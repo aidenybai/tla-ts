@@ -2490,7 +2490,7 @@ describe("evaluation errors match TLC", () => {
     expect(result.failure?.trace.map((step) => step.state.x)).toEqual([0]);
   });
 
-  it("evaluates a deep recursion whose calls are in the tail of the body", async () => {
+  it("evaluates a deep recursion whose calls, or LET operators that make them, end its body", async () => {
     const getResult = (definitions: string, value: string) =>
       check({
         source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\n${definitions}\nInit == x = ${value}\nNext == UNCHANGED x\nInv == x = 100000\n====`,
@@ -2502,7 +2502,7 @@ describe("evaluation errors match TLC", () => {
     );
     const local = await getResult(
       "",
-      "LET RECURSIVE Count(_)\n        Count(n) == IF n = 99999 THEN n ELSE Count(n + 1)\n    IN  Count(0)",
+      "LET RECURSIVE Count(_)\n        Count(n) == LET Step(m) == Count(m + 1) IN IF n = 99999 THEN n ELSE Step(n)\n    IN  Count(0)",
     );
     expect([global.status, global.distinctStates]).toEqual(["success", 1]);
     expect(local.status).toBe("invariant-violation");

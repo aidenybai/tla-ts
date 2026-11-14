@@ -1100,7 +1100,8 @@ interface CalledBody {
 // as it would in TLC.
 const TAIL_CALL_LIMIT = 1 << 20;
 
-// The IFs and LETs that lead from a body to the calls in its tail, compiled once.
+// The IFs, LETs and calls of LET operators that lead from a body to the calls in its tail,
+// compiled once.
 type TailStep =
   | {
       kind: "If";
@@ -1115,59 +1116,80 @@ type TailStep =
       expression: Expression & { kind: "Apply" };
       binders: ArgumentBinder[];
       evaluator: Evaluator;
+      // The LET operator whose body the call enters, or none for a call of the body's own operator.
+      entered: { body: Expression; step: TailStep } | undefined;
     }
   | { kind: "Other"; evaluator: Evaluator };
-
-const callsInTail = (expression: Expression, name: string): boolean => {
-  if (expression.kind === "If") {
-    return callsInTail(expression.consequent, name) || callsInTail(expression.alternative, name);
-  }
-  if (expression.kind === "Let") {
-    return (
-      expression.definitions.every((definition) => definition.name !== name) &&
-      callsInTail(expression.body, name)
-    );
-  }
-  return expression.kind === "Apply" && expression.operator === name;
-};
 
 const compileTailStep = (
   expression: Expression,
   name: string,
+  operators: ReadonlyMap<string, Definition>,
   environment: Environment,
-): TailStep => {
-  if (expression.kind === "If" && callsInTail(expression, name)) {
+): TailStep | undefined => {
+  if (expression.kind === "If") {
+    const consequent = compileTailStep(expression.consequent, name, operators, environment);
+    const alternative = compileTailStep(expression.alternative, name, operators, environment);
+    if (consequent === undefined && alternative === undefined) return undefined;
     return {
       kind: "If",
       expression,
       condition: getEntryEvaluator(expression.condition, environment),
-      consequent: compileTailStep(expression.consequent, name, environment),
-      alternative: compileTailStep(expression.alternative, name, environment),
+      consequent: consequent ?? {
+        kind: "Other",
+        evaluator: getEntryEvaluator(expression.consequent, environment),
+      },
+      alternative: alternative ?? {
+        kind: "Other",
+        evaluator: getEntryEvaluator(expression.alternative, environment),
+      },
     };
   }
-  if (expression.kind === "Let" && callsInTail(expression, name)) {
-    return {
-      kind: "Let",
-      definitions: expression.definitions,
-      body: compileTailStep(expression.body, name, environment),
-    };
+  if (expression.kind === "Let") {
+    if (expression.definitions.some((definition) => definition.name === name)) return undefined;
+    const body = compileTailStep(
+      expression.body,
+      name,
+      new Map([
+        ...operators,
+        ...expression.definitions
+          .filter((definition) => definition.kind === "Operator" && definition.params.length > 0)
+          .map((definition): [string, Definition] => [definition.name, definition]),
+      ]),
+      environment,
+    );
+    return body && { kind: "Let", definitions: expression.definitions, body };
   }
-  if (expression.kind === "Apply" && expression.operator === name) {
-    return {
-      kind: "Call",
-      expression,
-      binders: expression.args.map((arg) => getArgumentBinder(arg, environment)),
-      evaluator: getEntryEvaluator(expression, environment),
-    };
-  }
-  return { kind: "Other", evaluator: getEntryEvaluator(expression, environment) };
+  if (expression.kind !== "Apply") return undefined;
+  const operator = operators.get(expression.operator);
+  // An operator leaves the operators its body may enter, so a recursive one isn't entered again.
+  const entered =
+    operator === undefined
+      ? undefined
+      : compileTailStep(
+          operator.body,
+          name,
+          new Map([...operators].filter((entry) => entry[0] !== expression.operator)),
+          environment,
+        );
+  if (expression.operator !== name && entered === undefined) return undefined;
+  return {
+    kind: "Call",
+    expression,
+    binders: expression.args.map((arg) => getArgumentBinder(arg, environment)),
+    evaluator: getEntryEvaluator(expression, environment),
+    entered:
+      operator === undefined || entered === undefined
+        ? undefined
+        : { body: operator.body, step: entered },
+  };
 };
 
 // The body of a closure that calls itself in its tail, or undefined for any other body.
 const compileTailCalls = (closure: Closure, environment: Environment) =>
-  environment.callStack || !callsInTail(closure.body, closure.name)
+  environment.callStack
     ? undefined
-    : compileTailStep(closure.body, closure.name, environment);
+    : compileTailStep(closure.body, closure.name, new Map(), environment);
 
 const evaluateTailCalls = (closure: Closure, body: TailStep, bodyContext: Context): Value => {
   let context = bodyContext;
@@ -1180,13 +1202,19 @@ const evaluateTailCalls = (closure: Closure, body: TailStep, bodyContext: Contex
     } else if (step.kind === "Let") {
       context = withScope(context, bindDefinitions(step.definitions, context));
       step = step.body;
-    } else if (step.kind === "Call" && resolveApplyOperator(step.expression, context) === closure) {
+    } else if (step.kind === "Call") {
+      const callee = resolveApplyOperator(step.expression, context);
+      const entered = step.entered;
+      const isEntered =
+        callee?.kind === "Closure" &&
+        (entered === undefined ? callee === closure : callee.body === entered.body);
+      if (!isEntered) return step.evaluator(context);
       context = withScope(
         context,
-        bindOperatorArguments(closure, step.expression.args, context, step.binders),
+        bindOperatorArguments(callee, step.expression.args, context, step.binders),
       );
-      step = body;
-      turn++;
+      step = entered?.step ?? body;
+      turn += entered === undefined ? 1 : 0;
     } else {
       return step.evaluator(context);
     }
