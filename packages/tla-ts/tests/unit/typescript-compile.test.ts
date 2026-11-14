@@ -6854,6 +6854,22 @@ describe("errors", () => {
     expect((await checkModel(getSource("3,1,2;1,2,3"))).failure?.message).toContain("3,1,2;3,1,2");
   });
 
+  it("concats an array that the heap holds", async () => {
+    const getSource = (expected: string) => `
+      var array = [0, 1, 2];
+      const values = array.values();
+      var copy = array.concat();
+      var more = array.concat([3], 4);
+      array[0] = 7;
+      const text = \`\${values.next().value},\${copy.join()},\${more.join()},\${more.length}\`;
+      if (text !== "${expected}") throw new Error(text);
+    `;
+    expect((await checkModel(getSource("7,0,1,2,0,1,2,3,4,5"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("7,7,1,2,0,1,2,3,4,5"))).failure?.message).toContain(
+      "7,0,1,2,0,1,2,3,4,5",
+    );
+  });
+
   it.each([
     ["a malformed regular expression", "const pattern = /[$$]/v;"],
     [

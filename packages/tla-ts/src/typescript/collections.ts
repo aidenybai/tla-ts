@@ -2665,7 +2665,6 @@ export const getArrayLikeCall = (node: ts.CallExpression, context: Context) => {
   const methodArguments = isCall ? node.arguments.slice(1) : node.arguments;
   // concat spreads only the arrays that it adds, so tla-ts adds no object that may be one.
   const isConcat =
-    isCall &&
     method === "concat" &&
     methodArguments.every(
       (argument) => !ts.isSpreadElement(argument) && getKind(argument, context) !== "object",
