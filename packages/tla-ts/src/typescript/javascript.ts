@@ -2269,11 +2269,23 @@ LOCAL CharacterCodes ==
   IN  AsciiCodes @@ [character \\in {other.character : other \\in others} |->
                        (CHOOSE other \\in others : other.character = character).code]
 
-\\* The code unit that a code gives, which tla-ts makes only where it can tell the code.
+\\* The code units below the surrogates and above them, in order.
+LOCAL LowCodeUnits == ${formatString(Array.from({ length: 0xd800 }, (_, code) => String.fromCharCode(code)).join(""))}
+
+LOCAL HighCodeUnits == ${formatString(Array.from({ length: 0x2000 }, (_, offset) => String.fromCharCode(0xe000 + offset)).join(""))}
+
+\\* Each high surrogate before the low surrogate at the same offset, since TLA+ strings hold only
+\\* text that UTF-8 can encode, where a surrogate is only a part of a pair.
+LOCAL SurrogatePairs == ${formatString(Array.from({ length: 0x400 }, (_, offset) => String.fromCharCode(0xd800 + offset, 0xdc00 + offset)).join(""))}
+
+\\* The code unit that a code below 2^16 gives.
 LOCAL CodeUnit(code) ==
-  IF \\E character \\in DOMAIN CharacterCodes : CharacterCodes[character] = code
-  THEN CHOOSE character \\in DOMAIN CharacterCodes : CharacterCodes[character] = code
-  ELSE Assert(FALSE, "tla-ts can't make a character outside ASCII")
+  LET position == CASE code < 55296 -> code + 1
+                    [] code < 56320 -> 2 * (code - 55296) + 1
+                    [] code < 57344 -> 2 * (code - 56320) + 2
+                    [] OTHER -> code - 57343
+      units == CASE code < 55296 -> LowCodeUnits [] code < 57344 -> SurrogatePairs [] OTHER -> HighCodeUnits
+  IN  SubSeq(units, position, position)
 
 \\* String.fromCharCode, which takes each code modulo 2^16, or String.fromCodePoint, which throws a
 \\* RangeError for a number that isn't a code point and writes one past 2^16 as a surrogate pair.

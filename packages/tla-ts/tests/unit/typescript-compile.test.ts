@@ -9406,13 +9406,20 @@ describe("errors", () => {
     ).rejects.toThrow("units");
   });
 
-  it("stops where it can't make or encode a character outside ASCII", async () => {
-    await expect(
-      checkModel(`
-        const code = 0x4e00;
-        if (String.fromCharCode(code) === "") throw new Error("never");
-      `),
-    ).rejects.toThrow("tla-ts can't make a character outside ASCII");
+  it("makes any code unit from a code that the script doesn't write", async () => {
+    const getSource = (escapes: string) => `
+      let offset = 0;
+      for (const step of [1, 2, 3]) offset += step;
+      const made = String.fromCharCode(0x4e27 + offset, 0xd837 + offset, 0xddfa + offset);
+      if (made !== decodeURI("${escapes}") + String.fromCodePoint(0x1f5fa + offset)) {
+        throw new Error("units");
+      }
+    `;
+    expect((await checkModel(getSource("%E4%B8%AD"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("%E4%B8%AC"))).failure?.message).toContain('"units"');
+  });
+
+  it("stops where it can't encode a character outside ASCII", async () => {
     await expect(
       checkModel(`if (encodeURI("é") === "") throw new Error("never");`),
     ).rejects.toThrow("tla-ts can't encode a character outside ASCII");
