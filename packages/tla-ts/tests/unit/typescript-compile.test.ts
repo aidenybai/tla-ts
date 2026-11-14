@@ -953,6 +953,39 @@ describe("top-level statements", () => {
     expect(result.failure?.message).toContain("poisoned");
   });
 
+  it("assigns names that a function's array pattern takes from an iterator, where only their declarations are outside it", async () => {
+    const getSource = (taken: number, closes: number) => `
+      let closed = 0;
+      let step = 0;
+      const iterator = {
+        next: function () {
+          step += 1;
+          return { value: step * 10, done: step > 3 };
+        },
+        return: function () {
+          closed += 1;
+          return { value: undefined, done: true };
+        },
+      };
+      const iterable = {
+        [Symbol.iterator]: function () {
+          return iterator;
+        },
+      };
+      let first: number | undefined;
+      let second: number | undefined;
+      const take = () => {
+        [first, second] = iterable;
+        if (first !== 10 || second !== ${taken}) throw new Error("taken");
+      };
+      take();
+      if (closed !== ${closes} || step !== 2) throw new Error("closed");
+    `;
+    expect((await checkModel(getSource(20, 1))).failure).toBeUndefined();
+    expect((await checkModel(getSource(30, 1))).failure?.message).toContain("taken");
+    expect((await checkModel(getSource(20, 0))).failure?.message).toContain("closed");
+  });
+
   it("runs the getters that a parameter's pattern reads from the variable that its default names", async () => {
     const getSource = (expected: number) => `
       let reads = 0;

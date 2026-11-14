@@ -129,7 +129,7 @@ const isWritable = (symbol: ts.Symbol) => {
 };
 
 // A pattern whose elements only bind or assign names, which nothing outside the function that holds
-// the pattern reads. Binding or assigning them can't throw or run code, and the functions of the
+// the pattern reads, other than a declaration without an initializer. Binding or assigning them can't throw or run code, and the functions of the
 // iterator can't see them, so the pattern can take all its values before it binds them, which
 // JavaScript interleaves.
 const isPlainPattern = (
@@ -150,7 +150,10 @@ const isPlainPattern = (
       return (
         symbol === undefined ||
         !symbols.includes(symbol) ||
-        ts.findAncestor(name, ts.isFunctionLike) === owner
+        ts.findAncestor(name, ts.isFunctionLike) === owner ||
+        (ts.isVariableDeclaration(name.parent) &&
+          name.parent.name === name &&
+          name.parent.initializer === undefined)
       );
     })
   );
