@@ -18,7 +18,7 @@ export const App = () => (
       <Hero.Title>TLA-ts</Hero.Title>
       <Hero.Body>
         <p>
-          Formal verification for your existing TypeScript code via{" "}
+          Formally verify TypeScript code with{" "}
           <Link href="https://lamport.azurewebsites.net/tla/tla.html">TLA+</Link>.
         </p>
         <div className="flex gap-2">
