@@ -24,22 +24,27 @@ import {
   SORT_SIZE_INFINITE,
   QUANTIFIER_EXISTS,
 } from "../ast";
+import { ObjMap } from "../hashtable";
 import type { DatalogContext } from "./dl-context";
-import type { Rule } from "./dl-rule";
+import { mkPp, type Rule } from "./dl-rule";
 import type { RuleSet } from "./dl-rule-set";
 
 const DIVISION_OPS = new Set([OP_DIV, OP_IDIV, OP_MOD, OP_REM]);
 const DIVISION_BY_ZERO_OPS = new Set([OP_DIV0, OP_IDIV0, OP_MOD0, OP_POWER0]);
 
 export class RuleProperties {
-  private quantifiers = new Map<number, Rule>();
-  private uninterpretedFuncs = new Map<number, Rule>();
+  private quantifiers: ObjMap<Rule>;
+  private uninterpretedFuncs: ObjMap<Rule>;
   private interpretedPredicateRules: Rule[] = [];
   private negativeRules: Rule[] = [];
   private infiniteSortRules: Rule[] = [];
   isMonotone = true;
 
-  constructor(private context: DatalogContext) {}
+  constructor(private context: DatalogContext) {
+    const manager = context.manager;
+    this.quantifiers = new ObjMap((expr) => manager.hashes[expr]);
+    this.uninterpretedFuncs = new ObjMap((decl) => manager.getDeclHash(decl));
+  }
 
   private get manager(): AstManager {
     return this.context.manager;
@@ -75,7 +80,7 @@ export class RuleProperties {
       const kind = manager.kinds[expr];
       if (kind === KIND_VAR) this.checkSort(rule, manager.sorts[expr]);
       else if (kind === KIND_QUANTIFIER) {
-        if (!this.quantifiers.has(expr)) this.quantifiers.set(expr, rule);
+        this.quantifiers.set(expr, rule);
         todo.push(manager.getQuantifier(expr).body);
       } else {
         this.visitApp(rule, expr);
@@ -88,20 +93,18 @@ export class RuleProperties {
     const manager = this.manager;
     const decl = manager.decls[expr];
     const op = manager.getOp(expr);
-    const addUninterpreted = () => {
-      if (!this.uninterpretedFuncs.has(decl)) this.uninterpretedFuncs.set(decl, rule);
-    };
     if (this.context.isPredicate(expr)) {
       const rules = this.interpretedPredicateRules;
       if (rules[rules.length - 1] !== rule) rules.push(rule);
-    } else if (manager.getFamily(expr) === FAMILY_USER) addUninterpreted();
+    } else if (manager.getFamily(expr) === FAMILY_USER) this.uninterpretedFuncs.set(decl, rule);
     else if (op === OP_DT_ACCESSOR)
       throw new SmtUnsupportedError("datatype accessors in Horn rules");
-    else if (DIVISION_BY_ZERO_OPS.has(op) || op === OP_FUN_DEFINED) addUninterpreted();
+    else if (DIVISION_BY_ZERO_OPS.has(op) || op === OP_FUN_DEFINED)
+      this.uninterpretedFuncs.set(decl, rule);
     else if (DIVISION_OPS.has(op)) {
       const divisor = this.context.simplify(manager.getArg(expr, 1));
       if (!manager.isNumeral(divisor) || manager.getRationalValue(divisor).isZero())
-        addUninterpreted();
+        this.uninterpretedFuncs.set(decl, rule);
     }
     this.checkSort(rule, manager.sorts[expr]);
   }
@@ -113,21 +116,26 @@ export class RuleProperties {
   }
 
   checkForNegatedPredicates() {
-    if (this.negativeRules.length > 0) throw new SmtTacticError("Rule contains negative predicate");
+    if (this.negativeRules.length > 0)
+      throw new SmtTacticError(
+        `Rule contains negative predicate ${this.negativeRules[0].display(this.context)}`,
+      );
   }
 
   checkUninterpretedFree() {
-    const first = this.uninterpretedFuncs.keys().next();
+    const first = this.uninterpretedFuncs.entries().next();
     if (first.done !== true)
       throw new SmtTacticError(
-        `Uninterpreted '${getSymbolName(this.manager.funcDecls[first.value].name)}' in a rule`,
+        `Uninterpreted '${getSymbolName(this.manager.funcDecls[first.value[0]].name)}' in ${first.value[1].display(this.context)}`,
       );
   }
 
   checkExistsFree() {
-    for (const quantifier of this.quantifiers.keys())
-      if (this.manager.getQuantifier(quantifier).kind === QUANTIFIER_EXISTS)
-        throw new SmtTacticError("cannot process EXISTS quantifier in rule");
+    for (const entry of this.quantifiers)
+      if (this.manager.getQuantifier(entry[0]).kind === QUANTIFIER_EXISTS)
+        throw new SmtTacticError(
+          `cannot process EXISTS quantifier in rule ${entry[1].display(this.context)}`,
+        );
   }
 
   checkBackgroundFree() {
@@ -161,7 +169,9 @@ export class RuleProperties {
     }
     for (const expr of toCheck)
       if (this.containsPredicate(expr))
-        throw new SmtTacticError("recursive predicate occurs nested in the body of a rule");
+        throw new SmtTacticError(
+          `recursive predicate ${mkPp(manager, expr)} occurs nested in the body of a rule`,
+        );
   }
 
   private containsPredicate(root: number) {

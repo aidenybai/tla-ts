@@ -50,7 +50,7 @@ class RuleUnifier {
         this.subst.apply(target.head, 0, this.deltas),
         tail,
         isNegated,
-        `${target.name};${source.name}`,
+        `${target.getNameText()};${source.getNameText()}`,
       ),
       true,
     );

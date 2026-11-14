@@ -20,7 +20,7 @@ import { RefVector } from "../ref-vector";
 import type { RewriterOptions } from "../rewriter";
 import { getFreeVarSorts } from "../var-subst";
 import { DatalogContext, ENGINE_SPACER, FpParams } from "./dl-context";
-import { mkForall } from "./dl-rule";
+import { mkForall, mkPp } from "./dl-rule";
 import { SpacerDlInterface } from "./spacer-dl-interface";
 
 export const createDatalogContext = (
@@ -158,7 +158,8 @@ class HornTactic {
     const queries: number[] = [];
     for (const form of goal.forms.items) {
       const kind = this.getFormulaKind(form);
-      if (kind === undefined) throw new SmtTacticError("formula is not in Horn fragment");
+      if (kind === undefined)
+        throw new SmtTacticError(`formula is not in Horn fragment: ${mkPp(manager, form)}\n`);
       if (kind.isRule) context.addRule(kind.formula);
       else queries.push(kind.formula);
     }
