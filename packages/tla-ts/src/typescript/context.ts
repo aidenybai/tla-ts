@@ -632,22 +632,14 @@ export const getPrivateKey = (member: ts.ClassElement, context: Context) => {
 const isLiteralKey = (node: ts.Node) =>
   ts.isStringLiteral(node) || ts.isNumericLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node);
 
+// An accessor with a body and a key that a property can have, which a computed name gives as it
+// evaluates.
 export const isPlainAccessor = (
   node: ts.Node,
 ): node is ts.GetAccessorDeclaration | ts.SetAccessorDeclaration =>
   (ts.isGetAccessorDeclaration(node) || ts.isSetAccessorDeclaration(node)) &&
   node.body !== undefined &&
-  (ts.isIdentifier(node.name) ||
-    isLiteralKey(node.name) ||
-    ts.isPrivateIdentifier(node.name) ||
-    (ts.isComputedPropertyName(node.name) &&
-      (isLiteralKey(node.name.expression) || isWellKnownSymbol(node.name.expression))));
-
-// A well-known symbol, such as Symbol.iterator.
-const isWellKnownSymbol = (node: ts.Expression) =>
-  ts.isPropertyAccessExpression(node) &&
-  ts.isIdentifier(node.expression) &&
-  node.expression.text === "Symbol";
+  !ts.isBigIntLiteral(node.name);
 
 // The key that obj.name, obj["name"], or obj[0] reads, as a property key.
 export const getAccessKey = (node: ts.Expression) => {
@@ -1993,7 +1985,7 @@ const getSetAccessors = (node: ts.Node, context: Context) => {
     file,
     (inner): inner is ts.SetAccessorDeclaration =>
       ts.isSetAccessorDeclaration(inner) &&
-      getNameKey(inner.name) !== undefined &&
+      (getNameKey(inner.name) !== undefined || ts.isComputedPropertyName(inner.name)) &&
       isInlinedAccessor(inner, context),
   );
   setAccessors.set(file, found);
@@ -2033,8 +2025,12 @@ export const getSetters = (node: ts.Node, context: Context) => {
   return [
     ...getAccessorFunctions(node, "set", context),
     ...getReturnedFunctions(node, context),
+    // A computed name may give any key.
     ...getSetAccessors(node, context).filter(
-      (setter) => keys === undefined || keys.includes(getNameKey(setter.name) ?? ""),
+      (setter) =>
+        keys === undefined ||
+        ts.isComputedPropertyName(setter.name) ||
+        keys.includes(getNameKey(setter.name) ?? ""),
     ),
   ].filter((setter) =>
     getParameters(setter)

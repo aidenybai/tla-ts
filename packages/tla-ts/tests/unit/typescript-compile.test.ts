@@ -13393,6 +13393,40 @@ describe("errors", () => {
     expect((await checkModel(getSource("15,x,2"))).failure?.message).toContain("fields");
   });
 
+  it("defines a class's accessors and methods under computed keys that assign as the class is defined", async () => {
+    const getSource = (expected: string) => `
+      let key = "";
+      let setValue = "";
+      class Accessors {
+        get [key = "str" + "ing"]() {
+          return "get string";
+        }
+        set [key = "str" + "ing"](value: string) {
+          setValue = value;
+        }
+        [key = key + "s"]() {
+          return \`method \${key}\`;
+        }
+      }
+      const Statics = class {
+        static get [key = key + "!"]() {
+          return "static";
+        }
+      };
+      const made = new Accessors() as unknown as Record<string, string>;
+      made.string = "set string";
+      const method = typeof made.strings;
+      const result = \`\${made.string},\${setValue},\${method},\${(Statics as unknown as Record<string, string>)["strings!"]}\`;
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    expect(
+      (await checkModel(getSource("get string,set string,function,static"))).failure,
+    ).toBeUndefined();
+    expect((await checkModel(getSource("get string,,function,static"))).failure?.message).toContain(
+      "get string,set string,function,static",
+    );
+  });
+
   it("throws the ReferenceError of a name that a class's computed key reads", async () => {
     const getSource = (caught: string) => `
       let caught = "";
@@ -14823,9 +14857,14 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
-  it("rejects a class whose member names run code", () => {
-    expect(() => compile(`let count = 0;\nclass Counter {\n  [count++]() {}\n}`)).toThrow(
-      "spec.ts:3:4 Unsupported expression: count++",
+  it("defines a class's methods under keys that increments give as the class is defined", async () => {
+    const getSource = (expected: string) =>
+      compile(
+        `let count = 0;\nclass Counter {\n  [count++]() {\n    return "zero";\n  }\n  [count++]() {\n    return "one";\n  }\n}\nconst made = new Counter() as unknown as Record<string, unknown>;\nconst result = \`\${count},\${typeof made["0"]},\${typeof made["1"]},\${typeof made["2"]}\`;\nif (result !== "${expected}") throw new Error(result);`,
+      );
+    expect((await check(getSource("2,function,function,undefined"))).failure).toBeUndefined();
+    expect((await check(getSource("1,function,undefined,undefined"))).failure?.message).toContain(
+      "2,function,function,undefined",
     );
   });
 

@@ -13083,6 +13083,24 @@ const getHoistedAssignment = (statement: ts.Statement, path: Path, context: Cont
       : ts.isReturnStatement(statement) || ts.isThrowStatement(statement)
         ? statement.expression
         : undefined;
+  const held = evaluated === undefined ? undefined : skipCasts(evaluated);
+  const defined = ts.isClassDeclaration(statement)
+    ? statement
+    : held !== undefined && ts.isClassExpression(held)
+      ? held
+      : undefined;
+  // A class evaluates its computed keys in order as the script defines it, before it makes its
+  // objects, so a key that assigns runs first where each key before it is a literal or ran.
+  const key = defined?.members
+    .map((member) => member.name)
+    .find(
+      (name): name is ts.ComputedPropertyName =>
+        name !== undefined &&
+        ts.isComputedPropertyName(name) &&
+        !isLiteral(name.expression) &&
+        !results.has(name.expression),
+    );
+  if (key !== undefined) return getLeadingAssignment(key.expression, results, context);
   return evaluated === undefined ? undefined : getLeadingAssignment(evaluated, results, context);
 };
 
