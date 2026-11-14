@@ -64,6 +64,21 @@ const getIntRoot = (value: bigint, degree: number): bigint | undefined => {
   return low ** exponent === value ? low : undefined;
 };
 
+// rational::mult_inverse: the inverse of the value modulo 2^bits, which only an odd value has.
+export const getMultInverse = (value: bigint, bits: number) => {
+  if (value === 1n) return 1n;
+  if (value % 2n === 0n) return undefined;
+  const modulus = 1n << BigInt(bits);
+  let [oldRemainder, remainder] = [((value % modulus) + modulus) % modulus, modulus];
+  let [oldCoefficient, coefficient] = [1n, 0n];
+  while (remainder !== 0n) {
+    const quotient = oldRemainder / remainder;
+    [oldRemainder, remainder] = [remainder, oldRemainder - quotient * remainder];
+    [oldCoefficient, coefficient] = [coefficient, oldCoefficient - quotient * coefficient];
+  }
+  return ((oldCoefficient % modulus) + modulus) % modulus;
+};
+
 export class Rational {
   static readonly zero = new Rational(0n, 1n);
   static readonly one = new Rational(1n, 1n);

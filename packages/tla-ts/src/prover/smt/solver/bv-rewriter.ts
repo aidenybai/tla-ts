@@ -85,7 +85,7 @@ import {
 } from "./ast";
 import { mkBvApp } from "./bv-decl-plugin";
 import { type ArithRewriterOptions, PolyRewriter } from "./poly-rewriter";
-import { Rational } from "./rational";
+import { getMultInverse, Rational } from "./rational";
 import type { Rewrite } from "./rewriter-tpl";
 
 type Result = number | Rewrite | undefined;
@@ -115,20 +115,6 @@ const getMod = (value: bigint, modulus: bigint) => ((value % modulus) + modulus)
 const getPowerOfTwoExponent = (value: bigint) => {
   if (value <= 0n || (value & (value - 1n)) !== 0n) return -1;
   return value.toString(2).length - 1;
-};
-
-const getMultInverse = (value: bigint, bits: number) => {
-  if (value === 1n) return 1n;
-  if (value % 2n === 0n) return undefined;
-  const modulus = getPowerOfTwo(bits);
-  let [oldRemainder, remainder] = [getMod(value, modulus), modulus];
-  let [oldCoefficient, coefficient] = [1n, 0n];
-  while (remainder !== 0n) {
-    const quotient = oldRemainder / remainder;
-    [oldRemainder, remainder] = [remainder, oldRemainder - quotient * remainder];
-    [oldCoefficient, coefficient] = [coefficient, oldCoefficient - quotient * coefficient];
-  }
-  return getMod(oldCoefficient, modulus);
 };
 
 const getAbs = (value: bigint) => (value < 0n ? -value : value);
