@@ -3077,6 +3077,23 @@ const isArrayObjectUse = (node: ts.Expression, context: Context): boolean => {
   if (!ts.isCallExpression(parent) || !parent.arguments.some((argument) => argument === node)) {
     return false;
   }
+  // An array method's callback reads its this argument through this, which a callback that types
+  // this as an object reads as one.
+  if (
+    parent.arguments[1] === node &&
+    ts.isPropertyAccessExpression(parent.expression) &&
+    THIS_ARGUMENT_METHODS.has(parent.expression.name.text) &&
+    getKind(parent.expression.expression, context) === "sequence"
+  ) {
+    const callback = getCallee(parent.arguments[0], context);
+    const thisType = callback?.parameters.find(
+      (parameter) => ts.isIdentifier(parameter.name) && parameter.name.text === "this",
+    )?.type;
+    return (
+      thisType !== undefined &&
+      !isSequenceType(context.checker.getTypeFromTypeNode(thisType), context.checker)
+    );
+  }
   const callee = parent.expression.getText();
   const parameter = context.checker.getContextualType(node);
   return (
@@ -3242,6 +3259,20 @@ const KEY_METHODS = new Set(["add", "has", "delete", "set", "get"]);
 
 // The array methods that look for an element by identity.
 const ELEMENT_SEARCH_METHODS = new Set(["includes", "indexOf", "lastIndexOf"]);
+
+// The array methods that call their callback with their second argument as this.
+const THIS_ARGUMENT_METHODS = new Set([
+  "every",
+  "filter",
+  "find",
+  "findIndex",
+  "findLast",
+  "findLastIndex",
+  "flatMap",
+  "forEach",
+  "map",
+  "some",
+]);
 
 // The array methods whose callback takes each element, and whose result holds none of them.
 const ELEMENT_CALLBACK_METHODS = new Set([
@@ -4480,13 +4511,14 @@ export const findHeapArrays = (
       declaration !== undefined &&
       ts.isVariableDeclaration(declaration) &&
       declaration.initializer !== undefined &&
-      ts.isArrayLiteralExpression(declaration.initializer)
+      (ts.isArrayLiteralExpression(declaration.initializer) ||
+        isNewArrayOfElements(declaration.initializer))
         ? declaration.initializer
         : undefined;
     const reads = uses.filter((use) => use.parent !== declaration);
     if (
       literal !== undefined &&
-      literal.elements.every(
+      (ts.isNewExpression(literal) ? (literal.arguments ?? []) : literal.elements).every(
         (element) => !ts.isSpreadElement(element) && !ts.isOmittedExpression(element),
       ) &&
       reads.some(
@@ -4500,6 +4532,7 @@ export const findHeapArrays = (
       reads.every((use) => isArrayObjectUse(use, context))
     ) {
       arrays.add(literal);
+      if (ts.isNewExpression(literal) && declaration !== undefined) arrays.add(declaration);
     }
     // So is the new array that a built-in method makes, as slice() or splice() gives it.
     const initializer =

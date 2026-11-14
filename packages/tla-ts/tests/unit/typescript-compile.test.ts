@@ -5203,6 +5203,33 @@ describe("errors", () => {
     });
   });
 
+  describe("passes an array with a named property as a callback's this", () => {
+    const getSource = (expected: string) => `
+      var a = new Array(1, 2);
+      // @ts-ignore
+      a.res = "r";
+      let seen = "";
+      function visit(this: { [key: string | symbol]: unknown }, value: number) {
+        seen += \`\${String(this.res)}\${value}\${String(this.length)},\`;
+        return true;
+      }
+      [7].forEach(visit, a);
+      const kept = [5].filter(visit, a);
+      const all = [seen, kept.join(), a.length, a.join()];
+      if (all.join(";") !== "${expected}") throw new Error(all.join(";"));
+    `;
+
+    it("reads the array's properties through this", async () => {
+      const result = await checkModel(getSource("r72,r52,;5;2;1,2"));
+      expect(result.failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const result = await checkModel(getSource("r72,r52,;5;3;1,2"));
+      expect(result.failure?.message).toContain("r72,r52,;5;2;1,2");
+    });
+  });
+
   describe("skips to the next element after a hole where a callback runs as statements", () => {
     const getSource = (expected: string) => `
       const visited: number[] = [];
