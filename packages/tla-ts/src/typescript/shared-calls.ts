@@ -156,8 +156,7 @@ const getUnit = (unit: ts.Node, context: Context): Unit => {
 
 // Finds, before the model's code compiles, each helper that can run as an operator: a function
 // that a const or a declaration holds, whose parameters are names of values, that makes no closure
-// and calls itself nowhere, that reads no function from outside itself, and that changes none of
-// the names it reads from there.
+// and calls itself nowhere, and that reads no function from outside itself.
 export const classifySharedHelpers = (reached: readonly ts.Node[], context: Context) => {
   if (context.heap === undefined) return;
   const found = reached.flatMap((node) =>
@@ -217,12 +216,12 @@ export const classifySharedHelpers = (reached: readonly ts.Node[], context: Cont
     ) {
       return;
     }
-    // The operator gives back the state that the helper changes, but none of the names it reads.
+    // The operator gives back the state and the names from outside that the helper changes.
     const changed = findChanged(callee, new Map(), context);
-    if (outside.some((entry) => changed.has(entry[0]))) return;
+    const outsideNames = outside.map((entry) => entry[0]);
     context.sharedHelpers.set(callee, {
-      read: outside.map((entry) => entry[0]),
-      changed: state.filter((symbol) => changed.has(symbol)),
+      read: outsideNames,
+      changed: [...new Set([...state, ...outsideNames])].filter((symbol) => changed.has(symbol)),
     });
   });
 };
@@ -266,7 +265,13 @@ const getSharedCall = (
         ts.findAncestor(declaration.parent, ts.isFunctionLike) === undefined)
     );
   };
-  if (!helper.read.every(isReadable)) return undefined;
+  // A name from outside that the helper changes is one that the call binds and takes back.
+  if (
+    !helper.read.every(isReadable) ||
+    !helper.changed.every((symbol) => context.variables.has(symbol) || captured.includes(symbol))
+  ) {
+    return undefined;
+  }
   const calls = context.sharedCalls.get(callee) ?? [];
   const defined = calls.find(
     (shared) =>
@@ -341,6 +346,7 @@ const defineShared = (
     scope,
     mutable: new Set([
       ...state,
+      ...changed,
       ...parameters.flatMap((parameter) => getSymbol(parameter.name, context.checker) ?? []),
     ]),
     isAssigned: false,

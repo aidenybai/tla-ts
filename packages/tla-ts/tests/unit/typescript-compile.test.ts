@@ -4859,6 +4859,34 @@ describe("calls", () => {
     );
   });
 
+  it("runs a helper that changes the caller's names as an operator that gives them back", async () => {
+    const getSource = (expected: string) => `
+      const run = () => {
+        const seen = { count: 0 };
+        const starts: number[] = [];
+        let total = 0;
+        const mark = (index: number) => {
+          starts[index] ??= (index + 1) * 10;
+          total += starts[index];
+          seen.count++;
+          return starts[index];
+        };
+        const first = mark(0);
+        const again = mark(0);
+        starts.push(7);
+        const second = mark(2);
+        return \`\${first},\${again},\${second},\${starts.join("|")},\${total},\${seen.count}\`;
+      };
+      const text = run();
+      if (text !== "${expected}") throw new Error(text);
+    `;
+    expect(printModule(compile(getSource("10,10,30,10|7|30,50,3")).source)).toMatch(/^mark\(/m);
+    expect((await checkModel(getSource("10,10,30,10|7|30,50,3"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("10,10,30,10|7|30,40,3"))).failure?.message).toContain(
+      "10,10,30,10|7|30,50,3",
+    );
+  });
+
   it("runs helpers that call one that throws as operators, where the caller catches it", async () => {
     const getSource = (expected: string) => `
       const run = () => {

@@ -45,7 +45,7 @@ export interface SharedCall {
 }
 
 // A helper that can run as an operator: the names that it and the functions it runs read from
-// outside them, and the state that it changes.
+// outside them, and the state and those names that it changes.
 export interface SharedHelper {
   read: ts.Symbol[];
   changed: ts.Symbol[];
