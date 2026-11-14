@@ -19,6 +19,7 @@ import {
 import type { Context } from "./context";
 import { type Enode, TheoryJustification } from "./enode";
 import { FALSE_LITERAL, getVar, isNegated, type Literal, negate, TRUE_LITERAL } from "./literal";
+import { UnionFind } from "./lp/union-find";
 import { FuncInterp, type ProtoModel } from "./proto-model";
 import {
   type DependentValue,
@@ -64,9 +65,7 @@ interface Reach {
 
 export class TheoryArray extends Theory {
   readonly name = "array";
-  private finds: number[] = [];
-  private sizes: number[] = [];
-  private nexts: number[] = [];
+  private unionFind: UnionFind;
   private trail: (() => void)[] = [];
   private trailLimits: number[] = [];
   private stores: Enode[][] = [];
@@ -98,6 +97,8 @@ export class TheoryArray extends Theory {
 
   constructor(context: Context) {
     super(context, FAMILY_ARRAY);
+    this.unionFind = new UnionFind(this.trail);
+    this.unionFind.handler = { mergeEh: (root, joining) => this.mergeEh(root, joining) };
   }
 
   private isOp(node: Enode, op: number) {
@@ -106,34 +107,6 @@ export class TheoryArray extends Theory {
 
   private isArrayNode(node: Enode) {
     return this.manager.isArraySort(this.manager.sorts[node.owner]);
-  }
-
-  private find(thVar: number) {
-    let current = thVar;
-    while (this.finds[current] !== current) current = this.finds[current];
-    return current;
-  }
-
-  private merge(inputFirst: number, inputSecond: number) {
-    const firstRoot = this.find(inputFirst);
-    const secondRoot = this.find(inputSecond);
-    if (firstRoot === secondRoot) return;
-    const isSwapped = this.sizes[firstRoot] > this.sizes[secondRoot];
-    const joining = isSwapped ? secondRoot : firstRoot;
-    const root = isSwapped ? firstRoot : secondRoot;
-    this.mergeEh(root, joining);
-    this.finds[joining] = root;
-    this.sizes[root] += this.sizes[joining];
-    const next = this.nexts[joining];
-    this.nexts[joining] = this.nexts[root];
-    this.nexts[root] = next;
-    this.trail.push(() => {
-      this.sizes[root] -= this.sizes[joining];
-      this.finds[joining] = joining;
-      const restored = this.nexts[joining];
-      this.nexts[joining] = this.nexts[root];
-      this.nexts[root] = restored;
-    });
   }
 
   private pushBack(list: Enode[], node: Enode) {
@@ -189,14 +162,7 @@ export class TheoryArray extends Theory {
     const manager = this.manager;
     const thVar = this.varEnodes.length;
     this.varEnodes.push(node);
-    this.finds.push(thVar);
-    this.sizes.push(1);
-    this.nexts.push(thVar);
-    this.trail.push(() => {
-      this.finds.pop();
-      this.sizes.pop();
-      this.nexts.pop();
-    });
+    this.unionFind.mkVar();
     const isStore = this.isOp(node, OP_STORE);
     this.stores.push(isStore ? [node] : []);
     this.parentSelects.push([]);
@@ -311,12 +277,12 @@ export class TheoryArray extends Theory {
   }
 
   newEqEh(first: number, second: number) {
-    this.merge(first, second);
+    this.unionFind.merge(first, second);
   }
 
   newDiseqEh(inputFirst: number, inputSecond: number) {
-    const first = this.find(inputFirst);
-    const second = this.find(inputSecond);
+    const first = this.unionFind.find(inputFirst);
+    const second = this.unionFind.find(inputSecond);
     if (this.isArrayNode(this.getEnode(first)))
       this.assertExtensionality(this.getEnode(first), this.getEnode(second));
   }
@@ -343,7 +309,7 @@ export class TheoryArray extends Theory {
   }
 
   private addParentSelect(inputVar: number, select: Enode) {
-    const thVar = this.find(inputVar);
+    const thVar = this.unionFind.find(inputVar);
     this.pushBack(this.parentSelects[thVar], select);
     const stores = this.stores[thVar];
     for (let index = 0; index < stores.length; index++)
@@ -357,11 +323,11 @@ export class TheoryArray extends Theory {
   }
 
   private addParentStore(inputVar: number, store: Enode) {
-    this.pushBack(this.parentStores[this.find(inputVar)], store);
+    this.pushBack(this.parentStores[this.unionFind.find(inputVar)], store);
   }
 
   private addStore(inputVar: number, store: Enode) {
-    const thVar = this.find(inputVar);
+    const thVar = this.unionFind.find(inputVar);
     this.setPropUpwardStores(thVar);
     this.pushBack(this.stores[thVar], store);
     const parentSelects = this.parentSelects[thVar];
@@ -371,7 +337,7 @@ export class TheoryArray extends Theory {
   }
 
   private addMap(inputVar: number, map: Enode) {
-    const thVar = this.find(inputVar);
+    const thVar = this.unionFind.find(inputVar);
     this.setPropUpwardStores(thVar);
     this.pushBack(this.maps[thVar], map);
     const parentSelects = this.parentSelects[thVar];
@@ -381,7 +347,7 @@ export class TheoryArray extends Theory {
   }
 
   private addParentMap(inputVar: number, map: Enode) {
-    this.pushBack(this.parentMaps[this.find(inputVar)], map);
+    this.pushBack(this.parentMaps[this.unionFind.find(inputVar)], map);
   }
 
   // add_const and add_as_array take the variable as it is, the root that merge_eh passes.
@@ -403,13 +369,13 @@ export class TheoryArray extends Theory {
   }
 
   private addParentDefault(inputVar: number) {
-    const stores = this.stores[this.find(inputVar)];
+    const stores = this.stores[this.unionFind.find(inputVar)];
     for (let index = 0; index < stores.length; index++)
       if (this.isOp(stores[index], OP_STORE)) this.instantiateDefaultStoreAxiom(stores[index]);
   }
 
   private setPropUpwardVar(inputVar: number) {
-    const thVar = this.find(inputVar);
+    const thVar = this.unionFind.find(inputVar);
     if (this.isPropUpward[thVar]) return;
     this.isPropUpward[thVar] = true;
     this.trail.push(() => {
@@ -454,19 +420,19 @@ export class TheoryArray extends Theory {
     const node = context.getEnode(expr);
     if (node === undefined) return;
     if (op === OP_SELECT)
-      this.addParentSelect(this.find(this.getVar(this.getArgNode(expr, 0))), node);
+      this.addParentSelect(this.unionFind.find(this.getVar(this.getArgNode(expr, 0))), node);
     else if (op === OP_ARRAY_DEFAULT) {
       const thVar = this.getVar(this.getArgNode(expr, 0));
       this.setPropUpwardVar(thVar);
-      this.addParentDefault(this.find(thVar));
+      this.addParentDefault(this.unionFind.find(thVar));
     } else if (op === OP_CONST_ARRAY) {
       this.instantiateDefaultConstAxiom(node);
       const thVar = this.getVar(node);
       this.setPropUpwardVar(thVar);
-      this.addParentDefault(this.find(thVar));
+      this.addParentDefault(this.unionFind.find(thVar));
     } else if (op === OP_ARRAY_MAP) {
       for (let index = 0; index < node.numArgs; index++) {
-        const thVar = this.find(this.getVar(node.getArg(index)));
+        const thVar = this.unionFind.find(this.getVar(node.getArg(index)));
         this.addParentMap(thVar, node);
         this.setPropUpwardVar(thVar);
       }
@@ -741,7 +707,7 @@ export class TheoryArray extends Theory {
 
   private instantiateParentStoresDefault(inputVar: number) {
     let result = false;
-    for (const store of this.parentStores[this.find(inputVar)])
+    for (const store of this.parentStores[this.unionFind.find(inputVar)])
       if (this.instantiateDefaultStoreAxiom(store)) result = true;
     return result;
   }
@@ -936,7 +902,7 @@ export class TheoryArray extends Theory {
       const current = result[qhead];
       const thVar = this.getVar(current.root);
       if (thVar < 0) continue;
-      for (const store of this.parentStores[this.find(thVar)]) {
+      for (const store of this.parentStores[this.unionFind.find(thVar)]) {
         if (
           !this.isOp(store, OP_STORE) ||
           !context.isRelevant(store.owner) ||
@@ -1153,8 +1119,9 @@ export class TheoryArray extends Theory {
     for (let thVar = 0; thVar < numVars; thVar++) {
       const node = this.getEnode(thVar);
       if (!this.context.isRelevant(node.owner)) continue;
-      this.mgMerge(thVar, this.find(thVar));
-      if (this.isOp(node, OP_STORE)) this.mgMerge(thVar, this.find(this.getVar(node.getArg(0))));
+      this.mgMerge(thVar, this.unionFind.find(thVar));
+      if (this.isOp(node, OP_STORE))
+        this.mgMerge(thVar, this.unionFind.find(this.getVar(node.getArg(0))));
       else if (this.isOp(node, OP_CONST_ARRAY)) this.setDefault(thVar, node.getArg(0));
       else if (this.isOp(node, OP_ARRAY_DEFAULT))
         this.setDefault(this.getVar(node.getArg(0)), node);
@@ -1175,7 +1142,7 @@ export class TheoryArray extends Theory {
     const context = this.context;
     for (let thVar = 0; thVar < this.getNumVars(); thVar++) {
       const root = this.getEnode(thVar).root;
-      if (this.find(thVar) !== thVar || !context.isRelevant(root.owner)) continue;
+      if (this.unionFind.find(thVar) !== thVar || !context.isRelevant(root.owner)) continue;
       for (const parent of root.parents)
         if (
           parent.cg === parent &&

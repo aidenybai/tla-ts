@@ -76,6 +76,7 @@ import {
   TRUE_BOOL_VAR,
   TRUE_LITERAL,
 } from "./literal";
+import { UnionFind } from "./lp/union-find";
 import { Rewriter, TACTIC_REWRITER_OPTIONS } from "./rewriter";
 import { Theory } from "./theory";
 
@@ -236,9 +237,7 @@ export class TheoryBv extends Theory {
   private blaster: BitBlaster;
   private trail: (() => void)[] = [];
   private trailLimits: number[] = [];
-  private finds: number[] = [];
-  private sizes: number[] = [];
-  private nexts: number[] = [];
+  private unionFind = new UnionFind(this.trail);
   private bits: Literal[][] = [];
   private wpos: number[] = [];
   private zeroOneBits: ZeroOneBit[][] = [];
@@ -254,6 +253,10 @@ export class TheoryBv extends Theory {
   constructor(context: Context) {
     super(context, FAMILY_BV);
     this.blaster = new BitBlaster(context.manager);
+    this.unionFind.handler = {
+      mergeEh: (root, joining, second, first) => this.mergeEh(root, joining, second, first),
+      unmergeEh: (root) => this.unmergeEh(root),
+    };
   }
 
   private getBvSize(thVar: number) {
@@ -261,51 +264,10 @@ export class TheoryBv extends Theory {
     return manager.getBvSize(manager.sorts[this.getExpr(thVar)]);
   }
 
-  private find(thVar: number) {
-    let current = thVar;
-    while (this.finds[current] !== current) current = this.finds[current];
-    return current;
-  }
-
-  private merge(inputFirst: number, inputSecond: number) {
-    const firstRoot = this.find(inputFirst);
-    const secondRoot = this.find(inputSecond);
-    if (firstRoot === secondRoot) return;
-    const isSwapped = this.sizes[firstRoot] > this.sizes[secondRoot];
-    const joining = isSwapped ? secondRoot : firstRoot;
-    const root = isSwapped ? firstRoot : secondRoot;
-    this.mergeEh(
-      root,
-      joining,
-      isSwapped ? inputFirst : inputSecond,
-      isSwapped ? inputSecond : inputFirst,
-    );
-    this.finds[joining] = root;
-    this.sizes[root] += this.sizes[joining];
-    const next = this.nexts[joining];
-    this.nexts[joining] = this.nexts[root];
-    this.nexts[root] = next;
-    this.trail.push(() => {
-      this.sizes[root] -= this.sizes[joining];
-      this.finds[joining] = joining;
-      const restored = this.nexts[joining];
-      this.nexts[joining] = this.nexts[root];
-      this.nexts[root] = restored;
-      this.unmergeEh(root);
-    });
-  }
-
   private mkVar(node: Enode) {
     const thVar = this.varEnodes.length;
     this.varEnodes.push(node);
-    this.finds.push(thVar);
-    this.sizes.push(1);
-    this.nexts.push(thVar);
-    this.trail.push(() => {
-      this.finds.pop();
-      this.sizes.pop();
-      this.nexts.pop();
-    });
+    this.unionFind.mkVar();
     this.bits.push([]);
     this.wpos.push(0);
     this.zeroOneBits.push([]);
@@ -878,7 +840,7 @@ export class TheoryBv extends Theory {
   }
 
   newEqEh(first: number, second: number) {
-    this.merge(first, second);
+    this.unionFind.merge(first, second);
   }
 
   newDiseqEh(first: number, second: number) {
@@ -924,6 +886,7 @@ export class TheoryBv extends Theory {
 
   private propagateBits() {
     const context = this.context;
+    const unionFind = this.unionFind;
     const queue = this.propQueue;
     for (let entry = 0; entry < queue.length; entry += 2) {
       const thVar = queue[entry];
@@ -933,7 +896,7 @@ export class TheoryBv extends Theory {
       const value = context.getAssignment(bit);
       if (value === L_UNDEF) continue;
       const antecedent = value === L_FALSE ? negate(bit) : bit;
-      for (let other = this.nexts[thVar]; other !== thVar; other = this.nexts[other]) {
+      for (let other = unionFind.next(thVar); other !== thVar; other = unionFind.next(other)) {
         const otherBit = this.bits[other][index];
         if (bit === negate(otherBit)) {
           this.addNewDiseqAxiom(thVar, other, index);
@@ -984,9 +947,9 @@ export class TheoryBv extends Theory {
     if (this.wpos[second] === index) this.findWpos(second);
     const atom = this.atoms[getVar(consequent)];
     if (atom === undefined || !atom.isBit) return;
-    const root = this.find(second);
+    const root = this.unionFind.find(second);
     for (let occ = atom.occs; occ !== null; occ = occ.next)
-      if (isPropagatingClass || this.find(occ.thVar) !== root || occ.index !== index)
+      if (isPropagatingClass || this.unionFind.find(occ.thVar) !== root || occ.index !== index)
         this.propQueue.push(occ.thVar, occ.index);
   }
 
@@ -1145,7 +1108,7 @@ export class TheoryBv extends Theory {
   private unmergeEh(root: number) {
     const bits = this.zeroOneBits[root];
     for (let index = bits.length - 1; index >= 0; index--)
-      if (this.find(bits[index].owner) === root) {
+      if (this.unionFind.find(bits[index].owner) === root) {
         bits.length = index + 1;
         return;
       }
