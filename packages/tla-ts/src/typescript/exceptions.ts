@@ -458,22 +458,40 @@ export const translateInstanceOf = (node: ts.BinaryExpression, scope: Scope, con
   // prototype is on its chain, and a value that may not be an object is one only where it is.
   if (isHeapClass || (rightClasses !== undefined && isNative(rightClasses[0]) && isObject)) {
     const heap = getHeap(scope, node, context);
-    const prototype = useJavaScript(
-      "Get",
-      [heap, translateExpression(node.right, scope, context), string("prototype")],
-      context,
+    const constructor = translateExpression(node.right, scope, context);
+    const getFound = (prototype: Expression) =>
+      isObject
+        ? useJavaScript(
+            "IsPrototypeOf",
+            [heap, prototype, translateObjectValue(node.left, scope, context)],
+            context,
+          )
+        : useJavaScript(
+            "InheritsFrom",
+            [heap, prototype, translateExpression(node.left, scope, context)],
+            context,
+          );
+    const prototype = useJavaScript("Get", [heap, constructor, string("prototype")], context);
+    if (!isHeapClass) return getFound(prototype);
+    // A script may define a heap class's @@hasInstance, or replace its prototype with a primitive,
+    // where instanceof throws a TypeError.
+    return ifExpression(
+      useJavaScript("IsOrdinaryHasInstance", [heap, constructor], context),
+      share(prototype, "prototype", context, (shared) =>
+        ifExpression(
+          useJavaScript("IsRef", [shared], context),
+          getFound(shared),
+          apply("Assert", [
+            boolean(false),
+            string("tla-ts can't throw the TypeError of a prototype that isn't an object"),
+          ]),
+        ),
+      ),
+      apply("Assert", [
+        boolean(false),
+        string("tla-ts can't call a Symbol.hasInstance that a script defined"),
+      ]),
     );
-    return isObject
-      ? useJavaScript(
-          "IsPrototypeOf",
-          [heap, prototype, translateObjectValue(node.left, scope, context)],
-          context,
-        )
-      : useJavaScript(
-          "InheritsFrom",
-          [heap, prototype, translateExpression(node.left, scope, context)],
-          context,
-        );
   }
   // A generator function whose prototype object the heap holds, and whose @@hasInstance is
   // Function.prototype's, which a script can't change.

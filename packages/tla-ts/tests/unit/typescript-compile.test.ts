@@ -8410,6 +8410,73 @@ describe("errors", () => {
     });
   });
 
+  describe("constructs a function that a script makes once, whose body returns a value", () => {
+    const getSource = (made: string, read: string, expected: string) => `
+      "use strict";
+      const holder = { seen: 0 };
+      ${made}
+      const result = ${read};
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    const expectResult = async (made: string, read: string, expected: string, wrong: string) => {
+      expect((await checkModel(getSource(made, read, expected))).failure).toBeUndefined();
+      expect((await checkModel(getSource(made, read, wrong))).failure?.message).toContain(expected);
+    };
+
+    it("gives the instance where the body returns a primitive", async () => {
+      const made = `
+        function F(this: { value: number }, a: number) { this.value = a; return a + 1; }
+        const made = new (F as unknown as new (a: number) => { value: number })(2);
+      `;
+      const read = "`${made.value} ${Object.getPrototypeOf(made) === F.prototype}`";
+      await expectResult(made, read, "2 true", "2 false");
+    });
+
+    it("gives the object that the body returns", async () => {
+      const made = `
+        const other = { kept: 1 };
+        const F = function (this: { value: number }) { this.value = 1; return other; };
+        const made: object = new (F as unknown as new () => object)();
+      `;
+      await expectResult(
+        made,
+        "`${made === other} ${made instanceof F}`",
+        "true false",
+        "true true",
+      );
+    });
+
+    it("makes an instance inherit from the prototype that a script replaced", async () => {
+      const made = `
+        function F() { return 0; }
+        const first: object = new (F as unknown as new () => object)();
+        const replacement = { marked: true };
+        F.prototype = replacement;
+        const second: object = new (F as unknown as new () => object)();
+      `;
+      const read =
+        "`${Object.getPrototypeOf(second) === replacement} ${first instanceof F} ${second instanceof F}`";
+      await expectResult(made, read, "true false true", "true true true");
+    });
+
+    it("tells the instances of a function that no new constructs", async () => {
+      const made = "function F() { return 0; } const value: unknown = 1;";
+      const read = "`${F instanceof F} ${value instanceof F} ${({}) instanceof F}`";
+      await expectResult(made, read, "false false false", "false false true");
+    });
+
+    it("stops where a script defines the function's Symbol.hasInstance", async () => {
+      const source = getSource(
+        "function F() { return 0; } Object.defineProperty(F, Symbol.hasInstance, { value: () => true });",
+        "`${({}) instanceof F}`",
+        "true",
+      );
+      expect((await checkModel(source)).failure?.message).toContain(
+        "tla-ts can't call a Symbol.hasInstance that a script defined",
+      );
+    });
+  });
+
   it("writes the name and message of an error that the heap holds in its toString", async () => {
     const source = `
       const holder = { seen: 0 };

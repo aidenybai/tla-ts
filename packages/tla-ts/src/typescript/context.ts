@@ -1806,13 +1806,6 @@ export const skipCasts = (node: ts.Expression): ts.Expression =>
     ? skipCasts(node.expression)
     : node;
 
-// Whether a function body returns a value, which a new gives in place of the instance when it's
-// an object.
-const isReturning = (node: ts.Node): boolean =>
-  (ts.isReturnStatement(node) && node.expression !== undefined) ||
-  (!ts.isFunctionLike(node) &&
-    (ts.forEachChild(node, (child) => isReturning(child) || undefined) ?? false));
-
 // A function that a script makes once and calls with new, which it makes into objects on the heap
 // as it does a heap class: a constructor object, and the prototype that its instances inherit.
 // Whether a function assigns a property or a variable it doesn't declare, itself or through the
@@ -2183,23 +2176,26 @@ export const isHeapFunction = (node: ts.Node, context: Context): node is HeapFun
       : getSymbol(nameNode, context.checker);
   const sourceFile = node.getSourceFile();
   // A new or Reflect.construct constructs the function or takes it as newTarget, an Object
-  // function reads or changes it as an object, or its @@hasInstance reads its prototype.
+  // function reads or changes it as an object, or its @@hasInstance or an instanceof reads its
+  // prototype.
   const isNewTarget = (child: ts.Node): boolean => {
     const construction = getConstruction(child, context);
     const receiver = ts.isCallExpression(child)
       ? getHasInstanceReceiver(child, context)
       : undefined;
     const targets =
-      ts.isCallExpression(child) &&
-      ts.isPropertyAccessExpression(child.expression) &&
-      getBuiltIn(child.expression.expression, context) === "Object" &&
-      OWN_PROPERTY_FUNCTIONS.has(child.expression.name.text)
-        ? child.arguments.slice(0, 1)
-        : receiver !== undefined
-          ? [receiver]
-          : construction === undefined
-            ? []
-            : [construction.callee, construction.newTarget];
+      ts.isBinaryExpression(child) && child.operatorToken.kind === ts.SyntaxKind.InstanceOfKeyword
+        ? [child.right]
+        : ts.isCallExpression(child) &&
+            ts.isPropertyAccessExpression(child.expression) &&
+            getBuiltIn(child.expression.expression, context) === "Object" &&
+            OWN_PROPERTY_FUNCTIONS.has(child.expression.name.text)
+          ? child.arguments.slice(0, 1)
+          : receiver !== undefined
+            ? [receiver]
+            : construction === undefined
+              ? []
+              : [construction.callee, construction.newTarget];
     return (
       targets.some((target) => getSymbol(skipCasts(target), context.checker) === symbol) ||
       (ts.forEachChild(child, (inner) => isNewTarget(inner) || undefined) ?? false)
@@ -2211,18 +2207,17 @@ export const isHeapFunction = (node: ts.Node, context: Context): node is HeapFun
     isPlain(node) &&
     isOnce(node.parent) &&
     !isAssigned(symbol, sourceFile, context) &&
-    (isNewTarget(sourceFile)
-      ? !isReturning(node.body)
-      : // An assignment writes one of its properties, or a call passes it as an object.
-        findNodes(
-          sourceFile,
-          (child): child is ts.BinaryExpression =>
-            ts.isBinaryExpression(child) &&
-            child.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-            (ts.isPropertyAccessExpression(child.left) ||
-              ts.isElementAccessExpression(child.left)) &&
-            getSymbol(skipCasts(child.left.expression), context.checker) === symbol,
-        ).length > 0 || isPassedAsObject(symbol, sourceFile, context));
+    (isNewTarget(sourceFile) ||
+      // An assignment writes one of its properties, or a call passes it as an object.
+      findNodes(
+        sourceFile,
+        (child): child is ts.BinaryExpression =>
+          ts.isBinaryExpression(child) &&
+          child.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+          (ts.isPropertyAccessExpression(child.left) || ts.isElementAccessExpression(child.left)) &&
+          getSymbol(skipCasts(child.left.expression), context.checker) === symbol,
+      ).length > 0 ||
+      isPassedAsObject(symbol, sourceFile, context));
   heapFunctions.set(node, isHeap);
   return isHeap;
 };

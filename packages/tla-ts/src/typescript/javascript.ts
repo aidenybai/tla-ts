@@ -1814,6 +1814,12 @@ SequenceHasOwn(sequence, key) ==
 \\* Whether an object still holds a built-in function, which tla-ts runs as it compiles.
 HoldsBuiltIn(heap, ref, key, path) == SameValue(Get(heap, ref, key), Ref :> path)
 
+\\* Whether instanceof runs OrdinaryHasInstance on a function, as it does where the function's
+\\* @@hasInstance is Function.prototype's, or where it has none.
+IsOrdinaryHasInstance(heap, function) ==
+  LET handler == Get(heap, function, WellKnownSymbol("hasInstance"))
+  IN SameValue(handler, Undefined) \\/ SameValue(handler, Ref :> "Function.prototype.@@hasInstance")
+
 \\* What a symbol's toString, valueOf, or description gives, where Symbol.prototype still holds the
 \\* built-in method or getter.
 SymbolProperty(heap, symbol, prototype, name) ==
