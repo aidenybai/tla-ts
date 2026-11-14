@@ -1,5 +1,6 @@
 import ts from "@typescript/typescript6";
 import type { Expression, SourceLocation } from "../ast";
+import { TlaTypeScriptError } from "../errors";
 import {
   bindCall,
   bindOnce,
@@ -124,18 +125,13 @@ export const getThrownMessage = (thrown: Thrown, node: ts.Node) =>
     ? (thrown.uncaught.args[1] ?? string(""))
     : string(node.getText()));
 
-// The state that an operator takes and gives: the script's variables and its heap.
-const getState = (context: Context) => [
-  ...context.variables.keys(),
-  ...(context.heap === undefined ? [] : [context.heap]),
-];
-
 // What one function or class tells of the helpers that run it: the functions and classes that it
-// names, the names of values that it reads, with their declarations, whether it names a built-in
-// that queues jobs, and whether its code runs as an operator's would.
+// names, the names of values that it reads, with their declarations, every name that it names,
+// whether it names a built-in that queues jobs, and whether its code runs as an operator's would.
 interface Unit {
   runs: Set<ts.Node>;
   read: Map<ts.Symbol, ts.Node>;
+  names: Set<ts.Symbol>;
   isTaskNamed: boolean;
   isOwn: boolean;
 }
@@ -143,6 +139,7 @@ interface Unit {
 const getUnit = (unit: ts.Node, context: Context): Unit => {
   const runs = new Set<ts.Node>();
   const read = new Map<ts.Symbol, ts.Node>();
+  const names = new Set<ts.Symbol>();
   const isTaskNamed = { value: false };
   findNodes(unit, ts.isIdentifier).forEach((name) => {
     const named = getSymbol(name, context.checker);
@@ -152,6 +149,7 @@ const getUnit = (unit: ts.Node, context: Context): Unit => {
         : named;
     const declaration = symbol?.valueDeclaration;
     if (symbol === undefined || declaration === undefined) return;
+    names.add(symbol);
     if (declaration.getSourceFile().isDeclarationFile) {
       if (TASK_NAMES.has(symbol.name)) isTaskNamed.value = true;
       return;
@@ -175,6 +173,7 @@ const getUnit = (unit: ts.Node, context: Context): Unit => {
   return {
     runs,
     read,
+    names,
     isTaskNamed: isTaskNamed.value,
     isOwn:
       (!ts.isFunctionLike(unit) || isPlain(unit as FunctionNode)) &&
@@ -229,9 +228,38 @@ export const classifySharedHelpers = (reached: readonly ts.Node[], context: Cont
       ),
     ),
   ];
-  // The units that the candidates and the callbacks run, each found once.
+  // The functions that run through a value, as a method, a getter or a function that an object
+  // holds, rather than by name: a heap's read inside any helper may run them.
+  const valued = new Set(
+    reached.flatMap((node) =>
+      findNodes(node, ts.isIdentifier).flatMap((name) => {
+        const declaration = getSymbol(name, context.checker)?.valueDeclaration;
+        const fixed = declaration === undefined ? undefined : getFixedFunction(declaration);
+        return fixed === undefined ||
+          (ts.isCallExpression(name.parent) && name.parent.expression === name) ||
+          ((ts.isVariableDeclaration(name.parent) || ts.isFunctionDeclaration(name.parent)) &&
+            name.parent.name === name)
+          ? []
+          : [fixed];
+      }),
+    ),
+  );
+  const escaped = reached.flatMap((node) =>
+    findNodes(
+      node,
+      (inner): inner is FunctionNode =>
+        ts.isFunctionLike(inner) &&
+        "body" in inner &&
+        inner.body !== undefined &&
+        (valued.has(inner) ||
+          getFixedFunction(ts.isVariableDeclaration(inner.parent) ? inner.parent : inner) !==
+            inner),
+    ),
+  );
+  // The units that the candidates, the callbacks and the functions that run through a value run,
+  // each found once.
   const units = new Map<ts.Node, Unit>();
-  const pending: ts.Node[] = [...candidates, ...callbacks];
+  const pending: ts.Node[] = [...candidates, ...callbacks, ...escaped];
   while (pending.length > 0) {
     const node = pending.pop() ?? candidates[0];
     if (units.has(node)) continue;
@@ -239,20 +267,34 @@ export const classifySharedHelpers = (reached: readonly ts.Node[], context: Cont
     units.set(node, unit);
     pending.push(...unit.runs);
   }
-  const state = getState(context);
-  // What a function and the functions it runs read from outside it and change, where all of their
-  // code runs as an operator's would.
-  const getHelper = (callee: ts.Node): SharedHelper | undefined => {
-    const reach = new Set<ts.Node>([callee]);
-    const queued: ts.Node[] = [callee];
-    const read = new Map<ts.Symbol, ts.Node>();
+  // The functions and classes that some run, and those that they run in turn.
+  const getReach = (starts: readonly ts.Node[]) => {
+    const reach = new Set(starts);
+    const queued = [...starts];
     while (queued.length > 0) {
-      units.get(queued.pop() ?? callee)?.runs.forEach((run) => {
+      units.get(queued.pop() ?? starts[0])?.runs.forEach((run) => {
         if (reach.has(run)) return;
         reach.add(run);
         queued.push(run);
       });
     }
+    return reach;
+  };
+  // The variables that some functions and what they run name.
+  const getNamed = (reach: Iterable<ts.Node>) => {
+    const reachedUnits = [...reach].flatMap((node) => units.get(node) ?? []);
+    return [...context.variables.keys()].filter((symbol) =>
+      reachedUnits.some((unit) => unit.names.has(symbol)),
+    );
+  };
+  // Every helper's operator takes the variables of the functions that run through a value, as its
+  // code may run them.
+  const escapedState = getNamed(getReach(escaped));
+  // What a function and the functions it runs read from outside it and change, where all of their
+  // code runs as an operator's would.
+  const getHelper = (callee: ts.Node): SharedHelper | undefined => {
+    const reach = getReach([callee]);
+    const read = new Map<ts.Symbol, ts.Node>();
     const reachedUnits = [...reach].flatMap((node) => units.get(node) ?? []);
     reachedUnits.forEach((unit) =>
       unit.read.forEach((declaration, symbol) => read.set(symbol, declaration)),
@@ -284,7 +326,10 @@ export const classifySharedHelpers = (reached: readonly ts.Node[], context: Cont
     const outsideNames = outside.map((entry) => entry[0]);
     return {
       read: outsideNames,
-      changed: [...new Set([...state, ...outsideNames])].filter((symbol) => changed.has(symbol)),
+      state: [...new Set([...getNamed(reach), ...escapedState])],
+      changed: [...new Set([...context.variables.keys(), ...outsideNames])].filter((symbol) =>
+        changed.has(symbol),
+      ),
     };
   };
   candidates.forEach((callee) => {
@@ -361,7 +406,14 @@ const getSharedCall = (
       [...callbacks].every((entry) => shared.callbacks.get(entry[0]) === entry[1]),
   );
   if (defined !== undefined && context.inProgress.has(callee)) defined.isRecursive = true;
-  return defined ?? defineShared(callee, { changed, isCatching, captured, callbacks }, context);
+  if (defined !== undefined) return defined;
+  // The operator takes the heap, which is a variable, and only the others that its code may read or
+  // change.
+  const named = new Set(runs.flatMap((run) => run.state));
+  const state = [...context.variables.keys()].filter(
+    (symbol) => symbol === context.heap || named.has(symbol) || changed.includes(symbol),
+  );
+  return defineShared(callee, { changed, isCatching, captured, callbacks, state }, context);
 };
 
 // The parameters that take values, not the functions that the operator calls.
@@ -421,11 +473,10 @@ export const defineThrown = (context: Context) =>
 // or what it threw, the message and the place of the throw, and the state that it changed.
 const defineShared = (
   callee: FunctionNode,
-  variant: Pick<SharedCall, "changed" | "isCatching" | "captured" | "callbacks">,
+  variant: Pick<SharedCall, "changed" | "isCatching" | "captured" | "callbacks" | "state">,
   context: Context,
 ) => {
   const parameters = getParameters(callee);
-  const state = getState(context);
   const changed = variant.changed;
   const named = [
     ...getValueParameters(callee, variant.callbacks, context).map((parameter) => ({
@@ -433,7 +484,7 @@ const defineShared = (
       name: context.names.getFresh(parameter.name.getText()),
     })),
     ...variant.captured.map((symbol) => ({ symbol, name: context.names.getFresh(symbol.name) })),
-    ...state.map((symbol) => ({ symbol, name: context.names.getFresh(symbol.name) })),
+    ...variant.state.map((symbol) => ({ symbol, name: context.names.getFresh(symbol.name) })),
   ];
   const shared: SharedCall = {
     name: context.names.getFresh(
@@ -454,12 +505,12 @@ const defineShared = (
     ...base,
     isCatching: variant.isCatching,
     functions: new Map([...base.functions, ...variant.callbacks]),
-    bindings: new Map([
-      ...base.bindings,
-      ...named.flatMap((item): [ts.Symbol, Expression][] =>
+    // A variable that the operator doesn't take has no binding, so its code can't read it stale.
+    bindings: new Map(
+      named.flatMap((item): [ts.Symbol, Expression][] =>
         item.symbol === undefined ? [] : [[item.symbol, identifier(item.name)]],
       ),
-    ]),
+    ),
   };
   // The defaults that the operator evaluates where its call passes undefined, in order, as each
   // may read the parameters before it.
@@ -496,7 +547,7 @@ const defineShared = (
   const inner: Path = {
     scope: defaulted.scope,
     mutable: new Set([
-      ...state,
+      ...variant.state,
       ...changed,
       ...parameters.flatMap((parameter) => getSymbol(parameter.name, context.checker) ?? []),
     ]),
@@ -605,7 +656,6 @@ export const translateSharedCall = (
     outside,
     (bound, inner) => {
       const changed = shared.changed;
-      const state = getState(context);
       // What the call evaluated of the helper's own code, such as a default, belongs to that call,
       // though a call inside the helper's body keeps what its caller evaluated before it.
       const isOwn = (entry: [ts.Node, Expression], before: ReadonlyMap<ts.Node, Expression>) =>
@@ -671,12 +721,13 @@ export const translateSharedCall = (
         ...shared.captured.map(
           (symbol) => bound.scope.bindings.get(symbol) ?? getUndefined(context),
         ),
-        ...state.map(
-          (symbol) =>
-            bound.scope.bindings.get(symbol) ??
-            context.variables.get(symbol) ??
-            getUndefined(context),
-        ),
+        ...shared.state.map((symbol) => {
+          const value = bound.scope.bindings.get(symbol);
+          if (value === undefined) {
+            throw new TlaTypeScriptError(`${symbol.name} can't be read here`, node);
+          }
+          return value;
+        }),
       ];
       return letIn(
         bound.definitions,

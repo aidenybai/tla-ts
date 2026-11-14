@@ -5611,6 +5611,115 @@ describe("calls", () => {
     },
   );
 
+  it("passes a helper's operator only the variables that it reads or changes, as the call sees them", async () => {
+    const getSource = (expected: string) => `
+      const box = { count: 0 };
+      let seen = 0;
+      let other = 0;
+      const read = () => seen + box.count;
+      const bump = (by: number) => {
+        other = other + by;
+        box.count++;
+        return other;
+      };
+      const run = () => {
+        seen = 5;
+        const first = read();
+        other = 2;
+        const second = bump(first);
+        seen = 7;
+        return \`\${first},\${second},\${read()},\${other}\`;
+      };
+      const text = run();
+      if (text !== "${expected}") throw new Error(text);
+    `;
+    const printed = printModule(compile(getSource("5,7,8,7")).source);
+    expect(printed).toMatch(/^read\(\w+, box\w*, seen\w*\) ==/m);
+    expect(printed).toMatch(/^bump\(by\w*, \w+, box\w*, other\w*\) ==/m);
+    expect((await checkModel(getSource("5,7,8,7"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("0,2,7,7"))).failure?.message).toContain("5,7,8,7");
+  });
+
+  it("passes a helper's operator the variables that a function it runs through a value reads", async () => {
+    const getSource = (expected: string) => `
+      let seen = 0;
+      const box = { read: () => seen, count: 0 };
+      const get = (target: { read: () => number; count: number }) => {
+        target.count++;
+        return target.read();
+      };
+      const run = () => {
+        seen = 4;
+        const first = get(box);
+        seen = 6;
+        return \`\${first},\${get(box)},\${box.count}\`;
+      };
+      const text = run();
+      if (text !== "${expected}") throw new Error(text);
+    `;
+    expect(printModule(compile(getSource("4,6,2")).source)).toMatch(/^get\(/m);
+    expect((await checkModel(getSource("4,6,2"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("0,0,2"))).failure?.message).toContain("4,6,2");
+  });
+
+  it("passes a helper's operator a class that its callback names", async () => {
+    const getSource = (expected: string) => `
+      const thrower = () => {
+        throw new Error("thrown");
+      };
+      class C {
+        static method({ x = thrower() }: { x?: number } = {}) {
+          return x;
+        }
+      }
+      const box = { count: 0 };
+      const attempt = (run: () => void) => {
+        box.count++;
+        try {
+          run();
+          return "none";
+        } catch (error) {
+          return (error as Error).message;
+        }
+      };
+      const first = attempt(() => {
+        C.method();
+      });
+      const second = attempt(() => {
+        C.method({ x: 1 });
+      });
+      const text = \`\${first},\${second},\${box.count}\`;
+      if (text !== "${expected}") throw new Error(text);
+    `;
+    expect(printModule(compile(getSource("thrown,none,2")).source)).toMatch(/^attempt\(/m);
+    expect((await checkModel(getSource("thrown,none,2"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("none,none,2"))).failure?.message).toContain(
+      "thrown,none,2",
+    );
+  });
+
+  it("evaluates a helper's default in its operator from the state that the call passes", async () => {
+    const getSource = (expected: string) => `
+      let base = 1;
+      const box = { count: 0 };
+      const add = (value: number, by = base) => {
+        box.count++;
+        return value + by;
+      };
+      const run = () => {
+        base = 10;
+        const first = add(1);
+        base = 20;
+        return \`\${first},\${add(2)},\${add(3, 1)},\${box.count}\`;
+      };
+      const text = run();
+      if (text !== "${expected}") throw new Error(text);
+    `;
+    expect(printModule(compile(getSource("11,22,4,3")).source)).toMatch(/^add\(/m);
+    expect((await checkModel(getSource("11,22,4,3"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("2,3,4,3"))).failure?.message).toContain("11,22,4,3");
+  });
+
   it("runs nothing after a helper's operator that only throws, as a pattern's default calls it", async () => {
     const getSource = (expected: string) => `
       let initCount = 0;

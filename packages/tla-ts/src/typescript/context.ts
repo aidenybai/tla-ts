@@ -44,6 +44,8 @@ export interface SharedCall {
   callbacks: ReadonlyMap<ts.Symbol, FunctionNode>;
   // The state and the names from outside that it changes, which it gives back in that order.
   changed: ts.Symbol[];
+  // The heap and the variables that it and what it runs read or change, which it takes.
+  state: ts.Symbol[];
   parameters: OperatorParam[];
   // Whether a call inside its own body, or a body that it runs, calls it.
   isRecursive: boolean;
@@ -56,6 +58,8 @@ export interface SharedCall {
 export interface SharedHelper {
   read: ts.Symbol[];
   changed: ts.Symbol[];
+  // The variables that it, what it runs, and every function that runs through a value name.
+  state: ts.Symbol[];
 }
 
 export interface Passed {
