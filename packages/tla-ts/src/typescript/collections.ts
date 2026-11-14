@@ -2471,6 +2471,9 @@ const STRING_VALUE_METHODS = new Map<string, PrimitiveMethod>([
 
 const NUMBER_METHODS = new Map<string, PrimitiveMethod>([
   ["toString", { operator: "NumberToString", parameters: ["number"] }],
+  ["toFixed", { operator: "NumberToFixed", parameters: ["number"] }],
+  ["toExponential", { operator: "NumberToExponential", parameters: ["number"] }],
+  ["toPrecision", { operator: "NumberToPrecision", parameters: ["number"] }],
   ["valueOf", { operator: "PrimitiveOf", parameters: [] }],
 ]);
 

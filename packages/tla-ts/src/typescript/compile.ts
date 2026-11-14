@@ -49,6 +49,27 @@ import { isEsModule, NATIVE_ERRORS } from "./exceptions";
 import { getDomain, getKeptIterator, getWrappedThis, TYPED_ARRAYS } from "./types";
 
 // A state variable starts at its initializer, or at every value of its type without one.
+// The digits of a fraction's exact value and the fewest that give it back, without its sign, each
+// with the power of 10 of its first digit, which toFixed, toExponential, and toPrecision round.
+// A double is its integer significand times a power of 2, below 0 for a fraction, so its exact
+// value is the significand times 5 to the power's negation, over a power of 10.
+const getDecimalFields = (value: number) => {
+  const view = new DataView(new ArrayBuffer(8));
+  view.setFloat64(0, Math.abs(value));
+  const bits = view.getBigUint64(0);
+  const biased = Number(bits >> 52n);
+  const significand = biased === 0 ? bits : (bits & ((1n << 52n) - 1n)) | (1n << 52n);
+  const power = Math.max(biased, 1) - 1075;
+  const exact = (significand * 5n ** BigInt(-power)).toString();
+  const shortest = /^(\d)(?:\.(\d+))?e([+-]\d+)$/.exec(Math.abs(value).toExponential());
+  return [
+    { name: "digits", value: string(exact.replace(/0+$/, "")) },
+    { name: "exponent", value: number(exact.length - 1 + power) },
+    { name: "shortest", value: string(`${shortest?.[1]}${shortest?.[2] ?? ""}`) },
+    { name: "shortestExponent", value: number(Number(shortest?.[3])) },
+  ];
+};
+
 const translateInitial = (variable: Variable, context: Context) => {
   const declaration = variable.declaration;
   const name = context.variables.get(variable.symbol);
@@ -580,6 +601,7 @@ export const compile = (
                 { name: "value", value: identifier(fraction[1]) },
                 { name: "text", value: string(String(fraction[0])) },
                 { name: "floor", value: number(Math.floor(fraction[0])) },
+                ...getDecimalFields(fraction[0]),
                 {
                   name: "round",
                   value: Object.is(Math.round(fraction[0]), -0)
