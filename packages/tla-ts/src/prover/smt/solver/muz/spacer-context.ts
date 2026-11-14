@@ -35,10 +35,8 @@ export const L_GAVE_UP = 2;
 
 class ReachFact {
   tag = -1;
-  readonly justifications: ReachFact[] = [];
 
   constructor(
-    readonly rule: Rule,
     readonly fact: number,
     readonly auxVars: readonly number[],
     readonly isInit = false,
@@ -53,9 +51,7 @@ export class Lemma {
   level: number;
   bumped = 0;
   weakness: number;
-  isExternal = false;
   isBlocked = false;
-  isBackground = false;
 
   constructor(
     private context: SpacerContext,
@@ -116,7 +112,6 @@ export class Lemma {
   }
 
   setLevel(level: number) {
-    this.pob?.blockedAt(level);
     this.level = level;
   }
 
@@ -141,7 +136,6 @@ export class Pob {
   binding: number[] = [];
   level: number;
   depth: number;
-  desiredLevel = 0;
   isOpen = true;
   isUsingFarkas = true;
   isInQueue = false;
@@ -149,8 +143,6 @@ export class Pob {
   derivation: Derivation | undefined;
   readonly kids: Pob[] = [];
   readonly lemmas: Lemma[] = [];
-  blockedLevel = 0;
-  gas = 0;
 
   constructor(
     readonly parent: Pob | undefined,
@@ -163,7 +155,6 @@ export class Pob {
     this.level = level;
     this.depth = depth;
     if (isAddingToParent && parent !== undefined) parent.kids.push(this);
-    if (parent !== undefined) this.gas = parent.gas;
   }
 
   setPost(post: number, binding: readonly number[] = []) {
@@ -175,7 +166,6 @@ export class Pob {
     this.binding = [...other.binding];
     this.level = other.level;
     this.depth = other.depth;
-    this.desiredLevel = Math.max(this.desiredLevel, other.desiredLevel);
     this.isOpen = other.isOpen;
     this.isUsingFarkas = other.isUsingFarkas;
     this.weakness = other.weakness;
@@ -198,17 +188,11 @@ export class Pob {
     this.depth++;
     this.weakness = 0;
   }
-
-  blockedAt(level = 0) {
-    this.blockedLevel = Math.max(level, this.blockedLevel);
-    return this.blockedLevel;
-  }
 }
 
 const isPobLess = (manager: AstManager, first: Pob, second: Pob) => {
   if (first.level !== second.level) return first.level < second.level;
   if (first.depth !== second.depth) return first.depth < second.depth;
-  if (first.gas !== second.gas) return first.gas > second.gas;
   const getSize = (post: number) => (manager.getOp(post) === OP_AND ? manager.getNumArgs(post) : 1);
   if (getSize(first.post) !== getSize(second.post))
     return getSize(first.post) < getSize(second.post);
@@ -391,7 +375,7 @@ class Derivation {
     summaries.push(activeTrans);
     const model = pt.isMustReachable(mkAndOf(manager, summaries));
     if (model === undefined) return undefined;
-    const reachFact = pt.getUsedRf(model, true);
+    const reachFact = pt.getUsedRf(model);
     const summary = mkAndOf(manager, computeImplicantLiterals(model, [reachFact.fact]));
     premise.isMust = true;
     premise.summary = spacer.formulaN2o(summary, premise.oIndex);
@@ -428,11 +412,9 @@ class PredTransformer {
   private pobs = new Map<number, Pob[]>();
   nextPobId = 0;
   readonly lemmas: Lemma[] = [];
-  private bgInvs: Lemma[] = [];
   private frameSize = 0;
   private isSorted = true;
   readonly reachFacts: ReachFact[] = [];
-  private rfInitSize = 0;
   private transitionClause: number[] = [];
   private transition = -1;
   private init = -1;
@@ -504,11 +486,8 @@ class PredTransformer {
     return model;
   }
 
-  getUsedRf(model: ProtoModel, isAll: boolean) {
-    for (const reachFact of this.reachFacts) {
-      if (!isAll && reachFact.isInit) continue;
-      if (isFalseIn(model, reachFact.tag)) return reachFact;
-    }
+  getUsedRf(model: ProtoModel) {
+    for (const reachFact of this.reachFacts) if (isFalseIn(model, reachFact.tag)) return reachFact;
     throw new SmtTacticError("spacer found no used reach fact");
   }
 
@@ -583,11 +562,6 @@ class PredTransformer {
 
   addLemma(lemma: Lemma) {
     const manager = this.manager;
-    if (lemma.isBackground) {
-      if (this.bgInvs.some((other) => other.getExpr() === lemma.getExpr())) return false;
-      this.bgInvs.push(lemma);
-      return true;
-    }
     for (let index = 0; index < this.lemmas.length; index++) {
       const old = this.lemmas[index];
       if (old.getExpr() !== lemma.getExpr()) continue;
@@ -686,7 +660,6 @@ class PredTransformer {
       ? this.mkFreshRfTag()
       : manager.getArg(this.extendInitial(reachFact.fact), 0);
     this.reachFacts.push(reachFact);
-    if (reachFact.isInit) this.rfInitSize++;
     const fml = mkOrOf(
       manager,
       lastTag === -1
@@ -715,17 +688,6 @@ class PredTransformer {
     const conjs = flattenAnd(manager, [this.spacer.formulaN2o(summary, oIndex)]);
     if (conjs.some((conj) => !isTrueIn(model, conj))) return undefined;
     return { summary: mkAndOf(manager, computeImplicantLiterals(model, conjs)), auxVars };
-  }
-
-  isBlocked(pob: Pob) {
-    this.ensureLevel(pob.level);
-    const solver = this.solver;
-    return solver.withLevel(pob.level, () => {
-      solver.core = undefined;
-      solver.model = undefined;
-      const result = solver.checkAssumptions([pob.post], [], [], []);
-      return result === L_FALSE ? solver.usesLevel : undefined;
-    });
   }
 
   mbp(vars: number[], fml: number, model: ProtoModel, isForcing: boolean) {
@@ -875,8 +837,7 @@ class PredTransformer {
 
   initRfs() {
     for (const ptRule of this.ptRules.values())
-      if (isInitRule(ptRule))
-        this.addRf(new ReachFact(ptRule.rule, ptRule.trans, ptRule.auxs, true));
+      if (isInitRule(ptRule)) this.addRf(new ReachFact(ptRule.trans, ptRule.auxs, true));
   }
 
   private initRules(pts: Map<number, PredTransformer>) {
@@ -982,13 +943,11 @@ class PredTransformer {
     const manager = this.manager;
     const context = this.context;
     const spacer = this.spacer;
-    const children: ReachFact[] = [];
     const pathCons = [this.getTransition(rule)];
     const vars: number[] = [];
     this.getPredecessors(rule).forEach((predicate, index) => {
       const pt = context.getPredTransformer(predicate);
       const kid = pt.getUsedOriginRf(model, index);
-      children.push(kid);
       pathCons.push(spacer.formulaN2o(kid.fact, index));
       for (const decl of pt.sig) vars.push(spacer.constOf(spacer.o2o(decl, index)));
       for (const variable of kid.auxVars)
@@ -1001,9 +960,7 @@ class PredTransformer {
     if (context.params.getBool("spacer.reach_dnf", true))
       result = mkAndOf(manager, computeImplicantLiterals(model, [result]));
     result = this.mbp(vars, result, model, true);
-    const reachFact = new ReachFact(rule, result, isElimAux ? [] : auxVars);
-    reachFact.justifications.push(...children);
-    return reachFact;
+    return new ReachFact(result, isElimAux ? [] : auxVars);
   }
 
   isMdlRfConsistent(rule: Rule, model: ProtoModel) {
@@ -1060,8 +1017,6 @@ export class SpacerContext {
   queryPred = -1;
   query: PredTransformer | undefined;
   readonly pobQueue: PobQueue;
-  lastResult = L_UNDEF;
-  inductiveLevel = 0;
   expandedLevel = 0;
   private generalizers: LemmaGeneralizer[] = [];
   readonly isUsingCtp: boolean;
@@ -1135,14 +1090,11 @@ export class SpacerContext {
     for (const pt of rels.values()) pt.initRfs();
     this.rels = rels;
     this.query = undefined;
-    this.lastResult = L_UNDEF;
-    this.inductiveLevel = 0;
     this.generalizers = mkLemmaGeneralizers(this);
   }
 
   solve(fromLevel: number) {
-    this.lastResult = this.isUsingGpdr ? gpdrSolveCore(this) : this.solveCore(fromLevel);
-    return this.lastResult;
+    return this.isUsingGpdr ? gpdrSolveCore(this) : this.solveCore(fromLevel);
   }
 
   private solveCore(fromLevel: number) {
@@ -1329,11 +1281,7 @@ export class SpacerContext {
         isAllPropagated = pt.propagateToNextLevel(level) && isAllPropagated;
       if (!isAllPropagated) continue;
       for (const pt of this.rels.values()) pt.propagateToInfinity(level);
-      if (level <= maxLevel) {
-        this.inductiveLevel = level;
-        return true;
-      }
-      return false;
+      return level <= maxLevel;
     }
   }
 
