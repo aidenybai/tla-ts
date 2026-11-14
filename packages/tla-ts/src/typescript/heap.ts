@@ -1765,6 +1765,17 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
     (isNewProxy(node, context) || isRevocable(node, context))
   ) {
     const [target, handler] = node.arguments ?? [];
+    // An array's reads off the heap don't run the traps of a proxy of it.
+    const targetType = context.checker.getNonNullableType(
+      context.checker.getTypeAtLocation(target),
+    );
+    if (
+      (targetType.isUnion() ? targetType.types : [targetType]).some(
+        (member) => context.checker.isArrayType(member) || context.checker.isTupleType(member),
+      )
+    ) {
+      throw new TlaTypeScriptError("tla-ts can't make a proxy of an array", node);
+    }
     const values = [target, handler].map((argument) =>
       translateExpression(argument, scope, context),
     );

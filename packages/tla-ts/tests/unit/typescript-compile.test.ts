@@ -27136,12 +27136,30 @@ describe("proxies", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it.each([
+    ["an array", "const proxy = new Proxy([1], {});\nconst first = proxy[0];"],
+    [
+      "an array that it passes as an object",
+      "const keysOf = (value: object) => Object.keys(value).join();\nkeysOf(new Proxy([1], {}));",
+    ],
+    ["an array that Proxy.revocable takes", "const handle = Proxy.revocable<unknown[]>([], {});"],
+    ["a proxy of an array", "const array = new Proxy(new Proxy([], {}), {});"],
+    ["a tuple", 'const pair: [number, string] = [1, "a"];\nconst proxy = new Proxy(pair, {});'],
+    [
+      "a value that may be an array",
+      "const make = (target: number[] | { first: number }) => new Proxy(target, {});\nconst made = make({ first: 1 });",
+    ],
+  ])("stops where a script makes a proxy of %s", (_name, source) => {
+    expect(() => compile(source)).toThrow("tla-ts can't make a proxy of an array");
+  });
+
   it("stops where a proxy changes an array that the heap doesn't hold", async () => {
     const result = await checkModel(`
       const getArray = (): number[] => [];
-      const proxy = new Proxy(getArray(), {});
+      const target: object = getArray();
+      const proxy = new Proxy(target, {});
       Object.defineProperty(proxy, "0", { value: 1 });
-      if (proxy[0] !== 1) throw new Error("defined");
+      if (Reflect.get(proxy, "0") !== 1) throw new Error("defined");
     `);
     expect(result.failure?.message).toContain(
       "tla-ts can't change an object that the heap doesn't hold",
@@ -27358,8 +27376,6 @@ describe("proxies", () => {
       Object.defineProperty(target, "hidden", { value: 2 });
       const outer = new Proxy(new Proxy(target, {}), {});
       if (Object.getPrototypeOf(outer) !== Object.prototype) throw new Error("getPrototypeOf");
-      const array = new Proxy(new Proxy([], {}), {});
-      if (Object.getPrototypeOf(array) !== Array.prototype) throw new Error("array");
       if (!Object.isExtensible(outer)) throw new Error("isExtensible");
       if (outer.attr !== 1) throw new Error("get");
       if (!("hidden" in outer)) throw new Error("has");
@@ -27420,13 +27436,10 @@ describe("proxies", () => {
 
   it("runs IsArray through proxies, throwing a TypeError for a revoked one", async () => {
     const getSource = (isRevoked: boolean) => `
-      const handle = Proxy.revocable<unknown[]>([], {});
+      const handle = Proxy.revocable({}, {});
       const nested = new Proxy(handle.proxy, {});
-      const plain = new Proxy({}, {});
-      if (!Array.isArray(nested) || Array.isArray(plain)) throw new Error("isArray");
-      if (Object.prototype.toString.call(nested) !== "[object Array]") throw new Error("toString");
-      const json = JSON.stringify({ first: 1, second: 2 }, new Proxy(["second"], {}));
-      if (json !== '{"second":2}') throw new Error("replacer");
+      if (Array.isArray(nested)) throw new Error("isArray");
+      if (Object.prototype.toString.call(nested) !== "[object Object]") throw new Error("toString");
       const written = JSON.stringify(new Proxy({ first: [1] }, {}));
       if (written !== '{"first":[1]}') throw new Error("value");
       ${isRevoked ? "handle.revoke();" : ""}
@@ -27888,10 +27901,6 @@ describe("proxies", () => {
     });
 
     it.each([
-      [
-        "reads a proxy of an array",
-        "const keysOf = (value: object) => Object.keys(value).join(); keysOf(new Proxy([1], {}));",
-      ],
       [
         "reads a revoked proxy",
         "const keysOf = (value: object) => Object.keys(value).join(); const made = Proxy.revocable({ a: 1 }, {}); made.revoke(); keysOf(made.proxy);",
