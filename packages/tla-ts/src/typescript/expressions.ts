@@ -2403,11 +2403,25 @@ const translatePropertyAccess = (
             ? candidate.name
             : isAnonymous &&
                 parent !== undefined &&
-                ts.isVariableDeclaration(parent) &&
+                (ts.isVariableDeclaration(parent) || ts.isPropertyDeclaration(parent)) &&
                 parent.initializer === outer &&
-                ts.isIdentifier(parent.name)
+                (ts.isIdentifier(parent.name) || ts.isPrivateIdentifier(parent.name))
               ? parent.name
-              : undefined;
+              : isAnonymous &&
+                  parent !== undefined &&
+                  ts.isPropertyAssignment(parent) &&
+                  parent.initializer === outer &&
+                  (ts.isIdentifier(parent.name) || ts.isStringLiteral(parent.name)) &&
+                  parent.name.text !== "__proto__"
+                ? parent.name
+                : isAnonymous &&
+                    parent !== undefined &&
+                    ts.isBinaryExpression(parent) &&
+                    parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+                    parent.right === outer &&
+                    ts.isIdentifier(parent.left)
+                  ? parent.left
+                  : undefined;
       return given !== undefined
         ? string(given.text)
         : isAnonymous &&

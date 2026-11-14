@@ -24254,6 +24254,47 @@ describe("calls through values", () => {
     });
   });
 
+  describe("names a function that a class field, a property, or an assignment gives it", () => {
+    const getSource = (expected: string) => `
+      const box = { size: 0 };
+      class C {
+        static #field = () => "Test262";
+        static field = function () {
+          return 42;
+        };
+        static accessPrivateField() {
+          return this.#field;
+        }
+      }
+      const object = { method: function () {}, "quoted key": () => 0 };
+      let assigned = (() => 1);
+      assigned = function () {
+        return 2;
+      };
+      box.size = 1;
+      const read = [
+        C.accessPrivateField().name,
+        C.field.name,
+        object.method.name,
+        object["quoted key"].name,
+        assigned.name,
+      ].join();
+      if (read !== "${expected}") throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("#field,field,method,quoted key,assigned"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects the private field's name without its hash", async () => {
+      expect(
+        (await checkModel(getSource("field,field,method,quoted key,assigned"))).failure?.message,
+      ).toContain("#field,field,method,quoted key,assigned");
+    });
+  });
+
   describe("throws the TypeError of a built-in next on an object that isn't its iterator", () => {
     const getSource = (expected: string) => `
       "use strict";
