@@ -63,6 +63,7 @@ import {
   holdsArrayIteration,
   IN_PLACE_METHODS,
   isUnheldSplice,
+  REORDER_METHODS,
   translateSpliced,
   translateNew,
 } from "./collections";
@@ -3623,6 +3624,14 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
         nodes.push(node);
         return true;
       }
+      // sort, reverse, and copyWithin give the array that they change.
+      if (
+        isMethodCall(node) &&
+        REORDER_METHODS.has(node.expression.name.text) &&
+        getKind(node.expression.expression, context) === "sequence"
+      ) {
+        return addSource(node.expression.expression);
+      }
       // An element that at() reads, which addHolder takes, or what a function returns.
       if (
         ts.isCallExpression(node) &&
@@ -3703,6 +3712,8 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
     const isUse = (use: ts.Expression): boolean => {
       const parent = use.parent;
       if (ts.isParenthesizedExpression(parent)) return isUse(parent);
+      // A statement drops what it gives.
+      if (ts.isExpressionStatement(parent)) return true;
       // A function that returns one of the group's arrays makes its result a holder.
       if (ts.isReturnStatement(parent) || (ts.isArrowFunction(parent) && parent.body === use)) {
         const owner = ts.isReturnStatement(parent)
@@ -3764,7 +3775,9 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
             ts.isCallExpression(call) &&
             call.expression === parent &&
             (["push", "unshift"].includes(method) || !call.arguments.some(ts.isSpreadElement)) &&
-            addCallbackArray(call, method, use))
+            addCallbackArray(call, method, use) &&
+            // sort, reverse, and copyWithin give the array that they change.
+            (!REORDER_METHODS.has(method) || isUse(call)))
         );
       }
       // A key that isn't a number reads or writes a property, as x["NaN"] does.

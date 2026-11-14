@@ -12727,6 +12727,30 @@ describe("errors", () => {
     });
   });
 
+  describe("gives the array of a field that sort, reverse, or copyWithin changes, which a later push changes", () => {
+    const getSource = (expected: string) => `
+      interface Rows { names: string[] }
+      const rows: Rows = { names: ["b", "c", "a"] };
+      const sortRows = (set: Rows) => set.names.sort((first, second) => (first < second ? 1 : -1));
+      const sorted = sortRows(rows);
+      const reversed = rows.names.reverse();
+      const copied = rows.names.copyWithin(0, 2);
+      rows.names.push("z");
+      const result = [sorted.join(), reversed.length, copied.join(), sorted === copied].join(";");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("c,b,c,z;4;c,b,c,z;true"))).failure).toBeUndefined();
+    });
+
+    it("rejects wrong expectation 1", async () => {
+      expect((await checkModel(getSource("c,b,c,z;3;c,b,c,z;true"))).failure?.message).toContain(
+        "c,b,c,z;4;c,b,c,z;true",
+      );
+    });
+  });
+
   describe("gives a new array's sort where a function returns it, leaving the property it maps", () => {
     const getSource = (expected: string) => `
       interface Rows { names: string[]; sets: number[] }
