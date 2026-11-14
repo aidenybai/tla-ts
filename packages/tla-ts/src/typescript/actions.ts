@@ -2149,6 +2149,13 @@ export const translateCallStatement = (
     );
     const changeable = set([string("RegExp.prototype"), string("String.prototype")]);
     const changed = withHeap(field(change, "heap"));
+    // A Set of a lastIndex that isn't writable throws a TypeError.
+    const continueUnlessThrown = (next: Formula) =>
+      ifThenElse(
+        field(change, "isThrown"),
+        throwTypeError(changed, expression, context, frame),
+        next,
+      );
     // A replace function runs for each match once they're all found, with the heap after.
     const run =
       replacer === undefined
@@ -2173,25 +2180,27 @@ export const translateCallStatement = (
               ],
               context,
             ),
-            continueWith(changed, field(change, "value")),
+            continueUnlessThrown(continueWith(changed, field(change, "value"))),
           )
         : bindOnce(
             path,
             changeName,
             useJavaScript("RegExpMatchesIn", [heap, identifier(regexp), text], context),
-            continueWith(
-              changed,
-              translateRegExpReplacer(
-                replacer,
-                useJavaScript(
-                  "RegExpOf",
-                  [field(change, "heap"), identifier(regexp), changeable],
+            continueUnlessThrown(
+              continueWith(
+                changed,
+                translateRegExpReplacer(
+                  replacer,
+                  useJavaScript(
+                    "RegExpOf",
+                    [field(change, "heap"), identifier(regexp), changeable],
+                    context,
+                  ),
+                  text,
+                  field(change, "value"),
+                  changed.scope,
                   context,
                 ),
-                text,
-                field(change, "value"),
-                changed.scope,
-                context,
               ),
             ),
           );

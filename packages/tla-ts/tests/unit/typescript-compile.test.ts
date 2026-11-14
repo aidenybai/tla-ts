@@ -25093,6 +25093,39 @@ describe("regular expressions", () => {
     expect((await checkModel(getSource("exec"))).failure?.message).toContain("exec,test");
   });
 
+  it("throws the TypeError of setting a regexp's lastIndex that isn't writable", async () => {
+    const getSource = (expected: string) => `
+      const holder: { [key: string]: unknown } = {};
+      const names: string[] = [];
+      const run = (callback: () => unknown) => {
+        try {
+          callback();
+          names.push("none");
+        } catch (error) {
+          names.push((error as Error).name);
+        }
+      };
+      const sticky = /c/y;
+      Object.defineProperty(sticky, "lastIndex", { writable: false });
+      run(() => sticky.exec("abc"));
+      const global = /a/g;
+      Object.defineProperty(global, "lastIndex", { writable: false });
+      run(() => "aaa".replace(global, "x"));
+      const plain = /a/;
+      plain.lastIndex = 2;
+      Object.defineProperty(plain, "lastIndex", { writable: false });
+      run(() => plain.exec("a"));
+      run(() => "a".search(plain));
+      if (names.join() !== "${expected}") throw new Error(names.join());
+    `;
+    expect(
+      (await checkModel(getSource("TypeError,TypeError,none,TypeError"))).failure,
+    ).toBeUndefined();
+    expect(
+      (await checkModel(getSource("TypeError,TypeError,none,none"))).failure?.message,
+    ).toContain("TypeError,TypeError,none,TypeError");
+  });
+
   it("drop a regexp that a statement makes of literals", async () => {
     const getSource = (count: number) => `
       /(?i-s:)/;

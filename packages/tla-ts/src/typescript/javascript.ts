@@ -3809,14 +3809,19 @@ GetterCall(heap, getter, receiver) ==
 
 LOCAL LastIndexValue(heap, ref) == heap.objects[ref[Ref]].values["lastIndex"]
 
-\\* The heap after Set of a regexp's lastIndex, which throws a TypeError where it isn't writable.
-LOCAL SetLastIndex(heap, ref, value) ==
-  IF heap.objects[ref[Ref]].attributes["lastIndex"].writable
-  THEN [heap EXCEPT !.objects[ref[Ref]].values["lastIndex"] = value]
-  ELSE Assert(FALSE, "tla-ts can't throw the TypeError of setting a lastIndex that isn't writable")
+\\* Whether a regexp's lastIndex isn't writable, so that a Set of it throws a TypeError.
+LOCAL IsLastIndexFixed(heap, ref) == ~heap.objects[ref[Ref]].attributes["lastIndex"].writable
 
-\\* RegExpBuiltinExec, as the heap after it sets the lastIndex of a global or sticky regexp, and the
-\\* match it finds from there, or a failure. It reads lastIndex with ToLength whatever the flags.
+\\* The heap after Set of a regexp's lastIndex, which leaves it as it is where the Set throws, as
+\\* the caller tells.
+LOCAL SetLastIndex(heap, ref, value) ==
+  IF IsLastIndexFixed(heap, ref)
+  THEN heap
+  ELSE [heap EXCEPT !.objects[ref[Ref]].values["lastIndex"] = value]
+
+\\* RegExpBuiltinExec, as the heap after it sets the lastIndex of a global or sticky regexp, the match
+\\* it finds from there, or a failure, and whether that Set throws. It reads lastIndex with ToLength
+\\* whatever the flags.
 LOCAL RegExpRun(heap, ref, regexp, text) ==
   LET read == LastIndexValue(heap, ref)
       start == IF read = Infinity THEN Len(text) + 1 ELSE ToLength(read)
@@ -3829,7 +3834,8 @@ LOCAL RegExpRun(heap, ref, regexp, text) ==
   IN  [heap |-> CASE ~isUpdating -> heap
                   [] found.end = -1 -> SetLastIndex(heap, ref, 0)
                   [] OTHER -> SetLastIndex(heap, ref, found.end),
-       match |-> found]
+       match |-> found,
+       isThrown |-> isUpdating /\\ IsLastIndexFixed(heap, ref)]
 
 \\* The heap once RegExpBuiltinExec makes the array of a match, which is the last object it holds,
 \\* after the object of the match's named groups where the regexp has them.
@@ -3853,21 +3859,23 @@ LOCAL RegExpResult(heap, prototype, regexp, text, match) ==
                            !.values = @ @@ added,
                            !.attributes = @ @@ [key \\in DOMAIN added |-> Writable]])
 
-\\* RegExp.prototype.exec, as the heap after it and the array of the match it finds, or null.
+\\* RegExp.prototype.exec, as the heap after it, the array of the match it finds, or null, and whether
+\\* it throws the TypeError of setting a lastIndex that isn't writable. The calls of a regexp's
+\\* methods below give the same.
 RegExpExecIn(heap, ref, value, prototype) ==
   LET regexp == RegExpOf(heap, ref, {"RegExp.prototype"})
       text == Text(value)
       run == RegExpRun(heap, ref, regexp, text)
       made == RegExpResult(run.heap, prototype, regexp, text, run.match)
-  IN  IF run.match.end = -1
-      THEN [heap |-> run.heap, value |-> Null]
-      ELSE [heap |-> made, value |-> Allocated(made)]
+  IN  CASE run.isThrown -> [heap |-> run.heap, value |-> Null, isThrown |-> TRUE]
+        [] run.match.end = -1 -> [heap |-> run.heap, value |-> Null, isThrown |-> FALSE]
+        [] OTHER -> [heap |-> made, value |-> Allocated(made), isThrown |-> FALSE]
 
 \\* RegExp.prototype.test, as the heap after it and whether exec finds a match.
 RegExpTestIn(heap, ref, value) ==
   LET regexp == RegExpOf(heap, ref, {"RegExp.prototype"})
       run == RegExpRun(heap, ref, regexp, Text(value))
-  IN  [heap |-> run.heap, value |-> run.match.end # -1]
+  IN  [heap |-> run.heap, value |-> run.match.end # -1, isThrown |-> run.isThrown]
 
 \\* String.prototype.match through RegExp.prototype[@@match]: what exec gives for a regexp that isn't
 \\* global, and else the array of each match's text, or null, which leaves lastIndex at 0.
@@ -3879,8 +3887,9 @@ RegExpMatchIn(heap, ref, value, prototype) ==
       made == Allocate(reset, ArrayObject(prototype, [position \\in DOMAIN matches |->
                                                          RegExpCapture(text, matches[position], 0)]))
   IN  CASE ~regexp.global -> RegExpExecIn(heap, ref, value, prototype)
-        [] matches = <<>> -> [heap |-> reset, value |-> Null]
-        [] OTHER -> [heap |-> made, value |-> Allocated(made)]
+        [] IsLastIndexFixed(heap, ref) -> [heap |-> heap, value |-> Null, isThrown |-> TRUE]
+        [] matches = <<>> -> [heap |-> reset, value |-> Null, isThrown |-> FALSE]
+        [] OTHER -> [heap |-> made, value |-> Allocated(made), isThrown |-> FALSE]
 
 \\* The heap once String.prototype.replace or replaceAll through RegExp.prototype[@@replace] finds its
 \\* matches, and those matches. A global regexp finds each match and leaves lastIndex at 0, and
@@ -3890,8 +3899,12 @@ RegExpMatchesIn(heap, ref, value) ==
       text == Text(value)
       run == RegExpRun(heap, ref, regexp, text)
   IN  IF regexp.global
-      THEN [heap |-> SetLastIndex(heap, ref, 0), value |-> RegExpMatches(regexp, text, 0)]
-      ELSE [heap |-> run.heap, value |-> IF run.match.end = -1 THEN <<>> ELSE <<run.match>>]
+      THEN [heap |-> SetLastIndex(heap, ref, 0),
+            value |-> RegExpMatches(regexp, text, 0),
+            isThrown |-> IsLastIndexFixed(heap, ref)]
+      ELSE [heap |-> run.heap,
+            value |-> IF run.match.end = -1 THEN <<>> ELSE <<run.match>>,
+            isThrown |-> run.isThrown]
 
 \\* String.prototype.replace or replaceAll through RegExp.prototype[@@replace], with a replacement
 \\* template.
@@ -3899,7 +3912,8 @@ RegExpReplaceIn(heap, ref, value, template) ==
   LET regexp == RegExpOf(heap, ref, {"RegExp.prototype", "String.prototype"})
       found == RegExpMatchesIn(heap, ref, value)
   IN  [heap |-> found.heap,
-       value |-> RegExpReplaced(regexp, Text(value), found.value, Text(template))]
+       value |-> RegExpReplaced(regexp, Text(value), found.value, Text(template)),
+       isThrown |-> found.isThrown]
 
 \\* The argument at a position that replace calls a function with where a script has objects, which
 \\* would pass the named groups as an object.
@@ -3918,13 +3932,15 @@ RegExpSearchIn(heap, ref, value) ==
       restored == IF SameValue(LastIndexValue(run.heap, ref), previous)
                   THEN run.heap
                   ELSE SetLastIndex(run.heap, ref, previous)
-  IN  [heap |-> restored, value |-> IF run.match.end = -1 THEN -1 ELSE run.match.start]
+  IN  [heap |-> restored,
+       value |-> IF run.match.end = -1 THEN -1 ELSE run.match.start,
+       isThrown |-> (IsLastIndexFixed(heap, ref) /\\ ~SameValue(previous, 0)) \\/ run.isThrown]
 
 \\* String.prototype.split through RegExp.prototype[@@split], which splits with a new regexp that the
 \\* RegExp constructor makes, so the regexp's lastIndex stays as it is.
 RegExpSplitIn(heap, ref, value, limit) ==
   LET regexp == RegExpOf(heap, ref, {"RegExp.prototype", "String.prototype", "RegExp"})
-  IN  [heap |-> heap, value |-> RegExpPieces(regexp, Text(value), limit)]
+  IN  [heap |-> heap, value |-> RegExpPieces(regexp, Text(value), limit), isThrown |-> FALSE]
 
 \\* The length that a value gives an array, or -1 where ArraySetLength throws a RangeError.
 LOCAL ArrayLengthOf(value) ==
