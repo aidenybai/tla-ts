@@ -775,6 +775,34 @@ describe("runSmtlibScript prints what Z3 prints", () => {
     ]);
   });
 
+  it("completes an array-ext interpretation so its witnesses drop from the model", () => {
+    expect(
+      run([
+        "(set-option :sat.euf true)",
+        "(set-option :tactic.default_tactic smt)",
+        "(declare-const a (Array Int Int))",
+        "(declare-const b (Array Int Int))",
+        "(declare-const i Int)",
+        "(assert (= (store a i 1) (store b i 1)))",
+        "(assert (not (= a b)))",
+        "(check-sat)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      [
+        "(",
+        "  (define-fun a () (Array Int Int)",
+        "    (store ((as const (Array Int Int)) 2) 0 8367))",
+        "  (define-fun b () (Array Int Int)",
+        "    (store ((as const (Array Int Int)) 2) 0 1))",
+        "  (define-fun i () Int",
+        "    0)",
+        ")",
+      ].join("\n"),
+    ]);
+  });
+
   it("throws at a theory it does not implement", () => {
     expect(() =>
       run(["(declare-const b (_ BitVec 8))", '(assert (= (str.from_ubv b) "12"))', "(check-sat)"]),

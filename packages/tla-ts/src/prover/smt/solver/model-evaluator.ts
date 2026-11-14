@@ -2,9 +2,11 @@
 import { mkArrayApp } from "./array-decl-plugin";
 import {
   FAMILY_ARITH,
+  FAMILY_BASIC,
   FAMILY_LABEL,
   FAMILY_ARRAY,
   FAMILY_FPA,
+  FAMILY_MODEL_VALUE,
   FAMILY_RECFUN,
   FAMILY_USER,
   KIND_APP,
@@ -14,6 +16,8 @@ import {
   OP_CONST_ARRAY,
   OP_DIV,
   OP_DIV0,
+  OP_DT_ACCESSOR,
+  OP_DT_CONSTRUCTOR,
   OP_EQ,
   OP_FPA_FP,
   OP_IDIV,
@@ -44,6 +48,8 @@ const BY_ZERO_OPS = new Map([
   [OP_MOD, OP_MOD0],
   [OP_REM, OP_MOD0],
 ]);
+
+const BUILTIN_FAMILIES = new Set([FAMILY_BASIC, FAMILY_USER, FAMILY_MODEL_VALUE, FAMILY_LABEL]);
 
 export class ModelEvaluator extends RewriterTpl {
   private rewriter: Rewriter;
@@ -122,13 +128,9 @@ export class ModelEvaluator extends RewriterTpl {
     }
     const rewritten = this.rewriter.reduceAppCore(decl, args);
     const reduced =
-      rewritten !== -1
+      rewritten !== -1 || BUILTIN_FAMILIES.has(family)
         ? rewritten
-        : family === FAMILY_ARITH
-          ? this.evaluatePartialTheoryFunc(decl, args, sort)
-          : family === FAMILY_FPA
-            ? this.evaluateUnspecifiedFpaFunc(decl, args, sort)
-            : rewritten;
+        : this.evaluatePartialTheoryFunc(decl, args, sort);
     if (
       family !== FAMILY_ARITH ||
       typeof reduced !== "number" ||
@@ -158,8 +160,10 @@ export class ModelEvaluator extends RewriterTpl {
   private evaluatePartialTheoryFunc(decl: number, args: number[], sort: number): number | Rewrite {
     const manager = this.manager;
     const model = this.model;
-    const op = manager.funcDecls[decl].op;
-    const byZero = BY_ZERO_OPS.get(op);
+    const info = manager.funcDecls[decl];
+    if (info.family === FAMILY_FPA && !isConsideredUninterpreted(manager, decl, args)) return -1;
+    const op = info.op;
+    const byZero = info.family === FAMILY_ARITH ? BY_ZERO_OPS.get(op) : undefined;
     let interp = model.funcInterps.get(decl);
     if (interp === undefined && byZero !== undefined && !manager.isNumeral(args[1])) {
       const definition = model.funcInterps.get(byZero)?.getInterp();
@@ -172,23 +176,26 @@ export class ModelEvaluator extends RewriterTpl {
         sort,
       );
     }
-    if (interp === undefined) {
+    if (interp === undefined && info.family === FAMILY_ARITH) {
       const isByZero = byZero !== undefined && manager.getRationalValue(args[1]).isZero();
       if (!isByZero && op !== OP_DIV0 && op !== OP_IDIV0 && op !== OP_MOD0) return -1;
       interp = isByZero ? model.funcInterps.get(byZero) : undefined;
       if (interp === undefined) return manager.mkNumeralOfSort(Rational.zero, sort);
     }
-    if (interp.isPartial()) interp.setElse(model.getSomeValue(sort));
-    return { expr: this.substitute(interp.getInterp() as number, args), depth: Infinity };
-  }
-
-  // evaluate_partial_theory_func on a floating-point function: an application the standard leaves
-  // open takes the function's interpretation, or some value without one.
-  private evaluateUnspecifiedFpaFunc(decl: number, args: number[], sort: number): number | Rewrite {
-    const manager = this.manager;
-    if (!isConsideredUninterpreted(manager, decl, args)) return -1;
-    const interp = this.model.funcInterps.get(decl);
-    if (interp === undefined) return getManagerSomeValue(manager, sort);
+    if (interp === undefined && info.family === FAMILY_FPA)
+      return getManagerSomeValue(manager, sort);
+    if (op === OP_DT_ACCESSOR) {
+      if (interp === undefined && manager.isValue(args[0])) {
+        const value = model.getSomeValue(sort);
+        const created = new FuncInterp(manager, args.length);
+        created.setElse(value);
+        model.registerFunc(decl, created);
+        return value;
+      }
+      if (!manager.isGround(args[0])) return manager.mkApp(decl, args, sort);
+    }
+    if (op === OP_DT_CONSTRUCTOR) return manager.mkApp(decl, args, sort);
+    if (interp === undefined) return -1;
     if (interp.isPartial()) interp.setElse(getManagerSomeValue(manager, sort));
     return { expr: this.substitute(interp.getInterp() as number, args), depth: Infinity };
   }
