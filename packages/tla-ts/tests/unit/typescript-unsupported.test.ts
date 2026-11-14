@@ -25,8 +25,8 @@ const CASES: [string, string][] = [
   ["converting an array to a string", "label = `${values}`;"],
   ["delete", "delete record.a;"],
   [
-    "a call that throws inside an expression in try",
-    "const getChecked = (): number => { throw new Error('no'); }; try { count = getChecked(); } catch { count = 0; }",
+    "a call that throws inside a compound assignment in try",
+    "const getChecked = (): number => { throw new Error('no'); }; try { count += getChecked(); } catch { count = 0; }",
   ],
   ["throwing an array", "try { throw values; } catch { count = 0; }"],
   [

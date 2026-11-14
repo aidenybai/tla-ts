@@ -5935,7 +5935,7 @@ describe("calls", () => {
     ).toThrow("Inside try, call a function that throws as its own statement");
   });
 
-  it("catches what a function throws where a declaration or an assignment inside try calls it", async () => {
+  it("catches what a function throws where a declaration or an assignment inside try calls it, nested or not", async () => {
     const getSource = (expected: string) => `
       function fail(): number {
         throw "boom";
@@ -5954,10 +5954,18 @@ describe("calls", () => {
       } catch (error) {
         seen += String(error);
       }
+      try {
+        assigned = 1 + fail();
+        seen += "added";
+      } catch (error) {
+        seen += String(error) + assigned;
+      }
       if (seen !== "${expected}") throw new Error(seen);
     `;
-    expect((await checkModel(getSource("boomboom"))).failure).toBeUndefined();
-    expect((await checkModel(getSource("declared"))).failure?.message).toContain("boomboom");
+    expect((await checkModel(getSource("boomboomboom0"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("boomboomadded"))).failure?.message).toContain(
+      "boomboomboom0",
+    );
   });
 
   it("runs a catch pattern's default that throws only where the thrown value lacks it", async () => {
