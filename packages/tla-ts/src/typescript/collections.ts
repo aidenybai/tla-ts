@@ -2944,9 +2944,10 @@ export const translateArrayLikeCall = (
         );
   // A search of an object whose length is past 2^31 reads only the keys that it holds.
   const isLong =
-    (method === "indexOf" || method === "lastIndexOf" || method === "slice") &&
-    methodArguments.length <= 2 &&
-    methodArguments.every(isInertValue);
+    (((method === "indexOf" || method === "lastIndexOf" || method === "slice") &&
+      methodArguments.length <= 2) ||
+      method === "toSpliced") &&
+    methodArguments.every((argument) => isInertValue(argument) || isNumberArithmetic(argument));
   const getPassed = () =>
     [0, 1].map((position) => {
       const argument = methodArguments[position];
@@ -2964,16 +2965,32 @@ export const translateArrayLikeCall = (
                 [getHeap(scope, node, context), owner, ...getPassed()],
                 context,
               )
-            : useJavaScript(
-                "LongSearch",
-                [
-                  getHeap(scope, node, context),
-                  owner,
-                  ...getPassed(),
-                  boolean(method === "lastIndexOf"),
-                ],
-                context,
-              ),
+            : method === "toSpliced"
+              ? useJavaScript(
+                  "LongToSpliced",
+                  [
+                    getHeap(scope, node, context),
+                    owner,
+                    ...getPassed(),
+                    tuple(
+                      methodArguments
+                        .slice(2)
+                        .map((argument) => translateExpression(argument, scope, context)),
+                    ),
+                    number(Math.min(methodArguments.length, 2)),
+                  ],
+                  context,
+                )
+              : useJavaScript(
+                  "LongSearch",
+                  [
+                    getHeap(scope, node, context),
+                    owner,
+                    ...getPassed(),
+                    boolean(method === "lastIndexOf"),
+                  ],
+                  context,
+                ),
           translateElements(owner),
         )
       : translateElements(owner),
@@ -3369,3 +3386,20 @@ const translateNewCollection = (
   }
   return getMapOf(argument);
 };
+
+// Whether an expression is arithmetic of numeric literals, which converts nothing.
+const isNumberArithmetic = (node: ts.Expression): boolean =>
+  ts.isNumericLiteral(node) ||
+  (ts.isParenthesizedExpression(node) && isNumberArithmetic(node.expression)) ||
+  (ts.isPrefixUnaryExpression(node) &&
+    node.operator === ts.SyntaxKind.MinusToken &&
+    isNumberArithmetic(node.operand)) ||
+  (ts.isBinaryExpression(node) &&
+    [
+      ts.SyntaxKind.PlusToken,
+      ts.SyntaxKind.MinusToken,
+      ts.SyntaxKind.AsteriskToken,
+      ts.SyntaxKind.AsteriskAsteriskToken,
+    ].includes(node.operatorToken.kind) &&
+    isNumberArithmetic(node.left) &&
+    isNumberArithmetic(node.right));

@@ -26085,4 +26085,28 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("bc,ab,4"))).failure?.message).toContain("bc,ab,3");
     });
   });
+
+  describe("splices a copy of an array-like object whose length is past 2^53", () => {
+    const getSource = (expected: string) => `
+      const like: { [key: string]: unknown } = {
+        "9007199254740989": "a",
+        "9007199254740990": "b",
+        length: 2 ** 53 + 20,
+      };
+      const read = [
+        Array.prototype.toSpliced.call(like, 0, 2 ** 53 - 3).join(""),
+        Array.prototype.toSpliced.call(like, 0, 2 ** 53 - 2).join(""),
+        Array.prototype.toSpliced.call(like, 0, 2 ** 53).length,
+      ].join();
+      if (read !== "${expected}") throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("ab,b,0"))).failure).toBeUndefined();
+    });
+
+    it("rejects the length as unclamped", async () => {
+      expect((await checkModel(getSource("ab,b,1"))).failure?.message).toContain("ab,b,0");
+    });
+  });
 });

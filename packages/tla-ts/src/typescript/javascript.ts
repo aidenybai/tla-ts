@@ -5379,6 +5379,30 @@ LongSlice(heap, ref, start, end) ==
             Assert(FALSE, "tla-ts can't slice an array-like object with holes")
        [] OTHER -> [position \\in 1..count |-> Get(heap, ref, keys[position])]
 
+\\* toSpliced of an array-like object whose length is past 2^31, which reads each index it keeps,
+\\* where count is how many of start and skipCount a call passes.
+LongToSpliced(heap, ref, start, skip, items, count) ==
+  LET length == LongLength(Get(heap, ref, "length"))
+      first == IF count = 0 THEN 0 ELSE LongIndex(start, length)
+      rest == Subtract(length, first)
+      skipped == CASE count = 0 -> 0
+                   [] count = 1 -> rest
+                   [] skip \\in {Undefined, NegativeZero, NegativeInfinity} -> 0
+                   [] skip = Infinity -> rest
+                   [] IsDouble(skip) /\\ skip[Double][2] >= 0 -> IF IsNegative(skip) THEN 0 ELSE rest
+                   [] IsWide(skip) \\/ IsInteger(skip) ->
+                        CASE IsNegative(skip) -> 0
+                          [] LessThan(rest, skip) -> rest
+                          [] OTHER -> skip
+                   [] OTHER -> Assert(FALSE, "tla-ts can't use this index of an array-like object")
+      after == Add(first, skipped)
+      kept == Subtract(length, after)
+      read(from, size) == [position \\in 1..size |-> Get(heap, ref, StringOf(Add(from, position - 1)))]
+  IN CASE IsProxy(heap, ref) \\/ IsTypedArray(heap, ref) \\/ heap.objects[ref[Ref]].isOpaque ->
+            Assert(FALSE, "tla-ts can't splice this object")
+       [] IsBig(first) \\/ IsBig(kept) -> Assert(FALSE, "tla-ts can't splice this many elements")
+       [] OTHER -> read(0, first) \\o items \\o read(after, kept)
+
 \\* copyWithin on an array-like object whose length is past 2^31, which moves only the keys that the
 \\* object or its prototypes hold, and those that copy over them.
 LOCAL LongCopyWithin(heap, ref, target, start, end) ==
