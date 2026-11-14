@@ -25341,6 +25341,108 @@ describe("buffers", () => {
     });
   });
 
+  describe("holds BigInts in BigInt64Array and BigUint64Array as 8 bytes", () => {
+    const source = `
+      const check = (actual: unknown, expected: unknown, label: string) => {
+        if (!Object.is(actual, expected)) throw new Error(label);
+      };
+      const signed = new BigInt64Array([1n, -2n, 2147483647n]);
+      check(signed[1], -2n, "negative");
+      check(signed[2], 2147483647n, "max");
+      check(signed.join(), "1,-2,2147483647", "join");
+      const bytes = new Uint8Array(signed.buffer);
+      check(bytes.join(), "1,0,0,0,0,0,0,0,254,255,255,255,255,255,255,255,255,255,255,127,0,0,0,0", "bytes");
+      const unsigned = new BigUint64Array(2);
+      unsigned[0] = 5n;
+      const flag: any = true;
+      unsigned[1] = flag;
+      check(unsigned.join(), "5,1", "unsigned");
+      check(unsigned.includes(5n), true, "includes");
+      check(unsigned.indexOf(1n), 1, "indexOf");
+      unsigned.fill(7n, 1);
+      check(unsigned[1], 7n, "fill");
+      const copied = new BigInt64Array(unsigned);
+      check(copied.join(), "5,7", "copied");
+      let thrown = "";
+      try {
+        new BigInt64Array(new Int8Array(1) as unknown as BigInt64Array);
+      } catch (error) {
+        thrown = error instanceof TypeError ? "TypeError" : "other";
+      }
+      check(thrown, "TypeError", "content type");
+      thrown = "";
+      try {
+        signed.set(new Int8Array(1) as unknown as BigInt64Array);
+      } catch (error) {
+        thrown = error instanceof TypeError ? "TypeError" : "other";
+      }
+      check(thrown, "TypeError", "set content type");
+      const texts: any = ["12", " -3 ", "", "+4", "-0"];
+      const parsed = new BigInt64Array(texts);
+      check(parsed.join(), "12,-3,0,4,0", "texts");
+    `;
+    const negative = source.replace(
+      'check(signed[1], -2n, "negative")',
+      'check(signed[1], 2n, "negative")',
+    );
+    const bytes = source.replace('"1,0,0,0,0,0,0,0,254', '"1,0,0,0,0,0,0,0,253');
+    const copied = source.replace('"5,7", "copied"', '"5,8", "copied"');
+    const contentType = source.replace(
+      'check(thrown, "TypeError", "set content type")',
+      'check(thrown, "", "set content type")',
+    );
+
+    const texts = source.replace('"12,-3,0,4,0", "texts"', '"12,-3,0,4,1", "texts"');
+    it("agrees with Node", async () => {
+      expect((await checkModel(source)).failure).toBeUndefined();
+    });
+
+    it("rejects wrong expectation 1", async () => {
+      expect((await checkModel(negative)).failure?.message).toContain('"negative"');
+    });
+
+    it("rejects wrong expectation 2", async () => {
+      expect((await checkModel(bytes)).failure?.message).toContain('"bytes"');
+    });
+
+    it("rejects wrong expectation 3", async () => {
+      expect((await checkModel(copied)).failure?.message).toContain('"copied"');
+    });
+
+    it("rejects wrong expectation 4", async () => {
+      expect((await checkModel(contentType)).failure?.message).toContain('"set content type"');
+    });
+
+    it("rejects wrong expectation 5", async () => {
+      expect((await checkModel(texts)).failure?.message).toContain('"texts"');
+    });
+
+    it.each([
+      [
+        "reads a BigInt beyond 32 bits",
+        "const wide = new BigUint64Array(1); new Uint8Array(wide.buffer).fill(255); if (wide[0] === 0n) throw new Error('wide');",
+        "tla-ts can't hold a BigInt beyond 32 bits",
+      ],
+      [
+        "writes a number",
+        "const value: any = 1; let thrown = ''; try { new BigInt64Array(1)[0] = value; } catch (error) { thrown = 'thrown'; } if (thrown === '') throw new Error('number');",
+        "tla-ts can't throw the TypeError of converting a number to a BigInt",
+      ],
+      [
+        "converts a string that isn't decimal digits",
+        "const texts: any = ['1e3']; let thrown = ''; try { new BigInt64Array(texts); } catch (error) { thrown = 'thrown'; } if (thrown === '') throw new Error('syntax');",
+        "tla-ts can't convert this value to a BigInt",
+      ],
+      [
+        "keeps undefined through filter",
+        "const buffer = new ArrayBuffer(16, { maxByteLength: 16 }); const sample = new BigInt64Array(buffer); let calls = 0; try { sample.filter(() => { if (calls === 0) buffer.resize(8); calls++; return true; }); } catch (error) { calls = -1; } if (calls !== -1) throw new Error('kept');",
+        "tla-ts can't convert this value to a BigInt",
+      ],
+    ])("stops where a script %s", async (_, source, message) => {
+      expect((await checkModel(source)).failure?.message).toContain(message);
+    });
+  });
+
   it("throws a TypeError where a typed array's method runs through call on another value", async () => {
     const result = await checkModel(`
       function throws(expected: Function, func: () => unknown, message: string) {

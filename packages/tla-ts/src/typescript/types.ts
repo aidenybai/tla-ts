@@ -89,7 +89,7 @@ export const isEvery = (type: ts.Type, flags: ts.TypeFlags): boolean =>
     : (type.flags & flags) !== 0;
 
 // The plain objects that built-in functions take or give.
-// The type of each typed array's elements. tla-ts stops where a script makes a BigInt array.
+// The type of each typed array's elements.
 export const TYPED_ARRAYS = new Map(
   [
     "Int8",

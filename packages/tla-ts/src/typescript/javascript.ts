@@ -1073,6 +1073,8 @@ IsEnumerableOwn(heap, ref, key) ==
   LET object == LookupKey(heap, ref, key)
   IN key \\in DOMAIN object.values /\\ object.attributes[key].enumerable
 
+IsBigIntType(type) == type \\in {"BigInt64", "BigUint64"}
+
 ElementSize(type) ==
   CASE type \\in {"Int8", "Uint8", "Uint8Clamped"} -> 1
     [] type \\in {"Int16", "Uint16", "Float16"} -> 2
@@ -1128,14 +1130,20 @@ LOCAL FloatOf(bytes, exponentBits, fractionBits) ==
        [] isNegative -> -magnitude
        [] OTHER -> magnitude
 
-\\* An element's little-endian bytes as the number they hold.
+\\* An element's little-endian bytes as the number or the BigInt they hold, where tla-ts holds only a
+\\* BigInt within 32 bits.
 NumberOfBytes(type, bytes) ==
-  LET unsigned == BitsValue(ByteBits(bytes), 0, 8 * Len(bytes) - 1)
-      isNegative == bytes[Len(bytes)] >= 128
+  LET isBigInt == IsBigIntType(type)
+      held == IF isBigInt THEN SubSeq(bytes, 1, 4) ELSE bytes
+      unsigned == BitsValue(ByteBits(held), 0, 8 * Len(held) - 1)
+      isNegative == held[Len(held)] >= 128
   IN CASE type = "Float16" -> FloatOf(bytes, 5, 10)
        [] type = "Float32" -> FloatOf(bytes, 8, 23)
        [] type = "Float64" -> FloatOf(bytes, 11, 52)
        [] type \\in {"Uint8", "Uint8Clamped", "Uint16"} -> unsigned + (IF isNegative THEN 2^(8 * Len(bytes) - 1) ELSE 0)
+       [] type = "BigUint64" /\\ isNegative -> TooBig
+       [] isBigInt /\\ \\E position \\in 5..8 : bytes[position] # IF isNegative THEN 255 ELSE 0 -> TooBig
+       [] isBigInt -> Big :> IF isNegative THEN (unsigned - 2^30) - 2^30 ELSE unsigned
        [] type = "Uint32" /\\ isNegative -> Assert(FALSE, "tla-ts can't represent a number this big")
        [] type = "Uint32" -> unsigned
        [] isNegative -> (unsigned - 2^(8 * Len(bytes) - 2)) - 2^(8 * Len(bytes) - 2)
@@ -3935,9 +3943,13 @@ LOCAL FloatBytes(value, type) ==
                    [position \\in 0..(fractionBits - 1) |->
                       IF position < shift THEN 0 ELSE (rest \\div 2^(position - shift)) % 2])
 
-\\* The little-endian bytes that an element of a type holds for a number.
+\\* The little-endian bytes that an element of a type holds for a number, or for a BigInt, which
+\\* extends its sign past its 32 bits.
 NumberBytes(type, value) ==
-  CASE type \\in {"Float16", "Float32", "Float64"} -> FloatBytes(value, type)
+  CASE IsBigIntType(type) ->
+         [position \\in 1..8 |-> IF position <= 4 THEN (value[Big] \\div 2^(8 * (position - 1))) % 256
+                                ELSE IF value[Big] < 0 THEN 255 ELSE 0]
+    [] type \\in {"Float16", "Float32", "Float64"} -> FloatBytes(value, type)
     [] IsFraction(value) /\\ type = "Uint8Clamped" ->
          Assert(FALSE, "tla-ts can't round a fraction to a byte")
     [] IsFraction(value) ->
@@ -3960,11 +3972,28 @@ LOCAL WithBytes(heap, view, start, written) ==
   IN [heap EXCEPT !.objects[view.viewed[Ref]].bytes =
         SubSeq(bytes, 1, start) \\o written \\o SubSeq(bytes, start + Len(written) + 1, Len(bytes))]
 
+\\* What a typed array of a type holds for a value that a script writes: ToBigInt where it holds
+\\* BigInts, which throws a TypeError for a number and reads a string's decimal digits, and ToNumber
+\\* otherwise.
+ToElement(type, value) ==
+  LET text == TrimEnd(TrimStart(value))
+      unsigned == IF Prefix(text, 1) \\in {"+", "-"} THEN Tail(text) ELSE text
+      sign == IF Prefix(text, 1) = "-" THEN -1 ELSE 1
+  IN CASE ~IsBigIntType(type) -> ToNumber(value)
+       [] IsBigInt(value) -> value
+       [] TypeOf(value) = "boolean" -> Big :> IF value THEN 1 ELSE 0
+       [] TypeOf(value) = "string" /\\ text = "" -> Big :> 0
+       [] TypeOf(value) = "string" /\\ unsigned # "" /\\ DigitPrefix(unsigned, 10) = unsigned ->
+            Big :> sign * CheckedDigits(unsigned, 10, 0)
+       [] TypeOf(value) = "number" ->
+            Assert(FALSE, "tla-ts can't throw the TypeError of converting a number to a BigInt")
+       [] OTHER -> Assert(FALSE, "tla-ts can't convert this value to a BigInt")
+
 \\* A write to a typed array's element, which converts the value first, and does nothing at an
 \\* index past the end.
 TypedSet(heap, ref, key, value) ==
-  LET number == ToNumber(value)
-      view == heap.objects[ref[Ref]]
+  LET view == heap.objects[ref[Ref]]
+      number == ToElement(view.elementType, value)
   IN IF number = number /\\ TypedKey(key) = "index" /\\ ToIndex(key) < ViewLength(heap, view)
      THEN WithBytes(heap, view, view.byteOffset + ToIndex(key) * ElementSize(view.elementType),
                     NumberBytes(view.elementType, number))
@@ -4057,25 +4086,23 @@ LOCAL TypedArrayMade(heap, type, prototype, bufferPrototype, arguments, isIterat
       offset == IndexOfArgument(argument(2))
       length == IF argument(3) = Undefined THEN Undefined ELSE IndexOfArgument(argument(3))
       byteLength == Len(object.bytes)
-  IN CASE type \\in {"BigInt64", "BigUint64"} ->
-            Assert(FALSE, "tla-ts can't hold BigInts in a typed array")
-       [] ~IsObjectIn(heap, first) ->
+  IN CASE ~IsObjectIn(heap, first) ->
             LET count == IndexOfArgument(first)
             IN CASE count = -1 -> Failed("RangeError")
                  [] count * size > MaxBytes -> Assert(FALSE, "tla-ts can't make a buffer this big")
                  [] OTHER -> withBytes([position \\in 1..(count * size) |-> 0])
        [] IsTypedArray(heap, first) ->
-            IF IsOutOfBounds(heap, object)
+            IF IsOutOfBounds(heap, object) \\/ IsBigIntType(type) # IsBigIntType(object.elementType)
             THEN Failed("TypeError")
             ELSE withBytes(NumbersBytes(type, [position \\in 1..ViewLength(heap, object) |->
                                                  TypedElement(heap, first, position - 1)]))
        [] IsSequenceValue(first) ->
-            iterated(NumbersBytes(type, [position \\in DOMAIN first |-> ToNumber(first[position])]))
+            iterated(NumbersBytes(type, [position \\in DOMAIN first |-> ToElement(type, first[position])]))
        [] ~IsBuffer(heap, first) /\\ IsHeap(first) ->
             LET method == Get(heap, first, WellKnownSymbol("iterator"))
                 count == ToLength(Get(heap, first, "length"))
                 bytes == NumbersBytes(type, [position \\in 1..count |->
-                                               ToNumber(Get(heap, first, ToString(position - 1)))])
+                                               ToElement(type, Get(heap, first, ToString(position - 1)))])
             IN CASE method \\in {Undefined, Null} -> withBytes(bytes)
                  [] IsArray(heap, first) /\\ method = Ref :> "Array.prototype.values" -> iterated(bytes)
                  [] OTHER -> Assert(FALSE, "tla-ts can't make a typed array of this object")
@@ -4228,7 +4255,7 @@ LOCAL TypedSpecies(heap, ref, constructors) ==
 \\* that a callback shrank the buffer past.
 TypedArrayHolding(heap, ref, values, bufferPrototype, constructors) ==
   LET type == heap.objects[ref[Ref]].elementType
-      bytes == NumbersBytes(type, [position \\in DOMAIN values |-> ToNumber(values[position])])
+      bytes == NumbersBytes(type, [position \\in DOMAIN values |-> ToElement(type, values[position])])
       allocated == Allocate(heap, BufferObject(bufferPrototype, bytes, Undefined, FALSE))
       prototype == Get(allocated, TypedSpecies(heap, ref, constructors), "prototype")
   IN Allocate(allocated, [elementType |-> type] @@ ViewObject(prototype, Allocated(allocated), 0, Len(values)))
@@ -4271,6 +4298,7 @@ TypedArrayMethod(heap, ref, method, arguments, bufferPrototype, constructors) ==
              [] index >= length -> length - 1
              [] OTHER -> index
       separator == IF argument(1) = Undefined THEN "," ELSE StringOf(argument(1))
+      filled == ToElement(view.elementType, argument(1))
       write(current, first, values) ==
         IF values = <<>>
         THEN current
@@ -4300,22 +4328,21 @@ TypedArrayMethod(heap, ref, method, arguments, bufferPrototype, constructors) ==
                 offset == integer(2)
                 isTyped == IsTypedArray(heap, source)
                 sourceView == heap.objects[source[Ref]]
-                isBigInt(type) == type \\in {"BigInt64", "BigUint64"}
                 count == CASE isTyped -> ViewLength(heap, sourceView)
                            [] IsSequenceValue(source) -> Len(source)
                            [] OTHER -> ToLength(Get(heap, source, "length"))
                 values ==
                   [position \\in 1..count |->
                     CASE isTyped -> TypedElement(heap, source, position - 1)
-                      [] IsSequenceValue(source) -> ToNumber(source[position])
-                      [] OTHER -> ToNumber(Get(heap, source, ToString(position - 1)))]
+                      [] IsSequenceValue(source) -> ToElement(view.elementType, source[position])
+                      [] OTHER -> ToElement(view.elementType, Get(heap, source, ToString(position - 1)))]
             IN CASE offset = NegativeInfinity \\/ (offset # Infinity /\\ offset < 0) -> Thrown(heap, "RangeError")
                  [] IsOutOfBounds(heap, view) \\/ source \\in {Undefined, Null} -> Thrown(heap, "TypeError")
                  [] ~IsSequenceValue(source) /\\ ~IsHeap(source) ->
                       Assert(FALSE, "tla-ts can't set a typed array's elements from a primitive")
                  [] isTyped /\\ IsOutOfBounds(heap, sourceView) -> Thrown(heap, "TypeError")
                  [] offset = Infinity \\/ count + offset > length -> Thrown(heap, "RangeError")
-                 [] isTyped /\\ isBigInt(view.elementType) # isBigInt(sourceView.elementType) ->
+                 [] isTyped /\\ IsBigIntType(view.elementType) # IsBigIntType(sourceView.elementType) ->
                       Thrown(heap, "TypeError")
                  [] OTHER -> Returned(write(heap, offset, values), Undefined)
        [] IsOutOfBounds(heap, view) -> Thrown(heap, "TypeError")
@@ -4333,12 +4360,11 @@ TypedArrayMethod(heap, ref, method, arguments, bufferPrototype, constructors) ==
                               ELSE CHOOSE index \\in indices : \\A other \\in indices : index >= other)
        [] method = "join" /\\ separator = separator ->
             Returned(heap, Join([position \\in 1..length |-> StringOf(elements[position])], separator))
-       [] method = "fill" /\\ ToNumber(argument(1)) = ToNumber(argument(1)) ->
-            LET number == ToNumber(argument(1))
-                first == start(2)
+       [] method = "fill" /\\ filled = filled ->
+            LET first == start(2)
                 final == end(3)
                 count == IF final > first THEN final - first ELSE 0
-            IN Returned(write(heap, first, [position \\in 1..count |-> number]), ref)
+            IN Returned(write(heap, first, [position \\in 1..count |-> filled]), ref)
        [] method = "copyWithin" ->
             LET target == start(1)
                 first == start(2)
