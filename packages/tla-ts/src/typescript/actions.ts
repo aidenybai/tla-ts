@@ -10624,6 +10624,24 @@ const translateForeignNew = (
       );
 };
 
+// A var holds undefined, or what its parameter binds, from where its function or its script
+// starts, so its declaration without a value runs nothing, unless it's a state variable whose value
+// the script hasn't yet given.
+const isUnrun = (declaration: ts.VariableDeclaration, path: Path, context: Context) => {
+  const symbol =
+    declaration.initializer === undefined &&
+    ts.isIdentifier(declaration.name) &&
+    ts.isVariableDeclarationList(declaration.parent) &&
+    (declaration.parent.flags & ts.NodeFlags.BlockScoped) === 0
+      ? getSymbol(declaration.name, context.checker)
+      : undefined;
+  return (
+    symbol !== undefined &&
+    (path.scope.bindings.get(symbol) !== context.variables.get(symbol) ||
+      (symbol.declarations ?? []).some(ts.isParameter))
+  );
+};
+
 export const translateDeclarations = (
   declarations: readonly ts.VariableDeclaration[],
   path: Path,
@@ -10635,21 +10653,7 @@ export const translateDeclarations = (
   const declaration = declarations[0];
   rejectCatchRedeclaration(declaration);
   const initializer = declaration.initializer;
-  // A var holds undefined, or what its parameter binds, from where its function or its script
-  // starts, so its declaration without a value runs nothing, unless it's a state variable whose
-  // value the script hasn't yet given.
-  const varSymbol =
-    initializer === undefined &&
-    ts.isIdentifier(declaration.name) &&
-    ts.isVariableDeclarationList(declaration.parent) &&
-    (declaration.parent.flags & ts.NodeFlags.BlockScoped) === 0
-      ? getSymbol(declaration.name, context.checker)
-      : undefined;
-  if (
-    varSymbol !== undefined &&
-    (path.scope.bindings.get(varSymbol) !== context.variables.get(varSymbol) ||
-      (varSymbol.declarations ?? []).some(ts.isParameter))
-  ) {
+  if (isUnrun(declaration, path, context)) {
     return translateDeclarations(declarations.slice(1), path, context, frame, continueWith);
   }
   // An assignment that a later declaration's initializer evaluates first runs after the
@@ -14655,6 +14659,21 @@ export const translateStatements = (
       context,
       frame,
     );
+  }
+  // A run of statements that run nothing, such as thousands of vars, passes in one step rather
+  // than one statement inside another.
+  const unrun = statements.findIndex(
+    (inner) =>
+      !ts.isEmptyStatement(inner) &&
+      !(
+        ts.isVariableStatement(inner) &&
+        inner.declarationList.declarations.every((declaration) =>
+          isUnrun(declaration, path, context),
+        )
+      ),
+  );
+  if (unrun !== 0) {
+    return translateStatements(unrun === -1 ? [] : statements.slice(unrun), path, context, frame);
   }
   // A derived constructor's this is uninitialized until its super(...), so a statement that reads it
   // first throws a ReferenceError. The functions in the statement read it only as they run.

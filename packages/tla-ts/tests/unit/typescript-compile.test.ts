@@ -256,6 +256,20 @@ describe("top-level statements", () => {
     expect(result.status).toBe("deadlock");
   });
 
+  it("pass thousands of vars without values, as a test of names declares them", async () => {
+    const getSource = (expected: string) =>
+      [
+        ...Array.from({ length: 3000 }, (_, index) => `var v${index}: number | undefined;;`),
+        "v1500 = 1;",
+        ...Array.from({ length: 3000 }, (_, index) => `var v${index + 3000}: number | undefined;`),
+        `if (String(v2999) + v1500 + v5999 !== "${expected}") throw new Error(String(v2999) + v1500 + v5999);`,
+      ].join("\n");
+    expect((await checkModel(getSource("undefined1undefined"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("undefinedundefinedundefined"))).failure?.message).toContain(
+      "undefined1undefined",
+    );
+  });
+
   describe("run a call that needs statements before the call it is the first argument of", () => {
     const getSource = (expected: boolean) => `
       let checked = 0;
