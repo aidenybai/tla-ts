@@ -2519,6 +2519,22 @@ BuiltInIteratorNext(heap, ref, isString) ==
        IN [heap |-> allocated, value |-> Allocated(allocated), isThrown |-> FALSE]
   ELSE Assert(FALSE, "tla-ts can't step an iterator that isn't an array's or a string's with its next")
 
+\\* Whether a value is %ArrayIteratorPrototype%.next or %StringIteratorPrototype%.next.
+IsBuiltInIteratorNext(value) ==
+  /\\ IsRef(value)
+  /\\ TypeOf(value[Ref]) = "string"
+  /\\ value[Ref] \\in {"%ArrayIteratorPrototype%.next", "%StringIteratorPrototype%.next"}
+
+\\* A built-in iterator's next on a receiver, which throws a TypeError where the receiver isn't an
+\\* iterator of the next's kind.
+BuiltInIteratorStepOf(heap, ref, next) ==
+  LET isString == next[Ref] = "%StringIteratorPrototype%.next"
+  IN IF /\\ IsHeap(ref)
+        /\\ "iterated" \\in DOMAIN heap.objects[ref[Ref]]
+        /\\ (heap.objects[ref[Ref]].kind = "string") = isString
+     THEN BuiltInIteratorNext(heap, ref, isString)
+     ELSE [heap |-> heap, value |-> Undefined, isThrown |-> TRUE]
+
 \\* A filler repeated and cut to a length.
 RECURSIVE FillTo(_, _)
 FillTo(filler, length) ==

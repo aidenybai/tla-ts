@@ -3283,6 +3283,26 @@ export const translateCallStatement = (
         ),
       );
     };
+    // %ArrayIteratorPrototype%.next or %StringIteratorPrototype%.next, which throws a TypeError for
+    // a receiver that isn't an iterator of its kind.
+    const translateBuiltInNext = (current: Path, next: Expression, receiverValue: Expression) => {
+      const changeName = context.names.getFresh("change");
+      const change = identifier(changeName);
+      return bindOnce(
+        current,
+        changeName,
+        useJavaScript(
+          "BuiltInIteratorStepOf",
+          [getHeap(current.scope, expression, context), receiverValue, next],
+          context,
+        ),
+        ifThenElse(
+          field(change, "isThrown"),
+          throwTypeError(current, expression, context, frame),
+          continueWith(withHeap(field(change, "heap")), field(change, "value")),
+        ),
+      );
+    };
     // An Iterator.prototype method of an object that tla-ts doesn't follow as an iterator, which
     // closes the object and throws a TypeError where its callback isn't callable. A throw while it
     // closes gives way to the TypeError.
@@ -3421,33 +3441,39 @@ export const translateCallStatement = (
                 ),
               )
             : stop
-          : ITERATOR_CALLBACK_METHODS.has(target.name.text)
+          : target.name.text === "next" && expression.arguments.length === 0
             ? ifThenElse(
-                apply("=", [
-                  value,
-                  translateBuiltInValue(
-                    `Iterator.prototype.${target.name.text}`,
-                    expression,
-                    context,
-                  ),
-                ]),
-                rejectCallback(target.name.text),
+                useJavaScript("IsBuiltInIteratorNext", [value], context),
+                translateBuiltInNext(path, value, receiver),
                 stop,
               )
-            : accessor === null || keyNode === undefined
-              ? stop
-              : ifThenElse(
+            : ITERATOR_CALLBACK_METHODS.has(target.name.text)
+              ? ifThenElse(
                   apply("=", [
                     value,
                     translateBuiltInValue(
-                      `Object.prototype.${target.name.text}`,
+                      `Iterator.prototype.${target.name.text}`,
                       expression,
                       context,
                     ),
                   ]),
-                  translateAccessor(accessor[1], accessor[2] === "G" ? "get" : "set", keyNode),
+                  rejectCallback(target.name.text),
                   stop,
-                ),
+                )
+              : accessor === null || keyNode === undefined
+                ? stop
+                : ifThenElse(
+                    apply("=", [
+                      value,
+                      translateBuiltInValue(
+                        `Object.prototype.${target.name.text}`,
+                        expression,
+                        context,
+                      ),
+                    ]),
+                    translateAccessor(accessor[1], accessor[2] === "G" ? "get" : "set", keyNode),
+                    stop,
+                  ),
       ),
     );
   }

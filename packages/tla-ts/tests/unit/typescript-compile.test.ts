@@ -24128,6 +24128,31 @@ describe("regular expressions", () => {
 });
 
 describe("calls through values", () => {
+  describe("throws the TypeError of a built-in next on an object that isn't its iterator", () => {
+    const getSource = (expected: string) => `
+      "use strict";
+      const iterator = [0][Symbol.iterator]();
+      const object: { [key: string | symbol]: unknown } = Object.create(iterator);
+      const count = (...args: unknown[]): unknown => args.length;
+      let caught = "none";
+      try {
+        (object.next as (...args: unknown[]) => unknown)();
+      } catch (error) {
+        caught = error instanceof TypeError ? "type" : "other";
+      }
+      const step = iterator.next();
+      if (\`\${caught},\${step.value},\${count(1, 2)}\` !== "${expected}") throw new Error(caught);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("type,0,2"))).failure).toBeUndefined();
+    });
+
+    it("rejects the step as allowed", async () => {
+      expect((await checkModel(getSource("none,0,2"))).failure?.message).toContain("type");
+    });
+  });
+
   describe("steps a typed array's iterator as an object", () => {
     const getSource = (expected: string) => `
       const array = new Int8Array([3, 1]);
