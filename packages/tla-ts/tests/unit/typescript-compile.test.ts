@@ -953,6 +953,27 @@ describe("top-level statements", () => {
     expect(result.failure?.message).toContain("poisoned");
   });
 
+  it("runs the getters that a parameter's pattern reads from the variable that its default names", async () => {
+    const getSource = (expected: number) => `
+      let reads = 0;
+      const first = Object.defineProperty({} as { value?: number }, "value", {
+        get: function () {
+          reads += 1;
+          return 10;
+        },
+      });
+      const second = { value: 20 };
+      let source: { value?: number } = first;
+      const take = ({ value } = source) => value;
+      const before = take();
+      source = second;
+      const after = take();
+      if (before !== 10 || after !== 20 || reads !== ${expected}) throw new Error("default");
+    `;
+    expect((await checkModel(getSource(1))).failure).toBeUndefined();
+    expect((await checkModel(getSource(2))).failure?.message).toContain("default");
+  });
+
   it("throws a getter's error that a call reads, though the statement drops its value", async () => {
     const result = await checkModel(`
       const holder: { poisoned?: number } = {};

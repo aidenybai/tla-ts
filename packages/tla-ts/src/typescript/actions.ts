@@ -3479,14 +3479,22 @@ export const bindCall = (
     );
   }
   // A first parameter's pattern runs the getters of the properties it reads, after the call
-  // evaluates its only argument, or the object literal that its default makes where the call
-  // passes none.
+  // evaluates its only argument, or where the call passes none, the object literal that its
+  // default makes or the script's variable that its default names, which the caller reads alike.
   const only = argumentNodes.length === 1 ? argumentNodes[0] : undefined;
+  const firstDefault = first?.initializer === undefined ? undefined : skipCasts(first.initializer);
+  const named =
+    firstDefault !== undefined && ts.isIdentifier(firstDefault)
+      ? getSymbol(firstDefault, context.checker)?.valueDeclaration
+      : undefined;
   const defaultObject =
     argumentNodes.length === 0 &&
-    first?.initializer !== undefined &&
-    ts.isObjectLiteralExpression(skipCasts(first.initializer))
-      ? first.initializer
+    firstDefault !== undefined &&
+    (ts.isObjectLiteralExpression(firstDefault) ||
+      (named !== undefined &&
+        ts.isVariableDeclaration(named) &&
+        ts.isSourceFile(named.parent.parent.parent)))
+      ? first?.initializer
       : undefined;
   const source = only ?? defaultObject;
   if (
