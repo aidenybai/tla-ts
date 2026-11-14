@@ -1652,6 +1652,24 @@ GetterOf(heap, ref, key) == AccessorFieldOf(heap, ref, key, "get")
 
 SetterOf(heap, ref, key) == AccessorFieldOf(heap, ref, key, "set")
 
+\\* Whether a value is a built-in method or getter that throws a TypeError where a call gives it no
+\\* receiver, as its first step requires an object, a value of its own kind, or a constructor.
+\\* Object.prototype's toString and isPrototypeOf, Function.prototype[@@hasInstance], and the
+\\* @@toStringTag getters give a value instead.
+ThrowsWithoutReceiver(value) ==
+  /\\ IsRef(value)
+  /\\ TypeOf(value[Ref]) = "string"
+  /\\ LET path == value[Ref]
+         isUnder(prefix) == Len(path) > Len(prefix) /\\ SubSeq(path, 1, Len(prefix)) = prefix
+     IN /\\ \\/ \\E name \\in {"Array", "%Int8Array", "String", "RegExp", "Number", "Boolean",
+                            "Symbol", "BigInt", "Date", "Map", "Set", "WeakMap", "WeakSet",
+                            "Function", "Error", "ArrayBuffer", "DataView", "Promise", "Object"} :
+                isUnder(name \\o ".prototype.") \\/ isUnder("get " \\o name \\o ".prototype.")
+           \\/ path \\in {"%Int8Array.[[Prototype]]%.from", "%Int8Array.[[Prototype]]%.of"}
+        /\\ path \\notin {"Function.prototype.@@hasInstance", "Object.prototype.toString",
+                         "Object.prototype.isPrototypeOf"}
+        /\\ ~(Len(path) >= 13 /\\ SubSeq(path, Len(path) - 12, Len(path)) = "@@toStringTag")
+
 \\* The TypeError that a read throws where it runs %ThrowTypeError% or a getter of a buffer or a view
 \\* on another kind of object, or "".
 ReadError(heap, ref, key) ==

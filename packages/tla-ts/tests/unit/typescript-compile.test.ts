@@ -24128,6 +24128,29 @@ describe("regular expressions", () => {
 });
 
 describe("calls through values", () => {
+  describe("throws the TypeError of calling a built-in method without a receiver", () => {
+    const getSource = (expected: string) => `
+      "use strict";
+      const join = Array.prototype.join;
+      const trim = String.prototype.trim;
+      const valueOf = Object.prototype.valueOf;
+      const box = { size: 0 };
+      let caught = "";
+      try { join(); } catch (error) { caught += error instanceof TypeError ? "j" : "x"; }
+      try { trim(); } catch (error) { caught += error instanceof TypeError ? "t" : "x"; }
+      try { valueOf(); } catch (error) { caught += error instanceof TypeError ? "v" : "x"; }
+      if (caught !== "${expected}" || box.size !== 0) throw new Error(caught);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("jtv"))).failure).toBeUndefined();
+    });
+
+    it("rejects the expectation that valueOf gives a value", async () => {
+      expect((await checkModel(getSource("jt"))).failure?.message).toContain("jtv");
+    });
+  });
+
   it("returns an object that a function called through a variable makes", async () => {
     const result = await checkModel(`
       type Factory = (a: number, b: unknown) => unknown;

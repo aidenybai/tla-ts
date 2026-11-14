@@ -3400,12 +3400,19 @@ export const translateCallStatement = (
           otherwise,
         );
       },
-      // Calling undefined or null throws a TypeError.
+      // Calling undefined or null throws a TypeError, as does calling a built-in method that needs
+      // a receiver without one.
       ifThenElse(
         apply("\\in", [value, set([getUndefined(context), identifier("Null")])]),
         throwTypeError(path, expression, context, frame),
         !ts.isPropertyAccessExpression(target) || expression.arguments.some(ts.isSpreadElement)
-          ? stop
+          ? ts.isIdentifier(skipCasts(target)) && expression.arguments.every(isInertValue)
+            ? ifThenElse(
+                useJavaScript("ThrowsWithoutReceiver", [value], context),
+                throwTypeError(path, expression, context, frame),
+                stop,
+              )
+            : stop
           : ITERATOR_CALLBACK_METHODS.has(target.name.text)
             ? ifThenElse(
                 apply("=", [
@@ -3468,6 +3475,7 @@ export const translateCallStatement = (
           value,
           translateBuiltInValue("get Function.prototype.arguments", expression, context),
         ]),
+        useJavaScript("ThrowsWithoutReceiver", [value], context),
       ]),
       throwTypeError(path, expression, context, frame),
       leaf(
