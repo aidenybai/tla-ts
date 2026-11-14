@@ -1121,15 +1121,73 @@ type TailStep =
     }
   | { kind: "Other"; evaluator: Evaluator };
 
+// The LET operators with parameters that a body's definitions add to those in scope.
+const withLetOperators = (
+  operators: ReadonlyMap<string, Definition>,
+  expression: Expression & { kind: "Let" },
+) =>
+  new Map([
+    ...operators,
+    ...expression.definitions
+      .filter((definition) => definition.kind === "Operator" && definition.params.length > 0)
+      .map((definition): [string, Definition] => [definition.name, definition]),
+  ]);
+
+// The LET operators that a body's tail calls, each with the operators in scope at its first call,
+// after those that its own tail calls, so that each compiles after the operators it enters. A path
+// that calls an operator it's still in doesn't enter it again, so a recursive one isn't.
+const collectTailOperators = (
+  expression: Expression,
+  name: string,
+  operators: ReadonlyMap<string, Definition>,
+  collected: Map<Definition, ReadonlyMap<string, Definition>>,
+  visited: Set<Definition>,
+) => {
+  if (expression.kind === "If") {
+    collectTailOperators(expression.consequent, name, operators, collected, visited);
+    collectTailOperators(expression.alternative, name, operators, collected, visited);
+    return;
+  }
+  if (expression.kind === "Let") {
+    if (expression.definitions.some((definition) => definition.name === name)) return;
+    collectTailOperators(
+      expression.body,
+      name,
+      withLetOperators(operators, expression),
+      collected,
+      visited,
+    );
+    return;
+  }
+  const operator = expression.kind === "Apply" ? operators.get(expression.operator) : undefined;
+  if (operator === undefined || visited.has(operator)) return;
+  visited.add(operator);
+  collectTailOperators(operator.body, name, operators, collected, visited);
+  collected.set(operator, operators);
+};
+
 const compileTailStep = (
   expression: Expression,
   name: string,
   operators: ReadonlyMap<string, Definition>,
   environment: Environment,
+  entries: ReadonlyMap<Definition, TailStep | undefined>,
 ): TailStep | undefined => {
   if (expression.kind === "If") {
-    const consequent = compileTailStep(expression.consequent, name, operators, environment);
-    const alternative = compileTailStep(expression.alternative, name, operators, environment);
+    const consequent = compileTailStep(
+      expression.consequent,
+      name,
+      operators,
+      environment,
+      entries,
+    );
+    const alternative = compileTailStep(
+      expression.alternative,
+      name,
+      operators,
+      environment,
+      entries,
+    );
     if (consequent === undefined && alternative === undefined) return undefined;
     return {
       kind: "If",
@@ -1150,28 +1208,15 @@ const compileTailStep = (
     const body = compileTailStep(
       expression.body,
       name,
-      new Map([
-        ...operators,
-        ...expression.definitions
-          .filter((definition) => definition.kind === "Operator" && definition.params.length > 0)
-          .map((definition): [string, Definition] => [definition.name, definition]),
-      ]),
+      withLetOperators(operators, expression),
       environment,
+      entries,
     );
     return body && { kind: "Let", definitions: expression.definitions, body };
   }
   if (expression.kind !== "Apply") return undefined;
   const operator = operators.get(expression.operator);
-  // An operator leaves the operators its body may enter, so a recursive one isn't entered again.
-  const entered =
-    operator === undefined
-      ? undefined
-      : compileTailStep(
-          operator.body,
-          name,
-          new Map([...operators].filter((entry) => entry[0] !== expression.operator)),
-          environment,
-        );
+  const entered = operator === undefined ? undefined : entries.get(operator);
   if (expression.operator !== name && entered === undefined) return undefined;
   return {
     kind: "Call",
@@ -1185,11 +1230,22 @@ const compileTailStep = (
   };
 };
 
-// The body of a closure that calls itself in its tail, or undefined for any other body.
-const compileTailCalls = (closure: Closure, environment: Environment) =>
-  environment.callStack
-    ? undefined
-    : compileTailStep(closure.body, closure.name, new Map(), environment);
+// The body of a closure that calls itself in its tail, or undefined for any other body. Each LET
+// operator that the tail enters compiles once, into a table that every path through the body reads,
+// as the branches of a body may all enter one operator.
+const compileTailCalls = (closure: Closure, environment: Environment) => {
+  if (environment.callStack) return undefined;
+  const collected = new Map<Definition, ReadonlyMap<string, Definition>>();
+  collectTailOperators(closure.body, closure.name, new Map(), collected, new Set());
+  const entries = new Map<Definition, TailStep | undefined>();
+  collected.forEach((operators, operator) =>
+    entries.set(
+      operator,
+      compileTailStep(operator.body, closure.name, operators, environment, entries),
+    ),
+  );
+  return compileTailStep(closure.body, closure.name, new Map(), environment, entries);
+};
 
 const evaluateTailCalls = (closure: Closure, body: TailStep, bodyContext: Context): Value => {
   let context = bodyContext;

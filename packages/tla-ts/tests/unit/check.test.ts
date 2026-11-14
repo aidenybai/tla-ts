@@ -2508,6 +2508,23 @@ describe("evaluation errors match TLC", () => {
     expect(local.status).toBe("invariant-violation");
   });
 
+  it("enters each LET operator once where the branches of a recursion's body all reach it", async () => {
+    const getResult = (limit: number, depth: number) => {
+      const joins = Array.from(
+        { length: depth },
+        (_, index) => `J${index + 1}(m) == IF m % 2 = 0 THEN J${index}(m) ELSE J${index}(m)`,
+      ).join("\n      ");
+      return check({
+        source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nRECURSIVE Count(_)\nCount(n) ==\n  LET J0(m) == IF m = ${limit} THEN m ELSE Count(m + 1)\n      ${joins}\n  IN  J${depth}(n)\nInit == x = Count(0)\nNext == UNCHANGED x\nInv == x = ${limit}\n====`,
+        config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+      });
+    };
+    const counted = await getResult(1000, 24);
+    expect([counted.status, counted.distinctStates]).toEqual(["success", 1]);
+    const overflowed = await getResult(1 << 21, 1);
+    expect(overflowed.failure?.message).toContain("StackOverflowError");
+  });
+
   it("reports a successor the next-state relation leaves incomplete like TLC", async () => {
     const getResult = (next: string) =>
       check({
