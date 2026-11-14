@@ -1628,7 +1628,7 @@ export const translateSortArguments = (
 };
 
 // The methods that reorder or overwrite an array in place, and give the array.
-const REORDER_METHODS = new Set(["sort", "reverse", "fill", "copyWithin"]);
+export const REORDER_METHODS = new Set(["sort", "reverse", "fill", "copyWithin"]);
 
 // The array methods that give a new array.
 const NEW_ARRAY_METHODS = new Set([
@@ -1647,6 +1647,20 @@ const NEW_ARRAY_METHODS = new Set([
 // The methods that change only an array value in place, which an object's method of the same name
 // doesn't.
 export const SEQUENCE_UPDATES = new Set([...REORDER_METHODS, "splice"]);
+
+// A fresh array, from a literal or a method that makes a new one, that a method reorders in place
+// is the array that the call gives, as nothing else holds it.
+export const isFreshReorder = (node: MethodCall, context: Context) => {
+  const fresh = skipCasts(node.expression.expression);
+  return (
+    getKind(fresh, context) === "sequence" &&
+    REORDER_METHODS.has(node.expression.name.text) &&
+    (ts.isArrayLiteralExpression(fresh) ||
+      (isMethodCall(fresh) &&
+        NEW_ARRAY_METHODS.has(fresh.expression.name.text) &&
+        getKind(fresh.expression.expression, context) === "sequence"))
+  );
+};
 
 // A sequence after sort, reverse, fill, or copyWithin.
 const translateReorder = (
@@ -1831,17 +1845,7 @@ export const translateMethod = (
     ? getUpdatedValue(translateExpression(receiver, scope, context), kind, node, scope, context)
     : undefined;
   if (updated !== undefined) return updated;
-  // A fresh array, from a literal or a method that makes a new one, that a method reorders in place
-  // is the array that the call gives, as nothing else holds it.
-  const fresh = skipCasts(receiver);
-  if (
-    kind === "sequence" &&
-    REORDER_METHODS.has(node.expression.name.text) &&
-    (ts.isArrayLiteralExpression(fresh) ||
-      (isMethodCall(fresh) &&
-        NEW_ARRAY_METHODS.has(fresh.expression.name.text) &&
-        getKind(fresh.expression.expression, context) === "sequence"))
-  ) {
+  if (isFreshReorder(node, context)) {
     return checkArrayMethod(
       translateReorder(translateExpression(receiver, scope, context), node, scope, context),
       node,

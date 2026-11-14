@@ -5258,6 +5258,10 @@ describe("errors", () => {
       "a local of an outer function that an inner function returns",
       "const make = () => {\n  const items: number[] = [];\n  const get = () => {\n    return items;\n  };\n  const other = get();\n  items.push(1);\n  return other.length;\n};\nlet size = make();",
     ],
+    [
+      "an array whose sort a function returns",
+      "let items = [2, 1];\nconst getSorted = () => items.sort();\nconst sorted = getSorted();\nitems.push(3);\nlet size = sorted.length;",
+    ],
   ])("rejects %s, as the caller would share it", (_, source) => {
     expect(() => compile(source)).toThrow("items would share an object that changes in place");
   });
@@ -12577,6 +12581,55 @@ describe("errors", () => {
 
     it("rejects wrong expectation 1", async () => {
       await expect(checkModel(getSource("2,3,5,1,4"))).rejects.toThrow("sorted 1,4,2,3,5");
+    });
+  });
+
+  describe("gives the array that a local's sort or reverse changes where a function returns the call", () => {
+    const getSource = (expected: string) => `
+      const getSorted = (first: number) => {
+        const items = [first, 1];
+        items.push(3);
+        return items.sort((left, right) => right - left);
+      };
+      const reversed = (() => {
+        const items = ["a", "b"];
+        items.push("c");
+        return items.reverse();
+      })();
+      const result = [getSorted(2).join(), reversed.join()].join(";");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("3,2,1;c,b,a"))).failure).toBeUndefined();
+    });
+
+    it("rejects wrong expectation 1", async () => {
+      await expect(checkModel(getSource("1,2,3;c,b,a"))).rejects.toThrow("3,2,1;c,b,a");
+    });
+  });
+
+  describe("gives a new array's sort where a function returns it, leaving the property it maps", () => {
+    const getSource = (expected: string) => `
+      interface Rows { names: string[]; sets: number[] }
+      const getFields = (set: Rows) =>
+        set.names
+          .map((name, index): [string, number] => [name, set.sets[index]])
+          .sort((first, second) => (first[0] < second[0] ? -1 : 1));
+      const rows: Rows = { names: ["b", "a", "c"], sets: [2, 1, 3] };
+      const fields = getFields(rows);
+      const result = [fields.map((field) => field.join(":")).join(), rows.names.join()].join(";");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("a:1,b:2,c:3;b,a,c"))).failure).toBeUndefined();
+    });
+
+    it("rejects wrong expectation 1", async () => {
+      expect((await checkModel(getSource("a:1,b:2,c:3;a,b,c"))).failure?.message).toContain(
+        "a:1,b:2,c:3;b,a,c",
+      );
     });
   });
 

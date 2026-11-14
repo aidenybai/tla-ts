@@ -1,6 +1,6 @@
 import ts from "@typescript/typescript6";
 import { getWritten } from "./actions";
-import { MUTATING_METHODS } from "./collections";
+import { MUTATING_METHODS, REORDER_METHODS } from "./collections";
 import {
   type Context,
   findNodes,
@@ -386,7 +386,8 @@ const getEscapes = (
       return getWritten(parent.parent) === parent ? [] : getFrom(parent, getPart(depths));
     }
     const method = parent.name.text;
-    if (isUpdate(call, context)) return [];
+    // sort, reverse, fill, and copyWithin give the array that they change.
+    if (isUpdate(call, context)) return REORDER_METHODS.has(method) ? getFrom(call, depths) : [];
     const fromCallbacks = call.arguments.flatMap((argument) => {
       const callback = getCallee(argument, context);
       const parameter = callback?.parameters[0];
@@ -548,17 +549,18 @@ export const rejectSharing = (roots: readonly ts.Node[], context: Context) => {
 
   const reached = getReached(roots, context);
   const changed = new Map<ts.Symbol, number>();
+  const changeCounts = new Map<ts.Symbol, number>();
   // The heap objects' fields that change in place, by name, as one object may have many types.
   const changedFields = new Map<string, number>();
   const addChanged = (written: Written[]) =>
-    written.forEach((entry) =>
-      entry.field === undefined
-        ? changed.set(entry.symbol, Math.max(changed.get(entry.symbol) ?? -1, entry.depth))
-        : changedFields.set(
-            entry.field,
-            Math.max(changedFields.get(entry.field) ?? -1, entry.depth),
-          ),
-    );
+    written.forEach((entry) => {
+      changeCounts.set(entry.symbol, (changeCounts.get(entry.symbol) ?? 0) + 1);
+      if (entry.field === undefined) {
+        changed.set(entry.symbol, Math.max(changed.get(entry.symbol) ?? -1, entry.depth));
+        return;
+      }
+      changedFields.set(entry.field, Math.max(changedFields.get(entry.field) ?? -1, entry.depth));
+    });
   // How deep a symbol's object changes, where a read of a heap object's field sees only that
   // field's changes, and any other read of the heap sees every field's.
   const getChangedDepth = (symbol: ts.Symbol, field: string | undefined) => {
@@ -625,6 +627,18 @@ export const rejectSharing = (roots: readonly ts.Node[], context: Context) => {
         context,
         new Set(),
       );
+      // A sort, reverse, fill, or copyWithin that runs once, as the only change to its receiver,
+      // shares the array only as it is once changed.
+      const isOnlyReorder =
+        symbol !== undefined &&
+        changeCounts.get(symbol) === 1 &&
+        ts.isPropertyAccessExpression(node.parent) &&
+        isMethodCall(node.parent.parent) &&
+        REORDER_METHODS.has(node.parent.name.text) &&
+        ts.findAncestor(
+          node,
+          (inner) => ts.isFunctionLike(inner) || ts.isIterationStatement(inner, false),
+        ) === undefined;
       const changedDepth =
         symbol === undefined
           ? undefined
@@ -633,7 +647,10 @@ export const rejectSharing = (roots: readonly ts.Node[], context: Context) => {
               isHeapRead && ts.isPropertyAccessExpression(node) ? node.name.text : undefined,
             );
       const sourceDepth =
-        symbol === undefined || changedDepth === undefined || isLastUse(node, symbol)
+        symbol === undefined ||
+        changedDepth === undefined ||
+        isOnlyReorder ||
+        isLastUse(node, symbol)
           ? undefined
           : changedDepth;
       // A target may change the top of a new object, which only it names.

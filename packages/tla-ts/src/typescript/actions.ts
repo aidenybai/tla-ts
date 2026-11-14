@@ -34,6 +34,8 @@ import {
   translateMethodElements,
   MUTATING_METHODS,
   SEQUENCE_UPDATES,
+  REORDER_METHODS,
+  isFreshReorder,
   translateSpliced,
   translateClampedIndex,
   translateSkipped,
@@ -3066,14 +3068,22 @@ export const translateCallStatement = (
       kind !== "other" &&
       (kind === "sequence" || !SEQUENCE_UPDATES.has(method))
     ) {
+      if (isFreshReorder(expression, context)) {
+        return continueWith(path, translateExpression(expression, path.scope, context));
+      }
+      const assigned = assign(receiver, path, context, (current) => {
+        const value = getUpdatedValue(current, kind, expression, path.scope, context);
+        if (value === undefined) {
+          throw new TlaTypeScriptError(`Unsupported method: ${method}`, expression);
+        }
+        return value;
+      });
+      // sort, reverse, fill, and copyWithin give the array that they change.
       const changed = continueWith(
-        assign(receiver, path, context, (current) => {
-          const value = getUpdatedValue(current, kind, expression, path.scope, context);
-          if (value === undefined) {
-            throw new TlaTypeScriptError(`Unsupported method: ${method}`, expression);
-          }
-          return value;
-        }),
+        assigned,
+        REORDER_METHODS.has(method)
+          ? translateExpression(receiver, assigned.scope, context)
+          : undefined,
       );
       const updated = guardReceiver(receiver, changed);
       const key = expression.arguments.at(0);
