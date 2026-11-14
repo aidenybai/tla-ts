@@ -315,4 +315,55 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
       ]),
     ).toEqual(["sat", "sat"]);
   });
+
+  // generic_model_converter reads the arity of div0 and mod0 from their declarations: two.
+  it("defines division by zero as a function of two arguments", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(assert (= (rem x y) 3))",
+        "(assert (> x 10))",
+        "(check-sat-using (then purify-arith smt))",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      "(",
+      "  (define-fun x () Int",
+      "    11)",
+      "  (define-fun y () Int",
+      "    8)",
+      "  (define-fun div0 ((x!0 Int) (x!1 Int)) Int",
+      "    (ite (and (= x!0 11) (= x!1 8)) 1",
+      "      0))",
+      "  (define-fun mod0 ((x!0 Int) (x!1 Int)) Int",
+      "    (ite (and (= x!0 11) (= x!1 8)) 3",
+      "      0))",
+      ")",
+    ]);
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(assert (= (div x y) 3))",
+        "(assert (> x 10))",
+        "(check-sat-using (then purify-arith smt))",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      "(",
+      "  (define-fun x () Int",
+      "    12)",
+      "  (define-fun y () Int",
+      "    4)",
+      "  (define-fun div0 ((x!0 Int) (x!1 Int)) Int",
+      "    (ite (and (= x!0 12) (= x!1 4)) 3",
+      "      0))",
+      "  (define-fun mod0 ((x!0 Int) (x!1 Int)) Int",
+      "    0)",
+      ")",
+    ]);
+  });
 });

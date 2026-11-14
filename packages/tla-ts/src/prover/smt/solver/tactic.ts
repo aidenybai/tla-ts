@@ -6,7 +6,16 @@ import {
   SmtTacticError,
   SmtUnsupportedError,
 } from "../../../errors";
-import { type AstManager, KIND_APP, OP_ITE, SORT_BOOL } from "./ast";
+import {
+  type AstManager,
+  KIND_APP,
+  OP_DIV0,
+  OP_IDIV0,
+  OP_ITE,
+  OP_MOD0,
+  OP_POWER0,
+  SORT_BOOL,
+} from "./ast";
 import { createQfufbvAckrTactic, runAckermannizeBv } from "./ackermannize-bv-tactic";
 import { AssertedFormulas } from "./asserted-formulas";
 import { createAigTactic } from "./aig-tactic";
@@ -1867,6 +1876,9 @@ interface TacticCheck {
   core: Dependency | undefined;
 }
 
+// The port's declarations of division by zero leave out their domain; Z3's have two arguments.
+const DIVISION_BY_ZERO_DECLS = new Set([OP_DIV0, OP_IDIV0, OP_MOD0, OP_POWER0]);
+
 // A constant of an uninterpreted sort the model lacks puts its value in that sort's universe.
 const applyDefinitions = (definitions: Definition[], model: ProtoModel) => {
   const manager = model.manager;
@@ -1880,7 +1892,9 @@ const applyDefinitions = (definitions: Definition[], model: ProtoModel) => {
       continue;
     }
     const value = evaluator.rewrite(definition.def);
-    const arity = manager.funcDecls[definition.decl].domain.length;
+    const arity = DIVISION_BY_ZERO_DECLS.has(definition.decl)
+      ? 2
+      : manager.funcDecls[definition.decl].domain.length;
     if (arity > 0) {
       const oldInterp = model.funcInterps.get(definition.decl);
       const isChanged = oldInterp?.elseExpr !== value;
