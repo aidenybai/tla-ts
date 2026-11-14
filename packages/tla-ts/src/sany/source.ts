@@ -10,7 +10,6 @@ export interface SourceFile {
   source: string;
   tokens: Token[];
   lineOffsets: number[];
-  tokenIndexes: Map<string, number>;
 }
 
 const OPENERS = new Map([
@@ -20,8 +19,6 @@ const OPENERS = new Map([
   ["<<", ">>"],
 ]);
 
-const getPositionKey = (line: number, column: number) => `${line}:${column}`;
-
 export const createSourceFile = (name: string, source: string): SourceFile => {
   const tokens = tokenize(source)
     .filter((token) => token.kind !== "End")
@@ -30,15 +27,7 @@ export const createSourceFile = (name: string, source: string): SourceFile => {
   for (let index = 0; index < source.length; index++) {
     if (source[index] === "\n") lineOffsets.push(index + 1);
   }
-  return {
-    name,
-    source,
-    tokens,
-    lineOffsets,
-    tokenIndexes: new Map(
-      tokens.map((token, index) => [getPositionKey(token.line, token.column), index]),
-    ),
-  };
+  return { name, source, tokens, lineOffsets };
 };
 
 export const isToken = (file: SourceFile, index: number, text: string) =>
@@ -62,8 +51,8 @@ const countTokensBefore = (file: SourceFile, position: SourceLocation, isAtCount
   return low;
 };
 
+// Tokens are in source order at distinct positions, so this finds the token at a position too.
 export const getTokenIndex = (file: SourceFile, position: SourceLocation) =>
-  file.tokenIndexes.get(getPositionKey(position.line, position.column)) ??
   Math.min(countTokensBefore(file, position, false), file.tokens.length - 1);
 
 const getEndTokenIndex = (file: SourceFile, position: SourceLocation) =>
