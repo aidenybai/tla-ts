@@ -809,6 +809,33 @@ describe("top-level statements", () => {
     expect((await checkModel(getSource("1,9,"))).failure?.message).toContain("caught");
   });
 
+  it("make the objects of a catch's pattern's defaults, as a declaration's pattern does", async () => {
+    const getSource = (expected: string) => `
+      const log: string[] = [];
+      try {
+        throw { w: { x: 1, z: 7 } };
+        // @ts-ignore
+      } catch ({ w: { x, z } = { x: 4, z: 6 } }) {
+        log.push(x + ":" + z);
+      }
+      try {
+        throw {};
+        // @ts-ignore
+      } catch ({ w: { x, z } = { x: 4, z: 6 } }) {
+        log.push(x + ":" + z);
+      }
+      try {
+        throw [];
+        // @ts-ignore
+      } catch ([{ y } = { y: 5 }]) {
+        log.push("y" + y);
+      }
+      if (log.join() !== "${expected}") throw new Error(log.join());
+    `;
+    expect((await checkModel(getSource("1:7,4:6,y5"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("1:7,1:7,y5"))).failure?.message).toContain("1:7,4:6,y5");
+  });
+
   it("stop the check at a catch's array pattern over a thrown object", async () => {
     const result = await checkModel(`
       const box = { size: 1 };

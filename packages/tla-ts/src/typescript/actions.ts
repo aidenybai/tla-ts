@@ -13089,42 +13089,52 @@ const translateTry = (
   };
   const catchClause = statement.catchClause;
   const bodyFrame = statement.finallyBlock === undefined ? outer : guardYields(outer);
-  const runCatch = (clause: ts.CatchClause, caught: Path, value: Expression) => {
+  const runCatch = (clause: ts.CatchClause, catching: Path, value: Expression) => {
     const declaration = clause.variableDeclaration;
-    const bound =
-      declaration === undefined
-        ? { definitions: [], scope: caught.scope }
-        : bindPattern(declaration.name, value, caught.scope, context);
-    // A catch's parameter is a local binding, which the block may assign as it does a let.
-    const parameter =
-      declaration !== undefined && ts.isIdentifier(declaration.name)
-        ? getSymbol(declaration.name, context.checker)
-        : undefined;
-    return letIn(
-      bound.definitions,
-      throwOnDestructured(
-        bound.scope,
-        caught,
-        context,
-        bodyFrame,
-        forceHeap(
-          caught.scope,
-          bound.scope,
-          translateStatements(
-            clause.block.statements,
-            {
-              ...caught,
-              scope: { ...bound.scope, destructured: undefined },
-              mutable:
-                parameter === undefined ? caught.mutable : new Set([...caught.mutable, parameter]),
-            },
+    // A catch's pattern makes the objects of its defaults first, as a declaration's does.
+    return allocateAll(
+      declaration === undefined ? [] : getAllocated(declaration, context),
+      catching,
+      context,
+      (caught) => {
+        const bound =
+          declaration === undefined
+            ? { definitions: [], scope: caught.scope }
+            : bindPattern(declaration.name, value, caught.scope, context);
+        // A catch's parameter is a local binding, which the block may assign as it does a let.
+        const parameter =
+          declaration !== undefined && ts.isIdentifier(declaration.name)
+            ? getSymbol(declaration.name, context.checker)
+            : undefined;
+        return letIn(
+          bound.definitions,
+          throwOnDestructured(
+            bound.scope,
+            caught,
             context,
             bodyFrame,
+            forceHeap(
+              caught.scope,
+              bound.scope,
+              translateStatements(
+                clause.block.statements,
+                {
+                  ...caught,
+                  scope: { ...bound.scope, destructured: undefined },
+                  mutable:
+                    parameter === undefined
+                      ? caught.mutable
+                      : new Set([...caught.mutable, parameter]),
+                },
+                context,
+                bodyFrame,
+              ),
+              leaf(boolean(false)),
+              context,
+            ),
           ),
-          leaf(boolean(false)),
-          context,
-        ),
-      ),
+        );
+      },
     );
   };
   const handle = (inner: Path, thrown: Thrown) => {
