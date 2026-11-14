@@ -1,9 +1,17 @@
 // Ported from Z3 (src/sat/smt/pb_solver.h, src/sat/smt/pb_solver.cpp,
 // src/sat/smt/pb_internalize.cpp), MIT license, see z3-license.txt.
 import { SmtTacticError } from "../../../../errors";
-import { type AstManager, OP_AT_LEAST_K, OP_AT_MOST_K, OP_PB_EQ, OP_PB_GE, OP_PB_LE } from "../ast";
+import {
+  type AstManager,
+  OP_AT_LEAST_K,
+  OP_AT_MOST_K,
+  OP_PB_EQ,
+  OP_PB_GE,
+  OP_PB_LE,
+  SORT_BOOL,
+} from "../ast";
 import { L_FALSE, L_TRUE, L_UNDEF } from "../lbool";
-import { getPbCoeff, getPbK, hasUnitCoefficients } from "../pb-rewriter";
+import { getPbCoeff, getPbK, hasUnitCoefficients, mkPbGe } from "../pb-rewriter";
 import { Rational } from "../rational";
 import { NULL_LITERAL } from "./clause";
 import { Card, type Constraint, type ConstraintHost, Pbc } from "./pb-constraint";
@@ -1321,6 +1329,33 @@ export class PbSolver implements SatExtension, ConstraintHost {
       mutexes.push(mutex);
     }
     if (isChanged) lits.splice(0, lits.length, ...members);
+  }
+
+  toFormulas(lit2expr: (lit: number) => number, formulas: number[]) {
+    const manager = this.manager;
+    for (const constraint of this.constraints) {
+      const args = constraint.lits.map(lit2expr);
+      const formula =
+        constraint instanceof Pbc
+          ? mkPbGe(
+              manager,
+              constraint.coeffs.map((coeff) => Rational.fromNumber(coeff)),
+              args,
+              Rational.fromNumber(constraint.k),
+            )
+          : manager.mkApp(
+              manager.mkPbDecl(
+                OP_AT_LEAST_K,
+                [Rational.fromNumber(constraint.k)],
+                args.map(() => SORT_BOOL),
+              ),
+              args,
+              SORT_BOOL,
+            );
+      formulas.push(
+        constraint.lit === NULL_LITERAL ? formula : manager.mkEq(lit2expr(constraint.lit), formula),
+      );
+    }
   }
 
   private active2card() {

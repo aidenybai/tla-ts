@@ -164,5 +164,8 @@ export const sat2goal = (
     checkpoint();
     goal.assert(manager.mkOr(arena.getLits(clause).map(getExpr)));
   }
+  const formulas: number[] = [];
+  solver.ext?.toFormulas(getExpr, formulas);
+  for (const formula of formulas) goal.assert(formula);
   goal.addDefinitions(converter.entries);
 };

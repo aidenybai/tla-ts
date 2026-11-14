@@ -68,6 +68,7 @@ export interface SatExtension {
   flushRoots(): void;
   initUseList(useVars: Set<number>): void;
   findMutexes(lits: number[], mutexes: number[][]): void;
+  toFormulas(lit2expr: (lit: number) => number, formulas: number[]): void;
 }
 
 const UINT_MAX = 4294967295;

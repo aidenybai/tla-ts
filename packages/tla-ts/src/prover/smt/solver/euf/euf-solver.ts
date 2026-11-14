@@ -919,6 +919,13 @@ export class EufSolver implements SatExtension {
 
   findMutexes() {}
 
+  // Every theory solver but pb's returns false from to_formulas, which ends the walk.
+  toFormulas(_lit2expr: (lit: number) => number, formulas: number[]) {
+    if (this.solvers.length > 0) return;
+    for (const node of this.egraph.nodes)
+      if (node.root !== node) formulas.push(this.manager.mkEq(node.owner, node.root.owner));
+  }
+
   saveModel(model: ProtoModel | null) {
     model?.incRef();
     this.qmodel?.decRef();
