@@ -6855,13 +6855,14 @@ const getLoopTarget = (node: ts.Node, context: Context) => {
   const isUnordered = method === "forEach" && isOrderFreeForEach(node, receiver, context);
   const callbackArguments = isCall ? node.arguments.slice(1) : node.arguments;
   // toSorted without a comparator reads an array-like object's elements as a loop where a getter
-  // may answer its length or an element.
+  // may answer its length or an element, or its length may be an object that it converts.
   const isSortedCopy =
     method === "toSorted" &&
     isArrayLike &&
     callbackArguments.length === 0 &&
     (getElementGetters(receiver, context) !== undefined ||
-      getDefinedGetters(receiver, "length", context).length > 0);
+      getDefinedGetters(receiver, "length", context).length > 0 ||
+      isObjectLength(receiver, context));
   return (LOOP_METHODS.has(method) ||
     UNCALLED_METHODS.has(method) ||
     isSortedCopy ||

@@ -5405,6 +5405,31 @@ describe("errors", () => {
     });
   });
 
+  describe("sorts a copy of an array-like object whose length is an object", () => {
+    const getSource = (expected: string) => `
+      let conversions = 0;
+      const like: { [key: string]: unknown } = {
+        0: 4,
+        1: 0,
+        2: 1,
+        length: { valueOf() { conversions++; return 2; } },
+      };
+      const sorted = Array.prototype.toSorted.call(like) as unknown[];
+      const seen = [sorted.join(), conversions];
+      if (seen.join(";") !== "${expected}") throw new Error(seen.join(";"));
+    `;
+
+    it("converts the length once before it reads the elements", async () => {
+      const result = await checkModel(getSource("0,4;1"));
+      expect(result.failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const result = await checkModel(getSource("0,1,4;1"));
+      expect(result.failure?.message).toContain("0,4;1");
+    });
+  });
+
   describe("runs a getter loop before a const that another object's getter reads", () => {
     const getSource = (expected: string) => `
       const like = { get 0() { return "b"; }, length: 1 };
