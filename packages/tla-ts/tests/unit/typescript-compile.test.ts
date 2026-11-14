@@ -8562,6 +8562,25 @@ describe("errors", () => {
     });
   });
 
+  describe("reads an array's prototype through a value of type any", () => {
+    const getSource = (expected: string) => `
+      const box = { size: 0 };
+      const list: any = [1, 2];
+      const read = [typeof list.join, list.length, list[1]].join();
+      if (read !== "${expected}" || box.size !== 0) throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("function,2,2"))).failure).toBeUndefined();
+    });
+
+    it("rejects a join that the array lacks", async () => {
+      expect((await checkModel(getSource("undefined,2,2"))).failure?.message).toContain(
+        "function,2,2",
+      );
+    });
+  });
+
   describe("tells typeof a name that a closure assigns", () => {
     const getSource = (expected: string) => `
       const box = { size: 0 };

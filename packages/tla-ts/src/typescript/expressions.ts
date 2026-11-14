@@ -2462,6 +2462,8 @@ const translatePropertyAccess = (
     getKind(receiver, context) !== "object" &&
     (context.checker.getTypeAtLocation(receiver).flags & ts.TypeFlags.Any) !== 0
   ) {
+    // A value of type any may be an array, which reads its other properties from Array.prototype.
+    context.builtIns.add("Array.prototype");
     return useJavaScript(
       "GetAny",
       [getHeap(scope, node, context), translateExpression(receiver, scope, context), string(name)],
@@ -2790,6 +2792,7 @@ const translateElementRead = (
     context.heap !== undefined &&
     (context.checker.getTypeAtLocation(node.expression).flags & ts.TypeFlags.Any) !== 0
   ) {
+    context.builtIns.add("Array.prototype");
     return useJavaScript(
       "GetAny",
       [
