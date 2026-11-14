@@ -133,7 +133,7 @@ class ConsequenceFinder {
     solver.initSearch();
     solver.propagate(false);
     if (solver.isInconsistent) return L_FALSE;
-    solver.initAssumptions(asms.length > 0 ? asms : [2 * solver.mkVar(true, false)]);
+    solver.initAssumptions(asms.length > 0 ? asms : [2 * solver.mkVar(true)]);
     solver.propagate(false);
     if (solver.checkInconsistent()) return L_FALSE;
     this.extractFixedConsequences(unfixedLits, assumptions, unfixedVars);

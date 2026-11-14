@@ -6,7 +6,7 @@ import { RandomGen } from "../random-gen";
 import type { ResourceLimit } from "../rlimit";
 import { AsymmBranch } from "./asymm-branch";
 import { Cleaner } from "./cleaner";
-import { ClauseArena, NULL_LITERAL } from "./clause";
+import { ClauseArena, NULL_LITERAL, UINT_MAX } from "./clause";
 import {
   GC_DYN_PSM,
   GC_GLUE,
@@ -71,7 +71,6 @@ export interface SatExtension {
   toFormulas(lit2expr: (lit: number) => number, formulas: number[]): void;
 }
 
-const UINT_MAX = 4294967295;
 const RANDOM_MAX_VALUE = 0x7fff;
 
 const S_SAT = 0;
@@ -125,7 +124,7 @@ const sortClauses = (clauses: number[], isLess: (first: number, second: number) 
 
 export class Solver {
   config: SatConfig;
-  rand = new RandomGen(0);
+  rand: RandomGen;
   arena = new ClauseArena();
   cleaner: Cleaner;
   mc = new ModelConverter();
@@ -157,7 +156,6 @@ export class Solver {
   private varCount = 0;
   justVal: number[] = [];
   justKind: number[] = [];
-  decision: boolean[] = [];
   mark: boolean[] = [];
   litMark: boolean[] = [];
   eliminated: boolean[] = [];
@@ -217,7 +215,7 @@ export class Solver {
   isSimplifyEnabled = true;
   isRestartEnabled = true;
   lemma: number[] = [];
-  private incremental = false;
+  private incremental: boolean;
   private assumptions: number[] = [];
   private assumptionSet = new Set<number>();
   readonly userScopeLiterals: number[] = [];
@@ -241,7 +239,7 @@ export class Solver {
     this.asymmBranch = new AsymmBranch(this, params);
     this.probing = new Probing(this, params);
     this.updateParams();
-    this.mkVar(false, false);
+    this.mkVar(false);
   }
 
   private updateParams() {
@@ -334,7 +332,7 @@ export class Solver {
     }
   }
 
-  mkVar(isExternal: boolean, isDecision: boolean) {
+  mkVar(isExternal: boolean) {
     this.isModelCurrent = false;
     const boolVar = this.varCount++;
     this.activeVars.push(boolVar);
@@ -350,7 +348,6 @@ export class Solver {
     this.justLevel[boolVar] = UINT_MAX;
     this.justVal.push(0);
     this.justKind.push(JUSTIFICATION_NONE);
-    this.decision.push(isDecision);
     this.eliminated.push(false);
     this.external.push(isExternal);
     this.varScope.push(this.scopeLvl);
@@ -402,10 +399,7 @@ export class Solver {
   }
 
   mkClauseCore(lits: number[], isRedundant: boolean, isTheory = false): number {
-    if (!isRedundant || isTheory) {
-      if (!this.simplifyClause(lits)) return -1;
-      if (!this.isSearching) this.mc.addClause(lits);
-    }
+    if ((!isRedundant || isTheory) && !this.simplifyClause(lits)) return -1;
     switch (lits.length) {
       case 0:
         this.setConflict();
@@ -723,7 +717,7 @@ export class Solver {
     this.trail.push(lit);
   }
 
-  propagateCore(isUpdating: boolean) {
+  propagate(isUpdating: boolean) {
     if (this.isExtPropagating()) this.ext?.unitPropagate?.();
     while (this.qhead < this.trail.length && !this.isInconsistent) {
       do {
@@ -736,10 +730,6 @@ export class Solver {
       if (this.isExtPropagating()) this.ext?.unitPropagate?.();
     }
     return !this.isInconsistent;
-  }
-
-  propagate(isUpdating: boolean) {
-    return this.propagateCore(isUpdating);
   }
 
   private propagateClause(clause: number, isUpdating: boolean, assignLevel: number, first: number) {
@@ -1840,7 +1830,7 @@ export class Solver {
   // variables, the scope variable is the last one.
   userPush() {
     this.popToBaseLevel();
-    this.userScopeLiterals.push(2 * this.mkVar(true, false));
+    this.userScopeLiterals.push(2 * this.mkVar(true));
     this.ext?.userPush?.();
   }
 
@@ -1915,7 +1905,6 @@ export class Solver {
     for (const values of [
       this.justVal,
       this.justKind,
-      this.decision,
       this.eliminated,
       this.external,
       this.varScope,

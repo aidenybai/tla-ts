@@ -66,6 +66,13 @@ export class WatchList {
       : this.data[2 * index + 1] & ~4;
   }
 
+  numNonlearnedBin() {
+    let count = 0;
+    for (let index = 0; index < this.size; index++)
+      if (this.isBinary(index) && !this.isLearned(index)) count++;
+    return count;
+  }
+
   getClause(index: number) {
     return this.data[2 * index];
   }

@@ -3,10 +3,9 @@
 import { L_FALSE, L_TRUE, L_UNDEF } from "../lbool";
 import { RandomGen } from "../random-gen";
 import { Big } from "./big";
+import { UINT_MAX } from "./clause";
 import { getBool, getNumber, type SatParams } from "./config";
 import type { Solver } from "./solver";
-
-const UINT_MAX = 4294967295;
 
 export class AsymmBranch {
   private counter = 0;

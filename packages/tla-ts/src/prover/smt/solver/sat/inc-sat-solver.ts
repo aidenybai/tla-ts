@@ -11,7 +11,7 @@ import { convertModel, mkIncSatEufPreprocess, mkIncSatPreprocess } from "../tact
 import type { SatParams } from "./config";
 import { Goal2Sat } from "./goal2sat";
 import { getConsequences } from "./consequences";
-import { sat2goal } from "./sat2goal";
+import { isLiteral, sat2goal } from "./sat2goal";
 import { Solver } from "./solver";
 
 const BIT_BLAST_PARAMS = {
@@ -68,18 +68,10 @@ export class IncSatSolver {
     this.internalized = new RefVector(manager);
   }
 
-  private isLiteral(expr: number) {
-    const manager = this.manager;
-    return (
-      manager.isUninterpretedConst(expr) ||
-      (manager.isNot(expr) && manager.isUninterpretedConst(manager.getArg(expr, 0)))
-    );
-  }
-
   private isClause(expr: number): boolean {
     const manager = this.manager;
     if (manager.depths[expr] > 4) return false;
-    if (this.isLiteral(expr)) return true;
+    if (isLiteral(manager, expr)) return true;
     if (!manager.isApp(expr)) return false;
     const op = manager.getOp(expr);
     const isConnective =
@@ -199,7 +191,7 @@ export class IncSatSolver {
     const literals: number[] = [];
     const asm2fml = new Map<number, number>();
     for (const assumption of assumptions) {
-      if (this.isLiteral(assumption)) {
+      if (isLiteral(this.manager, assumption)) {
         literals.push(assumption);
         asm2fml.set(assumption, assumption);
         continue;
@@ -254,7 +246,7 @@ export class IncSatSolver {
     const consequences: number[] = [];
     const internalized = this.internalizeFormulas();
     if (internalized !== L_TRUE) return { result: internalized, consequences };
-    if (!assumptions.every((assumption) => this.isLiteral(assumption)))
+    if (!assumptions.every((assumption) => isLiteral(this.manager, assumption)))
       throw new SmtUnsupportedError("get-consequences assumptions that are not literals");
     this.internalizeAssumptions(assumptions);
     const found = getConsequences(

@@ -14,7 +14,6 @@ export interface McEntry {
   boolVar: number;
   kind: number;
   clauses: number[];
-  clause: number[];
   elimStacks: (number[] | undefined)[];
 }
 
@@ -26,7 +25,6 @@ const getLitValue = (lit: number, model: Int8Array) => {
 export class ModelConverter {
   entries: McEntry[] = [];
   exposedLim = 0;
-  private mark: boolean[] = [];
   elimStack: number[] = [];
 
   private processStack(model: Int8Array, clause: number[], stack: number[]) {
@@ -74,7 +72,7 @@ export class ModelConverter {
   }
 
   mk(kind: number, boolVar: number) {
-    const entry: McEntry = { boolVar, kind, clauses: [], clause: [], elimStacks: [] };
+    const entry: McEntry = { boolVar, kind, clauses: [], elimStacks: [] };
     this.entries.push(entry);
     return entry;
   }
@@ -89,10 +87,6 @@ export class ModelConverter {
     this.elimStack = [];
   }
 
-  setClause(entry: McEntry, lits: number[]) {
-    entry.clause.push(...lits);
-  }
-
   insert(entry: McEntry, lits: number[]) {
     entry.clauses.push(...lits, NULL_LITERAL);
     this.addElimStack(entry);
@@ -103,14 +97,6 @@ export class ModelConverter {
     this.exposedLim += source.exposedLim;
     source.entries = [];
     source.exposedLim = 0;
-  }
-
-  addClause(lits: number[]) {
-    if (this.entries.length === 0) return;
-    for (const lit of lits) {
-      while (this.mark.length <= lit >> 1) this.mark.push(false);
-      this.mark[lit >> 1] = true;
-    }
   }
 
   private swap(boolVar: number, size: number, clause: number[]) {
