@@ -123,6 +123,7 @@ import {
   getSuperCall,
   isNullBased,
   rejectDeclaredCall,
+  getAssignedTarget,
 } from "./context";
 import { TlaTypeScriptError } from "../errors";
 import { UNSETTLED_AWAIT_WARNING } from "../exit-codes";
@@ -970,6 +971,15 @@ const getDefaultedTarget = (node: ts.Expression) =>
     ? { target: node.left, initializer: node.right }
     : { target: node, initializer: undefined };
 
+// An array pattern that an assignment or a for-of writes, or one nested in it, whose elements
+// the pattern writes rather than reads.
+const isPatternTarget = (node: ts.Node): boolean =>
+  ts.isArrayLiteralExpression(node) &&
+  (getAssignedTarget(node.parent) === node ||
+    (ts.isSpreadElement(node.parent)
+      ? isPatternTarget(node.parent.parent)
+      : isPatternTarget(node.parent)));
+
 const assignPattern = <Result>(
   target: ts.Expression,
   source: ts.Expression | undefined,
@@ -1142,7 +1152,8 @@ const assignPattern = <Result>(
               !(ts.isVariableDeclaration(inner.parent) && inner.parent.name === inner) &&
               !(
                 ts.isSpreadElement(inner.parent) && ts.isArrayLiteralExpression(inner.parent.parent)
-              ),
+              ) &&
+              !isPatternTarget(inner.parent),
           ).length > 0;
         if (isSeen) {
           throw new TlaTypeScriptError(

@@ -14315,6 +14315,51 @@ describe("errors", () => {
     ).toThrow("tla-ts can't destructure this object through its iterator");
   });
 
+  describe("assigns a name as an element and as the rest of one pattern", () => {
+    const getSource = (expected: string) => `
+      "use strict";
+      const log = { text: "", count: 0 };
+      const iterator = {
+        next() {
+          log.count += 1;
+          log.text += "next";
+          if (log.count === 2) throw new RangeError("next");
+          return { done: false, value: log.count };
+        },
+        return() {
+          log.text += "return";
+          return { done: true, value: undefined };
+        },
+      };
+      const iterable: { [key: string | symbol]: unknown } = {
+        [Symbol.iterator]() {
+          return iterator;
+        },
+      };
+      let x: unknown;
+      const run = () => {
+        // @ts-ignore
+        [x, ...x] = iterable;
+      };
+      try {
+        run();
+      } catch (error) {
+        log.text += error instanceof RangeError ? ":range" : ":other";
+      }
+      if (log.text !== "${expected}") throw new Error(log.text);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("nextnext:range"))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkModel(getSource("nextnextreturn:range"))).failure?.message).toContain(
+        "nextnext:range",
+      );
+    });
+  });
+
   describe("writes a property that a rest element takes from an iterator", () => {
     const getSource = (expected: string) => `
       "use strict";
