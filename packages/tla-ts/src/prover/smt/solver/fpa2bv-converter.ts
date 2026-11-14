@@ -105,14 +105,14 @@ export class Fpa2BvConverter {
       manager.decDeclRef(entry[0]);
       manager.decRef(entry[1]);
     }
+    for (const entry of this.uf2BvUf) {
+      manager.decDeclRef(entry[0]);
+      manager.decDeclRef(entry[1]);
+    }
     for (const entry of this.minMaxUfs) {
       manager.decDeclRef(entry[0]);
       manager.decRef(entry[1][0]);
       manager.decRef(entry[1][1]);
-    }
-    for (const entry of this.uf2BvUf) {
-      manager.decDeclRef(entry[0]);
-      manager.decDeclRef(entry[1]);
     }
     this.constants.clear();
     this.rmConstants.clear();
