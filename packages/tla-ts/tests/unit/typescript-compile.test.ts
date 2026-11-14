@@ -1580,6 +1580,53 @@ describe("values", () => {
     });
   });
 
+  describe("fails a global regexp's match from a lastIndex past 2^31", () => {
+    const getSource = (expected: string) => `
+      const box = { size: 0 };
+      const global = /./g;
+      const plain = /./;
+      const read: string[] = [];
+      const indices = [1 / 0, 2 ** 32 + 1, 2 ** 53 - 1, 1.7976931348623157e308, -(2 ** 40)];
+      for (const lastIndex of indices) {
+        global.lastIndex = lastIndex;
+        plain.lastIndex = lastIndex;
+        const found = global.exec("test");
+        const kept = plain.exec("test");
+        read.push(
+          \`\${found === null ? "null" : found[0]}:\${global.lastIndex}:\${kept === null ? "null" : kept[0]}:\${plain.lastIndex}\`,
+        );
+      }
+      box.size = 1;
+      if (read.join() !== "${expected}") throw new Error(read.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (
+          await checkModel(
+            getSource(
+              "null:0:t:Infinity,null:0:t:4294967297,null:0:t:9007199254740991,null:0:t:1.7976931348623157e+308,t:1:t:-1099511627776",
+            ),
+          )
+        ).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects a match from 2^32 + 1 as found", async () => {
+      expect(
+        (
+          await checkModel(
+            getSource(
+              "null:0:t:Infinity,t:1:t:4294967297,null:0:t:9007199254740991,null:0:t:1.7976931348623157e+308,t:1:t:-1099511627776",
+            ),
+          )
+        ).failure?.message,
+      ).toContain(
+        "null:0:t:Infinity,null:0:t:4294967297,null:0:t:9007199254740991,null:0:t:1.7976931348623157e+308,t:1:t:-1099511627776",
+      );
+    });
+  });
+
   describe("unshifts onto array-like objects whose length is near 2^53 or Infinity", () => {
     const getSource = (expected: string) => `
       const like: { [key: string]: unknown } = {

@@ -2117,6 +2117,13 @@ NextElementPosition(heap, ref, position, length, isReversed) ==
             [] isReversed -> CHOOSE other \\in later : \\A more \\in later : more <= other
             [] OTHER -> CHOOSE other \\in later : \\A more \\in later : other <= more
 
+\\* Whether a length is Infinity or an integer past 2^31, which ToLength clamps to 2^53 - 1, and
+\\* which lies past every index that TLC's integers hold.
+LOCAL IsLong(length) ==
+  \\/ length = Infinity
+  \\/ IsWide(length) /\\ ~IsNegative(length)
+  \\/ IsDouble(length) /\\ ~IsNegative(length) /\\ length[Double][2] >= 0
+
 \\* The integer of a key of decimal digits from 10 on, below 2^53.
 RECURSIVE DecimalOf(_)
 DecimalOf(text) ==
@@ -2146,10 +2153,7 @@ LongKeys(heap, ref) ==
 \\* reads it even when no element is present.
 PresentElements(heap, ref) ==
   LET raw == Get(heap, ref, "length")
-      \\* A length of Infinity, or an integer past 2^31, lies above every index that an object holds.
-      isBeyond == \\/ raw = Infinity
-                  \\/ IsWide(raw) /\\ ~IsNegative(raw)
-                  \\/ IsDouble(raw) /\\ ~IsNegative(raw) /\\ raw[Double][2] >= 0
+      isBeyond == IsLong(raw)
       length == IF isBeyond THEN raw ELSE ToLength(raw)
       present == {position \\in {ToIndex(key) : key \\in IndexKeys(heap, ref)} :
                     isBeyond \\/ position < length}
@@ -4374,7 +4378,7 @@ LOCAL SetLastIndex(heap, ref, value) ==
 \\* match it finds from there, or a failure. It reads lastIndex with ToLength whatever the flags.
 LOCAL RegExpRun(heap, ref, regexp, text) ==
   LET read == LastIndexValue(heap, ref)
-      start == IF read = Infinity THEN Len(text) + 1 ELSE ToLength(read)
+      start == IF IsLong(read) THEN Len(text) + 1 ELSE ToLength(read)
       isUpdating == regexp.global \\/ regexp.sticky
       found == CASE ~isUpdating /\\ start = start -> RegExpSearch(regexp, text, 0)
                  [] start > Len(text) -> RegExpFailure
@@ -5233,12 +5237,6 @@ ArrayChangeFrom(heap, ref, method, items, length, first) ==
 
 \\* 2^53 - 1, the greatest length.
 LOCAL MaxLength == Wide :> <<4194303, 2147483647>>
-
-\\* Whether a length is Infinity or an integer past 2^31, which ToLength clamps to 2^53 - 1.
-LOCAL IsLong(length) ==
-  \\/ length = Infinity
-  \\/ IsWide(length) /\\ ~IsNegative(length)
-  \\/ IsDouble(length) /\\ ~IsNegative(length) /\\ length[Double][2] >= 0
 
 LOCAL LongLength(length) ==
   IF IsWide(length) /\\ length[Wide] # <<4194304, 0>> THEN length ELSE MaxLength
