@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vite-plus/test";
+import { parseOcamlFloat } from "../../src/prover/prep/methods";
 import { CLI } from "./cli-harness";
 
 const directories: string[] = [];
@@ -103,5 +104,49 @@ Unexpected operator '
 
 `);
     expect(result.status).toBe(3);
+  });
+});
+
+describe("tlapm reads a float as OCaml's float_of_string does", () => {
+  it("accepts the forms tlapm accepts", () => {
+    expect(
+      ["1_0", " 5", "2.", ".5e1", "+3", "0x10", "0X.8", "-0x1.8p1", "0x1p 1", "1_", "INF"].map(
+        parseOcamlFloat,
+      ),
+    ).toEqual([10, 5, 2, 5, 3, 16, 0.5, -3, 2, 1, Infinity]);
+    expect(parseOcamlFloat("nan(a-b)")).toBeNaN();
+  });
+
+  it("rejects the forms tlapm rejects", () => {
+    expect(
+      [
+        "",
+        "_",
+        "5 ",
+        "0b11",
+        "0o17",
+        "1e",
+        ".",
+        "0x",
+        "0x.p1",
+        "0x1p",
+        "0x1p+ 1",
+        "infinit",
+      ].filter((text) => parseOcamlFloat(text) !== undefined),
+    ).toEqual([]);
+  });
+
+  it("rejects an empty --stretch and one Arg.Float rejects", () => {
+    const directory = writeModule("Empty", "---- MODULE Empty ----\n====\n");
+    ["", "0b11"].forEach((stretch) => {
+      const result = runTlapm(directory, ["--stretch", stretch, "-N", "Empty.tla"]);
+      expect(result.stderr).toBe("Error: option '--stretch' expects a float.\n");
+      expect(result.status).toBe(1);
+    });
+  });
+
+  it("accepts a --stretch with underscores", () => {
+    const directory = writeModule("Empty", "---- MODULE Empty ----\n====\n");
+    expect(runTlapm(directory, ["--stretch", "1_0", "-N", "Empty.tla"]).status).toBe(0);
   });
 });

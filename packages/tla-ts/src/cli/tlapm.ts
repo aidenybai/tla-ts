@@ -15,7 +15,7 @@ import {
 } from "../obligations";
 import { format, renderDoc } from "../obligations/format";
 import { printSequent, type PrinterOptions } from "../obligations/printer";
-import { parseDefaultMethods } from "../prover/prep/methods";
+import { parseDefaultMethods, parseOcamlFloat } from "../prover/prep/methods";
 import {
   encodeProofTheory,
   formatNormalized,
@@ -365,7 +365,7 @@ export const runTlapm = async (args: string[]) => {
     console.error(`Error: option '${nonInteger.name}' expects an integer.`);
     return 1;
   }
-  if (parsed.get("--stretch")?.some((value) => Number.isNaN(Number(value)))) {
+  if (parsed.get("--stretch")?.some((value) => parseOcamlFloat(value) === undefined)) {
     console.error("Error: option '--stretch' expects a float.");
     return 1;
   }
@@ -445,7 +445,7 @@ export const runTlapm = async (args: string[]) => {
     fingerprints: new Map(),
     backends: {
       defaultMethods: methods === undefined ? undefined : parseDefaultMethods(methods),
-      stretch: Number(parsed.get("--stretch")?.[0] ?? 1),
+      stretch: parseOcamlFloat(parsed.get("--stretch")?.[0] ?? "1") ?? 1,
       isFlattened: !parsed.has("--noflatten"),
       smtLogic: debugFlags.has("disable_arithmetic")
         ? "UF"

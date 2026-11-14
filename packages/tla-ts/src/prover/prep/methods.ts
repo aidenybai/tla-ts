@@ -96,6 +96,25 @@ const getProverMethod = (
 const BUDGET_FORMS =
   'a number of seconds (wall-clock timeout), or a deterministic Z3 rlimit budget of the form "rN" (e.g. "r5")';
 
+const HEX_FLOAT =
+  /^[\t-\r ]*[+-]?0x(?=\.?[\da-f])([\da-f]*)\.?([\da-f]*)(?:p([\t-\r ]*[+-]?\d+))?$/i;
+const DECIMAL_FLOAT = /^[\t-\r ]*[+-]?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?$/i;
+const SPECIAL_FLOAT = /^[\t-\r ]*[+-]?(?:(inf(?:inity)?)|nan(?:\([^)]*\))?)$/i;
+
+// OCaml's float_of_string_opt: caml_float_of_string drops underscores, then reads a C99 float.
+export const parseOcamlFloat = (text: string) => {
+  const digits = text.replaceAll("_", "");
+  const sign = digits.trimStart().startsWith("-") ? -1 : 1;
+  const hex = HEX_FLOAT.exec(digits);
+  if (hex) {
+    const mantissa = Number(BigInt(`0x${hex[1]}${hex[2]}`));
+    return mantissa === 0 ? 0 : sign * mantissa * 2 ** (Number(hex[3] ?? 0) - 4 * hex[2].length);
+  }
+  const special = SPECIAL_FLOAT.exec(digits);
+  if (special) return special[1] === undefined ? NaN : sign * Infinity;
+  return DECIMAL_FLOAT.test(digits) ? Number(digits) : undefined;
+};
+
 const getRlimit = (budget: string, locus: Locus | undefined) => {
   const count = Number(budget.slice(1));
   if (!/^[rR]./.test(budget) || !Number.isFinite(count) || count <= 0)
