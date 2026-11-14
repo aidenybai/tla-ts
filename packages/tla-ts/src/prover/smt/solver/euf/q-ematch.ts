@@ -280,11 +280,7 @@ class Eval {
         else todo.push(arg);
       }
       if (args.length !== manager.getNumArgs(term)) continue;
-      const node = ctx.egraph.findCongruent(
-        manager.decls[term],
-        args,
-        args.length === 2 && manager.getOp(term) === OP_EQ,
-      );
+      const node = ctx.egraph.findCongruent(manager.decls[term], args);
       if (node === undefined) return null;
       for (let index = args.length; index-- > 0;) {
         const first = args[index];

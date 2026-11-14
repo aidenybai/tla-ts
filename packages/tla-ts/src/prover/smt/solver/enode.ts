@@ -109,6 +109,12 @@ export class Enode {
     return (this.flags & IS_EQ) !== 0;
   }
 
+  // Deviation from Z3: smt::enode::m_commutative holds for every binary application of a
+  // commutative declaration; the internalizer flags only equalities.
+  get isCommutative() {
+    return (this.flags & IS_EQ) !== 0;
+  }
+
   get isBool() {
     return (this.flags & IS_BOOL) !== 0;
   }

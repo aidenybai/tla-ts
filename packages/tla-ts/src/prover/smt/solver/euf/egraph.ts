@@ -1,6 +1,23 @@
 // Ported from Z3 (src/ast/euf/euf_egraph.h, src/ast/euf/euf_egraph.cpp, src/ast/euf/euf_enode.h,
 // src/ast/euf/euf_enode.cpp, src/ast/euf/euf_justification.h), MIT license, see z3-license.txt.
-import { type AstManager, OP_EQ } from "../ast";
+import {
+  type AstManager,
+  OP_ADD,
+  OP_AND,
+  OP_ARRAY_EXT,
+  OP_ARRAY_MAP,
+  OP_BADD,
+  OP_BAND,
+  OP_BCOMP,
+  OP_BMUL,
+  OP_BOR,
+  OP_BXNOR,
+  OP_BXOR,
+  OP_EQ,
+  OP_MUL,
+  OP_OR,
+  OP_XOR,
+} from "../ast";
 import { CgTable } from "../cg-table";
 import { L_FALSE, L_TRUE, L_UNDEF } from "../lbool";
 
@@ -78,7 +95,7 @@ export class Enode {
     readonly decl: number,
     readonly args: readonly Enode[],
     readonly generation: number,
-    readonly isEq: boolean,
+    readonly isCommutative: boolean,
   ) {}
 
   get numArgs() {
@@ -135,7 +152,7 @@ export class Enode {
   congruent(other: Enode) {
     if (this.decl !== other.decl || this.args.length !== other.args.length) return false;
     if (
-      this.isEq &&
+      this.isCommutative &&
       this.args[0].root === other.args[1].root &&
       this.args[1].root === other.args[0].root
     )
@@ -214,6 +231,32 @@ interface UpdateRecord {
 const TO_MERGE_PLAIN = 0;
 const TO_MERGE_COMM = 1;
 const TO_JUSTIFIED = 2;
+// func_decl_info::is_commutative, which the decl plugins set by family and kind.
+const isCommutativeDecl = (manager: AstManager, decl: number): boolean => {
+  const funcDecl = manager.funcDecls[decl];
+  switch (funcDecl.op) {
+    case OP_EQ:
+    case OP_AND:
+    case OP_OR:
+    case OP_XOR:
+    case OP_ADD:
+    case OP_MUL:
+    case OP_BADD:
+    case OP_BMUL:
+    case OP_BAND:
+    case OP_BOR:
+    case OP_BXOR:
+    case OP_BXNOR:
+    case OP_BCOMP:
+    case OP_ARRAY_EXT:
+      return true;
+    case OP_ARRAY_MAP:
+      return isCommutativeDecl(manager, funcDecl.parameters[0]);
+    default:
+      return false;
+  }
+};
+
 const TO_ADD_LITERAL = 3;
 
 interface ToMerge {
@@ -264,8 +307,12 @@ export class Egraph {
     return this.expr2enode[expr];
   }
 
-  findCongruent(decl: number, args: readonly Enode[], isEq: boolean) {
-    return this.table.findFor(decl, args, isEq);
+  findCongruent(decl: number, args: readonly Enode[]) {
+    return this.table.findFor(
+      decl,
+      args,
+      args.length === 2 && isCommutativeDecl(this.manager, decl),
+    );
   }
 
   enodesOf(decl: number) {
@@ -292,7 +339,7 @@ export class Egraph {
       decl,
       args,
       generation,
-      args.length === 2 && isApp && manager.getOp(expr) === OP_EQ,
+      args.length === 2 && isApp && isCommutativeDecl(manager, decl),
     );
     if (this.isDefaultRelevant) node.isRelevant = true;
     this.nodes.push(node);
@@ -330,7 +377,7 @@ export class Egraph {
   }
 
   private isComm(node: Enode, other: Enode) {
-    return node.isEq && node.args[0].root !== other.args[0].root;
+    return node.isCommutative && node.args[0].root !== other.args[0].root;
   }
 
   private insertTable(node: Enode) {
