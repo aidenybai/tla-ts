@@ -446,8 +446,15 @@ const proveWithBackends = async (
       reason: expanded.message,
       note: `${expanded.message}\nObligation:\n\n`,
     });
-    // Prep.ship: each method still answers from the fingerprints file. A stored failure prints
-    // the obligation normalize_expand left, whose goal is FALSE, when ExpandENABLED is cited.
+    // Prep.ship goes on with the obligation normalize_expand left, whose goal is FALSE: it checks
+    // that for triviality, then each method still answers from the fingerprints file. A stored
+    // failure prints that obligation when ExpandENABLED is cited.
+    const falsified: Sequent = {
+      ...normalizeSequent(expandDefs(obligation.sequent)),
+      active: { kind: "Internal", builtin: "FALSE" },
+    };
+    if (obligation.kind.kind === "Support" && isTrivial(falsified))
+      return { obligation: { ...getObligationBase(obligation), status: "trivial" }, attempts };
     for (const method of methods.provers) {
       const prior = method === methods.provers[0] ? firstPrior : getPrior(method);
       if (prior && isProvedAttempt(prior)) {
@@ -457,12 +464,7 @@ const proveWithBackends = async (
       if (prior && getBudget(prior.method) >= getBudget(method))
         reuse(
           prior,
-          methods.frontends.has("expandenabled")
-            ? `${formatObligation({
-                ...normalizeSequent(expandDefs(obligation.sequent)),
-                active: { kind: "Internal", builtin: "FALSE" },
-              })}\n`
-            : undefined,
+          methods.frontends.has("expandenabled") ? `${formatObligation(falsified)}\n` : undefined,
         );
     }
     return getUnprovedReport(

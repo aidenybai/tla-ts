@@ -448,10 +448,10 @@ const proveModule = async (
       });
       report.warnings.forEach((warning) => printWarning(warning, settings.isToolbox));
       if (!settings.isToolbox) return;
-      if (report.obligation.status === "trivial")
-        return printObligationMessage(obligation, "trivial", ["prover:tlapm", "already:false"]);
       if (obligation.kind.kind === "Error") return printFailedObligation(obligation, "user error");
       report.attempts.forEach((attempt) => printAttempt(obligation, attempt, settings.printing));
+      if (report.obligation.status === "trivial")
+        printObligationMessage(obligation, "trivial", ["prover:tlapm", "already:false"]);
     },
   });
   const theoryPath = `${directory}/${module.name}.thy`;

@@ -364,3 +364,45 @@ THEOREM 4611686018427387904 # 4611686018427387905
     expect(result.status).toBe(0);
   });
 });
+
+describe("tlapm checks the obligation a failed frontend leaves for triviality", () => {
+  it("answers trivial for a supporting fact under an assumption that is FALSE", () => {
+    const directory = writeModule(
+      "Trivial",
+      `---- MODULE Trivial ----
+EXTENDS Naturals, TLAPS
+VARIABLE x
+A == x' = 1
+THEOREM ASSUME FALSE PROVE 1 + 1 = 2
+<1> USE ExpandENABLED
+<1>1. QED BY ENABLED A
+====
+`,
+    );
+    const result = runTlapm(directory, ["--toolbox", "0", "0", "--threads", "1", "Trivial.tla"]);
+    const results = result.stderr.slice(result.stderr.indexOf("@!!type:obligationsnumber"));
+    expect(
+      results.split("\n").filter((line) => /^(@!!(id|status|prover|already):|\[)/.test(line)),
+    ).toEqual([
+      "@!!id:1",
+      "@!!status:failed",
+      "@!!prover:expandenabled",
+      "@!!already:false",
+      "@!!id:2",
+      "@!!status:failed",
+      "@!!prover:expandenabled",
+      "@!!already:false",
+      "@!!id:2",
+      "@!!status:trivial",
+      "@!!prover:tlapm",
+      "@!!already:false",
+      "@!!id:3",
+      "@!!status:trivial",
+      "@!!prover:tlapm",
+      "@!!already:false",
+      "[ERROR]: Could not prove or check:",
+      "[ERROR]: 1/3 obligations failed.",
+    ]);
+    expect(result.status).toBe(0);
+  });
+});
