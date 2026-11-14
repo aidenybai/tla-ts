@@ -6797,14 +6797,24 @@ const getLoopTarget = (node: ts.Node, context: Context) => {
       : undefined;
   }
   const isUnordered = method === "forEach" && isOrderFreeForEach(node, receiver, context);
+  const callbackArguments = isCall ? node.arguments.slice(1) : node.arguments;
+  // toSorted without a comparator reads an array-like object's elements as a loop where a getter
+  // may answer its length or an element.
+  const isSortedCopy =
+    method === "toSorted" &&
+    isArrayLike &&
+    callbackArguments.length === 0 &&
+    (getElementGetters(receiver, context) !== undefined ||
+      getDefinedGetters(receiver, "length", context).length > 0);
   return (LOOP_METHODS.has(method) ||
     UNCALLED_METHODS.has(method) ||
+    isSortedCopy ||
     ((SORT_METHODS.has(method) || method === "flatMap") && !isArrayLike)) &&
     (isArrayLike || isUnordered || getKind(receiver, context) === "sequence")
     ? {
         method,
         receiver,
-        callbackArguments: isCall ? node.arguments.slice(1) : node.arguments,
+        callbackArguments,
         isArrayLike,
         isUnordered,
         isInherited: false,
@@ -6921,7 +6931,7 @@ const getLoopCall = (node: ts.Expression, path: Path, context: Context): LoopCal
   const target = getLoopTarget(node, context);
   if (target === undefined) return undefined;
   const argument = target.callbackArguments.at(0);
-  if (UNCALLED_METHODS.has(target.method)) {
+  if (UNCALLED_METHODS.has(target.method) || (target.method === "toSorted" && target.isArrayLike)) {
     return getLoopGetters(node, context).length > 0 &&
       !target.callbackArguments.some(ts.isSpreadElement)
       ? {
@@ -6985,7 +6995,9 @@ const translateLoopCall = (
     method === "lastIndexOf" ||
     method === "toReversed";
   const isReduce = method.startsWith("reduce");
-  const isSort = SORT_METHODS.has(method);
+  // toSorted copies an array-like object's elements, reading each index, and then sorts the copy.
+  const isSortedCopy = method === "toSorted" && loop.isArrayLike;
+  const isSort = SORT_METHODS.has(method) && !isSortedCopy;
   // toSpliced copies the elements before where it starts and after those it skips, which it doesn't
   // read, and inserts its items between them.
   const isSpliced = method === "toSpliced";
@@ -7202,9 +7214,15 @@ const translateLoopCall = (
                 apply("Len", [kept]),
               ]),
             ])
-          : GATHERING_METHODS.has(method) || isReduce
-            ? kept
-            : getUndefined(context));
+          : isSortedCopy
+            ? useJavaScript(
+                "SortSequence",
+                [kept, ...translateSortArguments(undefined, path.scope, context)],
+                context,
+              )
+            : GATHERING_METHODS.has(method) || isReduce
+              ? kept
+              : getUndefined(context));
   const inner = {
     ...withValues(
       path,
@@ -7314,7 +7332,7 @@ const translateLoopCall = (
   // Reads the element at a position, running a getter that answers it, where the object or a
   // prototype has the index. The find methods read each index, and map keeps a hole, which the
   // array it makes can't hold.
-  const isCopy = method === "toReversed" || method === "with" || isSpliced;
+  const isCopy = method === "toReversed" || method === "with" || isSpliced || isSortedCopy;
   const visit =
     callback !== undefined
       ? runCallback
@@ -7590,7 +7608,7 @@ const translateLoopCall = (
             ? useJavaScript("SortStart", [sequence], context)
             : isHeapMap
               ? tuple([tuple([]), set([])])
-              : GATHERING_METHODS.has(method)
+              : GATHERING_METHODS.has(method) || isSortedCopy
                 ? tuple([])
                 : getUndefined(context),
         )

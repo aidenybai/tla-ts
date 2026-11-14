@@ -5230,6 +5230,33 @@ describe("errors", () => {
     });
   });
 
+  describe("sorts a copy of an array-like object whose getters answer its elements", () => {
+    const getSource = (expected: string) => `
+      const arr = [5, 0, 3];
+      Object.defineProperty(arr, "0", { get() { arr.push(1); return 5; } });
+      const order: number[] = [];
+      const like = {
+        get 0() { order.push(0); return "b"; },
+        1: undefined,
+        get 2() { order.push(2); return "a"; },
+        length: 4,
+      };
+      const sorted = Array.prototype.toSorted.call(like) as unknown[];
+      const seen = [sorted.join(), sorted.length, order.join(), arr.toSorted().join(), arr.length];
+      if (seen.join(";") !== "${expected}") throw new Error(seen.join(";"));
+    `;
+
+    it("reads each index below the length that it read first", async () => {
+      const result = await checkModel(getSource("a,b,,;4;0,2;0,3,5;4"));
+      expect(result.failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const result = await checkModel(getSource("a,b,,;4;0,2;0,1,3,5;4"));
+      expect(result.failure?.message).toContain("a,b,,;4;0,2;0,3,5;4");
+    });
+  });
+
   describe("skips to the next element after a hole where a callback runs as statements", () => {
     const getSource = (expected: string) => `
       const visited: number[] = [];
