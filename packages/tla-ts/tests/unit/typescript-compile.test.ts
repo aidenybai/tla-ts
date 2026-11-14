@@ -13059,6 +13059,30 @@ describe("errors", () => {
     expect(wrong.failure?.message).toContain("iterator");
   });
 
+  it("reads the properties of Intl and of its constructors and prototypes", async () => {
+    const getSource = (expected: string) => `
+      const holder: { [key: string]: unknown } = {};
+      const length = Object.getOwnPropertyDescriptor(Intl.NumberFormat, "length");
+      const result = [
+        Intl.Collator.length,
+        Intl.Collator.name,
+        typeof Intl,
+        Intl.Collator.prototype.constructor === Intl.Collator,
+        Object.prototype.toString.call(Intl),
+        Object.getPrototypeOf(Intl.Locale.prototype) === Object.prototype,
+        length?.writable,
+      ].join(",");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    expect(
+      (await checkModel(getSource("0,Collator,object,true,[object Intl],true,false"))).failure,
+    ).toBeUndefined();
+    expect(
+      (await checkModel(getSource("0,Collator,object,true,[object Object],true,false"))).failure
+        ?.message,
+    ).toContain("[object Intl]");
+  });
+
   it("reads the prototypes of the iterators that strings, maps, sets, and regexps make", async () => {
     const result = await checkModel(`
       const holder: { [key: string]: unknown } = {};

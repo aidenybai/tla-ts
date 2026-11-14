@@ -18,6 +18,7 @@ const GLOBALS = [
   "Math",
   "JSON",
   "Reflect",
+  "Intl",
   "Date",
   "RegExp",
   "Error",
