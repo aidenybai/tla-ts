@@ -4839,21 +4839,44 @@ describe("values", () => {
       expect((await checkModel(getSource("0a"))).failure?.message).toContain("0a,1b");
     });
 
-    it("stops where the loop changes the array", () => {
-      expect(() =>
-        compile(`
-          const names: string[] = [];
-          names[0] = "a";
-          names[1] = "b";
-          const drop = () => {
-            names.pop();
-          };
-          for (const key in names) {
-            drop();
-          }
-        `),
-      ).toThrow("Don't change an array while a for-of iterates it");
+    it("skips the indices that the loop takes out of the array", async () => {
+      const getSource = (expected: string) => `
+        const names: string[] = [];
+        names[0] = "a";
+        names[1] = "b";
+        const drop = () => {
+          names.pop();
+        };
+        let seen = "";
+        for (const key in names) {
+          drop();
+          seen += key;
+        }
+        if (seen !== "${expected}") throw new Error(seen);
+      `;
+      expect((await checkModel(getSource("0"))).failure).toBeUndefined();
+      expect((await checkModel(getSource("01"))).failure?.message).toContain('"0"');
     });
+  });
+
+  it("skips the indices that a for-in's body takes out of a list or an array", async () => {
+    const getSource = (expected: string) => `
+      const holey = [0, 1, , 3];
+      const list = [0, 1, 2, 3];
+      let seen = "";
+      for (const key in holey) {
+        if (key === "0") holey.pop();
+        seen += key;
+      }
+      seen += ";";
+      for (const key in list) {
+        if (key === "1") list.splice(0, 2);
+        seen += key;
+      }
+      if (seen !== "${expected}") throw new Error(seen);
+    `;
+    expect((await checkModel(getSource("01;01"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("013;0123"))).failure?.message).toContain("01;01");
   });
 
   it("skips a key that a for-in's body deletes, and not one that it adds", async () => {

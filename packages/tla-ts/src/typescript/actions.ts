@@ -13439,7 +13439,22 @@ const translateIterations = (
     (!ts.isMethodDeclaration(node) &&
       !ts.isAccessor(node) &&
       (ts.forEachChild(node, (child) => isIteratedChanged(child) || undefined) ?? false));
-  if (iterated !== undefined && !isIterator && !isLive && isIteratedChanged(iterated.expression)) {
+  // A for-in over a list that the body changes visits the indices that the list had as it started,
+  // and skips one that the list no longer has as the loop reaches it.
+  const isListChanged =
+    iterated !== undefined && isListKeys && isIteratedChanged(iterated.expression);
+  // A for-in that checks its keys reads the object that a variable holds, where the loop changes
+  // the object but doesn't assign the variable.
+  const isObjectChanged =
+    isKeyChecked && heldSymbol !== undefined && !isAssigned(heldSymbol, loop, context);
+  if (
+    iterated !== undefined &&
+    !isIterator &&
+    !isLive &&
+    !isListChanged &&
+    !isObjectChanged &&
+    isIteratedChanged(iterated.expression)
+  ) {
     throw new TlaTypeScriptError(
       "Don't change an array while a for-of iterates it",
       iterated.expression,
@@ -13674,6 +13689,16 @@ const translateIterations = (
         bodyFrame,
         (bound, innerFrame) => translateStatements([loop.statement], bound, context, innerFrame),
       );
+      if (isListChanged) {
+        return ifThenElse(
+          apply("<=", [
+            identifier(position),
+            apply("Len", [translateExpression(iterated.expression, current.scope, context)]),
+          ]),
+          run,
+          advance(current),
+        );
+      }
       if (!isKeyChecked) {
         return ts.isForOfStatement(iterated)
           ? keepHoles(iterated, element, identifier(position), current, context, run)
