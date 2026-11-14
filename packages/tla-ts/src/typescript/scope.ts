@@ -198,9 +198,13 @@ export const rejectBeforeDeclaration = (node: ts.Identifier, scope: Scope, conte
   ) {
     return;
   }
-  const isUninitialized = ts.isSourceFile(declaration.parent.parent.parent)
-    ? scope.uninitialized.has(symbol)
-    : node.getStart() < declaration.getStart();
+  // A function other than the one that declares the let may run after its declaration, wherever
+  // its text is.
+  const isUninitialized =
+    ts.isSourceFile(declaration.parent.parent.parent) ||
+    ts.findAncestor(node, ts.isFunctionLike) !== ts.findAncestor(declaration, ts.isFunctionLike)
+      ? scope.uninitialized.has(symbol)
+      : node.getStart() < declaration.getStart();
   if (isUninitialized) {
     throw new TlaTypeScriptError(`Inside try, use ${node.text} after its declaration`, node);
   }

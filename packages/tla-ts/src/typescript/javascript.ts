@@ -873,6 +873,9 @@ SetEnvironment(heap, environment, bindings) ==
 \\* A local that an environment holds.
 EnvironmentValue(heap, environment, key) == heap.objects[environment[Ref]].bindings[key]
 
+\\* Whether an environment holds a local, which its call stores once the local's declaration runs.
+HasEnvironmentValue(heap, environment, key) == key \\in DOMAIN heap.objects[environment[Ref]].bindings
+
 \\* The environment of the call that made a closure, or Undefined for a function that isn't one.
 EnvironmentOf(heap, value) ==
   IF IsHeap(value) /\\ "environment" \\in DOMAIN heap.objects[value[Ref]]

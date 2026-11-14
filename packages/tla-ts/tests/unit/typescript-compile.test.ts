@@ -18613,6 +18613,67 @@ describe("errors", () => {
     });
   });
 
+  describe("read a let of the async call around an async function as it resumes, which the call may have initialized meanwhile", () => {
+    const getSource = (isAwaited: boolean, expected: number) => `
+      (async function () {
+        async function read() {
+          await 0;
+          try {
+            return value;
+          } catch (error) {
+            return error instanceof ReferenceError ? -1 : 0;
+          }
+        }
+        const result = read();
+        ${isAwaited ? "await 0;" : ""}
+        let value = 1;
+        if ((await result) !== ${expected}) throw new Error("read");
+      })();
+    `;
+
+    it("reads the value that the call initialized", async () => {
+      expect((await checkModel(getSource(false, 1))).failure).toBeUndefined();
+    });
+
+    it("doesn't throw where the call initialized it", async () => {
+      expect((await checkModel(getSource(false, -1))).failure).toBeDefined();
+    });
+
+    it("throws where the call hasn't initialized it yet", async () => {
+      expect((await checkModel(getSource(true, -1))).failure).toBeUndefined();
+    });
+
+    it("doesn't read a value where the call hasn't initialized it yet", async () => {
+      expect((await checkModel(getSource(true, 1))).failure).toBeDefined();
+    });
+  });
+
+  describe("read inside try a let that a function declared before it reads once it's initialized", () => {
+    const getSource = (expected: number) => `
+      (function () {
+        function read() {
+          return value;
+        }
+        let value = 1;
+        let result = 0;
+        try {
+          result = read();
+        } catch (error) {
+          result = -1;
+        }
+        if (result !== ${expected}) throw new Error("read");
+      })();
+    `;
+
+    it("reads the value", async () => {
+      expect((await checkModel(getSource(1))).failure).toBeUndefined();
+    });
+
+    it("doesn't throw", async () => {
+      await expect(checkModel(getSource(-1))).rejects.toThrow("read");
+    });
+  });
+
   describe("keep what a generator's body changes where an async function awaits after resuming it", () => {
     const getSource = (expected: string) => `
       let steps = 0;

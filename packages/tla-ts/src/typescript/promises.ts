@@ -2749,6 +2749,52 @@ const runAsyncBody = (
           },
         };
       };
+      // A let or a const of a call around the body that was uninitialized as the body left may
+      // have been initialized since, as the call ran on, which stores it in its environment then.
+      const initialize = (
+        entered: Path,
+        continueEntered: (path: Path) => Formula,
+        pending = kept.flatMap((entry) =>
+          entry.locals
+            .filter(
+              (local) =>
+                entered.scope.uninitialized.has(local.symbol) &&
+                !entered.scope.bindings.has(local.symbol),
+            )
+            .map((local) => ({ activation: entry.activation, local })),
+        ),
+      ): Formula => {
+        const first = pending.at(0);
+        if (first === undefined) return continueEntered(entered);
+        const key = [
+          getHeap(entered.scope, node, context),
+          first.activation,
+          string(first.local.key),
+        ];
+        return ifThenElse(
+          useJavaScript("HasEnvironmentValue", key, context),
+          initialize(
+            {
+              ...entered,
+              scope: {
+                ...entered.scope,
+                bindings: new Map([
+                  ...entered.scope.bindings,
+                  [first.local.symbol, useJavaScript("EnvironmentValue", key, context)],
+                ]),
+                uninitialized: new Set(
+                  [...entered.scope.uninitialized].filter(
+                    (symbol) => symbol !== first.local.symbol,
+                  ),
+                ),
+              },
+            },
+            continueEntered,
+            pending.slice(1),
+          ),
+          initialize(entered, continueEntered, pending.slice(1)),
+        );
+      };
       const finish = (current: Path, value: Expression, isThrown: boolean) =>
         leave(current, (left) =>
           isThrown
@@ -2771,9 +2817,11 @@ const runAsyncBody = (
               operand,
               context,
               (resumer, settled, isRejected, onReturn) =>
-                (isRejected ? onRejected : onFulfilled)(
-                  setCaller(enter(resumer, current), { path: resumer, resume: onReturn }),
-                  settled,
+                initialize(enter(resumer, current), (entered) =>
+                  (isRejected ? onRejected : onFulfilled)(
+                    setCaller(entered, { path: resumer, resume: onReturn }),
+                    settled,
+                  ),
                 ),
               left.caller.resume,
             ),
