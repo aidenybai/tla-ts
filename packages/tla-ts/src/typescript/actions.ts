@@ -3710,9 +3710,17 @@ export const translateCallStatement = (
       ),
     );
   }
-  // An array method whose callback changes nothing evaluates as an expression, though the
-  // statement drops its value.
-  if (callee === undefined && getLoopTarget(expression, context) !== undefined) {
+  // An array method whose callback changes nothing, or one that only reads the array, evaluates as
+  // an expression, though the statement drops its value.
+  if (
+    callee === undefined &&
+    (getLoopTarget(expression, context) !== undefined ||
+      (isMethodCall(expression) &&
+        READING_METHODS.has(expression.expression.name.text) &&
+        (expression.expression.name.text !== "toSorted" || expression.arguments.length === 0) &&
+        (getKind(expression.expression.expression, context) === "sequence" ||
+          isHeapArray(expression.expression.expression, context))))
+  ) {
     const value = translateExpression(expression, path.scope, context);
     return ifThenElse(apply("=", [value, value]), continueWith(path, value), leaf(boolean(false)));
   }
@@ -6820,6 +6828,9 @@ const UNCALLED_METHODS = new Set([
   "toSpliced",
   "with",
 ]);
+
+// The array methods that read an array without calling back and give a value.
+const READING_METHODS = new Set(["at", "join", "slice", "toSorted"]);
 
 // The methods of %TypedArray%.prototype that run as loops, which read each index below the length
 // that they validate first.

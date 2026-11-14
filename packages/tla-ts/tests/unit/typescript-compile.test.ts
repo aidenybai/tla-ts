@@ -6834,6 +6834,26 @@ describe("errors", () => {
     });
   });
 
+  it("runs a statement that drops what an array method reads", async () => {
+    const getSource = (expected: string) => `
+      var held = [3, 1, 2];
+      delete held[5];
+      const plain = [3, 1, 2];
+      plain.at(0);
+      plain.join();
+      plain.slice(1);
+      plain.toSorted();
+      held.at(0);
+      held.join();
+      held.slice(1);
+      held.toSorted();
+      const text = \`\${plain.join()};\${held.join()}\`;
+      if (text !== "${expected}") throw new Error(text);
+    `;
+    expect((await checkModel(getSource("3,1,2;3,1,2"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("3,1,2;1,2,3"))).failure?.message).toContain("3,1,2;3,1,2");
+  });
+
   it.each([
     ["a malformed regular expression", "const pattern = /[$$]/v;"],
     [
