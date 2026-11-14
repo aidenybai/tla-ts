@@ -20207,6 +20207,52 @@ describe("errors", () => {
     });
   });
 
+  describe("reads a script's var that a loop's head declares from a closure", () => {
+    const source = `
+      const seen: unknown[] = [];
+      function same(actual: unknown, expected: unknown, label: string) {
+        if (!Object.is(actual, expected)) throw new Error(label);
+      }
+      function throws(func: () => unknown) {
+        try {
+          func();
+        } catch (thrown) {
+          seen.push(thrown instanceof TypeError);
+          return;
+        }
+        throw new Error("returned");
+      }
+      throws(function () {
+        ((Iterator as unknown as { [key: string]: unknown }).missing as (...args: unknown[]) => unknown)();
+      });
+      for (var item of [undefined, 0]) {
+        throws(function () {
+          seen.push(item);
+          ((Iterator as unknown as { [key: string]: unknown }).missing as (...args: unknown[]) => unknown)(item);
+        });
+      }
+      same(seen.join(), "true,,true,0,true", "seen");
+      same(item, 0, "after");
+      for (var [first] of [[5]]) {
+        same(first, 5, "pattern");
+      }
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(source)).failure).toBeUndefined();
+    });
+
+    it.each([
+      ["seen", '"true,,true,0,true"', '"true,,true,1,true"'],
+      ["after", "same(item, 0,", "same(item, undefined,"],
+      ["pattern", "same(first, 5,", "same(first, 6,"],
+    ])("rejects a wrong %s", async (label, expected, wrong) => {
+      expect((await checkModel(source.replace(expected, wrong))).failure?.message).toContain(
+        `"${label}"`,
+      );
+    });
+  });
+
   it("gives the result of a generator method's first next", async () => {
     const result = await check(
       compile(

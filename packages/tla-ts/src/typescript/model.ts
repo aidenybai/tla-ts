@@ -149,6 +149,16 @@ export const isDeclaration = (statement: ts.Statement) =>
     (statement.isTypeOnly || statement.moduleSpecifier !== undefined)) ||
   (ts.isFunctionDeclaration(statement) && statement.body !== undefined);
 
+// The variables that a var, let, or const declares.
+const getListDeclarations = (list: ts.VariableDeclarationList) =>
+  list.declarations.flatMap((declaration) =>
+    getBoundNames(declaration.name).map((identifier) => ({
+      name: identifier.text,
+      declaration,
+      identifier,
+    })),
+  );
+
 // The functions and constants a statement declares.
 const getDeclarations = (statement: ts.Statement): Declared[] => {
   if (ts.isModuleDeclaration(statement)) {
@@ -176,13 +186,7 @@ const getDeclarations = (statement: ts.Statement): Declared[] => {
   ) {
     return [];
   }
-  return statement.declarationList.declarations.flatMap((declaration) =>
-    getBoundNames(declaration.name).map((identifier) => ({
-      name: identifier.text,
-      declaration,
-      identifier,
-    })),
-  );
+  return getListDeclarations(statement.declarationList);
 };
 
 // Reads a model's state variables, exported functions, and tags, and names them in TLA+.
@@ -200,19 +204,23 @@ export const readModel = (
         ts.isTypeAliasDeclaration(statement) && tags.get(statement)?.has("symmetric") === true,
     )
     .map((statement) => declareModelValues(statement, context));
-  // A script's var in a block, a loop, or a try at its top level is the script's, as a var at its
-  // top level is.
+  // A script's var in a block, a loop, a loop's head, or a try at its top level is the script's,
+  // as a var at its top level is. A loop's head that destructures stays out, since tla-ts binds
+  // its names in the loop.
   const nestedVars = isScript(sourceFile)
     ? statements
         .filter((statement) => !ts.isVariableStatement(statement))
         .flatMap((statement) =>
           findNodes(
             statement,
-            (inner): inner is ts.VariableStatement =>
-              ts.isVariableStatement(inner) &&
-              (inner.declarationList.flags & ts.NodeFlags.BlockScoped) === 0 &&
+            (inner): inner is ts.VariableDeclarationList =>
+              ts.isVariableDeclarationList(inner) &&
+              (inner.flags & ts.NodeFlags.BlockScoped) === 0 &&
+              (ts.isVariableStatement(inner.parent) ||
+                (ts.isIterationStatement(inner.parent, false) &&
+                  inner.declarations.every((declaration) => ts.isIdentifier(declaration.name)))) &&
               ts.findAncestor(
-                inner.parent,
+                inner.parent.parent,
                 (ancestor) =>
                   ts.isFunctionLike(ancestor) ||
                   ts.isClassLike(ancestor) ||
@@ -221,7 +229,7 @@ export const readModel = (
               ) === undefined,
           ),
         )
-        .flatMap(getDeclarations)
+        .flatMap(getListDeclarations)
     : [];
   const declarations = [...statements.flatMap(getDeclarations), ...nestedVars];
   const changed = new Set(
