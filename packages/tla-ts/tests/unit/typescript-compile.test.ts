@@ -1419,6 +1419,31 @@ describe("values", () => {
     });
   });
 
+  describe("treats indices beyond 32 bits as past either end, and keeps ~ inside 32 bits", () => {
+    const getSource = (expected: string) => `
+      const box = { size: 0 };
+      const buffer = new ArrayBuffer(4);
+      const list = [1, 2, 3];
+      const read = [
+        ~-2147483648, ~2147483647, list.slice(-(2 ** 40), 2 ** 40).length, list.at(2 ** 40),
+        list.toSpliced(1, 2 ** 40).length, buffer.slice(0, 2 ** 53).byteLength,
+      ].join();
+      if (read !== "${expected}" || box.size !== 0) throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("2147483647,-2147483648,3,,1,4"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects a splice count past 2^31 as 0", async () => {
+      expect(
+        (await checkModel(getSource("2147483647,-2147483648,3,,3,4"))).failure?.message,
+      ).toContain("2147483647,-2147483648,3,,1,4");
+    });
+  });
+
   describe("converts lengths and indices beyond 32 bits as Node does", () => {
     const getSource = (expected: string) => `
       const like = { 0: 12, length: -4294967294 };

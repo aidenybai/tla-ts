@@ -840,7 +840,8 @@ BitwiseOr(left, right) == BitwiseOperation("or", left, right)
 BitwiseXor(left, right) == BitwiseOperation("xor", left, right)
 
 \\* JavaScript's ~.
-BitwiseNot(value) == -Int32(value) - 1
+\\* JavaScript's ~, as -1 - x, which keeps -2^31 inside TLC's integers.
+BitwiseNot(value) == -1 - Int32(value)
 
 \\* Math.imul: the low 32 bits of a product. Each integer splits into halves of 16 bits, and each
 \\* product of halves into bytes, so no step leaves TLC's 32 bits.
@@ -1013,6 +1014,9 @@ RelativeIndex(index, length) ==
     [] index = Infinity -> length
     [] index = NegativeInfinity -> -1
     [] IsFraction(index) -> IF Truncate(index) < 0 THEN length + Truncate(index) ELSE Truncate(index)
+    \\* An integer past 2^31 either way lies past either end of any array that tla-ts holds.
+    [] IsWide(index) \\/ (IsDouble(index) /\\ index[Double][2] >= 0) ->
+         IF IsNegative(index) THEN -1 ELSE length
     [] IsBig(index) -> BeyondInteger
     [] index < 0 -> length + index
     [] OTHER -> index
@@ -1027,6 +1031,8 @@ ClampedCount(count, maximum) ==
     [] count = Infinity -> maximum
     [] IsFraction(count) ->
          IF Truncate(count) < 0 THEN 0 ELSE IF Truncate(count) > maximum THEN maximum ELSE Truncate(count)
+    [] IsWide(count) \\/ (IsDouble(count) /\\ count[Double][2] >= 0) ->
+         IF IsNegative(count) THEN 0 ELSE maximum
     [] IsBig(count) -> BeyondInteger
     [] count < 0 -> 0
     [] count > maximum -> maximum
@@ -4801,11 +4807,11 @@ BufferSlice(heap, ref, start, end, isShared, constructor) ==
   LET object == heap.objects[ref[Ref]]
       length == Len(object.bytes)
       clamped(index) == IF index < 0 THEN 0 ELSE IF index > length THEN length ELSE index
-      first == clamped(RelativeIndex(ToIntegerOrInfinity(ToNumber(start)), length))
+      first == clamped(RelativeIndex(ToNumber(start), length))
       final ==
         IF end = Undefined
         THEN length
-        ELSE clamped(RelativeIndex(ToIntegerOrInfinity(ToNumber(end)), length))
+        ELSE clamped(RelativeIndex(ToNumber(end), length))
       species == Get(heap, ref, "constructor")
   IN CASE ~IsBuffer(heap, ref) \\/ object.isShared # isShared -> Thrown(heap, "TypeError")
        [] object.isDetached -> Thrown(heap, "TypeError")
