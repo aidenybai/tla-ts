@@ -949,6 +949,12 @@ export const createSmtlibReader = (
 
   const getFirstFunc = (name: string) => funcs.get(name)?.[0];
 
+  // func_decls::signatures_collide: the domain, and the range unless it is -1.
+  const hasSignature = (decl: number, domain: readonly number[], range: number) =>
+    (range === -1 || manager.funcDecls[decl].range === range) &&
+    manager.funcDecls[decl].domain.length === domain.length &&
+    manager.funcDecls[decl].domain.every((sort, index) => sort === domain[index]);
+
   const checkDecl = (decl: number, at: SExpr) => {
     const error = logicChecker.checkDecl(decl);
     if (error !== undefined) throw new SmtParseError(error, at);
@@ -1933,10 +1939,7 @@ export const createSmtlibReader = (
             sort === argSorts[index] || (isArithSort(sort) && isArithSort(argSorts[index])),
         ),
     );
-    const found =
-      candidates.find((decl) =>
-        manager.funcDecls[decl].domain.every((sort, index) => sort === argSorts[index]),
-      ) ?? candidates.at(-1);
+    const found = candidates.find((decl) => hasSignature(decl, argSorts, -1)) ?? candidates.at(-1);
     if (found !== undefined) return mkApp(found, args, at);
     if (args.length === 0 || range !== undefined) return undefined;
     if (decls.length > 1) throwAmbiguousConstant(name, at);
@@ -2071,14 +2074,7 @@ export const createSmtlibReader = (
       throw new SmtUnsupportedError("the declaration reference");
     const domain = domainList.items.map((item) => parseSort(item, "Invalid function name"));
     const range = parseSort(rangeSort, "Invalid function name");
-    const declared = funcs
-      .get(name.text)
-      ?.find(
-        (decl) =>
-          manager.funcDecls[decl].range === range &&
-          manager.funcDecls[decl].domain.length === domain.length &&
-          manager.funcDecls[decl].domain.every((sort, index) => sort === domain[index]),
-      );
+    const declared = funcs.get(name.text)?.find((decl) => hasSignature(decl, domain, range));
     if (declared !== undefined) return { decl: declared, domain, range };
     const builtin = CHAINABLE_OPS.get(name.text) ?? BUILTIN_OPS.get(name.text);
     if (builtin === undefined)
@@ -2232,13 +2228,7 @@ export const createSmtlibReader = (
       throw new SmtParseError("invalid named expression, expression contains free variables", at);
     if (macros.get(name)?.domain.length === 0)
       throw new SmtParseError("named expression already defined", at);
-    if (
-      (funcs.get(name) ?? []).some(
-        (decl) =>
-          manager.funcDecls[decl].domain.length === 0 &&
-          manager.funcDecls[decl].range === manager.sorts[expr],
-      )
-    )
+    if ((funcs.get(name) ?? []).some((decl) => hasSignature(decl, [], manager.sorts[expr])))
       throw new SmtParseError(
         `invalid named expression, declaration already defined with this name ${name}`,
         at,
@@ -3117,14 +3107,7 @@ export const createSmtlibReader = (
     if (macros.has(symbol.text))
       throw new SmtUnsupportedError(`the overloaded symbol ${symbol.text}`);
     const existing = funcs.get(symbol.text) ?? [];
-    if (
-      existing.some(
-        (decl) =>
-          manager.funcDecls[decl].range === range &&
-          manager.funcDecls[decl].domain.length === domain.length &&
-          manager.funcDecls[decl].domain.every((sort, index) => sort === domain[index]),
-      )
-    )
+    if (existing.some((other) => hasSignature(other, domain, range)))
       throw new SmtParseError(
         `invalid declaration, ${domain.length === 0 ? "constant" : "function"} '${symbol.text}' (with the given signature) already declared`,
         list.end,
@@ -3199,12 +3182,7 @@ export const createSmtlibReader = (
     const decls = funcs.get(String(manager.funcDecls[decl].name)) ?? [];
     return (
       decls.includes(decl) &&
-      decls.some(
-        (other) =>
-          other !== decl &&
-          manager.funcDecls[other].domain.length === domain.length &&
-          manager.funcDecls[other].domain.every((sort, index) => sort === domain[index]),
-      )
+      decls.some((other) => other !== decl && hasSignature(other, domain, -1))
     );
   };
 
