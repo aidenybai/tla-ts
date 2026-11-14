@@ -341,10 +341,30 @@ const PRIMITIVE_TYPES =
   ts.TypeFlags.Undefined |
   ts.TypeFlags.Null;
 
+// The primitive that a call of Object wraps where nothing else holds the object it makes, whose
+// prototype is the primitive's.
+const getWrappedPrimitive = (node: ts.Expression, context: Context) => {
+  const call = skipCasts(node);
+  const argument = ts.isCallExpression(call) ? call.arguments[0] : undefined;
+  return ts.isCallExpression(call) &&
+    getBuiltIn(call.expression, context) === "Object" &&
+    call.arguments.length === 1 &&
+    argument !== undefined &&
+    !ts.isSpreadElement(argument) &&
+    (context.checker.getTypeAtLocation(argument).flags &
+      (PRIMITIVE_TYPES & ~(ts.TypeFlags.Undefined | ts.TypeFlags.Null))) !==
+      0 &&
+    !context.checker.getTypeAtLocation(argument).isUnion()
+    ? argument
+    : undefined;
+};
+
 // The built-in object that is the prototype of a node's value, or "null".
 const getPrototype = (node: ts.Expression, context: Context): string | undefined => {
   const name = getName(node, context);
   if (name !== undefined) return getParent(name);
+  const wrapped = getWrappedPrimitive(node, context);
+  if (wrapped !== undefined) return getPrototype(wrapped, context);
   const checker = context.checker;
   const type = checker.getTypeAtLocation(node);
   if (type.isUnion()) return undefined;
@@ -352,6 +372,7 @@ const getPrototype = (node: ts.Expression, context: Context): string | undefined
   if (type.flags & ts.TypeFlags.StringLike) return "String.prototype";
   if (type.flags & ts.TypeFlags.BooleanLike) return "Boolean.prototype";
   if (type.flags & ts.TypeFlags.BigIntLike) return "BigInt.prototype";
+  if (type.flags & ts.TypeFlags.ESSymbolLike) return "Symbol.prototype";
   // Iterator.from's iterator is wrapped where its prototype no longer inherits from
   // Iterator.prototype, and getIteratorCall reads a string's.
   const arrayIteratorCall = getArrayIteratorCall(node, context);
@@ -1013,6 +1034,7 @@ export const translateIntrinsic = (node: ts.Expression, scope: Scope, context: C
   const isOfObject =
     (isPrototypeOfCall(node) || isPrototypeCall(node, context)) &&
     getIteratorCall(node.arguments[0], context) === undefined &&
+    getWrappedPrimitive(node.arguments[0], context) === undefined &&
     (getKind(node.arguments[0], context) === "object" ||
       (context.heap !== undefined &&
         scope.bindings.has(context.heap) &&

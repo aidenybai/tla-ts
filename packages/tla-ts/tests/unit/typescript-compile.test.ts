@@ -25426,4 +25426,28 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("tells the prototype of a symbol and of the object that Object makes of a primitive", () => {
+    const getSource = (expected: string) => `
+      const box = { size: 0 };
+      const read = [
+        Object.getPrototypeOf(Symbol("a")).constructor === Symbol,
+        Object.getPrototypeOf(Object(Symbol("a"))).constructor === Symbol,
+        Object.getPrototypeOf(Object(1)).constructor === Number,
+        Object.getPrototypeOf(Object("s")).constructor === Number,
+      ].join();
+      box.size = 1;
+      if (read !== "${expected}") throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("true,true,true,false"))).failure).toBeUndefined();
+    });
+
+    it("rejects a string's wrapper as a Number", async () => {
+      expect((await checkModel(getSource("true,true,true,true"))).failure?.message).toContain(
+        "true,true,true,false",
+      );
+    });
+  });
 });
