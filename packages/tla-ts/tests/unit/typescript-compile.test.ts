@@ -6044,6 +6044,50 @@ describe("calls", () => {
     );
   });
 
+  it("catches what a field's initializer throws, before the next field runs", async () => {
+    const getSource = (expected: string) => `
+      function fail(): number {
+        throw "boom";
+      }
+      let isRun = false;
+      class C {
+        a = fail();
+        b = (isRun = true);
+      }
+      let seen = "";
+      try {
+        const made = new C();
+        seen = "made";
+      } catch (error) {
+        seen = String(error);
+      }
+      if (seen + isRun !== "${expected}") throw new Error(seen + isRun);
+    `;
+    expect((await checkModel(getSource("boomfalse"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("madetrue"))).failure?.message).toContain("boomfalse");
+  });
+
+  it("stops where a class extends one whose field's initializer may throw", () => {
+    expect(() =>
+      compile(`
+        function fail(): number {
+          throw "boom";
+        }
+        class A {
+          a = fail();
+        }
+        class C extends A {
+          constructor() {
+            super();
+          }
+        }
+        try {
+          new C();
+        } catch {}
+      `),
+    ).toThrow("tla-ts can't extend a class whose fields run as statements");
+  });
+
   it("runs a catch pattern's default that throws only where the thrown value lacks it", async () => {
     const getSource = (expected: string) => `
       function fail(): number {

@@ -14,6 +14,7 @@ import {
 import { TlaTypeScriptError } from "../errors";
 import { createNames, type Names } from "./names";
 import { getKeptReads } from "./narrowing";
+import { mayThrow } from "./functions";
 import type { Link } from "./regions";
 import { apply, define, identifier, ifExpression, index, letExpression, string } from "./tla";
 
@@ -3547,9 +3548,12 @@ export const getRunConstructor = (
       : (constructor.body?.statements.length ?? 0) > 0 || isNullBased(node)
         ? constructor
         : undefined;
-  if (base !== undefined && run !== undefined && ts.isClassLike(run)) {
+  if (
+    base !== undefined &&
+    ((run !== undefined && ts.isClassLike(run)) || getRunFields(base, context).length > 0)
+  ) {
     throw new TlaTypeScriptError(
-      "tla-ts can't extend a class whose fields run a constructor",
+      "tla-ts can't extend a class whose fields run as statements",
       node,
     );
   }
@@ -3564,9 +3568,19 @@ export const getRunFields = (node: HeapClass, context: Context) => {
     (member): member is ts.PropertyDeclaration =>
       ts.isPropertyDeclaration(member) && !isStatic(member) && !isAmbient(member),
   );
+  // A field whose call may throw defines itself as a statement too, so that what it throws leaves
+  // the new.
   const first = fields.findIndex((field) => {
     const created = field.initializer && getNewClass(field.initializer, context);
-    return created !== undefined && getRunConstructor(created, context) !== undefined;
+    const called = field.initializer && skipCasts(field.initializer);
+    const callee =
+      called !== undefined && ts.isCallExpression(called)
+        ? getCallee(called.expression, context)
+        : undefined;
+    return (
+      (created !== undefined && getRunConstructor(created, context) !== undefined) ||
+      (callee !== undefined && mayThrow(callee, context))
+    );
   });
   return first === -1 ? [] : fields.slice(first);
 };
