@@ -50,16 +50,13 @@ class RuleUnifier {
         this.subst.apply(target.head, 0, this.deltas),
         tail,
         isNegated,
-        `${target.name};${source.name}`,
+        `${target.getNameText()};${source.getNameText()}`,
       ),
       true,
     );
     return this.simplifier.transformRule(resolvent);
   }
 }
-
-const hasQuantifier = (context: DatalogContext, rule: Rule) =>
-  context.ruleManager.hasQuantifiers(rule);
 
 // The rules at a position of a head or tail, and which of them can still be expanded or removed.
 class Visitor {
@@ -109,7 +106,7 @@ export class MkRuleInliner implements RuleTransformerPlugin {
 
   private tryToInlineRule(target: Rule, source: Rule, tailIndex: number): Rule | undefined {
     this.context.ruleManager.normVars(target);
-    if (hasQuantifier(this.context, source)) {
+    if (this.context.ruleManager.hasQuantifiers(source)) {
       this.hasNewQuantifier = true;
       return undefined;
     }
@@ -213,10 +210,17 @@ export class MkRuleInliner implements RuleTransformerPlugin {
     if (this.forbidMultipleMultipliers(source, candidates))
       candidates = this.createAllowedRuleSet(source);
     for (const stratum of candidates.getStrats())
-      for (const rule of candidates.getPredicateRules(stratum.values().next().value as number))
+      for (const rule of candidates.getPredicateRules(stratum.values().next().value as number)) {
         this.transformRule(source, rule, this.inlinedRules);
+        // Z3 does not catch the has_new_quantifier that plan_inlining throws, and aborts.
+        if (this.hasNewQuantifier)
+          throw new SmtUnsupportedError("inlining a rule with a quantifier");
+      }
   }
 
+  // Deviation from Z3: transform_rule keeps a rule that has a quantifier without inlining the rest
+  // of its tail, although the rules of those predicates are dropped, so Z3 answers unreachable for
+  // a reachable query (dl_mk_rule_inliner.cpp). The rest of the tail is inlined here.
   private transformRule(source: RuleSet, original: Rule, target: RuleSet) {
     const manager = this.context.manager;
     let isModified = false;
@@ -397,7 +401,8 @@ export class MkRuleInliner implements RuleTransformerPlugin {
 
   apply(source: RuleSet) {
     if (source.rules.length === 0) return undefined;
-    if (source.rules.some((rule) => hasQuantifier(this.context, rule))) return undefined;
+    if (source.rules.some((rule) => this.context.ruleManager.hasQuantifiers(rule)))
+      return undefined;
     this.hasNewQuantifier = false;
     let isDone = false;
     let result = new RuleSet(this.context);

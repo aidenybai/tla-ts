@@ -1,6 +1,7 @@
 // Ported from Z3 (src/muz/transforms/dl_mk_slice.cpp), MIT license, see z3-license.txt.
 import { getSymbolName, KIND_VAR, OP_EQ, OP_ITE, SORT_BOOL } from "../ast";
 import { flattenAndVector } from "../ast-util";
+import { ObjMap } from "../hashtable";
 import { RefVector } from "../ref-vector";
 import { getFreeVarSorts } from "../var-subst";
 import type { DatalogContext } from "./dl-context";
@@ -10,14 +11,16 @@ import type { RuleTransformerPlugin } from "./dl-rule-transformer";
 
 export class MkSlice implements RuleTransformerPlugin {
   readonly priority = 1;
-  private sliceable = new Map<number, boolean[]>();
+  private sliceable: ObjMap<boolean[]>;
   private input: boolean[] = [];
   private output: boolean[] = [];
   private isVarSliceable: boolean[] = [];
   private solvedVars: number[] = [];
   readonly predicates = new Map<number, number>();
 
-  constructor(private context: DatalogContext) {}
+  constructor(private context: DatalogContext) {
+    this.sliceable = new ObjMap((decl) => context.manager.getDeclHash(decl));
+  }
 
   private getPredicateSlice(predicate: number) {
     const existing = this.sliceable.get(predicate);
@@ -82,7 +85,7 @@ export class MkSlice implements RuleTransformerPlugin {
     const manager = this.context.manager;
     if (manager.getOp(expr) === OP_ITE) {
       const thenEq = this.getEq(manager.getArg(expr, 1));
-      const elseEq = this.getEq(manager.getArg(expr, 2));
+      const elseEq = thenEq === undefined ? undefined : this.getEq(manager.getArg(expr, 2));
       if (thenEq !== undefined && elseEq !== undefined && thenEq.index === elseEq.index)
         return {
           index: thenEq.index,
@@ -95,11 +98,13 @@ export class MkSlice implements RuleTransformerPlugin {
     }
     if (manager.kinds[expr] === KIND_VAR)
       return { index: manager.values[expr], value: manager.trueExpr };
-    if (manager.isNot(expr) && manager.kinds[manager.getArg(expr, 0)] === KIND_VAR)
-      return { index: manager.values[manager.getArg(expr, 0)], value: manager.falseExpr };
-    if (manager.getOp(expr) !== OP_EQ) return undefined;
-    const left = manager.getArg(expr, 0);
-    const right = manager.getArg(expr, 1);
+    // is_not rebinds the expression to its argument, so the equation under a negation is solved.
+    const atom = manager.isNot(expr) ? manager.getArg(expr, 0) : expr;
+    if (atom !== expr && manager.kinds[atom] === KIND_VAR)
+      return { index: manager.values[atom], value: manager.falseExpr };
+    if (manager.getOp(atom) !== OP_EQ) return undefined;
+    const left = manager.getArg(atom, 0);
+    const right = manager.getArg(atom, 1);
     if (manager.kinds[left] === KIND_VAR) return { index: manager.values[left], value: right };
     if (manager.kinds[right] === KIND_VAR) return { index: manager.values[right], value: left };
     return undefined;
@@ -246,16 +251,14 @@ export class MkSlice implements RuleTransformerPlugin {
       return;
     }
     this.initVars(rule);
+    const head = this.updatePredicate(rule.head);
     const tail = rule.tail
       .slice(0, rule.uninterpretedSize)
       .map((atom) => this.updatePredicate(atom));
     const conjs = this.getTailConjs(rule);
     tail.push(...conjs.items);
     const ruleManager = this.context.ruleManager;
-    const updated = ruleManager.fixUnboundVars(
-      ruleManager.mk(this.updatePredicate(rule.head), tail, [], rule.name),
-      false,
-    );
+    const updated = ruleManager.fixUnboundVars(ruleManager.mk(head, tail, [], rule.name), false);
     conjs.reset();
     target.addRule(updated);
   }

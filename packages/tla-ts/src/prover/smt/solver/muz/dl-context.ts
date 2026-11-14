@@ -82,7 +82,7 @@ export class DatalogContext {
   constructor(
     readonly manager: AstManager,
     readonly params: FpParams,
-    rewriterOptions: RewriterOptions,
+    readonly rewriterOptions: RewriterOptions,
     private engineFactory: EngineFactory,
   ) {
     this.ruleManager = new RuleManager(manager, this);
