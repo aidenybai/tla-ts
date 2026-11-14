@@ -133,8 +133,50 @@ export type FunctionNode =
 
 export type HelperDeclaration = ts.FunctionDeclaration | ts.VariableDeclaration;
 
+// TypeScript narrows a variable at a read from what the read's function assigns before it, and keeps
+// that across a call, though a function that the call runs may assign the variable a value of
+// another type. A read of a variable that another function assigns has its declared type.
+const withDeclaredReads = (checker: ts.TypeChecker): ts.TypeChecker => {
+  const getFunction = (node: ts.Node) =>
+    ts.findAncestor(node.parent, ts.isFunctionLike) ?? node.getSourceFile();
+  const writers = new Map<ts.SourceFile, Map<ts.Symbol, Set<ts.Node>>>();
+  const getWriters = (file: ts.SourceFile) => {
+    const known = writers.get(file);
+    if (known !== undefined) return known;
+    const found = new Map<ts.Symbol, Set<ts.Node>>();
+    findNodes(file, (inner): inner is ts.Node => getAssignedTarget(inner) !== undefined).forEach(
+      (assignment) => {
+        const target = getAssignedTarget(assignment);
+        (target === undefined ? [] : getWrittenNames(target)).forEach((name) => {
+          const symbol = getSymbol(name, checker);
+          if (symbol !== undefined) {
+            found.set(symbol, new Set([...(found.get(symbol) ?? []), getFunction(assignment)]));
+          }
+        });
+      },
+    );
+    writers.set(file, found);
+    return found;
+  };
+  return {
+    ...checker,
+    getTypeAtLocation: (node) => {
+      const symbol = ts.isIdentifier(node) ? getSymbol(node, checker) : undefined;
+      const declaration = symbol?.valueDeclaration;
+      const isWrittenElsewhere =
+        symbol !== undefined &&
+        declaration !== undefined &&
+        (ts.isVariableDeclaration(declaration) || ts.isParameter(declaration)) &&
+        [...(getWriters(node.getSourceFile()).get(symbol) ?? [])].some(
+          (writer) => writer !== getFunction(node),
+        );
+      return isWrittenElsewhere ? checker.getTypeOfSymbol(symbol) : checker.getTypeAtLocation(node);
+    },
+  };
+};
+
 export const createContext = (checker: ts.TypeChecker): Context => ({
-  checker,
+  checker: withDeclaredReads(checker),
   names: createNames(JAVASCRIPT_OPERATORS),
   variables: new Map(),
   definitions: new Map(),
@@ -726,23 +768,23 @@ export const isStatic = (node: ts.Node) =>
   ts.canHaveModifiers(node) &&
   (ts.getModifiers(node) ?? []).some((modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword);
 
-// Whether an assignment's target writes a name, alone or in a pattern.
-const isWrittenBy = (target: ts.Node, symbol: ts.Symbol, context: Context): boolean => {
-  if (ts.isIdentifier(target)) return getSymbol(target, context.checker) === symbol;
+// The names that an assignment's target writes, alone or in a pattern.
+const getWrittenNames = (target: ts.Node): ts.Identifier[] => {
+  if (ts.isIdentifier(target)) return [target];
   if (ts.isParenthesizedExpression(target) || ts.isSpreadElement(target)) {
-    return isWrittenBy(target.expression, symbol, context);
+    return getWrittenNames(target.expression);
   }
   if (ts.isBinaryExpression(target) && target.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
-    return isWrittenBy(target.left, symbol, context);
+    return getWrittenNames(target.left);
   }
-  if (ts.isArrayLiteralExpression(target)) {
-    return target.elements.some((element) => isWrittenBy(element, symbol, context));
-  }
-  if (!ts.isObjectLiteralExpression(target)) return false;
-  return target.properties.some((property) =>
-    isWrittenBy(getPropertyTarget(property), symbol, context),
-  );
+  if (ts.isArrayLiteralExpression(target)) return target.elements.flatMap(getWrittenNames);
+  if (!ts.isObjectLiteralExpression(target)) return [];
+  return target.properties.flatMap((property) => getWrittenNames(getPropertyTarget(property)));
 };
+
+// Whether an assignment's target writes a name, alone or in a pattern.
+const isWrittenBy = (target: ts.Node, symbol: ts.Symbol, context: Context) =>
+  getWrittenNames(target).some((name) => getSymbol(name, context.checker) === symbol);
 
 // What a property of an object pattern assigns.
 const getPropertyTarget = (property: ts.ObjectLiteralElementLike) =>

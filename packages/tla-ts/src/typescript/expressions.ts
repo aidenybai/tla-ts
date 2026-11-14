@@ -1109,6 +1109,26 @@ export const translateCall = (
     if (kind === "sequence" || kind === "set" || kind === "map") {
       return boolean(method === "isExtensible");
     }
+    // A value without a type is an object on the heap, another object or function, which stays
+    // extensible, or a primitive, which isn't.
+    if (names === undefined && context.heap !== undefined) {
+      context.prelude.add("Null");
+      return ifExpression(
+        useJavaScript("IsRef", [value], context),
+        useJavaScript(test, [getHeap(scope, node, context), value], context),
+        ifExpression(
+          apply("/\\", [
+            apply("#", [value, identifier("Null")]),
+            apply("\\in", [
+              useJavaScript("TypeOf", [value], context),
+              set([string("object"), string("function")]),
+            ]),
+          ]),
+          boolean(method === "isExtensible"),
+          boolean(method !== "isExtensible"),
+        ),
+      );
+    }
     // A function that the heap or the built-in objects hold is an object there, which may be
     // frozen, as %ThrowTypeError% is, which a script reaches through descriptors. Another function
     // stays extensible, and undefined isn't.

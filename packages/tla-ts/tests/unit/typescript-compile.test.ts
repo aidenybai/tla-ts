@@ -5388,6 +5388,52 @@ describe("errors", () => {
     ).toThrow("spec.ts:3:37 typeof can't tell a @symmetric value from a function");
   });
 
+  describe("read a variable that another function assigns with its declared type", () => {
+    const getSource = (expected: string) => `
+      let value: number | string = 0;
+      const setText = () => {
+        value = "a";
+      };
+      value = 1;
+      setText();
+      if (typeof value !== "${expected}") throw new Error(typeof value);
+    `;
+
+    it("tells its type as it runs", async () => {
+      expect((await checkModel(getSource("string"))).failure).toBeUndefined();
+    });
+
+    it("doesn't keep the type that its own function narrowed it to", async () => {
+      expect((await checkModel(getSource("number"))).failure?.message).toContain("string");
+    });
+
+    it("tells the type of a variable without one that only another function assigns", async () => {
+      const result = await checkModel(`
+        const assign = () => {
+          count = 1;
+        };
+        var count;
+        assign();
+        if (typeof count !== "number") throw new Error(typeof count);
+      `);
+      expect(result.failure).toBeUndefined();
+    });
+
+    it("rejects arithmetic on it where the declared type isn't a number", () => {
+      expect(() =>
+        compile(`
+          let value: number | string = 1;
+          const setText = () => {
+            value = "2";
+          };
+          value = 1;
+          setText();
+          const product = value * 3;
+        `),
+      ).toThrow("* needs numbers");
+    });
+  });
+
   it("runs a call in typeof's operand, which may throw", async () => {
     const getSource = (count: number) => `
       const count: number = ${count};
@@ -22644,6 +22690,21 @@ ${call}
       if (!Object.isExtensible(resolveFunction)) throw new Error("not extensible");
     `);
     expect(result.failure).toBeUndefined();
+  });
+
+  it("tells whether values that a callback assigns to untyped variables are extensible", async () => {
+    const source = (expected: string) => `
+      var count; var frozen; var empty;
+      const assign = () => { count = 1; frozen = Object.freeze({}); empty = null; };
+      assign();
+      const flags = [Object.isExtensible(count), Object.isExtensible(frozen), Object.isExtensible(empty),
+        Object.isFrozen(count), Object.isSealed(frozen)];
+      if (flags.join() !== "${expected}") throw new Error(flags.join());
+    `;
+    expect((await checkModel(source("false,false,false,true,true"))).failure).toBeUndefined();
+    expect((await checkModel(source("true,false,false,true,true"))).failure?.message).toContain(
+      "false,false,false,true,true",
+    );
   });
 
   it("stops where a script defines a promise's property", async () => {
