@@ -114,9 +114,13 @@ export const mayThrow = (
   if (visited.has(node)) return false;
   visited.add(node);
   // A using declaration throws a TypeError for a value that isn't disposable, and it and a
-  // DisposableStack's methods run dispose methods. A write to a const throws a TypeError.
+  // DisposableStack's methods run dispose methods. A write to a const throws a TypeError, as does a
+  // read of a function's caller or arguments, which runs %ThrowTypeError%.
   if (
     ts.isThrowStatement(node) ||
+    (ts.isPropertyAccessExpression(node) &&
+      ["caller", "arguments"].includes(node.name.text) &&
+      context.checker.getTypeAtLocation(node.expression).getCallSignatures().length > 0) ||
     (ts.isVariableDeclarationList(node) && (node.flags & ts.NodeFlags.Using) !== 0) ||
     getStackCall(node, context) !== undefined ||
     getIteratorDisposeCall(node, context) !== undefined ||

@@ -8629,7 +8629,8 @@ const throwReadError = (
       (ts.isPropertyAccessExpression(accessed) && !ts.isPrivateIdentifier(accessed.name))) &&
     accessed.expression.kind !== ts.SyntaxKind.SuperKeyword &&
     (isBuiltInObject(accessed.expression, context) ||
-      getKind(accessed.expression, context) === "object")
+      getKind(accessed.expression, context) === "object" ||
+      context.checker.getTypeAtLocation(accessed.expression).getCallSignatures().length > 0)
     ? ifThenElse(
         apply("=", [
           useJavaScript(

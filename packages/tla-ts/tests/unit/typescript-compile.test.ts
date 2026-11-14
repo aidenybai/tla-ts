@@ -8534,6 +8534,34 @@ describe("errors", () => {
     });
   });
 
+  describe("throws the TypeError of reading a function's caller or arguments", () => {
+    const getSource = (expected: string) => `
+      "use strict";
+      function fn() {}
+      const box = { size: 0 };
+      let caught = "";
+      try {
+        fn.caller;
+      } catch (error) {
+        caught += error instanceof TypeError ? "type" : "other";
+      }
+      try {
+        fn.arguments;
+      } catch (error) {
+        caught += error instanceof TypeError ? "type" : "other";
+      }
+      if (caught !== "${expected}" || box.size !== 0) throw new Error(caught);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("typetype"))).failure).toBeUndefined();
+    });
+
+    it("rejects the expectation of one TypeError", async () => {
+      expect((await checkModel(getSource("type"))).failure?.message).toContain("typetype");
+    });
+  });
+
   describe("throws the TypeError of deleting a typed array's element", () => {
     const getSource = (expected: string) => `
       const typed = new Int8Array(2);
