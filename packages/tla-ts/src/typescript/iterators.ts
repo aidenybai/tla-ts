@@ -8,6 +8,7 @@ import {
   getSymbol,
   getUndefined,
   isInertValue,
+  isUnresolved,
   skipCasts,
 } from "./context";
 import { type Formula, ifThenElse, leaf } from "./formula";
@@ -145,8 +146,10 @@ const isPlainPattern = (
   const symbols = names.flatMap((name) =>
     name === undefined ? [] : (getSymbol(name, context.checker) ?? []),
   );
+  // A name that nothing binds holds nothing that the iterator's functions could read.
+  const unresolved = names.filter((name) => name !== undefined && isUnresolved(name, context));
   return (
-    symbols.length === names.length &&
+    symbols.length + unresolved.length === names.length &&
     (ts.isArrayBindingPattern(pattern) || symbols.every(isWritable)) &&
     findNodes(pattern.getSourceFile(), ts.isIdentifier).every((name) => {
       const symbol = getSymbol(name, context.checker);
@@ -319,6 +322,28 @@ export const closeIterator = (
     ),
   );
 
+// Closes an iterator where what the pattern runs throws: its return runs, and whatever it gives or
+// throws leaves that throw as it was.
+const closeQuietly = (
+  site: ts.Node,
+  iterator: Expression,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path) => Formula,
+) => {
+  const quiet = { ...frame, throwTo: (after: Path) => continueWith(after) };
+  return read(site, iterator, "return", path, context, quiet, (found, method) =>
+    ifThenElse(
+      isNullish(method, context),
+      continueWith(found),
+      callMethod(site, "return", method, iterator, found, context, quiet, continueWith, (after) =>
+        continueWith(after),
+      ),
+    ),
+  );
+};
+
 const takeAll = (
   pattern: ts.ArrayBindingPattern | ts.ArrayLiteralExpression,
   iterable: Expression,
@@ -335,6 +360,14 @@ const takeAll = (
       (ts.isBindingElement(element) && element.dotDotDotToken !== undefined),
   );
   const count = restAt === -1 ? elements.length : restAt;
+  // Assigning a name that nothing binds throws a ReferenceError once its element took a value, so
+  // the pattern takes no more and closes the iterator, which can't change what it throws.
+  const unresolvedAt = elements.findIndex((element) => {
+    const name = getPlainName(element);
+    return name !== undefined && isUnresolved(name, context);
+  });
+  const isThrowing = unresolvedAt !== -1 && (restAt === -1 || unresolvedAt < restAt);
+  const takeCount = isThrowing ? unresolvedAt + 1 : count;
   const finish = (current: Path, values: Expression[]) =>
     continueWith(
       current,
@@ -349,6 +382,11 @@ const takeAll = (
     next: Expression,
     values: Expression[],
   ): Formula => {
+    if (isThrowing && values.length === takeCount) {
+      return closeQuietly(pattern, iterator, current, context, frame, (closed) =>
+        finish(closed, values),
+      );
+    }
     if (restAt === -1 && values.length === count) {
       return closeIterator(pattern, iterator, current, context, frame, throwWith, (closed) =>
         finish(closed, values),

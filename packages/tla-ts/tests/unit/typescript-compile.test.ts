@@ -14202,6 +14202,46 @@ describe("errors", () => {
     });
   });
 
+  describe("throws the ReferenceError of a pattern that assigns an unbound name from an iterator", () => {
+    const getSource = (expected: string) => `
+      "use strict";
+      const log = { text: "" };
+      const iterator = {
+        next() {
+          log.text += "next";
+          return { done: false, value: 5 };
+        },
+        return() {
+          log.text += "return";
+          throw new RangeError("return");
+        },
+      };
+      const iterable: { [key: string | symbol]: unknown } = {
+        [Symbol.iterator]() {
+          return iterator;
+        },
+      };
+      try {
+        let kept: unknown = 0;
+        // @ts-ignore
+        [kept, missing] = iterable;
+      } catch (error) {
+        log.text += error instanceof ReferenceError ? ":reference" : ":other";
+      }
+      if (log.text !== "${expected}") throw new Error(log.text);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("nextnextreturn:reference"))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkModel(getSource("nextreturn:reference"))).failure?.message).toContain(
+        "nextnextreturn:reference",
+      );
+    });
+  });
+
   it("throws the ReferenceError of a name that an object literal spreads", async () => {
     const getSource = (expected: number) => `
       let caught = 0;
