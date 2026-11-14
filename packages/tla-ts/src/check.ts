@@ -862,6 +862,9 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     action: string | undefined,
   ) => {
     const depth = parent === -1 ? 1 : depths[parent] + 1;
+    // A symmetry's representative or a view is a new state, which shares values with the others
+    // only once it is canonicalized too.
+    if (fingerprintState !== state) canonicalizeState(fingerprintState);
     states.push(state);
     fingerprintStates.push(fingerprintState);
     parents.push(parent);
