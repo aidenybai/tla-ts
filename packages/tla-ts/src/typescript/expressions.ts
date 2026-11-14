@@ -2682,9 +2682,11 @@ const translateElementRead = (
   );
   if (primitiveRead !== undefined) return primitiveRead;
   const kind = getKind(node.expression, context);
-  // A Map or a Set off the heap has no own properties, so a symbol reads its prototype's.
+  // A Map, a Set, or a weak one off the heap has no own properties, so a symbol reads its
+  // prototype's.
+  const collection = getCollection(node.expression, context);
   if (
-    (kind === "map" || kind === "set") &&
+    collection !== undefined &&
     context.heap !== undefined &&
     isSymbolKey(node.argumentExpression, context)
   ) {
@@ -2692,7 +2694,7 @@ const translateElementRead = (
       "Get",
       [
         getHeap(scope, node, context),
-        translateBuiltInValue(kind === "map" ? "Map.prototype" : "Set.prototype", node, context),
+        translateBuiltInValue(`${collection}.prototype`, node, context),
         translatePropertyKey(node.argumentExpression, scope, context),
       ],
       context,

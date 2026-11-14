@@ -9338,6 +9338,18 @@ describe("errors", () => {
     expect((await checkModel(wrong)).failure?.message).toContain('"string"');
   });
 
+  it("reads the Symbol.toStringTag of a weak collection's own prototype", async () => {
+    const source = `
+      const holder = { seen: "" };
+      const tags = [WeakMap.prototype[Symbol.toStringTag], new WeakSet()[Symbol.toStringTag]];
+      if (tags.join() !== "WeakMap,WeakSet") throw new Error(tags.join());
+      holder.seen = tags.join();
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    const wrong = source.replace('"WeakMap,WeakSet"', '"Map,Set"');
+    expect((await checkModel(wrong)).failure?.message).toContain('"WeakMap,WeakSet"');
+  });
+
   it("rejects new Object of a value whose type doesn't tell the object", () => {
     expect(() =>
       compile("const box = { prop: 1 };\nconst same: Object = new Object(box);"),
