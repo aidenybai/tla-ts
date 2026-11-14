@@ -217,7 +217,13 @@ class Eval {
     evidence: EnodePair[],
   ) {
     const manager = this.ctx.manager;
-    if (s === t) return L_TRUE;
+    if (
+      s === t ||
+      (manager.isAlgebraicNumeral(s) &&
+        manager.isAlgebraicNumeral(t) &&
+        manager.compareArithValues(s, t) === 0)
+    )
+      return L_TRUE;
     if (manager.areDistinct(s, t)) return L_FALSE;
     if (!manager.isApp(s) || !manager.isApp(t)) return L_UNDEF;
     if (manager.decls[s] !== manager.decls[t]) return L_UNDEF;
