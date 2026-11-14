@@ -253,7 +253,7 @@ class PurifyRewriter extends RewriterTpl {
     const expr = this.mk(decl, args, SORT_INT);
     const processed = this.state.appToFresh.get(expr);
     if (processed !== undefined) return processed;
-    this.processIdiv(OP_IDIV, args);
+    this.processIdiv(decl, args);
     return this.state.appToFresh.get(expr) as number;
   }
 

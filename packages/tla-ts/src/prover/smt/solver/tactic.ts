@@ -743,6 +743,8 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
       build: (environment, params) =>
         inPlace((goal) => {
           const manager = environment.manager;
+          const original = new RefVector(manager);
+          for (const form of goal.forms.items) original.push(form);
           try {
             tseitinCnf(manager, goal);
           } catch (error) {
@@ -753,6 +755,8 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
               isKeepingDistinct: false,
             });
             tseitinCnf(manager, goal);
+          } finally {
+            original.reset();
           }
         }),
     },
@@ -880,6 +884,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
           ["lia2pb_total_bits", PARAM_UINT, 2048, true],
         ]),
       ]),
+      isTrackingDependencies: true,
       build: (environment, params) =>
         inPlace((goal) =>
           lia2pb(environment.manager, goal, {
@@ -1348,6 +1353,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     "aig",
     {
       descrs: getDescrs("", [["max_memory", PARAM_UINT, UINT_MAX, true]]),
+      isTrackingDependencies: true,
       build: (environment) => createAigTactic(environment.manager),
     },
   ],
