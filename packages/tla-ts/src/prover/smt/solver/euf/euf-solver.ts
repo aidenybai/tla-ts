@@ -853,23 +853,31 @@ export class EufSolver implements SatExtension {
     const replay = new Map<number, number>();
     for (const reinit of this.reinits) replay.set(reinit.expr, reinit.boolVar);
     si.setExpr2VarReplay(replay);
-    for (const reinit of this.reinits) {
-      const expr = reinit.expr;
-      const oldGeneration = this.generation;
-      this.generation = reinit.generation;
-      const lit = si.isBoolOp(expr) ? 2 * (replay.get(expr) as number) : si.internalize(expr);
-      const isConnective =
-        manager.getFamily(expr) === FAMILY_BASIC &&
-        (si.isBoolOp(expr) ||
-          (manager.getOp(expr) === OP_EQ && manager.isBool(manager.getArg(expr, 0))));
-      if (this.egraph.find(expr) === undefined && !isConnective) {
-        const args = manager.isApp(expr)
-          ? manager.getArgs(expr).map((arg) => this.eInternalize(arg))
-          : [];
-        this.internalizeTerm(expr);
-        if (this.egraph.find(expr) === undefined) this.mkEnode(expr, args);
-      } else this.attachLit(lit, expr);
-      this.generation = oldGeneration;
+    // scoped_suspend_rlimit: the replay runs to its end even when the limit is spent.
+    const limit = manager.limit;
+    const wasSuspended = limit.isSuspended;
+    limit.isSuspended = true;
+    try {
+      for (const reinit of this.reinits) {
+        const expr = reinit.expr;
+        const oldGeneration = this.generation;
+        this.generation = reinit.generation;
+        const lit = si.isBoolOp(expr) ? 2 * (replay.get(expr) as number) : si.internalize(expr);
+        const isConnective =
+          manager.getFamily(expr) === FAMILY_BASIC &&
+          (si.isBoolOp(expr) ||
+            (manager.getOp(expr) === OP_EQ && manager.isBool(manager.getArg(expr, 0))));
+        if (this.egraph.find(expr) === undefined && !isConnective) {
+          const args = manager.isApp(expr)
+            ? manager.getArgs(expr).map((arg) => this.eInternalize(arg))
+            : [];
+          this.internalizeTerm(expr);
+          if (this.egraph.find(expr) === undefined) this.mkEnode(expr, args);
+        } else this.attachLit(lit, expr);
+        this.generation = oldGeneration;
+      }
+    } finally {
+      limit.isSuspended = wasSuspended;
     }
     for (const entry of replay)
       if (si.isBoolOp(entry[0]) && !si.isCached(entry[0], 2 * entry[1]))
