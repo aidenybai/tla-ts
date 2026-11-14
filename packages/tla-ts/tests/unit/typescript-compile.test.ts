@@ -1530,6 +1530,31 @@ describe("values", () => {
     });
   });
 
+  describe("reads Number's greatest constants through a key", () => {
+    const getSource = (expected: string) => `
+      const box = { size: 0 };
+      const constants = Number as unknown as { [key: string]: unknown };
+      const keys = ["MAX_VALUE", "MAX_SAFE_INTEGER", "MIN_SAFE_INTEGER"];
+      box.size = 1;
+      const read = keys.map((key) => String(constants[key])).join();
+      if (read !== "${expected}") throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("1.7976931348623157e+308,9007199254740991,-9007199254740991")))
+          .failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects the greatest safe integer as 2^53", async () => {
+      expect(
+        (await checkModel(getSource("1.7976931348623157e+308,9007199254740992,-9007199254740991")))
+          .failure?.message,
+      ).toContain("1.7976931348623157e+308,9007199254740991,-9007199254740991");
+    });
+  });
+
   describe("unshifts onto array-like objects whose length is near 2^53 or Infinity", () => {
     const getSource = (expected: string) => `
       const like: { [key: string]: unknown } = {

@@ -422,9 +422,12 @@ export const compile = (
           "Infinity",
           "POSITIVE_INFINITY",
           "NEGATIVE_INFINITY",
-          // The properties of Number and Math that hold fractions.
+          // The properties of Number and Math that hold fractions or integers beyond 32 bits.
           "EPSILON",
           "MIN_VALUE",
+          "MAX_VALUE",
+          "MAX_SAFE_INTEGER",
+          "MIN_SAFE_INTEGER",
           "E",
           "LN10",
           "LN2",
