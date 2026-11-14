@@ -537,6 +537,10 @@ export const bindPatternInline = (
         context,
       );
     }
+    // A function that the heap doesn't hold, such as Object or an arrow, isn't a record.
+    if (type.getCallSignatures().length > 0 || type.getConstructSignatures().length > 0) {
+      throw new TlaTypeScriptError("tla-ts can't destructure a function", element);
+    }
     // A record may lack the field that a default or a nested pattern reads, which then reads
     // undefined. Where objects are in the heap, a value whose type isn't an object's, such as a
     // caught one, may still be an object, which the pattern reads as a member read does.

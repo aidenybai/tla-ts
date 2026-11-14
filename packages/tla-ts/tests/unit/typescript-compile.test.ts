@@ -12501,6 +12501,27 @@ describe("errors", () => {
     ).toThrow("tla-ts can't destructure a value that may be an object or another value");
   });
 
+  it.each([
+    ["Object in a script with objects", true, "const { keys } = Object;"],
+    ["an alias of Object", true, "const O = Object;\nconst { keys } = O;"],
+    ["Promise", true, "const { resolve } = Promise;"],
+    [
+      "a parameter that Object is passed to",
+      true,
+      "const read = ({ keys }: ObjectConstructor) => keys;\nconst got = read(Object);",
+    ],
+    ["an arrow in a script with objects", true, "const make = () => 1;\nconst { length } = make;"],
+    ["an arrow", false, "const make = () => 1;\nconst { length } = make;"],
+    [
+      "an arrow in a nested pattern",
+      false,
+      "const make = () => 1;\nconst { inner: { length } } = { inner: make };",
+    ],
+  ])("stops where a pattern destructures %s", (_name, hasObjects, source) => {
+    const heap = hasObjects ? "class Heap { x = 1; }\nconst heap = new Heap();\n" : "";
+    expect(() => compile(`${heap}${source}`)).toThrow("tla-ts can't destructure a function");
+  });
+
   it("calls the functions that an arrow returns as its body, once for each constant", async () => {
     const getSource = (expected: string) => `
       interface Repeat {
