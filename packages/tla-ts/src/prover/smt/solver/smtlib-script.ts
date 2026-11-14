@@ -1457,8 +1457,12 @@ export const runSmtlibScript = (
         return;
       }
       state.logic = logic.text;
-      state.reader = createSmtlibReader(state.manager, logic.text, settings.parserOptions);
-      if (state.isProofsEnabled !== undefined) resetKernel();
+      if (state.isProofsEnabled === undefined)
+        state.reader = createSmtlibReader(state.manager, logic.text, settings.parserOptions);
+      else {
+        state.reader.restrictSorts(logic.text);
+        resetKernel();
+      }
       if (settings.isPrintingSuccess) print("success");
     },
     "set-info": () => {},

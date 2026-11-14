@@ -544,6 +544,9 @@ interface MappedDecl {
 }
 const ARRAY_EXTENSION_LOGICS = new Set(["HORN", "ALL"]);
 
+// arith_decl_plugin::get_sort_names gives these logics no Int.
+const INT_FREE_LOGICS = new Set(["NRA", "QF_NRA", "QF_NTA", "QF_UFNRA"]);
+
 const BUILTIN_NAMES = new Set([
   "true",
   "false",
@@ -776,7 +779,6 @@ export const createSmtlibReader = (
 ) => {
   const hasArith = logic === undefined || logicHasArith(logic);
   const hasBv = logic === undefined || logicHasBv(logic);
-  const isNumeralAsReal = logic !== undefined && logicHasRealsOnly(logic);
   const logicChecker = createLogicChecker(manager, logic);
   const sortDecls = new Map<string, SortDecl>([
     ["Bool", { kind: "sort", sort: SORT_BOOL }],
@@ -810,6 +812,10 @@ export const createSmtlibReader = (
   const hasFpa = logic === undefined || logicHasFpa(logic);
   const hasArrayExtensions = logic === undefined || ARRAY_EXTENSION_LOGICS.has(logic);
   const hasSeq = logic === undefined || logicHasSeq(logic);
+  const restricted = {
+    isNumeralAsReal: logic !== undefined && logicHasRealsOnly(logic),
+    hasSetSort: hasArrayExtensions,
+  };
 
   const getFirstFunc = (name: string) => funcs.get(name)?.[0];
 
@@ -938,7 +944,8 @@ export const createSmtlibReader = (
   ): number => {
     const head = sexpr.items[0];
     if (!isSymbol(head)) throw new SmtParseError("invalid sort, symbol or '_' expected", head);
-    const isArray = ARRAY_SORT_NAMES.has(head.text) || (head.text === "Set" && hasArrayExtensions);
+    const isArray =
+      ARRAY_SORT_NAMES.has(head.text) || (head.text === "Set" && restricted.hasSetSort);
     if (isArray && hasArrays) {
       const parameters = sexpr.items.slice(1).map((item) => parseSort(item, context, bindings));
       if (head.text === "Set" ? parameters.length !== 1 : parameters.length < 2)
@@ -998,7 +1005,7 @@ export const createSmtlibReader = (
   };
 
   const isBuiltinParametricSort = (name: string) =>
-    (hasArrays && (ARRAY_SORT_NAMES.has(name) || (name === "Set" && hasArrayExtensions))) ||
+    (hasArrays && (ARRAY_SORT_NAMES.has(name) || (name === "Set" && restricted.hasSetSort))) ||
     (hasSeq && (name === "Seq" || name === "RegEx")) ||
     (hasFpa && FPA_SORT_NAMES.has(name));
 
@@ -1869,7 +1876,7 @@ export const createSmtlibReader = (
 
   const parseLeaf = (sexpr: SExpr): number => {
     if (sexpr.kind === "numeral")
-      return isNumeralAsReal
+      return restricted.isNumeralAsReal
         ? manager.mkRealNumeral(Rational.of(BigInt(sexpr.text), 1n))
         : manager.mkNumeral(BigInt(sexpr.text));
     if (sexpr.kind === "decimal") {
@@ -2585,6 +2592,14 @@ export const createSmtlibReader = (
     for (const restore of undo.splice(start).reverse()) restore();
   };
 
+  // cmd_context::set_logic on a manager that is in use: restrict_builtin_sorts takes the sorts the
+  // logic lacks, and the declarations and the operators stay.
+  const restrictSorts = (name: string) => {
+    if (logicHasRealsOnly(name)) restricted.isNumeralAsReal = true;
+    if (!ARRAY_EXTENSION_LOGICS.has(name)) restricted.hasSetSort = false;
+    if (INT_FREE_LOGICS.has(name)) sortDecls.delete("Int");
+  };
+
   const isUsed = (name: string) => funcs.has(name) || BUILTIN_NAMES.has(name);
 
   const isClashing = (decl: number) => {
@@ -2625,6 +2640,7 @@ export const createSmtlibReader = (
     getLogicError: logicChecker.checkExpr,
     push,
     pop,
+    restrictSorts,
     isUsed,
     isClashing,
     getDeclaredFuncs,
@@ -2654,7 +2670,7 @@ export const parseSmtlib = (
   report: (error: SmtParseError) => void,
 ): SmtProblem => {
   const commands = createCommandReader(text);
-  const state = { reader: createSmtlibReader(manager), logic: "", rlimit: 0 };
+  const state = { reader: createSmtlibReader(manager), logic: "", rlimit: 0, isInUse: false };
   const assertions: number[] = [];
   const runCommand = (list: SmtList) => {
     const name = expectSymbol(list.items[0], "invalid command, symbol expected", list).text;
@@ -2675,12 +2691,15 @@ export const parseSmtlib = (
         throw new SmtParseError("logic must be set before initialization", list.end);
       if (!isSupportedLogic(option.text)) return;
       state.logic = option.text;
-      state.reader = createSmtlibReader(manager, option.text);
+      if (state.isInUse) state.reader.restrictSorts(option.text);
+      else state.reader = createSmtlibReader(manager, option.text);
     } else if (DECLARATIONS.has(name)) {
+      state.isInUse = true;
       if (name.startsWith("define-"))
         throw new SmtUnsupportedError(`the command ${name} is not supported`);
       state.reader.declareCommand(list);
     } else if (name === "assert") {
+      state.isInUse = true;
       const assertion = state.reader.parseFormula(list.items[1] ?? list.end);
       const logicError = state.reader.getLogicError(assertion);
       if (logicError !== undefined) {
