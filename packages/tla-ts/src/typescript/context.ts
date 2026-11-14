@@ -789,6 +789,22 @@ export const isAssigned = (symbol: ts.Symbol, node: ts.Node, context: Context): 
   );
 };
 
+// Whether a script assigns to a name inside a function other than the one around a read of it,
+// which TypeScript's narrowing at the read doesn't see.
+export const isAssignedElsewhere = (symbol: ts.Symbol, read: ts.Node, context: Context) => {
+  const around = ts.findAncestor(read, ts.isFunctionLike);
+  return (
+    findNodes(read.getSourceFile(), (inner): inner is ts.Node => {
+      const target = getAssignedTarget(inner);
+      return (
+        target !== undefined &&
+        isWrittenBy(target, symbol, context) &&
+        ts.findAncestor(inner, ts.isFunctionLike) !== around
+      );
+    }).length > 0
+  );
+};
+
 // Whether a variable that a script declares without a type or a value is assigned only as the
 // rest of object patterns, so that it holds undefined or an object.
 export const isRestOnly = (symbol: ts.Symbol, context: Context) => {

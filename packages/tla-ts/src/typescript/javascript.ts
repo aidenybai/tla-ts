@@ -1,6 +1,6 @@
 import ts from "@typescript/typescript6";
 import type { Expression } from "../ast";
-import { type Context, getSymbol, getUndefined, share } from "./context";
+import { type Context, getSymbol, getUndefined, isAssignedElsewhere, share } from "./context";
 import { TlaTypeScriptError } from "../errors";
 import { formatString } from "../printer";
 import {
@@ -5327,7 +5327,14 @@ export const getTypeNames = (type: ts.Type, checker: ts.TypeChecker): string[] |
 };
 
 export const translateTypeOf = (node: ts.TypeOfExpression, scope: Scope, context: Context) => {
-  const names = getTypeNames(context.checker.getTypeAtLocation(node.expression), context.checker);
+  const symbol = ts.isIdentifier(node.expression)
+    ? getSymbol(node.expression, context.checker)
+    : undefined;
+  const type =
+    symbol !== undefined && isAssignedElsewhere(symbol, node, context)
+      ? context.checker.getTypeOfSymbol(symbol)
+      : context.checker.getTypeAtLocation(node.expression);
+  const names = getTypeNames(type, context.checker);
   const known = names && [...new Set(names.map((name) => (name === "null" ? "object" : name)))];
   // Object.defineProperty can give a property a value of another type than TypeScript's.
   const read = ts.isParenthesizedExpression(node.expression)

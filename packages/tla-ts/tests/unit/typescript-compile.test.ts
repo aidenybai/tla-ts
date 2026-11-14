@@ -8534,6 +8534,26 @@ describe("errors", () => {
     });
   });
 
+  describe("tells typeof a name that a closure assigns", () => {
+    const getSource = (expected: string) => `
+      const box = { size: 0 };
+      let held;
+      const set = () => {
+        held = box;
+      };
+      set();
+      if (typeof held !== "${expected}") throw new Error(typeof held);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("object"))).failure).toBeUndefined();
+    });
+
+    it("rejects the type that TypeScript narrows the name to", async () => {
+      expect((await checkModel(getSource("undefined"))).failure?.message).toContain("object");
+    });
+  });
+
   describe("throws the TypeError of reading a function's caller or arguments", () => {
     const getSource = (expected: string) => `
       "use strict";
