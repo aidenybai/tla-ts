@@ -946,6 +946,8 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
               new Map([...params, ["arith_lhs", true], ["elim_and", true], ["som", true]]),
             ),
           );
+          // and_then stops at a decided goal.
+          if (goal.isDecided()) return;
           fm(manager, goal, {
             isRealOnly: getBool(params, "fm_real_only", true),
             limit: getUint(params, "fm_limit", 5000000),

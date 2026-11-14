@@ -470,4 +470,43 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
       '(:reason-unknown "state of the most recent check-sat command is not known")',
     ]);
   });
+
+  // mk_fm_tactic is and_then(simplify, fm), and and_then stops at a decided goal.
+  it("skips fm once simplify has decided the goal", () => {
+    expect(
+      run([
+        "(declare-const x Real)",
+        "(assert (and (> x 1.0) (< x 1.0)))",
+        "(apply fm)",
+        "(assert (> (+ x 1.0) x))",
+        "(apply fm)",
+        "(reset)",
+        "(declare-const x Real)",
+        "(assert (> (+ x 1.0) x))",
+        "(apply fm)",
+        "(declare-const y Real)",
+        "(assert (> y x))",
+        "(apply fm)",
+      ]),
+    ).toEqual([
+      "(goals",
+      "(goal",
+      "  false",
+      "  :precision precise :depth 2)",
+      ")",
+      "(goals",
+      "(goal",
+      "  false",
+      "  :precision precise :depth 2)",
+      ")",
+      "(goals",
+      "(goal",
+      "  :precision precise :depth 1)",
+      ")",
+      "(goals",
+      "(goal",
+      "  :precision precise :depth 2)",
+      ")",
+    ]);
+  });
 });
