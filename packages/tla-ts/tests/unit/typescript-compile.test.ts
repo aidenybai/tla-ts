@@ -17559,6 +17559,41 @@ describe("errors", () => {
     expect(wrong.failure).toBeDefined();
   });
 
+  const getAwaitsSource = (count: number, expected: number) => `
+    (async function () {
+      var count = 0;
+      ${Array.from(
+        { length: count },
+        (_, position) => `
+          var release${position}: any;
+          var suspend${position} = new Promise(function (resolve) { release${position} = resolve; });`,
+      ).join("")}
+      async function bump() {
+        ${Array.from({ length: count }, (_, position) => `await suspend${position}; count += 1;`).join("\n")}
+      }
+      var result = bump();
+      ${Array.from({ length: count }, (_, position) => `release${position}();`).join("\n")}
+      await result;
+      if (count !== ${expected}) throw new Error("resumed");
+    })();
+  `;
+
+  it("keeps an async call's locals in a heap with a name, so that each await adds less to the module", () => {
+    const getSize = (count: number) =>
+      printModule(compile(getAwaitsSource(count, count), "spec.ts").source).length;
+    expect(getSize(3)).toBeLessThan(1.5 * getSize(2));
+  });
+
+  it("awaits the promises that an async call's locals hold, which only their declarations write", async () => {
+    expect((await checkModel(getAwaitsSource(2, 2))).failure).toBeUndefined();
+  });
+
+  it("finds a wrong count of the awaits that an async call's locals hold", async () => {
+    expect((await checkModel(getAwaitsSource(2, 1))).failure?.message).toContain(
+      "A promise rejected with no handler",
+    );
+  });
+
   it("keeps what an async function that a call declares and calls by name changes after it awaits", async () => {
     const source = (expected: string) => `
       declare function setTimeout(callback: () => void): void;

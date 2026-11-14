@@ -6,6 +6,8 @@ import {
   enterBody,
   type Frame,
   getChanged,
+  getWritten,
+  getWrittenRoots,
   leaveBody,
   getBody,
   allocate,
@@ -35,6 +37,7 @@ import {
   getSymbol,
   getUndefined,
   isAnyGenerator,
+  isAssigned,
   isAsyncFunction,
   isAsyncGenerator,
   skipCasts,
@@ -2621,6 +2624,37 @@ const runAsyncBody = (
         activation: entry[1],
         locals: getKeptLocals(entry[0], context),
       }));
+      // The kept locals that only their declarations write, and parameters that no arguments
+      // object aliases, which hold the same value from the time they're bound.
+      const sourceFile = node.getSourceFile();
+      const written = new Set(
+        findNodes(sourceFile, (inner): inner is ts.Node => getWritten(inner) !== undefined).flatMap(
+          (inner) => {
+            const target = getWritten(inner);
+            return target === undefined
+              ? []
+              : getWrittenRoots(target).flatMap((root) => getSymbol(root, context.checker) ?? []);
+          },
+        ),
+      );
+      const fixed = new Set(
+        kept.flatMap((entry) =>
+          entry.locals.flatMap((local) => {
+            const declaration = local.symbol.valueDeclaration;
+            return written.has(local.symbol) ||
+              isAssigned(local.symbol, sourceFile, context) ||
+              (declaration !== undefined &&
+                ts.isParameter(declaration) &&
+                findNodes(
+                  declaration.parent,
+                  (inner): inner is ts.Identifier =>
+                    ts.isIdentifier(inner) && inner.text === "arguments",
+                ).length > 0)
+              ? []
+              : [local.symbol];
+          }),
+        ),
+      );
       const captured =
         callee === undefined || (keptMaker !== undefined && scope.activations?.has(keptMaker))
           ? new Set<ts.Symbol>()
@@ -2634,45 +2668,46 @@ const runAsyncBody = (
         ]),
       ];
       const heapSymbol = context.heap;
-      const leave = (current: Path) => {
+      // The heap that keeps the locals' values names itself, as each value reads the heap that the
+      // body entered with, so that each await in turn would otherwise copy the one before it.
+      const leave = (
+        current: Path,
+        continueLeft: (left: { caller: ReturnType<typeof getCaller>; left: Path }) => Formula,
+      ) => {
         const caller = getCaller(current);
         const left = leaveBody(current, caller.path, changed, isOuter);
-        return {
-          caller,
-          left:
-            heapSymbol === undefined
-              ? left
-              : {
-                  ...left,
-                  scope: {
-                    ...left.scope,
-                    bindings: new Map([
-                      ...left.scope.bindings,
-                      [
-                        heapSymbol,
-                        kept.reduce(
-                          (heap, entry) => {
-                            const values = entry.locals.flatMap(
-                              (local): [Expression, Expression][] => {
-                                const value = current.scope.bindings.get(local.symbol);
-                                return value === undefined ? [] : [[string(local.key), value]];
-                              },
-                            );
-                            return values.length === 0
-                              ? heap
-                              : useJavaScript(
-                                  "SetEnvironment",
-                                  [heap, entry.activation, functionFrom(values)],
-                                  context,
-                                );
-                          },
-                          getHeap(left.scope, node, context),
-                        ),
-                      ],
-                    ]),
-                  },
-                },
-        };
+        if (heapSymbol === undefined) return continueLeft({ caller, left });
+        const heap = getHeap(left.scope, node, context);
+        const stored = kept.reduce((outer, entry) => {
+          const values = entry.locals.flatMap((local): [Expression, Expression][] => {
+            const value = current.scope.bindings.get(local.symbol);
+            return value === undefined ? [] : [[string(local.key), value]];
+          });
+          return values.length === 0
+            ? outer
+            : useJavaScript(
+                "SetEnvironment",
+                [outer, entry.activation, functionFrom(values)],
+                context,
+              );
+        }, heap);
+        if (stored === heap) return continueLeft({ caller, left });
+        const heapName = context.names.getFresh("heap");
+        return bindOnce(
+          left,
+          heapName,
+          stored,
+          continueLeft({
+            caller,
+            left: {
+              ...left,
+              scope: {
+                ...left.scope,
+                bindings: new Map([...left.scope.bindings, [heapSymbol, identifier(heapName)]]),
+              },
+            },
+          }),
+        );
       };
       const enter = (resumer: Path, current: Path) => {
         const entered = enterBody(
@@ -2688,27 +2723,38 @@ const runAsyncBody = (
             bindings: new Map([
               ...entered.scope.bindings,
               ...kept.flatMap((entry) =>
-                entry.locals
-                  .filter((local) => entered.scope.bindings.has(local.symbol))
-                  .map((local): [ts.Symbol, Expression] => [
-                    local.symbol,
-                    useJavaScript(
-                      "EnvironmentValue",
-                      [heap, entry.activation, string(local.key)],
-                      context,
-                    ),
-                  ]),
+                entry.locals.flatMap((local): [ts.Symbol, Expression][] => {
+                  const value = current.scope.bindings.get(local.symbol);
+                  // A fixed local that the body had bound keeps its value, which tells the promises
+                  // and functions it holds apart where the body compiles.
+                  return !entered.scope.bindings.has(local.symbol)
+                    ? []
+                    : value !== undefined &&
+                        !current.scope.uninitialized.has(local.symbol) &&
+                        fixed.has(local.symbol)
+                      ? [[local.symbol, value]]
+                      : [
+                          [
+                            local.symbol,
+                            useJavaScript(
+                              "EnvironmentValue",
+                              [heap, entry.activation, string(local.key)],
+                              context,
+                            ),
+                          ],
+                        ];
+                }),
               ),
             ]),
           },
         };
       };
-      const finish = (current: Path, value: Expression, isThrown: boolean) => {
-        const left = leave(current);
-        return isThrown
-          ? left.caller.resume(settle(left.left, node, name, value, true, context))
-          : resolve(left.left, node, name, value, undefined, context, left.caller.resume);
-      };
+      const finish = (current: Path, value: Expression, isThrown: boolean) =>
+        leave(current, (left) =>
+          isThrown
+            ? left.caller.resume(settle(left.left, node, name, value, true, context))
+            : resolve(left.left, node, name, value, undefined, context, left.caller.resume),
+        );
       const bodyFrame: Frame = {
         next: (current) => finish(current, getUndefined(context), false),
         exit: (current, value) => finish(current, value ?? getUndefined(context), false),
@@ -2716,22 +2762,22 @@ const runAsyncBody = (
         continueTo: undefined,
         throwTo: (current, thrown) => finish(current, thrown.value, true),
         yieldTo: undefined,
-        awaitTo: (current, value, operand, onFulfilled, onRejected) => {
-          const left = leave(current);
-          return awaitIn(
-            left.left,
-            node,
-            value,
-            operand,
-            context,
-            (resumer, settled, isRejected, onReturn) =>
-              (isRejected ? onRejected : onFulfilled)(
-                setCaller(enter(resumer, current), { path: resumer, resume: onReturn }),
-                settled,
-              ),
-            left.caller.resume,
-          );
-        },
+        awaitTo: (current, value, operand, onFulfilled, onRejected) =>
+          leave(current, (left) =>
+            awaitIn(
+              left.left,
+              node,
+              value,
+              operand,
+              context,
+              (resumer, settled, isRejected, onReturn) =>
+                (isRejected ? onRejected : onFulfilled)(
+                  setCaller(enter(resumer, current), { path: resumer, resume: onReturn }),
+                  settled,
+                ),
+              left.caller.resume,
+            ),
+          ),
         inlining: callee === undefined ? frame.inlining : new Set([...frame.inlining, callee]),
       };
       const start = setCaller(
