@@ -7062,8 +7062,11 @@ const getLoopCall = (node: ts.Expression, path: Path, context: Context): LoopCal
   const target = getLoopTarget(node, context);
   if (target === undefined) return undefined;
   const argument = target.callbackArguments.at(0);
+  // A length that may be an object or a symbol converts in statements, which may throw.
+  const isLengthConverted =
+    target.isArrayLike && !target.isTyped && isObjectLength(target.receiver, context);
   if (UNCALLED_METHODS.has(target.method) || (target.method === "toSorted" && target.isArrayLike)) {
-    return getLoopGetters(node, context).length > 0 &&
+    return (getLoopGetters(node, context).length > 0 || isLengthConverted) &&
       !target.callbackArguments.some(ts.isSpreadElement)
       ? {
           method: target.method,
@@ -7090,6 +7093,7 @@ const getLoopCall = (node: ts.Expression, path: Path, context: Context): LoopCal
       getChanged(callback, path, context).length > 0 ||
       (path.scope.isCatching && mayThrow(callback, context)) ||
       getLoopGetters(node, context).length > 0 ||
+      isLengthConverted ||
       context.heapCollections.has(node) ||
       (target.isArrayLike && target.method === "forEach"))
     ? {
@@ -7933,9 +7937,19 @@ const translateLoopCall = (
               )
             : seeded(after);
         };
-        // ToLength converts a length that's an object to a primitive first.
+        // ToLength converts a length that's an object to a primitive first, and throws a TypeError
+        // where ToNumber does, for a symbol or a BigInt.
         return isLengthConverted
-          ? runToPrimitive(expression, held, "number", found, context, frame, visitWith)
+          ? runToPrimitive(expression, held, "number", found, context, frame, (after, primitive) =>
+              ifThenElse(
+                junction("Or", [
+                  useJavaScript("IsSymbol", [primitive], context),
+                  useJavaScript("IsBigInt", [primitive], context),
+                ]),
+                throwTypeError(after, expression, context, frame),
+                visitWith(after, primitive),
+              ),
+            )
           : visitWith(found, held);
       }),
     );

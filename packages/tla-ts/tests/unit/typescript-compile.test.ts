@@ -585,6 +585,32 @@ describe("top-level statements", () => {
     expect((await checkModel(source(false))).failure?.message).toContain("length");
   });
 
+  it("throw the TypeError of an array-like object's length that's a symbol or a BigInt", async () => {
+    const source = (expected: string) => `
+      const getError = (call: () => unknown) => {
+        try {
+          call();
+          return "none";
+        } catch (error) {
+          return error instanceof TypeError ? "type" : "other";
+        }
+      };
+      const like: { [key: string]: unknown } = { 0: 1 };
+      like.length = Symbol("length");
+      const big: { [key: string]: unknown } = { 0: 1, length: 1n };
+      const errors = [
+        getError(() => Array.prototype.find.call(like, () => true)),
+        getError(() => Array.prototype.indexOf.call(like, 1)),
+        getError(() => Array.prototype.some.call(big, () => true)),
+      ];
+      if (errors.join() !== "${expected}") throw new Error(errors.join());
+    `;
+    expect((await checkModel(source("type,type,type"))).failure).toBeUndefined();
+    expect((await checkModel(source("none,type,type"))).failure?.message).toContain(
+      "type,type,type",
+    );
+  });
+
   it("run an array method's call whose value a statement drops", async () => {
     const source = (expected: number) => `
       const values = [1, 2, 3];
