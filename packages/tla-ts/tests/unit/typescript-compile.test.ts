@@ -9778,6 +9778,81 @@ describe("errors", () => {
     expect(result.failure?.message).toContain("replaced Function.prototype.bind");
   });
 
+  describe("binds a class's method to a receiver", () => {
+    const getSource = (doubled: number, name: string) => `
+      class C {
+        value = 1;
+        get(amount: number) { return this.value + amount; }
+        static double(amount: number) { return amount * 2; }
+      }
+      const c = new C();
+      const other = new C();
+      other.value = 10;
+      const bound = c.get.bind(c);
+      const added = c.get.bind(c, 5);
+      const moved = c.get.bind(other);
+      const doubled = C.double.bind(C);
+      c.get = (amount: number) => 100 + amount;
+      if (bound(2) !== 3 || added() !== 6 || moved(1) !== 11 || doubled(4) !== ${doubled}) {
+        throw new Error("call");
+      }
+      if (bound.name !== "${name}" || bound.length !== 1 || added.length !== 0) throw new Error("shape");
+      let caught = "none";
+      try {
+        new (bound as unknown as new () => object)();
+      } catch (error) {
+        caught = (error as Error).constructor.name;
+      }
+      if (caught !== "TypeError") throw new Error(caught);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(8, "bound get"))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong expectations", async () => {
+      expect((await checkModel(getSource(9, "bound get"))).failure?.message).toContain('"call"');
+      expect((await checkModel(getSource(8, "get"))).failure?.message).toContain('"shape"');
+    });
+
+    it("stops where the object doesn't hold the method as bind runs", async () => {
+      const result = await checkModel(`
+        class C {
+          get(amount: number) { return amount; }
+        }
+        const c = new C();
+        c.get = (amount: number) => 100 + amount;
+        const bound = c.get.bind(c);
+        if (bound(2) !== 102) throw new Error("replaced");
+      `);
+      expect(result.failure?.message).toContain("tla-ts can't tell which method this bind binds");
+    });
+  });
+
+  describe("calls an async method that bind bound", () => {
+    const getSource = (expected: number) => `
+      class C {
+        value = 1;
+        async get(amount: number) { return this.value + amount; }
+      }
+      const c = new C();
+      const bound = c.get.bind(c);
+      bound(2).then((value) => {
+        if (value !== ${expected}) throw new Error("async");
+      });
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(3))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation", async () => {
+      expect((await checkModel(getSource(4))).failure?.message).toContain(
+        "rejected with no handler",
+      );
+    });
+  });
+
   describe("stops iterating an array where a script replaced the array iterator", () => {
     const replaced = `
       let calls = 0;

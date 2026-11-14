@@ -1864,6 +1864,35 @@ export const translateCallStatement = (
       continueWith,
     );
   }
+  // A bound async method runs with the receiver that bind gave it.
+  const boundAsync = getBound(expression.expression, context);
+  if (
+    boundAsync !== undefined &&
+    ts.isMethodDeclaration(boundAsync.target) &&
+    isAsyncFunction(boundAsync.target)
+  ) {
+    if (!boundAsync.isSteady || boundAsync.arguments.length > 0) {
+      throw new TlaTypeScriptError(
+        `Unsupported call: ${expression.expression.getText()}`,
+        expression,
+      );
+    }
+    return translateAsyncCall(
+      expression,
+      boundAsync.target,
+      {
+        value:
+          boundAsync.receiver === undefined
+            ? getUndefined(context)
+            : translateExpression(boundAsync.receiver, path.scope, context),
+        method: boundAsync.target,
+      },
+      path,
+      context,
+      frame,
+      continueWith,
+    );
+  }
   const asyncMethod = getCalledMethod(expression.expression, context, isAsyncFunction);
   if (asyncMethod !== undefined) {
     return ifThenElse(

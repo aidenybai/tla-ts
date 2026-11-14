@@ -901,7 +901,9 @@ export const getFunctionValue = (
 };
 
 export interface Binding {
-  target: ts.FunctionExpression | ts.ArrowFunction | ts.FunctionDeclaration;
+  target: ts.FunctionExpression | ts.ArrowFunction | ts.FunctionDeclaration | ts.MethodDeclaration;
+  // The method that bind reads from an object, which bind binds only where the object holds it.
+  method: CalledMethod | undefined;
   receiver: ts.Expression | undefined;
   arguments: ts.Expression[];
   isSteady: boolean;
@@ -932,8 +934,9 @@ const isSteady = (value: ts.Expression, node: ts.Node, context: Context) => {
 };
 
 // A call of Function.prototype.bind on a function that a script evaluates once, as f.bind(x, ...)
-// or Function.prototype.bind.call(f, x, ...). A call of the bound function reads its receiver and
-// arguments again, so it needs them steady, and an empty object can only be bound.
+// or Function.prototype.bind.call(f, x, ...), or on a class's method, as c.method.bind(c). A call
+// of the bound function reads its receiver and arguments again, so it needs them steady, and an
+// empty object can only be bound.
 export const getBinding = (node: ts.Node, context: Context): Binding | undefined => {
   if (context.heap === undefined || !isMethodCall(node)) return undefined;
   const callee = node.expression;
@@ -941,12 +944,25 @@ export const getBinding = (node: ts.Node, context: Context): Binding | undefined
     callee.name.text === "call" && callee.expression.getText() === "Function.prototype.bind";
   if (!isCall && callee.name.text !== "bind") return undefined;
   const values = isCall ? [...node.arguments] : [callee.expression, ...node.arguments];
-  const target = values[0] === undefined ? undefined : getFunctionValue(values[0], context);
+  const bound = values[0] === undefined ? undefined : getFunctionValue(values[0], context);
+  const called =
+    bound !== undefined || values[0] === undefined
+      ? undefined
+      : getCalledMethod(values[0], context, (inner) => isPlain(inner) || isAsyncFunction(inner));
+  const method =
+    called?.getter === undefined &&
+    called?.method !== undefined &&
+    ts.isMethodDeclaration(called.method)
+      ? { ...called, method: called.method }
+      : undefined;
+  const target = bound ?? method?.method;
+  const read = method === undefined ? values : [method.receiver, ...values.slice(1)];
   if (
     target === undefined ||
-    (!ts.isArrowFunction(target) && target.asteriskToken !== undefined) ||
-    (ts.getCombinedModifierFlags(target) & ts.ModifierFlags.Async) !== 0 ||
-    values.some(
+    (bound !== undefined &&
+      ((!ts.isArrowFunction(bound) && bound.asteriskToken !== undefined) ||
+        (ts.getCombinedModifierFlags(bound) & ts.ModifierFlags.Async) !== 0)) ||
+    read.some(
       (value) =>
         !isSteady(value, node, context) &&
         !(ts.isObjectLiteralExpression(value) && value.properties.length === 0),
@@ -956,9 +972,10 @@ export const getBinding = (node: ts.Node, context: Context): Binding | undefined
   }
   return {
     target,
+    method,
     receiver: values[1],
     arguments: values.slice(2),
-    isSteady: values.every((value) => isSteady(value, node, context)),
+    isSteady: read.every((value) => isSteady(value, node, context)),
     isCall,
   };
 };

@@ -1399,7 +1399,7 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
         ],
         context,
       );
-    return ifExpression(
+    const bound = ifExpression(
       binding.isCall
         ? apply("/\\", [
             holds("Function.prototype", "bind"),
@@ -1414,9 +1414,15 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
             "BoundFunctionObject",
             [
               translateBuiltInValue("Function.prototype", node, context),
-              string(getFunctionName(binding.target)),
+              string(
+                ts.isMethodDeclaration(binding.target)
+                  ? (binding.method?.key ?? "")
+                  : getFunctionName(binding.target),
+              ),
               number(Math.max(0, length)),
-              boolean(!ts.isArrowFunction(binding.target)),
+              boolean(
+                !ts.isArrowFunction(binding.target) && !ts.isMethodDeclaration(binding.target),
+              ),
             ],
             context,
           ),
@@ -1428,6 +1434,16 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
         string("tla-ts can't bind a function where a script replaced Function.prototype.bind"),
       ]),
     );
+    return binding.method === undefined
+      ? bound
+      : ifExpression(
+          translateHoldsMethod(binding.method, scope, context),
+          bound,
+          apply("Assert", [
+            boolean(false),
+            string("tla-ts can't tell which method this bind binds"),
+          ]),
+        );
   }
   if (ts.isCallExpression(node) && isSymbolCall(node, context)) {
     return useJavaScript(
