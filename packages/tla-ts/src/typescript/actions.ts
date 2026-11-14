@@ -13707,54 +13707,107 @@ const translateTry = (
   };
   const catchClause = statement.catchClause;
   const bodyFrame = statement.finallyBlock === undefined ? outer : guardYields(outer);
-  const runCatch = (clause: ts.CatchClause, catching: Path, value: Expression) => {
+  const bindCatch = (clause: ts.CatchClause, caught: Path, value: Expression): Formula => {
     const declaration = clause.variableDeclaration;
-    // A catch's pattern makes the objects of its defaults first, as a declaration's does.
-    return allocateAll(
-      declaration === undefined ? [] : getAllocated(declaration, context),
-      catching,
-      context,
-      (caught) => {
-        const bound =
-          declaration === undefined
-            ? { definitions: [], scope: caught.scope }
-            : bindPattern(declaration.name, value, caught.scope, context);
-        // A catch's parameter is a local binding, which the block may assign as it does a let.
-        const parameter =
-          declaration !== undefined && ts.isIdentifier(declaration.name)
-            ? getSymbol(declaration.name, context.checker)
-            : undefined;
-        return letIn(
-          bound.definitions,
-          throwOnDestructured(
-            bound.scope,
+    // A default of a catch's pattern whose call only statements can run, such as one that throws
+    // inside another try, runs as its own statement where the pattern takes undefined for it.
+    const defaulted =
+      declaration === undefined
+        ? undefined
+        : findNodes(declaration.name, ts.isBindingElement).find((element) => {
+            const initializer = element.initializer && getCast(element.initializer);
+            return (
+              ts.isIdentifier(element.name) &&
+              initializer !== undefined &&
+              ts.isCallExpression(initializer) &&
+              !caught.scope.results.has(initializer) &&
+              isStatementCall(initializer, caught, context)
+            );
+          });
+    const call = defaulted?.initializer && getCast(defaulted.initializer);
+    const symbol = defaulted && getSymbol(defaulted.name, context.checker);
+    if (declaration !== undefined && call !== undefined && ts.isCallExpression(call) && symbol) {
+      const withResult = (current: Path, result: Expression) => ({
+        ...current,
+        scope: { ...current.scope, results: new Map([...current.scope.results, [call, result]]) },
+      });
+      const skipped = bindPattern(
+        declaration.name,
+        value,
+        withResult(caught, getUndefined(context)).scope,
+        context,
+      );
+      const part = skipped.scope.bindings.get(symbol);
+      if (part === undefined) throw new TlaTypeScriptError("Unsupported default", call);
+      return letIn(
+        skipped.definitions,
+        throwOnDestructured(
+          skipped.scope,
+          caught,
+          context,
+          bodyFrame,
+          translateJoined(
+            call,
             caught,
             context,
-            bodyFrame,
-            forceHeap(
-              caught.scope,
-              bound.scope,
-              translateStatements(
-                clause.block.statements,
-                {
-                  ...caught,
-                  scope: { ...bound.scope, destructured: undefined },
-                  mutable:
-                    parameter === undefined
-                      ? caught.mutable
-                      : new Set([...caught.mutable, parameter]),
-                },
-                context,
-                bodyFrame,
+            (after, result) =>
+              bindCatch(clause, withResult(after, result ?? getUndefined(context)), value),
+            (next) =>
+              ifThenElse(
+                apply("=", [part, getUndefined(context)]),
+                translateCallStatement(call, caught, context, bodyFrame, next),
+                next(caught, getUndefined(context)),
               ),
-              leaf(boolean(false)),
-              context,
-            ),
           ),
-        );
-      },
+        ),
+      );
+    }
+    const bound =
+      declaration === undefined
+        ? { definitions: [], scope: caught.scope }
+        : bindPattern(declaration.name, value, caught.scope, context);
+    // A catch's parameter is a local binding, which the block may assign as it does a let.
+    const parameter =
+      declaration !== undefined && ts.isIdentifier(declaration.name)
+        ? getSymbol(declaration.name, context.checker)
+        : undefined;
+    return letIn(
+      bound.definitions,
+      throwOnDestructured(
+        bound.scope,
+        caught,
+        context,
+        bodyFrame,
+        forceHeap(
+          caught.scope,
+          bound.scope,
+          translateStatements(
+            clause.block.statements,
+            {
+              ...caught,
+              scope: { ...bound.scope, destructured: undefined },
+              mutable:
+                parameter === undefined ? caught.mutable : new Set([...caught.mutable, parameter]),
+            },
+            context,
+            bodyFrame,
+          ),
+          leaf(boolean(false)),
+          context,
+        ),
+      ),
     );
   };
+  // A catch's pattern makes the objects of its defaults first, as a declaration's does.
+  const runCatch = (clause: ts.CatchClause, catching: Path, value: Expression) =>
+    allocateAll(
+      clause.variableDeclaration === undefined
+        ? []
+        : getAllocated(clause.variableDeclaration, context),
+      catching,
+      context,
+      (caught) => bindCatch(clause, caught, value),
+    );
   const handle = (inner: Path, thrown: Thrown) => {
     if (catchClause === undefined) return rethrow(inner, thrown);
     const caught = { ...inner, scope: { ...inner.scope, isCatching } };

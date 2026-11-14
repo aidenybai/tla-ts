@@ -5712,6 +5712,32 @@ describe("calls", () => {
     expect((await checkModel(getSource("declared"))).failure?.message).toContain("boomboom");
   });
 
+  it("runs a catch pattern's default that throws only where the thrown value lacks it", async () => {
+    const getSource = (expected: string) => `
+      function fail(): number {
+        throw "boom";
+      }
+      let seen = "";
+      try {
+        throw { x: 3 };
+      } catch ({ x = fail() }: any) {
+        seen = "got" + x;
+      }
+      try {
+        try {
+          throw [];
+        } catch ([y = fail()]: any) {
+          seen += "no" + y;
+        }
+      } catch (error) {
+        seen += String(error);
+      }
+      if (seen !== "${expected}") throw new Error(seen);
+    `;
+    expect((await checkModel(getSource("got3boom"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("got3"))).failure?.message).toContain("got3boom");
+  });
+
   it("ends a case with a block that returns", async () => {
     const getSource = (expected: string) => `
       const describe = (value: number): string => {
