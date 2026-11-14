@@ -466,6 +466,7 @@ const commuteSequent = createSequentMap(commuteSymbols, "all");
 const coalesceSequent = createSequentMap(coalesceModal, "visible");
 
 export const processObligation = (sequent: Sequent): Sequent => {
+  // Levels.compute_level, whose levels the passes below read on demand: only its errors matter.
   getLevelInfo(undefined, { kind: "Sequent", sequent });
   const keys = sequent.context;
   const expanded = expandUnchangedSequent(keys, expandActionSequent(keys, sequent));
