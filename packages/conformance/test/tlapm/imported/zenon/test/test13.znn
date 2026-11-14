@@ -1,5 +1,5 @@
 (*---
-description: Zenon's own test zenon/test/test13.znn, which Zenon must prove.
+description: Zenon's own test zenon/test/test13.znn, which Zenon must prove. The recorded lambda names depend on when OCaml's minor GC runs, because expr.ml shares expressions through a weak table that reuses an old lambda only until a collection frees it, so tla-ts prints alpha-equivalent names and stays in the baseline.
 ref: zenon/test/test13.znn
 features:
   - zenon-test
