@@ -428,15 +428,23 @@ export const compile = (
           "Float16Array",
           "Float32Array",
           "Float64Array",
-          // A time value may be NaN or an integer beyond 32 bits.
+          // A time value may be NaN or an integer beyond 32 bits, as may a power.
           "Date",
+          "pow",
         ].includes(node.text)) ||
       (ts.isPrefixUnaryExpression(node) &&
         node.operator === ts.SyntaxKind.MinusToken &&
         ts.isNumericLiteral(node.operand) &&
         Number(node.operand.text) === 0) ||
-      // Division may give an infinity or -0.
-      (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.SlashToken) ||
+      // Division may give an infinity or -0, and ** and >>> an integer beyond 32 bits.
+      (ts.isBinaryExpression(node) &&
+        [
+          ts.SyntaxKind.SlashToken,
+          ts.SyntaxKind.AsteriskAsteriskToken,
+          ts.SyntaxKind.AsteriskAsteriskEqualsToken,
+          ts.SyntaxKind.GreaterThanGreaterThanGreaterThanToken,
+          ts.SyntaxKind.GreaterThanGreaterThanGreaterThanEqualsToken,
+        ].includes(node.operatorToken.kind)) ||
       // A literal may give a fraction or an integer beyond 32 bits.
       (ts.isNumericLiteral(node) &&
         (!Number.isInteger(Number(node.text)) || Number(node.text) > 2 ** 31 - 1)) ||

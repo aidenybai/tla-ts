@@ -1128,13 +1128,29 @@ describe("values", () => {
     });
   });
 
-  it("stops where a script without special numbers raises an integer beyond 32 bits", async () => {
+  it("stops where a script without objects raises an integer beyond 32 bits", async () => {
     await expect(
       checkModel(`
         const n = Math.pow(2, 32);
         if (String(n) !== "4294967296") throw new Error(String(n));
       `),
     ).rejects.toThrow("tla-ts can't represent");
+  });
+
+  describe("raises an integer beyond 32 bits in a script with no other special numbers", () => {
+    const getSource = (expected: string) => `
+      const box = { size: 0 };
+      const n = Math.pow(2, 32) - (2 ** 31 >>> 0);
+      if (String(n) !== "${expected}" || box.size !== 0) throw new Error(String(n));
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("2147483648"))).failure).toBeUndefined();
+    });
+
+    it("rejects 2^32 itself", async () => {
+      expect((await checkModel(getSource("4294967296"))).failure?.message).toContain("2147483648");
+    });
   });
 
   describe("writes the doubles that literals give as Node does", () => {
