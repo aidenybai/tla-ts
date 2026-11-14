@@ -136,6 +136,9 @@ describe("typed tier matches TLC", () => {
     "LiveComparers",
     "EnabledInstance",
     "LetFunctionEquality",
+    "LiveDeadlock",
+    "LiveDeadlockMissed",
+    "LiveDeadlockViolated",
   ])("checks %s as the interpreter does", async (name) => {
     const [typed, interpreted] = await Promise.all([
       checkFixture(name, true),

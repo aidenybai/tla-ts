@@ -5279,13 +5279,14 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
     liveSuccessors.length = 0;
     compiled.next(state, onSuccessor);
     const isDeadlocked = expansion.successors === 0 && check.isDeadlockChecked;
-    // The interpreter reports a violation of a temporal property, and a deadlock beside one. Like
-    // TLC, it finds a violation early in the part of the graph it checks periodically.
-    if (live && (isDeadlocked || live.addState(index, state, liveSuccessors))) deopt();
-    if (live && index + 1 === liveChecks.at) {
-      liveChecks.at *= 2;
-      if (live.findViolation()) deopt();
-    }
+    // Like TLC, the interpreter finds a violation of a temporal property early in the part of the
+    // graph it checks periodically, and a violation in a part stays one as the graph grows. At a
+    // deadlock it reports only a violation found as it adds the deadlocked state.
+    if (isDeadlocked && live?.findViolation()) deopt();
+    if (live?.addState(index, state, liveSuccessors)) deopt();
+    const isChecked = index + 1 === liveChecks.at;
+    if (isChecked) liveChecks.at *= 2;
+    if (isChecked && !isDeadlocked && live?.findViolation()) deopt();
     if (isDeadlocked) {
       const path: Plain[][] = [];
       for (let position = index; position !== -1; position = parents.data[position]) {
