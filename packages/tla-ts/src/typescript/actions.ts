@@ -6746,12 +6746,22 @@ const getLoopGetters = (node: ts.Node, context: Context) => {
 // Whether an array-like object's length may be an object, which the method converts to a primitive
 // before it reads the elements, running the object's valueOf and toString methods.
 const isObjectLength = (receiver: ts.Node, context: Context) => {
-  const length = context.checker.getTypeAtLocation(receiver).getProperty("length");
-  const type = length === undefined ? undefined : context.checker.getTypeOfSymbol(length);
+  const receiverType = context.checker.getTypeAtLocation(receiver);
+  const length = receiverType.getProperty("length");
+  const type =
+    length === undefined
+      ? receiverType.getStringIndexType()
+      : context.checker.getTypeOfSymbol(length);
   return (
     type !== undefined &&
     (type.isUnion() ? type.types : [type]).some(
-      (member) => (member.flags & (ts.TypeFlags.Object | ts.TypeFlags.NonPrimitive)) !== 0,
+      (member) =>
+        (member.flags &
+          (ts.TypeFlags.Object |
+            ts.TypeFlags.NonPrimitive |
+            ts.TypeFlags.Unknown |
+            ts.TypeFlags.Any)) !==
+        0,
     )
   );
 };
@@ -6883,6 +6893,8 @@ const translateLoopCall = (
   const lengthGetters = isObject ? getDefinedGetters(receiver, "length", context) : [];
   const speciesGetters = isObject ? getSpeciesGetters(method, receiver, context) : [];
   const isLengthConverted = isObject && isObjectLength(receiver, context);
+  // A length that's an array reads its valueOf and toString from Array.prototype.
+  if (isLengthConverted) context.builtIns.add("Array.prototype");
   // The array that map makes, where the heap holds it, gathers its elements and its holes.
   const isHeapMap = method === "map" && context.heapCollections.has(expression);
   const getters = loop.isTyped

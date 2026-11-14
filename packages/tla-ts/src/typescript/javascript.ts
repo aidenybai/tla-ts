@@ -3237,6 +3237,11 @@ ConvertWith(heap, ref, method) ==
             BooleanToString(WrappedPrimitive(heap, ref, "Boolean", "toString"))
        [] path = "BigInt.prototype.valueOf" /\\ IsHeap(ref) /\\ "bigint" \\in DOMAIN Lookup(heap, ref) ->
             Lookup(heap, ref).bigint
+       [] /\\ path = "Array.prototype.toString"
+          /\\ IsSequenceValue(ref)
+          /\\ \\A position \\in DOMAIN ref : ref[position] = Null \\/ TypeOf(ref[position]) # "object"
+          /\\ HoldsBuiltIn(heap, ref, "join", "Array.prototype.join") ->
+            JoinValues(ref, ",")
        [] OTHER -> Assert(FALSE, "tla-ts can't tell what this method gives where it converts an object")
 
 \\* ToNumber of a primitive. tla-ts can't represent a string's fraction.

@@ -5050,6 +5050,68 @@ describe("errors", () => {
     });
   });
 
+  describe("converts the length of an array-like object that an index signature types", () => {
+    const getSource = (expected: string) => `
+      const seen: unknown[] = [];
+      let conversions = 0;
+      const obj: { [key: string]: unknown } = {
+        0: "a",
+        1: "b",
+        length: {
+          valueOf() {
+            conversions++;
+            return 1;
+          },
+        },
+      };
+      Array.prototype.forEach.call(obj, (value: unknown) => {
+        seen.push(value);
+      });
+      const total = Array.prototype.reduce.call(
+        obj,
+        (sum: unknown, value: unknown) => String(sum) + String(value),
+        "",
+      ) as string;
+      const result = [seen.join(), total, conversions].join(";");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("calls valueOf once for each method", async () => {
+      const result = await checkModel(getSource("a;a;2"));
+      expect(result.failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const result = await checkModel(getSource("a;a;1"));
+      expect(result.failure?.message).toContain("a;a;2");
+    });
+  });
+
+  describe("converts a length that's an array through its join", () => {
+    const getSource = (expected: string) => `
+      const seen: unknown[] = [];
+      const obj: { [key: string]: unknown } = { 0: "a", 1: "b", 2: "c", length: [2] };
+      Array.prototype.forEach.call(obj, (value: unknown) => {
+        seen.push(value);
+      });
+      obj.length = [];
+      Array.prototype.forEach.call(obj, (value: unknown) => {
+        seen.push(value);
+      });
+      if (seen.join() !== "${expected}") throw new Error(seen.join());
+    `;
+
+    it("reads as many elements as the array joins to", async () => {
+      const result = await checkModel(getSource("a,b"));
+      expect(result.failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const result = await checkModel(getSource("b,a"));
+      expect(result.failure?.message).toContain("a,b");
+    });
+  });
+
   describe("skips to the next element after a hole where a callback runs as statements", () => {
     const getSource = (expected: string) => `
       const visited: number[] = [];
