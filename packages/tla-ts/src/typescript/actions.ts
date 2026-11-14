@@ -62,6 +62,7 @@ import {
   getElement,
   getAnyFunction,
   getCaptures,
+  getHolder,
   getCapturedArguments,
   getClosures,
   isClosure,
@@ -10497,24 +10498,94 @@ export const allocateAll = (
 ): Formula => {
   const symbol = context.heap;
   if (symbol === undefined || allocations.length === 0) return continueWith(path);
-  const allocated = allocations.reduce<Bound>(
-    (current, allocation) => {
-      const name = context.names.getFresh("heap");
-      const ref = translateAllocatedValue(allocation, identifier(name), current.scope, context);
-      return {
-        definitions: [
-          ...current.definitions,
-          define(name, [], translateAllocated(allocation, current.scope, context)),
-        ],
+  // A closure that reads the const whose object literal holds it is made after the object, which
+  // holds undefined there until the closure is made.
+  const deferred = allocations.filter((allocation) => {
+    const holder = getHolder(allocation);
+    const held = holder && getSymbol(holder.declaration.name, context.checker);
+    return (
+      holder !== undefined &&
+      held !== undefined &&
+      allocations.includes(holder.literal) &&
+      isClosure(allocation, context) &&
+      getCaptures(allocation, context).includes(held)
+    );
+  });
+  const allocateOne = (current: Bound, allocation: ts.Node, scope: Scope) => {
+    const name = context.names.getFresh("heap");
+    return {
+      name,
+      ref: translateAllocatedValue(allocation, identifier(name), current.scope, context),
+      definition: define(name, [], translateAllocated(allocation, scope, context)),
+    };
+  };
+  const made = allocations
+    .filter((allocation) => !deferred.includes(allocation))
+    .reduce<Bound>(
+      (current, allocation) => {
+        const one = allocateOne(current, allocation, current.scope);
+        return {
+          definitions: [...current.definitions, one.definition],
+          scope: {
+            ...current.scope,
+            bindings: new Map([...current.scope.bindings, [symbol, identifier(one.name)]]),
+            allocated: new Map([...current.scope.allocated, [allocation, one.ref]]),
+          },
+        };
+      },
+      {
+        definitions: [],
         scope: {
-          ...current.scope,
-          bindings: new Map([...current.scope.bindings, [symbol, identifier(name)]]),
-          allocated: new Map([...current.scope.allocated, [allocation, ref]]),
+          ...path.scope,
+          allocated: new Map([
+            ...path.scope.allocated,
+            ...deferred.map((closure): [ts.Node, Expression] => [closure, getUndefined(context)]),
+          ]),
         },
-      };
-    },
-    { definitions: [], scope: path.scope },
-  );
+      },
+    );
+  const allocated = deferred.reduce<Bound>((current, closure) => {
+    const holder = getHolder(closure);
+    const held = holder && getSymbol(holder.declaration.name, context.checker);
+    const object = holder && current.scope.allocated.get(holder.literal);
+    if (holder === undefined || held === undefined || object === undefined) {
+      throw new TlaTypeScriptError("Make objects only where a statement always runs", closure);
+    }
+    const one = allocateOne(current, closure, {
+      ...current.scope,
+      bindings: new Map([...current.scope.bindings, [held, object]]),
+    });
+    const written = context.names.getFresh("heap");
+    const heap = identifier(one.name);
+    return {
+      definitions: [
+        ...current.definitions,
+        one.definition,
+        define(
+          written,
+          [],
+          useJavaScript(
+            "Update",
+            [
+              heap,
+              object,
+              useJavaScript(
+                "Put",
+                [useJavaScript("Lookup", [heap, object], context), string(holder.key), one.ref],
+                context,
+              ),
+            ],
+            context,
+          ),
+        ),
+      ],
+      scope: {
+        ...current.scope,
+        bindings: new Map([...current.scope.bindings, [symbol, identifier(written)]]),
+        allocated: new Map([...current.scope.allocated, [closure, one.ref]]),
+      },
+    };
+  }, made);
   return allocated.definitions.reduceRight(
     (body, definition) => bindOnce(path, definition.name, definition.body, body),
     continueWith({ ...path, scope: allocated.scope }),

@@ -1998,6 +1998,25 @@ const getOuterLocals = (node: ts.Node, context: Context) =>
 
 export type Closure = ts.FunctionExpression | ts.ArrowFunction;
 
+// The const whose object literal holds a closure as a property's value, which tla-ts makes before
+// the closure, so that the closure's environment holds the object, which the property then holds.
+export const getHolder = (node: ts.Node) => {
+  const property = node.parent;
+  const literal = property.parent;
+  const declaration = ts.findAncestor(literal, ts.isVariableDeclaration);
+  return ts.isPropertyAssignment(property) &&
+    property.initializer === node &&
+    (ts.isIdentifier(property.name) || ts.isStringLiteral(property.name)) &&
+    ts.isObjectLiteralExpression(literal) &&
+    declaration !== undefined &&
+    ts.isIdentifier(declaration.name) &&
+    declaration.initializer !== undefined &&
+    skipCasts(declaration.initializer) === literal &&
+    (ts.getCombinedNodeFlags(declaration) & ts.NodeFlags.Const) !== 0
+    ? { declaration, literal, key: property.name.text }
+    : undefined;
+};
+
 // The name of the const that holds a function.
 const getHeldName = (node: ts.Node) =>
   ts.isVariableDeclaration(node.parent) &&
@@ -2207,7 +2226,8 @@ export const getCaptures = (node: Closure, context: Context) => {
       ts.findAncestor(declaration.parent, ts.isFunctionLike) !== maker ||
       isRepeated(node) ||
       (ts.isVariableDeclaration(declaration) &&
-        (isRepeated(declaration) || declaration.end > node.getStart()))
+        (isRepeated(declaration) ||
+          (declaration.end > node.getStart() && getHolder(node)?.declaration !== declaration)))
     ) {
       throw new TlaTypeScriptError(
         "tla-ts can't follow a function that outlives its call and reads this name",

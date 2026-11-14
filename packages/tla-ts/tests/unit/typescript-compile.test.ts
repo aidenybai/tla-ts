@@ -17791,6 +17791,55 @@ describe("errors", () => {
     ).toContain(expected);
   });
 
+  it("calls a closure that reads the const whose object literal holds it", async () => {
+    const getSource = (expected: string) => `
+      interface Reader {
+        errors: string[];
+        next: () => string;
+        count: number;
+      }
+      const createReader = (source: string): Reader => {
+        const position = { offset: 0 };
+        const state: Reader = {
+          errors: [],
+          next: () => {
+            const character = source[position.offset] ?? "";
+            position.offset++;
+            state.count++;
+            if (character === "!") state.errors.push(\`bad \${position.offset}\`);
+            return character;
+          },
+          count: 0,
+        };
+        return state;
+      };
+      const countBang = (source: string) => {
+        const local = {
+          seen: 0,
+          step: () => {
+            local.seen += source.length;
+            return local.seen;
+          },
+        };
+        local.step();
+        return local.step();
+      };
+      const run = () => {
+        const first = createReader("a!b");
+        const second = createReader("!x");
+        const read = [first.next(), second.next(), first.next(), first.next(), second.next()].join("");
+        return \`\${read};\${first.errors.join("/")};\${second.errors.join("/")};\${first.count},\${second.count};\${Object.keys(first).join("")};\${countBang("abc")}\`;
+      };
+      const text = run();
+      if (text !== "${expected}") throw new Error(text);
+    `;
+    const expected = "a!!bx;bad 2;bad 1;3,2;errorsnextcount;6";
+    expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    expect(
+      (await checkModel(getSource(expected.replace("3,2", "3,1")))).failure?.message,
+    ).toContain(expected);
+  });
+
   it("calls a closure that outlives its call through the iterator protocol", async () => {
     expect((await checkModel(getEscapedNextSource(3))).failure).toBeUndefined();
   });
