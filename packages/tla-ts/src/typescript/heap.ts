@@ -139,6 +139,7 @@ import {
   isHeapType,
   isNumberLike,
   isSequenceType,
+  mayBeSequenceType,
   TYPED_ARRAYS,
   type BufferName,
   isBufferName,
@@ -4955,10 +4956,32 @@ export const findHeapArrays = (
           isArrayObjectUse(reference, context)),
     );
   };
-  // A comparison by identity tells the array apart from an equal copy: ===, Object.is, a set's or a
-  // map's key, or a function that compares its parameter so.
+  // A value that may be a sequence, which lacks the identity that a comparison reads, unlike an
+  // array that the heap already holds, such as a rest element.
+  const mayLackIdentity = (node: ts.Expression) => {
+    const value = skipCasts(node);
+    const declaration = ts.isIdentifier(value)
+      ? getSymbol(value, context.checker)?.valueDeclaration
+      : undefined;
+    return (
+      (declaration === undefined || !arrays.has(declaration)) &&
+      mayBeSequenceType(
+        context.checker.getNonNullableType(context.checker.getTypeAtLocation(value)),
+        context.checker,
+      )
+    );
+  };
+  // A comparison by identity tells the array apart from an equal copy that may be a sequence: ===,
+  // Object.is, a set's or a map's key, or a function that compares its parameter so. A function's
+  // comparison compares what its call passes.
   const isIdentityUse = (use: ts.Expression, isOuter: boolean): boolean => {
     const parent = use.parent;
+    const isComparedToCopy = () =>
+      !isOuter ||
+      (ts.isBinaryExpression(parent)
+        ? mayLackIdentity(parent.left === use ? parent.right : parent.left)
+        : ts.isCallExpression(parent) &&
+          parent.arguments.some((argument) => argument !== use && mayLackIdentity(argument)));
     if (
       ts.isBinaryExpression(parent) &&
       [
@@ -4968,12 +4991,12 @@ export const findHeapArrays = (
         ts.SyntaxKind.ExclamationEqualsToken,
       ].includes(parent.operatorToken.kind)
     ) {
-      return true;
+      return isComparedToCopy();
     }
     if (!ts.isCallExpression(parent) || !parent.arguments.includes(use)) return false;
     const position = parent.arguments.indexOf(use);
     const callee = parent.expression;
-    if (callee.getText() === "Object.is") return true;
+    if (callee.getText() === "Object.is") return isComparedToCopy();
     if (
       ts.isPropertyAccessExpression(callee) &&
       ["set", "get", "has", "add", "delete"].includes(callee.name.text) &&
@@ -4993,6 +5016,7 @@ export const findHeapArrays = (
     return (
       declaration !== undefined &&
       parameter !== undefined &&
+      isComparedToCopy() &&
       findNodes(declaration, ts.isIdentifier).some(
         (reference) =>
           reference !== name &&

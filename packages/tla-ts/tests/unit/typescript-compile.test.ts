@@ -6911,6 +6911,22 @@ describe("errors", () => {
     );
   });
 
+  it("keeps an array a sequence where a script compares it only with a rest element", async () => {
+    const getSource = (expected: string) => `
+      const isSame = (left: unknown, right: unknown) => Object.is(left, right);
+      var values = [1, 2, 3, 4, 5];
+      let text = "";
+      for (const [, , ...rest] = values; text === ""; ) {
+        text = \`\${Array.isArray(rest)},\${rest.join()},\${isSame(rest, values)}\`;
+      }
+      if (text !== "${expected}") throw new Error(text);
+    `;
+    expect((await checkModel(getSource("true,3,4,5,false"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("true,3,4,5,true"))).failure?.message).toContain(
+      "true,3,4,5,false",
+    );
+  });
+
   describe("holds an array on the heap where a script compares it by identity", () => {
     const source = `
       const isSame = (left: unknown, right: unknown) => Object.is(left, right);
