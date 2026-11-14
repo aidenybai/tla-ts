@@ -1507,6 +1507,21 @@ const getOperation = (node: ts.Node, context: Context): ProxyOperation | undefin
   if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.InKeyword) {
     return { trap: "has", object: node.right, key: getLiteralKey(node.left), isReflected: false };
   }
+  // instanceof reads the prototypes of a proxy on its left, through getPrototypeOf, where the
+  // function on its right has the ordinary @@hasInstance.
+  if (
+    ts.isBinaryExpression(node) &&
+    node.operatorToken.kind === ts.SyntaxKind.InstanceOfKeyword &&
+    ts.isIdentifier(node.right)
+  ) {
+    return {
+      trap: "getPrototypeOf",
+      object: node.left,
+      key: undefined,
+      method: "instanceof",
+      isReflected: false,
+    };
+  }
   if (
     ts.isBinaryExpression(node) &&
     node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
@@ -1982,10 +1997,37 @@ export const runProxyOperation = (
   path: Path,
   context: Context,
   frame: Frame,
-  continueWith: (path: Path, value: Expression) => Formula,
+  finish: (path: Path, value: Expression) => Formula,
 ): Formula => {
   const operation = getProxyOperation(node, context);
   if (operation === undefined) throw new TlaTypeScriptError("Unsupported proxy operation", node);
+  // instanceof goes on from the prototype that getPrototypeOf gives through the function's
+  // prototype chain, as OrdinaryHasInstance does.
+  const constructor =
+    ts.isBinaryExpression(node) && operation.method === "instanceof" ? node.right : undefined;
+  const continueWith = (after: Path, value: Expression) => {
+    if (constructor === undefined) return finish(after, value);
+    const heap = getHeap(after.scope, node, context);
+    const owner = translateExpression(constructor, after.scope, context);
+    return ifThenElse(
+      apply("/\\", [
+        apply("=", [useJavaScript("TypeOfIn", [heap, owner], context), string("function")]),
+        useJavaScript("IsOrdinaryHasInstance", [heap, owner], context),
+        useJavaScript(
+          "IsObjectIn",
+          [heap, useJavaScript("Get", [heap, owner, string("prototype")], context)],
+          context,
+        ),
+      ]),
+      finish(after, useJavaScript("HasInstanceFrom", [heap, owner, value], context)),
+      leaf(
+        apply("Assert", [
+          boolean(false),
+          string("tla-ts can't run instanceof through this function's Symbol.hasInstance"),
+        ]),
+      ),
+    );
+  };
   const trap = operation.trap;
   const key = string(operation.key ?? "");
   const method = string(operation.method ?? "");

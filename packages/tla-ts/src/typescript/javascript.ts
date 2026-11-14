@@ -1887,6 +1887,14 @@ SequenceHasOwn(sequence, key) ==
 \\* Whether an object still holds a built-in function, which tla-ts runs as it compiles.
 HoldsBuiltIn(heap, ref, key, path) == SameValue(Get(heap, ref, key), Ref :> path)
 
+\\* OrdinaryHasInstance from the prototype that an object's [[GetPrototypeOf]] gives, which reads the
+\\* function's prototype and walks on from there.
+HasInstanceFrom(heap, function, prototype) ==
+  LET owner == Get(heap, function, "prototype")
+  IN /\\ prototype # Null
+     /\\ \\/ SameValue(prototype, owner)
+        \\/ IsPrototypeOf(heap, owner, prototype)
+
 \\* Whether instanceof runs OrdinaryHasInstance on a function, as it does where the function's
 \\* @@hasInstance is Function.prototype's, or where it has none.
 IsOrdinaryHasInstance(heap, function) ==

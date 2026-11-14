@@ -25313,4 +25313,43 @@ describe("BigInts", () => {
       ).toContain("1,true,true,true,3,false,true,attr");
     });
   });
+
+  describe("runs instanceof on a proxy through its getPrototypeOf trap", () => {
+    const getSource = (expected: string) => `
+      function Custom() {}
+      function Other() {}
+      const proxy = new Proxy(
+        {},
+        {
+          getPrototypeOf() {
+            return Custom.prototype;
+          },
+        },
+      );
+      const fixed = {};
+      Object.preventExtensions(fixed);
+      const lying = new Proxy(fixed, {
+        getPrototypeOf() {
+          return Custom.prototype;
+        },
+      });
+      const read: unknown[] = [proxy instanceof Custom, proxy instanceof Other, proxy instanceof Object];
+      try {
+        read.push(lying instanceof Custom);
+      } catch (error) {
+        read.push(error instanceof TypeError ? "type" : "other");
+      }
+      if (read.join() !== "${expected}") throw new Error(read.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("true,false,true,type"))).failure).toBeUndefined();
+    });
+
+    it("rejects the trap's prototype for a fixed target as allowed", async () => {
+      expect((await checkModel(getSource("true,false,true,true"))).failure?.message).toContain(
+        "true,false,true,type",
+      );
+    });
+  });
 });
