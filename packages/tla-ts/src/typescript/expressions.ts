@@ -2057,7 +2057,7 @@ const translateIdentifier = (node: ts.Identifier, scope: Scope, context: Context
       node,
     );
   }
-  // The global object, whose properties tla-ts doesn't read.
+  // The global object, whose standard globals' keys tla-ts reads.
   if (
     node.text === "globalThis" &&
     context.heap !== undefined &&
@@ -2065,6 +2065,7 @@ const translateIdentifier = (node: ts.Identifier, scope: Scope, context: Context
     (symbol.flags & ts.SymbolFlags.ValueModule) !== 0
   ) {
     context.prelude.add("JavaScript");
+    context.builtIns.add("globalThis");
     return identifier("GlobalObject");
   }
   throw new TlaTypeScriptError(`Unknown name: ${node.text}`, node);

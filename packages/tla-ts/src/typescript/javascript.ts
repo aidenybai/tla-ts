@@ -686,8 +686,8 @@ LOCAL IsObject(value) == IsRef(value) \\/ TypeOf(value) = "function"
 
 LOCAL ObjectPrototype == Ref :> "Object.prototype"
 
-\\* The global object, which a script's this is at its top level, and whose properties tla-ts doesn't
-\\* read.
+\\* The global object, which a script's this is at its top level. A host gives it properties besides
+\\* the standard globals', such as Node's process, so tla-ts reads only the keys of those.
 GlobalObject == Ref :> "globalThis"
 
 LOCAL Writable == [writable |-> TRUE, enumerable |-> TRUE, configurable |-> TRUE, kind |-> "data"]
@@ -744,7 +744,7 @@ IsDataView(heap, value) ==
 
 IsTypedArray(heap, value) == IsHeap(value) /\\ "elementType" \\in DOMAIN heap.objects[value[Ref]]
 
-Lookup(heap, ref) ==
+LOCAL LookupFor(heap, ref, isGlobalKey) ==
   CASE IsProxy(heap, ref) -> Assert(FALSE, "tla-ts can't run a proxy's internal method here")
     [] IsTypedArray(heap, ref) -> Assert(FALSE, "tla-ts can't run a typed array's internal method here")
     [] ref \\in {Undefined, Null} ->
@@ -752,9 +752,18 @@ Lookup(heap, ref) ==
     [] IsHeap(ref) /\\ heap.objects[ref[Ref]].isOpaque ->
          Assert(FALSE, "tla-ts can't read the properties of a generator or a promise")
     [] IsHeap(ref) -> heap.objects[ref[Ref]]
+    [] IsRef(ref) /\\ ref = GlobalObject /\\ ~isGlobalKey ->
+         Assert(FALSE, "tla-ts can't tell which properties the global object has")
     [] IsBuiltIn(ref) /\\ BuiltInKey(ref) \\in DOMAIN heap.changed -> heap.changed[BuiltInKey(ref)]
     [] IsBuiltIn(ref) -> BuiltIns[BuiltInKey(ref)]
     [] OTHER -> Assert(FALSE, "tla-ts can't read the properties of " \\o ToString(ref))
+
+Lookup(heap, ref) == LookupFor(heap, ref, FALSE)
+
+\\* An object's own properties, where what reads or writes them names a key, which is a standard
+\\* global's where the object is the global object.
+LookupKey(heap, ref, key) ==
+  LookupFor(heap, ref, key \\in DOMAIN BuiltIns[GlobalObject[Ref]].values)
 
 Update(heap, ref, object) ==
   IF IsHeap(ref)
@@ -1042,7 +1051,7 @@ LOCAL DescribeObject(object, key) ==
        [] isAccessor -> described
        [] OTHER -> [described EXCEPT !.attributes["value"].kind = attributes.kind]
 
-Describe(heap, ref, key) == DescribeObject(Lookup(heap, ref), key)
+Describe(heap, ref, key) == DescribeObject(LookupKey(heap, ref, key), key)
 
 \\* Object.getOwnPropertyDescriptors, which makes a description of each own property of an object,
 \\* and then the object that holds them under their keys, last, so that Allocated names it.
@@ -1055,10 +1064,10 @@ DescribeAll(heap, object) ==
                 Ref :> (first + CHOOSE position \\in DOMAIN keys : keys[position] = key)]
   IN Allocate(described, PutAll(EmptyObject, refs, keys))
 
-HasOwn(heap, ref, key) == key \\in DOMAIN Own(heap, ref)
+HasOwn(heap, ref, key) == key \\in DOMAIN LookupKey(heap, ref, key).values
 
 IsEnumerableOwn(heap, ref, key) ==
-  LET object == Lookup(heap, ref)
+  LET object == LookupKey(heap, ref, key)
   IN key \\in DOMAIN object.values /\\ object.attributes[key].enumerable
 
 ElementSize(type) ==
@@ -1230,7 +1239,7 @@ LOCAL ViewReceives(heap, path, receiver) ==
 LOCAL PropertiesOf(heap, ref, key) ==
   IF IsTypedArray(heap, ref) /\\ TypedKey(key) = "property"
   THEN heap.objects[ref[Ref]]
-  ELSE Lookup(heap, ref)
+  ELSE LookupKey(heap, ref, key)
 
 \\* The own properties that a read finds, where a promise that tla-ts follows has none, as a write to
 \\* one stops.
@@ -1258,8 +1267,9 @@ RECURSIVE Has(_, _, _)
 Has(heap, ref, key) ==
   IF IsTypedArray(heap, ref) /\\ TypedKey(key) # "property"
   THEN TypedKey(key) = "index" /\\ ToIndex(key) < ViewLength(heap, heap.objects[ref[Ref]])
-  ELSE \\/ key \\in DOMAIN ReadPropertiesOf(heap, ref, key).values
-       \\/ LET prototype == Prototype(heap, ref) IN prototype # Null /\\ Has(heap, prototype, key)
+  ELSE LET object == ReadPropertiesOf(heap, ref, key)
+       IN \\/ key \\in DOMAIN object.values
+          \\/ object.prototype # Null /\\ Has(heap, object.prototype, key)
 
 \\* An error is a record of its constructor, its message and its name, an AggregateError's also of its
 \\* errors, a SuppressedError's also of its error and the error it suppressed, and one that a script
@@ -1685,11 +1695,11 @@ IsInstanceOfError(heap, value, constructors, name) ==
     [] OTHER -> IsErrorOf(value, constructors)
 
 CanDelete(heap, ref, key) ==
-  LET object == Lookup(heap, ref)
+  LET object == LookupKey(heap, ref, key)
   IN key \\notin DOMAIN object.values \\/ object.attributes[key].configurable
 
 Delete(heap, ref, key) ==
-  LET object == Lookup(heap, ref)
+  LET object == LookupKey(heap, ref, key)
       kept == DOMAIN object.values \\ {key}
   IN IF key \\in DOMAIN object.values
      THEN Update(heap, ref, [object EXCEPT !.keys = SelectSeq(@, LAMBDA other : other # key),
@@ -4895,7 +4905,7 @@ TrappedDescriptor(heap, result) ==
 \\* The completed descriptor of an object's own property, or Undefined where it has none.
 OwnDescriptor(heap, ref, key) ==
   IF HasOwn(heap, ref, key)
-  THEN LET object == Lookup(heap, ref)
+  THEN LET object == LookupKey(heap, ref, key)
            attributes == object.attributes[key]
            fields == IF attributes.kind = "accessor"
                      THEN {"get", "set", "enumerable", "configurable"}

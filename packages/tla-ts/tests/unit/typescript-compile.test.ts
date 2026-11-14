@@ -9180,7 +9180,7 @@ describe("errors", () => {
     });
   });
 
-  it("compares globalThis as the global object and stops where it reads its properties", async () => {
+  it("compares globalThis as the global object and stops where it reads a host's property", async () => {
     const source = `
       const holder = { seen: 0 };
       const check = (actual: unknown, expected: unknown, message: string) => {
@@ -9213,8 +9213,63 @@ describe("errors", () => {
     expect((await checkModel(wrong)).failure?.message).toContain("other thisArg");
     const frozen = source.replace("isFrozen(global), false", "isFrozen(global), true");
     expect((await checkModel(frozen)).failure?.message).toContain("frozen");
-    const read = source.replace("holder.seen = 1;", "holder.seen = globalThis.NaN;");
-    expect((await checkModel(read)).failure?.message).toContain("can't read the properties");
+    const read = source.replace(
+      "holder.seen = 1;",
+      "holder.seen = (globalThis as unknown as { process: number }).process;",
+    );
+    expect((await checkModel(read)).failure?.message).toContain(
+      "can't tell which properties the global object has",
+    );
+  });
+
+  it("stops where the script's name hides a built-in that the global object holds", () => {
+    expect(() =>
+      compile(`
+        let Array = 1;
+        const holder = { global: globalThis as unknown, value: Array };
+      `),
+    ).toThrow("tla-ts can't name the built-in Array, which Array hides");
+  });
+
+  describe("reads, writes, and deletes the standard globals of the global object", () => {
+    const getSource = (expected: string) => `
+      interface Properties {
+        [key: string]: unknown;
+      }
+      const global = globalThis;
+      const described = Object.getOwnPropertyDescriptor(global, "parseInt")!;
+      const nan = Object.getOwnPropertyDescriptor(global, "NaN")!;
+      const properties = global as unknown as Properties;
+      const saved = properties.WeakSet;
+      properties.WeakSet = 1;
+      const isChanged = properties.WeakSet === 1;
+      properties.WeakSet = saved;
+      delete properties.WeakSet;
+      const seen = [
+        described.value === parseInt,
+        described.writable,
+        described.enumerable,
+        nan.writable,
+        nan.configurable,
+        global.Math === Math,
+        Object.prototype.hasOwnProperty.call(global, "Infinity"),
+        isChanged,
+        "WeakSet" in global,
+      ];
+      if (seen.join() !== "${expected}") throw new Error(seen.join());
+    `;
+
+    it("reads Node's descriptors", async () => {
+      const result = await checkModel(
+        getSource("true,true,false,false,false,true,true,true,false"),
+      );
+      expect(result.failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const result = await checkModel(getSource("true,true,false,false,false,true,true,true,true"));
+      expect(result.failure?.message).toContain("true,true,false,false,false,true,true,true,false");
+    });
   });
 
   it("gives new Object's object argument back and wraps a primitive one", async () => {

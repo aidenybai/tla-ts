@@ -570,11 +570,17 @@ const isCompared = (node: ts.Expression, context: Context): boolean => {
 };
 
 const getGlobal = (name: string, node: ts.Node, context: Context) => {
-  const symbol = context.checker
+  const named = context.checker
     .getSymbolsInScope(node.getSourceFile(), ts.SymbolFlags.Value)
-    .find((candidate) => candidate.name === name && isLibrary(candidate));
-  if (symbol === undefined) throw new TlaTypeScriptError(`Unknown built-in: ${name}`, node);
-  return symbol;
+    .find((candidate) => candidate.name === name);
+  if (named !== undefined && !isLibrary(named)) {
+    throw new TlaTypeScriptError(
+      `tla-ts can't name the built-in ${name}, which ${name} hides`,
+      node,
+    );
+  }
+  if (named === undefined) throw new TlaTypeScriptError(`Unknown built-in: ${name}`, node);
+  return named;
 };
 
 const isGlobalFunction = (name: string) => isGlobal(name) && BUILT_INS[name][1];
