@@ -199,7 +199,11 @@ const getModuleError = (source: string, path?: string) => {
           input: output,
           encoding: "utf8",
         })
-      : spawnSync(process.execPath, [path], { encoding: "utf8" });
+      : spawnSync(
+          process.execPath,
+          hasImportCall(source) ? ["--require", TIMERS_PATH, path] : [path],
+          { encoding: "utf8" },
+        );
   if (run.status === 0) return undefined;
   return run.stderr.split("\n").find((line) => /^\w*Error\b/.test(line)) ?? `exit ${run.status}`;
 };
@@ -2968,8 +2972,7 @@ const nameGlobalObject = (source: string) => {
   );
 };
 
-// A script's import(), import.source(), or import.defer() loads a module, which Node's vm can't do
-// without a linker, and whose fixture files tla-ts doesn't read.
+// A call of import(), import.source(), or import.defer(), which loads a module.
 const isImportCallee = (node: ts.Node) =>
   node.kind === ts.SyntaxKind.ImportKeyword ||
   (ts.isMetaProperty(node) &&
@@ -2983,52 +2986,111 @@ const hasImportCall = (source: string) => {
   return visit(ts.createSourceFile(PROGRAM_PATH, source, ts.ScriptTarget.Latest));
 };
 
-// The directory of the module tests that import fixtures, where each file of the corpus is
-// TypeScript that tla-ts reads and JavaScript that Node runs.
+// The directory of the tests that import fixtures, where each file of the corpus is TypeScript
+// that tla-ts reads and JavaScript that Node runs.
 const MODULE_DIRECTORY = mkdtempSync(join(tmpdir(), "test262-"));
 writeFileSync(join(MODULE_DIRECTORY, "package.json"), '{ "type": "module" }');
 process.on("exit", () => rmSync(MODULE_DIRECTORY, { recursive: true, force: true }));
 
+// Node loads a module that import() names in later turns of its event loop, after an async test's
+// timer, which tla-ts runs once the jobs run out. Node runs the timers once the loop has nothing
+// else to do instead.
+const TIMERS_PATH = join(MODULE_DIRECTORY, "timers.cjs");
+writeFileSync(
+  TIMERS_PATH,
+  `const timers = [];
+globalThis.setTimeout = (callback) => { timers.push(callback); };
+process.on("beforeExit", () => { timers.splice(0).forEach((callback) => callback()); });
+`,
+);
+
+// Runs a script that imports in Node, from its path, where import() finds the fixtures, with the
+// global object of the modules it loads.
+const SCRIPT_RUNNER = `const vm = require("node:vm");
+const path = process.argv[1];
+vm.runInThisContext(require("node:fs").readFileSync(path, "utf8"), {
+  filename: path,
+  importModuleDynamically: vm.constants.USE_MAIN_CONTEXT_DEFAULT_LOADER,
+});`;
+
 const getModulePath = (path: string) =>
   join(MODULE_DIRECTORY, relative(TEST_DIRECTORY, path)).replace(/\.js$/, ".ts");
 
-// The fixtures that a module test imports, by path, each through a static import of a relative
-// path, or undefined where a file imports another way, such as dynamically or with attributes.
+// The fixtures that a test imports, by path, each through a static import of a relative path or
+// an import() of one, or undefined where a file imports statically another way, such as with
+// attributes.
 const getFixtures = (path: string) => {
   const fixtures = new Map<string, string>();
   const isLinked = (file: string, text: string): boolean => {
     const sourceFile = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
-    const isDynamic = (node: ts.Node): boolean =>
-      (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) ||
-      (ts.isMetaProperty(node) && node.keywordToken === ts.SyntaxKind.ImportKeyword) ||
-      (ts.forEachChild(node, isDynamic) ?? false);
+    const getImported = (specifier: ts.Expression) =>
+      ts.isStringLiteralLike(specifier) && /^\.\.?\//.test(specifier.text)
+        ? join(dirname(file), specifier.text)
+        : undefined;
+    const link = (imported: string) => {
+      if (imported === path || fixtures.has(imported)) return true;
+      const importedText = readFileSync(imported, "utf8");
+      fixtures.set(imported, importedText);
+      return isLinked(imported, importedText);
+    };
+    // An import() of a JavaScript file that exists links it, and Node rejects any other.
+    const linksCalls = (node: ts.Node): boolean => {
+      const specifier =
+        ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword
+          ? node.arguments.at(0)
+          : undefined;
+      const imported = specifier && getImported(specifier);
+      return (
+        (imported === undefined ||
+          !imported.endsWith(".js") ||
+          !existsSync(imported) ||
+          link(imported)) &&
+        (ts.forEachChild(node, (child) => (linksCalls(child) ? undefined : false)) ?? true)
+      );
+    };
     return (
-      !isDynamic(sourceFile) &&
+      linksCalls(sourceFile) &&
       sourceFile.statements.every((statement) => {
         if (!ts.isImportDeclaration(statement) && !ts.isExportDeclaration(statement)) return true;
         const specifier = statement.moduleSpecifier;
         if (specifier === undefined) return true;
-        const imported =
-          ts.isStringLiteral(specifier) && /^\.\.?\//.test(specifier.text)
-            ? join(dirname(file), specifier.text)
-            : undefined;
-        if (
-          imported === undefined ||
-          !existsSync(imported) ||
-          statement.attributes !== undefined ||
-          (ts.isImportDeclaration(statement) &&
-            statement.importClause?.phaseModifier === ts.SyntaxKind.DeferKeyword)
-        ) {
-          return false;
-        }
-        if (imported === path || fixtures.has(imported)) return true;
-        const importedText = readFileSync(imported, "utf8");
-        fixtures.set(imported, importedText);
-        return isLinked(imported, importedText);
+        const imported = getImported(specifier);
+        return (
+          imported !== undefined &&
+          existsSync(imported) &&
+          statement.attributes === undefined &&
+          !(
+            ts.isImportDeclaration(statement) &&
+            statement.importClause?.phaseModifier === ts.SyntaxKind.DeferKeyword
+          ) &&
+          link(imported)
+        );
       })
     );
   };
   return isLinked(path, readFileSync(path, "utf8")) ? fixtures : undefined;
+};
+
+// Runs a script that imports in Node, which reports an uncaught error or rejection as it ends.
+const getScriptError = (source: string, path: string, isSloppy: boolean) => {
+  writeFileSync(
+    path,
+    ts.transpileModule(source, {
+      compilerOptions: {
+        module: ts.ModuleKind.ESNext,
+        target: ts.ScriptTarget.ESNext,
+        moduleDetection: ts.ModuleDetectionKind.Legacy,
+        alwaysStrict: !isSloppy,
+      },
+    }).outputText,
+  );
+  const run = spawnSync(
+    process.execPath,
+    ["--no-warnings", "--require", TIMERS_PATH, "--eval", SCRIPT_RUNNER, path],
+    { encoding: "utf8" },
+  );
+  if (run.status === 0) return undefined;
+  return run.stderr.split("\n").find((line) => /^\w*Error\b/.test(line)) ?? `exit ${run.status}`;
 };
 
 const runTest = async (path: string): Promise<TestRun> => {
@@ -3041,13 +3103,12 @@ const runTest = async (path: string): Promise<TestRun> => {
   if (BUILT_STRING.test(source)) {
     return { id, outcome: "skipped", reason: "a string of every code point in large ranges" };
   }
-  const isLinked = metadata.isModule && LINKED_MODULE.test(source.slice(source.indexOf("---*/")));
+  const isImporting = hasImportCall(source);
+  const isLinked =
+    isImporting || (metadata.isModule && LINKED_MODULE.test(source.slice(source.indexOf("---*/"))));
   const fixtures = isLinked ? getFixtures(path) : new Map<string, string>();
   if (fixtures === undefined) {
-    return { id, outcome: "skipped", reason: "a module that imports other than from a fixture" };
-  }
-  if (!metadata.isModule && hasImportCall(source)) {
-    return { id, outcome: "skipped", reason: "a script that imports a module" };
+    return { id, outcome: "skipped", reason: "a test that imports other than from a fixture" };
   }
   // A fixture is a module, so its code is strict.
   fixtures.forEach((text, fixture) => {
@@ -3076,7 +3137,9 @@ const runTest = async (path: string): Promise<TestRun> => {
   const isSloppy = metadata.flags.includes("noStrict");
   const nodeError = metadata.isModule
     ? getModuleError(annotated, isLinked ? programPath.replace(/\.ts$/, ".js") : undefined)
-    : await getNodeError(annotated, isSloppy);
+    : isImporting
+      ? getScriptError(annotated, programPath.replace(/\.ts$/, ".js"), isSloppy)
+      : await getNodeError(annotated, isSloppy);
   if (nodeError !== undefined) {
     return { id, outcome: "skipped", reason: `Node fails: ${getFirstLine(nodeError)}` };
   }
