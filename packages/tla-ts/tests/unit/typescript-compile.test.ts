@@ -36126,4 +36126,97 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("steps a sync iterable through an async generator's yield*", () => {
+    const getSource = (expected: string) => `
+      let log = "";
+      let count = 0;
+      const iterable = {
+        [Symbol.iterator]() {
+          return {
+            next(value?: string) {
+              count = count + 1;
+              log = log + "n" + value;
+              return { value: count, done: count > 1 };
+            },
+          };
+        },
+      };
+      async function* gen() {
+        yield* iterable;
+        log = log + "e";
+      }
+      const iterator = gen();
+      iterator.next("a").then((first) => {
+        log = log + "g" + first.value;
+        iterator.next("b").then((second) => {
+          log = log + "d" + second.done;
+        });
+      });
+      Promise.resolve()
+        .then(() => { log = log + "1"; })
+        .then(() => { log = log + "2"; })
+        .then(() => { log = log + "3"; })
+        .then(() => { log = log + "4"; })
+        .then(() => { log = log + "5"; })
+        .then(() => {
+          if (log !== "${expected}") throw new Error(log);
+        });
+    `;
+
+    it("agrees with Node", async () => {
+      const expected = "nundefined12g1nb34e5dtrue";
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects a value that settles a job early", async () => {
+      const expected = "nundefined1g1nb23e4dtrue5";
+      expect((await checkModel(getSource(expected))).failure?.message).toContain(
+        "A promise rejected with no handler",
+      );
+    });
+  });
+
+  describe("throws the TypeError of a yield* over an object whose Symbol.iterator gives a primitive", () => {
+    const getSource = (expected: string) => `
+      let log = "";
+      const iterable = {
+        [Symbol.asyncIterator]: null,
+        [Symbol.iterator]() {
+          log = log + "c";
+          return 1;
+        },
+      };
+      async function* gen() {
+        log = log + "s";
+        yield* iterable as unknown as Iterable<number>;
+      }
+      gen()
+        .next()
+        .then(
+          () => {
+            log = log + "f";
+          },
+          (error: unknown) => {
+            log = log + (error instanceof TypeError ? "t" : "o");
+          },
+        );
+      log = log + "a";
+      Promise.resolve()
+        .then(() => { log = log + "1"; })
+        .then(() => {
+          if (log !== "${expected}") throw new Error(log);
+        });
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("scat1"))).failure).toBeUndefined();
+    });
+
+    it("rejects a yield* that fulfills", async () => {
+      expect((await checkModel(getSource("scaf1"))).failure?.message).toContain(
+        "A promise rejected with no handler",
+      );
+    });
+  });
 });

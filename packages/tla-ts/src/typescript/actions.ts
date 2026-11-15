@@ -165,9 +165,11 @@ import {
   isIteratedValue,
   isTaken,
   isUntypedPattern,
+  mayGivePromises,
   openAsyncIterator,
   openIterator,
   readValue,
+  stepFromSync,
   stepIterator,
   takeFromIterable,
   takeFromIterator,
@@ -10160,6 +10162,45 @@ const delegateToAsyncIterator = (
               throwWith,
             ),
         );
+  // An object without Symbol.asyncIterator iterates through an async-from-sync iterator, whose
+  // next a yield* calls with the value that resumes it.
+  const delegateFromSync =
+    (iterator: Expression, next: Expression) =>
+    (current: Path, value: Expression, count: number): Formula =>
+      count > DELEGATION_LIMIT
+        ? leaf(
+            apply("Assert", [
+              boolean(false),
+              string(`tla-ts can't follow more than ${DELEGATION_LIMIT} values of a yield*`),
+            ]),
+          )
+        : stepFromSync(
+            node,
+            iterator,
+            next,
+            value,
+            mayGivePromises(iterated, context),
+            current,
+            context,
+            frame,
+            awaitTo,
+            throwWith,
+            (stepped, result, isDone) =>
+              isDone
+                ? continueWith(stepped)
+                : yieldTo(
+                    stepped,
+                    result,
+                    (resumed, sent) =>
+                      delegateFromSync(iterator, next)(
+                        resumed,
+                        sent ?? getUndefined(context),
+                        count + 1,
+                      ),
+                    throwWith,
+                    { isDelegated: true, isGuarded: true },
+                  ),
+          );
   return allocate(iterated, path, context, (inner) =>
     openAsyncIterator(
       node,
@@ -10168,7 +10209,10 @@ const delegateToAsyncIterator = (
       context,
       frame,
       failWith,
-      (opened, iterator, next) => delegate(opened, iterator, next, 0),
+      (opened, iterator, next, isSync) =>
+        isSync
+          ? delegateFromSync(iterator, next)(opened, getUndefined(context), 0)
+          : delegate(opened, iterator, next, 0),
     ),
   );
 };
