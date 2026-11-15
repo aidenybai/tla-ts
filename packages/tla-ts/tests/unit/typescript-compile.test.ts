@@ -26921,6 +26921,61 @@ describe("errors", () => {
     ).toBeDefined();
   });
 
+  it("runs finally's callback with no arguments, and passes on the value or the reason", async () => {
+    const source = (expected: string) => `
+      declare function setTimeout(callback: () => void): void;
+      let log = "";
+      Promise.resolve(1)
+        .finally(() => {
+          log += "a";
+          return 5;
+        })
+        .then((value) => {
+          log += \`v\${value}\`;
+        });
+      Promise.reject(2)
+        .finally(() => {
+          log += "b";
+        })
+        .catch((reason) => {
+          log += \`r\${reason}\`;
+        });
+      Promise.resolve(3)
+        .finally(() => {
+          throw 4;
+        })
+        .catch((reason) => {
+          log += \`t\${reason}\`;
+        });
+      Promise.resolve(6)
+        .finally(undefined)
+        .then((value) => {
+          log += \`u\${value}\`;
+        });
+      Promise.resolve()
+        .then(() => {
+          log += "0";
+        })
+        .then(() => {
+          log += "1";
+        })
+        .then(() => {
+          log += "2";
+        })
+        .then(() => {
+          log += "3";
+        })
+        .then(() => {
+          log += "4";
+        });
+      setTimeout(() => {
+        if (log !== "${expected}") throw new Error(log);
+      });
+    `;
+    expect((await checkModel(source("ab0t4u612v1r234"))).failure).toBeUndefined();
+    expect((await checkModel(source("ab0t4u61v12r234"))).failure).toBeDefined();
+  });
+
   it("fulfills Promise.any with the first value, or rejects it with an AggregateError", async () => {
     const result = await checkModel(`
       declare function setTimeout(callback: () => void): void;

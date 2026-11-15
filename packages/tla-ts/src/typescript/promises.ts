@@ -854,13 +854,8 @@ const makePromise = (
   );
 };
 
-// A function that a then or a catch takes, which runs as a job with the promise's value.
-const getHandler = (
-  node: ts.Expression | undefined,
-  path: Path,
-  context: Context,
-  frame: Frame,
-): Handler | undefined => {
+// Calls a function that a then, a catch, or a finally takes, in a later job.
+const getRunner = (node: ts.Expression | undefined, path: Path, context: Context, frame: Frame) => {
   if (node === undefined) return undefined;
   const cast = getCast(node);
   if (
@@ -871,25 +866,91 @@ const getHandler = (
   }
   if (isResolver(cast, context)) {
     const callee = translateExpression(cast, path.scope, context);
-    return {
-      run: (current, value, onReturn, onThrow) =>
-        callResolving(node, callee, [value], undefined, current, context, onReturn, onThrow),
-    };
+    return (
+      current: Path,
+      values: Expression[],
+      onReturn: (path: Path, result: Expression) => Formula,
+      onThrow: (path: Path, thrown: Expression) => Formula,
+    ) => callResolving(node, callee, values, undefined, current, context, onReturn, onThrow);
   }
   const callee = getCallback(cast, path, context) ?? getAsyncCallee(cast, path, context);
   if (callee === undefined) {
     throw new TlaTypeScriptError("Pass then a function that tla-ts can follow", node);
   }
-  const runCallback = getCallbackRunner(
+  return getCallbackRunner(
     callee,
     ts.isArrowFunction(callee) ? path.scope.receiver : undefined,
     path,
     context,
     frame,
   );
-  return {
-    run: (current, value, onReturn, onThrow) => runCallback(current, [value], onReturn, onThrow),
-  };
+};
+
+// A function that a then or a catch takes, which runs as a job with the promise's value.
+const getHandler = (
+  node: ts.Expression | undefined,
+  path: Path,
+  context: Context,
+  frame: Frame,
+): Handler | undefined => {
+  const run = getRunner(node, path, context, frame);
+  return (
+    run && {
+      run: (current, value, onReturn, onThrow) => run(current, [value], onReturn, onThrow),
+    }
+  );
+};
+
+// The thenFinally and catchFinally of Promise.prototype.finally, which call onFinally with no
+// arguments, and give the promise that p.then gives, where p is the promise that PromiseResolve
+// gives for what onFinally returns: one that fulfills with the value or rejects with the reason.
+const getFinallyHandlers = (
+  node: ts.CallExpression,
+  path: Path,
+  context: Context,
+  frame: Frame,
+) => {
+  const run = getRunner(node.arguments.at(0), path, context, frame);
+  const getFinally = (isRejected: boolean): Handler => ({
+    run: (current, value, onReturn, onThrow) =>
+      run === undefined
+        ? onReturn(current, value)
+        : run(
+            current,
+            [],
+            (after, result) =>
+              awaitValue(after, node, result, undefined, context, (resolved, followed) =>
+                guardBuiltIns(
+                  node,
+                  "Promise.prototype",
+                  ["then", "constructor"],
+                  resolved,
+                  context,
+                  makePromise(resolved, node, context, (made, derived) =>
+                    onReturn(
+                      addReaction(
+                        made,
+                        node,
+                        followed,
+                        {
+                          onFulfilled: {
+                            run: (job, _, give, raise) =>
+                              isRejected ? raise(job, value) : give(job, value),
+                          },
+                          onRejected: undefined,
+                          derived,
+                        },
+                        context,
+                      ),
+                      getPromise(made, node, derived).ref,
+                    ),
+                  ),
+                ),
+              ),
+            onThrow,
+          ),
+  });
+  return run === undefined ? [undefined, undefined] : [getFinally(false), getFinally(true)];
 };
 
 // Runs a callback in a later job, where the variables it captures hold what they held where the
@@ -1808,7 +1869,7 @@ const translatePromiseCombinator = (
 const getPromiseMethod = (node: ts.CallExpression, context: Context) => {
   const callee = node.expression;
   return ts.isPropertyAccessExpression(callee) &&
-    (callee.name.text === "then" || callee.name.text === "catch") &&
+    ["then", "catch", "finally"].includes(callee.name.text) &&
     isPromiseType(callee.expression, context)
     ? { method: callee.name.text, receiver: getCast(callee.expression) }
     : undefined;
@@ -3211,7 +3272,9 @@ export const translatePromiseCall = (
           getHandler(argument, path, context, frame),
           getHandler(node.arguments.at(1), path, context, frame),
         ]
-      : [undefined, getHandler(argument, path, context, frame)];
+      : promiseMethod.method === "catch"
+        ? [undefined, getHandler(argument, path, context, frame)]
+        : getFinallyHandlers(node, path, context, frame);
   const react = (current: Path, name: string) =>
     makePromise(current, node, context, (made, derived) =>
       continueWith(
@@ -3228,7 +3291,9 @@ export const translatePromiseCall = (
   return guardBuiltIns(
     node,
     "Promise.prototype",
-    promiseMethod.method === "then" ? ["then", "constructor"] : ["catch", "then", "constructor"],
+    promiseMethod.method === "then"
+      ? ["then", "constructor"]
+      : [promiseMethod.method, "then", "constructor"],
     path,
     context,
     dispatchPromise(
