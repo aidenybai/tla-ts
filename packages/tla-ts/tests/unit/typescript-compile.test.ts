@@ -36092,4 +36092,30 @@ describe("BigInts", () => {
     `);
     expect(division.failure?.message).toContain("tla-ts can't throw the RangeError");
   });
+
+  describe("joins after a branch that leaves the heap as a loop left it", () => {
+    const getSource = (count: number, expected: string) => `
+      const box = { size: 0 };
+      const labels: string[] = [];
+      ${Array.from(
+        { length: count },
+        (_, index) => `for (let i = 0; i < 2; i++) box.size += 1;
+      if (box.size > ${index * 3}) labels.push("${index}");`,
+      ).join("\n")}
+      if (labels.join() !== "${expected}") throw new Error(labels.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(3, "0,1"))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation", async () => {
+      expect((await checkModel(getSource(3, "0,1,2"))).failure?.message).toContain('"0,1"');
+    });
+
+    it("translates what follows each branch once", () => {
+      const getSize = (count: number) => printModule(compile(getSource(count, "")).source).length;
+      expect(getSize(8)).toBeLessThan(getSize(4) * 2);
+    });
+  });
 });

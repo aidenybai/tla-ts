@@ -10749,6 +10749,7 @@ const translateExpressionStatement = (
     return ifThenElse(
       useJavaScript("CanDelete", [deleted.heap, deleted.ref, deleted.key], context),
       shareHeap(
+        path,
         {
           ...path,
           scope: {
@@ -11133,7 +11134,7 @@ const translateWriteStatement = (
     throwOnNullish(
       ifThenElse(
         useJavaScript("CanPut", [write.heap, write.ref, write.key], context),
-        shareHeap(assigned, context, next),
+        shareHeap(path, assigned, context, next),
         throwTypeError(path, expression, context, frame),
       ),
     );
@@ -11161,6 +11162,7 @@ const translateWriteStatement = (
         ifThenElse(
           apply("=", [field(change, "error"), string("")]),
           shareHeap(
+            path,
             {
               ...path,
               scope: {
@@ -12004,9 +12006,18 @@ const shareBinding = (
   );
 };
 
-// Names the heap after a statement changes it, so that later statements share it.
-const shareHeap = (path: Path, context: Context, continueWith: (path: Path) => Formula) =>
-  shareBinding(path, context.heap, "heap", context, continueWith);
+// Names the heap after a statement changes it, so that later statements share it. A statement that
+// leaves it as it was keeps its binding, so that a join after the statement finds it unchanged.
+const shareHeap = (
+  before: Path,
+  path: Path,
+  context: Context,
+  continueWith: (path: Path) => Formula,
+) =>
+  context.heap !== undefined &&
+  path.scope.bindings.get(context.heap) === before.scope.bindings.get(context.heap)
+    ? continueWith(path)
+    : shareBinding(path, context.heap, "heap", context, continueWith);
 
 // A new of a value that isn't a class that the script declares, such as a built-in method, which
 // throws a TypeError if the value isn't a constructor. tla-ts can't call one that is.
@@ -17517,6 +17528,7 @@ export const translateStatements = (
       statementFrame,
       (after, value) =>
         shareHeap(
+          path,
           assign(assignment.left, after, context, () => value),
           context,
           continueWith,
@@ -17535,13 +17547,13 @@ export const translateStatements = (
       path,
       context,
       statementFrame,
-      (after) => shareHeap(after, context, continueWith),
+      (after) => shareHeap(path, after, context, continueWith),
     );
   }
   if (ts.isExpressionStatement(statement)) {
     return allocate(statement.expression, path, context, (inner) =>
       translateExpressionStatement(statement.expression, inner, context, statementFrame, (after) =>
-        shareHeap(after, context, continueWith),
+        shareHeap(path, after, context, continueWith),
       ),
     );
   }
