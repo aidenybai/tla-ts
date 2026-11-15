@@ -3650,8 +3650,9 @@ export const translateNode = (
     }
     return getUndefined(context);
   }
-  // A module's this is undefined, which an arrow function outside any other function reads too.
-  if (
+  // A module's this is undefined, and a script's outside strict mode is the global object, which
+  // an arrow function outside any other function reads too.
+  const isTopLevelThis =
     node.kind === ts.SyntaxKind.ThisKeyword &&
     ts.isSourceFile(
       ts.findAncestor(
@@ -3661,10 +3662,12 @@ export const translateNode = (
           (ts.isFunctionLike(ancestor) && !ts.isArrowFunction(ancestor)) ||
           ts.isClassLike(ancestor),
       ) ?? node,
-    ) &&
-    isModuleFile(node.getSourceFile())
-  ) {
-    return getUndefined(context);
+    );
+  if (isTopLevelThis && isModuleFile(node.getSourceFile())) return getUndefined(context);
+  if (isTopLevelThis && !isStrictCode(node)) {
+    context.prelude.add("JavaScript");
+    context.builtIns.add("globalThis");
+    return identifier("GlobalObject");
   }
   // A static field's or static block's this is its class, which an arrow function there reads
   // wherever it runs, where nothing assigns the class's name. A class expression has the name of

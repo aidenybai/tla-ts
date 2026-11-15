@@ -128,9 +128,10 @@ const runTla = async (source: string) => {
   return state;
 };
 
-// The value of an expression, in JavaScript and in the TLA+ that tla-ts compiles it to.
+// The value of an expression, in JavaScript and in the TLA+ that tla-ts compiles it to. JavaScript
+// runs it in a module, which is strict code, so tla-ts compiles it as strict code too.
 export const evaluateExpression = async (expression: string, setup = "") => {
-  const state = await runTla(`${setup}\nlet result = ${expression};`);
+  const state = await runTla(`"use strict";\n${setup}\nlet result = ${expression};`);
   return {
     expected: getCanonical(
       runJavaScript(`${setup}\nexport const getResult = () => (${expression});`),

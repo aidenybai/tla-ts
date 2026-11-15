@@ -1,5 +1,6 @@
 import ts from "@typescript/typescript6";
 import { TlaTypeScriptError } from "../errors";
+import { isStrictCode } from "./context";
 
 const reject = (message: string, node: ts.Node): never => {
   throw new TlaTypeScriptError(`SyntaxError: ${message}`, node);
@@ -49,6 +50,13 @@ export const getVarNames = (node: ts.Node): string[] => {
   return [...own, ...nested];
 };
 
+// A function declaration that is neither a generator nor async.
+const isPlainFunction = (node: ts.Node): node is ts.FunctionDeclaration =>
+  ts.isFunctionDeclaration(node) &&
+  node.asteriskToken === undefined &&
+  (ts.getCombinedModifierFlags(node) & ts.ModifierFlags.Async) === 0;
+
+// Outside strict mode, a block can declare a name twice where only plain functions declare it.
 const rejectRedeclaration = (
   statements: readonly ts.Statement[],
   others: string[],
@@ -56,10 +64,22 @@ const rejectRedeclaration = (
   node: ts.Node,
 ) => {
   const lexical = getLexicalNames(statements, isFunctionBody);
+  const duplicates = lexical.filter((name, position) => lexical.indexOf(name) !== position);
+  const isFunctionsOnly = (name: string) =>
+    !isStrictCode(node) &&
+    statements
+      .filter((statement) => getLexicalNames([statement], isFunctionBody).includes(name))
+      .every(isPlainFunction);
   const clash =
-    lexical.find((name, position) => lexical.indexOf(name) !== position) ??
+    duplicates.find((name) => !isFunctionsOnly(name)) ??
     [...statements.flatMap(getVarNames), ...others].find((name) => lexical.includes(name));
   if (clash !== undefined) reject(`Identifier '${clash}' has already been declared`, node);
+  if (duplicates.length > 0) {
+    throw new TlaTypeScriptError(
+      "tla-ts can't run a block that declares a function twice outside strict mode",
+      node,
+    );
+  }
 };
 
 // Whether a node is the target of an assignment, or part of a destructuring assignment's pattern.
@@ -103,8 +123,25 @@ const isBodyOf = (node: ts.Statement) => {
   );
 };
 
-// Rejects programs that JavaScript rejects as it parses, where TypeScript accepts them. Compiled
-// TypeScript is strict mode code.
+// Outside strict mode, a plain function declaration can be an if statement's branch, or a labelled
+// statement's item where the labels aren't a loop's, an if statement's, or a with statement's body.
+const isSloppyFunctionBody = (node: ts.Statement) => {
+  if (!isPlainFunction(node) || isStrictCode(node)) return false;
+  if (ts.isIfStatement(node.parent)) return true;
+  const labelled = ts.findAncestor(
+    node.parent,
+    (ancestor) => !ts.isLabeledStatement(ancestor.parent),
+  );
+  return (
+    labelled !== undefined &&
+    ts.isLabeledStatement(labelled) &&
+    !isBodyOf(labelled) &&
+    !ts.isWithStatement(labelled.parent)
+  );
+};
+
+// Rejects programs that JavaScript rejects as it parses, where TypeScript accepts them, and stops at
+// those that it accepts only outside strict mode, where tla-ts doesn't follow them.
 export const rejectEarlyErrors = (sourceFile: ts.SourceFile) => {
   const visit = (node: ts.Node) => {
     if (ts.isRegularExpressionLiteral(node)) {
@@ -130,7 +167,38 @@ export const rejectEarlyErrors = (sourceFile: ts.SourceFile) => {
         node,
       );
     }
+    if (ts.isFunctionLike(node) && "body" in node && node.body !== undefined) {
+      const parameters = node.parameters.filter(
+        (parameter) => !(ts.isIdentifier(parameter.name) && parameter.name.text === "this"),
+      );
+      const names = parameters.flatMap((parameter) => getBindingNames(parameter.name));
+      const duplicate = names.find((name, position) => names.indexOf(name) !== position);
+      // Outside strict mode, a plain function with simple parameters can name a parameter twice.
+      const isSloppyDuplicate =
+        (ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node)) &&
+        !isStrictCode(node) &&
+        parameters.every(
+          (parameter) =>
+            ts.isIdentifier(parameter.name) &&
+            parameter.initializer === undefined &&
+            parameter.dotDotDotToken === undefined,
+        );
+      if (duplicate !== undefined && isSloppyDuplicate) {
+        throw new TlaTypeScriptError(
+          "tla-ts can't run a function that names a parameter twice outside strict mode",
+          node,
+        );
+      }
+      if (duplicate !== undefined)
+        reject("Duplicate parameter name not allowed in this context", node);
+    }
     if ((ts.isClassDeclaration(node) || ts.isFunctionDeclaration(node)) && isBodyOf(node)) {
+      if (isSloppyFunctionBody(node)) {
+        throw new TlaTypeScriptError(
+          "tla-ts can't run a function declaration that is a statement's body outside strict mode",
+          node,
+        );
+      }
       reject("A declaration can't be the body of a statement", node);
     }
     if (
@@ -157,6 +225,9 @@ export const rejectEarlyErrors = (sourceFile: ts.SourceFile) => {
       (node.text === "arguments" || node.text === "eval") &&
       isAssigned(node)
     ) {
+      if (!isStrictCode(node)) {
+        throw new TlaTypeScriptError(`tla-ts can't write ${node.text} outside strict mode`, node);
+      }
       reject(`Unexpected ${node.text} in strict mode`, node);
     }
     ts.forEachChild(node, visit);

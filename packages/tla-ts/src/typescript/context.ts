@@ -587,13 +587,20 @@ const hasTopLevelAwait = (node: ts.Node): boolean =>
 export const isModuleFile = (file: ts.SourceFile) =>
   file.statements.some(isModuleSyntax) || hasTopLevelAwait(file);
 
-const hasStrictDirective = (statements: readonly ts.Statement[]) =>
-  statements.some(
-    (statement) =>
-      ts.isExpressionStatement(statement) &&
-      ts.isStringLiteral(statement.expression) &&
-      statement.expression.getText().slice(1, -1) === "use strict",
-  );
+// A "use strict" directive is in the string literals that start the statements, and later it is
+// only an expression.
+const hasStrictDirective = (statements: readonly ts.Statement[]) => {
+  const isString = (statement: ts.Statement) =>
+    ts.isExpressionStatement(statement) && ts.isStringLiteral(statement.expression);
+  const end = statements.findIndex((statement) => !isString(statement));
+  return statements
+    .slice(0, end === -1 ? statements.length : end)
+    .some(
+      (statement) =>
+        ts.isExpressionStatement(statement) &&
+        statement.expression.getText().slice(1, -1) === "use strict",
+    );
+};
 
 // Code that runs in strict mode wherever it runs: in a class, under a "use strict" directive, or in
 // a module.
@@ -630,6 +637,71 @@ export const getArgumentsOwner = (node: ts.Node, checker: ts.TypeChecker) => {
 // A name that no declaration binds, whose reading throws a ReferenceError.
 export const isUnresolved = (node: ts.Node, context: Context): node is ts.Identifier =>
   ts.isIdentifier(node) && context.checker.getSymbolAtLocation(node) === undefined;
+
+// The names that an assignment target writes, through the elements of its patterns.
+const getAssignedNames = (target: ts.Expression): ts.Expression[] => {
+  const inner = skipCasts(target);
+  if (ts.isArrayLiteralExpression(inner)) return inner.elements.flatMap(getAssignedNames);
+  if (ts.isObjectLiteralExpression(inner)) {
+    return inner.properties.flatMap((property) =>
+      ts.isPropertyAssignment(property)
+        ? getAssignedNames(property.initializer)
+        : ts.isShorthandPropertyAssignment(property)
+          ? [property.name]
+          : ts.isSpreadAssignment(property)
+            ? getAssignedNames(property.expression)
+            : [],
+    );
+  }
+  if (ts.isSpreadElement(inner)) return getAssignedNames(inner.expression);
+  if (ts.isBinaryExpression(inner) && inner.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+    return getAssignedNames(inner.left);
+  }
+  return [inner];
+};
+
+// Outside strict mode, a write to a name that no binding has makes a global, and one to NaN,
+// Infinity, or undefined does nothing, where strict mode throws, so tla-ts stops at them.
+export const rejectSloppyGlobalWrites = (file: ts.SourceFile, context: Context) => {
+  const isFixedGlobal = (name: ts.Expression) =>
+    ts.isIdentifier(name) &&
+    ["NaN", "Infinity", "undefined"].includes(name.text) &&
+    (getSymbol(name, context.checker)?.declarations ?? []).every(
+      (declaration) => declaration.getSourceFile().isDeclarationFile,
+    );
+  const getWrites = (node: ts.Node): ts.Expression[] => {
+    if (ts.isBinaryExpression(node)) {
+      const kind = node.operatorToken.kind;
+      return kind === ts.SyntaxKind.EqualsToken
+        ? getAssignedNames(node.left)
+        : kind >= ts.SyntaxKind.FirstCompoundAssignment && kind <= ts.SyntaxKind.LastAssignment
+          ? [skipCasts(node.left)].filter(isFixedGlobal)
+          : [];
+    }
+    if (
+      (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
+      (node.operator === ts.SyntaxKind.PlusPlusToken ||
+        node.operator === ts.SyntaxKind.MinusMinusToken)
+    ) {
+      return [skipCasts(node.operand)].filter(isFixedGlobal);
+    }
+    return (ts.isForInStatement(node) || ts.isForOfStatement(node)) &&
+      !ts.isVariableDeclarationList(node.initializer)
+      ? getAssignedNames(node.initializer)
+      : [];
+  };
+  const written = findNodes(file, (node): node is ts.Node => getWrites(node).length > 0)
+    .flatMap(getWrites)
+    .find(
+      (name) =>
+        ts.isIdentifier(name) &&
+        !isStrictCode(name) &&
+        (getSymbol(name, context.checker) === undefined || isFixedGlobal(name)),
+    );
+  if (written !== undefined) {
+    throw new TlaTypeScriptError("tla-ts can't write a global outside strict mode", written);
+  }
+};
 
 // Whether a literal is truthy, where its value is certain.
 const getLiteralTruth = (node: ts.Expression) => {

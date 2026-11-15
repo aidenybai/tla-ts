@@ -38,8 +38,7 @@ const TEST_DIRECTORY = join(CORPORA_DIRECTORY, "test262", "test");
 
 const HARNESS = readFileSync(join(CONFORMANCE_DIRECTORY, "test262-harness.ts"), "utf8");
 
-// Compiled TypeScript is a strict mode module.
-const SKIPPED_FLAGS = new Set(["noStrict", "raw"]);
+const SKIPPED_FLAGS = new Set(["raw"]);
 
 // A module that imports or exports, which the corpus pairs with fixture files.
 const LINKED_MODULE = /^\s*(?:import|export)\b|\bimport\s*[(.]/m;
@@ -140,14 +139,15 @@ process.on("unhandledRejection", (reason) => {
 });
 
 // Runs a test in Node, with its jobs and then its timers, as an async test checks $DONE in one.
-const getNodeError = async (source: string) => {
+const getNodeError = async (source: string, isSloppy: boolean) => {
   const timers: (() => void)[] = [];
   try {
     const output = ts.transpileModule(source, {
       compilerOptions: {
         module: ts.ModuleKind.CommonJS,
         target: ts.ScriptTarget.ESNext,
-        moduleDetection: ts.ModuleDetectionKind.Force,
+        moduleDetection: isSloppy ? ts.ModuleDetectionKind.Legacy : ts.ModuleDetectionKind.Force,
+        alwaysStrict: !isSloppy,
       },
     }).outputText;
     runInNewContext(output, {
@@ -1610,6 +1610,10 @@ const UNCALLABLE_ERROR = 2349;
 // them on a union of typed arrays. Each needs a unit test of such a call.
 const TYPED_UNION_METHODS = new Set(["findLast", "reduce", "reduceRight"]);
 
+// A call that gives a function no this where the function types one, which tla-ts runs with the this
+// that a call by name gives: undefined, or the global object outside strict mode.
+const UNTYPED_THIS_ERROR = 2684;
+
 // An operator's operand of a type that the operator doesn't take, or that is null or undefined,
 // which tla-ts converts to a primitive where it's an object that the test declares, a wrapper, or a
 // primitive.
@@ -2652,9 +2656,23 @@ const ignoreSoundErrors = () => {
       )
     );
   };
+  const isPlainCall = (node: ts.Node) => {
+    const callee = ts.findAncestor(
+      node,
+      (ancestor) => !ts.isParenthesizedExpression(ancestor.parent),
+    );
+    return (
+      callee !== undefined &&
+      ts.isCallExpression(callee.parent) &&
+      callee.parent.expression === callee &&
+      (ts.isIdentifier(ts.skipParentheses(callee)) ||
+        ts.isFunctionExpression(ts.skipParentheses(callee)))
+    );
+  };
   const isSound = (diagnostic: ts.Diagnostic) => {
     const node = getNode(diagnostic.start ?? 0);
     return (
+      (diagnostic.code === UNTYPED_THIS_ERROR && isPlainCall(node)) ||
       (diagnostic.code === ARGUMENT_COUNT_ERROR &&
         (isShortBuiltInCall(node) || isShortReducingCall(node) || isShortSearchingCall(node))) ||
       (SHORT_CALL_ERRORS.has(diagnostic.code) && isShortProtocolCall(node, diagnostic)) ||
@@ -2759,8 +2777,8 @@ const getFailedRun = (id: string, reason: string): TestRun => ({
 // TypeScript's syntax and grammar errors, and its semantic errors that ECMAScript makes early
 // errors, such as a redeclared let.
 const EARLY_ERRORS = new Set([
-  2300, 2335, 2337, 2357, 2364, 2392, 2406, 2451, 2462, 2481, 2487, 2523, 2524, 2660, 2777, 2779,
-  2804, 2815, 5076, 6188, 6189, 18006, 18011, 18012, 18013, 18016, 18026, 18037, 18041, 18061,
+  2300, 2335, 2337, 2357, 2364, 2392, 2406, 2451, 2462, 2480, 2481, 2487, 2523, 2524, 2660, 2777,
+  2779, 2804, 2815, 5076, 6188, 6189, 18006, 18011, 18012, 18013, 18016, 18026, 18037, 18041, 18061,
 ]);
 
 const isEarlyError = (code: number) =>
@@ -2780,14 +2798,17 @@ const isNodeSyntaxError = (source: string) => {
 
 // A test that expects a SyntaxError passes when tla-ts rejects the program with one.
 const runSyntaxTest = (id: string, source: string, metadata: Metadata): TestRun => {
-  const strict = metadata.flags.includes("onlyStrict") ? '"use strict";\n' : "";
+  // A module is strict code, which tla-ts reads only of a file that imports or exports.
+  const strict =
+    metadata.flags.includes("onlyStrict") || metadata.isModule ? '"use strict";\n' : "";
   const isRejected = metadata.isModule
     ? isModuleSyntaxError(source)
     : isNodeSyntaxError(`${strict}${source}`);
   if (!isRejected) {
     return { id, outcome: "skipped", reason: "Node accepts it" };
   }
-  const program = `${getHarness(metadata, source)}\n${source}`;
+  const program = `${strict}${getHarness(metadata, source)}
+${source}`;
   try {
     compile(program, "test262.ts");
   } catch (error) {
@@ -2919,7 +2940,8 @@ const runTest = async (path: string): Promise<TestRun> => {
   });
   const programPath = isLinked ? getModulePath(path) : PROGRAM_PATH;
   if (isLinked) mkdirSync(dirname(programPath), { recursive: true });
-  // TypeScript itself fails on some syntax, such as import defer.
+  // TypeScript itself fails on some syntax, such as import defer, and recurses without end on some
+  // types, such as an object's that a generator assigns and names by what it yields.
   const annotated = (() => {
     try {
       return annotate(
@@ -2928,21 +2950,24 @@ const runTest = async (path: string): Promise<TestRun> => {
       );
     } catch (error) {
       if (error instanceof Error && error.message.startsWith("Debug Failure.")) return undefined;
+      if (error instanceof RangeError) return undefined;
       throw error;
     }
   })();
   if (annotated === undefined) return { id, outcome: "skipped", reason: "TypeScript fails" };
+  const isSloppy = metadata.flags.includes("noStrict");
   const nodeError = metadata.isModule
     ? getModuleError(annotated, isLinked ? programPath.replace(/\.ts$/, ".js") : undefined)
-    : await getNodeError(annotated);
+    : await getNodeError(annotated, isSloppy);
   if (nodeError !== undefined) {
     return { id, outcome: "skipped", reason: `Node fails: ${getFirstLine(nodeError)}` };
   }
   try {
-    // Node runs the test as a module, which is strict code, so tla-ts compiles it as strict too.
-    const strict = `"use strict"; ${annotated}`;
+    // A noStrict test runs outside strict mode, as a script, and any other runs in strict mode, as
+    // Node runs it as a module.
+    const program = isSloppy ? annotated : `"use strict"; ${annotated}`;
     const result = await check({
-      ...compile(strict, isLinked ? programPath : "test262.ts"),
+      ...compile(program, isLinked ? programPath : "test262.ts"),
       onPrint: () => {},
     });
     if (result.status === "success" || result.status === "deadlock") {

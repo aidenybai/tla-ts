@@ -2413,8 +2413,16 @@ IsWritable(heap, ref, key) ==
      THEN object.attributes[key].writable
      ELSE object.prototype = Null \\/ IsWritable(heap, object.prototype, key)
 
-\\* Whether a write puts its value without a TypeError. %ThrowTypeError%, the setter of
-\\* Function.prototype's arguments and caller, always throws one.
+\\* Whether a write runs %ThrowTypeError%, the setter of Function.prototype's arguments and caller,
+\\* which throws a TypeError outside strict mode too.
+IsThrowingSet(heap, ref, key) ==
+  LET accessor == AccessorOf(heap, ref, key)
+  IN /\\ ~(IsTypedArray(heap, ref) /\\ TypedKey(key) # "property")
+     /\\ accessor # Undefined
+     /\\ accessor.set # Undefined
+     /\\ GetterPath(accessor.set) = "get Function.prototype.arguments"
+
+\\* Whether a write puts its value without a TypeError.
 LOCAL CanPutOf(heap, ref, key) ==
   LET accessor == AccessorOf(heap, ref, key)
       object == PropertiesOf(heap, ref, key)
@@ -2422,9 +2430,7 @@ LOCAL CanPutOf(heap, ref, key) ==
        [] accessor = Undefined ->
             /\\ IsWritable(heap, ref, key)
             /\\ key \\in DOMAIN object.values \\/ object.extensible
-       [] OTHER ->
-            /\\ accessor.set # Undefined
-            /\\ GetterPath(accessor.set) # "get Function.prototype.arguments"
+       [] OTHER -> accessor.set # Undefined /\\ ~IsThrowingSet(heap, ref, key)
 
 CanPut(heap, ref, key) == CanPutOf(heap, Forward(heap, ref, {"set", "getOwnPropertyDescriptor", "defineProperty"}), key)
 
@@ -7941,8 +7947,10 @@ export const translateTypeOf = (node: ts.TypeOfExpression, scope: Scope, context
       string(known[0]),
     );
   }
-  if (known?.length === 1 && !isProperty && !hasCall(read)) return string(known[0]);
-  if (known?.length === 1 && !isProperty) {
+  // A call that TypeScript doesn't check, as under @ts-ignore, may give a this of another type.
+  const isThis = read.kind === ts.SyntaxKind.ThisKeyword;
+  if (known?.length === 1 && !isProperty && !isThis && !hasCall(read)) return string(known[0]);
+  if (known?.length === 1 && !isProperty && !isThis) {
     const operand = translateExpression(node.expression, scope, context);
     return ifExpression(apply("=", [operand, operand]), string(known[0]), string(known[0]));
   }

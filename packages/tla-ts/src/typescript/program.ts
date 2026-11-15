@@ -1,6 +1,35 @@
 import ts from "@typescript/typescript6";
 import { TlaTypeScriptError } from "../errors";
+import { isStrictCode } from "./context";
 import { rejectEarlyErrors } from "./early-errors";
+
+// TypeScript checks every file as a module, so it rejects a word that only strict mode reserves, as
+// yield or public, even as a name outside strict mode.
+const RESERVED_WORD_ERRORS = new Set([1212, 1213, 1214]);
+
+const getNodeAt = (node: ts.Node, position: number): ts.Node =>
+  ts.forEachChild(node, (child) =>
+    child.getStart() <= position && position < child.getEnd()
+      ? getNodeAt(child, position)
+      : undefined,
+  ) ?? node;
+
+// A generator reserves yield in its parameters and its body, and a generator expression in its own
+// name, outside strict mode too. A function declaration's or a method's name, and an arrow
+// function's parameters, take the yield of the code around them, and an arrow function's body
+// doesn't.
+const isGeneratorYield = (node: ts.Node) => {
+  if (!ts.isIdentifier(node) || node.text !== "yield") return false;
+  const owner = ts.findAncestor(node.parent, (ancestor) =>
+    ts.isArrowFunction(ancestor)
+      ? node.pos >= ancestor.body.pos && "quit"
+      : ts.isFunctionLike(ancestor) &&
+        (ts.isFunctionExpression(ancestor) ||
+          ancestor.name === undefined ||
+          node.pos >= ancestor.name.end),
+  );
+  return owner !== undefined && "asteriskToken" in owner && owner.asteriskToken !== undefined;
+};
 
 const COMPILER_OPTIONS: ts.CompilerOptions = {
   strict: true,
@@ -169,10 +198,18 @@ export const createProgram = (
   rejectEarlyErrors(modelSourceFile);
   const getModelFiles = (program: ts.Program) =>
     modelProgram.getSourceFiles().flatMap((file) => program.getSourceFile(file.fileName) ?? []);
+  // A word that only strict mode reserves names a binding outside strict mode.
+  const isReported = (diagnostic: ts.Diagnostic) =>
+    !RESERVED_WORD_ERRORS.has(diagnostic.code) ||
+    diagnostic.file === undefined ||
+    isStrictCode(getNodeAt(diagnostic.file, diagnostic.start ?? 0)) ||
+    isGeneratorYield(getNodeAt(diagnostic.file, diagnostic.start ?? 0));
   const getDiagnostics = (program: ts.Program) =>
-    ts.sortAndDeduplicateDiagnostics(
-      getModelFiles(program).flatMap((file) => ts.getPreEmitDiagnostics(program, file)),
-    );
+    ts
+      .sortAndDeduplicateDiagnostics(
+        getModelFiles(program).flatMap((file) => ts.getPreEmitDiagnostics(program, file)),
+      )
+      .filter(isReported);
   const modelDiagnostics = getDiagnostics(modelProgram);
   // A model that type checks by itself keeps the program of its own files, which loads faster.
   const program =

@@ -12,6 +12,7 @@ import {
   hasObjectMembers,
   isInertValue,
   isScript,
+  rejectSloppyGlobalWrites,
 } from "./context";
 import { type CompiledSpec, createSections, emit, type Sections } from "./emit";
 import { getBinary, getNumberValue } from "./expressions";
@@ -159,6 +160,7 @@ export const compile = (
   const path = fileName.replaceAll("\\", "/");
   const program = createProgram(source, path, libraries);
   const context = createContext(program.checker, program.files);
+  program.files.forEach((file) => rejectSloppyGlobalWrites(file, context));
   const sourceFile = program.sourceFile;
   // The files that the model imports, each after the files it imports, as they run.
   const visited = new Set([sourceFile]);
@@ -766,16 +768,18 @@ export const compile = (
     ...(context.heap === undefined &&
     model.script.every(
       (statement) =>
-        ts.isVariableStatement(statement) &&
-        statement.declarationList.declarations.every(
-          (declaration) =>
-            ts.isIdentifier(declaration.name) &&
-            // Only a script runs a declaration that nothing reads, which may throw.
-            (!isScript(sourceFile) ||
-              declaration.initializer === undefined ||
-              (statement.declarationList.flags & ts.NodeFlags.Const) === 0 ||
-              isInertValue(declaration.initializer)),
-        ),
+        // A string as a statement, such as a "use strict" directive, does nothing as it runs.
+        (ts.isExpressionStatement(statement) && ts.isStringLiteral(statement.expression)) ||
+        (ts.isVariableStatement(statement) &&
+          statement.declarationList.declarations.every(
+            (declaration) =>
+              ts.isIdentifier(declaration.name) &&
+              // Only a script runs a declaration that nothing reads, which may throw.
+              (!isScript(sourceFile) ||
+                declaration.initializer === undefined ||
+                (statement.declarationList.flags & ts.NodeFlags.Const) === 0 ||
+                isInertValue(declaration.initializer)),
+          )),
     )
       ? model.variables.map((variable) =>
           link(

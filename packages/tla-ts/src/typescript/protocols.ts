@@ -31,6 +31,7 @@ import {
   isMethodCall,
   getLiveMaker,
   isNestedFunction,
+  isStrictCode,
   skipCasts,
 } from "./context";
 import { TlaTypeScriptError } from "../errors";
@@ -2057,7 +2058,7 @@ const runTrap = (
 
 // Runs an operation on a value that may be a proxy. A proxy runs its trap, and throws a TypeError
 // where what the trap gives disagrees with what the target can't change. A change that fails
-// throws a TypeError, as scripts run in strict mode, where Reflect's gives false.
+// throws a TypeError in strict mode, where Reflect's gives false.
 export const runProxyOperation = (
   node: ts.Expression | ts.BindingElement,
   path: Path,
@@ -2403,8 +2404,13 @@ export const runProxyOperation = (
             ? value
             : proxy,
       );
+    // A write or a delete that fails outside strict mode changes nothing and doesn't throw.
     const fail = (after: Path) =>
-      operation.isReflected ? next(after, boolean(false)) : throwWith(after);
+      operation.isReflected
+        ? next(after, boolean(false))
+        : (trap === "set" || trap === "deleteProperty") && !isStrictCode(node)
+          ? next(after, trap === "set" ? value : boolean(false))
+          : throwWith(after);
     // Gives an object that the operation makes, such as a descriptor.
     const give = (after: Path, object: Expression) =>
       bind(

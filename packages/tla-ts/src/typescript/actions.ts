@@ -4766,7 +4766,7 @@ const translateCallStatementBody = (
     expression,
     callee,
     expression.arguments,
-    getReceiver(path.scope, context, called),
+    getReceiver(path.scope, context, called, { node: expression, callee }),
     path,
     context,
     frame,
@@ -5442,16 +5442,15 @@ export const isArgumentsRead = (read: ts.Identifier, context: Context) => {
 };
 
 // Outside strict mode, a function with simple parameters has an arguments object that maps them,
-// so that writing one changes the other, which tla-ts's arguments object doesn't follow. Only a
-// parameter that changes where the object's elements are read, or a parameter read where the
-// object changes or leaves the function, shows the difference.
+// so that writing one changes the other, and whose callee is the function, which tla-ts's arguments
+// object doesn't follow. Only a read of the object other than of its length or its elements, or a
+// parameter that changes where the object's elements are read, shows the difference.
 const rejectMappedArguments = (callee: FunctionNode, context: Context) => {
   const parameters = callee.parameters.filter(
     (parameter) => !(ts.isIdentifier(parameter.name) && parameter.name.text === "this"),
   );
   if (
     isStrictCode(callee) ||
-    parameters.length === 0 ||
     parameters.some(
       (parameter) =>
         !ts.isIdentifier(parameter.name) ||
@@ -5472,14 +5471,12 @@ const rejectMappedArguments = (callee: FunctionNode, context: Context) => {
       const written = getWritten(node);
       return written !== undefined && getWrittenRoots(written).some(isParameter);
     }).length > 0;
-  const isParameterRead =
-    findNodes(callee, (node): node is ts.Identifier => isParameter(node)).length > 0;
   const reads = getArgumentsReads(callee, context);
   const isLengthRead = (read: ts.Identifier) =>
     isArgumentsRead(read, context) && ts.isPropertyAccessExpression(read.parent);
   if (
-    (isParameterWritten && !reads.every(isLengthRead)) ||
-    (isParameterRead && !reads.every((read) => isArgumentsRead(read, context)))
+    !reads.every((read) => isArgumentsRead(read, context)) ||
+    (isParameterWritten && !reads.every(isLengthRead))
   ) {
     throw new TlaTypeScriptError(
       "tla-ts can't follow an arguments object that maps its function's parameters outside strict mode",
@@ -11507,34 +11504,42 @@ const translateExpressionStatement = (
       continueWith,
     );
   }
-  // Deleting a property that can't change throws a TypeError, as scripts run in strict mode.
+  // Deleting a property that can't change throws a TypeError in strict mode, and outside it
+  // changes nothing.
   if (ts.isDeleteExpression(expression)) {
     const deleted = getHeapWrite(expression.expression, path, context);
     if (deleted === undefined) {
       throw new TlaTypeScriptError(`Unsupported statement: ${expression.getText()}`, expression);
     }
+    const canDelete = useJavaScript("CanDelete", [deleted.heap, deleted.ref, deleted.key], context);
     const heap = useJavaScript("Delete", [deleted.heap, deleted.ref, deleted.key], context);
     const target = skipCasts(expression.expression);
-    // ToObject of the base throws on undefined or null, where a literal key converts nothing.
+    // ToObject of the base throws on undefined or null, where a literal key converts nothing,
+    // inside strict mode or out.
     const isBaseChecked =
       ts.isPropertyAccessExpression(target) ||
       (ts.isElementAccessExpression(target) && isLiteral(target.argumentExpression));
-    const deletion = ifThenElse(
-      useJavaScript("CanDelete", [deleted.heap, deleted.ref, deleted.key], context),
+    const continueWithHeap = (after: Expression) =>
       shareHeap(
         path,
         {
           ...path,
           scope: {
             ...path.scope,
-            bindings: new Map([...path.scope.bindings, [deleted.symbol, heap]]),
+            bindings: new Map([...path.scope.bindings, [deleted.symbol, after]]),
           },
         },
         context,
         continueWith,
-      ),
-      throwTypeError(path, expression, context, frame),
-    );
+      );
+    // Outside strict mode, the heap stays as it was, so the statements after it translate once.
+    const deletion = isStrictCode(expression)
+      ? ifThenElse(
+          canDelete,
+          continueWithHeap(heap),
+          throwTypeError(path, expression, context, frame),
+        )
+      : continueWithHeap(ifExpression(canDelete, heap, deleted.heap));
     return isBaseChecked
       ? ifThenElse(
           apply("\\in", [deleted.ref, set([getUndefined(context), identifier("Null")])]),
@@ -11884,7 +11889,7 @@ const translateWriteStatement = (
   if (assigned === undefined) {
     throw new TlaTypeScriptError(`Unsupported statement: ${expression.getText()}`, expression);
   }
-  // A write to a property that can't change throws a TypeError, as scripts run in strict mode.
+  // A write to a property that can't change throws a TypeError in strict mode.
   const write = written === undefined ? undefined : getHeapWrite(written, path, context);
   // A write to a property of null or undefined throws a TypeError.
   const receiver =
@@ -11985,13 +11990,54 @@ const translateWriteStatement = (
       ),
     );
   }
+  // Outside strict mode, a write that fails changes nothing, which tla-ts follows where what it
+  // writes changes nothing else either. It keeps the heap as it was, rather than going on from
+  // each outcome, which would translate the rest of the statements twice for each such write.
+  const isWritingRight =
+    ts.isBinaryExpression(expression) &&
+    findNodes(expression.right, (node): node is ts.Expression => isAssignment(node)).length > 0;
+  const canPut = useJavaScript("CanPut", [write.heap, write.ref, write.key], context);
   const translateWrite = (next: (path: Path) => Formula) =>
     throwOnNullish(
-      ifThenElse(
-        useJavaScript("CanPut", [write.heap, write.ref, write.key], context),
-        shareHeap(path, assigned, context, next),
-        throwTypeError(path, expression, context, frame),
-      ),
+      isStrictCode(expression) || isWritingRight
+        ? ifThenElse(
+            canPut,
+            shareHeap(path, assigned, context, next),
+            isStrictCode(expression)
+              ? throwTypeError(path, expression, context, frame)
+              : leaf(
+                  apply("Assert", [
+                    boolean(false),
+                    string("tla-ts can't ignore a failed write outside strict mode"),
+                  ]),
+                ),
+          )
+        : ifThenElse(
+            useJavaScript("IsThrowingSet", [write.heap, write.ref, write.key], context),
+            throwTypeError(path, expression, context, frame),
+            shareHeap(
+              path,
+              {
+                ...assigned,
+                scope: {
+                  ...assigned.scope,
+                  bindings: new Map([
+                    ...assigned.scope.bindings,
+                    [
+                      write.symbol,
+                      ifExpression(
+                        canPut,
+                        getHeap(assigned.scope, expression, context),
+                        write.heap,
+                      ),
+                    ],
+                  ]),
+                },
+              },
+              context,
+              next,
+            ),
+          ),
     );
   // A write of __proto__ runs Object.prototype's setter where the object inherits it.
   const heapSymbol = context.heap;
