@@ -770,7 +770,8 @@ const typeCallbacks = () => {
       edits.set(passed.getEnd(), " as (...args: unknown[]) => unknown");
     }
     // An element may come from a getter or a prototype, whatever the array's own type, so a value
-    // parameter that the callback only compares takes any value.
+    // parameter that the callback only compares takes any value. So does reduce's accumulator,
+    // which takes the initial value, the elements, and what the callback returns.
     const calledMethod =
       method ??
       (ts.isCallExpression(call) &&
@@ -778,29 +779,29 @@ const typeCallbacks = () => {
       ts.isPropertyAccessExpression(callee)
         ? callee.name.text
         : undefined);
-    const valueParameter =
+    const valueParameters =
       calledMethod === undefined || !ARRAY_CALLBACK_METHODS.has(calledMethod)
-        ? undefined
-        : declaration.parameters.at(calledMethod.startsWith("reduce") ? 1 : 0);
-    const valueSymbol =
-      valueParameter === undefined ? undefined : checker.getSymbolAtLocation(valueParameter.name);
+        ? []
+        : declaration.parameters.slice(0, calledMethod.startsWith("reduce") ? 2 : 1);
     const isCompared = (use: ts.Node) =>
       ts.isTypeOfExpression(use.parent) ||
       (ts.isBinaryExpression(use.parent) && COMPARISONS.has(use.parent.operatorToken.kind));
-    const uses = getUses(valueSymbol);
-    const isUnknownValue =
-      valueParameter !== undefined &&
-      valueParameter.type === undefined &&
-      ts.isIdentifier(valueParameter.name) &&
-      uses.length > 0 &&
-      uses.every(isCompared);
-    if (isUnknownValue) edits.set(valueParameter.name.getEnd(), ": unknown");
+    const unknownValues = valueParameters.filter((parameter) => {
+      const uses = getUses(checker.getSymbolAtLocation(parameter.name));
+      return (
+        parameter.type === undefined &&
+        ts.isIdentifier(parameter.name) &&
+        uses.length > 0 &&
+        uses.every(isCompared)
+      );
+    });
+    unknownValues.forEach((parameter) => edits.set(parameter.name.getEnd(), ": unknown"));
     const signatures = checker.getContextualType(passed)?.getCallSignatures() ?? [];
     if (signatures.length !== 1) return;
     declaration.parameters.forEach((parameter, position) => {
       const given = signatures[0].parameters.at(position);
       if (
-        (isUnknownValue && parameter === valueParameter) ||
+        unknownValues.includes(parameter) ||
         given === undefined ||
         parameter.type !== undefined ||
         parameter.initializer !== undefined ||
