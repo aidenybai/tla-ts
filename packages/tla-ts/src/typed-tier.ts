@@ -4025,13 +4025,22 @@ const compileStep = (
   primed: (string | undefined)[],
   isEnabled: boolean,
 ): (() => string) => {
-  // TLC stops looking for a step that ENABLED needs at the first one it finds.
-  const getEmitCode = (successor: string) =>
-    isEnabled ? `if (emit(${successor})) break enabled;` : `emit(${successor});`;
+  // TLC stops looking for a step that ENABLED needs at the first one it finds. The search learns
+  // whether a step leaves every value as it was from the values the step assigns.
+  const getEmitCode = (codes: (string | undefined)[]) => {
+    const successor = `[${codes.map((code) => code ?? "undefined").join(", ")}]`;
+    if (isEnabled) return `if (emit(${successor})) break enabled;`;
+    const isUnchanged = codes.flatMap((code, index) =>
+      code === `v${index}`
+        ? []
+        : [code !== undefined && /^\w+$/.test(code) ? `${code} === v${index}` : "false"],
+    );
+    return `emit(${successor}, ${isUnchanged.length === 0 ? "true" : isUnchanged.join(" && ")});`;
+  };
   if (pending.length === 0) {
     // TLC fails on a step that leaves a variable unassigned only where it reaches the step.
     if (!isEnabled && primed.some((code) => code === undefined)) return () => "H.deopt();";
-    return () => getEmitCode(`[${primed.map((code) => code ?? "undefined").join(", ")}]`);
+    return () => getEmitCode(primed);
   }
   // With warnings on, TLC evaluates what is left once every variable is assigned, without branching.
   if (program.environment.runtime.isWarningEnabled && primed.every((code) => code !== undefined)) {
@@ -4055,7 +4064,7 @@ const compileStep = (
       };
     });
     return () =>
-      `if (${guards.map((guard) => `(${guard.emit()})`).join(" && ")}) { ${getEmitCode(`[${primed.join(", ")}]`)} }`;
+      `if (${guards.map((guard) => `(${guard.emit()})`).join(" && ")}) { ${getEmitCode(primed)} }`;
   }
   const [first, ...rest] = pending;
   const expression = first.expression;
@@ -5582,7 +5591,7 @@ const getSignatureCode = (
 };
 
 interface CompiledSpec {
-  next: (state: Plain[], emit: (successor: Plain[]) => void) => void;
+  next: (state: Plain[], emit: (successor: Plain[], isUnchanged: boolean) => void) => void;
   // A state predicate holds of a successor that has its parent's values of the variables it reads,
   // since it held of the parent.
   invariants: ((state: Plain[], parent?: Plain[]) => boolean)[];
@@ -6215,8 +6224,10 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
     while (cursor.position < end) addFingerprint(compiled.decode(cursor));
   };
   // Returns the index of a state in the model, or -1 for a state outside it.
-  const visit = (state: Plain[], parent?: Plain[]) => {
+  const visit = (state: Plain[], parent?: Plain[], isUnchanged = false) => {
     statistics.generated++;
+    // A step that changes no value leads back to the state it starts from, which is stored already.
+    if (isUnchanged) return expanding.index;
     if (!isInModel(state, parent)) {
       checkInvariants(state, parent);
       return -1;
@@ -6325,13 +6336,13 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
   const expansion = { successors: 0, newStates: 0 };
   const liveSuccessors: LiveSuccessor<Plain[]>[] = [];
   const liveChecks = { at: 1024 };
-  const onSuccessor = (successor: Plain[]) => {
+  const onSuccessor = (successor: Plain[], isUnchanged: boolean) => {
     for (const property of compiled.actionProperties) {
       if (!property(expanding.state, successor)) deopt();
     }
     expansion.successors++;
     const distinct = statistics.distinct;
-    const index = visit(successor, expanding.state);
+    const index = visit(successor, expanding.state, isUnchanged);
     if (live && index !== -1) liveSuccessors.push({ index, state: successor });
     if (statistics.distinct > distinct) {
       expansion.newStates++;
