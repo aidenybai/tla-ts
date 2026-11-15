@@ -39656,4 +39656,32 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("stops where a block that runs more than once assigns its function's var", () => {
+    const getSource = (bound: number, expected: string) => `
+      const seen: string[] = [];
+      (function () {
+        for (let i = 0; i < 2; i++) {
+          if (i > ${bound}) function h() {}
+        }
+        // @ts-ignore
+        seen.push(typeof h);
+      })();
+      if (seen.join() !== "${expected}") throw new Error(seen.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(5, "undefined"))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation", async () => {
+      expect((await checkModel(getSource(5, "function"))).failure?.message).toContain("undefined");
+    });
+
+    it("stops where the declaration runs", async () => {
+      expect((await checkModel(getSource(0, "function"))).failure?.message).toContain(
+        "tla-ts can't assign a var a function that a block that runs more than once declares",
+      );
+    });
+  });
 });
