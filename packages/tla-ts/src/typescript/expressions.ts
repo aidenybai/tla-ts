@@ -208,6 +208,8 @@ import {
   isEvery,
   isRegExpArray,
   isSequenceType,
+  isUntold,
+  isCollectionName,
   mayBeSequenceType,
   translateUnknown,
   isArrayConstruction,
@@ -2342,13 +2344,26 @@ const translateBinary = (node: ts.BinaryExpression, scope: Scope, context: Conte
     }
     const container = getKind(node.right, context);
     // A script's heap holds the built-in objects too, such as Number.
-    if (container === "object" || (container === "other" && context.heap !== undefined)) {
+    if (container === "object" && !isUntold(node.right, context.checker)) {
       return useJavaScript(
         "Has",
         [
           getHeap(scope, node, context),
           translate(node.right),
           translatePropertyKey(node.left, scope, context),
+        ],
+        context,
+      );
+    }
+    if (container === "object" || (container === "other" && context.heap !== undefined)) {
+      context.builtIns.add("Array.prototype");
+      return useJavaScript(
+        "HasAny",
+        [
+          getHeap(scope, node, context),
+          translate(node.right),
+          translatePropertyKey(node.left, scope, context),
+          boolean(context.isEveryMapHeld),
         ],
         context,
       );
@@ -4388,7 +4403,7 @@ export const translateNode = (
   if (
     ts.isNewExpression(node) &&
     context.heapCollections.has(node) &&
-    (["Set", "Map"].includes(getBuiltIn(node.expression, context) ?? "") ||
+    (isCollectionName(getBuiltIn(node.expression, context) ?? "") ||
       isNewSubclassCollection(node, context))
   ) {
     const made = scope.allocated.get(node);

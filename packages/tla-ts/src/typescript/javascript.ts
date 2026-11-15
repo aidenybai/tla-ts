@@ -2350,7 +2350,15 @@ LOCAL SpeciesGetters ==
   {"get " \\o owner \\o ".@@species" :
      owner \\in {"Array", "RegExp", "Map", "Set", "Promise", "ArrayBuffer", "SharedArrayBuffer"}}
 
-\\* A read of a key from an object or its prototypes, where a getter that reads a buffer's or a view's
+\\* What Map.prototype's or Set.prototype's size getter gives for a map or a set that the heap holds.
+LOCAL CollectionSize(heap, path, receiver) ==
+  LET object == IF IsHeap(receiver) THEN heap.objects[receiver[Ref]] ELSE EmptyObject
+  IN CASE "collection" \\notin DOMAIN object \\/ path # "get " \\o object.collection \\o ".prototype.size" ->
+            Assert(FALSE, "tla-ts can't throw the TypeError of a getter on another kind of object")
+       [] object.collection = "Map" -> Cardinality(DOMAIN object.data)
+       [] OTHER -> Cardinality(object.data)
+
+
 \\* internal slots reads the receiver's. An array outside the heap, which a value typed only as
 \\* array-like may hold, holds its elements and its length, and reads the rest from its prototype.
 RECURSIVE GetFrom(_, _, _, _)
@@ -2372,6 +2380,9 @@ GetFrom(heap, ref, key, receiver) ==
                    /\\ path \\in RegExpGetters -> RegExpGet(heap, path, receiver)
               [] key \\in DOMAIN object.values /\\ object.attributes[key].kind = "accessor"
                    /\\ path \\in SpeciesGetters -> receiver
+              [] key \\in DOMAIN object.values /\\ object.attributes[key].kind = "accessor"
+                   /\\ path \\in {"get Map.prototype.size", "get Set.prototype.size"} ->
+                   CollectionSize(heap, path, receiver)
               [] key \\in DOMAIN object.values /\\ object.attributes[key].kind = "accessor"
                    /\\ IntlGetterKind(path) # "" -> IntlGet(heap, path, receiver)
               [] key \\in DOMAIN object.values /\\ object.attributes[key].kind = "accessor"
@@ -2416,6 +2427,18 @@ GetAny(heap, value, key, isEveryMapHeld) ==
                 SubSeq(value, ToIndex(key) + 1, ToIndex(key) + 1)
            [] OTHER -> GetFrom(heap, Ref :> "String.prototype", key, value)
     [] OTHER -> Assert(FALSE, "tla-ts can't read a property of this value")
+
+\\* Whether in finds a key in a value whose type doesn't tell what it is, where a sequence is an array
+\\* where the heap holds every map, which has its elements and its length, and the rest from
+\\* Array.prototype.
+HasAny(heap, value, key, isEveryMapHeld) ==
+  CASE IsSequenceValue(value) /\\ ~isEveryMapHeld ->
+         Assert(FALSE, "tla-ts can't tell an array off the heap from a map")
+    [] IsSequenceValue(value) ->
+         \\/ key = "length"
+         \\/ TypedKey(key) = "index" /\\ ToIndex(key) < Len(value)
+         \\/ Has(heap, Ref :> "Array.prototype", key)
+    [] OTHER -> Has(heap, value, key)
 
 \\* Object.getPrototypeOf of a value whose type doesn't tell what it is, where a primitive gives the
 \\* prototype of the object that wraps it, an error the prototype of its constructor, and a sequence,
@@ -7217,8 +7240,9 @@ ArrayLikeReverse(heap, ref) ==
      ELSE [heap |-> state.heap, value |-> ref, isThrown |-> state.isThrown]
 
 \\* A set or a map that the heap holds, so that it keeps its identity as a script changes it, with
-\\* the value that it holds as its data.
-CollectionObject(prototype, data) == [data |-> data] @@ [EmptyObject EXCEPT !.prototype = prototype]
+\\* the value that it holds as its data, and the built-in collection that made it.
+CollectionObject(prototype, collection, data) ==
+  [data |-> data, collection |-> collection] @@ [EmptyObject EXCEPT !.prototype = prototype]
 
 \\* The value that a set or a map that the heap holds has, or undefined or null as an optional chain
 \\* reads them.
@@ -7244,7 +7268,7 @@ DistinctKeys(keys, kept) ==
 OrderedCollectionObject(prototype, data, keys, isMap) ==
   LET order == DistinctKeys(SelectSeq(keys, LAMBDA key : key \\in CollectionKeys(data, isMap)), <<>>)
   IN IF Len(order) = Cardinality(CollectionKeys(data, isMap))
-     THEN [order |-> order] @@ CollectionObject(prototype, data)
+     THEN [order |-> order] @@ CollectionObject(prototype, IF isMap THEN "Map" ELSE "Set", data)
      ELSE Assert(FALSE, "tla-ts can't tell the order of this collection's keys")
 
 \\* Whether a set or a map knows the order of its keys, which one that a script made from a set
@@ -7290,7 +7314,7 @@ SetMethodObject(heap, prototype, data, method, ref, other, otherKeys) ==
   IF HasOrder(heap, ref) /\\ HasOrder(heap, other)
   THEN OrderedCollectionObject(
          prototype, data, SetMethodOrder(method, OrderedValues(heap, ref, FALSE, "keys"), otherKeys), FALSE)
-  ELSE CollectionObject(prototype, data)
+  ELSE CollectionObject(prototype, "Set", data)
 
 \\* The elements of a set in an order that TLC picks, which only a loop that ends the same in any
 \\* order visits, as a set that TLC holds keeps no insertion order.

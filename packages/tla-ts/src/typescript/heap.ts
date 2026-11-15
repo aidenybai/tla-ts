@@ -153,6 +153,7 @@ import {
   isSetOrMapType,
   REORDER_METHODS,
   getReorderedArray,
+  isUntold,
 } from "./types";
 
 const SHORT_CIRCUITS = new Set([
@@ -1723,6 +1724,9 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
     const keys = isOrderedCollection(node, context)
       ? translateNewKeys(node, scope, context)
       : undefined;
+    // A subclass's instance is the collection's that it extends.
+    const collection =
+      getBuiltIn(getConstruction(node, context)?.callee ?? node.expression, context) ?? "";
     return useJavaScript(
       "Allocate",
       [
@@ -1730,19 +1734,14 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
         useJavaScript(
           keys === undefined ? "CollectionObject" : "OrderedCollectionObject",
           [
-            isNewSubclassCollection(node, context)
+            isNewSubclassCollection(node, context) || !isCollectionName(collection)
               ? useJavaScript(
                   "Get",
                   [heap, translateExpression(node.expression, scope, context), string("prototype")],
                   context,
                 )
-              : translateBuiltInValue(
-                  getBuiltIn(node.expression, context) === "Map"
-                    ? "Map.prototype"
-                    : "Set.prototype",
-                  node,
-                  context,
-                ),
+              : translateBuiltInValue(`${collection}.prototype`, node, context),
+            ...(keys === undefined ? [string(collection)] : []),
             translateNew(node, scope, context),
             ...(keys === undefined ? [] : [keys, boolean(getCollection(node, context) === "Map")]),
           ],
@@ -1829,7 +1828,7 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
               ],
               context,
             )
-          : useJavaScript("CollectionObject", [prototype, made], context),
+          : useJavaScript("CollectionObject", [prototype, string("Set"), made], context),
       ],
       context,
     );
@@ -4176,8 +4175,7 @@ const isComparedArgument = (call: ts.CallExpression, position: number, context: 
 const isFreshCollection = (node: ts.Node | undefined, context: Context) =>
   node !== undefined &&
   (ts.isArrayLiteralExpression(node) ||
-    (ts.isNewExpression(node) &&
-      ["Set", "Map"].includes(getBuiltIn(node.expression, context) ?? "")) ||
+    (ts.isNewExpression(node) && isCollectionName(getBuiltIn(node.expression, context) ?? "")) ||
     isNewSubclassCollection(node, context));
 
 // A new of a class that extends a collection, whose instance the heap always holds, as the class's
@@ -4436,19 +4434,6 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
   const checker = context.checker;
   const isAnyOrUnknown = (node: ts.Expression) =>
     (checker.getTypeAtLocation(node).flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;
-  // A value whose type doesn't tell what it is, such as any, unknown, object, or {}, which may be an
-  // array or a map.
-  const isUntold = (node: ts.Expression) =>
-    [checker.getTypeAtLocation(node)]
-      .flatMap((type) => (type.isUnion() ? type.types : [type]))
-      .some(
-        (member) =>
-          (member.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown | ts.TypeFlags.NonPrimitive)) !==
-            0 ||
-          ((member.flags & ts.TypeFlags.Object) !== 0 &&
-            member.getProperties().length === 0 &&
-            member.getCallSignatures().length === 0),
-      );
   // A read that tells as it runs what a value whose type doesn't tell is: of a property of a value
   // of type any or unknown, as a pattern reads it too, or by in, Array.isArray, getPrototypeOf, or a
   // method of Object that lists its keys.
@@ -4462,7 +4447,7 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
           (ts.isVariableDeclaration(parent) &&
             parent.initializer === node &&
             ts.isObjectBindingPattern(parent.name)))) ||
-      (isUntold(node) &&
+      (isUntold(node, checker) &&
         ((ts.isBinaryExpression(parent) &&
           parent.operatorToken.kind === ts.SyntaxKind.InKeyword &&
           parent.right === node) ||
@@ -5363,8 +5348,8 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
   };
   const isReachedNode = (node: ts.Node) =>
     ts.findAncestor(node, (ancestor) => isReached.has(ancestor)) !== undefined;
-  // A map off the heap may be the same TLA+ value as an array, so a script that reads a value by its
-  // kind holds its maps on the heap.
+  // A map off the heap may be the same TLA+ value as an array, and a weak set or map the same as a
+  // set or a map, so a script that reads a value by its kind holds them on the heap.
   const readsKinds = expressions.some((node) => isReachedNode(node) && isReadByKind(node));
   // A parameter or a field whose array a function changes in place starts a group, as does a
   // variable whose array a write gives a hole.
@@ -5416,7 +5401,8 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
         (ts.isNewExpression(node) &&
           isFreshCollection(node, context) &&
           (isOrderedCollection(node, context) ||
-            (readsKinds && getCollection(node, context) === "Map"))))
+            (readsKinds &&
+              ["Map", "WeakSet", "WeakMap"].includes(getCollection(node, context) ?? "")))))
     ) {
       grow([], [], [node]).forEach((inner) => found.add(inner));
     }

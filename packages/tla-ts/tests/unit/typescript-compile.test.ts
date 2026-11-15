@@ -44059,15 +44059,13 @@ describe("BigInts", () => {
       expect(result.failure).toBeUndefined();
     });
 
-    it("stops at a weak map, which the heap doesn't hold", async () => {
+    it("tells a weak map that the heap holds from an array", async () => {
       const result = await checkModel(`
         const map: unknown = new WeakMap<object, number>();
         const object: unknown = {};
         if (Array.isArray(map) || Array.isArray(object)) throw new Error("array");
       `);
-      expect(result.failure?.message).toContain(
-        "tla-ts can't tell an array off the heap from a map",
-      );
+      expect(result.failure).toBeUndefined();
     });
   });
 
@@ -44240,14 +44238,12 @@ describe("BigInts", () => {
       );
     });
 
-    it("stops at a weak map, which the heap doesn't hold", async () => {
+    it("reads a weak map that the heap holds as a weak map", async () => {
       const result = await checkModel(`
         const map: any = new WeakMap();
         if (map.length !== undefined) throw new Error("array");
       `);
-      expect(result.failure?.message).toContain(
-        "tla-ts can't tell an array off the heap from a map",
-      );
+      expect(result.failure).toBeUndefined();
     });
   });
 
@@ -44437,6 +44433,92 @@ describe("BigInts", () => {
       expect(result.failure?.message).toContain(
         "tla-ts can't give a typed name, parameter, property, or element a value of another kind",
       );
+    });
+  });
+  describe("tests a key of an array or an object whose type doesn't tell what it is with in", () => {
+    const getSource = (expected: string) => `
+      const has = (value: any, key: string | number) => key in value;
+      const log = [
+        has([1, 2], 0),
+        has([1, 2], "1"),
+        has([1, 2], 2),
+        has([1, 2], "length"),
+        has([1, 2], "push"),
+        has({ a: 1 }, "a"),
+        has({ a: 1 }, "toString"),
+        has({ a: 1 }, "b"),
+      ].join(",");
+      if (log !== "${expected}") throw new Error(log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("true,true,false,true,true,true,true,false"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects an inherited key as missing", async () => {
+      expect(
+        (await checkModel(getSource("true,true,false,true,false,true,false,false"))).failure
+          ?.message,
+      ).toContain("true,true,false,true,true,true,true,false");
+    });
+  });
+
+  describe("tests a key of a weak map or a weak set whose type doesn't tell what it is with in", () => {
+    const getSource = (expected: string) => `
+      const has = (value: object, key: string) => key in value;
+      const map = new WeakMap<object, number>();
+      const set = new WeakSet<object>();
+      const key = {};
+      map.set(key, 1);
+      set.add(key);
+      const log = [
+        has(map, "get"),
+        has(map, "size"),
+        has(set, "add"),
+        has(set, "get"),
+        map.get(key),
+        set.has(key),
+        set.has({}),
+      ].join(",");
+      if (log !== "${expected}") throw new Error(log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("true,false,true,false,1,true,false"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects a weak map's method as missing", async () => {
+      expect(
+        (await checkModel(getSource("false,false,true,false,1,true,false"))).failure?.message,
+      ).toContain("true,false,true,false,1,true,false");
+    });
+  });
+
+  describe("reads the size of a map or a set whose type doesn't tell what it is", () => {
+    const getSource = (expected: string) => `
+      const map = new Map([[1, "a"], [2, "b"]]);
+      const set = new Set(["a", "b", "c"]);
+      const weak = new WeakMap<object, number>();
+      map.set(3, "c");
+      set.delete("a");
+      const first = [...set][0];
+      const anyMap: any = map;
+      const anySet: any = set;
+      const anyWeak: any = weak;
+      const log = [anyMap.size, anySet.size, anyWeak.size, first].join(",");
+      if (log !== "${expected}") throw new Error(log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("3,2,,b"))).failure).toBeUndefined();
+    });
+
+    it("rejects a weak map's size", async () => {
+      expect((await checkModel(getSource("3,2,0,b"))).failure?.message).toContain("3,2,,b");
     });
   });
 });

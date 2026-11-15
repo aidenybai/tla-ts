@@ -354,6 +354,20 @@ export const isHeapPattern = (type: ts.Type, pattern: ts.Node, context: Context)
   return isHeapType(type, context);
 };
 
+// Whether a value's type doesn't tell what it is, such as any, unknown, object, or {}, so it may be
+// an array or a map.
+export const isUntold = (node: ts.Expression, checker: ts.TypeChecker) =>
+  [checker.getTypeAtLocation(node)]
+    .flatMap((type) => (type.isUnion() ? type.types : [type]))
+    .some(
+      (member) =>
+        (member.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown | ts.TypeFlags.NonPrimitive)) !==
+          0 ||
+        ((member.flags & ts.TypeFlags.Object) !== 0 &&
+          member.getProperties().length === 0 &&
+          member.getCallSignatures().length === 0),
+    );
+
 // Whether a script with objects reads a value's properties through the heap as it runs, as its type
 // any or unknown, or a union of objects in the heap with arrays and primitives, doesn't tell what
 // it is.
