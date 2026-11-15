@@ -41618,4 +41618,14 @@ describe("BigInts", () => {
       );
     });
   });
+
+  it("stops where a call leaves out an array method's callback", () => {
+    expect(() =>
+      compile(`
+        const values = [1, 2];
+        // @ts-ignore
+        values.every();
+      `),
+    ).toThrow("Pass a function here");
+  });
 });

@@ -184,9 +184,12 @@ const getCallbackFunction = (callback: ts.Expression, scope: Scope, context: Con
   );
 };
 
-const getCallback = (callback: ts.Expression, outer: Scope, context: Context) => {
-  const callee = getCallbackFunction(callback, outer, context);
-  if (callee?.body === undefined) throw new TlaTypeScriptError("Pass a function here", callback);
+// A call that leaves out its callback passes undefined, which isn't a function.
+const getCallback = (callback: ts.Expression | undefined, outer: Scope, context: Context) => {
+  const callee = callback && getCallbackFunction(callback, outer, context);
+  if (callback === undefined || callee?.body === undefined) {
+    throw new TlaTypeScriptError("Pass a function here", callback);
+  }
   const parameters = getParameters(callee);
   const unbound = parameters.find(
     (parameter) => parameter.initializer !== undefined || parameter.dotDotDotToken !== undefined,
