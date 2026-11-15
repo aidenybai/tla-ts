@@ -42494,4 +42494,26 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("slices an array-like object from an index past 2^31", () => {
+    const getSource = (expected: string) => `
+      const letters: { [key: string]: unknown } = { length: 2, 0: "a", 1: "b" };
+      let log = "";
+      log += Array.prototype.at.call(letters, 4294967294);
+      log += Array.prototype.slice.call(letters, 4294967294).length;
+      log += Array.prototype.slice.call(letters, 1, 4294967295).length;
+      log += Array.prototype.slice.call(letters, -4294967295).length;
+      if (log !== "${expected}") throw new Error(log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("undefined012"))).failure).toBeUndefined();
+    });
+
+    it("rejects a slice past the end with an element", async () => {
+      expect((await checkModel(getSource("undefined112"))).failure?.message).toContain(
+        "undefined012",
+      );
+    });
+  });
 });

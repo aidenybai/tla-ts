@@ -901,8 +901,11 @@ const translateSequenceOperation = (
       ? translate(inner)
       : useJavaScript("ToNumber", [translate(inner)], context);
   // An index that counts back from the end when it's negative, as at() and slice() take it.
+  // A literal past 2^31 - 1 is a Wide integer, which isn't a position.
   const getRelative = (inner: ts.Expression, operator: "RelativeIndex" | "ClampedIndex") =>
-    ts.isNumericLiteral(inner) && Number.isInteger(Number(inner.text))
+    ts.isNumericLiteral(inner) &&
+    Number.isInteger(Number(inner.text)) &&
+    Number(inner.text) <= 2 ** 31 - 1
       ? translate(inner)
       : useJavaScript(operator, [getIndex(inner), getLength()], context);
   const orUndefined = (exists: Expression, value: Expression) => {
