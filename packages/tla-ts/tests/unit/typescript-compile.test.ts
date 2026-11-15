@@ -18913,6 +18913,62 @@ describe("errors", () => {
     });
   });
 
+  describe("closes what an iterator helper wraps through the helper's return", () => {
+    const forwarded = `
+      let returnCount = 0;
+      class TestIterator extends Iterator<number> {
+        next(): IteratorResult<number, undefined> {
+          return { done: false, value: 1 };
+        }
+        return(): IteratorResult<number, undefined> {
+          ++returnCount;
+          return { done: true, value: undefined };
+        }
+      }
+      const iterator = new TestIterator().filter(() => false);
+      iterator.return!();
+      if (Number(returnCount) !== 1) throw new Error("first");
+      const second = iterator.return!();
+      if (returnCount !== 1 || second.done !== true) throw new Error("second");
+    `;
+    const finished = `
+      const log: string[] = [];
+      function* g(): Generator<number, undefined, undefined> {
+        try {
+          yield 1;
+          yield 2;
+        } finally {
+          log.push("finally");
+        }
+        return undefined;
+      }
+      const mapped = g().map((value) => value * 2);
+      mapped.next();
+      const closed = mapped.return!();
+      const after = mapped.next();
+      if (closed.done !== true || after.done !== true || log.join() !== "finally") {
+        throw new Error("closed");
+      }
+    `;
+
+    it("forwards the first return to a class's iterator", async () => {
+      expect((await checkModel(forwarded)).failure).toBeUndefined();
+    });
+
+    it("runs the finally of a generator that the helper wraps", async () => {
+      expect((await checkModel(finished)).failure).toBeUndefined();
+    });
+
+    it.each([
+      ["first", forwarded, "Number(returnCount) !== 1", "Number(returnCount) !== 0"],
+      ["closed", finished, 'log.join() !== "finally"', 'log.join() !== ""'],
+    ])("rejects a wrong %s", async (label, source, expected, wrong) => {
+      expect((await checkModel(source.replace(expected, wrong))).failure?.message).toContain(
+        `"${label}"`,
+      );
+    });
+  });
+
   it("flattens the arrays that flatMap's mapper returns", async () => {
     const source = `
       const holder = { count: 0 };

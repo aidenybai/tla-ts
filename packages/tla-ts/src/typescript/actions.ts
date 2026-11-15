@@ -2241,7 +2241,7 @@ export const translateCallStatement = (
     );
   }
   const consumer = getGeneratorMethod(expression, context);
-  const stepped = isGeneratorStep(expression, context) ? expression : undefined;
+  const stepped = getGeneratorStep(expression, context);
   const consume =
     consumer &&
     ((current: Path) =>
@@ -2284,8 +2284,9 @@ export const translateCallStatement = (
               )
             : consume(current)
       : stepped &&
-        ((current: Path) => translateGeneratorStep(stepped, current, context, frame, continueWith));
-  const generator = consumer?.receiver ?? stepped?.expression.expression;
+        ((current: Path) =>
+          translateGeneratorStep(expression, stepped, current, context, frame, continueWith));
+  const generator = consumer?.receiver ?? stepped?.expression;
   if (translateStep !== undefined && generator !== undefined) {
     const receiver = getCast(generator);
     if (
@@ -6471,8 +6472,6 @@ const translateIteratorHelper = (
     if (caller === undefined) throw new TlaTypeScriptError("Unsupported iterator helper", node);
     return caller;
   };
-  // A helper's return closes the generator it wraps, which tla-ts doesn't follow, so a return
-  // stops.
   if (helper.invalid === "primitive") {
     return translateHoldsIteratorPrototype(
       method,
@@ -6500,12 +6499,26 @@ const translateIteratorHelper = (
   if (candidates.size !== 1 && helper.invalid === undefined) {
     throw new TlaTypeScriptError("tla-ts can't tell which generator this helper wraps", node);
   }
+  // A helper's return closes what it wraps, as its next closes it once take reaches its limit,
+  // where what the close throws leaves the helper done.
   const getSuspension = (resume: Suspension["resume"]): Suspension => ({
     ref,
     generator,
     resume,
     isStarted: true,
     isGuarded: true,
+    abort:
+      helper.invalid === "object"
+        ? undefined
+        : (closing, method) =>
+            method === "return"
+              ? close(closing, getCaller(closing))
+              : leaf(
+                  apply("Assert", [
+                    boolean(false),
+                    string(`tla-ts can't ${method} an iterator helper`),
+                  ]),
+                ),
     isAsync: false,
     queue: [],
   });
@@ -6513,6 +6526,23 @@ const translateIteratorHelper = (
     ...current,
     generators: new Map([...current.generators, [name, getSuspension(resume)]]),
   });
+  const close = (current: Path, caller: Caller) =>
+    resumeGenerator(
+      node,
+      underlying,
+      "return",
+      undefined,
+      current,
+      context,
+      {
+        ...frame,
+        throwTo: (after, thrown) =>
+          caller.throwTo === undefined
+            ? leaf(thrown.uncaught)
+            : caller.throwTo(leave(after, undefined), thrown),
+      },
+      (after) => caller.step(leave(after, undefined), undefined, true),
+    );
   const getFrame = (caller: Caller): Frame => ({
     ...frame,
     // A callback that throws closes the generator before the error leaves next, which wins over
@@ -6579,25 +6609,7 @@ const translateIteratorHelper = (
           throwTo: caller.throwTo,
         });
       }
-      // What the close throws leaves next, as the helper finishes.
-      if (method === "take" && counter >= (limit ?? 0)) {
-        return resumeGenerator(
-          node,
-          underlying,
-          "return",
-          undefined,
-          resumer,
-          context,
-          {
-            ...frame,
-            throwTo: (current, thrown) =>
-              caller.throwTo === undefined
-                ? leaf(thrown.uncaught)
-                : caller.throwTo(leave(current, undefined), thrown),
-          },
-          (after) => give(after, undefined, true),
-        );
-      }
+      if (method === "take" && counter >= (limit ?? 0)) return close(resumer, caller);
       return resumeGenerator(
         node,
         underlying,
@@ -6731,18 +6743,19 @@ const translateIteratorHelper = (
 // A call to a generator's next, return, or throw, which gives an object with what the generator
 // yields or returns.
 const translateGeneratorStep = (
-  node: MethodCall,
+  node: ts.CallExpression,
+  step: ts.PropertyAccessExpression,
   path: Path,
   context: Context,
   frame: Frame,
   continueWith: (path: Path, value?: Expression) => Formula,
 ): Formula => {
   const heapSymbol = context.heap;
-  const method = node.expression.name.text;
+  const method = step.name.text;
   const argument = node.arguments.at(0);
   return resumeGenerator(
     node,
-    translateExpression(node.expression.expression, path.scope, context),
+    translateExpression(step.expression, path.scope, context),
     method,
     argument && {
       value:
@@ -7509,11 +7522,21 @@ export const isSameExpression = (left: Expression, right: Expression) => {
 const isSteppedValue = (node: ts.Expression, context: Context) =>
   isGeneratorType(node, context) || isBuiltInIteratorType(node, context);
 
-// A call to the next, return, or throw of a generator object.
-const isGeneratorStep = (node: ts.CallExpression, context: Context): node is MethodCall =>
-  isMethodCall(node) &&
-  ["next", "return", "throw"].includes(node.expression.name.text) &&
-  isGeneratorType(node.expression.expression, context);
+// The next, return, or throw of a generator object that a call calls. An iterator helper's type
+// may lack a return, which it has, so the call may assert that it's there.
+const getGeneratorStep = (node: ts.CallExpression, context: Context) => {
+  const callee =
+    ts.isNonNullExpression(node.expression) &&
+    ts.isPropertyAccessExpression(node.expression.expression) &&
+    node.expression.expression.name.text === "return"
+      ? node.expression.expression
+      : node.expression;
+  return ts.isPropertyAccessExpression(callee) &&
+    ["next", "return", "throw"].includes(callee.name.text) &&
+    isGeneratorType(callee.expression, context)
+    ? callee
+    : undefined;
+};
 
 // A call of a method of Iterator.prototype that consumes a generator object or wraps it in a
 // helper, or of the method's call with the generator object.
@@ -11539,7 +11562,7 @@ const isStatementResult = (node: ts.CallExpression, path: Path, context: Context
         // A change of an object gives the object, though TypeScript types what it gives as any.
         (node.arguments.length > 0 &&
           isHeapType(context.checker.getTypeAtLocation(node.arguments[0]), context)))) ||
-    isGeneratorStep(node, context) ||
+    getGeneratorStep(node, context) !== undefined ||
     getGeneratorMethod(node, context) !== undefined ||
     getIterableFrom(node, context) !== undefined ||
     getIteratorFrom(node, context) !== undefined ||
