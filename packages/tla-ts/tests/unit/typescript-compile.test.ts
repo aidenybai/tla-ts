@@ -8847,7 +8847,21 @@ describe("errors", () => {
       "a function that redeclares a catch parameter",
       "try {} catch (error) {\n  function error() {}\n}",
     ],
-    ["two functions with one name in a block", "{\n  function step() {}\n  function step() {}\n}"],
+    [
+      "two functions with one name in a block in strict mode",
+      '"use strict";\n{\n  function step() {}\n  function step() {}\n}',
+    ],
+    [
+      "a generator and a function with one name in a block",
+      "{\n  function* step() {}\n  function step() {}\n}",
+    ],
+    ["a function as an if's branch in strict mode", '"use strict";\nif (true) function step() {}'],
+    ["a labelled function as the body of a loop", "while (false) label: function step() {}"],
+    ["an arrow that names a parameter twice", "const step = (a: number, a: number) => a;"],
+    [
+      "a function that names a parameter twice in strict mode",
+      '"use strict";\nfunction step(a: number, a: number) {\n  return a;\n}',
+    ],
     ["a class as the body of an if", "if (true) class Step {}"],
     ["a function as the body of a loop", "while (false) function step() {}"],
     [
@@ -8855,10 +8869,32 @@ describe("errors", () => {
       "class Box {\n  #size = 1;\n  read() {\n    const { #size: size } = this;\n  }\n}",
     ],
     ["an escape in new.target", "function make() {\n  return new.t\\u0061rget;\n}"],
-    ["assigning arguments", "function make() {\n  [arguments] = [[]];\n}"],
+    [
+      "assigning arguments in strict mode",
+      '"use strict";\nfunction make() {\n  [arguments] = [[]];\n}',
+    ],
     ["an export name with a lone surrogate", 'function step() {}\nexport { step as "\\uD83D" };'],
   ])("rejects %s as a SyntaxError", (_, source) => {
     expect(() => compile(source)).toThrow(/^spec\.ts:\d+:\d+ SyntaxError: /);
+  });
+
+  it.each([
+    ["a function as an if's branch", "if (true) function step() {}", "statement's body"],
+    ["a labelled function", "label: function step() {}", "statement's body"],
+    [
+      "two functions with one name in a block",
+      "{\n  function step() {}\n  function step() {}\n}",
+      "declares a function twice",
+    ],
+    ["assigning arguments", "function make() {\n  [arguments] = [[]];\n}", "write arguments"],
+    [
+      "a function that names a parameter twice",
+      "function step(a: number, a: number) {\n  return a;\n}",
+      "names a parameter twice",
+    ],
+  ])("stops at %s, which only strict mode rejects", (_, source, message) => {
+    expect(() => compile(source)).toThrow(`tla-ts can't`);
+    expect(() => compile(source)).toThrow(message);
   });
 
   it("accepts a var beside a function in a function body", () => {
