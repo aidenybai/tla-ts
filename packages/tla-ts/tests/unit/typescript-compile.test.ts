@@ -7460,6 +7460,13 @@ describe("definitions", () => {
     expect(wrong.failure?.message).toContain("the namespace's getFirst");
   });
 
+  it("stops at a read of a default export of a class with no name before its module runs", () => {
+    const path = join(import.meta.dirname, "../fixtures/typescript/imports/default-early.ts");
+    expect(() => compile(readFileSync(path, "utf8"), path)).toThrow(
+      "tla-ts can't read the default export made before its module runs",
+    );
+  });
+
   it("stops at a namespace object that a script uses other than to read an export", () => {
     const path = join(import.meta.dirname, "../fixtures/typescript/imports/namespace.ts");
     const source = readFileSync(path, "utf8");
