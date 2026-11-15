@@ -39685,4 +39685,34 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("2"))).failure?.message).toContain("seen iterator,2");
     });
   });
+
+  describe("runs new of a typed array inside an expression first", () => {
+    const getSource = (expected: string) => `
+      const seen: unknown[] = [];
+      const iterable: unknown = {
+        [Symbol.iterator]: function () {
+          seen.push("iterator");
+          let index = 0;
+          return {
+            next: function () {
+              index += 1;
+              return { value: index, done: index > 2 };
+            },
+          };
+        },
+      };
+      seen.push("before", new Int8Array(iterable as Iterable<number>).length);
+      if (seen.join() !== "${expected}") throw new Error("seen " + seen.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("iterator,before,2"))).failure).toBeUndefined();
+    });
+
+    it("rejects the iterator as running after the arguments before it", async () => {
+      expect((await checkModel(getSource("before,iterator,2"))).failure?.message).toContain(
+        "seen iterator,before,2",
+      );
+    });
+  });
 });
