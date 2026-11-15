@@ -100,6 +100,7 @@ import {
   changesState,
   getArgumentsOwner,
   isStrictCode,
+  getOwnSymbol,
   getSymbol,
   isAssigned,
   getTopLevelDeclaration,
@@ -10798,25 +10799,6 @@ export const throwOnDestructured = (
   );
 };
 
-const isCatchParameter = (node: ts.Node, name: string): boolean => {
-  if (ts.isSourceFile(node) || ts.isFunctionLike(node)) return false;
-  const parameter = ts.isCatchClause(node) ? node.variableDeclaration?.name : undefined;
-  return (
-    (parameter !== undefined && ts.isIdentifier(parameter) && parameter.text === name) ||
-    isCatchParameter(node.parent, name)
-  );
-};
-
-const rejectCatchRedeclaration = (declaration: ts.VariableDeclaration) => {
-  if (
-    (declaration.parent.flags & ts.NodeFlags.BlockScoped) === 0 &&
-    ts.isIdentifier(declaration.name) &&
-    isCatchParameter(declaration.parent, declaration.name.text)
-  ) {
-    throw new TlaTypeScriptError("Name this var apart from the catch parameter", declaration);
-  }
-};
-
 // Binds each declared local to a LET definition. A let can change later, and a const can't.
 // Whether a function, or one it calls, makes or reads objects, which only statements can do.
 const usesHeap = (node: ts.Node, context: Context, visited: Set<ts.Node>): boolean => {
@@ -11638,7 +11620,6 @@ export const translateDeclarations = (
 ): Formula => {
   if (declarations.length === 0) return continueWith(path);
   const declaration = declarations[0];
-  rejectCatchRedeclaration(declaration);
   const initializer = declaration.initializer;
   if (isUnrun(declaration, path, context)) {
     return translateDeclarations(declarations.slice(1), path, context, frame, continueWith);
@@ -12741,7 +12722,6 @@ const bindElement = (
   if (declared.declarations.length !== 1) {
     throw new TlaTypeScriptError("Declare one element of a for-of", declared);
   }
-  rejectCatchRedeclaration(declared.declarations[0]);
   const name = declared.declarations[0].name;
   if (isGetterPattern(name, path, context)) {
     const value = context.names.getFresh("value");
@@ -15808,7 +15788,7 @@ const getHoistedVars = (statements: readonly ts.Statement[], context: Context) =
       );
     }
   });
-  const symbols = [...new Set(names.flatMap((name) => getSymbol(name, context.checker) ?? []))];
+  const symbols = [...new Set(names.flatMap((name) => getOwnSymbol(name, context.checker) ?? []))];
   const inlined = symbols.filter((symbol) =>
     (symbol.declarations ?? []).some(
       (declaration) =>

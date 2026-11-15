@@ -3451,6 +3451,57 @@ if (!Object.is(text, "${text}")) throw new Error(text);
     );
   });
 
+  describe("writes the catch parameter that a var in the catch block declares again", () => {
+    const getSource = (expected: string) => `
+      let before: unknown;
+      let during: unknown;
+      let after: unknown;
+      let seen = "";
+      try {
+        throw "exception";
+      } catch (err) {
+        before = err;
+        for (var err = "loop initializer"; err !== "increment"; err = "increment") {
+          during = err;
+        }
+        after = err;
+      }
+      try {
+        throw "thrown";
+      } catch (key) {
+        for (var key in { propertyName: null }) seen += key;
+        seen += \`,\${key}\`;
+      }
+      try {
+        throw "thrown";
+      } catch (value) {
+        for (var value of [2]) seen += \`,\${value}\`;
+        seen += \`,\${value}\`;
+      }
+      function readKey() {
+        return key;
+      }
+      function readValue() {
+        return value;
+      }
+      const result = [before, during, after, seen, String(err), String(readKey()), String(readValue())];
+      if (result.join("|") !== "${expected}") throw new Error(result.join("|"));
+    `;
+    const expected =
+      "exception|loop initializer|increment|propertyName,propertyName,2,2|undefined|undefined|undefined";
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects the expectation that the var's own binding takes the initializer", async () => {
+      expect(
+        (await checkModel(getSource(expected.replace("2,2|undefined", "2,2|increment")))).failure
+          ?.message,
+      ).toContain(expected);
+    });
+  });
+
   it("tells an error from another value with Error.isError", async () => {
     const getSource = (expected: string) => `
       class Err extends TypeError {}

@@ -838,7 +838,43 @@ const getObjectPatternPart = (
 };
 
 // TypeScript gives new.target the symbol of the function it's in, which isn't its value.
+// The catch parameter that a var in its block declares again, which the var's initializer and a
+// for-in's or for-of's steps write, as Annex B.3.4 has it, while the var's own binding stays
+// undefined.
+export const getRedeclaredCatchParameter = (declaration: ts.VariableDeclaration) => {
+  if (
+    !ts.isIdentifier(declaration.name) ||
+    !ts.isVariableDeclarationList(declaration.parent) ||
+    (declaration.parent.flags & ts.NodeFlags.BlockScoped) !== 0
+  ) {
+    return undefined;
+  }
+  const name = declaration.name.text;
+  const clause = ts.findAncestor(declaration.parent, (ancestor) =>
+    ts.isFunctionLike(ancestor) || ts.isClassStaticBlockDeclaration(ancestor)
+      ? "quit"
+      : ts.isCatchClause(ancestor) &&
+        ancestor.variableDeclaration !== undefined &&
+        ts.isIdentifier(ancestor.variableDeclaration.name) &&
+        ancestor.variableDeclaration.name.text === name,
+  );
+  return clause !== undefined && ts.isCatchClause(clause)
+    ? clause.variableDeclaration?.name
+    : undefined;
+};
+
+// The symbol that a name binds or reads, where a var that declares a catch parameter again binds
+// the parameter.
 export const getSymbol = (node: ts.Node, checker: ts.TypeChecker) => {
+  const redeclared =
+    ts.isIdentifier(node) && ts.isVariableDeclaration(node.parent) && node.parent.name === node
+      ? getRedeclaredCatchParameter(node.parent)
+      : undefined;
+  return getOwnSymbol(redeclared ?? node, checker);
+};
+
+// The symbol of a name's own declaration, which a var that hoists its binding takes.
+export const getOwnSymbol = (node: ts.Node, checker: ts.TypeChecker) => {
   const parent = node.parent;
   // A parameter property's name names the property, where the constructor's body reads the
   // parameter.
