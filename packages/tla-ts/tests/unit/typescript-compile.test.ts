@@ -31529,6 +31529,29 @@ describe("regular expressions", () => {
     );
   });
 
+  it("calls the exec of an object that a species returns, telling it from the built-in by identity", async () => {
+    const getSource = (expected: string) => `
+      const obj = { constructor: function () {} };
+      // @ts-ignore
+      obj.constructor[Symbol.species] = function () {
+        return {
+          exec: function () {
+            throw new RangeError("x");
+          },
+        };
+      };
+      let caught = "none";
+      try {
+        RegExp.prototype[Symbol.split].call(obj, "a");
+      } catch (error) {
+        caught = error instanceof RangeError ? "range" : "other";
+      }
+      if (caught !== "${expected}") throw new Error(caught);
+    `;
+    expect((await checkModel(getSource("range"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("none"))).failure?.message).toContain("range");
+  });
+
   it("throws a TypeError where Symbol.split's species isn't a constructor or its constructor isn't an object", async () => {
     const getSource = (expected: string) => `
       const seen: string[] = [];

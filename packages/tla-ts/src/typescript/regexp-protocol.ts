@@ -188,7 +188,11 @@ const regExpExec = (
         context,
         (read, exec) =>
           ifThenElse(
-            apply("=", [exec, translateBuiltInValue("RegExp.prototype.exec", site, context)]),
+            useJavaScript(
+              "SameValue",
+              [exec, translateBuiltInValue("RegExp.prototype.exec", site, context)],
+              context,
+            ),
             builtIn(read),
             ifThenElse(
               apply("=", [
@@ -637,7 +641,11 @@ const construct = (
         },
       );
       return ifThenElse(
-        apply("=", [constructor, translateBuiltInValue("RegExp", site, context)]),
+        useJavaScript(
+          "SameValue",
+          [constructor, translateBuiltInValue("RegExp", site, context)],
+          context,
+        ),
         copied,
         called,
       );
