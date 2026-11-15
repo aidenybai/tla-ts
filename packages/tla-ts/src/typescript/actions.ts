@@ -112,6 +112,10 @@ import {
   isAssigned,
   getTopLevelDeclaration,
   getUndefined,
+  getUnresolvable,
+  isImplicitGlobal,
+  isPlainWrite,
+  isUnresolvable,
   isHeapClass,
   isHeapFunction,
   isMethodCall,
@@ -185,6 +189,7 @@ import {
   takeSpreads,
 } from "./iterators";
 import {
+  readGlobal,
   translateCondition,
   translateExpression,
   translateIteratedSequence,
@@ -904,6 +909,8 @@ const getTarget = (node: ts.Expression, path: Path, context: Context): Target =>
   if (isChainedChange(node, context)) return getTarget(node.expression.expression, path, context);
   if (ts.isIdentifier(node)) {
     rejectBeforeDeclaration(node, path.scope, context);
+    const mapped = getMappedTarget(node, path, context);
+    if (mapped !== undefined) return mapped;
     const symbol = getSymbol(node, context.checker);
     const current = symbol === undefined ? undefined : path.scope.bindings.get(symbol);
     const whole = ts.findAncestor(
@@ -938,7 +945,8 @@ const getTarget = (node: ts.Expression, path: Path, context: Context): Target =>
         node,
       );
     }
-    return { symbol, current, update: (getValue) => getValue(current) };
+    const read = isImplicitGlobal(node, context) ? readGlobal(node, current, context) : current;
+    return { symbol, current: read, update: (getValue) => getValue(read) };
   }
   const privateMember =
     ts.isPropertyAccessExpression(node) && ts.isPrivateIdentifier(node.name)
@@ -5558,15 +5566,14 @@ export const isArgumentsRead = (read: ts.Identifier, context: Context) => {
 };
 
 // Outside strict mode, a function with simple parameters has an arguments object that maps them,
-// so that writing one changes the other, and whose callee is the function, which tla-ts's arguments
-// object doesn't follow. Only a read of the object other than of its length or its elements, or a
-// parameter that changes where the object's elements are read, shows the difference.
-const rejectMappedArguments = (callee: FunctionNode, context: Context) => {
-  const parameters = callee.parameters.filter(
-    (parameter) => !(ts.isIdentifier(parameter.name) && parameter.name.text === "this"),
-  );
+// so that writing one changes the other, and whose callee is the function. Only a read of the object
+// other than of its length or its elements, or a parameter that changes where the object's elements
+// are read, shows the difference from the arguments object of strict mode.
+export const isMappedArguments = (callee: FunctionNode, context: Context) => {
+  const parameters = getParameters(callee);
   if (
     isStrictCode(callee) ||
+    !isArgumentsNamed(callee, context) ||
     parameters.some(
       (parameter) =>
         !ts.isIdentifier(parameter.name) ||
@@ -5574,7 +5581,7 @@ const rejectMappedArguments = (callee: FunctionNode, context: Context) => {
         parameter.dotDotDotToken !== undefined,
     )
   ) {
-    return;
+    return false;
   }
   const names = new Set(parameters.map((parameter) => parameter.name));
   const symbols = new Set(
@@ -5590,15 +5597,139 @@ const rejectMappedArguments = (callee: FunctionNode, context: Context) => {
   const reads = getArgumentsReads(callee, context);
   const isLengthRead = (read: ts.Identifier) =>
     isArgumentsRead(read, context) && ts.isPropertyAccessExpression(read.parent);
-  if (
+  return (
     !reads.every((read) => isArgumentsRead(read, context)) ||
     (isParameterWritten && !reads.every(isLengthRead))
+  );
+};
+
+// The function that declares a parameter, which has its own arguments object.
+const getParameterOwner = (symbol: ts.Symbol | undefined) => {
+  const declaration = symbol?.valueDeclaration;
+  const owner =
+    declaration !== undefined && ts.isParameter(declaration) ? declaration.parent : undefined;
+  return owner !== undefined &&
+    (ts.isFunctionDeclaration(owner) ||
+      ts.isFunctionExpression(owner) ||
+      ts.isMethodDeclaration(owner) ||
+      ts.isConstructorDeclaration(owner) ||
+      ts.isAccessor(owner))
+    ? owner
+    : undefined;
+};
+
+// A read of a parameter that an arguments object maps, from the object, which holds the parameter's
+// value. A write through the object may give it a value of another type than the parameter's, which
+// tla-ts stops at.
+export const getMappedParameter = (node: ts.Identifier, scope: Scope, context: Context) => {
+  const symbol = getSymbol(node, context.checker);
+  const owner = getParameterOwner(symbol);
+  const ref = owner?.body === undefined ? undefined : scope.allocated.get(owner.body);
+  if (
+    owner === undefined ||
+    ref === undefined ||
+    context.heap === undefined ||
+    !isMappedArguments(owner, context)
+  ) {
+    return undefined;
+  }
+  const position = getParameters(owner).findIndex(
+    (parameter) => getSymbol(parameter.name, context.checker) === symbol,
+  );
+  const heap = getHeap(scope, node, context);
+  const value = useJavaScript("MappedParameter", [heap, ref, number(position + 1)], context);
+  const type = context.checker.getTypeAtLocation(node);
+  const members = type.isUnion() ? type.types : [type];
+  const types = getTypeNames(type, context.checker);
+  if ((type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0) {
+    return { heap, ref, position, raw: value, value };
+  }
+  if (
+    types === undefined ||
+    members.some(
+      (member) => member.isLiteral() || (member.flags & ts.TypeFlags.EnumLiteral) !== 0,
+    ) ||
+    members.filter((member) => (member.flags & ts.TypeFlags.BooleanLiteral) !== 0).length === 1
   ) {
     throw new TlaTypeScriptError(
-      "tla-ts can't follow an arguments object that maps its function's parameters outside strict mode",
-      reads[0],
+      "tla-ts can't follow a parameter of this type that an arguments object outside strict mode maps",
+      node,
     );
   }
+  context.prelude.add("Null");
+  return {
+    heap,
+    ref,
+    position,
+    raw: value,
+    value: share(value, "parameter", context, (shared) =>
+      ifExpression(
+        useJavaScript("HasTypeIn", [heap, shared, set(types.map((name) => string(name)))], context),
+        shared,
+        apply("Assert", [
+          boolean(false),
+          string(
+            `tla-ts can't read ${node.text}, which its arguments object gave a value of another type`,
+          ),
+        ]),
+      ),
+    ),
+  };
+};
+
+// Writes a parameter that an arguments object maps, through the object.
+const getMappedTarget = (node: ts.Identifier, path: Path, context: Context) => {
+  const mapped = getMappedParameter(node, path.scope, context);
+  const symbol = context.heap;
+  if (mapped === undefined || symbol === undefined) return undefined;
+  if (!path.mutable.has(symbol)) {
+    throw new TlaTypeScriptError("Change objects only in statements", node);
+  }
+  return {
+    symbol,
+    current: mapped.value,
+    update: (getValue: (current: Expression) => Expression) =>
+      useJavaScript(
+        "SetMappedParameter",
+        [mapped.heap, mapped.ref, number(mapped.position + 1), getValue(mapped.value)],
+        context,
+      ),
+  };
+};
+
+// What tla-ts doesn't follow of an arguments object that maps its function's parameters: that of a
+// generator or an async function, a parameter that a function inside reads or that holds a function
+// that the call inlines, and a callee that no model value stands for.
+// It gives the function that the callee holds.
+const rejectMappedArguments = (callee: FunctionNode, scope: Scope, context: Context) => {
+  const stop = (message: string, node: ts.Node): never => {
+    throw new TlaTypeScriptError(`tla-ts can't follow ${message} outside strict mode`, node);
+  };
+  if (isAnyGenerator(callee) || isAsyncFunction(callee)) {
+    stop("the arguments object of a generator or an async function", callee);
+  }
+  const parameters = getParameters(callee);
+  const symbols = parameters.map((parameter) => getSymbol(parameter.name, context.checker));
+  const inner = findNodes(
+    callee.body ?? callee,
+    (node): node is ts.Identifier =>
+      ts.isIdentifier(node) &&
+      symbols.includes(getSymbol(node, context.checker)) &&
+      ts.findAncestor(node.parent, ts.isFunctionLike) !== callee,
+  ).at(0);
+  if (inner !== undefined) {
+    stop("an arguments object that maps a parameter that a function inside reads", inner);
+  }
+  const held = parameters.find((parameter) => {
+    const symbol = getSymbol(parameter.name, context.checker);
+    return symbol !== undefined && scope.functions.has(symbol);
+  });
+  if (held !== undefined)
+    stop("an arguments object that maps a parameter that holds a function", held);
+  const value = getFunctionValue(callee, context);
+  return value === callee
+    ? value
+    : stop("an arguments object whose callee no model value stands for", callee);
 };
 
 export const allocateArguments = (
@@ -5613,13 +5744,22 @@ export const allocateArguments = (
   if (heapSymbol === undefined || body === undefined || !isArgumentsNamed(callee, context)) {
     return bound;
   }
-  rejectMappedArguments(callee, context);
+  const mapped = isMappedArguments(callee, context)
+    ? rejectMappedArguments(callee, bound.scope, context)
+    : undefined;
   const heap = context.names.getFresh("heap");
-  const made = useJavaScript(
-    "ArgumentsObject",
-    [list, translateBuiltInValue("get Function.prototype.arguments", node, context)],
-    context,
-  );
+  const made =
+    mapped !== undefined
+      ? useJavaScript(
+          "MappedArgumentsObject",
+          [list, translateFunctionValue(mapped, context), number(getParameters(callee).length)],
+          context,
+        )
+      : useJavaScript(
+          "ArgumentsObject",
+          [list, translateBuiltInValue("get Function.prototype.arguments", node, context)],
+          context,
+        );
   return {
     definitions: [
       ...bound.definitions,
@@ -13810,7 +13950,8 @@ const getEffects = (
     );
   };
   const written =
-    ts.isForOfStatement(node) && !ts.isVariableDeclarationList(node.initializer)
+    (ts.isForOfStatement(node) || ts.isForInStatement(node)) &&
+    !ts.isVariableDeclarationList(node.initializer)
       ? node.initializer
       : getWritten(node);
   // A write to a property of an object in the heap changes the heap, not the name that holds it.
@@ -13819,6 +13960,15 @@ const getEffects = (
       ? []
       : getWrittenRoots(written).flatMap((root) => {
           const symbol = ts.isIdentifier(root) ? getSymbol(root, context.checker) : undefined;
+          // A parameter that an arguments object maps holds its value on the heap.
+          const owner = getParameterOwner(symbol);
+          if (
+            context.heap !== undefined &&
+            owner !== undefined &&
+            isMappedArguments(owner, context)
+          ) {
+            return [symbol, context.heap].flatMap((changed) => changed ?? []);
+          }
           const access = ts.findAncestor(
             root,
             (ancestor) =>
@@ -16701,7 +16851,11 @@ const runAssignment = (
       ),
     );
   }
-  const target = ts.isIdentifier(node.left) ? getSymbol(node.left, context.checker) : undefined;
+  // A parameter that an arguments object maps holds its value on the heap.
+  const target =
+    ts.isIdentifier(node.left) && getMappedParameter(node.left, path.scope, context) === undefined
+      ? getSymbol(node.left, context.checker)
+      : undefined;
   // An assignment that runs before the rest of its statement makes its objects first, which the
   // statement, reading its result, doesn't make, unless a call made its parameters' defaults.
   return allocateAll(
@@ -18200,6 +18354,14 @@ export const translateStatements = (
       frame,
     );
   }
+  if (path.scope.globalChecked !== undefined && path.scope.globalChecked !== statements[0]) {
+    return translateStatements(
+      statements,
+      { ...path, scope: { ...path.scope, globalChecked: undefined } },
+      context,
+      frame,
+    );
+  }
   if (statements.length === 0) return frame.next(path);
   const statement = statements[0];
   // What an assignment or an increment in the statement gave belongs to this run of it, so no path
@@ -18386,10 +18548,21 @@ export const translateStatements = (
   // before anything else it evaluates runs, throws a ReferenceError there, as does one that first
   // writes such a let. A script's lets are state variables, which the scope binds before their
   // declarations run.
+  // A global that a write outside strict mode makes throws until the write runs, which the
+  // statement checks, once, where it reads the global first.
+  const isGlobalRead = (name: ts.Identifier) =>
+    path.scope.globalChecked !== statement &&
+    isImplicitGlobal(name, context) &&
+    !isPlainWrite(name) &&
+    !ts.isTypeOfExpression(
+      ts.findAncestor(name.parent, (ancestor) => !ts.isParenthesizedExpression(ancestor)) ??
+        name.parent,
+    );
   const isThrowing = (name: ts.Identifier) => {
     const symbol = getSymbol(name, context.checker);
     const declaration = symbol?.valueDeclaration;
     return (
+      isGlobalRead(name) ||
       isUnresolved(name, context) ||
       (symbol !== undefined &&
         path.scope.uninitialized.has(symbol) &&
@@ -18430,8 +18603,8 @@ export const translateStatements = (
     : evaluated === undefined
       ? undefined
       : (getUnresolvedRead(evaluated, context, isThrowing) ?? written ?? loopRead);
-  if (unresolved !== undefined) {
-    const thrown = throwError("ReferenceError", path, unresolved, context, statementFrame);
+  const throwRead = (read: ts.Identifier) => {
+    const thrown = throwError("ReferenceError", path, read, context, statementFrame);
     // A pattern gets its first element through the array's iterator, or its first property
     // through the object's prototypes, and a throw in a for-of looks up its iterator's return.
     const getPatterns = (node: ts.Node): ts.Expression[] =>
@@ -18447,11 +18620,11 @@ export const translateStatements = (
             ...getPatterns(node.parent),
           ];
     const patterns = [
-      ...getPatterns(unresolved),
-      ...(unresolved === loopRead && loopTarget !== undefined ? [loopTarget] : []),
+      ...getPatterns(read),
+      ...(read === loopRead && loopTarget !== undefined ? [loopTarget] : []),
     ];
     const isIterating =
-      unresolved === loopRead || patterns.some((inner) => ts.isArrayLiteralExpression(inner));
+      read === loopRead || patterns.some((inner) => ts.isArrayLiteralExpression(inner));
     const isReading = patterns.some((inner) => ts.isObjectLiteralExpression(inner));
     // A script that makes no objects can't change what a pattern reads.
     const heap = context.heap === undefined ? undefined : path.scope.bindings.get(context.heap);
@@ -18460,8 +18633,8 @@ export const translateStatements = (
     return ifThenElse(
       junction("And", [
         ...(isIterating ? [holdsArrayIteration(heap, statement, context)] : []),
-        ...(isReading || unresolved === loopRead ? [isKept("Object.prototype")] : []),
-        ...(unresolved === loopRead
+        ...(isReading || read === loopRead ? [isKept("Object.prototype")] : []),
+        ...(read === loopRead
           ? [isKept("Iterator.prototype"), isKept("%ArrayIteratorPrototype%")]
           : []),
       ]),
@@ -18473,6 +18646,25 @@ export const translateStatements = (
         ]),
       ),
     );
+  };
+  if (unresolved !== undefined) {
+    const symbol = getSymbol(unresolved, context.checker);
+    const global =
+      symbol !== undefined && isGlobalRead(unresolved)
+        ? path.scope.bindings.get(symbol)
+        : undefined;
+    return global === undefined
+      ? throwRead(unresolved)
+      : ifThenElse(
+          isUnresolvable(global, context),
+          throwRead(unresolved),
+          translateStatements(
+            statements,
+            { ...path, scope: { ...path.scope, globalChecked: statement } },
+            context,
+            frame,
+          ),
+        );
   }
   // A statement that first uses a private name of an object that lacks it throws a TypeError.
   const leadingPrivate =
@@ -19316,7 +19508,7 @@ export const translateScript = (
     ...scope.bindings,
     ...[...hoisted, ...locals].map((symbol): [ts.Symbol, Expression] => [
       symbol,
-      getUndefined(context),
+      context.implicitGlobals.has(symbol) ? getUnresolvable(context) : getUndefined(context),
     ]),
   ]);
   return translateStatements(

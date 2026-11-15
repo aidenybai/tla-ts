@@ -168,6 +168,7 @@ export const emit = (
   const constants = [
     ...(prelude.has("Null") && !isJavaScript ? ["Null"] : []),
     ...(prelude.has("Undefined") && !isJavaScript ? ["Undefined"] : []),
+    ...(prelude.has("Unresolvable") ? ["Unresolvable"] : []),
     ...context.modelValues.values(),
     ...context.constructors.values(),
     ...context.symbols,

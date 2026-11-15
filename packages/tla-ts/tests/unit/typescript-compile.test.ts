@@ -4430,24 +4430,8 @@ ${body}
     ).toBeUndefined();
   });
 
-  it("stops where a write outside strict mode names no binding", () => {
-    expect(() =>
-      compile(`
-        let count: number = 0;
-        // @ts-ignore
-        missing = 1;
-        count = 1;
-      `),
-    ).toThrow("tla-ts can't write a global outside strict mode");
-  });
-
-  it.each([
-    ["a pattern", "({ missing } = { missing: 42 });"],
-    ["a for-of head", "for (missing of [1]) count += 1;"],
-    ["a pattern's default", "[missing = 1] = [];"],
-    ["a pattern that names NaN", "[NaN] = [1];"],
-  ])("stops where %s outside strict mode writes a global", (_, statement) => {
-    expect(() => compile(`let count = 0;\n// @ts-ignore\n${statement}\ncount = 1;`)).toThrow(
+  it("stops where a pattern outside strict mode writes NaN", () => {
+    expect(() => compile("let count = 0;\n// @ts-ignore\n[NaN] = [1];\ncount = 1;")).toThrow(
       "tla-ts can't write a global outside strict mode",
     );
   });
@@ -21886,25 +21870,23 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
-  it("stops where an arguments object outside strict mode maps a parameter that changes", async () => {
-    const script = `
+  it("follows an arguments object outside strict mode that maps a parameter that changes", async () => {
+    const getScript = (expected: number) => `
       const box = { seen: 0 as unknown };
       function f(a: number) {
         a = 2;
         return arguments[0];
       }
       box.seen = f(1);
-      if (box.seen !== 1) throw new Error("mapped");
+      if (box.seen !== ${expected}) throw new Error("seen " + box.seen);
     `;
-    expect(() => compile(script)).toThrow(
-      "tla-ts can't follow an arguments object that maps its function's parameters outside strict mode",
-    );
-    const result = await checkModel(`"use strict";\n${script}`);
-    expect(result.failure).toBeUndefined();
+    expect((await checkModel(getScript(2))).failure).toBeUndefined();
+    expect((await checkModel(getScript(1))).failure?.message).toContain("seen 2");
+    expect((await checkModel(`"use strict";\n${getScript(1)}`)).failure).toBeUndefined();
   });
 
-  it("stops where an arguments object outside strict mode, whose callee is its function, leaves it", async () => {
-    const script = `
+  it("reads the function as the callee of an arguments object outside strict mode", async () => {
+    const getScript = (expected: string) => `
       const box = { result: "none" };
       function f(): unknown {
         return arguments.callee;
@@ -21914,16 +21896,11 @@ describe("errors", () => {
       } catch (error) {
         box.result = error instanceof TypeError ? "type" : "other";
       }
-      if (box.result !== "type") throw new Error("callee " + box.result);
+      if (box.result !== "${expected}") throw new Error("callee " + box.result);
     `;
-    expect(() => compile(script)).toThrow(
-      "tla-ts can't follow an arguments object that maps its function's parameters outside strict mode",
-    );
-    expect((await checkModel(`"use strict";\n${script}`)).failure).toBeUndefined();
-    expect(
-      (await checkModel(`"use strict";\n${script.replace('!== "type"', '!== "callee"')}`)).failure
-        ?.message,
-    ).toContain("callee type");
+    expect((await checkModel(getScript("callee"))).failure).toBeUndefined();
+    expect((await checkModel(getScript("type"))).failure?.message).toContain("callee callee");
+    expect((await checkModel(`"use strict";\n${getScript("type")}`)).failure).toBeUndefined();
   });
 
   it("reads the length and the elements of an arguments object outside strict mode", async () => {
@@ -41499,6 +41476,117 @@ describe("BigInts", () => {
       await expect(
         checkModel(getSource("1053[105,3]|$1_ 42|abb[b]|aBbc|😀_|aaa[a]|abcdef|ab_")),
       ).rejects.toThrow("1053[1,053]|$1_ 42|");
+    });
+  });
+  describe("a global that a write outside strict mode makes", () => {
+    const getSource = (expected: string) => `
+      const seen: string[] = [];
+      const read = () => {
+        try {
+          // @ts-ignore
+          total;
+          // @ts-ignore
+          seen.push(String(total));
+        } catch (error) {
+          seen.push(error instanceof ReferenceError ? "reference" : "other");
+        }
+      };
+      // @ts-ignore
+      seen.push(typeof total);
+      read();
+      // @ts-ignore
+      [total, other] = [1, 2];
+      // @ts-ignore
+      for (key in { a: 1 }) total += 1;
+      // @ts-ignore
+      total++;
+      read();
+      // @ts-ignore
+      seen.push(typeof total, key, String(other));
+      if (seen.join() !== "${expected}") throw new Error("seen " + seen.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("undefined,reference,3,number,a,2"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects a global that exists before the write", async () => {
+      expect(
+        (await checkModel(getSource("undefined,undefined,3,number,a,2"))).failure?.message,
+      ).toContain("seen undefined,reference,3,number,a,2");
+    });
+
+    it("stops where code in strict mode writes it", () => {
+      expect(() =>
+        compile(`
+          const write = () => {
+            "use strict";
+            // @ts-ignore
+            total = 2;
+          };
+          // @ts-ignore
+          total = 1;
+          write();
+        `),
+      ).toThrow("tla-ts can't write in strict mode a global that a write outside it makes");
+    });
+  });
+
+  it("assigns the name that a for-in's head writes", async () => {
+    const getSource = (expected: string) => `
+      var key: string = "none";
+      for (key in { a: 1, b: 2 }) {}
+      if (key !== "${expected}") throw new Error("key " + key);
+    `;
+    expect((await checkModel(getSource("b"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("none"))).failure?.message).toContain("key b");
+  });
+
+  describe("an arguments object outside strict mode that maps its function's parameters", () => {
+    const getSource = (expected: string) => `
+      const seen: unknown[] = [];
+      function update(first: any, second: any) {
+        arguments[0] = 10;
+        seen.push(first);
+        second = 20;
+        seen.push(arguments[1]);
+        Object.defineProperty(arguments, "0", { value: 30 });
+        seen.push(first);
+        delete arguments[1];
+        second = 40;
+        seen.push(arguments[1], second);
+        Object.defineProperty(arguments, "0", { writable: false });
+        first = 50;
+        seen.push(arguments[0], first, arguments.callee === update, arguments.length);
+      }
+      update(1, 2);
+      if (seen.join() !== "${expected}") throw new Error("seen " + seen.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("10,20,30,,40,30,50,true,2"))).failure).toBeUndefined();
+    });
+
+    it("rejects a parameter that stays mapped where its element becomes read-only", async () => {
+      expect((await checkModel(getSource("10,20,30,,40,50,50,true,2"))).failure?.message).toContain(
+        "seen 10,20,30,,40,30,50,true,2",
+      );
+    });
+
+    it("stops where an element gives a parameter a value of another type", async () => {
+      const result = await checkModel(`
+        const seen: unknown[] = [];
+        function update(first: number) {
+          arguments[0] = "text";
+          seen.push(first);
+        }
+        update(1);
+      `);
+      expect(result.failure?.message).toContain(
+        "tla-ts can't read first, which its arguments object gave a value of another type",
+      );
     });
   });
 });

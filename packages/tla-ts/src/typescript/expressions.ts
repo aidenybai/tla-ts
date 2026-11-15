@@ -44,6 +44,8 @@ import {
   isScript,
   getTopLevelDeclaration,
   getUndefined,
+  isImplicitGlobal,
+  isUnresolvable,
   isHeapClass,
   isFunctionObject,
   getObjectMethod,
@@ -143,6 +145,7 @@ import {
   useJavaScript,
 } from "./javascript";
 import { getThisOwner, rejectBeforeDeclaration, type Scope } from "./scope";
+import { getMappedParameter } from "./actions";
 import {
   apply,
   boolean,
@@ -2407,6 +2410,20 @@ const isUnset = (symbol: ts.Symbol, context: Context) => {
   );
 };
 
+// A read of a global that a write outside strict mode makes, which throws a ReferenceError until
+// the write runs. A statement that reads it first throws there, and tla-ts stops at any other read.
+export const readGlobal = (name: ts.Identifier, value: Expression, context: Context) =>
+  ifExpression(
+    isUnresolvable(value, context),
+    apply("Assert", [
+      boolean(false),
+      string(
+        `tla-ts can't throw the ReferenceError of reading ${name.text} before a write makes it`,
+      ),
+    ]),
+    value,
+  );
+
 const translateIdentifier = (node: ts.Identifier, scope: Scope, context: Context) => {
   if (node.text === "undefined") return getUndefined(context);
   rejectGeneratorUse(node, context);
@@ -2421,6 +2438,8 @@ const translateIdentifier = (node: ts.Identifier, scope: Scope, context: Context
     return identifier(node.text);
   }
   rejectBeforeDeclaration(node, scope, context);
+  const mapped = getMappedParameter(node, scope, context);
+  if (mapped !== undefined) return mapped.value;
   const symbol = getSymbol(node, context.checker);
   const held = symbol === undefined ? undefined : scope.functions.get(symbol);
   if (held !== undefined) {
@@ -2431,7 +2450,9 @@ const translateIdentifier = (node: ts.Identifier, scope: Scope, context: Context
     return translateFunctionValue(value, context);
   }
   const binding = symbol === undefined ? undefined : scope.bindings.get(symbol);
-  if (binding !== undefined) return binding;
+  if (binding !== undefined) {
+    return isImplicitGlobal(node, context) ? readGlobal(node, binding, context) : binding;
+  }
   // A call holds the arguments object it makes under the body of the function it calls.
   const argumentsBody = getArgumentsOwner(node, context.checker)?.body;
   const argumentsObject = argumentsBody && scope.allocated.get(argumentsBody);
