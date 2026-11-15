@@ -3816,6 +3816,52 @@ const translateCallStatementBody = (
         ),
       );
     };
+    // subarray reads the typed array's length before it converts its begin and end, and makes its
+    // typed array after them, where a detached buffer throws its TypeError.
+    const convertedSubarrayValues = getConvertedSubarrayValues(expression, context);
+    const runConvertedSubarray = (converted: readonly ts.Expression[]) => {
+      const lengthName = context.names.getFresh("length");
+      return ifThenElse(
+        useJavaScript("IsTypedArray", [heap, ref], context),
+        bindOnce(
+          path,
+          lengthName,
+          useJavaScript(
+            "ViewLength",
+            [heap, index(field(heap, "objects"), [index(ref, [identifier("Ref")])])],
+            context,
+          ),
+          runConversion(
+            expression,
+            {
+              operands: converted,
+              hints: converted.map(() => "number" as const),
+              combine: (primitives) => tuple([...primitives]),
+            },
+            path,
+            context,
+            frame,
+            (after, primitives) =>
+              runChange(
+                after,
+                useJavaScript(
+                  "TypedArraySubarray",
+                  [
+                    getHeap(after.scope, expression, context),
+                    ref,
+                    primitives,
+                    identifier(lengthName),
+                    translateBuiltInValue("ArrayBuffer.prototype", expression, context),
+                    translateTypedConstructors(expression, context),
+                  ],
+                  context,
+                ),
+              ),
+          ),
+        ),
+        throwTypeError(path, expression, context, frame),
+      );
+    };
     // set of an array-like source writes each element in order, so the first that a getter which
     // only throws answers throws once set wrote those before it, where nothing before runs code.
     const setGetter = useJavaScript(
@@ -3828,22 +3874,24 @@ const translateCallStatementBody = (
         ? runConvertedView(convertedViewValues)
         : convertedAtomicsValues !== undefined
           ? runConvertedAtomics(convertedAtomicsValues)
-          : viewCall.owner === "TypedArray" &&
-              method === "set" &&
-              getThrowingGetters(expression, context).length > 0
-            ? throwFirstGetter(
-                expression,
-                apply("#", [setGetter, getUndefined(context)]),
-                setGetter,
-                typedValues[0] ?? getUndefined(context),
-                withHeap(
-                  useJavaScript("TypedArraySetBefore", [heap, ref, typedArguments], context),
-                ),
-                context,
-                frame,
-                runChange(path, operation),
-              )
-            : runChange(path, operation);
+          : convertedSubarrayValues !== undefined
+            ? runConvertedSubarray(convertedSubarrayValues)
+            : viewCall.owner === "TypedArray" &&
+                method === "set" &&
+                getThrowingGetters(expression, context).length > 0
+              ? throwFirstGetter(
+                  expression,
+                  apply("#", [setGetter, getUndefined(context)]),
+                  setGetter,
+                  typedValues[0] ?? getUndefined(context),
+                  withHeap(
+                    useJavaScript("TypedArraySetBefore", [heap, ref, typedArguments], context),
+                  ),
+                  context,
+                  frame,
+                  runChange(path, operation),
+                )
+              : runChange(path, operation);
     return bindOnce(
       path,
       receiver,
@@ -13282,6 +13330,18 @@ const getConvertedAtomicsValues = (node: ts.Node, context: Context) => {
     : undefined;
 };
 
+// The begin and end of a call of a typed array's subarray where one is an object, or of type any,
+// which the call converts in turn after it reads the typed array's length.
+const getConvertedSubarrayValues = (node: ts.Node, context: Context) => {
+  const call = getViewCall(node, context);
+  return call?.owner === "TypedArray" &&
+    call.method === "subarray" &&
+    call.values.length <= 2 &&
+    call.values.some((value) => isObjectOperand(value, context) || isAnyOperand(value, context))
+    ? call.values
+    : undefined;
+};
+
 // Runs new of a buffer, a DataView, or a typed array, which throws the error its constructor does,
 // and makes a typed array of an object's iterator's values where a script's @@iterator method
 // gives them.
@@ -14401,7 +14461,8 @@ const getEffects = (
     isIndexConvertingNew(node, context) ||
     isObjectDateCall(node, context) ||
     getConvertedViewValues(node, context) !== undefined ||
-    getConvertedAtomicsValues(node, context) !== undefined
+    getConvertedAtomicsValues(node, context) !== undefined ||
+    getConvertedSubarrayValues(node, context) !== undefined
       ? getConversionFunctions(node, context)
       : undefined;
   // A definition that reads its descriptor's fields, a read of a key with getters, or an

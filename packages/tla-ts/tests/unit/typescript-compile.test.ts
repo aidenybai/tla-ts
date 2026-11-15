@@ -44743,4 +44743,48 @@ describe("BigInts", () => {
       ).toContain("0,5,5,0,index/value/far/index/value/index,RangeError");
     });
   });
+
+  describe("converts the begin and end of subarray before it reads a detached buffer", () => {
+    const getSource = (expected: string) => `
+      const effects: string[] = [];
+      const begin = { valueOf() { effects.push("begin"); return 1; } };
+      const end = { valueOf() { effects.push("end"); return 3; } };
+      const sample = new Int8Array([1, 2, 3, 4]);
+      // @ts-ignore
+      const part = sample.subarray(begin, end);
+      const length = part.length;
+      const first = part[0];
+      sample.buffer.transfer();
+      let caught = "";
+      try {
+        // @ts-ignore
+        sample.subarray(begin, end);
+      } catch (error) {
+        caught = (error as Error).constructor.name;
+      }
+      const resizable = new ArrayBuffer(4, { maxByteLength: 8 });
+      const fixed = new Int8Array(resizable, 0, 4);
+      let shrunk = "";
+      try {
+        // @ts-ignore
+        fixed.subarray({ valueOf() { resizable.resize(2); return 0; } });
+      } catch (error) {
+        shrunk = (error as Error).constructor.name;
+      }
+      const log = [length, first, effects.join("/"), caught, shrunk].join(",");
+      if (log !== "${expected}") throw new Error(log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("2,2,begin/end/begin/end,TypeError,RangeError"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects a TypeError before the conversions", async () => {
+      expect(
+        (await checkModel(getSource("2,2,begin/end,TypeError,RangeError"))).failure?.message,
+      ).toContain("2,2,begin/end/begin/end,TypeError,RangeError");
+    });
+  });
 });
