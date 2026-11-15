@@ -2560,6 +2560,28 @@ export const isHeapClass = (node: ts.ClassLikeDeclaration, context: Context): bo
   return isHeap;
 };
 
+// Why a class that no other translation takes isn't a heap class, where the reason is its place
+// rather than its members or what it extends.
+export const getClassStop = (node: ts.ClassLikeDeclaration, context: Context) => {
+  if (context.heap === undefined) return undefined;
+  if (!isOnce(node)) return "tla-ts can't make a class in code that may run more than once";
+  const declared = ts.isClassExpression(node) ? node.parent : node;
+  if (
+    ts.isClassExpression(node) &&
+    !ts.isVariableDeclaration(declared) &&
+    !ts.isPropertyDeclaration(declared) &&
+    getInPlaceNew(node) === undefined
+  ) {
+    return "tla-ts can't make a class that no declaration holds";
+  }
+  const name = ts.isVariableDeclaration(declared) ? declared.name : node.name;
+  const symbol =
+    name !== undefined && ts.isIdentifier(name) ? getSymbol(name, context.checker) : undefined;
+  return symbol !== undefined && isAssigned(symbol, node.getSourceFile(), context)
+    ? "tla-ts can't make a class whose name the script assigns"
+    : undefined;
+};
+
 // The parameters that a call passes values to, without the this parameter that only types this.
 export const getParameters = (node: ts.SignatureDeclaration) =>
   node.parameters.filter(

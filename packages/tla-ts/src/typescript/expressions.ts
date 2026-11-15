@@ -62,6 +62,7 @@ import {
   isClosure,
   rejectDeclaredCall,
   isDeclarationOnly,
+  getClassStop,
 } from "./context";
 import { TlaTypeScriptError } from "../errors";
 import { translateJsonCall } from "./json";
@@ -4147,5 +4148,6 @@ export const translateNode = (
       ? translateNew(node, scope, context)
       : translateNewError(node, classes, scope, context);
   }
-  throw new TlaTypeScriptError(`Unsupported expression: ${node.getText()}`, node);
+  const stop = ts.isClassExpression(node) ? getClassStop(node, context) : undefined;
+  throw new TlaTypeScriptError(stop ?? `Unsupported expression: ${node.getText()}`, node);
 };

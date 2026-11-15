@@ -139,6 +139,7 @@ import {
   isNullBased,
   rejectDeclaredCall,
   getAssignedTarget,
+  getClassStop,
 } from "./context";
 import { TlaTypeScriptError } from "../errors";
 import { UNSETTLED_AWAIT_WARNING } from "../exit-codes";
@@ -19356,7 +19357,8 @@ export const translateStatements = (
   if (ts.isFunctionDeclaration(statement)) {
     return translateVarFunction(statement, path, context, continueWith);
   }
-  throw new TlaTypeScriptError(`Unsupported statement: ${statement.getText()}`, statement);
+  const stop = ts.isClassDeclaration(statement) ? getClassStop(statement, context) : undefined;
+  throw new TlaTypeScriptError(stop ?? `Unsupported statement: ${statement.getText()}`, statement);
 };
 
 // An action's body as a TLA+ action: each path that assigns a state variable becomes a step, and

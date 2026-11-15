@@ -22269,7 +22269,7 @@ describe("errors", () => {
           })();
         }
       `),
-    ).toThrow("Unsupported expression: class");
+    ).toThrow("tla-ts can't make a class in code that may run more than once");
   });
 
   it("throws the ReferenceError of a derived constructor's this before super(...)", async () => {
@@ -41677,6 +41677,49 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("88,3,4,16,32,33,44,5"))).failure?.message).toContain(
         "seen 88,4,5,16,32,33,44,3",
       );
+    });
+  });
+
+  describe("a class that tla-ts can't make for its place", () => {
+    it("stops where code that may run more than once makes it", () => {
+      expect(() =>
+        compile(`
+          const make = () => {
+            return class {
+              static value = 1;
+            };
+          };
+          const first = make();
+          const second = make();
+          if (first === second) throw new Error("same");
+        `),
+      ).toThrow("tla-ts can't make a class in code that may run more than once");
+    });
+
+    it("stops where an assignment holds it", () => {
+      expect(() =>
+        compile(`
+          let Made: { value: number };
+          Made = class {
+            static value = 1;
+          };
+          if (Made.value !== 1) throw new Error("value");
+        `),
+      ).toThrow("tla-ts can't make a class that no declaration holds");
+    });
+
+    it("stops where the script assigns its name", () => {
+      expect(() =>
+        compile(`
+          let Made = class {
+            static value = 1;
+          };
+          Made = class {
+            static value = 2;
+          };
+          if (Made.value !== 2) throw new Error("value");
+        `),
+      ).toThrow("tla-ts can't make a class whose name the script assigns");
     });
   });
 });
