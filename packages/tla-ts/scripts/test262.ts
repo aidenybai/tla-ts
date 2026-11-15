@@ -596,6 +596,17 @@ const loosen = () => {
       edits.set(parent.right.getStart(), "(");
       edits.set(parent.right.getEnd(), " as any)");
     }
+    // A class that extends Iterator, whose type takes the type of the values it gives, gives any
+    // value.
+    const heritage = ts.findAncestor(node, ts.isExpressionWithTypeArguments);
+    if (
+      diagnostic.code === BASE_TYPE_ARGUMENTS_ERROR &&
+      heritage !== undefined &&
+      heritage.typeArguments === undefined &&
+      isGlobalIterator(heritage.expression, checker)
+    ) {
+      edits.set(heritage.expression.getEnd(), "<unknown>");
+    }
     // A function that returns no value, whose return type TypeScript can't infer where its type
     // depends on itself, as a pattern's default that calls it does, returns undefined.
     const returning = RETURN_TYPE_ERRORS.has(diagnostic.code)
@@ -684,6 +695,20 @@ const loosen = () => {
   if (edits.size > 0) applyEdits(edits);
   return edits.size > 0;
 };
+
+// TypeScript's error for a class that extends a generic constructor without its type arguments.
+const BASE_TYPE_ARGUMENTS_ERROR = 2508;
+
+const isGlobalIterator = (node: ts.Expression, checker: ts.TypeChecker) =>
+  ts.isIdentifier(node) &&
+  node.text === "Iterator" &&
+  (checker.getSymbolAtLocation(node)?.declarations ?? []).every(
+    (declaration) => declaration.getSourceFile().isDeclarationFile,
+  );
+
+// TypeScript's errors for a class member that its base type's member doesn't match: one of another
+// type, or an accessor where the base has a method.
+const BASE_MEMBER_ERRORS = new Set([2416, 2423]);
 
 // TypeScript's errors for a function whose return type depends on itself.
 const RETURN_TYPE_ERRORS = new Set([7023, 7024]);
@@ -1933,6 +1958,21 @@ const ignoreSoundErrors = () => {
       access.parent.operatorToken.kind === ts.SyntaxKind.EqualsToken
     );
   };
+  // A member of a class that extends Iterator, which the member's own type types, whatever the
+  // type of Iterator's member, as an iterator that the test writes to throw or misbehave does.
+  const isIteratorMember = (node: ts.Node) => {
+    const member = ts.findAncestor(node, ts.isClassElement);
+    const heritage = member?.parent.heritageClauses?.[0]?.types[0];
+    return (
+      member !== undefined &&
+      member.name !== undefined &&
+      member.name.getStart() <= node.getStart() &&
+      node.getEnd() <= member.name.getEnd() &&
+      member.parent.heritageClauses?.[0]?.token === ts.SyntaxKind.ExtendsKeyword &&
+      heritage !== undefined &&
+      isGlobalIterator(heritage.expression, checker)
+    );
+  };
   const isSound = (diagnostic: ts.Diagnostic) => {
     const node = getNode(diagnostic.start ?? 0);
     return (
@@ -1946,6 +1986,7 @@ const ignoreSoundErrors = () => {
       (UNASSIGNABLE_ERRORS.has(diagnostic.code) && isPatternArgument(node)) ||
       (diagnostic.code === 2322 && isIteratorWrite(node)) ||
       (diagnostic.code === 2322 && isWrittenExec(node, diagnostic)) ||
+      (BASE_MEMBER_ERRORS.has(diagnostic.code) && isIteratorMember(node)) ||
       (CONVERTED_ARGUMENT_ERRORS.has(diagnostic.code) &&
         (isConvertedCall(diagnostic) ||
           isConvertedProtocolCall(diagnostic) ||
