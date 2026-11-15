@@ -36,8 +36,7 @@ const TEST_DIRECTORY = join(CORPORA_DIRECTORY, "test262", "test");
 
 const HARNESS = readFileSync(join(CONFORMANCE_DIRECTORY, "test262-harness.ts"), "utf8");
 
-// Compiled TypeScript is a strict mode module.
-const SKIPPED_FLAGS = new Set(["noStrict", "raw"]);
+const SKIPPED_FLAGS = new Set(["raw"]);
 
 // A module that imports or exports, which the corpus pairs with fixture files, and whose exported
 // functions tla-ts would read as a spec's actions.
@@ -130,14 +129,15 @@ process.on("unhandledRejection", (reason) => {
 });
 
 // Runs a test in Node, with its jobs and then its timers, as an async test checks $DONE in one.
-const getNodeError = async (source: string) => {
+const getNodeError = async (source: string, isSloppy: boolean) => {
   const timers: (() => void)[] = [];
   try {
     const output = ts.transpileModule(source, {
       compilerOptions: {
         module: ts.ModuleKind.CommonJS,
         target: ts.ScriptTarget.ESNext,
-        moduleDetection: ts.ModuleDetectionKind.Force,
+        moduleDetection: isSloppy ? ts.ModuleDetectionKind.Legacy : ts.ModuleDetectionKind.Force,
+        alwaysStrict: !isSloppy,
       },
     }).outputText;
     runInNewContext(output, {
@@ -2508,14 +2508,18 @@ const runTest = async (path: string): Promise<TestRun> => {
     }
   })();
   if (annotated === undefined) return { id, outcome: "skipped", reason: "TypeScript fails" };
-  const nodeError = metadata.isModule ? getModuleError(annotated) : await getNodeError(annotated);
+  const isSloppy = metadata.flags.includes("noStrict");
+  const nodeError = metadata.isModule
+    ? getModuleError(annotated)
+    : await getNodeError(annotated, isSloppy);
   if (nodeError !== undefined) {
     return { id, outcome: "skipped", reason: `Node fails: ${getFirstLine(nodeError)}` };
   }
   try {
-    // Node runs the test as a module, which is strict code, so tla-ts compiles it as strict too.
-    const strict = `"use strict"; ${annotated}`;
-    const result = await check({ ...compile(strict, "test262.ts"), onPrint: () => {} });
+    // A noStrict test runs outside strict mode, as a script, and any other runs in strict mode, as
+    // Node runs it as a module.
+    const program = isSloppy ? annotated : `"use strict"; ${annotated}`;
+    const result = await check({ ...compile(program, "test262.ts"), onPrint: () => {} });
     if (result.status === "success" || result.status === "deadlock") {
       return { id, outcome: "pass", reason: "" };
     }
