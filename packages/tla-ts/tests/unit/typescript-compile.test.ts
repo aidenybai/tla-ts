@@ -40009,6 +40009,36 @@ describe("BigInts", () => {
     expect(wrong.failure?.message).toContain("34274true");
   });
 
+  describe("reads a property of a value of type any in a script that makes no objects", () => {
+    const getSource = (expected: string) => `
+      const list: any = [1, 2];
+      const empty: any = [];
+      let log = "";
+      log += list.length;
+      log += list[1];
+      log += empty[0];
+      if (log !== "${expected}") throw new Error(log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("22undefined"))).failure).toBeUndefined();
+    });
+
+    it("rejects the element before it", async () => {
+      expect((await checkModel(getSource("21undefined"))).failure?.message).toContain(
+        "22undefined",
+      );
+    });
+
+    it("stops at a property of a number", async () => {
+      const result = await checkModel(`
+        const count: any = 5;
+        if (count.size !== undefined) throw new Error("size");
+      `);
+      expect(result.failure?.message).toContain("tla-ts can't read a property of this value");
+    });
+  });
+
   it("stops at a variable that a script reads through a module's namespace object", () => {
     const path = join(import.meta.dirname, "../fixtures/typescript/imports/namespace.ts");
     expect(() =>
