@@ -1223,18 +1223,20 @@ export const createSearch = (
       const definitions = [...environment.facts.ids.keys()];
       const scopeExpressions = getScopeExpressions(spec.scope);
       // The interpreter evaluates again what the tier evaluated before it fell back. TLC evaluates
-      // a constant definition without parameters once as it starts. An operator a scope binds
-      // without its expression can reach any definition.
+      // a constant definition without parameters once as it starts, so one with a startup value
+      // never draws again. An operator a scope binds without its expression can reach any
+      // definition.
+      const isReplayed = (definition: Definition) =>
+        getStartupValue(definition, environment) === undefined &&
+        isImpureDefinition(definition, environment, "replayed");
       const hasReplayedEffects =
         scopeExpressions === undefined
-          ? definitions.some((definition) =>
-              isImpureDefinition(definition, environment, "replayed"),
-            )
+          ? definitions.some(isReplayed)
           : definitions.some(
               (definition) =>
                 !(definition.kind === "Operator" && definition.params.length > 0) &&
                 isConstantLevel(definition, environment) &&
-                isImpureDefinition(definition, environment, "replayed"),
+                isReplayed(definition),
             ) ||
             isExpressionImpure(
               [

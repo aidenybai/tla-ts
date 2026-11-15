@@ -221,6 +221,20 @@ describe("typed tier matches TLC", () => {
     expect(await getCounts(false)).toEqual(expected);
   });
 
+  it("draws a random constant definition once, as TLC run with -fp 0 -seed 4 does", async () => {
+    const results = await Promise.all(
+      [undefined, INTERPRETED_SET_SIZE].map((maxSetSize) =>
+        check({
+          source: readFileSync(join(FIXTURES, "RandomEdges.tla"), "utf8"),
+          config: readFileSync(join(FIXTURES, "RandomEdges.cfg"), "utf8"),
+          maxSetSize,
+          seed: 4n,
+        }),
+      ),
+    );
+    expect(results.map((result) => result.generatedStates)).toEqual([5724, 5724]);
+  });
+
   it("prints a constant definition once, as TLC does as it starts", async () => {
     const getLines = async (isTyped: boolean) => {
       const lines: string[] = [];
