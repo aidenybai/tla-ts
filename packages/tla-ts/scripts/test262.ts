@@ -105,6 +105,10 @@ const PORTED_INCLUDES = new Map([
     readFileSync(join(CONFORMANCE_DIRECTORY, "test262-fn-global-object.ts"), "utf8"),
   ],
   ["tcoHelper.js", readFileSync(join(CONFORMANCE_DIRECTORY, "test262-tco-helper.ts"), "utf8")],
+  [
+    "byteConversionValues.js",
+    readFileSync(join(CONFORMANCE_DIRECTORY, "test262-byte-conversion-values.ts"), "utf8"),
+  ],
 ]);
 
 // An async test's harness defines $DONE, as doneprintHandle.js does.
