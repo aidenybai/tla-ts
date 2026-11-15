@@ -42310,4 +42310,36 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("a built-in call that leaves out its only argument", () => {
+    const getSource = (expected: string) => `
+      "use strict";
+      const pair = [5, 6];
+      const added = new Set([1]);
+      // @ts-ignore
+      added.add();
+      // @ts-ignore
+      const seen = [[5, 6].at(), pair.at(), [5, 6].with().join("/"), pair.with().join("/"), added.size];
+      if (seen.join() !== "${expected}") throw new Error("seen " + seen.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("5,5,/6,/6,2"))).failure).toBeUndefined();
+    });
+
+    it("rejects an index other than 0", async () => {
+      expect((await checkModel(getSource("6,6,5/,5/,2"))).failure?.message).toContain(
+        "seen 5,5,/6,/6,2",
+      );
+    });
+
+    it("stops on match and search", () => {
+      expect(() => compile(`// @ts-ignore\nconst found = "".match();`)).toThrow(
+        'Unsupported call: "".match',
+      );
+      expect(() => compile(`// @ts-ignore\nconst found = "".search();`)).toThrow(
+        'Unsupported call: "".search',
+      );
+    });
+  });
 });
