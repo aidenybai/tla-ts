@@ -42285,4 +42285,29 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("an empty array's fill and copyWithin with an object index", () => {
+    const getSource = (expected: number) => `
+      "use strict";
+      let count = 0;
+      const index = { valueOf: () => ++count };
+      // @ts-ignore
+      [].fill(0, index);
+      // @ts-ignore
+      [].copyWithin(0, 0, index);
+      if (count !== ${expected}) throw new Error("count " + count);
+    `;
+
+    it("stops where Node converts the index", async () => {
+      expect((await checkModel(getSource(2))).failure?.message).toContain(
+        "tla-ts can't convert this object to a number",
+      );
+    });
+
+    it("rejects an index left unconverted", async () => {
+      expect((await checkModel(getSource(0))).failure?.message).toContain(
+        "tla-ts can't convert this object to a number",
+      );
+    });
+  });
 });
