@@ -44613,4 +44613,51 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("runs the getter of a typed array's constructor that map, filter, slice, and subarray read", () => {
+    const getSource = (expected: string) => `
+      let log = "";
+      let visited = 0;
+      const sample = new Uint8Array([1, 2, 3]);
+      Object.defineProperty(sample, "constructor", {
+        get() {
+          log += "c";
+          throw new Error("ctor");
+        },
+      });
+      const run = (name: string, call: () => unknown) => {
+        try {
+          call();
+        } catch (error) {
+          log += name + (error as Error).message;
+        }
+      };
+      run("m", () =>
+        sample.map((value) => {
+          visited += 1;
+          return value;
+        }),
+      );
+      run("f", () =>
+        sample.filter(() => {
+          visited += 1;
+          return true;
+        }),
+      );
+      run("s", () => sample.slice(1));
+      run("u", () => sample.subarray(1));
+      const result = [log, visited].join(",");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("cmctorcfctorcsctorcuctor,3"))).failure).toBeUndefined();
+    });
+
+    it("rejects a filter that reads the constructor before it visits the elements", async () => {
+      expect(
+        (await checkModel(getSource("cmctorcfctorcsctorcuctor,0"))).failure?.message,
+      ).toContain("cmctorcfctorcsctorcuctor,3");
+    });
+  });
 });

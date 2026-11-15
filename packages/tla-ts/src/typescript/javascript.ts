@@ -6592,6 +6592,14 @@ TypedArraySetBefore(heap, ref, arguments) ==
      ELSE WithBytes(heap, view, view.byteOffset + start * ElementSize(view.elementType),
                     NumbersBytes(view.elementType, values))
 
+\\* Whether slice or subarray of a typed array reads the receiver's constructor, as its receiver's
+\\* checks pass and its arguments convert without running code or throwing: slice requires the view in
+\\* bounds, and subarray only a typed array.
+ReadsTypedArraySpecies(heap, ref, method, arguments) ==
+  /\\ IsTypedArray(heap, ref)
+  /\\ method = "subarray" \\/ ~IsOutOfBounds(heap, heap.objects[ref[Ref]])
+  /\\ \\A position \\in DOMAIN arguments : IsPlainNumeric(arguments[position])
+
 \\* %TypedArray%.prototype's methods that read and write a typed array's elements, which give the
 \\* heap after them, their value, and the error they throw, if any. slice and subarray make their
 \\* typed array through the receiver's constructor, of those that constructors holds by their element

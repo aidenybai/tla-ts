@@ -3561,7 +3561,7 @@ const translateCallStatementBody = (
       translateExpression(value, path.scope, context),
     );
     const typedArguments = tuple(typedValues);
-    const operation =
+    const getOperation = (heap: Expression) =>
       viewCall.owner === "TypedArray"
         ? useJavaScript(
             "TypedArrayMethod",
@@ -3632,20 +3632,50 @@ const translateCallStatementBody = (
                         ],
                         context,
                       );
-    const runOperation = bindOnce(
-      path,
-      changeName,
-      operation,
-      ifThenElse(
-        apply("=", [field(change, "error"), string("")]),
-        continueWith(withHeap(field(change, "heap")), field(change, "value")),
+    const runOperationFrom = (current: Path, finish: (path: Path, value: Expression) => Formula) =>
+      bindOnce(
+        current,
+        changeName,
+        getOperation(getHeap(current.scope, expression, context)),
         ifThenElse(
-          apply("=", [field(change, "error"), string("RangeError")]),
-          throwError("RangeError", path, expression, context, frame),
-          throwTypeError(path, expression, context, frame),
+          apply("=", [field(change, "error"), string("")]),
+          finish(withHeap(field(change, "heap"), current), field(change, "value")),
+          ifThenElse(
+            apply("=", [field(change, "error"), string("RangeError")]),
+            throwError("RangeError", current, expression, context, frame),
+            throwTypeError(current, expression, context, frame),
+          ),
         ),
-      ),
-    );
+      );
+    const speciesGetters = getViewSpeciesGetters(expression, context);
+    const runOperation =
+      speciesGetters.length === 0
+        ? runOperationFrom(path, continueWith)
+        : translateJoined(
+            expression,
+            path,
+            context,
+            (after, value) => continueWith(after, value ?? getUndefined(context)),
+            (next) =>
+              ifThenElse(
+                useJavaScript(
+                  "ReadsTypedArraySpecies",
+                  [heap, ref, string(method), typedArguments],
+                  context,
+                ),
+                readWith(
+                  expression,
+                  ref,
+                  string("constructor"),
+                  speciesGetters,
+                  path,
+                  context,
+                  frame,
+                  (read) => runOperationFrom(read, next),
+                ),
+                runOperationFrom(path, next),
+              ),
+          );
     // set of an array-like source writes each element in order, so the first that a getter which
     // only throws answers throws once set wrote those before it, where nothing before runs code.
     const setGetter = useJavaScript(
@@ -9077,7 +9107,8 @@ const translateShortLoopCall = (
   // no getter answers.
   const isObject = loop.isArrayLike && !loop.isTyped;
   const lengthGetters = isObject ? getDefinedGetters(receiver, "length", context) : [];
-  const speciesGetters = isObject ? getSpeciesGetters(method, receiver, context) : [];
+  const speciesGetters =
+    isObject || loop.isTyped ? getSpeciesGetters(method, receiver, context) : [];
   const isLengthConverted = isObject && isObjectLength(receiver, context);
   // A search's fromIndex converts after the method reads the length, running an object's valueOf
   // and toString, so an array-like object's method reads each element as it visits it.
@@ -9170,6 +9201,20 @@ const translateShortLoopCall = (
   const name = context.names.getFresh("Loop");
   const ownerName = context.names.getFresh("owner");
   const owner = identifier(ownerName);
+  // A typed array's map and filter read the receiver's constructor, which a getter may answer.
+  const readSpecies = (current: Path, next: (path: Path) => Formula) =>
+    loop.isTyped && speciesGetters.length > 0
+      ? readWith(
+          expression,
+          owner,
+          string("constructor"),
+          speciesGetters,
+          current,
+          context,
+          frame,
+          next,
+        )
+      : next(current);
   const sequenceName = context.names.getFresh("sequence");
   const sequence = identifier(sequenceName);
   // A set's or a map's forEach reads its entries again at each step, as its iterator does.
@@ -9625,50 +9670,55 @@ const translateShortLoopCall = (
         ts.isElementAccessExpression(sorted));
     // map's array where the heap holds it, and a typed array's filter's typed array, which it
     // makes through the receiver's constructor after it visits the elements.
-    const made = isHeapMap
-      ? useJavaScript(
-          "Allocate",
-          [
-            getHeap(after.scope, expression, context),
-            useJavaScript(
-              "ArrayObjectWithHoles",
-              [
-                translateBuiltInValue("Array.prototype", expression, context),
-                index(value, [number(1)]),
-                index(value, [number(2)]),
-              ],
-              context,
-            ),
-          ],
-          context,
-        )
-      : loop.isTyped && GATHERING_METHODS.has(method)
+    const getMade = (current: Path) =>
+      isHeapMap
         ? useJavaScript(
-            "TypedArrayHolding",
+            "Allocate",
             [
-              getHeap(after.scope, expression, context),
-              owner,
-              value,
-              translateBuiltInValue("ArrayBuffer.prototype", expression, context),
-              translateTypedConstructors(expression, context),
+              getHeap(current.scope, expression, context),
+              useJavaScript(
+                "ArrayObjectWithHoles",
+                [
+                  translateBuiltInValue("Array.prototype", expression, context),
+                  index(value, [number(1)]),
+                  index(value, [number(2)]),
+                ],
+                context,
+              ),
             ],
             context,
           )
-        : undefined;
-    const finish = (): Formula =>
-      made === undefined || context.heap === undefined
-        ? continueWith(isWrittenBack ? assign(receiver, after, context, () => value) : after, value)
+        : loop.isTyped && GATHERING_METHODS.has(method)
+          ? useJavaScript(
+              "TypedArrayHolding",
+              [
+                getHeap(current.scope, expression, context),
+                owner,
+                value,
+                translateBuiltInValue("ArrayBuffer.prototype", expression, context),
+                translateTypedConstructors(expression, context),
+              ],
+              context,
+            )
+          : undefined;
+    const finishFrom = (current: Path): Formula => {
+      const made = getMade(current);
+      return made === undefined || context.heap === undefined
+        ? continueWith(
+            isWrittenBack ? assign(receiver, current, context, () => value) : current,
+            value,
+          )
         : bindOnce(
-            after,
+            current,
             heapName,
             made,
             continueWith(
               {
-                ...after,
+                ...current,
                 scope: {
-                  ...after.scope,
+                  ...current.scope,
                   bindings: new Map([
-                    ...after.scope.bindings,
+                    ...current.scope.bindings,
                     [context.heap, identifier(heapName)],
                   ]),
                 },
@@ -9676,6 +9726,11 @@ const translateShortLoopCall = (
               useJavaScript("Allocated", [identifier(heapName)], context),
             ),
           );
+    };
+    // A typed array's filter makes its typed array through the receiver's constructor once it
+    // visited the elements, reading it through a getter that the script may write.
+    const finish = (): Formula =>
+      loop.isTyped && method === "filter" ? readSpecies(after, finishFrom) : finishFrom(after);
     const completed = isUnseeded
       ? ifThenElse(
           index(identifier(result), [number(changed.length + 2)]),
@@ -9923,18 +9978,25 @@ const translateShortLoopCall = (
           // ArraySpeciesCreate reads an array's constructor, running its getter, where tla-ts
           // follows only Array.
           // A typed array's map makes its typed array before it visits the elements.
-          const species = useJavaScript(
-            "TypedArraySpecies",
-            [
-              getHeap(after.scope, receiver, context),
-              owner,
-              translateTypedConstructors(expression, context),
-            ],
-            context,
-          );
+          const getSpecies = (current: Path) =>
+            useJavaScript(
+              "TypedArraySpecies",
+              [
+                getHeap(current.scope, receiver, context),
+                owner,
+                translateTypedConstructors(expression, context),
+              ],
+              context,
+            );
           if (loop.isTyped) {
             return method === "map"
-              ? ifThenElse(apply("=", [species, species]), seeded(after), leaf(boolean(false)))
+              ? readSpecies(after, (read) =>
+                  ifThenElse(
+                    apply("=", [getSpecies(read), getSpecies(read)]),
+                    seeded(read),
+                    leaf(boolean(false)),
+                  ),
+                )
               : seeded(after);
           }
           return ["filter", "map"].includes(method)
@@ -13075,6 +13137,16 @@ const isIndexConvertingNew = (node: ts.Node, context: Context) =>
     .slice(1, 3)
     .some((value) => !isPrimitiveIndex(getCast(value), context));
 
+// The getters of a typed array's constructor that its slice and subarray may run, as they make their
+// typed array through it once their receiver's and arguments' checks pass.
+const getViewSpeciesGetters = (node: ts.Node, context: Context) => {
+  const viewCall = getViewCall(node, context);
+  return viewCall?.owner === "TypedArray" &&
+    (viewCall.method === "slice" || viewCall.method === "subarray")
+    ? getDefinedGetters(node, "constructor", context)
+    : [];
+};
+
 // The getters of newTarget's prototype that new of a buffer, a DataView, a typed array, or a weak
 // holder may run, where Reflect.construct gives it another newTarget.
 const getNewTargetGetters = (node: ts.Node, context: Context) => {
@@ -14269,6 +14341,7 @@ const getEffects = (
     ...getStoredLengthConversions(node, context),
     ...getRegExpProtocolAccessors(node, context),
     ...getNewTargetGetters(node, context),
+    ...getViewSpeciesGetters(node, context),
     ...(written === undefined ? [] : getRestCopyGetters(written, context)),
   ];
   // A pattern that destructures an object, or a for-of, a spread, a yield*, or new of a typed array
