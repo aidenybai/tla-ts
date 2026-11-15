@@ -4965,6 +4965,58 @@ describe("values", () => {
         "tla-ts can't name a function that a block declares outside the block outside strict mode",
       );
     });
+
+    it.each([
+      [
+        "a catch whose parameter has another name",
+        'throw new Error("thrown");',
+        "catch (error) {\n  var x = 2;\n  probeInside = function () { return x; };\n}",
+      ],
+      [
+        "a catch whose parameter is a pattern",
+        "throw { size: 2 };\n  // @ts-ignore",
+        "catch ({ size }) {\n  var x = size;\n  probeInside = function () { return x; };\n}",
+      ],
+      [
+        "a block inside a catch",
+        'throw new Error("thrown");',
+        "catch (error) {\n  {\n    var x = 2;\n    probeInside = function () { return x; };\n  }\n}",
+      ],
+      [
+        "a for inside a catch",
+        'throw new Error("thrown");',
+        "catch (error) {\n  for (var index = 0; index < 1; index++) {\n    var x = 2;\n  }\n  probeInside = function () { return x; };\n}",
+      ],
+    ])(
+      "binds a var that %s declares, and a function that it assigns, where the script reads them",
+      async (_name, thrown, caught) => {
+        const getSource = (expected: string) => `
+var x = 1;
+var probeBefore = function () { return x; };
+var probeInside: (() => number) | undefined;
+try {
+  ${thrown}
+} ${caught}
+const text = \`\${probeBefore()},\${probeInside!()},\${x}\`;
+if (!Object.is(text, "${expected}")) throw new Error(text);
+`;
+        expect((await checkModel(getSource("2,2,2"))).failure).toBeUndefined();
+        expect((await checkModel(getSource("1,2,2"))).failure?.message).toContain("2,2,2");
+      },
+    );
+
+    it("holds the function that a branch assigns where the script calls it after the branch", async () => {
+      const getSource = (expected: string) => `
+        var probeInside: (() => number) | undefined;
+        if (Math.max(1, 2) === 2) {
+          probeInside = function () { return 2; };
+        }
+        const value = probeInside!();
+        if (!Object.is(value, ${expected})) throw new Error(String(value));
+      `;
+      expect((await checkModel(getSource("2"))).failure).toBeUndefined();
+      expect((await checkModel(getSource("3"))).failure?.message).toContain("2");
+    });
   });
 
   describe("iterates the keys of an array that changes in place with a for-in", () => {

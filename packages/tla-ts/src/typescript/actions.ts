@@ -12322,11 +12322,23 @@ export const translateJoined = (
       ).length > 0
     );
   };
-  const isKept = <T>(entries: Map<ts.Symbol, T>, before: Map<ts.Symbol, T>) =>
-    [...entries].every((entry) =>
-      before.has(entry[0])
-        ? before.get(entry[0]) === entry[1] || changed.includes(entry[0])
+  const isKept = (bindings: Map<ts.Symbol, Expression>) =>
+    [...bindings].every((entry) =>
+      path.scope.bindings.has(entry[0])
+        ? path.scope.bindings.get(entry[0]) === entry[1] || changed.includes(entry[0])
         : !isVarInside(entry[0]),
+    );
+  // What follows holds the functions held before, which the operator can't take, so each exit holds
+  // the same ones, apart from those of names that the statement declares and that don't outlive it.
+  const isHeldAsBefore = (functions: Map<ts.Symbol, FunctionNode>) =>
+    [...path.scope.functions].every((entry) => functions.get(entry[0]) === entry[1]) &&
+    [...functions].every(
+      (entry) =>
+        path.scope.functions.get(entry[0]) === entry[1] ||
+        (entry[0].valueDeclaration !== undefined &&
+          ts.findAncestor(entry[0].valueDeclaration, (ancestor) => ancestor === node) !==
+            undefined &&
+          !isVarInside(entry[0])),
     );
   const exits: { path: Path; value?: Expression }[] = [];
   const joined = translateWith((inner, value) => {
@@ -12351,8 +12363,8 @@ export const translateJoined = (
       [...(exit.path.unboundThis ?? [])].every((constructor) =>
         exits[0].path.unboundThis?.has(constructor),
       ) &&
-      isKept(exit.path.scope.bindings, path.scope.bindings) &&
-      isKept(exit.path.scope.functions, path.scope.functions),
+      isKept(exit.path.scope.bindings) &&
+      isHeldAsBefore(exit.path.scope.functions),
   );
   if (!isJoinable) return translateWith(continueWith);
   if (exits.length === 0) return joined;
