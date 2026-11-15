@@ -44354,4 +44354,28 @@ describe("BigInts", () => {
       ).toContain("true,false,true,false,1,true,false");
     });
   });
+
+  describe("reads the size of a map or a set whose type doesn't tell what it is", () => {
+    const getSource = (expected: string) => `
+      const map = new Map([[1, "a"], [2, "b"]]);
+      const set = new Set(["a", "b", "c"]);
+      const weak = new WeakMap<object, number>();
+      map.set(3, "c");
+      set.delete("a");
+      const first = [...set][0];
+      const anyMap: any = map;
+      const anySet: any = set;
+      const anyWeak: any = weak;
+      const log = [anyMap.size, anySet.size, anyWeak.size, first].join(",");
+      if (log !== "${expected}") throw new Error(log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("3,2,,b"))).failure).toBeUndefined();
+    });
+
+    it("rejects a weak map's size", async () => {
+      expect((await checkModel(getSource("3,2,0,b"))).failure?.message).toContain("3,2,,b");
+    });
+  });
 });

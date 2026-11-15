@@ -1724,7 +1724,9 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
     const keys = isOrderedCollection(node, context)
       ? translateNewKeys(node, scope, context)
       : undefined;
-    const builtIn = getBuiltIn(node.expression, context) ?? "";
+    // A subclass's instance is the collection's that it extends.
+    const collection =
+      getBuiltIn(getConstruction(node, context)?.callee ?? node.expression, context) ?? "";
     return useJavaScript(
       "Allocate",
       [
@@ -1732,13 +1734,14 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
         useJavaScript(
           keys === undefined ? "CollectionObject" : "OrderedCollectionObject",
           [
-            isNewSubclassCollection(node, context) || !isCollectionName(builtIn)
+            isNewSubclassCollection(node, context) || !isCollectionName(collection)
               ? useJavaScript(
                   "Get",
                   [heap, translateExpression(node.expression, scope, context), string("prototype")],
                   context,
                 )
-              : translateBuiltInValue(`${builtIn}.prototype`, node, context),
+              : translateBuiltInValue(`${collection}.prototype`, node, context),
+            ...(keys === undefined ? [string(collection)] : []),
             translateNew(node, scope, context),
             ...(keys === undefined ? [] : [keys, boolean(getCollection(node, context) === "Map")]),
           ],
@@ -1825,7 +1828,7 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
               ],
               context,
             )
-          : useJavaScript("CollectionObject", [prototype, made], context),
+          : useJavaScript("CollectionObject", [prototype, string("Set"), made], context),
       ],
       context,
     );
