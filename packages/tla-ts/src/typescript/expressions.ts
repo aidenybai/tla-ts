@@ -692,6 +692,9 @@ const translateInt32Literal = (node: ts.Expression) => {
     : number(unsigned > 2 ** 31 ? unsigned - 2 ** 32 : unsigned);
 };
 
+// The Math functions that the JavaScript module computes from their arguments alone.
+export const MATH_OPERATORS = new Map([["sqrt", "Sqrt"]]);
+
 const translateMath = (node: ts.CallExpression, method: string, scope: Scope, context: Context) => {
   const isSpecial = context.hasSpecialNumbers;
   // Math's functions convert their arguments to numbers. A statement converts the objects among
@@ -725,6 +728,15 @@ const translateMath = (node: ts.CallExpression, method: string, scope: Scope, co
   if (method === "pow" && node.arguments.length === 2) {
     const power = useJavaScript("Power", node.arguments.map(translate), context);
     return isSpecial ? power : useJavaScript("PlainNumber", [power], context);
+  }
+  const operator = MATH_OPERATORS.get(method);
+  if (
+    operator !== undefined &&
+    node.arguments.length === 1 &&
+    !node.arguments.some(ts.isSpreadElement)
+  ) {
+    const result = useJavaScript(operator, node.arguments.map(translate), context);
+    return isSpecial ? result : useJavaScript("PlainNumber", [result], context);
   }
   if ((method === "round" || method === "sign") && node.arguments.length === 1) {
     return useJavaScript(method === "round" ? "Round" : "Sign", [translate(argument)], context);

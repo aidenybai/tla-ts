@@ -40944,4 +40944,41 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("computes Math.sqrt correctly rounded", () => {
+    const getSource = (expected: string) => `
+      const inputs = [2, 0.1, 1e-310, 5e-324, 1.7976931348623157e308, 9007199254740994, -1, -0, NaN];
+      const expected = [${expected}];
+      inputs.forEach((value, index) => {
+        if (!Object.is(Math.sqrt(value), expected[index])) throw new Error("wrong at " + index);
+      });
+      if (Math.sqrt(Infinity) !== Infinity) throw new Error("wrong at the end");
+    `;
+
+    it("agrees with Node", async () => {
+      const result = await checkModel(
+        getSource(
+          "1.4142135623730951, 0.31622776601683794, 9.999999999999986e-156, 2.2227587494850775e-162, 1.3407807929942596e154, 94906265.62425156, NaN, -0, NaN",
+        ),
+      );
+      expect(result.failure).toBeUndefined();
+    });
+
+    it("rejects a root one bit off", async () => {
+      const result = await checkModel(
+        getSource(
+          "1.4142135623730951, 0.3162277660168379, 9.999999999999986e-156, 2.2227587494850775e-162, 1.3407807929942596e154, 94906265.62425156, NaN, -0, NaN",
+        ),
+      );
+      expect(result.failure?.message).toContain("wrong at 1");
+    });
+
+    it("stops at a root that a script of integers can't hold", async () => {
+      const result = await checkModel(`
+        let root = Math.sqrt(16);
+        root = Math.sqrt(root + 1);
+      `);
+      expect(result.failure?.message).toContain("tla-ts can't represent");
+    });
+  });
 });

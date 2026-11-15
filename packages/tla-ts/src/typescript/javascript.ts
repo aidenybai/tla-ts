@@ -905,6 +905,33 @@ Hypot(values) ==
        [] root * root # square -> Assert(FALSE, "tla-ts can't represent a fraction")
        [] OTHER -> root
 
+\\* A natural's integer square root and the remainder, from its highest two bits down.
+RECURSIVE NatRootFrom(_, _, _, _)
+NatRootFrom(nat, pair, root, remainder) ==
+  IF pair < 0
+  THEN <<root, remainder>>
+  ELSE LET current == NatAdd(NatShiftLeft(remainder, 2), NatOf(LimbAt(NatShiftRight(nat, 2 * pair), 1) % 4))
+           trial == NatAdd(NatShiftLeft(root, 2), <<1>>)
+           fits == ~NatBelow(current, trial)
+       IN NatRootFrom(nat, pair - 1,
+                      NatAdd(NatShiftLeft(root, 1), IF fits THEN <<1>> ELSE <<>>),
+                      IF fits THEN NatSubtract(current, trial) ELSE current)
+
+\\* Math.sqrt, rounded from a root of 55 bits or more and whether any remainder is left, as for a
+\\* quotient. The significand shifts by an amount that leaves its power of 2 even.
+Sqrt(value) ==
+  CASE value \\in {NaN, NegativeInfinity} -> NaN
+    [] value = Infinity \\/ IsZero(value) -> value
+    [] IsNegative(value) -> NaN
+    [] OTHER ->
+         LET binary == Binary(value)
+             least == 110 - NatBits(Significand(binary))
+             shift == least + ((binary[2] - least) % 2)
+             root == NatRootFrom(NatShiftLeft(Significand(binary), shift), 55, <<>>, <<>>)
+         IN Rounded(FALSE,
+                    NatAdd(NatShiftLeft(root[1], 1), IF root[2] = <<>> THEN <<>> ELSE <<1>>),
+                    (binary[2] - shift) \\div 2 - 1)
+
 \\* JavaScript's <<. The bit below the shifted bits becomes the sign bit.
 LeftShift(left, right) ==
   LET a == Int32(left)
