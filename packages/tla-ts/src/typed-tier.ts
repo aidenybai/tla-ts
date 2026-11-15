@@ -4381,7 +4381,31 @@ const advanceOdometer = (positions: number[], base: number) => {
   return false;
 };
 
+const mixHash = (hash: number) => {
+  const mixed = Math.imul(hash ^ (hash >>> 16), 0x85ebca6b);
+  const remixed = Math.imul(mixed ^ (mixed >>> 13), 0xc2b2ae35);
+  return remixed ^ (remixed >>> 16);
+};
+
+// Two lanes of Murmur3's mixing, with their own constants, hash the words of a key into 64 bits.
+const hashWords = (words: Int32Array, start: number, end: number, hash: Int32Array) => {
+  let first = 0x811c9dc5;
+  let second = 0x9747b28c;
+  for (let index = start; index < end; index++) {
+    const word = words[index];
+    const firstWord = Math.imul(word, 0xcc9e2d51);
+    first ^= Math.imul((firstWord << 15) | (firstWord >>> 17), 0x1b873593);
+    first = (Math.imul((first << 13) | (first >>> 19), 5) + 0xe6546b64) | 0;
+    const secondWord = Math.imul(word, 0x85ebca77);
+    second ^= Math.imul((secondWord << 13) | (secondWord >>> 19), 0xc2b2ae3d);
+    second = (Math.imul((second << 17) | (second >>> 15), 9) + 0x27d4eb2f) | 0;
+  }
+  hash[0] = mixHash(first ^ (end - start));
+  hash[1] = mixHash(second ^ (end - start));
+};
+
 const HELPERS = {
+  hashWords,
   EMPTY: Object.freeze([]),
   subsets: (base: Plain[]) =>
     getSelections(base.length).map((selection) => {
@@ -4730,6 +4754,8 @@ interface Codec {
   names: { count: number };
   writers: Map<Type, string>;
   readers: Map<Type, string>;
+  // The functions writing the keys of collections, of values and of their images.
+  keyWriters: [Map<Type, string>, Map<Type, string>];
 }
 
 const getWriter = (codec: Codec, type: Type, code: string): string => {
@@ -4832,40 +4858,128 @@ const getMovedPositions = (images: Images[], domain: Value[]) => {
     : undefined;
 };
 
-// Writes the image of a value, without building it where the image only reorders a function.
-const getImageWriter = (
+// Whether a permutation can change a value of the type.
+const isPermutable = (images: Images[], type: Type): boolean => {
+  const resolved = resolveType(type);
+  switch (resolved.kind) {
+    case "Str":
+    case "Mix":
+    case "Opt":
+      return true;
+    case "Seq":
+    case "Set":
+      return isPermutable(images, resolved.element);
+    case "Map":
+      return isPermutable(images, resolved.keys) || isPermutable(images, resolved.values);
+    case "Fn":
+      return (
+        getMovedPositions(images, resolved.domain) !== undefined ||
+        isPermutable(images, resolved.range)
+      );
+    case "Rec":
+      return resolved.shapes.some((shape) =>
+        shape.some((field) => isPermutable(images, getFieldType(resolved, field))),
+      );
+    case "Tup":
+      return resolved.elements.some((element) => isPermutable(images, element));
+    default:
+      return false;
+  }
+};
+
+// Writes the key of a value, or of its image under P where isPermuted, which a permutation can't
+// reorder. A set a permutation changes is its size and the sums of the hashes of its elements, and so
+// is a function with such keys, its pairs. The image needn't be built or sorted.
+const getKeyWriter = (
   program: Program,
   codec: Codec,
   images: Images[],
   type: Type,
   code: string,
-): string | undefined => {
+  isPermuted: boolean,
+): string => {
   const resolved = resolveType(type);
-  const positions = resolved.kind === "Fn" && getMovedPositions(images, resolved.domain);
-  if (resolved.kind !== "Fn" || !positions) {
-    const permuted = getPermuteCode(program, images, type, code);
-    return permuted && getWriter(codec, type, permuted);
-  }
-  const base = program.indexes.length;
-  program.indexes.push(
-    ...positions.map((table) => {
-      const sources = new Int32Array(table.length);
-      table.forEach((position, index) => {
-        sources[position] = index;
-      });
-      return sources;
-    }),
-  );
-  const fn = getName(program, "f");
-  const sources = getName(program, "s");
-  const elements = resolved.domain.map((_, position) => {
-    const element = `${fn}[${sources}[${position}]]`;
-    return (
-      getImageWriter(program, codec, images, resolved.range, element) ??
-      getWriter(codec, resolved.range, element)
+  if (!isPermutable(images, resolved)) return getWriter(codec, resolved, code);
+  const getInner = (inner: Type, innerCode: string) =>
+    getKeyWriter(program, codec, images, inner, innerCode, isPermuted);
+  const reserve = `if (n + ${RESERVED_BYTES} > d.length) { W.size = n; H.addPage(W); d = W.data; n = W.size; }`;
+  const varint = `if (t >= 0 && t < 128) d[n++] = t; else n = H.varint(d, n, t);`;
+  const getSum = (length: string, element: string) => {
+    const [first, second, start, aligned] = ["h", "h", "h", "h"].map((prefix) =>
+      getName(program, prefix),
     );
-  });
-  return `{ const ${fn} = ${code}; const ${sources} = D[${base} + G]; ${elements.join(" ")} }`;
+    const word = (sum: string) =>
+      [0, 8, 16, 24].map((shift) => `d[n++] = (${sum} >>> ${shift}) & 255;`).join(" ");
+    return `let ${first} = 0, ${second} = 0; for (let j = 0; j < ${length}; j++) { ${reserve} const ${start} = n - W.start; while ((n & 3) !== 0) d[n++] = 0; const ${aligned} = n - W.start; ${element} while ((n & 3) !== 0) d[n++] = 0; H.hashWords(W.words, (W.start + ${aligned}) >> 2, n >> 2, U); ${first} = (${first} + U[0]) | 0; ${second} = (${second} + U[1]) | 0; n = W.start + ${start}; } t = ${length}; ${varint} ${word(first)} ${word(second)}`;
+  };
+  const name = getName(program, "k");
+  switch (resolved.kind) {
+    case "Str":
+      return `t = ${isPermuted ? `P[${code}]` : code}; ${varint}`;
+    case "Opt":
+      return `t = ${code}; t = t === false ? 0 : t === true ? 1 : ${isPermuted ? "P[t]" : "t"} + 2; ${varint}`;
+    case "Mix":
+      return `{ let ${name} = ${code}; ${isPermuted ? `if (${name} >= ${ATOM_BASE}) ${name} = ${ATOM_BASE} + P[${name} - ${ATOM_BASE}];` : ""} ${getWriter(codec, resolved, name)} }`;
+    case "Seq":
+    case "Set":
+    case "Map": {
+      const known = codec.keyWriters[Number(isPermuted)].get(resolved);
+      const call = (writer: string) => `${writer}(${code}${isPermuted ? ", P, G" : ""});`;
+      if (known) return call(known);
+      const writer = `kw${codec.names.count++}`;
+      codec.keyWriters[Number(isPermuted)].set(resolved, writer);
+      const body =
+        resolved.kind === "Seq"
+          ? `t = x.length; ${varint} for (let j = 0; j < x.length; j++) { ${reserve} ${getInner(resolved.element, "x[j]")} }`
+          : resolved.kind === "Set"
+            ? getSum("x.length", getInner(resolved.element, "x[j]"))
+            : isPermutable(images, resolved.keys)
+              ? getSum(
+                  "x[0].length",
+                  `${getInner(resolved.keys.element, "x[0][j]")} ${getInner(resolved.values.element, "x[1][j]")}`,
+                )
+              : `${getWriter(codec, resolved.keys, "x[0]")} ${getInner(resolved.values, "x[1]")}`;
+      codec.functions.push(`const ${writer} = (x${isPermuted ? ", P, G" : ""}) => { ${body} };`);
+      return call(writer);
+    }
+    case "Fn": {
+      const positions = isPermuted && getMovedPositions(images, resolved.domain);
+      if (!positions) {
+        return `{ const ${name} = ${code}; ${resolved.domain.map((_, index) => getInner(resolved.range, `${name}[${index}]`)).join(" ")} }`;
+      }
+      const base = program.indexes.length;
+      program.indexes.push(
+        ...positions.map((table) => {
+          const sources = new Int32Array(table.length);
+          table.forEach((position, index) => {
+            sources[position] = index;
+          });
+          return sources;
+        }),
+      );
+      const sources = getName(program, "s");
+      return `{ const ${name} = ${code}; const ${sources} = D[${base} + G]; ${resolved.domain.map((_, index) => getInner(resolved.range, `${name}[${sources}[${index}]]`)).join(" ")} }`;
+    }
+    case "Rec":
+      if (resolved.shapes.length > 1) {
+        const cases = resolved.shapes.map((shape, tag) => {
+          const fields = shape.map((field, index) =>
+            getInner(getFieldType(resolved, field), `${name}[${index + 1}]`),
+          );
+          return `case ${tag}: ${fields.join(" ")} break;`;
+        });
+        return `{ const ${name} = ${code}; d[n++] = ${name}[0]; switch (${name}[0]) { ${cases.join(" ")} } }`;
+      }
+      return `{ const ${name} = ${code}; ${getParts(resolved)
+        .map((part, index) => getInner(part, `${name}[${index}]`))
+        .join(" ")} }`;
+    case "Tup":
+      return `{ const ${name} = ${code}; ${getParts(resolved)
+        .map((part, index) => getInner(part, `${name}[${index}]`))
+        .join(" ")} }`;
+    default:
+      return unsupported();
+  }
 };
 
 // TLC fingerprints a state under symmetry as the smallest of its images, so every state of an orbit
@@ -5269,6 +5383,7 @@ const compileSpec = (
     names: { count: 0 },
     writers: new Map(),
     readers: new Map(),
+    keyWriters: [new Map(), new Map()],
   };
   const writers = program.variableTypes.map((type, index) => getWriter(codec, type, `v${index}`));
   const readers = program.variableTypes.map((type) => getReader(codec, type));
@@ -5282,13 +5397,11 @@ const compileSpec = (
     return `if (v${index} === E[${index}]) { t = ${to} - ${from}; if (n + t + ${RESERVED_BYTES} > d.length) { W.size = n; H.addPage(W); d = W.data; n = W.size; } for (let k = ${from}; k < ${to}; k++) d[n++] = Y[k]; } else { ${writers[index]} }`;
   });
   const images = check.symmetry ?? [];
-  const imageWrites = program.variableTypes.map((type, index) =>
-    getImageWriter(program, codec, images, type, `v${index}`),
-  );
+  const isSymmetricKey = images.length > 0 && !check.view;
   // Any order of the variables keys an orbit, and one that compares cheap variables a permutation
   // moves first leaves most images after a few bytes.
   const getKeyCost = (index: number) =>
-    imageWrites[index] === undefined
+    !isPermutable(images, program.variableTypes[index])
       ? Infinity
       : (hasVariableSize(program.variableTypes[index]) ? MAXIMUM_INTEGER : 0) +
         getFixedSize(program.variableTypes[index]);
@@ -5298,15 +5411,21 @@ const compileSpec = (
     : program.variableTypes
         .map((_, index) => index)
         .sort((left, right) => getKeyCost(left) - getKeyCost(right));
-  const keyWriters = keyOrder.map((index) => writers[index]);
+  const getKeyWriters = (isPermuted: boolean) =>
+    keyOrder.map((index) =>
+      getKeyWriter(program, codec, images, program.variableTypes[index], `v${index}`, isPermuted),
+    );
+  const keyWriters = isSymmetricKey
+    ? getKeyWriters(false)
+    : keyOrder.map((index) => writers[index]);
   const sites = { count: 0 };
   const signatures = program.variableTypes.map((type, index) =>
     getSignatureCode(program, sites, type, `v${index}`),
   );
-  const imageWriters = keyOrder.map((index) => {
-    const writer = imageWrites[index] ?? writers[index];
-    return `{ const b = n - W.start - m; ${writer} if (c === 0) { c = H.compareBytes(d, W.start + m + b, n, d, W.start + b); if (c > 0) continue images; } }`;
-  });
+  const imageWriters = (isSymmetricKey ? getKeyWriters(true) : []).map(
+    (writer) =>
+      `{ const b = n - W.start - m; ${writer} if (c === 0) { c = H.compareBytes(d, W.start + m + b, n, d, W.start + b); if (c > 0) continue images; } }`,
+  );
   // TLC evaluates the view of the smallest image of a state, which it finds comparing the variables
   // in its order.
   const smallest = program.variableTypes.map(() => getName(program, "u"));
@@ -5375,6 +5494,7 @@ const compileSpec = (
       ranks[id] = rank;
     });
   const source = `let d, n, i, t, W, Y, E = [];
+  const U = new Int32Array(2);
   let ${smallest.join(", ")};
   const X = new Int32Array(${program.variableTypes.length + 1});
   const T = new Int32Array(Q.length);
@@ -5458,29 +5578,6 @@ interface StateTable {
   slots: Int32Array;
   mask: number;
 }
-
-const mixHash = (hash: number) => {
-  const mixed = Math.imul(hash ^ (hash >>> 16), 0x85ebca6b);
-  const remixed = Math.imul(mixed ^ (mixed >>> 13), 0xc2b2ae35);
-  return remixed ^ (remixed >>> 16);
-};
-
-// Two lanes of Murmur3's mixing, with their own constants, hash the words of a key into 64 bits.
-const hashWords = (words: Int32Array, start: number, end: number, hash: Int32Array) => {
-  let first = 0x811c9dc5;
-  let second = 0x9747b28c;
-  for (let index = start; index < end; index++) {
-    const word = words[index];
-    const firstWord = Math.imul(word, 0xcc9e2d51);
-    first ^= Math.imul((firstWord << 15) | (firstWord >>> 17), 0x1b873593);
-    first = (Math.imul((first << 13) | (first >>> 19), 5) + 0xe6546b64) | 0;
-    const secondWord = Math.imul(word, 0x85ebca77);
-    second ^= Math.imul((secondWord << 13) | (secondWord >>> 19), 0xc2b2ae3d);
-    second = (Math.imul((second << 17) | (second >>> 15), 9) + 0x27d4eb2f) | 0;
-  }
-  hash[0] = mixHash(first ^ (end - start));
-  hash[1] = mixHash(second ^ (end - start));
-};
 
 export const runTypedSearch = (
   environment: Environment,
