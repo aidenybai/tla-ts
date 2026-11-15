@@ -39591,4 +39591,34 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("", strict))).failure?.message).toContain(sloppy);
     });
   });
+
+  describe("calls a function that a block declares through its var outside strict mode", () => {
+    const getSource = (expected: string) => `
+      let after: unknown;
+      (function () {
+        {
+          function f() {
+            return "first";
+          }
+        }
+        {
+          function f() {
+            return "second";
+          }
+        }
+        // @ts-ignore
+        after = f;
+      })();
+      const result = (after as () => string)();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("second"))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation", async () => {
+      expect((await checkModel(getSource("first"))).failure?.message).toContain("second");
+    });
+  });
 });

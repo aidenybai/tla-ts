@@ -4277,8 +4277,9 @@ export const findNodes = <T extends ts.Node>(root: ts.Node, test: (node: ts.Node
 const candidates = new WeakMap<ts.SourceFile, FunctionNode[]>();
 
 // The functions that a value whose type has calls may hold, where tla-ts can't tell which: those
-// that no other function encloses, or that a function makes each time it runs and that read none of
-// its locals, whose type TypeScript lets the value hold.
+// that no other function encloses, or that a function makes each time it runs or as its var holds
+// them outside strict mode and that read none of its locals, whose type TypeScript lets the value
+// hold.
 export const getFunctionCandidates = (callee: ts.Expression, context: Context) => {
   if (isHeldBuiltInObject(callee, context)) return [];
   const sourceFile = callee.getSourceFile();
@@ -4294,7 +4295,8 @@ export const getFunctionCandidates = (callee: ts.Expression, context: Context) =
       return (
         candidate?.body !== undefined &&
         (ts.findAncestor(candidate.parent, ts.isFunctionLike) === undefined ||
-          (isNestedFunction(candidate, context) && getOuterLocals(candidate, context).length === 0))
+          ((isNestedFunction(candidate, context) || isVarFunction(candidate)) &&
+            getOuterLocals(candidate, context).length === 0))
       );
     });
   candidates.set(sourceFile, found);
