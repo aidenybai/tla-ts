@@ -3736,7 +3736,7 @@ const compileUnchanged = (program: Program, expression: Expression, frame: Frame
       emit: () =>
         elements.length === 0
           ? "true"
-          : `![${elements.map((element) => element.emit()).join(", ")}].includes(false)`,
+          : `((${["1", ...elements.map((element) => `(${element.emit()})`)].join(" & ")}) === 1)`,
     };
   }
   const current = compileValue(program, expression, frame);
