@@ -3338,6 +3338,14 @@ const compileValue = (program: Program, expression: Expression, frame: Frame): C
       const field = getFieldName(target.type, expression.args);
       if (field !== undefined) return compileField(program, target, field);
       const tuple = resolveType(target.type);
+      // A sequence applied to a string may be <<>>, TLC's empty function, which is also a record.
+      if (
+        tuple.kind === "Seq" &&
+        expression.args[0]?.kind === "String" &&
+        !program.plains.isSparse
+      ) {
+        throw SPARSE;
+      }
       const [position] = expression.args;
       if (
         tuple.kind === "Tup" &&
