@@ -42007,4 +42007,256 @@ describe("BigInts", () => {
       ).toContain("log afalse,bfalse,c!true");
     });
   });
+  describe("a bound function's length", () => {
+    const getSource = (expected: string) => `
+      const holder = { prop: "abc" };
+      function target(first: number, second: number) {}
+      const bound = target.bind(holder, 1);
+      if (bound.length !== ${expected}) throw new Error("length " + bound.length);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("1"))).failure).toBeUndefined();
+    });
+
+    it("rejects a length that leaves out the bound arguments", async () => {
+      expect((await checkModel(getSource("2"))).failure?.message).toContain("length 1");
+    });
+
+    it("stops where a script defined the target's length", async () => {
+      const result = await checkModel(`
+        const holder = { prop: "abc" };
+        function target(first: number) {}
+        Object.defineProperty(target, "length", { value: 5 });
+        const bound = target.bind(holder);
+      `);
+      expect(result.failure?.message).toContain(
+        "tla-ts can't bind a function whose length a script defined",
+      );
+    });
+  });
+
+  it("stops where a call leaves out an array method's callback", () => {
+    expect(() =>
+      compile(`
+        const values = [1, 2];
+        // @ts-ignore
+        values.every();
+      `),
+    ).toThrow("Pass a function here");
+  });
+
+  describe("a built-in that a call gives fewer arguments than it declares", () => {
+    const getStringsSource = (expected: string) => `
+      const text = "abc";
+      const seen = [
+        // @ts-ignore
+        text.at(),
+        // @ts-ignore
+        text.charAt(),
+        // @ts-ignore
+        text.charCodeAt(),
+        // @ts-ignore
+        text.padEnd(),
+        // @ts-ignore
+        text.padStart(),
+        // @ts-ignore
+        text.repeat(),
+        // @ts-ignore
+        text.split().length,
+        // @ts-ignore
+        text.substr(),
+        // @ts-ignore
+        text.substring(),
+        // @ts-ignore
+        Number.isFinite(),
+        // @ts-ignore
+        Number.isInteger(),
+        // @ts-ignore
+        Number.isNaN(),
+        // @ts-ignore
+        Number.isSafeInteger(),
+        // @ts-ignore
+        ArrayBuffer.isView(),
+        // @ts-ignore
+        Date.UTC(),
+        // @ts-ignore
+        [undefined, 1].indexOf(),
+        // @ts-ignore
+        [1, undefined].lastIndexOf(),
+        // @ts-ignore
+        [undefined].includes(),
+        // @ts-ignore
+        [1, 2].toSpliced().length,
+      ];
+      if (seen.join() !== "${expected}") throw new Error("seen " + seen.join());
+    `;
+    const getBuffersSource = (expected: string) => `
+      const view = new DataView(new ArrayBuffer(8));
+      view.setInt8(0, 5);
+      view.setInt8(1, 6);
+      const seen: unknown[] = [];
+      // @ts-ignore
+      seen.push(view.getInt8(), view.getUint16(), view.getInt32());
+      // @ts-ignore
+      view.setUint8(0);
+      // @ts-ignore
+      view.setFloat64(0);
+      seen.push(view.getFloat64(0));
+      const typed = new Int8Array([7, 8, 9]);
+      // @ts-ignore
+      seen.push(typed.at(), typed.indexOf(), typed.includes());
+      // @ts-ignore
+      typed.copyWithin();
+      // @ts-ignore
+      typed.fill();
+      const array = [1, 2];
+      // @ts-ignore
+      array.fill();
+      seen.push(typed.join(), array.join(), array.length);
+      if (seen.join() !== "${expected}") throw new Error("seen " + seen.join());
+    `;
+    const getObjectsSource = (expected: string) => `
+      "use strict";
+      const seen: unknown[] = [];
+      function* make() {
+        try {
+          yield 1;
+        } catch (error) {
+          seen.push(error === undefined);
+        }
+      }
+      const iterator = make();
+      iterator.next();
+      // @ts-ignore
+      iterator.throw();
+      function receiver(this: unknown) {
+        return this === undefined;
+      }
+      // @ts-ignore
+      seen.push(Function.prototype.bind.call(receiver)());
+      const registry = new FinalizationRegistry(() => {});
+      // @ts-ignore
+      seen.push(registry.register({}));
+      // @ts-ignore
+      const error = new SuppressedError();
+      // @ts-ignore
+      seen.push(error.error, error.suppressed, Object.hasOwn(error, "message"), Error.isError());
+      const holder = { prop: 1 };
+      // @ts-ignore
+      seen.push(Iterator.prototype.reduce.call([1, 2].values(), (sum: number, value: number) => sum + value));
+      try {
+        // @ts-ignore
+        String.prototype.replaceAll.call(null);
+      } catch (thrown) {
+        seen.push(thrown instanceof TypeError);
+      }
+      try {
+        // @ts-ignore
+        String.prototype.matchAll.call(undefined);
+      } catch (thrown) {
+        seen.push(thrown instanceof TypeError);
+      }
+      try {
+        // @ts-ignore
+        String.prototype.replace.call(null);
+      } catch (thrown) {
+        seen.push(thrown instanceof TypeError);
+      }
+      try {
+        // @ts-ignore
+        Array.prototype.every.call(undefined);
+      } catch (thrown) {
+        seen.push(thrown instanceof TypeError);
+      }
+      // @ts-ignore
+      Promise.resolve().then((value) => {
+        seen.push(value);
+        if (seen.join() !== "${expected}") throw new Error("seen " + seen.join());
+      });
+    `;
+
+    it("agrees with Node on strings, numbers, and arrays", async () => {
+      expect(
+        (
+          await checkModel(
+            getStringsSource(
+              "a,a,97,abc,abc,,1,abc,abc,false,false,false,false,false,NaN,0,1,true,2",
+            ),
+          )
+        ).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects a missing argument read as other than undefined", async () => {
+      expect(
+        (
+          await checkModel(
+            getStringsSource(
+              "a,b,97,abc,abc,,1,abc,abc,false,false,false,false,false,NaN,0,1,true,2",
+            ),
+          )
+        ).failure?.message,
+      ).toContain("seen a,a,97");
+    });
+
+    it("agrees with Node on data views and typed arrays", async () => {
+      expect(
+        (await checkModel(getBuffersSource("5,1286,84279296,NaN,7,-1,false,0,0,0,,,2"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects a missing value written as other than undefined", async () => {
+      expect(
+        (await checkModel(getBuffersSource("5,1286,84279296,0,7,-1,false,0,0,0,,,2"))).failure
+          ?.message,
+      ).toContain("seen 5,1286,84279296,NaN");
+    });
+
+    it("agrees with Node on generators, functions, and promises", async () => {
+      expect(
+        (await checkModel(getObjectsSource("true,true,,,,false,false,3,true,true,true,true,")))
+          .failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects a missing exception thrown as other than undefined", async () => {
+      expect(
+        (await checkModel(getObjectsSource("false,true,,,,false,false,3,true,true,true,true,")))
+          .failure?.message,
+      ).toContain("A promise rejected with no handler");
+    });
+  });
+
+  describe("a script's function that a call gives fewer arguments than it declares", () => {
+    const getSource = (expected: string) => `
+      "use strict";
+      const seen: unknown[] = [];
+      function optional(this: unknown, first?: number, second = 2) {
+        return [this, first, second, arguments.length].join("/");
+      }
+      // @ts-ignore
+      seen.push(optional.call(), optional.apply());
+      function pattern({ prop }: { prop: number }) {
+        return prop;
+      }
+      try {
+        // @ts-ignore
+        pattern();
+      } catch (thrown) {
+        seen.push(thrown instanceof TypeError);
+      }
+      if (seen.join() !== "${expected}") throw new Error("seen " + seen.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("//2/0,//2/0,true"))).failure).toBeUndefined();
+    });
+
+    it("rejects a receiver other than undefined", async () => {
+      expect((await checkModel(getSource("null//2/0,//2/0,true"))).failure?.message).toContain(
+        "seen //2/0",
+      );
+    });
+  });
 });

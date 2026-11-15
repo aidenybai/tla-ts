@@ -1467,7 +1467,14 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
 
   const binding = getBinding(node, context);
   if (binding !== undefined) {
-    const length = getFunctionLength(getParameters(binding.target)) - binding.arguments.length;
+    const targetLength = getFunctionLength(getParameters(binding.target));
+    const length = targetLength - binding.arguments.length;
+    // A function that the heap holds may have a length that a script defined, which bind reads.
+    const held =
+      scope.allocated.get(binding.target) ??
+      (getHeldName(binding.target, context) === undefined
+        ? undefined
+        : getCandidateValue(binding.target, context));
     const holds = (object: "Function.prototype" | "Function.prototype.bind", key: string) =>
       useJavaScript(
         "HoldsBuiltIn",
@@ -1486,28 +1493,41 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
             holds("Function.prototype.bind", "call"),
           ])
         : holds("Function.prototype", "bind"),
-      useJavaScript(
-        "Allocate",
-        [
-          heap,
-          useJavaScript(
-            "BoundFunctionObject",
-            [
-              translateBuiltInValue("Function.prototype", node, context),
-              string(
-                ts.isMethodDeclaration(binding.target)
-                  ? (binding.method?.key ?? "")
-                  : getFunctionName(binding.target, context),
-              ),
-              number(Math.max(0, length)),
-              boolean(
-                !ts.isArrowFunction(binding.target) && !ts.isMethodDeclaration(binding.target),
-              ),
-            ],
-            context,
-          ),
-        ],
-        context,
+      ifExpression(
+        held === undefined
+          ? boolean(true)
+          : useJavaScript(
+              "SameValue",
+              [useJavaScript("Get", [heap, held, string("length")], context), number(targetLength)],
+              context,
+            ),
+        useJavaScript(
+          "Allocate",
+          [
+            heap,
+            useJavaScript(
+              "BoundFunctionObject",
+              [
+                translateBuiltInValue("Function.prototype", node, context),
+                string(
+                  ts.isMethodDeclaration(binding.target)
+                    ? (binding.method?.key ?? "")
+                    : getFunctionName(binding.target, context),
+                ),
+                number(Math.max(0, length)),
+                boolean(
+                  !ts.isArrowFunction(binding.target) && !ts.isMethodDeclaration(binding.target),
+                ),
+              ],
+              context,
+            ),
+          ],
+          context,
+        ),
+        apply("Assert", [
+          boolean(false),
+          string("tla-ts can't bind a function whose length a script defined"),
+        ]),
       ),
       apply("Assert", [
         boolean(false),

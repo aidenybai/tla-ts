@@ -260,10 +260,107 @@ const NULLABLE_ERRORS = new Set([2531, 2532, 2533, 2721, 2722, 18047, 18048, 180
 const UNKNOWN_VALUE_ERROR = 18046;
 const ARGUMENT_COUNT_ERROR = 2554;
 
-// The built-ins that tla-ts compiles from their values, not their declared signatures, where a test
-// calls them with fewer arguments than TypeScript's types take. Each needs a unit test of such a
-// call, since a translation that follows the signature may read the missing arguments wrongly.
-const SHORT_CALLED_BUILT_INS = new Set(["RegExp"]);
+// The built-ins that tla-ts runs with undefined for each argument that a call leaves out, as
+// JavaScript does, where a test calls them, directly or through call, with fewer arguments than
+// TypeScript's types take. Each is the interface that declares it and its method's name, with a
+// typed array's interface as TypedArray and ReadonlyArray as Array, and a constructor as its
+// interface alone. Each needs a
+// unit test of such a call, since a translation that follows the signature may read the missing
+// arguments wrongly.
+const SHORT_CALLED_BUILT_INS = new Set([
+  "Array.every",
+  "Array.fill",
+  "Array.filter",
+  "Array.find",
+  "Array.findIndex",
+  "Array.findLast",
+  "Array.findLastIndex",
+  "Array.forEach",
+  "Array.includes",
+  "Array.indexOf",
+  "Array.lastIndexOf",
+  "Array.map",
+  "Array.reduce",
+  "Array.reduceRight",
+  "Array.some",
+  "Array.toSpliced",
+  "ArrayBufferConstructor.isView",
+  "AsyncGenerator.throw",
+  "CallableFunction.bind",
+  "DataView.getFloat16",
+  "DataView.getFloat32",
+  "DataView.getFloat64",
+  "DataView.getInt8",
+  "DataView.getInt16",
+  "DataView.getInt32",
+  "DataView.getUint8",
+  "DataView.getUint16",
+  "DataView.getUint32",
+  "DataView.setFloat16",
+  "DataView.setFloat32",
+  "DataView.setFloat64",
+  "DataView.setInt8",
+  "DataView.setInt16",
+  "DataView.setInt32",
+  "DataView.setUint8",
+  "DataView.setUint16",
+  "DataView.setUint32",
+  "DateConstructor.UTC",
+  "ErrorConstructor.isError",
+  "FinalizationRegistry.register",
+  "Function.bind",
+  "Generator.throw",
+  "IteratorObject.reduce",
+  "NumberConstructor.isFinite",
+  "NumberConstructor.isInteger",
+  "NumberConstructor.isNaN",
+  "NumberConstructor.isSafeInteger",
+  "PromiseConstructor.all",
+  "PromiseConstructor.allSettled",
+  "PromiseConstructor.any",
+  "PromiseConstructor.race",
+  "PromiseConstructor.resolve",
+  "PromiseConstructor.try",
+  "RegExpConstructor",
+  "String.at",
+  "String.charAt",
+  "String.charCodeAt",
+  "String.matchAll",
+  "String.padEnd",
+  "String.padStart",
+  "String.repeat",
+  "String.replace",
+  "String.replaceAll",
+  "String.split",
+  "String.substr",
+  "String.substring",
+  "SuppressedErrorConstructor",
+  "TypedArray.at",
+  "TypedArray.copyWithin",
+  "TypedArray.every",
+  "TypedArray.fill",
+  "TypedArray.filter",
+  "TypedArray.find",
+  "TypedArray.findIndex",
+  "TypedArray.findLast",
+  "TypedArray.findLastIndex",
+  "TypedArray.forEach",
+  "TypedArray.includes",
+  "TypedArray.indexOf",
+  "TypedArray.lastIndexOf",
+  "TypedArray.map",
+  "TypedArray.reduce",
+  "TypedArray.reduceRight",
+  "TypedArray.some",
+  "TypedArray.toLocaleString",
+]);
+
+// The built-ins, named as SHORT_CALLED_BUILT_INS names them, whose signatures declare each argument
+// that JavaScript reads, so that an argument past them only runs, which no literal or name of a
+// declared function shows.
+const LONG_CALLED_BUILT_INS = new Set(["CallableFunction.bind", "Promise.then", "WeakMap.has"]);
+
+const TYPED_ARRAY_NAME = /^(Big)?(Int|Uint|Float)\d+(Clamped)?Array$/;
 
 const PROGRAM_PATH = "/test262.ts";
 
@@ -664,15 +761,26 @@ const loosen = () => {
     }
     // A test may call a function with fewer arguments than it declares, which leaves the others
     // undefined, or with more, which only its arguments object holds. A rest parameter takes the
-    // extra arguments without changing the function's length.
+    // extra arguments without changing the function's length. A tag takes the template's strings
+    // and then each substitution.
+    const getArgumentCount = (
+      call: ts.CallExpression | ts.NewExpression | ts.TaggedTemplateExpression,
+    ) =>
+      ts.isTaggedTemplateExpression(call)
+        ? 1 + (ts.isTemplateExpression(call.template) ? call.template.templateSpans.length : 0)
+        : (call.arguments?.length ?? 0);
     const count = /but got (\d+)/.exec(ts.flattenDiagnosticMessageText(diagnostic.messageText, ""));
     const called =
-      diagnostic.code === ARGUMENT_COUNT_ERROR && count !== null
+      SHORT_CALL_ERRORS.has(diagnostic.code) && count !== null
         ? ts.findAncestor(
             node,
-            (ancestor): ancestor is ts.CallExpression | ts.NewExpression =>
-              (ts.isCallExpression(ancestor) || ts.isNewExpression(ancestor)) &&
-              (ancestor.arguments?.length ?? 0) === Number(count[1]),
+            (
+              ancestor,
+            ): ancestor is ts.CallExpression | ts.NewExpression | ts.TaggedTemplateExpression =>
+              (ts.isCallExpression(ancestor) ||
+                ts.isNewExpression(ancestor) ||
+                ts.isTaggedTemplateExpression(ancestor)) &&
+              getArgumentCount(ancestor) === Number(count[1]),
           )
         : undefined;
     const callee = called && checker.getResolvedSignature(called)?.getDeclaration();
@@ -685,7 +793,7 @@ const loosen = () => {
       const parameters = callee.parameters.filter(
         (parameter) => !ts.isIdentifier(parameter.name) || parameter.name.text !== "this",
       );
-      const given = called.arguments?.length ?? 0;
+      const given = getArgumentCount(called);
       parameters.slice(given).forEach((parameter) => {
         if (
           ts.isIdentifier(parameter.name) &&
@@ -2105,28 +2213,75 @@ const ignoreSoundErrors = () => {
         ts.findAncestor(reference, ts.isFunctionLike) === undefined,
     );
   };
-  // A call of a built-in that SHORT_CALLED_BUILT_INS lists, with fewer arguments than its type
-  // takes, which passes undefined for the others as JavaScript does.
-  const isShortBuiltInCall = (node: ts.Node) => {
+  // A call of a script's function through call or apply without arguments, which runs it with this
+  // undefined and no arguments, where each of its parameters is optional.
+  const isReceiverlessCall = (node: ts.Node) => {
+    const call = ts.findAncestor(node, ts.isCallExpression);
+    const callee = call && skipParentheses(call.expression);
+    const signatures =
+      callee !== undefined &&
+      ts.isPropertyAccessExpression(callee) &&
+      ["apply", "call"].includes(callee.name.text) &&
+      call?.arguments.length === 0
+        ? checker.getTypeAtLocation(callee.expression).getCallSignatures()
+        : [];
+    return (
+      signatures.length > 0 &&
+      signatures.every((signature) => {
+        const declaration = signature.getDeclaration();
+        return (
+          (ts.isFunctionDeclaration(declaration) ||
+            ts.isFunctionExpression(declaration) ||
+            ts.isArrowFunction(declaration) ||
+            ts.isMethodDeclaration(declaration)) &&
+          declaration.body !== undefined &&
+          declaration.parameters.every(
+            (parameter) =>
+              (ts.isIdentifier(parameter.name) && parameter.name.text === "this") ||
+              parameter.questionToken !== undefined ||
+              parameter.initializer !== undefined ||
+              parameter.dotDotDotToken !== undefined,
+          )
+        );
+      })
+    );
+  };
+  // A call of a script's function with fewer arguments than it declares, where a parameter left
+  // without one is a pattern without a default, whose destructuring of undefined throws a
+  // TypeError, and each other is optional.
+  const isShortPatternCall = (node: ts.Node) => {
     const call = ts.findAncestor(
       node,
       (ancestor): ancestor is ts.CallExpression | ts.NewExpression =>
         ts.isCallExpression(ancestor) || ts.isNewExpression(ancestor),
     );
     const declaration = call && checker.getResolvedSignature(call)?.getDeclaration();
-    return (
+    const missing =
       call !== undefined &&
-      ts.isIdentifier(call.expression) &&
-      SHORT_CALLED_BUILT_INS.has(call.expression.text) &&
       declaration !== undefined &&
-      declaration.getSourceFile().isDeclarationFile &&
-      (call.arguments?.length ?? 0) <
-        declaration.parameters.filter(
-          (parameter) =>
-            parameter.questionToken === undefined &&
-            parameter.initializer === undefined &&
-            parameter.dotDotDotToken === undefined,
-        ).length
+      (ts.isFunctionDeclaration(declaration) ||
+        ts.isFunctionExpression(declaration) ||
+        ts.isArrowFunction(declaration) ||
+        ts.isMethodDeclaration(declaration)) &&
+      declaration.body !== undefined &&
+      !(call.arguments ?? []).some(ts.isSpreadElement)
+        ? declaration.parameters
+            .filter(
+              (parameter) => !ts.isIdentifier(parameter.name) || parameter.name.text !== "this",
+            )
+            .slice(call.arguments?.length ?? 0)
+        : [];
+    const isPattern = (parameter: ts.ParameterDeclaration) =>
+      !ts.isIdentifier(parameter.name) && parameter.initializer === undefined;
+    return (
+      missing.some(isPattern) &&
+      missing.every(
+        (parameter) =>
+          isPattern(parameter) ||
+          parameter.questionToken !== undefined ||
+          parameter.dotDotDotToken !== undefined ||
+          parameter.initializer !== undefined,
+      )
     );
   };
   // A call of the call method of an array's method that REDUCING_METHODS lists, with a this value
@@ -2201,6 +2356,61 @@ const ignoreSoundErrors = () => {
     node.kind === ts.SyntaxKind.FalseKeyword ||
     node.kind === ts.SyntaxKind.NullKeyword ||
     ts.isNumericLiteral(node);
+  // A call or a new of a built-in, directly or through call, with fewer arguments than its type
+  // takes, which passes undefined for the others as JavaScript does, where SHORT_CALLED_BUILT_INS
+  // lists it, or with more, each a literal or a declared function's name, where
+  // LONG_CALLED_BUILT_INS lists it.
+  const isMiscountedBuiltInCall = (node: ts.Node, diagnostic: ts.Diagnostic) => {
+    const counts = /Expected (at least )?(\d+)(?:-(\d+))? arguments, but got (\d+)/.exec(
+      ts.flattenDiagnosticMessageText(diagnostic.messageText, ""),
+    );
+    if (counts === null) return false;
+    const given = Number(counts[4]);
+    const call = ts.findAncestor(
+      node,
+      (ancestor): ancestor is ts.CallExpression | ts.NewExpression =>
+        (ts.isCallExpression(ancestor) || ts.isNewExpression(ancestor)) &&
+        (ancestor.arguments?.length ?? 0) === given,
+    );
+    if (call === undefined || (call.arguments ?? []).some(ts.isSpreadElement)) return false;
+    const callee = skipParentheses(call.expression);
+    const declaration =
+      ts.isCallExpression(call) &&
+      ts.isPropertyAccessExpression(callee) &&
+      callee.name.text === "call"
+        ? checker.getTypeAtLocation(callee.expression).getCallSignatures()[0]?.getDeclaration()
+        : checker.getResolvedSignature(call)?.getDeclaration();
+    const owner = declaration?.parent;
+    if (
+      declaration === undefined ||
+      owner === undefined ||
+      !ts.isInterfaceDeclaration(owner) ||
+      !declaration.getSourceFile().isDeclarationFile
+    ) {
+      return false;
+    }
+    const built = [
+      TYPED_ARRAY_NAME.test(owner.name.text)
+        ? "TypedArray"
+        : owner.name.text === "ReadonlyArray"
+          ? "Array"
+          : owner.name.text,
+      ...(declaration.name === undefined ? [] : [declaration.name.getText()]),
+    ].join(".");
+    const extra = (call.arguments ?? []).slice(Number(counts[3] ?? counts[2]));
+    return given < Number(counts[2])
+      ? SHORT_CALLED_BUILT_INS.has(built)
+      : counts[1] === undefined &&
+          LONG_CALLED_BUILT_INS.has(built) &&
+          extra.every(
+            (value) =>
+              isPrimitiveLiteral(value) ||
+              ts.isStringLiteral(value) ||
+              (ts.isIdentifier(value) &&
+                checker.getSymbolAtLocation(value)?.valueDeclaration?.kind ===
+                  ts.SyntaxKind.FunctionDeclaration),
+          );
+  };
   // A call of a string's method, or of new RegExp or RegExp, whose arguments tla-ts converts: a
   // primitive for a string's method's parameter, an object that the test declares or a wrapper
   // for any but padStart's and padEnd's filler, and a primitive literal for RegExp's pattern and
@@ -2379,7 +2589,7 @@ const ignoreSoundErrors = () => {
           ts.isMethodSignature(declared) &&
           TYPED_ARRAY_CALLBACK_METHODS.has(declared.name.getText()) &&
           ts.isInterfaceDeclaration(declared.parent) &&
-          /^(Big)?(Int|Uint|Float)\d+(Clamped)?Array$/.test(declared.parent.name.text) &&
+          TYPED_ARRAY_NAME.test(declared.parent.name.text) &&
           taken !== undefined &&
           checker
             .getSignaturesOfType(checker.getTypeOfSymbol(taken), ts.SignatureKind.Call)
@@ -2761,9 +2971,10 @@ const ignoreSoundErrors = () => {
       isGlobalIterator(heritage.types[0].expression, checker)
     );
   };
-  // A call that spreads arguments into a function expression or a superclass's constructor without
-  // parameters, directly or through apply. It reads them only through its arguments object, which
-  // takes any values.
+  // A call that spreads arguments into a function or a method that the script declares without
+  // parameters, or into a superclass's constructor without them, directly or, for a function
+  // expression, through apply. It reads them only through its arguments object, which takes any
+  // values.
   const isUntypedSpreadCall = (node: ts.Node) => {
     const call = ts.findAncestor(node, ts.isCallExpression);
     if (call === undefined || node.getStart() < call.arguments.pos) return false;
@@ -2781,12 +2992,16 @@ const ignoreSoundErrors = () => {
         : [];
     // super calls the constructor of the class that the class extends.
     const declaration =
-      called.kind === ts.SyntaxKind.SuperKeyword
-        ? checker.getResolvedSignature(call)?.declaration
-        : called;
+      isApply || ts.isFunctionExpression(called)
+        ? called
+        : checker.getResolvedSignature(call)?.declaration;
     return (
       declaration !== undefined &&
-      (ts.isFunctionExpression(declaration) || ts.isConstructorDeclaration(declaration)) &&
+      (ts.isFunctionExpression(declaration) ||
+        ts.isFunctionDeclaration(declaration) ||
+        ts.isMethodDeclaration(declaration) ||
+        ts.isConstructorDeclaration(declaration)) &&
+      declaration.body !== undefined &&
       declaration.parameters.length === 0 &&
       elements.some(ts.isSpreadElement)
     );
@@ -2808,9 +3023,7 @@ const ignoreSoundErrors = () => {
       callee.parent.expression === callee &&
       TYPED_UNION_METHODS.has(callee.name.text) &&
       type.isUnion() &&
-      type.types.every((member) =>
-        /^(Big)?(Int|Uint|Float)\d+(Clamped)?Array$/.test(member.getSymbol()?.getName() ?? ""),
-      )
+      type.types.every((member) => TYPED_ARRAY_NAME.test(member.getSymbol()?.getName() ?? ""))
     );
   };
   const isPlainCall = (node: ts.Node) => {
@@ -2830,8 +3043,12 @@ const ignoreSoundErrors = () => {
     const node = getNode(diagnostic.start ?? 0);
     return (
       (diagnostic.code === UNTYPED_THIS_ERROR && isPlainCall(node)) ||
+      (SHORT_CALL_ERRORS.has(diagnostic.code) &&
+        (isMiscountedBuiltInCall(node, diagnostic) ||
+          isReceiverlessCall(node) ||
+          isShortPatternCall(node))) ||
       (diagnostic.code === ARGUMENT_COUNT_ERROR &&
-        (isShortBuiltInCall(node) || isShortReducingCall(node) || isShortSearchingCall(node))) ||
+        (isShortReducingCall(node) || isShortSearchingCall(node))) ||
       (SHORT_CALL_ERRORS.has(diagnostic.code) && isShortProtocolCall(node, diagnostic)) ||
       (diagnostic.code === MISSING_PROPERTY_ERROR && isPatternRead(node)) ||
       ((diagnostic.code === NOT_ITERABLE_ERROR || NULLABLE_ERRORS.has(diagnostic.code)) &&
