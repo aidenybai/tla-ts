@@ -42465,4 +42465,33 @@ describe("BigInts", () => {
       ).toThrow("Give a Set keys of one kind, as TLC can't compare a number with a string");
     });
   });
+
+  describe("combines a Set with a Set or a Map of keys of the same kind", () => {
+    const getSource = (other: string, expected: string) => `
+      const letters = new Set(["a", "b"]);
+      const joined = letters.union(new Set([${other}]));
+      const kept = letters.intersection(new Map([["b", 1]]));
+      let log = "";
+      log += joined.size;
+      log += kept.has("b");
+      log += letters.isDisjointFrom(new Set([${other}]));
+      if (log !== "${expected}") throw new Error(log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource('"c"', "3truetrue"))).failure).toBeUndefined();
+    });
+
+    it("rejects a union without the other key", async () => {
+      expect((await checkModel(getSource('"c"', "2truetrue"))).failure?.message).toContain(
+        "3truetrue",
+      );
+    });
+
+    it("stops at a Set of numbers", () => {
+      expect(() => compile(getSource("3", "3truetrue"))).toThrow(
+        "Pass union() a Set or a Map of keys of the same kind, as TLC can't compare a number with a string",
+      );
+    });
+  });
 });

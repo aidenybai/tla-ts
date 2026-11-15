@@ -1372,6 +1372,19 @@ const translateSetMethod = (node: MethodCall, scope: Scope, context: Context) =>
   if (method !== "has" && kind !== "set" && kind !== "map") {
     throw new TlaTypeScriptError(`Pass a Set or a Map to ${method}()`, argument);
   }
+  const kinds = [node.expression.expression, argument].map((side) =>
+    getDeclaredKeyKinds(side, context.checker),
+  );
+  if (
+    method !== "has" &&
+    kinds.every((side) => side !== undefined) &&
+    new Set(kinds.flat()).size > 1
+  ) {
+    throw new TlaTypeScriptError(
+      `Pass ${method}() a Set or a Map of keys of the same kind, as TLC can't compare a number with a string`,
+      argument,
+    );
+  }
   const values = translateExpression(node.expression.expression, scope, context);
   const other = translateSetKey(argument, scope, context);
   return operation(values, method !== "has" && kind === "map" ? getDomain(other) : other);
