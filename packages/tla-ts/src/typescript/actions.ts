@@ -2121,6 +2121,27 @@ export const translateCallStatement = (
   if (isNullishArrayMethodCall(expression, context)) {
     return throwTypeError(path, expression, context, frame);
   }
+  if (isUnseededReduce(expression, context)) {
+    const name = context.names.getFresh("reduced");
+    const reduced = identifier(name);
+    return bindOnce(
+      path,
+      name,
+      translateExpression(
+        expression,
+        {
+          ...path.scope,
+          checkedReductions: new Set([...(path.scope.checkedReductions ?? []), expression]),
+        },
+        context,
+      ),
+      ifThenElse(
+        index(reduced, [number(1)]),
+        throwTypeError(path, expression, context, frame),
+        continueWith(path, index(reduced, [number(2)])),
+      ),
+    );
+  }
   // A receiver that may be undefined or null gives undefined to an optional chain, and throws a
   // TypeError otherwise.
   const guardReceiver = (receiver: ts.Expression, changed: Formula) => {
@@ -11010,7 +11031,23 @@ const isStatementResult = (node: ts.CallExpression, path: Path, context: Context
     getDispatched(node, path.scope.functions, context) !== undefined ||
     // A call inside try of a function that may throw runs its body, so that catch takes what it
     // throws.
-    (path.scope.isCatching && isThrowingCall(node, path, context)));
+    (path.scope.isCatching &&
+      (isThrowingCall(node, path, context) || isUnseededReduce(node, context))));
+
+// A call of an array's reduce or reduceRight without an initial value, which throws a TypeError
+// where the array has no element to start from.
+const isUnseededReduce = (node: ts.CallExpression, context: Context) => {
+  const arrayMethod = getArrayMethodCall(node, context);
+  const method = arrayMethod ?? (isMethodCall(node) ? node.expression.name.text : undefined);
+  return (
+    (method === "reduce" || method === "reduceRight") &&
+    !node.arguments.some(ts.isSpreadElement) &&
+    node.arguments.length === (arrayMethod === undefined ? 1 : 2) &&
+    (arrayMethod !== undefined ||
+      (isMethodCall(node) &&
+        context.checker.isArrayType(context.checker.getTypeAtLocation(node.expression.expression))))
+  );
+};
 
 // A call of a function that may throw, which a parameter or a variable may hold.
 const isThrowingCall = (node: ts.CallExpression, path: Path, context: Context) => {

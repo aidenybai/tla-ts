@@ -977,11 +977,15 @@ const translateSequenceOperation = (
       indices: call.indices,
     });
     const initial = call.arguments[1];
+    const reducer = lambda([accumulator, position], translateCallback(argument, inner, context));
+    if (scope.checkedReductions?.has(node) === true) {
+      return useJavaScript("CheckedReduce", [sequence, reducer, boolean(isRight)], context);
+    }
     return useJavaScript(
       "Reduce",
       [
         sequence,
-        lambda([accumulator, position], translateCallback(argument, inner, context)),
+        reducer,
         boolean(isRight),
         boolean(initial !== undefined),
         initial === undefined ? getUndefined(context) : translate(initial),

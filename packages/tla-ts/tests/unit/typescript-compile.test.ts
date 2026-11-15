@@ -739,6 +739,41 @@ describe("top-level statements", () => {
     expect(result.failure?.message).toContain("TypeError");
   });
 
+  it("throw a TypeError that catch takes where a reduce without an initial value has no element", async () => {
+    const getSource = (expected: string) => `
+      let log = "";
+      const attempt = (name: string, callback: () => void) => {
+        try {
+          callback();
+          log = log + name + "ok,";
+        } catch (error) {
+          log = log + name + (error instanceof TypeError ? "T," : "E,");
+        }
+      };
+      const add = (total: number, value: number) => total + value;
+      const empty: number[] = [];
+      const values = [1, 2, 3];
+      const holes = new Array<number>(3);
+      const sparse = new Array<number>(3);
+      sparse[1] = 5;
+      let total = 0;
+      attempt("a", () => { empty.reduce(add); });
+      attempt("b", () => { total = values.reduce(add) * 2; });
+      attempt("c", () => { empty.reduceRight(add); });
+      attempt("d", () => { total += values.reduceRight((sum, value) => sum * 10 + value); });
+      attempt("e", () => { holes.reduce(add); });
+      attempt("f", () => { total += sparse.reduce(add); });
+      attempt("g", () => { total += empty.reduce(add, 7); });
+      const result = log + total;
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    const expected = "aT,bok,cT,dok,eT,fok,gok,345";
+    expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    expect(
+      (await checkModel(getSource("aok,bok,cT,dok,eT,fok,gok,345"))).failure?.message,
+    ).toContain(expected);
+  });
+
   it("skip a hole in the array that map makes where nothing reads the array", async () => {
     const source = (expected: number) => `
       const items = [1, 2, 3];

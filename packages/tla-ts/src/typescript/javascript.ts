@@ -671,6 +671,11 @@ Reduce(sequence, Op(_, _), isRight, hasInitial, initial) ==
        [] length = 0 -> Assert(FALSE, "tla-ts can't throw the TypeError of reducing an empty array")
        [] OTHER -> ReduceAt(Op, sequence[order[1]], Tail(order))
 
+\\* Reduce without an initial value, which gives whether it found no element to start from, where
+\\* reduce throws a TypeError, and otherwise what it gives.
+CheckedReduce(sequence, Op(_, _), isRight) ==
+  IF sequence = <<>> THEN <<TRUE>> ELSE <<FALSE, Reduce(sequence, Op, isRight, FALSE, FALSE)>>
+
 IsRef(value) ==
   LET text == ToString(value)
   IN Len(text) >= 7 /\\ SubSeq(text, 1, 7) = "(Ref :>"
