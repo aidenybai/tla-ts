@@ -10443,6 +10443,15 @@ const translateExpressionStatement = (
       continueWith(path),
     );
   }
+  // A foreign new may also pass the objects that it makes, which exist before it throws.
+  if (
+    isForeignConstruction(expression, context) &&
+    (expression.arguments ?? []).every(
+      (argument) => isInertValue(argument) || path.scope.allocated.has(skipCasts(argument)),
+    )
+  ) {
+    return translateForeignNew(expression, path, context, frame);
+  }
   return translateWriteStatement(expression, path, context, frame, continueWith);
 };
 
@@ -11464,16 +11473,18 @@ const shareHeap = (path: Path, context: Context, continueWith: (path: Path) => F
   shareBinding(path, context.heap, "heap", context, continueWith);
 
 // A new of a value that isn't a class that the script declares, such as a built-in method, which
-// throws a TypeError if the value isn't a constructor. tla-ts can't call one that is. Its arguments
-// run first, so they must be values that can't throw.
-const isForeignNew = (node: ts.Node, context: Context): node is ts.NewExpression =>
+// throws a TypeError if the value isn't a constructor. tla-ts can't call one that is.
+const isForeignConstruction = (node: ts.Node, context: Context): node is ts.NewExpression =>
   ts.isNewExpression(node) &&
   context.heap !== undefined &&
   getNewClass(node, context) === undefined &&
   getErrorClass(getSymbol(node.expression, context.checker), context.checker) === undefined &&
   !["Set", "Map"].includes(node.expression.getText()) &&
-  (node.arguments ?? []).every(isInertValue) &&
   !isProxyOperation(node, context);
+
+// A foreign new whose arguments are values that can't throw.
+const isForeignNew = (node: ts.Node, context: Context): node is ts.NewExpression =>
+  isForeignConstruction(node, context) && (node.arguments ?? []).every(isInertValue);
 
 const translateForeignNew = (
   expression: ts.NewExpression,

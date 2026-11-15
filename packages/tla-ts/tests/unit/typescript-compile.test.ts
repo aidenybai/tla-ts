@@ -9381,6 +9381,34 @@ describe("errors", () => {
     });
   });
 
+  describe("throws the TypeError of a new of a built-in function that it passes the objects it makes", () => {
+    const getSource = (expected: number) => `
+      let thrown = 0;
+      try {
+        new (Atomics.add as unknown as new (...args: unknown[]) => object)(
+          new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT)),
+        );
+      } catch (error) {
+        if (error instanceof TypeError) thrown++;
+      }
+      try {
+        new (Symbol.keyFor as unknown as new (...args: unknown[]) => object)(Symbol());
+      } catch (error) {
+        if (error instanceof TypeError) thrown++;
+      }
+      const getThrown = (): number => thrown;
+      if (getThrown() !== ${expected}) throw new Error("thrown");
+    `;
+
+    it("agrees with Node on 2", async () => {
+      expect((await checkModel(getSource(2))).failure).toBeUndefined();
+    });
+
+    it("rejects the expectation 1", async () => {
+      expect((await checkModel(getSource(1))).failure?.message).toContain('"thrown"');
+    });
+  });
+
   it("gives the receiver of the @@species getter that a script takes from its descriptor", async () => {
     const getSource = (expected: number) => `
       const holder = {};
