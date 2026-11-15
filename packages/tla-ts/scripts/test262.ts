@@ -274,10 +274,12 @@ const getPatternType = (name: ts.BindingName): string | undefined => {
       ? "Iterable<unknown>"
       : `[${elements.join(", ")}]`;
   }
+  // A rest element gathers each other key's value.
   const properties = name.elements.map((element) => {
+    if (element.dotDotDotToken !== undefined) return "[key: string | symbol]: unknown";
     const key = element.propertyName ?? element.name;
     const type = getPatternType(element.name);
-    if (element.dotDotDotToken !== undefined || type === undefined) return undefined;
+    if (type === undefined) return undefined;
     return ts.isIdentifier(key) || ts.isStringLiteral(key) || ts.isNumericLiteral(key)
       ? `${key.getText()}?: ${type}`
       : undefined;
