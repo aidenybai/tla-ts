@@ -2437,7 +2437,9 @@ const isNodeSyntaxError = (source: string) => {
 
 // A test that expects a SyntaxError passes when tla-ts rejects the program with one.
 const runSyntaxTest = (id: string, source: string, metadata: Metadata): TestRun => {
-  const strict = metadata.flags.includes("onlyStrict") ? '"use strict";\n' : "";
+  // A module is strict code, which tla-ts reads only of a file that imports or exports.
+  const strict =
+    metadata.flags.includes("onlyStrict") || metadata.isModule ? '"use strict";\n' : "";
   const isRejected = metadata.isModule
     ? isModuleSyntaxError(source)
     : isNodeSyntaxError(`${strict}${source}`);
