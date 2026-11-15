@@ -70,6 +70,7 @@ const PORTED_INCLUDES = new Map([
     "decimalToHexString.js",
     readFileSync(join(CONFORMANCE_DIRECTORY, "test262-decimal-to-hex-string.ts"), "utf8"),
   ],
+  ["regExpUtils.js", readFileSync(join(CONFORMANCE_DIRECTORY, "test262-reg-exp-utils.ts"), "utf8")],
 ]);
 
 // An async test's harness defines $DONE, as doneprintHandle.js does.
@@ -110,6 +111,10 @@ const getMetadata = (source: string): Metadata => {
     isModule: flags.includes("module"),
   };
 };
+
+// A property escape test's buildString call, which makes a string of each code point in ranges
+// that reach past a million, more than TLC can hold.
+const BUILT_STRING = /\bbuildString\(/;
 
 // Tests that end Node itself, such as with a segmentation fault, which would end this script.
 const NODE_CRASHES = new Set([
@@ -2494,6 +2499,9 @@ const runTest = async (path: string): Promise<TestRun> => {
   const skipReason = NODE_CRASHES.has(id) ? "Node crashes" : getSkipReason(metadata);
   if (skipReason !== undefined) return { id, outcome: "skipped", reason: skipReason };
   if (metadata.isSyntaxError) return runSyntaxTest(id, source, metadata);
+  if (BUILT_STRING.test(source)) {
+    return { id, outcome: "skipped", reason: "a string of every code point in large ranges" };
+  }
   if (metadata.isModule && LINKED_MODULE.test(source.slice(source.indexOf("---*/")))) {
     return { id, outcome: "skipped", reason: "a module that imports or exports" };
   }
