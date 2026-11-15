@@ -432,7 +432,7 @@ export interface Path {
 }
 
 interface KnownDefault {
-  initializer: ts.Expression;
+  expression: ts.Expression;
   isRun: boolean;
 }
 
@@ -6985,6 +6985,107 @@ const getSymbols = (node: ts.Node, context: Context) =>
 const getInitializers = (node: ts.Node) =>
   findNodes(node, ts.isBindingElement).flatMap((element) => element.initializer ?? []);
 
+// What binding a name evaluates, in order: each element's computed key, its default, and its
+// nested pattern, which may throw or run an iterator.
+const getPatternSteps = (name: ts.BindingName): ts.Node[] =>
+  ts.isIdentifier(name)
+    ? []
+    : name.elements.flatMap((element) =>
+        ts.isOmittedExpression(element)
+          ? []
+          : [
+              ...(element.propertyName !== undefined &&
+              ts.isComputedPropertyName(element.propertyName)
+                ? [element.propertyName.expression]
+                : []),
+              ...(element.initializer === undefined ? [] : [element.initializer]),
+              ...(ts.isIdentifier(element.name)
+                ? []
+                : [element.name, ...getPatternSteps(element.name)]),
+            ],
+      );
+
+// Whether a call is no computed key, or one that binding the names evaluates before anything
+// that may throw or run code: what evaluates before it ran already, or is a value such as a
+// literal, or is a pattern around it, whose value is a literal object.
+const isFirstKey = (
+  names: readonly ts.BindingName[],
+  call: ts.Expression,
+  path: Path,
+  context: Context,
+) => {
+  const steps = names.flatMap((name) => [
+    ...(ts.isParameter(name.parent) && name.parent.initializer !== undefined
+      ? [name.parent.initializer]
+      : []),
+    ...(ts.isIdentifier(name) ? [] : [name, ...getPatternSteps(name)]),
+  ]);
+  const at = steps.findIndex((step) => ts.isExpression(step) && getCast(step) === call);
+  return (
+    at === -1 ||
+    !ts.isComputedPropertyName(steps[at].parent) ||
+    steps
+      .slice(0, at)
+      .every((step) =>
+        ts.isBindingName(step)
+          ? step.pos <= call.pos && call.end <= step.end && !isGetterPattern(step, path, context)
+          : ts.isExpression(step) &&
+            (path.scope.results.has(getCast(step)) || isInertValue(getCast(step))),
+      )
+  );
+};
+
+// Runs the computed key of an object pattern's first property as its own statement, where only
+// statements can run its call, before the pattern reads the value. A value that is null or
+// undefined throws its TypeError as the pattern binds, before the key.
+const runFirstKey = (
+  name: ts.BindingName,
+  value: Expression,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path) => Formula,
+) => {
+  const key = ts.isObjectBindingPattern(name) ? name.elements.at(0)?.propertyName : undefined;
+  const call =
+    key !== undefined && ts.isComputedPropertyName(key) ? getCast(key.expression) : undefined;
+  if (
+    call === undefined ||
+    !ts.isCallExpression(call) ||
+    path.scope.results.has(call) ||
+    !(isStatementCall(call, path, context) || (path.scope.isCatching && mayThrow(call, context)))
+  ) {
+    return undefined;
+  }
+  const bound = new Set(
+    findNodes(name, ts.isBindingElement).flatMap((element) =>
+      ts.isIdentifier(element.name) ? getSymbols(element.name, context) : [],
+    ),
+  );
+  if (getSymbols(call, context).some((symbol) => bound.has(symbol))) {
+    throw new TlaTypeScriptError("tla-ts can't run this key before what it binds", call);
+  }
+  return translateJoined(
+    call,
+    path,
+    context,
+    (after, result) =>
+      continueWith({
+        ...after,
+        scope: {
+          ...after.scope,
+          results: new Map([...after.scope.results, [call, result ?? getUndefined(context)]]),
+        },
+      }),
+    (next) =>
+      ifThenElse(
+        isNullish(value, context),
+        next(path, getUndefined(context)),
+        translateCallStatement(call, path, context, frame, next),
+      ),
+  );
+};
+
 // Runs the first of the defaults that bindings certainly evaluate whose call only statements can
 // run, as its own statement before the bindings, which take its value from the path's results.
 // The call must not read what the bindings bind, and the other expressions that the bindings
@@ -7000,8 +7101,8 @@ const runCertainDefault = (
   continueWith: (path: Path) => Formula,
 ) => {
   const skipped = known
-    .filter((entry) => !entry.isRun && !path.scope.results.has(entry.initializer))
-    .map((entry): [ts.Expression, Expression] => [entry.initializer, getUndefined(context)]);
+    .filter((entry) => !entry.isRun && !path.scope.results.has(entry.expression))
+    .map((entry): [ts.Expression, Expression] => [entry.expression, getUndefined(context)]);
   if (skipped.length > 0) {
     return continueWith({
       ...path,
@@ -7010,7 +7111,7 @@ const runCertainDefault = (
   }
   const run = known
     .filter((entry) => entry.isRun)
-    .map((entry) => getCast(entry.initializer))
+    .map((entry) => getCast(entry.expression))
     .filter((initializer) => !path.scope.results.has(initializer));
   const pending = run.filter(
     (initializer): initializer is ts.CallExpression =>
@@ -7025,6 +7126,12 @@ const runCertainDefault = (
     return throwError("ReferenceError", path, run[unresolved], context, frame);
   }
   if (first === undefined) return undefined;
+  if (!isFirstKey(names, first, path, context)) {
+    throw new TlaTypeScriptError(
+      "tla-ts can't run a computed key's call after what its pattern evaluates before it",
+      first,
+    );
+  }
   const bound = new Set(
     names
       .flatMap((name) => [
@@ -7069,7 +7176,7 @@ const runCertainDefault = (
 
 // The defaults that binding a name to a value certainly evaluates or skips, in order: its own,
 // where the value is undefined or a literal that isn't, and, where the value is a literal, those
-// of the elements and properties of the literal.
+// of the elements and properties of the literal, with the computed keys of the properties.
 const getKnownDefaults = (
   name: ts.BindingName,
   value: ts.Expression | undefined,
@@ -7079,11 +7186,16 @@ const getKnownDefaults = (
   if (value === undefined || isUndefinedLiteral(value, context)) {
     return initializer === undefined
       ? []
-      : [{ initializer, isRun: true }, ...getKnownDefaults(name, initializer, undefined, context)];
+      : [
+          { expression: initializer, isRun: true },
+          ...getKnownDefaults(name, initializer, undefined, context),
+        ];
   }
   const literal = getCast(value);
   const own =
-    initializer !== undefined && isDefinedLiteral(literal) ? [{ initializer, isRun: false }] : [];
+    initializer !== undefined && isDefinedLiteral(literal)
+      ? [{ expression: initializer, isRun: false }]
+      : [];
   return [...own, ...getLiteralDefaults(name, literal, context)];
 };
 
@@ -7134,6 +7246,7 @@ const getLiteralDefaults = (
     const restAt = name.elements.findIndex((element) => element.dotDotDotToken !== undefined);
     return name.elements.slice(0, restAt === -1 ? undefined : restAt).flatMap((element) => {
       const key = element.propertyName ?? element.name;
+      if (ts.isComputedPropertyName(key)) return [{ expression: key.expression, isRun: true }];
       if (!ts.isIdentifier(key) || Object.hasOwn(Object.prototype, key.text)) return [];
       const property = literal.properties.findLast(
         (candidate) =>
@@ -12746,6 +12859,10 @@ const bindElement = (
       (after) => bindElement(declared, element, source, after, context, frame, continueWith),
     );
   if (defaulted !== undefined) return defaulted;
+  const keyed = runFirstKey(name, element, path, context, frame, (after) =>
+    bindElement(declared, element, source, after, context, frame, continueWith),
+  );
+  if (keyed !== undefined) return keyed;
   const taken =
     ts.isArrayBindingPattern(name) &&
     takeFromIterator(name, element, path, context, frame, (after, values) =>
@@ -14342,6 +14459,12 @@ const translateTry = (
   const bodyFrame = statement.finallyBlock === undefined ? outer : guardYields(outer);
   const bindCatch = (clause: ts.CatchClause, caught: Path, value: Expression): Formula => {
     const declaration = clause.variableDeclaration;
+    const keyed =
+      declaration &&
+      runFirstKey(declaration.name, value, caught, context, bodyFrame, (after) =>
+        bindCatch(clause, after, value),
+      );
+    if (keyed !== undefined) return keyed;
     // A default of a catch's pattern whose call only statements can run, such as one that throws
     // inside another try, runs as its own statement where the pattern takes undefined for it.
     const defaulted =

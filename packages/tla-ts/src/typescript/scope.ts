@@ -39,7 +39,7 @@ import {
   string,
   tuple,
 } from "./tla";
-import { getHeap } from "./heap";
+import { getHeap, translatePropertyKey } from "./heap";
 import { translateBuiltInValue } from "./intrinsics";
 import { useJavaScript } from "./javascript";
 import { getField, getPathStep, getPropertyKey, isHeapPattern, isSequenceType } from "./types";
@@ -525,6 +525,34 @@ export const bindPatternInline = (
       );
     }
     const name = element.propertyName ?? element.name;
+    // A computed key evaluates before the pattern reads it, and a value that the heap doesn't hold
+    // stops.
+    if (
+      ts.isComputedPropertyName(name) &&
+      heapSymbol !== undefined &&
+      current.read?.has(element) !== true
+    ) {
+      const got = useJavaScript(
+        "Get",
+        [
+          getHeap(current, element, context),
+          value,
+          translatePropertyKey(name.expression, current, context),
+        ],
+        context,
+      );
+      const part = isHeapPattern(type, pattern, context)
+        ? got
+        : ifExpression(
+            useJavaScript("IsRef", [value], context),
+            got,
+            apply("Assert", [
+              boolean(false),
+              string("tla-ts can't read a computed key of this value"),
+            ]),
+          );
+      return bindPatternInline(element.name, withDefault(part), current, context);
+    }
     const key =
       ts.isObjectBindingPattern(name) || ts.isArrayBindingPattern(name)
         ? undefined
@@ -583,17 +611,30 @@ export const bindPatternInline = (
   // A nested pattern may destructure an element that an array lacks, which throws a TypeError
   // that TLC would find only where something reads what the pattern binds.
   if (!isHeapObject && !ts.isBindingElement(pattern.parent)) return bound;
-  const keys = (isHeapObject ? pattern.elements : []).flatMap((element) => {
-    if (element.dotDotDotToken !== undefined || scope.read?.has(element)) return [];
+  const elements = (isHeapObject ? pattern.elements : []).filter(
+    (element) => element.dotDotDotToken === undefined && !scope.read?.has(element),
+  );
+  const keys = elements.flatMap((element) => {
     const name = element.propertyName ?? element.name;
     const key =
       ts.isIdentifier(name) || ts.isStringLiteral(name) ? getPropertyKey(name) : undefined;
     return key === undefined ? [] : [string(key)];
   });
-  const read = useJavaScript(
-    "ReadKeys",
-    [getHeap(bound, pattern, context), value, set(keys)],
-    context,
+  // A computed key may be a symbol, which TLC can't keep in a set with strings.
+  const read = elements.reduce(
+    (heap, element) =>
+      element.propertyName !== undefined && ts.isComputedPropertyName(element.propertyName)
+        ? useJavaScript(
+            "ReadKeys",
+            [
+              heap,
+              value,
+              set([translatePropertyKey(element.propertyName.expression, bound, context)]),
+            ],
+            context,
+          )
+        : heap,
+    useJavaScript("ReadKeys", [getHeap(bound, pattern, context), value, set(keys)], context),
   );
   return { ...bound, bindings: new Map([...bound.bindings, [heapSymbol, read]]) };
 };

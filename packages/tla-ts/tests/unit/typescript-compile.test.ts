@@ -6494,6 +6494,51 @@ describe("calls", () => {
     expect((await checkModel(getSource("thrown,1"))).failure?.message).toContain("thrown,0");
   });
 
+  it("evaluates a pattern's computed key before it reads the property", async () => {
+    const getSource = (expected: string) => `
+      let count = 0;
+      function thrower(): never {
+        throw new Error("key");
+      }
+      const getKey = (): "x" => {
+        count++;
+        return "x";
+      };
+      const getName = (error: unknown) =>
+        error instanceof TypeError ? "type" : (error as Error).message;
+      const read = ({ [thrower()]: x }: { x?: number }) => \`\${x}\`;
+      let parameter = "none";
+      try {
+        parameter = read({});
+      } catch (error) {
+        parameter = getName(error);
+      }
+      const { [getKey()]: declared } = { x: 1 };
+      let iterated = "";
+      try {
+        for (const { [getKey()]: x } of [{ x: 2 }, null] as { x?: number }[]) iterated += x;
+      } catch (error) {
+        iterated += getName(error);
+      }
+      let caught = "none";
+      try {
+        try {
+          throw {};
+        } catch ({ [thrower()]: x }) {
+          caught = "body";
+        }
+      } catch (error) {
+        caught = getName(error);
+      }
+      const text = \`\${parameter},\${declared},\${iterated},\${caught},\${count}\`;
+      if (text !== "${expected}") throw new Error(text);
+    `;
+    expect((await checkModel(getSource("key,1,2type,key,2"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("key,1,2type,key,3"))).failure?.message).toContain(
+      "key,1,2type,key,2",
+    );
+  });
+
   it("runs helpers that call one that throws as operators, where the caller catches it", async () => {
     const getSource = (expected: string) => `
       const run = () => {
