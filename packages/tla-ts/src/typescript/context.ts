@@ -1261,9 +1261,14 @@ export const isTimerCall = (node: ts.CallExpression, context: Context) => {
 // can't follow what the statement's object binds.
 export const WITH_STOP = "$tlaWithStop";
 
-const isScriptDeclaredCall = (node: ts.CallExpression, context: Context) => {
-  const declarations = ts.isIdentifier(node.expression)
-    ? (getSymbol(node.expression, context.checker)?.declarations ?? [])
+// The value that a delete outside strict mode leaves a global that a write makes, which reads throw
+// for until a write makes it again.
+export const DELETED_GLOBAL = "$tlaDeletedGlobal";
+
+// A name that only a script's declare gives.
+const isScriptDeclared = (node: ts.Expression, context: Context) => {
+  const declarations = ts.isIdentifier(node)
+    ? (getSymbol(node, context.checker)?.declarations ?? [])
     : [];
   return (
     declarations.length > 0 &&
@@ -1274,6 +1279,9 @@ const isScriptDeclaredCall = (node: ts.CallExpression, context: Context) => {
   );
 };
 
+export const isDeletedGlobal = (node: ts.Identifier, context: Context) =>
+  node.text === DELETED_GLOBAL && isScriptDeclared(node, context);
+
 // The reason that a call of a with statement's stop gives.
 export const getWithStop = (node: ts.CallExpression, context: Context) => {
   const reason = node.arguments.at(0);
@@ -1281,7 +1289,7 @@ export const getWithStop = (node: ts.CallExpression, context: Context) => {
     node.expression.text === WITH_STOP &&
     reason !== undefined &&
     ts.isStringLiteral(reason) &&
-    isScriptDeclaredCall(node, context)
+    isScriptDeclared(node.expression, context)
     ? reason.text
     : undefined;
 };
@@ -1290,7 +1298,7 @@ export const getWithStop = (node: ts.CallExpression, context: Context) => {
 // that tla-ts has no model of.
 export const rejectDeclaredCall = (node: ts.CallExpression, context: Context) => {
   if (
-    isScriptDeclaredCall(node, context) &&
+    isScriptDeclared(node.expression, context) &&
     getWithStop(node, context) === undefined &&
     !isTimerCall(node, context)
   ) {

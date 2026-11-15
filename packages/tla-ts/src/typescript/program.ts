@@ -11,6 +11,7 @@ import {
   isVarFunction,
 } from "./context";
 import { rejectEarlyErrors } from "./early-errors";
+import { rewriteNameDeletes } from "./name-deletes";
 import { rewriteWithStatements } from "./with-statements";
 
 // TypeScript checks every file as a module, so it rejects a word that only strict mode reserves, as
@@ -259,9 +260,12 @@ export const createProgram = (
   if (syntaxErrors.length > 0)
     throw new TlaTypeScriptError(ts.formatDiagnostics(syntaxErrors, host));
   rejectEarlyErrors(firstSourceFile);
-  const text = rewriteWithStatements(firstSourceFile, firstProgram.getTypeChecker());
+  const withText = rewriteWithStatements(firstSourceFile, firstProgram.getTypeChecker());
+  const withProgram =
+    withText === firstText ? firstProgram : createTypeScriptProgram([path], withText, new Set());
+  const text = rewriteNameDeletes(getModelSourceFile(withProgram), withProgram.getTypeChecker());
   const rewrittenProgram =
-    text === firstText ? firstProgram : createTypeScriptProgram([path], text, new Set());
+    text === withText ? withProgram : createTypeScriptProgram([path], text, new Set());
   const rewrittenChecker = rewrittenProgram.getTypeChecker();
   const globals = getImplicitGlobals(getModelSourceFile(rewrittenProgram), (name) =>
     getSymbol(name, rewrittenChecker),

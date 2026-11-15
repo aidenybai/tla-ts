@@ -42838,4 +42838,61 @@ describe("BigInts", () => {
       expect(() => compile(`"use strict"; delete Math.E;`)).toThrow("TS2704");
     });
   });
+
+  describe("a delete of a name outside strict mode", () => {
+    const getSource = (expected: string) => `
+      const seen: unknown[] = [];
+      var declared = 1;
+      function declaredFunction() {}
+      let lexical = 2;
+      // @ts-ignore
+      seen.push(delete declared, delete declaredFunction, delete lexical, delete NaN, delete nothing);
+      function deleteParameter(first: number) {
+        return [delete first, delete arguments, typeof arguments].join("/");
+      }
+      seen.push(deleteParameter(1));
+      // @ts-ignore
+      made = 1;
+      // @ts-ignore
+      var result = delete made;
+      // @ts-ignore
+      seen.push(result, typeof made);
+      try {
+        // @ts-ignore
+        made;
+        seen.push("read");
+      } catch (error) {
+        seen.push(error instanceof ReferenceError);
+      }
+      // @ts-ignore
+      made = 3;
+      // @ts-ignore
+      seen.push(made);
+      if (seen.join() !== "${expected}") throw new Error("seen " + seen.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (
+          await checkModel(
+            getSource("false,false,false,false,true,false/false/object,true,undefined,true,3"),
+          )
+        ).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects the global kept", async () => {
+      expect(
+        (
+          await checkModel(
+            getSource("false,false,false,false,true,false/false/object,true,number,read,3"),
+          )
+        ).failure?.message,
+      ).toContain("seen false,false,false,false,true,false/false/object,true,undefined,true,3");
+    });
+
+    it("keeps the type error of a global that the host defines", () => {
+      expect(() => compile(`delete JSON;`)).toThrow("TS1102");
+    });
+  });
 });

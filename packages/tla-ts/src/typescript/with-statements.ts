@@ -267,21 +267,12 @@ export const rewriteWithStatements = (file: ts.SourceFile, checker: ts.TypeCheck
         (name) => (isDeclared(name) ? `typeof ${name.text}` : `"undefined"`),
       );
     }
-    // A binding that a declaration makes can't be deleted, and where no binding has the name,
-    // delete gives true.
+    // Where no object binds the name, the delete stays one of the name.
     if (ts.isDeleteExpression(node)) {
       return getNameForm(
         node.expression,
         (object, quoted) => `delete (${object} as any)[${quoted}]`,
-        (name) => {
-          const declarations = resolve(name)?.declarations;
-          if (declarations === undefined) {
-            return implicitGlobals.has(name.text) ? `delete ${name.text}` : "true";
-          }
-          return declarations.every((declaration) => declaration.getSourceFile() === file)
-            ? "false"
-            : `delete ${name.text}`;
-        },
+        (name) => `delete ${name.text}`,
       );
     }
     if (
