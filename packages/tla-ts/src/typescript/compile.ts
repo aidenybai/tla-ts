@@ -167,6 +167,27 @@ const NAN_OPERATORS = new Set([
   ts.SyntaxKind.CaretEqualsToken,
 ]);
 
+// An argument that a built-in takes as a value, such as a Set's key or an array's element, rather
+// than as a callback that it calls, whose declared type has call signatures.
+const isBuiltInValueArgument = (node: ts.Expression, checker: ts.TypeChecker) => {
+  const call = node.parent;
+  if (!ts.isCallExpression(call) && !ts.isNewExpression(call)) return false;
+  const position = call.arguments?.indexOf(node) ?? -1;
+  const declaration =
+    position < 0 ? undefined : checker.getResolvedSignature(call)?.getDeclaration();
+  const parameters = declaration?.parameters ?? [];
+  const parameter = parameters[position] ?? parameters.at(-1);
+  const type =
+    parameter?.type === undefined ? undefined : checker.getTypeFromTypeNode(parameter.type);
+  const members = type === undefined ? [] : type.isUnion() ? type.types : [type];
+  return (
+    declaration !== undefined &&
+    declaration.getSourceFile().isDeclarationFile &&
+    type !== undefined &&
+    members.every((member) => member.getCallSignatures().length === 0)
+  );
+};
+
 export const compile = (
   source: string,
   fileName = "spec.ts",
@@ -564,14 +585,18 @@ export const compile = (
       isRegExpArray(
         context.checker.getNonNullableType(context.checker.getTypeAtLocation(node.expression)),
       )) ||
-    // A function that a script holds as a value, such as an array's element or an operand, which
-    // only a model value on the heap can be.
+    // A function that a script holds as a value, such as an array's element, an operand, a cast's
+    // operand, or a value that a built-in takes, which only a model value on the heap can be.
     (ts.isIdentifier(node) &&
       (ts.isArrayLiteralExpression(node.parent) ||
         ts.isBinaryExpression(node.parent) ||
         ts.isPrefixUnaryExpression(node.parent) ||
         ts.isConditionalExpression(node.parent) ||
-        (ts.isVariableDeclaration(node.parent) && node.parent.initializer === node)) &&
+        ts.isAsExpression(node.parent) ||
+        ts.isTypeAssertionExpression(node.parent) ||
+        ts.isSatisfiesExpression(node.parent) ||
+        (ts.isVariableDeclaration(node.parent) && node.parent.initializer === node) ||
+        isBuiltInValueArgument(node, context.checker)) &&
       getFunction(getTopLevelDeclaration(getSymbol(node, context.checker))) !== undefined) ||
     // A function that a block declares outside strict mode, which its var holds as a value.
     isVarFunction(node) ||

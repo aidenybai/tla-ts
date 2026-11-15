@@ -10201,16 +10201,16 @@ describe("errors", () => {
         `)
       ).failure?.message;
     expect(await converts("number", "new Date(value)", "made.getTime()", "5")).toContain(
-      "tla-ts can't convert this object to a number",
+      "tla-ts can't give a typed name, parameter, property, or element a value of another kind",
     );
     expect(await converts("number", "new Date(2020, 1, value)", "made.getDate()", "5")).toContain(
-      "tla-ts can't convert this object to a number",
+      "tla-ts can't give a typed name, parameter, property, or element a value of another kind",
     );
     expect(await converts("number", "new Number(value)", "made.valueOf()", "5")).toContain(
-      "tla-ts can't convert this object to a number",
+      "tla-ts can't give a typed name, parameter, property, or element a value of another kind",
     );
     expect(await converts("string", "new String(value)", "made.valueOf()", '"x"')).toContain(
-      "tla-ts can't convert this object to a string",
+      "tla-ts can't give a typed name, parameter, property, or element a value of another kind",
     );
     const result = await checkModel(`
       const time = 5;
@@ -44292,6 +44292,150 @@ describe("BigInts", () => {
     it("rejects a map's key as its property", async () => {
       expect((await checkModel(getSource("false,true,true"))).failure?.message).toContain(
         "false,true,false",
+      );
+    });
+  });
+
+  describe("checks the kind of a value of type any that a typed slot takes", () => {
+    const getSource = (expected: string) => `
+      const values: any[] = [2, "b", undefined];
+      const isTwo = (value: number) => value === 2;
+      const getName = (): string => values[1];
+      const counts: number[] = [0];
+      counts[0] = values[0];
+      counts.push(values[2]);
+      var total = 1;
+      total = values[0];
+      const label: string = values[1];
+      const log = [
+        isTwo(values[0]),
+        isTwo(values[2]),
+        getName() === "b",
+        counts.indexOf(2),
+        total === 2,
+        label + "c",
+      ].join();
+      if (log !== "${expected}") throw new Error(log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("true,false,true,0,true,bc"))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong log", async () => {
+      expect((await checkModel(getSource("true,true,true,0,true,bc"))).failure?.message).toContain(
+        "true,false,true,0,true,bc",
+      );
+    });
+
+    it.each([
+      [
+        "a parameter",
+        "const isTwo = (value: number) => value === 2; if (isTwo(name)) throw new Error();",
+      ],
+      ["a variable", "const count: number = name; if (count === 2) throw new Error();"],
+      ["an element", "const counts = [1]; counts[0] = name; counts.indexOf(2);"],
+      ["a pushed element", "const counts = [1]; counts.push(name); counts.indexOf(2);"],
+      [
+        "a Map's value",
+        "const sizes = new Map([['a', 1]]); sizes.set('a', name); if (sizes.get('a') === 2) throw 1;",
+      ],
+      [
+        "a property",
+        "const point = { x: 1 }; point.x = name; if (point.x === 2) throw new Error();",
+      ],
+      ["a return", "const getCount = (): number => name; if (getCount() === 2) throw new Error();"],
+      ["an assigned var", "var count = 1; count = name; if (count === 2) throw new Error();"],
+    ])("stops at a value of another kind in %s", async (_, code) => {
+      const result = await checkModel(`
+        const read = (): any => "a";
+        const name = read();
+        ${code}
+      `).catch((error: unknown) => ({ failure: { message: String(error) } }));
+      expect(result.failure?.message).toContain(
+        "tla-ts can't give a typed name, parameter, property, or element a value of another kind",
+      );
+    });
+  });
+
+  describe("holds a function that a built-in takes as a value", () => {
+    const getSource = (expected: string) => `
+      function getOne() {
+        return 1;
+      }
+      function double(value: number) {
+        return value * 2;
+      }
+      const seen = new Set<Function>();
+      seen.add(double);
+      const list: Function[] = [];
+      list.push(getOne);
+      const log = [
+        seen.has(double),
+        seen.has(getOne),
+        seen.has(double as any),
+        list.indexOf(getOne),
+        list.includes(double),
+      ].join();
+      if (log !== "${expected}") throw new Error(log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("true,false,true,0,false"))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong log", async () => {
+      expect((await checkModel(getSource("true,true,true,0,false"))).failure?.message).toContain(
+        "true,false,true,0,false",
+      );
+    });
+
+    it("stops at a function as a key of a Map of strings", async () => {
+      const result = await checkModel(`
+        function double(value: number) {
+          return value * 2;
+        }
+        const names = new Map<string, number>([["a", 1]]);
+        if (names.has(double as any)) throw new Error("has");
+      `);
+      expect(result.failure?.message).toContain(
+        "tla-ts can't compare a key of another kind with the keys of a Set or a Map",
+      );
+    });
+  });
+
+  describe("checks the kind of a value of type any that a logical assignment gives", () => {
+    const getSource = (expected: string) => `
+      const values: any[] = [3, "b"];
+      let count: number | undefined;
+      count ??= values[0];
+      let label = "";
+      label ||= values[1];
+      let isSet = true;
+      isSet &&= values[0] === 3;
+      const log = [count === 3, label + "c", isSet].join();
+      if (log !== "${expected}") throw new Error(log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("true,bc,true"))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong log", async () => {
+      expect((await checkModel(getSource("true,b,true"))).failure?.message).toContain(
+        "true,bc,true",
+      );
+    });
+
+    it("stops at a value of another kind", async () => {
+      const result = await checkModel(`
+        const read = (): any => "a";
+        let count: number | undefined;
+        count ??= read();
+        if (count === 2) throw new Error("count");
+      `);
+      expect(result.failure?.message).toContain(
+        "tla-ts can't give a typed name, parameter, property, or element a value of another kind",
       );
     });
   });

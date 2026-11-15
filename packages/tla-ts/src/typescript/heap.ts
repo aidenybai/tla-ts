@@ -4443,8 +4443,7 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
       .flatMap((type) => (type.isUnion() ? type.types : [type]))
       .some(
         (member) =>
-          (member.flags &
-            (ts.TypeFlags.Any | ts.TypeFlags.Unknown | ts.TypeFlags.NonPrimitive)) !==
+          (member.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown | ts.TypeFlags.NonPrimitive)) !==
             0 ||
           ((member.flags & ts.TypeFlags.Object) !== 0 &&
             member.getProperties().length === 0 &&

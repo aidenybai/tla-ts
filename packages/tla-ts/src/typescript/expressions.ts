@@ -1812,27 +1812,134 @@ export const translateSetKey = (node: ts.Expression, scope: Scope, context: Cont
     0
       ? getTakerKeyKinds(node, context)
       : undefined;
-  if (kinds === undefined || kinds.length === 0) return key;
-  return share(key, "key", context, (shared) =>
+  return kinds === undefined || kinds.length === 0
+    ? key
+    : translateKindCheck(
+        key,
+        kinds,
+        "tla-ts can't compare a key of another kind with the keys of a Set or a Map",
+        context,
+      );
+};
+
+// A value that stops the check unless TLC can compare it with values of the kinds that typeof
+// gives, where typeof can't tell an object from a function without the heap.
+const translateKindCheck = (
+  value: Expression,
+  kinds: string[],
+  message: string,
+  context: Context,
+) =>
+  share(value, "value", context, (shared) =>
     ifExpression(
       useJavaScript(
-        "IsComparableKey",
+        "IsComparableKind",
         [
           shared,
           set(
-            kinds.flatMap((kind) => (kind === "object" ? [kind, "function"] : [kind])).map(string),
+            kinds
+              .flatMap((kind) =>
+                kind === "object" || kind === "function" ? ["object", "function"] : [kind],
+              )
+              .map(string),
           ),
         ],
         context,
       ),
       shared,
-      apply("Assert", [
-        boolean(false),
-        string("tla-ts can't compare a key of another kind with the keys of a Set or a Map"),
-      ]),
+      apply("Assert", [boolean(false), string(message)]),
     ),
   );
+
+// The assignments that give their target the value on their right.
+const SLOT_ASSIGNMENTS = new Set([
+  ts.SyntaxKind.EqualsToken,
+  ts.SyntaxKind.QuestionQuestionEqualsToken,
+  ts.SyntaxKind.BarBarEqualsToken,
+  ts.SyntaxKind.AmpersandAmpersandEqualsToken,
+]);
+
+// The kinds of the values of the slot that a script's value of type any or unknown goes into: a
+// typed variable, parameter, property, element, or return, which the script's code then compares
+// and combines as values of those kinds. A built-in's parameter takes a value of any kind, and a
+// pattern reads a value of any kind.
+const getSlotKinds = (node: ts.Expression, context: Context) => {
+  const getOuter = (inner: ts.Expression): ts.Expression =>
+    ts.isArrayLiteralExpression(inner.parent) ||
+    (ts.isSpreadElement(inner.parent) && ts.isArrayLiteralExpression(inner.parent.parent))
+      ? getOuter(ts.isSpreadElement(inner.parent) ? inner.parent.parent : inner.parent)
+      : (ts.isPropertyAssignment(inner.parent) && inner.parent.initializer === inner) ||
+          ts.isShorthandPropertyAssignment(inner.parent)
+        ? getOuter(inner.parent.parent)
+        : inner;
+  const outer = getOuter(node);
+  const parent = outer.parent;
+  const isCall = ts.isCallExpression(parent) || ts.isNewExpression(parent);
+  const isSlot =
+    ((ts.isVariableDeclaration(parent) ||
+      ts.isParameter(parent) ||
+      ts.isBindingElement(parent) ||
+      ts.isPropertyDeclaration(parent)) &&
+      parent.initializer === outer &&
+      ts.isIdentifier(parent.name)) ||
+    (ts.isBinaryExpression(parent) &&
+      SLOT_ASSIGNMENTS.has(parent.operatorToken.kind) &&
+      parent.right === outer &&
+      !ts.isArrayLiteralExpression(parent.left) &&
+      !ts.isObjectLiteralExpression(parent.left)) ||
+    // A callback's return goes to the function that calls it, which may be a built-in.
+    (ts.isReturnStatement(parent) &&
+      ts.findAncestor(parent, ts.isFunctionLike)?.type !== undefined) ||
+    (ts.isArrowFunction(parent) && parent.body === outer && parent.type !== undefined) ||
+    (isCall && parent.arguments?.includes(outer) === true);
+  if (
+    !isSlot ||
+    (context.checker.getTypeAtLocation(node).flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) ===
+      0 ||
+    !isScript(node.getSourceFile()) ||
+    (isCall &&
+      !isScriptFunction(context.checker.getResolvedSignature(parent)?.getDeclaration()) &&
+      !isElementArgument(parent, outer, context))
+  ) {
+    return undefined;
+  }
+  const slot = context.checker.getContextualType(node);
+  const names = slot === undefined ? undefined : getTypeNames(slot, context.checker);
+  const kinds = names?.filter((name) => name !== "null" && name !== "undefined");
+  return kinds === undefined || kinds.length === 0 ? undefined : kinds;
 };
+
+// The positions of the arguments that an array's methods keep as elements, from the first.
+const ELEMENT_ARGUMENTS = new Map([
+  ["push", [0, Infinity]],
+  ["unshift", [0, Infinity]],
+  ["splice", [2, Infinity]],
+  ["fill", [0, 0]],
+  ["with", [1, 1]],
+]);
+
+// An argument that an array's method keeps as an element, or that a Map's set keeps as a value.
+const isElementArgument = (
+  call: ts.CallExpression | ts.NewExpression,
+  argument: ts.Expression,
+  context: Context,
+) => {
+  if (!ts.isCallExpression(call) || !ts.isPropertyAccessExpression(call.expression)) return false;
+  const position = call.arguments.indexOf(argument);
+  const method = call.expression.name.text;
+  const receiver = call.expression.expression;
+  const range = ELEMENT_ARGUMENTS.get(method);
+  return context.checker.isArrayType(context.checker.getTypeAtLocation(receiver))
+    ? range !== undefined && position >= range[0] && position <= range[1]
+    : method === "set" && position === 1 && getCollection(receiver, context) === "Map";
+};
+
+const isScriptFunction = (declaration: ts.Declaration | undefined) =>
+  declaration !== undefined &&
+  ts.isFunctionLike(declaration) &&
+  "body" in declaration &&
+  declaration.body !== undefined &&
+  !declaration.getSourceFile().isDeclarationFile;
 
 // A value as a string, as JavaScript converts it in a template or beside a string in +.
 // A BigInt, which the JavaScript module holds as its integer under the model value Big within
@@ -3602,12 +3709,22 @@ export const translateExpression = (
       context,
     );
   }
-  const translated = evaluateUnread(
+  const value = evaluateUnread(
     node,
     translateNode(node, scope, context, isDefined),
     scope,
     context,
   );
+  const kinds = getSlotKinds(node, context);
+  const translated =
+    kinds === undefined
+      ? value
+      : translateKindCheck(
+          value,
+          kinds,
+          "tla-ts can't give a typed name, parameter, property, or element a value of another kind",
+          context,
+        );
   // The base of an optional chain that a check already read is the value that it read.
   return locate(
     isSetOrMapRead(node, context) &&
