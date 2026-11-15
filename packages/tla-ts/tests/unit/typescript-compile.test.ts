@@ -25650,4 +25650,32 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("none"))).failure?.message).toContain("stop");
     });
   });
+
+  describe("calls the getters of %TypedArray% that a descriptor gives", () => {
+    const getSource = (expected: string) => `
+      const box = { size: 0 };
+      const TypedArray = Object.getPrototypeOf(Int8Array);
+      const TypedArrayPrototype = TypedArray.prototype;
+      const getter = Object.getOwnPropertyDescriptor(TypedArrayPrototype, "buffer")!.get!;
+      const tag = Object.getOwnPropertyDescriptor(TypedArrayPrototype, Symbol.toStringTag)!.get!;
+      const species = Object.getOwnPropertyDescriptor(TypedArray, Symbol.species)!.get!;
+      let caught = "none";
+      try { getter.call({}); } catch (error) { caught = error instanceof TypeError ? "type" : "other"; }
+      const sample = new Int8Array(4);
+      const value = {};
+      box.size = 1;
+      const read = [caught, getter.call(sample) === sample.buffer, tag.call(42), tag.call(sample), species.call(value) === value].join();
+      if (read !== "${expected}") throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("type,true,,Int8Array,true"))).failure).toBeUndefined();
+    });
+
+    it("rejects @@toStringTag as giving a name for a number", async () => {
+      expect(
+        (await checkModel(getSource("type,true,Number,Int8Array,true"))).failure?.message,
+      ).toContain("type,true,,Int8Array,true");
+    });
+  });
 });

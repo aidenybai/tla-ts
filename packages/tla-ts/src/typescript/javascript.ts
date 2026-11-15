@@ -3690,7 +3690,7 @@ GetterCall(heap, getter, receiver) ==
        [] path \\in ViewGetters ->
             IF ViewReceives(heap, path, receiver) THEN give(ViewGet(heap, path, receiver)) ELSE typeError
        [] path \\in {"get " \\o owner \\o ".@@species" :
-                     owner \\in {"Array", "RegExp", "Map", "Set", "Promise", "ArrayBuffer",
+                     owner \\in {"%Int8Array.[[Prototype]]%", "Array", "RegExp", "Map", "Set", "Promise", "ArrayBuffer",
                                 "SharedArrayBuffer"}} ->
             give(receiver)
        [] OTHER -> Assert(FALSE, "tla-ts can't tell which function this value holds")

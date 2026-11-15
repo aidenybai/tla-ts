@@ -2575,10 +2575,15 @@ const GETTERS = new Map([
   ["DataView", new Set(["buffer", "byteLength", "byteOffset"])],
   ["Map", new Set(["size"])],
   ["Set", new Set(["size"])],
+  [
+    "%Int8Array.[[Prototype]]%",
+    new Set(["buffer", "byteLength", "byteOffset", "length", "@@toStringTag"]),
+  ],
 ]);
 
 // The constructors whose @@species getter gives its receiver.
 const SPECIES_OWNERS = new Set([
+  "%Int8Array.[[Prototype]]%",
   "Array",
   "RegExp",
   "Map",
@@ -2587,6 +2592,13 @@ const SPECIES_OWNERS = new Set([
   "ArrayBuffer",
   "SharedArrayBuffer",
 ]);
+
+// %TypedArray%, which only Object.getPrototypeOf of a typed array's constructor names.
+const isTypedArrayIntrinsic = (node: ts.Expression, context: Context) =>
+  ts.isCallExpression(node) &&
+  node.expression.getText() === "Object.getPrototypeOf" &&
+  node.arguments.length === 1 &&
+  TYPED_ARRAYS.has(getBuiltIn(node.arguments[0], context) ?? "");
 
 // A call of a built-in getter that a variable holds from a descriptor, as in
 // Object.getOwnPropertyDescriptor(RegExp.prototype, "global").get, directly or through call, which
@@ -2605,21 +2617,44 @@ export const getGetterCall = (node: ts.Node, context: Context) => {
       ? skipCasts(descriptor.arguments[0])
       : undefined;
   const key = ts.isCallExpression(descriptor) ? descriptor.arguments.at(1) : undefined;
-  const builtIn =
-    owner !== undefined && ts.isPropertyAccessExpression(owner) && owner.name.text === "prototype"
-      ? getBuiltIn(owner.expression, context)
+  const prototype = owner === undefined ? undefined : getOrigin(owner, context);
+  const constructor =
+    prototype !== undefined &&
+    ts.isPropertyAccessExpression(prototype) &&
+    prototype.name.text === "prototype"
+      ? getOrigin(prototype.expression, context)
       : undefined;
+  const isTypedArray = constructor !== undefined && isTypedArrayIntrinsic(constructor, context);
+  const builtIn = isTypedArray
+    ? "%Int8Array.[[Prototype]]%"
+    : constructor === undefined
+      ? undefined
+      : getBuiltIn(constructor, context);
+  const keyName =
+    key !== undefined && ts.isStringLiteral(key)
+      ? key.text
+      : key !== undefined &&
+          ts.isPropertyAccessExpression(key) &&
+          key.name.text === "toStringTag" &&
+          getBuiltIn(key.expression, context) === "Symbol"
+        ? "@@toStringTag"
+        : undefined;
+  const prototypePath = isTypedArray
+    ? "%Int8Array.prototype.[[Prototype]]%"
+    : `${builtIn}.prototype`;
   const speciesOwner =
-    owner !== undefined &&
+    prototype !== undefined &&
     key !== undefined &&
     ts.isPropertyAccessExpression(key) &&
     key.name.text === "species" &&
     getBuiltIn(key.expression, context) === "Symbol"
-      ? getBuiltIn(owner, context)
+      ? isTypedArrayIntrinsic(prototype, context)
+        ? "%Int8Array.[[Prototype]]%"
+        : getBuiltIn(prototype, context)
       : undefined;
   const path =
-    key !== undefined && ts.isStringLiteral(key) && GETTERS.get(builtIn ?? "")?.has(key.text)
-      ? (`get ${builtIn}.prototype.${key.text}` as const)
+    keyName !== undefined && GETTERS.get(builtIn ?? "")?.has(keyName)
+      ? (`get ${prototypePath}.${keyName}` as const)
       : speciesOwner !== undefined && SPECIES_OWNERS.has(speciesOwner)
         ? (`get ${speciesOwner}.@@species` as const)
         : undefined;
