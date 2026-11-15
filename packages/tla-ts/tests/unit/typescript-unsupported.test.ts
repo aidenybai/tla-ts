@@ -59,7 +59,10 @@ const CASES: [string, string][] = [
     "instanceof on a value that isn't caught, an error, or of type unknown or any",
     "const value: object = record; if (value instanceof Error) count = 1;",
   ],
-  ["labels", "outer: { count++; }"],
+  [
+    "a break past the nearest loop",
+    "outer: for (const value of values) { for (const other of values) { count++; break outer; } }",
+  ],
   ["an increment after a comma", "count = (label, count++);"],
   ["returning a value from an action", "count++; return count;"],
   ["assigning a constant", "LIMIT = 3;"],
