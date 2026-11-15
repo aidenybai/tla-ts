@@ -2856,7 +2856,22 @@ const translatePropertyAccess = (
   if (isAddedToBuiltIn(node, context)) {
     throw new TlaTypeScriptError("tla-ts can't read a key that a built-in object lacks", node);
   }
-  return getField(translateExpression(receiver, scope, context), name);
+  // A string or an array isn't a record, so a value that may be either reads its length as they
+  // do.
+  return mayBeStringOrArray(receiver, context)
+    ? share(translateExpression(receiver, scope, context), "receiver", context, (value) =>
+        ifExpression(
+          isStringOrArray(value, context),
+          name === "length"
+            ? apply("Len", [value])
+            : apply("Assert", [
+                boolean(false),
+                string(`tla-ts can't read ${name} of a string or an array here`),
+              ]),
+          getField(value, name),
+        ),
+      )
+    : getField(translateExpression(receiver, scope, context), name);
 };
 
 // A read of super.key or super[key], which finds the key from the base of the class the read is
@@ -2878,6 +2893,25 @@ const translateSuperRead = (
     lookup.receiver,
   );
 };
+
+// A value whose type is a union with a string or an array, which TLA+ holds as a sequence rather
+// than a record.
+const mayBeStringOrArray = (node: ts.Expression, context: Context) => {
+  const type = context.checker.getNonNullableType(context.checker.getTypeAtLocation(node));
+  return (
+    type.isUnion() &&
+    type.types.some(
+      (member) =>
+        (member.flags & ts.TypeFlags.StringLike) !== 0 || isSequenceType(member, context.checker),
+    )
+  );
+};
+
+const isStringOrArray = (value: Expression, context: Context) =>
+  junction("Or", [
+    apply("=", [useJavaScript("TypeOf", [value], context), string("string")]),
+    useJavaScript("IsSequenceValue", [value], context),
+  ]);
 
 // The operators that convert an operand to a number, as + does where both operands are numbers.
 const NUMERIC_OPERATORS = new Set([
@@ -3214,13 +3248,23 @@ const translateElementRead = (
     checker.getIndexInfosOfType(objectType).length > 0
   ) {
     return share(value, "object", context, (object) =>
-      share(key, "key", context, (shared) =>
-        ifExpression(
+      share(key, "key", context, (shared) => {
+        const read = ifExpression(
           apply("\\in", [shared, apply("DOMAIN", [object])]),
           index(object, [shared]),
           getUndefined(context),
-        ),
-      ),
+        );
+        return mayBeStringOrArray(node.expression, context)
+          ? ifExpression(
+              isStringOrArray(object, context),
+              apply("Assert", [
+                boolean(false),
+                string("tla-ts can't read an element of a string or an array here"),
+              ]),
+              read,
+            )
+          : read;
+      }),
     );
   }
   if (

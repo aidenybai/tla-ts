@@ -39625,4 +39625,32 @@ describe("BigInts", () => {
       expect((await checkModel(getSource(wrong))).failure?.message).toContain(`seen ${expected}`);
     });
   });
+
+  describe("reads the length of a value that may be a string or an array", () => {
+    const getSource = (expected: string) => `
+      const seen: unknown[] = [];
+      const getLength = (value: string | unknown[]) => value.length;
+      for (const value of [[], [1, 2], "abc"]) seen.push(getLength(value));
+      if (seen.join() !== "${expected}") throw new Error("seen " + seen.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("0,2,3"))).failure).toBeUndefined();
+    });
+
+    it("rejects a string's length as an array's", async () => {
+      expect((await checkModel(getSource("0,2,1"))).failure?.message).toContain("seen 0,2,3");
+    });
+
+    it("stops at an element of one", async () => {
+      const result = await checkModel(`
+        const seen: unknown[] = [];
+        const getFirst = (value: string | unknown[]) => value[0];
+        seen.push(getFirst([1]));
+      `);
+      expect(result.failure?.message).toContain(
+        "tla-ts can't read an element of a string or an array here",
+      );
+    });
+  });
 });
