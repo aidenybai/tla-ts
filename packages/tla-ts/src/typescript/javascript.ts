@@ -6224,6 +6224,34 @@ TypedArrayFirstGetter(heap, ref, isBig) ==
             CodeOf(heap, getter(ToString(NumbersFirstGetter(heap, ref, isBig))))
        [] OTHER -> Undefined
 
+\\* The code of the getter that String.raw runs first as it reads a template object: its raw's, and
+\\* else its raw's length's, or that of the first segment that a getter answers, where the length, the
+\\* segments before, and the substitutions between them convert to strings without running code or
+\\* throwing, or Undefined.
+StringRawFirstGetter(heap, template, substitutions) ==
+  LET isReadable(value) == IsHeap(value) /\\ ~IsProxy(heap, value)
+      isPlain(value) == IsPlainNumeric(value) \\/ IsBigInt(value)
+      raw == Get(heap, template, "raw")
+      length == Get(heap, raw, "length")
+      count == ToLength(length)
+      read == {index \\in 0..(count - 1) : GetterOf(heap, raw, ToString(index)) # Undefined}
+      first == CHOOSE index \\in read : \\A other \\in read : index <= other
+  IN CASE ~isReadable(template) -> Undefined
+       [] GetterOf(heap, template, "raw") # Undefined -> CodeOf(heap, GetterOf(heap, template, "raw"))
+       [] ~isReadable(raw) -> Undefined
+       [] GetterOf(heap, raw, "length") # Undefined -> CodeOf(heap, GetterOf(heap, raw, "length"))
+       [] ~IsPlainNumeric(length) \\/ IsBig(length) \\/ length = Infinity \\/ count > MaxBytes -> Undefined
+       [] /\\ read # {}
+          /\\ \\A index \\in 0..(first - 1) :
+               /\\ isPlain(Get(heap, raw, ToString(index)))
+               /\\ index < Len(substitutions) => isPlain(substitutions[index + 1]) ->
+            CodeOf(heap, GetterOf(heap, raw, ToString(first)))
+       [] OTHER -> Undefined
+
+\\* The object whose getter StringRawFirstGetter gives, which the getter runs with as this.
+StringRawFirstReceiver(heap, template) ==
+  IF GetterOf(heap, template, "raw") # Undefined THEN template ELSE Get(heap, template, "raw")
+
 \\* The heap with a new typed array of a length, of the elements of an array or a typed array, or
 \\* viewing a buffer, where isIterating tells whether an array still iterates through the built-in
 \\* iterator and next.

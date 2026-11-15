@@ -2473,6 +2473,21 @@ const translateCallStatementBody = (
     const raw = identifier(name);
     const translate = (argument: ts.Expression) =>
       translateExpression(argument, path.scope, context);
+    const template = translate(expression.arguments[0]);
+    const substitutions = tuple(expression.arguments.slice(1).map(translate));
+    const run = bindOnce(
+      path,
+      name,
+      useJavaScript("StringRaw", [heap, template, substitutions], context),
+      ifThenElse(
+        field(raw, "isThrown"),
+        throwTypeError(path, expression, context, frame),
+        continueWith(path, field(raw, "text")),
+      ),
+    );
+    // String.raw reads its template's raw, raw's length, and then each segment in order, so the
+    // first that a getter which only throws answers throws.
+    const code = useJavaScript("StringRawFirstGetter", [heap, template, substitutions], context);
     return ifThenElse(
       useJavaScript(
         "HoldsBuiltIn",
@@ -2484,24 +2499,18 @@ const translateCallStatementBody = (
         ],
         context,
       ),
-      bindOnce(
-        path,
-        name,
-        useJavaScript(
-          "StringRaw",
-          [
-            heap,
-            translate(expression.arguments[0]),
-            tuple(expression.arguments.slice(1).map(translate)),
-          ],
-          context,
-        ),
-        ifThenElse(
-          field(raw, "isThrown"),
-          throwTypeError(path, expression, context, frame),
-          continueWith(path, field(raw, "text")),
-        ),
-      ),
+      getThrowingGetters(expression, context).length > 0
+        ? throwFirstGetter(
+            expression,
+            apply("#", [code, getUndefined(context)]),
+            code,
+            useJavaScript("StringRawFirstReceiver", [heap, template], context),
+            path,
+            context,
+            frame,
+            run,
+          )
+        : run,
       leaf(
         apply("Assert", [
           boolean(false),

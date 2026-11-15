@@ -44719,4 +44719,45 @@ describe("BigInts", () => {
       ).toContain("lengthiteratorelementelement,1-6-7");
     });
   });
+
+  describe("runs the getter that String.raw reads first of its template", () => {
+    const getSource = (expected: string) => `
+      let log = "";
+      const raw: Record<string, unknown> = { length: 3, 0: "a" };
+      Object.defineProperty(raw, "1", {
+        get() {
+          throw new Error("segment");
+        },
+      });
+      try {
+        String.raw({ raw } as unknown as TemplateStringsArray, "x", "y");
+      } catch (error) {
+        log += (error as Error).message;
+      }
+      const sized = {};
+      Object.defineProperty(sized, "length", {
+        get() {
+          throw new Error("length");
+        },
+      });
+      try {
+        String.raw({ raw: sized } as unknown as TemplateStringsArray);
+      } catch (error) {
+        log += (error as Error).message;
+      }
+      const joined = String.raw({ raw: { length: 2, 0: "a", 1: "b" } } as unknown as TemplateStringsArray, 1);
+      const result = [log, joined].join(",");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("segmentlength,a1b"))).failure).toBeUndefined();
+    });
+
+    it("rejects a String.raw that skips the length's getter", async () => {
+      expect((await checkModel(getSource("segment,a1b"))).failure?.message).toContain(
+        "segmentlength,a1b",
+      );
+    });
+  });
 });
