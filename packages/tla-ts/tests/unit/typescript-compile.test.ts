@@ -8601,15 +8601,18 @@ describe("definitions", () => {
     );
   });
 
-  it("stops at a namespace object that a script uses other than to read an export", () => {
+  it("reads a namespace object that a script uses other than to read an export", async () => {
     const path = join(import.meta.dirname, "../fixtures/typescript/imports/namespace.ts");
     const source = readFileSync(path, "utf8");
-    expect(() =>
-      compile(source.replace("first.getFirst() !== 1", "Object.isExtensible(first)"), path),
-    ).toThrow("tla-ts can't make a module's namespace object");
-    expect(() =>
-      compile(source.replace("first.getFirst() !== 1", "Object.keys(first).length !== 1"), path),
-    ).toThrow("tla-ts can't make a module's namespace object");
+    const getSource = (condition: string) => source.replace("first.getFirst() !== 1", condition);
+    expect(
+      (await check(compile(getSource("Object.isExtensible(first)"), path))).failure,
+    ).toBeUndefined();
+    expect(
+      (await check(compile(getSource("Object.keys(first).length !== 1"), path))).failure,
+    ).toBeUndefined();
+    const wrong = await check(compile(getSource("Object.keys(first).length !== 2"), path));
+    expect(wrong.failure?.message).toContain("the namespace's getFirst");
   });
 
   it("constructs a class that another file declares", async () => {
@@ -41613,6 +41616,36 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("32"))).failure?.message).toContain(
         "A timer threw an exception",
       );
+    });
+  });
+
+  describe("a module's namespace object", () => {
+    const path = join(import.meta.dirname, "../fixtures/typescript/imports/namespacing.ts");
+    const source = readFileSync(path, "utf8");
+
+    it("agrees with Node", async () => {
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects a namespace object that takes a write", async () => {
+      const wrong = source.replace("[object Module],false,", "[object Module],true,");
+      expect((await check(compile(wrong, path))).failure?.message).toContain(
+        "[object Module],false,",
+      );
+    });
+
+    it("stops at an export that a function may change after its module runs", () => {
+      expect(() =>
+        compile('import * as bumping from "./bumping";\nObject.keys(bumping);', path),
+      ).toThrow(
+        "tla-ts can't make a module's namespace object whose count may change after the module runs",
+      );
+    });
+
+    it("stops at the namespace object of the module that the script is", () => {
+      expect(() =>
+        compile('import * as self from "./namespacing";\nObject.keys(self);', path),
+      ).toThrow("tla-ts can't make the namespace object of a module that hasn't run");
     });
   });
 });

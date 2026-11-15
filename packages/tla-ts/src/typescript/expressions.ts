@@ -144,6 +144,7 @@ import {
   translateTypeOf,
   useJavaScript,
 } from "./javascript";
+import { getNamespaceRead, getNamespaceRef } from "./namespaces";
 import { getThisOwner, rejectBeforeDeclaration, type Scope } from "./scope";
 import { getMappedParameter } from "./actions";
 import {
@@ -2426,6 +2427,8 @@ export const readGlobal = (name: ts.Identifier, value: Expression, context: Cont
 
 const translateIdentifier = (node: ts.Identifier, scope: Scope, context: Context) => {
   if (node.text === "undefined") return getUndefined(context);
+  const namespace = getNamespaceRead(node, context.checker);
+  if (namespace !== undefined) return getNamespaceRef(namespace.file, context);
   rejectGeneratorUse(node, context);
   if (
     context.hasSpecialNumbers &&

@@ -39,6 +39,7 @@ import {
 } from "./intrinsics";
 import { WELL_KNOWN_SYMBOLS } from "./javascript";
 import { type Exported, isDeclaration, type Model, readModel, type Variable } from "./model";
+import { findNamespaces, getNamespaceRead, isLiteralValue } from "./namespaces";
 import { createProgram } from "./program";
 import { link } from "./regions";
 import { translateCall, translateInvariant, translateProperty, VALUE_TAGS } from "./properties";
@@ -198,10 +199,10 @@ export const compile = (
       : (symbol.flags & ts.SymbolFlags.Alias ? program.checker.getAliasedSymbol(symbol) : symbol)
           .valueDeclaration;
   };
-  // A file that imports reads a module's namespace object, which tla-ts doesn't make, only to read
-  // an export through it other than a var's or a let's, whose binding tla-ts keeps as state. It
-  // reads a default export of an expression or of a class with no name, whose binding tla-ts
-  // doesn't make uninitialized, only where the module that declares it ran first.
+  // A file that imports reads an export through a module's namespace object as the module's
+  // binding, other than a var's or a let's, whose binding tla-ts keeps as state. It reads a default
+  // export of an expression or of a class with no name, whose binding tla-ts doesn't make
+  // uninitialized, only where the module that declares it ran first.
   const rejectModuleReads = (node: ts.Node, file: ts.SourceFile): void => {
     const declaration = ts.isIdentifier(node) ? getDeclaration(node) : undefined;
     if (
@@ -214,12 +215,6 @@ export const compile = (
       ts.findAncestor(node, ts.isTypeNode) === undefined
     ) {
       const parent = node.parent;
-      if (
-        ts.isSourceFile(declaration) &&
-        !(ts.isPropertyAccessExpression(parent) && parent.expression === node)
-      ) {
-        throw new TlaTypeScriptError("tla-ts can't make a module's namespace object", node);
-      }
       const member =
         ts.isSourceFile(declaration) && ts.isPropertyAccessExpression(parent)
           ? getDeclaration(parent.name)
@@ -258,6 +253,11 @@ export const compile = (
   order
     .filter((file) => file.statements.some(ts.isImportDeclaration))
     .forEach((file) => rejectModuleReads(file, file));
+  context.namespaces = findNamespaces(sourceFile, files, context);
+  // The bindings that the namespace objects take, which their modules make as they run.
+  const exported = [...context.namespaces.values()].flatMap((namespace) =>
+    namespace.exports.flatMap((entry) => (ts.isSourceFile(entry.value) ? [] : [entry.value])),
+  );
   // The code units outside ASCII that the script's text holds, or that the escapes of its literals
   // and names write, whose codes the module tells. A lone surrogate is half of a pair, as a
   // module's text holds only whole characters.
@@ -383,7 +383,9 @@ export const compile = (
               !ts.isFunctionLike(declaration.initializer) &&
               hasEffect(declaration.initializer),
           )
-        : !isDeclaration(statement),
+        : !isDeclaration(statement) &&
+          !ts.isExportDeclaration(statement) &&
+          !(ts.isExportAssignment(statement) && isLiteralValue(statement.expression)),
     ),
   );
   const getWrittenSymbols = (reachedNodes: readonly ts.Node[]) =>
@@ -400,7 +402,7 @@ export const compile = (
       ),
     );
   const getImported = (run: readonly ts.Statement[]): ts.Statement[] => {
-    const reachedNodes = getReached([sourceFile, ...run], context);
+    const reachedNodes = getReached([sourceFile, ...exported, ...run], context);
     const written = getWrittenSymbols(reachedNodes);
     // Where any of them changes, every variable that the model reaches runs where its file
     // declares it, as its value may read one that changes.
@@ -512,6 +514,7 @@ export const compile = (
       ].includes(node.text)) ||
     (ts.isVariableDeclarationList(node) && (node.flags & ts.NodeFlags.Using) !== 0) ||
     node.kind === ts.SyntaxKind.AsyncKeyword ||
+    (ts.isIdentifier(node) && getNamespaceRead(node, program.checker) !== undefined) ||
     isHoleyArray(node, context) ||
     isThrownArray(node) ||
     isArrayLengthening(node, context) ||
@@ -557,7 +560,7 @@ export const compile = (
       ts.isElementAccessExpression(node.expression) &&
       context.checker.isArrayType(context.checker.getTypeAtLocation(node.expression.expression))) ||
     (ts.forEachChild(node, usesObjects) ?? false);
-  const reached = getReached(roots, context);
+  const reached = getReached([...roots, ...exported], context);
   context.reached = new Set(reached);
   // A set or a map that a script iterates, spreads, copies, or calls forEach, keys, values, or entries
   // on, whose order every set and map then keeps.
@@ -809,7 +812,7 @@ export const compile = (
         )
       : [
           locate(
-            render(translateScript(model.script, model.exported.length === 0, context)),
+            render(translateScript(model.script, sourceFile, model.exported.length === 0, context)),
             getLocation(model.script[0] ?? sourceFile),
           ),
         ]),
