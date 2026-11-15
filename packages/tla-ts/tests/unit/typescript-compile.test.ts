@@ -39154,4 +39154,240 @@ describe("BigInts", () => {
       );
     });
   });
+  describe("calls a function that a helper takes and calls without arguments", () => {
+    const getSource = (expected: number) => `
+      const holder = { seen: 0 };
+      function wrap(callback: () => number, offset: number) {
+        return callback() + offset;
+      }
+      const five = () => 5;
+      const result = wrap(() => 4, 1) + wrap(five, 2);
+      if (result !== ${expected}) throw new Error(\`\${result}\`);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(12))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation", async () => {
+      expect((await checkModel(getSource(11))).failure?.message).toContain("12");
+    });
+  });
+
+  describe("throws the TypeError of a pattern that a call inside an expression destructures", () => {
+    const getSource = (expected: string) => `
+      const holder = { seen: 0 };
+      const read = ({ x }: any = undefined) => x;
+      const first = (value: any) => {
+        const { item } = value;
+        return item;
+      };
+      let caught = "";
+      try {
+        const text = \`\${read()}\`;
+        caught += text;
+      } catch (error) {
+        caught += error instanceof TypeError ? "t" : "x";
+      }
+      try {
+        const item = first(null);
+        caught += item;
+      } catch (error) {
+        caught += error instanceof TypeError ? "t" : "x";
+      }
+      caught += \`\${read({ x: "a" })}\${first({ item: "b" })}\`;
+      if (caught !== "${expected}") throw new Error(caught);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("ttab"))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation", async () => {
+      expect((await checkModel(getSource("tab"))).failure?.message).toContain("ttab");
+    });
+
+    it("stops where nothing catches the TypeError", async () => {
+      const result = await checkModel(`
+        const holder = { seen: 0 };
+        const read = ({ x }: any) => x;
+        const text = \`\${read(null)}\`;
+      `);
+      expect(result.failure?.message).toContain("tla-ts can't throw a pattern's TypeError");
+    });
+  });
+
+  describe("destructures a string through its code points", () => {
+    const getSource = (expected: string) => `
+      const holder = { seen: 0 };
+      const text = "a\\u{1F600}c";
+      const [first, second] = text;
+      let a: string | undefined = "";
+      let b: string | undefined = "";
+      [a, b] = "x";
+      let c = "";
+      let d = "";
+      for ([c, d] of ["yz"]) {}
+      const read = ([e]: string) => e;
+      const result = \`\${first}\${second.length}\${a}\${b}\${c}\${d}\${read("w")}\`;
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("a2xundefinedyzw"))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation", async () => {
+      expect((await checkModel(getSource("a1xundefinedyzw"))).failure?.message).toContain(
+        "a2xundefinedyzw",
+      );
+    });
+
+    it("destructures a string that a value of any type holds", async () => {
+      const result = await checkModel(`
+        const t: any = "ab";
+        let a: any;
+        let b: any;
+        [a, b] = t;
+        const [c] = t;
+        const result = \`\${a}\${b}\${c}\`;
+        if (result !== "aba") throw new Error(result);
+      `);
+      expect(result.failure).toBeUndefined();
+    });
+
+    it("stops where a script replaced the string's iterator", async () => {
+      const result = await checkModel(`
+        const holder = { seen: 0 };
+        String.prototype[Symbol.iterator] = function* () {
+          yield "z";
+        } as any;
+        const [a] = "ab";
+      `);
+      expect(result.failure?.message).toContain(
+        "tla-ts can't iterate a string whose iterator a script replaced",
+      );
+    });
+  });
+
+  describe("writes a property of a primitive as strict mode decides", () => {
+    const getSource = (expected: string) => `
+      "use strict";
+      const s: any = "s";
+      const n: any = 5;
+      let caught = "";
+      try {
+        s.x = 1;
+      } catch (error) {
+        caught += error instanceof TypeError ? "t" : "x";
+      }
+      try {
+        n["y"] = 2;
+      } catch (error) {
+        caught += error instanceof TypeError ? "t" : "x";
+      }
+      if (caught !== "${expected}") throw new Error(caught);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("tt"))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation", async () => {
+      expect((await checkModel(getSource("t"))).failure?.message).toContain("tt");
+    });
+
+    it("throws the TypeError of a write to a symbol's property", async () => {
+      const result = await checkModel(`
+        "use strict";
+        const holder = { seen: 0 };
+        const symbol = Symbol();
+        let caught = "none";
+        try {
+          // @ts-ignore
+          symbol.z = 3;
+        } catch (error) {
+          caught = error instanceof TypeError ? "t" : "x";
+        }
+        if (caught !== "t") throw new Error(caught);
+      `);
+      expect(result.failure).toBeUndefined();
+    });
+
+    it("ignores the write outside strict mode", async () => {
+      const result = await checkModel(`
+        const s: any = "s";
+        const n: any = 5;
+        let ran = "";
+        s.x = 1;
+        n["y"] = 2;
+        ran += "r";
+        if (ran !== "r") throw new Error(ran);
+      `);
+      expect(result.failure).toBeUndefined();
+    });
+
+    it("stops at a write outside strict mode of a value it does not follow", async () => {
+      const result = await checkModel(`
+        const s: any = "s";
+        const n = 1;
+        s.x = n + 1;
+      `);
+      expect(result.failure?.message).toContain(
+        "tla-ts can't follow a write to a primitive's property outside strict mode",
+      );
+    });
+  });
+
+  describe("throws what a for loop's incrementor throws inside the loop", () => {
+    const getSource = (expected: string) => `
+      let reached = "";
+      let caught = "";
+      try {
+        for (; ; (function () { throw "update"; })()) {
+          reached += "b";
+        }
+      } catch (error) {
+        caught = error === "update" ? "u" : "x";
+      }
+      const result = \`\${reached}\${caught}\`;
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("bu"))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation", async () => {
+      expect((await checkModel(getSource("u"))).failure?.message).toContain("bu");
+    });
+  });
+
+  describe("reads typeof a var before a statement assigns it as undefined", () => {
+    const getSource = (expected: string) => `
+      // @ts-ignore
+      const before = typeof later;
+      var later: number[] = [];
+      function read() {
+        // @ts-ignore
+        const inner = typeof local;
+        var local = "x";
+        return inner + typeof local;
+      }
+      const result = before + typeof later + read();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("undefinedobjectundefinedstring"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation", async () => {
+      expect((await checkModel(getSource("objectobjectstringstring"))).failure?.message).toContain(
+        "undefinedobjectundefinedstring",
+      );
+    });
+  });
 });

@@ -28,11 +28,13 @@ import {
 } from "./context";
 import {
   allocateArguments,
+  checkDestructured,
   getArgumentsReads,
   getWritten,
   isArgumentsRead,
   getWrittenRoots,
   getImmutableWrite,
+  isMaybeNullish,
   throwOnUnentered,
   isValueReturn,
   translateLocalStatements,
@@ -119,7 +121,8 @@ export const mayThrow = (
   visited.add(node);
   // A using declaration throws a TypeError for a value that isn't disposable, and it and a
   // DisposableStack's methods run dispose methods. A write to a const throws a TypeError, as does a
-  // read of a function's caller or arguments, which runs %ThrowTypeError%.
+  // read of a function's caller or arguments, which runs %ThrowTypeError%, and a pattern that
+  // destructures null or undefined.
   if (
     ts.isThrowStatement(node) ||
     (ts.isPropertyAccessExpression(node) &&
@@ -128,7 +131,9 @@ export const mayThrow = (
     (ts.isVariableDeclarationList(node) && (node.flags & ts.NodeFlags.Using) !== 0) ||
     getStackCall(node, context) !== undefined ||
     getIteratorDisposeCall(node, context) !== undefined ||
-    getImmutableWrite(node, context)?.isIgnored === false
+    getImmutableWrite(node, context)?.isIgnored === false ||
+    ((ts.isObjectBindingPattern(node) || ts.isArrayBindingPattern(node)) &&
+      isMaybeNullish(context.checker.getTypeAtLocation(node)))
   ) {
     return true;
   }
@@ -177,6 +182,11 @@ export const bindFactory = (declaration: ts.Node | undefined, scope: Scope, cont
 const getHelper = (declaration: HelperDeclaration, context: Context) =>
   getFunction(declaration) ?? getFactoryCall(getInitializer(declaration), context)?.closure;
 
+// How many arguments a helper's parameter takes as an operator parameter, where 0 makes it a value.
+export const getArity = (parameter: ts.ParameterDeclaration, context: Context) =>
+  context.checker.getTypeAtLocation(parameter.name).getCallSignatures().at(0)?.parameters.length ??
+  0;
+
 // Compiles a top-level helper function or constant into a TLA+ definition, after the definitions
 // it uses.
 export const getDefinition = (declaration: HelperDeclaration, context: Context): Definition => {
@@ -190,13 +200,10 @@ export const getDefinition = (declaration: HelperDeclaration, context: Context):
   const callee = getHelper(declaration, context);
   const parameters = declareParameters(callee === undefined ? [] : getParameters(callee), context);
   // An operator parameter declares how many arguments it takes, as in F(_, _).
-  const declared = parameters.map((parameter) => {
-    const signatures = context.checker.getTypeAtLocation(parameter.node.name).getCallSignatures();
-    return {
-      name: parameter.name,
-      arity: signatures.length === 0 ? 0 : signatures[0].parameters.length,
-    };
-  });
+  const declared = parameters.map((parameter) => ({
+    name: parameter.name,
+    arity: getArity(parameter.node, context),
+  }));
   const definition: Definition = {
     name: context.names.getFresh(declaration.name.getText()),
     parameters: declared,
@@ -419,7 +426,12 @@ const inlineCall = (
     values.evaluate(
       letIn(
         [...made.definitions, ...bound.definitions],
-        forceHeap(scope, bound.scope, leaf(value), leaf(getUndefined(context)), context),
+        stopOnDestructured(
+          made.scope,
+          bound.scope,
+          forceHeap(scope, bound.scope, leaf(value), leaf(getUndefined(context)), context),
+          context,
+        ),
       ),
       leaf(getUndefined(context)),
     ),
@@ -441,6 +453,25 @@ export const forceHeap = (
   return heap === undefined || heapSymbol === undefined || heap === before.bindings.get(heapSymbol)
     ? rest
     : ifThenElse(apply("=", [heap, heap]), rest, otherwise);
+};
+
+// Stops where a pattern that an expression binds destructures null or undefined, whose TypeError
+// only a statement throws, as one does that runs a call that may throw inside try.
+const stopOnDestructured = (before: Scope, after: Scope, rest: Formula, context: Context) => {
+  const added = (after.destructured ?? []).slice((before.destructured ?? []).length);
+  return added.length === 0
+    ? rest
+    : checkDestructured(
+        added,
+        leaf(
+          apply("Assert", [
+            boolean(false),
+            string("tla-ts can't throw a pattern's TypeError inside an expression"),
+          ]),
+        ),
+        rest,
+        context,
+      );
 };
 
 // A function argument to an operator parameter, as a LAMBDA or an operator's name.
@@ -1143,27 +1174,23 @@ const translatePure = (
     );
     // Each value runs though nothing reads it, so that a getter it reads stops the check.
     const forced = context.heap === undefined ? [] : bound.values;
+    const rest = stopOnDestructured(
+      scope,
+      bound.scope,
+      forceHeap(
+        scope,
+        bound.scope,
+        continueWith(bound.scope),
+        leaf(getUndefined(context)),
+        context,
+      ),
+      context,
+    );
     return letIn(
       bound.definitions,
       forced.length === 0
-        ? forceHeap(
-            scope,
-            bound.scope,
-            continueWith(bound.scope),
-            leaf(getUndefined(context)),
-            context,
-          )
-        : ifThenElse(
-            apply("=", [tuple(forced), tuple(forced)]),
-            forceHeap(
-              scope,
-              bound.scope,
-              continueWith(bound.scope),
-              leaf(getUndefined(context)),
-              context,
-            ),
-            leaf(getUndefined(context)),
-          ),
+        ? rest
+        : ifThenElse(apply("=", [tuple(forced), tuple(forced)]), rest, leaf(getUndefined(context))),
     );
   }
   if (ts.isIfStatement(statement)) {

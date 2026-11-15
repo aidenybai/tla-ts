@@ -27,6 +27,7 @@ import {
   isUniterable,
   translateArrayIteration,
   translatePatternIteration,
+  translateStringIteration,
 } from "./collections";
 import { isNullish } from "./protocols";
 import { translateElements, translateExpression } from "./expressions";
@@ -434,7 +435,9 @@ export const bindPatternInline = (
   const iterated =
     isIterated && heap !== undefined
       ? translatePatternIteration(value, heap, pattern, type, context)
-      : value;
+      : ts.isArrayBindingPattern(pattern) && !isTaken(value)
+        ? translateStringIteration(value, type, heap, pattern, context)
+        : value;
   // A parameter may take any value that a call passes, and a declaration's value may not have its
   // pattern's type, so only the value's own type tells that it's no primitive.
   const initializer = ts.isVariableDeclaration(pattern.parent)

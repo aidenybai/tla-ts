@@ -1451,8 +1451,8 @@ const COMPOUND_ASSIGNMENTS = new Set([
 // A comparison of types that don't overlap, which only misleads where TypeScript narrows an operand
 // by it.
 const UNINTENDED_COMPARISON_ERROR = 2367;
-// A read of a variable that TypeScript can't tell is assigned. tla-ts reads a var's type as its
-// value's, so a read is sound only where the value is assigned whenever it runs.
+// A read of a variable that TypeScript can't tell is assigned. tla-ts reads a let's or a const's
+// type as its value's, so a read of one is sound only where the value is assigned whenever it runs.
 const UNASSIGNED_READ_ERROR = 2454;
 
 const EQUALITY_OPERATORS = new Set([
@@ -1753,6 +1753,16 @@ const ignoreSoundErrors = () => {
       ts.findAncestor(declaration, (ancestor) => ancestor === clause.variableDeclaration) !==
         undefined &&
       ts.findAncestor(node, (ancestor) => ancestor === clause.block) !== undefined
+    );
+  };
+  // A read of a var, which holds undefined until a statement assigns it, as tla-ts reads it.
+  const isVarRead = (node: ts.Node) => {
+    const declaration = checker.getSymbolAtLocation(node)?.valueDeclaration;
+    return (
+      declaration !== undefined &&
+      ts.isVariableDeclaration(declaration) &&
+      ts.isVariableDeclarationList(declaration.parent) &&
+      (declaration.parent.flags & ts.NodeFlags.BlockScoped) === 0
     );
   };
   // A read in a generator function that the test calls at once, of a variable that a top-level var
@@ -2317,7 +2327,7 @@ const ignoreSoundErrors = () => {
         isNullableArrayPattern(node)) ||
       (diagnostic.code === NOT_ITERABLE_ERROR && isCaughtArrayPattern(node)) ||
       (diagnostic.code === UNASSIGNED_READ_ERROR &&
-        (isCaughtRead(node) || isLaterGeneratorRead(node))) ||
+        (isCaughtRead(node) || isVarRead(node) || isLaterGeneratorRead(node))) ||
       ((diagnostic.code === NOT_ITERABLE_ERROR || NULLABLE_ERRORS.has(diagnostic.code)) &&
         isTypeErrorPattern(node)) ||
       (UNASSIGNABLE_ERRORS.has(diagnostic.code) && isPatternArgument(node)) ||

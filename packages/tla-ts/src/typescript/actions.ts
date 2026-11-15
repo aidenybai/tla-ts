@@ -23,6 +23,7 @@ import {
   translateHeapElements,
   translateArrayIteration,
   translatePatternIteration,
+  translateStringIteration,
   isMaybePrimitive,
   isUniterable,
   getPatternHeap,
@@ -345,6 +346,7 @@ import {
   bindValues,
   translateArgumentValues,
   createStateScope,
+  type Destructured,
   getArrowReceivers,
   getBoundNames,
   getDefaulted,
@@ -1190,7 +1192,15 @@ const assignPattern = <Result>(
       heap === undefined || isList ? undefined : context.checker.getTypeOfAssignmentPattern(target);
     const iterated =
       heap === undefined
-        ? value
+        ? isList || isHeapSource
+          ? value
+          : translateStringIteration(
+              value,
+              context.checker.getTypeOfAssignmentPattern(target),
+              heapSymbol === undefined ? undefined : getHeap(path.scope, target, context),
+              target,
+              context,
+            )
         : type === undefined
           ? translateArrayIteration(value, heap, target, context)
           : translatePatternIteration(value, heap, target, type, context);
@@ -11758,9 +11768,84 @@ const translateWriteStatement = (
       rest,
     );
   };
+  // A write to a property of another primitive throws a TypeError in strict mode, and outside it
+  // does nothing, which tla-ts follows for a value that runs no code, unless a setter that its
+  // prototypes may hold runs.
+  const accessed =
+    written !== undefined &&
+    (ts.isPropertyAccessExpression(written) || ts.isElementAccessExpression(written)) &&
+    isMaybePrimitive(context.checker.getTypeAtLocation(skipCasts(written.expression)))
+      ? written
+      : undefined;
+  const skipPrimitive = (rest: Formula) => {
+    if (accessed === undefined) return rest;
+    const isIgnored =
+      ts.isBinaryExpression(expression) &&
+      expression.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      isInertValue(skipCasts(expression.right));
+    const stop = (message: string) => leaf(apply("Assert", [boolean(false), string(message)]));
+    const outcome = isStrictCode(expression)
+      ? throwTypeError(path, expression, context, frame)
+      : isIgnored
+        ? continueWith(path)
+        : stop("tla-ts can't follow a write to a primitive's property outside strict mode");
+    const type = useJavaScript(
+      "TypeOf",
+      [translateExpression(skipCasts(accessed.expression), path.scope, context)],
+      context,
+    );
+    const heap = context.heap === undefined ? undefined : getHeap(path.scope, accessed, context);
+    const key = ts.isPropertyAccessExpression(accessed)
+      ? string(accessed.name.text)
+      : translatePropertyKey(accessed.argumentExpression, path.scope, context);
+    const isHeld =
+      heap === undefined
+        ? undefined
+        : junction(
+            "Or",
+            (
+              [
+                ["string", "String.prototype"],
+                ["number", "Number.prototype"],
+                ["boolean", "Boolean.prototype"],
+                ["symbol", "Symbol.prototype"],
+                ["bigint", "BigInt.prototype"],
+              ] as const
+            ).map(([name, prototype]) =>
+              junction("And", [
+                apply("=", [type, string(name)]),
+                useJavaScript(
+                  "Has",
+                  [heap, translateBuiltInValue(prototype, accessed, context), key],
+                  context,
+                ),
+              ]),
+            ),
+          );
+    return ifThenElse(
+      apply("\\notin", [type, set([string("object"), string("function")])]),
+      isHeld === undefined
+        ? outcome
+        : ifThenElse(
+            isHeld,
+            stop("tla-ts can't write a property that a primitive's prototypes hold"),
+            outcome,
+          ),
+      rest,
+    );
+  };
+
   if (write === undefined) {
     return throwOnNullish(
-      forceHeap(path.scope, assigned.scope, continueWith(assigned), leaf(boolean(false)), context),
+      skipPrimitive(
+        forceHeap(
+          path.scope,
+          assigned.scope,
+          continueWith(assigned),
+          leaf(boolean(false)),
+          context,
+        ),
+      ),
     );
   }
   const translateWrite = (next: (path: Path) => Formula) =>
@@ -11854,7 +11939,7 @@ const translateWriteStatement = (
   );
 };
 
-const isMaybeNullish = (type: ts.Type): boolean =>
+export const isMaybeNullish = (type: ts.Type): boolean =>
   type.isUnion()
     ? type.types.some(isMaybeNullish)
     : (type.flags &
@@ -11875,7 +11960,24 @@ export const throwOnDestructured = (
   rest: Formula,
 ): Formula => {
   const destructured = scope.destructured ?? [];
-  if (destructured.length === 0) return rest;
+  return destructured.length === 0
+    ? rest
+    : checkDestructured(
+        destructured,
+        throwTypeError(path, destructured[0].pattern, context, frame),
+        rest,
+        context,
+      );
+};
+
+// Runs what is thrown where a pattern destructures null or undefined, or a value it can't iterate,
+// and the rest otherwise, once the elements that its patterns iterate are found.
+export const checkDestructured = (
+  destructured: readonly Destructured[],
+  thrown: Formula,
+  rest: Formula,
+  context: Context,
+): Formula => {
   context.prelude.add("Null");
   const iterated = destructured.flatMap((entry) => entry.iterated ?? []);
   return ifThenElse(
@@ -11886,7 +11988,7 @@ export const throwOnDestructured = (
         ...(entry.isUniterable === undefined ? [] : [entry.isUniterable]),
       ]),
     ),
-    throwTypeError(path, destructured[0].pattern, context, frame),
+    thrown,
     iterated.length === 0
       ? rest
       : ifThenElse(
@@ -15404,7 +15506,7 @@ const translateIterations = (
       incrementor === undefined
         ? repeat(current)
         : allocate(incrementor, current, context, (inner) =>
-            translateExpressionStatement(incrementor, inner, context, frame, repeat),
+            translateExpressionStatement(incrementor, inner, context, bodyFrame, repeat),
           );
     const bodyFrame: Frame = {
       ...frame,
