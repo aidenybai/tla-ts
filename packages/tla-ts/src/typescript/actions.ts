@@ -3659,6 +3659,7 @@ const translateCallStatementBody = (
             context,
             frame,
             run,
+            getterCall.receiver,
           )
         : run;
     const builtIn = translateBuiltInValue(getterCall.path, expression, context);
@@ -14738,6 +14739,19 @@ const getFirstRead = (node: ts.CallExpression, context: Context) => {
 
 // The getters that a script's descriptors give whose body only throws, which a built-in that reads
 // one before it changes anything throws from where it reads it.
+// Whether a getter may answer a read of an object that a literal makes: its own getters, and those
+// that a descriptor defines, as on Object.prototype, but not another literal's.
+const isReachedGetter = (getter: ts.Node, held: ts.Expression | undefined) => {
+  const literal = held === undefined ? undefined : skipCasts(held);
+  return (
+    literal === undefined ||
+    !ts.isObjectLiteralExpression(literal) ||
+    literal.properties.some((property) => property.name?.getText() === "__proto__") ||
+    !ts.isObjectLiteralExpression(getter.parent) ||
+    getter.parent === literal
+  );
+};
+
 const getThrowingGetters = (node: ts.Node, context: Context) =>
   [
     ...getAccessorFunctions(node, "get", context),
@@ -14767,28 +14781,31 @@ export const throwFirstGetter = (
   context: Context,
   frame: Frame,
   otherwise: Formula,
+  held?: ts.Expression,
 ) =>
-  getThrowingGetters(node, context).reduceRight<Formula>(
-    (rest, getter) =>
-      ifThenElse(
-        apply("/\\", [
-          isRead,
-          apply("=", [code, getCandidateValue(getter, context) ?? getUndefined(context)]),
-        ]),
-        inlineBody(
-          node,
-          getter,
-          [],
-          { value: receiver, method: getter },
-          path,
-          context,
-          frame,
-          () => otherwise,
+  getThrowingGetters(node, context)
+    .filter((getter) => isReachedGetter(getter, held))
+    .reduceRight<Formula>(
+      (rest, getter) =>
+        ifThenElse(
+          apply("/\\", [
+            isRead,
+            apply("=", [code, getCandidateValue(getter, context) ?? getUndefined(context)]),
+          ]),
+          inlineBody(
+            node,
+            getter,
+            [],
+            { value: receiver, method: getter },
+            path,
+            context,
+            frame,
+            () => otherwise,
+          ),
+          rest,
         ),
-        rest,
-      ),
-    otherwise,
-  );
+      otherwise,
+    );
 
 const translateLoop = (
   loop: ts.IterationStatement,

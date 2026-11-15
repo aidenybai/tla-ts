@@ -37653,4 +37653,42 @@ describe("BigInts", () => {
       ).toContain("5,7|first|source|1,42,43,4,5");
     });
   });
+
+  describe("runs only the getters of the literal that the flags getter reads", () => {
+    const getSource = (expected: string) => `
+      const box = { size: 0 };
+      class Thrown extends Error {}
+      const get = Object.getOwnPropertyDescriptor(RegExp.prototype, "flags")!.get!;
+      let count = 0;
+      const throwsFrom = function (run: () => void) {
+        try {
+          run();
+        } catch (error) {
+          if (error instanceof Thrown) {
+            count += 1;
+            return;
+          }
+          throw error;
+        }
+        throw new Error("none");
+      };
+      throwsFrom(function () { get.call({ get hasIndices(): boolean { throw new Thrown(); } }); });
+      throwsFrom(function () { get.call({ get global(): boolean { throw new Thrown(); } }); });
+      throwsFrom(function () { get.call({ get ignoreCase(): boolean { throw new Thrown(); } }); });
+      throwsFrom(function () { get.call({ get multiline(): boolean { throw new Thrown(); } }); });
+      throwsFrom(function () { get.call({ get dotAll(): boolean { throw new Thrown(); } }); });
+      throwsFrom(function () { get.call({ get unicode(): boolean { throw new Thrown(); } }); });
+      throwsFrom(function () { get.call({ get sticky(): boolean { throw new Thrown(); } }); });
+      box.size = 1;
+      if (String(count) !== "${expected}") throw new Error(String(count));
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("7"))).failure).toBeUndefined();
+    });
+
+    it("rejects a getter as not throwing", async () => {
+      expect((await checkModel(getSource("6"))).failure?.message).toContain('"7"');
+    });
+  });
 });
