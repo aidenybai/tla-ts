@@ -2515,7 +2515,8 @@ const runTest = async (path: string): Promise<TestRun> => {
   if (!metadata.isModule && hasImportCall(source)) {
     return { id, outcome: "skipped", reason: "a script that imports a module" };
   }
-  // TypeScript itself fails on some syntax, such as import defer.
+  // TypeScript itself fails on some syntax, such as import defer, and recurses without end on some
+  // types, such as an object's that a generator assigns and names by what it yields.
   const annotated = (() => {
     try {
       return annotate(
@@ -2523,6 +2524,7 @@ const runTest = async (path: string): Promise<TestRun> => {
       );
     } catch (error) {
       if (error instanceof Error && error.message.startsWith("Debug Failure.")) return undefined;
+      if (error instanceof RangeError) return undefined;
       throw error;
     }
   })();
