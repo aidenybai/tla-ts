@@ -33,13 +33,9 @@ import {
 import { getContext } from "./search";
 import { forEachInitialState, hasBranches } from "./successors";
 import {
-  extendByScalar,
-  extendFunction,
-  extendScalar,
-  extendSet,
-  extendValue,
-  getExtendedFingerprints,
-  getLowFingerprint,
+  extendFingerprint,
+  FINGERPRINT_CODE,
+  getFingerprintTables,
   getScalarExtension,
 } from "./tlc/fingerprint";
 import { OUT_DEGREE_BUCKETS } from "./tlc/summary";
@@ -896,42 +892,48 @@ const getRecordShapes = (resolved: RecType) =>
 
 const isScalar = (value: Value) => typeof value !== "object" || value.kind === "ModelValue";
 
-// Generates code that adds the values of a state's plains to the fingerprint in the order given, as
-// TLC fingerprints them. Scalars it knows, such as atoms and field names, extend by their extensions.
+// Generates code that fingerprints a state's plains in the order given, as TLC fingerprints the
+// values they stand for, into words as its low and high words. Scalars it knows, such as atoms and
+// field names, extend by their extensions.
 const createStateFingerprinter = (types: Type[], order: number[], plains: Plains) => {
   const atoms = Int32Array.from(plains.values.flatMap(getScalarExtension));
   const domains: Int32Array[] = [];
   const fallbacks: ((plain: Plain) => void)[] = [];
+  const words = new Int32Array(2);
   const names = { count: 0 };
+  const code = FINGERPRINT_CODE;
   const getAtomCode = (atom: string) =>
-    `${atom} *= 3; extendByScalar(A[${atom}], A[${atom} + 1], A[${atom} + 2]);`;
+    `${atom} *= 3; ${code.scalar(`A[${atom}]`, `A[${atom} + 1]`, `A[${atom} + 2]`)}`;
   const getCode = (type: Type, plain: string): string => {
     const resolved = resolveType(type);
     const name = `p${names.count++}`;
-    if (resolved.kind === "Int" || resolved.kind === "Bool") return `extendScalar(${plain});`;
+    if (resolved.kind === "Int") return code.integer(plain);
+    if (resolved.kind === "Bool") return code.boolean(plain);
     if (resolved.kind === "Str") return `{ let ${name} = ${plain}; ${getAtomCode(name)} }`;
     if (resolved.kind === "Opt") {
-      return `{ let ${name} = ${plain}; if (typeof ${name} === "boolean") extendScalar(${name}); else { ${getAtomCode(name)} } }`;
+      return `{ let ${name} = ${plain}; if (typeof ${name} === "boolean") { ${code.boolean(name)} } else { ${getAtomCode(name)} } }`;
     }
     if (resolved.kind === "Mix") {
-      return `{ let ${name} = ${plain}; if (${name} < ${ATOM_BASE}) extendScalar(${name}); else { ${name} -= ${ATOM_BASE}; ${getAtomCode(name)} } }`;
+      return `{ let ${name} = ${plain}; if (${name} < ${ATOM_BASE}) { ${code.integer(name)} } else { ${name} -= ${ATOM_BASE}; ${getAtomCode(name)} } }`;
     }
     // A mask's bits are its elements, in TLC's order.
     if (resolved.kind === "Set" && isMask(resolved, plains)) {
-      return `{ const ${name} = ${plain}; let n = 0; for (let r = ${name}; r !== 0; r &= r - 1) n++; extendSet(n); for (let r = ${name}; r !== 0; r &= r - 1) extendScalar(31 - Math.clz32(r & -r)); }`;
+      return `{ const ${name} = ${plain}; ${code.set(`H.count(${name})`)} for (let r${name} = ${name}; r${name} !== 0; r${name} &= r${name} - 1) { ${code.integer(`(31 - Math.clz32(r${name} & -r${name}))`)} } }`;
     }
     if (resolved.kind === "Seq") {
-      return `{ const ${name} = ${plain}; extendFunction(${name}.length); for (let i${name} = 0; i${name} < ${name}.length; i${name}++) { extendScalar(i${name} + 1); ${getCode(resolved.element, `${name}[i${name}]`)} } }`;
+      return `{ const ${name} = ${plain}; ${code.function(`${name}.length`)} for (let i${name} = 0; i${name} < ${name}.length; i${name}++) { ${code.integer(`(i${name} + 1)`)} ${getCode(resolved.element, `${name}[i${name}]`)} } }`;
     }
     if (resolved.kind === "Tup") {
       const items = resolved.elements.map(
-        (element, index) => `extendScalar(${index + 1}); ${getCode(element, `${name}[${index}]`)}`,
+        (element, index) =>
+          `${code.integer(String(index + 1))} ${getCode(element, `${name}[${index}]`)}`,
       );
-      return `{ const ${name} = ${plain}; extendFunction(${items.length}); ${items.join(" ")} }`;
+      return `{ const ${name} = ${plain}; ${code.function(String(items.length))} ${items.join(" ")} }`;
     }
     if (resolved.kind === "Fn" && resolved.domain.every(isScalar)) {
       const domain = domains.push(Int32Array.from(resolved.domain.flatMap(getScalarExtension))) - 1;
-      return `{ const ${name} = ${plain}; const d${name} = D[${domain}]; extendFunction(${name}.length); for (let i${name} = 0; i${name} < ${name}.length; i${name}++) { extendByScalar(d${name}[3 * i${name}], d${name}[3 * i${name} + 1], d${name}[3 * i${name} + 2]); ${getCode(resolved.range, `${name}[i${name}]`)} } }`;
+      const index = `3 * i${name}`;
+      return `{ const ${name} = ${plain}; const d${name} = D[${domain}]; ${code.function(`${name}.length`)} for (let i${name} = 0; i${name} < ${name}.length; i${name}++) { ${code.scalar(`d${name}[${index}]`, `d${name}[${index} + 1]`, `d${name}[${index} + 2]`)} ${getCode(resolved.range, `${name}[i${name}]`)} } }`;
     }
     if (resolved.kind === "Rec") {
       const offset = resolved.shapes.length > 1 ? 1 : 0;
@@ -939,33 +941,55 @@ const createStateFingerprinter = (types: Type[], order: number[], plains: Plains
         if (shape.isNull)
           return `{ let n${name} = ${name}[${offset}]; ${getAtomCode(`n${name}`)} }`;
         const fields = shape.order.map((field, index) => {
-          const extension = getScalarExtension(shape.names[index]).join(", ");
-          return `extendByScalar(${extension}); ${getCode(shape.types[index], `${name}[${field + offset}]`)}`;
+          const extension = getScalarExtension(shape.names[index]).map(String);
+          return `${code.scalar(extension[0], extension[1], extension[2])} ${getCode(shape.types[index], `${name}[${field + offset}]`)}`;
         });
-        return `extendFunction(${fields.length}); ${fields.join(" ")}`;
+        return `${code.function(String(fields.length))} ${fields.join(" ")}`;
       });
       const body =
         offset === 0
           ? cases[0]
-          : `switch (${name}[0]) { ${cases.map((code, tag) => `case ${tag}: ${code} break;`).join(" ")} }`;
+          : `switch (${name}[0]) { ${cases.map((item, tag) => `case ${tag}: ${item} break;`).join(" ")} }`;
       return `{ const ${name} = ${plain}; ${body} }`;
     }
     // A set of other elements, or a function with keys, is sorted as its value is built.
     const read = createValueReader(type, plains);
-    return `X[${fallbacks.push((item) => extendValue(read(item))) - 1}](${plain});`;
+    const fallback = fallbacks.push((item) => extendFingerprint(words, read(item))) - 1;
+    return `W[0] = l; W[1] = h; X[${fallback}](${plain}); l = W[0]; h = W[1];`;
   };
   const body = order.map((variable) => getCode(types[variable], `s[${variable}]`)).join("\n");
-  const extend: (state: Plain[]) => void = new Function(
-    "extendScalar",
-    "extendByScalar",
-    "extendSet",
-    "extendFunction",
+  const tables = getFingerprintTables();
+  const fingerprint: (state: Plain[]) => void = new Function(
+    "H0",
+    "H1",
+    "H2",
+    "H3",
+    "L0",
+    "L1",
+    "L2",
+    "L3",
     "A",
     "D",
     "X",
-    `return (s) => { ${body} };`,
-  )(extendScalar, extendByScalar, extendSet, extendFunction, atoms, domains, fallbacks);
-  return extend;
+    "W",
+    "H",
+    `return (s) => { let h = ${tables.initialHigh}, l = ${tables.initialLow}, m; ${body} W[0] = l; W[1] = h; };`,
+  )(
+    tables.H0,
+    tables.H1,
+    tables.H2,
+    tables.H3,
+    tables.L0,
+    tables.L1,
+    tables.L2,
+    tables.L3,
+    atoms,
+    domains,
+    fallbacks,
+    words,
+    HELPERS,
+  );
+  return { fingerprint, words };
 };
 
 interface Program {
@@ -5531,9 +5555,11 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
       },
       {
         getFingerprint: (successor) =>
-          (liveFingerprints[successor.index] ??= getLowFingerprint(() =>
-            getLiveFingerprinter()(successor.state),
-          )),
+          (liveFingerprints[successor.index] ??= (() => {
+            const fingerprinter = getLiveFingerprinter();
+            fingerprinter.fingerprint(successor.state);
+            return fingerprinter.words[0];
+          })()),
         // The successors of a state the search expanded are all stored.
         getSuccessors: (_index, state) => {
           const successors: LiveSuccessor<Plain[]>[] = [];
@@ -5610,14 +5636,19 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
           ),
         );
       }
-      const extend = createStateFingerprinter(
+      const fingerprinter = createStateFingerprinter(
         program.variableTypes,
         check.variableOrder,
         program.plains,
       );
-      return getExtendedFingerprints(statistics.distinct, (index) =>
-        extend(getRepresentative(index)),
-      );
+      const fingerprints = new BigInt64Array(statistics.distinct);
+      const words = new Int32Array(fingerprints.buffer);
+      for (let index = 0; index < statistics.distinct; index++) {
+        fingerprinter.fingerprint(getRepresentative(index));
+        words[2 * index] = fingerprinter.words[0];
+        words[2 * index + 1] = fingerprinter.words[1];
+      }
+      return fingerprints;
     },
   });
   for (let index = 0; index < statistics.distinct; index++) {

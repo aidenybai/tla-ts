@@ -218,7 +218,7 @@ const SET_ENUM_VALUE = 5;
 const FCN_RCD_VALUE = 9;
 const MODEL_VALUE = 21;
 
-export const extendScalar = (value: boolean | number | string | ModelValue) => {
+const extendScalar = (value: boolean | number | string | ModelValue) => {
   if (typeof value === "boolean") {
     extendByte(BOOL_VALUE);
     extendByte(value ? 116 : 102);
@@ -263,25 +263,61 @@ export const getScalarExtension = (value: boolean | number | string | ModelValue
   return extension;
 };
 
-export const extendByScalar = (length: number, scalarHigh: number, scalarLow: number) => {
-  let rest = length;
-  for (; rest >= 4; rest -= 4) extendInt(0);
-  for (; rest > 0; rest--) extendByte(0);
-  high ^= scalarHigh;
-  low ^= scalarLow;
+// Code that extends a fingerprint in the locals h and l as the functions here extend theirs, with
+// a local m and the tables FINGERPRINT_TABLES gives as H0 to H3 and L0 to L3.
+const getByteCode = (byte: string) =>
+  `m = (${byte} ^ l) & 255; l = ((l >>> 8) | (h << 24)) ^ L0[m]; h = (h >>> 8) ^ H0[m];`;
+const getWordCode = (word: string) =>
+  `m = l ^ ${word}; l = h ^ L3[m & 255] ^ L2[(m >>> 8) & 255] ^ L1[(m >>> 16) & 255] ^ L0[m >>> 24]; h = H3[m & 255] ^ H2[(m >>> 8) & 255] ^ H1[(m >>> 16) & 255] ^ H0[m >>> 24];`;
+
+export const FINGERPRINT_CODE = {
+  integer: (value: string) => `${getByteCode(String(INT_VALUE))} ${getWordCode(value)}`,
+  boolean: (value: string) =>
+    `${getByteCode(String(BOOL_VALUE))} ${getByteCode(`(${value} ? 116 : 102)`)}`,
+  set: (length: string) => `${getByteCode(String(SET_ENUM_VALUE))} ${getWordCode(length)}`,
+  function: (length: string) => `${getByteCode(String(FCN_RCD_VALUE))} ${getWordCode(length)}`,
+  // A scalar of the extension getScalarExtension gives.
+  scalar: (length: string, scalarHigh: string, scalarLow: string) =>
+    `{ let r = ${length}; for (; r >= 4; r -= 4) { ${getWordCode("0")} } for (; r > 0; r--) { ${getByteCode("0")} } h ^= ${scalarHigh}; l ^= ${scalarLow}; }`,
 };
 
-export const extendSet = (length: number) => {
+export const getFingerprintTables = () => ({
+  H0: SLICE_HIGH_0,
+  H1: SLICE_HIGH_1,
+  H2: SLICE_HIGH_2,
+  H3: SLICE_HIGH_3,
+  L0: SLICE_LOW_0,
+  L1: SLICE_LOW_1,
+  L2: SLICE_LOW_2,
+  L3: SLICE_LOW_3,
+  initialHigh,
+  initialLow,
+});
+
+// Extends the fingerprint held in state, as low and high words, by a value.
+export const extendFingerprint = (state: Int32Array, value: Value) => {
+  const outerHigh = high;
+  const outerLow = low;
+  low = state[0];
+  high = state[1];
+  extendValue(value);
+  state[0] = low;
+  state[1] = high;
+  high = outerHigh;
+  low = outerLow;
+};
+
+const extendSet = (length: number) => {
   extendByte(SET_ENUM_VALUE);
   extendInt(length);
 };
 
-export const extendFunction = (length: number) => {
+const extendFunction = (length: number) => {
   extendByte(FCN_RCD_VALUE);
   extendInt(length);
 };
 
-export const extendValue = (value: Value) => {
+const extendValue = (value: Value) => {
   if (typeof value !== "object" || isModelValue(value)) {
     extendScalar(value);
   } else if (isFunctionValue(value)) {
@@ -310,22 +346,8 @@ export const getTlcFingerprint = (state: Value[]) => {
   return fingerprint;
 };
 
-// The low 32 bits of the fingerprint of the values extend adds, by which TLC orders a state's
-// successors in its liveness graph.
-export const getLowFingerprint = (extend: () => void) => {
-  const outerHigh = high;
-  const outerLow = low;
-  high = initialHigh;
-  low = initialLow;
-  extend();
-  const fingerprint = low | 0;
-  high = outerHigh;
-  low = outerLow;
-  return fingerprint;
-};
-
 // Fingerprints each of count states from the values extend adds for it.
-export const getExtendedFingerprints = (count: number, extend: (position: number) => void) => {
+const getExtendedFingerprints = (count: number, extend: (position: number) => void) => {
   const fingerprints = new BigInt64Array(count);
   const words = new Int32Array(fingerprints.buffer);
   const outerHigh = high;
