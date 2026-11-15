@@ -44675,4 +44675,38 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("converts an object of type any that Number or a unary operator takes", () => {
+    const getSource = (expected: string) => `
+      const effects: string[] = [];
+      const getValues = (): any[] => [
+        { valueOf() { effects.push("valueOf"); return 4; } },
+        { toString() { effects.push("toString"); return "7"; }, valueOf: false },
+        "9",
+      ];
+      const values = getValues();
+      const log = [
+        Number(values[0]),
+        +values[1],
+        -values[0],
+        ~values[1],
+        Number(values[2]),
+        effects.join("/"),
+      ].join(",");
+      if (log !== "${expected}") throw new Error(log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("4,7,-4,-8,9,valueOf/toString/valueOf/toString"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects a conversion that calls toString before valueOf", async () => {
+      expect(
+        (await checkModel(getSource("4,7,-4,-8,9,toString/valueOf/valueOf/toString"))).failure
+          ?.message,
+      ).toContain("4,7,-4,-8,9,valueOf/toString/valueOf/toString");
+    });
+  });
 });
