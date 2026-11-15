@@ -3534,18 +3534,20 @@ IteratedString(heap, value) ==
     [] OTHER -> Assert(FALSE, "tla-ts can't read the string of an object with a Symbol.toPrimitive")
 
 \\* A step of an array's or a string's iterator, which forgets what it iterates once done: the heap
-\\* after it, the value it gives, and whether it's done.
+\\* after it, the value it gives, whether it's done, and whether it throws the TypeError of a typed
+\\* array out of bounds, which leaves the iterator as it was.
 BuiltInIteratorStep(heap, ref) ==
   LET iterator == heap.objects[ref[Ref]]
       iterated == iterator.iterated
       index == iterator.index
       isString == iterator.kind = "string"
+      isThrown == /\\ iterated # Undefined
+                  /\\ ~isString
+                  /\\ IsTypedArray(heap, iterated)
+                  /\\ IsOutOfBounds(heap, heap.objects[iterated[Ref]])
       isDone == \\/ iterated = Undefined
                 \\/ index >= CASE isString -> Len(StringCharacters(iterated))
-                              [] IsTypedArray(heap, iterated) ->
-                                   IF IsOutOfBounds(heap, heap.objects[iterated[Ref]])
-                                   THEN Assert(FALSE, "tla-ts can't throw the TypeError of stepping a typed array out of bounds")
-                                   ELSE ViewLength(heap, heap.objects[iterated[Ref]])
+                              [] IsTypedArray(heap, iterated) -> ViewLength(heap, heap.objects[iterated[Ref]])
                               [] OTHER -> ToLength(Get(heap, iterated, "length"))
       element == IF isString THEN StringCharacters(iterated)[index + 1] ELSE Get(heap, iterated, ToString(index))
       value == CASE isDone -> Undefined
@@ -3554,7 +3556,9 @@ BuiltInIteratorStep(heap, ref) ==
                  [] OTHER -> <<index, element>>
       stepped == [heap EXCEPT !.objects[ref[Ref]] =
                     IF isDone THEN [@ EXCEPT !.iterated = Undefined] ELSE [@ EXCEPT !.index = index + 1]]
-  IN [heap |-> stepped, value |-> value, isDone |-> isDone]
+  IN IF isThrown
+     THEN [heap |-> heap, value |-> Undefined, isDone |-> FALSE, isThrown |-> TRUE]
+     ELSE [heap |-> stepped, value |-> value, isDone |-> isDone, isThrown |-> FALSE]
 
 \\* Whether an array's or a string's iterator reads the built-in next.
 HoldsIteratorNext(heap, ref) ==
@@ -3570,7 +3574,9 @@ BuiltInIteratorNext(heap, ref, isString) ==
      /\\ (heap.objects[ref[Ref]].kind = "string") = isString
   THEN LET step == BuiltInIteratorStep(heap, ref)
            allocated == Allocate(step.heap, IteratorResult(step.value, step.isDone))
-       IN [heap |-> allocated, value |-> Allocated(allocated), isThrown |-> FALSE]
+       IN IF step.isThrown
+          THEN [heap |-> heap, value |-> Undefined, isThrown |-> TRUE]
+          ELSE [heap |-> allocated, value |-> Allocated(allocated), isThrown |-> FALSE]
   ELSE Assert(FALSE, "tla-ts can't step an iterator that isn't an array's or a string's with its next")
 
 \\* Whether a value is %ArrayIteratorPrototype%.next or %StringIteratorPrototype%.next.

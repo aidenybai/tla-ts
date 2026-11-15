@@ -6677,8 +6677,10 @@ const withBuiltInIterator = (
     isAsync: false,
     queue: [],
   });
+  // A step throws the TypeError of a typed array out of bounds where the step before it didn't, so
+  // only where something besides the step before it changed the heap.
   const stepFrom =
-    (count: number) =>
+    (count: number, stepped?: Expression) =>
     (resumer: Path): Formula => {
       if (count >= BUILT_IN_ITERATOR_STEP_LIMIT) {
         return leaf(
@@ -6693,7 +6695,7 @@ const withBuiltInIterator = (
       const caller = getCaller(resumer);
       const heap = getHeap(resumer.scope, node, context);
       const stepName = context.names.getFresh("step");
-      const stepped = identifier(stepName);
+      const step = identifier(stepName);
       const heapSymbol = context.heap;
       const after =
         heapSymbol === undefined
@@ -6702,23 +6704,31 @@ const withBuiltInIterator = (
               ...resumer,
               scope: {
                 ...resumer.scope,
-                bindings: new Map([
-                  ...resumer.scope.bindings,
-                  [heapSymbol, field(stepped, "heap")],
-                ]),
+                bindings: new Map([...resumer.scope.bindings, [heapSymbol, field(step, "heap")]]),
               },
             };
+      const continued = ifThenElse(
+        field(step, "isDone"),
+        caller.step(leave(after, undefined), undefined, true),
+        caller.step(
+          leave(after, stepFrom(count + 1, field(step, "heap"))),
+          field(step, "value"),
+          false,
+        ),
+      );
       return ifThenElse(
         useJavaScript("HoldsIteratorNext", [heap, ref], context),
         bindOnce(
           resumer,
           stepName,
           useJavaScript("BuiltInIteratorStep", [heap, ref], context),
-          ifThenElse(
-            field(stepped, "isDone"),
-            caller.step(leave(after, undefined), undefined, true),
-            caller.step(leave(after, stepFrom(count + 1)), field(stepped, "value"), false),
-          ),
+          stepped !== undefined && isSameExpression(heap, stepped)
+            ? continued
+            : ifThenElse(
+                field(step, "isThrown"),
+                throwTypeError(leave(resumer, stepFrom(count)), node, context, caller),
+                continued,
+              ),
         ),
         leaf(
           apply("Assert", [
@@ -12845,7 +12855,7 @@ export const throwError = (
   path: Path,
   node: ts.Node,
   context: Context,
-  frame: Frame,
+  frame: Pick<Frame, "throwTo">,
 ) => {
   const uncaught = apply("Assert", [boolean(false), string(name)]);
   return frame.throwTo === undefined
@@ -12853,8 +12863,12 @@ export const throwError = (
     : frame.throwTo(path, { value: translateEngineError(name, node, context), uncaught });
 };
 
-export const throwTypeError = (path: Path, node: ts.Node, context: Context, frame: Frame) =>
-  throwError("TypeError", path, node, context, frame);
+export const throwTypeError = (
+  path: Path,
+  node: ts.Node,
+  context: Context,
+  frame: Pick<Frame, "throwTo">,
+) => throwError("TypeError", path, node, context, frame);
 
 // Names a value after a statement changes it, so that later statements read the name rather than
 // repeat what made the value.

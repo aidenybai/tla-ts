@@ -39957,6 +39957,50 @@ describe("BigInts", () => {
     });
   });
 
+  describe("throws a TypeError where an array iterator steps a typed array out of bounds", () => {
+    const getSource = (expected: string) => `
+      const rab = new ArrayBuffer(3, { maxByteLength: 4 });
+      const fixed = new Uint8Array(rab, 0, 3);
+      fixed[1] = 7;
+      let log = "";
+      const keys = Array.prototype.keys.call(fixed);
+      const values = Array.prototype.values.call(fixed);
+      const entries = fixed.entries();
+      const first = values.next();
+      log += first.value;
+      rab.resize(2);
+      try {
+        Array.from(keys);
+      } catch (error) {
+        log += error instanceof TypeError ? "k" : "other";
+      }
+      try {
+        values.next();
+      } catch (error) {
+        log += error instanceof TypeError ? "v" : "other";
+      }
+      try {
+        entries.next();
+      } catch (error) {
+        log += error instanceof TypeError ? "e" : "other";
+      }
+      rab.resize(3);
+      const second = values.next();
+      const third = entries.next();
+      log += second.value;
+      log += JSON.stringify(third.value);
+      if (log !== "${expected}") throw new Error(log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("0kve7[0,0]"))).failure).toBeUndefined();
+    });
+
+    it("rejects an iterator that a throw moves on", async () => {
+      expect((await checkModel(getSource("0kve0[0,0]"))).failure?.message).toContain("0kve7[0,0]");
+    });
+  });
+
   it("stops at a variable that a script reads through a module's namespace object", () => {
     const path = join(import.meta.dirname, "../fixtures/typescript/imports/namespace.ts");
     expect(() =>
