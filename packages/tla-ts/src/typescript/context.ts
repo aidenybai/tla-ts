@@ -2073,7 +2073,11 @@ export const getBinding = (node: ts.Node, context: Context): Binding | undefined
       ? { ...called, method: called.method }
       : undefined;
   const target = bound ?? method?.method;
-  const read = method === undefined ? values : [method.receiver, ...values.slice(1)];
+  // A function that bind reads where the script makes it is steady itself.
+  const read =
+    method === undefined
+      ? values.filter((value) => value !== target)
+      : [method.receiver, ...values.slice(1)];
   if (
     target === undefined ||
     (bound !== undefined &&

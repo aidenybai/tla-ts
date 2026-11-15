@@ -43075,4 +43075,36 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("2463"))).failure?.message).toContain("2461");
     });
   });
+
+  describe("binds a function expression where the script makes it", () => {
+    const getSource = (expected: string) => `
+      const receiver = { base: 10 };
+      const add = function sum(this: { base: number }, left: number, right: number) {
+        return this.base + left + right;
+      }.bind(receiver, 1);
+      const plain = function () {}.bind(null);
+      const log = [
+        add.name,
+        add.length,
+        add(2),
+        Object.hasOwn(add, "prototype"),
+        plain.name,
+        plain.length,
+        typeof plain,
+      ].join("|");
+      if (log !== "${expected}") throw new Error(log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("bound sum|1|13|false|bound |0|function"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects a bound function that keeps the length of its target", async () => {
+      expect(
+        (await checkModel(getSource("bound sum|2|13|false|bound |0|function"))).failure?.message,
+      ).toContain("bound sum|1|13|false|bound |0|function");
+    });
+  });
 });
