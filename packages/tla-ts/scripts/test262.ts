@@ -1024,6 +1024,8 @@ interface GeneratorTypes {
   sent: string[];
   // What a return call passes, which the generator then returns.
   closed: string[];
+  // The yield* operands, by their order in the generator, that TypeScript can't iterate as typed.
+  casts: number[];
 }
 
 // The generators of a round's program, with what TypeScript reports of them.
@@ -1053,13 +1055,33 @@ const getMemberTypes = (checker: ts.TypeChecker, type: ts.Type | undefined) => {
 const getUnion = (members: string[]) =>
   members.length === 0 ? ["never"] : [...new Set(members)].toSorted();
 
+// The yields and returns of a generator's own body.
+const getYieldsAndReturns = (generator: ts.FunctionLikeDeclaration) => {
+  const yields: ts.YieldExpression[] = [];
+  const returns: ts.ReturnStatement[] = [];
+  const visit = (node: ts.Node) => {
+    if (ts.isYieldExpression(node)) yields.push(node);
+    if (ts.isReturnStatement(node)) returns.push(node);
+    if (!ts.isFunctionLike(node)) ts.forEachChild(node, visit);
+  };
+  if (generator.body !== undefined) ts.forEachChild(generator.body, visit);
+  return { yields, returns };
+};
+
+const getDelegated = (generator: ts.FunctionLikeDeclaration) =>
+  getYieldsAndReturns(generator).yields.flatMap((node) =>
+    node.asteriskToken !== undefined && node.expression !== undefined ? [node.expression] : [],
+  );
+
 // A generator that the test declares, whose yield gives a value or whose return a call passes a
 // value TypeScript rejects, takes the types of what it yields, returns, and is sent: each yield's
 // operand, each return's, undefined where its end is reachable, each argument that a return call
 // passes it, and each argument that a next call passes it, with undefined, which a next with none
-// and a loop send. Each round types the generators by the round before, and TypeScript, which then
-// rejects any other argument for next or return, shows what more they're sent, until the types
-// settle.
+// and a loop send. A yield* yields unknown, as what another iterator yields may be anything, and
+// one whose operand TypeScript can't iterate, as a test of a broken iterator gives, reads it as an
+// iterable of unknown, which tla-ts sees through. Each round types the generators by the round
+// before, and TypeScript, which then rejects any other argument for next or return, shows what
+// more they're sent, until the types settle.
 const typeGenerators = () => {
   const original = file.text;
   const getGenerators = (sourceFile: ts.SourceFile) => {
@@ -1124,12 +1146,6 @@ const typeGenerators = () => {
         : [];
     });
   };
-  const hasDelegation = (generator: ts.FunctionLikeDeclaration) => {
-    const visit = (node: ts.Node): boolean =>
-      (ts.isYieldExpression(node) && node.asteriskToken !== undefined) ||
-      (!ts.isFunctionLike(node) && (ts.forEachChild(node, visit) ?? false));
-    return generator.body !== undefined && visit(generator.body);
-  };
   const initial = getState();
   if (initial === undefined) return false;
   const targets = new Set(
@@ -1137,10 +1153,15 @@ const typeGenerators = () => {
       ...initial.diagnostics
         .filter((diagnostic) => GENERATOR_ERRORS.has(diagnostic.code))
         .map((diagnostic) => {
-          const generator = ts.findAncestor(
-            initial.getNode(diagnostic.start ?? 0),
-            ts.isFunctionLike,
-          );
+          const node = initial.getNode(diagnostic.start ?? 0);
+          // TypeScript names a variable that holds an anonymous generator.
+          const holder = node.parent;
+          const generator =
+            ts.isVariableDeclaration(holder) &&
+            holder.name === node &&
+            holder.initializer !== undefined
+              ? holder.initializer
+              : ts.findAncestor(node, ts.isFunctionLike);
           return initial.generators.findIndex((candidate) => candidate === generator);
         }),
       ...initial.diagnostics
@@ -1149,7 +1170,7 @@ const typeGenerators = () => {
           const rejected = getRejectedCall(initial, diagnostic);
           return rejected?.method === "return"
             ? getHeldGenerators(initial, rejected.receiver).filter(
-                (position) => !hasDelegation(initial.generators[position]),
+                (position) => getDelegated(initial.generators[position]).length === 0,
               )
             : [];
         }),
@@ -1169,14 +1190,25 @@ const typeGenerators = () => {
     if (before === undefined) return false;
     applyEdits(
       new Map(
-        [...types].map(([position, type]) => {
+        [...types].flatMap(([position, type]) => {
           const generator = before.generators[position];
           const closeParen = generator
             .getChildren()
             .find((child) => child.kind === ts.SyntaxKind.CloseParenToken);
+          const iterable = isAsync(generator) ? "AsyncIterable" : "Iterable";
+          const delegated = getDelegated(generator);
           return [
-            closeParen?.getEnd() ?? generator.parameters.end,
-            `: ${isAsync(generator) ? "AsyncGenerator" : "Generator"}<${type.yielded || "never"}, ${type.returned || "never"}, ${type.sent.join(" | ")}>`,
+            [
+              closeParen?.getEnd() ?? generator.parameters.end,
+              `: ${isAsync(generator) ? "AsyncGenerator" : "Generator"}<${type.yielded || "never"}, ${type.returned || "never"}, ${type.sent.join(" | ")}>`,
+            ] as const,
+            ...type.casts.flatMap((cast) => [
+              [delegated[cast].getStart(), "("] as const,
+              [
+                delegated[cast].getEnd(),
+                ` as unknown as ${iterable}<unknown, unknown, unknown>)`,
+              ] as const,
+            ]),
           ];
         }),
       ),
@@ -1218,14 +1250,9 @@ const typeGenerators = () => {
     const next = new Map<number, GeneratorTypes>();
     [...types].forEach(([position, type]) => {
       const generator = state.generators[position];
-      const yields: ts.YieldExpression[] = [];
-      const returns: ts.ReturnStatement[] = [];
-      const visit = (node: ts.Node) => {
-        if (ts.isYieldExpression(node)) yields.push(node);
-        if (ts.isReturnStatement(node)) returns.push(node);
-        if (!ts.isFunctionLike(node)) ts.forEachChild(node, visit);
-      };
-      if (generator.body !== undefined) ts.forEachChild(generator.body, visit);
+      const yieldsAndReturns = getYieldsAndReturns(generator);
+      const yields = yieldsAndReturns.yields;
+      const returns = yieldsAndReturns.returns;
       const getTypes = (operand: ts.Expression | undefined) => {
         if (operand === undefined) return ["undefined"];
         const value = checker.getTypeAtLocation(operand);
@@ -1236,9 +1263,21 @@ const typeGenerators = () => {
       const last = statements.at(-1);
       const isEndReachable =
         last === undefined || !(ts.isReturnStatement(last) || ts.isThrowStatement(last));
-      // A yield* yields what another iterator does, which this doesn't type.
-      if (yields.some((node) => node.asteriskToken !== undefined)) return;
-      const yielded = yields.map((node) => getTypes(node.expression));
+      const casts = getDelegated(generator).flatMap((operand, cast) =>
+        type.casts.includes(cast) ||
+        // The first round yields never, which no operand fits.
+        (type.yielded !== "" &&
+          state.diagnostics.some(
+            (diagnostic) =>
+              (diagnostic.start ?? 0) >= operand.getStart() &&
+              (diagnostic.start ?? 0) < operand.getEnd(),
+          ))
+          ? [cast]
+          : [],
+      );
+      const yielded = yields.map((node) =>
+        node.asteriskToken === undefined ? getTypes(node.expression) : ["unknown"],
+      );
       const closedTypes = [...new Set([...type.closed, ...(closed.get(position) ?? [])])];
       // TypeScript takes a generator that can end without a return only where its return type is
       // undefined or has void.
@@ -1256,6 +1295,7 @@ const typeGenerators = () => {
         returned: isTyped ? getUnion(returned.flatMap((members) => members ?? [])).join(" | ") : "",
         sent: sentTypes,
         closed: closedTypes,
+        casts,
       });
     });
     const isSettled =
@@ -1267,7 +1307,8 @@ const typeGenerators = () => {
           settled.yielded !== "" &&
           settled.yielded === type.yielded &&
           settled.returned === type.returned &&
-          settled.sent.join(" | ") === type.sent.join(" | ")
+          settled.sent.join(" | ") === type.sent.join(" | ") &&
+          settled.casts.join() === type.casts.join()
         );
       });
     if (isSettled) return true;
@@ -1281,7 +1322,7 @@ const typeGenerators = () => {
     new Map(
       [...targets].map((position) => [
         position,
-        { yielded: "", returned: "", sent: ["undefined"], closed: [] },
+        { yielded: "", returned: "", sent: ["undefined"], closed: [], casts: [] },
       ]),
     ),
     0,

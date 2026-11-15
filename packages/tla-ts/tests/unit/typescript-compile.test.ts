@@ -3807,6 +3807,44 @@ ${body}
     });
   });
 
+  describe("delegates to what a yield* casts to an iterable as the value itself", () => {
+    const getSource = (expected: string) => `
+      const broken = {
+        [Symbol.iterator]() {
+          return { next: null };
+        },
+      };
+      const plain = [1, 2];
+      function* fromBroken(): Generator<unknown, never, undefined> {
+        yield* (broken as unknown as Iterable<unknown, unknown, unknown>);
+        throw new Error("unreachable");
+      }
+      function* fromPlain(): Generator<unknown, void, undefined> {
+        yield* (plain as unknown as Iterable<unknown, unknown, unknown>);
+      }
+      const seen: string[] = [];
+      try {
+        fromBroken().next();
+      } catch (error) {
+        seen.push(error instanceof TypeError ? "type" : "other");
+      }
+      const iterator = fromPlain();
+      seen.push(String(iterator.next().value), String(iterator.next().value), String(iterator.next().done));
+      if (seen.join("|") !== "${expected}") throw new Error(seen.join("|"));
+    `;
+    const expected = "type|1|2|true";
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects the expectation that a next that isn't callable throws no TypeError", async () => {
+      expect(
+        (await checkModel(getSource(expected.replace("type|", "other|")))).failure?.message,
+      ).toContain(expected);
+    });
+  });
+
   it("tells an error from another value with Error.isError", async () => {
     const getSource = (expected: string) => `
       class Err extends TypeError {}
