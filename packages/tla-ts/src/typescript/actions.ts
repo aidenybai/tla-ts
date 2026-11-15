@@ -52,6 +52,7 @@ import {
 import {
   findNodes,
   getFunctionCandidates,
+  getFunctionValue,
   getObjectGetter,
   type HeapClass,
   type ChangeSummary,
@@ -257,6 +258,7 @@ import {
   getOwnFunctionKeys,
   translatePropertyKey,
   translateErrorFields,
+  translateFunctionValue,
 } from "./heap";
 import {
   COLLECTIONS,
@@ -12999,9 +13001,9 @@ export const translateJoined = (
         ? path.scope.bindings.get(entry[0]) === entry[1] || changed.includes(entry[0])
         : !isVarInside(entry[0]) || captured.includes(entry[0]),
     );
-  // What follows holds the functions held before, which the operator can't take, so each exit holds
-  // the same ones for each name that code after the statement can read. That leaves out the names
-  // that the statement declares and that don't outlive it, and those of the functions it called.
+  // What follows holds the functions held before, so each exit holds the same ones for each name
+  // that code after the statement can read. That leaves out the names that the statement declares
+  // and that don't outlive it, and those of the functions it called.
   const isReadAfter = (symbol: ts.Symbol) => {
     const declaration = symbol.valueDeclaration;
     if (declaration === undefined) return true;
@@ -13013,18 +13015,33 @@ export const translateJoined = (
       owner === undefined || ts.findAncestor(node, (ancestor) => ancestor === owner) !== undefined
     );
   };
+  // A name that the operator takes may hold other functions on its exits than before, where each
+  // that it holds has a value, which it passes. Code after the statement calls the function as it
+  // calls any that a value holds.
+  const getHeldValue = (functions: Map<ts.Symbol, FunctionNode>, symbol: ts.Symbol) => {
+    const held = functions.get(symbol);
+    return held && getFunctionValue(held, context);
+  };
   const isHeldAsBefore = (functions: Map<ts.Symbol, FunctionNode>) =>
     [...new Set([...path.scope.functions.keys(), ...functions.keys()])].every(
       (symbol) =>
-        !isReadAfter(symbol) || functions.get(symbol) === path.scope.functions.get(symbol),
+        !isReadAfter(symbol) ||
+        functions.get(symbol) === path.scope.functions.get(symbol) ||
+        passed.includes(symbol),
     );
+  const getPassed = (inner: Path, symbol: ts.Symbol) => {
+    const value = getHeldValue(inner.scope.functions, symbol);
+    return value === undefined
+      ? inner.scope.bindings.get(symbol)
+      : translateFunctionValue(value, context);
+  };
   const exits: { path: Path; value?: Expression }[] = [];
   const joined = translateWith((inner, value) => {
     exits.push({ path: inner, value });
     return leaf(
       call(name, [
-        ...changed.flatMap((symbol) => inner.scope.bindings.get(symbol) ?? []),
-        ...captured.map((symbol) => inner.scope.bindings.get(symbol) ?? getUndefined(context)),
+        ...changed.flatMap((symbol) => getPassed(inner, symbol) ?? []),
+        ...captured.map((symbol) => getPassed(inner, symbol) ?? getUndefined(context)),
         value ?? getUndefined(context),
       ]),
     );
@@ -13045,7 +13062,23 @@ export const translateJoined = (
       isKept(exit.path.scope.bindings) &&
       isHeldAsBefore(exit.path.scope.functions),
   );
-  if (!isJoinable) return translateWith(continueWith);
+  const unheld = passed.filter((symbol) =>
+    exits.some(
+      (exit) => exit.path.scope.functions.get(symbol) !== path.scope.functions.get(symbol),
+    ),
+  );
+  if (
+    !isJoinable ||
+    !unheld.every((symbol) =>
+      exits.every(
+        (exit) =>
+          !exit.path.scope.functions.has(symbol) ||
+          getHeldValue(exit.path.scope.functions, symbol) !== undefined,
+      ),
+    )
+  ) {
+    return translateWith(continueWith);
+  }
   if (exits.length === 0) return joined;
   const isValued = exits.some((exit) => exit.value !== undefined);
   const rest = continueWith(
@@ -13055,6 +13088,7 @@ export const translateJoined = (
       unboundThis: exits[0].path.unboundThis,
       scope: {
         ...path.scope,
+        functions: new Map([...path.scope.functions].filter((entry) => !unheld.includes(entry[0]))),
         bindings: new Map([
           ...path.scope.bindings,
           ...passed.map((symbol, position): [ts.Symbol, Expression] => [

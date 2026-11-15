@@ -36151,4 +36151,36 @@ describe("BigInts", () => {
       expect(getSize(8)).toBeLessThan(getSize(4) * 2);
     });
   });
+
+  describe("joins after a branch that assigns a function to a let", () => {
+    const getAssignment = (
+      index: number,
+    ) => `let add${index}: ((value: number) => number) | undefined;
+      if (box.size > ${index}) {
+        add${index} = function (value: number) {
+          return value + ${index + 1};
+        };
+      }`;
+    const getSource = (count: number, expected: string) => `
+      const box = { size: 2 };
+      ${Array.from({ length: count }, (_, index) => getAssignment(index)).join("\n")}
+      const added = [${Array.from({ length: count }, (_, index) => `add${index}`).join(", ")}];
+      let total = 0;
+      for (const add of added) total = add ? add(total) : total;
+      if (total !== ${expected}) throw new Error("total " + total);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(3, "3"))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation", async () => {
+      expect((await checkModel(getSource(3, "6"))).failure?.message).toContain("total 3");
+    });
+
+    it("translates what follows each branch once", () => {
+      const getSize = (count: number) => printModule(compile(getSource(count, "0")).source).length;
+      expect(getSize(8)).toBeLessThan(getSize(4) * 2);
+    });
+  });
 });
