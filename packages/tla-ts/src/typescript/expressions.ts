@@ -126,6 +126,7 @@ import {
   getOwnFunctionKeys,
   translatePropertyKey,
   getAnyProperty,
+  isMapless,
 } from "./heap";
 import {
   getBuiltIn,
@@ -1160,11 +1161,9 @@ const translateBuiltInCall = (
     if (context.heap === undefined) {
       throw new TlaTypeScriptError("Array.isArray needs a value whose type tells", node);
     }
-    // A map off the heap may be the same TLA+ value as an array, so only a script that names no map
-    // holds a sequence that is surely one.
     return useJavaScript(
       "IsArrayAny",
-      [getHeap(scope, node, context), value, boolean(!/Map\b/.test(node.getSourceFile().text))],
+      [getHeap(scope, node, context), value, boolean(isMapless(node))],
       context,
     );
   }

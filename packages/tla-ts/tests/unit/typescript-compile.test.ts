@@ -4557,14 +4557,21 @@ ${body}
     expect(
       (await checkModel(getSource("Generator|AsyncGenerator|true|true|true"))).failure?.message,
     ).toContain(expected);
-    expect(() =>
-      compile(`
-        const make = function* (start: number) {
-          yield start;
-        };
-        const prototype = Object.getPrototypeOf(Object.getPrototypeOf(make(1)));
-      `),
-    ).toThrow("getPrototypeOf needs a value whose type tells");
+    const getChainSource = (expected: string) => `
+      const make = function* (start: number) {
+        yield start;
+      };
+      const prototype = Object.getPrototypeOf(Object.getPrototypeOf(make(1)));
+      const log = [
+        prototype === Object.getPrototypeOf(function* () {}).prototype,
+        prototype === Object.prototype,
+      ].join();
+      if (log !== "${expected}") throw new Error(log);
+    `;
+    expect((await checkModel(getChainSource("true,false"))).failure).toBeUndefined();
+    expect((await checkModel(getChainSource("false,false"))).failure?.message).toContain(
+      "true,false",
+    );
   });
 
   it("reads the constructor of an async function from its prototype", async () => {
@@ -43621,6 +43628,48 @@ describe("BigInts", () => {
       `);
       expect(result.failure?.message).toContain(
         "tla-ts can't tell an array off the heap from a map",
+      );
+    });
+  });
+
+  describe("reads the prototype of a value of type unknown as it runs", () => {
+    const getSource = (expected: string) => `
+      const values: unknown[] = [1, "a", true, 2n, Symbol("s"), {}, new TypeError("x"), [1], Object.create(null)];
+      const log = [
+        Object.getPrototypeOf(values[0]) === Number.prototype,
+        Object.getPrototypeOf(values[1]) === String.prototype,
+        Object.getPrototypeOf(values[2]) === Boolean.prototype,
+        Object.getPrototypeOf(values[3]) === BigInt.prototype,
+        Object.getPrototypeOf(values[4]) === Symbol.prototype,
+        Object.getPrototypeOf(values[5]) === Object.prototype,
+        Object.getPrototypeOf(values[6]) === TypeError.prototype,
+        Object.getPrototypeOf(values[7]) === Array.prototype,
+        Object.getPrototypeOf(values[8]) === null,
+        Object.getPrototypeOf(values[1]) === Object.prototype,
+      ].join(",");
+      if (log !== "${expected}") throw new Error(log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("true,true,true,true,true,true,true,true,true,false"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects a string that inherits from Object.prototype directly", async () => {
+      expect(
+        (await checkModel(getSource("true,true,true,true,true,true,true,true,true,true"))).failure
+          ?.message,
+      ).toContain("true,true,true,true,true,true,true,true,true,false");
+    });
+
+    it("stops at the TypeError of null", async () => {
+      const result = await checkModel(`
+        const values: unknown[] = [{}, null];
+        if (Object.getPrototypeOf(values[1]) === Object.prototype) throw new Error("object");
+      `);
+      expect(result.failure?.message).toContain(
+        "tla-ts can't throw the TypeError of getPrototypeOf of undefined or null",
       );
     });
   });

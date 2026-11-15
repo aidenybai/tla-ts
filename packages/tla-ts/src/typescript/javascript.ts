@@ -2291,6 +2291,22 @@ GetAny(heap, value, key) ==
            [] OTHER -> GetFrom(heap, Ref :> "String.prototype", key, value)
     [] OTHER -> Assert(FALSE, "tla-ts can't read a property of this value")
 
+\\* Object.getPrototypeOf of a value whose type doesn't tell what it is, where a primitive gives the
+\\* prototype of the object that wraps it, an error the prototype of its constructor, and a sequence,
+\\* which may also be a map where a script names one, Array.prototype.
+PrototypeAny(heap, value, isMapless) ==
+  CASE value \\in {Undefined, Null} ->
+         Assert(FALSE, "tla-ts can't throw the TypeError of getPrototypeOf of undefined or null")
+    [] IsRef(value) -> Prototype(heap, value)
+    [] IsError(value) -> Get(heap, value.constructor, "prototype")
+    [] IsSequenceValue(value) /\\ isMapless -> Ref :> "Array.prototype"
+    [] TypeOf(value) = "number" -> Ref :> "Number.prototype"
+    [] TypeOf(value) = "string" -> Ref :> "String.prototype"
+    [] TypeOf(value) = "boolean" -> Ref :> "Boolean.prototype"
+    [] TypeOf(value) = "bigint" -> Ref :> "BigInt.prototype"
+    [] TypeOf(value) = "symbol" -> Ref :> "Symbol.prototype"
+    [] OTHER -> Assert(FALSE, "tla-ts can't tell the prototype of " \\o ToString(value))
+
 \\* A generator object that tla-ts follows, which is neither a promise nor a function.
 IsGeneratorObject(heap, ref) ==
   LET object == heap.objects[ref[Ref]]
@@ -4626,7 +4642,7 @@ IsArray(heap, value) ==
     [] OTHER -> IsRef(value) /\\ IsArrayObject(Lookup(heap, value))
 
 \\* IsArray of a value whose type doesn't tell what it is. An array off the heap is a sequence, which
-\\* may also be a map that tla-ts holds off the heap where a script names one.
+\\* may also be a map where a script names one.
 IsArrayAny(heap, value, isMapless) ==
   CASE IsRef(value) -> IsArray(heap, value)
     [] ~IsSequenceValue(value) -> FALSE
