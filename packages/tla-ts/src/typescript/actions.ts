@@ -16563,9 +16563,14 @@ export const translateStatements = (
   const statement = statements[0];
   // What an assignment or an increment in the statement gave belongs to this run of it, so no path
   // that leaves it keeps that for a later run. A call's result stays, as the objects it made, such
-  // as an array whose iterator reads its elements later, still hold it.
+  // as an array whose iterator reads its elements later, still hold it. A statement that tla-ts
+  // makes around a function's expression body has no parent, so the body stands for it.
+  const root =
+    statement.parent === undefined
+      ? (ts.forEachChild(statement, (child) => child) ?? statement)
+      : statement;
   const isOwn = (node: ts.Node) =>
-    isAssignment(node) && ts.findAncestor(node, (ancestor) => ancestor === statement) !== undefined;
+    isAssignment(node) && ts.findAncestor(node, (ancestor) => ancestor === root) !== undefined;
   const leave = (inner: Path): Path =>
     [...inner.scope.results.keys()].some(isOwn)
       ? {

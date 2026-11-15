@@ -2286,6 +2286,37 @@ setTimeout(() => {
     });
   });
 
+  describe("runs the increment in a callback's expression body again at each call", () => {
+    it.each([
+      ["a generator's forEach", "g().forEach(() => ++calls);\ncheck();", '"2"'],
+      ["an iterator helper's map", "g().map(() => calls++).toArray();\ncheck();", '"2"'],
+      [
+        "an operand of find's callback",
+        "g().find((value) => (++calls, value === 1));\ncheck();",
+        '"2"',
+      ],
+      [
+        "a promise's reactions",
+        "const increment = () => ++calls;\nconst resolved = Promise.resolve(0);\nconst first = resolved.then(increment);\nconst second = resolved.then(increment);\nconst run = async () => {\n  await first;\n  await second;\n  check();\n};\nrun();",
+        "A promise rejected with no handler",
+      ],
+    ])("in %s", async (_name, body, wrongMessage) => {
+      const getSource = (count: number) => `
+function* g(): Generator<number, void, undefined> {
+  yield 0;
+  yield 1;
+}
+let calls = 0;
+const check = () => {
+  if (calls !== ${count}) throw new Error(String(calls));
+};
+${body}
+`;
+      expect((await checkModel(getSource(2))).failure).toBeUndefined();
+      expect((await checkModel(getSource(1))).failure?.message).toContain(wrongMessage);
+    });
+  });
+
   it("runs an assignment in a unary operator's operand first", async () => {
     const getSource = (negated: number, voided: number) => `
       let x = 0;
