@@ -675,16 +675,18 @@ export const compile = (
     ...(context.heap === undefined &&
     model.script.every(
       (statement) =>
-        ts.isVariableStatement(statement) &&
-        statement.declarationList.declarations.every(
-          (declaration) =>
-            ts.isIdentifier(declaration.name) &&
-            // Only a script runs a declaration that nothing reads, which may throw.
-            (!isScript(sourceFile) ||
-              declaration.initializer === undefined ||
-              (statement.declarationList.flags & ts.NodeFlags.Const) === 0 ||
-              isInertValue(declaration.initializer)),
-        ),
+        // A string as a statement, such as a "use strict" directive, does nothing as it runs.
+        (ts.isExpressionStatement(statement) && ts.isStringLiteral(statement.expression)) ||
+        (ts.isVariableStatement(statement) &&
+          statement.declarationList.declarations.every(
+            (declaration) =>
+              ts.isIdentifier(declaration.name) &&
+              // Only a script runs a declaration that nothing reads, which may throw.
+              (!isScript(sourceFile) ||
+                declaration.initializer === undefined ||
+                (statement.declarationList.flags & ts.NodeFlags.Const) === 0 ||
+                isInertValue(declaration.initializer)),
+          )),
     )
       ? model.variables.map((variable) =>
           link(

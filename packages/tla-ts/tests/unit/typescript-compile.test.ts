@@ -36439,4 +36439,12 @@ describe("BigInts", () => {
       "tla-ts can't run a function declaration that is a statement's body outside strict mode",
     );
   });
+
+  it("runs a script of declarations under a use strict directive as one without it", async () => {
+    for (const directive of ['"use strict";', ""]) {
+      const result = await checkModel(`${directive}\nlet result = new Set([1, 2]).add(3);`);
+      expect(result.status).toBe("deadlock");
+      expect(getTrace(result)).toEqual([{ result: "{1, 2, 3}" }]);
+    }
+  });
 });
