@@ -130,6 +130,7 @@ import {
   isNumberLike,
   isSequenceType,
   mayBeSequenceType,
+  mayBeSetOrMapType,
   TYPED_ARRAYS,
   type BufferName,
   isBufferName,
@@ -3567,20 +3568,20 @@ const FRESH_ARRAY_READS = new Set([
   "Reflect.ownKeys",
 ]);
 
-// The calls that read a proxy of an array only as an object, through its internal methods.
+// The calls that read a proxy of a collection only as an object, through its internal methods.
 const isProxyObjectCall = (callee: string) =>
   /^(Object|Reflect)\.\w+$/.test(callee) ||
   /^(Array|Object)\.prototype\.\w+\.call$/.test(callee) ||
   ["Array.isArray", "JSON.stringify"].includes(callee);
 
-// The proxies of arrays that a script makes, and the variables, parameters, calls, and reads of
-// Proxy.revocable's proxy that hold them. A proxy is an object that the heap holds, so tla-ts reads
-// these as objects, whose reads run the proxy's internal methods, where it would read an array as a
-// sequence. So each place that a proxy reaches must read it only as an object: a read or a write of
-// a key, a comparison, a function of Object, Reflect, or JSON, a proxy that targets it, or a
-// variable or a script function's parameter whose reads do so in turn, and that no cast or
-// narrowing reads as an array.
-export const findArrayProxies = (roots: readonly ts.Node[], context: Context) => {
+// The proxies of arrays, sets, and maps that a script makes, and the variables, parameters, calls,
+// and reads of Proxy.revocable's proxy that hold them. A proxy is an object that the heap holds, so
+// tla-ts reads these as objects, whose reads run the proxy's internal methods, where it would read
+// an array as a sequence, or a set or a map by its type. So each place that a proxy reaches must
+// read it only as an object: a read or a write of a key, a comparison, a function of Object,
+// Reflect, or JSON, a proxy that targets it, or a variable or a script function's parameter whose
+// reads do so in turn, and that no cast or narrowing reads as a collection.
+export const findCollectionProxies = (roots: readonly ts.Node[], context: Context) => {
   const checker = context.checker;
   const made: (ts.NewExpression | ts.CallExpression)[] = [];
   const find = (node: ts.Node) => {
@@ -3588,7 +3589,7 @@ export const findArrayProxies = (roots: readonly ts.Node[], context: Context) =>
       (ts.isNewExpression(node) || ts.isCallExpression(node)) &&
       (isNewProxy(node, context) || isRevocable(node, context)) &&
       node.arguments !== undefined &&
-      mayBeArray(node.arguments[0])
+      mayBeCollection(node.arguments[0])
     ) {
       made.push(node);
     }
@@ -3602,12 +3603,14 @@ export const findArrayProxies = (roots: readonly ts.Node[], context: Context) =>
     }
     ts.forEachChild(node, collect);
   };
-  const mayBeArray = (node: ts.Node) =>
-    mayBeSequenceType(checker.getNonNullableType(checker.getTypeAtLocation(node)), checker);
+  const mayBeCollection = (node: ts.Node) => {
+    const type = checker.getNonNullableType(checker.getTypeAtLocation(node));
+    return mayBeSequenceType(type, checker) || mayBeSetOrMapType(type);
+  };
   const isAny = (node: ts.Node) => (checker.getTypeAtLocation(node).flags & ts.TypeFlags.Any) !== 0;
   const stop = (node: ts.Node): never => {
     throw new TlaTypeScriptError(
-      "tla-ts can't make a proxy of an array that the script may read as an array",
+      "tla-ts can't make a proxy of an array, a set, or a map that the script may read as one",
       node,
     );
   };
@@ -3625,7 +3628,9 @@ export const findArrayProxies = (roots: readonly ts.Node[], context: Context) =>
     (references.get(symbol) ?? [])
       .filter((reference) => reference !== name)
       .forEach((reference) =>
-        !proxies.has(name.parent) && mayBeArray(reference) ? stop(reference) : visit(reference),
+        !proxies.has(name.parent) && mayBeCollection(reference)
+          ? stop(reference)
+          : visit(reference),
       );
   };
   const visit = (node: ts.Expression): void => {
@@ -3638,17 +3643,17 @@ export const findArrayProxies = (roots: readonly ts.Node[], context: Context) =>
       return visit(parent);
     }
     if (ts.isAsExpression(parent) || ts.isTypeAssertionExpression(parent)) {
-      return mayBeArray(parent) || isAny(parent) ? stop(parent) : visit(parent);
+      return mayBeCollection(parent) || isAny(parent) ? stop(parent) : visit(parent);
     }
     if (
       (ts.isPropertyAccessExpression(parent) || ts.isElementAccessExpression(parent)) &&
       parent.expression === node
     ) {
       const user = parent.parent;
-      // A sequence's method would run where a method call reads a value whose type is an array.
+      // A collection's method would run where a method call reads a value whose type is one.
       return (ts.isCallExpression(user) || ts.isNewExpression(user)) &&
         user.expression === parent &&
-        mayBeArray(node)
+        mayBeCollection(node)
         ? stop(parent)
         : undefined;
     }
@@ -3678,7 +3683,7 @@ export const findArrayProxies = (roots: readonly ts.Node[], context: Context) =>
     }
     if (ts.isVariableDeclaration(parent) && parent.initializer === node) {
       if (!ts.isIdentifier(parent.name) || isAny(parent.name)) return stop(parent);
-      if (mayBeArray(parent.name)) proxies.add(parent);
+      if (mayBeCollection(parent.name)) proxies.add(parent);
       return hold(parent.name);
     }
     if (
@@ -3691,7 +3696,7 @@ export const findArrayProxies = (roots: readonly ts.Node[], context: Context) =>
       if (ts.isCallExpression(parent) && isProxyObjectCall(callee)) {
         // A call that may give the proxy back, as Object.freeze does, gives a value that holds it,
         // unlike the keys or the values that a call reads into a new array.
-        if (mayBeArray(parent) && !FRESH_ARRAY_READS.has(callee)) {
+        if (mayBeCollection(parent) && !FRESH_ARRAY_READS.has(callee)) {
           proxies.add(parent);
           visit(parent);
         }
@@ -3717,7 +3722,7 @@ export const findArrayProxies = (roots: readonly ts.Node[], context: Context) =>
         parameter.dotDotDotToken !== undefined ||
         !ts.isIdentifier(parameter.name) ||
         isAny(parameter.name) ||
-        mayBeArray(parameter.name)
+        mayBeCollection(parameter.name)
         ? stop(parent)
         : hold(parameter.name);
     }
@@ -3757,7 +3762,7 @@ export const findArrayProxies = (roots: readonly ts.Node[], context: Context) =>
         if (parameter.dotDotDotToken !== undefined || !ts.isIdentifier(parameter.name)) {
           return stop(parameter);
         }
-        if (mayBeArray(parameter.name) || isAny(parameter.name)) proxies.add(parameter);
+        if (mayBeCollection(parameter.name) || isAny(parameter.name)) proxies.add(parameter);
         hold(parameter.name);
       });
     });

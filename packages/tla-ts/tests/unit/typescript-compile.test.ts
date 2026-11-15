@@ -37565,4 +37565,36 @@ describe("BigInts", () => {
       ).toThrow("tla-ts can't read what Object.assign gives");
     });
   });
+
+  describe("reads a proxy of a set or a map as an object", () => {
+    const getSource = (expected: string) => `
+      const box = { size: 0 };
+      const proxy = new Proxy(new Set([1]), {});
+      const mapProxy = new Proxy(new Map([[1, 2]]), {});
+      box.size = 1;
+      const read = [typeof proxy, typeof mapProxy, proxy === (mapProxy as object)].join();
+      if (read !== "${expected}") throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("object,object,false"))).failure).toBeUndefined();
+    });
+
+    it("rejects the proxies as the same object", async () => {
+      expect((await checkModel(getSource("object,object,true"))).failure?.message).toContain(
+        "object,object,false",
+      );
+    });
+
+    it("stops where the script calls the collection's methods on the proxy", () => {
+      ["proxy.has(1);", "[...proxy];", "Set.prototype.has.call(proxy, 1);"].forEach((read) =>
+        expect(() =>
+          compile(`
+            const proxy = new Proxy(new Set([1]), {});
+            ${read}
+          `),
+        ).toThrow("tla-ts can't make a proxy of an array, a set, or a map"),
+      );
+    });
+  });
 });

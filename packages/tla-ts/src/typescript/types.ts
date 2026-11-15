@@ -100,6 +100,10 @@ export const isSequenceType = (type: ts.Type, checker: ts.TypeChecker): boolean 
     ? type.types.every((member) => isSequenceType(member, checker))
     : checker.isArrayType(type) || checker.isTupleType(type);
 
+// Whether any member of a type is a set or a map, weak or not.
+export const mayBeSetOrMapType = (type: ts.Type) =>
+  (type.isUnion() ? type.types : [type]).some((member) => isSetType(member) || isMapType(member));
+
 // Whether any member of a type is an array or a tuple, which a sequence holds without its identity.
 export const mayBeSequenceType = (type: ts.Type, checker: ts.TypeChecker) =>
   (type.isUnion() ? type.types : [type]).some((member) => isSequenceType(member, checker));
@@ -495,17 +499,18 @@ export const isHeapSetOrMap = (node: ts.Expression, context: Context) => {
   );
 };
 
-// Whether an expression gives a proxy of an array, which the heap holds as an object.
-const isArrayProxy = (node: ts.Expression, context: Context): boolean => {
+// Whether an expression gives a proxy of an array, a set, or a map, which the heap holds as an
+// object.
+const isCollectionProxy = (node: ts.Expression, context: Context): boolean => {
   if (ts.isParenthesizedExpression(node) || ts.isNonNullExpression(node)) {
-    return isArrayProxy(node.expression, context);
+    return isCollectionProxy(node.expression, context);
   }
   const declaration = ts.isIdentifier(node)
     ? getSymbol(node, context.checker)?.valueDeclaration
     : undefined;
   return (
-    context.arrayProxies.has(node) ||
-    (declaration !== undefined && context.arrayProxies.has(declaration))
+    context.collectionProxies.has(node) ||
+    (declaration !== undefined && context.collectionProxies.has(declaration))
   );
 };
 
@@ -915,7 +920,7 @@ export const getWrappedThis = (node: ts.Node, context: Context) => {
 export const getKind = (node: ts.Expression, context: Context): Kind => {
   if (context.heap !== undefined && getWrappedThis(node, context) !== undefined) return "object";
   if (isHeapArray(node, context) || getBound(node, context) !== undefined) return "object";
-  if (isArrayProxy(node, context)) return "object";
+  if (isCollectionProxy(node, context)) return "object";
   const checker = context.checker;
   if (isHeldErrorName(node, context)) return "object";
   // An object stays one where TypeScript narrows its type, as instanceof Object narrows it to the
