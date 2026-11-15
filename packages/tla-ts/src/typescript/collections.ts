@@ -971,7 +971,15 @@ const translateSequenceOperation = (
                   context,
                 )
               : isComparableElement
-                ? apply("=", [index(sequence, [position]), value])
+                ? junction("And", [
+                    // An element that a cast or any gives the array may be of another kind than
+                    // its type, which TLC can't compare with the value.
+                    apply("=", [
+                      useJavaScript("TypeOf", [index(sequence, [position])], context),
+                      useJavaScript("TypeOf", [value], context),
+                    ]),
+                    apply("=", [index(sequence, [position]), value]),
+                  ])
                 : useJavaScript("SameValue", [index(sequence, [position]), value], context);
         const from = call.arguments[1];
         // An undefined fromIndex is 0, where indexOf starts anyway but lastIndexOf stops.

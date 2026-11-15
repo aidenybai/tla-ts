@@ -44649,4 +44649,30 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("searches an array whose elements are of another kind than its type", () => {
+    const getSource = (expected: string) => `
+      const marker = { toString() { return true; } };
+      const mixed = new Array(false, true, marker as any, false, "true" as any, 0 as any, null);
+      const values: boolean[] = mixed;
+      const log = [
+        values.lastIndexOf(true),
+        values.lastIndexOf(false),
+        values.indexOf(true),
+        values.includes(false),
+        values.indexOf(null as any),
+      ].join(",");
+      if (log !== "${expected}") throw new Error(log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("1,3,1,true,6"))).failure).toBeUndefined();
+    });
+
+    it("rejects an object that equals the boolean its toString gives", async () => {
+      expect((await checkModel(getSource("2,3,1,true,6"))).failure?.message).toContain(
+        "1,3,1,true,6",
+      );
+    });
+  });
 });
