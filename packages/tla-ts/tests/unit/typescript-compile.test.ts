@@ -42382,4 +42382,25 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("calls the function that a write outside strict mode gives a global", () => {
+    const getSource = (expected: string) => `
+      const seen: string[] = [];
+      // @ts-ignore
+      step = function (value: number) {
+        seen.push(String(value + 1));
+      };
+      // @ts-ignore
+      step(1);
+      if (seen.join() !== "${expected}") throw new Error("seen " + seen.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("2"))).failure).toBeUndefined();
+    });
+
+    it("rejects a call that doesn't run", async () => {
+      expect((await checkModel(getSource("1"))).failure?.message).toContain("seen 2");
+    });
+  });
 });

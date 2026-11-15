@@ -18635,14 +18635,21 @@ export const translateStatements = (
   // declarations run.
   // A global that a write outside strict mode makes throws until the write runs, which the
   // statement checks, once, where it reads the global first.
-  const isGlobalRead = (name: ts.Identifier) =>
-    path.scope.globalChecked !== statement &&
-    isImplicitGlobal(name, context) &&
-    !isPlainWrite(name) &&
-    !ts.isTypeOfExpression(
-      ts.findAncestor(name.parent, (ancestor) => !ts.isParenthesizedExpression(ancestor)) ??
-        name.parent,
+  // A global that a write gave a function holds it in the scope, not in its state variable, so the
+  // write ran.
+  const isGlobalRead = (name: ts.Identifier) => {
+    const symbol = getSymbol(name, context.checker);
+    return (
+      path.scope.globalChecked !== statement &&
+      isImplicitGlobal(name, context) &&
+      (symbol === undefined || !path.scope.functions.has(symbol)) &&
+      !isPlainWrite(name) &&
+      !ts.isTypeOfExpression(
+        ts.findAncestor(name.parent, (ancestor) => !ts.isParenthesizedExpression(ancestor)) ??
+          name.parent,
+      )
     );
+  };
   const isThrowing = (name: ts.Identifier) => {
     const symbol = getSymbol(name, context.checker);
     const declaration = symbol?.valueDeclaration;
