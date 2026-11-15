@@ -1481,6 +1481,8 @@ type Matcher =
   | { kind: "start" | "end"; flags: string }
   | { kind: "boundary"; isInverted: boolean; flags: string }
   | { kind: "lookahead"; body: Matcher; isNegative: boolean }
+  // An assertion that the next count code units are ones whose codes tla-ts tells.
+  | { kind: "known"; count: number }
   | { kind: "backreference"; indices: number[]; flags: string };
 
 const LINE_TERMINATORS = [0x0a, 0x0d, 0x2028, 0x2029];
@@ -1567,10 +1569,39 @@ const getGroups = (source: string) => {
   return { count: scan.count, names };
 };
 
+// The properties of strings, and those of them whose strings tla-ts can't list from the code points
+// that a script's text holds, as an emoji ZWJ or tag sequence may be of any length.
+const STRING_PROPERTIES = new Set([
+  "Basic_Emoji",
+  "Emoji_Keycap_Sequence",
+  "RGI_Emoji_Modifier_Sequence",
+  "RGI_Emoji_Flag_Sequence",
+  "RGI_Emoji_Tag_Sequence",
+  "RGI_Emoji_ZWJ_Sequence",
+  "RGI_Emoji",
+]);
+
+const UNBOUNDED_STRING_PROPERTIES = new Set([
+  "RGI_Emoji_Tag_Sequence",
+  "RGI_Emoji_ZWJ_Sequence",
+  "RGI_Emoji",
+]);
+
+const EMOJI_MODIFIERS = [0x1f3fb, 0x1f3fc, 0x1f3fd, 0x1f3fe, 0x1f3ff];
+
+const REGIONAL_INDICATORS = Array.from({ length: 26 }, (_, offset) => 0x1f1e6 + offset);
+
+// The code units of the longest prefix that the strings of a property of strings may share with
+// one of its strings that holds a code unit outside the script's text: a keycap, a flag, or a
+// modifier sequence, or the first emoji and joiner or tag character of a ZWJ or tag sequence.
+const STRING_PROPERTY_REACH = 5;
+
 // Parses a pattern into its matchers, following the spec's grammar with Annex B's extensions for
-// patterns without the u flag. TypeScript checks a literal's syntax, which tla-ts reads as valid.
-const parsePattern = (source: string, flags: string, node: ts.Node) => {
-  const isUnicode = flags.includes("u");
+// patterns without the u or v flag. TypeScript checks a literal's syntax, which tla-ts reads as
+// valid.
+const parsePattern = (source: string, flags: string, node: ts.Node, characters: Set<number>) => {
+  const isUnicodeSets = flags.includes("v");
+  const isUnicode = flags.includes("u") || isUnicodeSets;
   const groups = getGroups(source);
   const cursor = { position: 0, captures: 0, flags };
   const peek = (offset = 0) => source.charAt(cursor.position + offset);
@@ -1630,9 +1661,15 @@ const parsePattern = (source: string, flags: string, node: ts.Node) => {
     }
     const start = cursor.position;
     const parsed = isAt("(?=") || isAt("(?!") ? parseLookahead() : parseAtom();
+    const atomSource = source.slice(start, cursor.position);
     const atom =
       parsed.kind === "set" && parsed.source === undefined
-        ? { ...parsed, source: source.slice(start, cursor.position), flags: cursor.flags }
+        ? {
+            ...parsed,
+            ...(isUnicodeSets ? { set: getEngineSet(atomSource), isInverted: false } : {}),
+            source: atomSource,
+            flags: cursor.flags,
+          }
         : parsed;
     const bounds = parseBounds();
     if (bounds === undefined) return atom;
@@ -1688,7 +1725,7 @@ const parsePattern = (source: string, flags: string, node: ts.Node) => {
       };
     }
     if (character === "(") return parseGroup();
-    if (character === "[") return parseClass();
+    if (character === "[") return isUnicodeSets ? parseClassSet() : parseClass();
     if (character === "\\") return parseAtomEscape();
     if ("*+?)".includes(character) || /^\{\d+(,\d*)?\}/.test(getRest())) throw invalid();
     return getCharacter(readCode());
@@ -1700,8 +1737,12 @@ const parsePattern = (source: string, flags: string, node: ts.Node) => {
       const outer = cursor.flags;
       const removed = modifiers[2] ?? "";
       cursor.position += modifiers[0].length;
-      cursor.flags =
-        [...outer].filter((flag) => !removed.includes(flag)).join("") + (modifiers[1] ?? "");
+      cursor.flags = [
+        ...new Set([
+          ...[...outer].filter((flag) => !removed.includes(flag)),
+          ...(modifiers[1] ?? ""),
+        ]),
+      ].join("");
       const body = parseDisjunction();
       cursor.flags = outer;
       close();
@@ -1748,6 +1789,7 @@ const parsePattern = (source: string, flags: string, node: ts.Node) => {
       cursor.position += 2;
       return { kind: "set", set: classEscape, isInverted: false };
     }
+    if (isUnicodeSets && (escaped === "p" || escaped === "P")) return parseClassSet();
     const property = parseProperty();
     if (property !== undefined) return { kind: "set", set: property, isInverted: false };
     // A \ that no control letter follows stands for itself, as Annex B allows.
@@ -1842,6 +1884,123 @@ const parsePattern = (source: string, flags: string, node: ts.Node) => {
     cursor.position += 1;
     return { kind: "set", set: unite(...sets), isInverted };
   };
+  // With the v flag, the code points that an atom matches as the engine that tla-ts runs on tells,
+  // which folds case, reads properties, and runs a class's set operations as the spec does.
+  const getEngineMatcher = (text: string) =>
+    new RegExp(`^(?:${text})$`, cursor.flags.replace(/[dgmy]/g, ""));
+  const getEngineSet = (text: string): CharacterSet => {
+    const matcher = getEngineMatcher(text);
+    return (code) => matcher.test(String.fromCodePoint(code));
+  };
+  // The strings of a \q{...}, after its {, as the code points of each.
+  const parseClassStrings = () => {
+    const strings: number[][] = [[]];
+    while (peek() !== "}") {
+      if (peek() === "") throw invalid();
+      if (peek() === "|") {
+        cursor.position += 1;
+        strings.push([]);
+        continue;
+      }
+      const isBackspace = isAt("\\b");
+      if (isBackspace) cursor.position += 2;
+      strings[strings.length - 1].push(
+        isBackspace ? 0x08 : peek() === "\\" ? parseCharacterEscape(true) : readCode(),
+      );
+    }
+    cursor.position += 1;
+    return strings;
+  };
+  // A class with the v flag, or a property escape outside one, which may hold strings as well as
+  // code points. The engine that tla-ts runs on tells which code points it holds, and which of the
+  // strings that the class writes or that its properties of strings may hold of the script's code
+  // points. CompileAtom matches each string, the longest first, then a code point, then the empty
+  // string. A property of strings's strings that hold other code points are left out, so the match
+  // first asserts that the text ahead holds only those that tla-ts tells.
+  const parseClassSet = (): Matcher => {
+    const start = cursor.position;
+    const written: number[][] = [];
+    const properties: string[] = [];
+    const scan = { depth: 0 };
+    do {
+      const property = /^\\[pP]\{([^}]*)\}/.exec(getRest());
+      if (peek() === "") throw invalid();
+      if (isAt("\\q{")) {
+        cursor.position += 3;
+        written.push(...parseClassStrings());
+      } else if (property !== null) {
+        properties.push(property[1]);
+        cursor.position += property[0].length;
+      } else if (peek() === "\\") {
+        cursor.position += 2;
+      } else {
+        scan.depth += peek() === "[" ? 1 : peek() === "]" ? -1 : 0;
+        cursor.position += 1;
+      }
+    } while (scan.depth > 0);
+    const text = source.slice(start, cursor.position);
+    const matcher = getEngineMatcher(text);
+    const alphabet = getAlphabet(characters, true);
+    const stringProperties = properties.filter((name) => STRING_PROPERTIES.has(name));
+    if (
+      stringProperties.some((name) => UNBOUNDED_STRING_PROPERTIES.has(name)) &&
+      alphabet.some((code) => code === 0x200d || (code >= 0xe0020 && code <= 0xe007f))
+    ) {
+      throw new TlaTypeScriptError(
+        "tla-ts can't match the emoji ZWJ and tag sequences of a property of strings",
+        node,
+      );
+    }
+    const candidates = (
+      stringProperties.length === 0
+        ? written
+        : [
+            ...written,
+            ...[..."0123456789#*"].map((digit) => [digit.charCodeAt(0), 0xfe0f, 0x20e3]),
+            ...alphabet.flatMap((code) => [
+              [code, 0xfe0f],
+              ...EMOJI_MODIFIERS.map((modifier) => [code, modifier]),
+            ]),
+            ...REGIONAL_INDICATORS.filter((code) => alphabet.includes(code)).flatMap((first) =>
+              REGIONAL_INDICATORS.map((second) => [first, second]),
+            ),
+          ]
+    ).filter((points) => points.length > 1);
+    const strings = [...new Set(candidates.map((points) => String.fromCodePoint(...points)))]
+      .filter((string) => matcher.test(string))
+      .map((string) => [...string].map((point) => point.codePointAt(0) ?? 0))
+      .sort((left, right) => right.length - left.length);
+    const singles: Matcher = {
+      kind: "set",
+      set: getEngineSet(text),
+      isInverted: false,
+      source: text,
+      flags: cursor.flags,
+    };
+    const isIgnoringCase = cursor.flags.includes("i");
+    const getPoint = (code: number): Matcher => {
+      const escape = `\\u{${code.toString(16)}}`;
+      return {
+        kind: "set",
+        set: isIgnoringCase ? getEngineSet(escape) : getCharacterSet(code),
+        isInverted: false,
+        source: escape,
+        flags: cursor.flags,
+      };
+    };
+    const items: Matcher[] = [
+      ...strings.map((points): Matcher => ({ kind: "sequence", items: points.map(getPoint) })),
+      singles,
+      ...(matcher.test("") ? [{ kind: "sequence" as const, items: [] }] : []),
+    ];
+    const alternation: Matcher = items.length === 1 ? singles : { kind: "alternation", items };
+    return stringProperties.length === 0
+      ? alternation
+      : {
+          kind: "sequence",
+          items: [{ kind: "known", count: STRING_PROPERTY_REACH }, alternation],
+        };
+  };
   const pattern = parseDisjunction();
   if (cursor.position < source.length) throw invalid();
   return { pattern, count: groups.count, names: groups.names };
@@ -1866,6 +2025,25 @@ const CODE_UNITS = Array.from({ length: 0x10000 }, (_, code) => code);
 const isHighSurrogate = (code: number) => code >= 0xd800 && code <= 0xdbff;
 
 const isLowSurrogate = (code: number) => code >= 0xdc00 && code <= 0xdfff;
+
+// The code points that a script's strings may hold: those in ASCII, the code units outside it that
+// its text holds, and with the u or v flag the code points that pairs of those make.
+const getAlphabet = (characters: Set<number>, isUnicode: boolean) => {
+  const units = [...characters];
+  return [
+    ...CODE_UNITS.slice(0, 128),
+    ...units,
+    ...(isUnicode
+      ? units
+          .filter(isHighSurrogate)
+          .flatMap((high) =>
+            units
+              .filter(isLowSurrogate)
+              .map((low) => (high - 0xd800) * 0x400 + low - 0xdc00 + 0x10000),
+          )
+      : []),
+  ];
+};
 
 // The string of a code point, where TLA+ writes a lone surrogate as a part of a pair, since its
 // strings hold only text that UTF-8 can encode.
@@ -1898,19 +2076,7 @@ const translateCharacters = (
   const isMatched = (code: number) =>
     (folded === undefined || fold === undefined ? matcher.set(code) : folded.has(fold(code))) !==
     matcher.isInverted;
-  const units = [...characters];
-  const known = [
-    ...units,
-    ...(isUnicode
-      ? units
-          .filter(isHighSurrogate)
-          .flatMap((high) =>
-            units
-              .filter(isLowSurrogate)
-              .map((low) => (high - 0xd800) * 0x400 + low - 0xdc00 + 0x10000),
-          )
-      : []),
-  ];
+  const known = getAlphabet(characters, isUnicode).slice(128);
   const folding =
     isUnicode && fold !== undefined && matcher.source !== undefined
       ? new RegExp(`^(?:${matcher.source})$`, flags.replace(/[gmy]/g, ""))
@@ -1934,8 +2100,21 @@ const translateCharacters = (
 
 const translateMatcher = (matcher: Matcher, flags: string, characters: Set<number>): Expression => {
   const kind = { name: "kind", value: string(matcher.kind) };
+  // With the v flag, a set's own test tells each code point that it matches.
+  if (matcher.kind === "set" && flags.includes("v")) {
+    return record("Record", [
+      kind,
+      {
+        name: "characters",
+        value: set(getAlphabet(characters, true).filter(matcher.set).map(getCodePoint)),
+      },
+    ]);
+  }
   if (matcher.kind === "set") {
     return translateCharacters(matcher, matcher.flags ?? flags, characters);
+  }
+  if (matcher.kind === "known") {
+    return record("Record", [kind, { name: "count", value: number(matcher.count) }]);
   }
   if ("items" in matcher) {
     return record("Record", [
@@ -2013,10 +2192,7 @@ const translateRegExp = (
   node: ts.Node,
   context: Context,
 ) => {
-  if (flags.includes("v")) {
-    throw new TlaTypeScriptError("tla-ts can't match a regular expression with the v flag", node);
-  }
-  const parsed = parsePattern(pattern, flags, node);
+  const parsed = parsePattern(pattern, flags, node, context.characters);
   context.prelude.add("JavaScript");
   return record("Record", [
     { name: "pattern", value: translateMatcher(parsed.pattern, flags, context.characters) },

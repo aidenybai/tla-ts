@@ -4007,6 +4007,9 @@ RegExpEscape(value) ==
 \\* holds, backtracking where the spec's continuations fail.
 LOCAL RegExpFailure == [start |-> -1, end |-> -1, captures |-> <<>>]
 
+\\* Whether a regexp reads code points, as the u and v flags both make it.
+LOCAL IsFullUnicode(regexp) == regexp.unicode \\/ regexp.unicodeSets
+
 LOCAL UppercaseOf ==
   [character \\in CharactersOf("abcdefghijklmnopqrstuvwxyz") |->
      LET position == CHOOSE position \\in 1..26 :
@@ -4022,7 +4025,7 @@ LOCAL UnicodeFolds == (${formatString("\u017f")} :> "S") @@ (${formatString("\u2
 LOCAL Canonical(regexp, character) ==
   CASE ~regexp.ignoreCase -> character
     [] character \\in DOMAIN UppercaseOf -> UppercaseOf[character]
-    [] regexp.unicode /\\ character \\in DOMAIN UnicodeFolds -> UnicodeFolds[character]
+    [] IsFullUnicode(regexp) /\\ character \\in DOMAIN UnicodeFolds -> UnicodeFolds[character]
     [] OTHER -> character
 
 LOCAL LineTerminators == {"\\n", "\\r", ${formatString(" ")}, ${formatString(" ")}}
@@ -4037,12 +4040,12 @@ LOCAL CharacterAt(text, index) ==
 \\* folding is are too.
 LOCAL IsWordAt(regexp, text, index) ==
   \\/ CharacterAt(text, index) \\in WordCharacters
-  \\/ regexp.unicode /\\ regexp.ignoreCase /\\ CharacterAt(text, index) \\in DOMAIN UnicodeFolds
+  \\/ IsFullUnicode(regexp) /\\ regexp.ignoreCase /\\ CharacterAt(text, index) \\in DOMAIN UnicodeFolds
 
 \\* The code units of the character at an index that a regexp reads, where with the u flag a
 \\* surrogate pair is one character.
 LOCAL CharacterWidth(regexp, text, index) ==
-  IF /\\ regexp.unicode
+  IF /\\ IsFullUnicode(regexp)
      /\\ index >= 0
      /\\ index + 1 < Len(text)
      /\\ IsHighSurrogate(CharacterCode(CharacterAt(text, index)))
@@ -4063,7 +4066,7 @@ LOCAL IsSameCharacter(regexp, left, right) ==
   CASE left = right -> TRUE
     [] ~regexp.ignoreCase -> FALSE
     [] \\E character \\in {left, right} :
-         character \\in WordCharacters \\/ (regexp.unicode /\\ character \\in DOMAIN UnicodeFolds) ->
+         character \\in WordCharacters \\/ (IsFullUnicode(regexp) /\\ character \\in DOMAIN UnicodeFolds) ->
          Canonical(regexp, left) = Canonical(regexp, right)
     [] OTHER -> Assert(FALSE, "tla-ts can't compare the case of characters that aren't ASCII letters")
 
@@ -4129,6 +4132,12 @@ RegExpStep(regexp, text, node, state, stack) ==
                [] node.isNegative -> RegExpContinue(regexp, text, state, stack)
                [] found.end = -1 -> RegExpFailure
                [] OTHER -> RegExpContinue(regexp, text, [state EXCEPT !.captures = found.captures], stack)
+    [] node.kind = "known" ->
+         IF \\A offset \\in 0..(node.count - 1) :
+              \\/ state.end + offset >= Len(text)
+              \\/ CharacterAt(text, state.end + offset) \\in DOMAIN CharacterCodes
+         THEN RegExpContinue(regexp, text, state, stack)
+         ELSE Assert(FALSE, "tla-ts can't tell whether a class matches a character outside ASCII")
     [] node.kind = "backreference" ->
          LET captured == RegExpCaptureOf(state.captures, node.indices)
              length == IF captured = <<>> THEN 0 ELSE captured[2] - captured[1]
@@ -5339,7 +5348,7 @@ RegExpSplitCaptures(heap, result, pieces, count) ==
 
 \\* AdvanceStringIndex, which steps past a surrogate pair where the regexp reads code points.
 AdvanceStringIndex(text, index, isUnicode) ==
-  index + (IF isUnicode THEN CharacterWidth([unicode |-> TRUE], text, index) ELSE 1)
+  index + (IF isUnicode THEN CharacterWidth([unicode |-> TRUE, unicodeSets |-> FALSE], text, index) ELSE 1)
 
 RECURSIVE SubstitutionNames(_)
 \\* The group names of a replacement template's $<name> patterns, in order, where the groups are an
@@ -5408,7 +5417,7 @@ RegExpMatchIn(heap, ref, value, prototype) ==
       isFullUnicode ==
         RegExpFlag(heap, ref, regexp, "unicode") \\/ RegExpFlag(heap, ref, regexp, "unicodeSets")
   IN  CASE ~RegExpFlag(heap, ref, regexp, "global") -> RegExpExecIn(heap, ref, value, prototype)
-        [] ~regexp.global \\/ isFullUnicode # regexp.unicode ->
+        [] ~regexp.global \\/ isFullUnicode # IsFullUnicode(regexp) ->
              Assert(FALSE, "tla-ts can't call a regexp's method where a script changed what it reads")
         [] IsLastIndexFixed(heap, ref) -> [heap |-> heap, value |-> Null, isThrown |-> TRUE]
         [] matches = <<>> -> [heap |-> reset, value |-> Null, isThrown |-> FALSE]
