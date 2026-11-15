@@ -41810,4 +41810,36 @@ describe("BigInts", () => {
       ).toContain("A promise rejected with no handler");
     });
   });
+
+  describe("a script's function that a call gives fewer arguments than it declares", () => {
+    const getSource = (expected: string) => `
+      "use strict";
+      const seen: unknown[] = [];
+      function optional(this: unknown, first?: number, second = 2) {
+        return [this, first, second, arguments.length].join("/");
+      }
+      // @ts-ignore
+      seen.push(optional.call(), optional.apply());
+      function pattern({ prop }: { prop: number }) {
+        return prop;
+      }
+      try {
+        // @ts-ignore
+        pattern();
+      } catch (thrown) {
+        seen.push(thrown instanceof TypeError);
+      }
+      if (seen.join() !== "${expected}") throw new Error("seen " + seen.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("//2/0,//2/0,true"))).failure).toBeUndefined();
+    });
+
+    it("rejects a receiver other than undefined", async () => {
+      expect((await checkModel(getSource("null//2/0,//2/0,true"))).failure?.message).toContain(
+        "seen //2/0",
+      );
+    });
+  });
 });

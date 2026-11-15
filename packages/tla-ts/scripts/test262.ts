@@ -2213,6 +2213,77 @@ const ignoreSoundErrors = () => {
         ts.findAncestor(reference, ts.isFunctionLike) === undefined,
     );
   };
+  // A call of a script's function through call or apply without arguments, which runs it with this
+  // undefined and no arguments, where each of its parameters is optional.
+  const isReceiverlessCall = (node: ts.Node) => {
+    const call = ts.findAncestor(node, ts.isCallExpression);
+    const callee = call && skipParentheses(call.expression);
+    const signatures =
+      callee !== undefined &&
+      ts.isPropertyAccessExpression(callee) &&
+      ["apply", "call"].includes(callee.name.text) &&
+      call?.arguments.length === 0
+        ? checker.getTypeAtLocation(callee.expression).getCallSignatures()
+        : [];
+    return (
+      signatures.length > 0 &&
+      signatures.every((signature) => {
+        const declaration = signature.getDeclaration();
+        return (
+          (ts.isFunctionDeclaration(declaration) ||
+            ts.isFunctionExpression(declaration) ||
+            ts.isArrowFunction(declaration) ||
+            ts.isMethodDeclaration(declaration)) &&
+          declaration.body !== undefined &&
+          declaration.parameters.every(
+            (parameter) =>
+              (ts.isIdentifier(parameter.name) && parameter.name.text === "this") ||
+              parameter.questionToken !== undefined ||
+              parameter.initializer !== undefined ||
+              parameter.dotDotDotToken !== undefined,
+          )
+        );
+      })
+    );
+  };
+  // A call of a script's function with fewer arguments than it declares, where a parameter left
+  // without one is a pattern without a default, whose destructuring of undefined throws a
+  // TypeError, and each other is optional.
+  const isShortPatternCall = (node: ts.Node) => {
+    const call = ts.findAncestor(
+      node,
+      (ancestor): ancestor is ts.CallExpression | ts.NewExpression =>
+        ts.isCallExpression(ancestor) || ts.isNewExpression(ancestor),
+    );
+    const declaration = call && checker.getResolvedSignature(call)?.getDeclaration();
+    const missing =
+      call !== undefined &&
+      declaration !== undefined &&
+      (ts.isFunctionDeclaration(declaration) ||
+        ts.isFunctionExpression(declaration) ||
+        ts.isArrowFunction(declaration) ||
+        ts.isMethodDeclaration(declaration)) &&
+      declaration.body !== undefined &&
+      !(call.arguments ?? []).some(ts.isSpreadElement)
+        ? declaration.parameters
+            .filter(
+              (parameter) => !ts.isIdentifier(parameter.name) || parameter.name.text !== "this",
+            )
+            .slice(call.arguments?.length ?? 0)
+        : [];
+    const isPattern = (parameter: ts.ParameterDeclaration) =>
+      !ts.isIdentifier(parameter.name) && parameter.initializer === undefined;
+    return (
+      missing.some(isPattern) &&
+      missing.every(
+        (parameter) =>
+          isPattern(parameter) ||
+          parameter.questionToken !== undefined ||
+          parameter.dotDotDotToken !== undefined ||
+          parameter.initializer !== undefined,
+      )
+    );
+  };
   // A call of the call method of an array's method that REDUCING_METHODS lists, with a this value
   // and a reducer that the method's signature with no initial value takes. TypeScript checks call
   // against the method's last signature alone, which takes an initial value.
@@ -2972,7 +3043,10 @@ const ignoreSoundErrors = () => {
     const node = getNode(diagnostic.start ?? 0);
     return (
       (diagnostic.code === UNTYPED_THIS_ERROR && isPlainCall(node)) ||
-      (SHORT_CALL_ERRORS.has(diagnostic.code) && isMiscountedBuiltInCall(node, diagnostic)) ||
+      (SHORT_CALL_ERRORS.has(diagnostic.code) &&
+        (isMiscountedBuiltInCall(node, diagnostic) ||
+          isReceiverlessCall(node) ||
+          isShortPatternCall(node))) ||
       (diagnostic.code === ARGUMENT_COUNT_ERROR &&
         (isShortReducingCall(node) || isShortSearchingCall(node))) ||
       (SHORT_CALL_ERRORS.has(diagnostic.code) && isShortProtocolCall(node, diagnostic)) ||
