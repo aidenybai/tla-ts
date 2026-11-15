@@ -1034,6 +1034,37 @@ Atanh(value) ==
     [] IsOne(Negate(value)) -> NegativeInfinity
     [] OTHER -> Approximated("atanh")
 
+Exp(value) ==
+  CASE value \\in {NaN, Infinity} -> value
+    [] IsZero(value) -> 1
+    [] value = NegativeInfinity -> 0
+    [] OTHER -> Approximated("exp")
+
+Expm1(value) ==
+  CASE value \\in {NaN, Infinity} \\/ IsZero(value) -> value
+    [] value = NegativeInfinity -> -1
+    [] OTHER -> Approximated("expm1")
+
+\\* Math.log, Math.log2, and Math.log10, which agree where the specification fixes them.
+LOCAL Logarithm(name, value) ==
+  CASE value \\in {NaN, Infinity} -> value
+    [] IsZero(value) -> NegativeInfinity
+    [] IsNegative(value) -> NaN
+    [] IsOne(value) -> 0
+    [] OTHER -> Approximated(name)
+
+Log(value) == Logarithm("log", value)
+
+Log2(value) == Logarithm("log2", value)
+
+Log10(value) == Logarithm("log10", value)
+
+Log1p(value) ==
+  CASE value \\in {NaN, Infinity} \\/ IsZero(value) -> value
+    [] IsOne(Negate(value)) -> NegativeInfinity
+    [] LessThan(value, -1) -> NaN
+    [] OTHER -> Approximated("log1p")
+
 \\* JavaScript's <<. The bit below the shifted bits becomes the sign bit.
 LeftShift(left, right) ==
   LET a == Int32(left)

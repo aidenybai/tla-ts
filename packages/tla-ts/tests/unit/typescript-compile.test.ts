@@ -41122,4 +41122,44 @@ describe("BigInts", () => {
       expect(result.failure?.message).toContain("tla-ts can't compute Math.acosh of this number");
     });
   });
+
+  describe("computes the exponentials and logarithms of Math where the specification fixes them", () => {
+    const getSource = (expected: string) => `
+      const results = [
+        Math.exp(-0), Math.exp(-Infinity), Math.exp(Infinity), Math.expm1(-0), Math.expm1(-Infinity),
+        Math.log(-0), Math.log(1), Math.log(-5e-324), Math.log2(0), Math.log2(-Infinity),
+        Math.log10(1), Math.log10(Infinity), Math.log1p(-1), Math.log1p(-1.0000000000000002),
+        Math.log1p(-0),
+      ];
+      const expected = [${expected}];
+      results.forEach((value, index) => {
+        if (!Object.is(value, expected[index])) throw new Error("wrong at " + index);
+      });
+    `;
+
+    it("agrees with Node", async () => {
+      const result = await checkModel(
+        getSource(
+          "1, 0, Infinity, -0, -1, -Infinity, 0, NaN, -Infinity, NaN, 0, Infinity, -Infinity, NaN, -0",
+        ),
+      );
+      expect(result.failure).toBeUndefined();
+    });
+
+    it("rejects -0 as Math.exp(-Infinity)", async () => {
+      const result = await checkModel(
+        getSource(
+          "1, -0, Infinity, -0, -1, -Infinity, 0, NaN, -Infinity, NaN, 0, Infinity, -Infinity, NaN, -0",
+        ),
+      );
+      expect(result.failure?.message).toContain("wrong at 1");
+    });
+
+    it("stops where an engine approximates", async () => {
+      const result = await checkModel(`
+        if (Object.is(Math.log2(8), 0)) throw new Error("wrong");
+      `);
+      expect(result.failure?.message).toContain("tla-ts can't compute Math.log2 of this number");
+    });
+  });
 });
