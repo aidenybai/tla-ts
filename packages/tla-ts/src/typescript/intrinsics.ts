@@ -21,7 +21,7 @@ import {
 import { getVarNames } from "./early-errors";
 import { getConstructor, getErrorClass, NATIVE_ERRORS } from "./exceptions";
 import { getNumberValue, getRawString, isGlobalObject, translateExpression } from "./expressions";
-import { getHeap, isFunctionValue, translateFunctionObject } from "./heap";
+import { getHeap, isFunctionValue, isMapless, translateFunctionObject } from "./heap";
 import { useJavaScript, WELL_KNOWN_SYMBOLS } from "./javascript";
 import { getThisOwner, type Scope } from "./scope";
 import type { Expression } from "../ast";
@@ -1455,6 +1455,29 @@ export const translateIntrinsic = (node: ts.Expression, scope: Scope, context: C
   }
   const isCall = isPrototypeCall(node, context);
   const name = isCall ? getPrototype(node.arguments[0], context) : getName(node, context);
+  // A value whose type doesn't tell what it is has the prototype that its kind gives as it runs.
+  if (
+    isCall &&
+    name === undefined &&
+    context.heap !== undefined &&
+    scope.bindings.has(context.heap)
+  ) {
+    if (!isCompared(node, context)) {
+      throw new TlaTypeScriptError(
+        `Compare ${node.getText()} only with === or assert.sameValue`,
+        node,
+      );
+    }
+    return useJavaScript(
+      "PrototypeAny",
+      [
+        getHeap(scope, node, context),
+        translateFunctionObject(node.arguments[0], scope, context),
+        boolean(isMapless(node)),
+      ],
+      context,
+    );
+  }
   if (isCall && name === undefined) {
     throw new TlaTypeScriptError("getPrototypeOf needs a value whose type tells", node);
   }

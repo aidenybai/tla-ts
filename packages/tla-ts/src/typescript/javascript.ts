@@ -2415,6 +2415,22 @@ GetAny(heap, value, key) ==
            [] OTHER -> GetFrom(heap, Ref :> "String.prototype", key, value)
     [] OTHER -> Assert(FALSE, "tla-ts can't read a property of this value")
 
+\\* Object.getPrototypeOf of a value whose type doesn't tell what it is, where a primitive gives the
+\\* prototype of the object that wraps it, an error the prototype of its constructor, and a sequence,
+\\* which may also be a map where a script names one, Array.prototype.
+PrototypeAny(heap, value, isMapless) ==
+  CASE value \\in {Undefined, Null} ->
+         Assert(FALSE, "tla-ts can't throw the TypeError of getPrototypeOf of undefined or null")
+    [] IsRef(value) -> Prototype(heap, value)
+    [] IsError(value) -> Get(heap, value.constructor, "prototype")
+    [] IsSequenceValue(value) /\\ isMapless -> Ref :> "Array.prototype"
+    [] TypeOf(value) = "number" -> Ref :> "Number.prototype"
+    [] TypeOf(value) = "string" -> Ref :> "String.prototype"
+    [] TypeOf(value) = "boolean" -> Ref :> "Boolean.prototype"
+    [] TypeOf(value) = "bigint" -> Ref :> "BigInt.prototype"
+    [] TypeOf(value) = "symbol" -> Ref :> "Symbol.prototype"
+    [] OTHER -> Assert(FALSE, "tla-ts can't tell the prototype of " \\o ToString(value))
+
 \\* A generator object that tla-ts follows, which is neither a promise nor a function.
 IsGeneratorObject(heap, ref) ==
   LET object == heap.objects[ref[Ref]]
@@ -4767,6 +4783,14 @@ IsArray(heap, value) ==
                  \\/ IsArray(heap, target)
     [] OTHER -> IsRef(value) /\\ IsArrayObject(Lookup(heap, value))
 
+\\* IsArray of a value whose type doesn't tell what it is. An array off the heap is a sequence, which
+\\* may also be a map where a script names one.
+IsArrayAny(heap, value, isMapless) ==
+  CASE IsRef(value) -> IsArray(heap, value)
+    [] ~IsSequenceValue(value) -> FALSE
+    [] isMapless -> TRUE
+    [] OTHER -> Assert(FALSE, "tla-ts can't tell an array off the heap from a map")
+
 \\* The values that concat appends for an argument: the elements of an object whose
 \\* @@isConcatSpreadable property is truthy, or of an array where that property is undefined, and
 \\* otherwise the value itself.
@@ -5189,6 +5213,27 @@ WrapperObject(prototype, primitive) ==
       attributes |-> [key \\in keys |-> IF key = "length" THEN fixed ELSE [fixed EXCEPT !.enumerable = TRUE]],
       extensible |-> TRUE, prototype |-> prototype, isCallable |-> FALSE, isConstructor |-> FALSE,
       isOpaque |-> FALSE, privates |-> <<>>, primitive |-> primitive]
+
+\\* What Object.keys, values, entries, or getOwnPropertyNames gives for a value whose type doesn't tell
+\\* what it is: an object on the heap, or the object that a primitive converts to, or an array off the
+\\* heap, which may also be a map where a script names one.
+OwnKeysAny(heap, value, method, isMapless) ==
+  LET object ==
+        CASE value \\in {Undefined, Null} ->
+               Assert(FALSE, "tla-ts can't throw the TypeError of converting undefined or null to an object")
+          [] IsSequenceValue(value) /\\ isMapless -> ArrayObject(Null, value)
+          [] TypeOf(value) \\in {"string", "number", "boolean", "bigint", "symbol"} ->
+               WrapperObject(Null, value)
+          [] OTHER -> Assert(FALSE, "tla-ts can't list the keys of " \\o ToString(value))
+      keys == SelectSeq(OwnKeys(object), LAMBDA key : object.attributes[key].enumerable)
+  IN CASE IsRef(value) /\\ method = "keys" -> ObjectKeys(heap, value)
+       [] IsRef(value) /\\ method = "values" -> ObjectValues(heap, value)
+       [] IsRef(value) /\\ method = "entries" -> ObjectEntries(heap, value)
+       [] IsRef(value) -> OwnPropertyNames(heap, value)
+       [] method = "getOwnPropertyNames" -> OwnKeys(object)
+       [] method = "keys" -> keys
+       [] method = "values" -> [position \\in DOMAIN keys |-> object.values[keys[position]]]
+       [] OTHER -> [position \\in DOMAIN keys |-> <<keys[position], object.values[keys[position]]>>]
 
 \\* The object that Object makes of a symbol or a BigInt, which holds it in a slot named symbol or
 \\* bigint rather than the primitive slot of a Boolean, Number, or String object.
@@ -7318,10 +7363,10 @@ ApplyAll(object, keys, descriptors) ==
        IN IF defined.isDone THEN ApplyAll(defined.object, Tail(keys), Tail(descriptors)) ELSE defined
 
 \\* Whether a value is an object, where a function throws a TypeError if it isn't. An object that
-\\* isn't in the heap, such as an array, stops the run.
+\\* isn't in the heap, such as an array or a function, stops the run.
 IsObjectArgument(value) ==
   CASE IsObject(value) -> TRUE
-    [] value # Null /\\ TypeOf(value) = "object" ->
+    [] value # Null /\\ TypeOf(value) \\in {"object", "function"} ->
          Assert(FALSE, "tla-ts can't use " \\o ToString(value) \\o " as an object here")
     [] OTHER -> FALSE
 
@@ -7613,12 +7658,13 @@ Assign(heap, ref, sources) ==
                         EnumerableOwnKeys(IF IsObject(source) THEN Lookup(heap, source) ELSE source))
        IN IF written.isDone THEN Assign(written.heap, ref, Tail(sources)) ELSE written
 
-\\* Whether a prototype chain reaches an object.
+\\* Whether a prototype chain reaches an object, where the walk ends at a proxy, whose
+\\* [[GetPrototypeOf]] isn't the ordinary one.
 RECURSIVE ChainHas(_, _, _)
 ChainHas(heap, prototype, ref) ==
   /\\ prototype # Null
   /\\ \\/ SameValue(prototype, ref)
-     \\/ ChainHas(heap, Lookup(heap, prototype).prototype, ref)
+     \\/ ~IsProxy(heap, prototype) /\\ ChainHas(heap, Lookup(heap, prototype).prototype, ref)
 
 \\* Object.setPrototypeOf, which fails where the object isn't extensible or the chain would loop.
 \\* Object.prototype keeps the prototype it has, and a primitive stays as it is.

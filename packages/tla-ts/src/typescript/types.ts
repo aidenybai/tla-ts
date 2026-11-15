@@ -22,6 +22,7 @@ import {
   isMethodCall,
   isStatic,
   skipCasts,
+  PRIMITIVE_FLAGS,
 } from "./context";
 import {
   type Collection,
@@ -352,6 +353,47 @@ export const isHeapPattern = (type: ts.Type, pattern: ts.Node, context: Context)
   }
   return isHeapType(type, context);
 };
+
+// Whether a script with objects reads a value's properties through the heap as it runs, as its type
+// any or unknown, or a union of objects in the heap with arrays and primitives, doesn't tell what
+// it is.
+export const isReadAsAny = (node: ts.Expression, context: Context) => {
+  if (context.heap === undefined) return false;
+  const checker = context.checker;
+  const type = checker.getTypeAtLocation(node);
+  return (
+    (type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0 ||
+    (type.isUnion() &&
+      hasHeapType(type, context) &&
+      type.types.every(
+        (member) =>
+          isPlainObject(member, context) ||
+          isSequenceType(member, checker) ||
+          (member.flags & PRIMITIVE_FLAGS) !== 0,
+      ))
+  );
+};
+
+// Whether a value that any, unknown, {}, Object, or a union with an object types may be an object
+// in the heap or another value.
+export const mayBeHeapObject = (node: ts.Expression, context: Context) => {
+  const type = context.checker.getNonNullableType(context.checker.getTypeAtLocation(node));
+  return (
+    context.heap !== undefined &&
+    (hasHeapType(type, context) ||
+      (type.isUnion() ? type.types : [type]).some(
+        (member) =>
+          (member.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0 ||
+          member.getSymbol()?.name === "Object" ||
+          ((member.flags & ts.TypeFlags.Object) !== 0 &&
+            member.getProperties().length === 0 &&
+            member.getCallSignatures().length === 0),
+      ))
+  );
+};
+
+// The methods of Object that list the keys of a value whose type doesn't tell what it is as it runs.
+export const OWN_KEYS_ANY = new Set(["keys", "values", "entries", "getOwnPropertyNames"]);
 
 // In a script with objects, a value of type any may be an object, so its properties are unknown,
 // as are those of a value that a union types as an object or another value.

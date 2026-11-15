@@ -4557,14 +4557,21 @@ ${body}
     expect(
       (await checkModel(getSource("Generator|AsyncGenerator|true|true|true"))).failure?.message,
     ).toContain(expected);
-    expect(() =>
-      compile(`
-        const make = function* (start: number) {
-          yield start;
-        };
-        const prototype = Object.getPrototypeOf(Object.getPrototypeOf(make(1)));
-      `),
-    ).toThrow("getPrototypeOf needs a value whose type tells");
+    const getChainSource = (expected: string) => `
+      const make = function* (start: number) {
+        yield start;
+      };
+      const prototype = Object.getPrototypeOf(Object.getPrototypeOf(make(1)));
+      const log = [
+        prototype === Object.getPrototypeOf(function* () {}).prototype,
+        prototype === Object.prototype,
+      ].join();
+      if (log !== "${expected}") throw new Error(log);
+    `;
+    expect((await checkModel(getChainSource("true,false"))).failure).toBeUndefined();
+    expect((await checkModel(getChainSource("false,false"))).failure?.message).toContain(
+      "true,false",
+    );
   });
 
   it("reads the constructor of an async function from its prototype", async () => {
@@ -16102,15 +16109,7 @@ describe("errors", () => {
     }
   });
 
-  it("stops where a script reads a property of an object or another value", () => {
-    expect(() =>
-      compile(`
-        interface Sized { length: number }
-        const read = (value: string | Sized) => value.length;
-        const sized: Sized = { length: 4 };
-        if (read(sized) !== 4) throw new Error("length");
-      `),
-    ).toThrow("tla-ts can't read a property of a value that may be an object or another value");
+  it("stops where a script destructures an object or another value", () => {
     expect(() =>
       compile(`
         interface Sized { length: number }
@@ -16131,15 +16130,12 @@ describe("errors", () => {
       if (seen.join() !== "2,1") throw new Error("seen " + seen.join());
     `;
 
-    it("agrees with Node where the type is an object's", async () => {
-      expect((await checkModel(getSource("object"))).failure).toBeUndefined();
-    });
-
-    it.each(["{}", "Object", "object | number", "any"])("stops where the type is %s", (type) => {
-      expect(() => compile(getSource(type))).toThrow(
-        "tla-ts can't list the keys of a value that may be an object or another value",
-      );
-    });
+    it.each(["object", "{}", "Object", "object | number", "any"])(
+      "agrees with Node where the type is %s",
+      async (type) => {
+        expect((await checkModel(getSource(type))).failure).toBeUndefined();
+      },
+    );
   });
 
   it.each([
@@ -44013,6 +44009,202 @@ describe("BigInts", () => {
           )
         ).failure?.message,
       ).toContain(expected);
+    });
+  });
+  describe("tells whether a value of type unknown is an array as it runs", () => {
+    const getSource = (expected: string) => `
+      const source: unknown[] = [3, 4];
+      const filtered: unknown = source.filter(() => true);
+      const empty: unknown = [1].filter(() => false);
+      const target: object = [1];
+      const proxy: unknown = new Proxy(target, {});
+      const object: unknown = {};
+      const fn: unknown = function () {};
+      const error: unknown = new TypeError("x");
+      const text: unknown = "ab";
+      const nothing: unknown = null;
+      const log = [
+        Array.isArray(filtered),
+        Array.isArray(empty),
+        Array.isArray(proxy),
+        Array.isArray(object),
+        Array.isArray(JSON as unknown),
+        Array.isArray(fn),
+        Array.isArray(error),
+        Array.isArray(text),
+        Array.isArray(nothing),
+      ].join(",");
+      if (log !== "${expected}") throw new Error(log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("true,true,true,false,false,false,false,false,false"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects a proxy of an array that isn't one", async () => {
+      expect(
+        (await checkModel(getSource("true,true,false,false,false,false,false,false,false"))).failure
+          ?.message,
+      ).toContain("true,true,true,false,false,false,false,false,false");
+    });
+
+    it("stops at a value off the heap where the script names a map", async () => {
+      const result = await checkModel(`
+        const map: unknown = new Map<number, number>();
+        const object: unknown = {};
+        if (Array.isArray(map) || Array.isArray(object)) throw new Error("array");
+      `);
+      expect(result.failure?.message).toContain(
+        "tla-ts can't tell an array off the heap from a map",
+      );
+    });
+  });
+
+  describe("reads the prototype of a value of type unknown as it runs", () => {
+    const getSource = (expected: string) => `
+      const values: unknown[] = [1, "a", true, 2n, Symbol("s"), {}, new TypeError("x"), [1], Object.create(null)];
+      const log = [
+        Object.getPrototypeOf(values[0]) === Number.prototype,
+        Object.getPrototypeOf(values[1]) === String.prototype,
+        Object.getPrototypeOf(values[2]) === Boolean.prototype,
+        Object.getPrototypeOf(values[3]) === BigInt.prototype,
+        Object.getPrototypeOf(values[4]) === Symbol.prototype,
+        Object.getPrototypeOf(values[5]) === Object.prototype,
+        Object.getPrototypeOf(values[6]) === TypeError.prototype,
+        Object.getPrototypeOf(values[7]) === Array.prototype,
+        Object.getPrototypeOf(values[8]) === null,
+        Object.getPrototypeOf(values[1]) === Object.prototype,
+      ].join(",");
+      if (log !== "${expected}") throw new Error(log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("true,true,true,true,true,true,true,true,true,false"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects a string that inherits from Object.prototype directly", async () => {
+      expect(
+        (await checkModel(getSource("true,true,true,true,true,true,true,true,true,true"))).failure
+          ?.message,
+      ).toContain("true,true,true,true,true,true,true,true,true,false");
+    });
+
+    it("stops at the TypeError of null", async () => {
+      const result = await checkModel(`
+        const values: unknown[] = [{}, null];
+        if (Object.getPrototypeOf(values[1]) === Object.prototype) throw new Error("object");
+      `);
+      expect(result.failure?.message).toContain(
+        "tla-ts can't throw the TypeError of getPrototypeOf of undefined or null",
+      );
+    });
+  });
+
+  describe("ends the cycle check of setPrototypeOf at a proxy", () => {
+    const getSource = (expected: string) => `
+      const root: { [key: string]: unknown } = {};
+      const target: { [key: string]: unknown } = Object.create(root);
+      const proxy = new Proxy(target, {});
+      const plain: { [key: string]: unknown } = Object.create(root);
+      let log = "";
+      try {
+        Object.setPrototypeOf(root, plain);
+        log += "set";
+      } catch (error) {
+        log += error instanceof TypeError ? "cycle" : "other";
+      }
+      Object.setPrototypeOf(root, proxy);
+      log += \`|\${Object.getPrototypeOf(root) === proxy}\`;
+      if (log !== "${expected}") throw new Error(log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("cycle|true"))).failure).toBeUndefined();
+    });
+
+    it("rejects a cycle through the proxy", async () => {
+      expect((await checkModel(getSource("cycle|false"))).failure?.message).toContain("cycle|true");
+    });
+  });
+
+  describe("makes an object with Object.create whatever types its prototype and the object", () => {
+    const getSource = (expected: string) => `
+      const root: { [key: string]: unknown } = { x: 1 };
+      const proxy = new Proxy(Object.create(root), {});
+      const values: any[] = [proxy, 2];
+      const leaf: { [key: string]: unknown } = Object.create(values[0]);
+      let log = \`\${Object.create(root).x}|\${"x" in Object.create(proxy)}|\${leaf.x}\`;
+      try {
+        Object.create(values[1]);
+        log += "|made";
+      } catch (error) {
+        log += \`|\${error instanceof TypeError}\`;
+      }
+      if (log !== "${expected}") throw new Error(log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("1|true|1|true"))).failure).toBeUndefined();
+    });
+
+    it("rejects an object made from a number", async () => {
+      expect((await checkModel(getSource("1|true|1|made"))).failure?.message).toContain(
+        "1|true|1|true",
+      );
+    });
+  });
+
+  describe("reads a property of a union of objects, arrays, and primitives as it runs", () => {
+    const getSource = (expected: string) => `
+      interface Sized {
+        length: number;
+        [key: number]: unknown;
+      }
+      const read = (value: string | Sized | unknown[]) => value.length;
+      const at = (value: string | Sized | unknown[]) => value[0];
+      const sized: Sized = { length: 4, 0: "first" };
+      const log = [read(sized), read("abc"), read([1, 2]), at("xy"), at([5]), at(sized), at("")];
+      if (log.join(",") !== "${expected}") throw new Error(log.join(","));
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("4,3,2,x,5,first,"))).failure).toBeUndefined();
+    });
+
+    it("rejects a string read as an object", async () => {
+      expect((await checkModel(getSource("4,,2,x,5,first,"))).failure?.message).toContain(
+        "4,3,2,x,5,first,",
+      );
+    });
+  });
+
+  describe("lists the keys of a value whose type doesn't tell what it is as it runs", () => {
+    const getSource = (expected: string) => `
+      const values: {}[] = [{ a: 1, b: 2 }, "xy", [7, 8], 5, true];
+      const list = (value: {}) =>
+        [
+          Object.keys(value).join(" "),
+          Object.values(value).join(" "),
+          Object.entries(value).map((entry) => \`\${entry[0]}=\${entry[1]}\`).join(" "),
+          Object.getOwnPropertyNames(value).join(" "),
+        ].join("/");
+      const log = values.map((value) => list(value)).join("|");
+      if (log !== "${expected}") throw new Error(log);
+    `;
+    const expected =
+      "a b/1 2/a=1 b=2/a b|0 1/x y/0=x 1=y/0 1 length|0 1/7 8/0=7 1=8/0 1 length|///|///";
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects a string's length as enumerable", async () => {
+      const wrong = expected.replace("0 1/x y", "0 1 length/x y 2");
+      expect((await checkModel(getSource(wrong))).failure?.message).toContain(expected);
     });
   });
 });

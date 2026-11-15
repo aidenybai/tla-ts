@@ -126,6 +126,7 @@ import {
   getOwnFunctionKeys,
   translatePropertyKey,
   getAnyProperty,
+  isMapless,
 } from "./heap";
 import {
   getBuiltIn,
@@ -179,6 +180,9 @@ import {
 import {
   getCollection,
   rejectAnyReceiver,
+  isReadAsAny,
+  mayBeHeapObject,
+  OWN_KEYS_ANY,
   getField,
   isAddedToBuiltIn,
   getKind,
@@ -1166,7 +1170,7 @@ const translateBuiltInCall = (
         context,
       );
     }
-    translateExpression(argument, scope, context);
+    const value = translateExpression(argument, scope, context);
     const names = getTypeNames(context.checker.getTypeAtLocation(argument), context.checker);
     if (getKind(argument, context) === "sequence" && names?.every((name) => name === "object")) {
       return boolean(true);
@@ -1177,7 +1181,14 @@ const translateBuiltInCall = (
     ) {
       return boolean(false);
     }
-    throw new TlaTypeScriptError("Array.isArray needs a value whose type tells", node);
+    if (context.heap === undefined) {
+      throw new TlaTypeScriptError("Array.isArray needs a value whose type tells", node);
+    }
+    return useJavaScript(
+      "IsArrayAny",
+      [getHeap(scope, node, context), value, boolean(isMapless(node))],
+      context,
+    );
   }
   if (getBuiltIn(receiver, context) === "Error" && method === "isError") {
     const argument = node.arguments.at(0);
@@ -1341,6 +1352,18 @@ const translateBuiltInCall = (
         },
       );
     }
+    if (OWN_KEYS_ANY.has(method) && mayBeHeapObject(argument, context)) {
+      return useJavaScript(
+        "OwnKeysAny",
+        [
+          getHeap(scope, node, context),
+          translateFunctionObject(argument, scope, context),
+          string(method),
+          boolean(isMapless(node)),
+        ],
+        context,
+      );
+    }
   }
   // freeze, seal, and preventExtensions give a primitive back as it is.
   const primitive = global === "Object" ? node.arguments.at(0) : undefined;
@@ -1471,10 +1494,12 @@ const translateBuiltInCall = (
   }
   const isFromEntriesCall = isFromEntries(node, context);
   if (isCreation(node, context) || isFromEntriesCall) {
+    // Where nothing types the object, or a type any or unknown, a read of it goes through the heap.
     const contextual = context.checker.getContextualType(node);
     const isTyped =
-      contextual !== undefined &&
-      ((contextual.flags & ts.TypeFlags.Unknown) !== 0 || hasHeapType(contextual, context));
+      contextual === undefined ||
+      (contextual.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0 ||
+      hasHeapType(contextual, context);
     if (!isTyped) {
       throw new TlaTypeScriptError(
         `Give the object Object.${isFromEntriesCall ? "fromEntries" : "create"} makes an object type`,
@@ -3020,13 +3045,7 @@ const translatePropertyAccess = (
   if (context.heap !== undefined && mayBeGeneratorType(receiver, context)) {
     throw new TlaTypeScriptError(`tla-ts can't read a generator's ${name} as a value`, node);
   }
-  if (
-    context.heap !== undefined &&
-    getKind(receiver, context) !== "object" &&
-    (context.checker.getTypeAtLocation(receiver).flags &
-      (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !==
-      0
-  ) {
+  if (getKind(receiver, context) !== "object" && isReadAsAny(receiver, context)) {
     return getAnyProperty(
       getHeap(scope, node, context),
       translateExpression(receiver, scope, context),
@@ -3386,12 +3405,7 @@ const translateElementRead = (
       context,
     );
   }
-  if (
-    context.heap !== undefined &&
-    (context.checker.getTypeAtLocation(node.expression).flags &
-      (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !==
-      0
-  ) {
+  if (isReadAsAny(node.expression, context)) {
     return getAnyProperty(
       getHeap(scope, node, context),
       translateExpression(node.expression, scope, context),

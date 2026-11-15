@@ -170,6 +170,10 @@ export const getHeap = (scope: Scope, node: ts.Node, context: Context) => {
   return heap;
 };
 
+// Whether a script names no map, which tla-ts may hold off the heap as the same TLA+ value as an
+// array, so that a sequence whose type doesn't tell what it is is surely an array.
+export const isMapless = (node: ts.Node) => !/Map\b/.test(node.getSourceFile().text);
+
 // A read of a property of a value of type any or unknown, which may be an array or a string, which
 // read their other properties from their prototypes.
 export const getAnyProperty = (
@@ -2240,7 +2244,8 @@ export const isDescriptionOfAll = (node: ts.Node, context: Context): boolean =>
     getDescribedPrimitive(node.arguments[0], context) !== undefined) &&
   !isProxyOperation(node, context);
 
-// Object.create, with a prototype that tla-ts can tell is an object or null.
+// Object.create, with a prototype that tla-ts can tell is an object or null, or where a script has
+// objects, any prototype, which Create tells as it runs.
 export const isCreation = (node: ts.Node, context: Context) => {
   if (
     !isMethodCall(node) ||
@@ -2257,7 +2262,8 @@ export const isCreation = (node: ts.Node, context: Context) => {
   return (
     (prototype.kind === ts.SyntaxKind.NullKeyword ||
       getKind(prototype, context) === "object" ||
-      isBuiltInObject(prototype, context)) &&
+      isBuiltInObject(prototype, context) ||
+      context.heap !== undefined) &&
     (properties === undefined || getKind(properties, context) === "object")
   );
 };

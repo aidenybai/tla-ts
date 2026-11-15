@@ -239,7 +239,7 @@ export type HelperDeclaration = ts.FunctionDeclaration | ts.VariableDeclaration;
 const anyProperty = Symbol("any property");
 const anyIndex = Symbol("any index");
 
-const PRIMITIVE_FLAGS =
+export const PRIMITIVE_FLAGS =
   ts.TypeFlags.StringLike |
   ts.TypeFlags.NumberLike |
   ts.TypeFlags.BigIntLike |
