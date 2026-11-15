@@ -43643,4 +43643,30 @@ describe("BigInts", () => {
       ).toThrow("Unsupported break");
     });
   });
+
+  describe("drops a function that a statement makes", () => {
+    const getSource = (expected: number) => `
+      let count = 0;
+      (() => count++);
+      (function named() {
+        count++;
+      });
+      {
+        length: 3000;
+      }
+      () => {
+        count++;
+      };
+      count++;
+      if (count !== ${expected}) throw new Error(\`count \${count}\`);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(1))).failure).toBeUndefined();
+    });
+
+    it("rejects a dropped function that runs", async () => {
+      expect((await checkModel(getSource(2))).failure?.message).toContain("count 1");
+    });
+  });
 });

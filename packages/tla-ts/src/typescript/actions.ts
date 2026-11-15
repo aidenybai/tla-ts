@@ -11875,10 +11875,12 @@ const translateExpressionStatement = (
         )
       : deletion;
   }
-  // A regexp that a statement makes of literals and drops, or an object whose members evaluate
-  // nothing, changes nothing.
+  // A regexp that a statement makes of literals and drops, a function, or an object whose members
+  // evaluate nothing, changes nothing.
   if (
     ts.isRegularExpressionLiteral(expression) ||
+    ts.isArrowFunction(expression) ||
+    ts.isFunctionExpression(expression) ||
     ((ts.isNewExpression(expression) || ts.isCallExpression(expression)) &&
       (expression.arguments ?? []).every(
         (argument) => ts.isStringLiteralLike(argument) || ts.isRegularExpressionLiteral(argument),
