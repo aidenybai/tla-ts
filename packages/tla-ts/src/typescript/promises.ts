@@ -41,6 +41,7 @@ import {
   isAssigned,
   isAsyncFunction,
   isAsyncGenerator,
+  isHeapFunction,
   isTimerCall,
   skipCasts,
   translateString,
@@ -2719,9 +2720,11 @@ export const translatePromiseCall = (
     const constructor = argument && getCapabilityConstructor(argument, context);
     const iterable = node.arguments.at(1);
     const cast = iterable && getCast(iterable);
-    // A constructor that a name gives, whose resolve and prototype the combinator reads.
+    // A constructor that a name gives, whose resolve and prototype the combinator reads, which
+    // the heap holds.
     const elements =
       constructor !== undefined &&
+      isHeapFunction(constructor, context) &&
       argument !== undefined &&
       ts.isIdentifier(getCast(argument)) &&
       COMBINATORS.includes(called) &&
