@@ -1100,6 +1100,17 @@ const translateBuiltInCall = (
       context,
     );
   }
+  if (isReflectedObject && method === "get" && node.arguments.length === 2) {
+    return useJavaScript(
+      "Get",
+      [
+        getHeap(scope, node, context),
+        translateObjectValue(reflected, scope, context),
+        translatePropertyKey(node.arguments[1], scope, context),
+      ],
+      context,
+    );
+  }
   if (isReflectedObject && method === "isExtensible" && node.arguments.length === 1) {
     return useJavaScript(
       "IsExtensible",

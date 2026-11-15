@@ -11887,6 +11887,31 @@ describe("errors", () => {
     });
   });
 
+  describe("reads a key through Reflect.get", () => {
+    const getSource = (expected: string) => `
+      const symbol = Symbol("symbol");
+      const base: { [key: string | symbol]: unknown } = { inherited: "i" };
+      const object: { [key: string | symbol]: unknown } = Object.create(base);
+      object[symbol] = 42;
+      object.own = "o";
+      const results = [
+        Reflect.get(object, symbol),
+        Reflect.get(object, "own"),
+        Reflect.get(object, "inherited"),
+        Reflect.get(object, "missing"),
+      ];
+      if (results.join() !== "${expected}") throw new Error("read");
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("42,o,i,"))).failure).toBeUndefined();
+    });
+
+    it("rejects the expectation 42,o,,", async () => {
+      expect((await checkModel(getSource("42,o,,"))).failure?.message).toContain("read");
+    });
+  });
+
   describe("throws the TypeError of Reflect.setPrototypeOf with a primitive prototype", () => {
     const getSource = (expected: string) => `
       const thrown = (run: () => unknown) => {
