@@ -25765,4 +25765,26 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("calls a primitive's method that a string literal keys", () => {
+    const getSource = (expected: string) => `
+      const box = { size: 0 };
+      const flag = false;
+      const wrapped = new Boolean(true);
+      const text = "ab";
+      box.size = 1;
+      const read = [flag["toString"](), wrapped["toString"](), text["toUpperCase"](), wrapped["valueOf"]()].join();
+      if (read !== "${expected}") throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("false,true,AB,true"))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrapper's string as its primitive's opposite", async () => {
+      expect((await checkModel(getSource("false,false,AB,true"))).failure?.message).toContain(
+        "false,true,AB,true",
+      );
+    });
+  });
 });

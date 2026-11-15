@@ -2511,6 +2511,72 @@ const BOOLEAN_METHODS = new Map<string, PrimitiveMethod>([
   ["valueOf", { operator: "PrimitiveOf", parameters: [] }],
 ]);
 
+// A method of a boolean, a number, or a string, or of their wrapper objects, that a call reads
+// under a key that a string literal writes, as false["toString"]() does, and runs without
+// arguments where the prototype still holds the built-in.
+export const translateKeyedPrimitiveCall = (
+  node: ts.CallExpression,
+  scope: Scope,
+  context: Context,
+) => {
+  const callee = skipCasts(node.expression);
+  if (
+    context.heap === undefined ||
+    !ts.isElementAccessExpression(callee) ||
+    !ts.isStringLiteral(callee.argumentExpression) ||
+    node.arguments.length > 0
+  ) {
+    return undefined;
+  }
+  const receiver = callee.expression;
+  const key = callee.argumentExpression.text;
+  const type = context.checker.getTypeAtLocation(receiver);
+  const wrapper = type.getSymbol()?.name;
+  const kind = isEvery(type, ts.TypeFlags.BooleanLike)
+    ? "Boolean"
+    : isEvery(type, ts.TypeFlags.NumberLike)
+      ? "Number"
+      : isEvery(type, ts.TypeFlags.StringLike)
+        ? "String"
+        : (["Boolean", "Number", "String"] as const).find((name) => name === wrapper);
+  const method =
+    kind === "Boolean"
+      ? BOOLEAN_METHODS.get(key)
+      : kind === "Number"
+        ? NUMBER_METHODS.get(key)
+        : kind === "String"
+          ? STRING_METHODS.get(key)
+          : undefined;
+  if (kind === undefined || method === undefined || method.parameters.length > 0) return undefined;
+  const heap = getHeap(scope, node, context);
+  const value = translateExpression(receiver, scope, context);
+  const isWrapped = wrapper === kind && !isEvery(type, PRIMITIVE_FLAGS);
+  return isWrapped
+    ? translatePrimitiveMethod(
+        method,
+        useJavaScript("WrappedPrimitive", [heap, value, string(kind), string(key)], context),
+        [],
+        context,
+      )
+    : ifExpression(
+        useJavaScript(
+          "HoldsBuiltIn",
+          [
+            heap,
+            translateBuiltInValue(`${kind}.prototype`, node, context),
+            string(key),
+            string(`${kind}.prototype.${key}`),
+          ],
+          context,
+        ),
+        translatePrimitiveMethod(method, value, [], context),
+        apply("Assert", [
+          boolean(false),
+          string(`tla-ts can't call ${kind}.prototype.${key} where a script replaced it`),
+        ]),
+      );
+};
+
 // The prototypes whose methods a script may call on another value, with the operator that
 // converts the value.
 const PRIMITIVE_PROTOTYPES = new Map([

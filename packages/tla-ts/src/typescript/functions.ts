@@ -70,7 +70,7 @@ import {
   tuple,
 } from "./tla";
 import { isBuiltInObject } from "./intrinsics";
-import { getStoredCall, translateStoredCall } from "./collections";
+import { getStoredCall, translateKeyedPrimitiveCall, translateStoredCall } from "./collections";
 import { link } from "./regions";
 import { getStackCall } from "./stacks";
 import { getIteratorDisposeCall } from "./disposal";
@@ -838,6 +838,9 @@ export const translateLocalCall = (
               ).length === 0),
         )
       : [];
+  const keyed =
+    callee === undefined ? translateKeyedPrimitiveCall(node, scope, context) : undefined;
+  if (keyed !== undefined) return keyed;
   // A function that bind gives, which runs its target with the bound receiver and arguments first.
   const binding = callee === undefined ? getBound(skipCasts(node.expression), context) : undefined;
   if (
