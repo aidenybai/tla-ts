@@ -25729,7 +25729,7 @@ describe("errors", () => {
     ).toThrow("spec.ts:4:28 Unsupported expression: this");
   });
 
-  it("reads a module's this as undefined, and stops on a script's", async () => {
+  it("reads a module's this as undefined, and stops on a strict script's", async () => {
     const source = `
       const box = { seen: 0 };
       const read = () => this;
@@ -25742,9 +25742,9 @@ describe("errors", () => {
     expect((await checkModel(wrong)).failure?.message).toContain('"this"');
     expect(() =>
       compile(
-        "const box = { seen: 0 };\nconst read = () => this;\nif (read() !== undefined) box.seen = 1;",
+        '"use strict";\nconst box = { seen: 0 };\nconst read = () => this;\nif (read() !== undefined) box.seen = 1;',
       ),
-    ).toThrow("spec.ts:2:20 Unsupported expression: this");
+    ).toThrow("spec.ts:3:20 Unsupported expression: this");
   });
 
   const getCallbackThisSource = (directive: string, expected: string) => `
@@ -25831,6 +25831,20 @@ describe("errors", () => {
     expect((await checkModel(getSource("object,undefined"))).failure?.message).toContain(
       "kinds undefined,object",
     );
+  });
+
+  it("reads the global object as the this of a script outside strict mode", async () => {
+    const getSource = (expected: boolean) => `
+      const box = { count: 0 };
+      var global = this;
+      const read = () => this;
+      function isGlobal(this: void) {
+        return this === global && read() === globalThis;
+      }
+      if (isGlobal() !== ${expected}) throw new Error("not global");
+    `;
+    expect((await checkModel(getSource(true))).failure).toBeUndefined();
+    expect((await checkModel(getSource(false))).failure?.message).toContain("not global");
   });
 
   it("stops where a function outside strict mode gets a primitive as its this", async () => {
