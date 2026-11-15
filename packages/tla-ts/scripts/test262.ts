@@ -84,6 +84,10 @@ const PORTED_INCLUDES = new Map([
     "dateConstants.js",
     readFileSync(join(CONFORMANCE_DIRECTORY, "test262-date-constants.ts"), "utf8"),
   ],
+  [
+    "assertRelativeDateMs.js",
+    readFileSync(join(CONFORMANCE_DIRECTORY, "test262-assert-relative-date-ms.ts"), "utf8"),
+  ],
 ]);
 
 // An async test's harness defines $DONE, as doneprintHandle.js does.
