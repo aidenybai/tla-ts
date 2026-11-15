@@ -41722,4 +41722,289 @@ describe("BigInts", () => {
       ).toThrow("tla-ts can't make a class whose name the script assigns");
     });
   });
+  describe("a compound assignment that reads its name before a yield in its value suspends", () => {
+    const getSource = (expected: string) => `
+      let log = "";
+      function* g(): Generator<number, void, string> {
+        log += (yield 1) + ",";
+        log += yield 2;
+      }
+      const iter = g();
+      iter.next("a");
+      log += "x";
+      iter.next("b");
+      log += "y";
+      iter.next("c");
+      if (log !== "${expected}") throw new Error("log " + log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("b,c"))).failure).toBeUndefined();
+    });
+
+    it("rejects a name that it reads after the yield", async () => {
+      expect((await checkModel(getSource("xb,yc"))).failure?.message).toContain("log b,c");
+    });
+  });
+
+  describe("gives a yield* the value that its iterator or generator returns", () => {
+    const getSource = (expected: string) => `
+      let log = "";
+      let count = 0;
+      const iterable = {
+        [Symbol.iterator]() {
+          return this;
+        },
+        next(sent: unknown) {
+          count++;
+          log += sent + ",";
+          return { done: count > 1, value: count * 10 };
+        },
+        throw(sent: unknown) {
+          log += "throw " + sent + ",";
+          return { done: true, value: 30 };
+        },
+      };
+      function* inner() {
+        yield 1;
+        return "inner";
+      }
+      function* g() {
+        log += (yield* iterable) + 1 + ",";
+        const value = yield* inner();
+        log += value + ",";
+        count = 0;
+        log += \`got \${yield* iterable}\`;
+      }
+      const iter = g();
+      iter.next("a");
+      iter.next("b");
+      iter.next("c");
+      iter.throw("d");
+      if (log !== "${expected}") throw new Error("log " + log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("21,inner,got 30"))).failure).toBeUndefined();
+    });
+
+    it("rejects a yield* that gives undefined", async () => {
+      expect(
+        (await checkModel(getSource("NaN,undefined,got undefined"))).failure?.message,
+      ).toContain("log 21,inner,got 30");
+    });
+  });
+
+  describe("awaits a promise that a sync iterator's throw gives through an async generator's yield*", () => {
+    const getSource = (expected: string) => `
+      const iterable = {
+        [Symbol.iterator]() {
+          return {
+            next() {
+              return { value: 1, done: false };
+            },
+            throw() {
+              return { value: Promise.resolve(42), done: true };
+            },
+          };
+        },
+      };
+      async function* g() {
+        return yield* iterable;
+      }
+      const iter = g();
+      const first = await iter.next();
+      const second = await iter.throw(new Error("no"));
+      const log = first.value + "," + second.value + "," + second.done;
+      if (log !== "${expected}") throw new Error("log " + log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("1,42,true"))).failure).toBeUndefined();
+    });
+
+    it("rejects a yield* that gives the promise", async () => {
+      expect((await checkModel(getSource("1,[object Promise],true"))).failure?.message).toContain(
+        "log 1,42,true",
+      );
+    });
+  });
+
+  describe("checks a private name with in on the value that a yield gives", () => {
+    const getSource = (expected: string) => `
+      class C {
+        #field = 1;
+        static *has(): Generator<number, boolean, object> {
+          return #field in (yield 1);
+        }
+      }
+      const first = C.has();
+      first.next();
+      const second = C.has();
+      second.next();
+      const a = first.next(new C());
+      const b = second.next({});
+      const log = a.value + "," + b.value;
+      if (log !== "${expected}") throw new Error("log " + log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("true,false"))).failure).toBeUndefined();
+    });
+
+    it("rejects an object without the private name that passes the check", async () => {
+      expect((await checkModel(getSource("true,true"))).failure?.message).toContain(
+        "log true,false",
+      );
+    });
+  });
+
+  describe("passes the value that a yield gives to a function expression that a call runs", () => {
+    const getSource = (expected: string) => `
+      let x = "a";
+      function* g(): Generator<number, string, string> {
+        const first = (function (arg: string) {
+          return arg + "!";
+        })(yield 1);
+        return (function (left: string, right: string) {
+          return first + left + right;
+        })(x, yield 2);
+      }
+      const iter = g();
+      iter.next();
+      iter.next("b");
+      x = "c";
+      const result = iter.next("d");
+      const log = result.value + "," + x;
+      if (log !== "${expected}") throw new Error("log " + log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("b!ad,c"))).failure).toBeUndefined();
+    });
+
+    it("rejects an argument that it reads after the yield", async () => {
+      expect((await checkModel(getSource("b!cd,c"))).failure?.message).toContain("log b!ad,c");
+    });
+  });
+
+  describe("writes the value that a yield gives to a property of the object that a name held before it", () => {
+    const getSource = (expected: string) => `
+      let holder = { foo: "a" };
+      const first = holder;
+      let written = "";
+      const target = {
+        set foo(value: string) {
+          written = value;
+        },
+      };
+      function* g(): Generator<number, void, string> {
+        holder.foo = yield 1;
+        target.foo = yield 2;
+      }
+      const iter = g();
+      iter.next();
+      holder = { foo: "b" };
+      iter.next("c");
+      iter.next("d");
+      const log = first.foo + "," + holder.foo + "," + written;
+      if (log !== "${expected}") throw new Error("log " + log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("c,b,d"))).failure).toBeUndefined();
+    });
+
+    it("rejects a write to the object that the name holds after the yield", async () => {
+      expect((await checkModel(getSource("a,c,d"))).failure?.message).toContain("log c,b,d");
+    });
+  });
+
+  describe("converts a key that TypeScript types as any to a property key", () => {
+    const getSource = (expected: string) => `
+      const keys: unknown[] = ["a", 1, Symbol.iterator];
+      const made: { [key: string | symbol]: unknown } = {};
+      const literal = { [keys[0] as any]: 1, [keys[1] as any]: 2 };
+      made[keys[2] as any] = 3;
+      const log = Object.keys(literal).join() + "," + (made[Symbol.iterator] === 3);
+      if (log !== "${expected}") throw new Error("log " + log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("1,a,true"))).failure).toBeUndefined();
+    });
+
+    it("rejects keys in the order that the literal gives them", async () => {
+      expect((await checkModel(getSource("a,1,true"))).failure?.message).toContain("log 1,a,true");
+    });
+
+    it("stops where the key is an object, whose conversion runs code", async () => {
+      const result = await checkModel(`
+        const key: unknown = {};
+        const literal = { [key as any]: 1 };
+      `);
+      expect(result.failure?.message).toContain("tla-ts can't convert objects to strings");
+    });
+  });
+
+  describe("evaluates the keys and values of an object literal in order around the yields in them", () => {
+    const getSource = (expected: string) => `
+      let key = "a";
+      function* g(): Generator<number, { [key: string]: unknown }, string> {
+        return {
+          [key]: 1,
+          get [yield 1]() {
+            return 2;
+          },
+          [yield 2]: key,
+        };
+      }
+      const iter = g();
+      iter.next();
+      key = "b";
+      iter.next("c");
+      key = "d";
+      const result = iter.next("e");
+      const made = result.value as { [key: string]: unknown };
+      const log = Object.keys(made).join() + "," + made.a + "," + made.c + "," + made.e;
+      if (log !== "${expected}") throw new Error("log " + log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("a,c,e,1,2,d"))).failure).toBeUndefined();
+    });
+
+    it("rejects a key that it reads after the yields", async () => {
+      expect((await checkModel(getSource("d,c,e,undefined,2,d"))).failure?.message).toContain(
+        "log a,c,e,1,2,d",
+      );
+    });
+  });
+
+  describe("sends the value of a next that waits while an async generator's body runs", () => {
+    const getSource = (expected: string) => `
+      async function* gen(): AsyncGenerator<string, string, string> {
+        const x = yield "a";
+        const y = yield x;
+        return y + "!";
+      }
+      const iter = gen();
+      const a = iter.next("ignored");
+      const b = iter.next("b");
+      const c = iter.next("c");
+      const results = [await a, await b, await c];
+      const log = results.map((result) => result.value + result.done).join();
+      if (log !== "${expected}") throw new Error("log " + log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("afalse,bfalse,c!true"))).failure).toBeUndefined();
+    });
+
+    it("rejects a waiting next that sends undefined", async () => {
+      expect(
+        (await checkModel(getSource("afalse,undefinedfalse,undefined!true"))).failure?.message,
+      ).toContain("log afalse,bfalse,c!true");
+    });
+  });
 });

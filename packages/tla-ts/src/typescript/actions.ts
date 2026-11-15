@@ -481,9 +481,9 @@ interface Suspension {
   // return awaits its value there first.
   abort?: (path: Path, method: string, value: Expression | undefined) => Formula;
   isAsync: boolean;
-  // The promises of the nexts that called an async generator while its body ran, which it settles
-  // in order once it yields or completes.
-  queue: readonly string[];
+  // The promises of the nexts that called an async generator while its body ran, with the values
+  // they send, which it settles in order once it yields or completes.
+  queue: readonly { request: string; sent: Expression | undefined }[];
   // The call that resumed the body, while it runs, which takes what it yields or returns.
   caller?: Caller;
   // Whether a step may make the suspension again once it's gone, as an array's or a string's
@@ -523,26 +523,36 @@ const getAsyncCaller = (
       ? settleRequest(
           { ...current, generators: new Map([...current.generators, [name, waiting]]) },
           node,
-          queued,
+          queued.request,
           getUndefined(context),
           true,
           false,
           context,
           drain,
         )
-      : resume({
-          ...current,
-          generators: new Map([
-            ...current.generators,
-            [
-              name,
-              {
-                ...waiting,
-                caller: getAsyncCaller(node, name, current, queued, context, continueWith),
-              },
-            ],
-          ]),
-        });
+      : resume(
+          {
+            ...current,
+            generators: new Map([
+              ...current.generators,
+              [
+                name,
+                {
+                  ...waiting,
+                  caller: getAsyncCaller(
+                    node,
+                    name,
+                    current,
+                    queued.request,
+                    context,
+                    continueWith,
+                  ),
+                },
+              ],
+            ]),
+          },
+          queued.sent,
+        );
   };
   return {
     path,
@@ -1961,7 +1971,11 @@ const getAssignedPath = (expression: ts.Expression, path: Path, context: Context
     return { ...after, scope: { ...after.scope, functions } };
   }
   const update = getUpdate(expression, path, context);
-  return update === undefined ? undefined : assign(expression.left, path, context, update);
+  // A name that the statement read before a yield or an await in the value suspended it.
+  const read = path.scope.results.get(expression.left);
+  return update === undefined
+    ? undefined
+    : assign(expression.left, path, context, (current) => update(read ?? current));
 };
 
 // Whether a logical assignment writes its target, which holds a value.
@@ -7810,7 +7824,6 @@ export const resumeGenerator = (
       suspension.caller !== undefined &&
       suspension.isAsync &&
       method === "next" &&
-      argument === undefined &&
       continueAsync !== undefined
     ) {
       return makeRequest(path, node, context, (made, request, ref) =>
@@ -7819,7 +7832,7 @@ export const resumeGenerator = (
             ...made,
             generators: new Map([
               ...made.generators,
-              [name, { ...suspension, queue: [...suspension.queue, request] }],
+              [name, { ...suspension, queue: [...suspension.queue, { request, sent }] }],
             ]),
           },
           ref,
@@ -10510,7 +10523,7 @@ const translateDelegatedYield = (
   path: Path,
   context: Context,
   frame: Frame,
-  continueWith: (path: Path) => Formula,
+  continueWith: (path: Path, value?: Expression) => Formula,
 ): Formula => {
   const yieldTo = frame.yieldTo;
   const throwTo = frame.throwTo;
@@ -10710,7 +10723,7 @@ const delegateToGenerator = (
   path: Path,
   context: Context,
   frame: Frame,
-  continueWith: (path: Path) => Formula,
+  continueWith: (path: Path, value?: Expression) => Formula,
 ): Formula => {
   const uncaught = apply("Assert", [boolean(false), string(node.getText())]);
   const throwTo = frame.throwTo;
@@ -10742,7 +10755,7 @@ const delegateToGenerator = (
             isDone
               ? method === "return"
                 ? frame.exit(stepped, result)
-                : continueWith(stepped)
+                : continueWith(stepped, result)
               : yieldTo(
                   stepped,
                   result,
@@ -10778,7 +10791,7 @@ const delegateToSyncGenerator = (
   path: Path,
   context: Context,
   frame: Frame,
-  continueWith: (path: Path) => Formula,
+  continueWith: (path: Path, value?: Expression) => Formula,
 ): Formula => {
   const uncaught = apply("Assert", [boolean(false), string(node.getText())]);
   const throwTo = frame.throwTo;
@@ -10836,7 +10849,7 @@ const delegateToSyncGenerator = (
                   isDone
                     ? method === "return"
                       ? awaitTo(resumed, settled, undefined, frame.exit, throwWith)
-                      : continueWith(resumed)
+                      : continueWith(resumed, settled)
                     : yieldTo(
                         resumed,
                         settled,
@@ -10872,7 +10885,7 @@ const delegateToAsyncGenerator = (
   path: Path,
   context: Context,
   frame: Frame,
-  continueWith: (path: Path) => Formula,
+  continueWith: (path: Path, value?: Expression) => Formula,
 ): Formula => {
   const uncaught = apply("Assert", [boolean(false), string(node.getText())]);
   const throwTo = frame.throwTo;
@@ -10905,7 +10918,7 @@ const delegateToAsyncGenerator = (
               (fulfilled) => {
                 const iteration = getIteration(fulfilled, node, promise);
                 return iteration.isDone
-                  ? continueWith(fulfilled)
+                  ? continueWith(fulfilled, iteration.value)
                   : yieldTo(
                       fulfilled,
                       iteration.value,
@@ -10935,7 +10948,7 @@ const delegateToIterator = (
   path: Path,
   context: Context,
   frame: Frame,
-  continueWith: (path: Path) => Formula,
+  continueWith: (path: Path, value?: Expression) => Formula,
 ): Formula => {
   const uncaught = apply("Assert", [boolean(false), string(node.getText())]);
   const throwTo = frame.throwTo;
@@ -10975,7 +10988,7 @@ const delegateToIterator = (
                   ? frame.exit(read, value)
                   : ifThenElse(
                       apply("=", [value, value]),
-                      continueWith(read),
+                      continueWith(read, value),
                       leaf(boolean(false)),
                     ),
               ),
@@ -11039,7 +11052,7 @@ const delegateToAsyncIterator = (
   path: Path,
   context: Context,
   frame: Frame,
-  continueWith: (path: Path) => Formula,
+  continueWith: (path: Path, value?: Expression) => Formula,
 ): Formula => {
   const uncaught = apply("Assert", [boolean(false), string(node.getText())]);
   const throwTo = frame.throwTo;
@@ -11088,7 +11101,7 @@ const delegateToAsyncIterator = (
                           useJavaScript("ToBoolean", [done], context),
                           ifThenElse(
                             apply("=", [value, value]),
-                            continueWith(taken),
+                            continueWith(taken, value),
                             leaf(boolean(false)),
                           ),
                           yieldTo(
@@ -11143,7 +11156,9 @@ const delegateToAsyncIterator = (
             throwWith,
             (stepped, result, isDone) => {
               if (isDone) {
-                return key === "return" ? frame.exit(stepped, result) : continueWith(stepped);
+                return key === "return"
+                  ? frame.exit(stepped, result)
+                  : continueWith(stepped, result);
               }
               return yieldTo(
                 stepped,
@@ -17140,14 +17155,39 @@ const getFirstLeading = (
   if (first === undefined) return undefined;
   return (
     getLeadingAwaitOrYield(first, results, context) ??
-    (isSettled(first, results) || isReadName(first, context)
+    // The private name that the left of an in names evaluates nothing.
+    (isSettled(first, results) || isReadName(first, context) || ts.isPrivateIdentifier(first)
       ? getFirstLeading(rest, results, context)
       : undefined)
   );
 };
 
-// The await or the yield that a node evaluates before anything else. A yield* gives what the
-// iterator returns, which tla-ts doesn't follow.
+// A property that a name's object holds under a name, whose reference an assignment evaluates by
+// reading the name, before its value.
+const isNamedPropertyOfName = (
+  node: ts.Expression,
+  context: Context,
+): node is ts.PropertyAccessExpression =>
+  ts.isPropertyAccessExpression(node) &&
+  ts.isIdentifier(node.name) &&
+  isReadName(node.expression, context);
+
+// The computed key and the value that an object literal's property evaluates.
+const getPropertyOperands = (property: ts.ObjectLiteralElementLike): ts.Expression[] => [
+  ...(property.name !== undefined && ts.isComputedPropertyName(property.name)
+    ? [property.name.expression]
+    : []),
+  ...(ts.isPropertyAssignment(property)
+    ? [property.initializer]
+    : ts.isShorthandPropertyAssignment(property)
+      ? [property.name]
+      : []),
+];
+
+const isFunctionExpressionCall = (node: ts.Node): node is ts.CallExpression =>
+  ts.isCallExpression(node) && ts.isFunctionExpression(skipCasts(node.expression));
+
+// The await or the yield that a node evaluates before anything else.
 const getLeadingAwaitOrYield = (
   node: ts.Expression,
   results: Scope["results"],
@@ -17160,7 +17200,7 @@ const getLeadingAwaitOrYield = (
   // A yield evaluates its operand before it yields.
   if (ts.isYieldExpression(node)) {
     const operand = node.expression && getLeadingAwaitOrYield(node.expression, results, context);
-    return operand ?? (node.asteriskToken === undefined ? node : undefined);
+    return operand ?? node;
   }
   if (
     ts.isParenthesizedExpression(node) ||
@@ -17194,10 +17234,30 @@ const getLeadingAwaitOrYield = (
       context,
     );
   }
+  // An object literal evaluates the keys and the values of its properties in order, up to a spread.
+  if (ts.isObjectLiteralExpression(node)) {
+    const index = node.properties.findIndex(ts.isSpreadAssignment);
+    return getFirstLeading(
+      (index === -1 ? node.properties : node.properties.slice(0, index)).flatMap(
+        getPropertyOperands,
+      ),
+      results,
+      context,
+    );
+  }
+  // A call of a function expression evaluates the function, which runs nothing, then its arguments.
+  if (isFunctionExpressionCall(node)) {
+    const index = node.arguments.findIndex(ts.isSpreadElement);
+    return getFirstLeading(
+      index === -1 ? node.arguments : node.arguments.slice(0, index),
+      results,
+      context,
+    );
+  }
   if (!ts.isBinaryExpression(node)) return undefined;
   const kind = node.operatorToken.kind;
   if (kind === ts.SyntaxKind.EqualsToken) {
-    return ts.isIdentifier(node.left)
+    return ts.isIdentifier(node.left) || isNamedPropertyOfName(node.left, context)
       ? getLeadingAwaitOrYield(node.right, results, context)
       : undefined;
   }
@@ -17228,12 +17288,23 @@ const getEarlierNames = (
   const operands =
     ts.isBinaryExpression(parent) && parent.operatorToken.kind !== ts.SyntaxKind.EqualsToken
       ? [parent.left, parent.right]
-      : ts.isArrayLiteralExpression(parent)
-        ? [...parent.elements]
-        : ts.isTemplateExpression(parent)
-          ? parent.templateSpans.map((span) => span.expression)
-          : [];
-  const position = operands.findIndex((operand) => operand === node);
+      : ts.isBinaryExpression(parent) && isNamedPropertyOfName(parent.left, context)
+        ? [parent.left.expression, parent.right]
+        : ts.isArrayLiteralExpression(parent)
+          ? [...parent.elements]
+          : ts.isObjectLiteralExpression(parent)
+            ? parent.properties.flatMap(getPropertyOperands)
+            : ts.isObjectLiteralElementLike(parent) && ts.isObjectLiteralExpression(parent.parent)
+              ? getPropertyOperands(parent)
+              : isFunctionExpressionCall(parent)
+                ? [...parent.arguments]
+                : ts.isTemplateExpression(parent)
+                  ? parent.templateSpans.map((span) => span.expression)
+                  : [];
+  // The operand that holds the node, as a property holds its key and its value.
+  const position = operands.findIndex(
+    (operand) => operand === node || (node.pos <= operand.pos && operand.end <= node.end),
+  );
   return [
     ...getEarlierNames(parent, root, results, context),
     ...(position === -1 ? [] : operands.slice(0, position)).filter(
@@ -18775,11 +18846,17 @@ export const translateStatements = (
       withResult(after, paused, value),
     );
   }
-  // A yield inside a statement gives the value that the next that resumes the body sends.
+  // A yield inside a statement gives the value that the next that resumes the body sends, and a
+  // yield* the value that the iterator returns.
   if (
     paused !== undefined &&
     !(ts.isExpressionStatement(statement) && skipCasts(statement.expression) === paused)
   ) {
+    if (paused.asteriskToken !== undefined) {
+      return translateDelegatedYield(paused, path, context, statementFrame, (after, value) =>
+        withResult(after, paused, value ?? getUndefined(context)),
+      );
+    }
     return translateYield(paused, path, context, statementFrame, (after, sent) =>
       withResult(after, paused, sent ?? getUndefined(context)),
     );
