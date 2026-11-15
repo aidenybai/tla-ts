@@ -71,10 +71,14 @@ const PORTED_INCLUDES = new Map([
 // An async test's harness defines $DONE, as doneprintHandle.js does.
 const DONE_HARNESS = readFileSync(join(CONFORMANCE_DIRECTORY, "test262-done.ts"), "utf8");
 
-const getHarness = (metadata: Metadata) =>
+// A test that reads $262 has the host's members that tla-ts can model.
+const HOST_HARNESS = readFileSync(join(CONFORMANCE_DIRECTORY, "test262-host.ts"), "utf8");
+
+const getHarness = (metadata: Metadata, source: string) =>
   [
     HARNESS,
     ...(metadata.flags.includes("async") ? [DONE_HARNESS] : []),
+    ...(/\$262\b/.test(source) ? [HOST_HARNESS] : []),
     ...metadata.includes.flatMap((include) => PORTED_INCLUDES.get(include) ?? []),
   ].join("\n");
 
@@ -2085,7 +2089,7 @@ const runSyntaxTest = (id: string, source: string, metadata: Metadata): TestRun 
   if (!isRejected) {
     return { id, outcome: "skipped", reason: "Node accepts it" };
   }
-  const program = `${getHarness(metadata)}\n${source}`;
+  const program = `${getHarness(metadata, source)}\n${source}`;
   try {
     compile(program, "test262.ts");
   } catch (error) {
@@ -2159,7 +2163,7 @@ const runTest = async (path: string): Promise<TestRun> => {
   const annotated = (() => {
     try {
       return annotate(
-        `${getHarness(metadata)}\n${metadata.isModule ? source : nameGlobalObject(source)}`,
+        `${getHarness(metadata, source)}\n${metadata.isModule ? source : nameGlobalObject(source)}`,
       );
     } catch (error) {
       if (error instanceof Error && error.message.startsWith("Debug Failure.")) return undefined;
