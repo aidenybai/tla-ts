@@ -43673,4 +43673,31 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("ends the cycle check of setPrototypeOf at a proxy", () => {
+    const getSource = (expected: string) => `
+      const root: { [key: string]: unknown } = {};
+      const target: { [key: string]: unknown } = Object.create(root);
+      const proxy = new Proxy(target, {});
+      const plain: { [key: string]: unknown } = Object.create(root);
+      let log = "";
+      try {
+        Object.setPrototypeOf(root, plain);
+        log += "set";
+      } catch (error) {
+        log += error instanceof TypeError ? "cycle" : "other";
+      }
+      Object.setPrototypeOf(root, proxy);
+      log += \`|\${Object.getPrototypeOf(root) === proxy}\`;
+      if (log !== "${expected}") throw new Error(log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("cycle|true"))).failure).toBeUndefined();
+    });
+
+    it("rejects a cycle through the proxy", async () => {
+      expect((await checkModel(getSource("cycle|false"))).failure?.message).toContain("cycle|true");
+    });
+  });
 });

@@ -7438,12 +7438,13 @@ Assign(heap, ref, sources) ==
                         EnumerableOwnKeys(IF IsObject(source) THEN Lookup(heap, source) ELSE source))
        IN IF written.isDone THEN Assign(written.heap, ref, Tail(sources)) ELSE written
 
-\\* Whether a prototype chain reaches an object.
+\\* Whether a prototype chain reaches an object, where the walk ends at a proxy, whose
+\\* [[GetPrototypeOf]] isn't the ordinary one.
 RECURSIVE ChainHas(_, _, _)
 ChainHas(heap, prototype, ref) ==
   /\\ prototype # Null
   /\\ \\/ SameValue(prototype, ref)
-     \\/ ChainHas(heap, Lookup(heap, prototype).prototype, ref)
+     \\/ ~IsProxy(heap, prototype) /\\ ChainHas(heap, Lookup(heap, prototype).prototype, ref)
 
 \\* Object.setPrototypeOf, which fails where the object isn't extensible or the chain would loop.
 \\* Object.prototype keeps the prototype it has, and a primitive stays as it is.
