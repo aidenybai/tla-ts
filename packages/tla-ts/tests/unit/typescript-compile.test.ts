@@ -25474,4 +25474,38 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("none,false"))).failure?.message).toContain("type,false");
     });
   });
+
+  describe("throws from a getter of an array's first element before a for-of runs its body", () => {
+    const getSource = (expected: string) => `
+      class Stop extends Error {}
+      const array: unknown[] = [];
+      let iterations = 0;
+      Object.defineProperty(array, "0", {
+        get: function () {
+          throw new Stop();
+        },
+      });
+      let caught = "none";
+      try {
+        for (const value of array) {
+          iterations += 1;
+        }
+      } catch (error) {
+        caught = error instanceof Stop ? "stop" : "other";
+      }
+      const plain = [1, 2];
+      let total = 0;
+      for (const value of plain) total += value;
+      const read = [caught, iterations, total].join();
+      if (read !== "${expected}") throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("stop,0,3"))).failure).toBeUndefined();
+    });
+
+    it("rejects the body as running once", async () => {
+      expect((await checkModel(getSource("stop,1,3"))).failure?.message).toContain("stop,0,3");
+    });
+  });
 });

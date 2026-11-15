@@ -11946,6 +11946,50 @@ const translateLoop = (
     return translateUnrolled(loop, unrolled, path, context, frame, continueWith);
   }
   const runLoop = (inner: Path) => translateIterations(loop, inner, context, frame, continueWith);
+  // A for-of of an array whose first element a getter that only throws gives throws before its
+  // first iteration, as the iterator's first next reads the element.
+  const throwing =
+    ts.isForOfStatement(loop) &&
+    loop.awaitModifier === undefined &&
+    isHeapArray(loop.expression, context)
+      ? getAccessorFunctions(loop, "get", context).filter(
+          (getter) =>
+            getter.body !== undefined &&
+            ts.isBlock(getter.body) &&
+            getter.body.statements.length === 1 &&
+            ts.isThrowStatement(getter.body.statements[0]) &&
+            getParameters(getter).length === 0 &&
+            getCandidateValue(getter, context) !== undefined,
+        )
+      : [];
+  if (ts.isForOfStatement(loop) && throwing.length > 0) {
+    return allocate(loop.expression, path, context, (inner) => {
+      const heap = getHeap(inner.scope, loop.expression, context);
+      const array = translateExpression(loop.expression, inner.scope, context);
+      const first = useJavaScript("FirstElementGetter", [heap, array], context);
+      return throwing.reduceRight<Formula>(
+        (otherwise, getter) =>
+          ifThenElse(
+            apply("/\\", [
+              holdsArrayIteration(heap, loop.expression, context, array),
+              apply("=", [first, getCandidateValue(getter, context) ?? getUndefined(context)]),
+            ]),
+            inlineBody(
+              loop.expression,
+              getter,
+              [],
+              { value: array, method: getter },
+              inner,
+              context,
+              frame,
+              () => runLoop(inner),
+            ),
+            otherwise,
+          ),
+        runLoop(inner),
+      );
+    });
+  }
   // A for-of or a for-in evaluates what it iterates once, before its first iteration.
   if (ts.isForOfStatement(loop) || ts.isForInStatement(loop)) {
     return allocate(loop.expression, path, context, runLoop);

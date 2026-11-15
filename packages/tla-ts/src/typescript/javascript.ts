@@ -1659,6 +1659,13 @@ AccessorFieldOf(heap, ref, key, field) ==
 
 GetterOf(heap, ref, key) == AccessorFieldOf(heap, ref, key, "get")
 
+\\* The code of the getter that an array-like object's first element reads, where its length isn't
+\\* 0, or Undefined.
+FirstElementGetter(heap, ref) ==
+  IF ToLength(Get(heap, ref, "length")) > 0 /\\ GetterOf(heap, ref, "0") # Undefined
+  THEN CodeOf(heap, GetterOf(heap, ref, "0"))
+  ELSE Undefined
+
 SetterOf(heap, ref, key) == AccessorFieldOf(heap, ref, key, "set")
 
 \\* The getter that an object that the heap holds reads its then through, where it isn't a promise, a
