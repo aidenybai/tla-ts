@@ -13765,19 +13765,6 @@ describe("errors", () => {
           'const shared = [1];\nconst holder = new Map([["a", shared], ["b", shared]]);\nconst members = new Set(holder.values());\nif (members.size !== 1) throw new Error("size");',
       },
       {
-        name: "an element that indexOf looks for",
-        source: 'const list = [[1], [2]];\nif (list.indexOf([1]) !== -1) throw new Error("index");',
-      },
-      {
-        name: "an element that lastIndexOf looks for",
-        source:
-          'const list = [[1], [2]];\nif (list.lastIndexOf([1]) !== -1) throw new Error("index");',
-      },
-      {
-        name: "an element that includes looks for",
-        source: 'const list = [[1], [2]];\nif (list.includes([1])) throw new Error("includes");',
-      },
-      {
         name: "a case of a switch",
         source:
           'const first = [1];\nconst second = [1];\nswitch (first) {\n  case second:\n    throw new Error("case");\n}',
@@ -13789,6 +13776,35 @@ describe("errors", () => {
         );
       }),
     );
+  });
+
+  // An array that a literal makes is no element of another, and an array that equals no element is
+  // none of them, so a search finds neither, as Node does.
+  it("searches an array for an array that no element can be", async () => {
+    const getSource = (expected: string) => `
+      const sample: unknown[] = [42, 0, 1];
+      const inner = [7];
+      const nested = [inner, [8]];
+      const found = [
+        sample.includes([42]),
+        [[]].includes([]),
+        sample.indexOf(sample),
+        nested.indexOf([9]),
+        nested.lastIndexOf([7]),
+        nested.includes([7]),
+      ].join();
+      if (found !== "${expected}") throw new Error(found);
+    `;
+    const expected = "false,false,-1,-1,-1,false";
+    expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    await expect(checkModel(getSource("false,true,-1,-1,-1,false"))).rejects.toThrow(expected);
+    await expect(
+      checkModel(`
+        const inner = [7];
+        const nested = [inner, [8]];
+        if (nested.indexOf(inner) !== 0) throw new Error("index");
+      `),
+    ).rejects.toThrow("tla-ts can't compare objects by identity");
   });
 
   // Entries and keys come from unique keys, so a set holds each of them, as Node does.
