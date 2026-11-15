@@ -154,6 +154,33 @@ describe("typed tier matches TLC", () => {
   });
 
   it.each([
+    ["ViolatedCounters", "Bounded", [36, 16, 2, 6, 6]],
+    ["ConstrainedViolation", "Low", [13, 9, 3, 4, 4]],
+    ["LiveViolation", "Short", [21, 12, 1, 6, 6]],
+    ["SymmetricViolation", "Few", [20, 9, 1, 6, 6]],
+  ])(
+    "reports the invariant %s violates where TLC does, as the interpreter does",
+    async (name, invariant, counts) => {
+      const [typed, interpreted] = await Promise.all([
+        checkFixture(name, true),
+        checkFixture(name, true, false),
+      ]);
+      expect([
+        typed.status,
+        typed.violation?.name,
+        [
+          typed.generatedStates,
+          typed.distinctStates,
+          typed.queuedStates,
+          typed.depth,
+          typed.violation?.trace.length,
+        ],
+      ]).toEqual(["invariant-violation", invariant, counts]);
+      expect(typed).toEqual(interpreted);
+    },
+  );
+
+  it.each([
     "FairProcesses",
     "StarvedProcesses",
     "PartialStepsReached",

@@ -237,14 +237,15 @@ export interface TypedResult {
   depth: number;
   initialStates: { generated: number; distinct: number };
   outDegrees: number[];
-  deadlock: TypedDeadlock | undefined;
+  deadlock: TypedPath | undefined;
+  // The path to the first successor that violates an invariant, which is its last state.
+  violation: TypedPath | undefined;
   // TLC's fingerprints of the states, in runs each below the next.
   forEachFingerprintRun: (visit: (run: BigInt64Array) => void) => void;
 }
 
-// The path from an initial state to a state without successors, which the interpreter rebuilds
-// to report the deadlock.
-export interface TypedDeadlock {
+// A path from an initial state, which the interpreter rebuilds to report what ends it.
+export interface TypedPath {
   length: number;
   isPathState: (position: number, state: Value[]) => boolean;
 }
@@ -6148,9 +6149,10 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
   const keys = createArena();
   const reader = { page: 0, data: keys.data, position: 0 };
   // For each state expanded, a 1 bit for each new state it found and then a 0 bit, to rebuild the
-  // path to a deadlock. States are expanded in the order they are found, so the 0 bits before a
-  // state's 1 bit count the state it was found from.
-  const finds = { data: new Int32Array(check.isDeadlockChecked ? 1 << 11 : 0), size: 0 };
+  // path to a deadlock or a violation. States are expanded in the order they are found, so the 0 bits
+  // before a state's 1 bit count the state it was found from.
+  const isPathKept = check.isDeadlockChecked || check.invariants.length > 0;
+  const finds = { data: new Int32Array(isPathKept ? 1 << 11 : 0), size: 0 };
   // TLC's fingerprints of the states, as low and high words in small pages, one list of pages for
   // each top byte in signed order. Each list sorts alone, and none grows by copying.
   const fingerprints = Array.from({ length: 256 }, () => ({
@@ -6168,8 +6170,15 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
   const outDegrees = Array.from({ length: OUT_DEGREE_BUCKETS }, () => 0);
   const isInModel = (state: Plain[], parent?: Plain[]) =>
     compiled.constraints.every((constraint) => constraint(state, parent));
-  const checkInvariants = (state: Plain[], parent?: Plain[]) => {
-    for (const invariant of compiled.invariants) if (!invariant(state, parent)) deopt();
+  // The successor that violates an invariant, which ends the search, with the states then queued.
+  const violations: { state: Plain[]; queued: number }[] = [];
+  const checkInvariants = (state: Plain[], parent: Plain[] | undefined, stored: number) => {
+    for (const invariant of compiled.invariants) {
+      if (invariant(state, parent)) continue;
+      if (parent === undefined) deopt();
+      violations.push({ state, queued: stored - expanding.index - 1 });
+      return;
+    }
   };
   const grow = () => {
     const old = table.slots;
@@ -6245,7 +6254,7 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
     // A step that changes no value leads back to the state it starts from, which is stored already.
     if (isUnchanged) return expanding.index;
     if (!isInModel(state, parent)) {
-      checkInvariants(state, parent);
+      checkInvariants(state, parent, statistics.distinct);
       return -1;
     }
     writeKey(state);
@@ -6255,7 +6264,7 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
       keys.size = keys.start;
       compiled.encode(state, keys);
     }
-    checkInvariants(state, parent);
+    checkInvariants(state, parent, statistics.distinct - 1);
     return statistics.distinct - 1;
   };
   const readState = () => {
@@ -6352,8 +6361,8 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
     statistics.depth = 1;
     live?.addInitialState(stateIndex, state);
   }
-  // The path to a deadlock starts from an initial state.
-  if (!check.isDeadlockChecked) {
+  // A path starts from an initial state.
+  if (!isPathKept) {
     initialBytes.data = new Uint8Array(0);
     initialStarts.data = new Int32Array(0);
   }
@@ -6363,6 +6372,7 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
   const liveSuccessors: LiveSuccessor<Plain[]>[] = [];
   const liveChecks = { at: 1024 };
   const onSuccessor = (successor: Plain[], isUnchanged: boolean) => {
+    if (violations.length > 0) return;
     for (const property of compiled.actionProperties) {
       if (!property(expanding.state, successor)) deopt();
     }
@@ -6375,14 +6385,27 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
       statistics.depth = Math.max(statistics.depth, level.depth + 1);
     }
   };
-  const getResult = (deadlock: TypedDeadlock | undefined, queued: number): TypedResult => ({
+  const getTypedPath = (path: Plain[][]): TypedPath => ({
+    length: path.length,
+    isPathState: (position, values) =>
+      values.every((value, variable) =>
+        isSame(
+          toPlain(value, program.variableTypes[variable], program.plains),
+          path[position][variable],
+        ),
+      ),
+  });
+  const getResult = (
+    queued: number,
+    paths: Pick<TypedResult, "deadlock" | "violation">,
+  ): TypedResult => ({
     generatedStates: statistics.generated,
     distinctStates: statistics.distinct,
     queuedStates: queued,
     depth: statistics.depth,
     initialStates,
     outDegrees,
-    deadlock,
+    ...paths,
     forEachFingerprintRun: (visit) => {
       for (let page = reader.page; page < keys.pages.length; page++) {
         addFingerprints(keys.pages[page], keys.ends[page] ?? keys.size);
@@ -6411,6 +6434,15 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
     expansion.newStates = 0;
     liveSuccessors.length = 0;
     compiled.next(state, onSuccessor);
+    // After a violation the interpreter adds the state to the behavior graph with the successors it
+    // found, which the path to the violation doesn't rebuild.
+    if (violations.length > 0 && live) deopt();
+    if (violations.length > 0) {
+      return getResult(violations[0].queued, {
+        deadlock: undefined,
+        violation: getTypedPath([...getPath(index), violations[0].state]),
+      });
+    }
     const isDeadlocked = expansion.successors === 0 && check.isDeadlockChecked;
     // Like TLC, the interpreter finds a violation of a temporal property early in the part of the
     // graph it checks periodically, and a violation in a part stays one as the graph grows. At a
@@ -6421,22 +6453,14 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
     if (isChecked) liveChecks.at *= 2;
     if (isChecked && !isDeadlocked && live?.findViolation()) deopt();
     if (isDeadlocked) {
-      const path = getPath(index);
-      const types = program.variableTypes;
-      return getResult(
-        {
-          length: path.length,
-          isPathState: (position, values) =>
-            values.every((value, variable) =>
-              isSame(toPlain(value, types[variable], program.plains), path[position][variable]),
-            ),
-        },
-        statistics.distinct - index - 1,
-      );
+      return getResult(statistics.distinct - index - 1, {
+        deadlock: getTypedPath(getPath(index)),
+        violation: undefined,
+      });
     }
     outDegrees[Math.min(expansion.newStates, OUT_DEGREE_BUCKETS - 1)]++;
-    if (check.isDeadlockChecked) pushFinds(finds, expansion.newStates);
+    if (isPathKept) pushFinds(finds, expansion.newStates);
   }
   if (live?.findViolation()) deopt();
-  return getResult(undefined, 0);
+  return getResult(0, { deadlock: undefined, violation: undefined });
 };

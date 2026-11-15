@@ -1116,7 +1116,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       isDeadlockChecked: config.checkDeadlock,
       isFingerprinted: !options.isFingerprintDistanceSkipped,
     });
-  if (typed && !typed.deadlock) {
+  if (typed && !typed.deadlock && !typed.violation) {
     for (let count = 2; count < typed.initialStates.generated; count *= 2) {
       reportInitialStatesProgress(count, options.onProgress);
     }
@@ -1544,28 +1544,32 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     periodic.time += performance.now() - now;
     return lasso;
   };
-  // The tier found a state without successors. The interpreter rebuilds the tier's path to it and
-  // reports the deadlock from it, as it would after its own search.
-  const deadlock = typed?.deadlock;
-  const initialIndex = deadlock ? states.findIndex((state) => deadlock.isPathState(0, state)) : -1;
-  if (typed && deadlock && initialIndex !== -1) {
+  // The tier found a state without successors, or a successor that violates an invariant. The
+  // interpreter rebuilds the tier's path to it and reports it, as it would after its own search.
+  const path = typed?.deadlock ?? typed?.violation;
+  const initialIndex = path ? states.findIndex((state) => path.isPathState(0, state)) : -1;
+  if (typed && path && initialIndex !== -1) {
     const steps: { successor: Successor; action: SpecAction | undefined }[] = [];
     const getLastState = () => steps.at(-1)?.successor.state ?? states[initialIndex];
-    for (
-      let position = 1;
-      position === steps.length + 1 && position < deadlock.length;
-      position++
-    ) {
+    for (let position = 1; position === steps.length + 1 && position < path.length; position++) {
+      // The interpreter expands only the states it stores, which it has canonicalized.
+      canonicalizeState(getLastState());
       forEachActionSuccessor(getLastState(), undefined, (successor, action) => {
-        if (!deadlock.isPathState(position, successor.state)) return false;
+        if (!path.isPathState(position, successor.state)) return false;
         steps.push({ successor, action });
         return true;
       });
     }
+    const isRebuilt = steps.length === path.length - 1;
+    const violating = typed.violation && isRebuilt ? steps.pop() : undefined;
+    if (violating && isCanonicalizedFirst) canonicalizeState(violating.successor.state);
+    const violated =
+      violating && search.findViolatedInvariant(violating.successor.state, getLastState());
     const isDeadlocked =
-      steps.length === deadlock.length - 1 &&
+      typed.deadlock !== undefined &&
+      isRebuilt &&
       forEachActionSuccessor(getLastState(), undefined, () => true) === 0;
-    if (isDeadlocked) {
+    if (isDeadlocked || violated) {
       const parent = { index: initialIndex };
       for (const step of steps) {
         visitSuccessor(parent.index, step.successor, [], undefined, step.action);
@@ -1579,6 +1583,16 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       outDegrees.splice(0, outDegrees.length, ...typed.outDegrees);
       newStateCount = 0;
       Object.assign(current, { index: parent.index, candidate: undefined, isExpanding: true });
+      if (violating && violated) {
+        current.candidate = violating.successor.state;
+        current.candidateLevel = depths[parent.index] + 1;
+        return withOutDegrees(
+          reportViolation("invariant-violation", {
+            name: violated.name,
+            ...traces.getTrace(parent.index, violating.successor),
+          }),
+        );
+      }
       const result = expandState(parent.index, []);
       if (result) return result;
     }
