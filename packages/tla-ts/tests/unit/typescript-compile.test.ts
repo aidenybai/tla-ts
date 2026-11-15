@@ -42750,4 +42750,39 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("makes a Set of an array of keys of type any", () => {
+    const getSource = (expected: string) => `
+      const keys: string[] = ["a", "b"];
+      const seen = new Set<string>(keys);
+      const log = String(seen.has("b")) + seen.size;
+      if (log !== "${expected}") throw new Error(log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("true2"))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong size", async () => {
+      await expect(checkModel(getSource("true3"))).rejects.toThrow("true2");
+    });
+
+    it("stops at keys of type any", () => {
+      expect(() =>
+        compile(`
+          const make = (keys: any[]) => new Set<string>(keys).size;
+          if (make(["a", 1]) !== 2) throw new Error("size");
+        `),
+      ).toThrow("Give a Set keys of one kind, as TLC can't compare a number with a string");
+    });
+
+    it("stops at spread keys of type any", () => {
+      expect(() =>
+        compile(`
+          const make = (keys: any[]) => new Set<string>(["a", ...keys]).size;
+          if (make(["a", 1]) !== 2) throw new Error("size");
+        `),
+      ).toThrow("Give a Set keys of one kind, as TLC can't compare a number with a string");
+    });
+  });
 });

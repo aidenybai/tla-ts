@@ -3694,6 +3694,26 @@ const getKeyKinds = (node: ts.NewExpression, context: Context) => {
     });
     return isKeyCall && ts.isCallExpression(call) ? [call.arguments.at(0), ...nested] : nested;
   };
+  // An array whose keys are of type any or unknown may give keys of several kinds, which TLC
+  // compares as the Set or the Map takes them.
+  const arrays =
+    given === undefined
+      ? []
+      : ts.isArrayLiteralExpression(given)
+        ? given.elements.filter(ts.isSpreadElement).map((spread) => spread.expression)
+        : [given];
+  const isUntyped = arrays.some((array) => {
+    const element = checker.getIndexTypeOfType(
+      checker.getTypeAtLocation(array),
+      ts.IndexKind.Number,
+    );
+    const key =
+      isEntries && element !== undefined && isTypeReference(element)
+        ? checker.getTypeArguments(element).at(0)
+        : element;
+    return key !== undefined && (key.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;
+  });
+  if (isUntyped) return undefined;
   // A Set or Map that no variable holds has only the keys it starts with.
   const keys = [...initial, ...(symbol === undefined ? [] : getUses(node.getSourceFile()))];
   const kinds = keys.map((key) =>
