@@ -44871,4 +44871,30 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("stops where a script defines an accessor on the global object", () => {
+    const getSource = (descriptor: string, expected: number) => `
+      const global = globalThis as unknown as Record<string, unknown>;
+      Object.defineProperty(globalThis, "data", ${descriptor});
+      if (global.data !== ${expected}) throw new Error(String(global.data));
+    `;
+
+    it("agrees with Node on a data property", async () => {
+      expect(
+        (await checkModel(getSource("{ value: 1, configurable: true }", 1))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects a data property's wrong value", async () => {
+      expect(
+        (await checkModel(getSource("{ value: 1, configurable: true }", 2))).failure?.message,
+      ).toContain("1");
+    });
+
+    it("stops at an accessor, which a global variable's read wouldn't run", async () => {
+      expect(
+        (await checkModel(getSource("{ get: () => 1, configurable: true }", 1))).failure?.message,
+      ).toContain("tla-ts can't define accessors on the global object");
+    });
+  });
 });

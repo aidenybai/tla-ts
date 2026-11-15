@@ -7456,30 +7456,33 @@ IsObjectArgument(value) ==
 \\* script may define an accessor under a string key that is neither of those nor an index. A typed
 \\* array, which the heap holds, reads its prototypes' accessors as any object on the heap does.
 LOCAL CanDefineOn(ref, key, descriptor) ==
-  Assert(\\/ IsHeap(ref)
-         \\/ ~descriptor.isAccessor
-         \\/ BuiltInKey(ref) \\in {"Array.prototype", "Object.prototype"}
-         \\/ BuiltInKey(ref) \\in {"%Int8Array.prototype.[[Prototype]]%"} \\cup
-              {type \\o "Array.prototype" :
-                 type \\in {"Int8", "Uint8", "Uint8Clamped", "Int16", "Uint16", "Float16", "Int32",
-                          "Uint32", "Float32", "Float64", "BigInt64", "BigUint64"}}
-         \\/ /\\ BuiltInKey(ref) \\in {"Boolean.prototype", "Number.prototype", "String.prototype",
-                                 "Error.prototype", "Date.prototype", "RegExp.prototype"}
-            /\\ ~IsSymbol(key)
-            /\\ TypedKey(key) = "property"
-            /\\ key \\notin DOMAIN BuiltIns[BuiltInKey(ref)].values
-         \\/ /\\ ~IsRef(ref)
-            /\\ IsBuiltIn(ref)
-            /\\ BuiltIns[ref].isCallable
-            /\\ BuiltIns[ref].prototype = Ref :> "Object.prototype"
-         \\* The combinators read Promise's resolve through Get, and stop where its accessor lacks
-         \\* a getter of the script.
-         \\/ /\\ ~IsRef(ref)
-            /\\ IsBuiltIn(ref)
-            /\\ "prototype" \\in DOMAIN BuiltIns[ref].values
-            /\\ BuiltIns[ref].values["prototype"] = Ref :> "Promise.prototype"
-            /\\ key = "resolve",
-         "tla-ts can't define accessors on built-in objects")
+  \\* A global variable reads its binding, not the global object's accessor.
+  /\\ Assert(~descriptor.isAccessor \\/ ToString(ref) # ToString(GlobalObject),
+            "tla-ts can't define accessors on the global object")
+  /\\ Assert(\\/ IsHeap(ref)
+            \\/ ~descriptor.isAccessor
+            \\/ BuiltInKey(ref) \\in {"Array.prototype", "Object.prototype"}
+            \\/ BuiltInKey(ref) \\in {"%Int8Array.prototype.[[Prototype]]%"} \\cup
+                 {type \\o "Array.prototype" :
+                    type \\in {"Int8", "Uint8", "Uint8Clamped", "Int16", "Uint16", "Float16", "Int32",
+                             "Uint32", "Float32", "Float64", "BigInt64", "BigUint64"}}
+            \\/ /\\ BuiltInKey(ref) \\in {"Boolean.prototype", "Number.prototype", "String.prototype",
+                                    "Error.prototype", "Date.prototype", "RegExp.prototype"}
+               /\\ ~IsSymbol(key)
+               /\\ TypedKey(key) = "property"
+               /\\ key \\notin DOMAIN BuiltIns[BuiltInKey(ref)].values
+            \\/ /\\ ~IsRef(ref)
+               /\\ IsBuiltIn(ref)
+               /\\ BuiltIns[ref].isCallable
+               /\\ BuiltIns[ref].prototype = Ref :> "Object.prototype"
+            \\* The combinators read Promise's resolve through Get, and stop where its accessor lacks
+            \\* a getter of the script.
+            \\/ /\\ ~IsRef(ref)
+               /\\ IsBuiltIn(ref)
+               /\\ "prototype" \\in DOMAIN BuiltIns[ref].values
+               /\\ BuiltIns[ref].values["prototype"] = Ref :> "Promise.prototype"
+               /\\ key = "resolve",
+            "tla-ts can't define accessors on built-in objects")
 
 \\* A typed array's [[DefineOwnProperty]] of a key that is a number, which defines nothing where the
 \\* key isn't an index before the end or the descriptor isn't of a writable, enumerable, configurable
