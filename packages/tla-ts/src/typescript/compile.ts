@@ -14,7 +14,7 @@ import {
 } from "./context";
 import { type CompiledSpec, createSections, emit, type Sections } from "./emit";
 import { render } from "./formula";
-import { getBinary } from "./expressions";
+import { getBinary, getNumberValue } from "./expressions";
 import { translateBody } from "./functions";
 import {
   findChangedArrays,
@@ -514,6 +514,19 @@ export const compile = (
         (!Number.isInteger(Number(node.text)) || Number(node.text) > 2 ** 31 - 1)) ||
       (ts.forEachChild(node, usesSpecialNumbers) ?? false);
     context.hasSpecialNumbers = roots.some(usesSpecialNumbers);
+    // ToNumber of a string that writes a fraction as JavaScript prints it gives that fraction.
+    const addTextFractions = (node: ts.Node): void => {
+      const value = ts.isStringLiteral(node) ? Number(node.text) : 0;
+      if (
+        Number.isFinite(value) &&
+        !Number.isInteger(value) &&
+        String(value) === node.getText().slice(1, -1)
+      ) {
+        getNumberValue(value, context);
+      }
+      ts.forEachChild(node, addTextFractions);
+    };
+    if (context.hasSpecialNumbers) roots.forEach(addTextFractions);
     // A variable may hold any typed array's constructor, so the heap holds them all, their
     // prototypes, and the methods that they share.
     const usesTypedArrays = (node: ts.Node): boolean =>

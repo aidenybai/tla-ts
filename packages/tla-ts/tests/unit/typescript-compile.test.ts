@@ -26164,4 +26164,26 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("0,NaN,und"))).failure?.message).toContain("NaN,NaN,und");
     });
   });
+
+  describe("converts a string that writes a fraction to that fraction", () => {
+    const getSource = (expected: string) => `
+      const box = { size: 0 };
+      const texts = ["-1.234", "1.9"];
+      // @ts-expect-error a shift converts a string to a number
+      const shifted = texts[0] << 0;
+      // @ts-expect-error indexOf converts a string to an integer
+      const found = "aaaa".indexOf("a", texts[1]);
+      box.size = 1;
+      const read = [shifted, found].join();
+      if (read !== "${expected}") throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("-1,1"))).failure).toBeUndefined();
+    });
+
+    it("rejects the shift as rounding away from 0", async () => {
+      expect((await checkModel(getSource("-2,1"))).failure?.message).toContain("-1,1");
+    });
+  });
 });
