@@ -44760,4 +44760,37 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("throws where a declaration's initializer reads %ThrowTypeError% or a view's getter", () => {
+    const getSource = (expected: string) => `
+      function strict() {
+        "use strict";
+      }
+      const fake: DataView = Object.create(DataView.prototype);
+      let log = "";
+      try {
+        const caller = (strict as unknown as { caller: unknown }).caller;
+        log += String(caller);
+      } catch (error) {
+        log += (error as Error).name;
+      }
+      try {
+        const length = fake.byteLength;
+        log += String(length);
+      } catch (error) {
+        log += (error as Error).name;
+      }
+      if (log !== "${expected}") throw new Error(log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("TypeErrorTypeError"))).failure).toBeUndefined();
+    });
+
+    it("rejects a strict function's caller that reads as undefined", async () => {
+      expect((await checkModel(getSource("undefinedTypeError"))).failure?.message).toContain(
+        "TypeErrorTypeError",
+      );
+    });
+  });
 });

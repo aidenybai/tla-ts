@@ -2771,16 +2771,18 @@ ReceiverlessValue(value) ==
     [] OTHER -> Undefined
 
 \\* The TypeError that a read throws where it runs %ThrowTypeError% or a getter of a buffer or a view
-\\* on another kind of object, or "".
+\\* on another kind of object, or "". An array outside the heap runs neither.
 ReadError(heap, ref, key) ==
   LET path == GetterPath(GetterOf(heap, ref, key))
-  IN IF \\/ path = "get Function.prototype.arguments"
-        \\/ path \\in ViewGetters /\\ ~ViewReceives(heap, path, ref)
-        \\/ /\\ IntlGetterKind(path) # ""
-           /\\ ~IntlReceives(heap, IntlGetterKind(path), ref)
-           /\\ ~IntlMayWalk(heap, IntlGetterKind(path), ref)
-     THEN "TypeError"
-     ELSE ""
+  IN IF IsSequenceValue(ref)
+     THEN ""
+     ELSE IF \\/ path = "get Function.prototype.arguments"
+             \\/ path \\in ViewGetters /\\ ~ViewReceives(heap, path, ref)
+             \\/ /\\ IntlGetterKind(path) # ""
+                /\\ ~IntlReceives(heap, IntlGetterKind(path), ref)
+                /\\ ~IntlMayWalk(heap, IntlGetterKind(path), ref)
+          THEN "TypeError"
+          ELSE ""
 
 \\* Whether a write runs the __proto__ setter of Object.prototype.
 IsProtoWrite(heap, ref, key) == GetterPath(SetterOf(heap, ref, key)) = "set Object.prototype.__proto__"

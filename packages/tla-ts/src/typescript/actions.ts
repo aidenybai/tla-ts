@@ -13792,7 +13792,17 @@ export const translateDeclarations = (
       translateCheckedDeclarations(declarations, path, context, frame, continueWith),
     );
   }
-  return translateCheckedDeclarations(declarations, path, context, frame, continueWith);
+  // An initializer that reads a property of a name throws where the read runs %ThrowTypeError%, as
+  // a strict function's caller does, or a getter of a buffer or a view on another kind of object.
+  const checked = translateCheckedDeclarations(declarations, path, context, frame, continueWith);
+  const read = initializer === undefined ? undefined : skipCasts(initializer);
+  return initializer !== undefined &&
+    read !== undefined &&
+    !path.scope.results.has(initializer) &&
+    ts.isPropertyAccessExpression(read) &&
+    ts.isIdentifier(skipCasts(read.expression))
+    ? throwReadError(initializer, path, context, frame, checked)
+    : checked;
 };
 
 const translateCheckedDeclarations = (
