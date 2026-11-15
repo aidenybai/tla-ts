@@ -36092,4 +36092,38 @@ describe("BigInts", () => {
     `);
     expect(division.failure?.message).toContain("tla-ts can't throw the RangeError");
   });
+
+  describe("keeps what a cast yield*'s iterator method changes", () => {
+    const getSource = (expected: number) => `
+      let calls = 0;
+      const iterable = {
+        [Symbol.asyncIterator]() {
+          calls = calls + 1;
+          return {
+            next() {
+              return Promise.resolve({ value: calls, done: true });
+            },
+          };
+        },
+      };
+      async function* gen(): AsyncGenerator<unknown, void, undefined> {
+        yield* (iterable as unknown as AsyncIterable<unknown, unknown, unknown>);
+      }
+      gen()
+        .next()
+        .then(() => {
+          if (calls !== ${expected}) throw new Error(String(calls));
+        });
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(1))).failure).toBeUndefined();
+    });
+
+    it("rejects a method whose change is lost", async () => {
+      expect((await checkModel(getSource(0))).failure?.message).toContain(
+        "A promise rejected with no handler",
+      );
+    });
+  });
 });

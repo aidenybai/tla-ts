@@ -12640,11 +12640,15 @@ const getEffects = (
     (written !== undefined &&
       ts.isArrayLiteralExpression(written) &&
       (isIteratedPattern(written, context) || isIterablePattern(written, context))) ||
-    ((ts.isSpreadElement(node) ||
-      (ts.isYieldExpression(node) && node.asteriskToken !== undefined)) &&
-      node.expression !== undefined &&
+    (ts.isSpreadElement(node) &&
       getKind(node.expression, context) !== "sequence" &&
       isIterableValue(node.expression, context)) ||
+    // A yield* iterates what it casts as the value itself.
+    (ts.isYieldExpression(node) &&
+      node.asteriskToken !== undefined &&
+      node.expression !== undefined &&
+      getKind(getCast(node.expression), context) !== "sequence" &&
+      isIterableValue(getCast(node.expression), context)) ||
     (ts.isForOfStatement(node) &&
       getKind(node.expression, context) !== "sequence" &&
       isIterableValue(node.expression, context)) ||
