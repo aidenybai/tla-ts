@@ -1116,7 +1116,7 @@ export const readDescriptors = (
 };
 
 // The getters that the script defines under any key, which reading an object's values may run.
-const getOwnValueGetters = (node: ts.Node, context: Context) => [
+export const getOwnValueGetters = (node: ts.Node, context: Context) => [
   ...new Set([...getGetterKeys(node)].flatMap((key) => getKeyGetters(node, key, context))),
 ];
 

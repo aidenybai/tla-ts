@@ -139,6 +139,7 @@ import {
 import {
   getJsonText,
   getReplacers,
+  getStringifyGetters,
   getRevival,
   isBigIntStringify,
   parseJson,
@@ -3555,8 +3556,17 @@ const translateCallStatementBody = (
     return reviveJson(expression, revival, path, context, frame, continueWith);
   }
   const replacers = getReplacers(expression, context);
-  if (replacers !== undefined) {
-    return replaceJson(expression, replacers, path, context, frame, continueWith);
+  const stringifyGetters = getStringifyGetters(expression, context);
+  if (replacers !== undefined || stringifyGetters.length > 0) {
+    return replaceJson(
+      expression,
+      replacers ?? [],
+      stringifyGetters,
+      path,
+      context,
+      frame,
+      continueWith,
+    );
   }
   if (isBigIntStringify(expression, context)) {
     return allocateAll(
@@ -11454,6 +11464,7 @@ const isStatementResult = (node: ts.CallExpression, path: Path, context: Context
     isBigIntStringify(node, context) ||
     getRevival(node, context) !== undefined ||
     getReplacers(node, context) !== undefined ||
+    getStringifyGetters(node, context).length > 0 ||
     isDescriptorsRead(node, context) ||
     isOwnValuesRead(node, context) ||
     isRevoke(node, context) ||
@@ -12397,6 +12408,7 @@ const getEffects = (
     ...getTrapFunctions(node, context),
     ...getDescriptorGetters(node, context),
     ...getOwnValuesGetters(node, context),
+    ...getStringifyGetters(node, context),
     ...getReadFunctions(node, context),
     ...getLoopGetters(node, context),
     ...getRemovedGetters(node, context),

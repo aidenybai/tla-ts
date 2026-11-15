@@ -34093,4 +34093,53 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("3"))).failure?.message).toContain("RangeError,3");
     });
   });
+
+  describe("runs the getters that JSON.stringify reads in order", () => {
+    const getSource = (expected: string) => `
+      const log = { text: "" };
+      const inner = {
+        get deep() {
+          log.text += "deep,";
+          return 7;
+        },
+        flat: "x",
+      };
+      const o: { [key: string]: unknown } = {
+        b: 1,
+        get a() {
+          log.text += "a,";
+          delete o.c;
+          o.z = 9;
+          return inner;
+        },
+        c: 3,
+      };
+      const plain = JSON.stringify(o);
+      const listed = JSON.stringify(o, ["z", "1", "a", "deep", "a"]);
+      const read = [plain, listed, log.text].join("|");
+      if (read !== '${expected}') throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (
+          await checkModel(
+            getSource('{"b":1,"a":{"deep":7,"flat":"x"}}|{"z":9,"a":{"deep":7}}|a,deep,a,deep,'),
+          )
+        ).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects a key that a getter deleted as still written", async () => {
+      expect(
+        (
+          await checkModel(
+            getSource(
+              '{"b":1,"a":{"deep":7,"flat":"x"},"c":3}|{"z":9,"a":{"deep":7}}|a,deep,a,deep,',
+            ),
+          )
+        ).failure?.message,
+      ).toContain('{\\"b\\":1,\\"a\\":{\\"deep\\":7,\\"flat\\":\\"x\\"}}|');
+    });
+  });
 });

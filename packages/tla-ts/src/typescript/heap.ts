@@ -73,6 +73,7 @@ import {
 import {
   getJsonText,
   getReplacers,
+  getStringifyGetters,
   getRevival,
   isParsedObject,
   parseJson,
@@ -5532,7 +5533,9 @@ const getOwnEngineErrors = (node: ts.Node, context: Context) => {
   const jsonText = getJsonText(node, context);
   if (jsonText !== undefined) return "error" in parseJson(jsonText) ? ["SyntaxError"] : [];
   if (getRevival(node, context) !== undefined) return ["SyntaxError"];
-  if (getReplacers(node, context) !== undefined) return ["TypeError"];
+  if (getReplacers(node, context) !== undefined || getStringifyGetters(node, context).length > 0) {
+    return ["TypeError"];
+  }
   const dateCall = getDateCall(node, context);
   if (dateCall !== undefined) {
     return [

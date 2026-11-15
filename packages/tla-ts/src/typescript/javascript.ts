@@ -7093,21 +7093,31 @@ SerializeJSON(heap, value, state, stack, indent) ==
             ELSE array(value, stack)
        [] OTHER -> Assert(FALSE, "tla-ts can't tell what JSON.stringify writes for " \\o ToString(value))
 
-\\* JSON.stringify, which can't call a replacer function.
-JSONStringify(heap, value, replacer, space, arrayPrototype, functionPrototype, isSequence) ==
+\\* The keys that JSON.stringify writes of each object, which a replacer array lists, or Undefined
+\\* where it writes all of them, as it can't call a replacer function.
+JSONList(heap, replacer, isSequence) ==
   LET isList == IsArray(heap, replacer)
                   \\/ (isSequence /\\ ~IsRef(replacer) /\\ SubSeq(ToString(replacer), 1, 2) = "<<")
-      keys == IF isList THEN JSONKeys(heap, replacer) ELSE Undefined
-      gap == JSONGap(heap, space)
-      state == [keys |-> keys, gap |-> gap, isSequence |-> isSequence,
-                arrayPrototype |-> arrayPrototype, functionPrototype |-> functionPrototype]
   IN CASE TypeOfIn(heap, replacer) = "function" -> Assert(FALSE, "tla-ts can't call a replacer")
        [] /\\ ~IsRef(replacer)
           /\\ TypeOf(replacer) = "object"
           /\\ replacer # Null
           /\\ ~isList ->
             Assert(FALSE, "tla-ts can't tell whether " \\o ToString(replacer) \\o " is an array")
-       [] keys = keys /\\ gap = gap -> SerializeJSON(heap, value, state, {}, "")
+       [] isList -> JSONKeys(heap, replacer)
+       [] OTHER -> Undefined
+
+\\* JSON.stringify of the keys that JSONList gives.
+JSONStringifyKeys(heap, value, keys, space, arrayPrototype, functionPrototype, isSequence) ==
+  LET gap == JSONGap(heap, space)
+      state == [keys |-> keys, gap |-> gap, isSequence |-> isSequence,
+                arrayPrototype |-> arrayPrototype, functionPrototype |-> functionPrototype]
+  IN IF keys = keys /\\ gap = gap THEN SerializeJSON(heap, value, state, {}, "") ELSE Undefined
+
+\\* JSON.stringify, which can't call a replacer function.
+JSONStringify(heap, value, replacer, space, arrayPrototype, functionPrototype, isSequence) ==
+  JSONStringifyKeys(heap, value, JSONList(heap, replacer, isSequence), space, arrayPrototype,
+                    functionPrototype, isSequence)
 
 \\* JSON.stringify where a replacer function replaces each value it writes, which a statement walks,
 \\* as it calls the function. Each frame of the walk holds an object that the walk writes, its keys,
@@ -7128,6 +7138,12 @@ JSONReplaced(frames) == frames[1].pairs[1][2]
 JSONHolder(frames) == JSONTop(frames).holder
 
 JSONKey(frames) == JSONTop(frames).keys[JSONTop(frames).position]
+
+\\* The getter that the walk runs to read the top frame's next key, or Undefined.
+JSONGetter(heap, frames) ==
+  IF IsHeap(JSONHolder(frames)) /\\ ~IsProxy(heap, JSONHolder(frames))
+  THEN GetterOf(heap, JSONHolder(frames), JSONKey(frames))
+  ELSE Undefined
 
 \\* The value that the walk reads at the top frame's next key. An array outside the heap that the
 \\* walk read from what holds it must still be the value that it holds, as the replacer may write it.
@@ -7164,9 +7180,10 @@ LOCAL JSONDescends(heap, value, isSequence) ==
     [] OTHER -> Assert(FALSE, "tla-ts can't tell what JSON.stringify writes for " \\o ToString(value))
 
 \\* The frames once the replacer gave a value for the top frame's next key, where it read another: a
-\\* frame for an object whose keys the walk writes, or else the value among those the top frame
-\\* gathered. An array outside the heap that may be the one the walk read must stay what holds it holds.
-JSONReplace(heap, frames, read, value, isSequence) ==
+\\* frame for an object whose keys the walk writes, which a list of keys may give, or else the value
+\\* among those the top frame gathered. An array outside the heap that may be the one the walk read
+\\* must stay what holds it holds.
+JSONReplace(heap, frames, read, value, isSequence, list) ==
   LET top == JSONTop(frames)
       advanced == [top EXCEPT !.position = @ + 1]
       below == SubSeq(frames, 1, Len(frames) - 1)
@@ -7174,6 +7191,7 @@ JSONReplace(heap, frames, read, value, isSequence) ==
       keys == CASE IsSequenceValue(value) -> [position \\in DOMAIN value |-> ToString(position - 1)]
                 [] isArray ->
                      [position \\in 1..ToLength(Get(heap, value, "length")) |-> ToString(position - 1)]
+                [] list # Undefined -> list
                 [] OTHER -> ObjectKeys(heap, value)
   IN CASE ~JSONDescends(heap, value, isSequence) ->
             Append(below, [advanced EXCEPT !.pairs = Append(@, <<JSONKey(frames), value>>)])
