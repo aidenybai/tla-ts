@@ -42423,4 +42423,31 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("a call statement whose value nothing reads, where a script makes no objects", () => {
+    const getSource = (expected: string) => `
+      "use strict";
+      const seen: unknown[] = [];
+      const big: any = 1n;
+      try {
+        [1].fill(0, big);
+        seen.push("filled");
+      } catch (error) {
+        seen.push(error instanceof TypeError);
+      }
+      if (seen.join() !== "${expected}") throw new Error("seen " + seen.join());
+    `;
+
+    it("stops where Node throws as the call converts its argument", async () => {
+      expect((await checkModel(getSource("true"))).failure?.message).toContain(
+        "tla-ts can't throw the TypeError of converting a BigInt to a number",
+      );
+    });
+
+    it("rejects the call left unevaluated", async () => {
+      expect((await checkModel(getSource("filled"))).failure?.message).toContain(
+        "tla-ts can't throw the TypeError of converting a BigInt to a number",
+      );
+    });
+  });
 });

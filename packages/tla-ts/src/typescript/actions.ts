@@ -11611,7 +11611,7 @@ const translateExpressionStatement = (
   }
   if (ts.isCallExpression(expression)) {
     return translateCallStatement(expression, path, context, frame, (after, value) =>
-      value === undefined || context.heap === undefined
+      value === undefined
         ? continueWith(after)
         : ifThenElse(apply("=", [value, value]), continueWith(after), leaf(boolean(false))),
     );
