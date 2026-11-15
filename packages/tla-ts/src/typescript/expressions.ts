@@ -1053,6 +1053,20 @@ const translateBuiltInCall = (
   ) {
     return useJavaScript("RegExpEscape", [translateExpression(escaped, scope, context)], context);
   }
+  const [bits, bigint] = node.arguments;
+  if (
+    getBuiltIn(receiver, context) === "BigInt" &&
+    (method === "asIntN" || method === "asUintN") &&
+    node.arguments.length === 2 &&
+    isNumberLike(bits, context) &&
+    isBigIntLike(bigint, context)
+  ) {
+    return useJavaScript(
+      method === "asIntN" ? "BigIntAsIntN" : "BigIntAsUintN",
+      [translateExpression(bits, scope, context), translateExpression(bigint, scope, context)],
+      context,
+    );
+  }
   const parsed =
     global === "Number" && method === "parseInt"
       ? translateParseInt(node, scope, context)

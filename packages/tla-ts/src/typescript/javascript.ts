@@ -6008,6 +6008,28 @@ IndexOfArgument(value) ==
        [] number < 0 -> -1
        [] OTHER -> number
 
+\\* The bits that BigInt.asIntN and BigInt.asUintN take, which ToIndex converts.
+LOCAL BitsOf(bits) ==
+  IF IndexOfArgument(bits) = -1
+  THEN Assert(FALSE, "tla-ts can't throw the RangeError of ToIndex")
+  ELSE IndexOfArgument(bits)
+
+\\* BigInt.asUintN: a BigInt modulo 2^bits.
+BigIntAsUintN(bits, value) ==
+  LET count == BitsOf(bits)
+  IN CASE ~BigIntIsNegative(value) /\\ count >= NatBits(BigIntNat(value)) -> value
+       [] count > MaxBigIntBits -> TooBig
+       [] OTHER -> BigIntOf(FALSE, BigIntModulo(value, count))
+
+\\* BigInt.asIntN: a BigInt modulo 2^bits, less 2^bits where that's 2^(bits - 1) or more.
+BigIntAsIntN(bits, value) ==
+  LET count == BitsOf(bits)
+      modulo == BigIntModulo(value, count)
+  IN CASE count > NatBits(BigIntNat(value)) -> value
+       [] count > 0 /\\ NatBits(modulo) = count ->
+            BigIntOf(TRUE, NatSubtract(NatShiftLeft(<<1>>, count), modulo))
+       [] OTHER -> BigIntOf(FALSE, modulo)
+
 LOCAL MaxBytes == 65536
 
 \\* What a constructor of a buffer, a DataView, or a typed array gives where it throws: the error,

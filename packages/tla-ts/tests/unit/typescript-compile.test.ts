@@ -43704,4 +43704,44 @@ describe("BigInts", () => {
       ).toContain(expected);
     });
   });
+
+  describe("wraps BigInts with BigInt.asIntN and BigInt.asUintN", () => {
+    const getSource = (expected: string) => `
+      const box = { size: 0 };
+      const values = [1n, -1n, -5n, -0x80000000n, 0xfedcba9876543210n, -0x123456789abcdef0123n];
+      const log: string[] = [];
+      for (const value of values) {
+        const wrapped = [0, 3, 32, 65, 2147483647].map((bits) => {
+          const unsigned = bits > 65 && value < 0n ? "" : BigInt.asUintN(bits, value);
+          return \`\${BigInt.asIntN(bits, value)}/\${unsigned}\`;
+        });
+        log.push(wrapped.join(","));
+      }
+      if (log.join("|") !== "${expected}") throw new Error(log.join("|"));
+    `;
+    const expected = [
+      "0/0,1/1,1/1,1/1,1/1|0/0,-1/7,-1/4294967295,-1/36893488147419103231,-1/",
+      "0/0,3/3,-5/4294967291,-5/36893488147419103227,-5/",
+      "0/0,0/0,-2147483648/2147483648,-2147483648/36893488145271619584,-2147483648/",
+      "0/0,0/0,1985229328/1985229328,18364758544493064720/18364758544493064720,18364758544493064720/18364758544493064720",
+      "0/0,-3/5,839974621/839974621,13445626791503920861/13445626791503920861,-5373003642731685151011/",
+    ].join("|");
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects asIntN as asUintN", async () => {
+      expect(
+        (await checkModel(getSource(expected.replace("-1/7", "7/7")))).failure?.message,
+      ).toContain(expected);
+    });
+
+    it("stops where asUintN of a negative BigInt takes too many bits", async () => {
+      expect(
+        (await checkModel("const box = { size: 0 };\nconst wide = BigInt.asUintN(5000, -1n) > 0n;"))
+          .failure?.message,
+      ).toContain("tla-ts can't hold a BigInt beyond 4096 bits");
+    });
+  });
 });
