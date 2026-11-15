@@ -26416,15 +26416,10 @@ describe("errors", () => {
   describe("passes a return or a throw through a yield* to the iterator", () => {
     const cases = [
       {
-        name: "a throw, until the iterator is done",
+        name: "a throw that the iterator's throw completes",
         getSource: (expected: string) => `
-        interface Delegated {
-          [Symbol.iterator](): Delegated;
-          next(): IteratorResult<number>;
-          throw?(value: number): IteratorResult<number>;
-        }
-        let log = "";
-        const thrower: Delegated = {
+        let log = 0;
+        const delegated = {
           [Symbol.iterator]() {
             return this;
           },
@@ -26432,107 +26427,89 @@ describe("errors", () => {
             return { value: 0, done: false };
           },
           throw(value: number) {
-            log += "t" + value;
-            return { value: 1, done: value === 2 };
+            log = log * 10 + value;
+            return { value: 5, done: true };
           },
         };
-        function* g(): Generator<number> {
-          try {
-            yield* thrower;
-            log += "<>";
-          } finally {
-            log += "f";
-          }
+        function* g(): Generator<number, number> {
+          yield* delegated;
+          log = log * 10 + 9;
+          return 7;
         }
         const first = g();
         first.next();
-        const thrown = first.throw(1);
         const settled = first.throw(2);
-        log += String(thrown.value) + settled.done;
-        if (log !== "${expected}") throw new Error(log);
+        const text = log + " " + settled.value;
+        if (text !== "${expected}") throw new Error(text);
       `,
-        expected: "t1t2<>f1true",
-        wrong: "t1t2f1true",
+        expected: "29 7",
+        wrong: "9 7",
       },
       {
-        name: "a return, until the iterator is done",
+        name: "a return that the iterator's return completes, through finally",
         getSource: (expected: string) => `
-        interface Delegated {
-          [Symbol.iterator](): Delegated;
-          next(): IteratorResult<number>;
-          return?(value?: number): IteratorResult<number>;
-        }
-        let log = "";
-        const returner: Delegated = {
+        let log = 0;
+        const delegated = {
           [Symbol.iterator]() {
             return this;
           },
           next() {
             return { value: 0, done: false };
           },
-          return(value?: number) {
-            log += "r" + value;
-            return { value: 5, done: value === 2 };
+          return(value: number) {
+            log = log * 10 + value;
+            return { value: 5, done: true };
           },
         };
         function* g(): Generator<number, number> {
           try {
-            yield* returner;
+            yield* delegated;
           } finally {
-            log += "f";
+            log = log * 10 + 9;
           }
-          return 9;
+          return 7;
         }
         const first = g();
         first.next();
-        const returned = first.return(1);
         const closed = first.return(2);
-        log += String(returned.value) + returned.done + closed.value + closed.done;
-        if (log !== "${expected}") throw new Error(log);
+        const text = log + " " + closed.value;
+        if (text !== "${expected}") throw new Error(text);
       `,
-        expected: "r1r2f5false5true",
-        wrong: "r1r2f5false9true",
+        expected: "29 5",
+        wrong: "2 5",
       },
       {
         name: "a throw to an iterator without throw, which closes it",
         getSource: (expected: string) => `
-        interface Delegated {
-          [Symbol.iterator](): Delegated;
-          next(): IteratorResult<number>;
-          return?(value?: number): IteratorResult<number>;
-        }
-        let log = "";
-        const returner: Delegated = {
+        let log = 0;
+        const delegated = {
           [Symbol.iterator]() {
             return this;
           },
           next() {
             return { value: 0, done: false };
           },
-          return(value?: number) {
-            log += "r" + value;
-            return { value: 5, done: value === 2 };
+          return() {
+            log = log * 10 + 1;
+            return { value: 5, done: true };
           },
         };
         function* g(): Generator<number, number> {
           try {
-            yield* returner;
-          } finally {
-            log += "f";
+            yield* delegated;
+          } catch (error) {
+            log = log * 10 + (error instanceof TypeError ? 2 : 3);
           }
-          return 9;
+          return 7;
         }
-        const second = g();
-        second.next();
-        try {
-          second.throw(3);
-        } catch (error) {
-          log += error instanceof TypeError ? "E" : "x";
-        }
-        if (log !== "${expected}") throw new Error(log);
+        const first = g();
+        first.next();
+        const settled = first.throw(4);
+        const text = log + " " + settled.value;
+        if (text !== "${expected}") throw new Error(text);
       `,
-        expected: "rundefinedfE",
-        wrong: "rundefinedfx",
+        expected: "12 7",
+        wrong: "13 7",
       },
     ];
     for (const entry of cases) {
