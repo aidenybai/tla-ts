@@ -4192,6 +4192,16 @@ export const isNewSubclassCollection = (node: ts.Node, context: Context) => {
   );
 };
 
+// The built-in methods that tell what a value whose type doesn't tell is as they run.
+const KIND_READS = new Set([
+  "Array.isArray",
+  "Object.getPrototypeOf",
+  "Object.keys",
+  "Object.values",
+  "Object.entries",
+  "Object.getOwnPropertyNames",
+]);
+
 // The built-in methods that give the array they change rather than a new one.
 const SELF_RETURNING_METHODS = new Set(["sort", "reverse", "fill", "copyWithin"]);
 
@@ -4424,6 +4434,43 @@ const writesHole = (uses: readonly ts.Identifier[], context: Context) =>
 // doesn't, the collections stay values.
 export const findChangedArrays = (reached: readonly ts.Node[], context: Context) => {
   const checker = context.checker;
+  const isAnyOrUnknown = (node: ts.Expression) =>
+    (checker.getTypeAtLocation(node).flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;
+  // A value whose type doesn't tell what it is, such as any, unknown, object, or {}, which may be an
+  // array or a map.
+  const isUntold = (node: ts.Expression) =>
+    [checker.getTypeAtLocation(node)]
+      .flatMap((type) => (type.isUnion() ? type.types : [type]))
+      .some(
+        (member) =>
+          (member.flags &
+            (ts.TypeFlags.Any | ts.TypeFlags.Unknown | ts.TypeFlags.NonPrimitive)) !==
+            0 ||
+          ((member.flags & ts.TypeFlags.Object) !== 0 &&
+            member.getProperties().length === 0 &&
+            member.getCallSignatures().length === 0),
+      );
+  // A read that tells as it runs what a value whose type doesn't tell is: of a property of a value
+  // of type any or unknown, as a pattern reads it too, or by Array.isArray, getPrototypeOf, or a
+  // method of Object that lists its keys.
+  const isReadByKind = (node: ts.Expression) => {
+    const parent = node.parent;
+    return (
+      (isAnyOrUnknown(node) &&
+        (((ts.isPropertyAccessExpression(parent) || ts.isElementAccessExpression(parent)) &&
+          parent.expression === node &&
+          !isAssignmentTarget(parent)) ||
+          (ts.isVariableDeclaration(parent) &&
+            parent.initializer === node &&
+            ts.isObjectBindingPattern(parent.name)))) ||
+      (isUntold(node) &&
+        isMethodCall(parent) &&
+        parent.arguments[0] === node &&
+        KIND_READS.has(
+          `${getBuiltIn(parent.expression.expression, context)}.${parent.expression.name.text}`,
+        ))
+    );
+  };
   const isReached = new Set(reached);
   const references = new Map<ts.Symbol, ts.Identifier[]>();
   const accesses: (ts.PropertyAccessExpression | ts.ElementAccessExpression)[] = [];
@@ -4736,7 +4783,17 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
     };
     const isUse = (use: ts.Expression): boolean => {
       const parent = use.parent;
-      if (ts.isParenthesizedExpression(parent)) return isUse(parent);
+      // A cast gives the same object.
+      if (
+        ts.isParenthesizedExpression(parent) ||
+        ts.isAsExpression(parent) ||
+        ts.isTypeAssertionExpression(parent) ||
+        ts.isSatisfiesExpression(parent)
+      ) {
+        return isUse(parent);
+      }
+      // A read by kind reads an object that the heap holds as it runs.
+      if (isReadByKind(use)) return true;
       // A statement drops what it gives.
       if (ts.isExpressionStatement(parent)) return true;
       // A function that returns one of the group's arrays makes its result a holder.
@@ -5304,6 +5361,9 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
   };
   const isReachedNode = (node: ts.Node) =>
     ts.findAncestor(node, (ancestor) => isReached.has(ancestor)) !== undefined;
+  // A map off the heap may be the same TLA+ value as an array, so a script that reads a value by its
+  // kind holds its maps on the heap.
+  const readsKinds = expressions.some((node) => isReachedNode(node) && isReadByKind(node));
   // A parameter or a field whose array a function changes in place starts a group, as does a
   // variable whose array a write gives a hole.
   const starts = [
@@ -5353,7 +5413,8 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
         getOrderedSetMethod(node, context) !== undefined ||
         (ts.isNewExpression(node) &&
           isFreshCollection(node, context) &&
-          isOrderedCollection(node, context)))
+          (isOrderedCollection(node, context) ||
+            (readsKinds && getCollection(node, context) === "Map"))))
     ) {
       grow([], [], [node]).forEach((inner) => found.add(inner));
     }

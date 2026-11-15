@@ -44050,9 +44050,18 @@ describe("BigInts", () => {
       ).toContain("true,true,true,false,false,false,false,false,false");
     });
 
-    it("stops at a value off the heap where the script names a map", async () => {
+    it("tells a map that the heap holds from an array", async () => {
       const result = await checkModel(`
         const map: unknown = new Map<number, number>();
+        const object: unknown = {};
+        if (Array.isArray(map) || Array.isArray(object)) throw new Error("array");
+      `);
+      expect(result.failure).toBeUndefined();
+    });
+
+    it("stops at a weak map, which the heap doesn't hold", async () => {
+      const result = await checkModel(`
+        const map: unknown = new WeakMap<object, number>();
         const object: unknown = {};
         if (Array.isArray(map) || Array.isArray(object)) throw new Error("array");
       `);
@@ -44208,21 +44217,35 @@ describe("BigInts", () => {
     });
   });
 
-  describe("stops at a map off the heap that a value of type any holds", () => {
+  describe("reads a map that a value of type any holds as a map", () => {
     const getSource = (expected: string) => `
       const map: any = new Map([[1, "a"]]);
-      const log = [map.length, map[1]].join(",");
+      const log = [
+        map.length,
+        map[1],
+        Array.isArray(map),
+        Object.keys(map).length,
+        Object.getPrototypeOf(map) === Map.prototype,
+      ].join(",");
       if (log !== "${expected}") throw new Error(log);
     `;
 
-    it("stops rather than read the map as an array", async () => {
-      expect((await checkModel(getSource(","))).failure?.message).toContain(
-        "tla-ts can't tell an array off the heap from a map",
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(",,false,0,true"))).failure).toBeUndefined();
+    });
+
+    it("rejects the map read as an array", async () => {
+      expect((await checkModel(getSource("1,a,true,1,false"))).failure?.message).toContain(
+        ",,false,0,true",
       );
     });
 
-    it("rejects the map's length and element as an array's", async () => {
-      expect((await checkModel(getSource("1,"))).failure?.message).toContain(
+    it("stops at a weak map, which the heap doesn't hold", async () => {
+      const result = await checkModel(`
+        const map: any = new WeakMap();
+        if (map.length !== undefined) throw new Error("array");
+      `);
+      expect(result.failure?.message).toContain(
         "tla-ts can't tell an array off the heap from a map",
       );
     });
