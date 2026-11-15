@@ -43045,4 +43045,34 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("10|1"))).failure?.message).toContain("10|0");
     });
   });
+
+  describe("calls a function expression that a getter returns and that reads the getter's locals", () => {
+    const getSource = (expected: string) => `
+      let gets = 0;
+      class Counting extends Iterator<number> {
+        // @ts-ignore
+        get next() {
+          gets += 1;
+          let count = 0;
+          return function () {
+            count += 1;
+            return { done: count > 3, value: count };
+          };
+        }
+      }
+      let log = "";
+      const counting = new Counting();
+      for (const value of counting.map((value) => value * 2)) log += value;
+      log += gets;
+      if (log !== "${expected}") throw new Error(log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("2461"))).failure).toBeUndefined();
+    });
+
+    it("rejects a getter that runs for each step", async () => {
+      expect((await checkModel(getSource("2463"))).failure?.message).toContain("2461");
+    });
+  });
 });

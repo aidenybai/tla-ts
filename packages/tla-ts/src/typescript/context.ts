@@ -2846,11 +2846,10 @@ const getHeldName = (node: ts.Node) =>
 
 // A function that a function makes and that outlives the call that made it, which reads the locals
 // of that call from its environment: one that the function assigns to a name declared outside it,
-// an async one that it returns, or one that an object literal or a property assignment holds, or an
-// arrow that it returns, itself or by the name of the const that holds it, that reads a local of
-// the function. An arrow reads the this of the function
-// around it, which the environment doesn't hold, and an async closure that awaits would resume after
-// its call returns.
+// an async one that it returns, or one that an object literal or a property assignment holds, or one
+// that it returns, itself or by the name of the const that holds it, that reads a local of the
+// function. An arrow reads the this of the function around it, which the environment doesn't hold,
+// and an async closure that awaits would resume after its call returns.
 export const isClosure = (node: ts.Node, context: Context): node is Closure => {
   if (
     context.heap === undefined ||
@@ -2927,7 +2926,7 @@ export const isClosure = (node: ts.Node, context: Context): node is Closure => {
       : undefined;
   return (
     (isAsync && ts.isReturnStatement(node.parent) && node.parent.expression === node) ||
-    (ts.isArrowFunction(node) && isReturned && isReadingLocals()) ||
+    (isReturned && isReadingLocals()) ||
     (declaration !== undefined &&
       ts.findAncestor(declaration, (ancestor) => ancestor === maker) === undefined)
   );
