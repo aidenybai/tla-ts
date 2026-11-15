@@ -40001,6 +40001,14 @@ describe("BigInts", () => {
     });
   });
 
+  it("reads a constant, a function, an object, and a class through a module's namespace object", async () => {
+    const path = join(import.meta.dirname, "../fixtures/typescript/imports/boxing.ts");
+    const source = readFileSync(path, "utf8");
+    expect((await check(compile(source, path))).failure).toBeUndefined();
+    const wrong = await check(compile(source.replace('"34274true"', '"34274false"'), path));
+    expect(wrong.failure?.message).toContain("34274true");
+  });
+
   it("stops at a variable that a script reads through a module's namespace object", () => {
     const path = join(import.meta.dirname, "../fixtures/typescript/imports/namespace.ts");
     expect(() =>

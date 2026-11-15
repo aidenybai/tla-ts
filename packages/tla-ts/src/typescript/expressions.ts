@@ -2658,7 +2658,11 @@ const translatePropertyAccess = (
   if (node.expression.kind === ts.SyntaxKind.SuperKeyword) {
     return translateSuperRead(node, string(node.name.text), scope, context);
   }
-  const declared = translateDeclared(node, getSymbol(node, context.checker), scope, context);
+  const property = getSymbol(node, context.checker);
+  // A module's namespace object holds what the module's bindings hold.
+  const binding = property === undefined ? undefined : scope.bindings.get(property);
+  if (binding !== undefined) return binding;
+  const declared = translateDeclared(node, property, scope, context);
   if (declared !== undefined) return declared;
   const intrinsic = translateIntrinsic(node, scope, context);
   if (intrinsic !== undefined) return intrinsic;

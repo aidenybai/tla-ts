@@ -273,13 +273,13 @@ const isPlainObject = (type: ts.Type, context: Context): boolean => {
           // The objects that Proxy.revocable, Object.getOwnPropertyDescriptors, and
           // Atomics.waitAsync give, whose types their declarations write in place.
           (symbol.declarations ?? []).some((declaration) => {
+            if (!ts.isTypeLiteralNode(declaration)) return false;
             const signature =
               ts.isIntersectionTypeNode(declaration.parent) ||
               ts.isUnionTypeNode(declaration.parent)
                 ? declaration.parent.parent
                 : declaration.parent;
             return (
-              ts.isTypeLiteralNode(declaration) &&
               ts.isMethodSignature(signature) &&
               ["revocable", "getOwnPropertyDescriptors", "waitAsync"].includes(
                 signature.name.getText(),
