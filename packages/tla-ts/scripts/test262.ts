@@ -664,15 +664,26 @@ const loosen = () => {
     }
     // A test may call a function with fewer arguments than it declares, which leaves the others
     // undefined, or with more, which only its arguments object holds. A rest parameter takes the
-    // extra arguments without changing the function's length.
+    // extra arguments without changing the function's length. A tag takes the template's strings
+    // and then each substitution.
+    const getArgumentCount = (
+      call: ts.CallExpression | ts.NewExpression | ts.TaggedTemplateExpression,
+    ) =>
+      ts.isTaggedTemplateExpression(call)
+        ? 1 + (ts.isTemplateExpression(call.template) ? call.template.templateSpans.length : 0)
+        : (call.arguments?.length ?? 0);
     const count = /but got (\d+)/.exec(ts.flattenDiagnosticMessageText(diagnostic.messageText, ""));
     const called =
-      diagnostic.code === ARGUMENT_COUNT_ERROR && count !== null
+      SHORT_CALL_ERRORS.has(diagnostic.code) && count !== null
         ? ts.findAncestor(
             node,
-            (ancestor): ancestor is ts.CallExpression | ts.NewExpression =>
-              (ts.isCallExpression(ancestor) || ts.isNewExpression(ancestor)) &&
-              (ancestor.arguments?.length ?? 0) === Number(count[1]),
+            (
+              ancestor,
+            ): ancestor is ts.CallExpression | ts.NewExpression | ts.TaggedTemplateExpression =>
+              (ts.isCallExpression(ancestor) ||
+                ts.isNewExpression(ancestor) ||
+                ts.isTaggedTemplateExpression(ancestor)) &&
+              getArgumentCount(ancestor) === Number(count[1]),
           )
         : undefined;
     const callee = called && checker.getResolvedSignature(called)?.getDeclaration();
@@ -685,7 +696,7 @@ const loosen = () => {
       const parameters = callee.parameters.filter(
         (parameter) => !ts.isIdentifier(parameter.name) || parameter.name.text !== "this",
       );
-      const given = called.arguments?.length ?? 0;
+      const given = getArgumentCount(called);
       parameters.slice(given).forEach((parameter) => {
         if (
           ts.isIdentifier(parameter.name) &&
