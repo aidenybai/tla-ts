@@ -212,16 +212,26 @@ const getName = (node: ts.Expression, context: Context): string | undefined => {
   if (ts.isParenthesizedExpression(node)) return getName(node.expression, context);
   const builtIn = getBuiltIn(node, context);
   if (builtIn !== undefined) return builtIn;
-  // A read in the block that declares the variable, outside any function there, runs after the
-  // declaration.
+  // A read in the block that declares the variable, outside any function there or in an arrow or a
+  // function expression that the block makes after the declaration, runs after the declaration.
   const held = getHeldBuiltIn(node, context);
   const statement = held?.parent.parent.parent;
+  const owner = held && ts.findAncestor(held, ts.isFunctionLike);
+  const isAfter = (inner: ts.Node): boolean => {
+    const function_ = ts.findAncestor(inner.parent, ts.isFunctionLike);
+    return (
+      function_ === owner ||
+      (function_ !== undefined &&
+        (ts.isArrowFunction(function_) || ts.isFunctionExpression(function_)) &&
+        isAfter(function_))
+    );
+  };
   if (
     held !== undefined &&
     statement !== undefined &&
     ts.isVariableStatement(statement) &&
     ts.findAncestor(node, (ancestor) => ancestor === statement.parent) !== undefined &&
-    ts.findAncestor(node, ts.isFunctionLike) === ts.findAncestor(held, ts.isFunctionLike)
+    isAfter(node)
   ) {
     return getName(held, context);
   }

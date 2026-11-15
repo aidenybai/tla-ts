@@ -27730,6 +27730,32 @@ ${call}
     expect(result.failure).toBeUndefined();
   });
 
+  it("throws a TypeError where an arrow calls a held Set method with another receiver", async () => {
+    const getSource = (expected: string) => `
+      let log = "";
+      const attempt = (name: string, callback: () => unknown) => {
+        try {
+          callback();
+          log = log + name + "ok,";
+        } catch (error) {
+          log = log + name + (error instanceof TypeError ? "T," : "E,");
+        }
+      };
+      const union = Set.prototype.union;
+      const realSet = new Set<number>([1]);
+      attempt("a", () => union.call(undefined, realSet));
+      attempt("b", () => union.call(new Map(), realSet));
+      attempt("c", () => Set.prototype.isSubsetOf.call({}, realSet));
+      log = log + typeof union;
+      if (log !== "${expected}") throw new Error(log);
+    `;
+    const expected = "aT,bT,cT,function";
+    expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    expect((await checkModel(getSource("aok,bT,cT,function"))).failure?.message).toContain(
+      expected,
+    );
+  });
+
   it("stops where a script replaced a collection's method that call runs", async () => {
     const result = await checkModel(`
       Object.defineProperty(Set.prototype, "clear", { value: () => {} });

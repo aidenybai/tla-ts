@@ -9649,16 +9649,30 @@ const getMissingCall = (node: ts.CallExpression, context: Context) => {
 const getMisreceivedCall = (node: ts.CallExpression, context: Context) => {
   const callee = node.expression;
   const receiver = node.arguments.at(0);
+  // A const may hold the method, as const union = Set.prototype.union does.
+  const held =
+    ts.isPropertyAccessExpression(callee) && ts.isIdentifier(callee.expression)
+      ? getSymbol(callee.expression, context.checker)?.valueDeclaration
+      : undefined;
+  const method =
+    held !== undefined &&
+    ts.isVariableDeclaration(held) &&
+    (held.parent.flags & ts.NodeFlags.Const) !== 0 &&
+    held.initializer !== undefined
+      ? skipCasts(held.initializer)
+      : ts.isPropertyAccessExpression(callee)
+        ? callee.expression
+        : undefined;
   if (
     !ts.isPropertyAccessExpression(callee) ||
     callee.name.text !== "call" ||
-    !ts.isPropertyAccessExpression(callee.expression) ||
+    method === undefined ||
+    !ts.isPropertyAccessExpression(method) ||
     receiver === undefined ||
     !node.arguments.slice(1).every(isInertValue)
   ) {
     return undefined;
   }
-  const method = callee.expression;
   const owner = method.expression;
   const ownerName =
     ts.isPropertyAccessExpression(owner) && owner.name.text === "prototype"
@@ -10959,6 +10973,7 @@ const isStatementResult = (node: ts.CallExpression, path: Path, context: Context
     getIntlMethodCall(node, context) !== undefined ||
     getThisSymbolCall(node, context) !== undefined ||
     getCalledThrough(node, context) !== undefined ||
+    getMisreceivedCall(node, context) !== undefined ||
     getStackCall(node, context) !== undefined ||
     getIteratorDisposeCall(node, context) !== undefined ||
     getHeapArrayChange(node, context) !== undefined ||
