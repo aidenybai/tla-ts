@@ -42373,4 +42373,28 @@ describe("BigInts", () => {
       ).toThrow("Unsupported call: Array.from.call");
     });
   });
+
+  describe("a chain of if statements whose joins take numbers that NaN makes special", () => {
+    const getSource = (expected: number) => `
+      "use strict";
+      let count = 0;
+      ${Array.from(
+        { length: 8 },
+        (_, index) => `
+          if (!new Number(NaN)) throw new Error("falsy");
+          else count++;
+          if (count !== ${index + 1}) throw new Error("count " + count);
+        `,
+      ).join("")}
+      if ((count as number) !== ${expected}) throw new Error("final " + count);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(8))).failure).toBeUndefined();
+    });
+
+    it("rejects another count", async () => {
+      expect((await checkModel(getSource(7))).failure?.message).toContain("final 8");
+    });
+  });
 });

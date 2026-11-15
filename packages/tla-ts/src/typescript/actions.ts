@@ -14455,12 +14455,30 @@ export const translateJoined = (
   const exits: { path: Path; value?: Expression }[] = [];
   const joined = translateWith((inner, value) => {
     exits.push({ path: inner, value });
-    return leaf(
-      call(name, [
-        ...changed.flatMap((symbol) => getPassed(inner, symbol) ?? []),
-        ...captured.map((symbol) => getPassed(inner, symbol) ?? getUndefined(context)),
-        value ?? getUndefined(context),
-      ]),
+    const values = [
+      ...changed.flatMap((symbol) => getPassed(inner, symbol) ?? []),
+      ...captured.map((symbol) => getPassed(inner, symbol) ?? getUndefined(context)),
+      value ?? getUndefined(context),
+    ];
+    // Each value binds before the call, as an argument that the operator reads again after the
+    // state changes evaluates again, and so does each argument that it was made of, once per read.
+    const names = values.map((passedValue) =>
+      inner.isLooping || ["Identifier", "Number", "String"].includes(passedValue.kind)
+        ? undefined
+        : context.names.getFresh("joined"),
+    );
+    return names.reduceRight<Formula>(
+      (rest, bound, position) =>
+        bound === undefined ? rest : bindValue(bound, values[position], rest),
+      leaf(
+        call(
+          name,
+          values.map((passedValue, position) => {
+            const bound = names[position];
+            return bound === undefined ? passedValue : identifier(bound);
+          }),
+        ),
+      ),
     );
   });
   // Each exit leaves the generators as the first does, which may have completed them. Where they
