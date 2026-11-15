@@ -2912,6 +2912,8 @@ export const translateNewBufferOf = (
   scope: Scope,
   context: Context,
   result: NewBufferResult = "heap",
+  // What a read of newTarget's prototype gave, where a statement read it first.
+  prototypeValue?: Expression,
 ) => {
   const isError = result !== "heap";
   const buffers = getNewBuffer(node, context) ?? [];
@@ -2930,14 +2932,32 @@ export const translateNewBufferOf = (
                 [callee, translateBuiltInValue(buffer, node, context)],
                 context,
               ),
-              translateNewBuffer(buffer, heap, values, newTarget, node, context, result),
+              translateNewBuffer(
+                buffer,
+                heap,
+                values,
+                newTarget,
+                node,
+                context,
+                result,
+                prototypeValue,
+              ),
               rest,
             ),
           isError
             ? string("")
             : apply("Assert", [boolean(false), string("tla-ts can't call this constructor")]),
         )
-      : translateNewBuffer(buffers[0], heap, values, newTarget, node, context, result);
+      : translateNewBuffer(
+          buffers[0],
+          heap,
+          values,
+          newTarget,
+          node,
+          context,
+          result,
+          prototypeValue,
+        );
   return newTarget === undefined || !isError
     ? made
     : ifExpression(
@@ -2955,14 +2975,21 @@ const translateNewBuffer = (
   node: ts.Expression,
   context: Context,
   result: NewBufferResult,
+  prototypeValue: Expression | undefined,
 ) => {
   // The constructor, which the prototype's constructor property holds.
   context.builtIns.add(buffer);
   const fallback = translateBuiltInValue(`${buffer}.prototype`, node, context);
   const prototype =
-    newTarget === undefined
-      ? fallback
-      : useJavaScript("PrototypeFromConstructor", [heap, newTarget, fallback], context);
+    prototypeValue !== undefined
+      ? ifExpression(
+          useJavaScript("IsObjectIn", [heap, prototypeValue], context),
+          prototypeValue,
+          fallback,
+        )
+      : newTarget === undefined
+        ? fallback
+        : useJavaScript("PrototypeFromConstructor", [heap, newTarget, fallback], context);
   const type = TYPED_ARRAYS.get(buffer);
   if (result === "offset error") {
     return type === undefined

@@ -44578,4 +44578,39 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("runs the getter of newTarget's prototype that a buffer's or a view's construction reads", () => {
+    const getSource = (expected: string) => `
+      let log = "";
+      const buffer = new ArrayBuffer(4, { maxByteLength: 4 });
+      const proto = Object.create(Uint8Array.prototype);
+      const newTarget = function () {}.bind(null);
+      Object.defineProperty(newTarget, "prototype", {
+        get() {
+          log += "p";
+          buffer.resize(1);
+          return proto;
+        },
+      });
+      let error = "";
+      try {
+        Reflect.construct(DataView, [buffer, 0, 2], newTarget);
+      } catch (caught) {
+        error = (caught as Error).name;
+      }
+      const made = Reflect.construct(Uint8Array, [2], newTarget);
+      const result = [log, error, Object.getPrototypeOf(made) === proto, made.length].join(",");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("pp,RangeError,true,2"))).failure).toBeUndefined();
+    });
+
+    it("rejects a view that checks its length before the getter resizes its buffer", async () => {
+      expect((await checkModel(getSource("pp,,true,2"))).failure?.message).toContain(
+        "pp,RangeError,true,2",
+      );
+    });
+  });
 });

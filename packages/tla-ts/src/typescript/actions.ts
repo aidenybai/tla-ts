@@ -338,6 +338,7 @@ import {
   readDescriptor,
   readDescriptors,
   read,
+  getKeyGetters,
   readPatternGetters,
   readRestGetters,
   readWith,
@@ -13074,6 +13075,15 @@ const isIndexConvertingNew = (node: ts.Node, context: Context) =>
     .slice(1, 3)
     .some((value) => !isPrimitiveIndex(getCast(value), context));
 
+// The getters of newTarget's prototype that new of a buffer, a DataView, a typed array, or a weak
+// holder may run, where Reflect.construct gives it another newTarget.
+const getNewTargetGetters = (node: ts.Node, context: Context) => {
+  const construction = ts.isExpression(node) ? getBufferConstruction(node, context) : undefined;
+  return construction === undefined || construction.newTarget === construction.callee
+    ? []
+    : getKeyGetters(node, "prototype", context);
+};
+
 // Runs new of a buffer, a DataView, or a typed array, which throws the error its constructor does,
 // and makes a typed array of an object's iterator's values where a script's @@iterator method
 // gives them.
@@ -13095,9 +13105,11 @@ const translateNewBufferStatement = (
       const values = construction.arguments.map((value) =>
         translateExpression(value, allocated.scope, context),
       );
-      const make = (
+      const buffers = getNewBuffer(node, context) ?? [];
+      const makeWith = (
         current: Path,
         madeArguments: Expression[],
+        prototypeValue: Expression | undefined,
         finish: (path: Path, value: Expression) => Formula,
       ) => {
         const heapSymbol = context.heap;
@@ -13127,6 +13139,7 @@ const translateNewBufferStatement = (
             current.scope,
             context,
             "error",
+            prototypeValue,
           ),
           ifThenElse(
             apply("=", [error, string("")]),
@@ -13140,6 +13153,8 @@ const translateNewBufferStatement = (
                 tuple(madeArguments),
                 current.scope,
                 context,
+                "heap",
+                prototypeValue,
               ),
               finish(after, useJavaScript("Allocated", [made], context)),
             ),
@@ -13148,6 +13163,61 @@ const translateNewBufferStatement = (
               throwError("RangeError", current, node, context, frame),
               throwTypeError(current, node, context, frame),
             ),
+          ),
+        );
+      };
+      // Reflect.construct with another newTarget reads its prototype, which a getter that the script
+      // writes may answer: a typed array of an object first, and anything else once its arguments'
+      // checks pass, which run again on what the getter leaves.
+      const prototypeGetters = getNewTargetGetters(node, context);
+      const typedBuffers = buffers.filter((buffer) => TYPED_ARRAYS.has(buffer));
+      if (
+        prototypeGetters.length > 0 &&
+        typedBuffers.length > 0 &&
+        typedBuffers.length < buffers.length
+      ) {
+        throw new TlaTypeScriptError(
+          "tla-ts can't tell when this construction reads its newTarget's prototype",
+          node,
+        );
+      }
+      const newTarget = translateExpression(construction.newTarget, allocated.scope, context);
+      const make = (
+        current: Path,
+        madeArguments: Expression[],
+        finish: (path: Path, value: Expression) => Formula,
+      ) => {
+        if (prototypeGetters.length === 0)
+          return makeWith(current, madeArguments, undefined, finish);
+        const heap = getHeap(current.scope, node, context);
+        const errorName = context.names.getFresh("error");
+        const first = madeArguments.at(0);
+        return bindOnce(
+          current,
+          errorName,
+          translateNewBufferOf(
+            node,
+            construction,
+            heap,
+            tuple(madeArguments),
+            current.scope,
+            context,
+            "error",
+            getUndefined(context),
+          ),
+          ifThenElse(
+            apply("\\/", [
+              apply("=", [identifier(errorName), string("")]),
+              typedBuffers.length === 0
+                ? boolean(false)
+                : first === undefined
+                  ? boolean(true)
+                  : useJavaScript("IsObjectIn", [heap, first], context),
+            ]),
+            read(node, newTarget, "prototype", current, context, frame, (got, prototypeValue) =>
+              makeWith(got, madeArguments, prototypeValue, finish),
+            ),
+            makeWith(current, madeArguments, getUndefined(context), finish),
           ),
         );
       };
@@ -13169,6 +13239,30 @@ const translateNewBufferStatement = (
             next(after, primitive),
           ),
         );
+      // A typed array reads newTarget's prototype before it converts its offset and length or
+      // iterates its argument, which a getter there would have to run before.
+      const readsPrototypeAfter = (current: Path, formula: Formula) =>
+        prototypeGetters.length === 0
+          ? formula
+          : ifThenElse(
+              apply("=", [
+                useJavaScript(
+                  "GetterOf",
+                  [getHeap(current.scope, node, context), newTarget, string("prototype")],
+                  context,
+                ),
+                getUndefined(context),
+              ]),
+              formula,
+              leaf(
+                apply("Assert", [
+                  boolean(false),
+                  string(
+                    "tla-ts can't run a getter of newTarget's prototype before a typed array runs its argument's code",
+                  ),
+                ]),
+              ),
+            );
       const makeViewing = (
         current: Path,
         madeArguments: Expression[],
@@ -13182,26 +13276,29 @@ const translateNewBufferStatement = (
                 [getHeap(current.scope, node, context), madeArguments[0]],
                 context,
               ),
-              toIndex(current, madeArguments[1] ?? getUndefined(context), (offsetPath, offset) =>
-                ifThenElse(
-                  apply("=", [
-                    translateNewBufferOf(
-                      node,
-                      construction,
-                      getHeap(offsetPath.scope, node, context),
-                      tuple([madeArguments[0], offset]),
-                      offsetPath.scope,
-                      context,
-                      "offset error",
-                    ),
-                    string("RangeError"),
-                  ]),
-                  throwError("RangeError", offsetPath, node, context, frame),
-                  madeArguments[2] === undefined
-                    ? make(offsetPath, [madeArguments[0], offset], finish)
-                    : toIndex(offsetPath, madeArguments[2], (lengthPath, length) =>
-                        make(lengthPath, [madeArguments[0], offset, length], finish),
+              readsPrototypeAfter(
+                current,
+                toIndex(current, madeArguments[1] ?? getUndefined(context), (offsetPath, offset) =>
+                  ifThenElse(
+                    apply("=", [
+                      translateNewBufferOf(
+                        node,
+                        construction,
+                        getHeap(offsetPath.scope, node, context),
+                        tuple([madeArguments[0], offset]),
+                        offsetPath.scope,
+                        context,
+                        "offset error",
                       ),
+                      string("RangeError"),
+                    ]),
+                    throwError("RangeError", offsetPath, node, context, frame),
+                    madeArguments[2] === undefined
+                      ? make(offsetPath, [madeArguments[0], offset], finish)
+                      : toIndex(offsetPath, madeArguments[2], (lengthPath, length) =>
+                          make(lengthPath, [madeArguments[0], offset, length], finish),
+                        ),
+                  ),
                 ),
               ),
               make(current, madeArguments, finish),
@@ -13241,7 +13338,6 @@ const translateNewBufferStatement = (
             );
       // new of a typed array of numbers reads an array-like object's elements in order, so the
       // first that a getter which only throws answers throws, where nothing before runs code.
-      const buffers = getNewBuffer(node, context) ?? [];
       const code = useJavaScript(
         "TypedArrayFirstGetter",
         [getHeap(allocated.scope, node, context), values[0] ?? getUndefined(context)],
@@ -13294,14 +13390,17 @@ const translateNewBufferStatement = (
                   [getHeap(allocated.scope, node, context), values[0]],
                   context,
                 ),
-                openIterator(
-                  node,
-                  values[0],
+                readsPrototypeAfter(
                   allocated,
-                  context,
-                  frame,
-                  throwWith,
-                  (opened, iterator, next) => step(opened, iterator, next, [], finish),
+                  openIterator(
+                    node,
+                    values[0],
+                    allocated,
+                    context,
+                    frame,
+                    throwWith,
+                    (opened, iterator, next) => step(opened, iterator, next, [], finish),
+                  ),
                 ),
                 madeFrom(finish),
               ),
@@ -14169,6 +14268,7 @@ const getEffects = (
     ...getRemovedGetters(node, context),
     ...getStoredLengthConversions(node, context),
     ...getRegExpProtocolAccessors(node, context),
+    ...getNewTargetGetters(node, context),
     ...(written === undefined ? [] : getRestCopyGetters(written, context)),
   ];
   // A pattern that destructures an object, or a for-of, a spread, a yield*, or new of a typed array

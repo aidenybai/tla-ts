@@ -157,7 +157,7 @@ export const getMethods = (node: ts.Node, key: string, context: Context, isAwait
     )
     .filter((candidate) => isAwaited || !isAsync(candidate));
 
-const getKeyGetters = (node: ts.Node, key: string, context: Context) => [
+export const getKeyGetters = (node: ts.Node, key: string, context: Context) => [
   ...getWrittenFunctions(node, key, context).filter(ts.isGetAccessorDeclaration),
   ...getAccessorFunctions(node, "get", context),
 ];
