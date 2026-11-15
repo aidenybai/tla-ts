@@ -64,6 +64,7 @@ import {
   holdsArrayIteration,
   translateMapped,
   IN_PLACE_METHODS,
+  isSelfReturning,
   isUnheldSplice,
   REORDER_METHODS,
   translateSpliced,
@@ -146,6 +147,7 @@ import {
   getCollection,
   isHeapSetOrMap,
   isOrderedCollection,
+  isSetOrMapType,
 } from "./types";
 
 const SHORT_CIRCUITS = new Set([
@@ -3715,6 +3717,56 @@ const getCalledName = (owner: ts.SignatureDeclaration) => {
     : undefined;
 };
 
+const IDENTITY_OPERATORS = new Set([
+  ts.SyntaxKind.EqualsEqualsEqualsToken,
+  ts.SyntaxKind.ExclamationEqualsEqualsToken,
+  ts.SyntaxKind.EqualsEqualsToken,
+  ts.SyntaxKind.ExclamationEqualsToken,
+]);
+
+// Whether an expression is a key of a set's or a map's method, which finds it by identity.
+const isKey = (use: ts.Expression, context: Context) => {
+  const parent = use.parent;
+  return (
+    ts.isCallExpression(parent) &&
+    parent.arguments[0] === use &&
+    ts.isPropertyAccessExpression(parent.expression) &&
+    ["set", "get", "has", "add", "delete"].includes(parent.expression.name.text) &&
+    ["set", "map"].includes(getKind(parent.expression.expression, context))
+  );
+};
+
+// Whether === or Object.is compares an expression.
+const isComparedByIdentity = (use: ts.Expression) => {
+  const parent = use.parent;
+  return ts.isBinaryExpression(parent)
+    ? IDENTITY_OPERATORS.has(parent.operatorToken.kind)
+    : ts.isCallExpression(parent) &&
+        parent.arguments.includes(use) &&
+        parent.expression.getText() === "Object.is";
+};
+
+// Whether the function that a call runs compares its argument at a position by identity.
+const isComparedArgument = (call: ts.CallExpression, position: number, context: Context) => {
+  const declaration = context.checker.getResolvedSignature(call)?.getDeclaration();
+  const name =
+    declaration !== undefined && ts.isFunctionLike(declaration)
+      ? declaration.parameters.at(position)?.name
+      : undefined;
+  const parameter =
+    name !== undefined && ts.isIdentifier(name) ? getSymbol(name, context.checker) : undefined;
+  return (
+    declaration !== undefined &&
+    parameter !== undefined &&
+    findNodes(declaration, ts.isIdentifier).some(
+      (reference) =>
+        reference !== name &&
+        getSymbol(reference, context.checker) === parameter &&
+        (isComparedByIdentity(reference) || isKey(reference, context)),
+    )
+  );
+};
+
 // A new collection that the heap may hold: an array literal, or a new set or map.
 const isFreshCollection = (node: ts.Node | undefined, context: Context) =>
   node !== undefined &&
@@ -4195,12 +4247,9 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
         nodes.push(node);
         return true;
       }
-      // sort, reverse, and copyWithin give the array that they change.
-      if (
-        isMethodCall(node) &&
-        REORDER_METHODS.has(node.expression.name.text) &&
-        getKind(node.expression.expression, context) === "sequence"
-      ) {
+      // sort, reverse, and copyWithin give the array that they change, as a set's add and a map's
+      // set give the collection.
+      if (isMethodCall(node) && isSelfReturning(node, context)) {
         return addSource(node.expression.expression);
       }
       // An element that at() reads, which addHolder takes, or what a function returns.
@@ -4431,6 +4480,7 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
         );
       }
       if (!ts.isCallExpression(parent) || parent.arguments.some(ts.isSpreadElement)) return false;
+      if (isComparedByIdentity(use)) return true;
       if (
         parent.arguments[0] === use &&
         ts.isPropertyAccessExpression(parent.expression) &&
@@ -4527,8 +4577,7 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
         return (
           ((declaration.parent.flags & ts.NodeFlags.Const) !== 0 ||
             holeHolders.has(symbol) ||
-            (ts.isIdentifier(declaration.name) &&
-              isOrderedCollection(declaration.name, context))) &&
+            (ts.isIdentifier(declaration.name) && isSetOrMapType(declaration.name, context))) &&
           ts.isIdentifier(declaration.name) &&
           initializer !== undefined &&
           addSource(initializer)
@@ -4887,16 +4936,9 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
       return;
     grow(start).forEach((node) => found.add(node));
   });
-  // The arrays that a script compares by identity, finds by it as an element, or takes as a key of a
-  // set or a map, which a sequence lacks. Both sides of a comparison join one group.
-  const isIdentityComparison = (node: ts.Node): node is ts.BinaryExpression =>
-    ts.isBinaryExpression(node) &&
-    [
-      ts.SyntaxKind.EqualsEqualsEqualsToken,
-      ts.SyntaxKind.ExclamationEqualsEqualsToken,
-      ts.SyntaxKind.EqualsEqualsToken,
-      ts.SyntaxKind.ExclamationEqualsToken,
-    ].includes(node.operatorToken.kind);
+  // The arrays, sets, and maps that a script compares by identity, finds by it as an element, or
+  // takes as a key of a set or a map, which a value lacks. Both sides of a comparison join one group,
+  // as do the sets and maps that a call passes where its function compares them.
   expressions.forEach((node) => {
     // The heap holds each set and map that keeps its order.
     if (
@@ -4917,11 +4959,19 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
         ELEMENT_SEARCH_METHODS.has(node.expression.name.text))
         ? node.arguments.at(0)
         : undefined;
-    const seeds = isIdentityComparison(node)
-      ? [node.left, node.right]
-      : key === undefined
-        ? []
-        : [key];
+    const seeds =
+      ts.isBinaryExpression(node) && IDENTITY_OPERATORS.has(node.operatorToken.kind)
+        ? [node.left, node.right]
+        : key !== undefined
+          ? [key]
+          : ts.isCallExpression(node)
+            ? node.arguments.filter(
+                (argument, position) =>
+                  ["set", "map"].includes(getKind(argument, context)) &&
+                  (node.expression.getText() === "Object.is" ||
+                    isComparedArgument(node, position, context)),
+              )
+            : [];
     const isFound = seeds.every((seed) =>
       getHolders(seed, checker).some((symbol) =>
         (symbol.declarations ?? []).some((declaration) => found.has(declaration)),
@@ -4931,7 +4981,7 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
       seeds.length > 0 &&
       !isFound &&
       isReachedNode(node) &&
-      seeds.every((seed) => getKind(seed, context) === "sequence")
+      seeds.every((seed) => ["sequence", "set", "map"].includes(getKind(seed, context)))
     ) {
       grow([], [], seeds).forEach((inner) => found.add(inner));
     }
@@ -5120,58 +5170,22 @@ export const findHeapArrays = (
       )
     );
   };
-  // A comparison by identity tells the array apart from an equal copy that may be a sequence: ===,
-  // Object.is, a set's or a map's key, or a function that compares its parameter so. A function's
-  // comparison compares what its call passes.
-  const isIdentityUse = (use: ts.Expression, isOuter: boolean): boolean => {
+  // A comparison by identity tells the array apart from an equal copy that may be a sequence, as
+  // does a set's or a map's key. A function's comparison compares what its call passes.
+  const isIdentityUse = (use: ts.Expression) => {
     const parent = use.parent;
     const isComparedToCopy = () =>
-      !isOuter ||
-      (ts.isBinaryExpression(parent)
+      ts.isBinaryExpression(parent)
         ? mayLackIdentity(parent.left === use ? parent.right : parent.left)
         : ts.isCallExpression(parent) &&
-          parent.arguments.some((argument) => argument !== use && mayLackIdentity(argument)));
-    if (
-      ts.isBinaryExpression(parent) &&
-      [
-        ts.SyntaxKind.EqualsEqualsEqualsToken,
-        ts.SyntaxKind.ExclamationEqualsEqualsToken,
-        ts.SyntaxKind.EqualsEqualsToken,
-        ts.SyntaxKind.ExclamationEqualsToken,
-      ].includes(parent.operatorToken.kind)
-    ) {
-      return isComparedToCopy();
-    }
-    if (!ts.isCallExpression(parent) || !parent.arguments.includes(use)) return false;
-    const position = parent.arguments.indexOf(use);
-    const callee = parent.expression;
-    if (callee.getText() === "Object.is") return isComparedToCopy();
-    if (
-      ts.isPropertyAccessExpression(callee) &&
-      ["set", "get", "has", "add", "delete"].includes(callee.name.text) &&
-      position === 0 &&
-      ["set", "map"].includes(getKind(callee.expression, context) ?? "")
-    ) {
-      return true;
-    }
-    if (!isOuter) return false;
-    const declaration = context.checker.getResolvedSignature(parent)?.getDeclaration();
-    const name =
-      declaration !== undefined && ts.isFunctionLike(declaration)
-        ? declaration.parameters.at(position)?.name
-        : undefined;
-    const parameter =
-      name !== undefined && ts.isIdentifier(name) ? getSymbol(name, context.checker) : undefined;
+          parent.arguments.some((argument) => argument !== use && mayLackIdentity(argument));
+    if (isKey(use, context)) return true;
+    if (isComparedByIdentity(use)) return isComparedToCopy();
     return (
-      declaration !== undefined &&
-      parameter !== undefined &&
+      ts.isCallExpression(parent) &&
+      parent.arguments.includes(use) &&
       isComparedToCopy() &&
-      findNodes(declaration, ts.isIdentifier).some(
-        (reference) =>
-          reference !== name &&
-          getSymbol(reference, context.checker) === parameter &&
-          isIdentityUse(reference, false),
-      )
+      isComparedArgument(parent, parent.arguments.indexOf(use), context)
     );
   };
   references.forEach((uses, symbol) => {
@@ -5198,7 +5212,7 @@ export const findHeapArrays = (
           isPatternResult(use) ||
           getKeptIterator(use.parent.parent, context) !== undefined ||
           getIteratedArray(use.parent, context) === use ||
-          isIdentityUse(use, true),
+          isIdentityUse(use),
       ) &&
       reads.every((use) => isArrayObjectUse(use, context))
     ) {

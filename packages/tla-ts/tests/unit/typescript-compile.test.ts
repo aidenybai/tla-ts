@@ -3583,6 +3583,38 @@ setTimeout(() => {
     });
   });
 
+  describe("gives the set or map that add and set change and undefined from clear", () => {
+    const getSource = (expected: string) => `
+      const set = new Set<number>([1]);
+      const other = new Set<number>([1]);
+      const map = new Map<number, string>();
+      const added = set.add(2);
+      const result = [
+        added === set,
+        set === other,
+        set.add(1).add(3).size,
+        map.set(1, "one") === map,
+        map.set(2, "two").get(2),
+        set.clear(),
+        set.size,
+        map.clear(),
+        map.size,
+      ];
+      if (result.join("|") !== "${expected}") throw new Error(result.join("|"));
+    `;
+    const expected = "true|false|3|true|two||0||0";
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects the expectation that a set with the same values is the same set", async () => {
+      expect(
+        (await checkModel(getSource(expected.replace("true|false", "true|true")))).failure?.message,
+      ).toContain(expected);
+    });
+  });
+
   it("tells an error from another value with Error.isError", async () => {
     const getSource = (expected: string) => `
       class Err extends TypeError {}

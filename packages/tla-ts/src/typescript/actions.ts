@@ -1677,8 +1677,8 @@ const translateReflectSet = (
 
 const REMOVING_METHODS = new Set(["push", "unshift", "splice", "shift", "pop"]);
 
-// Whether a call changes an array, a set, or a map, and gives what it removed or how long the array
-// became.
+// Whether a call changes an array, a set, or a map, and gives what it removed, how long the array
+// became, or the collection.
 const isRemoving = (node: ts.Expression, context: Context): boolean => {
   if (ts.isNonNullExpression(node) || ts.isParenthesizedExpression(node)) {
     return isRemoving(node.expression, context);
@@ -1686,12 +1686,17 @@ const isRemoving = (node: ts.Expression, context: Context): boolean => {
   if (!isMethodCall(node)) return false;
   const method = node.expression.name.text;
   const kind = getKind(node.expression.expression, context);
-  // A set or a map that the heap holds changes as a statement's call.
+  const adder = kind === "set" ? "add" : "set";
+  // A set or a map that the heap holds changes as a statement's call, as does a weak collection,
+  // which checks the key that it takes.
   return (
-    (method === "delete" &&
-      (kind === "set" || kind === "map") &&
+    ((kind === "set" || kind === "map") &&
       !isHeapSetOrMap(node.expression.expression, context) &&
-      node.arguments.length === 1) ||
+      ((method === "delete" && node.arguments.length === 1) ||
+        (method === "clear" && node.arguments.length === 0) ||
+        (method === adder &&
+          getCollection(node.expression.expression, context)?.startsWith("Weak") === false &&
+          node.arguments.length === (kind === "set" ? 1 : 2)))) ||
     (kind === "sequence" &&
       !node.arguments.some(ts.isSpreadElement) &&
       REMOVING_METHODS.has(method))
@@ -1756,12 +1761,21 @@ const getRemoved = (
   path: Path,
   context: Context,
 ): Removed => {
-  // A set's or a map's delete gives whether it held the key.
-  if (method === "delete") {
+  // A set's or a map's delete gives whether it held the key, clear gives undefined, and add or set
+  // gives the collection.
+  if (kind === "set" || kind === "map") {
     const collection = translateExpression(receiver, path.scope, context);
-    const key = translateSetKey(node.arguments[0], path.scope, context);
+    const value =
+      method === "delete"
+        ? apply("\\in", [
+            translateSetKey(node.arguments[0], path.scope, context),
+            kind === "map" ? apply("DOMAIN", [collection]) : collection,
+          ])
+        : method === "clear"
+          ? getUndefined(context)
+          : getUpdatedValue(collection, kind, node, path.scope, context);
     return {
-      value: apply("\\in", [key, kind === "map" ? apply("DOMAIN", [collection]) : collection]),
+      value: value ?? collection,
       path: assign(
         receiver,
         path,

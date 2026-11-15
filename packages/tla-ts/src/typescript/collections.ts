@@ -1718,6 +1718,16 @@ export const translateSortArguments = (
 // The methods that reorder or overwrite an array in place, and give the array.
 export const REORDER_METHODS = new Set(["sort", "reverse", "fill", "copyWithin"]);
 
+// Whether a method gives the collection that it changes: sort, reverse, fill, or copyWithin of an
+// array, a set's add, or a map's set.
+export const isSelfReturning = (node: MethodCall, context: Context) => {
+  const method = node.expression.name.text;
+  const kind = getKind(node.expression.expression, context);
+  return kind === "sequence"
+    ? REORDER_METHODS.has(method)
+    : (kind === "set" && method === "add") || (kind === "map" && method === "set");
+};
+
 // The array methods that give a new array.
 const NEW_ARRAY_METHODS = new Set([
   "map",
