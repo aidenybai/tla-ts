@@ -3409,6 +3409,38 @@ if (!Object.is(text, "${text}")) throw new Error(text);
     );
   });
 
+  it("tells an error from another value with Error.isError", async () => {
+    const getSource = (expected: string) => `
+      class Err extends TypeError {}
+      const held = new RangeError("held");
+      const fake: { [key: string]: unknown } = { __proto__: Error.prototype, message: "" };
+      const thrown = (() => {
+        try {
+          Object.defineProperty(1, "key", {});
+        } catch (error) {
+          return error;
+        }
+      })();
+      const result = [
+        Error.isError(new Err()),
+        Error.isError(held),
+        Error.isError(thrown),
+        Error.isError(fake),
+        Error.isError(Error.prototype),
+        Error.isError([held]),
+        Error.isError(new Proxy(held, {})),
+        Error.isError(1n),
+      ];
+      if (result.join(",") !== "${expected}") throw new Error(result.join(","));
+    `;
+    expect(
+      (await checkModel(getSource("true,true,true,false,false,false,false,false"))).failure,
+    ).toBeUndefined();
+    expect(
+      (await checkModel(getSource("true,true,true,false,false,false,true,false"))).failure?.message,
+    ).toContain("true,true,true,false,false,false,false,false");
+  });
+
   it("runs the constructors of a class that extends Error, which give its error a message and a cause", async () => {
     const getSource = (expected: string) => `
       class BaseError extends Error {

@@ -1081,6 +1081,45 @@ const translateBuiltInCall = (
     }
     throw new TlaTypeScriptError("Array.isArray needs a value whose type tells", node);
   }
+  if (getBuiltIn(receiver, context) === "Error" && method === "isError") {
+    const argument = node.arguments.at(0);
+    const value =
+      argument === undefined ? undefined : translateExpression(argument, scope, context);
+    const names =
+      argument === undefined
+        ? undefined
+        : getTypeNames(context.checker.getTypeAtLocation(argument), context.checker);
+    const kind = argument === undefined ? undefined : getKind(argument, context);
+    const tested =
+      value === undefined ||
+      names?.every((name) => name !== "object" && name !== "function") ||
+      kind === "sequence" ||
+      kind === "set" ||
+      kind === "map"
+        ? boolean(false)
+        : context.heap === undefined
+          ? useJavaScript("IsError", [value], context)
+          : useJavaScript("HasErrorData", [getHeap(scope, node, context), value], context);
+    return context.heap === undefined
+      ? tested
+      : ifExpression(
+          useJavaScript(
+            "HoldsBuiltIn",
+            [
+              getHeap(scope, node, context),
+              translateBuiltInValue("Error", node, context),
+              string(method),
+              string("Error.isError"),
+            ],
+            context,
+          ),
+          tested,
+          apply("Assert", [
+            boolean(false),
+            string("tla-ts can't call Error.isError where a script replaced it"),
+          ]),
+        );
+  }
   // Reflect's functions on an object do what in and Object's functions do, and throw a TypeError
   // only where the value isn't one.
   const reflected = global === "Reflect" ? node.arguments.at(0) : undefined;

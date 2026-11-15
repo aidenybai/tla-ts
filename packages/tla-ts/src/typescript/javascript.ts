@@ -1823,6 +1823,12 @@ InheritsFrom(heap, owner, value) ==
     [] value = Null \\/ TypeOf(value) \\notin {"object", "function"} -> FALSE
     [] OTHER -> Assert(FALSE, "tla-ts can't tell what this value inherits from")
 
+\\* Whether a value has an [[ErrorData]] slot, as an error has, and not a proxy of one.
+HasErrorData(heap, value) ==
+  IF IsRef(value)
+  THEN IsHeap(value) /\\ "isError" \\in DOMAIN heap.objects[value[Ref]]
+  ELSE IsError(value)
+
 \\* Whether a value that may be any value is an error that one of the constructors made.
 IsErrorOf(value, constructors) == IsError(value) /\\ value.constructor \\in constructors
 
