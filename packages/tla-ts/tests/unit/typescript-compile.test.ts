@@ -26814,6 +26814,88 @@ describe("errors", () => {
     });
   });
 
+  // A yield inside a statement runs first, and gives the value of the next that resumes the body,
+  // where the first next's value goes nowhere.
+  describe("gives the value that a next sends where a yield inside a statement resumes", () => {
+    const getSource = (expected: string) => `
+      let log = "";
+      function* g(): Generator<number, string, string> {
+        const first = yield 1;
+        log += "<" + first + ">";
+        (yield 2) ? yield 3 : yield 4;
+        return (yield 5) + "!";
+      }
+      const iter = g();
+      const results = [
+        iter.next("a").value,
+        iter.next("b").value,
+        iter.next("").value,
+        iter.next("c").value,
+        iter.next("d").value,
+      ];
+      log += results.join();
+      if (log !== "${expected}") throw new Error(log);
+    `;
+    it("matches Node", async () => {
+      expect((await checkModel(getSource("<b>1,2,4,5,d!"))).failure).toBeUndefined();
+    });
+    it("fails a wrong log", async () => {
+      expect((await checkModel(getSource("<a>1,2,4,5,d!"))).failure?.message).toContain("<b>");
+    });
+  });
+
+  describe("gives the value that a next sends where a pattern's default yields", () => {
+    const getSource = (expected: string) => `
+      let log = "";
+      function* g(): Generator<number, void, string> {
+        let taken = "x";
+        const holder: { x: string[] } = { x: [] };
+        ({ x: [taken = yield 1] } = holder);
+        log += taken;
+      }
+      const iter = g();
+      iter.next("a");
+      iter.next("t");
+      if (log !== "${expected}") throw new Error(log);
+    `;
+    it("matches Node", async () => {
+      expect((await checkModel(getSource("t"))).failure).toBeUndefined();
+    });
+    it("fails a wrong log", async () => {
+      expect((await checkModel(getSource("x"))).failure?.message).toContain("t");
+    });
+  });
+
+  describe("passes the value that a next sends through a yield* to the iterator's next", () => {
+    const getSource = (expected: string) => `
+      let log = "";
+      const delegated = {
+        [Symbol.iterator]() {
+          return this;
+        },
+        next(...values: string[]) {
+          log += values.length + String(values[0]);
+          return { value: 1, done: false };
+        },
+      };
+      function* g(): Generator<number, void, string> {
+        yield* delegated;
+      }
+      const iter = g();
+      iter.next("a");
+      iter.next("b");
+      if (log !== "${expected}") throw new Error(log);
+    `;
+    it("matches Node", async () => {
+      expect((await checkModel(getSource("1undefined1b"))).failure).toBeUndefined();
+    });
+    it("fails a wrong log", async () => {
+      expect((await checkModel(getSource("0undefined1b"))).failure?.message).toContain(
+        "1undefined",
+      );
+    });
+  });
+
   describe("passes a return or a throw through a yield* to the iterator", () => {
     const cases = [
       {

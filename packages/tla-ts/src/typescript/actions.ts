@@ -440,9 +440,9 @@ interface Suspension {
   ref: Expression;
   // The function whose body a next runs, which a helper of an object that isn't an iterator lacks.
   generator: FunctionNode | undefined;
-  // Runs the rest of the body from the path of the call that resumes it, or undefined once the
-  // generator completes.
-  resume: ((path: Path) => Formula) | undefined;
+  // Runs the rest of the body from the path of the call that resumes it, with the value that a next
+  // sends, or undefined once the generator completes.
+  resume: ((path: Path, sent?: Expression) => Formula) | undefined;
   isStarted: boolean;
   // Whether it suspended inside a try or a yield*, which a return or a throw would have to run.
   isGuarded: boolean;
@@ -599,7 +599,7 @@ export interface Frame {
     | ((
         path: Path,
         value: Expression | undefined,
-        rest: (path: Path) => Formula,
+        rest: (path: Path, sent?: Expression) => Formula,
         throwRest: (path: Path, thrown: Expression) => Formula,
         mode?: YieldMode,
       ) => Formula)
@@ -1066,12 +1066,12 @@ interface TargetAssigner<Result> {
   ): Result;
 }
 
-// What only statements can run as a pattern assigns: a default that assigns, where the value that
-// its target takes is undefined, and the TypeError of a nested pattern that destructures null or
-// undefined.
+// What only statements can run as a pattern assigns: a default that assigns or yields, where the
+// value that its target takes is undefined, and the TypeError of a nested pattern that destructures
+// null or undefined.
 interface PatternStatements<Result> {
   runDefault: (
-    assignment: ts.BinaryExpression | Increment,
+    assignment: ts.BinaryExpression | Increment | ts.YieldExpression,
     part: Expression,
     path: Path,
     continueWith: (path: Path, value: Expression) => Result,
@@ -1138,7 +1138,8 @@ const assignPattern = <Result>(
         : assignInner(after, innerValue);
     return statements !== undefined &&
       assignment !== undefined &&
-      isAssignment(assignment) &&
+      (isAssignment(assignment) ||
+        (ts.isYieldExpression(assignment) && assignment.asteriskToken === undefined)) &&
       !current.scope.results.has(assignment)
       ? statements.runDefault(assignment, part, current, assignWith)
       : assignWith(current, getDefaulted(part, initializer, current.scope, context));
@@ -1554,7 +1555,11 @@ const assignPatternWith = (
           (next) =>
             ifThenElse(
               apply("=", [part, getUndefined(context)]),
-              runAssignment(assignment, current, context, frame, next),
+              ts.isYieldExpression(assignment)
+                ? translateYield(assignment, current, context, frame, (after, sent) =>
+                    next(after, sent ?? getUndefined(context)),
+                  )
+                : runAssignment(assignment, current, context, frame, next),
               next(current, part),
             ),
         ),
@@ -5640,7 +5645,7 @@ export const makeGenerator = (
           getCaller(resumed).step(
             leave(
               resumed,
-              (resumer) => rest(enter(resumer, resumed)),
+              (resumer, sent) => rest(enter(resumer, resumed), sent),
               mode?.isGuarded,
               abortRest &&
                 ((resumer, method, abrupt) => abortRest(enter(resumer, resumed), method, abrupt)),
@@ -6593,6 +6598,11 @@ export const resumeGenerator = (
   step: Caller["step"],
   continueAsync?: (path: Path, request: Expression) => Formula,
 ): Formula => {
+  // The value that a next sends, which a yield gives where the body resumes.
+  const sent =
+    method === "next" && argument !== undefined
+      ? translateExpression(argument, path.scope, context)
+      : undefined;
   // An async generator's next, return, or throw gives a promise of what the body does.
   const runAsync = (
     name: string,
@@ -6622,19 +6632,19 @@ export const resumeGenerator = (
             done,
           );
         }
-        if (argument !== undefined && suspension.isStarted) {
-          throw new TlaTypeScriptError("tla-ts can't send a value to a generator", argument);
-        }
-        return resume({
-          ...made,
-          generators: new Map([
-            ...made.generators,
-            [
-              name,
-              { ...suspension, caller: getAsyncCaller(node, name, made, request, context, done) },
-            ],
-          ]),
-        });
+        return resume(
+          {
+            ...made,
+            generators: new Map([
+              ...made.generators,
+              [
+                name,
+                { ...suspension, caller: getAsyncCaller(node, name, made, request, context, done) },
+              ],
+            ]),
+          },
+          sent,
+        );
       }
       if (resume !== undefined && suspension.isStarted && suspension.isGuarded) {
         return leaf(
@@ -6721,16 +6731,16 @@ export const resumeGenerator = (
     const resume = suspension.resume;
     if (method === "next") {
       if (resume === undefined) return step(path, undefined, true);
-      if (argument !== undefined && suspension.isStarted) {
-        throw new TlaTypeScriptError("tla-ts can't send a value to a generator", argument);
-      }
-      return resume({
-        ...path,
-        generators: new Map([
-          ...path.generators,
-          [name, { ...suspension, caller: { path, step, throwTo: frame.throwTo } }],
-        ]),
-      });
+      return resume(
+        {
+          ...path,
+          generators: new Map([
+            ...path.generators,
+            [name, { ...suspension, caller: { path, step, throwTo: frame.throwTo } }],
+          ]),
+        },
+        sent,
+      );
     }
     if (resume !== undefined && suspension.isStarted && suspension.isGuarded) {
       if (suspension.abort === undefined) {
@@ -9472,6 +9482,11 @@ const translateDelegatedYield = (
 
 const DELEGATION_LIMIT = 3;
 
+// A next's value that a yield* would pass on to a generator or an async iterator, which tla-ts
+// doesn't follow.
+const stopSending = () =>
+  leaf(apply("Assert", [boolean(false), string("tla-ts can't send a value through this yield*")]));
+
 // A generator's yield* over another generator, which resumes it with next and passes on what it
 // yields until it returns. A return or a throw while it delegates would call the generator's return
 // or throw, which tla-ts doesn't follow.
@@ -9510,7 +9525,8 @@ const delegateToGenerator = (
               : yieldTo(
                   stepped,
                   value,
-                  (resumed) => delegate(resumed, generator, count + 1),
+                  (resumed, sent) =>
+                    sent === undefined ? delegate(resumed, generator, count + 1) : stopSending(),
                   throwWith,
                   { isDelegated: true, isGuarded: true, isResult },
                 ),
@@ -9583,7 +9599,10 @@ const delegateToSyncGenerator = (
                     : yieldTo(
                         resumed,
                         settled,
-                        (after) => delegate(after, generator, count + 1),
+                        (after, sent) =>
+                          sent === undefined
+                            ? delegate(after, generator, count + 1)
+                            : stopSending(),
                         throwWith,
                         { isDelegated: true, isGuarded: true },
                       ),
@@ -9647,7 +9666,8 @@ const delegateToAsyncGenerator = (
                   : yieldTo(
                       fulfilled,
                       iteration.value,
-                      (after) => delegate(after, generator, count + 1),
+                      (after, sent) =>
+                        sent === undefined ? delegate(after, generator, count + 1) : stopSending(),
                       throwWith,
                       { isDelegated: true, isGuarded: true },
                     );
@@ -9720,7 +9740,8 @@ const delegateToIterator = (
               yieldTo(
                 stepped,
                 result,
-                (resumed) => step(resumed, "next", next, [], count + 1),
+                (resumed, sent) =>
+                  step(resumed, "next", next, [sent ?? getUndefined(context)], count + 1),
                 throwWith,
                 {
                   isDelegated: true,
@@ -9757,7 +9778,8 @@ const delegateToIterator = (
       context,
       frame,
       failWith,
-      (opened, iterator, next) => delegate(iterator, next)(opened, "next", next, [], 0),
+      (opened, iterator, next) =>
+        delegate(iterator, next)(opened, "next", next, [getUndefined(context)], 0),
     ),
   );
 };
@@ -9829,7 +9851,10 @@ const delegateToAsyncIterator = (
                           yieldTo(
                             taken,
                             value,
-                            (resumed) => delegate(resumed, iterator, next, count + 1),
+                            (resumed, sent) =>
+                              sent === undefined
+                                ? delegate(resumed, iterator, next, count + 1)
+                                : stopSending(),
                             throwWith,
                             { isDelegated: true, isGuarded: true },
                           ),
@@ -10227,58 +10252,7 @@ const translateExpressionStatement = (
     return translateDelegatedYield(expression, path, context, frame, continueWith);
   }
   if (ts.isYieldExpression(expression)) {
-    const yielded = expression.expression;
-    const called = yielded && getCast(yielded);
-    const isCalled =
-      called !== undefined &&
-      ts.isCallExpression(called) &&
-      called.arguments.every((argument) => !hasCall(argument, context));
-    // A yield of an await that the statement ran first yields what the await gave.
-    if (
-      frame.yieldTo === undefined ||
-      expression.asteriskToken !== undefined ||
-      (yielded !== undefined &&
-        !isCalled &&
-        !path.scope.results.has(skipCasts(yielded)) &&
-        hasCall(yielded, context))
-    ) {
-      throw new TlaTypeScriptError("Unsupported yield", expression);
-    }
-    const yieldTo = frame.yieldTo;
-    const throwTo = frame.throwTo;
-    const uncaught = apply("Assert", [boolean(false), string(expression.getText())]);
-    const throwWith = (current: Path, thrown: Expression) =>
-      throwTo === undefined ? leaf(uncaught) : throwTo(current, { value: thrown, uncaught });
-    const yieldWith = (current: Path, value: Expression | undefined) =>
-      yieldTo(current, value, continueWith, throwWith, {
-        isDelegated: false,
-        isGuarded: false,
-        abortRest: (aborted, method, abrupt) =>
-          method === "throw"
-            ? throwWith(aborted, abrupt ?? getUndefined(context))
-            : frame.exit(aborted, abrupt),
-      });
-    // A yield of an increment yields what it gives.
-    if (
-      called !== undefined &&
-      isIncrement(called) &&
-      isPlainIncrement(called, context) &&
-      !path.scope.results.has(called)
-    ) {
-      return runAssignment(called, path, context, frame, yieldWith);
-    }
-    // A yield of a call yields what the call gives.
-    if (isCalled && ts.isCallExpression(called)) {
-      return translateCallStatement(called, path, context, frame, (after, value) =>
-        yieldWith(after, value ?? getUndefined(context)),
-      );
-    }
-    return allocate(yielded, path, context, (inner) =>
-      yieldWith(
-        inner,
-        yielded === undefined ? undefined : translateExpression(yielded, inner.scope, context),
-      ),
-    );
+    return translateYield(expression, path, context, frame, (after) => continueWith(after));
   }
   const setter = getAssignedSetter(expression, context);
   const setterKey = ts.isBinaryExpression(expression) ? getAccessKey(expression.left) : undefined;
@@ -10730,6 +10704,68 @@ const translateImmutableWrite = (
         continueWith(path),
       )
     : written;
+};
+
+// A yield, which suspends the generator's body with the value of its operand, and goes on with
+// the value that the next that resumes the body sends.
+const translateYield = (
+  expression: ts.YieldExpression,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path, sent?: Expression) => Formula,
+): Formula => {
+  const yielded = expression.expression;
+  const called = yielded && getCast(yielded);
+  const isCalled =
+    called !== undefined &&
+    ts.isCallExpression(called) &&
+    called.arguments.every((argument) => !hasCall(argument, context));
+  // A yield of an await that the statement ran first yields what the await gave.
+  if (
+    frame.yieldTo === undefined ||
+    (yielded !== undefined &&
+      !isCalled &&
+      !path.scope.results.has(skipCasts(yielded)) &&
+      hasCall(yielded, context))
+  ) {
+    throw new TlaTypeScriptError("Unsupported yield", expression);
+  }
+  const yieldTo = frame.yieldTo;
+  const throwTo = frame.throwTo;
+  const uncaught = apply("Assert", [boolean(false), string(expression.getText())]);
+  const throwWith = (current: Path, thrown: Expression) =>
+    throwTo === undefined ? leaf(uncaught) : throwTo(current, { value: thrown, uncaught });
+  const yieldWith = (current: Path, value: Expression | undefined) =>
+    yieldTo(current, value, continueWith, throwWith, {
+      isDelegated: false,
+      isGuarded: false,
+      abortRest: (aborted, method, abrupt) =>
+        method === "throw"
+          ? throwWith(aborted, abrupt ?? getUndefined(context))
+          : frame.exit(aborted, abrupt),
+    });
+  // A yield of an increment yields what it gives.
+  if (
+    called !== undefined &&
+    isIncrement(called) &&
+    isPlainIncrement(called, context) &&
+    !path.scope.results.has(called)
+  ) {
+    return runAssignment(called, path, context, frame, yieldWith);
+  }
+  // A yield of a call yields what the call gives.
+  if (isCalled && ts.isCallExpression(called)) {
+    return translateCallStatement(called, path, context, frame, (after, value) =>
+      yieldWith(after, value ?? getUndefined(context)),
+    );
+  }
+  return allocate(yielded, path, context, (inner) =>
+    yieldWith(
+      inner,
+      yielded === undefined ? undefined : translateExpression(yielded, inner.scope, context),
+    ),
+  );
 };
 
 // Runs an assignment or an increment, which writes a variable or a property.
@@ -15008,16 +15044,57 @@ const isUnmoved = (
   );
 };
 
-// The await that a node evaluates before anything else.
-const getLeadingAwait = (
+// An operand that evaluates without running code or reading what may change, as a literal or
+// what the statement ran first gave, so that what follows it can run first.
+const isSettled = (node: ts.Expression, results: Scope["results"]): boolean =>
+  results.has(node) ||
+  ts.isLiteralExpression(node) ||
+  [ts.SyntaxKind.TrueKeyword, ts.SyntaxKind.FalseKeyword, ts.SyntaxKind.NullKeyword].includes(
+    node.kind,
+  ) ||
+  ((ts.isParenthesizedExpression(node) ||
+    ts.isNonNullExpression(node) ||
+    ts.isAsExpression(node) ||
+    ts.isVoidExpression(node) ||
+    ts.isTypeOfExpression(node)) &&
+    isSettled(node.expression, results)) ||
+  (ts.isArrayLiteralExpression(node) &&
+    node.elements.every(
+      (element) => !ts.isSpreadElement(element) && isSettled(element, results),
+    )) ||
+  (ts.isTemplateExpression(node) &&
+    node.templateSpans.every((span) => isSettled(span.expression, results))) ||
+  (ts.isBinaryExpression(node) &&
+    node.operatorToken.kind === ts.SyntaxKind.CommaToken &&
+    isSettled(node.left, results) &&
+    isSettled(node.right, results));
+
+// The first of a list of operands that a node evaluates in order to hold an await or a yield,
+// after operands that are settled.
+const getFirstLeading = (
+  operands: readonly ts.Expression[],
+  results: Scope["results"],
+): ts.AwaitExpression | ts.YieldExpression | undefined => {
+  const [first, ...rest] = operands;
+  if (first === undefined) return undefined;
+  return (
+    getLeadingAwaitOrYield(first, results) ??
+    (isSettled(first, results) ? getFirstLeading(rest, results) : undefined)
+  );
+};
+
+// The await or the yield that a node evaluates before anything else. A yield* gives what the
+// iterator returns, which tla-ts doesn't follow.
+const getLeadingAwaitOrYield = (
   node: ts.Expression,
-  results: ReadonlyMap<ts.Expression, Expression>,
-): ts.AwaitExpression | undefined => {
+  results: Scope["results"],
+): ts.AwaitExpression | ts.YieldExpression | undefined => {
   if (results.has(node)) return undefined;
-  if (ts.isAwaitExpression(node)) return getLeadingAwait(node.expression, results) ?? node;
+  if (ts.isAwaitExpression(node)) return getLeadingAwaitOrYield(node.expression, results) ?? node;
   // A yield evaluates its operand before it yields.
   if (ts.isYieldExpression(node)) {
-    return node.expression === undefined ? undefined : getLeadingAwait(node.expression, results);
+    const operand = node.expression && getLeadingAwaitOrYield(node.expression, results);
+    return operand ?? (node.asteriskToken === undefined ? node : undefined);
   }
   if (
     ts.isParenthesizedExpression(node) ||
@@ -15028,23 +15105,43 @@ const getLeadingAwait = (
     ts.isPropertyAccessExpression(node) ||
     ts.isElementAccessExpression(node)
   ) {
-    return getLeadingAwait(node.expression, results);
+    return getLeadingAwaitOrYield(node.expression, results);
   }
-  if (ts.isPrefixUnaryExpression(node)) return getLeadingAwait(node.operand, results);
-  if (ts.isConditionalExpression(node)) return getLeadingAwait(node.condition, results);
+  if (ts.isPrefixUnaryExpression(node)) return getLeadingAwaitOrYield(node.operand, results);
+  if (ts.isConditionalExpression(node)) return getLeadingAwaitOrYield(node.condition, results);
+  if (ts.isArrayLiteralExpression(node)) {
+    const index = node.elements.findIndex(ts.isSpreadElement);
+    return getFirstLeading(index === -1 ? node.elements : node.elements.slice(0, index), results);
+  }
+  if (ts.isTemplateExpression(node)) {
+    return getFirstLeading(
+      node.templateSpans.map((span) => span.expression),
+      results,
+    );
+  }
   if (!ts.isBinaryExpression(node)) return undefined;
   const kind = node.operatorToken.kind;
   if (kind === ts.SyntaxKind.EqualsToken) {
-    return ts.isIdentifier(node.left) ? getLeadingAwait(node.right, results) : undefined;
+    return ts.isIdentifier(node.left) ? getLeadingAwaitOrYield(node.right, results) : undefined;
   }
   const isAssignment =
     kind >= ts.SyntaxKind.FirstAssignment && kind <= ts.SyntaxKind.LastAssignment;
-  return isAssignment ? undefined : getLeadingAwait(node.left, results);
+  if (isAssignment) return undefined;
+  // A logical operator evaluates its right operand only for some values of its left.
+  const isLogical =
+    kind === ts.SyntaxKind.AmpersandAmpersandToken ||
+    kind === ts.SyntaxKind.BarBarToken ||
+    kind === ts.SyntaxKind.QuestionQuestionToken;
+  return isLogical
+    ? getLeadingAwaitOrYield(node.left, results)
+    : getFirstLeading([node.left, node.right], results);
 };
 
-const getStatementAwait = (statement: ts.Statement, path: Path) => {
+const getStatementAwaitOrYield = (statement: ts.Statement, path: Path) => {
   const evaluated = getEvaluated(statement);
-  return evaluated === undefined ? undefined : getLeadingAwait(evaluated, path.scope.results);
+  return evaluated === undefined
+    ? undefined
+    : getLeadingAwaitOrYield(evaluated, path.scope.results);
 };
 
 // An await, which suspends the async function's body until the promise of its value settles.
@@ -15229,12 +15326,13 @@ const findLeadingCall = (
     return thenConverted(inOrder(node.templateSpans.map((span) => span.expression)));
   }
   // An operand that runs a call that only statements can run, an increment, an assignment to a
-  // name of a value that runs nothing, or a branch of these, which it may evaluate first.
+  // name of a value that runs nothing, a yield, or a branch of these, which it may evaluate first.
   const isBranchRun = (operand: ts.Expression) => {
     const run = skipCasts(operand);
     const found = findLeadingCall(run, [], path, context);
     return (
       found.call !== undefined ||
+      (ts.isYieldExpression(run) && run.asteriskToken === undefined) ||
       (isIncrement(run) && isPlainIncrement(run, context)) ||
       (ts.isBinaryExpression(run) &&
         isAssignment(run) &&
@@ -15590,6 +15688,11 @@ const runBranch = (
     }
     if (isAssignment(run) && (!isIncrement(run) || isPlainIncrement(run, context))) {
       return runAssignment(run, next, context, frame, withOperand);
+    }
+    if (ts.isYieldExpression(run) && run.asteriskToken === undefined) {
+      return translateYield(run, next, context, frame, (after, sent) =>
+        withOperand(after, sent ?? getUndefined(context)),
+      );
     }
     // A call that only a statement can run runs as one, where one that an expression can run, such
     // as a set's has, gives its value as the rest of the operand does.
@@ -16336,18 +16439,38 @@ export const translateStatements = (
   ) {
     return continueWith(path);
   }
-  const awaited = getStatementAwait(statement, path);
-  if (awaited !== undefined) {
-    return translateAwait(awaited, path, context, frame, (after, value) =>
-      translateStatements(
-        statements,
-        {
-          ...after,
-          scope: { ...after.scope, results: new Map([...after.scope.results, [awaited, value]]) },
-        },
-        context,
-        frame,
-      ),
+  // A statement whose operands the statement ran first, such as the yields of an array literal,
+  // drops what they gave.
+  if (
+    ts.isExpressionStatement(statement) &&
+    !ts.isLiteralExpression(skipCasts(statement.expression)) &&
+    isSettled(statement.expression, path.scope.results)
+  ) {
+    return continueWith(path);
+  }
+  const paused = getStatementAwaitOrYield(statement, path);
+  const withResult = (after: Path, node: ts.Expression, value: Expression) =>
+    translateStatements(
+      statements,
+      {
+        ...after,
+        scope: { ...after.scope, results: new Map([...after.scope.results, [node, value]]) },
+      },
+      context,
+      frame,
+    );
+  if (paused !== undefined && ts.isAwaitExpression(paused)) {
+    return translateAwait(paused, path, context, frame, (after, value) =>
+      withResult(after, paused, value),
+    );
+  }
+  // A yield inside a statement gives the value that the next that resumes the body sends.
+  if (
+    paused !== undefined &&
+    !(ts.isExpressionStatement(statement) && skipCasts(statement.expression) === paused)
+  ) {
+    return translateYield(paused, path, context, frame, (after, sent) =>
+      withResult(after, paused, sent ?? getUndefined(context)),
     );
   }
   const hoistedCall = getHoistedCall(statement, path, context);
