@@ -1730,6 +1730,13 @@ ThrowsOnReceiver(heap, value, receiver) ==
            \\/ wrapped # ""
            \\/ isFunctionHeld /\\ TypeOfIn(heap, receiver) = "function"
      IN \\/ receiver \\in {Undefined, Null} /\\ ThrowsWithoutReceiver(value)
+        \\* catch invokes the receiver's then, which a data property holds that isn't a function.
+        \\/ /\\ path = "Promise.prototype.catch"
+           /\\ IsHeap(receiver)
+           /\\ ~IsProxy(heap, receiver)
+           /\\ ~heap.objects[receiver[Ref]].isOpaque
+           /\\ GetterOf(heap, receiver, "then") = Undefined
+           /\\ TypeOfIn(heap, Get(heap, receiver, "then")) # "function"
         \\/ /\\ isMethod
            /\\ \\/ \\E name \\in {"Map.prototype", "Set.prototype", "WeakMap.prototype",
                              "WeakSet.prototype", "WeakRef.prototype", "FinalizationRegistry.prototype",

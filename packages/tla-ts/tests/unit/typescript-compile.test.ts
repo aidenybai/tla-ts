@@ -25729,4 +25729,40 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("7,true"))).failure?.message).toContain("17,true");
     });
   });
+
+  describe("throws the TypeError of Promise.prototype.catch on an object whose then isn't a function", () => {
+    const getSource = (expected: string) => `
+      const box = { size: 0 };
+      const read: string[] = [];
+      const record = (run: () => void) => {
+        try {
+          run();
+          read.push("none");
+        } catch (error) {
+          read.push(error instanceof TypeError ? "type" : "other");
+        }
+      };
+      record(() => {
+        Promise.prototype.catch.call({});
+      });
+      record(() => {
+        Promise.prototype.catch.call({ then: 1 });
+      });
+      record(() => {
+        Promise.prototype.catch.call({ then: {} });
+      });
+      box.size = read.length;
+      if (read.join() !== "${expected}") throw new Error(read.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("type,type,type"))).failure).toBeUndefined();
+    });
+
+    it("rejects a number then as callable", async () => {
+      expect((await checkModel(getSource("type,none,type"))).failure?.message).toContain(
+        "type,type,type",
+      );
+    });
+  });
 });
