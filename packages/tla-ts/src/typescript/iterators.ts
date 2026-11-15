@@ -529,8 +529,9 @@ const closeQuietly = (
   );
 };
 
-// Whether the value of a result that an object's sync iterator gives may be a promise, as its type
-// tells: one that TypeScript types as any, unknown, or with a then, or one it can't find.
+// Whether the value of a result that an object's sync iterator's next, return, or throw gives may be
+// a promise, as its type tells: one that TypeScript types as any, unknown, or with a then, or one it
+// can't find.
 export const mayGivePromises = (iterable: ts.Expression, context: Context) => {
   const checker = context.checker;
   const getMembers = (type: ts.Type) => (type.isUnion() ? type.types : [type]);
@@ -546,7 +547,7 @@ export const mayGivePromises = (iterable: ts.Expression, context: Context) => {
       );
   const results = getReturned(
     getReturned([checker.getTypeAtLocation(iterable)], (name) => name.startsWith("__@iterator")),
-    (name) => name === "next",
+    (name) => ["next", "return", "throw"].includes(name),
   );
   return (
     results.length === 0 ||

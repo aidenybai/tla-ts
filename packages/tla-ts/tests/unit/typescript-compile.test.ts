@@ -41662,4 +41662,39 @@ describe("BigInts", () => {
       ).toContain("log 21,inner,got 30");
     });
   });
+
+  describe("awaits a promise that a sync iterator's throw gives through an async generator's yield*", () => {
+    const getSource = (expected: string) => `
+      const iterable = {
+        [Symbol.iterator]() {
+          return {
+            next() {
+              return { value: 1, done: false };
+            },
+            throw() {
+              return { value: Promise.resolve(42), done: true };
+            },
+          };
+        },
+      };
+      async function* g() {
+        return yield* iterable;
+      }
+      const iter = g();
+      const first = await iter.next();
+      const second = await iter.throw(new Error("no"));
+      const log = first.value + "," + second.value + "," + second.done;
+      if (log !== "${expected}") throw new Error("log " + log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("1,42,true"))).failure).toBeUndefined();
+    });
+
+    it("rejects a yield* that gives the promise", async () => {
+      expect((await checkModel(getSource("1,[object Promise],true"))).failure?.message).toContain(
+        "log 1,42,true",
+      );
+    });
+  });
 });
