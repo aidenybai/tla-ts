@@ -30784,6 +30784,31 @@ describe("regular expressions", () => {
     expect(() => compile(source)).toThrow("tla-ts can't read a key that a built-in object lacks");
   });
 
+  it("runs an array method that call runs on an error whose keys a script writes", async () => {
+    const getSource = (expected: string) => `
+      type Keyed = { [key: string | symbol]: unknown };
+      const box = { n: 1 };
+      const tested = (value: unknown, position: unknown, object: object) => object instanceof Error;
+      const error = new Error("m");
+      (error as unknown as Keyed).length = 2;
+      (error as unknown as Keyed)[1] = 4;
+      const other = new SyntaxError();
+      (other as unknown as Keyed)[0] = true;
+      (other as unknown as Keyed).length = 1;
+      const result = [
+        Array.prototype.some.call(error, tested as (...args: unknown[]) => unknown),
+        Array.prototype.indexOf.call(error, 4),
+        Array.prototype.lastIndexOf.call(other, true),
+        error.message,
+        box.n,
+      ].join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    const expected = "true,1,0,m,1";
+    expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    expect((await checkModel(getSource("false,1,0,m,1"))).failure?.message).toContain(expected);
+  });
+
   it("stops at a key that a map lacks, which an element access writes", () => {
     const source = `
       const map = new Map<string, number>();

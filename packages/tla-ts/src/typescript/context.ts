@@ -6,6 +6,7 @@ import { getErrorClass, isNativeErrorName, isPrototypeRead, NATIVE_ERRORS } from
 import { type Collection, getBuiltIn, isHeldBuiltInObject } from "./intrinsics";
 import {
   type BufferName,
+  getArrayMethodCall,
   isBufferName,
   isCollectionName,
   isHeapArray,
@@ -3505,6 +3506,8 @@ export const isHeldError = (
       (ts.isPropertyAccessExpression(callee) &&
         callee.name.text === "call" &&
         callee.expression.getText().startsWith("Object.prototype.")) ||
+      // An array method that call runs on the error reads its length and its indices.
+      (getArrayMethodCall(parent, context) !== undefined && parent.arguments[0] === child) ||
       isObjectParameter(
         parent,
         parent.arguments.findIndex((argument) => argument === child),
