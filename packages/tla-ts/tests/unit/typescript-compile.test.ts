@@ -6502,25 +6502,6 @@ ${body}
       await expect(checkModel(getSource("1,1"))).rejects.toThrow("1,2");
     });
 
-    it("stops at a function that a block declares outside strict mode where code outside names it", () => {
-      expect(() =>
-        compile(`
-          const run = () => {
-            {
-              function h() {
-                return 1;
-              }
-            }
-            // @ts-ignore
-            return typeof h;
-          };
-          run();
-        `),
-      ).toThrow(
-        "tla-ts can't name a function that a block declares outside the block outside strict mode",
-      );
-    });
-
     it.each([
       [
         "a catch whose parameter has another name",
@@ -40645,5 +40626,168 @@ describe("BigInts", () => {
       expect(result.status).toBe("deadlock");
       expect(getTrace(result)).toEqual([{ result: "{1, 2, 3}" }]);
     }
+  });
+
+  describe("binds the var of a function that a block declares outside strict mode", () => {
+    const getSource = (directive: string, expected: string) => `
+      ${directive}
+      const seen: string[] = [];
+      // @ts-ignore
+      seen.push(typeof f);
+      {
+        function f() {}
+      }
+      // @ts-ignore
+      seen.push(typeof f);
+      (function () {
+        var g: unknown = 1;
+        seen.push(typeof g);
+        switch (seen.length as number) {
+          default:
+            function g() {}
+        }
+        seen.push(typeof g);
+        let h = 2;
+        {
+          function h() {}
+        }
+        seen.push(typeof h);
+        try {
+          throw 3;
+        } catch (k) {
+          {
+            function k() {}
+          }
+          seen.push(typeof k);
+        }
+        // @ts-ignore
+        seen.push(typeof k);
+      })();
+      if (seen.join() !== "${expected}") throw new Error(seen.join());
+    `;
+    const sloppy = "undefined,function,number,function,number,number,function";
+    const strict = "undefined,undefined,number,number,number,number,undefined";
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("", sloppy))).failure).toBeUndefined();
+      expect((await checkModel(getSource('"use strict";', strict))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation", async () => {
+      expect((await checkModel(getSource("", strict))).failure?.message).toContain(sloppy);
+    });
+  });
+
+  describe("calls a function that a block declares through its var outside strict mode", () => {
+    const getSource = (expected: string) => `
+      let after: unknown;
+      (function () {
+        {
+          function f() {
+            return "first";
+          }
+        }
+        {
+          function f() {
+            return "second";
+          }
+        }
+        // @ts-ignore
+        after = f;
+      })();
+      const result = (after as () => string)();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("second"))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation", async () => {
+      expect((await checkModel(getSource("first"))).failure?.message).toContain("second");
+    });
+  });
+
+  describe("declares a function in an if's branch outside strict mode", () => {
+    const getSource = (expected: string) => `
+      const seen: string[] = [];
+      (function () {
+        // @ts-ignore
+        seen.push(typeof f);
+        if (seen.length > 0) function f() {} else function g() {}
+        // @ts-ignore
+        seen.push(typeof f, typeof g);
+        let h = 1;
+        if (seen.length > 0) function h() {}
+        seen.push(typeof h);
+      })();
+      if (seen.join() !== "${expected}") throw new Error(seen.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("undefined,function,undefined,number"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation", async () => {
+      expect(
+        (await checkModel(getSource("undefined,function,function,number"))).failure?.message,
+      ).toContain("undefined,function,undefined,number");
+    });
+
+    it("rejects the function in strict mode", () => {
+      expect(() => compile(`"use strict";\n${getSource("")}`)).toThrow(
+        "SyntaxError: A declaration can't be the body of a statement",
+      );
+    });
+  });
+
+  describe("stops where a block that runs more than once assigns its function's var", () => {
+    const getSource = (bound: number, expected: string) => `
+      const seen: string[] = [];
+      (function () {
+        for (let i = 0; i < 2; i++) {
+          if (i > ${bound}) function h() {}
+        }
+        // @ts-ignore
+        seen.push(typeof h);
+      })();
+      if (seen.join() !== "${expected}") throw new Error(seen.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(5, "undefined"))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation", async () => {
+      expect((await checkModel(getSource(5, "function"))).failure?.message).toContain("undefined");
+    });
+
+    it("stops where the declaration runs", async () => {
+      expect((await checkModel(getSource(0, "function"))).failure?.message).toContain(
+        "tla-ts can't assign a var a function that a block that runs more than once declares",
+      );
+    });
+  });
+
+  describe("runs an if whose branch is the empty statement", () => {
+    const getSource = (expected: string) => `
+      const seen: string[] = [];
+      let count = 0;
+      if (count++ > 0);
+      else seen.push("else");
+      if (count++ > 0);
+      seen.push(String(count));
+      if (seen.join() !== "${expected}") throw new Error(seen.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("else,2"))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation", async () => {
+      expect((await checkModel(getSource("else,1"))).failure?.message).toContain("else,2");
+    });
   });
 });

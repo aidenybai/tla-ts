@@ -104,6 +104,9 @@ import {
   changesState,
   getArgumentsOwner,
   isStrictCode,
+  isOnce,
+  isVarFunction,
+  getVarFunctionTarget,
   getOwnSymbol,
   getSymbol,
   isAssigned,
@@ -17747,26 +17750,6 @@ const getHoistedVars = (statements: readonly ts.Statement[], context: Context) =
         shared,
       );
     }
-    // Outside strict mode, a function that a block declares also binds its name around the block.
-    if (
-      isBlockLevel &&
-      !isStrictCode(declared) &&
-      statements.some(
-        (statement) =>
-          findNodes(
-            statement,
-            (inner): inner is ts.Identifier =>
-              ts.isIdentifier(inner) &&
-              inner.text === name &&
-              ts.findAncestor(inner, (ancestor) => ancestor === parent) === undefined,
-          ).length > 0,
-      )
-    ) {
-      throw new TlaTypeScriptError(
-        "tla-ts can't name a function that a block declares outside the block outside strict mode",
-        declared,
-      );
-    }
   });
   const symbols = [...new Set(names.flatMap((name) => getOwnSymbol(name, context.checker) ?? []))];
   const inlined = symbols.filter((symbol) =>
@@ -17843,6 +17826,37 @@ const getHoistedVars = (statements: readonly ts.Statement[], context: Context) =
   return symbols.filter(
     (symbol) => !inlined.includes(symbol) && !(symbol.declarations ?? []).some(ts.isParameter),
   );
+};
+
+// Outside strict mode, a function that a block declares assigns the var of its name, where its
+// declaration runs, what the block's binding of the name holds, as Annex B.3.2 adds. Code that runs
+// more than once makes a new function each time, which no model value stands for.
+const translateVarFunction = (
+  statement: ts.Statement,
+  path: Path,
+  context: Context,
+  continueWith: (path: Path) => Formula,
+) => {
+  if (!isVarFunction(statement)) return continueWith(path);
+  const target = getVarFunctionTarget(statement);
+  if (target === undefined || ts.isFunctionDeclaration(target.parent)) {
+    throw new TlaTypeScriptError(
+      `tla-ts can't assign ${statement.name.text} where a function declaration or an arguments object binds it, as a function that a block declares outside strict mode does`,
+      statement,
+    );
+  }
+  if (!isOnce(statement.parent)) {
+    return leaf(
+      apply("Assert", [
+        boolean(false),
+        string(
+          "tla-ts can't assign a var a function that a block that runs more than once declares",
+        ),
+      ]),
+    );
+  }
+  const value = translateExpression(statement.name, path.scope, context);
+  return continueWith(assign(target, path, context, () => value));
 };
 
 // A function's body starts with its vars bound to undefined, unless a statement that ran in part
@@ -18520,15 +18534,20 @@ export const translateStatements = (
         context,
         statementFrame,
         (defined) =>
-          continueWith({
-            ...defined,
-            scope: {
-              ...defined.scope,
-              uninitialized: new Set(
-                [...defined.scope.uninitialized].filter((other) => other !== symbol),
-              ),
+          translateVarFunction(
+            statement,
+            {
+              ...defined,
+              scope: {
+                ...defined.scope,
+                uninitialized: new Set(
+                  [...defined.scope.uninitialized].filter((other) => other !== symbol),
+                ),
+              },
             },
-          }),
+            context,
+            continueWith,
+          ),
       );
     });
   }
@@ -18832,7 +18851,9 @@ export const translateStatements = (
   }
   // A function declaration runs nothing where it stands: calls find the function it declares, and
   // one without a body, such as setTimeout, the host defines.
-  if (ts.isFunctionDeclaration(statement)) return continueWith(path);
+  if (ts.isFunctionDeclaration(statement)) {
+    return translateVarFunction(statement, path, context, continueWith);
+  }
   throw new TlaTypeScriptError(`Unsupported statement: ${statement.getText()}`, statement);
 };
 

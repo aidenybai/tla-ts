@@ -13,6 +13,7 @@ import {
   isInertValue,
   isScript,
   rejectSloppyGlobalWrites,
+  isVarFunction,
 } from "./context";
 import { type CompiledSpec, createSections, emit, type Sections } from "./emit";
 import { getBinary, getNumberValue } from "./expressions";
@@ -528,6 +529,8 @@ export const compile = (
         ts.isConditionalExpression(node.parent) ||
         (ts.isVariableDeclaration(node.parent) && node.parent.initializer === node)) &&
       getFunction(getTopLevelDeclaration(getSymbol(node, context.checker))) !== undefined) ||
+    // A function that a block declares outside strict mode, which its var holds as a value.
+    isVarFunction(node) ||
     isPrototypeArray(node, context) ||
     getKeptIterator(node, context) !== undefined ||
     getWrappedThis(node, context) !== undefined ||

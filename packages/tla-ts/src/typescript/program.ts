@@ -1,6 +1,13 @@
 import ts from "@typescript/typescript6";
 import { TlaTypeScriptError } from "../errors";
-import { isStrictCode } from "./context";
+import {
+  findNodes,
+  getVarFunctionTarget,
+  getVarScope,
+  isPlain,
+  isStrictCode,
+  isVarFunction,
+} from "./context";
 import { rejectEarlyErrors } from "./early-errors";
 
 // TypeScript checks every file as a module, so it rejects a word that only strict mode reserves, as
@@ -44,6 +51,9 @@ const COMPILER_OPTIONS: ts.CompilerOptions = {
   lib: ["lib.esnext.d.ts"],
   types: [],
 };
+
+// TypeScript's error for an if whose branch is the empty statement, which JavaScript runs.
+const EMPTY_IF_BRANCH_ERROR = 1313;
 
 // TypeScript's own declaration files, parsed once and shared by every program, since parsing them
 // takes most of a compile.
@@ -100,6 +110,46 @@ const assignParameterProperties = (fileName: string, text: string) => {
       current.slice(0, insertion.position) + insertion.text + current.slice(insertion.position),
     text,
   );
+};
+
+// HACK: TypeScript binds every file as strict code, where a function that a block declares binds its
+// name only in the block. Outside strict mode, the text gains what Annex B.3.2 and B.3.3 add: a block
+// around a function that an if's branch declares, and the var that a function that a block declares
+// assigns, where its function or its script declares none. The text stays on the same lines.
+const declareVarFunctions = (fileName: string, text: string) => {
+  const file = ts.createSourceFile(fileName, text, ts.ScriptTarget.ESNext, true);
+  const insertions = findNodes(file, ts.isFunctionDeclaration).flatMap((node) => {
+    const blocks =
+      ts.isIfStatement(node.parent) && isPlain(node) && !isStrictCode(node)
+        ? [
+            { position: node.getStart(file), text: "{" },
+            { position: node.end, text: "}" },
+          ]
+        : [];
+    const name =
+      isVarFunction(node) && getVarFunctionTarget(node) === undefined ? node.name.text : undefined;
+    const scope = name === undefined ? undefined : getVarScope(node);
+    return scope === undefined || (name === "arguments" && !ts.isSourceFile(scope))
+      ? blocks
+      : [
+          ...blocks,
+          {
+            position: ts.isSourceFile(scope) ? 0 : scope.getStart(file) + 1,
+            text: `var ${name}: any;`,
+          },
+        ];
+  });
+  return [
+    ...new Map(
+      insertions.map((insertion) => [`${insertion.position} ${insertion.text}`, insertion]),
+    ).values(),
+  ]
+    .toSorted((left, right) => right.position - left.position)
+    .reduce(
+      (current, insertion) =>
+        current.slice(0, insertion.position) + insertion.text + current.slice(insertion.position),
+      text,
+    );
 };
 
 // The project of the nearest tsconfig.json, where it holds the file, as an editor finds it.
@@ -160,7 +210,7 @@ export const createProgram = (
           if (fileName === path) {
             return ts.createSourceFile(
               path,
-              assignParameterProperties(path, source),
+              declareVarFunctions(path, assignParameterProperties(path, source)),
               languageVersion,
               true,
             );
@@ -176,7 +226,7 @@ export const createProgram = (
           }
           return ts.createSourceFile(
             fileName,
-            assignParameterProperties(fileName, file.text),
+            declareVarFunctions(fileName, assignParameterProperties(fileName, file.text)),
             languageVersion,
             true,
           );
@@ -209,7 +259,7 @@ export const createProgram = (
       .sortAndDeduplicateDiagnostics(
         getModelFiles(program).flatMap((file) => ts.getPreEmitDiagnostics(program, file)),
       )
-      .filter(isReported);
+      .filter((diagnostic) => isReported(diagnostic) && diagnostic.code !== EMPTY_IF_BRANCH_ERROR);
   const modelDiagnostics = getDiagnostics(modelProgram);
   // A model that type checks by itself keeps the program of its own files, which loads faster.
   const program =
