@@ -25916,4 +25916,41 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("a,1,stop"))).failure?.message).toContain("2,1,stop");
     });
   });
+
+  describe("returns the wrapper that a call of Object makes", () => {
+    const getSource = (expected: string) => `
+      declare global {
+        interface ObjectConstructor {
+          // oxlint-disable-next-line typescript/no-wrapper-object-types
+          (value: number): Number;
+        }
+      }
+      const box = { size: 0 };
+      function make() {
+        return Object(7);
+      }
+      const made = make();
+      const position = {
+        valueOf: function () {
+          return Object(1);
+        },
+        toString: function () {
+          return 1;
+        },
+      };
+      // @ts-expect-error indexOf converts an object to a number
+      const found = "aaaa".indexOf("aa", position);
+      box.size = 1;
+      const read = [typeof made, made.valueOf(), found].join();
+      if (read !== "${expected}") throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("object,7,1"))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrapper as a number", async () => {
+      expect((await checkModel(getSource("number,7,1"))).failure?.message).toContain("object,7,1");
+    });
+  });
 });

@@ -14575,8 +14575,10 @@ export const translateStatements = (
       if (constructor !== undefined && ts.isNewExpression(returned)) {
         return translateConstruction(returned, constructor, inner, context, frame, frame.exit);
       }
+      // A call that makes an object, such as Object(1), made it as the return allocated it.
       if (
         ts.isCallExpression(returned) &&
+        !inner.scope.allocated.has(returned) &&
         (!isLibraryCall(returned, context) ||
           isPromiseCall(returned, context) ||
           getLoopCall(returned, inner, context) !== undefined ||
