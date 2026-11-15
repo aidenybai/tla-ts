@@ -1381,6 +1381,11 @@ const SPREAD_CALL_ERRORS = new Set([ARGUMENT_COUNT_ERROR, 2345, 2556]);
 
 const skipParentheses = (node: ts.Expression): ts.Expression =>
   ts.isParenthesizedExpression(node) ? skipParentheses(node.expression) : node;
+// A call of a method on a union of typed arrays, whose members' signatures TypeScript can't combine.
+const UNCALLABLE_ERROR = 2349;
+// The typed arrays' methods that tla-ts runs on the elements of any typed array, where a test calls
+// them on a union of typed arrays. Each needs a unit test of such a call.
+const TYPED_UNION_METHODS = new Set(["findLast", "reduce", "reduceRight"]);
 
 // An operator's operand of a type that the operator doesn't take, or that is null or undefined,
 // which tla-ts converts to a primitive where it's an object that the test declares, a wrapper, or a
@@ -2238,6 +2243,28 @@ const ignoreSoundErrors = () => {
       elements.some(ts.isSpreadElement)
     );
   };
+  // A call of a method that TYPED_UNION_METHODS lists on a union of typed arrays, which TypeScript
+  // reports at the method's name.
+  const isTypedUnionCall = (node: ts.Node, diagnostic: ts.Diagnostic) => {
+    const callee = node.parent;
+    const type = ts.isPropertyAccessExpression(callee)
+      ? checker.getTypeAtLocation(callee.expression)
+      : undefined;
+    return (
+      ts.isPropertyAccessExpression(callee) &&
+      type !== undefined &&
+      callee.name === node &&
+      node.getStart() === diagnostic.start &&
+      node.getEnd() === (diagnostic.start ?? 0) + (diagnostic.length ?? 0) &&
+      ts.isCallExpression(callee.parent) &&
+      callee.parent.expression === callee &&
+      TYPED_UNION_METHODS.has(callee.name.text) &&
+      type.isUnion() &&
+      type.types.every((member) =>
+        /^(Big)?(Int|Uint|Float)\d+(Clamped)?Array$/.test(member.getSymbol()?.getName() ?? ""),
+      )
+    );
+  };
   const isSound = (diagnostic: ts.Diagnostic) => {
     const node = getNode(diagnostic.start ?? 0);
     return (
@@ -2266,6 +2293,7 @@ const ignoreSoundErrors = () => {
           isSearchingCall(diagnostic) ||
           isTypedArrayNew(diagnostic))) ||
       (diagnostic.code === UNKNOWN_CALLEE_ERROR && isStoredStringCall(node)) ||
+      (diagnostic.code === UNCALLABLE_ERROR && isTypedUnionCall(node, diagnostic)) ||
       diagnostic.code === UNUSED_OPERAND_ERROR ||
       (diagnostic.code === UNINTENDED_COMPARISON_ERROR && isUnnarrowed(node, diagnostic)) ||
       (UNTYPED_READ_ERRORS.has(diagnostic.code) && isObjectRead(node)) ||

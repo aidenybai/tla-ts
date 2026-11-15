@@ -510,6 +510,40 @@ describe("top-level statements", () => {
     });
   });
 
+  describe("runs findLast, reduce, and reduceRight on a union of typed arrays", () => {
+    const source = `
+      const seen: unknown[] = [];
+      for (const TA of [Int8Array, Float64Array]) {
+        const sample = new TA([1, 2, 3]);
+        // @ts-ignore
+        const total = sample.reduce(function (sum: number, value: number) {
+          return sum + value;
+        }, 10);
+        // @ts-ignore
+        const right = sample.reduceRight(function (text: unknown, value: number) {
+          return String(text) + value;
+        });
+        // @ts-ignore
+        const last = sample.findLast(function (value: number) {
+          return value < 3;
+        });
+        seen.push(total, right, last);
+      }
+      if (seen.join() !== "16,321,2,16,321,2") throw new Error("seen");
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(source)).failure).toBeUndefined();
+    });
+
+    it("rejects a wrong seen", async () => {
+      expect(
+        (await checkModel(source.replace('"16,321,2,16,321,2"', '"16,123,2,16,123,2"'))).failure
+          ?.message,
+      ).toContain('"seen"');
+    });
+  });
+
   describe("runs a reducer whose result the reduce's signature doesn't take on its values", () => {
     const source = `
       const seen: unknown[] = [];
