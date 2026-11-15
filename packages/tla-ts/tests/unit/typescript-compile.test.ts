@@ -41589,4 +41589,30 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("a promise's method that a string names", () => {
+    const getSource = (expected: string) => `
+      declare function setTimeout(callback: () => void): void;
+      let log = "";
+      Promise.resolve(1)["then"]((value) => value + 1).then((value) => {
+        log += value;
+      });
+      Promise.reject(2)["catch"]((value) => value + 1).then((value) => {
+        log += value;
+      });
+      setTimeout(() => {
+        if (log !== "${expected}") throw new Error("log " + log);
+      });
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("23"))).failure).toBeUndefined();
+    });
+
+    it("rejects the reactions in another order", async () => {
+      expect((await checkModel(getSource("32"))).failure?.message).toContain(
+        "A timer threw an exception",
+      );
+    });
+  });
 });

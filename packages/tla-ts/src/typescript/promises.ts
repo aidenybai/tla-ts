@@ -2082,9 +2082,16 @@ const getPromiseMethod = (node: ts.CallExpression, context: Context) => {
       ? callee.expression
       : undefined;
   const method = called ?? callee;
+  // A method that a string literal names, as in p["then"](f), reads the same key.
+  const name = ts.isPropertyAccessExpression(method)
+    ? method.name.text
+    : ts.isElementAccessExpression(method) && ts.isStringLiteralLike(method.argumentExpression)
+      ? method.argumentExpression.text
+      : undefined;
   if (
-    !ts.isPropertyAccessExpression(method) ||
-    !["then", "catch", "finally"].includes(method.name.text)
+    name === undefined ||
+    !(ts.isPropertyAccessExpression(method) || ts.isElementAccessExpression(method)) ||
+    !["then", "catch", "finally"].includes(name)
   ) {
     return undefined;
   }
@@ -2097,7 +2104,7 @@ const getPromiseMethod = (node: ts.CallExpression, context: Context) => {
     getBuiltIn(owner.expression, context) === "Promise";
   return receiver !== undefined && (isPrototype || isPromiseType(owner, context))
     ? {
-        method: method.name.text,
+        method: name,
         receiver: getCast(receiver),
         functions: called === undefined ? node.arguments : node.arguments.slice(1),
         isCalled: called !== undefined,
