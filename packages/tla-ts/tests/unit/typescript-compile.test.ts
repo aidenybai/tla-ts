@@ -42516,4 +42516,36 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("switches on a value that may be a number, a string, or a boolean", () => {
+    const getSource = (expected: string) => `
+      const pick = (value: string | number | boolean | undefined) => {
+        switch (value) {
+          case 1:
+            return "one";
+          case "a":
+            return "letter";
+          case true:
+            return "yes";
+          case undefined:
+            return "none";
+          default:
+            return "other";
+        }
+      };
+      let log = "";
+      for (const value of ["a", 1, 2, true, undefined, "1"]) log += pick(value);
+      if (log !== "${expected}") throw new Error(log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("letteroneotheryesnoneother"))).failure).toBeUndefined();
+    });
+
+    it("rejects the string 1 as the number", async () => {
+      expect((await checkModel(getSource("letteroneotheryesnoneone"))).failure?.message).toContain(
+        "letteroneotheryesnoneother",
+      );
+    });
+  });
 });
