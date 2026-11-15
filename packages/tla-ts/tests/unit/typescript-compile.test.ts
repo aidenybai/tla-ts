@@ -10650,6 +10650,104 @@ describe("errors", () => {
     });
   });
 
+  describe("revives JSON.parse of a text that a script builds", () => {
+    const getSource = (text: string, reviver: string, expected: string) => `
+      const box = { n: 1 };
+      const texts: string[] = ['${text}'];
+      const seen: string[] = [];
+      ${reviver}
+      const parsed: unknown = JSON.parse(texts[0], revive);
+      const result = [seen.join(), JSON.stringify(parsed), box.n].join("|");
+      if (result !== ${JSON.stringify(expected)}) throw new Error(result);
+    `;
+    const arrow = `
+      const revive = (key: string, value: unknown) => {
+        seen.push(key + ":" + typeof value);
+        return typeof value === "number" ? value * 10 : value;
+      };
+    `;
+    const arrowText = '{"a":1,"b":[2,{"c":3}],"d":"x"}';
+    const arrowRead =
+      'a:number,0:number,c:number,1:object,b:object,d:string,:object|{"a":10,"b":[20,{"c":30}],"d":"x"}|1';
+
+    it("agrees with Node on an arrow", async () => {
+      expect((await checkModel(getSource(arrowText, arrow, arrowRead))).failure).toBeUndefined();
+    });
+
+    it("agrees with Node on a declared function that reads this", async () => {
+      const declared = `
+        function revive(this: Record<string, unknown>, key: string, value: unknown) {
+          seen.push(key + "=" + (typeof value === "object" ? "object" : String(value)));
+          if (key === "a") delete this.b;
+          return key === "" ? this : value;
+        }
+      `;
+      const read = 'a=1,b=undefined,=object|{"":{"a":1}}|1';
+      expect(
+        (await checkModel(getSource('{"a":1,"b":2}', declared, read))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects wrong expectation 1", async () => {
+      const wrong = arrowRead.replace("1:object,b:object", "b:object,1:object");
+      expect((await checkModel(getSource(arrowText, arrow, wrong))).failure?.message).toContain(
+        "1:object,b:object",
+      );
+    });
+
+    const thrown = `
+      const box = { n: 1 };
+      const texts: string[] = ["[1]"];
+      let caught = "none";
+      try {
+        JSON.parse(texts[0], (key, value) => {
+          if (key === "0") throw new TypeError("x");
+          return value;
+        });
+      } catch (error) {
+        caught = error instanceof TypeError ? "type" : "other";
+      }
+      if (caught !== "type") throw new Error(caught);
+      box.n = 2;
+    `;
+
+    it("throws what the reviver throws to the catch", async () => {
+      expect((await checkModel(thrown)).failure).toBeUndefined();
+    });
+
+    it("rejects wrong expectation 2", async () => {
+      expect(
+        (await checkModel(thrown.replace('caught !== "type"', 'caught !== "other"'))).failure
+          ?.message,
+      ).toContain("type");
+    });
+
+    it("stops at an object that the reviver changes before it visits it", async () => {
+      const result = await checkModel(`
+        const box = { n: 1 };
+        const texts: string[] = ['{"a":1,"b":2}'];
+        JSON.parse(texts[0], function (this: Record<string, unknown>, key, value) {
+          if (key === "a") this.b = { c: 3 };
+          return value;
+        });
+      `);
+      expect(result.failure?.message).toContain(
+        "tla-ts can't revive an object that the reviver changed",
+      );
+    });
+
+    it("rejects a reviver that it can't tell", () => {
+      expect(() =>
+        compile(`
+          const box = { n: 1 };
+          const texts: string[] = ["1"];
+          const revivers = [(key: string, value: unknown) => value];
+          JSON.parse(texts[0], revivers[0]);
+        `),
+      ).toThrow("tla-ts can't tell which function revives this");
+    });
+  });
+
   it("makes the objects that JSON.parse makes of a literal's text", async () => {
     const source = `
       const holder = { seen: 0 };

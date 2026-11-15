@@ -6124,7 +6124,7 @@ LOCAL JSONElements(heap, prototype, text, at, objects, values) ==
              [end |-> after + 1, value |-> added, objects |-> element.objects]
         [] OTHER -> JSONFailed
 
-\\* What JSON.parse without a reviver makes of a text, whose end is 0 where the text isn't JSON,
+\\* What JSON.parse makes of a text, whose end is 0 where the text isn't JSON,
 \\* with arrays whose prototype is Array.prototype.
 JSONParse(heap, prototype, text) ==
   LET parsed == JSONValue(heap, prototype, text, JSONWhitespace(text, 1), <<>>)
@@ -6135,6 +6135,28 @@ JSONParse(heap, prototype, text) ==
 \\* Whether what JSON.parse makes holds an array.
 HasJSONArray(parsed) ==
   \\E position \\in DOMAIN parsed.objects : IsArrayObject(parsed.objects[position])
+
+\\* The steps of InternalizeJSONProperty over a value that JSON.parse made, which a holder's key
+\\* holds: entering an object, which goes on to its keys' steps, leaving it, and visiting a primitive.
+\\* A step that calls the reviver goes on by its skip, past the keys of an object that changed.
+RECURSIVE JSONReviveSteps(_, _, _, _), JSONReviveKeySteps(_, _, _)
+JSONReviveSteps(heap, holder, key, value) ==
+  IF IsObjectIn(heap, value)
+  THEN LET keys == RevivedKeys(heap, value)
+           inner == JSONReviveKeySteps(heap, value, keys)
+       IN  <<[kind |-> "enter", holder |-> holder, key |-> key, ref |-> value, keys |-> keys,
+              skip |-> Len(inner) + 2]>>
+           \\o inner
+           \\o <<[kind |-> "exit", holder |-> holder, key |-> key, ref |-> value, keys |-> keys,
+                 skip |-> 1]>>
+  ELSE <<[kind |-> "visit", holder |-> holder, key |-> key, ref |-> value, keys |-> <<>>,
+          skip |-> 1]>>
+
+LOCAL JSONReviveKeySteps(heap, ref, keys) ==
+  IF keys = <<>>
+  THEN <<>>
+  ELSE JSONReviveSteps(heap, ref, Head(keys), Get(heap, ref, Head(keys)))
+       \\o JSONReviveKeySteps(heap, ref, Tail(keys))
 
 \\* Which of Boolean, Number, and String an object wraps the primitive of, or "" where it wraps none.
 LOCAL JSONWrapperKind(heap, ref) ==
