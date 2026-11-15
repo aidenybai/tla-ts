@@ -24,7 +24,7 @@ const Block = (props: BlockProps) => {
   const block = props.block;
   if (block.kind === "heading") {
     return (
-      <h3 className="mt-2 scroll-m-4 text-foreground">
+      <h3 className="mt-4 scroll-m-4 text-foreground">
         <Text text={block.text} />
       </h3>
     );
