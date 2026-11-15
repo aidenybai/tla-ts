@@ -4255,6 +4255,22 @@ export const findHeapArrays = (
     ) {
       arrays.add(literal);
     }
+    // A proxy's target is an object that its internal methods read and change.
+    const target =
+      ts.isNewExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      node.expression.text === "Proxy" &&
+      node.arguments?.[0] !== undefined
+        ? getArrayLiteral(node.arguments[0], context)
+        : undefined;
+    if (
+      target !== undefined &&
+      target.elements.every(
+        (element) => !ts.isSpreadElement(element) && !ts.isOmittedExpression(element),
+      )
+    ) {
+      arrays.add(target);
+    }
     if (isHoleyArray(node)) arrays.add(node);
     if (isPrototypeArray(node)) arrays.add(node);
     if (isThrownArray(node)) arrays.add(node);

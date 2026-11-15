@@ -25352,4 +25352,27 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("reads an array that a proxy targets through the proxy", () => {
+    const getSource = (expected: string) => `
+      const box = { size: 0 };
+      const keys = Reflect.ownKeys(new Proxy([5, 6], {})).join(" ");
+      const target = new Proxy([7], {});
+      const proxy = new Proxy(target, { getOwnPropertyDescriptor: undefined });
+      const described = Object.getOwnPropertyDescriptor(proxy, "0");
+      box.size = 1;
+      const read = [keys, described?.value, described?.writable].join();
+      if (read !== "${expected}") throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("0 1 length,7,true"))).failure).toBeUndefined();
+    });
+
+    it("rejects the keys as missing length", async () => {
+      expect((await checkModel(getSource("0 1,7,true"))).failure?.message).toContain(
+        "0 1 length,7,true",
+      );
+    });
+  });
 });
