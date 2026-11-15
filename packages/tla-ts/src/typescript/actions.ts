@@ -382,7 +382,12 @@ import {
   type Receiver,
   type Scope,
 } from "./scope";
-import { getRegExpProtocolCall, runRegExpProtocolCall } from "./regexp-protocol";
+import {
+  getRegExpProtocolAccessors,
+  getRegExpProtocolCall,
+  readFlags,
+  runRegExpProtocolCall,
+} from "./regexp-protocol";
 import { getThrownMessage, isSharedCall, translateSharedCall } from "./shared-calls";
 import {
   set,
@@ -3806,11 +3811,22 @@ const translateCallStatementBody = (
               throwTypeError(path, expression, context, frame),
             ),
           );
-    // flags reads each flag of its receiver in order, so a getter of one that only throws throws.
+    // flags reads each flag of its receiver in order through Get, which runs the getters that the
+    // script writes, and throws a TypeError on a receiver that isn't an object.
     const flagsGetter = () =>
       useJavaScript("FlagsFirstGetter", [heap, getReceiverValue()], context);
-    const checked =
-      getterCall.path === "get RegExp.prototype.flags"
+    const isFlagsRead =
+      getterCall.path === "get RegExp.prototype.flags" &&
+      getRegExpProtocolAccessors(expression, context).length > 0;
+    const checked = isFlagsRead
+      ? translateJoined(expression, path, context, continueWith, (next) =>
+          ifThenElse(
+            useJavaScript("IsObjectIn", [heap, getReceiverValue()], context),
+            readFlags(expression, getReceiverValue(), path, context, frame, next),
+            throwTypeError(path, expression, context, frame),
+          ),
+        )
+      : getterCall.path === "get RegExp.prototype.flags"
         ? throwFirstGetter(
             expression,
             apply("#", [flagsGetter(), getUndefined(context)]),
@@ -14152,6 +14168,7 @@ const getEffects = (
     ...getLoopGetters(node, context),
     ...getRemovedGetters(node, context),
     ...getStoredLengthConversions(node, context),
+    ...getRegExpProtocolAccessors(node, context),
     ...(written === undefined ? [] : getRestCopyGetters(written, context)),
   ];
   // A pattern that destructures an object, or a for-of, a spread, a yield*, or new of a typed array

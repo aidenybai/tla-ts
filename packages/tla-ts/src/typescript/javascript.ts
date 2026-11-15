@@ -5740,14 +5740,17 @@ RegExpSplitterIn(heap, ref, flags, prototype) ==
                                                     !.sticky = TRUE]))
       ELSE Assert(FALSE, "tla-ts can't make a regexp of other flags than those of the regexp it copies")
 
+\\* How many captures @@split adds of a result whose length property holds a value.
+RegExpSplitTaken(length, pieces, count) ==
+  LET captures == IF ToLength(length) > 1 THEN ToLength(length) - 1 ELSE 0
+      room == count - Len(pieces)
+  IN  IF count # -1 /\\ room < captures THEN room ELSE captures
+
 \\* The pieces once RegExp.prototype[@@split] adds the captures of a match after its own: each
 \\* element of exec's result past the first, as many as its length tells, up to the count.
 RegExpSplitCaptures(heap, result, pieces, count) ==
-  LET length == ToLength(Get(heap, result, "length"))
-      captures == IF length > 1 THEN length - 1 ELSE 0
-      room == count - Len(pieces)
-      taken == IF count # -1 /\\ room < captures THEN room ELSE captures
-  IN  pieces \\o [position \\in 1..taken |-> Get(heap, result, ToString(position))]
+  pieces \\o [position \\in 1..RegExpSplitTaken(Get(heap, result, "length"), pieces, count) |->
+                Get(heap, result, ToString(position))]
 
 \\* AdvanceStringIndex, which steps past a surrogate pair where the regexp reads code points.
 AdvanceStringIndex(text, index, isUnicode) ==

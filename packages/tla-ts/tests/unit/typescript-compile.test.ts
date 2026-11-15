@@ -44521,4 +44521,61 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("3,2,0,b"))).failure?.message).toContain("3,2,,b");
     });
   });
+
+  describe("runs the getters and setters that a regexp's methods read through Get and Set", () => {
+    const getSource = (expected: string) => `
+      let log = "";
+      const fake = {
+        get lastIndex(): number {
+          log += "g";
+          return 1;
+        },
+        set lastIndex(value: number) {
+          log += \`s\${value}\`;
+        },
+        exec: () => {
+          log += "e";
+          return { index: 4 };
+        },
+      };
+      const found = RegExp.prototype[Symbol.search].call(fake as unknown as RegExp, "abc");
+      const flagged = {
+        get global() {
+          log += "G";
+          return true;
+        },
+        get sticky() {
+          log += "Y";
+          return false;
+        },
+      };
+      const get = Object.getOwnPropertyDescriptor(RegExp.prototype, "flags")!.get!;
+      const flags = get.call(flagged);
+      let thrown = "";
+      try {
+        RegExp.prototype[Symbol.match].call(
+          {
+            get flags(): string {
+              throw new Error("flags");
+            },
+          } as unknown as RegExp,
+          "",
+        );
+      } catch (error) {
+        thrown = (error as Error).message;
+      }
+      const result = [log, found, flags, thrown].join(",");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("gs0egGY,4,g,flags"))).failure).toBeUndefined();
+    });
+
+    it("rejects a search that skips the second read of lastIndex", async () => {
+      expect((await checkModel(getSource("gs0eGY,4,g,flags"))).failure?.message).toContain(
+        "gs0egGY,4,g,flags",
+      );
+    });
+  });
 });

@@ -1,21 +1,25 @@
 import ts from "@typescript/typescript6";
 import type { Expression } from "../ast";
 import { type Frame, getChanged, type Path, throwTypeError, translateJoined } from "./actions";
-import { type Context, getUndefined, skipCasts } from "./context";
+import { type Context, getSetters, getUndefined, skipCasts } from "./context";
 import { isEvery } from "./types";
 import { getConversionFunctions, runToPrimitive } from "./conversions";
 import { translateExpression } from "./expressions";
 import { type Formula, ifThenElse, leaf } from "./formula";
-import { getHeap } from "./heap";
+import { getGetterCall, getHeap } from "./heap";
 import { getBuiltIn, getBuiltInKey, translateBuiltInValue } from "./intrinsics";
 import { useJavaScript } from "./javascript";
 import {
   bind,
   callValue,
+  getOwnValueGetters,
   getFunctionCandidates,
   getMethods,
   loopStates,
+  read,
+  readWith,
   withHeap,
+  writeWith,
 } from "./protocols";
 import {
   apply,
@@ -117,10 +121,6 @@ const stop = (message: string) => leaf(apply("Assert", [boolean(false), string(m
 const concatenate = (...parts: Expression[]) =>
   parts.reduce((left, right) => apply("\\o", [left, right]));
 
-// Get(O, P) on the heap of a path.
-const getKey = (site: ts.Node, object: Expression, key: Expression, path: Path, context: Context) =>
-  useJavaScript("Get", [getHeap(path.scope, site, context), object, key], context);
-
 // ToString of a value, which runs a script's toString or Symbol.toPrimitive on an object, and
 // throws a TypeError on a symbol.
 const toText = (
@@ -139,7 +139,8 @@ const toText = (
     ),
   );
 
-// Set(R, "lastIndex", value, true), which throws a TypeError where the write fails.
+// Set(R, "lastIndex", value, true), which runs a setter that the script writes and throws a
+// TypeError where the write fails.
 const setLastIndex = (
   site: ts.Node,
   receiver: Expression,
@@ -148,20 +149,26 @@ const setLastIndex = (
   context: Context,
   frame: Frame,
   continueWith: (path: Path) => Formula,
-) => {
-  const heap = getHeap(path.scope, site, context);
-  return ifThenElse(
-    useJavaScript("CanPut", [heap, receiver, string("lastIndex")], context),
-    bind(
-      path,
-      "heap",
-      useJavaScript("SetProperty", [heap, receiver, string("lastIndex"), value], context),
+) =>
+  ifThenElse(
+    useJavaScript(
+      "CanPut",
+      [getHeap(path.scope, site, context), receiver, string("lastIndex")],
       context,
-      (written, changed) => continueWith(withHeap(written, changed, context)),
+    ),
+    writeWith(
+      site,
+      receiver,
+      string("lastIndex"),
+      value,
+      getSetters(site, context),
+      path,
+      context,
+      frame,
+      continueWith,
     ),
     throwTypeError(path, site, context, frame),
   );
-};
 
 // The exec functions that a script writes, which RegExpExec may call.
 const getExecMethods = (site: ts.Node, context: Context) => getMethods(site, "exec", context);
@@ -183,7 +190,6 @@ const regExpExec = (
     context,
     (after, result) => continueWith(after, result ?? getUndefined(context)),
     (next) => {
-      const heap = getHeap(path.scope, site, context);
       const builtIn = (current: Path) =>
         ifThenElse(
           useJavaScript("IsRegExpIn", [getHeap(current.scope, site, context), receiver], context),
@@ -220,56 +226,59 @@ const regExpExec = (
             stop("tla-ts can't run RegExp.prototype.exec on this receiver"),
           ),
         );
-      return bind(
-        path,
-        "exec",
-        useJavaScript("Get", [heap, receiver, string("exec")], context),
-        context,
-        (read, exec) =>
-          ifThenElse(
-            useJavaScript(
-              "SameValue",
-              [exec, translateBuiltInValue("RegExp.prototype.exec", site, context)],
-              context,
-            ),
-            builtIn(read),
-            ifThenElse(
-              apply("=", [
-                useJavaScript("TypeOfIn", [getHeap(read.scope, site, context), exec], context),
-                string("function"),
-              ]),
-              callValue(
-                site,
-                getExecMethods(site, context),
-                exec,
-                receiver,
-                [text],
-                read,
-                context,
-                frame,
-                () => stop("tla-ts can't tell which function this call runs"),
-                (after, result) =>
-                  bind(after, "result", result, context, (bound, held) =>
-                    ifThenElse(
-                      apply("\\/", [
-                        apply("=", [held, identifier("Null")]),
-                        useJavaScript(
-                          "IsObjectIn",
-                          [getHeap(bound.scope, site, context), held],
-                          context,
-                        ),
-                      ]),
-                      next(bound, held),
-                      throwTypeError(bound, site, context, frame),
-                    ),
-                  ),
-              ),
-              builtIn(read),
-            ),
+      return read(site, receiver, "exec", path, context, frame, (found, exec) =>
+        ifThenElse(
+          useJavaScript(
+            "SameValue",
+            [exec, translateBuiltInValue("RegExp.prototype.exec", site, context)],
+            context,
           ),
+          builtIn(found),
+          ifThenElse(
+            apply("=", [
+              useJavaScript("TypeOfIn", [getHeap(found.scope, site, context), exec], context),
+              string("function"),
+            ]),
+            callValue(
+              site,
+              getExecMethods(site, context),
+              exec,
+              receiver,
+              [text],
+              found,
+              context,
+              frame,
+              () => stop("tla-ts can't tell which function this call runs"),
+              (after, result) =>
+                bind(after, "result", result, context, (bound, held) =>
+                  ifThenElse(
+                    apply("\\/", [
+                      apply("=", [held, identifier("Null")]),
+                      useJavaScript(
+                        "IsObjectIn",
+                        [getHeap(bound.scope, site, context), held],
+                        context,
+                      ),
+                    ]),
+                    next(bound, held),
+                    throwTypeError(bound, site, context, frame),
+                  ),
+                ),
+            ),
+            builtIn(found),
+          ),
+        ),
       );
     },
   );
+
+// The getters and setters of the script that a protocol call may run, as it reads and writes the
+// properties of its receiver and of exec's results through Get and Set.
+export const getRegExpProtocolAccessors = (node: ts.Node, context: Context) =>
+  getRegExpProtocolCall(node, context) !== undefined ||
+  getGetterCall(node, context)?.path === "get RegExp.prototype.flags"
+    ? [...getOwnValueGetters(node, context), ...getSetters(node, context)]
+    : [];
 
 // The symbols that a protocol call may change: the heap, and what the functions it may call change,
 // which a join or a loop carries, once their declarations run.
@@ -282,6 +291,7 @@ const getProtocolChanged = (site: ts.Node, path: Path, context: Context) =>
         ...getSpeciesMethods(site, context),
         ...getReplaceFunctions(site, context),
         ...getConversionFunctions(site, context),
+        ...getRegExpProtocolAccessors(site, context),
       ].flatMap((called) => getChanged(called, path, context)),
       ...[...path.mutable].filter((symbol) => symbol === context.heap),
     ]),
@@ -316,38 +326,32 @@ const search = (
   frame: Frame,
   continueWith: (path: Path, value: Expression) => Formula,
 ) => {
-  const getLastIndex = (current: Path) =>
-    useJavaScript(
-      "Get",
-      [getHeap(current.scope, site, context), receiver, string("lastIndex")],
-      context,
-    );
   const isSame = (left: Expression, right: Expression) =>
     useJavaScript("SameValue", [left, right], context);
-  return bind(path, "previous", getLastIndex(path), context, (read, previous) =>
+  return read(site, receiver, "lastIndex", path, context, frame, (found, previous) =>
     joinProtocol(
       site,
-      read,
+      found,
       context,
       (reset) =>
         regExpExec(site, receiver, text, reset, context, frame, (ran, result) =>
-          bind(ran, "current", getLastIndex(ran), context, (after, current) =>
+          read(site, receiver, "lastIndex", ran, context, frame, (after, current) =>
             joinProtocol(
               site,
               after,
               context,
               (restored) =>
-                continueWith(
+                joinProtocol(
+                  site,
                   restored,
-                  ifExpression(
-                    apply("=", [result, identifier("Null")]),
-                    number(-1),
-                    useJavaScript(
-                      "Get",
-                      [getHeap(restored.scope, site, context), result, string("index")],
-                      context,
+                  context,
+                  (done, value) => continueWith(done, value ?? number(-1)),
+                  (next) =>
+                    ifThenElse(
+                      apply("=", [result, identifier("Null")]),
+                      next(restored, number(-1)),
+                      read(site, result, "index", restored, context, frame, next),
                     ),
-                  ),
                 ),
               (next) =>
                 ifThenElse(
@@ -361,14 +365,53 @@ const search = (
       (next) =>
         ifThenElse(
           isSame(previous, number(0)),
-          next(read),
-          setLastIndex(site, receiver, number(0), read, context, frame, next),
+          next(found),
+          setLastIndex(site, receiver, number(0), found, context, frame, next),
         ),
     ),
   );
 };
 
-// ToString(Get(R, "flags")), where RegExp.prototype's flags getter reads each flag through Get.
+// The flags in the order that RegExp.prototype's flags getter reads them, with their letters.
+const FLAGS = [
+  ["d", "hasIndices"],
+  ["g", "global"],
+  ["i", "ignoreCase"],
+  ["m", "multiline"],
+  ["s", "dotAll"],
+  ["u", "unicode"],
+  ["v", "unicodeSets"],
+  ["y", "sticky"],
+] as const;
+
+// What RegExp.prototype's flags getter gives of an object, as it reads each flag in order through
+// Get, which runs the getters that the script writes.
+export const readFlags = (
+  site: ts.Node,
+  receiver: Expression,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path, flags: Expression) => Formula,
+) =>
+  FLAGS.reduceRight<(current: Path, flags: Expression) => Formula>(
+    (rest, [letter, key]) =>
+      (current, flags) =>
+        read(site, receiver, key, current, context, frame, (after, value) =>
+          rest(
+            after,
+            ifExpression(
+              useJavaScript("ToBoolean", [value], context),
+              apply("\\o", [flags, string(letter)]),
+              flags,
+            ),
+          ),
+        ),
+    continueWith,
+  )(path, string(""));
+
+// ToString(Get(R, "flags")), where RegExp.prototype's flags getter reads each flag through Get, and
+// runs where the script writes getters.
 const getFlags = (
   site: ts.Node,
   receiver: Expression,
@@ -377,14 +420,35 @@ const getFlags = (
   frame: Frame,
   continueWith: (path: Path, flags: Expression) => Formula,
 ) => {
-  translateBuiltInValue("get RegExp.prototype.flags", site, context);
-  return bind(
-    path,
-    "flags",
-    useJavaScript("RegExpFlagsValue", [getHeap(path.scope, site, context), receiver], context),
-    context,
-    (read, flags) => toText(site, flags, read, context, frame, continueWith),
-  );
+  const flagsGetter = translateBuiltInValue("get RegExp.prototype.flags", site, context);
+  const convert = (after: Path, flags?: Expression) =>
+    toText(site, flags ?? string(""), after, context, frame, continueWith);
+  return getOwnValueGetters(site, context).length === 0
+    ? bind(
+        path,
+        "flags",
+        useJavaScript("RegExpFlagsValue", [getHeap(path.scope, site, context), receiver], context),
+        context,
+        convert,
+      )
+    : joinProtocol(site, path, context, convert, (next) =>
+        ifThenElse(
+          useJavaScript(
+            "SameValue",
+            [
+              useJavaScript(
+                "GetterOf",
+                [getHeap(path.scope, site, context), receiver, string("flags")],
+                context,
+              ),
+              flagsGetter,
+            ],
+            context,
+          ),
+          readFlags(site, receiver, path, context, frame, next),
+          read(site, receiver, "flags", path, context, frame, next),
+        ),
+      );
 };
 
 const hasFlag = (flags: Expression, flag: string, context: Context) =>
@@ -417,43 +481,36 @@ const execAll = (
           ifThenElse(
             apply("=", [result, identifier("Null")]),
             end(ran, gathered),
-            bind(
-              ran,
-              "matched",
-              getKey(site, result, string("0"), ran, context),
-              context,
-              (got, matched) =>
-                toText(site, matched, got, context, inner, (converted, matchText) => {
-                  const added = apply("Append", [gathered, gather(result, matchText)]);
-                  return ifThenElse(
-                    apply("=", [matchText, string("")]),
-                    bind(
-                      converted,
-                      "lastIndex",
-                      useJavaScript(
-                        "ToLength",
-                        [getKey(site, receiver, string("lastIndex"), converted, context)],
-                        context,
-                      ),
-                      context,
-                      (indexed, lastIndex) =>
-                        setLastIndex(
-                          site,
-                          receiver,
-                          useJavaScript(
-                            "AdvanceStringIndex",
-                            [text, lastIndex, isFullUnicode],
-                            context,
-                          ),
-                          indexed,
+            read(site, result, "0", ran, context, inner, (got, matched) =>
+              toText(site, matched, got, context, inner, (converted, matchText) => {
+                const added = apply("Append", [gathered, gather(result, matchText)]);
+                return ifThenElse(
+                  apply("=", [matchText, string("")]),
+                  readLength(
+                    site,
+                    receiver,
+                    "lastIndex",
+                    converted,
+                    context,
+                    inner,
+                    (indexed, lastIndex) =>
+                      setLastIndex(
+                        site,
+                        receiver,
+                        useJavaScript(
+                          "AdvanceStringIndex",
+                          [text, lastIndex, isFullUnicode],
                           context,
-                          inner,
-                          (advanced) => again(advanced, added),
                         ),
-                    ),
-                    again(converted, added),
-                  );
-                }),
+                        indexed,
+                        context,
+                        inner,
+                        (advanced) => again(advanced, added),
+                      ),
+                  ),
+                  again(converted, added),
+                );
+              }),
             ),
           ),
         ),
@@ -461,6 +518,22 @@ const execAll = (
     ),
   );
 };
+
+// ToLength(Get(O, P)), where ToNumber converts an object first.
+const readLength = (
+  site: ts.Node,
+  object: Expression,
+  key: string,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path, length: Expression) => Formula,
+) =>
+  read(site, object, key, path, context, frame, (got, value) =>
+    toNumberPrimitive(site, value, got, context, frame, (converted, primitive) =>
+      bind(converted, key, useJavaScript("ToLength", [primitive], context), context, continueWith),
+    ),
+  );
 
 // RegExp.prototype[@@match](string): RegExpExec's result where the flags have no g, and else the
 // array of the text of each match, or null.
@@ -474,10 +547,10 @@ const match = (
   frame: Frame,
   continueWith: (path: Path, value: Expression) => Formula,
 ) =>
-  getFlags(site, receiver, path, context, frame, (read, flags) =>
+  getFlags(site, receiver, path, context, frame, (flagged, flags) =>
     joinProtocol(
       site,
-      read,
+      flagged,
       context,
       (after, value) => continueWith(after, value ?? getUndefined(context)),
       (next) =>
@@ -488,7 +561,7 @@ const match = (
             receiver,
             text,
             flags,
-            read,
+            flagged,
             context,
             frame,
             (_result, matchText) => matchText,
@@ -520,7 +593,7 @@ const match = (
                 ),
               ),
           ),
-          regExpExec(site, receiver, text, read, context, frame, next),
+          regExpExec(site, receiver, text, flagged, context, frame, next),
         ),
     ),
   );
@@ -543,66 +616,44 @@ const speciesConstructor = (
   continueWith: (path: Path, constructor: Expression) => Formula,
 ) => {
   const regExp = translateBuiltInValue("RegExp", site, context);
-  return bind(
-    path,
-    "constructor",
-    useJavaScript(
-      "Get",
-      [getHeap(path.scope, site, context), receiver, string("constructor")],
+  return read(site, receiver, "constructor", path, context, frame, (found, constructor) =>
+    joinProtocol(
+      site,
+      found,
       context,
-    ),
-    context,
-    (read, constructor) =>
-      joinProtocol(
-        site,
-        read,
-        context,
-        (after, species) => continueWith(after, species ?? regExp),
-        (next) =>
+      (after, species) => continueWith(after, species ?? regExp),
+      (next) =>
+        ifThenElse(
+          apply("=", [constructor, getUndefined(context)]),
+          next(found, regExp),
           ifThenElse(
-            apply("=", [constructor, getUndefined(context)]),
-            next(read, regExp),
-            ifThenElse(
-              useJavaScript(
-                "IsObjectIn",
-                [getHeap(read.scope, site, context), constructor],
-                context,
-              ),
-              bind(
-                read,
-                "species",
-                useJavaScript(
-                  "Get",
-                  [
-                    getHeap(read.scope, site, context),
-                    constructor,
-                    useJavaScript("WellKnownSymbol", [string("species")], context),
-                  ],
-                  context,
-                ),
-                context,
-                (got, species) =>
-                  ifThenElse(
-                    apply("\\/", [
-                      apply("=", [species, getUndefined(context)]),
-                      apply("=", [species, identifier("Null")]),
-                    ]),
-                    next(got, regExp),
-                    ifThenElse(
-                      useJavaScript(
-                        "IsConstructor",
-                        [getHeap(got.scope, site, context), species],
-                        context,
-                      ),
-                      next(got, species),
-                      throwTypeError(got, site, context, frame),
-                    ),
-                  ),
-              ),
-              throwTypeError(read, site, context, frame),
+            useJavaScript(
+              "IsObjectIn",
+              [getHeap(found.scope, site, context), constructor],
+              context,
             ),
+            read(site, constructor, "@@species", found, context, frame, (got, species) =>
+              ifThenElse(
+                apply("\\/", [
+                  apply("=", [species, getUndefined(context)]),
+                  apply("=", [species, identifier("Null")]),
+                ]),
+                next(got, regExp),
+                ifThenElse(
+                  useJavaScript(
+                    "IsConstructor",
+                    [getHeap(got.scope, site, context), species],
+                    context,
+                  ),
+                  next(got, species),
+                  throwTypeError(got, site, context, frame),
+                ),
+              ),
+            ),
+            throwTypeError(found, site, context, frame),
           ),
-      ),
+        ),
+    ),
   );
 };
 
@@ -699,6 +750,60 @@ const construct = (
     },
   );
 
+// The pieces once @@split adds the captures of a match after its own: each element of exec's result
+// past the first, as many as its length tells, up to the count, which it reads in order through Get
+// where the script writes getters.
+const splitCaptures = (
+  site: ts.Node,
+  result: Expression,
+  pieces: Expression,
+  count: Expression,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path, pieces: Expression) => Formula,
+) =>
+  getOwnValueGetters(site, context).length === 0
+    ? bind(
+        path,
+        "captured",
+        useJavaScript(
+          "RegExpSplitCaptures",
+          [getHeap(path.scope, site, context), result, pieces, count],
+          context,
+        ),
+        context,
+        continueWith,
+      )
+    : readLength(site, result, "length", path, context, frame, (measured, length) =>
+        bind(
+          measured,
+          "captures",
+          useJavaScript("RegExpSplitTaken", [length, pieces, count], context),
+          context,
+          (counted, taken) =>
+            gatherEach(
+              site,
+              taken,
+              counted,
+              context,
+              frame,
+              (current, at, inner, next) =>
+                readWith(
+                  site,
+                  result,
+                  useJavaScript("StringOf", [at], context),
+                  getOwnValueGetters(site, context),
+                  current,
+                  context,
+                  inner,
+                  next,
+                ),
+              (after, captured) => continueWith(after, apply("\\o", [pieces, captured])),
+            ),
+        ),
+      );
+
 // RegExp.prototype[@@split](string, limit): it constructs a sticky splitter through the species
 // constructor, and from each index execs it there, cutting the text where a match ends past the
 // last cut and adding the match's captures, up to the limit's count of pieces.
@@ -719,7 +824,7 @@ const split = (
     (after, value) => continueWith(after, value ?? getUndefined(context)),
     (next) =>
       speciesConstructor(site, receiver, path, context, frame, (found, constructor) =>
-        getFlags(site, receiver, found, context, frame, (read, flags) => {
+        getFlags(site, receiver, found, context, frame, (flagged, flags) => {
           const isUnicode = apply("\\/", [
             hasFlag(flags, "u", context),
             hasFlag(flags, "v", context),
@@ -734,7 +839,7 @@ const split = (
             constructor,
             receiver,
             sticky,
-            read,
+            flagged,
             context,
             frame,
             (made, splitter) => {
@@ -796,25 +901,13 @@ const split = (
                                 ifThenElse(
                                   apply("=", [result, identifier("Null")]),
                                   advance(ran),
-                                  bind(
-                                    ran,
+                                  readLength(
+                                    site,
+                                    splitter,
                                     "lastIndex",
-                                    useJavaScript(
-                                      "ToLength",
-                                      [
-                                        useJavaScript(
-                                          "Get",
-                                          [
-                                            getHeap(ran.scope, site, context),
-                                            splitter,
-                                            string("lastIndex"),
-                                          ],
-                                          context,
-                                        ),
-                                      ],
-                                      context,
-                                    ),
+                                    ran,
                                     context,
+                                    inner,
                                     (indexed, lastIndex) =>
                                       bind(
                                         indexed,
@@ -845,20 +938,14 @@ const split = (
                                                 ifThenElse(
                                                   apply("=", [apply("Len", [cut]), count]),
                                                   end(cutting, cut),
-                                                  bind(
+                                                  splitCaptures(
+                                                    site,
+                                                    result,
+                                                    cut,
+                                                    count,
                                                     cutting,
-                                                    "captured",
-                                                    useJavaScript(
-                                                      "RegExpSplitCaptures",
-                                                      [
-                                                        getHeap(cutting.scope, site, context),
-                                                        result,
-                                                        cut,
-                                                        count,
-                                                      ],
-                                                      context,
-                                                    ),
                                                     context,
+                                                    inner,
                                                     (capturing, captured) =>
                                                       ifThenElse(
                                                         apply("=", [
@@ -983,78 +1070,50 @@ const readResult = (
     captures: Expression,
   ) => Formula,
 ) =>
-  toNumberPrimitive(
-    site,
-    getKey(site, result, string("length"), path, context),
-    path,
-    context,
-    frame,
-    (measured, length) =>
-      bind(
-        measured,
-        "length",
-        useJavaScript("ToLength", [length], context),
-        context,
-        (counted, resultLength) =>
-          toText(
-            site,
-            getKey(site, result, string("0"), counted, context),
-            counted,
-            context,
-            frame,
-            (converted, matched) =>
-              toNumberPrimitive(
-                site,
-                getKey(site, result, string("index"), converted, context),
-                converted,
-                context,
-                frame,
-                (indexed, indexValue) =>
-                  bind(
-                    indexed,
-                    "position",
-                    useJavaScript(
-                      "RegExpReplacePosition",
-                      [indexValue, apply("Len", [text])],
-                      context,
-                    ),
-                    context,
-                    (placed, position) =>
-                      gatherEach(
-                        site,
-                        ifExpression(
-                          apply(">", [resultLength, number(1)]),
-                          apply("-", [resultLength, number(1)]),
-                          number(0),
-                        ),
-                        placed,
-                        context,
-                        frame,
-                        (current, at, inner, next) =>
-                          bind(
-                            current,
-                            "capture",
-                            getKey(
-                              site,
-                              result,
-                              useJavaScript("StringOf", [at], context),
-                              current,
-                              context,
-                            ),
-                            context,
-                            (read, capture) =>
-                              ifThenElse(
-                                apply("=", [capture, getUndefined(context)]),
-                                next(read, capture),
-                                toText(site, capture, read, context, inner, next),
-                              ),
-                          ),
-                        (captured, captures) => continueWith(captured, matched, position, captures),
-                      ),
+  readLength(site, result, "length", path, context, frame, (counted, resultLength) =>
+    read(site, result, "0", counted, context, frame, (gotMatch, matchValue) =>
+      toText(site, matchValue, gotMatch, context, frame, (converted, matched) =>
+        read(site, result, "index", converted, context, frame, (gotIndex, indexRead) =>
+          toNumberPrimitive(site, indexRead, gotIndex, context, frame, (indexed, indexValue) =>
+            bind(
+              indexed,
+              "position",
+              useJavaScript("RegExpReplacePosition", [indexValue, apply("Len", [text])], context),
+              context,
+              (placed, position) =>
+                gatherEach(
+                  site,
+                  ifExpression(
+                    apply(">", [resultLength, number(1)]),
+                    apply("-", [resultLength, number(1)]),
+                    number(0),
                   ),
-              ),
+                  placed,
+                  context,
+                  frame,
+                  (current, at, inner, next) =>
+                    readWith(
+                      site,
+                      result,
+                      useJavaScript("StringOf", [at], context),
+                      getOwnValueGetters(site, context),
+                      current,
+                      context,
+                      inner,
+                      (found, capture) =>
+                        ifThenElse(
+                          apply("=", [capture, getUndefined(context)]),
+                          next(found, capture),
+                          toText(site, capture, found, context, inner, next),
+                        ),
+                    ),
+                  (captured, captures) => continueWith(captured, matched, position, captures),
+                ),
+            ),
           ),
+        ),
       ),
+    ),
   );
 
 // GetSubstitution of a template, where the groups aren't undefined: ToObject throws a TypeError on
@@ -1083,16 +1142,19 @@ const substitute = (
         context,
         frame,
         (current, at, inner, next) =>
-          bind(
+          readWith(
+            site,
+            groups,
+            index(names, [at]),
+            getOwnValueGetters(site, context),
             current,
-            "group",
-            getKey(site, groups, index(names, [at]), current, context),
             context,
-            (read, group) =>
+            inner,
+            (found, group) =>
               ifThenElse(
                 apply("=", [group, getUndefined(context)]),
-                next(read, string("")),
-                toText(site, group, read, context, inner, next),
+                next(found, string("")),
+                toText(site, group, found, context, inner, next),
               ),
           ),
         (after, named) => continueWith(after, substituted(named)),
@@ -1119,55 +1181,49 @@ const replaceResult = (
     replacement: Expression,
   ) => Formula,
 ) =>
-  readResult(site, result, text, path, context, frame, (read, matched, position, captures) =>
-    bind(
-      read,
-      "groups",
-      getKey(site, result, string("groups"), read, context),
-      context,
-      (grouped, groups) => {
-        const done = (after: Path, replacement: Expression) =>
-          continueWith(after, position, matched, replacement);
-        return ifThenElse(
-          apply("=", [
-            useJavaScript("TypeOfIn", [getHeap(grouped.scope, site, context), replacer], context),
-            string("function"),
-          ]),
-          callValue(
-            site,
-            getReplaceFunctions(site, context),
-            replacer,
-            getUndefined(context),
-            concatenate(
-              tuple([matched]),
-              captures,
-              tuple([position, text]),
-              ifExpression(apply("=", [groups, getUndefined(context)]), tuple([]), tuple([groups])),
+  readResult(site, result, text, path, context, frame, (found, matched, position, captures) =>
+    read(site, result, "groups", found, context, frame, (grouped, groups) => {
+      const done = (after: Path, replacement: Expression) =>
+        continueWith(after, position, matched, replacement);
+      return ifThenElse(
+        apply("=", [
+          useJavaScript("TypeOfIn", [getHeap(grouped.scope, site, context), replacer], context),
+          string("function"),
+        ]),
+        callValue(
+          site,
+          getReplaceFunctions(site, context),
+          replacer,
+          getUndefined(context),
+          concatenate(
+            tuple([matched]),
+            captures,
+            tuple([position, text]),
+            ifExpression(apply("=", [groups, getUndefined(context)]), tuple([]), tuple([groups])),
+          ),
+          grouped,
+          context,
+          frame,
+          () => stop("tla-ts can't tell which function this call runs"),
+          (called, value) => toText(site, value, called, context, frame, done),
+        ),
+        substitute(
+          site,
+          replacer,
+          groups,
+          (named) =>
+            useJavaScript(
+              "GetSubstitution",
+              [replacer, matched, text, position, captures, named],
+              context,
             ),
-            grouped,
-            context,
-            frame,
-            () => stop("tla-ts can't tell which function this call runs"),
-            (called, value) => toText(site, value, called, context, frame, done),
-          ),
-          substitute(
-            site,
-            replacer,
-            groups,
-            (named) =>
-              useJavaScript(
-                "GetSubstitution",
-                [replacer, matched, text, position, captures, named],
-                context,
-              ),
-            grouped,
-            context,
-            frame,
-            done,
-          ),
-        );
-      },
-    ),
+          grouped,
+          context,
+          frame,
+          done,
+        ),
+      );
+    }),
   );
 
 // RegExp.prototype[@@replace](string, replaceValue): ToString converts a replaceValue that isn't a
@@ -1246,17 +1302,27 @@ const replace = (
     path,
     context,
     (converted, replacer) =>
-      getFlags(site, receiver, converted, context, frame, (read, flags) =>
+      getFlags(site, receiver, converted, context, frame, (flagged, flags) =>
         joinProtocol(
           site,
-          read,
+          flagged,
           context,
           (found, results) => replaceAll(found, results ?? tuple([]), replacer ?? replaceValue),
           (next) =>
             ifThenElse(
               hasFlag(flags, "g", context),
-              execAll(site, receiver, text, flags, read, context, frame, (result) => result, next),
-              regExpExec(site, receiver, text, read, context, frame, (ran, result) =>
+              execAll(
+                site,
+                receiver,
+                text,
+                flags,
+                flagged,
+                context,
+                frame,
+                (result) => result,
+                next,
+              ),
+              regExpExec(site, receiver, text, flagged, context, frame, (ran, result) =>
                 next(
                   ran,
                   ifExpression(
