@@ -357,16 +357,26 @@ const openWith =
         ifThenElse(
           isNullish(method, context),
           missingWith(found, throwWith),
-          callMethod(site, key, method, held, found, context, frame, throwWith, (made, result) =>
-            bind(made, "iterator", result, context, (bound, iterator) =>
-              ifThenElse(
-                isObject(site, bound, iterator, context),
-                read(site, iterator, "next", bound, context, frame, (after, next) =>
-                  continueWith(after, iterator, next),
+          callMethod(
+            site,
+            key,
+            method,
+            held,
+            [],
+            found,
+            context,
+            frame,
+            throwWith,
+            (made, result) =>
+              bind(made, "iterator", result, context, (bound, iterator) =>
+                ifThenElse(
+                  isObject(site, bound, iterator, context),
+                  read(site, iterator, "next", bound, context, frame, (after, next) =>
+                    continueWith(after, iterator, next),
+                  ),
+                  throwWith(bound),
                 ),
-                throwWith(bound),
               ),
-            ),
           ),
         ),
       ),
@@ -386,11 +396,14 @@ export const openAsyncIterator = openWith(ASYNC_ITERATOR_KEY, () =>
   ),
 );
 
-// Calls an iterator's next, and goes on with the result where the iterator isn't done.
+// Calls an iterator's next, or the return or throw that a yield* passes on, and goes on with the
+// result where the iterator isn't done.
 export const stepIterator = (
   site: ts.Node,
   iterator: Expression,
-  next: Expression,
+  key: string,
+  method: Expression,
+  values: Expression[],
   path: Path,
   context: Context,
   frame: Frame,
@@ -398,20 +411,30 @@ export const stepIterator = (
   doneWith: (path: Path, result: Expression) => Formula,
   continueWith: (path: Path, result: Expression) => Formula,
 ) =>
-  callMethod(site, "next", next, iterator, path, context, frame, throwWith, (called, result) =>
-    bind(called, "result", result, context, (bound, held) =>
-      ifThenElse(
-        isObject(site, bound, held, context),
-        read(site, held, "done", bound, context, frame, (checked, done) =>
-          ifThenElse(
-            useJavaScript("ToBoolean", [done], context),
-            doneWith(checked, held),
-            continueWith(checked, held),
+  callMethod(
+    site,
+    key,
+    method,
+    iterator,
+    values,
+    path,
+    context,
+    frame,
+    throwWith,
+    (called, result) =>
+      bind(called, "result", result, context, (bound, held) =>
+        ifThenElse(
+          isObject(site, bound, held, context),
+          read(site, held, "done", bound, context, frame, (checked, done) =>
+            ifThenElse(
+              useJavaScript("ToBoolean", [done], context),
+              doneWith(checked, held),
+              continueWith(checked, held),
+            ),
           ),
+          throwWith(bound),
         ),
-        throwWith(bound),
       ),
-    ),
   );
 
 // Reads the value of an iterator's result.
@@ -443,6 +466,7 @@ export const closeIterator = (
         "return",
         method,
         iterator,
+        [],
         found,
         context,
         frame,
@@ -468,8 +492,17 @@ const closeQuietly = (
     ifThenElse(
       isNullish(method, context),
       continueWith(found),
-      callMethod(site, "return", method, iterator, found, context, quiet, continueWith, (after) =>
-        continueWith(after),
+      callMethod(
+        site,
+        "return",
+        method,
+        iterator,
+        [],
+        found,
+        context,
+        quiet,
+        continueWith,
+        (after) => continueWith(after),
       ),
     ),
   );
@@ -534,7 +567,9 @@ const takeAll = (
     return stepIterator(
       pattern,
       iterator,
+      "next",
       next,
+      [],
       current,
       context,
       frame,
@@ -624,7 +659,9 @@ export const takeSpreads = (
                         : stepIterator(
                             site,
                             iterator,
+                            "next",
                             next,
+                            [],
                             stepping,
                             context,
                             frame,

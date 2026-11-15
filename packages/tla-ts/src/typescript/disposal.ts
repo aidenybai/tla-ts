@@ -407,6 +407,7 @@ export const translateIteratorDisposeCall = (
               "return",
               method,
               receiver,
+              [],
               got,
               context,
               bodyFrame,

@@ -26380,6 +26380,139 @@ describe("errors", () => {
     });
   });
 
+  describe("passes a return or a throw through a yield* to the iterator", () => {
+    const cases = [
+      {
+        name: "a throw, until the iterator is done",
+        getSource: (expected: string) => `
+        interface Delegated {
+          [Symbol.iterator](): Delegated;
+          next(): IteratorResult<number>;
+          throw?(value: number): IteratorResult<number>;
+        }
+        let log = "";
+        const thrower: Delegated = {
+          [Symbol.iterator]() {
+            return this;
+          },
+          next() {
+            return { value: 0, done: false };
+          },
+          throw(value: number) {
+            log += "t" + value;
+            return { value: 1, done: value === 2 };
+          },
+        };
+        function* g(): Generator<number> {
+          try {
+            yield* thrower;
+            log += "<>";
+          } finally {
+            log += "f";
+          }
+        }
+        const first = g();
+        first.next();
+        const thrown = first.throw(1);
+        const settled = first.throw(2);
+        log += String(thrown.value) + settled.done;
+        if (log !== "${expected}") throw new Error(log);
+      `,
+        expected: "t1t2<>f1true",
+        wrong: "t1t2f1true",
+      },
+      {
+        name: "a return, until the iterator is done",
+        getSource: (expected: string) => `
+        interface Delegated {
+          [Symbol.iterator](): Delegated;
+          next(): IteratorResult<number>;
+          return?(value?: number): IteratorResult<number>;
+        }
+        let log = "";
+        const returner: Delegated = {
+          [Symbol.iterator]() {
+            return this;
+          },
+          next() {
+            return { value: 0, done: false };
+          },
+          return(value?: number) {
+            log += "r" + value;
+            return { value: 5, done: value === 2 };
+          },
+        };
+        function* g(): Generator<number, number> {
+          try {
+            yield* returner;
+          } finally {
+            log += "f";
+          }
+          return 9;
+        }
+        const first = g();
+        first.next();
+        const returned = first.return(1);
+        const closed = first.return(2);
+        log += String(returned.value) + returned.done + closed.value + closed.done;
+        if (log !== "${expected}") throw new Error(log);
+      `,
+        expected: "r1r2f5false5true",
+        wrong: "r1r2f5false9true",
+      },
+      {
+        name: "a throw to an iterator without throw, which closes it",
+        getSource: (expected: string) => `
+        interface Delegated {
+          [Symbol.iterator](): Delegated;
+          next(): IteratorResult<number>;
+          return?(value?: number): IteratorResult<number>;
+        }
+        let log = "";
+        const returner: Delegated = {
+          [Symbol.iterator]() {
+            return this;
+          },
+          next() {
+            return { value: 0, done: false };
+          },
+          return(value?: number) {
+            log += "r" + value;
+            return { value: 5, done: value === 2 };
+          },
+        };
+        function* g(): Generator<number, number> {
+          try {
+            yield* returner;
+          } finally {
+            log += "f";
+          }
+          return 9;
+        }
+        const second = g();
+        second.next();
+        try {
+          second.throw(3);
+        } catch (error) {
+          log += error instanceof TypeError ? "E" : "x";
+        }
+        if (log !== "${expected}") throw new Error(log);
+      `,
+        expected: "rundefinedfE",
+        wrong: "rundefinedfx",
+      },
+    ];
+    for (const entry of cases) {
+      it(`matches Node on ${entry.name}`, async () => {
+        expect((await checkModel(entry.getSource(entry.expected))).failure).toBeUndefined();
+      });
+      it(`fails a wrong log on ${entry.name}`, async () => {
+        const result = await checkModel(entry.getSource(entry.wrong));
+        expect(result.failure?.message).toContain(entry.expected);
+      });
+    }
+  });
+
   it("runs Array.fromAsync of the values() of an array written in place", async () => {
     // V8 rejects a job later than the spec, whose order a for await gives.
     const result = await checkModel(`

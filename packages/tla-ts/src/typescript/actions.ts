@@ -560,8 +560,9 @@ interface YieldMode {
   isGuarded: boolean;
   // A generator's yield* passes on the result object of the iterator it delegates to.
   isResult?: boolean;
-  // What a return at a plain yield does: the exit of the yield's frame.
-  returnRest?: (path: Path, value: Expression | undefined) => Formula;
+  // What a return or a throw does at a yield of a sync generator, from the path of the call that
+  // resumes it.
+  abortRest?: Suspension["abort"];
 }
 
 // A frame whose yields a return or a throw can't complete.
@@ -3882,6 +3883,7 @@ export const translateCallStatement = (
               "return",
               method,
               receiver,
+              [],
               found,
               context,
               closing,
@@ -5609,18 +5611,15 @@ export const makeGenerator = (
       },
       // An async generator's yield awaits its value.
       yieldTo: (current, value, rest, throwRest, mode) => {
-        const returnRest = isAsync ? undefined : mode?.returnRest;
+        const abortRest = isAsync ? undefined : mode?.abortRest;
         const step = (resumed: Path, settled: Expression | undefined) =>
           getCaller(resumed).step(
             leave(
               resumed,
               (resumer) => rest(enter(resumer, resumed)),
               mode?.isGuarded,
-              returnRest &&
-                ((resumer, method, abrupt) =>
-                  method === "throw"
-                    ? throwRest(enter(resumer, resumed), abrupt ?? getUndefined(context))
-                    : returnRest(enter(resumer, resumed), abrupt)),
+              abortRest &&
+                ((resumer, method, abrupt) => abortRest(enter(resumer, resumed), method, abrupt)),
             ),
             settled,
             false,
@@ -9506,8 +9505,8 @@ const delegateToAsyncGenerator = (
 };
 
 // A generator's yield* over an object's iterator, which passes on each of the iterator's results
-// until one is done. A return or a throw while it delegates would call the iterator's return or
-// throw, which tla-ts doesn't follow.
+// until one is done. A return or a throw while it delegates calls the iterator's return or throw,
+// and the generator returns or throws where the iterator lacks it.
 const delegateToIterator = (
   node: ts.YieldExpression,
   iterated: ts.Expression,
@@ -9522,40 +9521,76 @@ const delegateToIterator = (
   const throwWith = (current: Path, value: Expression) =>
     throwTo === undefined ? leaf(uncaught) : throwTo(current, { value, uncaught });
   const failWith = (failed: Path) => throwTypeError(failed, node, context, frame);
-  const delegate = (
-    current: Path,
-    iterator: Expression,
-    next: Expression,
-    count: number,
-  ): Formula =>
-    count > DELEGATION_LIMIT
-      ? leaf(
-          apply("Assert", [
-            boolean(false),
-            string(`tla-ts can't follow more than ${DELEGATION_LIMIT} values of a yield*`),
-          ]),
-        )
-      : stepIterator(
-          node,
-          iterator,
-          next,
-          current,
-          context,
-          frame,
-          failWith,
-          (done, result) =>
-            readValue(node, result, done, context, frame, (read, value) =>
-              ifThenElse(apply("=", [value, value]), continueWith(read), leaf(boolean(false))),
-            ),
-          (stepped, result) =>
-            yieldTo(
-              stepped,
-              result,
-              (resumed) => delegate(resumed, iterator, next, count + 1),
-              throwWith,
-              { isDelegated: true, isGuarded: true, isResult: true },
-            ),
-        );
+  // Calls the iterator's next, or the return or throw that resumed the generator, and yields the
+  // result until it's done.
+  const delegate = (iterator: Expression, next: Expression) => {
+    const step = (
+      current: Path,
+      key: string,
+      method: Expression,
+      values: Expression[],
+      count: number,
+    ): Formula =>
+      count > DELEGATION_LIMIT
+        ? leaf(
+            apply("Assert", [
+              boolean(false),
+              string(`tla-ts can't follow more than ${DELEGATION_LIMIT} values of a yield*`),
+            ]),
+          )
+        : stepIterator(
+            node,
+            iterator,
+            key,
+            method,
+            values,
+            current,
+            context,
+            frame,
+            failWith,
+            (done, result) =>
+              readValue(node, result, done, context, frame, (read, value) =>
+                key === "return"
+                  ? frame.exit(read, value)
+                  : ifThenElse(
+                      apply("=", [value, value]),
+                      continueWith(read),
+                      leaf(boolean(false)),
+                    ),
+              ),
+            (stepped, result) =>
+              yieldTo(
+                stepped,
+                result,
+                (resumed) => step(resumed, "next", next, [], count + 1),
+                throwWith,
+                {
+                  isDelegated: true,
+                  isGuarded: true,
+                  isResult: true,
+                  abortRest: (aborted, abrupt, value) =>
+                    read(node, iterator, abrupt, aborted, context, frame, (found, called) =>
+                      ifThenElse(
+                        isNullish(called, context),
+                        abrupt === "return"
+                          ? frame.exit(found, value)
+                          : closeIterator(
+                              node,
+                              iterator,
+                              found,
+                              context,
+                              frame,
+                              failWith,
+                              failWith,
+                            ),
+                        step(found, abrupt, called, [value ?? getUndefined(context)], count + 1),
+                      ),
+                    ),
+                },
+              ),
+          );
+    return step;
+  };
   return allocate(iterated, path, context, (inner) =>
     openIterator(
       node,
@@ -9564,7 +9599,7 @@ const delegateToIterator = (
       context,
       frame,
       failWith,
-      (opened, iterator, next) => delegate(opened, iterator, next, 0),
+      (opened, iterator, next) => delegate(iterator, next)(opened, "next", next, [], 0),
     ),
   );
 };
@@ -9606,6 +9641,7 @@ const delegateToAsyncIterator = (
           "next",
           next,
           iterator,
+          [],
           current,
           context,
           frame,
@@ -10053,15 +10089,17 @@ const translateExpressionStatement = (
     const yieldTo = frame.yieldTo;
     const throwTo = frame.throwTo;
     const uncaught = apply("Assert", [boolean(false), string(expression.getText())]);
+    const throwWith = (current: Path, thrown: Expression) =>
+      throwTo === undefined ? leaf(uncaught) : throwTo(current, { value: thrown, uncaught });
     const yieldWith = (current: Path, value: Expression | undefined) =>
-      yieldTo(
-        current,
-        value,
-        continueWith,
-        (rejected, thrown) =>
-          throwTo === undefined ? leaf(uncaught) : throwTo(rejected, { value: thrown, uncaught }),
-        { isDelegated: false, isGuarded: false, returnRest: frame.exit },
-      );
+      yieldTo(current, value, continueWith, throwWith, {
+        isDelegated: false,
+        isGuarded: false,
+        abortRest: (aborted, method, abrupt) =>
+          method === "throw"
+            ? throwWith(aborted, abrupt ?? getUndefined(context))
+            : frame.exit(aborted, abrupt),
+      });
     // A yield of an increment yields what it gives.
     if (
       called !== undefined &&
@@ -11250,7 +11288,9 @@ const translateNewBufferStatement = (
           : stepIterator(
               node,
               iterator,
+              "next",
               next,
+              [],
               current,
               context,
               frame,
@@ -13774,7 +13814,9 @@ const translateIterations = (
     return stepIterator(
       site,
       opened.iterator,
+      "next",
       opened.next,
+      [],
       path,
       context,
       bodyFrame,
