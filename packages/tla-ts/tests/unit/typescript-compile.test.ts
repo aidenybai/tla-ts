@@ -26811,6 +26811,211 @@ ${call}
     expect(result.failure).toBeUndefined();
   });
 
+  describe("combine the elements of a script's capability through its functions", () => {
+    const getSource = (expected: string) => `
+      let log = "";
+      const describe = (reason: unknown) =>
+        reason instanceof TypeError
+          ? "TypeError"
+          : reason instanceof AggregateError
+            ? "Aggregate" + reason.errors.join(",")
+            : String(reason);
+      function Settled(executor: (resolve: (value: { status: string; value?: unknown; reason?: unknown }[]) => void, reject: (reason: unknown) => void) => void) {
+        executor(
+          function (values) {
+            log += "settled:" + values.map((each) => each.status + "=" + (each.status === "fulfilled" ? each.value : each.reason)).join(",") + ";";
+          },
+          function (reason) {
+            log += "reject:" + describe(reason) + ";";
+          },
+        );
+      }
+      Settled.resolve = function (value: unknown) {
+        return value;
+      };
+      function C(executor: (resolve: (value: unknown) => void, reject: (reason: unknown) => void) => void) {
+        executor(
+          function (value) {
+            log += "resolve:" + value + ";";
+          },
+          function (reason) {
+            log += "reject:" + describe(reason) + ";";
+          },
+        );
+      }
+      C.resolve = function (value: unknown) {
+        return value;
+      };
+      const fulfills = {
+        then(onFulfilled: (value: unknown) => void) {
+          onFulfilled(1);
+        },
+      };
+      const rejects = {
+        then(_: unknown, onRejected: (reason: unknown) => void) {
+          onRejected(2);
+          onRejected(3);
+        },
+      };
+      const throws = {
+        then() {
+          throw "thrown";
+        },
+      };
+      Promise.allSettled.call(Settled, [fulfills, rejects]);
+      Promise.any.call(C, [rejects, rejects]);
+      Promise.race.call(C, [rejects, fulfills]);
+      Promise.all.call(C, [throws]);
+      Promise.all.call(C, [null]);
+      log += "end;";
+      if (log !== "${expected}") throw new Error(log);
+    `;
+
+    it("gives Node's answer", async () => {
+      expect(
+        (
+          await checkModel(
+            getSource(
+              "settled:fulfilled=1,rejected=2;reject:Aggregate2,2;reject:2;reject:3;resolve:1;reject:thrown;reject:TypeError;end;",
+            ),
+          )
+        ).failure,
+      ).toBeUndefined();
+    });
+
+    it("doesn't settle another way", async () => {
+      expect(
+        (
+          await checkModel(
+            getSource(
+              "settled:fulfilled=1,rejected=2;reject:Aggregate2,2;reject:2;reject:3;resolve:1;reject:thrown;reject:TypeError;endX;",
+            ),
+          )
+        ).failure,
+      ).toBeDefined();
+    });
+  });
+
+  describe("call the functions that a combinator of a script's capability passes a then later", () => {
+    const getSource = (expected: string) => `
+      let log = "";
+      function C(executor: (resolve: (value: unknown[]) => void, reject: (reason: unknown) => void) => void) {
+        executor(
+          function (values) {
+            log += "resolve:" + values.join("|") + ";";
+            throw "fromResolve";
+          },
+          function (reason) {
+            log += "reject:" + reason + ";";
+          },
+        );
+      }
+      C.resolve = function (value: unknown) {
+        return value;
+      };
+      function Other(executor: (resolve: () => void, reject: () => void) => void) {
+        executor(function () {}, function () {});
+        return { made: true };
+      }
+      Other.resolve = function (value: unknown) {
+        return value;
+      };
+      let first;
+      let second;
+      const a = {
+        then(onFulfilled: unknown) {
+          first = onFulfilled;
+        },
+      };
+      const b = {
+        then(onFulfilled: unknown) {
+          second = onFulfilled;
+        },
+      };
+      const made = Promise.all.call(C, [a, b]);
+      log += (typeof made) + ";";
+      log += (first === second) + ";";
+      const x = first!("x");
+      log += x + ";";
+      const y = first!("y");
+      log += y + ";";
+      let caught = "";
+      try {
+        second!("z");
+      } catch (error) {
+        caught = "caught:" + error + ";";
+      }
+      log += caught;
+      const w = second!("w");
+      log += w + ";";
+      const other = Promise.race.call(Other, []) as unknown as { made: boolean };
+      log += other.made + ";";
+      if (log !== "${expected}") throw new Error(log);
+    `;
+
+    it("gives Node's answer", async () => {
+      expect(
+        (
+          await checkModel(
+            getSource(
+              "object;false;undefined;undefined;resolve:x|z;caught:fromResolve;undefined;true;",
+            ),
+          )
+        ).failure,
+      ).toBeUndefined();
+    });
+
+    it("doesn't give another", async () => {
+      expect(
+        (
+          await checkModel(
+            getSource(
+              "object;false;undefined;undefined;resolve:x|z;caught:fromResolve;undefined;trueX;",
+            ),
+          )
+        ).failure,
+      ).toBeDefined();
+    });
+  });
+
+  describe("call a capability's function that the constructor declares, which a race passes a then", () => {
+    const getSource = (expected: string) => `
+      let log = "";
+      let count = 0;
+      function Constructor(executor: (resolve: () => never, reject: (reason: unknown) => void) => void) {
+        function reject(reason: unknown) {
+          count += 1;
+          log += "reject:" + reason + ";";
+        }
+        executor(() => {
+          throw new Error();
+        }, reject);
+      }
+      Constructor.resolve = function (value: unknown) {
+        return value;
+      };
+      let rejecter;
+      const thenable = {
+        then(_: unknown, onRejected: unknown) {
+          rejecter = onRejected;
+        },
+      };
+      Promise.race.call(Constructor, [thenable]);
+      rejecter!(1);
+      rejecter!(2);
+      log += count + ";";
+      if (log !== "${expected}") throw new Error(log);
+    `;
+
+    it("gives Node's answer", async () => {
+      expect((await checkModel(getSource("reject:1;reject:2;2;"))).failure).toBeUndefined();
+    });
+
+    it("doesn't give another", async () => {
+      expect((await checkModel(getSource("reject:1;reject:2;2X;"))).failure).toBeDefined();
+    });
+  });
+
   it("rejects new AggregateError, whose first argument isn't a message", () => {
     expect(() => compile(`const error = new AggregateError([1], "message");`)).toThrow(
       "Unsupported constructor: new AggregateError",
