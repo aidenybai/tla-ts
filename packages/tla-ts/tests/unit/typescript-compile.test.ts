@@ -44596,4 +44596,34 @@ describe("BigInts", () => {
       ).toContain("index/value/text,1,RangeError");
     });
   });
+
+  describe("converts the objects that new DataView takes for its byteOffset and byteLength", () => {
+    const getSource = (expected: string) => `
+      const effects: string[] = [];
+      const buffer = new ArrayBuffer(8);
+      const offset = { toString() { effects.push("offset"); return "2"; } };
+      // @ts-ignore
+      const view = new DataView(buffer, offset, 3);
+      const moved = new ArrayBuffer(8);
+      let caught = "";
+      try {
+        // @ts-ignore
+        new DataView(moved, 4, { valueOf() { effects.push("long"); moved.transfer(); return 5; } });
+      } catch (error) {
+        caught = (error as Error).constructor.name;
+      }
+      const log = [effects.join("/"), view.byteOffset, view.byteLength, caught].join(",");
+      if (log !== "${expected}") throw new Error(log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("offset/long,2,3,RangeError"))).failure).toBeUndefined();
+    });
+
+    it("rejects the TypeError of a buffer that the length's conversion detaches", async () => {
+      expect((await checkModel(getSource("offset/long,2,3,TypeError"))).failure?.message).toContain(
+        "offset/long,2,3,RangeError",
+      );
+    });
+  });
 });

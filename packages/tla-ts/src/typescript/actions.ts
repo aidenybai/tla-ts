@@ -13146,14 +13146,23 @@ const translateIntlError = (node: ts.Expression, path: Path, context: Context, f
 const getBufferConstruction = (node: ts.Expression, context: Context) =>
   getNewBuffer(node, context) && getConstruction(node, context);
 
-// new of a typed array whose byteOffset or length may be an object, which it converts to a
-// primitive where it views a buffer, running the object's valueOf and toString.
-const isIndexConvertingNew = (node: ts.Node, context: Context) =>
-  ts.isExpression(node) &&
-  (getNewBuffer(node, context) ?? []).every((buffer) => TYPED_ARRAYS.has(buffer)) &&
-  (getBufferConstruction(node, context)?.arguments ?? [])
-    .slice(1, 3)
-    .some((value) => !isPrimitiveIndex(getCast(value), context));
+// new of a typed array, or of a DataView without another newTarget, whose byteOffset or length may
+// be an object, which it converts to a primitive where it views a buffer, running the object's
+// valueOf and toString.
+const isIndexConvertingNew = (node: ts.Node, context: Context) => {
+  if (!ts.isExpression(node)) return false;
+  const buffers = getNewBuffer(node, context) ?? [];
+  const construction = getBufferConstruction(node, context);
+  return (
+    (buffers.every((buffer) => TYPED_ARRAYS.has(buffer)) ||
+      (buffers.length === 1 &&
+        buffers[0] === "DataView" &&
+        construction?.newTarget === construction?.callee)) &&
+    (construction?.arguments ?? [])
+      .slice(1, 3)
+      .some((value) => !isPrimitiveIndex(getCast(value), context))
+  );
+};
 
 // A call of a Date's setter with an object, which it converts to a number, running the object's
 // valueOf and toString.
@@ -13196,6 +13205,17 @@ const translateNewBufferStatement = (
       const values = construction.arguments.map((value) =>
         translateExpression(value, allocated.scope, context),
       );
+      // Runs next where a construction's error is "", and throws it otherwise.
+      const throwUnless = (current: Path, error: Expression, next: Formula) =>
+        ifThenElse(
+          apply("=", [error, string("")]),
+          next,
+          ifThenElse(
+            apply("=", [error, string("RangeError")]),
+            throwError("RangeError", current, node, context, frame),
+            throwTypeError(current, node, context, frame),
+          ),
+        );
       const make = (
         current: Path,
         madeArguments: Expression[],
@@ -13229,8 +13249,9 @@ const translateNewBufferStatement = (
             context,
             "error",
           ),
-          ifThenElse(
-            apply("=", [error, string("")]),
+          throwUnless(
+            current,
+            error,
             bindOnce(
               current,
               madeName,
@@ -13244,16 +13265,12 @@ const translateNewBufferStatement = (
               ),
               finish(after, useJavaScript("Allocated", [made], context)),
             ),
-            ifThenElse(
-              apply("=", [error, string("RangeError")]),
-              throwError("RangeError", current, node, context, frame),
-              throwTypeError(current, node, context, frame),
-            ),
           ),
         );
       };
       // A typed array that views a buffer throws its byteOffset's RangeError before it converts
-      // its length.
+      // its length, and a DataView its buffer's TypeError where it's detached, and the RangeError
+      // of a byteOffset past its end.
       const isConverted = isIndexConvertingNew(node, context);
       const toIndex = (
         current: Path,
@@ -13284,25 +13301,53 @@ const translateNewBufferStatement = (
                 context,
               ),
               toIndex(current, madeArguments[1] ?? getUndefined(context), (offsetPath, offset) =>
-                ifThenElse(
-                  apply("=", [
-                    translateNewBufferOf(
-                      node,
-                      construction,
-                      getHeap(offsetPath.scope, node, context),
-                      tuple([madeArguments[0], offset]),
-                      offsetPath.scope,
-                      context,
-                      "offset error",
+                bind(
+                  offsetPath,
+                  "error",
+                  translateNewBufferOf(
+                    node,
+                    construction,
+                    getHeap(offsetPath.scope, node, context),
+                    tuple([madeArguments[0], offset]),
+                    offsetPath.scope,
+                    context,
+                    "offset error",
+                  ),
+                  context,
+                  (errorPath, error) =>
+                    throwUnless(
+                      errorPath,
+                      error,
+                      madeArguments[2] === undefined
+                        ? make(errorPath, [madeArguments[0], offset], finish)
+                        : toIndex(errorPath, madeArguments[2], (lengthPath, length) => {
+                            const viewed = [madeArguments[0], offset, length];
+                            // A DataView throws the RangeError of a length past its buffer's
+                            // end, as the buffer was before it converted the length.
+                            return getNewBuffer(node, context)?.includes("DataView")
+                              ? bind(
+                                  lengthPath,
+                                  "error",
+                                  translateNewBufferOf(
+                                    node,
+                                    construction,
+                                    getHeap(errorPath.scope, node, context),
+                                    tuple(viewed),
+                                    errorPath.scope,
+                                    context,
+                                    "error",
+                                  ),
+                                  context,
+                                  (checkedPath, lengthError) =>
+                                    throwUnless(
+                                      checkedPath,
+                                      lengthError,
+                                      make(checkedPath, viewed, finish),
+                                    ),
+                                )
+                              : make(lengthPath, viewed, finish);
+                          }),
                     ),
-                    string("RangeError"),
-                  ]),
-                  throwError("RangeError", offsetPath, node, context, frame),
-                  madeArguments[2] === undefined
-                    ? make(offsetPath, [madeArguments[0], offset], finish)
-                    : toIndex(offsetPath, madeArguments[2], (lengthPath, length) =>
-                        make(lengthPath, [madeArguments[0], offset, length], finish),
-                      ),
                 ),
               ),
               make(current, madeArguments, finish),
