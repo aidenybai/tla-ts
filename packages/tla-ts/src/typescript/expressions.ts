@@ -693,7 +693,10 @@ const translateInt32Literal = (node: ts.Expression) => {
 };
 
 // The Math functions that the JavaScript module computes from their arguments alone.
-export const MATH_OPERATORS = new Map([["sqrt", "Sqrt"]]);
+export const MATH_OPERATORS = new Map([
+  ["sqrt", "Sqrt"],
+  ["fround", "Fround"],
+]);
 
 const translateMath = (node: ts.CallExpression, method: string, scope: Scope, context: Context) => {
   const isSpecial = context.hasSpecialNumbers;

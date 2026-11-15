@@ -398,11 +398,12 @@ LOCAL FromNat(isNegative, nat, exponent) ==
   LET odd == OddPart(NatHalves(nat), 0)
   IN FromBinary(<<isNegative, exponent + odd[2], odd[1][1], odd[1][2]>>)
 
-\\* A natural other than 0 times 2^exponent, rounded to the nearest number, an even significand where
-\\* two are as near, as IEEE 754 rounds: 53 bits, or fewer where the number is below 2^-1022.
-LOCAL Rounded(isNegative, nat, exponent) ==
+\\* A natural other than 0 times 2^exponent, rounded to the nearest number whose significand has
+\\* precision bits and whose last bit is 2^least or above, an even significand where two are as near,
+\\* as IEEE 754 rounds.
+LOCAL RoundedTo(isNegative, nat, exponent, precision, least) ==
   LET bits == NatBits(nat)
-      shift == IF bits - 53 > -1074 - exponent THEN bits - 53 ELSE -1074 - exponent
+      shift == IF bits - precision > least - exponent THEN bits - precision ELSE least - exponent
       kept == NatShiftRight(nat, shift)
       rest == NatSubtract(nat, NatShiftLeft(kept, shift))
       half == NatShiftLeft(<<1>>, shift - 1)
@@ -412,6 +413,9 @@ LOCAL Rounded(isNegative, nat, exponent) ==
   IN CASE shift <= 0 -> FromNat(isNegative, nat, exponent)
        [] rounded = <<>> -> IF isNegative THEN NegativeZero ELSE 0
        [] OTHER -> FromNat(isNegative, rounded, exponent + shift)
+
+\\* A natural other than 0 times 2^exponent, rounded to a double: 53 bits, or fewer below 2^-1022.
+LOCAL Rounded(isNegative, nat, exponent) == RoundedTo(isNegative, nat, exponent, 53, -1074)
 
 LOCAL Significand(binary) == NatOfHalves(<<binary[3], binary[4]>>)
 
@@ -931,6 +935,18 @@ Sqrt(value) ==
          IN Rounded(FALSE,
                     NatAdd(NatShiftLeft(root[1], 1), IF root[2] = <<>> THEN <<>> ELSE <<1>>),
                     (binary[2] - shift) \\div 2 - 1)
+
+\\* Math.fround: the nearest single-precision float, with 24 bits, or fewer below 2^-126, which is
+\\* an infinity from 2^128 on.
+Fround(value) ==
+  IF value \\in SpecialNumbers \\/ IsZero(value)
+  THEN value
+  ELSE LET binary == Binary(value)
+           rounded == RoundedTo(binary[1], Significand(binary), binary[2], 24, -149)
+       IN CASE IsZero(rounded) \\/ rounded \\in Infinities -> rounded
+            [] Binary(rounded)[2] + HalvesBits(<<Binary(rounded)[3], Binary(rounded)[4]>>) > 128 ->
+                 IF binary[1] THEN NegativeInfinity ELSE Infinity
+            [] OTHER -> rounded
 
 \\* JavaScript's <<. The bit below the shifted bits becomes the sign bit.
 LeftShift(left, right) ==

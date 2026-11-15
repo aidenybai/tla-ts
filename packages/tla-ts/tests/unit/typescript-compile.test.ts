@@ -40981,4 +40981,36 @@ describe("BigInts", () => {
       expect(result.failure?.message).toContain("tla-ts can't represent");
     });
   });
+
+  describe("rounds with Math.fround to the nearest single-precision float", () => {
+    const getSource = (expected: string) => `
+      const inputs = [
+        1.0000000596046448, 1.0000001788139343, 4294967297, 0.1, 3.4028235677973362e38,
+        3.4028235677973366e38, -1e39, 7.006492321624085e-46, 7.006492321624087e-46, -1e-46,
+        1.7976931348623157e308, NaN,
+      ];
+      const expected = [${expected}];
+      inputs.forEach((value, index) => {
+        if (!Object.is(Math.fround(value), expected[index])) throw new Error("wrong at " + index);
+      });
+    `;
+
+    it("agrees with Node", async () => {
+      const result = await checkModel(
+        getSource(
+          "1, 1.000000238418579, 4294967296, 0.10000000149011612, 3.4028234663852886e38, Infinity, -Infinity, 0, 1.401298464324817e-45, -0, Infinity, NaN",
+        ),
+      );
+      expect(result.failure).toBeUndefined();
+    });
+
+    it("rejects a tie rounded away from the even float", async () => {
+      const result = await checkModel(
+        getSource(
+          "1.0000001192092896, 1.000000238418579, 4294967296, 0.10000000149011612, 3.4028234663852886e38, Infinity, -Infinity, 0, 1.401298464324817e-45, -0, Infinity, NaN",
+        ),
+      );
+      expect(result.failure?.message).toContain("wrong at 0");
+    });
+  });
 });
