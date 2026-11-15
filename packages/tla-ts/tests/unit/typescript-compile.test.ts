@@ -26947,6 +26947,30 @@ describe("errors", () => {
     });
   });
 
+  describe("gives each iteration of a generator's loop the value that its own next sends", () => {
+    const getSource = (expected: string) => `
+      let log = "";
+      function* g(): Generator<number, void, string> {
+        for (let i = 0; i < 3; i++) {
+          const sent = yield i;
+          log += sent;
+        }
+      }
+      const iter = g();
+      iter.next("a");
+      iter.next("b");
+      iter.next("c");
+      iter.next("d");
+      if (log !== "${expected}") throw new Error(log);
+    `;
+    it("matches Node", async () => {
+      expect((await checkModel(getSource("bcd"))).failure).toBeUndefined();
+    });
+    it("fails a wrong log", async () => {
+      expect((await checkModel(getSource("bbb"))).failure?.message).toContain("bcd");
+    });
+  });
+
   describe("passes a return or a throw through a yield* to the iterator", () => {
     const cases = [
       {

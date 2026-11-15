@@ -13245,11 +13245,12 @@ const isTakingFromGenerators = (loop: ts.ForOfStatement, context: Context) => {
 
 // The path where an unrolled iteration of a loop starts. What an iteration before it evaluated or
 // made of the loop's own code belongs to that iteration, not to this one, which calls anew.
-const startIteration = (loop: ts.ForOfStatement, path: Path): Path => {
+const startIteration = (loop: ts.IterationStatement, path: Path): Path => {
   const isOwn = (entry: [ts.Node, Expression]) =>
     ts.findAncestor(
       entry[0],
-      (ancestor) => ancestor === loop.statement || ancestor === loop.initializer,
+      (ancestor) =>
+        ancestor === loop.statement || (ts.isForOfStatement(loop) && ancestor === loop.initializer),
     ) !== undefined;
   return {
     ...path,
@@ -13730,15 +13731,17 @@ const translateUnrolled = (
     const count = unrolled?.counts.at(position);
     if (unrolled !== undefined && count === undefined) return continueWith(current);
     const next = (after: Path) => iterate(after, position + 1);
+    // Each iteration evaluates the body's expressions again, such as a yield it hoists.
+    const started = startIteration(loop, current);
     return translateStatements(
       [loop.statement],
       unrolled === undefined || count === undefined
-        ? current
+        ? started
         : {
-            ...current,
+            ...started,
             scope: {
-              ...current.scope,
-              bindings: new Map([...current.scope.bindings, [unrolled.symbol, number(count)]]),
+              ...started.scope,
+              bindings: new Map([...started.scope.bindings, [unrolled.symbol, number(count)]]),
             },
           },
       context,
