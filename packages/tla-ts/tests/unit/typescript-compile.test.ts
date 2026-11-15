@@ -42847,4 +42847,50 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("holds a function that a built-in takes as a value", () => {
+    const getSource = (expected: string) => `
+      function getOne() {
+        return 1;
+      }
+      function double(value: number) {
+        return value * 2;
+      }
+      const seen = new Set<Function>();
+      seen.add(double);
+      const list: Function[] = [];
+      list.push(getOne);
+      const log = [
+        seen.has(double),
+        seen.has(getOne),
+        seen.has(double as any),
+        list.indexOf(getOne),
+        list.includes(double),
+      ].join();
+      if (log !== "${expected}") throw new Error(log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("true,false,true,0,false"))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong log", async () => {
+      expect((await checkModel(getSource("true,true,true,0,false"))).failure?.message).toContain(
+        "true,false,true,0,false",
+      );
+    });
+
+    it("stops at a function as a key of a Map of strings", async () => {
+      const result = await checkModel(`
+        function double(value: number) {
+          return value * 2;
+        }
+        const names = new Map<string, number>([["a", 1]]);
+        if (names.has(double as any)) throw new Error("has");
+      `);
+      expect(result.failure?.message).toContain(
+        "tla-ts can't compare a key of another kind with the keys of a Set or a Map",
+      );
+    });
+  });
 });
