@@ -23204,6 +23204,28 @@ describe("errors", () => {
     ).toThrow("tla-ts can't destructure this object through its iterator");
   });
 
+  it("binds a parameter's array pattern from the generator object that a call passes", async () => {
+    const getSource = (expected: string) => `
+      let first = 0;
+      let second = 0;
+      function* g() {
+        first += 1;
+        yield 5;
+        second += 1;
+      }
+      let seen = "";
+      const f = ([, rest]: Generator<number, void, unknown>) => {
+        seen = \`\${first},\${second},\${rest}\`;
+      };
+      f(g());
+      if (seen !== "${expected}") throw new Error(seen);
+    `;
+    expect((await checkModel(getSource("1,1,undefined"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("1,0,undefined"))).failure?.message).toContain(
+      "1,1,undefined",
+    );
+  });
+
   it("binds a generator's parameter through an iterator as the call makes the generator", async () => {
     const getSource = (closedAtCall: number) => `
       let closed = 0;

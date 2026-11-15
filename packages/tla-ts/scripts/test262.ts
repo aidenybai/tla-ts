@@ -466,6 +466,45 @@ const loosen = () => {
         `: ${destructured.dotDotDotToken === undefined ? patternType : `${patternType}[]`}`,
       );
     }
+    // An array pattern's parameter, which TypeScript types as a tuple from the pattern alone, takes
+    // any iterable that a call passes, such as a generator object, through its iterator. It takes
+    // the argument's type, as tla-ts reads an iterator only where the type says it has one.
+    const isErroredArgument = (argument: ts.Expression) =>
+      argument.getStart() === diagnostic.start &&
+      argument.getEnd() === (diagnostic.start ?? 0) + (diagnostic.length ?? 0);
+    const iteratedCall =
+      diagnostic.code === 2345
+        ? ts.findAncestor(
+            node,
+            (ancestor): ancestor is ts.CallExpression | ts.NewExpression =>
+              (ts.isCallExpression(ancestor) || ts.isNewExpression(ancestor)) &&
+              (ancestor.arguments?.some(isErroredArgument) ?? false),
+          )
+        : undefined;
+    const iteratedArgument = iteratedCall?.arguments?.find(isErroredArgument);
+    const iteratedDeclaration =
+      iteratedCall && checker.getResolvedSignature(iteratedCall)?.getDeclaration();
+    const iteratedParameter =
+      iteratedArgument !== undefined &&
+      iteratedDeclaration !== undefined &&
+      ts.isFunctionLike(iteratedDeclaration)
+        ? iteratedDeclaration.parameters.at(
+            iteratedCall?.arguments?.indexOf(iteratedArgument) ?? -1,
+          )
+        : undefined;
+    const iteratedType = iteratedArgument && checker.getTypeAtLocation(iteratedArgument);
+    if (
+      iteratedParameter !== undefined &&
+      iteratedType !== undefined &&
+      iteratedParameter.getSourceFile() === sourceFile &&
+      iteratedParameter.type === undefined &&
+      iteratedParameter.dotDotDotToken === undefined &&
+      ts.isArrayBindingPattern(iteratedParameter.name) &&
+      !checker.isArrayLikeType(iteratedType) &&
+      iteratedType.getProperties().some((property) => property.getName().startsWith("__@iterator@"))
+    ) {
+      edits.set(iteratedParameter.name.getEnd(), `: ${checker.typeToString(iteratedType)}`);
+    }
     // A function that reads this may be a constructor, whose instance gets any property.
     const receiving =
       diagnostic.code === 2683
