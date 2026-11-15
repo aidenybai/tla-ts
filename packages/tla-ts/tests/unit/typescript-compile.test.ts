@@ -36219,4 +36219,67 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("passes a return or a throw through the async-from-sync iterator of a yield*", () => {
+    const getSource = (method: string, call: string, expected: string) => `
+      let log = "";
+      const iterable = {
+        [Symbol.iterator]() {
+          return {
+            next() {
+              log = log + "n";
+              return { value: "v", done: false };
+            },
+            ${method}
+          };
+        },
+      };
+      async function* gen(): AsyncGenerator<string, void, unknown> {
+        yield* iterable;
+        log = log + "e";
+      }
+      const iterator = gen();
+      iterator.next().then((first) => {
+        log = log + "g" + first.value;
+        ${call}.then(
+          (second) => {
+            log = log + "f" + second.value + second.done;
+          },
+          (error: unknown) => {
+            log = log + (error instanceof TypeError ? "t" : "o");
+          },
+        );
+      });
+      Promise.resolve()
+        .then(() => { log = log + "1"; })
+        .then(() => { log = log + "2"; })
+        .then(() => { log = log + "3"; })
+        .then(() => { log = log + "4"; })
+        .then(() => { log = log + "5"; })
+        .then(() => {
+          if (log !== "${expected}") throw new Error(log);
+        });
+    `;
+    const close = `return() {
+      log = log + "c";
+      return {} as IteratorResult<string>;
+    },`;
+
+    it("agrees with Node where the sync iterator lacks the return", async () => {
+      const source = getSource("", 'iterator.return("r" as never)', "n12gv345frtrue");
+      expect((await checkModel(source)).failure).toBeUndefined();
+    });
+
+    it("agrees with Node where the sync iterator lacks the throw", async () => {
+      const source = getSource(close, 'iterator.throw("x")', "n12gvc34t5");
+      expect((await checkModel(source)).failure).toBeUndefined();
+    });
+
+    it("rejects a throw that doesn't close the sync iterator", async () => {
+      const source = getSource(close, 'iterator.throw("x")', "n12gv34t5");
+      expect((await checkModel(source)).failure?.message).toContain(
+        "A promise rejected with no handler",
+      );
+    });
+  });
 });

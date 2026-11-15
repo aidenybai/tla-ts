@@ -564,15 +564,17 @@ export const mayGivePromises = (iterable: ts.Expression, context: Context) => {
   );
 };
 
-// Calls an async-from-sync iterator's next, which runs the sync iterator's, and awaits the promise
-// it gives: with the result's value and done, once the promise of the value fulfills, or with what
-// rejects it. The promise settles a job after that of the value, and at once where the sync
-// iterator throws or gives a value that isn't an object. A rejected value closes the sync iterator
-// where the result isn't done.
+// Calls an async-from-sync iterator's next, return, or throw, which runs the sync iterator's, and
+// awaits the promise it gives: with the result's value and done, once the promise of the value
+// fulfills, or with what rejects it. The promise settles a job after that of the value, and at once
+// where the sync iterator throws, gives a value that isn't an object, or lacks the return or the
+// throw. A rejected value closes the sync iterator where a next or a throw gave a result that isn't
+// done.
 export const stepFromSync = (
   site: ts.Node,
   iterator: Expression,
   next: Expression,
+  key: "next" | "return" | "throw",
   sent: Expression,
   mayBePromise: boolean,
   path: Path,
@@ -589,79 +591,92 @@ export const stepFromSync = (
     throwTo: (current, thrown) => tick(current, (after) => rejectWith(after, thrown.value)),
   };
   const failWith = (failed: Path) => throwTypeError(failed, site, context, rejectFrame);
-  return callMethod(
-    site,
-    "next",
-    next,
-    iterator,
-    [sent],
-    path,
-    context,
-    rejectFrame,
-    failWith,
-    (called, result) =>
-      bind(called, "result", result, context, (bound, held) =>
-        ifThenElse(
-          isObject(site, bound, held, context),
-          read(site, held, "done", bound, context, rejectFrame, (checked, done) =>
-            readValue(site, held, checked, context, rejectFrame, (taken, value) => {
-              const awaitValue = (isDone: boolean, awaited: Expression) =>
-                awaitTo(
-                  taken,
-                  awaited,
-                  undefined,
-                  (fulfilled, settled) =>
-                    tick(fulfilled, (after) => fulfillWith(after, settled, isDone)),
-                  (rejected, reason) =>
-                    isDone
-                      ? tick(rejected, (after) => rejectWith(after, reason))
-                      : closeQuietly(site, iterator, rejected, context, frame, (closed) =>
-                          tick(closed, (after) => rejectWith(after, reason)),
-                        ),
-                );
-              // A value that may be a promise may be any that the path follows. Another value
-              // fulfills the promise of the value at once, unless it has a then.
-              const dispatch = (isDone: boolean) =>
-                mayBePromise
-                  ? dispatchFollowed(
-                      taken,
-                      site,
-                      value,
-                      context,
-                      (_name, ref) => awaitValue(isDone, ref),
-                      awaitValue(isDone, value),
-                    )
-                  : ifThenElse(
-                      useJavaScript(
-                        "IsThenable",
-                        [
-                          getHeap(taken.scope, site, context),
-                          value,
-                          translateBuiltInValue("Array.prototype", site, context),
-                          translateBuiltInValue("Object.prototype", site, context),
-                        ],
+  const call = (current: Path, method: Expression) =>
+    callMethod(
+      site,
+      key,
+      method,
+      iterator,
+      [sent],
+      current,
+      context,
+      rejectFrame,
+      failWith,
+      (called, result) =>
+        bind(called, "result", result, context, (bound, held) =>
+          ifThenElse(
+            isObject(site, bound, held, context),
+            read(site, held, "done", bound, context, rejectFrame, (checked, done) =>
+              readValue(site, held, checked, context, rejectFrame, (taken, value) => {
+                const awaitValue = (isDone: boolean, awaited: Expression) =>
+                  awaitTo(
+                    taken,
+                    awaited,
+                    undefined,
+                    (fulfilled, settled) =>
+                      tick(fulfilled, (after) => fulfillWith(after, settled, isDone)),
+                    (rejected, reason) =>
+                      isDone || key === "return"
+                        ? tick(rejected, (after) => rejectWith(after, reason))
+                        : closeQuietly(site, iterator, rejected, context, frame, (closed) =>
+                            tick(closed, (after) => rejectWith(after, reason)),
+                          ),
+                  );
+                // A value that may be a promise may be any that the path follows. Another value
+                // fulfills the promise of the value at once, unless it has a then.
+                const dispatch = (isDone: boolean) =>
+                  mayBePromise
+                    ? dispatchFollowed(
+                        taken,
+                        site,
+                        value,
                         context,
-                      ),
-                      leaf(
-                        apply("Assert", [
-                          boolean(false),
-                          string("tla-ts can't resolve a promise with an object that has a then"),
-                        ]),
-                      ),
-                      tick(taken, (fulfilled) =>
-                        tick(fulfilled, (after) => fulfillWith(after, value, isDone)),
-                      ),
-                    );
-              return ifThenElse(
-                useJavaScript("ToBoolean", [done], context),
-                dispatch(true),
-                dispatch(false),
-              );
-            }),
+                        (_name, ref) => awaitValue(isDone, ref),
+                        awaitValue(isDone, value),
+                      )
+                    : ifThenElse(
+                        useJavaScript(
+                          "IsThenable",
+                          [
+                            getHeap(taken.scope, site, context),
+                            value,
+                            translateBuiltInValue("Array.prototype", site, context),
+                            translateBuiltInValue("Object.prototype", site, context),
+                          ],
+                          context,
+                        ),
+                        leaf(
+                          apply("Assert", [
+                            boolean(false),
+                            string("tla-ts can't resolve a promise with an object that has a then"),
+                          ]),
+                        ),
+                        tick(taken, (fulfilled) =>
+                          tick(fulfilled, (after) => fulfillWith(after, value, isDone)),
+                        ),
+                      );
+                return ifThenElse(
+                  useJavaScript("ToBoolean", [done], context),
+                  dispatch(true),
+                  dispatch(false),
+                );
+              }),
+            ),
+            failWith(bound),
           ),
-          failWith(bound),
         ),
-      ),
+    );
+  if (key === "next") return call(path, next);
+  // A sync iterator without a return gives the value as done, and one without a throw closes
+  // before the TypeError.
+  return read(site, iterator, key, path, context, rejectFrame, (found, method) =>
+    ifThenElse(
+      isNullish(method, context),
+      key === "return"
+        ? tick(found, (after) => fulfillWith(after, sent, true))
+        : closeIterator(site, iterator, found, context, rejectFrame, failWith, failWith),
+      call(found, method),
+    ),
   );
 };
 
