@@ -4379,24 +4379,8 @@ ${body}
     ).toBeUndefined();
   });
 
-  it("stops where a write outside strict mode names no binding", () => {
-    expect(() =>
-      compile(`
-        let count: number = 0;
-        // @ts-ignore
-        missing = 1;
-        count = 1;
-      `),
-    ).toThrow("tla-ts can't write a global outside strict mode");
-  });
-
-  it.each([
-    ["a pattern", "({ missing } = { missing: 42 });"],
-    ["a for-of head", "for (missing of [1]) count += 1;"],
-    ["a pattern's default", "[missing = 1] = [];"],
-    ["a pattern that names NaN", "[NaN] = [1];"],
-  ])("stops where %s outside strict mode writes a global", (_, statement) => {
-    expect(() => compile(`let count = 0;\n// @ts-ignore\n${statement}\ncount = 1;`)).toThrow(
+  it("stops where a pattern outside strict mode writes NaN", () => {
+    expect(() => compile("let count = 0;\n// @ts-ignore\n[NaN] = [1];\ncount = 1;")).toThrow(
       "tla-ts can't write a global outside strict mode",
     );
   });
@@ -41186,6 +41170,62 @@ describe("BigInts", () => {
         if (Object.is(Math.log2(8), 0)) throw new Error("wrong");
       `);
       expect(result.failure?.message).toContain("tla-ts can't compute Math.log2 of this number");
+    });
+  });
+
+  describe("a global that a write outside strict mode makes", () => {
+    const getSource = (expected: string) => `
+      const seen: string[] = [];
+      const read = () => {
+        try {
+          // @ts-ignore
+          total;
+          // @ts-ignore
+          seen.push(String(total));
+        } catch (error) {
+          seen.push(error instanceof ReferenceError ? "reference" : "other");
+        }
+      };
+      // @ts-ignore
+      seen.push(typeof total);
+      read();
+      // @ts-ignore
+      [total, other] = [1, 2];
+      // @ts-ignore
+      for (key in { a: 1 }) total += 1;
+      // @ts-ignore
+      total++;
+      read();
+      // @ts-ignore
+      seen.push(typeof total, key, String(other));
+      if (seen.join() !== "${expected}") throw new Error("seen " + seen.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("undefined,reference,3,number,a,2"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects a global that exists before the write", async () => {
+      expect(
+        (await checkModel(getSource("undefined,undefined,3,number,a,2"))).failure?.message,
+      ).toContain("seen undefined,reference,3,number,a,2");
+    });
+
+    it("stops where code in strict mode writes it", () => {
+      expect(() =>
+        compile(`
+          const write = () => {
+            "use strict";
+            // @ts-ignore
+            total = 2;
+          };
+          // @ts-ignore
+          total = 1;
+          write();
+        `),
+      ).toThrow("tla-ts can't write in strict mode a global that a write outside it makes");
     });
   });
 

@@ -1,6 +1,15 @@
 import ts from "@typescript/typescript6";
 import type { Expression } from "../ast";
-import { type Context, getSymbol, getUndefined, isAssignedElsewhere, share } from "./context";
+import {
+  type Context,
+  getSymbol,
+  getUndefined,
+  isAssignedElsewhere,
+  isImplicitGlobal,
+  isUnresolvable,
+  share,
+  skipCasts,
+} from "./context";
 import { TlaTypeScriptError } from "../errors";
 import { formatString } from "../printer";
 import {
@@ -8063,7 +8072,22 @@ export const getTypeNames = (type: ts.Type, checker: ts.TypeChecker): string[] |
   return [isFunction ? "function" : "object"];
 };
 
-export const translateTypeOf = (node: ts.TypeOfExpression, scope: Scope, context: Context) => {
+// typeof of a global that a write outside strict mode makes, which is undefined until the write runs.
+export const translateTypeOf = (
+  node: ts.TypeOfExpression,
+  scope: Scope,
+  context: Context,
+): Expression => {
+  const read = skipCasts(node.expression);
+  const symbol = isImplicitGlobal(read, context) ? getSymbol(read, context.checker) : undefined;
+  const global = symbol === undefined ? undefined : scope.bindings.get(symbol);
+  const typeOf = translateTypeOfValue(node, scope, context);
+  return global === undefined
+    ? typeOf
+    : ifExpression(isUnresolvable(global, context), string("undefined"), typeOf);
+};
+
+const translateTypeOfValue = (node: ts.TypeOfExpression, scope: Scope, context: Context) => {
   const symbol = ts.isIdentifier(node.expression)
     ? getSymbol(node.expression, context.checker)
     : undefined;

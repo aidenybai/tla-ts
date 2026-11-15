@@ -112,6 +112,10 @@ import {
   isAssigned,
   getTopLevelDeclaration,
   getUndefined,
+  getUnresolvable,
+  isImplicitGlobal,
+  isPlainWrite,
+  isUnresolvable,
   isHeapClass,
   isHeapFunction,
   isMethodCall,
@@ -185,6 +189,7 @@ import {
   takeSpreads,
 } from "./iterators";
 import {
+  readGlobal,
   translateCondition,
   translateExpression,
   translateIteratedSequence,
@@ -935,7 +940,8 @@ const getTarget = (node: ts.Expression, path: Path, context: Context): Target =>
         node,
       );
     }
-    return { symbol, current, update: (getValue) => getValue(current) };
+    const read = isImplicitGlobal(node, context) ? readGlobal(node, current, context) : current;
+    return { symbol, current: read, update: (getValue) => getValue(read) };
   }
   const privateMember =
     ts.isPropertyAccessExpression(node) && ts.isPrivateIdentifier(node.name)
@@ -18030,6 +18036,14 @@ export const translateStatements = (
       frame,
     );
   }
+  if (path.scope.globalChecked !== undefined && path.scope.globalChecked !== statements[0]) {
+    return translateStatements(
+      statements,
+      { ...path, scope: { ...path.scope, globalChecked: undefined } },
+      context,
+      frame,
+    );
+  }
   if (statements.length === 0) return frame.next(path);
   const statement = statements[0];
   // What an assignment or an increment in the statement gave belongs to this run of it, so no path
@@ -18216,10 +18230,21 @@ export const translateStatements = (
   // before anything else it evaluates runs, throws a ReferenceError there, as does one that first
   // writes such a let. A script's lets are state variables, which the scope binds before their
   // declarations run.
+  // A global that a write outside strict mode makes throws until the write runs, which the
+  // statement checks, once, where it reads the global first.
+  const isGlobalRead = (name: ts.Identifier) =>
+    path.scope.globalChecked !== statement &&
+    isImplicitGlobal(name, context) &&
+    !isPlainWrite(name) &&
+    !ts.isTypeOfExpression(
+      ts.findAncestor(name.parent, (ancestor) => !ts.isParenthesizedExpression(ancestor)) ??
+        name.parent,
+    );
   const isThrowing = (name: ts.Identifier) => {
     const symbol = getSymbol(name, context.checker);
     const declaration = symbol?.valueDeclaration;
     return (
+      isGlobalRead(name) ||
       isUnresolved(name, context) ||
       (symbol !== undefined &&
         path.scope.uninitialized.has(symbol) &&
@@ -18260,8 +18285,8 @@ export const translateStatements = (
     : evaluated === undefined
       ? undefined
       : (getUnresolvedRead(evaluated, context, isThrowing) ?? written ?? loopRead);
-  if (unresolved !== undefined) {
-    const thrown = throwError("ReferenceError", path, unresolved, context, statementFrame);
+  const throwRead = (read: ts.Identifier) => {
+    const thrown = throwError("ReferenceError", path, read, context, statementFrame);
     // A pattern gets its first element through the array's iterator, or its first property
     // through the object's prototypes, and a throw in a for-of looks up its iterator's return.
     const getPatterns = (node: ts.Node): ts.Expression[] =>
@@ -18277,11 +18302,11 @@ export const translateStatements = (
             ...getPatterns(node.parent),
           ];
     const patterns = [
-      ...getPatterns(unresolved),
-      ...(unresolved === loopRead && loopTarget !== undefined ? [loopTarget] : []),
+      ...getPatterns(read),
+      ...(read === loopRead && loopTarget !== undefined ? [loopTarget] : []),
     ];
     const isIterating =
-      unresolved === loopRead || patterns.some((inner) => ts.isArrayLiteralExpression(inner));
+      read === loopRead || patterns.some((inner) => ts.isArrayLiteralExpression(inner));
     const isReading = patterns.some((inner) => ts.isObjectLiteralExpression(inner));
     // A script that makes no objects can't change what a pattern reads.
     const heap = context.heap === undefined ? undefined : path.scope.bindings.get(context.heap);
@@ -18290,8 +18315,8 @@ export const translateStatements = (
     return ifThenElse(
       junction("And", [
         ...(isIterating ? [holdsArrayIteration(heap, statement, context)] : []),
-        ...(isReading || unresolved === loopRead ? [isKept("Object.prototype")] : []),
-        ...(unresolved === loopRead
+        ...(isReading || read === loopRead ? [isKept("Object.prototype")] : []),
+        ...(read === loopRead
           ? [isKept("Iterator.prototype"), isKept("%ArrayIteratorPrototype%")]
           : []),
       ]),
@@ -18303,6 +18328,25 @@ export const translateStatements = (
         ]),
       ),
     );
+  };
+  if (unresolved !== undefined) {
+    const symbol = getSymbol(unresolved, context.checker);
+    const global =
+      symbol !== undefined && isGlobalRead(unresolved)
+        ? path.scope.bindings.get(symbol)
+        : undefined;
+    return global === undefined
+      ? throwRead(unresolved)
+      : ifThenElse(
+          isUnresolvable(global, context),
+          throwRead(unresolved),
+          translateStatements(
+            statements,
+            { ...path, scope: { ...path.scope, globalChecked: statement } },
+            context,
+            frame,
+          ),
+        );
   }
   // A statement that first uses a private name of an object that lacks it throws a TypeError.
   const leadingPrivate =
@@ -19146,7 +19190,7 @@ export const translateScript = (
     ...scope.bindings,
     ...[...hoisted, ...locals].map((symbol): [ts.Symbol, Expression] => [
       symbol,
-      getUndefined(context),
+      context.implicitGlobals.has(symbol) ? getUnresolvable(context) : getUndefined(context),
     ]),
   ]);
   return translateStatements(

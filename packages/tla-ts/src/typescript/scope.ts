@@ -82,6 +82,9 @@ export interface Scope {
   brandChecked?: ts.Statement;
   // The statement that runs where the global object holds the built-ins it reads.
   globalsChecked?: ts.Statement;
+  // The statement that runs where the global that a write outside strict mode makes, which it
+  // reads first, exists.
+  globalChecked?: ts.Statement;
   // The environment of the call of each async function whose body runs, which tells the closures
   // that read its locals which call made them.
   activations?: ReadonlyMap<ts.Node, Expression>;

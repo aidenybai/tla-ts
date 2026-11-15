@@ -1,7 +1,7 @@
 import ts from "@typescript/typescript6";
 import type { Expression, OperatorDefinition, OperatorParam, SourceLocation } from "../ast";
 import { getTypeNames, JAVASCRIPT_OPERATORS } from "./javascript";
-import { BUILT_INS } from "./built-ins";
+import { BUILT_INS, HOST_GLOBAL_KEYS } from "./built-ins";
 import { getErrorClass, isNativeErrorName, isPrototypeRead, NATIVE_ERRORS } from "./exceptions";
 import { type Collection, getBuiltIn, isHeldBuiltInObject } from "./intrinsics";
 import {
@@ -104,7 +104,7 @@ export interface Context {
   modelValues: Map<string, string>;
   constructors: Map<ts.Symbol | ts.Node, string>;
   // Model values and helper operators that the spec uses.
-  prelude: Set<"Null" | "Undefined" | "Rem" | "Quot" | "JavaScript">;
+  prelude: Set<"Null" | "Undefined" | "Rem" | "Quot" | "JavaScript" | "Unresolvable">;
   // The calls that the exported function being compiled makes and tla-ts can't compile.
   unknowns: Unknowns | undefined;
   heap: ts.Symbol | undefined;
@@ -146,6 +146,8 @@ export interface Context {
   // The reads of the global object's built-ins that their statements check, as a script that uses
   // the global object as a value may change them.
   checkedGlobals: ReadonlySet<ts.Identifier>;
+  // The vars that stand for the globals that writes outside strict mode make.
+  implicitGlobals: ReadonlySet<ts.Symbol>;
   // The generator functions that a script declares at its top, or that a variable there holds,
   // whose prototype objects the heap holds from the start, by the place on the heap of each.
   generatorPrototypes: Map<ts.FunctionDeclaration | ts.FunctionExpression, number>;
@@ -468,6 +470,7 @@ const withDeclaredReads = (checker: ts.TypeChecker, reads: DeclaredReads): ts.Ty
 export const createContext = (
   checker: ts.TypeChecker,
   files: readonly ts.SourceFile[],
+  implicitGlobals: ReadonlySet<ts.Symbol>,
 ): Context => {
   const reads = getDeclaredReads(checker, files);
   return {
@@ -506,6 +509,7 @@ export const createContext = (
     heapCollections: new Set(),
     collectionProxies: new Set(),
     checkedGlobals: new Set(),
+    implicitGlobals,
     generatorPrototypes: new Map(),
     hasInheritedElements: false,
     characters: new Set(),
@@ -795,8 +799,42 @@ const getAssignedNames = (target: ts.Expression): ts.Expression[] => {
   return [inner];
 };
 
-// Outside strict mode, a write to a name that no binding has makes a global, and one to NaN,
-// Infinity, or undefined does nothing, where strict mode throws, so tla-ts stops at them.
+// The names that a node writes without reading them first: an assignment's, through the elements
+// of its patterns, and a for-in's or a for-of's.
+const getPlainWrites = (node: ts.Node): ts.Expression[] =>
+  ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken
+    ? getAssignedNames(node.left)
+    : (ts.isForInStatement(node) || ts.isForOfStatement(node)) &&
+        !ts.isVariableDeclarationList(node.initializer)
+      ? getAssignedNames(node.initializer)
+      : [];
+
+// Whether a name is one that an assignment or a for-in or a for-of writes without reading it.
+export const isPlainWrite = (name: ts.Identifier) =>
+  ts.findAncestor(name.parent, (ancestor) =>
+    ts.isFunctionLike(ancestor) ? "quit" : getPlainWrites(ancestor).includes(name),
+  ) !== undefined;
+
+// Outside strict mode, a write to a name that no binding has makes a global: the names that a
+// file's code writes so. arguments is TypeScript's own name, which a declaration can't bind, and a
+// host may give the global object others, which exist before the write.
+export const getImplicitGlobals = (file: ts.SourceFile, checker: ts.TypeChecker) =>
+  new Set(
+    findNodes(file, (node): node is ts.Node => getPlainWrites(node).length > 0)
+      .flatMap(getPlainWrites)
+      .filter(
+        (name): name is ts.Identifier =>
+          ts.isIdentifier(name) &&
+          ![...HOST_GLOBAL_KEYS, "arguments"].includes(name.text) &&
+          !isStrictCode(name) &&
+          getSymbol(name, checker) === undefined,
+      )
+      .map((name) => name.text),
+  );
+
+// Outside strict mode, a write to NaN, Infinity, or undefined does nothing, which tla-ts doesn't
+// follow. In strict mode, a write to a global that a write outside it makes throws a ReferenceError
+// where the global doesn't exist yet, which tla-ts doesn't follow either.
 export const rejectSloppyGlobalWrites = (file: ts.SourceFile, context: Context) => {
   const isFixedGlobal = (name: ts.Expression) =>
     ts.isIdentifier(name) &&
@@ -807,11 +845,9 @@ export const rejectSloppyGlobalWrites = (file: ts.SourceFile, context: Context) 
   const getWrites = (node: ts.Node): ts.Expression[] => {
     if (ts.isBinaryExpression(node)) {
       const kind = node.operatorToken.kind;
-      return kind === ts.SyntaxKind.EqualsToken
-        ? getAssignedNames(node.left)
-        : kind >= ts.SyntaxKind.FirstCompoundAssignment && kind <= ts.SyntaxKind.LastAssignment
-          ? [skipCasts(node.left)].filter(isFixedGlobal)
-          : [];
+      return kind >= ts.SyntaxKind.FirstCompoundAssignment && kind <= ts.SyntaxKind.LastAssignment
+        ? [skipCasts(node.left)].filter(isFixedGlobal)
+        : getPlainWrites(node);
     }
     if (
       (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
@@ -820,22 +856,34 @@ export const rejectSloppyGlobalWrites = (file: ts.SourceFile, context: Context) 
     ) {
       return [skipCasts(node.operand)].filter(isFixedGlobal);
     }
-    return (ts.isForInStatement(node) || ts.isForOfStatement(node)) &&
-      !ts.isVariableDeclarationList(node.initializer)
-      ? getAssignedNames(node.initializer)
-      : [];
+    return getPlainWrites(node);
   };
-  const written = findNodes(file, (node): node is ts.Node => getWrites(node).length > 0)
-    .flatMap(getWrites)
-    .find(
-      (name) =>
-        ts.isIdentifier(name) &&
-        !isStrictCode(name) &&
-        (getSymbol(name, context.checker) === undefined || isFixedGlobal(name)),
-    );
+  const writes = findNodes(file, (node): node is ts.Node => getWrites(node).length > 0).flatMap(
+    getWrites,
+  );
+  const written = writes.find(
+    (name) =>
+      ts.isIdentifier(name) &&
+      !isStrictCode(name) &&
+      (getSymbol(name, context.checker) === undefined || isFixedGlobal(name)),
+  );
   if (written !== undefined) {
     throw new TlaTypeScriptError("tla-ts can't write a global outside strict mode", written);
   }
+  const strictWrite = writes.find((name) => isStrictCode(name) && isImplicitGlobal(name, context));
+  if (strictWrite !== undefined) {
+    throw new TlaTypeScriptError(
+      "tla-ts can't write in strict mode a global that a write outside it makes",
+      strictWrite,
+    );
+  }
+};
+
+// Whether a name reads a global that a write outside strict mode makes, which throws a
+// ReferenceError until the write runs.
+export const isImplicitGlobal = (name: ts.Node, context: Context): name is ts.Identifier => {
+  const symbol = ts.isIdentifier(name) ? getSymbol(name, context.checker) : undefined;
+  return symbol !== undefined && context.implicitGlobals.has(symbol);
 };
 
 // Whether a literal is truthy, where its value is certain.
@@ -4305,6 +4353,16 @@ export const getUndefined = (context: Context) => {
   context.prelude.add("Undefined");
   return identifier("Undefined");
 };
+
+// The value of a global that a write outside strict mode makes, before the write runs.
+export const getUnresolvable = (context: Context) => {
+  context.prelude.add("Unresolvable");
+  return identifier("Unresolvable");
+};
+
+// Whether a global that a write outside strict mode makes doesn't exist yet.
+export const isUnresolvable = (value: Expression, context: Context) =>
+  apply("=", [value, getUnresolvable(context)]);
 
 // Binds a value that an expression repeats to a LET definition, so that TLC evaluates it once.
 export const share = (

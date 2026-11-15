@@ -2,6 +2,7 @@ import ts from "@typescript/typescript6";
 import { TlaTypeScriptError } from "../errors";
 import {
   findNodes,
+  getImplicitGlobals,
   getVarFunctionTarget,
   getVarScope,
   isPlain,
@@ -198,7 +199,10 @@ export const createProgram = (
   const host =
     libraries === undefined ? ts.createCompilerHost(options) : createLibraryHost(libraries);
   const libraryDirectory = host.getDefaultLibLocation?.() ?? "";
-  const createTypeScriptProgram = (rootNames: string[]) =>
+  // HACK: a write outside strict mode to a name that no binding has makes a global, which the text
+  // gains a var for, at its start, so that the name binds wherever it's written or read. The
+  // compiler treats the var as the global, which reads throw for until a write makes it.
+  const createTypeScriptProgram = (rootNames: string[], globals: ReadonlySet<string>) =>
     ts.createProgram({
       rootNames,
       options,
@@ -210,7 +214,8 @@ export const createProgram = (
           if (fileName === path) {
             return ts.createSourceFile(
               path,
-              declareVarFunctions(path, assignParameterProperties(path, source)),
+              [...globals].map((name) => `var ${name}: any;`).join("") +
+                declareVarFunctions(path, assignParameterProperties(path, source)),
               languageVersion,
               true,
             );
@@ -240,12 +245,14 @@ export const createProgram = (
     if (file === undefined) throw new TlaTypeScriptError(`Can't read ${path}`);
     return file;
   };
-  const modelProgram = createTypeScriptProgram([path]);
-  const modelSourceFile = getModelSourceFile(modelProgram);
-  const syntaxErrors = modelProgram.getSyntacticDiagnostics(modelSourceFile);
+  const firstProgram = createTypeScriptProgram([path], new Set());
+  const firstSourceFile = getModelSourceFile(firstProgram);
+  const syntaxErrors = firstProgram.getSyntacticDiagnostics(firstSourceFile);
   if (syntaxErrors.length > 0)
     throw new TlaTypeScriptError(ts.formatDiagnostics(syntaxErrors, host));
-  rejectEarlyErrors(modelSourceFile);
+  rejectEarlyErrors(firstSourceFile);
+  const globals = getImplicitGlobals(firstSourceFile, firstProgram.getTypeChecker());
+  const modelProgram = globals.size === 0 ? firstProgram : createTypeScriptProgram([path], globals);
   const getModelFiles = (program: ts.Program) =>
     modelProgram.getSourceFiles().flatMap((file) => program.getSourceFile(file.fileName) ?? []);
   // A word that only strict mode reserves names a binding outside strict mode.
@@ -265,12 +272,22 @@ export const createProgram = (
   const program =
     project === undefined || modelDiagnostics.length === 0
       ? modelProgram
-      : createTypeScriptProgram([path, ...project.fileNames]);
+      : createTypeScriptProgram([path, ...project.fileNames], globals);
   const diagnostics = program === modelProgram ? modelDiagnostics : getDiagnostics(program);
   if (diagnostics.length > 0) throw new TlaTypeScriptError(ts.formatDiagnostics(diagnostics, host));
+  const sourceFile = getModelSourceFile(program);
+  const checker = program.getTypeChecker();
   return {
-    sourceFile: getModelSourceFile(program),
-    checker: program.getTypeChecker(),
+    sourceFile,
+    checker,
     files: getModelFiles(program).filter((file) => !file.isDeclarationFile),
+    implicitGlobals: new Set(
+      checker
+        .getSymbolsInScope(sourceFile, ts.SymbolFlags.Variable)
+        .filter(
+          (symbol) =>
+            globals.has(symbol.name) && symbol.valueDeclaration?.getSourceFile() === sourceFile,
+        ),
+    ),
   };
 };

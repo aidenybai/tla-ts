@@ -95,6 +95,7 @@ const RESERVED = new Set([
   "UsedConstantFunctions",
   "Null",
   "Undefined",
+  "Unresolvable",
   "Perms",
   "Rem",
   "Quot",
