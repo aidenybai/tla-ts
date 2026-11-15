@@ -17140,6 +17140,16 @@ const getFirstLeading = (
   );
 };
 
+// A property that a name's object holds under a name, whose reference an assignment evaluates by
+// reading the name, before its value.
+const isNamedPropertyOfName = (
+  node: ts.Expression,
+  context: Context,
+): node is ts.PropertyAccessExpression =>
+  ts.isPropertyAccessExpression(node) &&
+  ts.isIdentifier(node.name) &&
+  isReadName(node.expression, context);
+
 const isFunctionExpressionCall = (node: ts.Node): node is ts.CallExpression =>
   ts.isCallExpression(node) && ts.isFunctionExpression(skipCasts(node.expression));
 
@@ -17202,7 +17212,7 @@ const getLeadingAwaitOrYield = (
   if (!ts.isBinaryExpression(node)) return undefined;
   const kind = node.operatorToken.kind;
   if (kind === ts.SyntaxKind.EqualsToken) {
-    return ts.isIdentifier(node.left)
+    return ts.isIdentifier(node.left) || isNamedPropertyOfName(node.left, context)
       ? getLeadingAwaitOrYield(node.right, results, context)
       : undefined;
   }
@@ -17233,13 +17243,15 @@ const getEarlierNames = (
   const operands =
     ts.isBinaryExpression(parent) && parent.operatorToken.kind !== ts.SyntaxKind.EqualsToken
       ? [parent.left, parent.right]
-      : ts.isArrayLiteralExpression(parent)
-        ? [...parent.elements]
-        : isFunctionExpressionCall(parent)
-          ? [...parent.arguments]
-          : ts.isTemplateExpression(parent)
-            ? parent.templateSpans.map((span) => span.expression)
-            : [];
+      : ts.isBinaryExpression(parent) && isNamedPropertyOfName(parent.left, context)
+        ? [parent.left.expression, parent.right]
+        : ts.isArrayLiteralExpression(parent)
+          ? [...parent.elements]
+          : isFunctionExpressionCall(parent)
+            ? [...parent.arguments]
+            : ts.isTemplateExpression(parent)
+              ? parent.templateSpans.map((span) => span.expression)
+              : [];
   const position = operands.findIndex((operand) => operand === node);
   return [
     ...getEarlierNames(parent, root, results, context),

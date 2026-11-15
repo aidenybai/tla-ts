@@ -41755,4 +41755,36 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("b!cd,c"))).failure?.message).toContain("log b!ad,c");
     });
   });
+
+  describe("writes the value that a yield gives to a property of the object that a name held before it", () => {
+    const getSource = (expected: string) => `
+      let holder = { foo: "a" };
+      const first = holder;
+      let written = "";
+      const target = {
+        set foo(value: string) {
+          written = value;
+        },
+      };
+      function* g(): Generator<number, void, string> {
+        holder.foo = yield 1;
+        target.foo = yield 2;
+      }
+      const iter = g();
+      iter.next();
+      holder = { foo: "b" };
+      iter.next("c");
+      iter.next("d");
+      const log = first.foo + "," + holder.foo + "," + written;
+      if (log !== "${expected}") throw new Error("log " + log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("c,b,d"))).failure).toBeUndefined();
+    });
+
+    it("rejects a write to the object that the name holds after the yield", async () => {
+      expect((await checkModel(getSource("a,c,d"))).failure?.message).toContain("log c,b,d");
+    });
+  });
 });
