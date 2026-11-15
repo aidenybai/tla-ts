@@ -44649,4 +44649,107 @@ describe("BigInts", () => {
       );
     });
   });
+  describe("calls a function that a parameter holds as a value", () => {
+    const getSource = (expected: number) => `
+      type Double = (value: number) => number;
+      let total = 0;
+      function double(value: number): number {
+        return value * 2;
+      }
+      const doubles: Double[] = [double];
+      function outer(callback: (inner: Double) => number): number {
+        return callback(doubles[0]);
+      }
+      function main() {
+        const held: Double[] = [double];
+        function apply(inner: Double, value: number): number {
+          return inner(value);
+        }
+        total = apply(held[0], 4);
+      }
+      main();
+      total += outer((inner) => inner(3));
+      if (total !== ${expected}) throw new Error(String(total));
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(14))).failure).toBeUndefined();
+    });
+
+    it("rejects a wrong total", async () => {
+      expect((await checkModel(getSource(15))).failure?.message).toContain("14");
+    });
+
+    it("stops where it can't tell which function the parameter holds", () => {
+      expect(() =>
+        compile(`
+          type Length = (view: { length: number }) => number;
+          function outer(callback: (inner: Length) => void) {
+            const lengths: Length[] = [
+              function (view) {
+                return view.length;
+              },
+            ];
+            callback(lengths[0]);
+          }
+          let total = 0;
+          outer(function (inner) {
+            total = inner({ length: 3 });
+          });
+        `),
+      ).toThrow("Unsupported call: inner");
+    });
+  });
+
+  describe("passes a helper's function parameter on to another helper", () => {
+    const getSource = (expected: number) => `
+      type Step = (value: number) => number;
+      function double(value: number): number {
+        return value * 2;
+      }
+      function apply(step: Step, value: number): number {
+        return step(value);
+      }
+      function twice(step: Step, value: number): number {
+        return apply(step, apply(step, value));
+      }
+      const total = twice(double, 3) + twice((value) => value + 1, 3);
+      if (total !== ${expected}) throw new Error(String(total));
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(17))).failure).toBeUndefined();
+    });
+
+    it("rejects a wrong total", async () => {
+      await expect(checkModel(getSource(18))).rejects.toThrow("17");
+    });
+
+    it("stops where a function's operator would be a value", () => {
+      expect(() =>
+        compile(`
+          type Step = (value: number) => number;
+          function double(value: number): number {
+            return value * 2;
+          }
+          function outer(callback: (step: Step) => number): number {
+            return callback(double);
+          }
+          const total = outer((step) => 5);
+        `),
+      ).toThrow("tla-ts can't use double as a value here");
+      expect(() =>
+        compile(`
+          type Step = (value: number) => number;
+          function double(value: number): number {
+            return value * 2;
+          }
+          function apply(step: Step, callback: (inner: Step) => number): number {
+            return callback(step);
+          }
+          const total = apply(double, (inner) => 4);
+        `),
+      ).toThrow("tla-ts can't use step as a value here");
+    });
+  });
 });

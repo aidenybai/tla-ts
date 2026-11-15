@@ -81,8 +81,8 @@ import {
   translateNewError,
 } from "./exceptions";
 import {
-  getArity,
   getDefinition,
+  isOperatorParameter,
   translateFoundGetter,
   translateGetterCall,
   translateHelperCall,
@@ -1024,19 +1024,16 @@ const translateBuiltInCall = (
   if (!isMethodCall(node)) {
     const operator = symbol === undefined ? undefined : scope.bindings.get(symbol);
     const declaration = symbol?.valueDeclaration;
+    const isOperator =
+      operator?.kind === "Identifier" && isOperatorParameter(operator.name, context);
     if (
       operator === undefined ||
       (symbol !== undefined && scope.functions.has(symbol)) ||
-      (declaration !== undefined &&
-        ts.isParameter(declaration) &&
-        getArity(declaration, context) === 0)
+      (declaration !== undefined && ts.isParameter(declaration) && !isOperator)
     ) {
       return translateLocalCall(node, scope, context);
     }
-    if (
-      operator.kind !== "Identifier" ||
-      (declaration !== undefined && ts.isVariableDeclaration(declaration))
-    ) {
+    if (operator.kind !== "Identifier" || !isOperator) {
       throw new TlaTypeScriptError(`Unsupported call: ${node.expression.getText()}`, node);
     }
     const values = node.arguments.map((argument) => translateExpression(argument, scope, context));
@@ -2486,10 +2483,16 @@ const translateDeclared = (
       node,
     );
   }
-  // A function passes as its operator's name, and a constant as its value.
-  return getFunction(declaration) === undefined
-    ? translateHelperCall(declaration, undefined, scope, context)
-    : identifier(getDefinition(declaration, context).name);
+  if (getFunction(declaration) === undefined) {
+    return translateHelperCall(declaration, undefined, scope, context);
+  }
+  // A function passes as its operator's name, which TLA+ only takes as a value where the operator
+  // takes no arguments.
+  const definition = getDefinition(declaration, context);
+  if (definition.parameters.length > 0) {
+    throw new TlaTypeScriptError(`tla-ts can't use ${node.getText()} as a value here`, node);
+  }
+  return identifier(definition.name);
 };
 
 const SPECIAL_NUMBER_NAMES = new Map([
@@ -2684,6 +2687,9 @@ const translateIdentifier = (node: ts.Identifier, scope: Scope, context: Context
     return translateFunctionValue(value, context);
   }
   const binding = symbol === undefined ? undefined : scope.bindings.get(symbol);
+  if (binding?.kind === "Identifier" && isOperatorParameter(binding.name, context)) {
+    throw new TlaTypeScriptError(`tla-ts can't use ${node.text} as a value here`, node);
+  }
   if (binding !== undefined) {
     return isImplicitGlobal(node, context) ? readGlobal(node, binding, context) : binding;
   }
