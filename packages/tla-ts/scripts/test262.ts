@@ -1649,6 +1649,36 @@ const ignoreSoundErrors = () => {
       )
     );
   };
+  // An empty object pattern whose value is null or undefined, or an array pattern whose value is
+  // one or a primitive other than a string, which has no iterator method. JavaScript throws the
+  // TypeError that tla-ts throws too. A call that an expression inlines reads an object pattern's
+  // names before the TypeError.
+  const isTypeErrorPattern = (node: ts.Node) => {
+    const type =
+      ts.isArrayLiteralExpression(node) || ts.isObjectLiteralExpression(node)
+        ? ts.isBinaryExpression(node.parent) && node.parent.left === node
+          ? checker.getTypeAtLocation(node.parent.right)
+          : checker.getTypeOfAssignmentPattern(node)
+        : ts.isArrayBindingPattern(node) || ts.isObjectBindingPattern(node)
+          ? checker.getTypeAtLocation(node)
+          : undefined;
+    const throwing =
+      ts.TypeFlags.Undefined |
+      ts.TypeFlags.Null |
+      ts.TypeFlags.Never |
+      (ts.isArrayLiteralExpression(node) || ts.isArrayBindingPattern(node)
+        ? ts.TypeFlags.NumberLike |
+          ts.TypeFlags.BooleanLike |
+          ts.TypeFlags.ESSymbolLike |
+          ts.TypeFlags.BigIntLike
+        : 0);
+    return (
+      type !== undefined &&
+      !(ts.isObjectBindingPattern(node) && node.elements.length > 0) &&
+      !(ts.isObjectLiteralExpression(node) && node.properties.length > 0) &&
+      (type.isUnion() ? type.types : [type]).every((member) => (member.flags & throwing) !== 0)
+    );
+  };
   // An array pattern that a catch binds, or one nested in it, whose value of type unknown tla-ts
   // destructures as an array where it is one and refuses to otherwise.
   const isCaughtArrayPattern = (node: ts.Node) => {
@@ -2220,6 +2250,8 @@ const ignoreSoundErrors = () => {
       (diagnostic.code === NOT_ITERABLE_ERROR && isCaughtArrayPattern(node)) ||
       (diagnostic.code === UNASSIGNED_READ_ERROR &&
         (isCaughtRead(node) || isLaterGeneratorRead(node))) ||
+      ((diagnostic.code === NOT_ITERABLE_ERROR || NULLABLE_ERRORS.has(diagnostic.code)) &&
+        isTypeErrorPattern(node)) ||
       (UNASSIGNABLE_ERRORS.has(diagnostic.code) && isPatternArgument(node)) ||
       (diagnostic.code === 2322 && isIteratorWrite(node)) ||
       (diagnostic.code === OPTIONAL_DELETE_ERROR && isDeletedIterator(node)) ||
