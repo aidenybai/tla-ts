@@ -11130,32 +11130,52 @@ const translateWriteStatement = (
     );
   }
   // Outside strict mode, a write that fails changes nothing, which tla-ts follows where what it
-  // writes changes nothing else either.
+  // writes changes nothing else either. It keeps the heap as it was, rather than going on from
+  // each outcome, which would translate the rest of the statements twice for each such write.
   const isWritingRight =
     ts.isBinaryExpression(expression) &&
     findNodes(expression.right, (node): node is ts.Expression => isAssignment(node)).length > 0;
-  const failWrite = (next: (path: Path) => Formula) =>
-    isStrictCode(expression)
-      ? throwTypeError(path, expression, context, frame)
-      : isWritingRight
-        ? leaf(
-            apply("Assert", [
-              boolean(false),
-              string("tla-ts can't ignore a failed write outside strict mode"),
-            ]),
+  const canPut = useJavaScript("CanPut", [write.heap, write.ref, write.key], context);
+  const translateWrite = (next: (path: Path) => Formula) =>
+    throwOnNullish(
+      isStrictCode(expression) || isWritingRight
+        ? ifThenElse(
+            canPut,
+            shareHeap(assigned, context, next),
+            isStrictCode(expression)
+              ? throwTypeError(path, expression, context, frame)
+              : leaf(
+                  apply("Assert", [
+                    boolean(false),
+                    string("tla-ts can't ignore a failed write outside strict mode"),
+                  ]),
+                ),
           )
         : ifThenElse(
             useJavaScript("IsThrowingSet", [write.heap, write.ref, write.key], context),
             throwTypeError(path, expression, context, frame),
-            next(path),
-          );
-  const translateWrite = (next: (path: Path) => Formula) =>
-    throwOnNullish(
-      ifThenElse(
-        useJavaScript("CanPut", [write.heap, write.ref, write.key], context),
-        shareHeap(assigned, context, next),
-        failWrite(next),
-      ),
+            shareHeap(
+              {
+                ...assigned,
+                scope: {
+                  ...assigned.scope,
+                  bindings: new Map([
+                    ...assigned.scope.bindings,
+                    [
+                      write.symbol,
+                      ifExpression(
+                        canPut,
+                        getHeap(assigned.scope, expression, context),
+                        write.heap,
+                      ),
+                    ],
+                  ]),
+                },
+              },
+              context,
+              next,
+            ),
+          ),
     );
   // A write of __proto__ runs Object.prototype's setter where the object inherits it.
   const heapSymbol = context.heap;

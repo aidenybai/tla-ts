@@ -36400,4 +36400,20 @@ describe("BigInts", () => {
       "outcome ignored",
     );
   });
+
+  it("runs the statements after each write that fails outside strict mode once", async () => {
+    const writes = Array.from(
+      { length: 16 },
+      (_, index) => `frozen.key${index} = ${index};\nopen.key${index} = ${index};`,
+    ).join("\n");
+    const getSource = (expected: string) => `
+      const frozen: { [key: string]: number } = Object.freeze({ value: 0 });
+      const open: { [key: string]: number } = {};
+      ${writes}
+      let seen = [Object.keys(frozen).length, Object.keys(open).length].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+    expect((await checkModel(getSource("1,16"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("17,16"))).failure?.message).toContain("seen 1,16");
+  });
 });
