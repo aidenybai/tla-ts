@@ -21854,6 +21854,24 @@ describe("errors", () => {
     });
   });
 
+  it("iterates with for-of an object that a script types as iterable too, closing it where the loop breaks", async () => {
+    const getSource = (expected: string) => `
+      let closed = 0;
+      var iter = {} as unknown as { [key: string | symbol]: unknown } & Iterable<unknown>;
+      iter[Symbol.iterator] = function () {
+        return {
+          next: function () { return { value: 1, done: false }; },
+          return: function () { closed++; return { value: undefined, done: true }; },
+        };
+      };
+      let count = 0;
+      for (const value of iter) { count += value as number; break; }
+      if ([count, closed].join() !== "${expected}") throw new Error([count, closed].join());
+    `;
+    expect((await checkModel(getSource("1,1"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("1,0"))).failure?.message).toContain("1,1");
+  });
+
   it("assigns through the iterator that a script gives an object after making it, closing it each time", async () => {
     const getSource = (expected: string) => `
       let closed = 0;
@@ -21890,10 +21908,11 @@ describe("errors", () => {
 
   it("stops where a pattern whose type isn't an array's takes an object, though nothing reads it", async () => {
     const getSource = (statement: string) => `
-      var iter = {} as unknown as { [key: string | symbol]: unknown } & Iterable<unknown>;
-      iter[Symbol.iterator] = function () {
+      var made = {} as unknown as { [key: string | symbol]: unknown } & Iterable<unknown>;
+      made[Symbol.iterator] = function () {
         throw new RangeError("get");
       };
+      var iter: Iterable<unknown> = made;
       var x: unknown;
       var take = function ([x]: Iterable<unknown>) { return 1; };
       try { ${statement}; } catch {}

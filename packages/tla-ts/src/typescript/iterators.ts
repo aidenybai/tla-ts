@@ -77,7 +77,15 @@ export const isIteratedValue = (node: ts.Expression, context: Context) =>
   isIteratedType(context.checker.getTypeAtLocation(node), context);
 
 // A collection's subclass iterates as the collection does.
-const isIteratedType = (type: ts.Type, context: Context) => {
+const isIteratedType = (type: ts.Type, context: Context): boolean => {
+  // An object that a script declares and types as a library Iterable too, as it gives the object a
+  // Symbol.iterator method.
+  if (type.isIntersection()) {
+    return (
+      type.types.some((member) => isIteratedType(member, context)) &&
+      type.types.every((member) => isIteratedType(member, context) || isLibraryIterable(member))
+    );
+  }
   const declarations = type.getSymbol()?.declarations ?? [];
   return (
     context.heap !== undefined &&
@@ -233,11 +241,11 @@ export const takeFromIterator = (
   continueWith: (path: Path, values: Expression) => Formula,
 ): Formula | undefined => {
   if (taken.has(iterable)) return undefined;
-  const isIterable = isIterablePattern(pattern, context);
-  if ((!isIterable && !isIteratedPattern(pattern, context)) || !isPlainPattern(pattern, context)) {
+  const isIterated = isIteratedPattern(pattern, context);
+  if ((!isIterated && !isIterablePattern(pattern, context)) || !isPlainPattern(pattern, context)) {
     return undefined;
   }
-  if (isIterable) return takeFromIterable(pattern, iterable, path, context, frame, continueWith);
+  if (!isIterated) return takeFromIterable(pattern, iterable, path, context, frame, continueWith);
   // The protocol's TypeErrors and the values it takes each join, so that what follows the pattern,
   // and what catches it, translate once.
   return translateJoined(
