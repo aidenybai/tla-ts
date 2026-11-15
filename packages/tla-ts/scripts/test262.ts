@@ -1399,6 +1399,8 @@ const UNUSED_OPERAND_ERROR = 2695;
 const OPTIONAL_DELETE_ERROR = 2790;
 const UNRESOLVED_NAME_ERROR = 2304;
 const NOT_ITERABLE_ERROR = 2488;
+// A tuple's element past its end.
+const MISSING_ELEMENT_ERROR = 2493;
 
 // An argument of a type that a call's signatures don't take, which tla-ts converts where a string's
 // method or RegExp takes a primitive or an object.
@@ -1743,6 +1745,25 @@ const ignoreSoundErrors = () => {
       declaration !== undefined &&
       ts.isVariableDeclaration(declaration) &&
       ts.isCatchClause(declaration.parent)
+    );
+  };
+  // An element of an array pattern that a declaration initializes with an array literal, past the
+  // literal's end. JavaScript gives it undefined, as tla-ts does.
+  const isMissingElement = (node: ts.Node) => {
+    const element = ts.findAncestor(node, ts.isBindingElement);
+    const declaration = element?.parent.parent;
+    const initializer =
+      declaration !== undefined && ts.isVariableDeclaration(declaration)
+        ? declaration.initializer
+        : undefined;
+    return (
+      element !== undefined &&
+      ts.isArrayBindingPattern(element.parent) &&
+      element.dotDotDotToken === undefined &&
+      initializer !== undefined &&
+      ts.isArrayLiteralExpression(initializer) &&
+      !initializer.elements.some(ts.isSpreadElement) &&
+      element.parent.elements.indexOf(element) >= initializer.elements.length
     );
   };
   // A read in a catch's block of what the catch binds, which TypeScript can't tell is assigned where
@@ -2318,6 +2339,7 @@ const ignoreSoundErrors = () => {
       ((diagnostic.code === NOT_ITERABLE_ERROR || NULLABLE_ERRORS.has(diagnostic.code)) &&
         isNullableArrayPattern(node)) ||
       (diagnostic.code === NOT_ITERABLE_ERROR && isCaughtArrayPattern(node)) ||
+      (diagnostic.code === MISSING_ELEMENT_ERROR && isMissingElement(node)) ||
       (diagnostic.code === UNASSIGNED_READ_ERROR &&
         (isCaughtRead(node) || isLaterGeneratorRead(node))) ||
       ((diagnostic.code === NOT_ITERABLE_ERROR || NULLABLE_ERRORS.has(diagnostic.code)) &&
