@@ -17190,6 +17190,27 @@ const isSettled = (node: ts.Expression, results: Scope["results"]): boolean =>
 const isReadName = (node: ts.Expression, context: Context): node is ts.Identifier =>
   ts.isIdentifier(node) && !isUnresolved(node, context);
 
+// A name, or a property that no getter or proxy gives of a name that can't be null or undefined,
+// that a node reads before an await or a yield, whose value the statement keeps from then, as a
+// callee keeps the function it names.
+const isKeptName = (node: ts.Expression, context: Context) => {
+  if (isReadName(node, context)) return true;
+  if (
+    !ts.isPropertyAccessExpression(node) ||
+    ts.isOptionalChain(node) ||
+    !isReadName(node.expression, context)
+  ) {
+    return false;
+  }
+  const type = context.checker.getTypeAtLocation(node.expression);
+  return (
+    (type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) === 0 &&
+    context.checker.getNonNullableType(type) === type &&
+    !isGetterRead(node, context) &&
+    !isProxyOperation(node, context)
+  );
+};
+
 // The first of a list of operands that a node evaluates in order to hold an await or a yield,
 // after operands that are settled or names that it reads.
 const getFirstLeading = (
@@ -17202,7 +17223,7 @@ const getFirstLeading = (
   return (
     getLeadingAwaitOrYield(first, results, context) ??
     // The private name that the left of an in names evaluates nothing.
-    (isSettled(first, results) || isReadName(first, context) || ts.isPrivateIdentifier(first)
+    (isSettled(first, results) || isKeptName(first, context) || ts.isPrivateIdentifier(first)
       ? getFirstLeading(rest, results, context)
       : undefined)
   );
@@ -17230,6 +17251,19 @@ const getPropertyOperands = (property: ts.ObjectLiteralElementLike): ts.Expressi
       : []),
 ];
 
+const getClassOperands = (node: ts.ClassLikeDeclaration): ts.Expression[] => [
+  ...(node.heritageClauses ?? []).flatMap((clause) =>
+    clause.token === ts.SyntaxKind.ExtendsKeyword
+      ? clause.types.map((type) => type.expression)
+      : [],
+  ),
+  ...node.members.flatMap((member) =>
+    member.name !== undefined && ts.isComputedPropertyName(member.name)
+      ? [member.name.expression]
+      : [],
+  ),
+];
+
 const isFunctionExpressionCall = (node: ts.Node): node is ts.CallExpression =>
   ts.isCallExpression(node) && ts.isFunctionExpression(skipCasts(node.expression));
 
@@ -17255,12 +17289,19 @@ const getLeadingAwaitOrYield = (
     ts.isTypeOfExpression(node) ||
     ts.isVoidExpression(node) ||
     ts.isPropertyAccessExpression(node) ||
-    ts.isElementAccessExpression(node)
+    (ts.isElementAccessExpression(node) && ts.isOptionalChain(node))
   ) {
     return getLeadingAwaitOrYield(node.expression, results, context);
   }
+  if (ts.isElementAccessExpression(node)) {
+    return getFirstLeading([node.expression, node.argumentExpression], results, context);
+  }
   if (ts.isPrefixUnaryExpression(node)) {
     return getLeadingAwaitOrYield(node.operand, results, context);
+  }
+  // A class evaluates what it extends, then its computed keys, in order.
+  if (ts.isClassExpression(node)) {
+    return getFirstLeading(getClassOperands(node), results, context);
   }
   if (ts.isConditionalExpression(node)) {
     return getLeadingAwaitOrYield(node.condition, results, context);
@@ -17300,6 +17341,17 @@ const getLeadingAwaitOrYield = (
       context,
     );
   }
+  // A call evaluates its callee, then its arguments, up to a spread.
+  if (ts.isCallExpression(node)) {
+    const index = node.arguments.findIndex(ts.isSpreadElement);
+    return ts.isOptionalChain(node)
+      ? getLeadingAwaitOrYield(node.expression, results, context)
+      : getFirstLeading(
+          [node.expression, ...(index === -1 ? node.arguments : node.arguments.slice(0, index))],
+          results,
+          context,
+        );
+  }
   if (!ts.isBinaryExpression(node)) return undefined;
   const kind = node.operatorToken.kind;
   if (kind === ts.SyntaxKind.EqualsToken) {
@@ -17328,7 +17380,7 @@ const getEarlierNames = (
   root: ts.Node,
   results: Scope["results"],
   context: Context,
-): ts.Identifier[] => {
+): ts.Expression[] => {
   if (node === root) return [];
   const parent = ts.isTemplateSpan(node.parent) ? node.parent.parent : node.parent;
   const operands =
@@ -17338,15 +17390,28 @@ const getEarlierNames = (
         ? [parent.left.expression, parent.right]
         : ts.isArrayLiteralExpression(parent)
           ? [...parent.elements]
-          : ts.isObjectLiteralExpression(parent)
-            ? parent.properties.flatMap(getPropertyOperands)
-            : ts.isObjectLiteralElementLike(parent) && ts.isObjectLiteralExpression(parent.parent)
-              ? getPropertyOperands(parent)
-              : isFunctionExpressionCall(parent)
-                ? [...parent.arguments]
-                : ts.isTemplateExpression(parent)
-                  ? parent.templateSpans.map((span) => span.expression)
-                  : [];
+          : ts.isElementAccessExpression(parent)
+            ? [parent.expression, parent.argumentExpression]
+            : ts.isCallExpression(parent)
+              ? [
+                  ...(ts.isPropertyAccessExpression(parent.expression)
+                    ? [parent.expression.expression]
+                    : []),
+                  parent.expression,
+                  ...parent.arguments,
+                ]
+              : ts.isClassLike(parent)
+                ? getClassOperands(parent)
+                : ts.isObjectLiteralExpression(parent)
+                  ? parent.properties.flatMap(getPropertyOperands)
+                  : ts.isObjectLiteralElementLike(parent) &&
+                      ts.isObjectLiteralExpression(parent.parent)
+                    ? getPropertyOperands(parent)
+                    : isFunctionExpressionCall(parent)
+                      ? [...parent.arguments]
+                      : ts.isTemplateExpression(parent)
+                        ? parent.templateSpans.map((span) => span.expression)
+                        : [];
   // The operand that holds the node, as a property holds its key and its value.
   const position = operands.findIndex(
     (operand) => operand === node || (node.pos <= operand.pos && operand.end <= node.end),
@@ -17354,12 +17419,19 @@ const getEarlierNames = (
   return [
     ...getEarlierNames(parent, root, results, context),
     ...(position === -1 ? [] : operands.slice(0, position)).filter(
-      (operand): operand is ts.Identifier => !results.has(operand) && isReadName(operand, context),
+      (operand) => !results.has(operand) && isKeptName(operand, context),
     ),
   ];
 };
 
 const getStatementAwaitOrYield = (statement: ts.Statement, path: Path, context: Context) => {
+  // A class declaration evaluates what it extends and its computed keys.
+  if (ts.isClassDeclaration(statement)) {
+    const paused = getFirstLeading(getClassOperands(statement), path.scope.results, context);
+    return paused === undefined
+      ? undefined
+      : { paused, reads: getEarlierNames(paused, statement, path.scope.results, context) };
+  }
   const evaluated = getEvaluated(statement);
   const paused =
     evaluated === undefined

@@ -43669,4 +43669,54 @@ describe("BigInts", () => {
       expect((await checkModel(getSource(2))).failure?.message).toContain("count 1");
     });
   });
+
+  describe("awaits in computed keys, element keys, and call arguments", () => {
+    const getSource = (expected: string) => `
+      const log: string[] = [];
+      const recorder = {
+        record(value: unknown) {
+          log.push(\`r\${String(value)}\`);
+        },
+      };
+      let key = "a";
+      async function main() {
+        Promise.resolve().then(() => {
+          key = "z";
+        });
+        log.push(key + (await "q"));
+        class Keyed {
+          // @ts-ignore
+          [await "x"] = 1;
+          // @ts-ignore
+          static [key + (await "y")] = 2;
+        }
+        const Expressed = class {
+          // @ts-ignore
+          [await "w"] = 3;
+        };
+        const instance = new Keyed() as unknown as Record<string, number>;
+        const statics = Keyed as unknown as Record<string, number>;
+        const expressed = new Expressed() as unknown as Record<string, number>;
+        log.push(\`\${instance.x}\${statics.zy}\${expressed.w}\`);
+        log.push(String(Math.max(await 3, 1)));
+        recorder.record(await 5);
+        const table: Record<string, number> = { b: 7 };
+        log.push(String(table[await "b"]));
+      }
+      main().then(() => {
+        if (log.join() !== "${expected}") throw new Error(log.join());
+      });
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("aq,123,3,r5,7"))).failure).toBeUndefined();
+    });
+
+    it("rejects a read of a name after the await rather than before", async () => {
+      // The promise of the check rejects with the error, which nothing handles.
+      expect((await checkModel(getSource("zq,123,3,r5,7"))).failure?.message).toContain(
+        "A promise rejected with no handler",
+      );
+    });
+  });
 });
