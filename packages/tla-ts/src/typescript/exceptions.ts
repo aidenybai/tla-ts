@@ -9,6 +9,7 @@ import {
   getLiteralName,
   getSymbol,
   getUndefined,
+  hasObjectMembers,
   isModuleFile,
   isOnce,
   share,
@@ -97,7 +98,7 @@ export const getErrorClass = (
   if (
     declaration === undefined ||
     !(ts.isClassDeclaration(declaration) || isConstClass(declaration)) ||
-    declaration.members.length > 0 ||
+    hasObjectMembers(declaration) ||
     isPrototypeRead(symbol, checker)
   ) {
     return undefined;

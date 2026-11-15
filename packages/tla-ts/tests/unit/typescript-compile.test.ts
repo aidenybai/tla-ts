@@ -3615,6 +3615,42 @@ setTimeout(() => {
     });
   });
 
+  describe("calls a static method of a class of errors that still makes plain errors", () => {
+    const getSource = (expected: string) => `
+      class CheckError extends Error {
+        static thrower(message?: string): never {
+          throw new CheckError(message);
+        }
+      }
+      const seen: string[] = [];
+      try {
+        const { value = CheckError.thrower("default") } = {} as { value?: number };
+        seen.push(String(value));
+      } catch (error) {
+        seen.push(error instanceof CheckError ? \`check:\${(error as Error).message}\` : "other");
+      }
+      try {
+        Object.defineProperty(1, "key", {});
+      } catch (error) {
+        seen.push(error instanceof CheckError ? "check" : error instanceof TypeError ? "type" : "other");
+      }
+      const made = new CheckError("made");
+      seen.push(String(made instanceof Error), made.message);
+      if (seen.join("|") !== "${expected}") throw new Error(seen.join("|"));
+    `;
+    const expected = "check:default|type|true|made";
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects the expectation that a TypeError is one of the class's errors", async () => {
+      expect(
+        (await checkModel(getSource(expected.replace("|type|", "|check|")))).failure?.message,
+      ).toContain(expected);
+    });
+  });
+
   it("tells an error from another value with Error.isError", async () => {
     const getSource = (expected: string) => `
       class Err extends TypeError {}

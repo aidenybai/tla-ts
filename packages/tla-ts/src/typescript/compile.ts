@@ -9,6 +9,7 @@ import {
   getFunction,
   getSymbol,
   getTopLevelDeclaration,
+  hasObjectMembers,
   isInertValue,
   isScript,
 } from "./context";
@@ -406,7 +407,7 @@ export const compile = (
       isScriptClass(getSymbol(node.expression, context.checker)?.valueDeclaration)) ||
     // A class with members that extends a native error, whose errors only objects can be.
     (ts.isClassLike(node) &&
-      node.members.length > 0 &&
+      hasObjectMembers(node) &&
       (node.heritageClauses ?? []).some((clause) =>
         clause.types.some(
           (type) => ts.isIdentifier(type.expression) && NATIVE_ERRORS.has(type.expression.text),

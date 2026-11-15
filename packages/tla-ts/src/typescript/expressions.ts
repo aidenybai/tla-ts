@@ -37,6 +37,7 @@ import {
   isModuleFile,
   isStrictCode,
   getSymbol,
+  isStatic,
   isAssigned,
   findNodes,
   skipCasts,
@@ -2630,6 +2631,16 @@ const translatePropertyAccess = (
   if (intrinsic !== undefined) return intrinsic;
   const receiver = node.expression;
   const name = node.name.text;
+  // A class of errors that makes plain errors isn't an object that holds its static members.
+  const member = getSymbol(node.name, context.checker)?.valueDeclaration;
+  if (
+    member !== undefined &&
+    isStatic(member) &&
+    getErrorClass(getSymbol(receiver, context.checker), context.checker)?.[0].valueDeclaration ===
+      member.parent
+  ) {
+    throw new TlaTypeScriptError("tla-ts can't read a static member of a class of errors", node);
+  }
   const getterRead = translateGetterRead(node, scope, context);
   if (getterRead !== undefined) return getterRead;
   const receiverNames = getTypeNames(context.checker.getTypeAtLocation(receiver), context.checker);
