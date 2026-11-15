@@ -1878,6 +1878,13 @@ const TYPED_ARRAY_CALLBACK_METHODS = new Set([
   "some",
 ]);
 
+// The Date setters, and a DataView's getters and setters, which tla-ts runs on objects that a test
+// declares, wrappers, and primitives, converting each in turn as Node does: it runs the objects'
+// valueOf and toString, as new DataView does too. Each needs a unit test of such a call.
+const DATE_SETTER_NAME =
+  /^set(UTC)?(FullYear|Month|Date|Hours|Minutes|Seconds|Milliseconds)$|^setTime$/;
+const VIEW_ACCESSOR_NAME = /^(get|set)(Int|Uint|Float|BigInt|BigUint)\d+$/;
+
 // RegExp.prototype's methods under well-known symbols that tla-ts runs as their steps where a test
 // calls them through call, on any receiver, or on a regexp with a string, a limit, or a replaceValue
 // of another type than their signatures take. Each needs a unit test of such a call.
@@ -2974,6 +2981,96 @@ const ignoreSoundErrors = () => {
         isEveryType(call.arguments[position], primitives | ts.TypeFlags.ESSymbolLike))
     );
   };
+  // A value that a Date setter or a DataView converts to a number: a primitive, an object that the
+  // test declares, or a wrapper.
+  const isConvertedNumber = (value: ts.Expression) =>
+    isEveryType(
+      value,
+      ts.TypeFlags.NumberLike |
+        ts.TypeFlags.StringLike |
+        ts.TypeFlags.BooleanLike |
+        ts.TypeFlags.BigIntLike |
+        ts.TypeFlags.Null |
+        ts.TypeFlags.Undefined,
+    ) ||
+    isPlainObject(value) ||
+    isWrapper(value);
+  // A call of a method that DATE_SETTER_NAME or VIEW_ACCESSOR_NAME matches, on a Date or a DataView,
+  // or through call on Date.prototype's or DataView.prototype's method, which a statement runs
+  // where it's a Date's, whose arguments isConvertedNumber takes. tla-ts converts them, and stops
+  // where it can't, such as on a symbol for a Date or a littleEndian that isn't a literal.
+  const isNumberConvertingCall = (diagnostic: ts.Diagnostic) => {
+    const call = getErroredCall(diagnostic);
+    if (
+      call === undefined ||
+      !ts.isCallExpression(call) ||
+      !ts.isPropertyAccessExpression(call.expression) ||
+      call.arguments.some(ts.isSpreadElement)
+    ) {
+      return false;
+    }
+    const callee = call.expression;
+    const isCall = callee.name.text === "call";
+    // The method that a call through call runs: Date.prototype's or DataView.prototype's, or a
+    // variable's that the test never assigns again.
+    const getPrototypeMethod = (node: ts.Expression) => {
+      const symbol = ts.isIdentifier(node) ? checker.getSymbolAtLocation(node) : undefined;
+      const declaration = symbol?.valueDeclaration;
+      const isAssigned = (inner: ts.Node): boolean =>
+        (ts.isBinaryExpression(inner) &&
+          ts.isAssignmentOperator(inner.operatorToken.kind) &&
+          checker.getSymbolAtLocation(skipParentheses(inner.left)) === symbol) ||
+        (ts.forEachChild(inner, isAssigned) ?? false);
+      const value =
+        declaration !== undefined && ts.isVariableDeclaration(declaration)
+          ? isAssigned(sourceFile)
+            ? undefined
+            : declaration.initializer
+          : node;
+      const match =
+        value !== undefined &&
+        /^(Date|DataView)\.prototype\.(\w+)$/.exec(skipParentheses(value).getText());
+      return match ? { owner: match[1], method: match[2] } : undefined;
+    };
+    const target = isCall
+      ? getPrototypeMethod(callee.expression)
+      : {
+          owner: checker.getTypeAtLocation(callee.expression).getSymbol()?.getName(),
+          method: callee.name.text,
+        };
+    const values = isCall ? call.arguments.slice(1) : call.arguments;
+    return (
+      target !== undefined &&
+      ((target.owner === "Date" &&
+        DATE_SETTER_NAME.test(target.method) &&
+        (!isCall || ts.isExpressionStatement(call.parent))) ||
+        (target.owner === "DataView" && VIEW_ACCESSOR_NAME.test(target.method))) &&
+      values.every(isConvertedNumber)
+    );
+  };
+  // A new of DataView, at its byteOffset or byteLength, which isConvertedNumber takes. tla-ts
+  // converts them in turn with ToIndex, and throws the errors of its buffer between them as Node
+  // does.
+  const isDataViewNew = (diagnostic: ts.Diagnostic) => {
+    const call = getErroredCall(diagnostic);
+    const values = call?.arguments ?? [];
+    const position = values.findIndex(
+      (value) =>
+        value.getStart() === diagnostic.start &&
+        value.getEnd() === (diagnostic.start ?? 0) + (diagnostic.length ?? 0),
+    );
+    return (
+      call !== undefined &&
+      ts.isNewExpression(call) &&
+      ts.isIdentifier(call.expression) &&
+      call.expression.text === "DataView" &&
+      isGlobal(call.expression) &&
+      values.length <= 3 &&
+      !values.some(ts.isSpreadElement) &&
+      position >= 1 &&
+      values.slice(1).every(isConvertedNumber)
+    );
+  };
   // A call of a Set's method that SET_LIKE_METHODS lists, of an array, which the error is at.
   // tla-ts throws GetSetRecord's TypeError where the test gives nothing a size, and stops otherwise.
   const isSetLikeArrayCall = (diagnostic: ts.Diagnostic) => {
@@ -3386,6 +3483,8 @@ const ignoreSoundErrors = () => {
           isNullThisCall(diagnostic) ||
           isConcatCall(diagnostic) ||
           isIndexCall(diagnostic) ||
+          isNumberConvertingCall(diagnostic) ||
+          isDataViewNew(diagnostic) ||
           isSetLikeArrayCall(diagnostic) ||
           isTypedArrayCallback(diagnostic) ||
           isTypedArrayNew(diagnostic))) ||
