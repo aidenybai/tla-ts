@@ -170,10 +170,6 @@ export const getHeap = (scope: Scope, node: ts.Node, context: Context) => {
   return heap;
 };
 
-// Whether a script names no map, which tla-ts may hold off the heap as the same TLA+ value as an
-// array, so that a sequence whose type doesn't tell what it is is surely an array.
-export const isMapless = (node: ts.Node) => !/Map\b/.test(node.getSourceFile().text);
-
 // A read of a property of a value of type any or unknown, which may be an array or a string, which
 // read their other properties from their prototypes.
 export const getAnyProperty = (
@@ -184,7 +180,7 @@ export const getAnyProperty = (
 ) => {
   context.builtIns.add("Array.prototype");
   context.builtIns.add("String.prototype");
-  return useJavaScript("GetAny", [heap, value, key], context);
+  return useJavaScript("GetAny", [heap, value, key, boolean(context.isEveryMapHeld)], context);
 };
 
 // A value that TypeScript types as a function, or undefined, such as a descriptor's get, which is

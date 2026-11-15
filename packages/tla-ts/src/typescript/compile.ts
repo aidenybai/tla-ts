@@ -72,9 +72,11 @@ import { isEsModule, NATIVE_ERRORS } from "./exceptions";
 import {
   getDomain,
   getKeptIterator,
+  getKind,
   getWrappedThis,
   isCollectionName,
   isFractionKey,
+  isHeapSetOrMap,
   isRegExpArray,
   isSetOrMapType,
   TYPED_ARRAYS,
@@ -800,6 +802,13 @@ export const compile = (
       context.names.getFresh(`Symbol${name.charAt(0).toUpperCase()}${name.slice(1)}`),
     );
   }
+  // A map that the heap doesn't hold is a TLA+ function, which may be the same value as an array.
+  const makesMapValue = (node: ts.Node): boolean =>
+    ((ts.isNewExpression(node) || ts.isCallExpression(node)) &&
+      getKind(node, context) === "map" &&
+      !isHeapSetOrMap(node, context)) ||
+    (ts.forEachChild(node, makesMapValue) ?? false);
+  context.isEveryMapHeld = !roots.some(makesMapValue);
   const model = readModel(sourceFile, imported, context);
   context.script =
     isNodeScript && model.exported.length === 0

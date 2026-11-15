@@ -126,7 +126,6 @@ import {
   getOwnFunctionKeys,
   translatePropertyKey,
   getAnyProperty,
-  isMapless,
 } from "./heap";
 import {
   getBuiltIn,
@@ -1186,7 +1185,7 @@ const translateBuiltInCall = (
     }
     return useJavaScript(
       "IsArrayAny",
-      [getHeap(scope, node, context), value, boolean(isMapless(node))],
+      [getHeap(scope, node, context), value, boolean(context.isEveryMapHeld)],
       context,
     );
   }
@@ -1359,7 +1358,7 @@ const translateBuiltInCall = (
           getHeap(scope, node, context),
           translateFunctionObject(argument, scope, context),
           string(method),
-          boolean(isMapless(node)),
+          boolean(context.isEveryMapHeld),
         ],
         context,
       );

@@ -132,6 +132,9 @@ export interface Context {
   hasSpecialNumbers: boolean;
   // Whether a script iterates a set or a map, so that each keeps the order of its keys.
   hasOrderedCollections: boolean;
+  // Whether the heap holds every map that a script makes, as a map off the heap may be the same TLA+
+  // value as an array.
+  isEveryMapHeld: boolean;
   // The file of a script without exported actions that reports what it doesn't catch as Node does,
   // and whether Node runs it as an ES module.
   script: { sourceFile: ts.SourceFile; isEsModule: boolean } | undefined;
@@ -520,6 +523,7 @@ export const createContext = (
     functionObjects: new Map(),
     hasSpecialNumbers: false,
     hasOrderedCollections: false,
+    isEveryMapHeld: true,
     script: undefined,
     reached: undefined,
     symbols: [],

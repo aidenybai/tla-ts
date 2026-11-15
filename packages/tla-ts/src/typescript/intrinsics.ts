@@ -21,7 +21,7 @@ import {
 import { getVarNames } from "./early-errors";
 import { getConstructor, getErrorClass, NATIVE_ERRORS } from "./exceptions";
 import { getNumberValue, getRawString, isGlobalObject, translateExpression } from "./expressions";
-import { getHeap, isFunctionValue, isMapless, translateFunctionObject } from "./heap";
+import { getHeap, isFunctionValue, translateFunctionObject } from "./heap";
 import { useJavaScript, WELL_KNOWN_SYMBOLS } from "./javascript";
 import { getThisOwner, type Scope } from "./scope";
 import type { Expression } from "../ast";
@@ -1473,7 +1473,7 @@ export const translateIntrinsic = (node: ts.Expression, scope: Scope, context: C
       [
         getHeap(scope, node, context),
         translateFunctionObject(node.arguments[0], scope, context),
-        boolean(isMapless(node)),
+        boolean(context.isEveryMapHeld),
       ],
       context,
     );

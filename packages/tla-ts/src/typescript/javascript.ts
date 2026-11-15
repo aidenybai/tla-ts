@@ -2402,10 +2402,12 @@ Get(heap, ref, key) ==
 
 \\* A read of a property of a value whose type doesn't tell what it is: an object, an array, an error,
 \\* a function, or a string. tla-ts stops at another primitive, and at undefined or null, whose read
-\\* throws.
-GetAny(heap, value, key) ==
+\\* throws. A sequence is an array where the heap holds every map, which off the heap may equal one.
+GetAny(heap, value, key, isEveryMapHeld) ==
   CASE value \\in {Undefined, Null} ->
          Assert(FALSE, "tla-ts can't throw the TypeError of reading a property of undefined or null")
+    [] IsSequenceValue(value) /\\ ~isEveryMapHeld ->
+         Assert(FALSE, "tla-ts can't tell an array off the heap from a map")
     [] IsRef(value) \\/ IsSequenceValue(value) \\/ IsError(value) \\/ TypeOf(value) = "function" ->
          Get(heap, value, key)
     [] TypeOf(value) = "string" ->
@@ -2417,13 +2419,14 @@ GetAny(heap, value, key) ==
 
 \\* Object.getPrototypeOf of a value whose type doesn't tell what it is, where a primitive gives the
 \\* prototype of the object that wraps it, an error the prototype of its constructor, and a sequence,
-\\* which may also be a map where a script names one, Array.prototype.
-PrototypeAny(heap, value, isMapless) ==
+\\* which is an array where the heap holds every map, Array.prototype.
+PrototypeAny(heap, value, isEveryMapHeld) ==
   CASE value \\in {Undefined, Null} ->
          Assert(FALSE, "tla-ts can't throw the TypeError of getPrototypeOf of undefined or null")
     [] IsRef(value) -> Prototype(heap, value)
     [] IsError(value) -> Get(heap, value.constructor, "prototype")
-    [] IsSequenceValue(value) /\\ isMapless -> Ref :> "Array.prototype"
+    [] IsSequenceValue(value) /\\ isEveryMapHeld -> Ref :> "Array.prototype"
+    [] IsSequenceValue(value) -> Assert(FALSE, "tla-ts can't tell an array off the heap from a map")
     [] TypeOf(value) = "number" -> Ref :> "Number.prototype"
     [] TypeOf(value) = "string" -> Ref :> "String.prototype"
     [] TypeOf(value) = "boolean" -> Ref :> "Boolean.prototype"
@@ -2473,10 +2476,11 @@ HasCallableThen(heap, value) ==
 
 \\* The heap after a pattern reads keys of a value, which TLC would read only where something
 \\* reads what the pattern binds, so that a getter that tla-ts can't call stops the check.
-ReadKeys(heap, ref, keys) ==
+ReadKeys(heap, ref, keys, isEveryMapHeld) ==
   CASE ref \\in {Undefined, Null} ->
          Assert(FALSE, "tla-ts can't throw the TypeError of destructuring " \\o ToString(ref))
-    [] \\A key \\in keys : GetAny(heap, ref, key) = GetAny(heap, ref, key) -> heap
+    [] \\A key \\in keys :
+         GetAny(heap, ref, key, isEveryMapHeld) = GetAny(heap, ref, key, isEveryMapHeld) -> heap
     [] OTHER -> heap
 
 \\* TLC builds a function's values only where something reads them. This reads each one, so a getter
@@ -4784,11 +4788,11 @@ IsArray(heap, value) ==
     [] OTHER -> IsRef(value) /\\ IsArrayObject(Lookup(heap, value))
 
 \\* IsArray of a value whose type doesn't tell what it is. An array off the heap is a sequence, which
-\\* may also be a map where a script names one.
-IsArrayAny(heap, value, isMapless) ==
+\\* may also be a map where the heap doesn't hold every map.
+IsArrayAny(heap, value, isEveryMapHeld) ==
   CASE IsRef(value) -> IsArray(heap, value)
     [] ~IsSequenceValue(value) -> FALSE
-    [] isMapless -> TRUE
+    [] isEveryMapHeld -> TRUE
     [] OTHER -> Assert(FALSE, "tla-ts can't tell an array off the heap from a map")
 
 \\* The values that concat appends for an argument: the elements of an object whose
@@ -5216,12 +5220,13 @@ WrapperObject(prototype, primitive) ==
 
 \\* What Object.keys, values, entries, or getOwnPropertyNames gives for a value whose type doesn't tell
 \\* what it is: an object on the heap, or the object that a primitive converts to, or an array off the
-\\* heap, which may also be a map where a script names one.
-OwnKeysAny(heap, value, method, isMapless) ==
+\\* heap, which may also be a map where the heap doesn't hold every map.
+OwnKeysAny(heap, value, method, isEveryMapHeld) ==
   LET object ==
         CASE value \\in {Undefined, Null} ->
                Assert(FALSE, "tla-ts can't throw the TypeError of converting undefined or null to an object")
-          [] IsSequenceValue(value) /\\ isMapless -> ArrayObject(Null, value)
+          [] IsSequenceValue(value) /\\ isEveryMapHeld -> ArrayObject(Null, value)
+          [] IsSequenceValue(value) -> Assert(FALSE, "tla-ts can't tell an array off the heap from a map")
           [] TypeOf(value) \\in {"string", "number", "boolean", "bigint", "symbol"} ->
                WrapperObject(Null, value)
           [] OTHER -> Assert(FALSE, "tla-ts can't list the keys of " \\o ToString(value))

@@ -696,11 +696,16 @@ export const bindPatternInline = (
               heap,
               value,
               set([translatePropertyKey(element.propertyName.expression, bound, context)]),
+              boolean(context.isEveryMapHeld),
             ],
             context,
           )
         : heap,
-    useJavaScript("ReadKeys", [getHeap(bound, pattern, context), value, set(keys)], context),
+    useJavaScript(
+      "ReadKeys",
+      [getHeap(bound, pattern, context), value, set(keys), boolean(context.isEveryMapHeld)],
+      context,
+    ),
   );
   return { ...bound, bindings: new Map([...bound.bindings, [heapSymbol, read]]) };
 };

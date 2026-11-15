@@ -1485,7 +1485,12 @@ const assignPattern = <Result>(
                     heapSymbol,
                     useJavaScript(
                       "ReadKeys",
-                      [getHeap(current.scope, target, context), value, set(keys)],
+                      [
+                        getHeap(current.scope, target, context),
+                        value,
+                        set(keys),
+                        boolean(context.isEveryMapHeld),
+                      ],
                       context,
                     ),
                   ],

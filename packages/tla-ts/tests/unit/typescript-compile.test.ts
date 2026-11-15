@@ -44207,4 +44207,24 @@ describe("BigInts", () => {
       expect((await checkModel(getSource(wrong))).failure?.message).toContain(expected);
     });
   });
+
+  describe("stops at a map off the heap that a value of type any holds", () => {
+    const getSource = (expected: string) => `
+      const map: any = new Map([[1, "a"]]);
+      const log = [map.length, map[1]].join(",");
+      if (log !== "${expected}") throw new Error(log);
+    `;
+
+    it("stops rather than read the map as an array", async () => {
+      expect((await checkModel(getSource(","))).failure?.message).toContain(
+        "tla-ts can't tell an array off the heap from a map",
+      );
+    });
+
+    it("rejects the map's length and element as an array's", async () => {
+      expect((await checkModel(getSource("1,"))).failure?.message).toContain(
+        "tla-ts can't tell an array off the heap from a map",
+      );
+    });
+  });
 });
