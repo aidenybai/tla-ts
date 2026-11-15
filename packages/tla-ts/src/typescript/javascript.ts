@@ -5402,6 +5402,44 @@ LOCAL DataViewMade(heap, prototype, arguments) ==
                                         [] object.maxLength # Undefined -> -1
                                         [] OTHER -> Len(object.bytes) - offset))
 
+\\* Whether converting a value to a number runs no code and throws nothing.
+LOCAL IsPlainNumeric(value) ==
+  \\/ value = Null
+  \\/ ~IsRef(value) /\\ TypeOf(value) \\in {"undefined", "boolean", "number", "string"}
+
+\\* The index of the first element of an array-like object that a getter answers, as a built-in reads
+\\* each element in order and converts it to a number, where its length and each element before are
+\\* values that IsPlainNumeric holds, so that nothing before runs code or throws, or -1.
+LOCAL NumbersFirstGetter(heap, ref) ==
+  LET length == Get(heap, ref, "length")
+      count == ToLength(length)
+      read == {position \\in 0..(count - 1) : GetterOf(heap, ref, ToString(position)) # Undefined}
+      first == CHOOSE position \\in read : \\A other \\in read : position <= other
+  IN IF /\\ IsHeap(ref)
+        /\\ ~IsProxy(heap, ref)
+        /\\ ~IsTypedArray(heap, ref)
+        /\\ ~IsBuffer(heap, ref)
+        /\\ GetterOf(heap, ref, "length") = Undefined
+        /\\ IsPlainNumeric(length)
+        /\\ ~IsBig(length)
+        /\\ length # Infinity
+        /\\ count * 8 <= MaxBytes
+        /\\ read # {}
+        /\\ \\A position \\in 0..(first - 1) : IsPlainNumeric(Get(heap, ref, ToString(position)))
+     THEN first
+     ELSE -1
+
+\\* The code of the getter that new of a typed array runs first as it reads the elements of an
+\\* array-like object without an @@iterator, where nothing before runs code or throws, or Undefined.
+TypedArrayFirstGetter(heap, ref) ==
+  IF /\\ IsHeap(ref)
+     /\\ ~IsProxy(heap, ref)
+     /\\ GetterOf(heap, ref, WellKnownSymbol("iterator")) = Undefined
+     /\\ Get(heap, ref, WellKnownSymbol("iterator")) \\in {Undefined, Null}
+     /\\ NumbersFirstGetter(heap, ref) # -1
+  THEN CodeOf(heap, GetterOf(heap, ref, ToString(NumbersFirstGetter(heap, ref))))
+  ELSE Undefined
+
 \\* The heap with a new typed array of a length, of the elements of an array or a typed array, or
 \\* viewing a buffer, where isIterating tells whether an array still iterates through the built-in
 \\* iterator and next.
@@ -5666,6 +5704,44 @@ TypedArrayLength(heap, ref) ==
   IF IsTypedArray(heap, ref) /\\ ~IsOutOfBounds(heap, heap.objects[ref[Ref]])
   THEN ViewLength(heap, heap.objects[ref[Ref]])
   ELSE -1
+
+\\* The index of the first element of an array-like source that a getter answers as a typed array of
+\\* numbers sets its elements from it, where nothing that set does before throws or runs code, or -1.
+LOCAL SetFirstGetter(heap, ref, arguments) ==
+  LET offset == IF Len(arguments) >= 2 THEN arguments[2] ELSE Undefined
+      start == ToIntegerOrInfinity(ToNumber(offset))
+      view == heap.objects[ref[Ref]]
+      first == NumbersFirstGetter(heap, arguments[1])
+  IN IF /\\ IsTypedArray(heap, ref)
+        /\\ ~IsBigIntType(view.elementType)
+        /\\ Len(arguments) >= 1
+        /\\ IsPlainNumeric(offset)
+        /\\ start \\notin {Infinity, NegativeInfinity}
+        /\\ ~IsBig(start)
+        /\\ start >= 0
+        /\\ ~IsOutOfBounds(heap, view)
+        /\\ first # -1
+        /\\ ToLength(Get(heap, arguments[1], "length")) + start <= ViewLength(heap, view)
+     THEN first
+     ELSE -1
+
+\\* The code of the getter that %TypedArray%.prototype.set runs first as it reads an array-like
+\\* source, which SetFirstGetter gives, or Undefined.
+TypedArraySetFirstGetter(heap, ref, arguments) ==
+  IF SetFirstGetter(heap, ref, arguments) = -1
+  THEN Undefined
+  ELSE CodeOf(heap, GetterOf(heap, arguments[1], ToString(SetFirstGetter(heap, ref, arguments))))
+
+\\* The heap once set wrote the elements before the one that TypedArraySetFirstGetter reads.
+TypedArraySetBefore(heap, ref, arguments) ==
+  LET view == heap.objects[ref[Ref]]
+      start == ToIntegerOrInfinity(ToNumber(IF Len(arguments) >= 2 THEN arguments[2] ELSE Undefined))
+      values == [position \\in 1..SetFirstGetter(heap, ref, arguments) |->
+                   ToElement(view.elementType, Get(heap, arguments[1], ToString(position - 1)))]
+  IN IF values = <<>>
+     THEN heap
+     ELSE WithBytes(heap, view, view.byteOffset + start * ElementSize(view.elementType),
+                    NumbersBytes(view.elementType, values))
 
 \\* %TypedArray%.prototype's methods that read and write a typed array's elements, which give the
 \\* heap after them, their value, and the error they throw, if any. slice and subarray make their

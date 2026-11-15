@@ -34142,4 +34142,54 @@ describe("BigInts", () => {
       ).toContain('{\\"b\\":1,\\"a\\":{\\"deep\\":7,\\"flat\\":\\"x\\"}}|');
     });
   });
+
+  describe("throws from the first element getter that a typed array reads of an array-like object", () => {
+    const getSource = (expected: string) => `
+      const box = { size: 0 };
+      const beyond: { length: number; [key: number]: number | string } = { length: 2, 0: 5, 1: "7" };
+      Object.defineProperty(beyond, "2", {
+        get() {
+          throw new RangeError("beyond");
+        },
+      });
+      const made = new Uint8Array(beyond as ArrayLike<number>);
+      const first = { length: 3, 0: 1 };
+      Object.defineProperty(first, "1", {
+        get() {
+          throw new RangeError("first");
+        },
+      });
+      const source = { length: 3, 0: 42, 1: 43 };
+      Object.defineProperty(source, "2", {
+        get() {
+          throw new RangeError("source");
+        },
+      });
+      const sample = new Int16Array([1, 2, 3, 4, 5]);
+      const caught: string[] = [];
+      try {
+        new Float64Array(first);
+      } catch (error) {
+        caught.push((error as Error).message);
+      }
+      try {
+        sample.set(source, 1);
+      } catch (error) {
+        caught.push((error as Error).message);
+      }
+      box.size = 1;
+      const read = [made.join(), ...caught, sample.join()].join("|");
+      if (read !== "${expected}") throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("5,7|first|source|1,42,43,4,5"))).failure).toBeUndefined();
+    });
+
+    it("rejects set as writing nothing before the getter throws", async () => {
+      expect(
+        (await checkModel(getSource("5,7|first|source|1,2,3,4,5"))).failure?.message,
+      ).toContain("5,7|first|source|1,42,43,4,5");
+    });
+  });
 });

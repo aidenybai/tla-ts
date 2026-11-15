@@ -3297,6 +3297,10 @@ const translateCallStatementBody = (
       viewCall.owner === "TypedArray"
         ? "%Int8Array.prototype.[[Prototype]]%"
         : `${viewCall.owner}.prototype`;
+    const typedValues = viewCall.values.map((value) =>
+      translateExpression(value, path.scope, context),
+    );
+    const typedArguments = tuple(typedValues);
     const operation =
       viewCall.owner === "TypedArray"
         ? useJavaScript(
@@ -3305,9 +3309,7 @@ const translateCallStatementBody = (
               heap,
               ref,
               string(method),
-              tuple(
-                viewCall.values.map((value) => translateExpression(value, path.scope, context)),
-              ),
+              typedArguments,
               translateBuiltInValue("ArrayBuffer.prototype", expression, context),
               translateTypedConstructors(expression, context),
             ],
@@ -3355,7 +3357,7 @@ const translateCallStatementBody = (
                       ],
                       context,
                     );
-    const run = bindOnce(
+    const runOperation = bindOnce(
       path,
       changeName,
       operation,
@@ -3369,6 +3371,28 @@ const translateCallStatementBody = (
         ),
       ),
     );
+    // set of an array-like source writes each element in order, so the first that a getter which
+    // only throws answers throws once set wrote those before it, where nothing before runs code.
+    const setGetter = useJavaScript(
+      "TypedArraySetFirstGetter",
+      [heap, ref, typedArguments],
+      context,
+    );
+    const run =
+      viewCall.owner === "TypedArray" &&
+      method === "set" &&
+      getThrowingGetters(expression, context).length > 0
+        ? throwFirstGetter(
+            expression,
+            apply("#", [setGetter, getUndefined(context)]),
+            setGetter,
+            typedValues[0] ?? getUndefined(context),
+            withHeap(useJavaScript("TypedArraySetBefore", [heap, ref, typedArguments], context)),
+            context,
+            frame,
+            runOperation,
+          )
+        : runOperation;
     return bindOnce(
       path,
       receiver,
@@ -11657,6 +11681,46 @@ const translateNewBufferStatement = (
                   step(read, iterator, next, [...taken, value]),
                 ),
             );
+      // new of a typed array of numbers reads an array-like object's elements in order, so the
+      // first that a getter which only throws answers throws, where nothing before runs code.
+      const buffers = getNewBuffer(node, context) ?? [];
+      const code = useJavaScript(
+        "TypedArrayFirstGetter",
+        [getHeap(allocated.scope, node, context), values[0] ?? getUndefined(context)],
+        context,
+      );
+      const callee = translateExpression(construction.callee, allocated.scope, context);
+      const madeFrom =
+        values.length > 0 &&
+        construction.newTarget === construction.callee &&
+        buffers.length > 0 &&
+        buffers.every((buffer) => TYPED_ARRAYS.has(buffer) && !buffer.startsWith("Big")) &&
+        getThrowingGetters(node, context).length > 0
+          ? throwFirstGetter(
+              node,
+              apply("/\\", [
+                getBuiltIn(construction.callee, context) === undefined
+                  ? junction(
+                      "Or",
+                      buffers.map((buffer) =>
+                        useJavaScript(
+                          "SameValue",
+                          [callee, translateBuiltInValue(buffer, node, context)],
+                          context,
+                        ),
+                      ),
+                    )
+                  : boolean(true),
+                apply("#", [code, getUndefined(context)]),
+              ]),
+              code,
+              values[0],
+              allocated,
+              context,
+              frame,
+              make(allocated, values),
+            )
+          : make(allocated, values);
       return isIteratedTypedArray(node, context)
         ? ifThenElse(
             useJavaScript(
@@ -11673,9 +11737,9 @@ const translateNewBufferStatement = (
               throwWith,
               (opened, iterator, next) => step(opened, iterator, next, []),
             ),
-            make(allocated, values),
+            madeFrom,
           )
-        : make(allocated, values);
+        : madeFrom;
     },
   );
 
