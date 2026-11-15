@@ -3442,14 +3442,20 @@ export const isInertValue = (argument: ts.Expression): boolean =>
         isInertValue(property.initializer),
     ));
 
-// A file that exports nothing, which runs as JavaScript does rather than as a spec's model.
+// A file that exports no function, which a spec exports as an action, runs as JavaScript does
+// rather than as a spec's model.
 export const isScript = (sourceFile: ts.SourceFile) =>
   sourceFile.statements.every(
     (statement) =>
       !ts.canHaveModifiers(statement) ||
       !(ts.getModifiers(statement) ?? []).some(
         (modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword,
-      ),
+      ) ||
+      !(ts.isVariableStatement(statement)
+        ? statement.declarationList.declarations.some(
+            (declaration) => getFunction(declaration)?.body !== undefined,
+          )
+        : getFunction(statement)?.body !== undefined),
   );
 
 // What a new, or a Reflect.construct of a list of arguments, constructs, the arguments it passes,

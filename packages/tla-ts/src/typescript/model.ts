@@ -146,9 +146,12 @@ export const isDeclaration = (statement: ts.Statement) =>
   ts.isTypeAliasDeclaration(statement) ||
   ts.isInterfaceDeclaration(statement) ||
   ts.isEnumDeclaration(statement) ||
-  // A re-export, like an import, only loads the module it names.
+  // A re-export, like an import, only loads the module it names, and a script's export only names
+  // bindings.
   (ts.isExportDeclaration(statement) &&
-    (statement.isTypeOnly || statement.moduleSpecifier !== undefined)) ||
+    (statement.isTypeOnly ||
+      statement.moduleSpecifier !== undefined ||
+      isScript(statement.getSourceFile()))) ||
   (ts.isFunctionDeclaration(statement) && statement.body !== undefined);
 
 // The variables that a var, let, or const declares.
@@ -258,7 +261,7 @@ export const readModel = (
     if (!isLet(declared, changed, context) || !ts.isVariableDeclaration(declaration)) return [];
     const symbol = getOwnSymbol(declared.identifier, context.checker);
     const isImported = declaration.getSourceFile() !== sourceFile;
-    if ((isExported(declaration) && !isImported) || symbol === undefined) {
+    if ((isExported(declaration) && !isImported && !isScript(sourceFile)) || symbol === undefined) {
       throw new TlaTypeScriptError("State variables can't be exported", declaration);
     }
     if (context.variables.has(symbol)) return [];

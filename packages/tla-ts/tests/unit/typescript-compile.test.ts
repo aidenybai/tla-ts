@@ -122,6 +122,42 @@ describe("actions", () => {
     expect([result.status, result.distinctStates]).toEqual(["deadlock", 3]);
   });
 
+  it("keeps a file that exports a function a spec, whose exported const is a value", async () => {
+    const result = await checkModel(`
+      export const limit = 2;
+      let count = 0;
+      export const step = () => {
+        if (count < limit) count += 1;
+      };
+    `);
+    expect([result.status, result.distinctStates]).toEqual(["deadlock", 3]);
+  });
+
+  describe("runs a file that exports only values as a script", () => {
+    const getSource = (expected: string) => `
+      export const label = "box";
+      let count = 0;
+      count += 1;
+      {
+        var nested = count + 1;
+      }
+      const made = { label, count, nested };
+      if (JSON.stringify(made) !== '${expected}') throw new Error(JSON.stringify(made));
+    `;
+
+    it("agrees with Node", async () => {
+      const result = await checkModel(getSource('{"label":"box","count":1,"nested":2}'));
+      expect(result.failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const result = await checkModel(getSource('{"label":"box","count":1,"nested":3}'));
+      expect(result.failure?.message).toContain(
+        '{\\"label\\":\\"box\\",\\"count\\":1,\\"nested\\":2}',
+      );
+    });
+  });
+
   it("inlines a helper that changes state", async () => {
     const result = await checkModel(`
       /** @noDeadlock */
@@ -39869,5 +39905,65 @@ describe("BigInts", () => {
     it("rejects an iterator left open", async () => {
       expect((await checkModel(getCloseSource(""))).failure?.message).toContain("TypeError c");
     });
+  });
+  describe("rejects a promise combinator's promise where iterating its argument throws", () => {
+    const getSource = (expected: string) => `
+      declare function setTimeout(callback: () => void): void;
+      let log = "";
+      const thrown = { reason: 1 };
+      const throwing = {
+        [Symbol.iterator]() {
+          return {
+            next(): IteratorResult<unknown> {
+              throw thrown;
+            },
+          };
+        },
+      };
+      Promise.all(throwing).then(undefined, (reason) => {
+        log += reason === thrown ? "thrown" : "other";
+      });
+      setTimeout(() => {
+        if (log !== "${expected}") throw new Error(log);
+      });
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("thrown"))).failure).toBeUndefined();
+    });
+
+    it("rejects another reason", async () => {
+      expect((await checkModel(getSource("other"))).failure).toBeDefined();
+    });
+
+    it("stops where an iterator gives an element", async () => {
+      const result = await checkModel(`
+        class Once {
+          isDone = false;
+          next() {
+            const result = { done: this.isDone, value: 1 };
+            this.isDone = true;
+            return result;
+          }
+          [Symbol.iterator]() {
+            return this;
+          }
+        }
+        Promise.all(new Once());
+      `);
+      expect(result.failure?.message).toContain(
+        "tla-ts can't follow an element that an iterator gives Promise.all",
+      );
+    });
+  });
+
+  it("stops at a variable that a script reads through a module's namespace object", () => {
+    const path = join(import.meta.dirname, "../fixtures/typescript/imports/namespace.ts");
+    expect(() =>
+      compile(
+        'import * as logged from "./log";\nif (logged.log.length !== 0) throw new Error();',
+        path,
+      ),
+    ).toThrow("tla-ts can't read the variable logged.log through a module's namespace object");
   });
 });
