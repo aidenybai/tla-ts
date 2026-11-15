@@ -1886,6 +1886,16 @@ const isStructural = (program: Program, expression: Expression, frame: Frame): b
   if (expression.kind === "Apply" && isUnion(program, expression, frame)) {
     return expression.args.some((set) => isStructural(program, set, frame));
   }
+  if (
+    expression.kind === "Apply" &&
+    expression.args.length === 2 &&
+    isBuiltin(program, frame, expression.operator, "\\")
+  ) {
+    return (
+      isStructural(program, expression.args[0], frame) &&
+      isConstantExpression(program, expression.args[1], frame.scope)
+    );
+  }
   return (
     expression.kind === "RecordSet" ||
     expression.kind === "FunctionSet" ||
@@ -2017,16 +2027,23 @@ const compileMembership = (
         `((${name}) => ${tests.length === 0 ? "false" : tests.map((test) => test.emit()).join(" || ")})(${element.emit()})`,
     };
   }
-  // TLC tests membership in an infinite set less another in the first set, then in the other.
+  // TLC tests membership in a set less another in the first set, then in the other, though it
+  // evaluates both. So the tier skips the other only where evaluating it can't fail, or where it
+  // can't build the first, an infinite set.
   if (
     setExpression.kind === "Apply" &&
     setExpression.args.length === 2 &&
-    isBuiltin(program, frame, setExpression.operator, "\\") &&
-    isConstantExpression(program, setExpression.args[0], frame.scope)
+    isBuiltin(program, frame, setExpression.operator, "\\")
   ) {
     const [kept, removed] = setExpression.args;
-    const value = evaluateConstant(program, kept);
-    if (typeof value === "object" && value.kind === "InfiniteSet") {
+    const isInfinite = () => {
+      const value = evaluateConstant(program, kept);
+      return typeof value === "object" && value.kind === "InfiniteSet";
+    };
+    if (
+      isConstantExpression(program, removed, frame.scope) ||
+      (isConstantExpression(program, kept, frame.scope) && isInfinite())
+    ) {
       const name = getName(program, "e");
       const named = { type: element.type, emit: () => name };
       const isKept = compileMembership(program, named, kept, frame);
