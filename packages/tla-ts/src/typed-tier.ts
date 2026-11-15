@@ -2385,7 +2385,6 @@ const compileMembership = (
     if (elements.length === 0) return { type: createBool(), emit: () => "false" };
     elements.forEach((inner) => unify(element.type, getValueType(inner, program.plains)));
     const bounds = getIntervalBounds(elements);
-    const name = getName(program, "e");
     if (bounds) {
       return {
         type: createBool(),
@@ -2395,25 +2394,28 @@ const compileMembership = (
         },
       };
     }
-    const getTest = once(() => {
+    // The test of an element by the name it is read by.
+    const getTest = once((): ((name: string) => string) => {
       const type = closeType(element.type);
       const plains = elements.map((inner) => toPlain(inner, type, program.plains));
       const bitmap = getRecordBitmap(type, plains);
       if (bitmap) {
-        const fields = bitmap.fields.map((field, position) => ({
-          ...field,
-          code: `${name}[${position}]${field.isBool ? " ? 1 : 0" : ""}`,
-        }));
-        const isInRange = fields.map(
-          (field) => `${field.code} >= ${field.low} && ${field.code} <= ${field.high}`,
-        );
-        const offset = fields.map((field) => `(${field.code} - ${field.low}) * ${field.stride}`);
         const code = `B[${program.bitmaps.push(bitmap.bits) - 1}]`;
-        return `(${name}) => ${isInRange.join(" && ")} && ${code}[${offset.join(" + ")}] === 1`;
+        return (name) => {
+          const fields = bitmap.fields.map((field, position) => ({
+            ...field,
+            code: `${name}[${position}]${field.isBool ? " ? 1 : 0" : ""}`,
+          }));
+          const isInRange = fields.map(
+            (field) => `${field.code} >= ${field.low} && ${field.code} <= ${field.high}`,
+          );
+          const offset = fields.map((field) => `(${field.code} - ${field.low}) * ${field.stride}`);
+          return `${isInRange.join(" && ")} && ${code}[${offset.join(" + ")}] === 1`;
+        };
       }
       const isScalar = type.kind === "Int" || type.kind === "Str" || type.kind === "Mix";
       if (isScalar && plains.length <= MAXIMUM_COMPARISONS) {
-        return `(${name}) => ${plains.map((plain) => `${name} === ${plain}`).join(" || ")}`;
+        return (name) => plains.map((plain) => `${name} === ${plain}`).join(" || ");
       }
       const buckets = new Map<number, Plain[]>();
       plains.forEach((plain) => {
@@ -2422,11 +2424,15 @@ const compileMembership = (
       });
       const code = `S[${program.constantSets.push(buckets) - 1}]`;
       // A scalar is its own hash.
-      return isScalar
-        ? `(${name}) => ${code}.has(${name})`
-        : `(${name}) => H.isIn(${code}, ${name})`;
+      return isScalar ? (name) => `${code}.has(${name})` : (name) => `H.isIn(${code}, ${name})`;
     });
-    return { type: createBool(), emit: () => `(${getTest()})(${element.emit()})` };
+    return {
+      type: createBool(),
+      emit: () => {
+        const bound = getBinding(program, "e", element.emit());
+        return bound.wrap(getTest()(bound.name));
+      },
+    };
   }
   return compileSetMembership(program, element, compileValue(program, setExpression, frame));
 };
