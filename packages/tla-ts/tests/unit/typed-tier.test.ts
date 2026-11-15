@@ -167,6 +167,9 @@ describe("typed tier matches TLC", () => {
     "PartialEnabledStarved",
     "SymmetricLiveness",
     "SymmetricStarvation",
+    "UnchangedInstance",
+    "PrimedAliases",
+    "UnchangedFunctions",
   ])("checks %s as the interpreter does", async (name) => {
     const [typed, interpreted] = await Promise.all([
       checkFixture(name, true),

@@ -181,10 +181,17 @@ interface Compiled {
 interface CodeBinding {
   kind: "Code";
   compiled: Compiled;
-  // The LET definition whose value the code is, which a prime evaluates in the next state.
+  // The LET definition or argument whose value in the current state the code is, which a primed
+  // expression evaluates again in the next state.
   source: OperatorBinding | undefined;
-  // The LET function definition the code builds lazily, with its type and the scope of its body.
-  function?: { definition: FunctionDefinition; type: LambdaType; getScope: () => TierScope };
+  // The LET function definition the code builds lazily, with its type, the scope of its body, and
+  // whether it reads the next state.
+  function?: {
+    definition: FunctionDefinition;
+    type: LambdaType;
+    getScope: () => TierScope;
+    isNext: boolean;
+  };
 }
 
 interface OperatorBinding {
@@ -1360,6 +1367,9 @@ interface Frame {
   primed: (string | undefined)[];
   // The code that reads each unprimed variable, which is the next state's inside a primed expression.
   variables: string[];
+  // Whether the expression is primed as a whole, where TLC evaluates a LET definition or an argument
+  // again in the next state.
+  isNext: boolean;
 }
 
 const getVariableCodes = (program: Program) => program.variableTypes.map((_, index) => `v${index}`);
@@ -1370,6 +1380,7 @@ const getNextFrame = (frame: Frame): Frame => ({
   scope: frame.scope,
   primed: frame.primed.map(() => undefined),
   variables: frame.primed.map((code) => code ?? "H.deopt()"),
+  isNext: true,
 });
 
 const withBinding = (scope: TierScope, name: string, binding: Binding): TierScope =>
@@ -1404,11 +1415,12 @@ const bindDefinition = (
   definition: OperatorDefinition,
   value: Compiled,
   name: string,
+  frame: Frame,
 ) =>
   withBinding(scope, definition.name, {
     kind: "Code",
     compiled: { type: value.type, emit: () => getLazyCode(name) },
-    source: { kind: "Operator", definition, scope },
+    source: frame.isNext ? undefined : { kind: "Operator", definition, scope },
   });
 
 // TLC evaluates a RECURSIVE operator by applying it again, so the tier compiles its body once, into
@@ -1520,8 +1532,9 @@ const bindArguments = (
     // TLC passes arguments by name, so a disjunct in one branches where the body uses it as an action.
     if (isBranching(program, arg, frame.scope)) return withBinding(scope, param.name, source);
     const value = compileValue(program, arg, frame);
+    const current = frame.isNext ? undefined : source;
     if (!names || arg.kind === "Identifier" || arg.kind === "Number" || arg.kind === "String") {
-      return withBinding(scope, param.name, { kind: "Code", compiled: value, source });
+      return withBinding(scope, param.name, { kind: "Code", compiled: value, source: current });
     }
     // TLC evaluates an argument where the body uses it, and keeps its value, as for a LET.
     const name = getName(program, "l");
@@ -1529,7 +1542,7 @@ const bindArguments = (
     return withBinding(scope, param.name, {
       kind: "Code",
       compiled: { type: value.type, emit: () => getLazyCode(name) },
-      source,
+      source: current,
     });
   }, new Map());
 
@@ -1618,7 +1631,13 @@ const getExpansion = (
 };
 
 const compileIdentifier = (program: Program, name: string, frame: Frame): Compiled => {
-  const binding = frame.scope.get(name);
+  const code = frame.scope.get(name);
+  const binding =
+    code?.kind === "Code" && frame.isNext
+      ? code.function?.isNext === false
+        ? unsupported()
+        : (code.source ?? code)
+      : code;
   if (binding?.kind === "Code") return binding.compiled;
   if (binding?.kind === "Operator") {
     if (binding.definition.params.length > 0) return unsupported();
@@ -3558,21 +3577,15 @@ const compileValue = (program: Program, expression: Expression, frame: Frame): C
       const target = expression.expression;
       if (target.kind !== "Identifier") return unsupported();
       const global = findGlobalName(target.name, program.environment);
-      if (!frame.scope.has(target.name) && global?.kind === "Definition") {
+      const binding = frame.scope.get(target.name);
+      if (
+        binding?.kind === "Code"
+          ? binding.source !== undefined
+          : binding !== undefined || global?.kind === "Definition"
+      ) {
         return compileIdentifier(program, target.name, getNextFrame(frame));
       }
-      const binding = frame.scope.get(target.name);
-      const source = binding?.kind === "Code" ? binding.source : binding;
-      if (source) {
-        if (source.definition.params.length > 0) return unsupported();
-        return inline(program, source.definition, () =>
-          compileValue(program, source.definition.body, {
-            ...getNextFrame(frame),
-            scope: source.scope,
-          }),
-        );
-      }
-      if (frame.scope.has(target.name) || global?.kind !== "Variable") return unsupported();
+      if (binding || global?.kind !== "Variable") return unsupported();
       const code = frame.primed[global.index] ?? unsupported();
       return { type: program.variableTypes[global.index], emit: () => code };
     }
@@ -3648,7 +3661,7 @@ const bindFunction = (
     kind: "Code",
     compiled: { type, emit: () => getLazyCode(name) },
     source: undefined,
-    function: { definition, type, getScope: () => inner },
+    function: { definition, type, getScope: () => inner, isNext: frame.isNext },
   });
   names.push({
     name,
@@ -3677,7 +3690,7 @@ const bindLet = (program: Program, expression: LetExpression, frame: Frame) => {
     const value = compileValue(program, definition.body, { ...frame, scope: current });
     const name = getName(program, "l");
     names.push({ name, value });
-    return bindDefinition(current, definition, value, name);
+    return bindDefinition(current, definition, value, name, frame);
   }, frame.scope);
   return { names, scope };
 };
@@ -3819,7 +3832,7 @@ const bindActionLet = (program: Program, expression: LetExpression, frame: Frame
     const value = compileValue(program, definition.body, { ...frame, scope: current });
     const name = getName(program, "l");
     names.push({ name, value });
-    return bindDefinition(current, definition, value, name);
+    return bindDefinition(current, definition, value, name, frame);
   }, frame.scope);
   return { scope, names };
 };
@@ -4012,6 +4025,7 @@ const compileStep = (
             scope: item.scope,
             primed,
             variables: getVariableCodes(program),
+            isNext: false,
           }),
         );
       }
@@ -4028,7 +4042,7 @@ const compileStep = (
   }
   const [first, ...rest] = pending;
   const expression = first.expression;
-  const frame = { scope: first.scope, primed, variables: getVariableCodes(program) };
+  const frame = { scope: first.scope, primed, variables: getVariableCodes(program), isNext: false };
   const continueWith = (scope: TierScope, expressions: Expression[], inlining = first.inlining) =>
     compileStep(
       program,
@@ -5600,6 +5614,7 @@ const compileSpec = (
         scope: new Map(),
         primed: unprimed,
         variables: getVariableCodes(program),
+        isNext: false,
       }),
     );
   const invariants = check.invariants.map(compilePredicate);
@@ -5607,7 +5622,12 @@ const compileSpec = (
   const successor = program.variableTypes.map(() => getName(program, "n"));
   // [A]_v holds when A does or v is unchanged.
   const actionProperties = check.actionProperties.map((property) => {
-    const frame = { scope: new Map(), primed: successor, variables: getVariableCodes(program) };
+    const frame = {
+      scope: new Map(),
+      primed: successor,
+      variables: getVariableCodes(program),
+      isNext: false,
+    };
     return {
       action: expectBool(compileValue(program, property.action, frame)),
       unchanged: compileUnchanged(program, property.subscript, frame),
@@ -5618,11 +5638,16 @@ const compileSpec = (
     const variables = getVariableCodes(program);
     if (atom.kind === "State") {
       const holds = expectBool(
-        compileValue(program, atom.expression, { scope, primed: unprimed, variables }),
+        compileValue(program, atom.expression, {
+          scope,
+          primed: unprimed,
+          variables,
+          isNext: false,
+        }),
       );
       return () => holds.emit();
     }
-    const frame = { scope, primed: successor, variables };
+    const frame = { scope, primed: successor, variables, isNext: false };
     if (atom.kind === "Enabled") {
       // A fairness condition's step is <<A>>_v, whose successors are those of A that change v.
       const angle = atom.step.kind === "AngleAction" ? atom.step : undefined;
