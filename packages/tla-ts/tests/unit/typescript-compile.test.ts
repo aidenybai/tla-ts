@@ -37065,11 +37065,6 @@ describe("buffers", () => {
 
     it.each([
       [
-        "reads a BigInt beyond 32 bits",
-        "const wide = new BigUint64Array(1); new Uint8Array(wide.buffer).fill(255); if (wide[0] === 0n) throw new Error('wide');",
-        "tla-ts can't hold a BigInt beyond 32 bits",
-      ],
-      [
         "writes a number",
         "const value: any = 1; let thrown = ''; try { new BigInt64Array(1)[0] = value; } catch (error) { thrown = 'thrown'; } if (thrown === '') throw new Error('number');",
         "tla-ts can't throw the TypeError of converting a number to a BigInt",
@@ -37794,12 +37789,12 @@ describe("BigInts", () => {
     expect(result.failure).toBeUndefined();
   });
 
-  it("stops where a BigInt leaves 32 bits or divides by zero", async () => {
+  it("stops where a BigInt leaves 4096 bits or divides by zero", async () => {
     const overflow = await checkModel(`
-      let sum = 2147483647n;
-      sum = sum + 1n;
+      let sum = 2n ** 4095n;
+      sum = sum + sum;
     `);
-    expect(overflow.failure?.message).toContain("tla-ts can't hold a BigInt beyond 32 bits");
+    expect(overflow.failure?.message).toContain("tla-ts can't hold a BigInt beyond 4096 bits");
     const division = await checkModel(`
       let quotient = 1n;
       quotient = quotient / 0n;
@@ -43571,6 +43566,52 @@ describe("BigInts", () => {
       expect(
         (await checkModel(getSource("21falsetrue|true|0|0,1|truefalsetrue"))).failure?.message,
       ).toContain("21falsetrue|true|1|0,1|truefalsetrue");
+    });
+  });
+
+  describe("holds BigInts beyond TLC's integers", () => {
+    const getSource = (expected: string) => `
+      const box = { size: 0 };
+      const big = 0xfedcba9876543210n;
+      const small = 0x123456789abcdefn;
+      const elements = new BigInt64Array([-(2n ** 63n), 2n ** 64n + 5n]);
+      const log = [
+        big + small, big - small, small - big, big * -small, big / small, -big % small,
+        (-3n) ** 41n, 2147483647n + 1n, -2147483647n - 1n,
+        big > small, -big < -1e19, 2n ** 1024n > Number.MAX_VALUE, big === 0xfedcba9876543210n,
+        big.toString(36), Number(big) === 18364758544493064000, BigInt(2 ** 60),
+        elements[0], elements[1], new BigUint64Array(elements.buffer)[0],
+      ].join("|");
+      if (log !== "${expected}") throw new Error(log);
+    `;
+    const expected = [
+      "18446744073709551615|18282773015276577825|-18282773015276577825",
+      "-1505644448203263502622459810266844400|224|-240|-36472996377170786403|2147483648",
+      "-2147483648|true|true|true|true|3viyrl200xgk0|true|1152921504606846976",
+      "-9223372036854775808|5|9223372036854775808",
+    ].join("|");
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects a product that wraps at 64 bits", async () => {
+      expect(
+        (
+          await checkModel(
+            getSource(
+              expected.replace("-1505644448203263502622459810266844400", "-4417700156681392"),
+            ),
+          )
+        ).failure?.message,
+      ).toContain(expected);
+    });
+
+    it("stops at a BigInt beyond its bits", async () => {
+      expect(
+        (await checkModel("const box = { size: 0 };\nconst huge = 2n ** 100000n > 0n;")).failure
+          ?.message,
+      ).toContain("tla-ts can't hold a BigInt beyond 4096 bits");
     });
   });
 });

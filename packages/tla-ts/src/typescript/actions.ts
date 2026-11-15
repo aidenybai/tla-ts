@@ -1936,7 +1936,7 @@ const getAssignedPath = (expression: ts.Expression, path: Path, context: Context
       return assign(expression.operand, path, context, (current) =>
         useJavaScript(
           operator === "+" ? "BigIntAdd" : "BigIntSubtract",
-          [current, translateBigInt(1, context)],
+          [current, translateBigInt(1n, context)],
           context,
         ),
       );

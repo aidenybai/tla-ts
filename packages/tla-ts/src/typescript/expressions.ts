@@ -142,6 +142,7 @@ import {
   getTypeNames,
   getURICall,
   isComparable,
+  MAX_BIGINT_BITS,
   mayBeNumber,
   translateConversion,
   translateNumberString,
@@ -1791,9 +1792,31 @@ export const translateSetKey = (node: ts.Expression, scope: Scope, context: Cont
 };
 
 // A value as a string, as JavaScript converts it in a template or beside a string in +.
-// A BigInt, which the JavaScript module holds as its integer under the model value Big.
-export const translateBigInt = (value: number, context: Context) =>
-  useJavaScript(":>", [identifier("Big"), number(value)], context);
+// A BigInt, which the JavaScript module holds as its integer under the model value Big within
+// TLC's integers, and beyond them under Limbs as whether it's negative and its 14-bit limbs.
+export const translateBigInt = (value: bigint, context: Context, node?: ts.Node) => {
+  const magnitude = value < 0n ? -value : value;
+  if (magnitude.toString(2).length > MAX_BIGINT_BITS) {
+    throw new TlaTypeScriptError(`tla-ts can't hold a BigInt beyond ${MAX_BIGINT_BITS} bits`, node);
+  }
+  if (magnitude < 2n ** 31n) {
+    const integer = number(Number(magnitude));
+    return useJavaScript(
+      ":>",
+      [identifier("Big"), value < 0n ? apply("-.", [integer]) : integer],
+      context,
+    );
+  }
+  const limbs = Array.from(
+    { length: Math.ceil(magnitude.toString(2).length / 14) },
+    (_, position) => number(Number((magnitude >> BigInt(14 * position)) % 16384n)),
+  );
+  return useJavaScript(
+    ":>",
+    [identifier("Limbs"), tuple([boolean(value < 0n), tuple(limbs)])],
+    context,
+  );
+};
 
 // The types of the primitives that StringOf converts, where a union may hold any of them.
 export const PRIMITIVE_NAMES = new Set(["string", "number", "boolean", "undefined", "null"]);
@@ -3481,7 +3504,7 @@ export const translateTruthy = (
     apply("\\notin", [value, set([identifier("Null"), getUndefined(context)])]),
     ...(defined[0] === "string" ? [apply("#", [value, string("")])] : []),
     ...(defined[0] === "number" ? [apply("#", [value, number(0)])] : []),
-    ...(defined[0] === "bigint" ? [apply("#", [value, translateBigInt(0, context)])] : []),
+    ...(defined[0] === "bigint" ? [apply("#", [value, translateBigInt(0n, context)])] : []),
     ...(defined[0] === "boolean" ? [value] : []),
   ];
   return defined.length === 0
@@ -3937,11 +3960,7 @@ export const translateNode = (
     return translateExpression(staticClass, scope, context);
   }
   if (ts.isBigIntLiteral(node)) {
-    const value = BigInt(node.text.slice(0, -1).replaceAll("_", ""));
-    if (value > 2n ** 31n - 1n) {
-      throw new TlaTypeScriptError(`TLC's integers have 32 bits, so ${node.text} is too big`, node);
-    }
-    return translateBigInt(Number(value), context);
+    return translateBigInt(BigInt(node.text.slice(0, -1).replaceAll("_", "")), context, node);
   }
   if (ts.isNumericLiteral(node)) {
     const value = Number(node.text);
@@ -3995,7 +4014,7 @@ export const translateNode = (
     // ~x is -x - 1.
     return node.operator === ts.SyntaxKind.MinusToken
       ? negated
-      : useJavaScript("BigIntSubtract", [negated, translateBigInt(1, context)], context);
+      : useJavaScript("BigIntSubtract", [negated, translateBigInt(1n, context)], context);
   }
   if (ts.isPrefixUnaryExpression(node) && node.operator === ts.SyntaxKind.MinusToken) {
     const isLiteral = ts.isNumericLiteral(node.operand);

@@ -176,7 +176,7 @@ export const emit = (
   ];
   const modelValues = [
     ...(isJavaScript
-      ? ["Undefined", "Null", "Ref", "Big", "Wide", "Double", ...SPECIAL_NUMBERS]
+      ? ["Undefined", "Null", "Ref", "Big", "Limbs", "Wide", "Double", ...SPECIAL_NUMBERS]
       : []),
     ...constants,
   ];
