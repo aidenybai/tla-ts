@@ -1060,6 +1060,16 @@ const translateFromAsync = (
     call !== undefined && ts.isCallExpression(call)
       ? getFunctionOfKind(call.expression, context, isAnyGenerator)
       : undefined;
+  // The one value that the generator yields, whose type tells whether it has a then that
+  // fromAsync's await calls.
+  const yields =
+    made?.body === undefined
+      ? []
+      : findNodes(made.body, ts.isYieldExpression).filter(
+          (yielded) => ts.findAncestor(yielded.parent, ts.isFunctionLike) === made,
+        );
+  const yieldedNode =
+    yields.length === 1 && yields[0].asteriskToken === undefined ? yields[0].expression : undefined;
   const iteratorMethod =
     items !== undefined && ts.isObjectLiteralExpression(items)
       ? getIteratorMethod(items, context)
@@ -1274,7 +1284,13 @@ const translateFromAsync = (
                   node,
                 );
               }
-              return withNext(after, value ?? getUndefined(context), undefined, isDone, exit);
+              return withNext(
+                after,
+                value ?? getUndefined(context),
+                isDone ? undefined : yieldedNode,
+                isDone,
+                exit,
+              );
             },
           );
         };

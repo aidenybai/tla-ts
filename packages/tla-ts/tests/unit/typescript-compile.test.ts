@@ -25530,6 +25530,55 @@ describe("errors", () => {
     expect((await checkModel(source("true:0"))).failure).toBeDefined();
   });
 
+  it("runs the then of a thenable that a generator yields to Array.fromAsync", async () => {
+    const source = (expected: string) => `
+      declare function setTimeout(callback: () => void): void;
+      let log = "";
+      let closed = 0;
+      let reason: unknown = undefined;
+      const fulfilling = {
+        then(resolve: (value: unknown) => void) {
+          log += "t";
+          resolve(5);
+        },
+      };
+      const rejecting = {
+        then(resolve: (value: unknown) => void, reject: (reason: unknown) => void) {
+          reject("r");
+        },
+      };
+      function* fulfilled() {
+        yield fulfilling;
+      }
+      function* rejected() {
+        try {
+          yield rejecting;
+        } finally {
+          closed++;
+        }
+      }
+      const first = fulfilled();
+      Array.fromAsync(first).then((values) => {
+        log += \`[\${values.join(",")}]\`;
+      });
+      const second = rejected();
+      Array.fromAsync(second).catch((error: unknown) => {
+        reason = error;
+      });
+      Promise.resolve()
+        .then(() => { log += "0"; })
+        .then(() => { log += "1"; })
+        .then(() => { log += "2"; })
+        .then(() => { log += "3"; })
+        .then(() => { log += "4"; });
+      setTimeout(() => {
+        if (\`\${log} \${closed} \${String(reason)}\` !== "${expected}") throw new Error(\`\${log} \${closed} \${String(reason)}\`);
+      });
+    `;
+    expect((await checkModel(source("t01234[5] 1 r"))).failure).toBeUndefined();
+    expect((await checkModel(source("t01234[5] 0 r"))).failure).toBeDefined();
+  });
+
   it("stops at Array.fromAsync of a generator that writes a local of the function around it", () => {
     expect(() =>
       compile(`
