@@ -41236,4 +41236,33 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("matches lookbehinds backward, with the captures inside them", () => {
+    const getSource = (expected: string) => `
+      const results = [
+        "1053".replace(/(?<=(\\d+)(\\d+))$/, "[$1,$2]"),
+        "$10 42".replace(/(?<!\\$)\\d+/, "_"),
+        "abbc".replace(/(?<=\\1(\\w))c/, "[$1]"),
+        "aBbc".replace(/(?<=a(.)\\1)c/i, "[$1]"),
+        "😀x".replace(/(?<=.)x/u, "_"),
+        "aaab".replace(/(?<=(a+?))b/, "[$1]"),
+        "abcdef".replace(/(?<=(?<!b)c)d/g, "_"),
+        "abc".replace(/(?<=[\\q{ab|b}])c/v, "_"),
+      ];
+      if (results.join("|") !== "${expected}") throw new Error(results.join("|"));
+    `;
+
+    it("agrees with Node", async () => {
+      const result = await checkModel(
+        getSource("1053[1,053]|$1_ 42|abb[b]|aBbc|😀_|aaa[a]|abcdef|ab_"),
+      );
+      expect(result.failure).toBeUndefined();
+    });
+
+    it("rejects captures matched forward", async () => {
+      await expect(
+        checkModel(getSource("1053[105,3]|$1_ 42|abb[b]|aBbc|😀_|aaa[a]|abcdef|ab_")),
+      ).rejects.toThrow("1053[1,053]|$1_ 42|");
+    });
+  });
 });

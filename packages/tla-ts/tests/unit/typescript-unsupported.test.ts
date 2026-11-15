@@ -37,7 +37,6 @@ const CASES: [string, string][] = [
     "an array typed as an object with other properties",
     "const descriptor: PropertyDescriptor = []; count = descriptor.enumerable === true ? 1 : 0;",
   ],
-  ["a regular expression's lookbehind", 'label = label.replace(/(?<=a)b/, "c");'],
   ["calling an async function", "const run = async () => { count++; }; run();"],
   [
     "reassigning a function inside a loop",

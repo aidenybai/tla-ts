@@ -4053,6 +4053,13 @@ LOCAL CharacterWidth(regexp, text, index) ==
   THEN 2
   ELSE 1
 
+\\* The code units of the character that a matcher reads from an index in a direction: the one at
+\\* it going forward, and the one before it going backward, as a lookbehind does.
+LOCAL WidthToward(regexp, text, index, direction) ==
+  CASE direction = 1 -> CharacterWidth(regexp, text, index)
+    [] index >= 2 /\\ CharacterWidth(regexp, text, index - 2) = 2 -> 2
+    [] OTHER -> 1
+
 \\* Whether a class matches a character, where the compiler lists the characters that it matches
 \\* among those in ASCII and those that the script's strings may hold.
 LOCAL IsInClass(node, character) ==
@@ -4089,19 +4096,25 @@ RECURSIVE RegExpContinue(_, _, _, _)
 RECURSIVE RegExpRepeat(_, _, _, _, _, _, _)
 
 \\* The state that a matcher reaches from a state, then running the continuation that a stack
-\\* holds, or RegExpFailure.
+\\* holds, or RegExpFailure. A state's direction is -1 inside a lookbehind, which matches backward.
 RegExpStep(regexp, text, node, state, stack) ==
   CASE node.kind = "set" ->
-         LET width == CharacterWidth(regexp, text, state.end)
-         IN  IF /\\ state.end < Len(text)
-                /\\ IsInClass(node, SubSeq(text, state.end + 1, state.end + width))
-             THEN RegExpContinue(regexp, text, [state EXCEPT !.end = @ + width], stack)
+         LET width == WidthToward(regexp, text, state.end, state.direction)
+             first == IF state.direction = 1 THEN state.end ELSE state.end - width
+             isInText == IF state.direction = 1 THEN state.end < Len(text) ELSE state.end > 0
+         IN  IF isInText /\\ IsInClass(node, SubSeq(text, first + 1, first + width))
+             THEN RegExpContinue(regexp, text, [state EXCEPT !.end = @ + state.direction * width], stack)
              ELSE RegExpFailure
     [] node.kind = "sequence" ->
-         IF node.items = <<>>
-         THEN RegExpContinue(regexp, text, state, stack)
-         ELSE RegExpStep(regexp, text, Head(node.items), state,
-                         <<[kind |-> "match", node |-> [node EXCEPT !.items = Tail(@)]]>> \\o stack)
+         LET last == Len(node.items)
+         IN  CASE node.items = <<>> -> RegExpContinue(regexp, text, state, stack)
+               [] state.direction = 1 ->
+                    RegExpStep(regexp, text, Head(node.items), state,
+                               <<[kind |-> "match", node |-> [node EXCEPT !.items = Tail(@)]]>> \\o stack)
+               [] OTHER ->
+                    RegExpStep(regexp, text, node.items[last], state,
+                               <<[kind |-> "match",
+                                  node |-> [node EXCEPT !.items = SubSeq(@, 1, last - 1)]]>> \\o stack)
     [] node.kind = "alternation" ->
          IF node.items = <<>>
          THEN RegExpFailure
@@ -4126,28 +4139,31 @@ RegExpStep(regexp, text, node, state, stack) ==
          IN  IF (IsWordAt(flagged, text, state.end - 1) # IsWordAt(flagged, text, state.end)) # node.isInverted
              THEN RegExpContinue(regexp, text, state, stack)
              ELSE RegExpFailure
-    [] node.kind = "lookahead" ->
-         LET found == RegExpStep(regexp, text, node.body, state, <<>>)
+    [] node.kind = "lookaround" ->
+         LET found == RegExpStep(regexp, text, node.body, [state EXCEPT !.direction = node.direction], <<>>)
          IN  CASE node.isNegative /\\ found.end # -1 -> RegExpFailure
                [] node.isNegative -> RegExpContinue(regexp, text, state, stack)
                [] found.end = -1 -> RegExpFailure
                [] OTHER -> RegExpContinue(regexp, text, [state EXCEPT !.captures = found.captures], stack)
     [] node.kind = "known" ->
          IF \\A offset \\in 0..(node.count - 1) :
-              \\/ state.end + offset >= Len(text)
-              \\/ CharacterAt(text, state.end + offset) \\in DOMAIN CharacterCodes
-         THEN RegExpContinue(regexp, text, state, stack)
+              LET index == IF state.direction = 1 THEN state.end + offset ELSE state.end - offset - 1
+              IN  index < 0 \\/ index >= Len(text) \\/ CharacterAt(text, index) \\in DOMAIN CharacterCodes
+         THEN RegExpStep(regexp, text, node.body, state, stack)
          ELSE Assert(FALSE, "tla-ts can't tell whether a class matches a character outside ASCII")
     [] node.kind = "backreference" ->
          LET captured == RegExpCaptureOf(state.captures, node.indices)
              length == IF captured = <<>> THEN 0 ELSE captured[2] - captured[1]
-         IN  IF /\\ state.end + length <= Len(text)
+             first == IF state.direction = 1 THEN state.end ELSE state.end - length
+         IN  IF /\\ first >= 0
+                /\\ first + length <= Len(text)
                 /\\ \\A offset \\in 0..(length - 1) :
                      IsSameCharacter([regexp EXCEPT !.ignoreCase = node.ignoreCase],
                                      CharacterAt(text, captured[1] + offset),
-                                     CharacterAt(text, state.end + offset))
-                /\\ length = 0 \\/ CharacterWidth(regexp, text, state.end + length - 1) = 1
-             THEN RegExpContinue(regexp, text, [state EXCEPT !.end = @ + length], stack)
+                                     CharacterAt(text, first + offset))
+                /\\ length = 0 \\/ CharacterWidth(regexp, text, first + length - 1) = 1
+                /\\ state.direction = 1 \\/ length = 0 \\/ first = 0 \\/ CharacterWidth(regexp, text, first - 1) = 1
+             THEN RegExpContinue(regexp, text, [state EXCEPT !.end = @ + state.direction * length], stack)
              ELSE RegExpFailure
 
 \\* The continuation that a stack holds, run on the state that a matcher reaches.
@@ -4158,7 +4174,10 @@ RegExpContinue(regexp, text, state, stack) ==
        IN  CASE frame.kind = "match" -> RegExpStep(regexp, text, frame.node, state, Tail(stack))
              [] frame.kind = "close" ->
                   RegExpContinue(regexp, text,
-                                 [state EXCEPT !.captures[frame.index] = <<frame.start, state.end>>],
+                                 [state EXCEPT !.captures[frame.index] =
+                                    IF state.direction = 1
+                                    THEN <<frame.start, state.end>>
+                                    ELSE <<state.end, frame.start>>],
                                  Tail(stack))
              [] OTHER ->
                   IF frame.min = 0 /\\ state.end = frame.start
@@ -4190,7 +4209,7 @@ RegExpRepeat(regexp, text, node, min, max, state, stack) ==
 LOCAL RegExpAt(regexp, text, index) ==
   RegExpStep(regexp, text, regexp.pattern,
              [start |-> index, end |-> index,
-              captures |-> [position \\in 1..regexp.captures |-> <<>>]],
+              captures |-> [position \\in 1..regexp.captures |-> <<>>], direction |-> 1],
              <<>>)
 
 RECURSIVE RegExpSearch(_, _, _)

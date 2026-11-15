@@ -1480,9 +1480,9 @@ type Matcher =
     }
   | { kind: "start" | "end"; flags: string }
   | { kind: "boundary"; isInverted: boolean; flags: string }
-  | { kind: "lookahead"; body: Matcher; isNegative: boolean }
-  // An assertion that the next count code units are ones whose codes tla-ts tells.
-  | { kind: "known"; count: number }
+  | { kind: "lookaround"; body: Matcher; isNegative: boolean; isBehind: boolean }
+  // A matcher that first asserts that the next count code units are ones whose codes tla-ts tells.
+  | { kind: "known"; count: number; body: Matcher }
   | { kind: "backreference"; indices: number[]; flags: string };
 
 const LINE_TERMINATORS = [0x0a, 0x0d, 0x2028, 0x2029];
@@ -1656,11 +1656,10 @@ const parsePattern = (source: string, flags: string, node: ts.Node, characters: 
         flags: cursor.flags,
       };
     }
-    if (isAt("(?<=") || isAt("(?<!")) {
-      throw new TlaTypeScriptError("tla-ts can't match a lookbehind", node);
-    }
+    // A lookbehind, which no quantifier may follow.
+    if (isAt("(?<=") || isAt("(?<!")) return parseLookaround();
     const start = cursor.position;
-    const parsed = isAt("(?=") || isAt("(?!") ? parseLookahead() : parseAtom();
+    const parsed = isAt("(?=") || isAt("(?!") ? parseLookaround() : parseAtom();
     const atomSource = source.slice(start, cursor.position);
     const atom =
       parsed.kind === "set" && parsed.source === undefined
@@ -1707,12 +1706,13 @@ const parsePattern = (source: string, flags: string, node: ts.Node, characters: 
     }
     return { min, max: max > 2 ** 31 - 1 ? -1 : max };
   };
-  const parseLookahead = (): Matcher => {
-    const isNegative = peek(2) === "!";
-    cursor.position += 3;
+  const parseLookaround = (): Matcher => {
+    const isBehind = peek(2) === "<";
+    const isNegative = peek(isBehind ? 3 : 2) === "!";
+    cursor.position += isBehind ? 4 : 3;
     const body = parseDisjunction();
     close();
-    return { kind: "lookahead", body, isNegative };
+    return { kind: "lookaround", body, isNegative, isBehind };
   };
   const parseAtom = (): Matcher => {
     const character = peek();
@@ -1996,10 +1996,7 @@ const parsePattern = (source: string, flags: string, node: ts.Node, characters: 
     const alternation: Matcher = items.length === 1 ? singles : { kind: "alternation", items };
     return stringProperties.length === 0
       ? alternation
-      : {
-          kind: "sequence",
-          items: [{ kind: "known", count: STRING_PROPERTY_REACH }, alternation],
-        };
+      : { kind: "known", count: STRING_PROPERTY_REACH, body: alternation };
   };
   const pattern = parseDisjunction();
   if (cursor.position < source.length) throw invalid();
@@ -2114,7 +2111,11 @@ const translateMatcher = (matcher: Matcher, flags: string, characters: Set<numbe
     return translateCharacters(matcher, matcher.flags ?? flags, characters);
   }
   if (matcher.kind === "known") {
-    return record("Record", [kind, { name: "count", value: number(matcher.count) }]);
+    return record("Record", [
+      kind,
+      { name: "count", value: number(matcher.count) },
+      { name: "body", value: translateMatcher(matcher.body, flags, characters) },
+    ]);
   }
   if ("items" in matcher) {
     return record("Record", [
@@ -2150,11 +2151,13 @@ const translateMatcher = (matcher: Matcher, flags: string, characters: Set<numbe
       { name: "ignoreCase", value: boolean(matcher.flags.includes("i")) },
     ]);
   }
-  if (matcher.kind === "lookahead") {
+  if (matcher.kind === "lookaround") {
     return record("Record", [
       kind,
       { name: "body", value: translateMatcher(matcher.body, flags, characters) },
       { name: "isNegative", value: boolean(matcher.isNegative) },
+      // A lookbehind matches its body backward, from its last atom to its first.
+      { name: "direction", value: number(matcher.isBehind ? -1 : 1) },
     ]);
   }
   if (matcher.kind === "backreference") {
