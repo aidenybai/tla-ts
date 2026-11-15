@@ -26252,4 +26252,26 @@ describe("BigInts", () => {
       ).toContain("4278255616,511,4294967295,4278255617");
     });
   });
+
+  describe("reads no element at an index beyond 32 bits", () => {
+    const getSource = (expected: string) => `
+      const box = { size: 0 };
+      const text = String("hello world");
+      const items = [1, 2];
+      const past = text[Math.pow(2, 32) - 1];
+      const isIn = Math.pow(2, 32) in items;
+      const last = items[2 ** 40];
+      box.size = 1;
+      const read = [past, isIn, last, text[1]].join();
+      if (read !== "${expected}") throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(",false,,e"))).failure).toBeUndefined();
+    });
+
+    it("rejects the index as inside the array", async () => {
+      expect((await checkModel(getSource(",true,,e"))).failure?.message).toContain(",false,,e");
+    });
+  });
 });

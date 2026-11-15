@@ -983,11 +983,10 @@ FloorDivide(left, right) == Quotient(left, right, TRUE)
 TruncDivide(left, right) == Quotient(left, right, FALSE)
 
 \\* The position, counting from 1, of the element that a number reads, or 0 where it isn't an
-\\* index.
+\\* index, or is past any sequence's end, as an integer beyond 32 bits is.
 ElementPosition(value) ==
   CASE value = NegativeZero -> 1
-    [] value \\in SpecialNumbers \\/ IsFraction(value) -> 0
-    [] IsBig(value) -> BeyondInteger
+    [] value \\in SpecialNumbers \\/ IsFraction(value) \\/ IsBig(value) -> 0
     [] OTHER -> value + 1
 
 \\* The value that a Set or a Map keeps as a key, where -0 is 0.
