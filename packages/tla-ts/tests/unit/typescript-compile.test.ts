@@ -27966,6 +27966,131 @@ describe("errors", () => {
     }
   });
 
+  describe("throws into an async generator where it suspended in try or in a yield* over a generator", () => {
+    const cases = [
+      {
+        name: "a throw that the body catches and yields after",
+        getSource: (expected: string) => `
+        declare function setTimeout(callback: () => void): void;
+        let log = "";
+        async function* g(): AsyncGenerator<number, number, number> {
+          try {
+            yield 1;
+          } catch (error) {
+            log += "c" + error;
+            yield 2;
+          }
+          return 3;
+        }
+        const it = g();
+        it.next().then(() => it.throw(5).then((result) => { log += "r" + result.value; }));
+        Promise.resolve()
+          .then(() => { log += "0"; })
+          .then(() => { log += "1"; })
+          .then(() => { log += "2"; });
+        setTimeout(() => {
+          if (log !== "${expected}") throw new Error(log);
+        });
+      `,
+        expected: "0c512r2",
+        wrong: "0c51r22",
+      },
+      {
+        name: "a throw through a finally block",
+        getSource: (expected: string) => `
+        declare function setTimeout(callback: () => void): void;
+        let log = "";
+        async function* g(): AsyncGenerator<number, number, number> {
+          try {
+            yield 1;
+          } finally {
+            log += "f";
+          }
+          return 3;
+        }
+        const it = g();
+        it.next().then(() => it.throw(5).catch((error) => { log += "e" + error; }));
+        Promise.resolve()
+          .then(() => { log += "0"; })
+          .then(() => { log += "1"; })
+          .then(() => { log += "2"; });
+        setTimeout(() => {
+          if (log !== "${expected}") throw new Error(log);
+        });
+      `,
+        expected: "0f1e52",
+        wrong: "0f12e5",
+      },
+      {
+        name: "a throw that the generator under a yield* catches",
+        getSource: (expected: string) => `
+        declare function setTimeout(callback: () => void): void;
+        let log = "";
+        function* inner(): Generator<number, number, number> {
+          try {
+            yield 1;
+          } catch (error) {
+            log += "c" + error;
+            yield 2;
+          }
+          return 3;
+        }
+        async function* g(): AsyncGenerator<number, void, number> {
+          yield* inner();
+        }
+        const it = g();
+        it.next().then(() => it.throw(5).then((result) => { log += "r" + result.value; }));
+        Promise.resolve()
+          .then(() => { log += "0"; })
+          .then(() => { log += "1"; })
+          .then(() => { log += "2"; });
+        setTimeout(() => {
+          if (log !== "${expected}") throw new Error(log);
+        });
+      `,
+        expected: "01c52r2",
+        wrong: "01c5r22",
+      },
+      {
+        name: "a throw that the generator under a yield* doesn't catch",
+        getSource: (expected: string) => `
+        declare function setTimeout(callback: () => void): void;
+        let log = "";
+        function* inner(): Generator<number, number, number> {
+          yield 1;
+          return 3;
+        }
+        async function* g(): AsyncGenerator<number, void, number> {
+          try {
+            yield* inner();
+          } catch (error) {
+            log += "c" + error;
+          }
+        }
+        const it = g();
+        it.next().then(() => it.throw(5).then((result) => { log += "r" + result.done; }));
+        Promise.resolve()
+          .then(() => { log += "0"; })
+          .then(() => { log += "1"; })
+          .then(() => { log += "2"; });
+        setTimeout(() => {
+          if (log !== "${expected}") throw new Error(log);
+        });
+      `,
+        expected: "012c5rtrue",
+        wrong: "012cr5true",
+      },
+    ];
+    for (const entry of cases) {
+      it(`matches Node on ${entry.name}`, async () => {
+        expect((await checkModel(entry.getSource(entry.expected))).failure).toBeUndefined();
+      });
+      it(`fails a wrong log on ${entry.name}`, async () => {
+        expect((await checkModel(entry.getSource(entry.wrong))).failure).toBeDefined();
+      });
+    }
+  });
+
   it("runs Array.fromAsync of the values() of an array written in place", async () => {
     // V8 rejects a job later than the spec, whose order a for await gives.
     const result = await checkModel(`

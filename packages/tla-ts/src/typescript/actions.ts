@@ -450,7 +450,8 @@ interface Suspension {
   // Whether it suspended inside a try or a yield*, which a return or a throw would have to run.
   isGuarded: boolean;
   // Runs the rest of the body from a yield as a return or a throw there would, through the finally
-  // blocks and catch clauses around it, where a sync generator's plain yield suspended it.
+  // blocks and catch clauses around it, where a plain yield suspended it. An async generator's
+  // return awaits its value there first, which tla-ts doesn't follow.
   abort?: (path: Path, method: string, value: Expression | undefined) => Formula;
   isAsync: boolean;
   // The promises of the nexts that called an async generator while its body ran, which it settles
@@ -567,8 +568,7 @@ interface YieldMode {
   isGuarded: boolean;
   // A generator's yield* passes on the result object of the iterator it delegates to.
   isResult?: boolean;
-  // What a return or a throw does at a yield of a sync generator, from the path of the call that
-  // resumes it.
+  // What a return or a throw does at the yield, from the path of the call that resumes it.
   abortRest?: Suspension["abort"];
 }
 
@@ -5700,7 +5700,7 @@ export const makeGenerator = (
       },
       // An async generator's yield awaits its value.
       yieldTo: (current, value, rest, throwRest, mode) => {
-        const abortRest = isAsync ? undefined : mode?.abortRest;
+        const abortRest = mode?.abortRest;
         const step = (resumed: Path, settled: Expression | undefined) =>
           getCaller(resumed).step(
             leave(
@@ -6845,13 +6845,32 @@ export const resumeGenerator = (
           sent,
         );
       }
+      // A throw resumes the body at its yield, which throws it there.
       if (resume !== undefined && suspension.isStarted && suspension.isGuarded) {
-        return leaf(
-          apply("Assert", [
-            boolean(false),
-            string("tla-ts can't close a generator that suspended in try or yield*"),
-          ]),
-        );
+        return method === "throw" && suspension.abort !== undefined
+          ? suspension.abort(
+              {
+                ...made,
+                generators: new Map([
+                  ...made.generators,
+                  [
+                    name,
+                    {
+                      ...suspension,
+                      caller: getAsyncCaller(node, name, made, request, context, done),
+                    },
+                  ],
+                ]),
+              },
+              method,
+              argument?.value,
+            )
+          : leaf(
+              apply("Assert", [
+                boolean(false),
+                string("tla-ts can't close a generator that suspended in try or yield*"),
+              ]),
+            );
       }
       if (method === "throw") {
         return settleRequest(
@@ -9752,10 +9771,11 @@ const delegateToGenerator = (
     : delegate(path, translateExpression(iterated, path.scope, context), "next", undefined, 0);
 };
 
-// An async generator's yield* over a generator, which the async-from-sync iterator resumes with
-// next. It awaits each value that the generator yields, and the value it returns, a job before the
-// yield* awaits the iterator's result, as for an array. A value that rejects would close the
-// generator, which tla-ts doesn't follow.
+// An async generator's yield* over a generator, which the async-from-sync iterator resumes with the
+// method and the value that resumed the async generator. It awaits each value that the generator
+// yields, and the value it returns, a job before the yield* awaits the iterator's result, as for
+// an array, and what the generator throws rejects that result. A value that rejects would close
+// the generator, which tla-ts doesn't follow.
 const delegateToSyncGenerator = (
   node: ts.YieldExpression,
   iterated: ts.Expression,
@@ -9779,7 +9799,18 @@ const delegateToSyncGenerator = (
         string("tla-ts can't close a generator that yield* awaits a rejected value of"),
       ]),
     );
-  const delegate = (current: Path, generator: Expression, count: number): Formula =>
+  // The iterator's result rejects with what the generator throws, which the yield* awaits.
+  const stepFrame: Frame = {
+    ...frame,
+    throwTo: throwTo && ((current, thrown) => tick(current, (after) => throwTo(after, thrown))),
+  };
+  const delegate = (
+    current: Path,
+    generator: Expression,
+    method: string,
+    value: Expression | undefined,
+    count: number,
+  ): Formula =>
     count > DELEGATION_LIMIT
       ? leaf(
           apply("Assert", [
@@ -9790,12 +9821,12 @@ const delegateToSyncGenerator = (
       : resumeGenerator(
           node,
           generator,
-          "next",
-          undefined,
+          method,
+          value && { value },
           current,
           context,
-          frame,
-          (stepped, value, isDone, isResult) => {
+          stepFrame,
+          (stepped, result, isDone, isResult) => {
             if (isResult) {
               throw new TlaTypeScriptError(
                 "tla-ts can't await what a generator passes on through its own yield*",
@@ -9804,21 +9835,25 @@ const delegateToSyncGenerator = (
             }
             return awaitTo(
               stepped,
-              value ?? getUndefined(context),
+              result ?? getUndefined(context),
               undefined,
               (fulfilled, settled) =>
                 tick(fulfilled, (resumed) =>
                   isDone
-                    ? continueWith(resumed)
+                    ? method === "return"
+                      ? frame.exit(resumed, settled)
+                      : continueWith(resumed)
                     : yieldTo(
                         resumed,
                         settled,
-                        (after, sent) =>
-                          sent === undefined
-                            ? delegate(after, generator, count + 1)
-                            : stopSending(),
+                        (after, sent) => delegate(after, generator, "next", sent, count + 1),
                         throwWith,
-                        { isDelegated: true, isGuarded: true },
+                        {
+                          isDelegated: true,
+                          isGuarded: true,
+                          abortRest: (aborted, abrupt, abruptValue) =>
+                            delegate(aborted, generator, abrupt, abruptValue, count + 1),
+                        },
                       ),
                 ),
               rejected,
@@ -9827,9 +9862,9 @@ const delegateToSyncGenerator = (
         );
   return ts.isCallExpression(iterated)
     ? translateCallStatement(iterated, path, context, frame, (after, generator) =>
-        delegate(after, generator ?? getUndefined(context), 0),
+        delegate(after, generator ?? getUndefined(context), "next", undefined, 0),
       )
-    : delegate(path, translateExpression(iterated, path.scope, context), 0);
+    : delegate(path, translateExpression(iterated, path.scope, context), "next", undefined, 0);
 };
 
 // An async generator's yield* over another async generator, which awaits the promise of each next
