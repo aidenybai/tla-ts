@@ -4101,10 +4101,13 @@ NumberToPrecision(value, precision) ==
               \\o SubSeq(decimal.digits, exponent + 2, count)
        [] OTHER -> SignOf(value) \\o "0." \\o Repeated("0", -(exponent + 1)) \\o decimal.digits
 
+\\* How many digits in a radix from 2 to 36 a limb holds.
+LOCAL RadixChunk(radix) == CHOOSE count \\in 1..14 : radix^count <= Limb /\\ radix^(count + 1) > Limb
+
 \\* The digits of a natural in a radix from 2 to 36, as many at a time as a limb holds.
 RECURSIVE NatRadixDigits(_, _)
 NatRadixDigits(nat, radix) ==
-  LET count == CHOOSE count \\in 1..14 : radix^count <= Limb /\\ radix^(count + 1) > Limb
+  LET count == RadixChunk(radix)
       quotient == NatTrim(NatQuotientFrom(nat, radix^count, Len(nat), 0))
       digits == RadixDigits(LimbAt(NatSubtract(nat, NatTimes(quotient, radix^count)), 1), radix)
   IN  IF quotient = <<>>
@@ -4966,6 +4969,32 @@ LOCAL LooseKind(value) ==
 
 \\* Whether a number equals what ToNumber gives for a string. Numbers that aren't integers aren't
 \\* values, so a string that reads as a fraction equals none.
+\\* The natural that digits in a radix hold, read as many at a time as a limb holds.
+RECURSIVE NatOfDigits(_, _, _)
+NatOfDigits(text, radix, nat) ==
+  LET taken == Prefix(text, RadixChunk(radix))
+  IN IF text = ""
+     THEN nat
+     ELSE NatOfDigits(SubSeq(text, Len(taken) + 1, Len(text)), radix,
+                      NatAdd(NatTimes(nat, radix^Len(taken)), NatOf(CheckedDigits(taken, radix, 0))))
+
+\\* StringToBigInt: the BigInt of a string's integer, in decimal after an optional sign, or in binary,
+\\* octal, or hexadecimal after a prefix, between white space, or Undefined where it holds none.
+LOCAL StringToBigInt(value) ==
+  LET text == TrimEnd(TrimStart(value))
+      prefix == Prefix(text, 2)
+      radix == CASE prefix \\in {"0x", "0X"} -> 16
+                 [] prefix \\in {"0o", "0O"} -> 8
+                 [] prefix \\in {"0b", "0B"} -> 2
+                 [] OTHER -> 10
+      unsigned == CASE radix # 10 -> SubSeq(text, 3, Len(text))
+                     [] Prefix(text, 1) \\in {"+", "-"} -> Tail(text)
+                     [] OTHER -> text
+  IN CASE text = "" -> Big :> 0
+       [] unsigned = "" \\/ \\E position \\in 1..Len(unsigned) : SubSeq(unsigned, position, position) \\notin DigitsOf(radix) ->
+            Undefined
+       [] OTHER -> BigIntOf(Prefix(text, 1) = "-", NatOfDigits(unsigned, radix, <<>>))
+
 LOCAL EqualsText(number, text) ==
   ReadNumber(text, LAMBDA kind, isNegative, magnitude :
     CASE kind = "integer" -> StrictEquals(number, IF isNegative THEN -magnitude ELSE magnitude)
@@ -4991,7 +5020,8 @@ LooseEquals(heap, left, right) ==
                 bigint == IF leftKind = "bigint" THEN left ELSE right
             IN IsFinite(number) /\\ ~NumericLessThan(number, bigint) /\\ ~NumericLessThan(bigint, number)
        [] {leftKind, rightKind} = {"bigint", "string"} ->
-            Assert(FALSE, "tla-ts can't compare a BigInt with a string")
+            LET parsed == StringToBigInt(IF leftKind = "string" THEN left ELSE right)
+            IN parsed # Undefined /\\ parsed = IF leftKind = "bigint" THEN left ELSE right
        [] {leftKind, rightKind} = {"null", "undefined"} -> TRUE
        [] leftKind = "number" /\\ rightKind = "string" -> EqualsText(left, right)
        [] leftKind = "string" /\\ rightKind = "number" -> EqualsText(right, left)
@@ -5905,21 +5935,16 @@ LOCAL WithBytes(heap, view, start, written) ==
         SubSeq(bytes, 1, start) \\o written \\o SubSeq(bytes, start + Len(written) + 1, Len(bytes))]
 
 \\* What a typed array of a type holds for a value that a script writes: ToBigInt where it holds
-\\* BigInts, which throws a TypeError for a number and reads a string's decimal digits, and ToNumber
+\\* BigInts, which throws a TypeError for a number and reads a string's integer, and ToNumber
 \\* otherwise.
 ToElement(type, value) ==
-  LET text == TrimEnd(TrimStart(value))
-      unsigned == IF Prefix(text, 1) \\in {"+", "-"} THEN Tail(text) ELSE text
-      sign == IF Prefix(text, 1) = "-" THEN -1 ELSE 1
-  IN CASE ~IsBigIntType(type) -> ToNumber(value)
-       [] IsBigInt(value) -> value
-       [] TypeOf(value) = "boolean" -> Big :> IF value THEN 1 ELSE 0
-       [] TypeOf(value) = "string" /\\ text = "" -> Big :> 0
-       [] TypeOf(value) = "string" /\\ unsigned # "" /\\ DigitPrefix(unsigned, 10) = unsigned ->
-            Big :> sign * CheckedDigits(unsigned, 10, 0)
-       [] TypeOf(value) = "number" ->
-            Assert(FALSE, "tla-ts can't throw the TypeError of converting a number to a BigInt")
-       [] OTHER -> Assert(FALSE, "tla-ts can't convert this value to a BigInt")
+  CASE ~IsBigIntType(type) -> ToNumber(value)
+    [] IsBigInt(value) -> value
+    [] TypeOf(value) = "boolean" -> Big :> IF value THEN 1 ELSE 0
+    [] TypeOf(value) = "string" /\\ StringToBigInt(value) # Undefined -> StringToBigInt(value)
+    [] TypeOf(value) = "number" ->
+         Assert(FALSE, "tla-ts can't throw the TypeError of converting a number to a BigInt")
+    [] OTHER -> Assert(FALSE, "tla-ts can't convert this value to a BigInt")
 
 \\* What a typed array holds for a value that a script writes.
 ToElementOf(heap, ref, value) == ToElement(heap.objects[ref[Ref]].elementType, value)

@@ -43614,4 +43614,37 @@ describe("BigInts", () => {
       ).toContain("tla-ts can't hold a BigInt beyond 4096 bits");
     });
   });
+
+  describe("reads a string's integer to compare it with a BigInt or store it as one", () => {
+    const getSource = (expected: string) => `
+      const box = { size: 0 };
+      const equals = (left: unknown, right: unknown) => left == right;
+      const texts = ["", " 12 ", "-0", "-", "0x1f", "-0x1f", "0b101", "0o17", "1e3"];
+      texts.push("18446744073709551617", "-18446744073709551617", "\\t\\n7 ", "1.0", "+5");
+      const values = [0n, 12n, 31n, -31n, 5n, 15n, 18446744073709551617n, -18446744073709551617n, 7n];
+      const log = texts
+        .map((text) => values.map((value) => (equals(text, value) ? 1 : 0)).join(""))
+        .join("|");
+      const elements = new BigUint64Array(2);
+      const strings: unknown[] = ["18446744073709551617", " 0x10 "];
+      elements.set(strings as bigint[]);
+      if (\`\${log}|\${elements[0]}|\${elements[1]}\` !== "${expected}") {
+        throw new Error(\`\${log}|\${elements[0]}|\${elements[1]}\`);
+      }
+    `;
+    const expected = [
+      "100000000|010000000|100000000|000000000|001000000|000000000|000010000|000001000",
+      "000000000|000000100|000000010|000000001|000000000|000010000|1|16",
+    ].join("|");
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects a hexadecimal string that differs from its BigInt", async () => {
+      expect(
+        (await checkModel(getSource(expected.replace("001000000", "000000000")))).failure?.message,
+      ).toContain(expected);
+    });
+  });
 });
