@@ -24985,6 +24985,43 @@ describe("errors", () => {
     ).toThrow("spec.ts:2:20 Unsupported expression: this");
   });
 
+  const getCallbackThisSource = (directive: string, expected: string) => `
+    ${directive}
+    const seen: string[] = [];
+    [1].forEach(function (this: unknown) {
+      seen.push(String(this === globalThis), typeof this);
+    });
+    const holder = { name: "holder" };
+    [2].forEach(function (this: { name: string }) {
+      seen.push(this.name);
+    }, holder);
+    if (seen.join() !== "${expected}") throw new Error("seen " + seen.join());
+  `;
+
+  it("reads the global object as the this of a function outside strict mode that gets undefined", async () => {
+    expect(
+      (await checkModel(getCallbackThisSource("", "true,object,holder"))).failure,
+    ).toBeUndefined();
+    expect(
+      (await checkModel(getCallbackThisSource("", "false,undefined,holder"))).failure?.message,
+    ).toContain("seen true,object,holder");
+    expect(
+      (await checkModel(getCallbackThisSource('"use strict";', "false,undefined,holder"))).failure,
+    ).toBeUndefined();
+  });
+
+  it("stops where a function outside strict mode gets a primitive as its this", async () => {
+    const source = `
+      const seen: string[] = [];
+      [1].forEach(function (this: unknown) {
+        seen.push(typeof this);
+      }, 3);
+    `;
+    expect((await checkModel(source)).failure?.message).toContain(
+      "tla-ts can't wrap a primitive this outside strict mode",
+    );
+  });
+
   it("runs a call that makes an object before a declaration reads it through another call", async () => {
     const source = `
       const box = { seen: 0 };

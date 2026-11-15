@@ -74,6 +74,7 @@ import {
 import { isParsedObject, translateParsedObjects } from "./json";
 import { getCalledError, getConstructor, getErrorClass, isNativeErrorName } from "./exceptions";
 import {
+  getThisValue,
   translateElements,
   translateCondition,
   translateCall,
@@ -761,7 +762,7 @@ export const getSuperLookup = (node: ts.Node, scope: Scope, context: Context) =>
         ]),
         start,
       ),
-      receiver: receiver.value,
+      receiver: getThisValue(method, receiver.value, context),
     };
   }
   if (!ts.isClassLike(owner)) throw new TlaTypeScriptError("Unsupported expression: super", node);

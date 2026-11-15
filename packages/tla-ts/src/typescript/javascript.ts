@@ -701,6 +701,13 @@ LOCAL ObjectPrototype == Ref :> "Object.prototype"
 \\* the standard globals', such as Node's process, so tla-ts reads only the keys of those.
 GlobalObject == Ref :> "globalThis"
 
+\\* The this of a function outside strict mode, which is the global object for undefined or null and
+\\* an object that wraps a primitive.
+SloppyThis(value) ==
+  CASE value \\in {Undefined, Null} -> GlobalObject
+    [] TypeOf(value) \\in {"object", "function"} -> value
+    [] OTHER -> Assert(FALSE, "tla-ts can't wrap a primitive this outside strict mode")
+
 LOCAL Writable == [writable |-> TRUE, enumerable |-> TRUE, configurable |-> TRUE, kind |-> "data"]
 
 EmptyObject ==
