@@ -16501,42 +16501,65 @@ const getHoistedVars = (statements: readonly ts.Statement[], context: Context) =
         ts.isVariableDeclaration(declaration) && isInlined(declaration.initializer, context),
     ),
   );
-  // Such a var holds undefined until its declaration runs, which a read before it can't give.
-  // A function written before the declaration, or a function declaration that a call before it
-  // names, may run before it too.
-  const isRunEarly = (owner: ts.Node, declaration: ts.Declaration) =>
-    owner.getStart() < declaration.getStart() ||
-    (ts.isFunctionDeclaration(owner) &&
-      owner.name !== undefined &&
-      statements.some(
-        (statement) =>
-          findNodes(
-            statement,
-            (inner): inner is ts.Identifier =>
-              ts.isIdentifier(inner) &&
-              inner.getStart() < declaration.getStart() &&
-              owner.name !== undefined &&
-              getSymbol(inner, context.checker) === getSymbol(owner.name, context.checker),
-          ).length > 0,
-      ));
-  const getEarlyRead = (node: ts.Node, outer?: ts.Node): ts.Identifier | undefined => {
-    const owner = outer ?? (ts.isFunctionLike(node) ? node : undefined);
+  // Such a var holds undefined until its declaration runs, which a read before it can't give. A
+  // read runs before it where code before the declaration runs it: in no function, or in one that
+  // such code may call. Code may call a function where it reads a name of it, or of the object or
+  // class whose method it is, or where it makes one that nothing names.
+  const getNames = (node: ts.Node): ts.Identifier[] | undefined => {
+    if ((ts.isFunctionDeclaration(node) || ts.isClassDeclaration(node)) && node.name) {
+      return [node.name];
+    }
+    const held = ts.findAncestor(
+      node.parent,
+      (ancestor) => !ts.isParenthesizedExpression(ancestor) && !ts.isAsExpression(ancestor),
+    );
+    if (held !== undefined && ts.isVariableDeclaration(held) && ts.isIdentifier(held.name)) {
+      return [held.name];
+    }
+    return held !== undefined &&
+      (ts.isClassLike(held) || ts.isObjectLiteralExpression(held) || ts.isPropertyAssignment(held))
+      ? getNames(ts.isPropertyAssignment(held) ? held.parent : held)
+      : undefined;
+  };
+  const isRunEarly = (
+    node: ts.Node,
+    declaration: ts.Declaration,
+    seen: ReadonlySet<ts.Node>,
+  ): boolean => {
+    const owner = ts.findAncestor(
+      node.parent,
+      (ancestor) =>
+        ts.isFunctionLike(ancestor) &&
+        statements.some((statement) => ts.findAncestor(ancestor, (inner) => inner === statement)),
+    );
+    if (owner === undefined) return node.getStart() < declaration.getStart();
+    if (seen.has(owner)) return false;
+    const reached = new Set([...seen, owner]);
+    const names = getNames(owner);
+    if (names === undefined) return isRunEarly(owner, declaration, reached);
+    const symbols = names.flatMap((name) => getSymbol(name, context.checker) ?? []);
+    return statements.some((statement) =>
+      findNodes(
+        statement,
+        (inner): inner is ts.Identifier =>
+          ts.isIdentifier(inner) &&
+          !names.includes(inner) &&
+          symbols.some((symbol) => symbol === getSymbol(inner, context.checker)),
+      ).some((reference) => isRunEarly(reference, declaration, reached)),
+    );
+  };
+  const getEarlyRead = (node: ts.Node): ts.Identifier | undefined => {
     const symbol = ts.isIdentifier(node) ? getSymbol(node, context.checker) : undefined;
     const declaration = symbol?.valueDeclaration;
     return ts.isIdentifier(node) &&
       symbol !== undefined &&
       declaration !== undefined &&
       inlined.includes(symbol) &&
-      (owner === undefined
-        ? node.getStart() < declaration.getStart()
-        : isRunEarly(owner, declaration))
+      isRunEarly(node, declaration, new Set())
       ? node
-      : ts.forEachChild(node, (child) => getEarlyRead(child, owner));
+      : ts.forEachChild(node, getEarlyRead);
   };
-  const early =
-    inlined.length === 0
-      ? undefined
-      : statements.map((statement) => getEarlyRead(statement)).find(Boolean);
+  const early = inlined.length === 0 ? undefined : statements.map(getEarlyRead).find(Boolean);
   if (early !== undefined) {
     throw new TlaTypeScriptError(
       "tla-ts can't read a var that names a function before its declaration runs",

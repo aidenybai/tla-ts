@@ -5399,6 +5399,43 @@ ${body}
       ).toThrow("tla-ts can't read a var that names a function before its declaration runs");
     });
 
+    it("calls a var that names a function from functions written before its declaration that run after it", async () => {
+      const getSource = (expected: string) => `
+        const call = () => f();
+        const box = {
+          read() {
+            return f() + 1;
+          },
+        };
+        class Shape {
+          area() {
+            return f() + 2;
+          }
+        }
+        var f = () => 1;
+        const seen = [call(), box.read(), new Shape().area()].join();
+        if (seen !== "${expected}") throw new Error(seen);
+      `;
+      expect((await checkModel(getSource("1,2,3"))).failure).toBeUndefined();
+      expect((await checkModel(getSource("1,2,4"))).failure?.message).toContain("1,2,3");
+    });
+
+    it("stops at a call of a var that names a function from a method that runs before its declaration", () => {
+      expect(() =>
+        compile(`
+          const run = () => {
+            const holder = { get: () => f() };
+            try {
+              holder.get();
+            } catch {}
+            var f = () => 1;
+            return holder.get();
+          };
+          run();
+        `),
+      ).toThrow("tla-ts can't read a var that names a function before its declaration runs");
+    });
+
     it("calls a var that names a function from functions that run after its declaration", async () => {
       const getSource = (expected: string) => `
         const run = () => {
