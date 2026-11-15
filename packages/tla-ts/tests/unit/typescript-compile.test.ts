@@ -21688,6 +21688,78 @@ describe("errors", () => {
     expect((await checkModel(getSource("!=="))).failure?.message).toContain("identity");
   });
 
+  describe("destructures an object through the iterator that a script gives it after making it", () => {
+    const getSource = (expected: string) => `
+      var iter = {} as unknown as { [key: string | symbol]: unknown } & Iterable<unknown>;
+      let count = 0;
+      let text = "";
+      iter[Symbol.iterator] = function () {
+        return { next: function () { count++; return { value: count * 10, done: count > 1 }; } };
+      };
+      var take = function ([x, y]: Iterable<unknown>) { text = [x, y, count].join(); };
+      take(iter);
+      if (text !== "${expected}") throw new Error(text);
+    `;
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("10,,2"))).failure).toBeUndefined();
+    });
+    it("rejects the expectation 10,20,2", async () => {
+      expect((await checkModel(getSource("10,20,2"))).failure?.message).toContain("10,,2");
+    });
+  });
+
+  it("assigns through the iterator that a script gives an object after making it, closing it each time", async () => {
+    const getSource = (expected: string) => `
+      let closed = 0;
+      var iter = {} as unknown as { [key: string | symbol]: unknown } & Iterable<unknown>;
+      iter[Symbol.iterator] = function () {
+        let count = 0;
+        return {
+          next: function () { count++; return { value: count, done: false }; },
+          return: function () { closed++; return { value: undefined, done: true }; },
+        };
+      };
+      var x: unknown;
+      for (let index = 0; index < 2; index++) { [, x] = iter; }
+      if ([x, closed].join() !== "${expected}") throw new Error([x, closed].join());
+    `;
+    expect((await checkModel(getSource("2,2"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("2,1"))).failure?.message).toContain("2,2");
+  });
+
+  it("throws what the iterator that a script gives an object throws, though nothing reads the pattern", async () => {
+    const getSource = (expected: string) => `
+      var iter = {} as unknown as { [key: string | symbol]: unknown } & Iterable<unknown>;
+      iter[Symbol.iterator] = function () {
+        throw new RangeError("get");
+      };
+      var take = function ([x]: Iterable<unknown>) {};
+      let caught = "";
+      try { take(iter); } catch (error) { caught = error instanceof RangeError ? "range" : "other"; }
+      if (caught !== "${expected}") throw new Error(caught);
+    `;
+    expect((await checkModel(getSource("range"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("other"))).failure?.message).toContain("range");
+  });
+
+  it("stops where a pattern whose type isn't an array's takes an object, though nothing reads it", async () => {
+    const getSource = (statement: string) => `
+      var iter = {} as unknown as { [key: string | symbol]: unknown } & Iterable<unknown>;
+      iter[Symbol.iterator] = function () {
+        throw new RangeError("get");
+      };
+      var x: unknown;
+      var take = function ([x]: Iterable<unknown>) { return 1; };
+      try { ${statement}; } catch {}
+    `;
+    expect((await checkModel(getSource("[x] = iter"))).failure?.message).toContain(
+      "tla-ts can't destructure an object through its iterator",
+    );
+    expect((await checkModel(getSource("const r = take(iter)"))).failure?.message).toContain(
+      "tla-ts can't destructure an object through its iterator",
+    );
+  });
+
   it("destructures an object through the iterator that its Symbol.iterator method makes", async () => {
     const getSource = (closedAfterLoop: number) => `
       let closed = 0;

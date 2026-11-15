@@ -18,7 +18,7 @@ import { useJavaScript } from "./javascript";
 import { bind, callMethod, getWrittenFunctions, isNullish, read } from "./protocols";
 import { apply, boolean, string, tuple } from "./tla";
 import { getCaughtElements } from "./scope";
-import { getCollectionType } from "./types";
+import { getCollectionType, isLibraryIterable } from "./types";
 
 // The values that patterns took from iterators, which they bind as they would an array's.
 const taken = new WeakSet<Expression>();
@@ -232,13 +232,12 @@ export const takeFromIterator = (
   frame: Frame,
   continueWith: (path: Path, values: Expression) => Formula,
 ): Formula | undefined => {
-  if (
-    taken.has(iterable) ||
-    !isIteratedPattern(pattern, context) ||
-    !isPlainPattern(pattern, context)
-  ) {
+  if (taken.has(iterable)) return undefined;
+  const isIterable = isIterablePattern(pattern, context);
+  if ((!isIterable && !isIteratedPattern(pattern, context)) || !isPlainPattern(pattern, context)) {
     return undefined;
   }
+  if (isIterable) return takeFromIterable(pattern, iterable, path, context, frame, continueWith);
   // The protocol's TypeErrors and the values it takes each join, so that what follows the pattern,
   // and what catches it, translate once.
   return translateJoined(
@@ -273,11 +272,26 @@ export const isCaughtIteration = (
   isUntypedPattern(node, context) &&
   isPlainPattern(node, context);
 
-// Takes the values that a catch's array pattern binds from what the try threw: an object's through
-// its iterator, and an array's, or null's or undefined's for the pattern's TypeError, as the
-// pattern would.
-export const takeFromCaught = (
-  pattern: ts.ArrayBindingPattern,
+// An array pattern that a script types as a library Iterable, or as an object that is one too, whose
+// value may be an array or an object that a script gives a Symbol.iterator method.
+export const isIterablePattern = (
+  pattern: ts.ArrayBindingPattern | ts.ArrayLiteralExpression,
+  context: Context,
+) => {
+  if (context.heap === undefined) return false;
+  const type = context.checker.getNonNullableType(
+    ts.isArrayBindingPattern(pattern)
+      ? context.checker.getTypeAtLocation(pattern)
+      : context.checker.getTypeOfAssignmentPattern(pattern),
+  );
+  return (type.isIntersection() ? type.types : [type]).some(isLibraryIterable);
+};
+
+// Takes the values that an array pattern binds from a value that its type doesn't tell, as what a
+// try threw: an object's through its iterator, and an array's, or null's or undefined's for the
+// pattern's TypeError, as the pattern would.
+export const takeFromIterable = (
+  pattern: ts.ArrayBindingPattern | ts.ArrayLiteralExpression,
   value: Expression,
   path: Path,
   context: Context,

@@ -2887,6 +2887,21 @@ export const translatePatternIteration = (
         ),
       );
 
+// The heap after a pattern runs an array's iterator. A pattern whose type isn't an array's first
+// takes its elements, which stop where its value is an object, though nothing reads them.
+export const getPatternHeap = (
+  heap: Expression,
+  iterated: Expression,
+  pattern: ts.Node,
+  type: ts.Type,
+  context: Context,
+) =>
+  context.checker.isArrayLikeType(type)
+    ? translateArrayIteration(heap, heap, pattern, context)
+    : share(translateArrayIteration(heap, heap, pattern, context), "iterating", context, (after) =>
+        ifExpression(apply("=", [iterated, iterated]), after, after),
+      );
+
 export const ARRAY_ITERATOR_REPLACED =
   "tla-ts can't iterate an array whose iterator a script replaced";
 

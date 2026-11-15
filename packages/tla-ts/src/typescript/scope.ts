@@ -20,7 +20,12 @@ import {
   isUntypedPattern,
 } from "./iterators";
 import type { Expression, OperatorDefinition } from "../ast";
-import { getHeapElements, translateArrayIteration, translatePatternIteration } from "./collections";
+import {
+  getHeapElements,
+  getPatternHeap,
+  translateArrayIteration,
+  translatePatternIteration,
+} from "./collections";
 import { isNullish } from "./protocols";
 import { translateElements, translateExpression } from "./expressions";
 import {
@@ -91,6 +96,9 @@ export const getBoundNames = (name: ts.BindingName): ts.Identifier[] =>
 export interface Destructured {
   pattern: ts.BindingPattern;
   value: Expression;
+  // The elements that an array pattern takes from a value whose type doesn't tell that it's an
+  // array, which stop where it's an object.
+  iterated?: Expression;
 }
 
 export interface Receiver {
@@ -316,7 +324,7 @@ const isCaughtPattern = (pattern: ts.BindingPattern): boolean => {
 export const getCaughtElements = (
   value: Expression,
   heap: Expression,
-  pattern: ts.ArrayBindingPattern,
+  pattern: ts.ArrayBindingPattern | ts.ArrayLiteralExpression,
   context: Context,
 ) =>
   getTakenValue(
@@ -378,10 +386,6 @@ export const bindPatternInline = (
       pattern,
     );
   }
-  const destructuring: Scope = {
-    ...scope,
-    destructured: [...(scope.destructured ?? []), { pattern, value }],
-  };
   const heapSymbol = context.heap;
   if (ts.isArrayBindingPattern(pattern) && isUntypedPattern(pattern, context) && !isTaken(value)) {
     if (heapSymbol === undefined || !isCaughtPattern(pattern)) {
@@ -400,18 +404,29 @@ export const bindPatternInline = (
     ts.isArrayBindingPattern(pattern) &&
     !isTaken(value) &&
     !(context.checker.getTypeAtLocation(pattern).flags & ts.TypeFlags.StringLike);
-  const heap = heapSymbol === undefined ? undefined : getHeap(destructuring, pattern, context);
+  const heap = heapSymbol === undefined ? undefined : getHeap(scope, pattern, context);
   const iterated =
     isIterated && heap !== undefined
       ? translatePatternIteration(value, heap, pattern, type, context)
       : value;
+  // A pattern whose type isn't an array's stops at once where its value is an object that tla-ts
+  // can't iterate, though nothing reads what it binds.
+  const destructuring: Scope = {
+    ...scope,
+    destructured: [
+      ...(scope.destructured ?? []),
+      isIterated && heap !== undefined && !context.checker.isArrayLikeType(type)
+        ? { pattern, value, iterated }
+        : { pattern, value },
+    ],
+  };
   const iterating =
     isIterated && heapSymbol !== undefined && heap !== undefined
       ? {
           ...destructuring,
           bindings: new Map([
             ...destructuring.bindings,
-            [heapSymbol, translateArrayIteration(heap, heap, pattern, context)],
+            [heapSymbol, getPatternHeap(heap, iterated, pattern, type, context)],
           ]),
         }
       : destructuring;

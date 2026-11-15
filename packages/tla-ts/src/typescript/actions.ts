@@ -23,6 +23,7 @@ import {
   translateHeapElements,
   translateArrayIteration,
   translatePatternIteration,
+  getPatternHeap,
   holdsArrayIteration,
   ARRAY_ITERATOR_REPLACED,
   getHeapRegExpCall,
@@ -152,6 +153,7 @@ import {
   getIteratorFunctions,
   getTaken,
   isCaughtIteration,
+  isIterablePattern,
   isIteratedPattern,
   isSteppedPattern,
   isIteratedValue,
@@ -161,7 +163,7 @@ import {
   openIterator,
   readValue,
   stepIterator,
-  takeFromCaught,
+  takeFromIterable,
   takeFromIterator,
   takeSpreads,
 } from "./iterators";
@@ -1157,18 +1159,15 @@ const assignPattern = <Result>(
       !isTaken(value) &&
       !(context.checker.getTypeAtLocation(target).flags & ts.TypeFlags.StringLike);
     const heap = isIterated ? getHeap(path.scope, target, context) : undefined;
+    // A list's pattern, as a spread's, has no type of its own.
+    const type =
+      heap === undefined || isList ? undefined : context.checker.getTypeOfAssignmentPattern(target);
     const iterated =
       heap === undefined
         ? value
-        : isList
+        : type === undefined
           ? translateArrayIteration(value, heap, target, context)
-          : translatePatternIteration(
-              value,
-              heap,
-              target,
-              context.checker.getTypeOfAssignmentPattern(target),
-              context,
-            );
+          : translatePatternIteration(value, heap, target, type, context);
     const assignFrom = (position: number, current: Path, wasDone: Expression): Result => {
       if (position === target.elements.length) return continueWith(current);
       const element = target.elements[position];
@@ -1299,8 +1298,7 @@ const assignPattern = <Result>(
         next,
       );
     };
-    return assignFrom(
-      0,
+    const start =
       heapSymbol === undefined || heap === undefined
         ? path
         : {
@@ -1309,12 +1307,19 @@ const assignPattern = <Result>(
               ...path.scope,
               bindings: new Map([
                 ...path.scope.bindings,
-                [heapSymbol, translateArrayIteration(heap, heap, target, context)],
+                [
+                  heapSymbol,
+                  type === undefined
+                    ? translateArrayIteration(heap, heap, target, context)
+                    : getPatternHeap(heap, iterated, target, type, context),
+                ],
               ]),
             },
-          },
-      boolean(false),
-    );
+          };
+    // A statement stops at once where a pattern whose type isn't an array's takes an object.
+    return statements !== undefined && type !== undefined && !context.checker.isArrayLikeType(type)
+      ? statements.throwOnNullish(iterated, path, () => assignFrom(0, start, boolean(false)))
+      : assignFrom(0, start, boolean(false));
   }
   if (ts.isObjectLiteralExpression(target)) {
     // A pattern that spreads into a name of type any has type any, unlike the value it reads.
@@ -4287,7 +4292,7 @@ export const bindCall = (
     first !== undefined &&
     initializer !== undefined &&
     ts.isArrayBindingPattern(first.name) &&
-    isIteratedPattern(first.name, context) &&
+    (isIteratedPattern(first.name, context) || isIterablePattern(first.name, context)) &&
     !path.scope.results.has(initializer) &&
     argumentNodes.every((argument) => isUndefinedLiteral(argument, context)) &&
     !isAsyncFunction(callee)
@@ -4318,6 +4323,47 @@ export const bindCall = (
         )
       : undefined;
   if (iterated !== undefined) return iterated;
+  // A parameter's array pattern that a script types as iterable takes its values from the argument,
+  // which the call passes as a name, through the argument's iterator before the body runs. Every
+  // argument is inert, so taking the values first runs nothing out of order.
+  const iterable = parameters.flatMap((parameter, position) => {
+    const argument = argumentNodes.at(position);
+    return ts.isArrayBindingPattern(parameter.name) &&
+      argument !== undefined &&
+      ts.isIdentifier(argument) &&
+      !path.scope.results.has(argument) &&
+      argumentNodes.every(isInertValue) &&
+      !isAsyncFunction(callee)
+      ? [{ pattern: parameter.name, argument }]
+      : [];
+  })[0];
+  const iterableTaken =
+    iterable &&
+    takeFromIterator(
+      iterable.pattern,
+      translateExpression(iterable.argument, path.scope, context),
+      path,
+      context,
+      frame,
+      (after, values) =>
+        bindCall(
+          node,
+          callee,
+          argumentNodes,
+          receiver,
+          {
+            ...after,
+            scope: {
+              ...after.scope,
+              results: new Map([...after.scope.results, [iterable.argument, values]]),
+            },
+          },
+          context,
+          frame,
+          continueWith,
+        ),
+    );
+  if (iterableTaken !== undefined) return iterableTaken;
   const defaulted = runCertainDefault(
     parameters.map((parameter) => parameter.name),
     parameters.flatMap((parameter, position) =>
@@ -10137,7 +10183,7 @@ const translateExpressionStatement = (
     ts.isBinaryExpression(expression) &&
     expression.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
     ts.isArrayLiteralExpression(expression.left) &&
-    isIteratedPattern(expression.left, context)
+    (isIteratedPattern(expression.left, context) || isIterablePattern(expression.left, context))
   ) {
     return assignPatternWith(
       expression,
@@ -10574,13 +10620,23 @@ export const throwOnDestructured = (
   const destructured = scope.destructured ?? [];
   if (destructured.length === 0) return rest;
   context.prelude.add("Null");
+  const iterated = destructured.flatMap((entry) => entry.iterated ?? []);
   return ifThenElse(
     junction(
       "Or",
       destructured.map((entry) => isNullish(entry.value, context)),
     ),
     throwTypeError(path, destructured[0].pattern, context, frame),
-    rest,
+    iterated.length === 0
+      ? rest
+      : ifThenElse(
+          junction(
+            "And",
+            iterated.map((elements) => apply("=", [elements, elements])),
+          ),
+          rest,
+          leaf(boolean(false)),
+        ),
   );
 };
 
@@ -11946,11 +12002,12 @@ const getEffects = (
   // A pattern that destructures an object, or a for-of, a spread, or a yield* that iterates one,
   // runs the functions of the object's iterator.
   const isIterated =
-    (ts.isArrayBindingPattern(node) && isIteratedPattern(node, context)) ||
+    (ts.isArrayBindingPattern(node) &&
+      (isIteratedPattern(node, context) || isIterablePattern(node, context))) ||
     isCaughtIteration(node, context) ||
     (written !== undefined &&
       ts.isArrayLiteralExpression(written) &&
-      isIteratedPattern(written, context)) ||
+      (isIteratedPattern(written, context) || isIterablePattern(written, context))) ||
     ((ts.isSpreadElement(node) ||
       (ts.isYieldExpression(node) && node.asteriskToken !== undefined)) &&
       node.expression !== undefined &&
@@ -14229,7 +14286,7 @@ const translateTry = (
       );
     }
     return pattern !== undefined && isCaughtIteration(pattern, context)
-      ? takeFromCaught(pattern, thrown.value, caught, context, bodyFrame, (after, values) =>
+      ? takeFromIterable(pattern, thrown.value, caught, context, bodyFrame, (after, values) =>
           runCatch(catchClause, after, values),
         )
       : runCatch(catchClause, caught, thrown.value);

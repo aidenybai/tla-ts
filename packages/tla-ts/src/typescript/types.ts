@@ -187,13 +187,25 @@ const LIBRARY_OBJECTS = new Set([
   "BigInt",
 ]);
 
+export const isLibraryIterable = (type: ts.Type) =>
+  type.getSymbol()?.name === "Iterable" &&
+  (type.getSymbol()?.declarations ?? []).every(
+    (declaration) => declaration.getSourceFile().isDeclarationFile,
+  );
+
 // An object type, or the object type, which any object may have.
 const isPlainObject = (type: ts.Type, context: Context): boolean => {
   const checker = context.checker;
   const symbol = type.getSymbol();
   const readonly = type.aliasSymbol?.name === "Readonly" ? type.aliasTypeArguments?.[0] : undefined;
   if (readonly !== undefined) return isPlainObject(readonly, context);
-  if (type.isIntersection()) return type.types.every((member) => isPlainObject(member, context));
+  // An object that a script types as iterable too, as it gives it a Symbol.iterator method.
+  if (type.isIntersection()) {
+    return (
+      type.types.some((member) => isPlainObject(member, context)) &&
+      type.types.every((member) => isPlainObject(member, context) || isLibraryIterable(member))
+    );
+  }
   if ((type.flags & ts.TypeFlags.NonPrimitive) !== 0) return true;
   // The global object, which typeof globalThis types, and whose properties a script reads from
   // the heap.
