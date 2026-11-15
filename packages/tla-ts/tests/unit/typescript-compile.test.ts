@@ -41041,4 +41041,46 @@ describe("BigInts", () => {
       expect(result.failure?.message).toContain("tla-ts can't compute Math.cbrt of this number");
     });
   });
+
+  describe("computes the trigonometric functions of Math where the specification fixes them", () => {
+    const getSource = (expected: string) => `
+      const results = [
+        Math.sin(-0), Math.sin(Infinity), Math.cos(-0), Math.cos(-Infinity), Math.tan(-0),
+        Math.tan(Infinity), Math.asin(-0), Math.asin(1.0000000000000002), Math.acos(1),
+        Math.acos(-1.5), Math.atan(-0), Math.atan(-Infinity), Math.atan2(Infinity, -Infinity),
+        Math.atan2(-Infinity, Infinity), Math.atan2(-0, -0), Math.atan2(0, 1),
+        Math.atan2(-1e300, -Infinity), Math.atan2(5e-324, -0), Math.atan2(-1, Infinity),
+        Math.atan2(NaN, 1),
+      ];
+      const expected = [${expected}];
+      results.forEach((value, index) => {
+        if (!Object.is(value, expected[index])) throw new Error("wrong at " + index);
+      });
+    `;
+
+    it("agrees with Node", async () => {
+      const result = await checkModel(
+        getSource(
+          "-0, NaN, 1, NaN, -0, NaN, -0, NaN, 0, NaN, -0, -1.5707963267948966, 2.356194490192345, -0.7853981633974483, -3.141592653589793, 0, -3.141592653589793, 1.5707963267948966, -0, NaN",
+        ),
+      );
+      expect(result.failure).toBeUndefined();
+    });
+
+    it("rejects 3pi/4 one bit off", async () => {
+      const result = await checkModel(
+        getSource(
+          "-0, NaN, 1, NaN, -0, NaN, -0, NaN, 0, NaN, -0, -1.5707963267948966, 2.3561944901923453, -0.7853981633974483, -3.141592653589793, 0, -3.141592653589793, 1.5707963267948966, -0, NaN",
+        ),
+      );
+      expect(result.failure?.message).toContain("wrong at 12");
+    });
+
+    it("stops where an engine approximates", async () => {
+      const result = await checkModel(`
+        if (Object.is(Math.atan2(1, 1), 0)) throw new Error("wrong");
+      `);
+      expect(result.failure?.message).toContain("tla-ts can't compute Math.atan2 of this number");
+    });
+  });
 });

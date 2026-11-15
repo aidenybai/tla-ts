@@ -954,6 +954,57 @@ LOCAL Approximated(name) == Assert(FALSE, "tla-ts can't compute Math." \\o name 
 
 Cbrt(value) == IF value \\in SpecialNumbers \\/ IsZero(value) THEN value ELSE Approximated("cbrt")
 
+LOCAL IsOne(value) == ~IsBig(value) /\\ value = 1
+
+LOCAL IsBeyondOne(value) == LessThan(value, -1) \\/ LessThan(1, value)
+
+Sin(value) ==
+  CASE value \\in Infinities -> NaN
+    [] value = NaN \\/ IsZero(value) -> value
+    [] OTHER -> Approximated("sin")
+
+Cos(value) ==
+  CASE value \\in Infinities \\/ value = NaN -> NaN
+    [] IsZero(value) -> 1
+    [] OTHER -> Approximated("cos")
+
+Tan(value) ==
+  CASE value \\in Infinities -> NaN
+    [] value = NaN \\/ IsZero(value) -> value
+    [] OTHER -> Approximated("tan")
+
+Asin(value) ==
+  CASE value = NaN \\/ IsZero(value) -> value
+    [] IsBeyondOne(value) -> NaN
+    [] OTHER -> Approximated("asin")
+
+Acos(value) ==
+  CASE value = NaN \\/ IsBeyondOne(value) -> NaN
+    [] IsOne(value) -> 0
+    [] OTHER -> Approximated("acos")
+
+\\* Math.atan, where angles holds the numbers nearest pi/4, pi/2, 3pi/4, and pi, as engines give
+\\* them at infinities.
+Atan(value, angles) ==
+  CASE value = NaN \\/ IsZero(value) -> value
+    [] value = Infinity -> angles[2]
+    [] value = NegativeInfinity -> Negate(angles[2])
+    [] OTHER -> Approximated("atan")
+
+\\* Math.atan2 of y and x, whose angle takes the sign of y.
+Atan2(y, x, angles) ==
+  LET signed(angle) == IF IsNegative(y) THEN Negate(angle) ELSE angle
+      infinite == CASE x = Infinity -> angles[1]
+                    [] x = NegativeInfinity -> angles[3]
+                    [] OTHER -> angles[2]
+  IN CASE y = NaN \\/ x = NaN -> NaN
+       [] y \\in Infinities -> signed(infinite)
+       [] IsZero(y) -> IF IsNegative(x) THEN signed(angles[4]) ELSE y
+       [] x = Infinity -> signed(0)
+       [] x = NegativeInfinity -> signed(angles[4])
+       [] IsZero(x) -> signed(angles[2])
+       [] OTHER -> Approximated("atan2")
+
 \\* JavaScript's <<. The bit below the shifted bits becomes the sign bit.
 LeftShift(left, right) ==
   LET a == Int32(left)

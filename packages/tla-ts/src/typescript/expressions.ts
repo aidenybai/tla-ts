@@ -697,6 +697,13 @@ export const MATH_OPERATORS = new Map([
   ["sqrt", "Sqrt"],
   ["fround", "Fround"],
   ["cbrt", "Cbrt"],
+  ["sin", "Sin"],
+  ["cos", "Cos"],
+  ["tan", "Tan"],
+  ["asin", "Asin"],
+  ["acos", "Acos"],
+  ["atan", "Atan"],
+  ["atan2", "Atan2"],
 ]);
 
 const translateMath = (node: ts.CallExpression, method: string, scope: Scope, context: Context) => {
@@ -736,10 +743,27 @@ const translateMath = (node: ts.CallExpression, method: string, scope: Scope, co
   const operator = MATH_OPERATORS.get(method);
   if (
     operator !== undefined &&
-    node.arguments.length === 1 &&
+    node.arguments.length === (method === "atan2" ? 2 : 1) &&
     !node.arguments.some(ts.isSpreadElement)
   ) {
-    const result = useJavaScript(operator, node.arguments.map(translate), context);
+    // The numbers nearest pi/4, pi/2, 3pi/4, and pi, which a script of integers holds as Doubles
+    // that it can't represent.
+    const angles = ["atan", "atan2"].includes(method)
+      ? [
+          tuple(
+            [1, 2, 3, 4].map(
+              (quarters) =>
+                getNumberValue((quarters * Math.PI) / 4, context) ??
+                useJavaScript(
+                  ":>",
+                  [identifier("Double"), getBinary((quarters * Math.PI) / 4)],
+                  context,
+                ),
+            ),
+          ),
+        ]
+      : [];
+    const result = useJavaScript(operator, [...node.arguments.map(translate), ...angles], context);
     return isSpecial ? result : useJavaScript("PlainNumber", [result], context);
   }
   if ((method === "round" || method === "sign") && node.arguments.length === 1) {
