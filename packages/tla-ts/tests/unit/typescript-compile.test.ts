@@ -45429,4 +45429,25 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("reads a DisposableStack's disposed getter where a declaration takes it", () => {
+    const getSource = (expected: string) => `
+      const stack = new DisposableStack();
+      const before = stack.disposed;
+      stack.move();
+      const after = stack.disposed;
+      const seen = [before, after].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("false,true"))).failure).toBeUndefined();
+    });
+
+    it("rejects a stack that move leaves pending", async () => {
+      expect((await checkModel(getSource("false,false"))).failure?.message).toContain(
+        "seen false,true",
+      );
+    });
+  });
 });

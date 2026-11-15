@@ -2193,7 +2193,9 @@ LOCAL ViewGet(heap, path, receiver) ==
 \\* array getter a typed array's, a DataView getter a view's, and a buffer getter a buffer's of its
 \\* kind. A typed array's @@toStringTag gives undefined for any other value.
 LOCAL ViewReceives(heap, path, receiver) ==
-  CASE path = TypedArrayGetter \\o "@@toStringTag" -> TRUE
+  CASE path \\in {"get DisposableStack.prototype.disposed", "get AsyncDisposableStack.prototype.disposed"} ->
+         IsStackOf(heap, receiver, HasPrefix(path, "get Async"))
+    [] path = TypedArrayGetter \\o "@@toStringTag" -> TRUE
     [] HasPrefix(path, TypedArrayGetter) -> IsTypedArray(heap, receiver)
     [] HasPrefix(path, "get DataView.") -> IsDataView(heap, receiver)
     [] OTHER ->
