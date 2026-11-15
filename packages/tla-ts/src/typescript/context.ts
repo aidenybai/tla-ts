@@ -899,6 +899,20 @@ export const getOwnSymbol = (node: ts.Node, checker: ts.TypeChecker) => {
     : symbol;
 };
 
+// A name that only declarations type, as Node's typings type process, which has no code to run.
+export const isDeclarationOnly = (symbol: ts.Symbol) => {
+  const declarations = symbol.declarations ?? [];
+  return (
+    declarations.length > 0 &&
+    declarations.every(
+      (declaration) =>
+        (declaration.getSourceFile().isDeclarationFile ||
+          (ts.getCombinedModifierFlags(declaration) & ts.ModifierFlags.Ambient) !== 0) &&
+        !declaration.getSourceFile().hasNoDefaultLib,
+    )
+  );
+};
+
 // A declaration that a script's declare, or a function's signature without a body, gives, of a
 // value that the host defines.
 const isHostDeclaration = (declaration: ts.Declaration) =>

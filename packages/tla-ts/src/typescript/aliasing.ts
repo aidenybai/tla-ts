@@ -9,6 +9,7 @@ import {
   getSymbol,
   hasObjectLiteral,
   isMethodCall,
+  isDeclarationOnly,
 } from "./context";
 import { TlaTypeScriptError } from "../errors";
 import { getKind, isArrayConstruction, isHeapArray, isHeapSetOrMap, isHeapType } from "./types";
@@ -709,6 +710,13 @@ export const rejectSharing = (roots: readonly ts.Node[], context: Context) => {
           (targetDepth !== undefined && targetDepth >= escape.landing + freshDepth)
         );
       });
+      // A copy of what only a declaration gives would still have no code to run.
+      if (isShared && ts.isIdentifier(node) && symbol !== undefined && isDeclarationOnly(symbol)) {
+        throw new TlaTypeScriptError(
+          `tla-ts can't run ${node.getText()}, which only a declaration gives`,
+          node,
+        );
+      }
       if (isShared) {
         throw new TlaTypeScriptError(
           `${node.getText()} would share an object that changes in place, so copy it`,
