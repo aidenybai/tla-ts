@@ -1495,6 +1495,14 @@ export const getPrivateKey = (member: ts.ClassElement, context: Context) => {
 const isLiteralKey = (node: ts.Node) =>
   ts.isStringLiteral(node) || ts.isNumericLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node);
 
+// A field whose computed key a class evaluates once, in order with its other keys, as the script
+// defines it. Its object holds the key under a private name, for each new to define the field by.
+export const isComputedField = (member: ts.PropertyDeclaration) =>
+  ts.isComputedPropertyName(member.name) && !isLiteralKey(member.name.expression);
+
+export const getFieldKey = (member: ts.PropertyDeclaration, context: Context) =>
+  `${getBrand(member.parent, context)} key ${member.parent.members.indexOf(member)}`;
+
 // An accessor with a body and a key that a property can have, which a computed name gives as it
 // evaluates.
 export const isPlainAccessor = (
@@ -2543,7 +2551,9 @@ export const isHeapClass = (node: ts.ClassLikeDeclaration, context: Context): bo
           (ts.isIdentifier(member.name) ||
             ts.isPrivateIdentifier(member.name) ||
             isLiteralKey(member.name) ||
-            (ts.isComputedPropertyName(member.name) && isLiteralKey(member.name.expression)))),
+            // A new reads a computed key from the class's object, which its binding names.
+            (ts.isComputedPropertyName(member.name) &&
+              (isLiteralKey(member.name.expression) || (symbol !== undefined && !isField))))),
     ) &&
     (symbol === undefined || !isAssigned(symbol, node.getSourceFile(), context));
   heapClasses.set(node, isHeap);

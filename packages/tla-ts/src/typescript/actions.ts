@@ -92,6 +92,7 @@ import {
   translateString,
   isPrivateMember,
   isStatic,
+  isComputedField,
   getPrivateMember,
   getPrivateKey,
   getParameters,
@@ -264,6 +265,8 @@ import {
   translateHasPrivate,
   translateHoldsMethod,
   translateMemberKey,
+  translateClassRef,
+  translateComputedKey,
   translateObjectChange,
   translateObjectValue,
   getSuperLookup,
@@ -10428,7 +10431,16 @@ const translateElements = (
                   [
                     heap,
                     ref,
-                    translateMemberKey(element.name, inner.scope, context),
+                    isComputedField(element)
+                      ? translateComputedKey(
+                          element,
+                          isStatic(element)
+                            ? ref
+                            : translateClassRef(element.parent, inner.scope, context),
+                          heap,
+                          context,
+                        )
+                      : translateMemberKey(element.name, inner.scope, context),
                     identifier(value),
                   ],
                   context,

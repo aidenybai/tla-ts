@@ -41589,4 +41589,52 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("a class's computed field keys, which it evaluates once as the script defines it", () => {
+    const getSource = (expected: string) => `
+      let i = 0;
+      let key = "a";
+      class Base {
+        // @ts-ignore
+        [i++] = "first";
+        // @ts-ignore
+        static [i++] = "static";
+        // @ts-ignore
+        [i++] = "last";
+        // @ts-ignore
+        [key] = 1;
+      }
+      key = "b";
+      const Derived = class extends Base {
+        // @ts-ignore
+        [key] = 2;
+      };
+      key = "c";
+      const made = new Derived() as unknown as Record<string, unknown>;
+      const again = new Derived() as unknown as Record<string, unknown>;
+      const seen = [
+        i,
+        ...Object.keys(made),
+        made.a,
+        made.b,
+        made[0],
+        made[2],
+        again[2],
+        (Base as unknown as Record<string, unknown>)[1],
+      ];
+      if (seen.join() !== "${expected}") throw new Error("seen " + seen.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("3,0,2,a,b,1,2,first,last,last,static"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects keys that each new evaluates again", async () => {
+      expect(
+        (await checkModel(getSource("3,0,2,a,c,1,,first,last,last,static"))).failure?.message,
+      ).toContain("seen 3,0,2,a,b,1,2,first,last,last,static");
+    });
+  });
 });
