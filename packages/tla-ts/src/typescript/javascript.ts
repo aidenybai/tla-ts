@@ -6449,6 +6449,24 @@ AddBytes(left, right, carry) ==
   ELSE LET sum == Head(left) + Head(right) + carry
        IN <<sum % 256>> \\o AddBytes(Tail(left), Tail(right), sum \\div 256)
 
+\\* Whether an Atomics function throws a TypeError for the typed array it takes, which it checks
+\\* before it converts its index.
+AtomicsRejects(heap, method, ref) ==
+  LET view == heap.objects[ref[Ref]]
+      type == view.elementType
+  IN \\/ ~IsTypedArray(heap, ref)
+     \\/ IsOutOfBounds(heap, view)
+     \\/ method \\in {"notify", "wait", "waitAsync"} /\\ type \\notin {"Int32", "BigInt64"}
+     \\/ type \\in {"Uint8Clamped", "Float16", "Float32", "Float64"}
+     \\/ method \\in {"wait", "waitAsync"} /\\ ~heap.objects[view.viewed[Ref]].isShared
+
+\\* What notify gives once it checks its typed array and index, which it doesn't check again after it
+\\* converts its count. tla-ts runs one agent, so notify wakes no one.
+AtomicsNotified(heap, count) ==
+  IF count = Undefined \\/ IsNumber(ToNumber(count))
+  THEN Returned(heap, 0)
+  ELSE Thrown(heap, "TypeError")
+
 \\* Atomics' functions, which give the heap after them, their value, and the error they throw, if
 \\* any. tla-ts runs one agent, so nothing waits on a buffer: notify wakes no one, and a wait that
 \\* reads the value it expects times out.
@@ -6480,13 +6498,7 @@ AtomicsCall(heap, method, arguments, objectPrototype) ==
             IF argument(1) = Undefined \\/ IsInteger(argument(1)) \\/ argument(1) = NegativeZero
             THEN Returned(heap, Undefined)
             ELSE Thrown(heap, "TypeError")
-       [] ~IsTypedArray(heap, ref) -> Thrown(heap, "TypeError")
-       [] IsOutOfBounds(heap, view) -> Thrown(heap, "TypeError")
-       [] method \\in {"notify", "wait", "waitAsync"} /\\ type \\notin {"Int32", "BigInt64"} ->
-            Thrown(heap, "TypeError")
-       [] type \\in {"Uint8Clamped", "Float16", "Float32", "Float64"} -> Thrown(heap, "TypeError")
-       [] method \\in {"wait", "waitAsync"} /\\ ~heap.objects[view.viewed[Ref]].isShared ->
-            Thrown(heap, "TypeError")
+       [] AtomicsRejects(heap, method, ref) -> Thrown(heap, "TypeError")
        [] index = -1 \\/ index >= ViewLength(heap, view) -> Thrown(heap, "RangeError")
        [] method = "load" -> Returned(heap, NumberOfBytes(type, old))
        [] method = "store" -> Returned(WithBytes(heap, view, start, bytes(3)), converted(3))
@@ -6499,8 +6511,7 @@ AtomicsCall(heap, method, arguments, objectPrototype) ==
             LET expected == bytes(3)
                 replacement == bytes(4)
             IN modified(IF expected = old THEN replacement ELSE old)
-       [] method = "notify" /\\ (argument(3) = Undefined \\/ IsNumber(ToNumber(argument(3)))) ->
-            Returned(heap, 0)
+       [] method = "notify" -> AtomicsNotified(heap, argument(3))
        [] isEqual /\\ timeout \\in {NaN, Infinity} ->
             Assert(FALSE, "tla-ts can't wait for a value that nothing changes")
        [] method = "wait" -> Returned(heap, IF isEqual THEN "timed-out" ELSE "not-equal")
@@ -6639,6 +6650,30 @@ ReadsTypedArraySpecies(heap, ref, method, arguments) ==
   /\\ method = "subarray" \\/ ~IsOutOfBounds(heap, heap.objects[ref[Ref]])
   /\\ \\A position \\in DOMAIN arguments : IsPlainNumeric(arguments[position])
 
+\\* subarray, which makes a typed array of the same buffer from the length that the typed array had
+\\* before subarray converted its begin and end, which may have changed it since.
+TypedArraySubarray(heap, ref, arguments, length, bufferPrototype, constructors) ==
+  LET view == heap.objects[ref[Ref]]
+      buffer == heap.objects[view.viewed[Ref]]
+      clamped(position) ==
+        LET index == RelativeIndex(ToIntegerOrInfinity(ToNumber(ArgumentAt(arguments, position))),
+                                   length)
+        IN IF index < 0 THEN 0 ELSE IF index > length THEN length ELSE index
+      first == clamped(1)
+      last == IF ArgumentAt(arguments, 2) = Undefined THEN length ELSE clamped(2)
+      count == IF last > first THEN last - first ELSE 0
+      begin == view.byteOffset + first * ElementSize(view.elementType)
+      isTracking == view.viewLength = -1 /\\ ArgumentAt(arguments, 2) = Undefined
+      viewing == NewTypedArray(heap, view.elementType,
+                               Get(heap, TypedArraySpecies(heap, ref, constructors), "prototype"),
+                               bufferPrototype,
+                               IF isTracking THEN <<view.viewed, begin>>
+                               ELSE <<view.viewed, begin, count>>, TRUE)
+  IN CASE buffer.isDetached -> Thrown(heap, "TypeError")
+       [] begin + (IF isTracking THEN 0 ELSE count * ElementSize(view.elementType))
+            > Len(buffer.bytes) -> Thrown(heap, "RangeError")
+       [] OTHER -> Returned(viewing, Allocated(viewing))
+
 \\* %TypedArray%.prototype's methods that read and write a typed array's elements, which give the
 \\* heap after them, their value, and the error they throw, if any. slice and subarray make their
 \\* typed array through the receiver's constructor, of those that constructors holds by their element
@@ -6682,19 +6717,7 @@ TypedArrayMethod(heap, ref, method, arguments, bufferPrototype, constructors) ==
                          "subarray", "set", "copyWithin"} ->
             Assert(FALSE, "tla-ts can't run this typed array method")
        [] method = "subarray" ->
-            LET buffer == heap.objects[view.viewed[Ref]]
-                first == start(1)
-                count == IF end(2) > first THEN end(2) - first ELSE 0
-                begin == view.byteOffset + first * ElementSize(view.elementType)
-                isTracking == view.viewLength = -1 /\\ argument(2) = Undefined
-                viewing == NewTypedArray(heap, view.elementType, Get(heap, species, "prototype"),
-                                      bufferPrototype,
-                                      IF isTracking THEN <<view.viewed, begin>>
-                                      ELSE <<view.viewed, begin, count>>, TRUE)
-            IN CASE buffer.isDetached -> Thrown(heap, "TypeError")
-                 [] begin + (IF isTracking THEN 0 ELSE count * ElementSize(view.elementType))
-                      > Len(buffer.bytes) -> Thrown(heap, "RangeError")
-                 [] OTHER -> Returned(viewing, Allocated(viewing))
+            TypedArraySubarray(heap, ref, arguments, length, bufferPrototype, constructors)
        [] method = "set" ->
             LET source == argument(1)
                 offset == integer(2)

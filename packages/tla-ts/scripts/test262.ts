@@ -3050,6 +3050,30 @@ const ignoreSoundErrors = () => {
       values.every(isConvertedNumber)
     );
   };
+  // A call of a typed array's subarray, whose begin and end isConvertedNumber takes. tla-ts converts
+  // them in turn after it reads the typed array's length, and makes its typed array after them.
+  const isSubarrayCall = (diagnostic: ts.Diagnostic) => {
+    const call = getErroredCall(diagnostic);
+    return (
+      call !== undefined &&
+      ts.isCallExpression(call) &&
+      ts.isPropertyAccessExpression(call.expression) &&
+      call.expression.name.text === "subarray" &&
+      call.arguments.length <= 2 &&
+      !call.arguments.some(ts.isSpreadElement) &&
+      checker
+        .getSignaturesOfType(checker.getTypeAtLocation(call.expression), ts.SignatureKind.Call)
+        .every((signature) => {
+          const declared = signature.getDeclaration();
+          return (
+            declared.getSourceFile().isDeclarationFile &&
+            ts.isInterfaceDeclaration(declared.parent) &&
+            TYPED_ARRAY_NAME.test(declared.parent.name.text)
+          );
+        }) &&
+      call.arguments.every(isConvertedNumber)
+    );
+  };
   // A new of DataView, at its byteOffset or byteLength, which isConvertedNumber takes. tla-ts
   // converts them in turn with ToIndex, and throws the errors of its buffer between them as Node
   // does.
@@ -3489,6 +3513,7 @@ const ignoreSoundErrors = () => {
           isIndexCall(diagnostic) ||
           isNumberConvertingCall(diagnostic) ||
           isDataViewNew(diagnostic) ||
+          isSubarrayCall(diagnostic) ||
           isSetLikeArrayCall(diagnostic) ||
           isTypedArrayCallback(diagnostic) ||
           isTypedArrayNew(diagnostic))) ||
