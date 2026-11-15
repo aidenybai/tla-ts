@@ -472,6 +472,9 @@ interface Suspension {
   queue: readonly string[];
   // The call that resumed the body, while it runs, which takes what it yields or returns.
   caller?: Caller;
+  // Whether a step may make the suspension again once it's gone, as an array's or a string's
+  // iterator, whose next reads where it is from the heap.
+  isRestartable?: boolean;
 }
 
 interface Caller {
@@ -6659,12 +6662,22 @@ const withBuiltInIterator = (
     ...current,
     generators: new Map([...current.generators, [name, getSuspension(resume)]]),
   });
+  // A throw leaves the iterator where it was, without its suspension, so that a later step makes it
+  // again from where the heap says it is, and the code after it holds the generators it held before.
+  const drop = (current: Path): Path => {
+    const generators = new Map([...current.generators].filter((entry) => entry[0] !== name));
+    const isAsBefore =
+      generators.size === path.generators.size &&
+      [...generators].every((entry) => path.generators.get(entry[0]) === entry[1]);
+    return { ...current, generators: isAsBefore ? path.generators : generators };
+  };
   const getSuspension = (resume: Suspension["resume"]): Suspension => ({
     ref,
     generator: undefined,
     resume,
     isStarted: true,
     isGuarded: true,
+    isRestartable: true,
     abort: (current, method) =>
       method === "return"
         ? ifThenElse(
@@ -6744,7 +6757,7 @@ const withBuiltInIterator = (
             ? continued
             : ifThenElse(
                 field(step, "isThrown"),
-                throwTypeError(leave(resumer, stepFrom(count)), node, context, caller),
+                throwTypeError(drop(resumer), node, context, caller),
                 continued,
               ),
         ),
@@ -13869,18 +13882,18 @@ const changesObjects = (node: ts.Node, path: Path, context: Context) =>
 // code after a join, outside the branches, can still name each one.
 const isCompletedFrom = (generators: Path["generators"], before: Path["generators"]) =>
   generators === before ||
-  (generators.size === before.size &&
-    [...generators].every((entry) => {
-      const previous = before.get(entry[0]);
-      return (
-        previous !== undefined &&
-        (entry[1] === previous ||
-          (entry[1].ref === previous.ref &&
-            entry[1].resume === undefined &&
-            entry[1].caller === undefined &&
-            entry[1].queue.length === 0))
-      );
-    }));
+  ([...generators].every((entry) => {
+    const previous = before.get(entry[0]);
+    return (
+      previous !== undefined &&
+      (entry[1] === previous ||
+        (entry[1].ref === previous.ref &&
+          entry[1].resume === undefined &&
+          entry[1].caller === undefined &&
+          entry[1].queue.length === 0))
+    );
+  }) &&
+    [...before].every((entry) => generators.has(entry[0]) || entry[1].isRestartable === true));
 
 export const translateJoined = (
   node: ts.Node,
@@ -14002,12 +14015,36 @@ export const translateJoined = (
       ]),
     );
   });
+  // Each exit leaves the generators as the first does, which may have completed them. Where they
+  // differ only in the done array's or string's iterators that the statement made, the code after
+  // it holds none of those, as a later step makes their suspensions again.
+  const getSettled = (generators: Path["generators"]) =>
+    new Map(
+      [...generators].filter(
+        (entry) =>
+          path.generators.has(entry[0]) ||
+          entry[1].isRestartable !== true ||
+          entry[1].resume !== undefined,
+      ),
+    );
+  const isSameEntries = (left: Path["generators"], right: Path["generators"]) =>
+    left.size === right.size && [...left].every((entry) => right.get(entry[0]) === entry[1]);
+  const pruned = exits.every((exit) => exit.path.generators === exits[0].path.generators)
+    ? undefined
+    : getSettled(exits[0].path.generators);
+  const settled =
+    pruned === undefined
+      ? exits[0]?.path.generators
+      : isSameEntries(pruned, path.generators)
+        ? path.generators
+        : pruned;
   const isJoinable = exits.every(
     (exit) =>
       changed.every((symbol) => exit.path.scope.bindings.has(symbol)) &&
-      // Each exit leaves the generators as the first does, which may have completed them.
-      exit.path.generators === exits[0].path.generators &&
-      isCompletedFrom(exit.path.generators, path.generators) &&
+      settled !== undefined &&
+      (exit.path.generators === settled ||
+        isSameEntries(getSettled(exit.path.generators), settled)) &&
+      isCompletedFrom(settled, path.generators) &&
       exit.path.tasks === path.tasks &&
       exit.path.disposal === path.disposal &&
       // Each exit initialized the this of the same constructors.
@@ -14040,7 +14077,7 @@ export const translateJoined = (
   const rest = continueWith(
     {
       ...path,
-      generators: exits[0].path.generators,
+      generators: settled ?? exits[0].path.generators,
       unboundThis: exits[0].path.unboundThis,
       scope: {
         ...path.scope,
