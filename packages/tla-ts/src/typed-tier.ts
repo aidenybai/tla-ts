@@ -4114,33 +4114,44 @@ const growBytes = (bytes: Bytes) => {
   bytes.data = grown;
 };
 
-// Distinct states are kept in fixed pages, so the arena grows without copying. A state never spans
-// two pages, and its start is the page's index times PAGE_SIZE plus its offset in the page.
+// The states left to expand are kept in fixed pages, so the arena grows without copying, and a page
+// is reused once they are read. A state never spans two pages.
 interface Arena {
   pages: Uint8Array[];
-  words: Int32Array[];
+  // The size each page before the last was filled to.
+  ends: number[];
+  spares: Uint8Array[];
   data: Uint8Array;
+  words: Int32Array;
   size: number;
   start: number;
 }
 
-const PAGE_BITS = 24;
-const PAGE_SIZE = 1 << PAGE_BITS;
-const MAXIMUM_PAGES = 2 ** (31 - PAGE_BITS);
+const PAGE_SIZE = 1 << 24;
+const EMPTY_PAGE = new Uint8Array(0);
 
 const createArena = (): Arena => {
   const page = new Uint8Array(PAGE_SIZE);
-  return { pages: [page], words: [new Int32Array(page.buffer)], data: page, size: 0, start: 0 };
+  return {
+    pages: [page],
+    ends: [],
+    spares: [],
+    data: page,
+    words: new Int32Array(page.buffer),
+    size: 0,
+    start: 0,
+  };
 };
 
 const addPage = (arena: Arena) => {
   const length = arena.size - arena.start;
-  if (arena.pages.length === MAXIMUM_PAGES || length + RESERVED_BYTES > PAGE_SIZE) deopt();
-  const page = new Uint8Array(PAGE_SIZE);
+  if (length + RESERVED_BYTES > PAGE_SIZE) deopt();
+  const page = arena.spares.pop() ?? new Uint8Array(PAGE_SIZE);
   page.set(arena.data.subarray(arena.start, arena.size));
+  arena.ends.push(arena.start);
   arena.pages.push(page);
-  arena.words.push(new Int32Array(page.buffer));
   arena.data = page;
+  arena.words = new Int32Array(page.buffer);
   arena.start = 0;
   arena.size = length;
 };
@@ -5139,13 +5150,10 @@ interface CompiledSpec {
   liveAtoms: ((state: Plain[], next: Plain[]) => boolean)[];
   constraints: ((state: Plain[]) => boolean)[];
   encode: (state: Plain[], arena: Arena) => void;
-  decode: (data: Uint8Array, start: number) => Plain[];
-  // Writes the key of a state, and returns the image whose encoding it is, or -1 for the state's own.
-  writeKey: (state: Plain[], arena: Arena) => number;
-  decodeKey: (data: Uint8Array, start: number) => Plain[];
-  writeRest: (state: Plain[], arena: Arena) => void;
-  // Applies to a state the inverse of an image.
-  invert: (state: Plain[], image: number) => Plain[];
+  // Reads the state at a cursor, and moves the cursor past it.
+  decode: (cursor: Cursor) => Plain[];
+  // Writes the encoding of the class of states a state is in, under symmetry or a view.
+  writeKey: (state: Plain[], arena: Arena) => void;
   // The smallest image of a state, in the order TLC compares states in.
   represent: (state: Plain[]) => Plain[];
 }
@@ -5256,9 +5264,6 @@ const compileSpec = (
   const imageWrites = program.variableTypes.map((type, index) =>
     getImageWriter(program, codec, images, type, `v${index}`),
   );
-  const inversions = program.variableTypes.map(
-    (type, index) => getPermuteCode(program, images, type, `v${index}`) ?? `v${index}`,
-  );
   // Any order of the variables keys an orbit, and one that compares cheap variables a permutation
   // moves first leaves most images after a few bytes.
   const getKeyCost = (index: number) =>
@@ -5273,10 +5278,6 @@ const compileSpec = (
         .map((_, index) => index)
         .sort((left, right) => getKeyCost(left) - getKeyCost(right));
   const keyWriters = keyOrder.map((index) => writers[index]);
-  // The variables a view leaves out follow its key, from the image the key took.
-  const restOrder = check.view
-    ? program.variableTypes.map((_, index) => index).filter((index) => !keyOrder.includes(index))
-    : [];
   const sites = { count: 0 };
   const signatures = program.variableTypes.map((type, index) =>
     getSignatureCode(program, sites, type, `v${index}`),
@@ -5301,11 +5302,6 @@ const compileSpec = (
       build: `case ${position}: ${smallest[index]} = ${getPermuteCode(program, images, type, `v${index}`) ?? `v${index}`};`,
     };
   });
-  const restWriters = restOrder.map((index) =>
-    images.length > 0
-      ? getWriter(codec, program.variableTypes[index], smallest[index])
-      : writers[index],
-  );
   const smallestCode = `${smallest.map((name, index) => `${name} = v${index};`).join(" ")}
       images: for (let G = 0; G < A.length; G++) {
         const P = A[G];
@@ -5314,7 +5310,6 @@ const compileSpec = (
         compare: { ${imageComparisons.map((comparison) => comparison.compare).join(" ")} }
         if (k === -1) continue;
         switch (k) { ${imageComparisons.map((comparison) => comparison.build).join(" ")} }
-        chosen = G;
       }`;
   const viewKeyCode = `${smallestCode} ${viewWriters.join(" ")}`;
   const symmetricKeyCode = `Z.fill(0);
@@ -5335,7 +5330,7 @@ const compileSpec = (
         n = W.start + m;
         if (n + ${RESERVED_BYTES} > d.length) { W.size = n; H.addPage(W); d = W.data; n = W.size; }
         ${imageWriters.join(" ")}
-        if (c < 0) { d.copyWithin(W.start, W.start + m, n); m = n - W.start - m; chosen = G; }
+        if (c < 0) { d.copyWithin(W.start, W.start + m, n); m = n - W.start - m; }
       }
       n = W.start + m;`;
   // Emitting adds the comparers the code calls, so all of it is emitted before they are joined.
@@ -5382,12 +5377,13 @@ const compileSpec = (
       while ((n & 3) !== 0) d[n++] = 0;
       arena.size = n;
     },
-    decode: (data, start) => {
-      d = data;
-      i = start;
-      Y = data;
-      X[0] = start;
+    decode: (cursor) => {
+      d = cursor.data;
+      i = cursor.position;
+      Y = d;
+      X[0] = i;
       ${readers.map((reader, index) => `const value${index} = ${reader}; X[${index + 1}] = i;`).join(" ")}
+      cursor.position = (i + 3) & ~3;
       E = [${readers.map((_, index) => `value${index}`).join(", ")}];
       return E;
     },
@@ -5398,37 +5394,12 @@ const compileSpec = (
       if (arena.size + ${RESERVED_BYTES} > arena.data.length) H.addPage(arena);
       d = arena.data;
       n = arena.size;
-      let chosen = -1;
       ${check.view && images.length > 0 ? viewKeyCode : symmetricKeyCode}
       while ((n & 3) !== 0) d[n++] = 0;
       arena.size = n;
-      return chosen;
-    },
-    decodeKey: (data, start) => {
-      d = data;
-      i = start;
-      const state = new Array(${program.variableTypes.length});
-      ${keyOrder.map((index) => `state[${index}] = ${readers[index]};`).join(" ")}
-      ${restOrder.length > 0 ? `i = (i + 3) & ~3; ${restOrder.map((index) => `state[${index}] = ${readers[index]};`).join(" ")}` : ""}
-      return state;
-    },
-    writeRest: (state, arena) => {
-      ${unpack}
-      d = arena.data;
-      n = arena.size;
-      ${restWriters.join(" ")}
-      while ((n & 3) !== 0) d[n++] = 0;
-      arena.size = n;
-    },
-    invert: (state, image) => {
-      ${unpack}
-      const G = I[image];
-      const P = A[G];
-      return [${inversions.join(", ")}];
     },
     represent: (state) => {
       ${unpack}
-      let chosen = -1;
       ${smallestCode}
       return [${smallest.join(", ")}];
     },
@@ -5448,11 +5419,7 @@ const compileSpec = (
     moved,
     ...atoms.map((table) => moved.map((atom) => table.findIndex((image) => image === atom))),
   ];
-  const inverses = Int32Array.from(atoms, (table) => {
-    const inverse = atoms.findIndex((other) => table.every((image, atom) => other[image] === atom));
-    return inverse === -1 ? unsupported() : inverse;
-  });
-  return new Function("K", "S", "B", "R", "D", "L", "A", "Q", "Z", "I", "H", source)(
+  return new Function("K", "S", "B", "R", "D", "L", "A", "Q", "Z", "H", source)(
     program.constants,
     program.constantSets,
     program.bitmaps,
@@ -5462,7 +5429,6 @@ const compileSpec = (
     atoms,
     preimages,
     new Int32Array(program.plains.values.length),
-    inverses,
     HELPERS,
   );
 };
@@ -5472,17 +5438,27 @@ interface StateTable {
   mask: number;
 }
 
-// Murmur3's mixing, over the words of a state's encoding.
-const hashWords = (words: Int32Array, start: number, end: number) => {
-  let hash = 0x811c9dc5;
+const mixHash = (hash: number) => {
+  const mixed = Math.imul(hash ^ (hash >>> 16), 0x85ebca6b);
+  const remixed = Math.imul(mixed ^ (mixed >>> 13), 0xc2b2ae35);
+  return remixed ^ (remixed >>> 16);
+};
+
+// Two lanes of Murmur3's mixing, with their own constants, hash the words of a key into 64 bits.
+const hashWords = (words: Int32Array, start: number, end: number, hash: Int32Array) => {
+  let first = 0x811c9dc5;
+  let second = 0x9747b28c;
   for (let index = start; index < end; index++) {
-    const word = Math.imul(words[index], 0xcc9e2d51);
-    hash ^= Math.imul((word << 15) | (word >>> 17), 0x1b873593);
-    hash = (Math.imul((hash << 13) | (hash >>> 19), 5) + 0xe6546b64) | 0;
+    const word = words[index];
+    const firstWord = Math.imul(word, 0xcc9e2d51);
+    first ^= Math.imul((firstWord << 15) | (firstWord >>> 17), 0x1b873593);
+    first = (Math.imul((first << 13) | (first >>> 19), 5) + 0xe6546b64) | 0;
+    const secondWord = Math.imul(word, 0x85ebca77);
+    second ^= Math.imul((secondWord << 13) | (secondWord >>> 19), 0xc2b2ae3d);
+    second = (Math.imul((second << 17) | (second >>> 15), 9) + 0x27d4eb2f) | 0;
   }
-  hash = Math.imul(hash ^ (hash >>> 16), 0x85ebca6b);
-  hash = Math.imul(hash ^ (hash >>> 13), 0xc2b2ae35);
-  return hash ^ (hash >>> 16);
+  hash[0] = mixHash(first ^ (end - start));
+  hash[1] = mixHash(second ^ (end - start));
 };
 
 export const runTypedSearch = (
@@ -5571,16 +5547,17 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
   const atoms = getLiveAtoms(check.liveness ?? []);
   const compiled = compileSpec(program, check, atoms);
   const keys = createArena();
-  const starts = { data: new Int32Array(1 << 16), size: 0 };
+  const reader = { page: 0, data: keys.data, position: 0 };
   // The state each state was found from, to rebuild the path to a deadlock.
   const parents = { data: new Int32Array(check.isDeadlockChecked ? 1 << 16 : 0), size: 0 };
+  const fingerprints = { data: new Int32Array(1 << 16), size: 0 };
   const expanding: { state: Plain[]; index: number } = { state: [], index: -1 };
   const isEncoded = images.length === 0 && check.view === undefined;
   const isImaged = images.length > 0;
-  // Under symmetry TLC explores the first state of an orbit it finds, which is the inverse of the
-  // image that keys it.
-  const chosenImages = { data: new Int32Array(isImaged ? 1 << 16 : 0), size: 0 };
-  const table: StateTable = { slots: new Int32Array(1 << 18), mask: (1 << 17) - 1 };
+  // A slot holds a 64-bit hash of a key and one more than the index of its state. Like TLC with its
+  // fingerprints, the search takes a state whose hash it has seen as seen.
+  const table: StateTable = { slots: new Int32Array(3 << 17), mask: (1 << 17) - 1 };
+  const keyHash = new Int32Array(2);
   const statistics = { generated: 0, distinct: 0, depth: 0 };
   const outDegrees = Array.from({ length: OUT_DEGREE_BUCKETS }, () => 0);
   const isInModel = (state: Plain[]) =>
@@ -5590,58 +5567,68 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
   };
   const grow = () => {
     const old = table.slots;
-    const slots = new Int32Array(old.length * 2);
-    const mask = slots.length / 2 - 1;
-    for (let position = 0; position < old.length; position += 2) {
-      if (old[position + 1] === 0) continue;
-      let slot = old[position] & mask;
-      while (slots[slot * 2 + 1] !== 0) slot = (slot + 1) & mask;
-      slots[slot * 2] = old[position];
-      slots[slot * 2 + 1] = old[position + 1];
+    table.slots = new Int32Array(old.length * 2);
+    table.mask = table.mask * 2 + 1;
+    for (let position = 0; position < old.length; position += 3) {
+      if (old[position + 2] === 0) continue;
+      let slot = old[position] & table.mask;
+      while (table.slots[slot * 3 + 2] !== 0) slot = (slot + 1) & table.mask;
+      table.slots.set(old.subarray(position, position + 3), slot * 3);
     }
-    table.slots = slots;
-    table.mask = mask;
   };
-  // Each encoding is padded with zeros to a whole number of words, which hash and compare at once.
-  // A slot holds the hash of a key and one more than the index of its state. Finds the index of the
-  // state whose key was just written, or adds it if isAdded and returns -1.
-  const findEncoded = (isAdded: boolean) => {
-    const words = keys.words[keys.words.length - 1];
-    const start = keys.start;
-    const first = start >> 2;
-    const length = (keys.size - start) >> 2;
-    const hash = hashWords(words, first, first + length);
+  // Finds the index of the state whose key was just written, or adds it if isAdded and returns -1.
+  // Only the key of a state added stays written.
+  const findState = (isAdded: boolean) => {
+    hashWords(keys.words, keys.start >> 2, keys.size >> 2, keyHash);
+    const low = keyHash[0];
+    const high = keyHash[1];
     const slots = table.slots;
-    for (let slot = hash & table.mask; ; slot = (slot + 1) & table.mask) {
-      const entry = slots[slot * 2 + 1];
+    for (let slot = low & table.mask; ; slot = (slot + 1) & table.mask) {
+      const entry = slots[slot * 3 + 2];
       if (entry === 0) {
         if (!isAdded) {
-          keys.size = start;
+          keys.size = keys.start;
           return -1;
         }
-        slots[slot * 2] = hash;
-        slots[slot * 2 + 1] = statistics.distinct + 1;
-        if (++statistics.distinct * 8 > slots.length * 3) grow();
+        slots[slot * 3] = low;
+        slots[slot * 3 + 1] = high;
+        slots[slot * 3 + 2] = statistics.distinct + 1;
+        if (++statistics.distinct * 4 > (table.mask + 1) * 3) grow();
         return -1;
       }
-      if (slots[slot * 2] !== hash) continue;
-      // No encoding is a prefix of another, so two states of different lengths differ before the
-      // shorter one ends.
-      const other = starts.data[entry - 1];
-      const page = keys.words[other >>> PAGE_BITS];
-      const otherFirst = (other & (PAGE_SIZE - 1)) >> 2;
-      let isSameState = true;
-      for (let offset = 0; offset < length; offset++) {
-        if (page[otherFirst + offset] !== words[first + offset]) {
-          isSameState = false;
-          break;
-        }
-      }
-      if (isSameState) {
-        keys.size = start;
+      if (slots[slot * 3] === low && slots[slot * 3 + 1] === high) {
+        keys.size = keys.start;
         return entry - 1;
       }
     }
+  };
+  const writeKey = (state: Plain[]) =>
+    isEncoded ? compiled.encode(state, keys) : compiled.writeKey(state, keys);
+  const fingerprinter = createStateFingerprinter(
+    program.variableTypes,
+    check.variableOrder,
+    program.plains,
+  );
+  const readers = program.variableTypes.map((type) => createValueReader(type, program.plains));
+  const addFingerprint = (state: Plain[]) => {
+    const representative = isImaged ? compiled.represent(state) : state;
+    if (fingerprints.size + 2 > fingerprints.data.length) growWords(fingerprints);
+    if (check.view !== undefined) {
+      const fingerprint = check.getFingerprint(
+        representative.map((plain, variable) => readers[variable](plain)),
+      );
+      fingerprints.data[fingerprints.size++] = Number(BigInt.asIntN(32, fingerprint));
+      fingerprints.data[fingerprints.size++] = Number(BigInt.asIntN(32, fingerprint >> 32n));
+      return;
+    }
+    fingerprinter.fingerprint(representative);
+    fingerprints.data[fingerprints.size++] = fingerprinter.words[0];
+    fingerprints.data[fingerprints.size++] = fingerprinter.words[1];
+  };
+  // TLC's fingerprints of the states are taken a page at a time, as the page is reused or at the end.
+  const addFingerprints = (data: Uint8Array, end: number) => {
+    const cursor: Cursor = { data, position: 0 };
+    while (cursor.position < end) addFingerprint(compiled.decode(cursor));
   };
   // Returns the index of a state in the model, or -1 for a state outside it.
   const visit = (state: Plain[]) => {
@@ -5650,24 +5637,60 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
       checkInvariants(state);
       return -1;
     }
-    if (isEncoded) compiled.encode(state, keys);
-    const image = isEncoded ? -1 : compiled.writeKey(state, keys);
-    const found = findEncoded(true);
+    writeKey(state);
+    const found = findState(true);
     if (found !== -1) return found;
-    if (isImaged) pushWord(chosenImages, image);
-    if (check.view !== undefined) compiled.writeRest(state, keys);
-    pushWord(starts, (keys.pages.length - 1) * PAGE_SIZE + keys.start);
+    if (!isEncoded) {
+      keys.size = keys.start;
+      compiled.encode(state, keys);
+    }
     if (check.isDeadlockChecked) pushWord(parents, expanding.index);
     checkInvariants(state);
     return statistics.distinct - 1;
+  };
+  const readState = () => {
+    if (reader.position === keys.ends[reader.page]) {
+      addFingerprints(keys.pages[reader.page], reader.position);
+      keys.spares.push(keys.pages[reader.page]);
+      keys.pages[reader.page] = EMPTY_PAGE;
+      reader.page++;
+      reader.data = keys.pages[reader.page];
+      reader.position = 0;
+    }
+    return compiled.decode(reader);
+  };
+  // Each state on the path is the first successor of the one before it with its key, as it was found.
+  const getPath = (index: number) => {
+    const indexes: number[] = [];
+    for (let position = index; position !== -1; position = parents.data[position]) {
+      indexes.unshift(position);
+    }
+    const findFirst = (states: (emit: (state: Plain[]) => void) => void, target: number) => {
+      const found: Plain[][] = [];
+      states((state) => {
+        if (found.length > 0 || !isInModel(state)) return;
+        writeKey(state);
+        if (findState(false) === target) found.push(state);
+      });
+      return found[0];
+    };
+    const path = [
+      findFirst((emit) => {
+        const cursor: Cursor = { data: initialBytes.data, position: 0 };
+        for (let initial = 0; initial < initialStarts.size; initial++) {
+          emit(program.variableTypes.map((type) => readPlain(cursor, type, program.plains)));
+        }
+      }, indexes[0]),
+    ];
+    indexes.slice(1).forEach((target) => {
+      path.push(findFirst((emit) => compiled.next(path[path.length - 1], emit), target));
+    });
+    return path;
   };
   const holders = new Map(atoms.map((atom, position) => [atom, compiled.liveAtoms[position]]));
   const holds = (atom: LiveAtom, state: Plain[], next: Plain[]) =>
     (holders.get(atom) ?? unsupported())(state, next);
   const liveFingerprints: number[] = [];
-  const getLiveFingerprinter = once(() =>
-    createStateFingerprinter(program.variableTypes, check.variableOrder, program.plains),
-  );
   const live =
     check.liveness &&
     createLiveGraph<Plain[]>(
@@ -5682,7 +5705,6 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
       {
         getFingerprint: (successor) =>
           (liveFingerprints[successor.index] ??= (() => {
-            const fingerprinter = getLiveFingerprinter();
             fingerprinter.fingerprint(successor.state);
             return fingerprinter.words[0];
           })()),
@@ -5691,9 +5713,8 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
           const successors: LiveSuccessor<Plain[]>[] = [];
           compiled.next(state, (successor) => {
             if (!isInModel(successor)) return;
-            if (isEncoded) compiled.encode(successor, keys);
-            else compiled.writeKey(successor, keys);
-            const index = findEncoded(false);
+            writeKey(successor);
+            const index = findState(false);
             successors.push({ index: index === -1 ? deopt() : index, state: successor });
           });
           return successors;
@@ -5710,8 +5731,11 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
     statistics.depth = 1;
     live?.addInitialState(stateIndex, state);
   }
-  initialBytes.data = new Uint8Array(0);
-  initialStarts.data = new Int32Array(0);
+  // The path to a deadlock starts from an initial state.
+  if (!check.isDeadlockChecked) {
+    initialBytes.data = new Uint8Array(0);
+    initialStarts.data = new Int32Array(0);
+  }
   const initialStates = { generated: statistics.generated, distinct: statistics.distinct };
   const level = { depth: 1, end: statistics.distinct };
   const expansion = { successors: 0, newStates: 0 };
@@ -5730,17 +5754,6 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
       statistics.depth = Math.max(statistics.depth, level.depth + 1);
     }
   };
-  const getKey = (index: number) => {
-    const start = starts.data[index];
-    const page = keys.pages[start >>> PAGE_BITS];
-    const offset = start & (PAGE_SIZE - 1);
-    return isEncoded ? compiled.decode(page, offset) : compiled.decodeKey(page, offset);
-  };
-  const getState = (index: number) => {
-    const key = getKey(index);
-    const image = isImaged ? chosenImages.data[index] : -1;
-    return image === -1 ? key : compiled.invert(key, image);
-  };
   const getResult = (deadlock: TypedDeadlock | undefined, queued: number): TypedResult => ({
     generatedStates: statistics.generated,
     distinctStates: statistics.distinct,
@@ -5750,31 +5763,10 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
     outDegrees,
     deadlock,
     getFingerprints: () => {
-      const getRepresentative = (index: number) =>
-        isImaged ? compiled.represent(getKey(index)) : getKey(index);
-      if (check.view !== undefined) {
-        const readers = program.variableTypes.map((type) =>
-          createValueReader(type, program.plains),
-        );
-        return BigInt64Array.from({ length: statistics.distinct }, (_, index) =>
-          check.getFingerprint(
-            getRepresentative(index).map((plain, variable) => readers[variable](plain)),
-          ),
-        );
+      for (let page = reader.page; page < keys.pages.length; page++) {
+        addFingerprints(keys.pages[page], keys.ends[page] ?? keys.size);
       }
-      const fingerprinter = createStateFingerprinter(
-        program.variableTypes,
-        check.variableOrder,
-        program.plains,
-      );
-      const fingerprints = new BigInt64Array(statistics.distinct);
-      const words = new Int32Array(fingerprints.buffer);
-      for (let index = 0; index < statistics.distinct; index++) {
-        fingerprinter.fingerprint(getRepresentative(index));
-        words[2 * index] = fingerprinter.words[0];
-        words[2 * index + 1] = fingerprinter.words[1];
-      }
-      return fingerprints;
+      return new BigInt64Array(fingerprints.data.buffer, 0, statistics.distinct);
     },
   });
   for (let index = 0; index < statistics.distinct; index++) {
@@ -5782,7 +5774,7 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
       level.depth++;
       level.end = statistics.distinct;
     }
-    const state = getState(index);
+    const state = readState();
     expanding.state = state;
     expanding.index = index;
     expansion.successors = 0;
@@ -5799,10 +5791,7 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
     if (isChecked) liveChecks.at *= 2;
     if (isChecked && !isDeadlocked && live?.findViolation()) deopt();
     if (isDeadlocked) {
-      const path: Plain[][] = [];
-      for (let position = index; position !== -1; position = parents.data[position]) {
-        path.unshift(getState(position));
-      }
+      const path = getPath(index);
       const types = program.variableTypes;
       return getResult(
         {

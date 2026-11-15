@@ -134,16 +134,19 @@ describe("typed tier matches TLC", () => {
     expect([result.status, result.violation?.name]).toEqual([status, property]);
   });
 
-  it.each(["DeadlockedCounters", "SymmetricDeadlock", "ShallowDeadlock", "ConstrainedDeadlock"])(
-    "reports the deadlock in %s as the interpreter does",
-    async (name) => {
-      const [typed, interpreted] = await Promise.all([
-        checkFixture(name, true),
-        checkFixture(name, true, false),
-      ]);
-      expect(typed).toEqual(interpreted);
-    },
-  );
+  it.each([
+    "DeadlockedCounters",
+    "SymmetricDeadlock",
+    "ShallowDeadlock",
+    "ConstrainedDeadlock",
+    "ProjectedDeadlock",
+  ])("reports the deadlock in %s as the interpreter does", async (name) => {
+    const [typed, interpreted] = await Promise.all([
+      checkFixture(name, true),
+      checkFixture(name, true, false),
+    ]);
+    expect(typed).toEqual(interpreted);
+  });
 
   it.each([
     "FairProcesses",
