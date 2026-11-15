@@ -98,7 +98,9 @@ namespace assert {
     if (expectedElements.length !== actualElements.length) {
       throw new Test262Error(getMessage(message, "Expected the arrays to have the same length"));
     }
-    for (let index = 0; index < actualElements.length; index++) {
+    // The length of an object that isn't array-like is undefined, which < converts to NaN.
+    const length: unknown = actualElements.length;
+    for (let index = 0; length !== undefined && index < Number(length as unknown); index++) {
       if (!Object.is(expectedElements[index], actualElements[index])) {
         throw new Test262Error(
           getMessage(message, "Expected the arrays to have the same contents"),
