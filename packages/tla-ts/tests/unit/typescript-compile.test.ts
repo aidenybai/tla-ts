@@ -40790,4 +40790,159 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("else,1"))).failure?.message).toContain("else,2");
     });
   });
+
+  describe("converts the byteOffset and the length of a typed array that views a buffer in order", () => {
+    const expected =
+      "offset,length,2,1,odd,length,failing,true,offset,length,2,8,odd,true,failing,true";
+    const getSource = (seen: string) => `
+      const seen: unknown[] = [];
+      let size = 1;
+      const offset = {
+        valueOf: function () {
+          seen.push("offset");
+          return size;
+        },
+      };
+      const length = {
+        toString: function () {
+          seen.push("length");
+          return "2";
+        },
+      };
+      const odd = {
+        valueOf: function () {
+          seen.push("odd");
+          return 1;
+        },
+      };
+      const failing = {
+        valueOf: function () {
+          seen.push("failing");
+          throw new EvalError();
+        },
+      };
+      for (const TA of [Int8Array, Float64Array]) {
+        size = TA.BYTES_PER_ELEMENT;
+        const buffer = new ArrayBuffer(size * 4);
+        // @ts-ignore
+        const view = new TA(buffer, offset, length);
+        seen.push(view.length, view.byteOffset);
+        try {
+          // @ts-ignore
+          new TA(buffer, odd, length);
+        } catch (thrown) {
+          seen.push(thrown instanceof RangeError);
+        }
+        try {
+          // @ts-ignore
+          new TA(buffer, failing, length);
+        } catch (thrown) {
+          seen.push(thrown instanceof EvalError);
+        }
+      }
+      if (seen.join() !== "${seen}") throw new Error("seen " + seen.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it.each([
+      "offset,length,2,1,odd,length,failing,true,offset,length,2,8,odd,length,true,failing,true",
+      "offset,length,2,1,odd,length,failing,length,true,offset,length,2,8,odd,true,failing,true",
+      "offset,length,2,1,odd,length,failing,true,offset,length,2,8,odd,false,failing,true",
+    ])("rejects the expectation %s", async (wrong) => {
+      expect((await checkModel(getSource(wrong))).failure?.message).toContain(`seen ${expected}`);
+    });
+  });
+
+  describe("reads the length of a value that may be a string or an array", () => {
+    const getSource = (expected: string) => `
+      const seen: unknown[] = [];
+      const getLength = (value: string | unknown[]) => value.length;
+      for (const value of [[], [1, 2], "abc"]) seen.push(getLength(value));
+      if (seen.join() !== "${expected}") throw new Error("seen " + seen.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("0,2,3"))).failure).toBeUndefined();
+    });
+
+    it("rejects a string's length as an array's", async () => {
+      expect((await checkModel(getSource("0,2,1"))).failure?.message).toContain("seen 0,2,3");
+    });
+
+    it("stops at an element of one", async () => {
+      const result = await checkModel(`
+        const seen: unknown[] = [];
+        const getFirst = (value: string | unknown[]) => value[0];
+        seen.push(getFirst([1]));
+      `);
+      expect(result.failure?.message).toContain(
+        "tla-ts can't read an element of a string or an array here",
+      );
+    });
+  });
+
+  describe("runs the iterator of new of a typed array inside a function", () => {
+    const getSource = (expected: string) => `
+      const seen: unknown[] = [];
+      const iterable: unknown = {
+        [Symbol.iterator]: function () {
+          seen.push("iterator");
+          let index = 0;
+          return {
+            next: function () {
+              index += 1;
+              return { value: index, done: index > 2 };
+            },
+          };
+        },
+      };
+      function getLength() {
+        const made = new Int8Array(iterable as Iterable<number>);
+        return made.length;
+      }
+      seen.push(getLength());
+      if (seen.join() !== "${expected}") throw new Error("seen " + seen.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("iterator,2"))).failure).toBeUndefined();
+    });
+
+    it("rejects the iterator as not running", async () => {
+      expect((await checkModel(getSource("2"))).failure?.message).toContain("seen iterator,2");
+    });
+  });
+
+  describe("runs new of a typed array inside an expression first", () => {
+    const getSource = (expected: string) => `
+      const seen: unknown[] = [];
+      const iterable: unknown = {
+        [Symbol.iterator]: function () {
+          seen.push("iterator");
+          let index = 0;
+          return {
+            next: function () {
+              index += 1;
+              return { value: index, done: index > 2 };
+            },
+          };
+        },
+      };
+      seen.push("before", new Int8Array(iterable as Iterable<number>).length);
+      if (seen.join() !== "${expected}") throw new Error("seen " + seen.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("iterator,before,2"))).failure).toBeUndefined();
+    });
+
+    it("rejects the iterator as running after the arguments before it", async () => {
+      expect((await checkModel(getSource("before,iterator,2"))).failure?.message).toContain(
+        "seen iterator,before,2",
+      );
+    });
+  });
 });

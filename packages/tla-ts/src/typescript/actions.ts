@@ -12628,6 +12628,15 @@ const translateIntlError = (node: ts.Expression, path: Path, context: Context, f
 const getBufferConstruction = (node: ts.Expression, context: Context) =>
   getNewBuffer(node, context) && getConstruction(node, context);
 
+// new of a typed array whose byteOffset or length may be an object, which it converts to a
+// primitive where it views a buffer, running the object's valueOf and toString.
+const isIndexConvertingNew = (node: ts.Node, context: Context) =>
+  ts.isExpression(node) &&
+  (getNewBuffer(node, context) ?? []).every((buffer) => TYPED_ARRAYS.has(buffer)) &&
+  (getBufferConstruction(node, context)?.arguments ?? [])
+    .slice(1, 3)
+    .some((value) => !isPrimitiveIndex(getCast(value), context));
+
 // Runs new of a buffer, a DataView, or a typed array, which throws the error its constructor does,
 // and makes a typed array of an object's iterator's values where a script's @@iterator method
 // gives them.
@@ -12680,7 +12689,7 @@ const translateNewBufferStatement = (
             tuple(madeArguments),
             current.scope,
             context,
-            true,
+            "error",
           ),
           ifThenElse(
             apply("=", [error, string("")]),
@@ -12705,6 +12714,61 @@ const translateNewBufferStatement = (
           ),
         );
       };
+      // A typed array that views a buffer throws its byteOffset's RangeError before it converts
+      // its length.
+      const isConverted = isIndexConvertingNew(node, context);
+      const toIndex = (
+        current: Path,
+        value: Expression,
+        next: (path: Path, primitive: Expression) => Formula,
+      ) =>
+        runToPrimitive(node, value, "number", current, context, frame, (after, primitive) =>
+          ifThenElse(
+            junction("Or", [
+              useJavaScript("IsSymbol", [primitive], context),
+              useJavaScript("IsBigInt", [primitive], context),
+            ]),
+            throwTypeError(after, node, context, frame),
+            next(after, primitive),
+          ),
+        );
+      const makeViewing = (
+        current: Path,
+        madeArguments: Expression[],
+        finish: (path: Path, value: Expression) => Formula,
+      ) =>
+        !isConverted
+          ? make(current, madeArguments, finish)
+          : ifThenElse(
+              useJavaScript(
+                "IsBuffer",
+                [getHeap(current.scope, node, context), madeArguments[0]],
+                context,
+              ),
+              toIndex(current, madeArguments[1] ?? getUndefined(context), (offsetPath, offset) =>
+                ifThenElse(
+                  apply("=", [
+                    translateNewBufferOf(
+                      node,
+                      construction,
+                      getHeap(offsetPath.scope, node, context),
+                      tuple([madeArguments[0], offset]),
+                      offsetPath.scope,
+                      context,
+                      "offset error",
+                    ),
+                    string("RangeError"),
+                  ]),
+                  throwError("RangeError", offsetPath, node, context, frame),
+                  madeArguments[2] === undefined
+                    ? make(offsetPath, [madeArguments[0], offset], finish)
+                    : toIndex(offsetPath, madeArguments[2], (lengthPath, length) =>
+                        make(lengthPath, [madeArguments[0], offset, length], finish),
+                      ),
+                ),
+              ),
+              make(current, madeArguments, finish),
+            );
       const throwWith = (after: Path) => throwTypeError(after, node, context, frame);
       const step = (
         current: Path,
@@ -12775,9 +12839,9 @@ const translateNewBufferStatement = (
               allocated,
               context,
               frame,
-              make(allocated, values, finish),
+              makeViewing(allocated, values, finish),
             )
-          : make(allocated, values, finish);
+          : makeViewing(allocated, values, finish);
 
       // Each step of the iterator may make the typed array, and what follows goes on from a join.
       return isIteratedTypedArray(node, context)
@@ -12811,7 +12875,8 @@ const translateNewBufferStatement = (
 
 // Makes the objects that a node's object literals create, before the statement that evaluates
 // them runs, since an expression can't change the heap. An expression that ran already, such as
-// a conversion, a call, or a branch that a statement runs first, made those in it.
+// a conversion, a call, a typed array's new, or a branch that a statement runs first, made itself
+// and those in it.
 export const allocate = (
   node: ts.Node | undefined,
   path: Path,
@@ -12823,7 +12888,7 @@ export const allocate = (
       ? []
       : getAllocated(node, context).filter(
           (allocation) =>
-            ts.findAncestor(allocation.parent, (ancestor) =>
+            ts.findAncestor(allocation, (ancestor) =>
               ts.isFunctionLike(ancestor)
                 ? "quit"
                 : ts.isExpression(ancestor) && path.scope.results.has(ancestor),
@@ -13637,7 +13702,8 @@ const getEffects = (
   // of an array's length.
   const conversions =
     (ts.isExpression(node) && getConversion(node, context) !== undefined) ||
-    (isObjectChange(node, context) && mayDefineObjectLength(node, context))
+    (isObjectChange(node, context) && mayDefineObjectLength(node, context)) ||
+    isIndexConvertingNew(node, context)
       ? getConversionFunctions(node, context)
       : undefined;
   // A definition that reads its descriptor's fields, a read of a key with getters, or an
@@ -13653,8 +13719,8 @@ const getEffects = (
     ...getStoredLengthConversions(node, context),
     ...(written === undefined ? [] : getRestCopyGetters(written, context)),
   ];
-  // A pattern that destructures an object, or a for-of, a spread, or a yield* that iterates one,
-  // runs the functions of the object's iterator.
+  // A pattern that destructures an object, or a for-of, a spread, a yield*, or new of a typed array
+  // that iterates one, runs the functions of the object's iterator.
   const isIterated =
     (ts.isArrayBindingPattern(node) &&
       (isIteratedPattern(node, context) || isIterablePattern(node, context))) ||
@@ -13675,7 +13741,8 @@ const getEffects = (
       getKind(node.expression, context) !== "sequence" &&
       isIterableValue(node.expression, context)) ||
     getIterableFrom(node, context) !== undefined ||
-    getIterableFrom(node, context, "fromEntries") !== undefined;
+    getIterableFrom(node, context, "fromEntries") !== undefined ||
+    (ts.isExpression(node) && isIteratedTypedArray(node, context));
   // A method call on a generator object, a call it's passed to, or a pattern, a for-of, a spread,
   // or a yield* that iterates one resumes the body of a generator that may have made it.
   const isResumed =
@@ -16918,6 +16985,9 @@ interface LeadingCall {
   increment?: Increment;
   // A new Promise, whose executor runs as a statement, so nothing after it can run before it.
   construction?: ts.NewExpression;
+  // A new of a typed array of a value that may be an iterable, whose iterator runs as a
+  // statement, so nothing after it can run before it.
+  typedArray?: ts.NewExpression;
 }
 
 // The first call in a node's evaluation order that only statements can run, with the nodes that
@@ -17154,7 +17224,11 @@ const findLeadingCall = (
       getNewBuffer(node, context) !== undefined)
   ) {
     const found = inOrder(node.arguments ?? []);
-    return found.call !== undefined || found.isBlocked ? found : evaluate(node);
+    return found.call !== undefined || found.isBlocked
+      ? found
+      : isIteratedTypedArray(node, context)
+        ? { ...blocked, typedArray: node }
+        : evaluate(node);
   }
   if (ts.isNewExpression(node)) {
     const found = inOrder([node.expression, ...(node.arguments ?? [])]);
@@ -17203,11 +17277,12 @@ const findLeadingCall = (
     if (!path.scope.results.has(callee) && isGetterRead(callee, context)) {
       return { call: undefined, isBlocked: true, read: callee };
     }
-    // A method of what new makes runs the calls in new's arguments first.
+    // A method of what new makes runs the calls in new's arguments first, and a typed array's
+    // iterator.
     if (receiver !== undefined && ts.isNewExpression(receiver)) {
       const evaluated: ts.Node[] = [];
       const fromNew = findLeadingCall(receiver, evaluated, path, context);
-      if (fromNew.call !== undefined) {
+      if (fromNew.call !== undefined || fromNew.typedArray !== undefined) {
         before.push(...evaluated);
         return fromNew;
       }
@@ -17598,6 +17673,34 @@ const getHoistedConstruction = (statement: ts.Statement, path: Path, context: Co
   if (evaluated === undefined) return undefined;
   const before: ts.Node[] = [];
   const node = findLeadingCall(evaluated, before, path, context).construction;
+  const outer = skipCasts(evaluated);
+  if (
+    node === undefined ||
+    node === outer ||
+    (ts.isBinaryExpression(outer) &&
+      outer.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      skipCasts(outer.right) === node)
+  ) {
+    return undefined;
+  }
+  rejectEarlyRun(
+    node,
+    [node],
+    before.filter((inner) => ts.findAncestor(inner, (ancestor) => ancestor === node) === undefined),
+    path,
+    context,
+  );
+  return node;
+};
+
+// The new of a typed array of a value that may be an iterable inside a statement's expression, which
+// it evaluates first, other than one that the statement itself runs, which runs as its own
+// statement. Nothing that the statement evaluates before it may read what its iterator changes.
+const getHoistedTypedArray = (statement: ts.Statement, path: Path, context: Context) => {
+  const evaluated = getEvaluated(statement);
+  if (evaluated === undefined) return undefined;
+  const before: ts.Node[] = [];
+  const node = findLeadingCall(evaluated, before, path, context).typedArray;
   const outer = skipCasts(evaluated);
   if (
     node === undefined ||
@@ -18410,6 +18513,30 @@ export const translateStatements = (
         context,
         frame,
       ),
+    );
+  }
+  const typedArray = getHoistedTypedArray(statement, path, context);
+  const typedConstruction = typedArray && getBufferConstruction(typedArray, context);
+  if (typedArray !== undefined && typedConstruction !== undefined) {
+    return translateNewBufferStatement(
+      typedArray,
+      typedConstruction,
+      path,
+      context,
+      statementFrame,
+      (after, value) =>
+        translateStatements(
+          statements,
+          {
+            ...after,
+            scope: {
+              ...after.scope,
+              results: new Map([...after.scope.results, [typedArray, value]]),
+            },
+          },
+          context,
+          frame,
+        ),
     );
   }
   const hoistedRead = getHoistedRead(statement, path, context);
