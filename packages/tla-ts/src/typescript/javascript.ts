@@ -5032,6 +5032,27 @@ WrapperObject(prototype, primitive) ==
       extensible |-> TRUE, prototype |-> prototype, isCallable |-> FALSE, isConstructor |-> FALSE,
       isOpaque |-> FALSE, privates |-> <<>>, primitive |-> primitive]
 
+\\* What Object.keys, values, entries, or getOwnPropertyNames gives for a value whose type doesn't tell
+\\* what it is: an object on the heap, or the object that a primitive converts to, or an array off the
+\\* heap, which may also be a map where a script names one.
+OwnKeysAny(heap, value, method, isMapless) ==
+  LET object ==
+        CASE value \\in {Undefined, Null} ->
+               Assert(FALSE, "tla-ts can't throw the TypeError of converting undefined or null to an object")
+          [] IsSequenceValue(value) /\\ isMapless -> ArrayObject(Null, value)
+          [] TypeOf(value) \\in {"string", "number", "boolean", "bigint", "symbol"} ->
+               WrapperObject(Null, value)
+          [] OTHER -> Assert(FALSE, "tla-ts can't list the keys of " \\o ToString(value))
+      keys == SelectSeq(OwnKeys(object), LAMBDA key : object.attributes[key].enumerable)
+  IN CASE IsRef(value) /\\ method = "keys" -> ObjectKeys(heap, value)
+       [] IsRef(value) /\\ method = "values" -> ObjectValues(heap, value)
+       [] IsRef(value) /\\ method = "entries" -> ObjectEntries(heap, value)
+       [] IsRef(value) -> OwnPropertyNames(heap, value)
+       [] method = "getOwnPropertyNames" -> OwnKeys(object)
+       [] method = "keys" -> keys
+       [] method = "values" -> [position \\in DOMAIN keys |-> object.values[keys[position]]]
+       [] OTHER -> [position \\in DOMAIN keys |-> <<keys[position], object.values[keys[position]]>>]
+
 \\* The object that Object makes of a symbol or a BigInt, which holds it in a slot named symbol or
 \\* bigint rather than the primitive slot of a Boolean, Number, or String object.
 SlotObject(prototype, slot, value) == [EmptyObject EXCEPT !.prototype = prototype] @@ (slot :> value)

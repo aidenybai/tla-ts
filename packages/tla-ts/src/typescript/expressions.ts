@@ -180,6 +180,8 @@ import {
   getCollection,
   rejectAnyReceiver,
   isReadAsAny,
+  mayBeHeapObject,
+  OWN_KEYS_ANY,
   getField,
   isAddedToBuiltIn,
   getKind,
@@ -1328,6 +1330,18 @@ const translateBuiltInCall = (
                 method === "keys" ? key : tuple([key, index(elements, [identifier(position)])]),
               );
         },
+      );
+    }
+    if (OWN_KEYS_ANY.has(method) && mayBeHeapObject(argument, context)) {
+      return useJavaScript(
+        "OwnKeysAny",
+        [
+          getHeap(scope, node, context),
+          translateFunctionObject(argument, scope, context),
+          string(method),
+          boolean(isMapless(node)),
+        ],
+        context,
       );
     }
   }

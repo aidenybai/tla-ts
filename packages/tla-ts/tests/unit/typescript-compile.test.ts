@@ -16130,15 +16130,12 @@ describe("errors", () => {
       if (seen.join() !== "2,1") throw new Error("seen " + seen.join());
     `;
 
-    it("agrees with Node where the type is an object's", async () => {
-      expect((await checkModel(getSource("object"))).failure).toBeUndefined();
-    });
-
-    it.each(["{}", "Object", "object | number", "any"])("stops where the type is %s", (type) => {
-      expect(() => compile(getSource(type))).toThrow(
-        "tla-ts can't list the keys of a value that may be an object or another value",
-      );
-    });
+    it.each(["object", "{}", "Object", "object | number", "any"])(
+      "agrees with Node where the type is %s",
+      async (type) => {
+        expect((await checkModel(getSource(type))).failure).toBeUndefined();
+      },
+    );
   });
 
   it.each([
@@ -43741,6 +43738,32 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("4,,2,x,5,first,"))).failure?.message).toContain(
         "4,3,2,x,5,first,",
       );
+    });
+  });
+
+  describe("lists the keys of a value whose type doesn't tell what it is as it runs", () => {
+    const getSource = (expected: string) => `
+      const values: {}[] = [{ a: 1, b: 2 }, "xy", [7, 8], 5, true];
+      const list = (value: {}) =>
+        [
+          Object.keys(value).join(" "),
+          Object.values(value).join(" "),
+          Object.entries(value).map((entry) => \`\${entry[0]}=\${entry[1]}\`).join(" "),
+          Object.getOwnPropertyNames(value).join(" "),
+        ].join("/");
+      const log = values.map((value) => list(value)).join("|");
+      if (log !== "${expected}") throw new Error(log);
+    `;
+    const expected =
+      "a b/1 2/a=1 b=2/a b|0 1/x y/0=x 1=y/0 1 length|0 1/7 8/0=7 1=8/0 1 length|///|///";
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects a string's length as enumerable", async () => {
+      const wrong = expected.replace("0 1/x y", "0 1 length/x y 2");
+      expect((await checkModel(getSource(wrong))).failure?.message).toContain(expected);
     });
   });
 });

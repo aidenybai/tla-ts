@@ -374,6 +374,27 @@ export const isReadAsAny = (node: ts.Expression, context: Context) => {
   );
 };
 
+// Whether a value that any, unknown, {}, Object, or a union with an object types may be an object
+// in the heap or another value.
+export const mayBeHeapObject = (node: ts.Expression, context: Context) => {
+  const type = context.checker.getNonNullableType(context.checker.getTypeAtLocation(node));
+  return (
+    context.heap !== undefined &&
+    (hasHeapType(type, context) ||
+      (type.isUnion() ? type.types : [type]).some(
+        (member) =>
+          (member.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0 ||
+          member.getSymbol()?.name === "Object" ||
+          ((member.flags & ts.TypeFlags.Object) !== 0 &&
+            member.getProperties().length === 0 &&
+            member.getCallSignatures().length === 0),
+      ))
+  );
+};
+
+// The methods of Object that list the keys of a value whose type doesn't tell what it is as it runs.
+export const OWN_KEYS_ANY = new Set(["keys", "values", "entries", "getOwnPropertyNames"]);
+
 // In a script with objects, a value of type any may be an object, so its properties are unknown,
 // as are those of a value that a union types as an object or another value.
 export const rejectAnyReceiver = (node: ts.Expression, context: Context) => {
