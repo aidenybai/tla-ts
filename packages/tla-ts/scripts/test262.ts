@@ -1225,7 +1225,8 @@ const REDUCING_METHODS = new Set(["reduce", "reduceRight"]);
 // converts from a primitive. Each needs a unit test of such a call.
 const SEARCHING_METHODS = new Set(["includes", "indexOf", "lastIndexOf"]);
 // RegExp.prototype's methods under well-known symbols that tla-ts runs as their steps where a test
-// calls them through call, on any receiver and any string. Each needs a unit test of such a call.
+// calls them through call, on any receiver, or on a regexp with a string or a limit of another
+// type than their signatures take. Each needs a unit test of such a call.
 const PROTOCOL_METHODS = new Set(["match", "search", "split"]);
 // TypeScript's errors for a call with fewer arguments than its signature takes.
 const SHORT_CALL_ERRORS = new Set([ARGUMENT_COUNT_ERROR, 2555]);
@@ -1735,21 +1736,25 @@ const ignoreSoundErrors = () => {
         )
     );
   };
-  // A call through call of a method of RegExp.prototype that PROTOCOL_METHODS lists, as
-  // RegExp.prototype[Symbol.search].call(rx, s).
+  // A call of a method of RegExp.prototype that PROTOCOL_METHODS lists, on a regexp, as
+  // rx[Symbol.search](s), or through call, as RegExp.prototype[Symbol.search].call(rx, s).
   const isProtocolCall = (node: ts.Node): node is ts.CallExpression => {
-    if (!ts.isCallExpression(node) || !ts.isPropertyAccessExpression(node.expression)) return false;
-    const method = node.expression.expression;
+    if (!ts.isCallExpression(node)) return false;
+    const callee = node.expression;
+    const isCall = ts.isPropertyAccessExpression(callee) && callee.name.text === "call";
+    const method = isCall ? callee.expression : callee;
     if (!ts.isElementAccessExpression(method)) return false;
     const owner = method.expression;
     const key = method.argumentExpression;
+    const isOwned = isCall
+      ? ts.isPropertyAccessExpression(owner) &&
+        ts.isIdentifier(owner.expression) &&
+        owner.expression.text === "RegExp" &&
+        isGlobal(owner.expression) &&
+        owner.name.text === "prototype"
+      : checker.getTypeAtLocation(owner).getSymbol()?.getName() === "RegExp";
     return (
-      node.expression.name.text === "call" &&
-      ts.isPropertyAccessExpression(owner) &&
-      ts.isIdentifier(owner.expression) &&
-      owner.expression.text === "RegExp" &&
-      isGlobal(owner.expression) &&
-      owner.name.text === "prototype" &&
+      isOwned &&
       ts.isPropertyAccessExpression(key) &&
       ts.isIdentifier(key.expression) &&
       key.expression.text === "Symbol" &&
@@ -1759,12 +1764,23 @@ const ignoreSoundErrors = () => {
     );
   };
   // A protocol call that leaves out the receiver or the string, which are then undefined, as they
-  // are in JavaScript. TypeScript reports it at call's name.
-  const isShortProtocolCall = (node: ts.Node) =>
-    ts.isIdentifier(node) &&
-    ts.isPropertyAccessExpression(node.parent) &&
-    node.parent.name === node &&
-    isProtocolCall(node.parent.parent);
+  // are in JavaScript. TypeScript reports it at call's name, or at the method of a regexp, which
+  // tla-ts runs as its steps where it has no string.
+  const isShortProtocolCall = (node: ts.Node, diagnostic: ts.Diagnostic) => {
+    const call = ts.findAncestor(node, ts.isCallExpression);
+    const callee = call?.expression;
+    const isCall =
+      callee !== undefined && ts.isPropertyAccessExpression(callee) && callee.name.text === "call";
+    const reported = isCall ? callee.name : callee;
+    return (
+      call !== undefined &&
+      reported !== undefined &&
+      reported.getStart() === diagnostic.start &&
+      reported.getEnd() === (diagnostic.start ?? 0) + (diagnostic.length ?? 0) &&
+      (isCall || call.arguments.length === 0) &&
+      isProtocolCall(call)
+    );
+  };
   // A protocol call of a value of another type than the string or the limit: tla-ts converts the
   // string with ToString, running a toString or a Symbol.toPrimitive that the test writes, and
   // split's limit with ToUint32, throwing a TypeError on a symbol and stopping on another value
@@ -1922,7 +1938,7 @@ const ignoreSoundErrors = () => {
     return (
       (diagnostic.code === ARGUMENT_COUNT_ERROR &&
         (isShortBuiltInCall(node) || isShortReducingCall(node))) ||
-      (SHORT_CALL_ERRORS.has(diagnostic.code) && isShortProtocolCall(node)) ||
+      (SHORT_CALL_ERRORS.has(diagnostic.code) && isShortProtocolCall(node, diagnostic)) ||
       (diagnostic.code === MISSING_PROPERTY_ERROR && isPatternRead(node)) ||
       ((diagnostic.code === NOT_ITERABLE_ERROR || NULLABLE_ERRORS.has(diagnostic.code)) &&
         isNullableArrayPattern(node)) ||
