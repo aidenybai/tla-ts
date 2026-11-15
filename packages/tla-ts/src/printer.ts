@@ -31,17 +31,17 @@ const ESCAPES = new Map([
 export const formatString = (value: string) =>
   `"${value.replace(/[\\"\n\t\r\f]/g, (character) => ESCAPES.get(character) ?? character)}"`;
 
+// Appends to the lines in place, as copying them for each part takes time quadratic in a long
+// list's length.
 const concat = (...parts: (string | string[])[]) =>
   parts.reduce<string[]>(
     (lines, part) => {
       const next = typeof part === "string" ? [part] : part;
-      const last = lines[lines.length - 1];
-      const padding = " ".repeat(last.length);
-      return [
-        ...lines.slice(0, -1),
-        last + next[0],
-        ...next.slice(1).map((line) => padding + line),
-      ];
+      const last = lines.pop() ?? "";
+      const padding = next.length > 1 ? " ".repeat(last.length) : "";
+      lines.push(last + next[0]);
+      next.slice(1).forEach((line) => lines.push(padding + line));
+      return lines;
     },
     [""],
   );

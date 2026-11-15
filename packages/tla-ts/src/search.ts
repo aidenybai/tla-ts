@@ -738,11 +738,9 @@ export const createSearch = (
   const tlcOrder = { indices: undefined as number[] | undefined };
   const getTlcOrder = () => {
     if (tlcOrder.indices) return tlcOrder.indices;
-    const variableOrder = getVariableOrder();
-    const getTlcPosition = (index: number) => {
-      const position = variableOrder.indexOf(environment.variables[index]);
-      return position === -1 ? environment.variables.length : position;
-    };
+    const positions = new Map(getVariableOrder().map((name, position) => [name, position]));
+    const getTlcPosition = (index: number) =>
+      positions.get(environment.variables[index]) ?? environment.variables.length;
     tlcOrder.indices = environment.variables
       .map((_, index) => index)
       .sort((left, right) => getTlcPosition(left) - getTlcPosition(right));
