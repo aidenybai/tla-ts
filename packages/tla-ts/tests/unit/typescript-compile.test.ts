@@ -31385,6 +31385,16 @@ describe("regular expressions", () => {
       ).toContain("m1,,m3|1");
     });
   });
+
+  it("joins the undefined that a split gives for a capture that didn't take part as nothing", async () => {
+    const getSource = (expected: string) => `
+      const parts = /(a)|b/[Symbol.split]("xbxay");
+      const other = "xbxay".split(/(a)|b/);
+      if (parts.join(".") + other.join(".") !== "${expected}") throw new Error(parts.join("."));
+    `;
+    expect((await checkModel(getSource("x..x.a.yx..x.a.y"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("x.x.a.yx.x.a.y"))).failure?.message).toContain("x..x.a.y");
+  });
 });
 
 describe("calls through values", () => {

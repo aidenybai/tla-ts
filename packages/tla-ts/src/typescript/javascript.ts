@@ -652,11 +652,15 @@ SortSequence(sequence, IsBefore(_, _), mayThrow) ==
        [] OTHER -> SortedPrefix(defined, Len(defined), IsBefore)
             \\o [position \\in 1..(Len(sequence) - Len(defined)) |-> Undefined]
 
+\\* An element that join() writes, where undefined and null write nothing, as a regexp's split gives
+\\* undefined for a capture that didn't take part where TypeScript types the array as strings.
+LOCAL JoinPart(value) == IF value \\in {Undefined, Null} THEN "" ELSE value
+
 RECURSIVE Join(_, _)
 Join(sequence, separator) ==
   CASE sequence = <<>> -> ""
-    [] Len(sequence) = 1 -> Head(sequence)
-    [] OTHER -> Head(sequence) \\o separator \\o Join(Tail(sequence), separator)
+    [] Len(sequence) = 1 -> JoinPart(Head(sequence))
+    [] OTHER -> JoinPart(Head(sequence)) \\o separator \\o Join(Tail(sequence), separator)
 
 RECURSIVE ReduceAt(_, _, _)
 ReduceAt(Op(_, _), accumulator, positions) ==
