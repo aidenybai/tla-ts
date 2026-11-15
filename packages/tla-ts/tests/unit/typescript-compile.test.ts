@@ -41589,4 +41589,29 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("a compound assignment that reads its name before a yield in its value suspends", () => {
+    const getSource = (expected: string) => `
+      let log = "";
+      function* g(): Generator<number, void, string> {
+        log += (yield 1) + ",";
+        log += yield 2;
+      }
+      const iter = g();
+      iter.next("a");
+      log += "x";
+      iter.next("b");
+      log += "y";
+      iter.next("c");
+      if (log !== "${expected}") throw new Error("log " + log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("b,c"))).failure).toBeUndefined();
+    });
+
+    it("rejects a name that it reads after the yield", async () => {
+      expect((await checkModel(getSource("xb,yc"))).failure?.message).toContain("log b,c");
+    });
+  });
 });

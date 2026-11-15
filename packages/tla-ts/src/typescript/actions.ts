@@ -1957,7 +1957,11 @@ const getAssignedPath = (expression: ts.Expression, path: Path, context: Context
     return { ...after, scope: { ...after.scope, functions } };
   }
   const update = getUpdate(expression, path, context);
-  return update === undefined ? undefined : assign(expression.left, path, context, update);
+  // A name that the statement read before a yield or an await in the value suspended it.
+  const read = path.scope.results.get(expression.left);
+  return update === undefined
+    ? undefined
+    : assign(expression.left, path, context, (current) => update(read ?? current));
 };
 
 // Whether a logical assignment writes its target, which holds a value.
