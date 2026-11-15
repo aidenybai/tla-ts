@@ -25813,6 +25813,26 @@ describe("errors", () => {
     ).toContain("seen object,undefined,global,object,object,inner");
   });
 
+  it("reads the type of the this that a call gives, not the type that the function names", async () => {
+    const getSource = (expected: string) => `
+      const box = { count: 0 };
+      function strict(this: { [key: string]: unknown }) {
+        "use strict";
+        return typeof this;
+      }
+      function sloppy(this: void) {
+        return typeof this;
+      }
+      // @ts-ignore
+      const kinds = [strict(), sloppy()].join();
+      if (kinds !== "${expected}") throw new Error("kinds " + kinds);
+    `;
+    expect((await checkModel(getSource("undefined,object"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("object,undefined"))).failure?.message).toContain(
+      "kinds undefined,object",
+    );
+  });
+
   it("stops where a function outside strict mode gets a primitive as its this", async () => {
     const source = `
       const seen: string[] = [];
