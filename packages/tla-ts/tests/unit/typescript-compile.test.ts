@@ -41814,4 +41814,38 @@ describe("BigInts", () => {
       expect(result.failure?.message).toContain("tla-ts can't convert objects to strings");
     });
   });
+
+  describe("evaluates the keys and values of an object literal in order around the yields in them", () => {
+    const getSource = (expected: string) => `
+      let key = "a";
+      function* g(): Generator<number, { [key: string]: unknown }, string> {
+        return {
+          [key]: 1,
+          get [yield 1]() {
+            return 2;
+          },
+          [yield 2]: key,
+        };
+      }
+      const iter = g();
+      iter.next();
+      key = "b";
+      iter.next("c");
+      key = "d";
+      const result = iter.next("e");
+      const made = result.value as { [key: string]: unknown };
+      const log = Object.keys(made).join() + "," + made.a + "," + made.c + "," + made.e;
+      if (log !== "${expected}") throw new Error("log " + log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("a,c,e,1,2,d"))).failure).toBeUndefined();
+    });
+
+    it("rejects a key that it reads after the yields", async () => {
+      expect((await checkModel(getSource("d,c,e,undefined,2,d"))).failure?.message).toContain(
+        "log a,c,e,1,2,d",
+      );
+    });
+  });
 });

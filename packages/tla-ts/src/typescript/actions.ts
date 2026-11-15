@@ -17150,6 +17150,18 @@ const isNamedPropertyOfName = (
   ts.isIdentifier(node.name) &&
   isReadName(node.expression, context);
 
+// The computed key and the value that an object literal's property evaluates.
+const getPropertyOperands = (property: ts.ObjectLiteralElementLike): ts.Expression[] => [
+  ...(property.name !== undefined && ts.isComputedPropertyName(property.name)
+    ? [property.name.expression]
+    : []),
+  ...(ts.isPropertyAssignment(property)
+    ? [property.initializer]
+    : ts.isShorthandPropertyAssignment(property)
+      ? [property.name]
+      : []),
+];
+
 const isFunctionExpressionCall = (node: ts.Node): node is ts.CallExpression =>
   ts.isCallExpression(node) && ts.isFunctionExpression(skipCasts(node.expression));
 
@@ -17196,6 +17208,17 @@ const getLeadingAwaitOrYield = (
   if (ts.isTemplateExpression(node)) {
     return getFirstLeading(
       node.templateSpans.map((span) => span.expression),
+      results,
+      context,
+    );
+  }
+  // An object literal evaluates the keys and the values of its properties in order, up to a spread.
+  if (ts.isObjectLiteralExpression(node)) {
+    const index = node.properties.findIndex(ts.isSpreadAssignment);
+    return getFirstLeading(
+      (index === -1 ? node.properties : node.properties.slice(0, index)).flatMap(
+        getPropertyOperands,
+      ),
       results,
       context,
     );
@@ -17247,12 +17270,19 @@ const getEarlierNames = (
         ? [parent.left.expression, parent.right]
         : ts.isArrayLiteralExpression(parent)
           ? [...parent.elements]
-          : isFunctionExpressionCall(parent)
-            ? [...parent.arguments]
-            : ts.isTemplateExpression(parent)
-              ? parent.templateSpans.map((span) => span.expression)
-              : [];
-  const position = operands.findIndex((operand) => operand === node);
+          : ts.isObjectLiteralExpression(parent)
+            ? parent.properties.flatMap(getPropertyOperands)
+            : ts.isObjectLiteralElementLike(parent) && ts.isObjectLiteralExpression(parent.parent)
+              ? getPropertyOperands(parent)
+              : isFunctionExpressionCall(parent)
+                ? [...parent.arguments]
+                : ts.isTemplateExpression(parent)
+                  ? parent.templateSpans.map((span) => span.expression)
+                  : [];
+  // The operand that holds the node, as a property holds its key and its value.
+  const position = operands.findIndex(
+    (operand) => operand === node || (node.pos <= operand.pos && operand.end <= node.end),
+  );
   return [
     ...getEarlierNames(parent, root, results, context),
     ...(position === -1 ? [] : operands.slice(0, position)).filter(
