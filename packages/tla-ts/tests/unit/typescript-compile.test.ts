@@ -37065,11 +37065,6 @@ describe("buffers", () => {
 
     it.each([
       [
-        "reads a BigInt beyond 32 bits",
-        "const wide = new BigUint64Array(1); new Uint8Array(wide.buffer).fill(255); if (wide[0] === 0n) throw new Error('wide');",
-        "tla-ts can't hold a BigInt beyond 32 bits",
-      ],
-      [
         "writes a number",
         "const value: any = 1; let thrown = ''; try { new BigInt64Array(1)[0] = value; } catch (error) { thrown = 'thrown'; } if (thrown === '') throw new Error('number');",
         "tla-ts can't throw the TypeError of converting a number to a BigInt",
@@ -37794,12 +37789,12 @@ describe("BigInts", () => {
     expect(result.failure).toBeUndefined();
   });
 
-  it("stops where a BigInt leaves 32 bits or divides by zero", async () => {
+  it("stops where a BigInt leaves 4096 bits or divides by zero", async () => {
     const overflow = await checkModel(`
-      let sum = 2147483647n;
-      sum = sum + 1n;
+      let sum = 2n ** 4095n;
+      sum = sum + sum;
     `);
-    expect(overflow.failure?.message).toContain("tla-ts can't hold a BigInt beyond 32 bits");
+    expect(overflow.failure?.message).toContain("tla-ts can't hold a BigInt beyond 4096 bits");
     const division = await checkModel(`
       let quotient = 1n;
       quotient = quotient / 0n;
@@ -43804,6 +43799,220 @@ describe("BigInts", () => {
       ).toThrow(
         "tla-ts can't make a generator method in an object literal that runs more than once",
       );
+    });
+  });
+  describe("holds BigInts beyond TLC's integers", () => {
+    const getSource = (expected: string) => `
+      const box = { size: 0 };
+      const big = 0xfedcba9876543210n;
+      const small = 0x123456789abcdefn;
+      const elements = new BigInt64Array([-(2n ** 63n), 2n ** 64n + 5n]);
+      const log = [
+        big + small, big - small, small - big, big * -small, big / small, -big % small,
+        (-3n) ** 41n, 2147483647n + 1n, -2147483647n - 1n,
+        big > small, -big < -1e19, 2n ** 1024n > Number.MAX_VALUE, big === 0xfedcba9876543210n,
+        big.toString(36), Number(big) === 18364758544493064000, BigInt(2 ** 60),
+        elements[0], elements[1], new BigUint64Array(elements.buffer)[0],
+      ].join("|");
+      if (log !== "${expected}") throw new Error(log);
+    `;
+    const expected = [
+      "18446744073709551615|18282773015276577825|-18282773015276577825",
+      "-1505644448203263502622459810266844400|224|-240|-36472996377170786403|2147483648",
+      "-2147483648|true|true|true|true|3viyrl200xgk0|true|1152921504606846976",
+      "-9223372036854775808|5|9223372036854775808",
+    ].join("|");
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects a product that wraps at 64 bits", async () => {
+      expect(
+        (
+          await checkModel(
+            getSource(
+              expected.replace("-1505644448203263502622459810266844400", "-4417700156681392"),
+            ),
+          )
+        ).failure?.message,
+      ).toContain(expected);
+    });
+
+    it("stops at a BigInt beyond its bits", async () => {
+      expect(
+        (await checkModel("const box = { size: 0 };\nconst huge = 2n ** 100000n > 0n;")).failure
+          ?.message,
+      ).toContain("tla-ts can't hold a BigInt beyond 4096 bits");
+    });
+  });
+
+  describe("reads a string's integer to compare it with a BigInt or store it as one", () => {
+    const getSource = (expected: string) => `
+      const box = { size: 0 };
+      const equals = (left: unknown, right: unknown) => left == right;
+      const texts = ["", " 12 ", "-0", "-", "0x1f", "-0x1f", "0b101", "0o17", "1e3"];
+      texts.push("18446744073709551617", "-18446744073709551617", "\\t\\n7 ", "1.0", "+5");
+      const values = [0n, 12n, 31n, -31n, 5n, 15n, 18446744073709551617n, -18446744073709551617n, 7n];
+      const log = texts
+        .map((text) => values.map((value) => (equals(text, value) ? 1 : 0)).join(""))
+        .join("|");
+      const elements = new BigUint64Array(2);
+      const strings: unknown[] = ["18446744073709551617", " 0x10 "];
+      elements.set(strings as bigint[]);
+      if (\`\${log}|\${elements[0]}|\${elements[1]}\` !== "${expected}") {
+        throw new Error(\`\${log}|\${elements[0]}|\${elements[1]}\`);
+      }
+    `;
+    const expected = [
+      "100000000|010000000|100000000|000000000|001000000|000000000|000010000|000001000",
+      "000000000|000000100|000000010|000000001|000000000|000010000|1|16",
+    ].join("|");
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects a hexadecimal string that differs from its BigInt", async () => {
+      expect(
+        (await checkModel(getSource(expected.replace("001000000", "000000000")))).failure?.message,
+      ).toContain(expected);
+    });
+  });
+
+  describe("computes the bitwise operators of BigInts on their two's complement", () => {
+    const getSource = (expected: string) => `
+      const box = { size: 0 };
+      const values = [5n, -5n, -0x80000000n, 0xfedcba9876543210n, -0x123456789abcdef0123n];
+      const log: string[] = [];
+      for (const left of values) {
+        for (const right of values) log.push(\`\${left & right},\${left | right},\${left ^ right}\`);
+        log.push(\`\${~left},\${left << 70n},\${left >> 3n},\${left >> -5n},\${left >> 0x123456789n}\`);
+      }
+      let compound = 0xffn;
+      compound &= 0xf0n;
+      compound |= 0x10000000000n;
+      compound ^= -1n;
+      compound <<= 2n;
+      compound >>= 1n;
+      log.push(String(compound));
+      if (log.join("|") !== "${expected}") throw new Error(log.join("|"));
+    `;
+    const expected = [
+      "5,5,0|1,-1,-2|0,-2147483643,-2147483643|0,18364758544493064725,18364758544493064725",
+      "5,-5373003642731685151011,-5373003642731685151016|-6,5902958103587056517120,0,160,0",
+      "1,-1,-2|-5,-5,0|-2147483648,-5,2147483643|18364758544493064720,-5,-18364758544493064725",
+      "-5373003642731685151015,-1,5373003642731685151014|4,-5902958103587056517120,-1,-160,-1",
+      "0,-2147483643,-2147483643|-2147483648,-5,2147483643|-2147483648,-2147483648,0",
+      "18364758542507835392,-162254320,-18364758542670089712",
+      "-5373003642732525125632,-1307509027,5373003642731217616605",
+      "2147483647,-2535301200456458802993406410752,-268435456,-68719476736,-1",
+      "0,18364758544493064725,18364758544493064725",
+      "18364758544493064720,-5,-18364758544493064725",
+      "18364758542507835392,-162254320,-18364758542670089712",
+      "18364758544493064720,18364758544493064720,0",
+      "13445551732655403536,-5368084435919847489827,-5381529987652502893363",
+      "-18364758544493064721,21681280054126994721021457058103589601280,2295594818061633090,587672273423778071040,0",
+      "5,-5373003642731685151011,-5373003642731685151016",
+      "-5373003642731685151015,-1,5373003642731685151014",
+      "-5373003642732525125632,-1307509027,5373003642731217616605",
+      "13445551732655403536,-5368084435919847489827,-5381529987652502893363",
+      "-5373003642731685151011,-5373003642731685151011,0",
+      "5373003642731685151010,-6343323078693154944396059395910787781361664,-671625455341460643877,-171936116567413924832352,-1",
+      "-2199023256034",
+    ].join("|");
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects the & of two negative BigInts on their magnitudes", async () => {
+      expect(
+        (
+          await checkModel(
+            getSource(expected.replace("|-2147483648,-5,2147483643|", "|-5,-5,2147483643|")),
+          )
+        ).failure?.message,
+      ).toContain(expected);
+    });
+  });
+
+  describe("wraps BigInts with BigInt.asIntN and BigInt.asUintN", () => {
+    const getSource = (expected: string) => `
+      const box = { size: 0 };
+      const values = [1n, -1n, -5n, -0x80000000n, 0xfedcba9876543210n, -0x123456789abcdef0123n];
+      const log: string[] = [];
+      for (const value of values) {
+        const wrapped = [0, 3, 32, 65, 2147483647].map((bits) => {
+          const unsigned = bits > 65 && value < 0n ? "" : BigInt.asUintN(bits, value);
+          return \`\${BigInt.asIntN(bits, value)}/\${unsigned}\`;
+        });
+        log.push(wrapped.join(","));
+      }
+      if (log.join("|") !== "${expected}") throw new Error(log.join("|"));
+    `;
+    const expected = [
+      "0/0,1/1,1/1,1/1,1/1|0/0,-1/7,-1/4294967295,-1/36893488147419103231,-1/",
+      "0/0,3/3,-5/4294967291,-5/36893488147419103227,-5/",
+      "0/0,0/0,-2147483648/2147483648,-2147483648/36893488145271619584,-2147483648/",
+      "0/0,0/0,1985229328/1985229328,18364758544493064720/18364758544493064720,18364758544493064720/18364758544493064720",
+      "0/0,-3/5,839974621/839974621,13445626791503920861/13445626791503920861,-5373003642731685151011/",
+    ].join("|");
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects asIntN as asUintN", async () => {
+      expect(
+        (await checkModel(getSource(expected.replace("-1/7", "7/7")))).failure?.message,
+      ).toContain(expected);
+    });
+
+    it("stops where asUintN of a negative BigInt takes too many bits", async () => {
+      expect(
+        (await checkModel("const box = { size: 0 };\nconst wide = BigInt.asUintN(5000, -1n) > 0n;"))
+          .failure?.message,
+      ).toContain("tla-ts can't hold a BigInt beyond 4096 bits");
+    });
+  });
+
+  describe("reads and writes a DataView's 64-bit BigInts in either byte order", () => {
+    const getSource = (expected: string) => `
+      const view = new DataView(new ArrayBuffer(16));
+      const log: string[] = [];
+      view.setBigInt64(0, -2n);
+      view.setBigUint64(8, 0x0102030405060708n, true);
+      log.push(\`\${view.getBigInt64(0)},\${view.getBigUint64(0)},\${view.getBigUint64(0, true)}\`);
+      log.push(\`\${view.getBigInt64(8)},\${view.getBigUint64(8, true)}\`);
+      view.setBigInt64(4, 2n ** 64n + 0x80n, true);
+      log.push(\`\${view.getBigInt64(1)},\${view.getBigUint64(3, true)},\${view.getUint8(4)}\`);
+      view.setBigUint64(0, -(2n ** 70n) - 1n);
+      log.push(\`\${view.getBigInt64(0)},\${view.getBigUint64(0)}\`);
+      try {
+        view.getBigInt64(9);
+      } catch (error) {
+        log.push(String(error instanceof RangeError));
+      }
+      if (log.join("|") !== "${expected}") throw new Error(log.join("|"));
+    `;
+    const expected = [
+      "-2,18446744073709551614,18374686479671623679|578437695752307201,72623859790382856",
+      "-549755813888,33023,128|-1,18446744073709551615|true",
+    ].join("|");
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects a little-endian read as big-endian", async () => {
+      expect(
+        (
+          await checkModel(
+            getSource(expected.replace("18374686479671623679", "18446744073709551614")),
+          )
+        ).failure?.message,
+      ).toContain(expected);
     });
   });
 });

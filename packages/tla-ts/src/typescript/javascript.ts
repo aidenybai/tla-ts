@@ -43,10 +43,13 @@ export const WELL_KNOWN_SYMBOLS = [
   "unscopables",
 ];
 
+// The most bits a BigInt may take, past which TLC would take too long to compute with it.
+export const MAX_BIGINT_BITS = 4096;
+
 export const JAVASCRIPT_MODULE = `------------------------------ MODULE JavaScript ------------------------------
 EXTENDS Integers, Sequences, FiniteSets, TLC
 
-CONSTANTS Undefined, Null, Ref, Big, Wide, Double, BuiltIns, ConstantFunctions, Symbols, Fractions,
+CONSTANTS Undefined, Null, Ref, Big, Limbs, Wide, Double, BuiltIns, ConstantFunctions, Symbols, Fractions,
           Doubles,
           Characters, Searches, Cases, Normals, NaN, Infinity, NegativeInfinity, NegativeZero
 
@@ -84,10 +87,12 @@ SymbolDescription(heap, symbol) ==
      THEN "Symbol." \\o WellKnownSymbols[position]
      ELSE heap.symbols[position - Len(WellKnownSymbols)]
 
-\\* A BigInt, which tla-ts holds as its integer under the model value Big.
+\\* A BigInt, which tla-ts holds as its integer under the model value Big, or beyond TLC's integers
+\\* under Limbs.
 IsBigInt(value) ==
   LET text == ToString(value)
-  IN Len(text) >= 7 /\\ SubSeq(text, 1, 7) = "(Big :>"
+  IN \\/ Len(text) >= 7 /\\ SubSeq(text, 1, 7) = "(Big :>"
+     \\/ Len(text) >= 9 /\\ SubSeq(text, 1, 9) = "(Limbs :>"
 
 \\* An integer beyond TLC's 32 bits, which tla-ts holds as two halves under the model value Wide.
 IsWide(value) ==
@@ -389,19 +394,42 @@ LOCAL NatHalves(nat) ==
   <<LimbAt(nat, 3) \\div 8 + LimbAt(nat, 4) * 2048,
     LimbAt(nat, 1) + LimbAt(nat, 2) * Limb + (LimbAt(nat, 3) % 8) * 268435456>>
 
-\\* A natural's quotient and remainder by another, one bit at a time from the highest.
-RECURSIVE NatDivideFrom(_, _, _, _, _)
-NatDivideFrom(nat, divisor, bit, quotient, remainder) ==
-  IF bit < 0
-  THEN <<quotient, remainder>>
-  ELSE LET current == NatAdd(NatShiftLeft(remainder, 1),
-                             IF NatIsOdd(NatShiftRight(nat, bit)) THEN <<1>> ELSE <<>>)
-           fits == ~NatBelow(current, divisor)
-       IN NatDivideFrom(nat, divisor, bit - 1,
-                        NatAdd(NatShiftLeft(quotient, 1), IF fits THEN <<1>> ELSE <<>>),
-                        IF fits THEN NatSubtract(current, divisor) ELSE current)
+\\* The greatest limb from low to high that a divisor times stays within a natural.
+RECURSIVE QuotientLimbWithin(_, _, _, _)
+QuotientLimbWithin(nat, divisor, low, high) ==
+  IF low = high
+  THEN low
+  ELSE LET middle == (low + high + 1) \\div 2
+       IN IF NatBelow(nat, NatTimes(divisor, middle))
+          THEN QuotientLimbWithin(nat, divisor, low, middle - 1)
+          ELSE QuotientLimbWithin(nat, divisor, middle, high)
 
-LOCAL NatDivide(nat, divisor) == NatDivideFrom(nat, divisor, NatBits(nat) - 1, <<>>, <<>>)
+\\* The greatest limb that a divisor times stays within a natural below divisor * Limb. The divisor's
+\\* top limb is from Limb \\div 2, so that the natural's top two limbs over it and over it plus 1
+\\* bound the limb to a few.
+LOCAL QuotientLimb(nat, divisor) ==
+  LET top == LimbAt(nat, Len(divisor) + 1) * Limb + LimbAt(nat, Len(divisor))
+      high == top \\div divisor[Len(divisor)]
+  IN QuotientLimbWithin(nat, divisor, top \\div (divisor[Len(divisor)] + 1),
+                        IF high < Limb THEN high ELSE Limb - 1)
+
+\\* A natural's quotient and remainder by another, one limb at a time from the highest.
+RECURSIVE NatDivideFrom(_, _, _, _, _)
+NatDivideFrom(nat, divisor, position, quotient, remainder) ==
+  IF position = 0
+  THEN <<NatTrim(quotient), remainder>>
+  ELSE LET current == NatAdd(NatShiftLimbs(remainder, 1), NatOf(nat[position]))
+           limb == QuotientLimb(current, divisor)
+       IN NatDivideFrom(nat, divisor, position - 1, <<limb>> \\o quotient,
+                        NatSubtract(current, NatTimes(divisor, limb)))
+
+\\* A natural's quotient and remainder by another, both shifted until the divisor's top limb is
+\\* from Limb \\div 2, which leaves the quotient as it is and shifts the remainder.
+LOCAL NatDivide(nat, divisor) ==
+  LET shift == 14 - BitLength(divisor[Len(divisor)])
+      shifted == NatShiftLeft(nat, shift)
+      division == NatDivideFrom(shifted, NatShiftLeft(divisor, shift), Len(shifted), <<>>, <<>>)
+  IN <<division[1], NatShiftRight(division[2], shift)>>
 
 \\* A natural other than 0 below 2^54 times 2^exponent as a number.
 LOCAL FromNat(isNegative, nat, exponent) ==
@@ -495,14 +523,14 @@ LOCAL ExactRemainder(left, right) ==
        [] OTHER -> Rounded(a[1], remainder, low)
 
 
-\\* 5^count, by squaring.
-RECURSIVE FivePower(_)
-FivePower(count) ==
+\\* A natural to a power, by squaring.
+RECURSIVE NatPower(_, _)
+NatPower(nat, count) ==
   IF count = 0
   THEN <<1>>
-  ELSE LET half == FivePower(count \\div 2)
+  ELSE LET half == NatPower(nat, count \\div 2)
            squared == NatProduct(half, half)
-       IN IF count % 2 = 1 THEN NatTimes(squared, 5) ELSE squared
+       IN IF count % 2 = 1 THEN NatProduct(squared, nat) ELSE squared
 
 \\* The decimal digits of a natural, four at a time from the least.
 RECURSIVE NatText(_)
@@ -519,7 +547,7 @@ LOCAL ExactDecimal(value) ==
   LET binary == Binary(value)
       text == NatText(IF binary[2] >= 0
                       THEN NatShiftLeft(Significand(binary), binary[2])
-                      ELSE NatProduct(Significand(binary), FivePower(-binary[2])))
+                      ELSE NatProduct(Significand(binary), NatPower(<<5>>, -binary[2])))
   IN [digits |-> text, exponent |-> Len(text) - 1 + (IF binary[2] >= 0 THEN 0 ELSE binary[2])]
 
 \\* Number.isInteger.
@@ -724,77 +752,138 @@ LessThan(left, right) ==
 
 LessOrEqual(left, right) == left # NaN /\\ right # NaN /\\ ~LessThan(right, left)
 
-\\* TLC's integers have 32 bits, where a BigInt has as many as it needs, so tla-ts stops where one
-\\* would leave them.
-\\* The integer that a BigInt holds, where TypeScript's types may let another value through.
+\\* TLC's integers have 32 bits, where a BigInt has as many as it needs, so tla-ts holds a BigInt
+\\* beyond them under the model value Limbs, as whether it's negative and its magnitude's limbs. Each
+\\* BigInt has one form, Big up to 2^31 - 1 either way and Limbs past it, so = compares BigInts.
+LOCAL IsLimbs(value) ==
+  LET text == ToString(value)
+  IN Len(text) >= 9 /\\ SubSeq(text, 1, 9) = "(Limbs :>"
+
+\\* The integer that a BigInt within TLC's integers holds, where TypeScript's types may let another
+\\* value through.
 LOCAL IntegerOfBigInt(value) ==
-  IF IsBigInt(value)
+  IF IsBigInt(value) /\\ ~IsLimbs(value)
   THEN value[Big]
   ELSE Assert(FALSE, "tla-ts can't compute with a value that isn't a BigInt")
 
-LOCAL TooBig == Assert(FALSE, "tla-ts can't hold a BigInt beyond 32 bits")
+LOCAL BigIntIsNegative(value) == IF IsLimbs(value) THEN value[Limbs][1] ELSE IntegerOfBigInt(value) < 0
+
+LOCAL BigIntNat(value) ==
+  IF IsLimbs(value) THEN value[Limbs][2] ELSE NatOf(Absolute(IntegerOfBigInt(value)))
+
+\\* tla-ts stops where a BigInt would take more bits than TLC can compute with in reasonable time.
+LOCAL MaxBigIntBits == ${MAX_BIGINT_BITS}
+
+LOCAL TooBig == Assert(FALSE, "tla-ts can't hold a BigInt beyond ${MAX_BIGINT_BITS} bits")
+
+\\* The BigInt of a sign and a magnitude.
+LOCAL BigIntOf(isNegative, nat) ==
+  CASE NatBits(nat) > MaxBigIntBits -> TooBig
+    [] NatBits(nat) > 31 -> Limbs :> <<isNegative, nat>>
+    [] OTHER -> LET integer == LimbAt(nat, 1) + LimbAt(nat, 2) * Limb + LimbAt(nat, 3) * Limb * Limb
+                IN Big :> IF isNegative THEN -integer ELSE integer
+
+\\* A BigInt's decimal digits, after - where it's negative.
+LOCAL BigIntText(value) ==
+  IF IsLimbs(value)
+  THEN (IF value[Limbs][1] THEN "-" ELSE "") \\o NatText(value[Limbs][2])
+  ELSE ToString(IntegerOfBigInt(value))
+
+\\* The BigInt of a TLC integer, whose magnitude may be 2^31.
+LOCAL BigIntOfInteger(value) ==
+  IF value < 0 THEN BigIntOf(TRUE, NatAdd(NatOf(-(value + 1)), <<1>>)) ELSE Big :> value
+
+\\* A BigInt modulo 2^bits, as a natural.
+LOCAL BigIntModulo(value, bits) ==
+  LET nat == BigIntNat(value)
+      low == NatSubtract(nat, NatShiftLeft(NatShiftRight(nat, bits), bits))
+  IN IF BigIntIsNegative(value) /\\ low # <<>> THEN NatSubtract(NatShiftLeft(<<1>>, bits), low) ELSE low
+
+\\* The natural that little-endian bytes hold.
+RECURSIVE NatOfBytes(_)
+NatOfBytes(bytes) ==
+  IF bytes = <<>> THEN <<>> ELSE NatAdd(NatOf(Head(bytes)), NatShiftLeft(NatOfBytes(Tail(bytes)), 8))
+
+LOCAL IsSmallBigInts(left, right) == ~IsLimbs(left) /\\ ~IsLimbs(right)
+
+LOCAL SignedSum(isNegative, nat, isOtherNegative, other) ==
+  CASE isNegative = isOtherNegative -> BigIntOf(isNegative, NatAdd(nat, other))
+    [] NatBelow(nat, other) -> BigIntOf(isOtherNegative, NatSubtract(other, nat))
+    [] OTHER -> BigIntOf(isNegative, NatSubtract(nat, other))
 
 BigIntAdd(left, right) ==
-  LET augend == IntegerOfBigInt(left)
-      addend == IntegerOfBigInt(right)
-  IN IF \\/ addend > 0 /\\ augend > MaxInteger - addend
-        \\/ addend < 0 /\\ augend < -MaxInteger - addend
-     THEN TooBig
-     ELSE Big :> augend + addend
+  IF IsSmallBigInts(left, right)
+     /\\ LET augend == IntegerOfBigInt(left)
+            addend == IntegerOfBigInt(right)
+        IN ~(\\/ addend > 0 /\\ augend > MaxInteger - addend
+             \\/ addend < 0 /\\ augend < -MaxInteger - addend)
+  THEN Big :> IntegerOfBigInt(left) + IntegerOfBigInt(right)
+  ELSE SignedSum(BigIntIsNegative(left), BigIntNat(left), BigIntIsNegative(right), BigIntNat(right))
 
-BigIntNegate(value) == Big :> -IntegerOfBigInt(value)
+BigIntNegate(value) ==
+  IF IsLimbs(value) THEN Limbs :> <<~value[Limbs][1], value[Limbs][2]>> ELSE Big :> -IntegerOfBigInt(value)
 
 BigIntSubtract(left, right) == BigIntAdd(left, BigIntNegate(right))
 
 BigIntMultiply(left, right) ==
-  LET multiplicand == IntegerOfBigInt(left)
-      multiplier == IntegerOfBigInt(right)
-  IN IF multiplicand # 0 /\\ Absolute(multiplier) > MaxInteger \\div Absolute(multiplicand)
-     THEN TooBig
-     ELSE Big :> multiplicand * multiplier
+  IF IsSmallBigInts(left, right)
+     /\\ LET multiplicand == IntegerOfBigInt(left)
+        IN multiplicand = 0 \\/ Absolute(IntegerOfBigInt(right)) <= MaxInteger \\div Absolute(multiplicand)
+  THEN Big :> IntegerOfBigInt(left) * IntegerOfBigInt(right)
+  ELSE IF NatBits(BigIntNat(left)) + NatBits(BigIntNat(right)) > MaxBigIntBits + 1
+       THEN TooBig
+       ELSE BigIntOf(BigIntIsNegative(left) # BigIntIsNegative(right),
+                     NatProduct(BigIntNat(left), BigIntNat(right)))
+
+LOCAL BigIntIsZero(value) == ~IsLimbs(value) /\\ IntegerOfBigInt(value) = 0
 
 \\* BigInt's /, which rounds toward zero.
 BigIntDivide(left, right) ==
-  LET dividend == IntegerOfBigInt(left)
-      divisor == IntegerOfBigInt(right)
-      quotient == Absolute(dividend) \\div Absolute(divisor)
-  IN IF divisor = 0
-     THEN Assert(FALSE, "tla-ts can't throw the RangeError of dividing a BigInt by zero")
-     ELSE Big :> IF (dividend < 0) # (divisor < 0) THEN -quotient ELSE quotient
+  IF BigIntIsZero(right)
+  THEN Assert(FALSE, "tla-ts can't throw the RangeError of dividing a BigInt by zero")
+  ELSE BigIntOf(BigIntIsNegative(left) # BigIntIsNegative(right),
+                NatDivide(BigIntNat(left), BigIntNat(right))[1])
 
 \\* BigInt's %, whose result has the sign of the dividend.
 BigIntRemainder(left, right) ==
-  LET dividend == IntegerOfBigInt(left)
-      divisor == IntegerOfBigInt(right)
-      remainder == Absolute(dividend) % Absolute(divisor)
-  IN IF divisor = 0
-     THEN Assert(FALSE, "tla-ts can't throw the RangeError of dividing a BigInt by zero")
-     ELSE Big :> IF dividend < 0 THEN -remainder ELSE remainder
-
-RECURSIVE BigIntPowerOf(_, _)
-BigIntPowerOf(base, exponent) ==
-  IF exponent = 0 THEN Big :> 1 ELSE BigIntMultiply(base, BigIntPowerOf(base, exponent - 1))
+  IF BigIntIsZero(right)
+  THEN Assert(FALSE, "tla-ts can't throw the RangeError of dividing a BigInt by zero")
+  ELSE BigIntOf(BigIntIsNegative(left), NatDivide(BigIntNat(left), BigIntNat(right))[2])
 
 BigIntPower(base, exponent) ==
-  LET magnitude == Absolute(IntegerOfBigInt(base))
-      count == IntegerOfBigInt(exponent)
-  IN CASE count < 0 ->
+  LET nat == BigIntNat(base)
+      count == BigIntNat(exponent)
+      isOdd == NatIsOdd(count)
+  IN CASE BigIntIsNegative(exponent) ->
             Assert(FALSE, "tla-ts can't throw the RangeError of a BigInt's negative exponent")
-       [] count = 0 \\/ IntegerOfBigInt(base) = 1 -> Big :> 1
-       [] magnitude = 1 -> Big :> IF count % 2 = 0 THEN 1 ELSE -1
-       [] magnitude = 0 -> Big :> 0
-       [] count > 31 -> TooBig
-       [] OTHER -> BigIntPowerOf(base, count)
+       [] count = <<>> -> Big :> 1
+       [] nat = <<>> -> Big :> 0
+       [] nat = <<1>> -> Big :> IF BigIntIsNegative(base) /\\ isOdd THEN -1 ELSE 1
+       \\* The power takes at least (bits - 1) * count + 1 bits.
+       [] IsLimbs(exponent) \\/ IntegerOfBigInt(exponent) > (MaxBigIntBits - 1) \\div (NatBits(nat) - 1) -> TooBig
+       [] OTHER -> BigIntOf(BigIntIsNegative(base) /\\ isOdd, NatPower(nat, IntegerOfBigInt(exponent)))
+
+\\* A BigInt or a finite number as whether it's negative, a natural, and the power of 2 that scales it.
+LOCAL ExactOf(value) ==
+  CASE IsBigInt(value) -> <<BigIntIsNegative(value), BigIntNat(value), 0>>
+    [] IsZero(value) -> <<FALSE, <<>>, 0>>
+    [] OTHER -> <<Binary(value)[1], Significand(Binary(value)), Binary(value)[2]>>
+
+LOCAL ExactLessThan(left, right) ==
+  LET low == IF left[3] < right[3] THEN left[3] ELSE right[3]
+      leftNat == NatShiftLeft(left[2], left[3] - low)
+      rightNat == NatShiftLeft(right[2], right[3] - low)
+  IN CASE left[1] # right[1] -> left[1]
+       [] left[1] -> NatBelow(rightNat, leftNat)
+       [] OTHER -> NatBelow(leftNat, rightNat)
 
 \\* The order of numbers and BigInts, which compares their mathematical values.
-LOCAL NumericRank(value) ==
-  IF IsBigInt(value) THEN <<1, Halves(value[Big])[1], Halves(value[Big])[2], 0>> ELSE Rank(value)
-
 NumericLessThan(left, right) ==
-  CASE (IsDouble(left) \\/ IsDouble(right)) /\\ (IsBigInt(left) \\/ IsBigInt(right)) ->
-         Assert(FALSE, "tla-ts can't compare a BigInt with this number")
-    [] IsDouble(left) \\/ IsDouble(right) -> LessThan(left, right)
-    [] OTHER -> left # NaN /\\ right # NaN /\\ Precedes(NumericRank(left), NumericRank(right))
+  CASE left = NaN \\/ right = NaN -> FALSE
+    [] ~IsBigInt(left) /\\ ~IsBigInt(right) -> LessThan(left, right)
+    [] left = NegativeInfinity \\/ right = Infinity -> TRUE
+    [] left = Infinity \\/ right = NegativeInfinity -> FALSE
+    [] OTHER -> ExactLessThan(ExactOf(left), ExactOf(right))
 
 NumericLessOrEqual(left, right) == left # NaN /\\ right # NaN /\\ ~NumericLessThan(right, left)
 
@@ -859,6 +948,44 @@ BitwiseAnd(left, right) == BitwiseOperation("and", left, right)
 BitwiseOr(left, right) == BitwiseOperation("or", left, right)
 
 BitwiseXor(left, right) == BitwiseOperation("xor", left, right)
+
+\\* JavaScript's &, |, and ^ of BigInts, on their two's complement, where a negative BigInt's bits are
+\\* its magnitude less 1 complemented, with 1s past them without end.
+LOCAL BigIntBitwise(operation, left, right) ==
+  LET isLeftNegative == BigIntIsNegative(left)
+      isRightNegative == BigIntIsNegative(right)
+      leftNat == IF isLeftNegative THEN NatSubtract(BigIntNat(left), <<1>>) ELSE BigIntNat(left)
+      rightNat == IF isRightNegative THEN NatSubtract(BigIntNat(right), <<1>>) ELSE BigIntNat(right)
+      isNegative == BitOf(operation, IF isLeftNegative THEN 1 ELSE 0, IF isRightNegative THEN 1 ELSE 0) = 1
+      limb(nat, isComplemented, position) ==
+        IF isComplemented THEN Limb - 1 - LimbAt(nat, position) ELSE LimbAt(nat, position)
+      bits == [position \\in 1..(IF Len(leftNat) > Len(rightNat) THEN Len(leftNat) ELSE Len(rightNat)) |->
+                 LET result == Bits(operation, limb(leftNat, isLeftNegative, position),
+                                    limb(rightNat, isRightNegative, position))
+                 IN IF isNegative THEN Limb - 1 - result ELSE result]
+  IN BigIntOf(isNegative, IF isNegative THEN NatAdd(NatTrim(bits), <<1>>) ELSE NatTrim(bits))
+
+BigIntAnd(left, right) == BigIntBitwise("and", left, right)
+
+BigIntOr(left, right) == BigIntBitwise("or", left, right)
+
+BigIntXor(left, right) == BigIntBitwise("xor", left, right)
+
+\\* JavaScript's << of BigInts, where a negative count shifts right, rounding toward -Infinity.
+BigIntLeftShift(value, count) ==
+  LET nat == BigIntNat(value)
+      \\* A count beyond TLC's integers shifts every bit out, or stops.
+      bits == IF IsLimbs(count) THEN MaxBigIntBits + 1 ELSE Absolute(IntegerOfBigInt(count))
+  IN CASE nat = <<>> -> Big :> 0
+       [] ~BigIntIsNegative(count) ->
+            IF bits > MaxBigIntBits - NatBits(nat)
+            THEN TooBig
+            ELSE BigIntOf(BigIntIsNegative(value), NatShiftLeft(nat, bits))
+       [] BigIntIsNegative(value) ->
+            BigIntOf(TRUE, NatAdd(NatShiftRight(NatSubtract(nat, <<1>>), bits), <<1>>))
+       [] OTHER -> BigIntOf(FALSE, NatShiftRight(nat, bits))
+
+BigIntRightShift(value, count) == BigIntLeftShift(value, BigIntNegate(count))
 
 \\* JavaScript's ~.
 \\* JavaScript's ~, as -1 - x, which keeps -2^31 inside TLC's integers.
@@ -1949,20 +2076,17 @@ LOCAL FloatOf(bytes, exponentBits, fractionBits) ==
        [] exponent = 0 /\\ isFractionZero -> IF isNegative THEN NegativeZero ELSE 0
        [] OTHER -> FromBinary(<<isNegative, power + odd[2], odd[1][1], odd[1][2]>>)
 
-\\* An element's little-endian bytes as the number or the BigInt they hold, where tla-ts holds only a
-\\* BigInt within 32 bits.
+\\* An element's little-endian bytes as the number or the BigInt they hold.
 NumberOfBytes(type, bytes) ==
-  LET isBigInt == IsBigIntType(type)
-      held == IF isBigInt THEN SubSeq(bytes, 1, 4) ELSE bytes
-      unsigned == BitsValue(ByteBits(held), 0, 8 * Len(held) - 1)
-      isNegative == held[Len(held)] >= 128
+  LET unsigned == BitsValue(ByteBits(bytes), 0, 8 * Len(bytes) - 1)
+      isNegative == bytes[Len(bytes)] >= 128
   IN CASE type = "Float16" -> FloatOf(bytes, 5, 10)
        [] type = "Float32" -> FloatOf(bytes, 8, 23)
        [] type = "Float64" -> FloatOf(bytes, 11, 52)
        [] type \\in {"Uint8", "Uint8Clamped", "Uint16"} -> unsigned + (IF isNegative THEN 2^(8 * Len(bytes) - 1) ELSE 0)
-       [] type = "BigUint64" /\\ isNegative -> TooBig
-       [] isBigInt /\\ \\E position \\in 5..8 : bytes[position] # IF isNegative THEN 255 ELSE 0 -> TooBig
-       [] isBigInt -> Big :> IF isNegative THEN (unsigned - 2^30) - 2^30 ELSE unsigned
+       [] type = "BigInt64" /\\ isNegative ->
+            BigIntOf(TRUE, NatSubtract(NatShiftLeft(<<1>>, 64), NatOfBytes(bytes)))
+       [] IsBigIntType(type) -> BigIntOf(FALSE, NatOfBytes(bytes))
        [] type = "Uint32" /\\ isNegative -> Assert(FALSE, "tla-ts can't represent a number this big")
        [] type = "Uint32" -> unsigned
        [] isNegative -> (unsigned - 2^(8 * Len(bytes) - 2)) - 2^(8 * Len(bytes) - 2)
@@ -2786,7 +2910,7 @@ StringOf(value) ==
          Doubles[CHOOSE position \\in DOMAIN Doubles : Doubles[position].binary = value[Double]].text
     [] IsDouble(value) -> Assert(FALSE, "tla-ts can't write this number")
     [] TypeOf(value) = "number" -> ToString(value)
-    [] IsBigInt(value) -> ToString(value[Big])
+    [] IsBigInt(value) -> BigIntText(value)
     [] OTHER -> Assert(FALSE, "tla-ts can't convert objects to strings")
 
 \\* What String.raw gives for a template object and substitutions: whether it throws a TypeError, and
@@ -3280,13 +3404,16 @@ ToBigInt(value) ==
          Assert(FALSE, "tla-ts can't throw the TypeError of converting this value to a BigInt")
     [] TypeOf(value) = "boolean" -> Big :> IF value THEN 1 ELSE 0
     [] value = NegativeZero -> Big :> 0
-    [] IsInteger(value) -> Big :> value
+    [] IsInteger(value) -> BigIntOfInteger(value)
+    [] IsIntegral(value) ->
+         BigIntOf(Binary(value)[1], NatShiftLeft(Significand(Binary(value)), Binary(value)[2]))
     [] TypeOf(value) = "number" ->
          Assert(FALSE, "tla-ts can't throw the RangeError of converting this number to a BigInt")
     [] OTHER -> Assert(FALSE, "tla-ts can't convert this value to a BigInt")
 
-\\* Number(value) of a BigInt.
-NumberOfBigInt(value) == IntegerOfBigInt(value)
+\\* Number(value) of a BigInt, rounded to the nearest number.
+NumberOfBigInt(value) ==
+  IF IsLimbs(value) THEN Rounded(value[Limbs][1], value[Limbs][2], 0) ELSE IntegerOfBigInt(value)
 
 \\* ToIntegerOrInfinity of a number or undefined.
 LOCAL IntegerOf(value) ==
@@ -4012,13 +4139,28 @@ NumberToPrecision(value, precision) ==
               \\o SubSeq(decimal.digits, exponent + 2, count)
        [] OTHER -> SignOf(value) \\o "0." \\o Repeated("0", -(exponent + 1)) \\o decimal.digits
 
+\\* How many digits in a radix from 2 to 36 a limb holds.
+LOCAL RadixChunk(radix) == CHOOSE count \\in 1..14 : radix^count <= Limb /\\ radix^(count + 1) > Limb
+
+\\* The digits of a natural in a radix from 2 to 36, as many at a time as a limb holds.
+RECURSIVE NatRadixDigits(_, _)
+NatRadixDigits(nat, radix) ==
+  LET count == RadixChunk(radix)
+      quotient == NatTrim(NatQuotientFrom(nat, radix^count, Len(nat), 0))
+      digits == RadixDigits(LimbAt(NatSubtract(nat, NatTimes(quotient, radix^count)), 1), radix)
+  IN  IF quotient = <<>>
+      THEN digits
+      ELSE NatRadixDigits(quotient, radix) \\o Repeated("0", count - Len(digits)) \\o digits
+
 BigIntToString(value, radix) ==
   LET base == IF radix = Undefined THEN 10 ELSE IntegerOf(radix)
-      integer == IntegerOfBigInt(ThisBigInt(value))
+      bigint == ThisBigInt(value)
+      sign == IF BigIntIsNegative(bigint) THEN "-" ELSE ""
   IN  CASE ~IsInteger(base) \\/ base < 2 \\/ base > 36 ->
              Assert(FALSE, "tla-ts can't throw the RangeError of a radix outside 2 to 36")
-        [] integer < 0 -> "-" \\o RadixDigits(-integer, base)
-        [] OTHER -> RadixDigits(integer, base)
+        [] ~IsLimbs(bigint) -> sign \\o RadixDigits(Absolute(IntegerOfBigInt(bigint)), base)
+        [] base = 10 -> BigIntText(bigint)
+        [] OTHER -> sign \\o NatRadixDigits(BigIntNat(bigint), base)
 
 \\* The characters that trim() removes: WhiteSpace and LineTerminator.
 LOCAL Spaces ==
@@ -4500,7 +4642,7 @@ ToBoolean(value) ==
     [] TypeOf(value) = "boolean" -> value
     [] TypeOf(value) = "number" -> value # NaN /\\ ~IsZero(value)
     [] TypeOf(value) = "string" -> value # ""
-    [] IsBigInt(value) -> value[Big] # 0
+    [] IsBigInt(value) -> value # Big :> 0
     [] OTHER -> TRUE
 
 LOCAL Fields == {"value", "writable", "get", "set", "enumerable", "configurable"}
@@ -4865,6 +5007,32 @@ LOCAL LooseKind(value) ==
 
 \\* Whether a number equals what ToNumber gives for a string. Numbers that aren't integers aren't
 \\* values, so a string that reads as a fraction equals none.
+\\* The natural that digits in a radix hold, read as many at a time as a limb holds.
+RECURSIVE NatOfDigits(_, _, _)
+NatOfDigits(text, radix, nat) ==
+  LET taken == Prefix(text, RadixChunk(radix))
+  IN IF text = ""
+     THEN nat
+     ELSE NatOfDigits(SubSeq(text, Len(taken) + 1, Len(text)), radix,
+                      NatAdd(NatTimes(nat, radix^Len(taken)), NatOf(CheckedDigits(taken, radix, 0))))
+
+\\* StringToBigInt: the BigInt of a string's integer, in decimal after an optional sign, or in binary,
+\\* octal, or hexadecimal after a prefix, between white space, or Undefined where it holds none.
+LOCAL StringToBigInt(value) ==
+  LET text == TrimEnd(TrimStart(value))
+      prefix == Prefix(text, 2)
+      radix == CASE prefix \\in {"0x", "0X"} -> 16
+                 [] prefix \\in {"0o", "0O"} -> 8
+                 [] prefix \\in {"0b", "0B"} -> 2
+                 [] OTHER -> 10
+      unsigned == CASE radix # 10 -> SubSeq(text, 3, Len(text))
+                     [] Prefix(text, 1) \\in {"+", "-"} -> Tail(text)
+                     [] OTHER -> text
+  IN CASE text = "" -> Big :> 0
+       [] unsigned = "" \\/ \\E position \\in 1..Len(unsigned) : SubSeq(unsigned, position, position) \\notin DigitsOf(radix) ->
+            Undefined
+       [] OTHER -> BigIntOf(Prefix(text, 1) = "-", NatOfDigits(unsigned, radix, <<>>))
+
 LOCAL EqualsText(number, text) ==
   ReadNumber(text, LAMBDA kind, isNegative, magnitude :
     CASE kind = "integer" -> StrictEquals(number, IF isNegative THEN -magnitude ELSE magnitude)
@@ -4888,9 +5056,10 @@ LooseEquals(heap, left, right) ==
        [] {leftKind, rightKind} = numbers ->
             LET number == IF leftKind = "number" THEN left ELSE right
                 bigint == IF leftKind = "bigint" THEN left ELSE right
-            IN IsFinite(number) /\\ Magnitude(number) = bigint[Big]
+            IN IsFinite(number) /\\ ~NumericLessThan(number, bigint) /\\ ~NumericLessThan(bigint, number)
        [] {leftKind, rightKind} = {"bigint", "string"} ->
-            Assert(FALSE, "tla-ts can't compare a BigInt with a string")
+            LET parsed == StringToBigInt(IF leftKind = "string" THEN left ELSE right)
+            IN parsed # Undefined /\\ parsed = IF leftKind = "bigint" THEN left ELSE right
        [] {leftKind, rightKind} = {"null", "undefined"} -> TRUE
        [] leftKind = "number" /\\ rightKind = "string" -> EqualsText(left, right)
        [] leftKind = "string" /\\ rightKind = "number" -> EqualsText(right, left)
@@ -5778,12 +5947,12 @@ LOCAL FloatBytes(value, type) ==
             encode(binary[1], IF isSubnormal THEN 0 ELSE lead + bias,
                    [position \\in 0..(fractionBits - 1) |-> bit(position)])
 
-\\* The little-endian bytes that an element of a type holds for a number, or for a BigInt, which
-\\* extends its sign past its 32 bits.
+\\* The little-endian bytes that an element of a type holds for a number, or for a BigInt, which keeps
+\\* its low 64 bits in two's complement.
 NumberBytes(type, value) ==
   CASE IsBigIntType(type) ->
-         [position \\in 1..8 |-> IF position <= 4 THEN (value[Big] \\div 2^(8 * (position - 1))) % 256
-                                ELSE IF value[Big] < 0 THEN 255 ELSE 0]
+         LET nat == BigIntModulo(value, 64)
+         IN [position \\in 1..8 |-> LimbAt(NatShiftRight(nat, 8 * (position - 1)), 1) % 256]
     [] type \\in {"Float16", "Float32", "Float64"} -> FloatBytes(value, type)
     \\* An integer type keeps the low bits, which a Wide integer's ToInt32 holds, and a Double from 2^32
     \\* has none set.
@@ -5817,21 +5986,16 @@ LOCAL WithBytes(heap, view, start, written) ==
         SubSeq(bytes, 1, start) \\o written \\o SubSeq(bytes, start + Len(written) + 1, Len(bytes))]
 
 \\* What a typed array of a type holds for a value that a script writes: ToBigInt where it holds
-\\* BigInts, which throws a TypeError for a number and reads a string's decimal digits, and ToNumber
+\\* BigInts, which throws a TypeError for a number and reads a string's integer, and ToNumber
 \\* otherwise.
 ToElement(type, value) ==
-  LET text == TrimEnd(TrimStart(value))
-      unsigned == IF Prefix(text, 1) \\in {"+", "-"} THEN Tail(text) ELSE text
-      sign == IF Prefix(text, 1) = "-" THEN -1 ELSE 1
-  IN CASE ~IsBigIntType(type) -> ToNumber(value)
-       [] IsBigInt(value) -> value
-       [] TypeOf(value) = "boolean" -> Big :> IF value THEN 1 ELSE 0
-       [] TypeOf(value) = "string" /\\ text = "" -> Big :> 0
-       [] TypeOf(value) = "string" /\\ unsigned # "" /\\ DigitPrefix(unsigned, 10) = unsigned ->
-            Big :> sign * CheckedDigits(unsigned, 10, 0)
-       [] TypeOf(value) = "number" ->
-            Assert(FALSE, "tla-ts can't throw the TypeError of converting a number to a BigInt")
-       [] OTHER -> Assert(FALSE, "tla-ts can't convert this value to a BigInt")
+  CASE ~IsBigIntType(type) -> ToNumber(value)
+    [] IsBigInt(value) -> value
+    [] TypeOf(value) = "boolean" -> Big :> IF value THEN 1 ELSE 0
+    [] TypeOf(value) = "string" /\\ StringToBigInt(value) # Undefined -> StringToBigInt(value)
+    [] TypeOf(value) = "number" ->
+         Assert(FALSE, "tla-ts can't throw the TypeError of converting a number to a BigInt")
+    [] OTHER -> Assert(FALSE, "tla-ts can't convert this value to a BigInt")
 
 \\* What a typed array holds for a value that a script writes.
 ToElementOf(heap, ref, value) == ToElement(heap.objects[ref[Ref]].elementType, value)
@@ -5856,6 +6020,28 @@ IndexOfArgument(value) ==
        [] IsWide(number) -> IF IsNegative(number) \\/ number[Wide][1] = 4194304 THEN -1 ELSE BeyondInteger
        [] number < 0 -> -1
        [] OTHER -> number
+
+\\* The bits that BigInt.asIntN and BigInt.asUintN take, which ToIndex converts.
+LOCAL BitsOf(bits) ==
+  IF IndexOfArgument(bits) = -1
+  THEN Assert(FALSE, "tla-ts can't throw the RangeError of ToIndex")
+  ELSE IndexOfArgument(bits)
+
+\\* BigInt.asUintN: a BigInt modulo 2^bits.
+BigIntAsUintN(bits, value) ==
+  LET count == BitsOf(bits)
+  IN CASE ~BigIntIsNegative(value) /\\ count >= NatBits(BigIntNat(value)) -> value
+       [] count > MaxBigIntBits -> TooBig
+       [] OTHER -> BigIntOf(FALSE, BigIntModulo(value, count))
+
+\\* BigInt.asIntN: a BigInt modulo 2^bits, less 2^bits where that's 2^(bits - 1) or more.
+BigIntAsIntN(bits, value) ==
+  LET count == BitsOf(bits)
+      modulo == BigIntModulo(value, count)
+  IN CASE count > NatBits(BigIntNat(value)) -> value
+       [] count > 0 /\\ NatBits(modulo) = count ->
+            BigIntOf(TRUE, NatSubtract(NatShiftLeft(<<1>>, count), modulo))
+       [] OTHER -> BigIntOf(FALSE, modulo)
 
 LOCAL MaxBytes == 65536
 
@@ -6129,7 +6315,7 @@ FinalizationRegistryUnregister(heap, ref, token) ==
 DataViewSet(heap, ref, type, request, value, littleEndian) ==
   LET view == heap.objects[ref[Ref]]
       index == IndexOfArgument(request)
-      number == ToNumber(value)
+      number == ToElement(type, value)
       isLittle == ToBoolean(littleEndian)
       bytes == NumberBytes(type, number)
   IN CASE index = -1 -> Thrown(heap, "RangeError")
@@ -8379,11 +8565,7 @@ const translateBigIntText = (text: string, node: ts.Node, context: Context) => {
       string("tla-ts can't throw the SyntaxError of converting this string to a BigInt"),
     ]);
   }
-  const value = BigInt(text);
-  if (value > 2n ** 31n - 1n || value < -(2n ** 31n - 1n)) {
-    throw new TlaTypeScriptError(`TLC's integers have 32 bits, so ${text} is too big`, node);
-  }
-  return translateBigInt(Number(value), context);
+  return translateBigInt(BigInt(text), context, node);
 };
 
 const getConverted = (value: number, node: ts.Node, context: Context) => {
@@ -8530,9 +8712,13 @@ export const translateConversion = (node: ts.CallExpression, scope: Scope, conte
   }
   if (isBigIntLike(argument, context) && (name === "Number" || name === "Boolean")) {
     const value = translateExpression(argument, scope, context);
-    return name === "Number"
-      ? useJavaScript("NumberOfBigInt", [value], context)
-      : useJavaScript("ToBoolean", [value], context);
+    if (name === "Boolean") return useJavaScript("ToBoolean", [value], context);
+    // A BigInt beyond 2^31 gives an integer beyond 32 bits, which a script without special numbers
+    // can't hold.
+    const converted = useJavaScript("NumberOfBigInt", [value], context);
+    return context.hasSpecialNumbers
+      ? converted
+      : useJavaScript("PlainNumber", [converted], context);
   }
   if (name === "Number") return translateToNumber(argument, node, scope, context);
   if (name === "isNaN") {

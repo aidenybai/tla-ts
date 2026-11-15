@@ -89,6 +89,7 @@ const RESERVED = new Set([
   "vars",
   "Ref",
   "Big",
+  "Limbs",
   "BuiltIns",
   "UsedBuiltIns",
   "ConstantFunctions",
