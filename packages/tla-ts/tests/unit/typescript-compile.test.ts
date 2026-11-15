@@ -41589,4 +41589,33 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("a bound function's length", () => {
+    const getSource = (expected: string) => `
+      const holder = { prop: "abc" };
+      function target(first: number, second: number) {}
+      const bound = target.bind(holder, 1);
+      if (bound.length !== ${expected}) throw new Error("length " + bound.length);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("1"))).failure).toBeUndefined();
+    });
+
+    it("rejects a length that leaves out the bound arguments", async () => {
+      expect((await checkModel(getSource("2"))).failure?.message).toContain("length 1");
+    });
+
+    it("stops where a script defined the target's length", async () => {
+      const result = await checkModel(`
+        const holder = { prop: "abc" };
+        function target(first: number) {}
+        Object.defineProperty(target, "length", { value: 5 });
+        const bound = target.bind(holder);
+      `);
+      expect(result.failure?.message).toContain(
+        "tla-ts can't bind a function whose length a script defined",
+      );
+    });
+  });
 });
