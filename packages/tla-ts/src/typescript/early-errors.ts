@@ -119,8 +119,37 @@ const isBodyOf = (node: ts.Statement) => {
     (ts.isIfStatement(parent) &&
       (parent.thenStatement === node || parent.elseStatement === node)) ||
     (ts.isIterationStatement(parent, false) && parent.statement === node) ||
-    (ts.isLabeledStatement(parent) && parent.statement === node)
+    ((ts.isLabeledStatement(parent) || ts.isWithStatement(parent)) && parent.statement === node)
   );
+};
+
+// A let or a const that is a with statement's body, which the statement's rewrite would put in a
+// block. Where a line break follows a let, other than before a bracket, JavaScript reads the let
+// as a name, where TypeScript reads a declaration.
+const rejectLexicalWithBody = (node: ts.Node) => {
+  if (
+    !ts.isVariableStatement(node) ||
+    !ts.isWithStatement(node.parent) ||
+    (node.declarationList.flags & ts.NodeFlags.BlockScoped) === 0
+  ) {
+    return;
+  }
+  const name = node.declarationList.declarations.at(0)?.name;
+  if (
+    (node.declarationList.flags & ts.NodeFlags.Let) !== 0 &&
+    name !== undefined &&
+    !ts.isArrayBindingPattern(name) &&
+    node
+      .getSourceFile()
+      .text.slice(node.declarationList.getStart() + "let".length, name.getStart())
+      .includes("\n")
+  ) {
+    throw new TlaTypeScriptError(
+      "tla-ts can't read a let that a line break follows as a name",
+      node,
+    );
+  }
+  reject("A declaration can't be the body of a statement", node);
 };
 
 // Outside strict mode, a plain function declaration can be an if statement's branch, or a labelled
@@ -201,6 +230,7 @@ export const rejectEarlyErrors = (sourceFile: ts.SourceFile) => {
       }
       reject("A declaration can't be the body of a statement", node);
     }
+    rejectLexicalWithBody(node);
     if (
       ts.isBindingElement(node) &&
       node.propertyName !== undefined &&

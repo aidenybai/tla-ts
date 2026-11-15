@@ -60,6 +60,7 @@ import {
   translateString,
   isNestedFunction,
   isClosure,
+  getWithStop,
   rejectDeclaredCall,
   isDeclarationOnly,
   getClassStop,
@@ -888,6 +889,8 @@ export const translateCall = (
   context: Context,
   isDefined: boolean,
 ) => {
+  const withStop = getWithStop(node, context);
+  if (withStop !== undefined) return apply("Assert", [boolean(false), string(withStop)]);
   const translated = translateBuiltInCall(node, scope, context, isDefined);
   const callee = translateHoldsCallee(node, scope, context);
   return callee === undefined

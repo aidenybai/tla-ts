@@ -823,7 +823,10 @@ export const isPlainWrite = (name: ts.Identifier) =>
 // Outside strict mode, a write to a name that no binding has makes a global: the names that a
 // file's code writes so. arguments is TypeScript's own name, which a declaration can't bind, and a
 // host may give the global object others, which exist before the write.
-export const getImplicitGlobals = (file: ts.SourceFile, checker: ts.TypeChecker) =>
+export const getImplicitGlobals = (
+  file: ts.SourceFile,
+  getNameSymbol: (name: ts.Identifier) => ts.Symbol | undefined,
+) =>
   new Set(
     findNodes(file, (node): node is ts.Node => getPlainWrites(node).length > 0)
       .flatMap(getPlainWrites)
@@ -832,7 +835,7 @@ export const getImplicitGlobals = (file: ts.SourceFile, checker: ts.TypeChecker)
           ts.isIdentifier(name) &&
           ![...HOST_GLOBAL_KEYS, "arguments"].includes(name.text) &&
           !isStrictCode(name) &&
-          getSymbol(name, checker) === undefined,
+          getNameSymbol(name) === undefined,
       )
       .map((name) => name.text),
   );
@@ -1204,18 +1207,41 @@ export const isTimerCall = (node: ts.CallExpression, context: Context) => {
   );
 };
 
-// A call of a function that only a script's declarations give, other than setTimeout, runs code
-// that tla-ts has no model of.
-export const rejectDeclaredCall = (node: ts.CallExpression, context: Context) => {
+// The function that a with statement's rewrite declares, whose call stops the check where tla-ts
+// can't follow what the statement's object binds.
+export const WITH_STOP = "$tlaWithStop";
+
+const isScriptDeclaredCall = (node: ts.CallExpression, context: Context) => {
   const declarations = ts.isIdentifier(node.expression)
     ? (getSymbol(node.expression, context.checker)?.declarations ?? [])
     : [];
-  if (
+  return (
     declarations.length > 0 &&
     declarations.every(
       (declaration) =>
         !declaration.getSourceFile().isDeclarationFile && isHostDeclaration(declaration),
-    ) &&
+    )
+  );
+};
+
+// The reason that a call of a with statement's stop gives.
+export const getWithStop = (node: ts.CallExpression, context: Context) => {
+  const reason = node.arguments.at(0);
+  return ts.isIdentifier(node.expression) &&
+    node.expression.text === WITH_STOP &&
+    reason !== undefined &&
+    ts.isStringLiteral(reason) &&
+    isScriptDeclaredCall(node, context)
+    ? reason.text
+    : undefined;
+};
+
+// A call of a function that only a script's declarations give, other than setTimeout, runs code
+// that tla-ts has no model of.
+export const rejectDeclaredCall = (node: ts.CallExpression, context: Context) => {
+  if (
+    isScriptDeclaredCall(node, context) &&
+    getWithStop(node, context) === undefined &&
     !isTimerCall(node, context)
   ) {
     throw new TlaTypeScriptError(`tla-ts can't call ${node.expression.getText()}`, node);
