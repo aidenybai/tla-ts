@@ -27644,6 +27644,124 @@ describe("errors", () => {
     }
   });
 
+  describe("passes a next, a return, or a throw through a yield* to the generator", () => {
+    const cases = [
+      {
+        name: "a next's value",
+        getSource: (expected: string) => `
+        let log = 0;
+        function* inner(): Generator<number, number, number> {
+          const sent = yield 1;
+          log = log * 10 + sent;
+          return 9;
+        }
+        function* g(): Generator<number, number, number> {
+          yield* inner();
+          return 7;
+        }
+        const first = g();
+        first.next(0);
+        const ended = first.next(4);
+        const text = log + " " + ended.value;
+        if (text !== "${expected}") throw new Error(text);
+      `,
+        expected: "4 7",
+        wrong: "0 7",
+      },
+      {
+        name: "a return, through the generator's finally",
+        getSource: (expected: string) => `
+        let log = 0;
+        function* inner(): Generator<number, number, number> {
+          try {
+            yield 1;
+          } finally {
+            log = log * 10 + 1;
+          }
+          return 9;
+        }
+        function* g(): Generator<number, number, number> {
+          yield* inner();
+          return 7;
+        }
+        const first = g();
+        first.next(0);
+        const closed = first.return(2);
+        const text = log + " " + closed.value + closed.done;
+        if (text !== "${expected}") throw new Error(text);
+      `,
+        expected: "1 2true",
+        wrong: "0 2true",
+      },
+      {
+        name: "a throw that the generator catches and yields after",
+        getSource: (expected: string) => `
+        let log = 0;
+        function* inner(): Generator<number, number, number> {
+          try {
+            yield 1;
+          } catch (error) {
+            log = log * 10 + (error as number);
+            yield 3;
+          }
+          return 9;
+        }
+        function* g(): Generator<number, number, number> {
+          yield* inner();
+          log = log * 10 + 8;
+          return 7;
+        }
+        const first = g();
+        first.next(0);
+        const thrown = first.throw(2);
+        const ended = first.next(0);
+        const text = log + " " + thrown.value + " " + ended.value;
+        if (text !== "${expected}") throw new Error(text);
+      `,
+        expected: "28 3 7",
+        wrong: "8 3 7",
+      },
+      {
+        name: "a throw that the generator doesn't catch",
+        getSource: (expected: string) => `
+        let log = 0;
+        function* inner(): Generator<number, number, number> {
+          try {
+            yield 1;
+          } finally {
+            log = log * 10 + 1;
+          }
+          return 9;
+        }
+        function* g(): Generator<number, number, number> {
+          try {
+            yield* inner();
+          } catch (error) {
+            log = log * 10 + (error as number);
+          }
+          return 7;
+        }
+        const first = g();
+        first.next(0);
+        const settled = first.throw(2);
+        const text = log + " " + settled.value;
+        if (text !== "${expected}") throw new Error(text);
+      `,
+        expected: "12 7",
+        wrong: "2 7",
+      },
+    ];
+    for (const entry of cases) {
+      it(`matches Node on ${entry.name}`, async () => {
+        expect((await checkModel(entry.getSource(entry.expected))).failure).toBeUndefined();
+      });
+      it(`fails a wrong log on ${entry.name}`, async () => {
+        const result = await checkModel(entry.getSource(entry.wrong));
+        expect(result.failure?.message).toContain(entry.expected);
+      });
+    }
+  });
+
   it("runs Array.fromAsync of the values() of an array written in place", async () => {
     // V8 rejects a job later than the spec, whose order a for await gives.
     const result = await checkModel(`

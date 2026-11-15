@@ -6730,11 +6730,19 @@ const translateGeneratorStep = (
   continueWith: (path: Path, value?: Expression) => Formula,
 ): Formula => {
   const heapSymbol = context.heap;
+  const method = node.expression.name.text;
+  const argument = node.arguments.at(0);
   return resumeGenerator(
     node,
     translateExpression(node.expression.expression, path.scope, context),
-    node.expression.name.text,
-    node.arguments.at(0),
+    method,
+    argument && {
+      value:
+        method === "throw"
+          ? translateThrown(argument, path.scope, context)
+          : translateExpression(argument, path.scope, context),
+      node: argument,
+    },
     path,
     context,
     frame,
@@ -6775,14 +6783,15 @@ const translateGeneratorStep = (
   );
 };
 
-// Resumes the generator whose object a receiver holds, for its next, return, or throw. A return or
-// a throw completes a generator that suspended outside try statements, and otherwise runs the body
-// from the yield as a return or a throw there would, through its finally blocks and catch clauses.
+// Resumes the generator whose object a receiver holds, for its next, return, or throw, with the
+// value that the call passes and the expression that gives it. A return or a throw completes a
+// generator that suspended outside try statements, and otherwise runs the body from the yield as a
+// return or a throw there would, through its finally blocks and catch clauses.
 export const resumeGenerator = (
   node: ts.Node,
   receiver: Expression,
   method: string,
-  argument: ts.Expression | undefined,
+  argument: { value: Expression; node?: ts.Expression } | undefined,
   path: Path,
   context: Context,
   frame: Frame,
@@ -6790,10 +6799,7 @@ export const resumeGenerator = (
   continueAsync?: (path: Path, request: Expression) => Formula,
 ): Formula => {
   // The value that a next sends, which a yield gives where the body resumes.
-  const sent =
-    method === "next" && argument !== undefined
-      ? translateExpression(argument, path.scope, context)
-      : undefined;
+  const sent = method === "next" ? argument?.value : undefined;
   // An async generator's next, return, or throw gives a promise of what the body does.
   const runAsync = (
     name: string,
@@ -6846,20 +6852,23 @@ export const resumeGenerator = (
         );
       }
       if (method === "throw") {
-        const thrown =
-          argument === undefined
-            ? getUndefined(context)
-            : translateThrown(argument, path.scope, context);
-        return settleRequest(completed, node, request, thrown, true, true, context, done);
+        return settleRequest(
+          completed,
+          node,
+          request,
+          argument?.value ?? getUndefined(context),
+          true,
+          true,
+          context,
+          done,
+        );
       }
       // A return awaits its value before the request settles.
       return awaitIn(
         completed,
         node,
-        argument === undefined
-          ? getUndefined(context)
-          : translateExpression(argument, path.scope, context),
-        argument,
+        argument?.value ?? getUndefined(context),
+        argument?.node,
         context,
         (resumer, settled, isRejected, onReturn) =>
           settleRequest(resumer, node, request, settled, true, isRejected, context, onReturn),
@@ -6951,24 +6960,13 @@ export const resumeGenerator = (
           ]),
         },
         method,
-        argument &&
-          (method === "throw"
-            ? translateThrown(argument, path.scope, context)
-            : translateExpression(argument, path.scope, context)),
+        argument?.value,
       );
     }
-    if (method === "return") {
-      return step(completed, argument && translateExpression(argument, path.scope, context), true);
-    }
+    if (method === "return") return step(completed, argument?.value, true);
     const uncaught = apply("Assert", [boolean(false), string(node.getText())]);
     if (frame.throwTo === undefined) return leaf(uncaught);
-    return frame.throwTo(completed, {
-      value:
-        argument === undefined
-          ? getUndefined(context)
-          : translateThrown(argument, path.scope, context),
-      uncaught,
-    });
+    return frame.throwTo(completed, { value: argument?.value ?? getUndefined(context), uncaught });
   };
   const generators = [...path.generators];
   const held = generators.find((entry) => isSameExpression(entry[1].ref, receiver));
@@ -9688,8 +9686,9 @@ const stopSending = () =>
   leaf(apply("Assert", [boolean(false), string("tla-ts can't send a value through this yield*")]));
 
 // A generator's yield* over another generator, which resumes it with next and passes on what it
-// yields until it returns. A return or a throw while it delegates would call the generator's return
-// or throw, which tla-ts doesn't follow.
+// yields until it returns. A next, a return, or a throw while it delegates resumes the generator
+// with the same method and value. Where the generator completes, a return returns its value, and a
+// next or a throw continues after the yield*.
 const delegateToGenerator = (
   node: ts.YieldExpression,
   iterated: ts.Expression,
@@ -9703,7 +9702,13 @@ const delegateToGenerator = (
   const throwTo = frame.throwTo;
   const throwWith = (current: Path, value: Expression) =>
     throwTo === undefined ? leaf(uncaught) : throwTo(current, { value, uncaught });
-  const delegate = (current: Path, generator: Expression, count: number): Formula =>
+  const delegate = (
+    current: Path,
+    generator: Expression,
+    method: string,
+    value: Expression | undefined,
+    count: number,
+  ): Formula =>
     count > DELEGATION_LIMIT
       ? leaf(
           apply("Assert", [
@@ -9714,28 +9719,35 @@ const delegateToGenerator = (
       : resumeGenerator(
           node,
           generator,
-          "next",
-          undefined,
+          method,
+          value && { value },
           current,
           context,
           frame,
-          (stepped, value, isDone, isResult) =>
+          (stepped, result, isDone, isResult) =>
             isDone
-              ? continueWith(stepped)
+              ? method === "return"
+                ? frame.exit(stepped, result)
+                : continueWith(stepped)
               : yieldTo(
                   stepped,
-                  value,
-                  (resumed, sent) =>
-                    sent === undefined ? delegate(resumed, generator, count + 1) : stopSending(),
+                  result,
+                  (resumed, sent) => delegate(resumed, generator, "next", sent, count + 1),
                   throwWith,
-                  { isDelegated: true, isGuarded: true, isResult },
+                  {
+                    isDelegated: true,
+                    isGuarded: true,
+                    isResult,
+                    abortRest: (aborted, abrupt, abruptValue) =>
+                      delegate(aborted, generator, abrupt, abruptValue, count + 1),
+                  },
                 ),
         );
   return ts.isCallExpression(iterated)
     ? translateCallStatement(iterated, path, context, frame, (after, generator) =>
-        delegate(after, generator ?? getUndefined(context), 0),
+        delegate(after, generator ?? getUndefined(context), "next", undefined, 0),
       )
-    : delegate(path, translateExpression(iterated, path.scope, context), 0);
+    : delegate(path, translateExpression(iterated, path.scope, context), "next", undefined, 0);
 };
 
 // An async generator's yield* over a generator, which the async-from-sync iterator resumes with
