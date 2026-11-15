@@ -4653,6 +4653,73 @@ DataViewSet(heap, ref, type, request, value, littleEndian) ==
             Returned(WithBytes(heap, view, view.byteOffset + index,
                                IF isLittle THEN bytes ELSE Reversed(bytes)), Undefined)
 
+\\* The little-endian sum of two elements' bytes, which wraps as the element does.
+RECURSIVE AddBytes(_, _, _)
+AddBytes(left, right, carry) ==
+  IF left = <<>>
+  THEN <<>>
+  ELSE LET sum == Head(left) + Head(right) + carry
+       IN <<sum % 256>> \\o AddBytes(Tail(left), Tail(right), sum \\div 256)
+
+\\* Atomics' functions, which give the heap after them, their value, and the error they throw, if
+\\* any. tla-ts runs one agent, so nothing waits on a buffer: notify wakes no one, and a wait that
+\\* reads the value it expects times out.
+AtomicsCall(heap, method, arguments, objectPrototype) ==
+  LET argument(position) == IF Len(arguments) >= position THEN arguments[position] ELSE Undefined
+      ref == argument(1)
+      view == heap.objects[ref[Ref]]
+      type == view.elementType
+      index == IndexOfArgument(argument(2))
+      start == view.byteOffset + index * ElementSize(type)
+      old == SubSeq(ViewedBytes(heap, view), start + 1, start + ElementSize(type))
+      converted(position) ==
+        IF IsBigIntType(type)
+        THEN ToElement(type, argument(position))
+        ELSE ToIntegerOrInfinity(ToNumber(argument(position)))
+      bytes(position) == NumberBytes(type, converted(position))
+      modified(new) == Returned(WithBytes(heap, view, start, new), NumberOfBytes(type, old))
+      bitwise(operation) ==
+        modified([position \\in DOMAIN old |-> Bits(operation, old[position], bytes(3)[position])])
+      timeout == ToNumber(argument(4))
+      isEqual == NumberBytes(type, ToElement(type, argument(3))) = old
+      result(value) ==
+        LET made == Allocate(heap, PutAll([EmptyObject EXCEPT !.prototype = objectPrototype],
+                                          [async |-> FALSE, value |-> value], <<"async", "value">>))
+        IN Returned(made, Allocated(made))
+  IN CASE method = "isLockFree" ->
+            Returned(heap, ToIntegerOrInfinity(ToNumber(argument(1))) \\in {1, 2, 4, 8})
+       [] method = "pause" ->
+            IF argument(1) = Undefined \\/ IsInteger(argument(1)) \\/ argument(1) = NegativeZero
+            THEN Returned(heap, Undefined)
+            ELSE Thrown(heap, "TypeError")
+       [] ~IsTypedArray(heap, ref) -> Thrown(heap, "TypeError")
+       [] IsOutOfBounds(heap, view) -> Thrown(heap, "TypeError")
+       [] method \\in {"notify", "wait", "waitAsync"} /\\ type \\notin {"Int32", "BigInt64"} ->
+            Thrown(heap, "TypeError")
+       [] type \\in {"Uint8Clamped", "Float16", "Float32", "Float64"} -> Thrown(heap, "TypeError")
+       [] method \\in {"wait", "waitAsync"} /\\ ~heap.objects[view.viewed[Ref]].isShared ->
+            Thrown(heap, "TypeError")
+       [] index = -1 \\/ index >= ViewLength(heap, view) -> Thrown(heap, "RangeError")
+       [] method = "load" -> Returned(heap, NumberOfBytes(type, old))
+       [] method = "store" -> Returned(WithBytes(heap, view, start, bytes(3)), converted(3))
+       [] method = "add" -> modified(AddBytes(old, bytes(3), 0))
+       [] method = "sub" ->
+            modified(AddBytes(old, [position \\in DOMAIN old |-> 255 - bytes(3)[position]], 1))
+       [] method \\in {"and", "or", "xor"} -> bitwise(method)
+       [] method = "exchange" -> modified(bytes(3))
+       [] method = "compareExchange" ->
+            LET expected == bytes(3)
+                replacement == bytes(4)
+            IN modified(IF expected = old THEN replacement ELSE old)
+       [] method = "notify" /\\ (argument(3) = Undefined \\/ IsNumber(ToNumber(argument(3)))) ->
+            Returned(heap, 0)
+       [] isEqual /\\ timeout \\in {NaN, Infinity} ->
+            Assert(FALSE, "tla-ts can't wait for a value that nothing changes")
+       [] method = "wait" -> Returned(heap, IF isEqual THEN "timed-out" ELSE "not-equal")
+       [] ~isEqual -> result("not-equal")
+       [] LessOrEqual(timeout, 0) -> result("timed-out")
+       [] OTHER -> Assert(FALSE, "tla-ts can't wait asynchronously for a value to change")
+
 \\* ArrayBuffer's resize and SharedArrayBuffer's grow.
 Resize(heap, ref, request, isShared) ==
   LET object == heap.objects[ref[Ref]]

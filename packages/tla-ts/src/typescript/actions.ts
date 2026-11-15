@@ -3074,7 +3074,9 @@ export const translateCallStatement = (
     const prototypePath =
       viewCall.owner === "TypedArray"
         ? "%Int8Array.prototype.[[Prototype]]%"
-        : `${viewCall.owner}.prototype`;
+        : viewCall.owner === "Atomics"
+          ? "Atomics"
+          : `${viewCall.owner}.prototype`;
     const operation =
       viewCall.owner === "TypedArray"
         ? useJavaScript(
@@ -3122,17 +3124,32 @@ export const translateCallStatement = (
                   )
                 : method === "resize" || method === "grow"
                   ? useJavaScript("Resize", [heap, ref, values[0], isShared], context)
-                  : useJavaScript(
-                      "Transfer",
-                      [
-                        heap,
-                        ref,
-                        values[0],
-                        boolean(method === "transfer"),
-                        translateBuiltInValue("ArrayBuffer.prototype", expression, context),
-                      ],
-                      context,
-                    );
+                  : viewCall.owner === "Atomics"
+                    ? useJavaScript(
+                        "AtomicsCall",
+                        [
+                          heap,
+                          string(method),
+                          tuple(
+                            viewCall.values.map((value) =>
+                              translateExpression(value, path.scope, context),
+                            ),
+                          ),
+                          translateBuiltInValue("Object.prototype", expression, context),
+                        ],
+                        context,
+                      )
+                    : useJavaScript(
+                        "Transfer",
+                        [
+                          heap,
+                          ref,
+                          values[0],
+                          boolean(method === "transfer"),
+                          translateBuiltInValue("ArrayBuffer.prototype", expression, context),
+                        ],
+                        context,
+                      );
     const run = bindOnce(
       path,
       changeName,

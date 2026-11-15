@@ -9303,6 +9303,84 @@ describe("errors", () => {
     });
   });
 
+  describe("runs Atomics' operations on an integer typed array's elements", () => {
+    const getSource = (expected: number) => `
+      const i32a = new Int32Array(new SharedArrayBuffer(16));
+      if (Atomics.add(i32a, 0, 2147483647) !== 0) throw new Error("add");
+      if (Atomics.add(i32a, 0, 5) !== 2147483647 || i32a[0] !== ${expected}) throw new Error("wrap");
+      const bytes = new Uint8Array(4);
+      bytes[0] = 200 as number;
+      if (Atomics.sub(bytes, 0, 201) !== 200 || (bytes[0] as number) !== 255) throw new Error("sub");
+      if (Atomics.xor(bytes, 0, -1) !== 255 || (bytes[0] as number) !== 0) throw new Error("xor");
+      if (Atomics.or(bytes, 1, 6) !== 0 || Atomics.and(bytes, 1, 3) !== 6 || bytes[1] !== 2) {
+        throw new Error("bits");
+      }
+      if (Atomics.compareExchange(bytes, 0, 311, 7) !== 0 || bytes[0] !== 0) throw new Error("kept");
+      if (Atomics.compareExchange(bytes, 1, 258, 9) !== 2 || (bytes[1] as number) !== 9) {
+        throw new Error("exchanged");
+      }
+      if (Atomics.exchange(bytes, 1, 4) !== 9 || Atomics.load(bytes, 1) !== 4) throw new Error("load");
+      if (!Object.is(Atomics.store(i32a, 1, -0), 0)) throw new Error("store");
+      const big = new BigInt64Array(2);
+      if (Atomics.add(big, 0, 5n) !== 0n || Atomics.sub(big, 0, 7n) !== 5n || Atomics.load(big, 0) !== -2n) {
+        throw new Error("bigint");
+      }
+    `;
+
+    it("agrees with Node on -2147483644", async () => {
+      expect((await checkModel(getSource(-2147483644))).failure).toBeUndefined();
+    });
+
+    it("rejects the expectation -2147483643", async () => {
+      expect((await checkModel(getSource(-2147483643))).failure?.message).toContain('"wrap"');
+    });
+  });
+
+  describe("waits on and validates the typed arrays that Atomics takes", () => {
+    const getSource = (expected: number) => `
+      const i32a = new Int32Array(new SharedArrayBuffer(16));
+      Atomics.store(i32a, 2, 7);
+      if (Atomics.isLockFree(4) !== true || Atomics.isLockFree(3) !== false) throw new Error("lock");
+      if (Atomics.notify(i32a, 0) !== 0 || Atomics.pause() !== undefined) throw new Error("notify");
+      if (Atomics.wait(i32a, 2, 7, -1) !== "timed-out" || Atomics.wait(i32a, 2, 6) !== "not-equal") {
+        throw new Error("wait");
+      }
+      const waited = Atomics.waitAsync(i32a, 2, 7, 0);
+      if (waited.async !== false || waited.value !== "timed-out") throw new Error("waitAsync");
+      let thrown = 0;
+      try {
+        Atomics.add(new Float32Array(4) as unknown as Int32Array, 0, 1);
+      } catch (error) {
+        if (error instanceof TypeError) thrown++;
+      }
+      try {
+        Atomics.load(i32a, 4);
+      } catch (error) {
+        if (error instanceof RangeError) thrown++;
+      }
+      try {
+        Atomics.wait(new Int32Array(4), 0, 0, 0);
+      } catch (error) {
+        if (error instanceof TypeError) thrown++;
+      }
+      try {
+        Atomics.pause(0.5);
+      } catch (error) {
+        if (error instanceof TypeError) thrown++;
+      }
+      const getThrown = (): number => thrown;
+      if (getThrown() !== ${expected}) throw new Error("thrown");
+    `;
+
+    it("agrees with Node on 4", async () => {
+      expect((await checkModel(getSource(4))).failure).toBeUndefined();
+    });
+
+    it("rejects the expectation 3", async () => {
+      expect((await checkModel(getSource(3))).failure?.message).toContain('"thrown"');
+    });
+  });
+
   it("gives the receiver of the @@species getter that a script takes from its descriptor", async () => {
     const getSource = (expected: number) => `
       const holder = {};

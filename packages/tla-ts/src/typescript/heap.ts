@@ -2784,10 +2784,27 @@ const TYPED_ARRAY_METHODS = new Set([
   "copyWithin",
 ]);
 
+const ATOMICS_FUNCTIONS = new Set([
+  "load",
+  "store",
+  "add",
+  "sub",
+  "and",
+  "or",
+  "xor",
+  "exchange",
+  "compareExchange",
+  "isLockFree",
+  "notify",
+  "wait",
+  "waitAsync",
+  "pause",
+]);
+
 const VIEW_ACCESSOR = /^[gs]et(?:Int8|Uint8|Int16|Uint16|Int32|Uint32|Float16|Float32|Float64)$/;
 
-// A DataView's get or set method, a buffer's resize, grow, or slice, or a typed array's method,
-// which a statement runs, as each may throw. A typed array's method may also run through call, on
+// A DataView's get or set method, a buffer's resize, grow, or slice, a typed array's method, or an
+// Atomics function, which a statement runs, as each may throw. A typed array's method may also run through call, on
 // any receiver, where the callee must hold the built-in method.
 export const getViewCall = (node: ts.Node, context: Context) => {
   if (
@@ -2842,7 +2859,8 @@ export const getViewCall = (node: ts.Node, context: Context) => {
     (owner === "ArrayBuffer" &&
       (method === "resize" || method === "transfer" || method === "transferToFixedLength")) ||
     (owner === "SharedArrayBuffer" && method === "grow") ||
-    ((owner === "ArrayBuffer" || owner === "SharedArrayBuffer") && method === "slice");
+    ((owner === "ArrayBuffer" || owner === "SharedArrayBuffer") && method === "slice") ||
+    (owner === "Atomics" && ATOMICS_FUNCTIONS.has(method));
   return isKnown ? call : undefined;
 };
 
