@@ -908,6 +908,56 @@ export const isImplicitGlobal = (name: ts.Node, context: Context): name is ts.Id
   return symbol !== undefined && context.implicitGlobals.has(symbol);
 };
 
+// Outside strict mode, a var named arguments that a function declares starts as the function's
+// arguments object (ECMA-262 §10.2.11), which tla-ts doesn't give it, so a read of the var stops
+// unless a statement of the function's body that assigns the var ran first.
+export const rejectArgumentsVarReads = (file: ts.SourceFile, context: Context) => {
+  const read = findNodes(
+    file,
+    (node): node is ts.Identifier => ts.isIdentifier(node) && node.text === "arguments",
+  ).find((name) => {
+    const parent = name.parent;
+    if (
+      ((ts.isVariableDeclaration(parent) || ts.isBindingElement(parent)) && parent.name === name) ||
+      isPlainWrite(name)
+    ) {
+      return false;
+    }
+    const declaration = (
+      ts.isShorthandPropertyAssignment(parent)
+        ? context.checker.getShorthandAssignmentValueSymbol(parent)
+        : getSymbol(name, context.checker)
+    )?.valueDeclaration;
+    const scope =
+      declaration !== undefined &&
+      ts.isVariableDeclaration(declaration) &&
+      ts.isVariableDeclarationList(declaration.parent) &&
+      (declaration.parent.flags & ts.NodeFlags.BlockScoped) === 0
+        ? getVarScope(declaration)
+        : undefined;
+    if (scope === undefined || !ts.isBlock(scope) || ts.isArrowFunction(scope.parent)) {
+      return false;
+    }
+    const assignment = scope.statements.find(
+      (statement) =>
+        ts.isVariableStatement(statement) &&
+        statement.declarationList.declarations.some(
+          (inner) =>
+            ts.isIdentifier(inner.name) &&
+            inner.name.text === "arguments" &&
+            inner.initializer !== undefined,
+        ),
+    );
+    return assignment === undefined || name.pos < assignment.end;
+  });
+  if (read !== undefined) {
+    throw new TlaTypeScriptError(
+      "tla-ts can't read a function's var named arguments before the function assigns it",
+      read,
+    );
+  }
+};
+
 // Whether a literal is truthy, where its value is certain.
 const getLiteralTruth = (node: ts.Expression) => {
   if (node.kind === ts.SyntaxKind.TrueKeyword) return true;
@@ -1225,9 +1275,14 @@ export const isTimerCall = (node: ts.CallExpression, context: Context) => {
 // can't follow what the statement's object binds.
 export const WITH_STOP = "$tlaWithStop";
 
-const isScriptDeclaredCall = (node: ts.CallExpression, context: Context) => {
-  const declarations = ts.isIdentifier(node.expression)
-    ? (getSymbol(node.expression, context.checker)?.declarations ?? [])
+// The value that a delete outside strict mode leaves a global that a write makes, which reads throw
+// for until a write makes it again.
+export const DELETED_GLOBAL = "$tlaDeletedGlobal";
+
+// A name that only a script's declare gives.
+const isScriptDeclared = (node: ts.Expression, context: Context) => {
+  const declarations = ts.isIdentifier(node)
+    ? (getSymbol(node, context.checker)?.declarations ?? [])
     : [];
   return (
     declarations.length > 0 &&
@@ -1238,6 +1293,9 @@ const isScriptDeclaredCall = (node: ts.CallExpression, context: Context) => {
   );
 };
 
+export const isDeletedGlobal = (node: ts.Identifier, context: Context) =>
+  node.text === DELETED_GLOBAL && isScriptDeclared(node, context);
+
 // The reason that a call of a with statement's stop gives.
 export const getWithStop = (node: ts.CallExpression, context: Context) => {
   const reason = node.arguments.at(0);
@@ -1245,7 +1303,7 @@ export const getWithStop = (node: ts.CallExpression, context: Context) => {
     node.expression.text === WITH_STOP &&
     reason !== undefined &&
     ts.isStringLiteral(reason) &&
-    isScriptDeclaredCall(node, context)
+    isScriptDeclared(node.expression, context)
     ? reason.text
     : undefined;
 };
@@ -1254,7 +1312,7 @@ export const getWithStop = (node: ts.CallExpression, context: Context) => {
 // that tla-ts has no model of.
 export const rejectDeclaredCall = (node: ts.CallExpression, context: Context) => {
   if (
-    isScriptDeclaredCall(node, context) &&
+    isScriptDeclared(node.expression, context) &&
     getWithStop(node, context) === undefined &&
     !isTimerCall(node, context)
   ) {

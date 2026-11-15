@@ -11,11 +11,14 @@ import {
   isVarFunction,
 } from "./context";
 import { rejectEarlyErrors } from "./early-errors";
+import { rewriteNameDeletes } from "./name-deletes";
 import { rewriteWithStatements } from "./with-statements";
 
 // TypeScript checks every file as a module, so it rejects a word that only strict mode reserves, as
-// yield or public, even as a name outside strict mode.
-const RESERVED_WORD_ERRORS = new Set([1212, 1213, 1214]);
+// yield or public, and a binding named arguments or eval, even outside strict mode.
+// It also rejects a delete of a property that its type makes read-only, which outside strict mode
+// gives false where the property can't be deleted.
+const STRICT_MODE_ERRORS = new Set([1100, 1212, 1213, 1214, 1215, 2704]);
 
 const getNodeAt = (node: ts.Node, position: number): ts.Node =>
   ts.forEachChild(node, (child) =>
@@ -257,9 +260,12 @@ export const createProgram = (
   if (syntaxErrors.length > 0)
     throw new TlaTypeScriptError(ts.formatDiagnostics(syntaxErrors, host));
   rejectEarlyErrors(firstSourceFile);
-  const text = rewriteWithStatements(firstSourceFile, firstProgram.getTypeChecker());
+  const withText = rewriteWithStatements(firstSourceFile, firstProgram.getTypeChecker());
+  const withProgram =
+    withText === firstText ? firstProgram : createTypeScriptProgram([path], withText, new Set());
+  const text = rewriteNameDeletes(getModelSourceFile(withProgram), withProgram.getTypeChecker());
   const rewrittenProgram =
-    text === firstText ? firstProgram : createTypeScriptProgram([path], text, new Set());
+    text === withText ? withProgram : createTypeScriptProgram([path], text, new Set());
   const rewrittenChecker = rewrittenProgram.getTypeChecker();
   const globals = getImplicitGlobals(getModelSourceFile(rewrittenProgram), (name) =>
     getSymbol(name, rewrittenChecker),
@@ -268,9 +274,10 @@ export const createProgram = (
     globals.size === 0 ? rewrittenProgram : createTypeScriptProgram([path], text, globals);
   const getModelFiles = (program: ts.Program) =>
     modelProgram.getSourceFiles().flatMap((file) => program.getSourceFile(file.fileName) ?? []);
-  // A word that only strict mode reserves names a binding outside strict mode.
+  // Outside strict mode, a word that only strict mode reserves, arguments, or eval names a binding,
+  // and a delete of a read-only property gives false.
   const isReported = (diagnostic: ts.Diagnostic) =>
-    !RESERVED_WORD_ERRORS.has(diagnostic.code) ||
+    !STRICT_MODE_ERRORS.has(diagnostic.code) ||
     diagnostic.file === undefined ||
     isStrictCode(getNodeAt(diagnostic.file, diagnostic.start ?? 0)) ||
     isGeneratorYield(getNodeAt(diagnostic.file, diagnostic.start ?? 0));

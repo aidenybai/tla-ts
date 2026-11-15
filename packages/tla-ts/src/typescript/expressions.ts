@@ -45,8 +45,10 @@ import {
   isScript,
   getTopLevelDeclaration,
   getUndefined,
+  isDeletedGlobal,
   isImplicitGlobal,
   isUnresolvable,
+  getUnresolvable,
   isHeapClass,
   isFunctionObject,
   getObjectMethod,
@@ -2461,6 +2463,7 @@ export const readGlobal = (name: ts.Identifier, value: Expression, context: Cont
 
 const translateIdentifier = (node: ts.Identifier, scope: Scope, context: Context) => {
   if (node.text === "undefined") return getUndefined(context);
+  if (isDeletedGlobal(node, context)) return getUnresolvable(context);
   const namespace = getNamespaceName(node, context);
   if (namespace !== undefined) return getNamespaceRef(namespace, context);
   rejectGeneratorUse(node, context);
