@@ -26455,8 +26455,8 @@ describe("errors", () => {
 
   it("stops where a script reads a built-in getter that a well-known symbol keys", async () => {
     const result = await checkModel(`
-      const holder = {};
-      const species = Array[Symbol.species];
+      const typed = Int8Array as unknown as { [Symbol.species]: unknown };
+      const species = typed[Symbol.species];
     `);
     expect(result.failure?.message).toContain("tla-ts can't call getters");
   });
