@@ -1426,6 +1426,20 @@ const REDUCING_METHODS = new Set(["reduce", "reduceRight"]);
 // The array methods that tla-ts searches by value for any value, from an index that ToNumber
 // converts from a primitive. Each needs a unit test of such a call.
 const SEARCHING_METHODS = new Set(["includes", "indexOf", "lastIndexOf"]);
+// The typed arrays' methods that call a callback for each element, which tla-ts runs on what the
+// callback returns: ToBoolean of it for a test, the element type's conversion of it for map, and
+// nothing for forEach. Each needs a unit test of a callback that returns another type.
+const TYPED_ARRAY_CALLBACK_METHODS = new Set([
+  "every",
+  "filter",
+  "find",
+  "findIndex",
+  "findLast",
+  "findLastIndex",
+  "forEach",
+  "map",
+  "some",
+]);
 // RegExp.prototype's methods under well-known symbols that tla-ts runs as their steps where a test
 // calls them through call, on any receiver, or on a regexp with a string, a limit, or a replaceValue
 // of another type than their signatures take. Each needs a unit test of such a call.
@@ -2011,6 +2025,71 @@ const ignoreSoundErrors = () => {
       )
     );
   };
+  // A call of a typed array's method that TYPED_ARRAY_CALLBACK_METHODS lists, directly or through
+  // call, whose callback is a function that the test writes and that takes each value the method
+  // passes it, an element, an index, and the array, but returns another type than the method's
+  // signature does, or declares a this.
+  const isTypedArrayCallback = (diagnostic: ts.Diagnostic) => {
+    const call = getErroredCall(diagnostic);
+    if (call === undefined || !ts.isCallExpression(call)) return false;
+    const callee = skipParentheses(call.expression);
+    const isCall = ts.isPropertyAccessExpression(callee) && callee.name.text === "call";
+    const method = isCall ? skipParentheses(callee.expression) : callee;
+    const callback = call.arguments[isCall ? 1 : 0];
+    if (callback === undefined || call.arguments.some(ts.isSpreadElement)) return false;
+    const declaration = ts.isIdentifier(callback)
+      ? checker.getSymbolAtLocation(callback)?.valueDeclaration
+      : callback;
+    const written =
+      declaration !== undefined &&
+      ts.isVariableDeclaration(declaration) &&
+      declaration.initializer !== undefined
+        ? skipParentheses(declaration.initializer)
+        : declaration;
+    if (
+      written === undefined ||
+      written.getSourceFile() !== sourceFile ||
+      !(
+        ts.isFunctionDeclaration(written) ||
+        ts.isFunctionExpression(written) ||
+        ts.isArrowFunction(written)
+      ) ||
+      written.parameters.some(
+        (parameter) => parameter.dotDotDotToken !== undefined || !ts.isIdentifier(parameter.name),
+      )
+    ) {
+      return false;
+    }
+    const parameters = written.parameters.filter(
+      (parameter) => !(ts.isIdentifier(parameter.name) && parameter.name.text === "this"),
+    );
+    return checker
+      .getSignaturesOfType(checker.getTypeAtLocation(method), ts.SignatureKind.Call)
+      .some((signature) => {
+        const declared = signature.getDeclaration();
+        const taken = signature.parameters[0];
+        return (
+          declared.getSourceFile().isDeclarationFile &&
+          ts.isMethodSignature(declared) &&
+          TYPED_ARRAY_CALLBACK_METHODS.has(declared.name.getText()) &&
+          ts.isInterfaceDeclaration(declared.parent) &&
+          /^(Big)?(Int|Uint|Float)\d+(Clamped)?Array$/.test(declared.parent.name.text) &&
+          taken !== undefined &&
+          checker
+            .getSignaturesOfType(checker.getTypeOfSymbol(taken), ts.SignatureKind.Call)
+            .every(
+              (passed) =>
+                parameters.length <= passed.parameters.length &&
+                parameters.every((parameter, position) =>
+                  checker.isTypeAssignableTo(
+                    checker.getTypeOfSymbol(passed.parameters[position]),
+                    checker.getTypeAtLocation(parameter),
+                  ),
+                ),
+            )
+        );
+      });
+  };
   // A call of an array's method that SEARCHING_METHODS lists, of any value to search for and an
   // index to search from that tla-ts converts: a primitive, an object that the test declares, or a
   // wrapper.
@@ -2357,6 +2436,7 @@ const ignoreSoundErrors = () => {
           isConvertedProtocolCall(diagnostic) ||
           isReducingCall(diagnostic) ||
           isSearchingCall(diagnostic) ||
+          isTypedArrayCallback(diagnostic) ||
           isTypedArrayNew(diagnostic))) ||
       (diagnostic.code === UNKNOWN_CALLEE_ERROR && isStoredStringCall(node)) ||
       (diagnostic.code === UNCALLABLE_ERROR && isTypedUnionCall(node, diagnostic)) ||
