@@ -1263,6 +1263,15 @@ const expectRecord = (type: Type) => {
   return resolved.kind === "Rec" ? resolved : unsupported();
 };
 
+// A name for code in an expression, and a wrap that binds it there, unless the code only reads a
+// value the expression can read again.
+const getBinding = (program: Program, prefix: string, code: string) => {
+  if (/^[A-Za-z_$][\w$]*(\[\d+\])*$/.test(code))
+    return { name: code, wrap: (body: string) => `(${body})` };
+  const name = getName(program, prefix);
+  return { name, wrap: (body: string) => `((${name}) => ${body})(${code})` };
+};
+
 const getFieldCountCode = (program: Program, type: Type, code: string) => {
   const record = expectRecord(type);
   if (record.shapes.length === 1) return `((${code}), ${record.shapes[0].length})`;
@@ -1317,15 +1326,17 @@ const getIndexCode = (program: Program, type: FnType, code: string) => {
   });
   const table = `D[${program.indexes.push(index) - 1}]`;
   if (!Array.isArray(keys[0])) return `H.index(${table}, (${code}) - ${columns[0].low})`;
-  const name = getName(program, "k");
+  const key = getBinding(program, "k", code);
   const isInBox = columns.map(
     (column, position) =>
-      `${name}[${position}] >= ${column.low} && ${name}[${position}] < ${column.low + column.size}`,
+      `${key.name}[${position}] >= ${column.low} && ${key.name}[${position}] < ${column.low + column.size}`,
   );
   const offset = columns.map(
-    (column, position) => `(${name}[${position}] - ${column.low}) * ${strides[position]}`,
+    (column, position) => `(${key.name}[${position}] - ${column.low}) * ${strides[position]}`,
   );
-  return `((${name}) => ${name}.length === ${columns.length} && ${isInBox.join(" && ")} ? ${table}[${offset.join(" + ")}] : -1)(${code})`;
+  return key.wrap(
+    `${key.name}.length === ${columns.length} && ${isInBox.join(" && ")} ? ${table}[${offset.join(" + ")}] : -1`,
+  );
 };
 
 const evaluateConstant = (program: Program, expression: Expression) =>
@@ -2278,8 +2289,12 @@ const compileMembership = (
         const index = expectInt(element);
         return {
           type: createBool(),
-          emit: () =>
-            `((${name}) => ${name} >= 1 && ${name} <= (${readSequence(program, target.type, target.emit())}).length)(${index.emit()})`,
+          emit: () => {
+            const bound = getBinding(program, "e", index.emit());
+            return bound.wrap(
+              `${bound.name} >= 1 && ${bound.name} <= (${readSequence(program, target.type, target.emit())}).length`,
+            );
+          },
         };
       }
       // A record's domain holds strings, so a domain that holds another value may be a function's.
@@ -2346,12 +2361,12 @@ const compileMembership = (
       return {
         type: createBool(),
         emit: () => {
-          const name = getName(program, "e");
+          const bound = getBinding(program, "e", element.emit());
           const checks = [
-            ...(resolveType(element.type).kind === "Mix" ? [`${name} < ${ATOM_BASE}`] : []),
-            ...(value.name === "Nat" ? [`${name} >= 0`] : []),
+            ...(resolveType(element.type).kind === "Mix" ? [`${bound.name} < ${ATOM_BASE}`] : []),
+            ...(value.name === "Nat" ? [`${bound.name} >= 0`] : []),
           ];
-          return `((${name}) => ${checks.length === 0 ? "true" : checks.join(" && ")})(${element.emit()})`;
+          return bound.wrap(checks.length === 0 ? "true" : checks.join(" && "));
         },
       };
     }
@@ -2360,8 +2375,8 @@ const compileMembership = (
       return {
         type: createBool(),
         emit: () => {
-          const name = getName(program, "e");
-          return `((${name}) => ${name} >= ${value.low} && ${name} <= ${value.high})(${element.emit()})`;
+          const bound = getBinding(program, "e", element.emit());
+          return bound.wrap(`${bound.name} >= ${value.low} && ${bound.name} <= ${value.high}`);
         },
       };
     }
@@ -2374,8 +2389,10 @@ const compileMembership = (
     if (bounds) {
       return {
         type: createBool(),
-        emit: () =>
-          `((${name}) => ${name} >= ${bounds.low} && ${name} <= ${bounds.high})(${element.emit()})`,
+        emit: () => {
+          const bound = getBinding(program, "e", element.emit());
+          return bound.wrap(`${bound.name} >= ${bounds.low} && ${bound.name} <= ${bounds.high}`);
+        },
       };
     }
     const getTest = once(() => {
@@ -2519,13 +2536,13 @@ const compileField = (program: Program, record: Compiled, field: string): Compil
         const position = resolved.shapes[0].indexOf(field);
         return position === -1 ? "H.deopt()" : `(${code})[${position}]`;
       }
-      const name = getName(program, "r");
-      const index = getFieldIndexCode(program, record.type, field, name);
+      const bound = getBinding(program, "r", code);
+      const index = getFieldIndexCode(program, record.type, field, bound.name);
       if (resolved.kind === "Rec" && resolved.shapes.every((shape) => shape.includes(field))) {
-        return `((${name}) => ${name}[${index}])(${code})`;
+        return bound.wrap(`${bound.name}[${index}]`);
       }
       // A shape without the field has the index -1.
-      return `((${name}) => { const i = ${index}; return i >= 0 ? ${name}[i] : H.deopt(); })(${code})`;
+      return bound.wrap(`${index} >= 0 ? ${bound.name}[${index}] : H.deopt()`);
     },
   };
 };
@@ -5245,13 +5262,13 @@ const getPermuteCode = (
   };
   switch (resolved.kind) {
     case "Tup": {
-      const tuple = getName(program, "t");
+      const tuple = getBinding(program, "t", code);
       const elements = resolved.elements.map((element, index) =>
-        getPermuteCode(program, images, element, `${tuple}[${index}]`),
+        getPermuteCode(program, images, element, `${tuple.name}[${index}]`),
       );
       if (elements.every((element) => element === undefined)) return undefined;
-      const permuted = elements.map((element, index) => element ?? `${tuple}[${index}]`);
-      return `((${tuple}) => [${permuted.join(", ")}])(${code})`;
+      const permuted = elements.map((element, index) => element ?? `${tuple.name}[${index}]`);
+      return tuple.wrap(`[${permuted.join(", ")}]`);
     }
     case "Str":
       return `P[${code}]`;
@@ -5297,7 +5314,7 @@ const getPermuteCode = (
         return `${permuter}(${code}, P, G)`;
       }
       const offset = resolved.shapes.length === 1 ? 0 : 1;
-      const record = getName(program, "r");
+      const record = getBinding(program, "r", code);
       const shapes = resolved.shapes.map((shape) =>
         shape.map(
           (name, index) =>
@@ -5305,22 +5322,22 @@ const getPermuteCode = (
               program,
               images,
               getFieldType(resolved, name),
-              `${record}[${index + offset}]`,
-            ) ?? `${record}[${index + offset}]`,
+              `${record.name}[${index + offset}]`,
+            ) ?? `${record.name}[${index + offset}]`,
         ),
       );
       if (
         shapes.every((fields) =>
-          fields.every((field, index) => field === `${record}[${index + offset}]`),
+          fields.every((field, index) => field === `${record.name}[${index + offset}]`),
         )
       ) {
         return undefined;
       }
-      if (offset === 0) return `((${record}) => [${shapes[0].join(", ")}])(${code})`;
+      if (offset === 0) return record.wrap(`[${shapes[0].join(", ")}]`);
       const cases = shapes.map(
-        (fields, tag) => `${record}[0] === ${tag} ? [${tag}, ${fields.join(", ")}] : `,
+        (fields, tag) => `${record.name}[0] === ${tag} ? [${tag}, ${fields.join(", ")}] : `,
       );
-      return `((${record}) => ${cases.join("")}${record})(${code})`;
+      return record.wrap(`${cases.join("")}${record.name}`);
     }
     case "Fn": {
       const positions = getMovedPositions(images, resolved.domain);
@@ -5337,14 +5354,16 @@ const getPermuteCode = (
       return `((f) => { const t = D[${base} + G]; const o = new Array(f.length); for (let j = 0; j < f.length; j++) { const ${name} = f[j]; o[t[j]] = ${permuted}; } return o; })(${code})`;
     }
     case "Map": {
-      const map = getName(program, "m");
-      const values = getPermuteCode(program, images, resolved.values, `${map}[1]`);
+      const map = getBinding(program, "m", code);
+      const values = getPermuteCode(program, images, resolved.values, `${map.name}[1]`);
       const keys = getElementCode(
         resolved.keys.element,
-        (name, inner) => `(${map}[0]).map((${name}) => ${inner})`,
+        (name, inner) => `(${map.name}[0]).map((${name}) => ${inner})`,
       );
-      if (keys === undefined) return values && `((${map}) => [${map}[0], ${values}])(${code})`;
-      return `((${map}) => H.sortMap(${getComparerCode(program, resolved.keys.element)}, ${keys}, ${values ?? `${map}[1]`}))(${code})`;
+      if (keys === undefined) return values && map.wrap(`[${map.name}[0], ${values}]`);
+      return map.wrap(
+        `H.sortMap(${getComparerCode(program, resolved.keys.element)}, ${keys}, ${values ?? `${map.name}[1]`})`,
+      );
     }
     default:
       return undefined;
