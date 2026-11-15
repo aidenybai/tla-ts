@@ -26708,6 +26708,24 @@ describe("errors", () => {
     expect((await checkModel(source("s2o"))).failure).toBeDefined();
   });
 
+  it("seals and freezes a promise, which has no own properties", async () => {
+    const source = (expected: string) => `
+      const promise = new Promise(() => {});
+      const frozen = Promise.resolve(1);
+      const before = \`\${Object.isExtensible(promise)} \${Object.keys(promise).length} \${Object.isSealed(frozen)}\`;
+      const sealed = Object.seal(promise) === promise;
+      Object.freeze(frozen);
+      const after = \`\${Object.isExtensible(promise)} \${Object.isSealed(promise)} \${Object.isFrozen(promise)} \${Object.isFrozen(frozen)}\`;
+      if (\`\${before} \${sealed} \${after}\` !== "${expected}") throw new Error(\`\${before} \${sealed} \${after}\`);
+    `;
+    expect(
+      (await checkModel(source("true 0 false true false true true true"))).failure,
+    ).toBeUndefined();
+    expect(
+      (await checkModel(source("true 0 false true false true false true"))).failure,
+    ).toBeDefined();
+  });
+
   it("fulfills Promise.any with the first value, or rejects it with an AggregateError", async () => {
     const result = await checkModel(`
       declare function setTimeout(callback: () => void): void;

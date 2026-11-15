@@ -1171,8 +1171,13 @@ ViewLength(heap, view) ==
     [] OTHER -> view.viewLength
 
 \\* An object's own properties apart from a typed array's elements, which a typed array holds as an
-\\* ordinary object does.
-LOCAL OrdinaryOf(heap, ref) == IF IsTypedArray(heap, ref) THEN heap.objects[ref[Ref]] ELSE Lookup(heap, ref)
+\\* ordinary object does. A promise or a generator object has none, as tla-ts stops where a script
+\\* would give it one.
+LOCAL OrdinaryOf(heap, ref) ==
+  IF \\/ IsTypedArray(heap, ref)
+     \\/ IsHeap(ref) /\\ heap.objects[ref[Ref]].isOpaque /\\ "code" \\notin DOMAIN heap.objects[ref[Ref]]
+  THEN heap.objects[ref[Ref]]
+  ELSE Lookup(heap, ref)
 
 \\* A typed array's element keys, which come before its other own keys.
 LOCAL ElementKeys(heap, ref) ==
