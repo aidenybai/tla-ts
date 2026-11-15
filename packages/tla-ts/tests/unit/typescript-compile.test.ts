@@ -5186,6 +5186,74 @@ ${body}
     expect((await checkModel(getSource("0,1,2;nnnxj"))).failure?.message).toContain("0,1,2;xnnnj");
   });
 
+  describe("call and apply", () => {
+    it("call passes a function its this and the arguments after it", async () => {
+      const getSource = (expected: string) => `
+        "use strict";
+        function show(this: unknown, a?: unknown, ...rest: unknown[]) {
+          return [this === undefined ? "u" : typeof this, a, arguments.length].join("|");
+        }
+        const result = [show.call(0, 1, 2), show.call(undefined)].join(";");
+        if (result !== "${expected}") throw new Error(result);
+      `;
+      expect((await checkModel(getSource("number|1|2;u||0"))).failure).toBeUndefined();
+      expect((await checkModel(getSource("number|1|2;u||1"))).failure?.message).toContain(
+        "number|1|2;u||0",
+      );
+    });
+
+    it("apply passes a function expression an array literal's elements, or none for null", async () => {
+      const getSource = (expected: string) => `
+        "use strict";
+        const target = {};
+        const show = function (this: unknown, ...rest: unknown[]) {
+          return [this === target, arguments.length, arguments[2]].join("|");
+        };
+        const result = [show.apply(target, [3, 4, 5]), show.apply(null)].join(";");
+        if (result !== "${expected}") throw new Error(result);
+      `;
+      expect((await checkModel(getSource("true|3|5;false|0|"))).failure).toBeUndefined();
+      expect((await checkModel(getSource("true|2|5;false|0|"))).failure?.message).toContain(
+        "true|3|5;false|0|",
+      );
+    });
+
+    it("call runs an async function with the this and the arguments that it passes", async () => {
+      const getSource = (expected: string) => `
+        "use strict";
+        let log = "";
+        async function show(this: unknown, value?: unknown, ...rest: unknown[]) {
+          log += "s";
+          const awaited = await value;
+          return [this, awaited, arguments.length].join();
+        }
+        show.call("t", Promise.resolve(5), 2).then((result) => {
+          log += result;
+          if (log !== "${expected}") throw new Error(log);
+        });
+        log += "m";
+      `;
+      expect((await checkModel(getSource("smt,5,2"))).failure).toBeUndefined();
+      // The then's promise rejects with the error, which nothing handles.
+      expect((await checkModel(getSource("mst,5,2"))).failure?.message).toContain(
+        "A promise rejected with no handler",
+      );
+    });
+
+    it("apply passes a hole as what Array.prototype holds at its index", async () => {
+      const getSource = (expected: string) => `
+        Object.defineProperty(Array.prototype, "1", { value: "proto", configurable: true });
+        function show(a?: unknown, b?: unknown, ...rest: unknown[]) {
+          return [arguments.length, a, b, rest.length].join();
+        }
+        const result = show.apply(null, [1, , 2]);
+        if (result !== "${expected}") throw new Error(result);
+      `;
+      expect((await checkModel(getSource("3,1,proto,1"))).failure).toBeUndefined();
+      expect((await checkModel(getSource("3,1,,1"))).failure?.message).toContain("3,1,proto,1");
+    });
+  });
+
   it("forwards a rest parameter that a function spreads into another's call", async () => {
     const getSource = (expected: string) => `
       const sequence = (...parts: string[]) => ({ type: "sequence", units: parts.map((part) => part + "!") });
@@ -14265,17 +14333,18 @@ describe("errors", () => {
     expect((await checkModel(wrong)).failure?.message).toContain('"loose"');
   });
 
-  it("stops on a call of a prototype method that a reassigned variable held", () => {
-    expect(() =>
-      compile(`
-        const holder = { seen: 0 };
-        let valueOf = Symbol.prototype.valueOf;
-        const symbol = Symbol("s");
-        valueOf = function (this: unknown) { return symbol; };
-        if (valueOf.call(Symbol("other")) !== symbol) throw new Error("reassigned");
-        holder.seen = 1;
-      `),
-    ).toThrow("Unsupported call: valueOf.call");
+  it("calls the function that replaced a prototype method in a variable", async () => {
+    const source = `
+      const holder = { seen: 0 };
+      let valueOf = Symbol.prototype.valueOf;
+      const symbol = Symbol("s");
+      valueOf = function (this: unknown) { return symbol; };
+      if (valueOf.call(Symbol("other")) !== symbol) throw new Error("reassigned");
+      holder.seen = 1;
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    const wrong = source.replace("!== symbol", "=== symbol");
+    expect((await checkModel(wrong)).failure?.message).toContain('"reassigned"');
   });
 
   it("tags a primitive by its type in Object.prototype.toString", async () => {

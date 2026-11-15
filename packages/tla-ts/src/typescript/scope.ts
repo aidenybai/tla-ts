@@ -29,7 +29,7 @@ import {
   translatePatternIteration,
 } from "./collections";
 import { isNullish } from "./protocols";
-import { translateElements, translateExpression } from "./expressions";
+import { translateElements, translateExpression, translateHole } from "./expressions";
 import {
   apply,
   boolean,
@@ -740,9 +740,14 @@ export const translateArgumentValues = (
           list,
         };
   }
+  // A hole of the literal that apply takes its arguments from.
   const passed = (spread === -1 ? argumentNodes : argumentNodes.slice(0, rest))
     .filter((_, position) => isPassed(position))
-    .map((argument) => translateExpression(argument, scope, context));
+    .map((argument) =>
+      ts.isOmittedExpression(argument) && ts.isArrayLiteralExpression(argument.parent)
+        ? translateHole(argument.parent, argument.parent.elements.indexOf(argument), scope, context)
+        : translateExpression(argument, scope, context),
+    );
   return spread === -1
     ? { values: passed, isSpread: false, list }
     : {

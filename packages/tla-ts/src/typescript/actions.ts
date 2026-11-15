@@ -3807,6 +3807,63 @@ export const translateCallStatement = (
       ),
     );
   }
+  const applied = getAppliedCall(expression, path, context);
+  if (applied !== undefined) {
+    const appliedReceiver = ts.isArrowFunction(applied.callee)
+      ? path.scope.receiver
+      : {
+          value:
+            applied.thisArgument === undefined
+              ? getUndefined(context)
+              : translateExpression(applied.thisArgument, path.scope, context),
+          method: applied.callee,
+        };
+    const appliedCall = isAsyncFunction(applied.callee)
+      ? translateAsyncCall(
+          expression,
+          applied.callee,
+          appliedReceiver,
+          path,
+          context,
+          frame,
+          continueWith,
+          applied.argumentNodes,
+        )
+      : inlineBody(
+          expression,
+          applied.callee,
+          applied.argumentNodes,
+          appliedReceiver,
+          path,
+          context,
+          frame,
+          continueWith,
+        );
+    const method = applied.isApply ? "apply" : "call";
+    return context.heap === undefined
+      ? appliedCall
+      : ifThenElse(
+          useJavaScript(
+            "HoldsBuiltIn",
+            [
+              getHeap(path.scope, expression, context),
+              isHeapFunction(applied.callee, context)
+                ? translateExpression(applied.target, path.scope, context)
+                : translateBuiltInValue("Function.prototype", expression, context),
+              string(method),
+              string(`Function.prototype.${method}`),
+            ],
+            context,
+          ),
+          appliedCall,
+          leaf(
+            apply("Assert", [
+              boolean(false),
+              string("tla-ts can't tell which function this call runs"),
+            ]),
+          ),
+        );
+  }
   const callee = called?.method ?? getCallback(expression.expression, path, context);
   const bound = callee === undefined ? getBound(expression.expression, context) : undefined;
   if (bound !== undefined && !bound.isSteady) {
@@ -4199,6 +4256,41 @@ const getCalledThrough = (node: ts.CallExpression, context: Context) => {
     !node.arguments.some(ts.isSpreadElement) &&
     getKind(thisArgument, context) === "object"
     ? called
+    : undefined;
+};
+
+// A call of a script's function or async function through Function.prototype.call or apply,
+// with the this and the arguments that it passes. apply's CreateListFromArrayLike takes no
+// arguments from undefined or null, and an array literal's elements, with undefined at its holes.
+const getAppliedCall = (node: ts.CallExpression, path: Path, context: Context) => {
+  if (!isMethodCall(node) || !["call", "apply"].includes(node.expression.name.text)) {
+    return undefined;
+  }
+  const isApply = node.expression.name.text === "apply";
+  const target = getCast(node.expression.expression);
+  const callee =
+    ts.isIdentifier(target) || ts.isFunctionExpression(target) || ts.isArrowFunction(target)
+      ? (getCallback(target, path, context) ?? getAsyncCallee(target, path, context))
+      : undefined;
+  const listed = isApply ? node.arguments.at(1) : undefined;
+  const list = listed === undefined ? undefined : getCast(listed);
+  const argumentNodes = !isApply
+    ? node.arguments.slice(1)
+    : list === undefined ||
+        list.kind === ts.SyntaxKind.NullKeyword ||
+        isUndefinedLiteral(list, context)
+      ? []
+      : ts.isArrayLiteralExpression(list)
+        ? list.elements
+        : undefined;
+  return callee?.body !== undefined &&
+    (ts.isFunctionDeclaration(callee) ||
+      ts.isFunctionExpression(callee) ||
+      ts.isArrowFunction(callee)) &&
+    argumentNodes !== undefined &&
+    (!isApply || node.arguments.length <= 2) &&
+    !node.arguments.slice(0, isApply ? 2 : 1).some(ts.isSpreadElement)
+    ? { callee, target, argumentNodes, thisArgument: node.arguments.at(0), isApply }
     : undefined;
 };
 
@@ -11567,6 +11659,7 @@ const isStatementResult = (node: ts.CallExpression, path: Path, context: Context
     getIntlMethodCall(node, context) !== undefined ||
     getThisSymbolCall(node, context) !== undefined ||
     getCalledThrough(node, context) !== undefined ||
+    getAppliedCall(node, path, context) !== undefined ||
     getMisreceivedCall(node, context) !== undefined ||
     getStackCall(node, context) !== undefined ||
     getIteratorDisposeCall(node, context) !== undefined ||
@@ -15780,6 +15873,7 @@ const findLeadingCall = (
       : { call: undefined, isBlocked: true, read: node };
   }
   if (ts.isArrayLiteralExpression(node)) return inOrder(node.elements);
+  if (ts.isOmittedExpression(node)) return none;
   if (ts.isObjectLiteralExpression(node)) {
     return node.properties.every(
       (property) =>
