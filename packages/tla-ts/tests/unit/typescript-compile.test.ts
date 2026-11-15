@@ -16372,12 +16372,15 @@ describe("errors", () => {
         const json = JSON.stringify(scopes);
       `),
     ).toThrow("scopes would share an object that changes in place");
-    expect(() =>
-      checkModel(`
-        const scopes: Set<string>[] = [new Set()];
-        const grown = scopes[0].add("a");
-      `),
-    ).toThrow("Unsupported Set method: add");
+    // add gives the set that the array holds, which later adds change.
+    const getAdded = (check: string) => `
+      const scopes: Set<string>[] = [new Set()];
+      const grown = scopes[0].add("a");
+      scopes[0].add("b");
+      if (${check}) throw new Error("shared");
+    `;
+    expect((await checkModel(getAdded('!grown.has("b")'))).failure).toBeUndefined();
+    expect((await checkModel(getAdded('grown.has("b")'))).failure?.message).toContain("shared");
   });
 
   it("keeps a map's identity through an array", async () => {
