@@ -1357,9 +1357,9 @@ const REDUCING_METHODS = new Set(["reduce", "reduceRight"]);
 // converts from a primitive. Each needs a unit test of such a call.
 const SEARCHING_METHODS = new Set(["includes", "indexOf", "lastIndexOf"]);
 // RegExp.prototype's methods under well-known symbols that tla-ts runs as their steps where a test
-// calls them through call, on any receiver, or on a regexp with a string or a limit of another
-// type than their signatures take. Each needs a unit test of such a call.
-const PROTOCOL_METHODS = new Set(["match", "search", "split"]);
+// calls them through call, on any receiver, or on a regexp with a string, a limit, or a replaceValue
+// of another type than their signatures take. Each needs a unit test of such a call.
+const PROTOCOL_METHODS = new Set(["match", "search", "split", "replace"]);
 // TypeScript's errors for a call with fewer arguments than its signature takes.
 const SHORT_CALL_ERRORS = new Set([ARGUMENT_COUNT_ERROR, 2555]);
 // A call of a value of type unknown, which tla-ts runs where a key stores a String.prototype method.
@@ -1876,12 +1876,12 @@ const ignoreSoundErrors = () => {
   };
   // A call of a method of RegExp.prototype that PROTOCOL_METHODS lists, on a regexp, as
   // rx[Symbol.search](s), or through call, as RegExp.prototype[Symbol.search].call(rx, s).
-  const isProtocolCall = (node: ts.Node): node is ts.CallExpression => {
-    if (!ts.isCallExpression(node)) return false;
+  // The method of a protocol call, under the well-known symbol that names it.
+  const getProtocolMethod = (node: ts.CallExpression) => {
     const callee = node.expression;
     const isCall = ts.isPropertyAccessExpression(callee) && callee.name.text === "call";
     const method = isCall ? callee.expression : callee;
-    if (!ts.isElementAccessExpression(method)) return false;
+    if (!ts.isElementAccessExpression(method)) return undefined;
     const owner = method.expression;
     const key = method.argumentExpression;
     const isOwned = isCall
@@ -1891,19 +1891,21 @@ const ignoreSoundErrors = () => {
         isGlobal(owner.expression) &&
         owner.name.text === "prototype"
       : checker.getTypeAtLocation(owner).getSymbol()?.getName() === "RegExp";
-    return (
-      isOwned &&
+    return isOwned &&
       ts.isPropertyAccessExpression(key) &&
       ts.isIdentifier(key.expression) &&
       key.expression.text === "Symbol" &&
       isGlobal(key.expression) &&
       PROTOCOL_METHODS.has(key.name.text) &&
       !node.arguments.some(ts.isSpreadElement)
-    );
+      ? key.name.text
+      : undefined;
   };
-  // A protocol call that leaves out the receiver or the string, which are then undefined, as they
-  // are in JavaScript. TypeScript reports it at call's name, or at the method of a regexp, which
-  // tla-ts runs as its steps where it has no string.
+  const isProtocolCall = (node: ts.Node): node is ts.CallExpression =>
+    ts.isCallExpression(node) && getProtocolMethod(node) !== undefined;
+  // A protocol call that leaves out the receiver, the string, or replace's replaceValue, which are
+  // then undefined, as they are in JavaScript. TypeScript reports it at call's name, or at the
+  // method of a regexp, which tla-ts runs as its steps where it has no string or no replaceValue.
   const isShortProtocolCall = (node: ts.Node, diagnostic: ts.Diagnostic) => {
     const call = ts.findAncestor(node, ts.isCallExpression);
     const callee = call?.expression;
@@ -1915,14 +1917,16 @@ const ignoreSoundErrors = () => {
       reported !== undefined &&
       reported.getStart() === diagnostic.start &&
       reported.getEnd() === (diagnostic.start ?? 0) + (diagnostic.length ?? 0) &&
-      (isCall || call.arguments.length === 0) &&
-      isProtocolCall(call)
+      isProtocolCall(call) &&
+      (isCall ||
+        call.arguments.length === 0 ||
+        (call.arguments.length === 1 && getProtocolMethod(call) === "replace"))
     );
   };
   // A protocol call of a value of another type than the string or the limit: tla-ts converts the
-  // string with ToString, running a toString or a Symbol.toPrimitive that the test writes, and
-  // split's limit with ToUint32, throwing a TypeError on a symbol and stopping on another value
-  // that isn't a number.
+  // string with ToString, running a toString or a Symbol.toPrimitive that the test writes, split's
+  // limit with ToUint32, throwing a TypeError on a symbol and stopping on another value that isn't
+  // a number, and replace's replaceValue, or what its function returns, with ToString.
   const isConvertedProtocolCall = (diagnostic: ts.Diagnostic) => {
     const call = getErroredCall(diagnostic);
     return call !== undefined && isProtocolCall(call);
