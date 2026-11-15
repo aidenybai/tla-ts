@@ -15707,6 +15707,9 @@ interface LeadingCall {
   increment?: Increment;
   // A new Promise, whose executor runs as a statement, so nothing after it can run before it.
   construction?: ts.NewExpression;
+  // A new of a typed array of a value that may be an iterable, whose iterator runs as a
+  // statement, so nothing after it can run before it.
+  typedArray?: ts.NewExpression;
 }
 
 // The first call in a node's evaluation order that only statements can run, with the nodes that
@@ -15943,7 +15946,11 @@ const findLeadingCall = (
       getNewBuffer(node, context) !== undefined)
   ) {
     const found = inOrder(node.arguments ?? []);
-    return found.call !== undefined || found.isBlocked ? found : evaluate(node);
+    return found.call !== undefined || found.isBlocked
+      ? found
+      : isIteratedTypedArray(node, context)
+        ? { ...blocked, typedArray: node }
+        : evaluate(node);
   }
   if (ts.isNewExpression(node)) {
     const found = inOrder([node.expression, ...(node.arguments ?? [])]);
@@ -15986,11 +15993,12 @@ const findLeadingCall = (
         ? findLeadingCall(receiver, before, path, context)
         : none;
     if (fromReceiver.call !== undefined || fromReceiver.isBlocked) return fromReceiver;
-    // A method of what new makes runs the calls in new's arguments first.
+    // A method of what new makes runs the calls in new's arguments first, and a typed array's
+    // iterator.
     if (receiver !== undefined && ts.isNewExpression(receiver)) {
       const evaluated: ts.Node[] = [];
       const fromNew = findLeadingCall(receiver, evaluated, path, context);
-      if (fromNew.call !== undefined) {
+      if (fromNew.call !== undefined || fromNew.typedArray !== undefined) {
         before.push(...evaluated);
         return fromNew;
       }
@@ -16380,6 +16388,34 @@ const getHoistedConstruction = (statement: ts.Statement, path: Path, context: Co
   if (evaluated === undefined) return undefined;
   const before: ts.Node[] = [];
   const node = findLeadingCall(evaluated, before, path, context).construction;
+  const outer = skipCasts(evaluated);
+  if (
+    node === undefined ||
+    node === outer ||
+    (ts.isBinaryExpression(outer) &&
+      outer.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      skipCasts(outer.right) === node)
+  ) {
+    return undefined;
+  }
+  rejectEarlyRun(
+    node,
+    [node],
+    before.filter((inner) => ts.findAncestor(inner, (ancestor) => ancestor === node) === undefined),
+    path,
+    context,
+  );
+  return node;
+};
+
+// The new of a typed array of a value that may be an iterable inside a statement's expression, which
+// it evaluates first, other than one that the statement itself runs, which runs as its own
+// statement. Nothing that the statement evaluates before it may read what its iterator changes.
+const getHoistedTypedArray = (statement: ts.Statement, path: Path, context: Context) => {
+  const evaluated = getEvaluated(statement);
+  if (evaluated === undefined) return undefined;
+  const before: ts.Node[] = [];
+  const node = findLeadingCall(evaluated, before, path, context).typedArray;
   const outer = skipCasts(evaluated);
   if (
     node === undefined ||
@@ -17181,6 +17217,27 @@ export const translateStatements = (
         context,
         frame,
       ),
+    );
+  }
+  const typedArray = getHoistedTypedArray(statement, path, context);
+  const typedConstruction = typedArray && getBufferConstruction(typedArray, context);
+  if (typedArray !== undefined && typedConstruction !== undefined) {
+    return translateNewBufferStatement(
+      typedArray,
+      typedConstruction,
+      path,
+      context,
+      statementFrame,
+      (after, value) =>
+        translateStatements(
+          statements,
+          {
+            ...after,
+            scope: { ...after.scope, results: new Map([...after.scope.results, [typedArray, value]]) },
+          },
+          context,
+          frame,
+        ),
     );
   }
   const hoistedRead = getHoistedRead(statement, path, context);
