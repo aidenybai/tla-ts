@@ -2665,6 +2665,7 @@ const translatePropertyAccess = (
     if (held !== undefined || context.heap === undefined) {
       throw new TlaTypeScriptError(`Unsupported property: ${node.getText()}`, node);
     }
+    context.isAccessorRead = true;
     return share(translateExpression(receiver, scope, context), "function", context, (value) =>
       getFunctionCandidates(receiver, context).reduceRight<Expression>(
         (otherwise, candidate) => {

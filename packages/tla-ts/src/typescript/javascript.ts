@@ -1817,6 +1817,44 @@ ThenGetter(heap, value) ==
   THEN GetterOf(heap, value, "then")
   ELSE Undefined
 
+\\* Whether a value is a built-in method or getter that throws a TypeError where a call gives it no
+\\* receiver, as its first step requires an object, a value of its own kind, or a constructor.
+\\* Object.prototype's toString and isPrototypeOf, Function.prototype[@@hasInstance], and the
+\\* @@toStringTag getters give a value instead.
+ThrowsWithoutReceiver(value) ==
+  /\\ IsRef(value)
+  /\\ TypeOf(value[Ref]) = "string"
+  /\\ LET path == value[Ref]
+         isUnder(prefix) == Len(path) > Len(prefix) /\\ SubSeq(path, 1, Len(prefix)) = prefix
+     IN /\\ \\/ \\E name \\in {"Array", "%Int8Array", "String", "RegExp", "Number", "Boolean",
+                            "Symbol", "BigInt", "Date", "Map", "Set", "WeakMap", "WeakSet",
+                            "Function", "Error", "ArrayBuffer", "DataView", "Promise", "Object",
+                            "WeakRef", "FinalizationRegistry"} :
+                isUnder(name \\o ".prototype.") \\/ isUnder("get " \\o name \\o ".prototype.")
+           \\/ path \\in {"%Int8Array.[[Prototype]]%.from", "%Int8Array.[[Prototype]]%.of"}
+        /\\ path \\notin {"Function.prototype.@@hasInstance", "Object.prototype.toString",
+                         "Object.prototype.isPrototypeOf"}
+        /\\ ~(Len(path) >= 13 /\\ SubSeq(path, Len(path) - 12, Len(path)) = "@@toStringTag")
+
+\\* Whether a value is a function that only returns a literal, and the literal it returns.
+IsConstantFunction(value) == value \\in DOMAIN ConstantFunctions
+
+ConstantResult(value) == ConstantFunctions[value]
+
+\\* Whether a value is a built-in that gives a value where a call gives it no receiver:
+\\* Object.prototype.toString, Function.prototype[@@hasInstance], and the @@toStringTag getter of
+\\* typed arrays.
+HasReceiverlessValue(value) ==
+  /\\ IsRef(value)
+  /\\ TypeOf(value[Ref]) = "string"
+  /\\ value[Ref] \\in {"Object.prototype.toString", "Function.prototype.@@hasInstance",
+                     "get %Int8Array.prototype.[[Prototype]]%.@@toStringTag"}
+
+ReceiverlessValue(value) ==
+  CASE value[Ref] = "Object.prototype.toString" -> "[object Undefined]"
+    [] value[Ref] = "Function.prototype.@@hasInstance" -> FALSE
+    [] OTHER -> Undefined
+
 \\* The TypeError that a read throws where it runs %ThrowTypeError% or a getter of a buffer or a view
 \\* on another kind of object, or "".
 ReadError(heap, ref, key) ==
@@ -2011,6 +2049,80 @@ NewestSymbol(heap) == Symbols[Len(WellKnownSymbols) + Len(heap.symbols)]
 WellKnownSymbol(name) ==
   Symbols[CHOOSE position \\in DOMAIN WellKnownSymbols : WellKnownSymbols[position] = name]
 
+\\* Whether a built-in method throws a TypeError on a receiver, as one does on undefined or null
+\\* where it needs a receiver, and as one that needs an internal slot, or a primitive of its own
+\\* type, does on another primitive or on an ordinary object or array.
+ThrowsOnReceiver(heap, value, receiver) ==
+  /\\ IsRef(value)
+  /\\ TypeOf(value[Ref]) = "string"
+  /\\ LET path == value[Ref]
+         isUnder(name) ==
+           \\E prefix \\in {name \\o ".", "get " \\o name \\o "."} :
+             Len(path) > Len(prefix) /\\ SubSeq(path, 1, Len(prefix)) = prefix
+         isEnding(suffix) ==
+           Len(path) >= Len(suffix) /\\ SubSeq(path, Len(path) - Len(suffix) + 1, Len(path)) = suffix
+         isMethod == ~isEnding(".constructor") /\\ ~isEnding("@@toStringTag") /\\ ~isEnding("@@hasInstance")
+         isPrimitive == ~IsRef(receiver) /\\ TypeOf(receiver) \\notin {"object", "function"}
+         isOrdinary ==
+           \\/ IsSequenceValue(receiver)
+           \\/ /\\ IsHeap(receiver)
+              /\\ LET object == heap.objects[receiver[Ref]]
+                 IN /\\ DOMAIN object \\ {"isArray", "isArguments"} = DOMAIN EmptyObject
+                    /\\ ~object.isOpaque
+                    /\\ ~object.isCallable
+         \\* The type of the primitive that a wrapper object holds, or "".
+         wrapped ==
+           IF IsHeap(receiver) /\\ "primitive" \\in DOMAIN heap.objects[receiver[Ref]]
+           THEN TypeOf(heap.objects[receiver[Ref]].primitive)
+           ELSE ""
+         \\* An object without the internal slot a method needs: an ordinary one, a wrapper, or a
+         \\* function, which holds no slot of these but [[Call]].
+         isSlotless(isFunctionHeld) ==
+           \\/ isOrdinary
+           \\/ wrapped # ""
+           \\/ isFunctionHeld /\\ TypeOfIn(heap, receiver) = "function"
+     IN \\/ receiver \\in {Undefined, Null} /\\ ThrowsWithoutReceiver(value)
+        \\* Error.prototype.toString converts the message, whose ToPrimitive finds no method to call
+        \\* where its data properties hold neither toString nor valueOf as a function.
+        \\/ /\\ path = "Error.prototype.toString"
+           /\\ IsHeap(receiver)
+           /\\ ~IsProxy(heap, receiver)
+           /\\ GetterOf(heap, receiver, "name") = Undefined
+           /\\ TypeOf(Get(heap, receiver, "name")) \\in {"undefined", "string"}
+           /\\ GetterOf(heap, receiver, "message") = Undefined
+           /\\ LET message == Get(heap, receiver, "message")
+              IN /\\ IsHeap(message)
+                 /\\ ~IsProxy(heap, message)
+                 /\\ \\A key \\in {"toString", "valueOf", WellKnownSymbol("toPrimitive")} :
+                      /\\ GetterOf(heap, message, key) = Undefined
+                      /\\ TypeOfIn(heap, Get(heap, message, key)) # "function"
+        \\* catch invokes the receiver's then, which a data property holds that isn't a function.
+        \\/ /\\ path = "Promise.prototype.catch"
+           /\\ IsHeap(receiver)
+           /\\ ~IsProxy(heap, receiver)
+           /\\ ~heap.objects[receiver[Ref]].isOpaque
+           /\\ GetterOf(heap, receiver, "then") = Undefined
+           /\\ TypeOfIn(heap, Get(heap, receiver, "then")) # "function"
+        \\/ /\\ isMethod
+           /\\ \\/ \\E name \\in {"Map.prototype", "Set.prototype", "WeakMap.prototype",
+                             "WeakSet.prototype", "WeakRef.prototype", "FinalizationRegistry.prototype",
+                             "%GeneratorFunction%.prototype.prototype",
+                             "%RegExpStringIteratorPrototype%"} :
+                   isUnder(name)
+              \\/ path = "Promise.prototype.then"
+           /\\ receiver \\in {Undefined, Null} \\/ isPrimitive \\/ isSlotless(TRUE)
+        \\/ /\\ isMethod
+           /\\ isUnder("Function.prototype")
+           /\\ receiver \\in {Undefined, Null} \\/ isPrimitive \\/ isSlotless(FALSE)
+        \\/ /\\ isMethod
+           /\\ \\E pair \\in {<<"Symbol", "symbol">>, <<"BigInt", "bigint">>, <<"Number", "number">>,
+                          <<"Boolean", "boolean">>} :
+                /\\ isUnder(pair[1] \\o ".prototype")
+                /\\ \\/ isPrimitive /\\ TypeOf(receiver) # pair[2]
+                   \\/ wrapped \\notin {"", pair[2]}
+                   \\/ isOrdinary
+                   \\/ TypeOfIn(heap, receiver) = "function"
+
 \\* The heap after Symbol.for(key), which makes a symbol for the key where the registry holds none.
 RegisterSymbol(heap, key) ==
   LET text == StringOf(key)
@@ -2110,6 +2222,13 @@ ArrayIterator(heap, array, kind, prototype) ==
                                     @@ [iterated |-> array, index |-> 0, kind |-> kind])
   IN [heap |-> allocated, value |-> Allocated(allocated), isThrown |-> FALSE]
 
+\\* A typed array's iterator, where a call on another value, or on a typed array out of bounds,
+\\* throws a TypeError, as ValidateTypedArray does.
+TypedArrayIterator(heap, ref, kind, prototype) ==
+  IF IsTypedArray(heap, ref) /\\ ~IsOutOfBounds(heap, heap.objects[ref[Ref]])
+  THEN ArrayIterator(heap, ref, kind, prototype)
+  ELSE [heap |-> heap, value |-> Undefined, isThrown |-> TRUE]
+
 \\* The values of an array-like object at each index below its length, which Get reads, so that a
 \\* hole gives what a prototype holds there, or undefined.
 ArrayLikeValues(heap, ref) ==
@@ -2150,6 +2269,14 @@ PresentElements(heap, ref) ==
       indices |-> indices,
       values |-> Read([position \\in DOMAIN indices |-> Get(heap, ref, ToString(indices[position]))])]
 
+\\* Whether a function's call is still Function.prototype.call, which it reads from
+\\* Function.prototype where the heap holds no object of its own for it.
+CallsThroughBuiltIn(heap, function, functionPrototype) ==
+  HoldsBuiltIn(heap,
+               IF IsHeap(function) \\/ BuiltInKey(function) \\in DOMAIN BuiltIns
+               THEN function
+               ELSE functionPrototype,
+               "call", "Function.prototype.call")
 
 \\* Whether instanceof runs OrdinaryHasInstance on a function, as it does where the function's
 \\* @@hasInstance is Function.prototype's, or where it has none.
@@ -2808,9 +2935,12 @@ BuiltInIteratorStep(heap, ref) ==
       index == iterator.index
       isString == iterator.kind = "string"
       isDone == \\/ iterated = Undefined
-                \\/ index >= IF isString
-                            THEN Len(StringCharacters(iterated))
-                            ELSE ToLength(Get(heap, iterated, "length"))
+                \\/ index >= CASE isString -> Len(StringCharacters(iterated))
+                              [] IsTypedArray(heap, iterated) ->
+                                   IF IsOutOfBounds(heap, heap.objects[iterated[Ref]])
+                                   THEN Assert(FALSE, "tla-ts can't throw the TypeError of stepping a typed array out of bounds")
+                                   ELSE ViewLength(heap, heap.objects[iterated[Ref]])
+                              [] OTHER -> ToLength(Get(heap, iterated, "length"))
       element == IF isString THEN StringCharacters(iterated)[index + 1] ELSE Get(heap, iterated, ToString(index))
       value == CASE isDone -> Undefined
                  [] iterator.kind = "keys" -> index
@@ -2836,6 +2966,28 @@ BuiltInIteratorNext(heap, ref, isString) ==
            allocated == Allocate(step.heap, IteratorResult(step.value, step.isDone))
        IN [heap |-> allocated, value |-> Allocated(allocated), isThrown |-> FALSE]
   ELSE Assert(FALSE, "tla-ts can't step an iterator that isn't an array's or a string's with its next")
+
+\\* Whether a value is %ArrayIteratorPrototype%.next or %StringIteratorPrototype%.next.
+\\* A property of a value that may be a built-in function, which only a built-in's object tells.
+BuiltInFunctionProperty(heap, value, key) ==
+  IF IsBuiltIn(value)
+  THEN Get(heap, value, key)
+  ELSE Assert(FALSE, "tla-ts can't tell which function this value holds")
+
+IsBuiltInIteratorNext(value) ==
+  /\\ IsRef(value)
+  /\\ TypeOf(value[Ref]) = "string"
+  /\\ value[Ref] \\in {"%ArrayIteratorPrototype%.next", "%StringIteratorPrototype%.next"}
+
+\\* A built-in iterator's next on a receiver, which throws a TypeError where the receiver isn't an
+\\* iterator of the next's kind.
+BuiltInIteratorStepOf(heap, ref, next) ==
+  LET isString == next[Ref] = "%StringIteratorPrototype%.next"
+  IN IF /\\ IsHeap(ref)
+        /\\ "iterated" \\in DOMAIN heap.objects[ref[Ref]]
+        /\\ (heap.objects[ref[Ref]].kind = "string") = isString
+     THEN BuiltInIteratorNext(heap, ref, isString)
+     ELSE [heap |-> heap, value |-> Undefined, isThrown |-> TRUE]
 
 \\* A filler repeated and cut to a length.
 RECURSIVE FillTo(_, _)

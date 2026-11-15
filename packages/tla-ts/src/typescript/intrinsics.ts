@@ -778,6 +778,7 @@ export const translateBuiltInValue = (
     | "%AsyncGeneratorFunction%.prototype.prototype"
     | "Promise"
     | "Promise.prototype"
+    | "Promise.prototype.catch"
     | "JSON"
     | "Intl"
     | `Intl.${string}`
@@ -1100,6 +1101,16 @@ export const translateBuiltIns = (node: ts.SourceFile, context: Context) => {
       .forEach((value) => include(value.slice(1)));
   };
   ["Object.prototype", ...context.builtIns].forEach(include);
+  if (context.isAccessorRead) {
+    [...included].forEach((name) =>
+      BUILT_INS[name][3].forEach((property) =>
+        property
+          .slice(2)
+          .filter((value) => value.startsWith("oget ") || value.startsWith("oset "))
+          .forEach((value) => include(value.slice(1))),
+      ),
+    );
+  }
   // The objects that the included objects' properties hold, which typeof needs to tell apart.
   const referenced = new Set(
     [...included].flatMap((name) =>
@@ -2358,6 +2369,21 @@ export const getMadeRegExp = (node: ts.Node, context: Context) => {
 export const isInvalidRegExp = (node: ts.Node, context: Context) => {
   const texts = getRegExpTexts(node, context, new Set(), true);
   return texts?.length === 1 && getValidRegExp(texts[0]) === undefined;
+};
+
+// A call of BigInt on a string literal that isn't a StringIntegerLiteral, which throws a
+// SyntaxError: an integer with an optional sign in decimal, or one in hex, octal, or binary, between
+// white space, which \s matches as StrWhiteSpaceChar does.
+export const isInvalidBigIntText = (node: ts.Node, context: Context) => {
+  const argument = ts.isCallExpression(node) ? node.arguments.at(0) : undefined;
+  return (
+    ts.isCallExpression(node) &&
+    node.arguments.length === 1 &&
+    getBuiltIn(node.expression, context) === "BigInt" &&
+    argument !== undefined &&
+    ts.isStringLiteral(argument) &&
+    !/^\s*(?:[+-]?\d+|0[xX][0-9a-fA-F]+|0[oO][0-7]+|0[bB][01]+)?\s*$/.test(argument.text)
+  );
 };
 
 // The regexp that search or match makes of a string literal, where the literal is a valid pattern.

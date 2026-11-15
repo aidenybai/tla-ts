@@ -106,6 +106,9 @@ export interface Context {
   heap: ts.Symbol | undefined;
   // The built-in objects, by path, that a script names.
   builtIns: Set<string>;
+  // Whether a script reads a property of a function that may be a built-in accessor, whose objects
+  // the heap then holds.
+  isAccessorRead: boolean;
   // The literal that each function a script holds as a value returns, by its model value's name,
   // for the functions that return only a literal.
   constantFunctions: Map<string, Expression>;
@@ -480,6 +483,7 @@ export const createContext = (
     unknowns: undefined,
     heap: undefined,
     builtIns: new Set(),
+    isAccessorRead: false,
     constantFunctions: new Map(),
     functionObjects: new Map(),
     hasSpecialNumbers: false,
@@ -2224,7 +2228,20 @@ export const isFunctionObject = (
   (ts.getCombinedModifierFlags(node) & ts.ModifierFlags.Async) === 0 &&
   (isDefault(node) ||
     (ts.isClassExpression(node) && isReadClass(node)) ||
+    (ts.isFunctionExpression(node) && isOnce(node.parent) && isPropertyRead(node)) ||
     isPassedFunction(node, context));
+
+// Whether a function is the object of a property's read, such as function* () {}.prototype, rather
+// than of a method's call.
+const isPropertyRead = (node: ts.Node): boolean => {
+  const parent = node.parent;
+  if (ts.isParenthesizedExpression(parent)) return isPropertyRead(parent);
+  return (
+    ts.isPropertyAccessExpression(parent) &&
+    parent.expression === node &&
+    !(ts.isCallExpression(parent.parent) && parent.parent.expression === parent)
+  );
+};
 
 // A function that a call passes as an object, or an arrow or a generator that a name holds which a
 // call passes, that the script makes once. A plain function that a name holds is a heap function.

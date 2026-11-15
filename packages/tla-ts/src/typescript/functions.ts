@@ -7,7 +7,9 @@ import {
   type FunctionNode,
   findNodes,
   getAnyFunction,
+  getBound,
   getCallee,
+  getParameters,
   getFactoryCall,
   getFunction,
   getFunctionCandidates,
@@ -21,6 +23,7 @@ import {
   isPlain,
   isSuperAccess,
   share,
+  isInertValue,
   skipCasts,
 } from "./context";
 import {
@@ -68,7 +71,7 @@ import {
   tuple,
 } from "./tla";
 import { isBuiltInObject } from "./intrinsics";
-import { getStoredCall, translateStoredCall } from "./collections";
+import { getStoredCall, translateKeyedPrimitiveCall, translateStoredCall } from "./collections";
 import { link } from "./regions";
 import { getStackCall } from "./stacks";
 import { getIteratorDisposeCall } from "./disposal";
@@ -185,7 +188,7 @@ export const getDefinition = (declaration: HelperDeclaration, context: Context):
   if (declaration.name === undefined)
     throw new TlaTypeScriptError("Name this function", declaration);
   const callee = getHelper(declaration, context);
-  const parameters = declareParameters(callee?.parameters ?? [], context);
+  const parameters = declareParameters(callee === undefined ? [] : getParameters(callee), context);
   // An operator parameter declares how many arguments it takes, as in F(_, _).
   const declared = parameters.map((parameter) => {
     const signatures = context.checker.getTypeAtLocation(parameter.node.name).getCallSignatures();
@@ -313,20 +316,19 @@ const inlineCall = (
   scope: Scope,
   context: Context,
   called?: CalledMethod,
+  receiver = getReceiver(scope, context, called),
 ) => {
   if (callee.body === undefined) throw new TlaTypeScriptError("Give this a body", callee);
-  const passedCallbacks = callee.parameters.flatMap(
-    (parameter, position): [ts.Symbol, FunctionNode][] => {
-      const argument = argumentNodes.at(position);
-      const symbol = getSymbol(parameter.name, context.checker);
-      const callback = argument === undefined ? undefined : getCallback(argument, scope, context);
-      return callback === undefined ||
-        symbol === undefined ||
-        parameter.dotDotDotToken !== undefined
-        ? []
-        : [[symbol, callback]];
-    },
-  );
+  // TypeScript's this parameter types the receiver, which no argument passes.
+  const parameters = getParameters(callee);
+  const passedCallbacks = parameters.flatMap((parameter, position): [ts.Symbol, FunctionNode][] => {
+    const argument = argumentNodes.at(position);
+    const symbol = getSymbol(parameter.name, context.checker);
+    const callback = argument === undefined ? undefined : getCallback(argument, scope, context);
+    return callback === undefined || symbol === undefined || parameter.dotDotDotToken !== undefined
+      ? []
+      : [[symbol, callback]];
+  });
   // A parameter that the call doesn't pass, whose default is an arrow function that the body only
   // calls, calls that function as it would one that the call passes, as an expression can't make
   // the function object that the heap would hold.
@@ -334,36 +336,32 @@ const inlineCall = (
   const defaultCallbacks =
     context.heap === undefined || argumentNodes.some(ts.isSpreadElement)
       ? []
-      : callee.parameters
-          .slice(argumentNodes.length)
-          .flatMap((parameter): [ts.Symbol, FunctionNode][] => {
-            const initializer = parameter.initializer;
-            const symbol = getSymbol(parameter.name, context.checker);
-            const isOnlyCalled = findNodes(body, ts.isIdentifier).every(
-              (name) =>
-                getSymbol(name, context.checker) !== symbol ||
-                (ts.isCallExpression(name.parent) && name.parent.expression === name),
-            );
-            return initializer !== undefined &&
-              ts.isArrowFunction(initializer) &&
-              symbol !== undefined &&
-              isOnlyCalled &&
-              findNodes(
-                initializer,
-                (inner): inner is ts.ThisExpression => inner.kind === ts.SyntaxKind.ThisKeyword,
-              ).length === 0
-              ? [[symbol, initializer]]
-              : [];
-          });
+      : parameters.slice(argumentNodes.length).flatMap((parameter): [ts.Symbol, FunctionNode][] => {
+          const initializer = parameter.initializer;
+          const symbol = getSymbol(parameter.name, context.checker);
+          const isOnlyCalled = findNodes(body, ts.isIdentifier).every(
+            (name) =>
+              getSymbol(name, context.checker) !== symbol ||
+              (ts.isCallExpression(name.parent) && name.parent.expression === name),
+          );
+          return initializer !== undefined &&
+            ts.isArrowFunction(initializer) &&
+            symbol !== undefined &&
+            isOnlyCalled &&
+            findNodes(
+              initializer,
+              (inner): inner is ts.ThisExpression => inner.kind === ts.SyntaxKind.ThisKeyword,
+            ).length === 0
+            ? [[symbol, initializer]]
+            : [];
+        });
   const callbacks = [...passedCallbacks, ...defaultCallbacks];
   const isValue = (position: number) =>
-    !callbacks.some(
-      (entry) => entry[0] === getSymbol(callee.parameters[position].name, context.checker),
-    );
+    !callbacks.some((entry) => entry[0] === getSymbol(parameters[position].name, context.checker));
   const passed = translateArgumentValues(
-    callee.parameters,
+    parameters,
     argumentNodes,
-    (position) => position >= callee.parameters.length || isValue(position),
+    (position) => position >= parameters.length || isValue(position),
     scope,
     context,
   );
@@ -388,7 +386,7 @@ const inlineCall = (
     context,
   );
   const bound = bindValues(
-    callee.parameters.filter((_, position) => isValue(position)),
+    parameters.filter((_, position) => isValue(position)),
     passed.isSpread ? values.shared.slice(0, -1) : values.shared,
     made.scope,
     context,
@@ -406,7 +404,7 @@ const inlineCall = (
       allocated: new Map([...bound.scope.allocated].filter(isOutside)),
       results: new Map([...bound.scope.results].filter(isOutside)),
       functions: new Map([...bound.scope.functions, ...callbacks]),
-      receiver: getReceiver(scope, context, called),
+      receiver,
       arrowReceivers: getArrowReceivers(callbacks, scope),
     },
     context,
@@ -461,7 +459,7 @@ const translateOperatorArgument = (
       node,
     );
   }
-  const parameters = declareParameters(callee.parameters, context);
+  const parameters = declareParameters(getParameters(callee), context);
   context.inProgress.add(callee);
   const body = translateBody(callee.body, bindNames(scope, parameters), context);
   context.inProgress.delete(callee);
@@ -494,7 +492,7 @@ export const callStateOperator = (
         symbol: entry[0],
         name: context.names.getFresh(entry[0].name),
       }));
-      const parameters = callee.parameters.map((parameter) => {
+      const parameters = getParameters(callee).map((parameter) => {
         if (
           !ts.isIdentifier(parameter.name) ||
           parameter.dotDotDotToken !== undefined ||
@@ -561,7 +559,7 @@ export const callStateOperator = (
     })();
   return call(definition.name, [
     ...variables.map((entry) => scope.bindings.get(entry[0]) ?? entry[1]),
-    ...callee.parameters.map((_, position) => values[position] ?? getUndefined(context)),
+    ...getParameters(callee).map((_, position) => values[position] ?? getUndefined(context)),
   ]);
 };
 
@@ -713,7 +711,7 @@ export const isLiftable = (callee: FunctionNode, context: Context, isStateTaken 
       ts.isFunctionDeclaration(callee)) &&
     callee.body !== undefined &&
     isPlain(callee) &&
-    callee.parameters.every(
+    getParameters(callee).every(
       (parameter) =>
         ts.isIdentifier(parameter.name) &&
         parameter.initializer === undefined &&
@@ -758,7 +756,7 @@ export const callLifted = (
         symbol: entry[0],
         name: context.names.getFresh(entry[0].name),
       }));
-      const parameters = declareParameters(callee.parameters, context);
+      const parameters = declareParameters(getParameters(callee), context);
       const captured = found.captured.map((symbol) => ({
         symbol,
         name: context.names.getFresh(symbol.name),
@@ -860,12 +858,57 @@ export const translateLocalCall = (
               ).length === 0),
         )
       : [];
+  const keyed =
+    callee === undefined ? translateKeyedPrimitiveCall(node, scope, context) : undefined;
+  if (keyed !== undefined) return keyed;
+  // A function that bind gives, which runs its target with the bound receiver and arguments first.
+  const binding = callee === undefined ? getBound(skipCasts(node.expression), context) : undefined;
+  if (
+    binding !== undefined &&
+    binding.isSteady &&
+    binding.method === undefined &&
+    !context.inProgress.has(binding.target)
+  ) {
+    const target = binding.target;
+    return inlineCall(
+      target,
+      [...binding.arguments, ...node.arguments],
+      scope,
+      context,
+      undefined,
+      ts.isArrowFunction(target)
+        ? scope.receiver
+        : {
+            value:
+              binding.receiver === undefined
+                ? getUndefined(context)
+                : translateExpression(binding.receiver, scope, context),
+            method: target,
+          },
+    );
+  }
   const stored = callee === undefined ? getStoredCall(node, context) : undefined;
   if (callee === undefined && (candidates.length > 0 || stored !== undefined)) {
-    const unknown = apply("Assert", [
+    const stop = apply("Assert", [
       boolean(false),
       string("tla-ts can't tell which function this call runs"),
     ]);
+    // A built-in that gives a value without a receiver, such as Object.prototype.toString.
+    // A function that only returns a literal, as a getter that a descriptor gives may, gives it.
+    const getUnknown = (value: Expression) =>
+      node.arguments.every(isInertValue)
+        ? ifExpression(
+            useJavaScript("IsConstantFunction", [value], context),
+            useJavaScript("ConstantResult", [value], context),
+            ts.isIdentifier(skipCasts(node.expression))
+              ? ifExpression(
+                  useJavaScript("HasReceiverlessValue", [value], context),
+                  useJavaScript("ReceiverlessValue", [value], context),
+                  stop,
+                )
+              : stop,
+          )
+        : stop;
     return share(
       translateExpression(node.expression, scope, context),
       "function",
@@ -891,7 +934,7 @@ export const translateLocalCall = (
                 );
           },
           stored === undefined
-            ? unknown
+            ? getUnknown(value)
             : field(
                 translateStoredCall(
                   stored,
