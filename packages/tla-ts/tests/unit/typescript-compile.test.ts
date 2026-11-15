@@ -36092,4 +36092,24 @@ describe("BigInts", () => {
     `);
     expect(division.failure?.message).toContain("tla-ts can't throw the RangeError");
   });
+
+  describe("calls a function that a helper takes and calls without arguments", () => {
+    const getSource = (expected: number) => `
+      const holder = { seen: 0 };
+      function wrap(callback: () => number, offset: number) {
+        return callback() + offset;
+      }
+      const five = () => 5;
+      const result = wrap(() => 4, 1) + wrap(five, 2);
+      if (result !== ${expected}) throw new Error(\`\${result}\`);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(12))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation", async () => {
+      expect((await checkModel(getSource(11))).failure?.message).toContain("12");
+    });
+  });
 });

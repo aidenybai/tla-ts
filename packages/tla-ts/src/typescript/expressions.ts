@@ -73,6 +73,7 @@ import {
   translateNewError,
 } from "./exceptions";
 import {
+  getArity,
   getDefinition,
   translateFoundGetter,
   translateGetterCall,
@@ -937,10 +938,16 @@ const translateBuiltInCall = (
   }
   if (!isMethodCall(node)) {
     const operator = symbol === undefined ? undefined : scope.bindings.get(symbol);
-    if (operator === undefined || (symbol !== undefined && scope.functions.has(symbol))) {
+    const declaration = symbol?.valueDeclaration;
+    if (
+      operator === undefined ||
+      (symbol !== undefined && scope.functions.has(symbol)) ||
+      (declaration !== undefined &&
+        ts.isParameter(declaration) &&
+        getArity(declaration, context) === 0)
+    ) {
       return translateLocalCall(node, scope, context);
     }
-    const declaration = symbol?.valueDeclaration;
     if (
       operator.kind !== "Identifier" ||
       (declaration !== undefined && ts.isVariableDeclaration(declaration))

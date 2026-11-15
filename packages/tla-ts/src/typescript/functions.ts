@@ -171,6 +171,11 @@ export const bindFactory = (declaration: ts.Node | undefined, scope: Scope, cont
 const getHelper = (declaration: HelperDeclaration, context: Context) =>
   getFunction(declaration) ?? getFactoryCall(getInitializer(declaration), context)?.closure;
 
+// How many arguments a helper's parameter takes as an operator parameter, where 0 makes it a value.
+export const getArity = (parameter: ts.ParameterDeclaration, context: Context) =>
+  context.checker.getTypeAtLocation(parameter.name).getCallSignatures().at(0)?.parameters.length ??
+  0;
+
 // Compiles a top-level helper function or constant into a TLA+ definition, after the definitions
 // it uses.
 export const getDefinition = (declaration: HelperDeclaration, context: Context): Definition => {
@@ -184,13 +189,10 @@ export const getDefinition = (declaration: HelperDeclaration, context: Context):
   const callee = getHelper(declaration, context);
   const parameters = declareParameters(callee === undefined ? [] : getParameters(callee), context);
   // An operator parameter declares how many arguments it takes, as in F(_, _).
-  const declared = parameters.map((parameter) => {
-    const signatures = context.checker.getTypeAtLocation(parameter.node.name).getCallSignatures();
-    return {
-      name: parameter.name,
-      arity: signatures.length === 0 ? 0 : signatures[0].parameters.length,
-    };
-  });
+  const declared = parameters.map((parameter) => ({
+    name: parameter.name,
+    arity: getArity(parameter.node, context),
+  }));
   const definition: Definition = {
     name: context.names.getFresh(declaration.name.getText()),
     parameters: declared,
