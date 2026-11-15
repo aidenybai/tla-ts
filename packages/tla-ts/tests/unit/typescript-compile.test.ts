@@ -44897,4 +44897,235 @@ describe("BigInts", () => {
       ).toContain("tla-ts can't define accessors on the global object");
     });
   });
+
+  describe("converts the objects that a Date setter takes in turn", () => {
+    const getSource = (expected: string) => `
+      const effects: string[] = [];
+      const date = new Date(2016, 6);
+      const hour = { valueOf() { effects.push("hour"); date.setTime(0); return 3; } };
+      const minute = {
+        valueOf: null,
+        toString() { effects.push("minute"); date.setTime(86400000); return "4"; },
+      };
+      const second = { [Symbol.toPrimitive]() { effects.push("second"); return 5; } };
+      // @ts-ignore
+      const returned = date.setHours(hour, minute, second);
+      const invalid = new Date(NaN);
+      // @ts-ignore
+      const nan = invalid.setMinutes({ valueOf() { effects.push("nan"); return 1; } });
+      let thrown = "";
+      try {
+        // @ts-ignore
+        date.setMonth({ valueOf() { return Symbol(); } }, { valueOf() { effects.push("no"); } });
+      } catch (error) {
+        thrown = (error as Error).constructor.name;
+      }
+      const log = [effects.join("/"), returned, Number.isNaN(nan), thrown].join(",");
+      if (log !== "${expected}") throw new Error(log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("hour/minute/second/nan,11045000,true,TypeError"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects the time value from after every conversion", async () => {
+      expect(
+        (await checkModel(getSource("hour/minute/second/nan,97445000,true,TypeError"))).failure
+          ?.message,
+      ).toContain("hour/minute/second/nan,11045000,true,TypeError");
+    });
+  });
+
+  describe("converts the objects that a DataView's getter or setter takes in turn", () => {
+    const getSource = (expected: string) => `
+      const effects: string[] = [];
+      const view = new DataView(new ArrayBuffer(4));
+      const at = { valueOf() { effects.push("index"); return 1; } };
+      const text = { toString() { effects.push("text"); return 2; } };
+      const value = { valueOf() { effects.push("value"); return 513; } };
+      // @ts-ignore
+      view.setInt16(at, value);
+      // @ts-ignore
+      const read = view.getUint8(text, true);
+      let caught = "";
+      try {
+        // @ts-ignore
+        view.setInt8(-1, { valueOf() { effects.push("never"); return 1; } });
+      } catch (error) {
+        caught = (error as Error).constructor.name;
+      }
+      const log = [effects.join("/"), read, caught].join(",");
+      if (log !== "${expected}") throw new Error(log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("index/value/text,1,RangeError"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects a value that converts before the index's RangeError", async () => {
+      expect(
+        (await checkModel(getSource("index/value/text/never,1,RangeError"))).failure?.message,
+      ).toContain("index/value/text,1,RangeError");
+    });
+  });
+
+  describe("converts the objects that new DataView takes for its byteOffset and byteLength", () => {
+    const getSource = (expected: string) => `
+      const effects: string[] = [];
+      const buffer = new ArrayBuffer(8);
+      const offset = { toString() { effects.push("offset"); return "2"; } };
+      // @ts-ignore
+      const view = new DataView(buffer, offset, 3);
+      const moved = new ArrayBuffer(8);
+      let caught = "";
+      try {
+        // @ts-ignore
+        new DataView(moved, 4, { valueOf() { effects.push("long"); moved.transfer(); return 5; } });
+      } catch (error) {
+        caught = (error as Error).constructor.name;
+      }
+      const log = [effects.join("/"), view.byteOffset, view.byteLength, caught].join(",");
+      if (log !== "${expected}") throw new Error(log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("offset/long,2,3,RangeError"))).failure).toBeUndefined();
+    });
+
+    it("rejects the TypeError of a buffer that the length's conversion detaches", async () => {
+      expect((await checkModel(getSource("offset/long,2,3,TypeError"))).failure?.message).toContain(
+        "offset/long,2,3,RangeError",
+      );
+    });
+  });
+
+  describe("runs a Date setter called without arguments on undefined", () => {
+    const getSource = (expected: string) => `
+      const date = new Date(2016, 6);
+      // @ts-ignore
+      const hours = date.setHours();
+      const other = new Date(0);
+      // @ts-ignore
+      const time = other.setTime();
+      const log = [hours, date.getTime(), time].join(",");
+      if (log !== "${expected}") throw new Error(log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("NaN,NaN,NaN"))).failure).toBeUndefined();
+    });
+
+    it("rejects a setter that keeps the time value", async () => {
+      expect((await checkModel(getSource("NaN,1467331200000,NaN"))).failure?.message).toContain(
+        "NaN,NaN,NaN",
+      );
+    });
+  });
+  describe("calls a function that a parameter holds as a value", () => {
+    const getSource = (expected: number) => `
+      type Double = (value: number) => number;
+      let total = 0;
+      function double(value: number): number {
+        return value * 2;
+      }
+      const doubles: Double[] = [double];
+      function outer(callback: (inner: Double) => number): number {
+        return callback(doubles[0]);
+      }
+      function main() {
+        const held: Double[] = [double];
+        function apply(inner: Double, value: number): number {
+          return inner(value);
+        }
+        total = apply(held[0], 4);
+      }
+      main();
+      total += outer((inner) => inner(3));
+      if (total !== ${expected}) throw new Error(String(total));
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(14))).failure).toBeUndefined();
+    });
+
+    it("rejects a wrong total", async () => {
+      expect((await checkModel(getSource(15))).failure?.message).toContain("14");
+    });
+
+    it("stops where it can't tell which function the parameter holds", () => {
+      expect(() =>
+        compile(`
+          type Length = (view: { length: number }) => number;
+          function outer(callback: (inner: Length) => void) {
+            const lengths: Length[] = [
+              function (view) {
+                return view.length;
+              },
+            ];
+            callback(lengths[0]);
+          }
+          let total = 0;
+          outer(function (inner) {
+            total = inner({ length: 3 });
+          });
+        `),
+      ).toThrow("Unsupported call: inner");
+    });
+  });
+
+  describe("passes a helper's function parameter on to another helper", () => {
+    const getSource = (expected: number) => `
+      type Step = (value: number) => number;
+      function double(value: number): number {
+        return value * 2;
+      }
+      function apply(step: Step, value: number): number {
+        return step(value);
+      }
+      function twice(step: Step, value: number): number {
+        return apply(step, apply(step, value));
+      }
+      const total = twice(double, 3) + twice((value) => value + 1, 3);
+      if (total !== ${expected}) throw new Error(String(total));
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(17))).failure).toBeUndefined();
+    });
+
+    it("rejects a wrong total", async () => {
+      await expect(checkModel(getSource(18))).rejects.toThrow("17");
+    });
+
+    it("stops where a function's operator would be a value", () => {
+      expect(() =>
+        compile(`
+          type Step = (value: number) => number;
+          function double(value: number): number {
+            return value * 2;
+          }
+          function outer(callback: (step: Step) => number): number {
+            return callback(double);
+          }
+          const total = outer((step) => 5);
+        `),
+      ).toThrow("tla-ts can't use double as a value here");
+      expect(() =>
+        compile(`
+          type Step = (value: number) => number;
+          function double(value: number): number {
+            return value * 2;
+          }
+          function apply(step: Step, callback: (inner: Step) => number): number {
+            return callback(step);
+          }
+          const total = apply(double, (inner) => 4);
+        `),
+      ).toThrow("tla-ts can't use step as a value here");
+    });
+  });
 });

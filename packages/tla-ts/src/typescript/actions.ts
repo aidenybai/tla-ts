@@ -148,6 +148,7 @@ import {
   getConversion,
   getConversionFunctions,
   isCompoundAssignment,
+  isObjectOperand,
   runConversion,
   runToPrimitive,
 } from "./conversions";
@@ -2772,6 +2773,41 @@ const translateCallStatementBody = (
     const setter = getDateSetter(dateCall.method, dateCall.values, context);
     const changeName = context.names.getFresh("change");
     const change = identifier(changeName);
+    const convertedTimeName = context.names.getFresh("time");
+    const toNumber = (primitive: Expression) => {
+      const converted = useJavaScript("ToNumber", [primitive], context);
+      return context.hasSpecialNumbers
+        ? converted
+        : useJavaScript("PlainNumber", [converted], context);
+    };
+    const changeDate = (
+      current: Path,
+      read: Expression,
+      position: number,
+      numbers: readonly Expression[],
+    ) =>
+      bindOnce(
+        current,
+        changeName,
+        useJavaScript(
+          "DateChange",
+          [
+            getHeap(current.scope, expression, context),
+            identifier(receiver),
+            read,
+            string(dateCall.method),
+            number(position),
+            tuple([...numbers]),
+          ],
+          context,
+        ),
+        // A time value too far from 1970 for TLC's integers is only a number where something
+        // reads it.
+        continueWith(
+          withHeap(field(change, "heap"), current),
+          isStatement ? undefined : useJavaScript("TimeNumber", [field(change, "time")], context),
+        ),
+      );
     const run = dateCall.isSetter
       ? setter === undefined
         ? leaf(
@@ -2780,34 +2816,50 @@ const translateCallStatementBody = (
               string("tla-ts can't convert the arguments of this Date setter"),
             ]),
           )
-        : bindOnce(
-            path,
-            changeName,
-            useJavaScript(
-              "DateChange",
-              [
-                heap,
-                identifier(receiver),
-                time,
-                string(dateCall.method),
-                number(setter.position),
-                tuple(
-                  dateCall.values.map((argument) =>
+        : dateCall.values.some((argument) => isObjectOperand(argument, context))
+          ? // The setter converts its arguments in turn, which runs their valueOf and toString,
+            // and changes the heap that they leave. Node reads the time value once the first
+            // converts, where the spec reads it before.
+            runConversion(
+              expression,
+              {
+                operands: dateCall.values,
+                hints: dateCall.values.map(() => "number" as const),
+                combine: (primitives) => tuple(primitives.map(toNumber)),
+                afterFirst: (after, _, next) =>
+                  bindOnce(
+                    after,
+                    convertedTimeName,
+                    useJavaScript(
+                      "TimeOfDate",
+                      [getHeap(after.scope, expression, context), identifier(receiver)],
+                      context,
+                    ),
+                    next(after),
+                  ),
+              },
+              path,
+              context,
+              frame,
+              (after, numbers) =>
+                changeDate(
+                  after,
+                  identifier(convertedTimeName),
+                  setter.position,
+                  dateCall.values.map((_, position) => index(numbers, [number(position + 1)])),
+                ),
+            )
+          : changeDate(
+              path,
+              time,
+              setter.position,
+              // A call without arguments converts undefined.
+              dateCall.values.length === 0
+                ? [toNumber(getUndefined(context))]
+                : dateCall.values.map((argument) =>
                     translateToNumber(argument, expression, path.scope, context),
                   ),
-                ),
-              ],
-              context,
-            ),
-            // A time value too far from 1970 for TLC's integers is only a number where something
-            // reads it.
-            continueWith(
-              withHeap(field(change, "heap")),
-              isStatement
-                ? undefined
-                : useJavaScript("TimeNumber", [field(change, "time")], context),
-            ),
-          )
+            )
       : dateCall.method === "toISOString"
         ? ifThenElse(
             apply("=", [time, identifier("NaN")]),
@@ -3641,11 +3693,15 @@ const translateCallStatementBody = (
                         ],
                         context,
                       );
-    const runOperationFrom = (current: Path, finish: (path: Path, value: Expression) => Formula) =>
+    const runChange = (
+      current: Path,
+      changed: Expression,
+      finish: (path: Path, value: Expression) => Formula = continueWith,
+    ) =>
       bindOnce(
         current,
         changeName,
-        getOperation(getHeap(current.scope, expression, context)),
+        changed,
         ifThenElse(
           apply("=", [field(change, "error"), string("")]),
           finish(withHeap(field(change, "heap"), current), field(change, "value")),
@@ -3656,8 +3712,10 @@ const translateCallStatementBody = (
           ),
         ),
       );
+    const runOperationFrom = (current: Path, finish: (path: Path, value: Expression) => Formula) =>
+      runChange(current, getOperation(getHeap(current.scope, expression, context)), finish);
     const speciesGetters = getViewSpeciesGetters(expression, context);
-    const runOperation =
+    const runOperation = () =>
       speciesGetters.length === 0
         ? runOperationFrom(path, continueWith)
         : translateJoined(
@@ -3685,6 +3743,49 @@ const translateCallStatementBody = (
                 runOperationFrom(path, next),
               ),
           );
+    // ToIndex throws its RangeError before a setter converts its value.
+    const convertedViewValues = getConvertedViewValues(expression, context);
+    const runConvertedView = (converted: readonly ts.Expression[]) =>
+      runConversion(
+        expression,
+        {
+          operands: converted,
+          hints: converted.map(() => "number" as const),
+          combine: (primitives) => tuple([...primitives]),
+          afterFirst: (after, primitive, next) =>
+            ifThenElse(
+              useJavaScript("IsBigInt", [primitive], context),
+              throwTypeError(after, expression, context, frame),
+              ifThenElse(
+                apply("=", [useJavaScript("IndexOfArgument", [primitive], context), number(-1)]),
+                throwError("RangeError", after, expression, context, frame),
+                next(after),
+              ),
+            ),
+        },
+        path,
+        context,
+        frame,
+        (after, primitives) => {
+          const [request, value] = [1, 2].map((position) =>
+            position <= converted.length
+              ? index(primitives, [number(position)])
+              : getUndefined(context),
+          );
+          const afterHeap = getHeap(after.scope, expression, context);
+          const littleEndian = values[converted.length];
+          return runChange(
+            after,
+            method.startsWith("get")
+              ? useJavaScript("DataViewGet", [afterHeap, ref, type, request, littleEndian], context)
+              : useJavaScript(
+                  "DataViewSet",
+                  [afterHeap, ref, type, request, value, littleEndian],
+                  context,
+                ),
+          );
+        },
+      );
     // set of an array-like source writes each element in order, so the first that a getter which
     // only throws answers throws once set wrote those before it, where nothing before runs code.
     const setGetter = useJavaScript(
@@ -3693,20 +3794,22 @@ const translateCallStatementBody = (
       context,
     );
     const run =
-      viewCall.owner === "TypedArray" &&
-      method === "set" &&
-      getThrowingGetters(expression, context).length > 0
-        ? throwFirstGetter(
-            expression,
-            apply("#", [setGetter, getUndefined(context)]),
-            setGetter,
-            typedValues[0] ?? getUndefined(context),
-            withHeap(useJavaScript("TypedArraySetBefore", [heap, ref, typedArguments], context)),
-            context,
-            frame,
-            runOperation,
-          )
-        : runOperation;
+      convertedViewValues !== undefined
+        ? runConvertedView(convertedViewValues)
+        : viewCall.owner === "TypedArray" &&
+            method === "set" &&
+            getThrowingGetters(expression, context).length > 0
+          ? throwFirstGetter(
+              expression,
+              apply("#", [setGetter, getUndefined(context)]),
+              setGetter,
+              typedValues[0] ?? getUndefined(context),
+              withHeap(useJavaScript("TypedArraySetBefore", [heap, ref, typedArguments], context)),
+              context,
+              frame,
+              runOperation(),
+            )
+          : runOperation();
     return bindOnce(
       path,
       receiver,
@@ -13137,14 +13240,43 @@ const translateIntlError = (node: ts.Expression, path: Path, context: Context, f
 const getBufferConstruction = (node: ts.Expression, context: Context) =>
   getNewBuffer(node, context) && getConstruction(node, context);
 
-// new of a typed array whose byteOffset or length may be an object, which it converts to a
-// primitive where it views a buffer, running the object's valueOf and toString.
-const isIndexConvertingNew = (node: ts.Node, context: Context) =>
-  ts.isExpression(node) &&
-  (getNewBuffer(node, context) ?? []).every((buffer) => TYPED_ARRAYS.has(buffer)) &&
-  (getBufferConstruction(node, context)?.arguments ?? [])
-    .slice(1, 3)
-    .some((value) => !isPrimitiveIndex(getCast(value), context));
+// new of a typed array, or of a DataView without another newTarget, whose byteOffset or length may
+// be an object, which it converts to a primitive where it views a buffer, running the object's
+// valueOf and toString.
+const isIndexConvertingNew = (node: ts.Node, context: Context) => {
+  if (!ts.isExpression(node)) return false;
+  const buffers = getNewBuffer(node, context) ?? [];
+  const construction = getBufferConstruction(node, context);
+  return (
+    (buffers.every((buffer) => TYPED_ARRAYS.has(buffer)) ||
+      (buffers.length === 1 &&
+        buffers[0] === "DataView" &&
+        construction?.newTarget === construction?.callee)) &&
+    (construction?.arguments ?? [])
+      .slice(1, 3)
+      .some((value) => !isPrimitiveIndex(getCast(value), context))
+  );
+};
+
+// A call of a Date's setter with an object, which it converts to a number, running the object's
+// valueOf and toString.
+const isObjectDateCall = (node: ts.Node, context: Context) =>
+  getDateCall(node, context)?.values.some((value) => isObjectOperand(value, context)) === true;
+
+// The index, and a setter's value, of a call of a DataView's getter or setter where one is an
+// object, which the call converts in turn, running the object's valueOf and toString. Its
+// littleEndian, which it converts with ToBoolean after them, is a literal, so nothing that they
+// run changes it.
+const getConvertedViewValues = (node: ts.Node, context: Context) => {
+  const call = getViewCall(node, context);
+  if (call?.owner !== "DataView") return undefined;
+  const count = call.method.startsWith("get") ? 1 : 2;
+  const converted = call.values.slice(0, count);
+  return converted.some((value) => isObjectOperand(value, context)) &&
+    call.values.slice(count).every(isLiteralValue)
+    ? converted
+    : undefined;
+};
 
 // The getters of a typed array's constructor that its slice and subarray may run, as they make their
 // typed array through it once their receiver's and arguments' checks pass.
@@ -13187,6 +13319,17 @@ const translateNewBufferStatement = (
         translateExpression(value, allocated.scope, context),
       );
       const buffers = getNewBuffer(node, context) ?? [];
+      // Runs next where a construction's error is "", and throws it otherwise.
+      const throwUnless = (current: Path, error: Expression, next: Formula) =>
+        ifThenElse(
+          apply("=", [error, string("")]),
+          next,
+          ifThenElse(
+            apply("=", [error, string("RangeError")]),
+            throwError("RangeError", current, node, context, frame),
+            throwTypeError(current, node, context, frame),
+          ),
+        );
       const makeWith = (
         current: Path,
         madeArguments: Expression[],
@@ -13222,8 +13365,9 @@ const translateNewBufferStatement = (
             "error",
             prototypeValue,
           ),
-          ifThenElse(
-            apply("=", [error, string("")]),
+          throwUnless(
+            current,
+            error,
             bindOnce(
               current,
               madeName,
@@ -13238,11 +13382,6 @@ const translateNewBufferStatement = (
                 prototypeValue,
               ),
               finish(after, useJavaScript("Allocated", [made], context)),
-            ),
-            ifThenElse(
-              apply("=", [error, string("RangeError")]),
-              throwError("RangeError", current, node, context, frame),
-              throwTypeError(current, node, context, frame),
             ),
           ),
         );
@@ -13303,7 +13442,8 @@ const translateNewBufferStatement = (
         );
       };
       // A typed array that views a buffer throws its byteOffset's RangeError before it converts
-      // its length.
+      // its length, and a DataView its buffer's TypeError where it's detached, and the RangeError
+      // of a byteOffset past its end.
       const isConverted = isIndexConvertingNew(node, context);
       const toIndex = (
         current: Path,
@@ -13323,7 +13463,7 @@ const translateNewBufferStatement = (
       // A typed array reads newTarget's prototype before it converts its offset and length or
       // iterates its argument, which a getter there would have to run before.
       const readsPrototypeAfter = (current: Path, formula: Formula) =>
-        prototypeGetters.length === 0
+        prototypeGetters.length === 0 || typedBuffers.length === 0
           ? formula
           : ifThenElse(
               apply("=", [
@@ -13360,25 +13500,56 @@ const translateNewBufferStatement = (
               readsPrototypeAfter(
                 current,
                 toIndex(current, madeArguments[1] ?? getUndefined(context), (offsetPath, offset) =>
-                  ifThenElse(
-                    apply("=", [
-                      translateNewBufferOf(
-                        node,
-                        construction,
-                        getHeap(offsetPath.scope, node, context),
-                        tuple([madeArguments[0], offset]),
-                        offsetPath.scope,
-                        context,
-                        "offset error",
+                  bind(
+                    offsetPath,
+                    "error",
+                    translateNewBufferOf(
+                      node,
+                      construction,
+                      getHeap(offsetPath.scope, node, context),
+                      tuple([madeArguments[0], offset]),
+                      offsetPath.scope,
+                      context,
+                      "offset error",
+                    ),
+                    context,
+                    (errorPath, error) =>
+                      throwUnless(
+                        errorPath,
+                        error,
+                        madeArguments[2] === undefined
+                          ? make(errorPath, [madeArguments[0], offset], finish)
+                          : toIndex(errorPath, madeArguments[2], (lengthPath, length) => {
+                              const viewed = [madeArguments[0], offset, length];
+                              // A DataView throws the RangeError of a length past its buffer's
+                              // end, as the buffer was before it converted the length.
+                              return buffers.includes("DataView")
+                                ? bind(
+                                    lengthPath,
+                                    "error",
+                                    translateNewBufferOf(
+                                      node,
+                                      construction,
+                                      getHeap(errorPath.scope, node, context),
+                                      tuple(viewed),
+                                      errorPath.scope,
+                                      context,
+                                      "error",
+                                      prototypeGetters.length === 0
+                                        ? undefined
+                                        : getUndefined(context),
+                                    ),
+                                    context,
+                                    (checkedPath, lengthError) =>
+                                      throwUnless(
+                                        checkedPath,
+                                        lengthError,
+                                        make(checkedPath, viewed, finish),
+                                      ),
+                                  )
+                                : make(lengthPath, viewed, finish);
+                            }),
                       ),
-                      string("RangeError"),
-                    ]),
-                    throwError("RangeError", offsetPath, node, context, frame),
-                    madeArguments[2] === undefined
-                      ? make(offsetPath, [madeArguments[0], offset], finish)
-                      : toIndex(offsetPath, madeArguments[2], (lengthPath, length) =>
-                          make(lengthPath, [madeArguments[0], offset, length], finish),
-                        ),
                   ),
                 ),
               ),
@@ -14350,7 +14521,9 @@ const getEffects = (
   const conversions =
     (ts.isExpression(node) && getConversion(node, context) !== undefined) ||
     (isObjectChange(node, context) && mayDefineObjectLength(node, context)) ||
-    isIndexConvertingNew(node, context)
+    isIndexConvertingNew(node, context) ||
+    isObjectDateCall(node, context) ||
+    getConvertedViewValues(node, context) !== undefined
       ? getConversionFunctions(node, context)
       : undefined;
   // A definition that reads its descriptor's fields, a read of a key with getters, or an
