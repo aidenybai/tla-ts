@@ -44561,4 +44561,39 @@ describe("BigInts", () => {
       ).toContain("hour/minute/second/nan,11045000,true,TypeError");
     });
   });
+
+  describe("converts the objects that a DataView's getter or setter takes in turn", () => {
+    const getSource = (expected: string) => `
+      const effects: string[] = [];
+      const view = new DataView(new ArrayBuffer(4));
+      const at = { valueOf() { effects.push("index"); return 1; } };
+      const text = { toString() { effects.push("text"); return 2; } };
+      const value = { valueOf() { effects.push("value"); return 513; } };
+      // @ts-ignore
+      view.setInt16(at, value);
+      // @ts-ignore
+      const read = view.getUint8(text, true);
+      let caught = "";
+      try {
+        // @ts-ignore
+        view.setInt8(-1, { valueOf() { effects.push("never"); return 1; } });
+      } catch (error) {
+        caught = (error as Error).constructor.name;
+      }
+      const log = [effects.join("/"), read, caught].join(",");
+      if (log !== "${expected}") throw new Error(log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("index/value/text,1,RangeError"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects a value that converts before the index's RangeError", async () => {
+      expect(
+        (await checkModel(getSource("index/value/text/never,1,RangeError"))).failure?.message,
+      ).toContain("index/value/text,1,RangeError");
+    });
+  });
 });

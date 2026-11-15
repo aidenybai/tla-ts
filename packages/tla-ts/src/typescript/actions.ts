@@ -3677,20 +3677,64 @@ const translateCallStatementBody = (
                         ],
                         context,
                       );
-    const runOperation = bindOnce(
-      path,
-      changeName,
-      operation,
-      ifThenElse(
-        apply("=", [field(change, "error"), string("")]),
-        continueWith(withHeap(field(change, "heap")), field(change, "value")),
+    const runChange = (current: Path, changed: Expression) =>
+      bindOnce(
+        current,
+        changeName,
+        changed,
         ifThenElse(
-          apply("=", [field(change, "error"), string("RangeError")]),
-          throwError("RangeError", path, expression, context, frame),
-          throwTypeError(path, expression, context, frame),
+          apply("=", [field(change, "error"), string("")]),
+          continueWith(withHeap(field(change, "heap"), current), field(change, "value")),
+          ifThenElse(
+            apply("=", [field(change, "error"), string("RangeError")]),
+            throwError("RangeError", current, expression, context, frame),
+            throwTypeError(current, expression, context, frame),
+          ),
         ),
-      ),
-    );
+      );
+    // ToIndex throws its RangeError before a setter converts its value.
+    const convertedViewValues = getConvertedViewValues(expression, context);
+    const runConvertedView = (converted: readonly ts.Expression[]) =>
+      runConversion(
+        expression,
+        {
+          operands: converted,
+          hints: converted.map(() => "number" as const),
+          combine: (primitives) => tuple([...primitives]),
+          afterFirst: (after, primitive, next) =>
+            ifThenElse(
+              useJavaScript("IsBigInt", [primitive], context),
+              throwTypeError(after, expression, context, frame),
+              ifThenElse(
+                apply("=", [useJavaScript("IndexOfArgument", [primitive], context), number(-1)]),
+                throwError("RangeError", after, expression, context, frame),
+                next(after),
+              ),
+            ),
+        },
+        path,
+        context,
+        frame,
+        (after, primitives) => {
+          const [request, value] = [1, 2].map((position) =>
+            position <= converted.length
+              ? index(primitives, [number(position)])
+              : getUndefined(context),
+          );
+          const afterHeap = getHeap(after.scope, expression, context);
+          const littleEndian = values[converted.length];
+          return runChange(
+            after,
+            method.startsWith("get")
+              ? useJavaScript("DataViewGet", [afterHeap, ref, type, request, littleEndian], context)
+              : useJavaScript(
+                  "DataViewSet",
+                  [afterHeap, ref, type, request, value, littleEndian],
+                  context,
+                ),
+          );
+        },
+      );
     // set of an array-like source writes each element in order, so the first that a getter which
     // only throws answers throws once set wrote those before it, where nothing before runs code.
     const setGetter = useJavaScript(
@@ -3699,20 +3743,22 @@ const translateCallStatementBody = (
       context,
     );
     const run =
-      viewCall.owner === "TypedArray" &&
-      method === "set" &&
-      getThrowingGetters(expression, context).length > 0
-        ? throwFirstGetter(
-            expression,
-            apply("#", [setGetter, getUndefined(context)]),
-            setGetter,
-            typedValues[0] ?? getUndefined(context),
-            withHeap(useJavaScript("TypedArraySetBefore", [heap, ref, typedArguments], context)),
-            context,
-            frame,
-            runOperation,
-          )
-        : runOperation;
+      convertedViewValues !== undefined
+        ? runConvertedView(convertedViewValues)
+        : viewCall.owner === "TypedArray" &&
+            method === "set" &&
+            getThrowingGetters(expression, context).length > 0
+          ? throwFirstGetter(
+              expression,
+              apply("#", [setGetter, getUndefined(context)]),
+              setGetter,
+              typedValues[0] ?? getUndefined(context),
+              withHeap(useJavaScript("TypedArraySetBefore", [heap, ref, typedArguments], context)),
+              context,
+              frame,
+              runChange(path, operation),
+            )
+          : runChange(path, operation);
     return bindOnce(
       path,
       receiver,
@@ -13114,6 +13160,21 @@ const isIndexConvertingNew = (node: ts.Node, context: Context) =>
 const isObjectDateCall = (node: ts.Node, context: Context) =>
   getDateCall(node, context)?.values.some((value) => isObjectOperand(value, context)) === true;
 
+// The index, and a setter's value, of a call of a DataView's getter or setter where one is an
+// object, which the call converts in turn, running the object's valueOf and toString. Its
+// littleEndian, which it converts with ToBoolean after them, is a literal, so nothing that they
+// run changes it.
+const getConvertedViewValues = (node: ts.Node, context: Context) => {
+  const call = getViewCall(node, context);
+  if (call?.owner !== "DataView") return undefined;
+  const count = call.method.startsWith("get") ? 1 : 2;
+  const converted = call.values.slice(0, count);
+  return converted.some((value) => isObjectOperand(value, context)) &&
+    call.values.slice(count).every(isLiteralValue)
+    ? converted
+    : undefined;
+};
+
 // Runs new of a buffer, a DataView, or a typed array, which throws the error its constructor does,
 // and makes a typed array of an object's iterator's values where a script's @@iterator method
 // gives them.
@@ -14195,7 +14256,8 @@ const getEffects = (
     (ts.isExpression(node) && getConversion(node, context) !== undefined) ||
     (isObjectChange(node, context) && mayDefineObjectLength(node, context)) ||
     isIndexConvertingNew(node, context) ||
-    isObjectDateCall(node, context)
+    isObjectDateCall(node, context) ||
+    getConvertedViewValues(node, context) !== undefined
       ? getConversionFunctions(node, context)
       : undefined;
   // A definition that reads its descriptor's fields, a read of a key with getters, or an
