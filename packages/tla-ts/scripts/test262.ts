@@ -1224,6 +1224,11 @@ const REDUCING_METHODS = new Set(["reduce", "reduceRight"]);
 // The array methods that tla-ts searches by value for any value, from an index that ToNumber
 // converts from a primitive. Each needs a unit test of such a call.
 const SEARCHING_METHODS = new Set(["includes", "indexOf", "lastIndexOf"]);
+// RegExp.prototype's methods under well-known symbols that tla-ts runs as their steps where a test
+// calls them through call, on any receiver and any string. Each needs a unit test of such a call.
+const PROTOCOL_METHODS = new Set(["match", "search", "split"]);
+// TypeScript's errors for a call with fewer arguments than its signature takes.
+const SHORT_CALL_ERRORS = new Set([ARGUMENT_COUNT_ERROR, 2555]);
 // A call of a value of type unknown, which tla-ts runs where a key stores a String.prototype method.
 const UNKNOWN_CALLEE_ERROR = 2571;
 
@@ -1692,6 +1697,36 @@ const ignoreSoundErrors = () => {
         )
     );
   };
+  // A call through call of a method of RegExp.prototype that PROTOCOL_METHODS lists, as
+  // RegExp.prototype[Symbol.search].call(rx, s).
+  const isProtocolCall = (node: ts.Node): node is ts.CallExpression => {
+    if (!ts.isCallExpression(node) || !ts.isPropertyAccessExpression(node.expression)) return false;
+    const method = node.expression.expression;
+    if (!ts.isElementAccessExpression(method)) return false;
+    const owner = method.expression;
+    const key = method.argumentExpression;
+    return (
+      node.expression.name.text === "call" &&
+      ts.isPropertyAccessExpression(owner) &&
+      ts.isIdentifier(owner.expression) &&
+      owner.expression.text === "RegExp" &&
+      isGlobal(owner.expression) &&
+      owner.name.text === "prototype" &&
+      ts.isPropertyAccessExpression(key) &&
+      ts.isIdentifier(key.expression) &&
+      key.expression.text === "Symbol" &&
+      isGlobal(key.expression) &&
+      PROTOCOL_METHODS.has(key.name.text) &&
+      !node.arguments.some(ts.isSpreadElement)
+    );
+  };
+  // A protocol call that leaves out the receiver or the string, which are then undefined, as they
+  // are in JavaScript. TypeScript reports it at call's name.
+  const isShortProtocolCall = (node: ts.Node) =>
+    ts.isIdentifier(node) &&
+    ts.isPropertyAccessExpression(node.parent) &&
+    node.parent.name === node &&
+    isProtocolCall(node.parent.parent);
   // A call of an array's method that REDUCING_METHODS lists, whose reducer is a function that the
   // test writes and that takes each value it gets: the initial value, an element, or what it
   // returns as the accumulator, then an element, an index, and the array. The call's result, which
@@ -1819,6 +1854,7 @@ const ignoreSoundErrors = () => {
     const node = getNode(diagnostic.start ?? 0);
     return (
       (diagnostic.code === ARGUMENT_COUNT_ERROR && isShortBuiltInCall(node)) ||
+      (SHORT_CALL_ERRORS.has(diagnostic.code) && isShortProtocolCall(node)) ||
       (diagnostic.code === MISSING_PROPERTY_ERROR && isPatternRead(node)) ||
       ((diagnostic.code === NOT_ITERABLE_ERROR || NULLABLE_ERRORS.has(diagnostic.code)) &&
         isNullableArrayPattern(node)) ||
