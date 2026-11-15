@@ -7,6 +7,7 @@ import {
   getImportedModule,
   isImportCall,
   isInertValue,
+  isScript,
   isWrittenBy,
 } from "./context";
 import { NATIVE_ERRORS } from "./exceptions";
@@ -235,6 +236,13 @@ export const findNamespaces = (
     });
   };
   roots.forEach(add);
+  // Only a script, which runs as JavaScript does, holds objects on a heap.
+  if (modules.size > 0 && !isScript(sourceFile)) {
+    throw new TlaTypeScriptError(
+      "tla-ts can't make a module's namespace object outside a script",
+      sourceFile,
+    );
+  }
   // The module whose namespace object a node reads: a namespace import as a value or to read an
   // export, or an import() of a string.
   const getRead = (node: ts.Node) => {

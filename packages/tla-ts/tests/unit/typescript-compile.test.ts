@@ -41651,6 +41651,19 @@ describe("BigInts", () => {
       );
     });
 
+    it("stops at a namespace object outside a script", () => {
+      const model = [
+        'import * as first from "./first";',
+        "let count = 0;",
+        "export const step = () => {",
+        "  count += Object.keys(first).length;",
+        "};",
+      ].join("\n");
+      expect(() => compile(model, path)).toThrow(
+        "tla-ts can't make a module's namespace object outside a script",
+      );
+    });
+
     it("follows the script's own namespace object as its exports change", async () => {
       const ownPath = join(import.meta.dirname, "../fixtures/typescript/imports/selfish.ts");
       const own = readFileSync(ownPath, "utf8");
