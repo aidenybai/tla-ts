@@ -1482,7 +1482,20 @@ export const isFunctionObject = (
   (ts.getCombinedModifierFlags(node) & ts.ModifierFlags.Async) === 0 &&
   (isDefault(node) ||
     (ts.isClassExpression(node) && isReadClass(node)) ||
+    (ts.isFunctionExpression(node) && isOnce(node.parent) && isPropertyRead(node)) ||
     isPassedFunction(node, context));
+
+// Whether a function is the object of a property's read, such as function* () {}.prototype, rather
+// than of a method's call.
+const isPropertyRead = (node: ts.Node): boolean => {
+  const parent = node.parent;
+  if (ts.isParenthesizedExpression(parent)) return isPropertyRead(parent);
+  return (
+    ts.isPropertyAccessExpression(parent) &&
+    parent.expression === node &&
+    !(ts.isCallExpression(parent.parent) && parent.parent.expression === parent)
+  );
+};
 
 // A function that a call passes as an object, or an arrow or a generator that a name holds which a
 // call passes, that the script makes once. A plain function that a name holds is a heap function.

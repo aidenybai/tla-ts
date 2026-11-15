@@ -25992,4 +25992,25 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("reads a property of a function expression in place", () => {
+    const getSource = (expected: string) => `
+      const box = { size: 0 };
+      const kind = typeof function* () {}.prototype;
+      const name = function named() {}.name;
+      box.size = 1;
+      const read = [kind, name].join();
+      if (read !== "${expected}") throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("object,named"))).failure).toBeUndefined();
+    });
+
+    it("rejects a generator's prototype as undefined", async () => {
+      expect((await checkModel(getSource("undefined,named"))).failure?.message).toContain(
+        "object,named",
+      );
+    });
+  });
 });
