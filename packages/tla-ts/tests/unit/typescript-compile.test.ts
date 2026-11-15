@@ -43772,4 +43772,38 @@ describe("BigInts", () => {
       ).toContain("0,1,true,true");
     });
   });
+
+  describe("names why it can't make a method of an object literal that runs more than once", () => {
+    it("stops at a getter that reads its function's locals", () => {
+      expect(() =>
+        compile(`
+          const make = (label: string) => ({
+            get name() {
+              return label;
+            },
+          });
+          const first = make("a");
+          const second = make("b");
+          if (first.name === second.name) throw new Error("same");
+        `),
+      ).toThrow("reads the locals of its function in an object literal that runs more than once");
+    });
+
+    it("stops at a generator method", () => {
+      expect(() =>
+        compile(`
+          const make = () => ({
+            *values() {
+              yield 1;
+            },
+          });
+          const first = make();
+          const second = make();
+          if (first === second) throw new Error("same");
+        `),
+      ).toThrow(
+        "tla-ts can't make a generator method in an object literal that runs more than once",
+      );
+    });
+  });
 });

@@ -696,8 +696,30 @@ export const translateObject = (
         context,
       );
     }
-    throw new TlaTypeScriptError("Unsupported object member", property);
+    throw new TlaTypeScriptError(getMemberStop(property, node), property);
   }, identifier("EmptyObject"));
+};
+
+// Why tla-ts can't make a member of an object literal: a method or an accessor of a literal that
+// runs more than once is an object of its own each time, which tla-ts makes only where it reads
+// none of the locals of the function around it and isn't a generator.
+const getMemberStop = (
+  property: ts.ObjectLiteralElementLike,
+  literal: ts.ObjectLiteralExpression,
+) => {
+  if (
+    !(ts.isMethodDeclaration(property) || ts.isAccessor(property)) ||
+    property.body === undefined ||
+    isOnce(literal)
+  ) {
+    return "Unsupported object member";
+  }
+  if (ts.isMethodDeclaration(property) && property.asteriskToken !== undefined) {
+    return "tla-ts can't make a generator method in an object literal that runs more than once";
+  }
+  return ts.findAncestor(literal, ts.isFunctionLike) === undefined
+    ? "tla-ts can't make a method or an accessor in an object literal that a loop runs again"
+    : "tla-ts can't make a method or an accessor that reads the locals of its function in an object literal that runs more than once";
 };
 
 // A function's or a class's name: its own, or that of the binding its definition initializes,
