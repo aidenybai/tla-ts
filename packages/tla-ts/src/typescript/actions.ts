@@ -13043,24 +13043,34 @@ export const translateJoined = (
         ? path.scope.bindings.get(entry[0]) === entry[1] || changed.includes(entry[0])
         : !isVarInside(entry[0]),
     );
-  // What follows holds the functions held before, which the operator can't take, so each exit holds
-  // the same ones for each name that code after the statement can read. That leaves out the names
-  // that the statement declares and that don't outlive it, and those of the functions it called.
-  const isReadAfter = (symbol: ts.Symbol) => {
-    const declaration = symbol.valueDeclaration;
-    if (declaration === undefined) return true;
-    if (ts.findAncestor(declaration, (ancestor) => ancestor === node) !== undefined) {
-      return isVarInside(symbol);
-    }
-    const owner = ts.findAncestor(declaration.parent, ts.isFunctionLike);
+  // A name of a function that the statement calls, such as a parameter that a callback binds, is out
+  // of scope after the call, where no function that it makes reads it.
+  const isCalleeLocal = (symbol: ts.Symbol) => {
+    const owner =
+      symbol.valueDeclaration && ts.findAncestor(symbol.valueDeclaration.parent, ts.isFunctionLike);
     return (
-      owner === undefined || ts.findAncestor(node, (ancestor) => ancestor === owner) !== undefined
+      owner !== undefined &&
+      ts.findAncestor(node, (ancestor) => ancestor === owner) === undefined &&
+      findNodes(owner, ts.isIdentifier).every(
+        (name) =>
+          getSymbol(name, context.checker) !== symbol ||
+          ts.findAncestor(name.parent, ts.isFunctionLike) === owner,
+      )
     );
   };
+  // What follows holds the functions held before, which the operator can't take, so each exit holds
+  // the same ones, apart from those of names that the statement declares, or that the functions it
+  // calls declare, and that don't outlive it.
   const isHeldAsBefore = (functions: Map<ts.Symbol, FunctionNode>) =>
-    [...new Set([...path.scope.functions.keys(), ...functions.keys()])].every(
-      (symbol) =>
-        !isReadAfter(symbol) || functions.get(symbol) === path.scope.functions.get(symbol),
+    [...path.scope.functions].every((entry) => functions.get(entry[0]) === entry[1]) &&
+    [...functions].every(
+      (entry) =>
+        path.scope.functions.get(entry[0]) === entry[1] ||
+        (entry[0].valueDeclaration !== undefined &&
+          (ts.findAncestor(entry[0].valueDeclaration, (ancestor) => ancestor === node) !==
+            undefined ||
+            isCalleeLocal(entry[0])) &&
+          !isVarInside(entry[0])),
     );
   const exits: { path: Path; value?: Expression }[] = [];
   const joined = translateWith((inner, value) => {
