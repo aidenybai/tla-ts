@@ -2205,6 +2205,34 @@ if (!Object.is(text, "${text}")) throw new Error(text);
     });
   });
 
+  describe("runs the statements of a generator's loop again at each step", () => {
+    it.each([
+      ["an increment", "i++;", "0,1,2", "0,1,1"],
+      ["an increment in a test that breaks", "if (++i > 9) break;", "0,1,2", "0,1,1"],
+      [
+        "an increment in a test that throws",
+        'try {\n      if (i++ % 2 === 0) throw new Error("odd");\n    } catch {\n      i += 10;\n    }',
+        "0,11,12",
+        "0,11,11",
+      ],
+    ])("with %s", async (_name, body, expected, wrong) => {
+      const getSource = (text: string) => `
+function* steps(): Generator<number> {
+  let i = 0;
+  while (true) {
+    yield i;
+    ${body}
+  }
+}
+const iterator = steps();
+const text = [iterator.next().value, iterator.next().value, iterator.next().value].join();
+if (!Object.is(text, "${text}")) throw new Error(text);
+`;
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+      expect((await checkModel(getSource(wrong))).failure?.message).toContain(expected);
+    });
+  });
+
   it("runs an assignment in a unary operator's operand first", async () => {
     const getSource = (negated: number, voided: number) => `
       let x = 0;

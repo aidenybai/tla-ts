@@ -16293,6 +16293,32 @@ export const translateStatements = (
   }
   if (statements.length === 0) return frame.next(path);
   const statement = statements[0];
+  // What an assignment or an increment in the statement gave belongs to this run of it, so no path
+  // that leaves it keeps that for a later run. A call's result stays, as the objects it made, such
+  // as an array whose iterator reads its elements later, still hold it.
+  const isOwn = (node: ts.Node) =>
+    isAssignment(node) && ts.findAncestor(node, (ancestor) => ancestor === statement) !== undefined;
+  const leave = (inner: Path): Path =>
+    [...inner.scope.results.keys()].some(isOwn)
+      ? {
+          ...inner,
+          scope: {
+            ...inner.scope,
+            results: new Map([...inner.scope.results].filter((entry) => !isOwn(entry[0]))),
+          },
+        }
+      : inner;
+  const breakTo = frame.breakTo;
+  const continueTo = frame.continueTo;
+  const throwTo = frame.throwTo;
+  const statementFrame: Frame = {
+    ...frame,
+    next: (inner) => frame.next(leave(inner)),
+    exit: (inner, value) => frame.exit(leave(inner), value),
+    breakTo: breakTo && ((inner) => breakTo(leave(inner))),
+    continueTo: continueTo && ((inner) => continueTo(leave(inner))),
+    throwTo: throwTo && ((inner, thrown) => throwTo(leave(inner), thrown)),
+  };
   // A statement that reads a built-in that the script may change on the global object runs only
   // where the global object still holds it.
   const globals = new Set<string>();
@@ -16416,13 +16442,13 @@ export const translateStatements = (
         unboundReads[0],
       );
     }
-    return throwError("ReferenceError", path, first, context, frame);
+    return throwError("ReferenceError", path, first, context, statementFrame);
   }
   const continueWith = (inner: Path) =>
-    translateStatements(statements.slice(1), inner, context, frame);
+    translateStatements(statements.slice(1), leave(inner), context, frame);
   if (ts.isBlock(statement)) {
     return translateStatements(statement.statements, path, context, {
-      ...frame,
+      ...statementFrame,
       next: continueWith,
     });
   }
@@ -16440,7 +16466,7 @@ export const translateStatements = (
   getCalls(statement).forEach((call) => rejectDeclaredCall(call, context));
   const invalidRegExp = evaluated === undefined ? undefined : getInvalidRegExp(evaluated, context);
   if (invalidRegExp !== undefined) {
-    return throwError("SyntaxError", path, invalidRegExp, context, frame);
+    return throwError("SyntaxError", path, invalidRegExp, context, statementFrame);
   }
   // A statement that reads a name that no declaration binds, or a let before its declaration runs,
   // before anything else it evaluates runs, throws a ReferenceError there, as does one that first
@@ -16490,7 +16516,7 @@ export const translateStatements = (
       ? undefined
       : (getUnresolvedRead(evaluated, context, isThrowing) ?? written ?? loopRead);
   if (unresolved !== undefined) {
-    const thrown = throwError("ReferenceError", path, unresolved, context, frame);
+    const thrown = throwError("ReferenceError", path, unresolved, context, statementFrame);
     // A pattern gets its first element through the array's iterator, or its first property
     // through the object's prototypes, and a throw in a for-of looks up its iterator's return.
     const getPatterns = (node: ts.Node): ts.Expression[] =>
@@ -16566,7 +16592,7 @@ export const translateStatements = (
       (assigned !== undefined &&
         ts.isBinaryExpression(assigned) &&
         ts.isArrayLiteralExpression(assigned.left));
-    const thrown = throwTypeError(path, leadingPrivate, context, frame);
+    const thrown = throwTypeError(path, leadingPrivate, context, statementFrame);
     return ifThenElse(
       translateHasPrivate(privateMember, leadingPrivate.expression, path.scope, context),
       checked,
@@ -16625,7 +16651,7 @@ export const translateStatements = (
       frame,
     );
   if (paused !== undefined && ts.isAwaitExpression(paused)) {
-    return translateAwait(paused, path, context, frame, (after, value) =>
+    return translateAwait(paused, path, context, statementFrame, (after, value) =>
       withResult(after, paused, value),
     );
   }
@@ -16634,14 +16660,14 @@ export const translateStatements = (
     paused !== undefined &&
     !(ts.isExpressionStatement(statement) && skipCasts(statement.expression) === paused)
   ) {
-    return translateYield(paused, path, context, frame, (after, sent) =>
+    return translateYield(paused, path, context, statementFrame, (after, sent) =>
       withResult(after, paused, sent ?? getUndefined(context)),
     );
   }
   const hoistedCall = getHoistedCall(statement, path, context);
   if (hoistedCall !== undefined) {
     return allocate(hoistedCall.call, path, context, (allocated) =>
-      translateCallStatement(hoistedCall.call, allocated, context, frame, (after, value) =>
+      translateCallStatement(hoistedCall.call, allocated, context, statementFrame, (after, value) =>
         translateStatements(
           statements,
           withLeadingResults(hoistedCall, allocated, after, value, context),
@@ -16679,7 +16705,7 @@ export const translateStatements = (
           context,
           frame,
         ),
-      (next) => runBranch(branch.node, path, context, frame, next),
+      (next) => runBranch(branch.node, path, context, statementFrame, next),
     );
   }
   const hoisted = getHoistedAssignment(statement, path, context);
@@ -16688,7 +16714,7 @@ export const translateStatements = (
       ? []
       : getEarlierReads(hoisted, evaluated, path.scope, context);
   if (hoisted !== undefined) {
-    return runAssignment(hoisted, path, context, frame, (after, value) =>
+    return runAssignment(hoisted, path, context, statementFrame, (after, value) =>
       translateStatements(
         statements,
         {
@@ -16710,7 +16736,7 @@ export const translateStatements = (
       read,
       translateExpression(read, path.scope, context),
     ]);
-    return runAssignment(increment.node, path, context, frame, (after, value) =>
+    return runAssignment(increment.node, path, context, statementFrame, (after, value) =>
       translateStatements(
         statements,
         {
@@ -16761,8 +16787,8 @@ export const translateStatements = (
         frame,
       );
     return isGetterRead(hoistedRead, context) && !isProxyOperation(hoistedRead, context)
-      ? runGetterRead(hoistedRead, path, context, frame, withRead)
-      : runProxyOperation(hoistedRead, path, context, frame, withRead);
+      ? runGetterRead(hoistedRead, path, context, statementFrame, withRead)
+      : runProxyOperation(hoistedRead, path, context, statementFrame, withRead);
   }
   // A spread gathers what the iterator gives, as Array.from does.
   const spread = getHoistedSpread(statement, path, context);
@@ -16788,7 +16814,7 @@ export const translateStatements = (
             translateExpression(spread.expression, current.scope, context),
             current,
             context,
-            frame,
+            statementFrame,
             rest,
           )
         : translateGeneratorConsumer(
@@ -16803,11 +16829,11 @@ export const translateStatements = (
                 )
               : current,
             context,
-            frame,
+            statementFrame,
             rest,
           );
     return ts.isCallExpression(made) && !path.scope.results.has(made)
-      ? translateCallStatement(made, path, context, frame, (after, value) =>
+      ? translateCallStatement(made, path, context, statementFrame, (after, value) =>
           gather({
             ...after,
             scope: {
@@ -16821,23 +16847,30 @@ export const translateStatements = (
   const converted = getHoistedConversion(statement, path, context);
   if (converted !== undefined) {
     const node = converted.node;
-    return runConversion(node, converted.conversion, path, context, frame, (after, value) => {
-      const assigned = isCompoundAssignment(node)
-        ? assign(node.left, after, context, () => value)
-        : after;
-      return translateStatements(
-        statements,
-        {
-          ...assigned,
-          scope: {
-            ...assigned.scope,
-            results: new Map([...assigned.scope.results, [node, value]]),
+    return runConversion(
+      node,
+      converted.conversion,
+      path,
+      context,
+      statementFrame,
+      (after, value) => {
+        const assigned = isCompoundAssignment(node)
+          ? assign(node.left, after, context, () => value)
+          : after;
+        return translateStatements(
+          statements,
+          {
+            ...assigned,
+            scope: {
+              ...assigned.scope,
+              results: new Map([...assigned.scope.results, [node, value]]),
+            },
           },
-        },
-        context,
-        frame,
-      );
-    });
+          context,
+          frame,
+        );
+      },
+    );
   }
 
   if (
@@ -16858,7 +16891,7 @@ export const translateStatements = (
           scope: { ...inner.scope, bindings: new Map([...inner.scope.bindings, [symbol, ref]]) },
         },
         context,
-        frame,
+        statementFrame,
         continueWith,
       );
     });
@@ -16871,15 +16904,16 @@ export const translateStatements = (
         statement.declarationList.declarations,
         path,
         context,
-        frame,
-        (inner, innerFrame) => translateStatements(statements.slice(1), inner, context, innerFrame),
+        statementFrame,
+        (inner, innerFrame) =>
+          translateStatements(statements.slice(1), leave(inner), context, innerFrame),
       );
     }
     return translateDeclarations(
       statement.declarationList.declarations,
       path,
       context,
-      frame,
+      statementFrame,
       continueWith,
     );
   }
@@ -16891,7 +16925,8 @@ export const translateStatements = (
           statement,
           allocated.scope,
           context,
-          (branch) => translateStatements([branch], allocated, context, { ...frame, next }),
+          (branch) =>
+            translateStatements([branch], allocated, context, { ...statementFrame, next }),
           () => next(allocated),
         ),
       ),
@@ -16899,21 +16934,34 @@ export const translateStatements = (
   }
   if (ts.isReturnStatement(statement)) {
     const returned = statement.expression;
-    if (returned === undefined) return frame.exit(path);
-    if (frame.inlining.size === 0) {
+    if (returned === undefined) return statementFrame.exit(path);
+    if (statementFrame.inlining.size === 0) {
       throw new TlaTypeScriptError("Actions can't return a value", statement);
     }
     if (getIntlError(skipCasts(returned), context) !== undefined) {
-      return translateIntlError(skipCasts(returned), path, context, frame);
+      return translateIntlError(skipCasts(returned), path, context, statementFrame);
     }
     return allocate(returned, path, context, (inner) => {
       const constructed = getCast(returned);
       if (isPromiseConstruction(constructed, context)) {
-        return translatePromiseConstruction(constructed, inner, context, frame, frame.exit);
+        return translatePromiseConstruction(
+          constructed,
+          inner,
+          context,
+          statementFrame,
+          statementFrame.exit,
+        );
       }
       const constructor = getConstructorRun(returned, context);
       if (constructor !== undefined && ts.isNewExpression(returned)) {
-        return translateConstruction(returned, constructor, inner, context, frame, frame.exit);
+        return translateConstruction(
+          returned,
+          constructor,
+          inner,
+          context,
+          statementFrame,
+          statementFrame.exit,
+        );
       }
       if (
         ts.isCallExpression(returned) &&
@@ -16924,28 +16972,34 @@ export const translateStatements = (
           isStatementResult(returned, inner, context) ||
           isRemoving(returned, context))
       ) {
-        return translateCallStatement(returned, inner, context, frame, frame.exit);
+        return translateCallStatement(
+          returned,
+          inner,
+          context,
+          statementFrame,
+          statementFrame.exit,
+        );
       }
       return throwReadError(
         returned,
         inner,
         context,
-        frame,
-        frame.exit(inner, translateExpression(returned, inner.scope, context)),
+        statementFrame,
+        statementFrame.exit(inner, translateExpression(returned, inner.scope, context)),
       );
     });
   }
   if (ts.isBreakStatement(statement)) {
-    if (frame.breakTo === undefined || statement.label !== undefined) {
+    if (statementFrame.breakTo === undefined || statement.label !== undefined) {
       throw new TlaTypeScriptError("Unsupported break", statement);
     }
-    return frame.breakTo(path);
+    return statementFrame.breakTo(path);
   }
   if (ts.isContinueStatement(statement)) {
-    if (frame.continueTo === undefined || statement.label !== undefined) {
+    if (statementFrame.continueTo === undefined || statement.label !== undefined) {
       throw new TlaTypeScriptError("Unsupported continue", statement);
     }
-    return frame.continueTo(path);
+    return statementFrame.continueTo(path);
   }
   // A throw makes the objects of what it throws first, but an error outside the heap, which
   // makes none. A new whose constructor runs code runs it as a statement, and throws what it makes.
@@ -16963,9 +17017,9 @@ export const translateStatements = (
       (allocated) => {
         const throwValue = (after: Path, value: Expression, isGenerator = false) => {
           const uncaught = translateThrow(statement, after.scope, context);
-          return frame.throwTo === undefined
+          return statementFrame.throwTo === undefined
             ? leaf(uncaught)
-            : frame.throwTo(after, { value, uncaught, isGenerator });
+            : statementFrame.throwTo(after, { value, uncaught, isGenerator });
         };
         // A generator object that a call makes or a name holds, which tla-ts follows as it compiles,
         // to a catch's array pattern.
@@ -16974,8 +17028,13 @@ export const translateStatements = (
             ? getCreatedGenerator(thrown, allocated, context)
             : undefined;
         if (created !== undefined && ts.isCallExpression(thrown)) {
-          return translateGeneratorCall(thrown, created, allocated, context, frame, (after, ref) =>
-            throwValue(after, ref ?? getUndefined(context), true),
+          return translateGeneratorCall(
+            thrown,
+            created,
+            allocated,
+            context,
+            statementFrame,
+            (after, ref) => throwValue(after, ref ?? getUndefined(context), true),
           );
         }
         if (
@@ -16987,7 +17046,7 @@ export const translateStatements = (
         }
         return run === undefined
           ? throwValue(allocated, translateThrown(statement.expression, allocated.scope, context))
-          : translateConstruction(thrown, run, allocated, context, frame, (after, value) =>
+          : translateConstruction(thrown, run, allocated, context, statementFrame, (after, value) =>
               throwValue(after, value ?? getUndefined(context)),
             );
       },
@@ -17003,7 +17062,7 @@ export const translateStatements = (
       path,
       context,
       continueWith,
-      (next) => translateTry(statement, path, context, frame, next),
+      (next) => translateTry(statement, path, context, statementFrame, next),
       statement.catchClause !== undefined &&
         heap !== undefined &&
         path.mutable.has(heap) &&
@@ -17020,7 +17079,11 @@ export const translateStatements = (
           allocated.scope,
           context,
           (clause) =>
-            translateStatements(clause, allocated, context, { ...frame, next, breakTo: next }),
+            translateStatements(clause, allocated, context, {
+              ...statementFrame,
+              next,
+              breakTo: next,
+            }),
           () => next(allocated),
         ),
       ),
@@ -17035,7 +17098,7 @@ export const translateStatements = (
       : undefined;
   const assigned = assignment && skipCasts(assignment.right);
   if (assigned !== undefined && getIntlError(assigned, context) !== undefined) {
-    return translateIntlError(assigned, path, context, frame);
+    return translateIntlError(assigned, path, context, statementFrame);
   }
   const assignedBuffer = assigned && getBufferConstruction(assigned, context);
   if (assignment !== undefined && assigned !== undefined && assignedBuffer !== undefined) {
@@ -17044,7 +17107,7 @@ export const translateStatements = (
       assignedBuffer,
       path,
       context,
-      frame,
+      statementFrame,
       (after, value) =>
         shareHeap(
           assign(assignment.left, after, context, () => value),
@@ -17055,26 +17118,31 @@ export const translateStatements = (
   }
   const dropped = ts.isExpressionStatement(statement) ? skipCasts(statement.expression) : undefined;
   if (dropped !== undefined && getIntlError(dropped, context) !== undefined) {
-    return translateIntlError(dropped, path, context, frame);
+    return translateIntlError(dropped, path, context, statementFrame);
   }
   const droppedBuffer = dropped && getBufferConstruction(dropped, context);
   if (dropped !== undefined && droppedBuffer !== undefined) {
-    return translateNewBufferStatement(dropped, droppedBuffer, path, context, frame, (after) =>
-      shareHeap(after, context, continueWith),
+    return translateNewBufferStatement(
+      dropped,
+      droppedBuffer,
+      path,
+      context,
+      statementFrame,
+      (after) => shareHeap(after, context, continueWith),
     );
   }
   if (ts.isExpressionStatement(statement)) {
     return allocate(statement.expression, path, context, (inner) =>
-      translateExpressionStatement(statement.expression, inner, context, frame, (after) =>
+      translateExpressionStatement(statement.expression, inner, context, statementFrame, (after) =>
         shareHeap(after, context, continueWith),
       ),
     );
   }
   if (ts.isForOfStatement(statement) && statement.awaitModifier !== undefined) {
-    return translateForAwait(statement, path, context, frame, continueWith);
+    return translateForAwait(statement, path, context, statementFrame, continueWith);
   }
   if (ts.isForOfStatement(statement) && isTakingFromGenerators(statement, context)) {
-    return translateForOfTaken(statement, path, context, frame, continueWith);
+    return translateForOfTaken(statement, path, context, statementFrame, continueWith);
   }
   if (
     ts.isForOfStatement(statement) &&
@@ -17083,10 +17151,10 @@ export const translateStatements = (
       (isBuiltInIteratorType(statement.expression, context) &&
         !ts.isCallExpression(getCast(statement.expression))))
   ) {
-    return translateForOfGenerator(statement, path, context, frame, continueWith);
+    return translateForOfGenerator(statement, path, context, statementFrame, continueWith);
   }
   if (ts.isIterationStatement(statement, false)) {
-    return translateLoop(statement, path, context, frame, continueWith);
+    return translateLoop(statement, path, context, statementFrame, continueWith);
   }
   // A function declaration runs nothing where it stands: calls find the function it declares, and
   // one without a body, such as setTimeout, the host defines.
