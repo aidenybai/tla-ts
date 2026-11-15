@@ -4921,7 +4921,7 @@ export const inlineValues = (
   }
   const bound = allocateArguments(
     callee,
-    values,
+    tuple(values),
     callee,
     bindValues(getParameters(callee), values, path.scope, context),
     context,
