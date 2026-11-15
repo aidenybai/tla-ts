@@ -44059,15 +44059,13 @@ describe("BigInts", () => {
       expect(result.failure).toBeUndefined();
     });
 
-    it("stops at a weak map, which the heap doesn't hold", async () => {
+    it("tells a weak map that the heap holds from an array", async () => {
       const result = await checkModel(`
         const map: unknown = new WeakMap<object, number>();
         const object: unknown = {};
         if (Array.isArray(map) || Array.isArray(object)) throw new Error("array");
       `);
-      expect(result.failure?.message).toContain(
-        "tla-ts can't tell an array off the heap from a map",
-      );
+      expect(result.failure).toBeUndefined();
     });
   });
 
@@ -44240,14 +44238,12 @@ describe("BigInts", () => {
       );
     });
 
-    it("stops at a weak map, which the heap doesn't hold", async () => {
+    it("reads a weak map that the heap holds as a weak map", async () => {
       const result = await checkModel(`
         const map: any = new WeakMap();
         if (map.length !== undefined) throw new Error("array");
       `);
-      expect(result.failure?.message).toContain(
-        "tla-ts can't tell an array off the heap from a map",
-      );
+      expect(result.failure).toBeUndefined();
     });
   });
 
@@ -44323,6 +44319,39 @@ describe("BigInts", () => {
         (await checkModel(getSource("true,true,false,true,false,true,false,false"))).failure
           ?.message,
       ).toContain("true,true,false,true,true,true,true,false");
+    });
+  });
+
+  describe("tests a key of a weak map or a weak set whose type doesn't tell what it is with in", () => {
+    const getSource = (expected: string) => `
+      const has = (value: object, key: string) => key in value;
+      const map = new WeakMap<object, number>();
+      const set = new WeakSet<object>();
+      const key = {};
+      map.set(key, 1);
+      set.add(key);
+      const log = [
+        has(map, "get"),
+        has(map, "size"),
+        has(set, "add"),
+        has(set, "get"),
+        map.get(key),
+        set.has(key),
+        set.has({}),
+      ].join(",");
+      if (log !== "${expected}") throw new Error(log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("true,false,true,false,1,true,false"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects a weak map's method as missing", async () => {
+      expect(
+        (await checkModel(getSource("false,false,true,false,1,true,false"))).failure?.message,
+      ).toContain("true,false,true,false,1,true,false");
     });
   });
 });

@@ -209,6 +209,7 @@ import {
   isRegExpArray,
   isSequenceType,
   isUntold,
+  isCollectionName,
   mayBeSequenceType,
   translateUnknown,
   isArrayConstruction,
@@ -4285,7 +4286,7 @@ export const translateNode = (
   if (
     ts.isNewExpression(node) &&
     context.heapCollections.has(node) &&
-    (["Set", "Map"].includes(getBuiltIn(node.expression, context) ?? "") ||
+    (isCollectionName(getBuiltIn(node.expression, context) ?? "") ||
       isNewSubclassCollection(node, context))
   ) {
     const made = scope.allocated.get(node);

@@ -1724,6 +1724,7 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
     const keys = isOrderedCollection(node, context)
       ? translateNewKeys(node, scope, context)
       : undefined;
+    const builtIn = getBuiltIn(node.expression, context) ?? "";
     return useJavaScript(
       "Allocate",
       [
@@ -1731,19 +1732,13 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
         useJavaScript(
           keys === undefined ? "CollectionObject" : "OrderedCollectionObject",
           [
-            isNewSubclassCollection(node, context)
+            isNewSubclassCollection(node, context) || !isCollectionName(builtIn)
               ? useJavaScript(
                   "Get",
                   [heap, translateExpression(node.expression, scope, context), string("prototype")],
                   context,
                 )
-              : translateBuiltInValue(
-                  getBuiltIn(node.expression, context) === "Map"
-                    ? "Map.prototype"
-                    : "Set.prototype",
-                  node,
-                  context,
-                ),
+              : translateBuiltInValue(`${builtIn}.prototype`, node, context),
             translateNew(node, scope, context),
             ...(keys === undefined ? [] : [keys, boolean(getCollection(node, context) === "Map")]),
           ],
@@ -4177,8 +4172,7 @@ const isComparedArgument = (call: ts.CallExpression, position: number, context: 
 const isFreshCollection = (node: ts.Node | undefined, context: Context) =>
   node !== undefined &&
   (ts.isArrayLiteralExpression(node) ||
-    (ts.isNewExpression(node) &&
-      ["Set", "Map"].includes(getBuiltIn(node.expression, context) ?? "")) ||
+    (ts.isNewExpression(node) && isCollectionName(getBuiltIn(node.expression, context) ?? "")) ||
     isNewSubclassCollection(node, context));
 
 // A new of a class that extends a collection, whose instance the heap always holds, as the class's
@@ -5351,8 +5345,8 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
   };
   const isReachedNode = (node: ts.Node) =>
     ts.findAncestor(node, (ancestor) => isReached.has(ancestor)) !== undefined;
-  // A map off the heap may be the same TLA+ value as an array, so a script that reads a value by its
-  // kind holds its maps on the heap.
+  // A map off the heap may be the same TLA+ value as an array, and a weak set or map the same as a
+  // set or a map, so a script that reads a value by its kind holds them on the heap.
   const readsKinds = expressions.some((node) => isReachedNode(node) && isReadByKind(node));
   // A parameter or a field whose array a function changes in place starts a group, as does a
   // variable whose array a write gives a hole.
@@ -5404,7 +5398,8 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
         (ts.isNewExpression(node) &&
           isFreshCollection(node, context) &&
           (isOrderedCollection(node, context) ||
-            (readsKinds && getCollection(node, context) === "Map"))))
+            (readsKinds &&
+              ["Map", "WeakSet", "WeakMap"].includes(getCollection(node, context) ?? "")))))
     ) {
       grow([], [], [node]).forEach((inner) => found.add(inner));
     }
