@@ -45299,4 +45299,134 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("cbctor"))).failure?.message).toContain("bcctor");
     });
   });
+  describe("runs a helper before a const that a later call's callback reads", () => {
+    const getSource = (expected: string) => `
+      let log = "";
+      const run = (name: string, call: () => unknown) => {
+        try {
+          call();
+        } catch (error) {
+          log += name + (error as Error).message;
+        }
+      };
+      run("e", () => {
+        throw new Error("first");
+      });
+      const target = [5, 6, 7];
+      const names = {
+        get() {
+          return "s";
+        },
+      };
+      run(names.get(), () => {
+        target[0] = 1;
+      });
+      const result = log + target.join("-");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("efirst1-6-7"))).failure).toBeUndefined();
+    });
+
+    it("rejects a wrong log", async () => {
+      expect((await checkModel(getSource("efirst5-6-7"))).failure?.message).toContain(
+        "efirst1-6-7",
+      );
+    });
+  });
+
+  describe("throws where an assignment or a declaration reads a strict function's caller", () => {
+    const getSource = (expected: string) => `
+      function strict() {
+        "use strict";
+      }
+      let temp: unknown = 0;
+      let log = "";
+      try {
+        temp = strict.caller;
+      } catch (error) {
+        log += (error as Error).name;
+      }
+      try {
+        temp = strict.arguments;
+      } catch (error) {
+        log += (error as Error).name;
+      }
+      try {
+        const other = strict.caller;
+      } catch (error) {
+        log += (error as Error).name;
+      }
+      const result = log + String(temp);
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("TypeErrorTypeErrorTypeError0"))).failure).toBeUndefined();
+    });
+
+    it("rejects a wrong log", async () => {
+      expect((await checkModel(getSource("TypeErrorTypeError0"))).failure?.message).toContain(
+        "TypeErrorTypeErrorTypeError0",
+      );
+    });
+  });
+
+  describe("reads a const through a function only after its declaration", () => {
+    const getSource = (expected: number) => `
+      function getLate() {
+        return late + 1;
+      }
+      const getDouble = () => late * 2;
+      const late = 2;
+      const total = getLate() + getDouble();
+      if (total !== ${expected}) throw new Error(String(total));
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(7))).failure).toBeUndefined();
+    });
+
+    it("rejects a wrong total", async () => {
+      await expect(checkModel(getSource(8))).rejects.toThrow("7");
+    });
+
+    it("stops where a function reads a let or a const before its declaration", async () => {
+      const message =
+        "tla-ts can't throw the ReferenceError of reading late before its declaration";
+      await expect(
+        checkModel(`
+          function getLate() {
+            return late + 1;
+          }
+          const early = getLate();
+          const late = 2;
+        `),
+      ).rejects.toThrow(message);
+      expect(
+        (
+          await checkModel(`
+            function double() {
+              return late * 2;
+            }
+            let early = 0;
+            early = double();
+            let late = 3;
+          `)
+        ).failure?.message,
+      ).toContain(message);
+      await expect(
+        checkModel(`
+          function count(steps: number): number {
+            return steps === 0 ? late : count(steps - 1);
+          }
+          const early = count(2);
+          const late = 3;
+        `),
+      ).rejects.toThrow(
+        "tla-ts can't call a function that reads a let or a const before it's declared",
+      );
+    });
+  });
 });

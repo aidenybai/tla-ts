@@ -12,6 +12,7 @@ import {
   isDeclarationOnly,
 } from "./context";
 import { TlaTypeScriptError } from "../errors";
+import { type Scope } from "./scope";
 import {
   getKind,
   isArrayConstruction,
@@ -491,6 +492,18 @@ export const getReached = (roots: readonly ts.Node[], context: Context) => {
   roots.forEach(visit);
   return reached;
 };
+
+// Whether code, or a function that it names, reads a let or a const of the script whose declaration
+// hasn't run yet, which the state doesn't hold, as a getter of an object that the script makes
+// later may.
+export const readsUninitialized = (roots: readonly ts.Node[], scope: Scope, context: Context) =>
+  scope.uninitialized.size > 0 &&
+  getReached(roots, context).some((reached) =>
+    findNodes(reached, ts.isIdentifier).some((name) => {
+      const symbol = getSymbol(name, context.checker);
+      return symbol !== undefined && scope.uninitialized.has(symbol);
+    }),
+  );
 
 // Whether a node may make an object or a regexp literal, itself or through a function that it
 // names.

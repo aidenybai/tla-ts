@@ -152,7 +152,7 @@ import {
   useJavaScript,
 } from "./javascript";
 import { getNamespaceName, getNamespaceRef } from "./namespaces";
-import { getThisOwner, rejectBeforeDeclaration, type Scope } from "./scope";
+import { getThisOwner, isBeforeDeclaration, rejectBeforeDeclaration, type Scope } from "./scope";
 import { getMappedParameter } from "./actions";
 import {
   apply,
@@ -2678,6 +2678,14 @@ const translateIdentifier = (node: ts.Identifier, scope: Scope, context: Context
   const mapped = getMappedParameter(node, scope, context);
   if (mapped !== undefined) return mapped.value;
   const symbol = getSymbol(node, context.checker);
+  if (symbol !== undefined && isBeforeDeclaration(node, symbol, scope)) {
+    return apply("Assert", [
+      boolean(false),
+      string(
+        `tla-ts can't throw the ReferenceError of reading ${node.text} before its declaration`,
+      ),
+    ]);
+  }
   const held = symbol === undefined ? undefined : scope.functions.get(symbol);
   if (held !== undefined) {
     const value = getFunctionValue(held, context);

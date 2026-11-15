@@ -51,6 +51,9 @@ export interface SharedCall {
   changed: ts.Symbol[];
   // The heap and the variables that it and what it runs read or change, which it takes.
   state: ts.Symbol[];
+  // The lets and consts of the script that its caller hasn't declared yet, which it neither takes
+  // nor gives back, and whose reads throw.
+  uninitialized: ts.Symbol[];
   parameters: OperatorParam[];
   // Whether a call inside its own body, or a body that it runs, calls it.
   isRecursive: boolean;

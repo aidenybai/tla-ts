@@ -40,6 +40,7 @@ import {
   translateLocalStatements,
 } from "./actions";
 import { TlaTypeScriptError } from "../errors";
+import { readsUninitialized } from "./aliasing";
 import { getUncaughtText } from "./exceptions";
 import { translateCondition, translateExpression, translateNegatedCondition } from "./expressions";
 import { type Formula, ifThenElse, letIn, render, leaf } from "./formula";
@@ -700,8 +701,19 @@ export const translateHelperCall = (
       node ?? declaration,
     );
   }
-  const definition = getDefinition(declaration, context);
   const argumentNodes = node?.arguments ?? [];
+  // A definition, compiled once, reads a let or a const as initialized, so a call that runs
+  // before its declaration inlines the body, whose read throws.
+  if (readsUninitialized([declaration, ...argumentNodes], scope, context)) {
+    if (helper === undefined || node === undefined || context.inProgress.has(helper)) {
+      return apply("Assert", [
+        boolean(false),
+        string("tla-ts can't call a function that reads a let or a const before it's declared"),
+      ]);
+    }
+    return inlineCall(helper, argumentNodes, helperScope, context);
+  }
+  const definition = getDefinition(declaration, context);
   if (definition.readsState && isStateModified(scope, context)) {
     if (helper !== undefined && node !== undefined && context.inProgress.has(helper)) {
       return translateStateCall(declaration, helper, node, scope, context);

@@ -11745,6 +11745,23 @@ const throwReadError = (
     : read;
 };
 
+// Throws the TypeError of a read of a function's caller or arguments, which runs %ThrowTypeError%
+// where the function is strict, though nothing reads the value.
+const throwCallerError = (
+  expression: ts.Expression,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  read: Formula,
+) => {
+  const accessed = skipCasts(expression);
+  return ts.isPropertyAccessExpression(accessed) &&
+    ["caller", "arguments"].includes(accessed.name.text) &&
+    context.checker.getTypeAtLocation(accessed.expression).getCallSignatures().length > 0
+    ? throwReadError(expression, path, context, frame, read)
+    : read;
+};
+
 // The constructors that, without arguments, only make an object that nothing but the new sees.
 const EMPTY_CONSTRUCTORS = new Set([
   "Array",
@@ -12475,7 +12492,12 @@ const translateExpressionStatement = (
   ) {
     return translateForeignNew(expression, path, context, frame);
   }
-  return translateWriteStatement(expression, path, context, frame, continueWith);
+  // An assignment reads its right side before it writes, though nothing may read the value it
+  // writes.
+  const written = translateWriteStatement(expression, path, context, frame, continueWith);
+  return ts.isBinaryExpression(expression) && !LOGICAL_OPERATORS.has(expression.operatorToken.kind)
+    ? throwCallerError(expression.right, path, context, frame, written)
+    : written;
 };
 
 interface ImmutableWrite {
@@ -14405,7 +14427,7 @@ const translateCheckedDeclarations = (
         ),
       );
       return removed?.missing === undefined
-        ? bound
+        ? throwCallerError(initializer, allocated, context, frame, bound)
         : ifThenElse(
             removed.missing,
             throwTypeError(allocated, initializer, context, frame),

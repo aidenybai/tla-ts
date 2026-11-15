@@ -386,6 +386,10 @@ const getSharedCall = (
     return undefined;
   }
   const named = new Set(runs.flatMap((run) => run.state));
+  const uninitialized = [...context.variables.keys()].filter(
+    (symbol) =>
+      path.scope.uninitialized.has(symbol) && (named.has(symbol) || changed.includes(symbol)),
+  );
   const held = new Map(
     [...path.scope.functions].filter((entry) => read.includes(entry[0]) || named.has(entry[0])),
   );
@@ -394,6 +398,8 @@ const getSharedCall = (
       shared.captured.length === captured.length &&
       shared.captured.every((symbol) => captured.includes(symbol)) &&
       [...callbacks].every((entry) => shared.callbacks.get(entry[0]) === entry[1]) &&
+      shared.uninitialized.length === uninitialized.length &&
+      shared.uninitialized.every((symbol) => uninitialized.includes(symbol)) &&
       shared.held.size === held.size &&
       [...held].every((entry) => shared.held.get(entry[0]) === entry[1]),
   );
@@ -402,9 +408,22 @@ const getSharedCall = (
   // The operator takes the heap, which is a variable, and only the others that its code may read or
   // change.
   const state = [...context.variables.keys()].filter(
-    (symbol) => symbol === context.heap || named.has(symbol) || changed.includes(symbol),
+    (symbol) =>
+      !uninitialized.includes(symbol) &&
+      (symbol === context.heap || named.has(symbol) || changed.includes(symbol)),
   );
-  return defineShared(callee, { changed, captured, callbacks, held, state }, context);
+  return defineShared(
+    callee,
+    {
+      changed: changed.filter((symbol) => !uninitialized.includes(symbol)),
+      captured,
+      callbacks,
+      held,
+      state,
+      uninitialized,
+    },
+    context,
+  );
 };
 
 // The parameters that take values, not the functions that the operator calls.
@@ -464,7 +483,10 @@ export const defineThrown = (context: Context) =>
 // or what it threw, the message and the place of the throw, and the state that it changed.
 const defineShared = (
   callee: FunctionNode,
-  variant: Pick<SharedCall, "changed" | "captured" | "callbacks" | "held" | "state">,
+  variant: Pick<
+    SharedCall,
+    "changed" | "captured" | "callbacks" | "held" | "state" | "uninitialized"
+  >,
   context: Context,
 ) => {
   const parameters = getParameters(callee);
@@ -497,6 +519,7 @@ const defineShared = (
     // The body runs as inside a try, so that each caller catches or stops at what it throws.
     isCatching: true,
     functions: new Map([...base.functions, ...variant.held, ...variant.callbacks]),
+    uninitialized: new Set(variant.uninitialized),
     // A variable that the operator doesn't take has no binding, so its code can't read it stale.
     bindings: new Map(
       named.flatMap((item): [ts.Symbol, Expression][] =>
