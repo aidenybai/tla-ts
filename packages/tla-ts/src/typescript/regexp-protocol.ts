@@ -2,6 +2,7 @@ import ts from "@typescript/typescript6";
 import type { Expression } from "../ast";
 import { type Frame, getChanged, type Path, throwTypeError, translateJoined } from "./actions";
 import { type Context, getUndefined, skipCasts } from "./context";
+import { isEvery } from "./types";
 import { getConversionFunctions, runToPrimitive } from "./conversions";
 import { translateExpression } from "./expressions";
 import { type Formula, ifThenElse, leaf } from "./formula";
@@ -46,8 +47,22 @@ export interface RegExpProtocolCall {
   values: readonly ts.Expression[];
 }
 
+// Whether a call leaves out the string, or passes a string or a limit of another type than the
+// method's signature takes, which only the method's steps convert.
+const isConverted = (values: readonly ts.Expression[], context: Context) => {
+  const text = values.at(0);
+  const limit = values.at(1);
+  const isTyped = (value: ts.Expression, flags: ts.TypeFlags) =>
+    isEvery(context.checker.getTypeAtLocation(value), flags);
+  return (
+    text === undefined ||
+    !isTyped(text, ts.TypeFlags.StringLike) ||
+    (limit !== undefined && !isTyped(limit, ts.TypeFlags.NumberLike | ts.TypeFlags.Undefined))
+  );
+};
+
 // A call of a regexp's method under a well-known symbol, as rx[Symbol.search](s) where the script
-// writes an exec that it may call, or of RegExp.prototype's, as
+// writes an exec that it may call or the call converts its values, or of RegExp.prototype's, as
 // RegExp.prototype[Symbol.search].call(rx, s), whose receiver may be any object.
 export const getRegExpProtocolCall = (
   node: ts.Node,
@@ -68,7 +83,8 @@ export const getRegExpProtocolCall = (
       getBuiltIn(owner.expression, context) === "RegExp"
     : context.checker.getTypeAtLocation(owner).getSymbol()?.name === "RegExp" &&
       (getExecMethods(node, context).length > 0 ||
-        (method === "split" && getSpeciesMethods(node, context).length > 0));
+        (method === "split" && getSpeciesMethods(node, context).length > 0) ||
+        isConverted(node.arguments, context));
   return isTaken && !node.arguments.some(ts.isSpreadElement)
     ? {
         method,

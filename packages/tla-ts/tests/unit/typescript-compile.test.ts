@@ -32292,6 +32292,36 @@ describe("regular expressions", () => {
     expect((await checkModel(getSource("a3|1"))).failure?.message).toContain("unexpected");
   });
 
+  it("runs a regexp's protocol method as its steps where the call converts its string or its limit", async () => {
+    const getSource = (expected: string) => `
+      const seen: string[] = [];
+      const text = {
+        toString: function () {
+          return "a string";
+        },
+      };
+      // @ts-ignore
+      seen.push(String(/ring/[Symbol.search](text)));
+      // @ts-ignore
+      const matched = /n./[Symbol.match](text);
+      seen.push(matched === null ? "null" : matched[0]);
+      // @ts-ignore
+      seen.push(/d/[Symbol.split]().join(","));
+      try {
+        // @ts-ignore
+        /./[Symbol.split]("", Symbol.split);
+        seen.push("none");
+      } catch (error) {
+        seen.push(error instanceof TypeError ? "type" : "other");
+      }
+      if (seen.join("|") !== "${expected}") throw new Error(seen.join("|"));
+    `;
+    expect((await checkModel(getSource("4|ng|un,efine,|type"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("4|ng|undefined|type"))).failure?.message).toContain(
+      "un,efine,",
+    );
+  });
+
   it("throws a TypeError where Symbol.split's species isn't a constructor or its constructor isn't an object", async () => {
     const getSource = (expected: string) => `
       const seen: string[] = [];
