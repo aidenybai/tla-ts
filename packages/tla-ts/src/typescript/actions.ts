@@ -15211,6 +15211,8 @@ interface LeadingCall {
   spread?: ts.SpreadElement;
   // An increment, which only a statement can run, so nothing after it can run before it.
   increment?: Increment;
+  // A new Promise, whose executor runs as a statement, so nothing after it can run before it.
+  construction?: ts.NewExpression;
 }
 
 // The first call in a node's evaluation order that only statements can run, with the nodes that
@@ -15449,7 +15451,11 @@ const findLeadingCall = (
   }
   if (ts.isNewExpression(node)) {
     const found = inOrder([node.expression, ...(node.arguments ?? [])]);
-    return found.call !== undefined || found.isBlocked ? found : blocked;
+    return found.call !== undefined || found.isBlocked
+      ? found
+      : isPromiseConstruction(node, context)
+        ? { ...blocked, construction: node }
+        : blocked;
   }
   if (ts.isCallExpression(node)) {
     // A call that makes a generator runs first, with what makes its receiver, where instanceof
@@ -15868,6 +15874,34 @@ const getHoistedIncrement = (statement: ts.Statement, path: Path, context: Conte
     throw new TlaTypeScriptError("tla-ts can't run this before what reads what it changes", node);
   }
   return { node, reads: kept };
+};
+
+// The new Promise inside a statement's expression that it evaluates first, other than one that the
+// statement itself runs, which runs as its own statement. Nothing that the statement evaluates
+// before it may read what its executor changes.
+const getHoistedConstruction = (statement: ts.Statement, path: Path, context: Context) => {
+  const evaluated = getEvaluated(statement);
+  if (evaluated === undefined) return undefined;
+  const before: ts.Node[] = [];
+  const node = findLeadingCall(evaluated, before, path, context).construction;
+  const outer = skipCasts(evaluated);
+  if (
+    node === undefined ||
+    node === outer ||
+    (ts.isBinaryExpression(outer) &&
+      outer.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      skipCasts(outer.right) === node)
+  ) {
+    return undefined;
+  }
+  rejectEarlyRun(
+    node,
+    [node],
+    before.filter((inner) => ts.findAncestor(inner, (ancestor) => ancestor === node) === undefined),
+    path,
+    context,
+  );
+  return node;
 };
 
 // The spread that a statement's expression evaluates first of a generator object or an iterator,
@@ -16553,6 +16587,26 @@ export const translateStatements = (
           scope: {
             ...after.scope,
             results: new Map([...after.scope.results, ...kept, [increment.node, value]]),
+          },
+        },
+        context,
+        frame,
+      ),
+    );
+  }
+  const construction = getHoistedConstruction(statement, path, context);
+  if (construction !== undefined) {
+    return translatePromiseConstruction(construction, path, context, frame, (after, value) =>
+      translateStatements(
+        statements,
+        {
+          ...after,
+          scope: {
+            ...after.scope,
+            results: new Map([
+              ...after.scope.results,
+              [construction, value ?? getUndefined(context)],
+            ]),
           },
         },
         context,

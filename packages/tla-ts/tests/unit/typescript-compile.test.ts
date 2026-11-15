@@ -26264,6 +26264,23 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("runs the executor of a new Promise that an expression holds before what follows it", async () => {
+    const source = (expected: string) => `
+      declare function setTimeout(callback: () => void): void;
+      let log = "";
+      const append = (text: string) => {
+        log += text;
+        return text;
+      };
+      const pair = [new Promise(() => append("a")), append("b")];
+      setTimeout(() => {
+        if (\`\${pair[1]} \${log}\` !== "${expected}") throw new Error(\`\${pair[1]} \${log}\`);
+      });
+    `;
+    expect((await checkModel(source("b ab"))).failure).toBeUndefined();
+    expect((await checkModel(source("b ba"))).failure).toBeDefined();
+  });
+
   it("fulfills Promise.any with the first value, or rejects it with an AggregateError", async () => {
     const result = await checkModel(`
       declare function setTimeout(callback: () => void): void;
