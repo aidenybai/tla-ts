@@ -9379,26 +9379,34 @@ const translateShortLoopCall = (
                   ),
             ),
           )
-        : ifThenElse(
-            apply("=", [length, number(0)]),
-            getSeeded(current, getStart(undefined)),
-            runToPrimitive(
-              expression,
-              identifier(fromName),
-              "number",
-              current,
-              context,
-              frame,
-              (after, primitive) =>
-                ifThenElse(
-                  junction("Or", [
-                    useJavaScript("IsSymbol", [primitive], context),
-                    useJavaScript("IsBigInt", [primitive], context),
-                  ]),
-                  throwTypeError(after, expression, context, frame),
-                  getSeeded(after, getStart(useJavaScript("ToNumber", [primitive], context))),
+        : // The search runs once, from the start that each way to it gives.
+          translateJoined(
+            expression,
+            current,
+            context,
+            (after, start) => getSeeded(after, start ?? getStart(undefined)),
+            (next) =>
+              ifThenElse(
+                apply("=", [length, number(0)]),
+                next(current, getStart(undefined)),
+                runToPrimitive(
+                  expression,
+                  identifier(fromName),
+                  "number",
+                  current,
+                  context,
+                  frame,
+                  (after, primitive) =>
+                    ifThenElse(
+                      junction("Or", [
+                        useJavaScript("IsSymbol", [primitive], context),
+                        useJavaScript("IsBigInt", [primitive], context),
+                      ]),
+                      throwTypeError(after, expression, context, frame),
+                      next(after, getStart(useJavaScript("ToNumber", [primitive], context))),
+                    ),
                 ),
-            ),
+              ),
           );
   // The value that a search looks for and its fromIndex, which evaluate before the method runs.
   const searchedDefinition = define(
