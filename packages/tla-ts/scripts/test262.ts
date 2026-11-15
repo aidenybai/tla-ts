@@ -256,8 +256,10 @@ const IMPLICIT_ANY_ERRORS = new Set([
 // TypeScript's errors for a value that may be null or undefined.
 const NULLABLE_ERRORS = new Set([2531, 2532, 2533, 2721, 2722, 18047, 18048, 18049]);
 
-// TypeScript's error for a use of a value of type unknown.
+// TypeScript's errors for a use of a value of type unknown, the second where the value is a
+// property's or a call's, such as a String.prototype method that a key stores.
 const UNKNOWN_VALUE_ERROR = 18046;
+const UNKNOWN_CALLEE_ERROR = 2571;
 const ARGUMENT_COUNT_ERROR = 2554;
 
 // The built-ins that tla-ts compiles from their values, not their declared signatures, where a test
@@ -395,6 +397,41 @@ const getCallbackWrites = (checker: ts.TypeChecker, node: ts.Node) => {
     )
     ? writes
     : undefined;
+};
+
+// The values that a variable holds: its initializer's, or where it has none, those that =
+// assigns it.
+const getHeld = (checker: ts.TypeChecker, declaration: ts.VariableDeclaration) => {
+  if (declaration.initializer !== undefined) return [declaration.initializer];
+  const symbol = checker.getSymbolAtLocation(declaration.name);
+  const assigned: ts.Expression[] = [];
+  const visit = (node: ts.Node) => {
+    if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      ts.isIdentifier(node.left) &&
+      checker.getSymbolAtLocation(node.left) === symbol
+    ) {
+      assigned.push(node.right);
+    }
+    ts.forEachChild(node, visit);
+  };
+  if (symbol !== undefined) visit(declaration.getSourceFile());
+  return assigned;
+};
+
+// A variable that holds only what catches bind holds any value, as they do.
+const isCaughtHeld = (checker: ts.TypeChecker, declaration: ts.VariableDeclaration) => {
+  const held = getHeld(checker, declaration);
+  return (
+    held.length > 0 &&
+    held.every((value) => {
+      const caught = checker.getSymbolAtLocation(value)?.valueDeclaration;
+      return (
+        caught !== undefined && ts.isVariableDeclaration(caught) && ts.isCatchClause(caught.parent)
+      );
+    })
+  );
 };
 
 const loosen = () => {
@@ -633,6 +670,22 @@ const loosen = () => {
           ? "this: { [key: string | symbol]: unknown }"
           : "this: { [key: string | symbol]: unknown }, ",
       );
+    }
+    // A value that a catch binds, which TypeScript types as unknown in strict mode and as any
+    // outside it, is any where the test reads it, as a test reads an error's properties, and so is
+    // a variable that holds only such values.
+    const caught =
+      diagnostic.code === UNKNOWN_VALUE_ERROR || diagnostic.code === UNKNOWN_CALLEE_ERROR
+        ? checker.getSymbolAtLocation(node)?.valueDeclaration
+        : undefined;
+    if (
+      caught !== undefined &&
+      ts.isVariableDeclaration(caught) &&
+      ts.isIdentifier(caught.name) &&
+      caught.type === undefined &&
+      (ts.isCatchClause(caught.parent) || isCaughtHeld(checker, caught))
+    ) {
+      edits.set(caught.name.getEnd(), ": any");
     }
     // A test may call new on a function that isn't a constructor, to check that it throws.
     const created = ts.findAncestor(node, ts.isNewExpression);
@@ -1578,16 +1631,13 @@ const annotate = (text: string, path = PROGRAM_PATH) => {
   typeGenerators();
   typeCallbacks();
   for (;;) {
-    const sourceFile = service.getProgram()?.getSourceFile(file.path);
-    // A variable that an empty array literal initializes holds an array, which the fix infers as
-    // unknown where the test only destructures it.
-    const isEmptyArrayName = (node: ts.Node, position: number): boolean =>
-      (ts.isVariableDeclaration(node) &&
-        node.name.getEnd() === position &&
-        node.initializer !== undefined &&
-        ts.isArrayLiteralExpression(node.initializer) &&
-        node.initializer.elements.length === 0) ||
-      (ts.forEachChild(node, (child) => isEmptyArrayName(child, position) || undefined) ?? false);
+    const program = service.getProgram();
+    const sourceFile = program?.getSourceFile(file.path);
+    const checker = program?.getTypeChecker();
+    const getDeclaration = (node: ts.Node, position: number): ts.VariableDeclaration | undefined =>
+      ts.isVariableDeclaration(node) && node.name.getEnd() === position
+        ? node
+        : ts.forEachChild(node, (child) => getDeclaration(child, position));
     const fix = service
       .getSemanticDiagnostics(file.path)
       .values()
@@ -1607,15 +1657,44 @@ const annotate = (text: string, path = PROGRAM_PATH) => {
             .toSorted((left, right) => right.span.start - left.span.start)
             .reduce((current, change) => {
               const inferred = change.newText.replaceAll(/\bany\b/g, "unknown");
-              const isEmptyArray =
-                sourceFile !== undefined && isEmptyArrayName(sourceFile, change.span.start);
+              const declaration =
+                sourceFile === undefined
+                  ? undefined
+                  : getDeclaration(sourceFile, change.span.start);
+              const held =
+                declaration === undefined || checker === undefined
+                  ? []
+                  : getHeld(checker, declaration);
+              // A variable that holds only empty array literals holds an array, which the fix
+              // infers as unknown where the test only destructures it or fills it in a function.
+              const isEmptyArrayHeld =
+                held.length > 0 &&
+                held.every(
+                  (value) => ts.isArrayLiteralExpression(value) && value.elements.length === 0,
+                );
+              // A variable that only numbers are assigned to, which the fix infers as unknown where
+              // a function reads it, holds a number.
+              const isNumberHeld =
+                held.length > 0 &&
+                held.every(
+                  (value) =>
+                    checker !== undefined &&
+                    (checker.getTypeAtLocation(value).flags & ts.TypeFlags.NumberLike) !== 0,
+                );
               return (
                 current.slice(0, change.span.start) +
-                (inferred === ": unknown" && isEmptyArray
-                  ? ": unknown[]"
-                  : isEmptyArray
-                    ? getArrayOfUnion(inferred)
-                    : inferred) +
+                (inferred === ": unknown" &&
+                checker !== undefined &&
+                declaration !== undefined &&
+                isCaughtHeld(checker, declaration)
+                  ? ": any"
+                  : inferred === ": unknown" && isEmptyArrayHeld
+                    ? ": unknown[]"
+                    : isEmptyArrayHeld
+                      ? getArrayOfUnion(inferred)
+                      : inferred === ": unknown" && isNumberHeld
+                        ? ": number"
+                        : inferred) +
                 current.slice(change.span.start + change.span.length)
               );
             }, file.text);
@@ -1682,8 +1761,6 @@ const TYPED_ARRAY_CALLBACK_METHODS = new Set([
 const PROTOCOL_METHODS = new Set(["match", "search", "split", "replace"]);
 // TypeScript's errors for a call with fewer arguments than its signature takes.
 const SHORT_CALL_ERRORS = new Set([ARGUMENT_COUNT_ERROR, 2555]);
-// A call of a value of type unknown, which tla-ts runs where a key stores a String.prototype method.
-const UNKNOWN_CALLEE_ERROR = 2571;
 // A spread argument that TypeScript can't count against a function's parameters, an argument past
 // them, or apply's arguments where the function takes none.
 const SPREAD_CALL_ERRORS = new Set([ARGUMENT_COUNT_ERROR, 2345, 2556]);
