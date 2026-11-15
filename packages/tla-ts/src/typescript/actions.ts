@@ -10743,24 +10743,28 @@ const translateExpressionStatement = (
     if (deleted === undefined) {
       throw new TlaTypeScriptError(`Unsupported statement: ${expression.getText()}`, expression);
     }
+    const canDelete = useJavaScript("CanDelete", [deleted.heap, deleted.ref, deleted.key], context);
     const heap = useJavaScript("Delete", [deleted.heap, deleted.ref, deleted.key], context);
-    return ifThenElse(
-      useJavaScript("CanDelete", [deleted.heap, deleted.ref, deleted.key], context),
+    const continueWithHeap = (after: Expression) =>
       shareHeap(
         {
           ...path,
           scope: {
             ...path.scope,
-            bindings: new Map([...path.scope.bindings, [deleted.symbol, heap]]),
+            bindings: new Map([...path.scope.bindings, [deleted.symbol, after]]),
           },
         },
         context,
         continueWith,
-      ),
-      isStrictCode(expression)
-        ? throwTypeError(path, expression, context, frame)
-        : continueWith(path),
-    );
+      );
+    // Outside strict mode, the heap stays as it was, so the statements after it translate once.
+    return isStrictCode(expression)
+      ? ifThenElse(
+          canDelete,
+          continueWithHeap(heap),
+          throwTypeError(path, expression, context, frame),
+        )
+      : continueWithHeap(ifExpression(canDelete, heap, deleted.heap));
   }
   // A regexp that a statement makes of literals and drops, or an object whose members evaluate
   // nothing, changes nothing.

@@ -36416,4 +36416,18 @@ describe("BigInts", () => {
     expect((await checkModel(getSource("1,16"))).failure).toBeUndefined();
     expect((await checkModel(getSource("17,16"))).failure?.message).toContain("seen 1,16");
   });
+
+  it("runs the statements after each delete that fails outside strict mode once", async () => {
+    const keys = Array.from({ length: 16 }, (_, index) => `key${index}`);
+    const getSource = (expected: string) => `
+      const sealed: { [key: string]: number } = Object.seal({ value: 0 });
+      const open: { [key: string]: number } = {};
+      ${keys.map((key) => `open.${key} = 1;`).join("\n")}
+      ${keys.map((key) => `delete sealed.value;\ndelete open.${key};`).join("\n")}
+      let seen = [Object.keys(sealed).length, Object.keys(open).length].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+    expect((await checkModel(getSource("1,0"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("0,0"))).failure?.message).toContain("seen 1,0");
+  });
 });
