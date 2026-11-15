@@ -31495,6 +31495,40 @@ describe("regular expressions", () => {
     });
   });
 
+  it("passes undefined for the receiver and the string that a call of a regexp's protocol method leaves out", async () => {
+    const getSource = (expected: string) => `
+      const seen: string[] = [];
+      let text: unknown = 0;
+      const fakeRe = {
+        exec: function (value: unknown) {
+          text = value;
+          return null;
+        },
+      };
+      // @ts-ignore
+      seen.push(String(RegExp.prototype[Symbol.search].call(fakeRe)), String(text));
+      try {
+        // @ts-ignore
+        RegExp.prototype[Symbol.match].call();
+        seen.push("none");
+      } catch (error) {
+        seen.push(error instanceof TypeError ? "type" : "other");
+      }
+      try {
+        // @ts-ignore
+        RegExp.prototype[Symbol.split].call();
+        seen.push("none");
+      } catch (error) {
+        seen.push(error instanceof TypeError ? "type" : "other");
+      }
+      if (seen.join("|") !== "${expected}") throw new Error(seen.join("|"));
+    `;
+    expect((await checkModel(getSource("-1|undefined|type|type"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("-1|undefined|type|none"))).failure?.message).toContain(
+      "-1|undefined|type|type",
+    );
+  });
+
   it("throws a TypeError where Symbol.split's species isn't a constructor or its constructor isn't an object", async () => {
     const getSource = (expected: string) => `
       const seen: string[] = [];

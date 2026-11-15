@@ -41,7 +41,8 @@ export interface RegExpProtocolCall {
   protocol: Protocol;
   // What the call reads the method from: the receiver, or RegExp.prototype for its call.
   owner: ts.Expression;
-  receiver: ts.Expression;
+  // The receiver, which a call of call that passes nothing leaves undefined.
+  receiver?: ts.Expression;
   values: readonly ts.Expression[];
 }
 
@@ -68,7 +69,7 @@ export const getRegExpProtocolCall = (
     : context.checker.getTypeAtLocation(owner).getSymbol()?.name === "RegExp" &&
       (getExecMethods(node, context).length > 0 ||
         (method === "split" && getSpeciesMethods(node, context).length > 0));
-  return isTaken && receiver !== undefined && !node.arguments.some(ts.isSpreadElement)
+  return isTaken && !node.arguments.some(ts.isSpreadElement)
     ? {
         method,
         protocol,
@@ -907,7 +908,9 @@ export const runRegExpProtocolCall = (
     bind(
       path,
       "receiver",
-      translateExpression(call.receiver, path.scope, context),
+      call.receiver === undefined
+        ? getUndefined(context)
+        : translateExpression(call.receiver, path.scope, context),
       context,
       (evaluated, receiver) =>
         bindArguments(call.values, evaluated, context, [], (given, values) =>
