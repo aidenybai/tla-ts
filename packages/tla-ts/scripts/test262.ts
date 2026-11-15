@@ -1393,6 +1393,8 @@ const annotate = (text: string) => {
 const MISSING_PROPERTY_ERROR = 2339;
 // A value of another type than an assignment's target or a call's parameter.
 const UNASSIGNABLE_ERRORS = new Set([2322, 2345]);
+// A value of a type that lacks many of the members of an assignment's target or a call's parameter.
+const MISSING_MEMBERS_ERROR = 2740;
 const UNTYPED_READ_ERRORS = new Set([MISSING_PROPERTY_ERROR, 2551, 7017, 7053]);
 const UNUSED_OPERAND_ERROR = 2695;
 // A delete of a property that the object's type doesn't make optional.
@@ -2344,7 +2346,8 @@ const ignoreSoundErrors = () => {
         (isCaughtRead(node) || isLaterGeneratorRead(node))) ||
       ((diagnostic.code === NOT_ITERABLE_ERROR || NULLABLE_ERRORS.has(diagnostic.code)) &&
         isTypeErrorPattern(node)) ||
-      (UNASSIGNABLE_ERRORS.has(diagnostic.code) && isPatternArgument(node)) ||
+      ((UNASSIGNABLE_ERRORS.has(diagnostic.code) || diagnostic.code === MISSING_MEMBERS_ERROR) &&
+        isPatternArgument(node)) ||
       (diagnostic.code === 2322 && isIteratorWrite(node)) ||
       (diagnostic.code === OPTIONAL_DELETE_ERROR && isDeletedIterator(node)) ||
       (diagnostic.code === 2322 && isWrittenExec(node, diagnostic)) ||
