@@ -79,6 +79,7 @@ const PORTED_INCLUDES = new Map([
     "resizableArrayBufferUtils.js",
     readFileSync(join(CONFORMANCE_DIRECTORY, "test262-resizable-array-buffer-utils.ts"), "utf8"),
   ],
+  ["nans.js", readFileSync(join(CONFORMANCE_DIRECTORY, "test262-nans.ts"), "utf8")],
 ]);
 
 // An async test's harness defines $DONE, as doneprintHandle.js does.
