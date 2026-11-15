@@ -42766,4 +42766,43 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("a binding named arguments outside strict mode", () => {
+    const getSource = (expected: string) => `
+      const seen: unknown[] = [];
+      const echo = (arguments: number) => arguments;
+      function named(arguments: number) {
+        return arguments;
+      }
+      function assigned(first: number) {
+        var arguments: any = "var";
+        return arguments;
+      }
+      seen.push(echo(1), named(2), assigned(3));
+      if (seen.join() !== "${expected}") throw new Error("seen " + seen.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("1,2,var"))).failure).toBeUndefined();
+    });
+
+    it("rejects the parameter's value for the var", async () => {
+      expect((await checkModel(getSource("1,2,3"))).failure?.message).toContain("seen 1,2,var");
+    });
+
+    it("stops where a function reads its var named arguments before it assigns the var", () => {
+      expect(() =>
+        compile(`
+          function early(first: number) {
+            const kind = typeof arguments;
+            var arguments: any = "var";
+            return kind;
+          }
+          early(1);
+        `),
+      ).toThrow(
+        "tla-ts can't read a function's var named arguments before the function assigns it",
+      );
+    });
+  });
 });

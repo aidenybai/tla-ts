@@ -13,6 +13,7 @@ import {
   isInertValue,
   isImportCall,
   isScript,
+  rejectArgumentsVarReads,
   rejectSloppyGlobalWrites,
   isVarFunction,
 } from "./context";
@@ -168,7 +169,10 @@ export const compile = (
   const path = fileName.replaceAll("\\", "/");
   const program = createProgram(source, path, libraries);
   const context = createContext(program.checker, program.files, program.implicitGlobals);
-  program.files.forEach((file) => rejectSloppyGlobalWrites(file, context));
+  program.files.forEach((file) => {
+    rejectSloppyGlobalWrites(file, context);
+    rejectArgumentsVarReads(file, context);
+  });
   const sourceFile = program.sourceFile;
   // The files that the model imports, each after the files it imports, as they run.
   const visited = new Set([sourceFile]);

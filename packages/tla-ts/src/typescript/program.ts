@@ -14,8 +14,8 @@ import { rejectEarlyErrors } from "./early-errors";
 import { rewriteWithStatements } from "./with-statements";
 
 // TypeScript checks every file as a module, so it rejects a word that only strict mode reserves, as
-// yield or public, even as a name outside strict mode.
-const RESERVED_WORD_ERRORS = new Set([1212, 1213, 1214]);
+// yield or public, and a binding named arguments or eval, even outside strict mode.
+const STRICT_MODE_ERRORS = new Set([1100, 1212, 1213, 1214, 1215]);
 
 const getNodeAt = (node: ts.Node, position: number): ts.Node =>
   ts.forEachChild(node, (child) =>
@@ -268,9 +268,9 @@ export const createProgram = (
     globals.size === 0 ? rewrittenProgram : createTypeScriptProgram([path], text, globals);
   const getModelFiles = (program: ts.Program) =>
     modelProgram.getSourceFiles().flatMap((file) => program.getSourceFile(file.fileName) ?? []);
-  // A word that only strict mode reserves names a binding outside strict mode.
+  // A word that only strict mode reserves, or arguments or eval, names a binding outside strict mode.
   const isReported = (diagnostic: ts.Diagnostic) =>
-    !RESERVED_WORD_ERRORS.has(diagnostic.code) ||
+    !STRICT_MODE_ERRORS.has(diagnostic.code) ||
     diagnostic.file === undefined ||
     isStrictCode(getNodeAt(diagnostic.file, diagnostic.start ?? 0)) ||
     isGeneratorYield(getNodeAt(diagnostic.file, diagnostic.start ?? 0));
