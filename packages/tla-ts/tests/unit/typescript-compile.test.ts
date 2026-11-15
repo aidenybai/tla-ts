@@ -42548,4 +42548,43 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("writes a property of a value of type unknown", () => {
+    const getSource = (expected: string) => `
+      const values: { [key: string]: unknown } = { point: { x: 1 } };
+      let log = "";
+      // @ts-ignore
+      values.point.x = 4;
+      // @ts-ignore
+      values.point["y"] = "y";
+      // @ts-ignore
+      log += values.point.x;
+      // @ts-ignore
+      log += values.point.y;
+      // @ts-ignore
+      delete values.point.y;
+      // @ts-ignore
+      log += values.point.y;
+      if (log !== "${expected}") throw new Error(log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("4yundefined"))).failure).toBeUndefined();
+    });
+
+    it("rejects the value before the write", async () => {
+      expect((await checkModel(getSource("1yundefined"))).failure?.message).toContain(
+        "4yundefined",
+      );
+    });
+
+    it("stops at an element of an array", async () => {
+      const result = await checkModel(`
+        const values: { [key: string]: unknown } = { list: [1, 2] };
+        // @ts-ignore
+        values.list[0] = 5;
+      `);
+      expect(result.failure?.message).toContain("tla-ts can't read the properties of <<1, 2>>");
+    });
+  });
 });
