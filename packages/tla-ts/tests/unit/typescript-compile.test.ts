@@ -2749,6 +2749,24 @@ ${body}
     expect((await checkModel(getSource(2, "43"))).failure?.message).toContain("outcomes 44");
   });
 
+  it("joins after a branch that passes a function to a helper, whichever way it goes", async () => {
+    const getSource = (branches: number, expected: string) => `
+      const getKind = (value: unknown) => typeof value;
+      const one = () => 1;
+      let total = 0;
+      ${Array.from(
+        { length: branches },
+        () => 'if (Math.max(total, 0) >= 0) {\n  total += getKind(one) === "function" ? 1 : 0;\n}',
+      ).join("\n")}
+      if (!Object.is(total, ${expected})) throw new Error("total " + total);
+    `;
+    const getSize = (branches: number) =>
+      printModule(compile(getSource(branches, "0")).source).length;
+    expect(getSize(8)).toBeLessThan(getSize(4) * 3);
+    expect((await checkModel(getSource(3, "3"))).failure).toBeUndefined();
+    expect((await checkModel(getSource(3, "2"))).failure?.message).toContain("total 3");
+  });
+
   it("runs a default that assigns a function where the call certainly passes undefined", async () => {
     const getSource = (expected: string) => `
       var x = "outside";
