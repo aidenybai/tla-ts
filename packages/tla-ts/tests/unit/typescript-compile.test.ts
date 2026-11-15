@@ -7240,6 +7240,25 @@ describe("definitions", () => {
     expect(violated.status).toBe("invariant-violation");
   });
 
+  it("reads an export of another file through its namespace", async () => {
+    const path = join(import.meta.dirname, "../fixtures/typescript/imports/namespace.ts");
+    const source = readFileSync(path, "utf8");
+    expect((await check(compile(source, path))).failure).toBeUndefined();
+    const wrong = await check(compile(source.replace("!== 1", "!== 2"), path));
+    expect(wrong.failure?.message).toContain("the namespace's getFirst");
+  });
+
+  it("stops at a namespace object that a script uses other than to read an export", () => {
+    const path = join(import.meta.dirname, "../fixtures/typescript/imports/namespace.ts");
+    const source = readFileSync(path, "utf8");
+    expect(() =>
+      compile(source.replace("first.getFirst() !== 1", "Object.isExtensible(first)"), path),
+    ).toThrow("tla-ts can't make a module's namespace object");
+    expect(() =>
+      compile(source.replace("first.getFirst() !== 1", "Object.keys(first).length !== 1"), path),
+    ).toThrow("tla-ts can't make a module's namespace object");
+  });
+
   it("constructs a class that another file declares", async () => {
     const path = join(import.meta.dirname, "../fixtures/typescript/imports/stepping.ts");
     const source = readFileSync(path, "utf8");

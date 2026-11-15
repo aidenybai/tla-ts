@@ -154,6 +154,32 @@ export const compile = (
       files.push(imported);
     });
   visitImports(sourceFile);
+  // A module's namespace object, which tla-ts doesn't make, so only a read of one of its exports
+  // through it compiles. Only a file that imports can name one.
+  const rejectNamespaceValues = (node: ts.Node): void => {
+    const symbol = ts.isIdentifier(node) ? program.checker.getSymbolAtLocation(node) : undefined;
+    const declaration =
+      symbol === undefined
+        ? undefined
+        : (symbol.flags & ts.SymbolFlags.Alias ? program.checker.getAliasedSymbol(symbol) : symbol)
+            .valueDeclaration;
+    if (
+      declaration !== undefined &&
+      ts.isSourceFile(declaration) &&
+      !ts.isNamespaceImport(node.parent) &&
+      !ts.isNamespaceExport(node.parent) &&
+      !ts.isImportSpecifier(node.parent) &&
+      !ts.isExportSpecifier(node.parent) &&
+      !(ts.isPropertyAccessExpression(node.parent) && node.parent.expression === node) &&
+      ts.findAncestor(node, ts.isTypeNode) === undefined
+    ) {
+      throw new TlaTypeScriptError("tla-ts can't make a module's namespace object", node);
+    }
+    ts.forEachChild(node, rejectNamespaceValues);
+  };
+  [sourceFile, ...files]
+    .filter((file) => file.statements.some(ts.isImportDeclaration))
+    .forEach(rejectNamespaceValues);
   // The code units outside ASCII that the script's text holds, or that the escapes of its literals
   // and names write, whose codes the module tells. A lone surrogate is half of a pair, as a
   // module's text holds only whole characters.
