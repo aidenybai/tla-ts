@@ -1405,6 +1405,9 @@ const COMPOUND_ASSIGNMENTS = new Set([
 // A comparison of types that don't overlap, which only misleads where TypeScript narrows an operand
 // by it.
 const UNINTENDED_COMPARISON_ERROR = 2367;
+// A read of a variable that TypeScript can't tell is assigned. tla-ts reads a var's type as its
+// value's, so a read is sound only where the value is assigned whenever it runs.
+const UNASSIGNED_READ_ERROR = 2454;
 
 const EQUALITY_OPERATORS = new Set([
   ts.SyntaxKind.EqualsEqualsToken,
@@ -1662,6 +1665,65 @@ const ignoreSoundErrors = () => {
       declaration !== undefined &&
       ts.isVariableDeclaration(declaration) &&
       ts.isCatchClause(declaration.parent)
+    );
+  };
+  // A read in a catch's block of what the catch binds, which TypeScript can't tell is assigned where
+  // a rest element binds it, though the catch binds it before its block runs.
+  const isCaughtRead = (node: ts.Node) => {
+    const declaration = checker.getSymbolAtLocation(node)?.valueDeclaration;
+    const clause = declaration && ts.findAncestor(declaration, ts.isCatchClause);
+    return (
+      clause?.variableDeclaration !== undefined &&
+      ts.findAncestor(declaration, (ancestor) => ancestor === clause.variableDeclaration) !==
+        undefined &&
+      ts.findAncestor(node, (ancestor) => ancestor === clause.block) !== undefined
+    );
+  };
+  // A read in a generator function that the test calls at once, of a variable that a top-level var
+  // statement assigns, where the test reads the generator object only in top-level statements after
+  // that one. Only the generator object runs the body, so it runs once the variable is assigned.
+  const isLaterGeneratorRead = (node: ts.Node) => {
+    const declaration = checker.getSymbolAtLocation(node)?.valueDeclaration;
+    const generator = ts.findAncestor(node, ts.isFunctionLike);
+    if (
+      declaration === undefined ||
+      !ts.isVariableDeclaration(declaration) ||
+      declaration.initializer === undefined ||
+      declaration.parent.parent.parent !== sourceFile ||
+      generator === undefined ||
+      !ts.isFunctionExpression(generator) ||
+      generator.asteriskToken === undefined
+    ) {
+      return false;
+    }
+    const call = ts.walkUpParenthesizedExpressions(generator.parent);
+    const holder = call.parent;
+    if (
+      !ts.isCallExpression(call) ||
+      ts.skipParentheses(call.expression) !== generator ||
+      !ts.isVariableDeclaration(holder) ||
+      holder.initializer !== call ||
+      !ts.isIdentifier(holder.name)
+    ) {
+      return false;
+    }
+    const held = checker.getSymbolAtLocation(holder.name);
+    const references: ts.Identifier[] = [];
+    const visit = (inner: ts.Node) => {
+      if (
+        ts.isIdentifier(inner) &&
+        inner !== holder.name &&
+        checker.getSymbolAtLocation(inner) === held
+      ) {
+        references.push(inner);
+      }
+      ts.forEachChild(inner, visit);
+    };
+    visit(sourceFile);
+    return references.every(
+      (reference) =>
+        reference.getStart() >= declaration.parent.parent.getEnd() &&
+        ts.findAncestor(reference, ts.isFunctionLike) === undefined,
     );
   };
   // A call of a built-in that SHORT_CALLED_BUILT_INS lists, with fewer arguments than its type
@@ -2156,6 +2218,8 @@ const ignoreSoundErrors = () => {
       ((diagnostic.code === NOT_ITERABLE_ERROR || NULLABLE_ERRORS.has(diagnostic.code)) &&
         isNullableArrayPattern(node)) ||
       (diagnostic.code === NOT_ITERABLE_ERROR && isCaughtArrayPattern(node)) ||
+      (diagnostic.code === UNASSIGNED_READ_ERROR &&
+        (isCaughtRead(node) || isLaterGeneratorRead(node))) ||
       (UNASSIGNABLE_ERRORS.has(diagnostic.code) && isPatternArgument(node)) ||
       (diagnostic.code === 2322 && isIteratorWrite(node)) ||
       (diagnostic.code === OPTIONAL_DELETE_ERROR && isDeletedIterator(node)) ||
