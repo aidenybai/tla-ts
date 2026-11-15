@@ -9125,11 +9125,6 @@ describe("errors", () => {
       "let calls = 0;\nconst list = [1, 2];\nconst isTwo = (value: number, index: number, array: { length: number }) => {\n  calls++;\n  return array.length === 2;\n};\nlet isAll = list.every(isTwo);",
       "Type a callback's array parameter as an array",
     ],
-    [
-      "this in a function inside a method",
-      "const box = {\n  read() {\n    const inner = function (this: unknown) {\n      return this;\n    };\n    return inner();\n  },\n};\nlet value = box.read();",
-      "Unsupported expression: this",
-    ],
   ])("rejects %s in a script", (_, source, message) => {
     expect(() => compile(source)).toThrow(message);
   });
@@ -25775,6 +25770,47 @@ describe("errors", () => {
     expect(
       (await checkModel(getCallbackThisSource('"use strict";', "false,undefined,holder"))).failure,
     ).toBeUndefined();
+  });
+
+  it("gives a function that a call names undefined as its this", async () => {
+    const getSource = (expected: string) => `
+      const seen: string[] = [];
+      function sloppy(this: unknown) {
+        return typeof this;
+      }
+      function strict(this: unknown) {
+        "use strict";
+        const read = () => typeof this;
+        return read();
+      }
+      seen.push(sloppy(), strict());
+      seen.push(
+        (function (this: unknown) {
+          return this === globalThis;
+        })()
+          ? "global"
+          : "other",
+      );
+      const holder = {
+        strict,
+        sloppy,
+        read() {
+          const inner = function (this: unknown) {
+            return this;
+          };
+          return inner() === globalThis ? "inner" : "other";
+        },
+      };
+      seen.push(holder.strict(), holder.sloppy(), holder.read());
+      if (seen.join() !== "${expected}") throw new Error("seen " + seen.join());
+    `;
+    expect(
+      (await checkModel(getSource("object,undefined,global,object,object,inner"))).failure,
+    ).toBeUndefined();
+    expect(
+      (await checkModel(getSource("undefined,undefined,other,object,object,other"))).failure
+        ?.message,
+    ).toContain("seen object,undefined,global,object,object,inner");
   });
 
   it("stops where a function outside strict mode gets a primitive as its this", async () => {

@@ -4166,7 +4166,7 @@ export const translateCallStatement = (
     expression,
     callee,
     expression.arguments,
-    getReceiver(path.scope, context, called),
+    getReceiver(path.scope, context, called, { node: expression, callee }),
     path,
     context,
     frame,
