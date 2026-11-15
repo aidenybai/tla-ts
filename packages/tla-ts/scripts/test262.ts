@@ -2426,7 +2426,8 @@ const runSyntaxTest = (id: string, source: string, metadata: Metadata): TestRun 
   if (!isRejected) {
     return { id, outcome: "skipped", reason: "Node accepts it" };
   }
-  const program = `${getHarness(metadata, source)}\n${source}`;
+  const program = `${strict}${getHarness(metadata, source)}
+${source}`;
   try {
     compile(program, "test262.ts");
   } catch (error) {
