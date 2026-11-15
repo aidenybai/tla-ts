@@ -25594,4 +25594,34 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("none"))).failure?.message).toContain("stop");
     });
   });
+
+  describe("throws from a getter of a proxy's trap that the handler holds", () => {
+    const getSource = (expected: string) => `
+      class Stop extends Error {}
+      const handler = Object.defineProperty({}, "setPrototypeOf", {
+        get: function () {
+          throw new Stop();
+        },
+      });
+      const proxy = new Proxy({}, handler);
+      let caught = "none";
+      try {
+        Object.setPrototypeOf(proxy, {});
+      } catch (error) {
+        caught = error instanceof Stop ? "stop" : "other";
+      }
+      const plain = new Proxy({}, {});
+      Object.setPrototypeOf(plain, null);
+      const read = [caught, Object.getPrototypeOf(plain) === null].join();
+      if (read !== "${expected}") throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("stop,true"))).failure).toBeUndefined();
+    });
+
+    it("rejects the trap's getter as skipped", async () => {
+      expect((await checkModel(getSource("none,true"))).failure?.message).toContain("stop,true");
+    });
+  });
 });

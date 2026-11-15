@@ -12014,7 +12014,7 @@ const getThrowingGetters = (node: ts.Node, context: Context) =>
 
 // Runs the getter whose code a built-in reads first, where it reads one and it only throws, which
 // throws from there; otherwise runs the built-in.
-const throwFirstGetter = (
+export const throwFirstGetter = (
   node: ts.Node,
   isRead: Expression,
   code: Expression,

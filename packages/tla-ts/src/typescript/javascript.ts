@@ -1670,6 +1670,12 @@ FlagsFirstGetter(heap, receiver) ==
      THEN CodeOf(heap, GetterOf(heap, receiver, keys[first]))
      ELSE Undefined
 
+\\* The code of the getter that a read of a key of an object runs, or Undefined.
+KeyGetter(heap, ref, key) ==
+  IF IsHeap(ref) /\\ ~IsProxy(heap, ref) /\\ GetterOf(heap, ref, key) # Undefined
+  THEN CodeOf(heap, GetterOf(heap, ref, key))
+  ELSE Undefined
+
 \\* The code of the getter that an array-like object's first element reads, where its length isn't
 \\* 0, or Undefined.
 FirstElementGetter(heap, ref) ==
