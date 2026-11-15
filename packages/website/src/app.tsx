@@ -21,29 +21,18 @@ export const App = () => (
           Formally verify TypeScript code with{" "}
           <Link href="https://lamport.azurewebsites.net/tla/tla.html">TLA+</Link>.
         </p>
-        <div className="mt-4 flex flex-col gap-1 rounded-2xl p-1 shadow-raised">
-          <Code.Root source={install}>
-            <Code.Content />
-            <Code.Actions>
-              <Code.Copy />
-            </Code.Actions>
-          </Code.Root>
-          <div className="flex gap-1">
-            <a
-              href="https://github.com/aidenybai/tla-ts"
-              className={cn(buttonVariants({ variant: "card", size: "lg" }), "flex-1")}
-            >
-              <GitHubIcon />
-              GitHub
-            </a>
-            <a
-              href="/playground"
-              className={cn(buttonVariants({ variant: "card", size: "lg" }), "flex-1")}
-            >
-              <Play weight="fill" className="size-3" />
-              Playground
-            </a>
-          </div>
+        <div className="flex gap-2">
+          <a
+            href="https://github.com/aidenybai/tla-ts"
+            className={buttonVariants({ variant: "primary" })}
+          >
+            <GitHubIcon />
+            GitHub
+          </a>
+          <a href="/playground" className={cn(buttonVariants(), "text-foreground")}>
+            <Play weight="fill" className="size-3" />
+            Playground
+          </a>
         </div>
       </Hero.Body>
     </Hero.Root>
@@ -62,6 +51,18 @@ export const App = () => (
           <Example.Source />
           <Example.Hint />
         </Example.Root>
+      </Section.Root>
+      <Section.Root>
+        <Section.Title>Install</Section.Title>
+        <Code.Root source={install}>
+          <Code.Content />
+          <Code.Actions>
+            <Code.Copy />
+          </Code.Actions>
+        </Code.Root>
+        <p className="text-pretty">
+          Or skip the install and run <InlineCode>npx tla-ts [file].ts</InlineCode> directly.
+        </p>
       </Section.Root>
       <Reference />
       <Section.Root>

@@ -16,10 +16,7 @@ interface TitleProps {
 export const SectionTitle = (props: TitleProps) => {
   const id = props.children.toLowerCase().replaceAll(" ", "-");
   return (
-    <h2
-      id={id}
-      className="group relative mb-1 flex scroll-mt-8 items-center gap-3 text-[17px] font-medium text-foreground"
-    >
+    <h2 id={id} className="group relative scroll-mt-8 text-[17px] font-medium text-foreground">
       <a
         href={`#${id}`}
         aria-label="Link to this section"
@@ -28,7 +25,6 @@ export const SectionTitle = (props: TitleProps) => {
         <LinkSimple />
       </a>
       {props.children}
-      <span aria-hidden className="h-px flex-1 bg-border" />
     </h2>
   );
 };
