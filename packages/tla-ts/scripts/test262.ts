@@ -1428,6 +1428,10 @@ const UNCALLABLE_ERROR = 2349;
 // them on a union of typed arrays. Each needs a unit test of such a call.
 const TYPED_UNION_METHODS = new Set(["findLast", "reduce", "reduceRight"]);
 
+// A call that gives a function no this where the function types one, which tla-ts runs with the this
+// that a call by name gives: undefined, or the global object outside strict mode.
+const UNTYPED_THIS_ERROR = 2684;
+
 // An operator's operand of a type that the operator doesn't take, or that is null or undefined,
 // which tla-ts converts to a primitive where it's an object that the test declares, a wrapper, or a
 // primitive.
@@ -2306,9 +2310,23 @@ const ignoreSoundErrors = () => {
       )
     );
   };
+  const isPlainCall = (node: ts.Node) => {
+    const callee = ts.findAncestor(
+      node,
+      (ancestor) => !ts.isParenthesizedExpression(ancestor.parent),
+    );
+    return (
+      callee !== undefined &&
+      ts.isCallExpression(callee.parent) &&
+      callee.parent.expression === callee &&
+      (ts.isIdentifier(ts.skipParentheses(callee)) ||
+        ts.isFunctionExpression(ts.skipParentheses(callee)))
+    );
+  };
   const isSound = (diagnostic: ts.Diagnostic) => {
     const node = getNode(diagnostic.start ?? 0);
     return (
+      (diagnostic.code === UNTYPED_THIS_ERROR && isPlainCall(node)) ||
       (diagnostic.code === ARGUMENT_COUNT_ERROR &&
         (isShortBuiltInCall(node) || isShortReducingCall(node))) ||
       (SHORT_CALL_ERRORS.has(diagnostic.code) && isShortProtocolCall(node, diagnostic)) ||
