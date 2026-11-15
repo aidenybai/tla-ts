@@ -1332,6 +1332,22 @@ const typeGenerators = () => {
 // test262 is JavaScript, so its functions and variables have no types. This annotates them as
 // TypeScript's "Infer type from usage" fix does, with unknown where it infers any, then loosens
 // the types of the objects it describes.
+// A union of array types that the fix infers for an empty array that the test pushes values of
+// several types to, as unknown[][] | IArguments[], whose push takes only what every member's does.
+// An array of the union of their elements takes each.
+const getArrayOfUnion = (inferred: string) => {
+  const sourceFile = ts.createSourceFile(
+    PROGRAM_PATH,
+    `type Inferred = ${inferred.replace(/^:/, "")};`,
+    ts.ScriptTarget.Latest,
+  );
+  const alias = sourceFile.statements[0];
+  const type = alias !== undefined && ts.isTypeAliasDeclaration(alias) ? alias.type : undefined;
+  return type !== undefined && ts.isUnionTypeNode(type) && type.types.every(ts.isArrayTypeNode)
+    ? `: (${type.types.map((member) => member.elementType.getText(sourceFile)).join(" | ")})[]`
+    : inferred;
+};
+
 const annotate = (text: string) => {
   setText(text);
   typeIteratorBases();
@@ -1366,13 +1382,15 @@ const annotate = (text: string) => {
             .toSorted((left, right) => right.span.start - left.span.start)
             .reduce((current, change) => {
               const inferred = change.newText.replaceAll(/\bany\b/g, "unknown");
+              const isEmptyArray =
+                sourceFile !== undefined && isEmptyArrayName(sourceFile, change.span.start);
               return (
                 current.slice(0, change.span.start) +
-                (inferred === ": unknown" &&
-                sourceFile !== undefined &&
-                isEmptyArrayName(sourceFile, change.span.start)
+                (inferred === ": unknown" && isEmptyArray
                   ? ": unknown[]"
-                  : inferred) +
+                  : isEmptyArray
+                    ? getArrayOfUnion(inferred)
+                    : inferred) +
                 current.slice(change.span.start + change.span.length)
               );
             }, file.text);
