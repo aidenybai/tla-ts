@@ -211,6 +211,8 @@ export interface TypedCheck {
   // The scope of the LET definitions and arguments the specification's conjuncts were expanded in.
   scope: Scope | undefined;
   isDeadlockChecked: boolean;
+  // Without the fingerprint distance, TLC's fingerprints of the states aren't taken.
+  isFingerprinted: boolean;
   symmetry: Images[] | undefined;
   view: Expression | undefined;
   // The variables in the order TLC compares states in.
@@ -5652,7 +5654,7 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
   };
   const readState = () => {
     if (reader.position === keys.ends[reader.page]) {
-      addFingerprints(keys.pages[reader.page], reader.position);
+      if (check.isFingerprinted) addFingerprints(keys.pages[reader.page], reader.position);
       keys.spares.push(keys.pages[reader.page]);
       keys.pages[reader.page] = EMPTY_PAGE;
       reader.page++;

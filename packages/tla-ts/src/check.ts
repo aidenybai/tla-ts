@@ -1109,7 +1109,11 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       : undefined;
   const typed =
     typedChecks &&
-    runTypedSearch(environment, { ...typedChecks, isDeadlockChecked: config.checkDeadlock });
+    runTypedSearch(environment, {
+      ...typedChecks,
+      isDeadlockChecked: config.checkDeadlock,
+      isFingerprinted: !options.isFingerprintDistanceSkipped,
+    });
   if (typed && !typed.deadlock) {
     for (let count = 2; count < typed.initialStates.generated; count *= 2) {
       reportInitialStatesProgress(count, options.onProgress);
