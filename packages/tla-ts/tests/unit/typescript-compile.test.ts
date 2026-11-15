@@ -23310,6 +23310,33 @@ describe("errors", () => {
     ).toThrow("tla-ts can't destructure this object through its iterator");
   });
 
+  it("throws a TypeError from an array pattern after a script deletes the arrays' iterator", async () => {
+    const getSource = (expected: string) => `
+      // @ts-ignore
+      delete Array.prototype[Symbol.iterator];
+      const getName = (error: unknown) => (error instanceof TypeError ? "type" : "other");
+      const f = ([x]: number[]) => x;
+      let parameter = "none";
+      try {
+        f([1]);
+      } catch (error) {
+        parameter = getName(error);
+      }
+      let declared = "none";
+      try {
+        const [y] = [2];
+        declared = \`\${y}\`;
+      } catch (error) {
+        declared = getName(error);
+      }
+      const { a } = { a: 4 };
+      const text = \`\${parameter},\${declared},\${a}\`;
+      if (text !== "${expected}") throw new Error(text);
+    `;
+    expect((await checkModel(getSource("type,type,4"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("type,2,4"))).failure?.message).toContain("type,type,4");
+  });
+
   it("binds a parameter's array pattern from the generator object that a call passes", async () => {
     const getSource = (expected: string) => `
       let first = 0;

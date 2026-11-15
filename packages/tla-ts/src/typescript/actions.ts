@@ -11192,7 +11192,10 @@ export const throwOnDestructured = (
   return ifThenElse(
     junction(
       "Or",
-      destructured.map((entry) => isNullish(entry.value, context)),
+      destructured.flatMap((entry) => [
+        isNullish(entry.value, context),
+        ...(entry.isUniterable === undefined ? [] : [entry.isUniterable]),
+      ]),
     ),
     throwTypeError(path, destructured[0].pattern, context, frame),
     iterated.length === 0

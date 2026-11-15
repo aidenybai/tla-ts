@@ -102,6 +102,9 @@ export interface Destructured {
   // The elements that an array pattern takes from a value whose type doesn't tell that it's an
   // array, which stop where it's an object.
   iterated?: Expression;
+  // Whether an array that an array pattern iterates has no iterator method, as where a script
+  // deleted Array.prototype's, for which GetIterator throws a TypeError.
+  isUniterable?: Expression;
 }
 
 export interface Receiver {
@@ -431,13 +434,41 @@ export const bindPatternInline = (
       : value;
   // A pattern whose type isn't an array's stops at once where its value is an object that tla-ts
   // can't iterate, though nothing reads what it binds.
+  const isUniterable =
+    isIterated && heap !== undefined
+      ? apply("/\\", [
+          apply("~", [
+            apply("/\\", [
+              useJavaScript("IsRef", [value], context),
+              apply("~", [useJavaScript("IsArray", [heap, value], context)]),
+            ]),
+          ]),
+          isNullish(
+            useJavaScript(
+              "Get",
+              [
+                heap,
+                translateBuiltInValue("Array.prototype", pattern, context),
+                useJavaScript("WellKnownSymbol", [string("iterator")], context),
+              ],
+              context,
+            ),
+            context,
+          ),
+        ])
+      : undefined;
   const destructuring: Scope = {
     ...scope,
     destructured: [
       ...(scope.destructured ?? []),
-      isIterated && heap !== undefined && !context.checker.isArrayLikeType(type)
-        ? { pattern, value, iterated }
-        : { pattern, value },
+      {
+        pattern,
+        value,
+        ...(isIterated && heap !== undefined && !context.checker.isArrayLikeType(type)
+          ? { iterated }
+          : {}),
+        ...(isUniterable === undefined ? {} : { isUniterable }),
+      },
     ],
   };
   const iterating =
