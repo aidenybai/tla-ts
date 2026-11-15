@@ -44752,4 +44752,41 @@ describe("BigInts", () => {
       ).toThrow("tla-ts can't use step as a value here");
     });
   });
+
+  describe("runs a helper before a const that a later call's callback reads", () => {
+    const getSource = (expected: string) => `
+      let log = "";
+      const run = (name: string, call: () => unknown) => {
+        try {
+          call();
+        } catch (error) {
+          log += name + (error as Error).message;
+        }
+      };
+      run("e", () => {
+        throw new Error("first");
+      });
+      const target = [5, 6, 7];
+      const names = {
+        get() {
+          return "s";
+        },
+      };
+      run(names.get(), () => {
+        target[0] = 1;
+      });
+      const result = log + target.join("-");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("efirst1-6-7"))).failure).toBeUndefined();
+    });
+
+    it("rejects a wrong log", async () => {
+      expect((await checkModel(getSource("efirst5-6-7"))).failure?.message).toContain(
+        "efirst1-6-7",
+      );
+    });
+  });
 });
