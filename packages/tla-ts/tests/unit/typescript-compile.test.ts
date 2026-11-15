@@ -2069,6 +2069,65 @@ describe("values", () => {
     });
   });
 
+  describe("runs the statements of a for-of's body again at each element of an iterator", () => {
+    it.each([
+      ["a generator, with i++", "values()", "i++;", "2,0", "1,0"],
+      ["a generator, with ++i", "values()", "++i;", "2,0", "1,0"],
+      ["a generator, with a continue", "values()", "i++;\n  continue;", "2,0", "1,0"],
+      ["an array iterator, with i++", "[1, 1].values()", "i++;", "2,0", "1,0"],
+      ["an array iterator, with ++i", "[1, 1].values()", "++i;", "2,0", "1,0"],
+      [
+        "a generator, with a call that changes the count",
+        "values()",
+        "last = add() + x;",
+        "2,3",
+        "1,2",
+      ],
+    ])("over %s", async (_name, iterated, body, expected, wrong) => {
+      const getSource = (text: string) => `
+function* values() {
+  yield 1;
+  yield 1;
+}
+let i = 0;
+let last = 0;
+const add = () => {
+  i += 1;
+  return i;
+};
+for (const x of ${iterated}) {
+  ${body}
+}
+const text = \`\${i},\${last}\`;
+if (!Object.is(text, "${text}")) throw new Error(text);
+`;
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+      expect((await checkModel(getSource(wrong))).failure?.message).toContain(expected);
+    });
+
+    it("runs a for await's body again at each element of an async generator", async () => {
+      const getSource = (expected: number) => `
+        async function* values() {
+          yield 1;
+          yield 1;
+        }
+        let i = 0;
+        const run = async () => {
+          for await (const x of values()) {
+            i++;
+          }
+          if (!Object.is(i, ${expected})) throw new Error(String(i));
+        };
+        run();
+      `;
+      expect((await checkModel(getSource(2))).failure).toBeUndefined();
+      // The run's promise rejects with the error, which nothing handles.
+      expect((await checkModel(getSource(1))).failure?.message).toContain(
+        "A promise rejected with no handler",
+      );
+    });
+  });
+
   it("runs an assignment in a unary operator's operand first", async () => {
     const getSource = (negated: number, voided: number) => `
       let x = 0;

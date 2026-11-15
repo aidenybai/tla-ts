@@ -12839,7 +12839,7 @@ const translateForOfGenerator = (
             loop.initializer,
             element,
             undefined,
-            current,
+            startIteration(loop, current),
             context,
             bodyFrame,
             (bound, innerFrame) =>
@@ -13108,7 +13108,7 @@ const translateForAwait = (
           const iteration = getIteration(fulfilled, loop, promise);
           return iteration.isDone
             ? continueWith(fulfilled)
-            : runYielded(fulfilled, iteration.value, {
+            : runYielded(startIteration(loop, fulfilled), iteration.value, {
                 ...guardYields(frame),
                 next: iterate,
                 continueTo: iterate,
