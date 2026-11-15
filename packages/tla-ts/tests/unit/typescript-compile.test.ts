@@ -36378,4 +36378,26 @@ describe("BigInts", () => {
     }
     expect(() => compile("function* yield() {}")).not.toThrow();
   });
+
+  it("runs a function outside strict mode where a use strict comes after its first statement", async () => {
+    const getSource = (statements: string, expected: string) => `
+      function write() {
+        ${statements}
+        try {
+          // @ts-ignore
+          frozen.value = 2;
+          return "ignored";
+        } catch {
+          return "threw";
+        }
+      }
+      const outcome: string = write();
+      if (outcome !== "${expected}") throw new Error("outcome " + outcome);
+    `;
+    const late = 'const frozen = Object.freeze({ value: 1 });\n"use strict";';
+    expect((await checkModel(getSource(late, "ignored"))).failure).toBeUndefined();
+    expect((await checkModel(getSource(late, "threw"))).failure?.message).toContain(
+      "outcome ignored",
+    );
+  });
 });

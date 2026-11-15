@@ -575,13 +575,20 @@ const hasTopLevelAwait = (node: ts.Node): boolean =>
 export const isModuleFile = (file: ts.SourceFile) =>
   file.statements.some(isModuleSyntax) || hasTopLevelAwait(file);
 
-const hasStrictDirective = (statements: readonly ts.Statement[]) =>
-  statements.some(
-    (statement) =>
-      ts.isExpressionStatement(statement) &&
-      ts.isStringLiteral(statement.expression) &&
-      statement.expression.getText().slice(1, -1) === "use strict",
-  );
+// A "use strict" directive is in the string literals that start the statements, and later it is
+// only an expression.
+const hasStrictDirective = (statements: readonly ts.Statement[]) => {
+  const isString = (statement: ts.Statement) =>
+    ts.isExpressionStatement(statement) && ts.isStringLiteral(statement.expression);
+  const end = statements.findIndex((statement) => !isString(statement));
+  return statements
+    .slice(0, end === -1 ? statements.length : end)
+    .some(
+      (statement) =>
+        ts.isExpressionStatement(statement) &&
+        statement.expression.getText().slice(1, -1) === "use strict",
+    );
+};
 
 // Code that runs in strict mode wherever it runs: in a class, under a "use strict" directive, or in
 // a module.
