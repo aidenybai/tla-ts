@@ -1727,6 +1727,14 @@ const ignoreSoundErrors = () => {
     ts.isPropertyAccessExpression(node.parent) &&
     node.parent.name === node &&
     isProtocolCall(node.parent.parent);
+  // A protocol call of a value of another type than the string or the limit: tla-ts converts the
+  // string with ToString, running a toString or a Symbol.toPrimitive that the test writes, and
+  // split's limit with ToUint32, throwing a TypeError on a symbol and stopping on another value
+  // that isn't a number.
+  const isConvertedProtocolCall = (diagnostic: ts.Diagnostic) => {
+    const call = getErroredCall(diagnostic);
+    return call !== undefined && isProtocolCall(call);
+  };
   // A call of an array's method that REDUCING_METHODS lists, whose reducer is a function that the
   // test writes and that takes each value it gets: the initial value, an element, or what it
   // returns as the accumulator, then an element, an index, and the array. The call's result, which
@@ -1863,6 +1871,7 @@ const ignoreSoundErrors = () => {
       (diagnostic.code === 2322 && isIteratorWrite(node)) ||
       (CONVERTED_ARGUMENT_ERRORS.has(diagnostic.code) &&
         (isConvertedCall(diagnostic) ||
+          isConvertedProtocolCall(diagnostic) ||
           isReducingCall(diagnostic) ||
           isSearchingCall(diagnostic) ||
           isTypedArrayNew(diagnostic))) ||

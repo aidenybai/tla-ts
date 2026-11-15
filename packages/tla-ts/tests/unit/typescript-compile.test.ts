@@ -31561,6 +31561,39 @@ describe("regular expressions", () => {
     expect((await checkModel(getSource("a,c,"))).failure?.message).toContain("a,c");
   });
 
+  it("converts the string and the limit of a regexp's protocol method of other types", async () => {
+    const getSource = (expected: string) => `
+      const seen: string[] = [];
+      const fakeRe = {
+        lastIndex: 0,
+        exec: function (value: string) {
+          seen.push(value);
+          return null;
+        },
+      };
+      const text = {
+        toString: function () {
+          return "ab";
+        },
+      };
+      // @ts-ignore
+      seen.push(String(RegExp.prototype[Symbol.search].call(fakeRe, text)));
+      // @ts-ignore
+      seen.push(RegExp.prototype[Symbol.split].call(/b/, text, 1).join(","));
+      try {
+        // @ts-ignore
+        RegExp.prototype[Symbol.split].call(/b/, "ab", Symbol.split);
+      } catch (error) {
+        seen.push(error instanceof TypeError ? "type" : "other");
+      }
+      if (seen.join("|") !== "${expected}") throw new Error(seen.join("|"));
+    `;
+    expect((await checkModel(getSource("ab|-1|a|type"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("ab|-1|a,|type"))).failure?.message).toContain(
+      "ab|-1|a|type",
+    );
+  });
+
   it("throws a TypeError where Symbol.split's species isn't a constructor or its constructor isn't an object", async () => {
     const getSource = (expected: string) => `
       const seen: string[] = [];
