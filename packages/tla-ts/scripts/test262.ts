@@ -1387,6 +1387,88 @@ const typeGenerators = () => {
   );
 };
 
+// A variable that an empty array literal initializes, and that the test pushes object literals to,
+// which the fix types as a union of arrays where no push fits each, holds an array of objects with
+// each property that a push gives, optional where another push lacks it.
+const typePushedArrays = () => {
+  const program = service.getProgram();
+  const sourceFile = program?.getSourceFile(PROGRAM_PATH);
+  if (program === undefined || sourceFile === undefined) return;
+  const checker = program.getTypeChecker();
+  const replacements: { start: number; end: number; text: string }[] = [];
+  const visit = (node: ts.Node) => {
+    ts.forEachChild(node, visit);
+    if (
+      !ts.isVariableDeclaration(node) ||
+      !ts.isIdentifier(node.name) ||
+      node.type === undefined ||
+      !ts.isUnionTypeNode(node.type) ||
+      !node.type.types.every(ts.isArrayTypeNode) ||
+      node.initializer === undefined ||
+      !ts.isArrayLiteralExpression(node.initializer) ||
+      node.initializer.elements.length > 0
+    ) {
+      return;
+    }
+    const symbol = checker.getSymbolAtLocation(node.name);
+    const pushed: ts.Expression[] = [];
+    const findPushes = (inner: ts.Node) => {
+      if (
+        ts.isCallExpression(inner) &&
+        ts.isPropertyAccessExpression(inner.expression) &&
+        inner.expression.name.text === "push" &&
+        checker.getSymbolAtLocation(inner.expression.expression) === symbol
+      ) {
+        pushed.push(...inner.arguments);
+      }
+      ts.forEachChild(inner, findPushes);
+    };
+    findPushes(sourceFile);
+    if (pushed.length === 0 || !pushed.every(ts.isObjectLiteralExpression)) return;
+    const types = pushed.map((argument) => checker.getTypeAtLocation(argument));
+    const names = [
+      ...new Set(types.flatMap((type) => type.getProperties().map((property) => property.name))),
+    ];
+    const properties = names.map((name) => {
+      const found = types.flatMap((type) => type.getProperty(name) ?? []);
+      // A property that holds this holds the object a method's call gives, and one that holds an
+      // array of any, such as [...arguments], holds an array of any value.
+      const members = found.map((property) => {
+        const declaration = property.valueDeclaration;
+        const type = checker.getTypeOfSymbolAtLocation(property, sourceFile);
+        const element = checker.isArrayType(type) ? checker.getTypeArguments(type)[0] : undefined;
+        return declaration !== undefined &&
+          ts.isPropertyAssignment(declaration) &&
+          declaration.initializer.kind === ts.SyntaxKind.ThisKeyword
+          ? ["{ [key: string | symbol]: unknown }"]
+          : element !== undefined && (element.flags & ts.TypeFlags.Any) !== 0
+            ? ["unknown[]"]
+            : getMemberTypes(checker, type);
+      });
+      if (members.some((member) => member === undefined)) return undefined;
+      const key = /^[A-Za-z_$][\w$]*$/.test(name) ? name : JSON.stringify(name);
+      const union = getUnion(members.flatMap((member) => member ?? [])).join(" | ");
+      return `${key}${found.length < types.length ? "?" : ""}: ${union}`;
+    });
+    if (properties.includes(undefined)) return;
+    replacements.push({
+      start: node.type.getStart(),
+      end: node.type.getEnd(),
+      text: `{ ${properties.join("; ")} }[]`,
+    });
+  };
+  visit(sourceFile);
+  setText(
+    replacements
+      .toSorted((left, right) => right.start - left.start)
+      .reduce(
+        (current, replacement) =>
+          current.slice(0, replacement.start) + replacement.text + current.slice(replacement.end),
+        file.text,
+      ),
+  );
+};
+
 // test262 is JavaScript, so its functions and variables have no types. This annotates them as
 // TypeScript's "Infer type from usage" fix does, with unknown where it infers any, then loosens
 // the types of the objects it describes.
@@ -1437,6 +1519,7 @@ const annotate = (text: string) => {
     if (annotated === file.text) break;
     setText(annotated);
   }
+  typePushedArrays();
   // A type that one loosening gives can show where another is needed.
   while (loosen());
   ignoreSoundErrors();
