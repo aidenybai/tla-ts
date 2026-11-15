@@ -25624,4 +25624,30 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("none,true"))).failure?.message).toContain("stop,true");
     });
   });
+
+  describe("throws from a getter of the then that Promise.prototype.catch invokes", () => {
+    const getSource = (expected: string) => `
+      class Stop extends Error {}
+      const poisoned = Object.defineProperty({}, "then", {
+        get: function () {
+          throw new Stop();
+        },
+      });
+      let caught = "none";
+      try {
+        Promise.prototype.catch.call(poisoned);
+      } catch (error) {
+        caught = error instanceof Stop ? "stop" : "other";
+      }
+      if (caught !== "${expected}") throw new Error(caught);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("stop"))).failure).toBeUndefined();
+    });
+
+    it("rejects the getter as skipped", async () => {
+      expect((await checkModel(getSource("none"))).failure?.message).toContain("stop");
+    });
+  });
 });

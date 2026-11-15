@@ -1866,14 +1866,6 @@ NewestSymbol(heap) == Symbols[Len(WellKnownSymbols) + Len(heap.symbols)]
 WellKnownSymbol(name) ==
   Symbols[CHOOSE position \\in DOMAIN WellKnownSymbols : WellKnownSymbols[position] = name]
 
-\\* The code of the getter that concat reads first, its receiver's @@isConcatSpreadable, or Undefined.
-ConcatSpreadableGetter(heap, ref) ==
-  IF /\\ IsHeap(ref)
-     /\\ ~IsProxy(heap, ref)
-     /\\ GetterOf(heap, ref, WellKnownSymbol("isConcatSpreadable")) # Undefined
-  THEN CodeOf(heap, GetterOf(heap, ref, WellKnownSymbol("isConcatSpreadable")))
-  ELSE Undefined
-
 \\* The heap after Symbol.for(key), which makes a symbol for the key where the registry holds none.
 RegisterSymbol(heap, key) ==
   LET text == StringOf(key)
