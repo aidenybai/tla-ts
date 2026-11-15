@@ -41188,4 +41188,14 @@ describe("BigInts", () => {
       expect(result.failure?.message).toContain("tla-ts can't compute Math.log2 of this number");
     });
   });
+
+  it("assigns the name that a for-in's head writes", async () => {
+    const getSource = (expected: string) => `
+      var key: string = "none";
+      for (key in { a: 1, b: 2 }) {}
+      if (key !== "${expected}") throw new Error("key " + key);
+    `;
+    expect((await checkModel(getSource("b"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("none"))).failure?.message).toContain("key b");
+  });
 });

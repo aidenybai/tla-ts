@@ -13664,7 +13664,8 @@ const getEffects = (
     );
   };
   const written =
-    ts.isForOfStatement(node) && !ts.isVariableDeclarationList(node.initializer)
+    (ts.isForOfStatement(node) || ts.isForInStatement(node)) &&
+    !ts.isVariableDeclarationList(node.initializer)
       ? node.initializer
       : getWritten(node);
   // A write to a property of an object in the heap changes the heap, not the name that holds it.
