@@ -137,6 +137,9 @@ export interface Context {
   // The array literals, new sets and maps, and the rest elements, variables, parameters, fields,
   // and functions that hold them, which the heap holds.
   heapCollections: Set<ts.Node>;
+  // The proxies of arrays that a script makes, and the variables, parameters, calls, and reads of
+  // Proxy.revocable's proxy that hold them, which tla-ts reads as objects.
+  arrayProxies: Set<ts.Node>;
   // The reads of the global object's built-ins that their statements check, as a script that uses
   // the global object as a value may change them.
   checkedGlobals: ReadonlySet<ts.Identifier>;
@@ -498,6 +501,7 @@ export const createContext = (
     fractions: new Map(),
     doubles: new Set(),
     heapCollections: new Set(),
+    arrayProxies: new Set(),
     checkedGlobals: new Set(),
     generatorPrototypes: new Map(),
     hasInheritedElements: false,

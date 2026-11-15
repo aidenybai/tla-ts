@@ -6674,8 +6674,10 @@ LOCAL DefineConvertedAllOf(heap, ref, keys, descriptors) ==
                           THEN heap.objects[ref[Ref]]
                           ELSE LookupKeys(heap, ref, {keys[position] : position \\in DOMAIN keys}),
                           keys, descriptors)
-  IN CASE \\E position \\in DOMAIN keys :
-            ~descriptors[position].isValid \\/ ~CanDefineOn(ref, keys[position], descriptors[position]) ->
+  IN CASE \\E position \\in DOMAIN keys : ~descriptors[position].isValid ->
+            [heap |-> heap, isDone |-> FALSE, isRangeError |-> FALSE]
+       [] IsSequenceValue(ref) -> Assert(FALSE, "tla-ts can't change an object that the heap doesn't hold")
+       [] \\E position \\in DOMAIN keys : ~CanDefineOn(ref, keys[position], descriptors[position]) ->
             [heap |-> heap, isDone |-> FALSE, isRangeError |-> FALSE]
        [] IsTypedArray(heap, ref) /\\ \\E position \\in DOMAIN keys : TypedKey(keys[position]) # "property" ->
             IF Len(keys) = 1

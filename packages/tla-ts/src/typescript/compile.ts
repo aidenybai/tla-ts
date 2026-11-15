@@ -18,6 +18,7 @@ import { render } from "./formula";
 import { translateBody } from "./functions";
 import {
   findChangedArrays,
+  findArrayProxies,
   findHeapArrays,
   isArrayLengthening,
   isHoleyArray,
@@ -644,6 +645,7 @@ export const compile = (
       ].forEach((name) => context.builtIns.add(name));
     }
     context.heapCollections = findHeapArrays(roots, changedArrays, context);
+    context.arrayProxies = findArrayProxies(roots, context);
     context.checkedGlobals = findCheckedGlobals(sourceFile, context);
     context.generatorPrototypes = findGeneratorPrototypes(sourceFile, context);
     const prototypes = new Set(["Array.prototype", "Object.prototype"]);

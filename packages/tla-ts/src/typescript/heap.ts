@@ -1787,17 +1787,6 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
     (isNewProxy(node, context) || isRevocable(node, context))
   ) {
     const [target, handler] = node.arguments ?? [];
-    // An array's reads off the heap don't run the traps of a proxy of it.
-    const targetType = context.checker.getNonNullableType(
-      context.checker.getTypeAtLocation(target),
-    );
-    if (
-      (targetType.isUnion() ? targetType.types : [targetType]).some(
-        (member) => context.checker.isArrayType(member) || context.checker.isTupleType(member),
-      )
-    ) {
-      throw new TlaTypeScriptError("tla-ts can't make a proxy of an array", node);
-    }
     const values = [target, handler].map((argument) =>
       translateExpression(argument, scope, context),
     );
@@ -3486,6 +3475,13 @@ const isArrayObjectUse = (node: ts.Expression, context: Context): boolean => {
     return true;
   }
   if (ts.isSpreadElement(parent)) return true;
+  // A proxy reads its target as an object.
+  if (
+    (ts.isNewExpression(parent) || ts.isCallExpression(parent)) &&
+    (isNewProxy(parent, context) || isRevocable(parent, context))
+  ) {
+    return parent.arguments?.[0] === node;
+  }
   // Iterator.from runs the array's iterator too.
   if (getIteratedArray(parent, context) === node) return true;
   if (ts.isVariableDeclaration(parent)) return ts.isArrayBindingPattern(parent.name);
@@ -3538,6 +3534,251 @@ const isArrayObjectUse = (node: ts.Expression, context: Context): boolean => {
     /^Array\.prototype\.\w+\.call$/.test(callee) ||
     isObjectPlace
   );
+};
+
+// The traps that take the proxy as their receiver, by the position of the parameter.
+const PROXY_RECEIVERS = new Map([
+  ["get", 2],
+  ["set", 3],
+]);
+
+// The functions of Object and Reflect that read an object's keys or values into a new array.
+const FRESH_ARRAY_READS = new Set([
+  "Object.keys",
+  "Object.values",
+  "Object.entries",
+  "Object.getOwnPropertyNames",
+  "Object.getOwnPropertySymbols",
+  "Reflect.ownKeys",
+]);
+
+// The calls that read a proxy of an array only as an object, through its internal methods.
+const isProxyObjectCall = (callee: string) =>
+  /^(Object|Reflect)\.\w+$/.test(callee) ||
+  /^(Array|Object)\.prototype\.\w+\.call$/.test(callee) ||
+  ["Array.isArray", "JSON.stringify"].includes(callee);
+
+// The proxies of arrays that a script makes, and the variables, parameters, calls, and reads of
+// Proxy.revocable's proxy that hold them. A proxy is an object that the heap holds, so tla-ts reads
+// these as objects, whose reads run the proxy's internal methods, where it would read an array as a
+// sequence. So each place that a proxy reaches must read it only as an object: a read or a write of
+// a key, a comparison, a function of Object, Reflect, or JSON, a proxy that targets it, or a
+// variable or a script function's parameter whose reads do so in turn, and that no cast or
+// narrowing reads as an array.
+export const findArrayProxies = (roots: readonly ts.Node[], context: Context) => {
+  const checker = context.checker;
+  const made: (ts.NewExpression | ts.CallExpression)[] = [];
+  const find = (node: ts.Node) => {
+    if (
+      (ts.isNewExpression(node) || ts.isCallExpression(node)) &&
+      (isNewProxy(node, context) || isRevocable(node, context)) &&
+      node.arguments !== undefined &&
+      mayBeArray(node.arguments[0])
+    ) {
+      made.push(node);
+    }
+    ts.forEachChild(node, find);
+  };
+  const references = new Map<ts.Symbol, ts.Identifier[]>();
+  const collect = (node: ts.Node) => {
+    const symbol = ts.isIdentifier(node) ? getSymbol(node, checker) : undefined;
+    if (ts.isIdentifier(node) && symbol !== undefined) {
+      references.set(symbol, [...(references.get(symbol) ?? []), node]);
+    }
+    ts.forEachChild(node, collect);
+  };
+  const mayBeArray = (node: ts.Node) =>
+    mayBeSequenceType(checker.getNonNullableType(checker.getTypeAtLocation(node)), checker);
+  const isAny = (node: ts.Node) => (checker.getTypeAtLocation(node).flags & ts.TypeFlags.Any) !== 0;
+  const stop = (node: ts.Node): never => {
+    throw new TlaTypeScriptError(
+      "tla-ts can't make a proxy of an array that the script may read as an array",
+      node,
+    );
+  };
+  const usesArguments = (declaration: ts.Node) =>
+    findNodes(declaration, ts.isIdentifier).some((name) => name.text === "arguments");
+  const proxies = new Set<ts.Node>();
+  const visited = new Set<ts.Symbol>();
+  // Each read of a variable or a parameter that holds a proxy, where a variable whose type may be
+  // an array holds it as an object.
+  const hold = (name: ts.Identifier) => {
+    const symbol = getSymbol(name, checker);
+    if (symbol === undefined) return stop(name);
+    if (visited.has(symbol)) return;
+    visited.add(symbol);
+    (references.get(symbol) ?? [])
+      .filter((reference) => reference !== name)
+      .forEach((reference) =>
+        !proxies.has(name.parent) && mayBeArray(reference) ? stop(reference) : visit(reference),
+      );
+  };
+  const visit = (node: ts.Expression): void => {
+    const parent = node.parent;
+    if (
+      ts.isParenthesizedExpression(parent) ||
+      ts.isNonNullExpression(parent) ||
+      ts.isSatisfiesExpression(parent)
+    ) {
+      return visit(parent);
+    }
+    if (ts.isAsExpression(parent) || ts.isTypeAssertionExpression(parent)) {
+      return mayBeArray(parent) || isAny(parent) ? stop(parent) : visit(parent);
+    }
+    if (
+      (ts.isPropertyAccessExpression(parent) || ts.isElementAccessExpression(parent)) &&
+      parent.expression === node
+    ) {
+      const user = parent.parent;
+      // A sequence's method would run where a method call reads a value whose type is an array.
+      return (ts.isCallExpression(user) || ts.isNewExpression(user)) &&
+        user.expression === parent &&
+        mayBeArray(node)
+        ? stop(parent)
+        : undefined;
+    }
+    if (
+      ts.isExpressionStatement(parent) ||
+      ts.isTypeOfExpression(parent) ||
+      ts.isVoidExpression(parent) ||
+      (ts.isPrefixUnaryExpression(parent) && parent.operator === ts.SyntaxKind.ExclamationToken) ||
+      ((ts.isIfStatement(parent) || ts.isWhileStatement(parent) || ts.isDoStatement(parent)) &&
+        parent.expression === node) ||
+      (ts.isConditionalExpression(parent) && parent.condition === node)
+    ) {
+      return;
+    }
+    if (ts.isBinaryExpression(parent)) {
+      const kind = parent.operatorToken.kind;
+      return [
+        ts.SyntaxKind.EqualsEqualsEqualsToken,
+        ts.SyntaxKind.ExclamationEqualsEqualsToken,
+        ts.SyntaxKind.EqualsEqualsToken,
+        ts.SyntaxKind.ExclamationEqualsToken,
+      ].includes(kind) ||
+        (kind === ts.SyntaxKind.InKeyword && parent.right === node) ||
+        (kind === ts.SyntaxKind.InstanceOfKeyword && parent.left === node)
+        ? undefined
+        : stop(parent);
+    }
+    if (ts.isVariableDeclaration(parent) && parent.initializer === node) {
+      if (!ts.isIdentifier(parent.name) || isAny(parent.name)) return stop(parent);
+      if (mayBeArray(parent.name)) proxies.add(parent);
+      return hold(parent.name);
+    }
+    if (
+      (ts.isCallExpression(parent) || ts.isNewExpression(parent)) &&
+      parent.arguments?.includes(node) === true
+    ) {
+      const position = parent.arguments.indexOf(node);
+      if ((isNewProxy(parent, context) || isRevocable(parent, context)) && position === 0) return;
+      const callee = parent.expression.getText();
+      if (ts.isCallExpression(parent) && isProxyObjectCall(callee)) {
+        // A call that may give the proxy back, as Object.freeze does, gives a value that holds it,
+        // unlike the keys or the values that a call reads into a new array.
+        if (mayBeArray(parent) && !FRESH_ARRAY_READS.has(callee)) {
+          proxies.add(parent);
+          visit(parent);
+        }
+        return;
+      }
+      // A script function's parameter that holds no array, where the function reads it only as an
+      // object, and not through arguments.
+      const declaration = checker.getResolvedSignature(parent)?.getDeclaration();
+      const called = getSymbol(parent.expression, checker)?.valueDeclaration;
+      const parameter =
+        declaration !== undefined &&
+        ts.isFunctionLike(declaration) &&
+        !declaration.getSourceFile().isDeclarationFile &&
+        (called === declaration ||
+          (called !== undefined &&
+            ts.isVariableDeclaration(called) &&
+            (called.parent.flags & ts.NodeFlags.Const) !== 0 &&
+            called.initializer === declaration)) &&
+        !usesArguments(declaration)
+          ? declaration.parameters.at(position)
+          : undefined;
+      return parameter === undefined ||
+        parameter.dotDotDotToken !== undefined ||
+        !ts.isIdentifier(parameter.name) ||
+        isAny(parameter.name) ||
+        mayBeArray(parameter.name)
+        ? stop(parent)
+        : hold(parameter.name);
+    }
+    stop(parent);
+  };
+  // A handler's traps take the proxy's target, which may be an array, and get and set take the
+  // proxy too, so the parameters that take them hold proxies. The handler must be an object literal
+  // whose traps tla-ts can tell.
+  const holdTraps = (handler: ts.Expression) => {
+    if (!ts.isObjectLiteralExpression(handler)) return stop(handler);
+    handler.properties.forEach((property) => {
+      const name =
+        property.name !== undefined &&
+        (ts.isIdentifier(property.name) || ts.isStringLiteral(property.name))
+          ? property.name.text
+          : undefined;
+      const value = ts.isPropertyAssignment(property) ? property.initializer : undefined;
+      const trap =
+        ts.isMethodDeclaration(property) ||
+        (value !== undefined && (ts.isFunctionExpression(value) || ts.isArrowFunction(value)))
+          ? (value ?? property)
+          : undefined;
+      // A trap that isn't a function, such as undefined, runs nothing of the script's.
+      const isInert =
+        value !== undefined &&
+        (ts.isLiteralExpression(value) ||
+          value.kind === ts.SyntaxKind.NullKeyword ||
+          value.kind === ts.SyntaxKind.TrueKeyword ||
+          value.kind === ts.SyntaxKind.FalseKeyword ||
+          (ts.isIdentifier(value) && value.text === "undefined"));
+      if (name === undefined || (trap === undefined && !isInert)) return stop(property);
+      if (trap === undefined || !ts.isFunctionLike(trap)) return;
+      if (usesArguments(trap)) return stop(trap);
+      [0, PROXY_RECEIVERS.get(name)].forEach((position) => {
+        const parameter = position === undefined ? undefined : trap.parameters.at(position);
+        if (parameter === undefined) return;
+        if (parameter.dotDotDotToken !== undefined || !ts.isIdentifier(parameter.name)) {
+          return stop(parameter);
+        }
+        if (mayBeArray(parameter.name) || isAny(parameter.name)) proxies.add(parameter);
+        hold(parameter.name);
+      });
+    });
+  };
+  if (context.heap !== undefined) roots.forEach(find);
+  if (made.length > 0) roots.forEach(collect);
+  made.forEach((proxy) => {
+    const handler = proxy.arguments?.[1];
+    if (handler === undefined) return stop(proxy);
+    holdTraps(handler);
+    if (!isRevocable(proxy, context)) {
+      proxies.add(proxy);
+      return visit(proxy);
+    }
+    // Proxy.revocable gives the proxy and the function that revokes it.
+    const handle = proxy.parent;
+    const symbol =
+      ts.isVariableDeclaration(handle) && ts.isIdentifier(handle.name)
+        ? getSymbol(handle.name, checker)
+        : undefined;
+    const reads =
+      symbol === undefined
+        ? [handle]
+        : (references.get(symbol) ?? [])
+            .filter((reference) => reference.parent !== handle)
+            .map((reference) => reference.parent);
+    reads.forEach((read) => {
+      if (!ts.isPropertyAccessExpression(read)) return stop(read);
+      if (read.name.text === "proxy") {
+        proxies.add(read);
+        return visit(read);
+      }
+      if (read.name.text !== "revoke") stop(read);
+    });
+  });
+  return proxies;
 };
 
 // The Object functions that read an object's keys or prototype but none of its values.
@@ -5102,6 +5343,21 @@ export const findHeapArrays = (
       )
     ) {
       arrays.add(literal);
+    }
+    // A proxy's target is an object that its internal methods read and change.
+    const target =
+      (ts.isNewExpression(node) || ts.isCallExpression(node)) &&
+      (isNewProxy(node, context) || isRevocable(node, context)) &&
+      node.arguments?.[0] !== undefined
+        ? getArrayLiteral(node.arguments[0], context)
+        : undefined;
+    if (
+      target !== undefined &&
+      target.elements.every(
+        (element) => !ts.isSpreadElement(element) && !ts.isOmittedExpression(element),
+      )
+    ) {
+      arrays.add(target);
     }
     if (isHoleyArray(node, context)) arrays.add(node);
     if (isPrototypeArray(node, context)) arrays.add(node);

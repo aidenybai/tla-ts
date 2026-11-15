@@ -494,6 +494,20 @@ export const isHeapSetOrMap = (node: ts.Expression, context: Context) => {
   );
 };
 
+// Whether an expression gives a proxy of an array, which the heap holds as an object.
+const isArrayProxy = (node: ts.Expression, context: Context): boolean => {
+  if (ts.isParenthesizedExpression(node) || ts.isNonNullExpression(node)) {
+    return isArrayProxy(node.expression, context);
+  }
+  const declaration = ts.isIdentifier(node)
+    ? getSymbol(node, context.checker)?.valueDeclaration
+    : undefined;
+  return (
+    context.arrayProxies.has(node) ||
+    (declaration !== undefined && context.arrayProxies.has(declaration))
+  );
+};
+
 export const isHeapArray = (node: ts.Expression, context: Context) => {
   const type = context.checker.getNonNullableType(context.checker.getTypeAtLocation(node));
   // The heap holds the arrays that a match gives, with their indices.
@@ -868,6 +882,7 @@ export const getWrappedThis = (node: ts.Node, context: Context) => {
 export const getKind = (node: ts.Expression, context: Context): Kind => {
   if (context.heap !== undefined && getWrappedThis(node, context) !== undefined) return "object";
   if (isHeapArray(node, context) || getBound(node, context) !== undefined) return "object";
+  if (isArrayProxy(node, context)) return "object";
   const checker = context.checker;
   if (isHeldErrorName(node, context)) return "object";
   // An object stays one where TypeScript narrows its type, as instanceof Object narrows it to the
