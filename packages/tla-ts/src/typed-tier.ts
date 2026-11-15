@@ -906,6 +906,8 @@ const getRecordShapes = (resolved: RecType) =>
 
 const isScalar = (value: Value) => typeof value !== "object" || value.kind === "ModelValue";
 
+const isScalarType = (type: Type) => ["Int", "Str", "Bool"].includes(resolveType(type).kind);
+
 // Generates code that fingerprints a state's plains in the order given, as TLC fingerprints the
 // values they stand for, into words as its low and high words. Scalars it knows, such as atoms and
 // field names, extend by their extensions.
@@ -936,6 +938,17 @@ const createStateFingerprinter = (types: Type[], order: number[], plains: Plains
     }
     if (resolved.kind === "Seq") {
       return `{ const ${name} = ${plain}; ${code.function(`${name}.length`)} for (let i${name} = 0; i${name} < ${name}.length; i${name}++) { ${code.integer(`(i${name} + 1)`)} ${getCode(resolved.element, `${name}[i${name}]`)} } }`;
+    }
+    // Sets of scalars, and the keys of functions, are kept sorted in TLC's order.
+    if (resolved.kind === "Set" && isScalarType(resolved.element)) {
+      return `{ const ${name} = ${plain}; ${code.set(`${name}.length`)} for (let i${name} = 0; i${name} < ${name}.length; i${name}++) { ${getCode(resolved.element, `${name}[i${name}]`)} } }`;
+    }
+    if (
+      resolved.kind === "Map" &&
+      isScalarType(resolved.keys.element) &&
+      !isMask(resolved.keys, plains)
+    ) {
+      return `{ const ${name} = ${plain}; const k${name} = ${name}[0]; const v${name} = ${name}[1]; ${code.function(`k${name}.length`)} for (let i${name} = 0; i${name} < k${name}.length; i${name}++) { ${getCode(resolved.keys.element, `k${name}[i${name}]`)} ${getCode(resolved.values.element, `v${name}[i${name}]`)} } }`;
     }
     if (resolved.kind === "Tup") {
       const items = resolved.elements.map(
