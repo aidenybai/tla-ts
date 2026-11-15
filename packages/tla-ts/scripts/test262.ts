@@ -3,8 +3,9 @@
 // Usage: bun scripts/run.ts test262 [--verbose] [test path prefixes]
 
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
-import { join, relative } from "node:path";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, relative } from "node:path";
 import { runInNewContext, Script } from "node:vm";
 import ts from "@typescript/typescript6";
 import { TlaTypeScriptError } from "../src/errors";
@@ -39,8 +40,7 @@ const HARNESS = readFileSync(join(CONFORMANCE_DIRECTORY, "test262-harness.ts"), 
 // Compiled TypeScript is a strict mode module.
 const SKIPPED_FLAGS = new Set(["noStrict", "raw"]);
 
-// A module that imports or exports, which the corpus pairs with fixture files, and whose exported
-// functions tla-ts would read as a spec's actions.
+// A module that imports or exports, which the corpus pairs with fixture files.
 const LINKED_MODULE = /^\s*(?:import|export)\b|\bimport\s*[(.]/m;
 // Includes that the harness already defines, as compareArray.js is now part of assert.js.
 const HARNESS_INCLUDES = new Set(["compareArray.js"]);
@@ -172,14 +172,22 @@ const getNodeError = async (source: string) => {
 
 // Runs a module test in a Node of its own, as a module's body can await. Node reports a rejected
 // body as it reports an uncaught error, and a body that never settles with its own exit.
-const getModuleError = (source: string) => {
-  const output = ts.transpileModule(source, {
+const transpileModule = (source: string) =>
+  ts.transpileModule(source, {
     compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ESNext },
   }).outputText;
-  const run = spawnSync(process.execPath, ["--input-type=module", "-"], {
-    input: output,
-    encoding: "utf8",
-  });
+
+// Runs a module in Node, from the path of a test that imports fixtures, which Node runs from files.
+const getModuleError = (source: string, path?: string) => {
+  const output = transpileModule(source);
+  if (path !== undefined) writeFileSync(path, output);
+  const run =
+    path === undefined
+      ? spawnSync(process.execPath, ["--input-type=module", "-"], {
+          input: output,
+          encoding: "utf8",
+        })
+      : spawnSync(process.execPath, [path], { encoding: "utf8" });
   if (run.status === 0) return undefined;
   return run.stderr.split("\n").find((line) => /^\w*Error\b/.test(line)) ?? `exit ${run.status}`;
 };
@@ -207,27 +215,29 @@ const SHORT_CALLED_BUILT_INS = new Set(["RegExp"]);
 
 const PROGRAM_PATH = "/test262.ts";
 
-const file = { text: "", version: 0 };
+// The file that the service annotates, which is a module test's own path where it imports fixtures.
+const file = { path: PROGRAM_PATH, text: "", version: 0 };
 
 const service = ts.createLanguageService({
   getCompilationSettings: () => ({
     strict: true,
     target: ts.ScriptTarget.ESNext,
     module: ts.ModuleKind.ESNext,
+    moduleResolution: ts.ModuleResolutionKind.Bundler,
     moduleDetection: ts.ModuleDetectionKind.Force,
     lib: ["lib.esnext.d.ts"],
     types: [],
   }),
-  getScriptFileNames: () => [PROGRAM_PATH],
-  getScriptVersion: (path) => (path === PROGRAM_PATH ? String(file.version) : "0"),
+  getScriptFileNames: () => [file.path],
+  getScriptVersion: (path) => (path === file.path ? String(file.version) : "0"),
   getScriptSnapshot: (path) => {
-    const text = path === PROGRAM_PATH ? file.text : ts.sys.readFile(path);
+    const text = path === file.path ? file.text : ts.sys.readFile(path);
     return text === undefined ? undefined : ts.ScriptSnapshot.fromString(text);
   },
   getCurrentDirectory: () => "/",
   getDefaultLibFileName: ts.getDefaultLibFilePath,
-  fileExists: (path) => path === PROGRAM_PATH || ts.sys.fileExists(path),
-  readFile: (path) => (path === PROGRAM_PATH ? file.text : ts.sys.readFile(path)),
+  fileExists: (path) => path === file.path || ts.sys.fileExists(path),
+  readFile: (path) => (path === file.path ? file.text : ts.sys.readFile(path)),
 });
 
 const setText = (text: string) => {
@@ -298,7 +308,7 @@ const getPatternType = (name: ts.BindingName): string | undefined => {
 
 const loosen = () => {
   const program = service.getProgram();
-  const sourceFile = program?.getSourceFile(PROGRAM_PATH);
+  const sourceFile = program?.getSourceFile(file.path);
   if (program === undefined || sourceFile === undefined) return false;
   const checker = program.getTypeChecker();
   const getNode = (position: number) => {
@@ -332,7 +342,7 @@ const loosen = () => {
       : undefined;
   };
   const edits = new Map<number, string>();
-  service.getSemanticDiagnostics(PROGRAM_PATH).forEach((diagnostic) => {
+  service.getSemanticDiagnostics(file.path).forEach((diagnostic) => {
     const node = getNode(diagnostic.start ?? 0);
     const parent = node.parent;
     // A value that may be null or undefined, which the test reads as Node does.
@@ -840,7 +850,7 @@ const ARRAY_CALLBACK_METHODS = new Set([
 // doesn't give.
 const typeCallbacks = () => {
   const program = service.getProgram();
-  const sourceFile = program?.getSourceFile(PROGRAM_PATH);
+  const sourceFile = program?.getSourceFile(file.path);
   if (program === undefined || sourceFile === undefined) return;
   const checker = program.getTypeChecker();
   const references = new Map<ts.FunctionDeclaration, ts.Identifier[]>();
@@ -1352,13 +1362,14 @@ const typeGenerators = () => {
 // test262 is JavaScript, so its functions and variables have no types. This annotates them as
 // TypeScript's "Infer type from usage" fix does, with unknown where it infers any, then loosens
 // the types of the objects it describes.
-const annotate = (text: string) => {
+const annotate = (text: string, path = PROGRAM_PATH) => {
+  file.path = path;
   setText(text);
   typeIteratorBases();
   typeGenerators();
   typeCallbacks();
   for (;;) {
-    const sourceFile = service.getProgram()?.getSourceFile(PROGRAM_PATH);
+    const sourceFile = service.getProgram()?.getSourceFile(file.path);
     // A variable that an empty array literal initializes holds an array, which the fix infers as
     // unknown where the test only destructures it.
     const isEmptyArrayName = (node: ts.Node, position: number): boolean =>
@@ -1369,19 +1380,20 @@ const annotate = (text: string) => {
         node.initializer.elements.length === 0) ||
       (ts.forEachChild(node, (child) => isEmptyArrayName(child, position) || undefined) ?? false);
     const fix = service
-      .getSemanticDiagnostics(PROGRAM_PATH)
+      .getSemanticDiagnostics(file.path)
       .values()
       .filter((diagnostic) => IMPLICIT_ANY_ERRORS.has(diagnostic.code))
       .flatMap((diagnostic) => {
         const start = diagnostic.start ?? 0;
         const end = start + (diagnostic.length ?? 0);
-        return service.getCodeFixesAtPosition(PROGRAM_PATH, start, end, [diagnostic.code], {}, {});
+        return service.getCodeFixesAtPosition(file.path, start, end, [diagnostic.code], {}, {});
       })
       .find((candidate) => candidate.fixName === "inferFromUsage");
     const annotated =
       fix === undefined
         ? file.text
         : fix.changes
+            .filter((change) => change.fileName === file.path)
             .flatMap((change) => change.textChanges)
             .toSorted((left, right) => right.span.start - left.span.start)
             .reduce((current, change) => {
@@ -1537,7 +1549,7 @@ const isCondition = (node: ts.Node): boolean => {
 // such as undefined in a pattern, still throws, so its error stays.
 const ignoreSoundErrors = () => {
   const program = service.getProgram();
-  const sourceFile = program?.getSourceFile(PROGRAM_PATH);
+  const sourceFile = program?.getSourceFile(file.path);
   if (program === undefined || sourceFile === undefined) return;
   const checker = program.getTypeChecker();
   const getNode = (position: number) => {
@@ -2391,7 +2403,7 @@ const ignoreSoundErrors = () => {
   };
   const getLine = (diagnostic: ts.Diagnostic) =>
     sourceFile.getLineAndCharacterOfPosition(diagnostic.start ?? 0).line;
-  const diagnostics = service.getSemanticDiagnostics(PROGRAM_PATH);
+  const diagnostics = service.getSemanticDiagnostics(file.path);
   // @ts-ignore hides each error on its line, so a line with an error that stays keeps it.
   const kept = new Set(
     diagnostics
@@ -2526,6 +2538,54 @@ const hasImportCall = (source: string) => {
   return visit(ts.createSourceFile(PROGRAM_PATH, source, ts.ScriptTarget.Latest));
 };
 
+// The directory of the module tests that import fixtures, where each file of the corpus is
+// TypeScript that tla-ts reads and JavaScript that Node runs.
+const MODULE_DIRECTORY = mkdtempSync(join(tmpdir(), "test262-"));
+writeFileSync(join(MODULE_DIRECTORY, "package.json"), '{ "type": "module" }');
+process.on("exit", () => rmSync(MODULE_DIRECTORY, { recursive: true, force: true }));
+
+const getModulePath = (path: string) =>
+  join(MODULE_DIRECTORY, relative(TEST_DIRECTORY, path)).replace(/\.js$/, ".ts");
+
+// The fixtures that a module test imports, by path, each through a static import of a relative
+// path, or undefined where a file imports another way, such as dynamically or with attributes.
+const getFixtures = (path: string) => {
+  const fixtures = new Map<string, string>();
+  const isLinked = (file: string, text: string): boolean => {
+    const sourceFile = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
+    const isDynamic = (node: ts.Node): boolean =>
+      (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) ||
+      (ts.isMetaProperty(node) && node.keywordToken === ts.SyntaxKind.ImportKeyword) ||
+      (ts.forEachChild(node, isDynamic) ?? false);
+    return (
+      !isDynamic(sourceFile) &&
+      sourceFile.statements.every((statement) => {
+        if (!ts.isImportDeclaration(statement) && !ts.isExportDeclaration(statement)) return true;
+        const specifier = statement.moduleSpecifier;
+        if (specifier === undefined) return true;
+        const imported =
+          ts.isStringLiteral(specifier) && /^\.\.?\//.test(specifier.text)
+            ? join(dirname(file), specifier.text)
+            : undefined;
+        if (
+          imported === undefined ||
+          !existsSync(imported) ||
+          statement.attributes !== undefined ||
+          (ts.isImportDeclaration(statement) &&
+            statement.importClause?.phaseModifier === ts.SyntaxKind.DeferKeyword)
+        ) {
+          return false;
+        }
+        if (imported === path || fixtures.has(imported)) return true;
+        const importedText = readFileSync(imported, "utf8");
+        fixtures.set(imported, importedText);
+        return isLinked(imported, importedText);
+      })
+    );
+  };
+  return isLinked(path, readFileSync(path, "utf8")) ? fixtures : undefined;
+};
+
 const runTest = async (path: string): Promise<TestRun> => {
   const id = relative(TEST_DIRECTORY, path);
   const source = readFileSync(path, "utf8");
@@ -2536,17 +2596,29 @@ const runTest = async (path: string): Promise<TestRun> => {
   if (BUILT_STRING.test(source)) {
     return { id, outcome: "skipped", reason: "a string of every code point in large ranges" };
   }
-  if (metadata.isModule && LINKED_MODULE.test(source.slice(source.indexOf("---*/")))) {
-    return { id, outcome: "skipped", reason: "a module that imports or exports" };
+  const isLinked = metadata.isModule && LINKED_MODULE.test(source.slice(source.indexOf("---*/")));
+  const fixtures = isLinked ? getFixtures(path) : new Map<string, string>();
+  if (fixtures === undefined) {
+    return { id, outcome: "skipped", reason: "a module that imports other than from a fixture" };
   }
   if (!metadata.isModule && hasImportCall(source)) {
     return { id, outcome: "skipped", reason: "a script that imports a module" };
   }
+  // A fixture is a module, so its code is strict.
+  fixtures.forEach((text, fixture) => {
+    const modulePath = getModulePath(fixture);
+    mkdirSync(dirname(modulePath), { recursive: true });
+    writeFileSync(modulePath, `"use strict"; ${text}`);
+    writeFileSync(modulePath.replace(/\.ts$/, ".js"), transpileModule(text));
+  });
+  const programPath = isLinked ? getModulePath(path) : PROGRAM_PATH;
+  if (isLinked) mkdirSync(dirname(programPath), { recursive: true });
   // TypeScript itself fails on some syntax, such as import defer.
   const annotated = (() => {
     try {
       return annotate(
         `${getHarness(metadata, source)}\n${metadata.isModule ? source : nameGlobalObject(source)}`,
+        programPath,
       );
     } catch (error) {
       if (error instanceof Error && error.message.startsWith("Debug Failure.")) return undefined;
@@ -2554,14 +2626,19 @@ const runTest = async (path: string): Promise<TestRun> => {
     }
   })();
   if (annotated === undefined) return { id, outcome: "skipped", reason: "TypeScript fails" };
-  const nodeError = metadata.isModule ? getModuleError(annotated) : await getNodeError(annotated);
+  const nodeError = metadata.isModule
+    ? getModuleError(annotated, isLinked ? programPath.replace(/\.ts$/, ".js") : undefined)
+    : await getNodeError(annotated);
   if (nodeError !== undefined) {
     return { id, outcome: "skipped", reason: `Node fails: ${getFirstLine(nodeError)}` };
   }
   try {
     // Node runs the test as a module, which is strict code, so tla-ts compiles it as strict too.
     const strict = `"use strict"; ${annotated}`;
-    const result = await check({ ...compile(strict, "test262.ts"), onPrint: () => {} });
+    const result = await check({
+      ...compile(strict, isLinked ? programPath : "test262.ts"),
+      onPrint: () => {},
+    });
     if (result.status === "success" || result.status === "deadlock") {
       return { id, outcome: "pass", reason: "" };
     }
