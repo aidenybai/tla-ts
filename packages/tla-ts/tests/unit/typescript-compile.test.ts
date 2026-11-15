@@ -26186,4 +26186,42 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("-2,1"))).failure?.message).toContain("-1,1");
     });
   });
+
+  describe("writes and reads a float's bits exactly", () => {
+    const getSource = (expected: string) => `
+      const box = { size: 0 };
+      const view = new DataView(new ArrayBuffer(8));
+      const read32 = (value: number) => {
+        view.setFloat32(0, value);
+        return [view.getUint8(0), view.getUint8(1), view.getUint8(2), view.getUint8(3)].join(" ");
+      };
+      const read16 = (value: number) => {
+        view.setFloat16(0, value);
+        return [view.getUint8(0), view.getUint8(1)].join(" ");
+      };
+      view.setFloat64(0, 0.1);
+      const tenth = [view.getUint8(0), view.getUint8(7), view.getFloat64(0) === 0.1].join(" ");
+      view.setFloat64(0, -2147483648);
+      const most = view.getFloat64(0);
+      const half = read32(1.5);
+      const tiny = read16(2 ** -24);
+      const large = read32(4294967296);
+      box.size = 1;
+      const read = [tenth, most, half, tiny, large].join();
+      if (read !== "${expected}") throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("63 154 true,-2147483648,63 192 0 0,0 1,79 128 0 0"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects 1.5 as having another fraction", async () => {
+      expect(
+        (await checkModel(getSource("63 154 true,-2147483648,63 160 0 0,0 1,79 128 0 0"))).failure
+          ?.message,
+      ).toContain("63 154 true,-2147483648,63 192 0 0,0 1,79 128 0 0");
+    });
+  });
 });

@@ -1611,28 +1611,26 @@ BitsValue(bits, from, count) ==
 LOCAL ByteBits(bytes) ==
   [position \\in 0..(8 * Len(bytes) - 1) |-> (bytes[position \\div 8 + 1] \\div 2^(position % 8)) % 2]
 
-\\* A float's little-endian bytes as a number, which stops at a fraction, or at a number past TLC's
-\\* integers.
+\\* A float's little-endian bytes as the number they hold exactly: its significand, with the leading
+\\* bit that a normal float leaves out, times a power of 2.
 LOCAL FloatOf(bytes, exponentBits, fractionBits) ==
   LET bits == ByteBits(bytes)
       isNegative == bits[8 * Len(bytes) - 1] = 1
       exponent == BitsValue(bits, fractionBits, exponentBits)
-      power == exponent - (2^(exponentBits - 1) - 1)
-      shift == fractionBits - power
       isFractionZero == \\A position \\in 0..(fractionBits - 1) : bits[position] = 0
-      magnitude ==
-        IF shift >= 0
-        THEN 2^power + BitsValue(bits, shift, fractionBits - shift)
-        ELSE 2^power + BitsValue(bits, 0, fractionBits) * 2^(-shift)
+      leading == IF exponent = 0 THEN 0 ELSE 1
+      significand ==
+        IF fractionBits < 31
+        THEN <<0, BitsValue(bits, 0, fractionBits) + leading * 2^fractionBits>>
+        ELSE <<BitsValue(bits, 31, fractionBits - 31) + leading * 2^(fractionBits - 31),
+               BitsValue(bits, 0, 31)>>
+      odd == OddPart(significand, 0)
+      power == (IF exponent = 0 THEN 1 ELSE exponent) - (2^(exponentBits - 1) - 1) - fractionBits
   IN CASE exponent = 2^exponentBits - 1 /\\ isFractionZero ->
             IF isNegative THEN NegativeInfinity ELSE Infinity
        [] exponent = 2^exponentBits - 1 -> NaN
        [] exponent = 0 /\\ isFractionZero -> IF isNegative THEN NegativeZero ELSE 0
-       [] power < 0 \\/ \\E position \\in 0..(shift - 1) : bits[position] = 1 ->
-            Assert(FALSE, "tla-ts can't represent a fraction")
-       [] power > 30 -> Assert(FALSE, "tla-ts can't represent a number this big")
-       [] isNegative -> -magnitude
-       [] OTHER -> magnitude
+       [] OTHER -> FromBinary(<<isNegative, power + odd[2], odd[1][1], odd[1][2]>>)
 
 \\* An element's little-endian bytes as the number they hold.
 NumberOfBytes(type, bytes) ==
@@ -4559,39 +4557,45 @@ LOCAL FractionBits(type) == CASE type = "Float16" -> 10 [] type = "Float32" -> 2
 
 LOCAL BitsBytes(bits, size) == [position \\in 1..size |-> BitsValue(bits, 8 * (position - 1), 8)]
 
-\\* The little-endian bytes of a float that holds a number exactly, which stops where it would round.
+\\* The little-endian bytes of a float that holds a number exactly, which stops where it would round:
+\\* the number's binary form shifted so that its first bit leads the fraction, which a normal float
+\\* leaves out, or so that its last bit is the least that a subnormal float holds.
 LOCAL FloatBytes(value, type) ==
   LET size == ElementSize(type)
       exponentBits == ExponentBits(type)
       fractionBits == FractionBits(type)
       top == 8 * size - 1
       ones == 2^exponentBits - 1
+      bias == 2^(exponentBits - 1) - 1
       encode(isNegative, exponent, fraction) ==
         BitsBytes([position \\in 0..top |->
                      CASE position = top -> IF isNegative THEN 1 ELSE 0
                        [] position >= fractionBits -> (exponent \\div 2^(position - fractionBits)) % 2
                        [] OTHER -> fraction[position]], size)
       none == [position \\in 0..(fractionBits - 1) |-> 0]
-      magnitude == IF value < 0 THEN -value ELSE value
-      power == CHOOSE candidate \\in 0..30 : magnitude \\div 2^candidate = 1
-      shift == fractionBits - power
-      rest == magnitude - 2^power
+      binary == Binary(value)
+      significand == <<binary[3], binary[4]>>
+      count == HalvesBits(significand)
+      lead == binary[2] + count - 1
+      least == 1 - bias - fractionBits
+      isSubnormal == lead < 1 - bias
+      shifted == ShiftedLeft(significand, IF isSubnormal THEN binary[2] - least ELSE fractionBits - (count - 1))
+      bit(position) ==
+        IF position < 31
+        THEN (shifted[2] \\div 2^position) % 2
+        ELSE (shifted[1] \\div 2^(position - 31)) % 2
   IN CASE value = NaN ->
             encode(FALSE, ones, [position \\in 0..(fractionBits - 1) |->
                                    IF position = fractionBits - 1 THEN 1 ELSE 0])
        [] value = Infinity -> encode(FALSE, ones, none)
        [] value = NegativeInfinity -> encode(TRUE, ones, none)
        [] value = NegativeZero -> encode(TRUE, 0, none)
-       [] value = 0 -> encode(FALSE, 0, none)
-       [] IsFraction(value) -> Assert(FALSE, "tla-ts can't write a fraction's bits")
-       [] IsBig(value) -> BeyondInteger
-       [] value = -2147483647 - 1 -> Assert(FALSE, "tla-ts can't represent a number this big")
-       [] (shift < 0 /\\ magnitude % 2^(-shift) # 0) \\/ power + 2^(exponentBits - 1) - 1 >= ones ->
+       [] IsZero(value) -> encode(FALSE, 0, none)
+       [] lead > bias \\/ count - 1 > fractionBits \\/ binary[2] < least ->
             Assert(FALSE, "tla-ts can't round a number to a float")
        [] OTHER ->
-            encode(value < 0, power + 2^(exponentBits - 1) - 1,
-                   [position \\in 0..(fractionBits - 1) |->
-                      IF position < shift THEN 0 ELSE (rest \\div 2^(position - shift)) % 2])
+            encode(binary[1], IF isSubnormal THEN 0 ELSE lead + bias,
+                   [position \\in 0..(fractionBits - 1) |-> bit(position)])
 
 \\* The little-endian bytes that an element of a type holds for a number.
 NumberBytes(type, value) ==
