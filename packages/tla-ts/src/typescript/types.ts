@@ -545,7 +545,14 @@ export const getReorderedArray = (node: ts.Expression, context: Context) => {
 // Whether an expression gives a collection that the heap holds: a literal or a new set or map that
 // it holds, or what a holder of them gives.
 const isHeld = (node: ts.Expression, context: Context): boolean => {
-  if (ts.isParenthesizedExpression(node) || ts.isNonNullExpression(node)) {
+  // A cast gives the same collection whatever type it gives it.
+  if (
+    ts.isParenthesizedExpression(node) ||
+    ts.isNonNullExpression(node) ||
+    ts.isAsExpression(node) ||
+    ts.isTypeAssertionExpression(node) ||
+    ts.isSatisfiesExpression(node)
+  ) {
     return isHeld(node.expression, context);
   }
   const reordered = getReorderedArray(node, context);

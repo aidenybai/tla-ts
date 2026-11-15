@@ -3551,6 +3551,25 @@ export const translateNode = (
   ) {
     const value = translateExpression(node.expression, scope, context, isDefined);
     const primitive = getUnverifiedPrimitive(node, context);
+    // A cast to an array's type may give an object that the heap holds, such as an array that a
+    // parameter typed as an object takes, which tla-ts would read as a sequence.
+    if (
+      context.heap !== undefined &&
+      !ts.isParenthesizedExpression(node) &&
+      getKind(node, context) === "sequence" &&
+      getKind(node.expression, context) !== "sequence"
+    ) {
+      return share(value, "cast", context, (cast) =>
+        ifExpression(
+          useJavaScript("IsHeldObject", [cast], context),
+          apply("Assert", [
+            boolean(false),
+            string("tla-ts can't follow a cast that gives an object an array's type"),
+          ]),
+          cast,
+        ),
+      );
+    }
     return primitive === undefined
       ? value
       : share(value, "cast", context, (cast) =>

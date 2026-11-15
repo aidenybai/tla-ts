@@ -37505,4 +37505,32 @@ describe("BigInts", () => {
       ).toThrow("sort");
     });
   });
+
+  describe("reads a cast of an array that the heap holds as an object", () => {
+    const getSource = (expected: string) => `
+      const list: unknown = [1, 2, 3];
+      Object.defineProperty(list, "extra", { value: 4 });
+      const read = [(list as number[]).length, (list as number[])[1]].join();
+      if (read !== "${expected}") throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("3,2"))).failure).toBeUndefined();
+    });
+
+    it("rejects the length as the extra property's", async () => {
+      expect((await checkModel(getSource("4,2"))).failure?.message).toContain("3,2");
+    });
+
+    it("stops where a parameter typed as an object takes the array", async () => {
+      const result = await checkModel(`
+        const list = [1, 2, 3];
+        Object.defineProperty(list, "extra", { value: 4 });
+        const getLength = (value: object) => (value as number[]).length;
+        const read = String(getLength(list));
+        if (read !== "3") throw new Error(read);
+      `);
+      expect(result.failure?.message).toContain("tla-ts can't follow a cast");
+    });
+  });
 });
