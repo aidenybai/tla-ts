@@ -2943,9 +2943,71 @@ export const translatePatternIteration = (
               string("tla-ts can't destructure an object through its iterator"),
             ]),
           ),
-          translateArrayIteration(iterated, heap, pattern, context),
+          translateStringIteration(iterated, type, heap, pattern, context, (other) =>
+            translateArrayIteration(other, heap, pattern, context),
+          ),
         ),
       );
+
+// The code points that an array pattern takes from a value whose type may be a string's, through
+// String.prototype's iterator, which a script may replace, and what another value gives otherwise.
+export const translateStringIteration = (
+  value: Expression,
+  type: ts.Type,
+  heap: Expression | undefined,
+  node: ts.Node,
+  context: Context,
+  getOther = (other: Expression) => other,
+) => {
+  const getCharacters = (text: Expression) => {
+    const characters = useJavaScript("StringCharacters", [text], context);
+    return heap === undefined
+      ? characters
+      : ifExpression(
+          junction("And", [
+            useJavaScript(
+              "HoldsBuiltIn",
+              [
+                heap,
+                translateBuiltInValue("String.prototype", node, context),
+                useJavaScript("WellKnownSymbol", [string("iterator")], context),
+                string("String.prototype.@@iterator"),
+              ],
+              context,
+            ),
+            useJavaScript(
+              "HoldsBuiltIn",
+              [
+                heap,
+                translateStringIteratorPrototype(node, context),
+                string("next"),
+                string("%StringIteratorPrototype%.next"),
+              ],
+              context,
+            ),
+          ]),
+          characters,
+          apply("Assert", [
+            boolean(false),
+            string("tla-ts can't iterate a string whose iterator a script replaced"),
+          ]),
+        );
+  };
+  if (isEvery(type, ts.TypeFlags.StringLike)) return getCharacters(value);
+  const mayBeString = (type.isUnion() ? type.types : [type]).some(
+    (member) =>
+      (member.flags & (ts.TypeFlags.StringLike | ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0,
+  );
+  return mayBeString
+    ? share(value, "iterated", context, (shared) =>
+        ifExpression(
+          apply("=", [useJavaScript("TypeOf", [shared], context), string("string")]),
+          getCharacters(shared),
+          getOther(shared),
+        ),
+      )
+    : getOther(value);
+};
 
 // Whether a value of this type may be a primitive other than null or undefined, which an array
 // pattern iterates through its prototype.

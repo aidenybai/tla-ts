@@ -36155,4 +36155,57 @@ describe("BigInts", () => {
       expect(result.failure?.message).toContain("tla-ts can't throw a pattern's TypeError");
     });
   });
+
+  describe("destructures a string through its code points", () => {
+    const getSource = (expected: string) => `
+      const holder = { seen: 0 };
+      const text = "a\\u{1F600}c";
+      const [first, second] = text;
+      let a: string | undefined = "";
+      let b: string | undefined = "";
+      [a, b] = "x";
+      let c = "";
+      let d = "";
+      for ([c, d] of ["yz"]) {}
+      const read = ([e]: string) => e;
+      const result = \`\${first}\${second.length}\${a}\${b}\${c}\${d}\${read("w")}\`;
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("a2xundefinedyzw"))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation", async () => {
+      expect((await checkModel(getSource("a1xundefinedyzw"))).failure?.message).toContain(
+        "a2xundefinedyzw",
+      );
+    });
+
+    it("destructures a string that a value of any type holds", async () => {
+      const result = await checkModel(`
+        const t: any = "ab";
+        let a: any;
+        let b: any;
+        [a, b] = t;
+        const [c] = t;
+        const result = \`\${a}\${b}\${c}\`;
+        if (result !== "aba") throw new Error(result);
+      `);
+      expect(result.failure).toBeUndefined();
+    });
+
+    it("stops where a script replaced the string's iterator", async () => {
+      const result = await checkModel(`
+        const holder = { seen: 0 };
+        String.prototype[Symbol.iterator] = function* () {
+          yield "z";
+        } as any;
+        const [a] = "ab";
+      `);
+      expect(result.failure?.message).toContain(
+        "tla-ts can't iterate a string whose iterator a script replaced",
+      );
+    });
+  });
 });

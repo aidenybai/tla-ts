@@ -23,6 +23,7 @@ import {
   translateHeapElements,
   translateArrayIteration,
   translatePatternIteration,
+  translateStringIteration,
   isMaybePrimitive,
   isUniterable,
   getPatternHeap,
@@ -1181,7 +1182,15 @@ const assignPattern = <Result>(
       heap === undefined || isList ? undefined : context.checker.getTypeOfAssignmentPattern(target);
     const iterated =
       heap === undefined
-        ? value
+        ? isList || isHeapSource
+          ? value
+          : translateStringIteration(
+              value,
+              context.checker.getTypeOfAssignmentPattern(target),
+              heapSymbol === undefined ? undefined : getHeap(path.scope, target, context),
+              target,
+              context,
+            )
         : type === undefined
           ? translateArrayIteration(value, heap, target, context)
           : translatePatternIteration(value, heap, target, type, context);
