@@ -13613,6 +13613,49 @@ const keepHoles = (
   );
 };
 
+// A generator's for-of over an array written in place whose head or body yields, which runs its
+// iterations one after another, as a yield suspends the body between them. Nothing else holds the
+// array, so its elements stay as the loop starts, and its iterator has no return to close.
+const translateYieldingForOf = (
+  loop: ts.ForOfStatement,
+  literal: ts.ArrayLiteralExpression,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path) => Formula,
+): Formula => {
+  const sequence = context.names.getFresh("sequence");
+  const iterate = (previous: Path, position: number): Formula => {
+    if (position === literal.elements.length) return continueWith(previous);
+    const element = literal.elements[position];
+    const next = (after: Path) => iterate(after, position + 1);
+    const value = index(identifier(sequence), [number(position + 1)]);
+    const current = startIteration(loop, previous);
+    return keepHoles(
+      loop,
+      value,
+      position,
+      current,
+      context,
+      bindIteration(
+        loop.initializer,
+        value,
+        ts.isOmittedExpression(element) ? undefined : element,
+        current,
+        context,
+        { ...frame, next, continueTo: next, breakTo: continueWith },
+        (bound, innerFrame) => translateStatements([loop.statement], bound, context, innerFrame),
+      ),
+    );
+  };
+  return allocate(loop.expression, path, context, (inner) =>
+    letIn(
+      [define(sequence, [], translateExpression(loop.expression, inner.scope, context))],
+      iterate(inner, 0),
+    ),
+  );
+};
+
 // The most iterations of a generator's counted loop that tla-ts unrolls.
 const UNROLL_LIMIT = 64;
 
@@ -13767,6 +13810,19 @@ const translateLoop = (
   const unrolled = isYielding && ts.isForStatement(loop) ? getCounts(loop, context) : undefined;
   if (unrolled !== undefined || (isYielding && isForever(loop))) {
     return translateUnrolled(loop, unrolled, path, context, frame, continueWith);
+  }
+  const literal = ts.isForOfStatement(loop) ? getCast(loop.expression) : undefined;
+  if (
+    ts.isForOfStatement(loop) &&
+    frame.yieldTo !== undefined &&
+    (isYielding || hasYield(loop.initializer)) &&
+    literal !== undefined &&
+    ts.isArrayLiteralExpression(literal) &&
+    literal.elements.every(
+      (element) => !ts.isSpreadElement(element) && !mayBeGeneratorType(element, context),
+    )
+  ) {
+    return translateYieldingForOf(loop, literal, path, context, frame, continueWith);
   }
   const runLoop = (inner: Path) => translateIterations(loop, inner, context, frame, continueWith);
   // A for-of or a for-in evaluates what it iterates once, before its first iteration.
@@ -15077,17 +15133,24 @@ const isSettled = (node: ts.Expression, results: Scope["results"]): boolean =>
     isSettled(node.left, results) &&
     isSettled(node.right, results));
 
+// A name that a node reads before an await or a yield, whose value the statement keeps from then.
+const isReadName = (node: ts.Expression, context: Context): node is ts.Identifier =>
+  ts.isIdentifier(node) && !isUnresolved(node, context);
+
 // The first of a list of operands that a node evaluates in order to hold an await or a yield,
-// after operands that are settled.
+// after operands that are settled or names that it reads.
 const getFirstLeading = (
   operands: readonly ts.Expression[],
   results: Scope["results"],
+  context: Context,
 ): ts.AwaitExpression | ts.YieldExpression | undefined => {
   const [first, ...rest] = operands;
   if (first === undefined) return undefined;
   return (
-    getLeadingAwaitOrYield(first, results) ??
-    (isSettled(first, results) ? getFirstLeading(rest, results) : undefined)
+    getLeadingAwaitOrYield(first, results, context) ??
+    (isSettled(first, results) || isReadName(first, context)
+      ? getFirstLeading(rest, results, context)
+      : undefined)
   );
 };
 
@@ -15096,12 +15159,15 @@ const getFirstLeading = (
 const getLeadingAwaitOrYield = (
   node: ts.Expression,
   results: Scope["results"],
+  context: Context,
 ): ts.AwaitExpression | ts.YieldExpression | undefined => {
   if (results.has(node)) return undefined;
-  if (ts.isAwaitExpression(node)) return getLeadingAwaitOrYield(node.expression, results) ?? node;
+  if (ts.isAwaitExpression(node)) {
+    return getLeadingAwaitOrYield(node.expression, results, context) ?? node;
+  }
   // A yield evaluates its operand before it yields.
   if (ts.isYieldExpression(node)) {
-    const operand = node.expression && getLeadingAwaitOrYield(node.expression, results);
+    const operand = node.expression && getLeadingAwaitOrYield(node.expression, results, context);
     return operand ?? (node.asteriskToken === undefined ? node : undefined);
   }
   if (
@@ -15113,43 +15179,86 @@ const getLeadingAwaitOrYield = (
     ts.isPropertyAccessExpression(node) ||
     ts.isElementAccessExpression(node)
   ) {
-    return getLeadingAwaitOrYield(node.expression, results);
+    return getLeadingAwaitOrYield(node.expression, results, context);
   }
-  if (ts.isPrefixUnaryExpression(node)) return getLeadingAwaitOrYield(node.operand, results);
-  if (ts.isConditionalExpression(node)) return getLeadingAwaitOrYield(node.condition, results);
+  if (ts.isPrefixUnaryExpression(node)) {
+    return getLeadingAwaitOrYield(node.operand, results, context);
+  }
+  if (ts.isConditionalExpression(node)) {
+    return getLeadingAwaitOrYield(node.condition, results, context);
+  }
   if (ts.isArrayLiteralExpression(node)) {
     const index = node.elements.findIndex(ts.isSpreadElement);
-    return getFirstLeading(index === -1 ? node.elements : node.elements.slice(0, index), results);
+    return getFirstLeading(
+      index === -1 ? node.elements : node.elements.slice(0, index),
+      results,
+      context,
+    );
   }
   if (ts.isTemplateExpression(node)) {
     return getFirstLeading(
       node.templateSpans.map((span) => span.expression),
       results,
+      context,
     );
   }
   if (!ts.isBinaryExpression(node)) return undefined;
   const kind = node.operatorToken.kind;
   if (kind === ts.SyntaxKind.EqualsToken) {
-    return ts.isIdentifier(node.left) ? getLeadingAwaitOrYield(node.right, results) : undefined;
+    return ts.isIdentifier(node.left)
+      ? getLeadingAwaitOrYield(node.right, results, context)
+      : undefined;
   }
+  // A compound assignment reads its name before its value.
   const isAssignment =
     kind >= ts.SyntaxKind.FirstAssignment && kind <= ts.SyntaxKind.LastAssignment;
-  if (isAssignment) return undefined;
+  if (isAssignment && !ts.isIdentifier(node.left)) return undefined;
   // A logical operator evaluates its right operand only for some values of its left.
   const isLogical =
     kind === ts.SyntaxKind.AmpersandAmpersandToken ||
     kind === ts.SyntaxKind.BarBarToken ||
-    kind === ts.SyntaxKind.QuestionQuestionToken;
+    kind === ts.SyntaxKind.QuestionQuestionToken ||
+    LOGICAL_OPERATORS.has(kind);
   return isLogical
-    ? getLeadingAwaitOrYield(node.left, results)
-    : getFirstLeading([node.left, node.right], results);
+    ? getLeadingAwaitOrYield(node.left, results, context)
+    : getFirstLeading([node.left, node.right], results, context);
 };
 
-const getStatementAwaitOrYield = (statement: ts.Statement, path: Path) => {
+// The names that the operands before a node read, up to the expression of its statement.
+const getEarlierNames = (
+  node: ts.Node,
+  root: ts.Node,
+  results: Scope["results"],
+  context: Context,
+): ts.Identifier[] => {
+  if (node === root) return [];
+  const parent = ts.isTemplateSpan(node.parent) ? node.parent.parent : node.parent;
+  const operands =
+    ts.isBinaryExpression(parent) && parent.operatorToken.kind !== ts.SyntaxKind.EqualsToken
+      ? [parent.left, parent.right]
+      : ts.isArrayLiteralExpression(parent)
+        ? [...parent.elements]
+        : ts.isTemplateExpression(parent)
+          ? parent.templateSpans.map((span) => span.expression)
+          : [];
+  const position = operands.findIndex((operand) => operand === node);
+  return [
+    ...getEarlierNames(parent, root, results, context),
+    ...(position === -1 ? [] : operands.slice(0, position)).filter(
+      (operand): operand is ts.Identifier => !results.has(operand) && isReadName(operand, context),
+    ),
+  ];
+};
+
+const getStatementAwaitOrYield = (statement: ts.Statement, path: Path, context: Context) => {
   const evaluated = getEvaluated(statement);
-  return evaluated === undefined
+  const paused =
+    evaluated === undefined
+      ? undefined
+      : getLeadingAwaitOrYield(evaluated, path.scope.results, context);
+  return paused === undefined || evaluated === undefined
     ? undefined
-    : getLeadingAwaitOrYield(evaluated, path.scope.results);
+    : { paused, reads: getEarlierNames(paused, evaluated, path.scope.results, context) };
 };
 
 // An await, which suspends the async function's body until the promise of its value settles.
@@ -16490,13 +16599,22 @@ export const translateStatements = (
   ) {
     return continueWith(path);
   }
-  const paused = getStatementAwaitOrYield(statement, path);
+  const leading = getStatementAwaitOrYield(statement, path, context);
+  const paused = leading?.paused;
+  // The names that the statement read before it suspends keep the values they had then.
+  const reads = (leading?.reads ?? []).map((read): [ts.Expression, Expression] => [
+    read,
+    translateExpression(read, path.scope, context),
+  ]);
   const withResult = (after: Path, node: ts.Expression, value: Expression) =>
     translateStatements(
       statements,
       {
         ...after,
-        scope: { ...after.scope, results: new Map([...after.scope.results, [node, value]]) },
+        scope: {
+          ...after.scope,
+          results: new Map([...after.scope.results, ...reads, [node, value]]),
+        },
       },
       context,
       frame,

@@ -27087,6 +27087,34 @@ describe("errors", () => {
     });
   });
 
+  // A compound assignment reads its name before the yield in its value suspends the body.
+  describe("runs a generator's for-of over an array written in place whose head or body yields", () => {
+    const getSource = (expected: string) => `
+      let log = "";
+      let x = "";
+      function* g(): Generator<number, void, string> {
+        for (const value of [1, 2, 3]) {
+          if (value === 2) continue;
+          log += yield value;
+        }
+        for ([x = yield 4] of [[]]) log += x;
+      }
+      const iter = g();
+      const first = iter.next().value;
+      const second = iter.next("a").value;
+      const third = iter.next("b").value;
+      iter.next("c");
+      log += first + "," + second + "," + third;
+      if (log !== "${expected}") throw new Error(log);
+    `;
+    it("matches Node", async () => {
+      expect((await checkModel(getSource("abc1,3,4"))).failure).toBeUndefined();
+    });
+    it("fails a wrong log", async () => {
+      expect((await checkModel(getSource("abc1,2,4"))).failure?.message).toContain("abc1,3");
+    });
+  });
+
   describe("passes a return or a throw through a yield* to the iterator", () => {
     const cases = [
       {
