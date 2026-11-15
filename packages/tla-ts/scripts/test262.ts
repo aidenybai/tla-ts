@@ -158,8 +158,8 @@ const getMetadata = (source: string): Metadata => {
   };
 };
 
-// A property escape test's buildString call, which makes a string of each code point in ranges
-// that reach past a million, more than TLC can hold.
+// A call of regExpUtils.js's buildString, which makes a string of each code point in ranges that
+// may reach past a million, more than tla-ts can run a loop over.
 const BUILT_STRING = /\bbuildString\(/;
 
 // Tests that end Node itself, such as with a segmentation fault, which would end this script.
@@ -3229,6 +3229,90 @@ const nameGlobalObject = (source: string) => {
   );
 };
 
+// The numbers of an array literal of numeric literals, or undefined for another expression.
+const getNumbers = (node: ts.Expression | undefined) =>
+  node !== undefined &&
+  ts.isArrayLiteralExpression(node) &&
+  node.elements.every((element) => ts.isNumericLiteral(element))
+    ? node.elements.map((element) => Number(element.getText()))
+    : undefined;
+
+// The string that a buildString call makes, written as a literal that escapes each code point
+// outside printable ASCII, or undefined where the call passes other than literal arrays.
+const getBuiltLiteral = (call: ts.CallExpression) => {
+  const [argument] = call.arguments;
+  const properties =
+    call.arguments.length === 1 && ts.isObjectLiteralExpression(argument)
+      ? new Map(
+          argument.properties.map((property) => [
+            property.name?.getText(),
+            ts.isPropertyAssignment(property) ? property.initializer : undefined,
+          ]),
+        )
+      : new Map<string | undefined, ts.Expression | undefined>();
+  const lone = getNumbers(properties.get("loneCodePoints"));
+  const ranges = properties.get("ranges");
+  const spans =
+    ranges !== undefined && ts.isArrayLiteralExpression(ranges)
+      ? ranges.elements.map(getNumbers)
+      : undefined;
+  if (
+    properties.size !== 2 ||
+    lone === undefined ||
+    spans === undefined ||
+    spans.some((span) => span?.length !== 2)
+  ) {
+    return undefined;
+  }
+  const points = [
+    ...lone,
+    ...spans.flatMap((span) =>
+      span === undefined
+        ? []
+        : Array.from(
+            { length: Math.max(span[1] - span[0] + 1, 0) },
+            (_, offset) => span[0] + offset,
+          ),
+    ),
+  ];
+  if (!points.every((point) => Number.isInteger(point) && point >= 0 && point <= 0x10ffff)) {
+    return undefined;
+  }
+  const escaped = points.map((point) =>
+    point >= 0x20 && point <= 0x7e && point !== 0x22 && point !== 0x5c
+      ? String.fromCharCode(point)
+      : `\\u{${point.toString(16)}}`,
+  );
+  return `"${escaped.join("")}"`;
+};
+
+// A test's source with each call of buildString written as the literal of the string it makes,
+// which tla-ts reads without running the call's loop, or undefined where a call passes other than
+// literal arrays.
+const writeBuiltStrings = (source: string) => {
+  const sourceFile = ts.createSourceFile(PROGRAM_PATH, source, ts.ScriptTarget.Latest, true);
+  const calls: ts.CallExpression[] = [];
+  const visit = (node: ts.Node) => {
+    if (
+      ts.isCallExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      node.expression.text === "buildString"
+    ) {
+      calls.push(node);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  const literals = calls.map(getBuiltLiteral);
+  return literals.every((literal) => literal !== undefined)
+    ? calls.reduceRight(
+        (text, call, index) =>
+          `${text.slice(0, call.getStart(sourceFile))}${literals[index]}${text.slice(call.end)}`,
+        source,
+      )
+    : undefined;
+};
+
 // A call of import(), import.source(), or import.defer(), which loads a module.
 const isImportCallee = (node: ts.Node) =>
   node.kind === ts.SyntaxKind.ImportKeyword ||
@@ -3352,13 +3436,14 @@ const getScriptError = (source: string, path: string, isSloppy: boolean) => {
 
 const runTest = async (path: string): Promise<TestRun> => {
   const id = relative(TEST_DIRECTORY, path);
-  const source = readFileSync(path, "utf8");
-  const metadata = getMetadata(source);
+  const read = readFileSync(path, "utf8");
+  const metadata = getMetadata(read);
   const skipReason = NODE_CRASHES.has(id) ? "Node crashes" : getSkipReason(metadata);
   if (skipReason !== undefined) return { id, outcome: "skipped", reason: skipReason };
-  if (metadata.isSyntaxError) return runSyntaxTest(id, source, metadata);
-  if (BUILT_STRING.test(source)) {
-    return { id, outcome: "skipped", reason: "a string of every code point in large ranges" };
+  if (metadata.isSyntaxError) return runSyntaxTest(id, read, metadata);
+  const source = BUILT_STRING.test(read) ? writeBuiltStrings(read) : read;
+  if (source === undefined) {
+    return { id, outcome: "skipped", reason: "a buildString call of other than literal arrays" };
   }
   const isImporting = hasImportCall(source);
   const isLinked =
