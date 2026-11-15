@@ -183,6 +183,8 @@ interface CodeBinding {
   compiled: Compiled;
   // The LET definition whose value the code is, which a prime evaluates in the next state.
   source: OperatorBinding | undefined;
+  // The LET function definition the code builds lazily, with its type and the scope of its body.
+  function?: { definition: FunctionDefinition; type: LambdaType; getScope: () => TierScope };
 }
 
 interface OperatorBinding {
@@ -1033,6 +1035,8 @@ interface Program {
   names: { count: number };
   inlining: Definition[];
   recursions: Map<Definition, Recursion>;
+  // The functions counting the ways the LET functions being compiled hold as actions.
+  ways: Map<Definition, string>;
   isGuessing: boolean;
 }
 
@@ -3584,24 +3588,39 @@ const compileLambda = (
   };
 };
 
+// Binds a LET function definition to the function it builds lazily.
+const bindFunction = (
+  program: Program,
+  definition: FunctionDefinition,
+  frame: Frame,
+  names: LazyDefinition[],
+) => {
+  const bound = definition.bounds[0];
+  if (definition.bounds.length !== 1 || bound.pattern.kind !== "Name") return unsupported();
+  const name = getName(program, "l");
+  const type = createLambda();
+  const inner: TierScope = withBinding(frame.scope, definition.name, {
+    kind: "Code",
+    compiled: { type, emit: () => getLazyCode(name) },
+    source: undefined,
+    function: { definition, type, getScope: () => inner },
+  });
+  names.push({
+    name,
+    value: compileLambda(program, type, bound.pattern.name, bound.set, definition.body, {
+      ...frame,
+      scope: inner,
+    }),
+  });
+  return inner;
+};
+
 // Binds the definitions of a LET, each compiled where the LET is.
 const bindLet = (program: Program, expression: LetExpression, frame: Frame) => {
   const names: LazyDefinition[] = [];
   const scope = expression.definitions.reduce<TierScope>((current, definition) => {
     if (definition.kind === "Function") {
-      const bound = definition.bounds[0];
-      if (definition.bounds.length !== 1 || bound.pattern.kind !== "Name") return unsupported();
-      const name = getName(program, "l");
-      const type = createLambda();
-      const inner = bindCode(current, definition.name, type, getLazyCode(name));
-      names.push({
-        name,
-        value: compileLambda(program, type, bound.pattern.name, bound.set, definition.body, {
-          ...frame,
-          scope: inner,
-        }),
-      });
-      return inner;
+      return bindFunction(program, definition, { ...frame, scope: current }, names);
     }
     if (definition.params.length > 0) {
       return withBinding(current, definition.name, {
@@ -3734,6 +3753,93 @@ const compileMapConstruction = (
   };
 };
 
+// Binds the definitions of a LET in an action, leaving those that branch or prime to expand where used.
+const bindActionLet = (program: Program, expression: LetExpression, frame: Frame) => {
+  const names: LazyDefinition[] = [];
+  const scope = expression.definitions.reduce<TierScope>((current, definition) => {
+    if (definition.kind === "Function") {
+      return bindFunction(program, definition, { ...frame, scope: current }, names);
+    }
+    if (
+      definition.params.length > 0 ||
+      hasPrime(definition.body) ||
+      isBranching(program, definition.body, current)
+    ) {
+      return withBinding(current, definition.name, {
+        kind: "Operator",
+        definition,
+        scope: current,
+      });
+    }
+    const value = compileValue(program, definition.body, { ...frame, scope: current });
+    const name = getName(program, "l");
+    names.push({ name, value });
+    return bindDefinition(current, definition, value, name);
+  }, frame.scope);
+  return { scope, names };
+};
+
+// Goes on with the rest of a step once for each way an action holds.
+const repeatStep = (program: Program, ways: Compiled, tail: () => string) => () => {
+  const count = getName(program, "w");
+  return `for (let ${count} = ${ways.emit()}; ${count} > 0; ${count}--) { ${tail()} }`;
+};
+
+// A LET function definition applied as an action whose body branches.
+const getBranchingFunction = (
+  program: Program,
+  expression: Expression & { kind: "FunctionApplication" },
+  frame: Frame,
+) => {
+  const target = expression.function;
+  if (target.kind !== "Identifier") return undefined;
+  const binding = frame.scope.get(target.name);
+  const letFunction = binding?.kind === "Code" ? binding.function : undefined;
+  return letFunction && isBranching(program, letFunction.definition.body, letFunction.getScope())
+    ? letFunction
+    : undefined;
+};
+
+// TLC applies a function it builds lazily in an action by going on with its body there, so the
+// function holds once for each way its body does, through its recursive applications too.
+const compileFunctionWays = (
+  program: Program,
+  letFunction: NonNullable<CodeBinding["function"]>,
+  expression: Expression & { kind: "FunctionApplication" },
+  frame: Frame,
+): Compiled => {
+  const definition = letFunction.definition;
+  const bound = definition.bounds[0];
+  if (bound.pattern.kind !== "Name") return unsupported();
+  const type = letFunction.type;
+  const argument = expectType(
+    compileValue(program, getArgument(expression.args, expression.location), frame),
+    type.argument,
+  );
+  const known = program.ways.get(definition);
+  if (known) return { type: createInt(), emit: () => `${known}(${argument.emit()})` };
+  const name = getName(program, "c");
+  const parameter = getName(program, "a");
+  const scope = letFunction.getScope();
+  const isInDomain = compileMembership(
+    program,
+    { type: type.argument, emit: () => parameter },
+    bound.set,
+    { ...frame, scope },
+  );
+  program.ways.set(definition, name);
+  const body = compileWays(program, definition.body, {
+    ...frame,
+    scope: bindCode(scope, bound.pattern.name, type.argument, parameter),
+  });
+  program.ways.delete(definition);
+  return {
+    type: createInt(),
+    emit: () =>
+      `((${name}) => ((${name} = (${parameter}) => (${isInDomain.emit()} ? ${body.emit()} : H.deopt())), ${name}(${argument.emit()})))()`,
+  };
+};
+
 // The number of ways an action without primes holds, as TLC branches on it.
 const compileWays = (program: Program, expression: Expression, frame: Frame): Compiled => {
   if (hasPrime(expression)) return unsupported();
@@ -3766,6 +3872,13 @@ const compileWays = (program: Program, expression: Expression, frame: Frame): Co
               ? `${total} += ${body.emit()};`
               : `${total} *= ${body.emit()}; if (${total} === 0) return 0;`
           } } return ${total}; })()`,
+      );
+    }
+    case "Let": {
+      const bindings = bindActionLet(program, expression, frame);
+      const body = getWays(expression.body, bindings.scope);
+      return counted(
+        () => `(() => { ${getDeclarations(bindings.names)} return ${body.emit()}; })()`,
       );
     }
     case "If": {
@@ -3805,6 +3918,8 @@ const compileWays = (program: Program, expression: Expression, frame: Frame): Co
       break;
     }
     case "FunctionApplication": {
+      const letFunction = getBranchingFunction(program, expression, frame);
+      if (letFunction) return compileFunctionWays(program, letFunction, expression, frame);
       const expansion = getFunctionExpansion(program, expression, frame);
       if (!expansion) break;
       const ways = inline(program, expansion.definition, () =>
@@ -3812,7 +3927,6 @@ const compileWays = (program: Program, expression: Expression, frame: Frame): Co
       );
       return counted(() => expansion.apply(ways.emit));
     }
-    case "Let":
     case "Case":
       return unsupported();
     default:
@@ -3937,27 +4051,9 @@ const compileStep = (
         `${arms.map((arm) => `if (${arm.condition.emit()}) { ${arm.body()} } else `).join("")}{ ${other ? other() : "H.deopt();"} }`;
     }
     case "Let": {
-      const names: LazyDefinition[] = [];
-      const scope = expression.definitions.reduce<TierScope>((current, definition) => {
-        if (definition.kind !== "Operator") return unsupported();
-        if (
-          definition.params.length > 0 ||
-          hasPrime(definition.body) ||
-          isBranching(program, definition.body, current)
-        ) {
-          return withBinding(current, definition.name, {
-            kind: "Operator",
-            definition,
-            scope: current,
-          });
-        }
-        const value = compileValue(program, definition.body, { ...frame, scope: current });
-        const name = getName(program, "l");
-        names.push({ name, value });
-        return bindDefinition(current, definition, value, name);
-      }, first.scope);
-      const body = continueWith(scope, [expression.body]);
-      return () => `{ ${getDeclarations(names)} ${body()} }`;
+      const bindings = bindActionLet(program, expression, frame);
+      const body = continueWith(bindings.scope, [expression.body]);
+      return () => `{ ${getDeclarations(bindings.names)} ${body()} }`;
     }
     case "Identifier": {
       const binding = first.scope.get(expression.name);
@@ -3975,6 +4071,14 @@ const compileStep = (
       break;
     }
     case "FunctionApplication": {
+      const letFunction = getBranchingFunction(program, expression, frame);
+      if (letFunction) {
+        return repeatStep(
+          program,
+          compileFunctionWays(program, letFunction, expression, frame),
+          compileStep(program, rest, primed, isEnabled),
+        );
+      }
       const expansion = getFunctionExpansion(program, expression, frame);
       if (!expansion) break;
       const body = continueInto(expansion.definition, expansion.body, expansion.scope);
@@ -3983,12 +4087,11 @@ const compileStep = (
     case "Forall": {
       if (!isBranching(program, expression.body, frame.scope)) break;
       // TLC conjoins the body for each element, so it goes on once for each way the conjunction holds.
-      const ways = compileWays(program, expression, frame);
-      const tail = compileStep(program, rest, primed, isEnabled);
-      return () => {
-        const count = getName(program, "w");
-        return `for (let ${count} = ${ways.emit()}; ${count} > 0; ${count}--) { ${tail()} }`;
-      };
+      return repeatStep(
+        program,
+        compileWays(program, expression, frame),
+        compileStep(program, rest, primed, isEnabled),
+      );
     }
     case "Apply": {
       const expansion = getExpansion(program, expression, frame);
@@ -5809,6 +5912,7 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
     names: { count: 0 },
     inlining: [],
     recursions: new Map(),
+    ways: new Map(),
     isGuessing: plains.isGuessed,
   };
   // Every variable of such a spec is assigned before TLC branches on the next-state relation.

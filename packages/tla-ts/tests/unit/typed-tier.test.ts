@@ -105,6 +105,7 @@ describe("typed tier matches TLC", () => {
     ["MissingSegments", 145],
     ["SymmetricOrbits", 9361],
     ["SymmetricRotations", 2971],
+    ["LetFunctionWays", 235],
   ])("counts each successor TLC generates in %s", async (name, generatedStates) => {
     const results = await Promise.all([checkFixture(name, false), checkFixture(name, true)]);
     expect(results.map((result) => result.generatedStates)).toEqual([
