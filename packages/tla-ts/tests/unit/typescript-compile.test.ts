@@ -25787,4 +25787,32 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("runs a function that a key a string literal writes holds", () => {
+    const getSource = (expected: string) => `
+      const box = { size: 0 };
+      const holder: { [key: string]: unknown } = {};
+      holder.exec = RegExp.prototype.exec;
+      holder.run = () => 7;
+      let caught = "none";
+      try {
+        // @ts-ignore
+        box.size = holder["exec"]("m");
+      } catch (e) {
+        caught = e instanceof TypeError ? "type" : "other";
+      }
+      // @ts-ignore
+      const ran = holder["run"]();
+      const read = caught + "," + String(ran);
+      if (read !== "${expected}") throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("type,7"))).failure).toBeUndefined();
+    });
+
+    it("rejects exec on an object that isn't a RegExp as allowed", async () => {
+      expect((await checkModel(getSource("none,7"))).failure?.message).toContain("type,7");
+    });
+  });
 });

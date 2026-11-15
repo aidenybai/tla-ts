@@ -9837,8 +9837,10 @@ const getDispatched = (
   const assigned = symbol && functions.get(symbol);
   if (
     context.heap === undefined ||
-    // The function that a call gives may be any of them.
-    (declarations.length === 0 && !ts.isCallExpression(callee)) ||
+    // The function that a call gives may be any of them, as may one that a literal key reads.
+    (declarations.length === 0 &&
+      !ts.isCallExpression(callee) &&
+      !(ts.isElementAccessExpression(callee) && ts.isStringLiteral(callee.argumentExpression))) ||
     declarations.some((declaration) => declaration.getSourceFile().isDeclarationFile) ||
     (assigned === undefined ? getCallee(callee, context) !== undefined : isPlain(assigned)) ||
     getCalledMethod(callee, context) !== undefined ||
@@ -12860,6 +12862,14 @@ const isPlainCallee = (
     !ts.isPrivateIdentifier(node.name) &&
     getObjectGetter(node, context) === undefined &&
     !(getSymbol(node.name, context.checker)?.declarations ?? []).some(
+      ts.isGetAccessorDeclaration,
+    ) &&
+    isPlainCallee(getCast(node.expression), context, results)) ||
+  // A key that a string literal writes reads as a name does.
+  (ts.isElementAccessExpression(node) &&
+    ts.isStringLiteral(node.argumentExpression) &&
+    getObjectGetter(node, context) === undefined &&
+    !(getSymbol(node.argumentExpression, context.checker)?.declarations ?? []).some(
       ts.isGetAccessorDeclaration,
     ) &&
     isPlainCallee(getCast(node.expression), context, results));
