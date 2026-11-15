@@ -218,7 +218,7 @@ const SET_ENUM_VALUE = 5;
 const FCN_RCD_VALUE = 9;
 const MODEL_VALUE = 21;
 
-const extendScalar = (value: boolean | number | string | ModelValue) => {
+export const extendScalar = (value: boolean | number | string | ModelValue) => {
   if (typeof value === "boolean") {
     extendByte(BOOL_VALUE);
     extendByte(value ? 116 : 102);
@@ -247,6 +247,28 @@ const extendScalar = (value: boolean | number | string | ModelValue) => {
   extendByte(MODEL_VALUE);
   extendInt(getStringRank(value.name) + 1);
   return 5;
+};
+
+// TLC's fingerprint is linear in the bytes it extends by. A scalar extends it as zero bytes of its
+// length would, and then by its fingerprint from zero, so code may extend by a scalar it knows
+// without inspecting it.
+export const getScalarExtension = (value: boolean | number | string | ModelValue) => {
+  const outerHigh = high;
+  const outerLow = low;
+  high = 0;
+  low = 0;
+  const extension = [extendScalar(value), high, low];
+  high = outerHigh;
+  low = outerLow;
+  return extension;
+};
+
+export const extendByScalar = (length: number, scalarHigh: number, scalarLow: number) => {
+  let rest = length;
+  for (; rest >= 4; rest -= 4) extendInt(0);
+  for (; rest > 0; rest--) extendByte(0);
+  high ^= scalarHigh;
+  low ^= scalarLow;
 };
 
 export const extendSet = (length: number) => {
