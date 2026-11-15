@@ -34060,4 +34060,37 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("runs a getter that may throw as a statement where a read answers it", () => {
+    const getSource = (expected: string) => `
+      const box = { size: 0 };
+      const o: { [key: string | symbol]: unknown } = {};
+      Object.defineProperty(o, "risky", {
+        get: function () {
+          return check(box.size);
+        },
+      });
+      function check(size: number): number {
+        if (size === 0) throw new RangeError("empty");
+        return size;
+      }
+      const caught: string[] = [];
+      try {
+        o.risky;
+      } catch (error) {
+        caught.push((error as Error).name);
+      }
+      box.size = 3;
+      const read = [...caught, o.risky].join();
+      if (read !== "${expected}") throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("RangeError,3"))).failure).toBeUndefined();
+    });
+
+    it("rejects the read as throwing nothing", async () => {
+      expect((await checkModel(getSource("3"))).failure?.message).toContain("RangeError,3");
+    });
+  });
 });
