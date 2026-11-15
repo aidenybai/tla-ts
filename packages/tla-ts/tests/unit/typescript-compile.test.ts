@@ -16109,15 +16109,7 @@ describe("errors", () => {
     }
   });
 
-  it("stops where a script reads a property of an object or another value", () => {
-    expect(() =>
-      compile(`
-        interface Sized { length: number }
-        const read = (value: string | Sized) => value.length;
-        const sized: Sized = { length: 4 };
-        if (read(sized) !== 4) throw new Error("length");
-      `),
-    ).toThrow("tla-ts can't read a property of a value that may be an object or another value");
+  it("stops where a script destructures an object or another value", () => {
     expect(() =>
       compile(`
         interface Sized { length: number }
@@ -43724,6 +43716,30 @@ describe("BigInts", () => {
     it("rejects an object made from a number", async () => {
       expect((await checkModel(getSource("1|true|1|made"))).failure?.message).toContain(
         "1|true|1|true",
+      );
+    });
+  });
+
+  describe("reads a property of a union of objects, arrays, and primitives as it runs", () => {
+    const getSource = (expected: string) => `
+      interface Sized {
+        length: number;
+        [key: number]: unknown;
+      }
+      const read = (value: string | Sized | unknown[]) => value.length;
+      const at = (value: string | Sized | unknown[]) => value[0];
+      const sized: Sized = { length: 4, 0: "first" };
+      const log = [read(sized), read("abc"), read([1, 2]), at("xy"), at([5]), at(sized), at("")];
+      if (log.join(",") !== "${expected}") throw new Error(log.join(","));
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("4,3,2,x,5,first,"))).failure).toBeUndefined();
+    });
+
+    it("rejects a string read as an object", async () => {
+      expect((await checkModel(getSource("4,,2,x,5,first,"))).failure?.message).toContain(
+        "4,3,2,x,5,first,",
       );
     });
   });

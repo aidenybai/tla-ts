@@ -179,6 +179,7 @@ import {
 import {
   getCollection,
   rejectAnyReceiver,
+  isReadAsAny,
   getField,
   isAddedToBuiltIn,
   getKind,
@@ -2982,13 +2983,7 @@ const translatePropertyAccess = (
   if (context.heap !== undefined && mayBeGeneratorType(receiver, context)) {
     throw new TlaTypeScriptError(`tla-ts can't read a generator's ${name} as a value`, node);
   }
-  if (
-    context.heap !== undefined &&
-    getKind(receiver, context) !== "object" &&
-    (context.checker.getTypeAtLocation(receiver).flags &
-      (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !==
-      0
-  ) {
+  if (getKind(receiver, context) !== "object" && isReadAsAny(receiver, context)) {
     return getAnyProperty(
       getHeap(scope, node, context),
       translateExpression(receiver, scope, context),
@@ -3348,12 +3343,7 @@ const translateElementRead = (
       context,
     );
   }
-  if (
-    context.heap !== undefined &&
-    (context.checker.getTypeAtLocation(node.expression).flags &
-      (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !==
-      0
-  ) {
+  if (isReadAsAny(node.expression, context)) {
     return getAnyProperty(
       getHeap(scope, node, context),
       translateExpression(node.expression, scope, context),
