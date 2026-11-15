@@ -41424,4 +41424,81 @@ describe("BigInts", () => {
       expect(result.failure?.message).toContain("tla-ts can't compute Math.log2 of this number");
     });
   });
+
+  describe("matches regexps with the v flag", () => {
+    const getSource = (expected: string) => `
+      const results = [
+        String(/^[\\d--[3-5]]+$/v.test("1290")),
+        String(/^[\\p{ASCII_Hex_Digit}&&[a-z]]+$/v.test("abg")),
+        "xab-abc".replace(/[\\q{abc|ab}]/gv, "<$&>"),
+        String(/^[\\q{KK|ß}]$/vi.test("Kk")),
+        "a1️⃣b".replace(/[\\p{Emoji_Keycap_Sequence}--\\q{2️⃣}]/v, "#"),
+        "x🇺🇸y".replace(/\\p{RGI_Emoji_Flag_Sequence}/v, "F"),
+        "ſK".replace(/[\\w--\\d]/gvi, "w"),
+        "a😀b".replace(/(?:)/gv, "-"),
+        "abcab".replace(/[\\q{abc|ab|a}&&\\q{ab|abc}]/gv, "-"),
+        "ab".replace(/[\\q{}]/gv, "."),
+      ];
+      if (results.join("|") !== "${expected}") throw new Error(results.join("|"));
+    `;
+
+    it("agrees with Node", async () => {
+      const result = await checkModel(
+        getSource("true|false|x<ab>-<abc>|true|a#b|xFy|ww|-a-😀-b-|--|.a.b."),
+      );
+      expect(result.failure).toBeUndefined();
+    });
+
+    it("rejects a string that a difference leaves out", async () => {
+      await expect(
+        checkModel(getSource("true|false|x<ab>-<abc>|true|a1️⃣b|xFy|ww|-a-😀-b-|--|.a.b.")),
+      ).rejects.toThrow("true|false|x<ab>-<abc>|true|a#b|");
+    });
+
+    it("stops where a property of strings meets a character outside the script's text", async () => {
+      const result = await checkModel(`
+        let code = 0x1f3fc;
+        code += 1;
+        if (("👋" + String.fromCodePoint(code)).replace(/\\p{RGI_Emoji_Modifier_Sequence}/v, "M") !== "M") {
+          throw new Error("wrong");
+        }
+      `);
+      expect(result.failure?.message).toContain("tla-ts can't tell whether a class matches");
+    });
+
+    it("stops at the emoji ZWJ sequences of a property of strings", () => {
+      expect(() => compile(`const replaced = "👩‍💻".replace(/\\p{RGI_Emoji}/v, "E");`)).toThrow(
+        "tla-ts can't match the emoji ZWJ and tag sequences of a property of strings",
+      );
+    });
+  });
+
+  describe("matches lookbehinds backward, with the captures inside them", () => {
+    const getSource = (expected: string) => `
+      const results = [
+        "1053".replace(/(?<=(\\d+)(\\d+))$/, "[$1,$2]"),
+        "$10 42".replace(/(?<!\\$)\\d+/, "_"),
+        "abbc".replace(/(?<=\\1(\\w))c/, "[$1]"),
+        "aBbc".replace(/(?<=a(.)\\1)c/i, "[$1]"),
+        "😀x".replace(/(?<=.)x/u, "_"),
+        "aaab".replace(/(?<=(a+?))b/, "[$1]"),
+        "abcdef".replace(/(?<=(?<!b)c)d/g, "_"),
+        "abc".replace(/(?<=[\\q{ab|b}])c/v, "_"),
+      ];
+      if (results.join("|") !== "${expected}") throw new Error(results.join("|"));
+    `;
+
+    it("agrees with Node", async () => {
+      const result = await checkModel(
+        getSource("1053[1,053]|$1_ 42|abb[b]|aBbc|😀_|aaa[a]|abcdef|ab_"),
+      );
+      expect(result.failure).toBeUndefined();
+    });
+
+    it("rejects captures matched forward", async () => {
+      await expect(
+        checkModel(getSource("1053[105,3]|$1_ 42|abb[b]|aBbc|😀_|aaa[a]|abcdef|ab_")),
+      ).rejects.toThrow("1053[1,053]|$1_ 42|");
+    });
+  });
 });
