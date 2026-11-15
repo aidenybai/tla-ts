@@ -3,6 +3,7 @@ import {
   type Context,
   findNodes,
   type FunctionNode,
+  getArgumentsOwner,
   getBuiltInBase,
   getCallee,
   getConstruction,
@@ -1592,6 +1593,14 @@ export const getArrayIteratorCall = (node: ts.Node, context: Context) => {
       key: ts.isElementAccessExpression(callee) ? "@@iterator" : typedKind,
       path: `%Int8Array.prototype.[[Prototype]]%.${typedKind}`,
     };
+  }
+  // An arguments object's own @@iterator, which is Array.prototype.values.
+  if (
+    ts.isElementAccessExpression(callee) &&
+    callee.argumentExpression.getText() === "Symbol.iterator" &&
+    getArgumentsOwner(receiver, context.checker) !== undefined
+  ) {
+    return { kind: "values", receiver, key: "@@iterator", path: "Array.prototype.values" };
   }
   const kind = getKeptIterator(node, context);
   return kind !== undefined &&

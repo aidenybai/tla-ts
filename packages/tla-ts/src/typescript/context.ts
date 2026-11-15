@@ -2131,7 +2131,11 @@ export const getBinding = (node: ts.Node, context: Context): Binding | undefined
       ? { ...called, method: called.method }
       : undefined;
   const target = bound ?? method?.method;
-  const read = method === undefined ? values : [method.receiver, ...values.slice(1)];
+  // A function that bind reads where the script makes it is steady itself.
+  const read =
+    method === undefined
+      ? values.filter((value) => value !== target)
+      : [method.receiver, ...values.slice(1)];
   if (
     target === undefined ||
     (bound !== undefined &&
@@ -2733,10 +2737,12 @@ const isPropertyRead = (node: ts.Node): boolean => {
 
 // A function that a call passes as an object, or an arrow or a generator that a name holds which a
 // call passes, that the script makes once. A plain function that a name holds is a heap function.
+// One that call or apply passes as the receiver and that reads no local of the functions around it
+// is an object of its own each time the script makes it.
 const isPassedFunction = (node: ts.Node, context: Context) => {
-  if ((!ts.isArrowFunction(node) && !ts.isFunctionExpression(node)) || !isOnce(node.parent)) {
-    return false;
-  }
+  if (!ts.isArrowFunction(node) && !ts.isFunctionExpression(node)) return false;
+  if (isCallReceiver(node) && getOuterLocals(node, context).length === 0) return true;
+  if (!isOnce(node.parent)) return false;
   if (isObjectArgument(node, context.checker)) return true;
   const declaration = node.parent;
   if (
@@ -2836,6 +2842,10 @@ export const isNestedFunction = (
       ts.isReturnStatement(node.parent) &&
       node.parent.expression === node &&
       findNodes(node, ts.isIdentifier).every((name) => name.text !== "arguments")) ||
+    (ts.isFunctionExpression(node) &&
+      isPropertyWrite(node) &&
+      !isHeapFunction(node, context) &&
+      getFunctionValue(node, context) === undefined) ||
     (isDisposeCallback(node, context) && !isOnce(node.parent))) &&
   node.asteriskToken === undefined &&
   // Of async functions, only methods, dispose callbacks, and what an asyncDispose getter returns,
@@ -2849,6 +2859,14 @@ export const isNestedFunction = (
     isDisposeCallback(node, context)) &&
   ts.findAncestor(node.parent, ts.isFunctionLike) !== undefined &&
   (getOuterLocals(node, context).length === 0 || getLiveMaker(node, context) !== undefined);
+
+// A function that a statement writes to an object's property, as this.f = function () {} does.
+const isPropertyWrite = (node: ts.Node) =>
+  ts.isBinaryExpression(node.parent) &&
+  node.parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+  node.parent.right === node &&
+  ts.isPropertyAccessExpression(node.parent.left) &&
+  ts.isExpressionStatement(node.parent.parent);
 
 // The locals that a function reads from the functions around it, with the function that binds each.
 const getOuterLocals = (node: ts.Node, context: Context) =>
@@ -2904,11 +2922,10 @@ const getHeldName = (node: ts.Node) =>
 
 // A function that a function makes and that outlives the call that made it, which reads the locals
 // of that call from its environment: one that the function assigns to a name declared outside it,
-// an async one that it returns, or one that an object literal or a property assignment holds, or an
-// arrow that it returns, itself or by the name of the const that holds it, that reads a local of
-// the function. An arrow reads the this of the function
-// around it, which the environment doesn't hold, and an async closure that awaits would resume after
-// its call returns.
+// an async one that it returns, or one that an object literal or a property assignment holds, or one
+// that it returns, itself or by the name of the const that holds it, that reads a local of the
+// function. An arrow reads the this of the function around it, which the environment doesn't hold,
+// and an async closure that awaits would resume after its call returns.
 export const isClosure = (node: ts.Node, context: Context): node is Closure => {
   if (
     context.heap === undefined ||
@@ -2985,7 +3002,7 @@ export const isClosure = (node: ts.Node, context: Context): node is Closure => {
       : undefined;
   return (
     (isAsync && ts.isReturnStatement(node.parent) && node.parent.expression === node) ||
-    (ts.isArrowFunction(node) && isReturned && isReadingLocals()) ||
+    (isReturned && isReadingLocals()) ||
     (declaration !== undefined &&
       ts.findAncestor(declaration, (ancestor) => ancestor === maker) === undefined)
   );
@@ -3660,6 +3677,13 @@ const isObjectArgument = (argument: ts.Expression, checker: ts.TypeChecker) => {
     type.getConstructSignatures().length === 0
   );
 };
+
+// The receiver that call or apply passes, as in f.call(function () {}).
+const isCallReceiver = (node: ts.Node) =>
+  ts.isCallExpression(node.parent) &&
+  node.parent.arguments[0] === node &&
+  ts.isPropertyAccessExpression(node.parent.expression) &&
+  ["call", "apply"].includes(node.parent.expression.name.text);
 
 // Whether a call passes what a name holds as an object.
 const isPassedAsObject = (symbol: ts.Symbol, sourceFile: ts.SourceFile, context: Context) =>

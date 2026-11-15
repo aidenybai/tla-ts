@@ -831,6 +831,29 @@ export const translateBuiltInValue = (
   return getBuiltInValue(name, node, context);
 };
 
+// The stop of a call whose function tla-ts can't tell. Where the value is a built-in that runs code
+// from a string, which tla-ts never runs, the stop names it.
+export const stopUnknownCall = (value: Expression, context: Context) =>
+  [
+    ...[...context.constructors].flatMap(([key, name]) =>
+      !("kind" in key) && ["eval", "Function"].includes(key.name) && isLibrary(key)
+        ? [{ name: key.name, value: identifier(name) }]
+        : [],
+    ),
+    ...["GeneratorFunction", "AsyncFunction", "AsyncGeneratorFunction"].map((name) => ({
+      name,
+      value: useJavaScript(":>", [identifier("Ref"), string(`%${name}%`)], context),
+    })),
+  ].reduceRight(
+    (otherwise, runner) =>
+      ifExpression(
+        useJavaScript("SameValue", [value, runner.value], context),
+        apply("Assert", [boolean(false), string(`tla-ts can't run ${runner.name}`)]),
+        otherwise,
+      ),
+    apply("Assert", [boolean(false), string("tla-ts can't tell which function this call runs")]),
+  );
+
 // The built-in function that a built-in object holds at a key, by its path, such as "Math.max".
 const getBuiltInFunction = (owner: string, key: string) => {
   const value = BUILT_INS[owner]?.[3].find(

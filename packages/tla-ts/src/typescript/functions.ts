@@ -74,7 +74,7 @@ import {
   string,
   tuple,
 } from "./tla";
-import { isBuiltInObject } from "./intrinsics";
+import { isBuiltInObject, stopUnknownCall } from "./intrinsics";
 import { getStoredCall, translateKeyedPrimitiveCall, translateStoredCall } from "./collections";
 import { link } from "./regions";
 import { getStackCall } from "./stacks";
@@ -955,10 +955,6 @@ export const translateLocalCall = (
   }
   const stored = callee === undefined ? getStoredCall(node, context) : undefined;
   if (callee === undefined && (candidates.length > 0 || stored !== undefined)) {
-    const stop = apply("Assert", [
-      boolean(false),
-      string("tla-ts can't tell which function this call runs"),
-    ]);
     // A built-in that gives a value without a receiver, such as Object.prototype.toString.
     // A function that only returns a literal, as a getter that a descriptor gives may, gives it.
     const getUnknown = (value: Expression) =>
@@ -970,11 +966,11 @@ export const translateLocalCall = (
               ? ifExpression(
                   useJavaScript("HasReceiverlessValue", [value], context),
                   useJavaScript("ReceiverlessValue", [value], context),
-                  stop,
+                  stopUnknownCall(value, context),
                 )
-              : stop,
+              : stopUnknownCall(value, context),
           )
-        : stop;
+        : stopUnknownCall(value, context);
     return share(
       translateExpression(node.expression, scope, context),
       "function",

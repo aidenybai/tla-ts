@@ -43338,4 +43338,239 @@ describe("BigInts", () => {
       expect(() => compile(`delete JSON;`)).toThrow("TS1102");
     });
   });
+
+  describe("joins the paths through a script iterator's next that changes its receiver", () => {
+    const getSource = (expected: string) => `
+      let log = "";
+      class Countdown extends Iterator<number> {
+        counter = 2;
+        // @ts-ignore
+        next() {
+          if (this.counter <= 0) {
+            return { done: true, value: undefined };
+          } else {
+            this.counter -= 1;
+            return { done: false, value: this.counter };
+          }
+        }
+      }
+      const countdown = new Countdown();
+      countdown.forEach((value) => {
+        log += value;
+      });
+      log += \`|\${countdown.counter}\`;
+      if (log !== "${expected}") throw new Error(log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("10|0"))).failure).toBeUndefined();
+    });
+
+    it("rejects a step that leaves the counter", async () => {
+      expect((await checkModel(getSource("10|1"))).failure?.message).toContain("10|0");
+    });
+  });
+
+  describe("calls a function expression that a getter returns and that reads the getter's locals", () => {
+    const getSource = (expected: string) => `
+      let gets = 0;
+      class Counting extends Iterator<number> {
+        // @ts-ignore
+        get next() {
+          gets += 1;
+          let count = 0;
+          return function () {
+            count += 1;
+            return { done: count > 3, value: count };
+          };
+        }
+      }
+      let log = "";
+      const counting = new Counting();
+      for (const value of counting.map((value) => value * 2)) log += value;
+      log += gets;
+      if (log !== "${expected}") throw new Error(log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("2461"))).failure).toBeUndefined();
+    });
+
+    it("rejects a getter that runs for each step", async () => {
+      expect((await checkModel(getSource("2463"))).failure?.message).toContain("2461");
+    });
+  });
+
+  describe("binds a function expression where the script makes it", () => {
+    const getSource = (expected: string) => `
+      const receiver = { base: 10 };
+      const add = function sum(this: { base: number }, left: number, right: number) {
+        return this.base + left + right;
+      }.bind(receiver, 1);
+      const plain = function () {}.bind(null);
+      const log = [
+        add.name,
+        add.length,
+        add(2),
+        Object.hasOwn(add, "prototype"),
+        plain.name,
+        plain.length,
+        typeof plain,
+      ].join("|");
+      if (log !== "${expected}") throw new Error(log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("bound sum|1|13|false|bound |0|function"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects a bound function that keeps the length of its target", async () => {
+      expect(
+        (await checkModel(getSource("bound sum|2|13|false|bound |0|function"))).failure?.message,
+      ).toContain("bound sum|1|13|false|bound |0|function");
+    });
+  });
+
+  describe("passes a function expression as the receiver of call", () => {
+    const getSource = (expected: string) => `
+      function self(this: unknown) {
+        return this;
+      }
+      const made: unknown[] = [];
+      for (let step = 0; step < 2; step++) {
+        made.push(self.call(function () {}));
+      }
+      const run = (inner: () => void) => inner();
+      let log = "";
+      run(() => {
+        try {
+          Array.prototype.shift.call(function () {});
+        } catch (error) {
+          log += error instanceof TypeError;
+        }
+      });
+      log += \`|\${Object.hasOwn({}, "x")}|\${made[0] === made[1]}|\${typeof made[0]}\`;
+      if (log !== "${expected}") throw new Error(log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("true|false|false|function"))).failure).toBeUndefined();
+    });
+
+    it("rejects one object for each time the script makes the function", async () => {
+      expect((await checkModel(getSource("true|false|true|function"))).failure?.message).toContain(
+        "true|false|false|function",
+      );
+    });
+  });
+
+  describe("stops at a call of a value that holds eval or Function", () => {
+    const getSource = (index: number, expected: number) => `
+      const measure = (code: string) => code.length;
+      const runners: ((code: string) => unknown)[] = [measure, eval, Function];
+      const result = runners[${index}]("1 + 1");
+      if (result !== ${expected}) throw new Error(String(result));
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(0, 5))).failure).toBeUndefined();
+    });
+
+    it("rejects a function that gives another value", async () => {
+      expect((await checkModel(getSource(0, 4))).failure?.message).toContain("5");
+    });
+
+    it("names eval", async () => {
+      expect((await checkModel(getSource(1, 2))).failure?.message).toContain(
+        "tla-ts can't run eval",
+      );
+    });
+
+    it("names Function", async () => {
+      expect((await checkModel(getSource(2, 2))).failure?.message).toContain(
+        "tla-ts can't run Function",
+      );
+    });
+
+    it("names Function where call runs it", async () => {
+      const result = await checkModel(`
+        const found = Object.hasOwn({}, "x");
+        Function.call(globalThis, "return 1");
+        if (found) throw new Error("found");
+      `);
+      expect(result.failure?.message).toContain("tla-ts can't run Function");
+    });
+  });
+
+  describe("writes a function expression that reads no local to a property inside a function", () => {
+    const getSource = (expected: string) => `
+      interface Box {
+        label: string;
+        describe: () => string;
+      }
+      function decorate(box: Box) {
+        box.describe = function (this: Box) {
+          return \`box \${this.label}\`;
+        };
+      }
+      const first: Box = { label: "a", describe: () => "" };
+      const second: Box = { label: "b", describe: () => "" };
+      decorate(first);
+      decorate(second);
+      const log = [
+        first.describe(),
+        second.describe(),
+        first.describe === second.describe,
+        typeof first.describe,
+      ].join("|");
+      if (log !== "${expected}") throw new Error(log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("box a|box b|false|function"))).failure).toBeUndefined();
+    });
+
+    it("rejects one function for both writes", async () => {
+      expect((await checkModel(getSource("box a|box b|true|function"))).failure?.message).toContain(
+        "box a|box b|false|function",
+      );
+    });
+  });
+
+  describe("iterates an arguments object through its own @@iterator", () => {
+    const getSource = (expected: string) => `
+      let log = "";
+      function run(this: unknown, first: number, second?: number) {
+        const iterator = arguments[Symbol.iterator]();
+        let result = iterator.next();
+        log += result.value;
+        result = iterator.next();
+        log += result.value;
+        log += result.done;
+        result = iterator.next();
+        log += result.done;
+        log += \`|\${arguments[Symbol.iterator] === Array.prototype.values}\`;
+        log += \`|\${Object.getOwnPropertySymbols(arguments).length}\`;
+        log += \`|\${Object.keys(arguments).join(",")}\`;
+        const descriptor = Object.getOwnPropertyDescriptor(arguments, Symbol.iterator);
+        log += \`|\${descriptor?.writable}\${descriptor?.enumerable}\${descriptor?.configurable}\`;
+      }
+      run(2, 1);
+      if (log !== "${expected}") throw new Error(log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("21falsetrue|true|1|0,1|truefalsetrue"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects an arguments object without its own @@iterator", async () => {
+      expect(
+        (await checkModel(getSource("21falsetrue|true|0|0,1|truefalsetrue"))).failure?.message,
+      ).toContain("21falsetrue|true|1|0,1|truefalsetrue");
+    });
+  });
 });

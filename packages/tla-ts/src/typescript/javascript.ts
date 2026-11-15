@@ -4942,18 +4942,22 @@ ElementNames(elements) == OwnKeys(ArrayObject(Null, elements))
 HasOwnElement(elements, key) == key \\in DOMAIN ArrayObject(Null, elements).values
 
 \\* The arguments object of a call in strict mode, which holds the values the call gives under their
-\\* indices, its length, and a callee that throws.
-ArgumentsObject(elements, thrower) ==
+\\* indices, its length, Array.prototype.values as its @@iterator, and a callee that throws.
+ArgumentsObject(elements, thrower, values) ==
   LET indices == {ToString(position - 1) : position \\in DOMAIN elements}
+      iterator == WellKnownSymbol("iterator")
       callee == [writable |-> FALSE, enumerable |-> FALSE, configurable |-> FALSE, kind |-> "accessor"]
-  IN [keys |-> [position \\in DOMAIN elements |-> ToString(position - 1)] \\o <<"length", "callee">>,
-      values |-> [key \\in indices \\cup {"length", "callee"} |->
+  IN [keys |-> [position \\in DOMAIN elements |-> ToString(position - 1)]
+                 \\o <<"length", "callee", iterator>>,
+      values |-> [key \\in indices \\cup {"length", "callee", iterator} |->
                    CASE key = "length" -> Len(elements)
                      [] key = "callee" -> [get |-> thrower, set |-> thrower]
+                     [] key = iterator -> values
                      [] OTHER -> elements[ToIndex(key) + 1]],
-      attributes |-> [key \\in indices \\cup {"length", "callee"} |->
+      attributes |-> [key \\in indices \\cup {"length", "callee", iterator} |->
                        CASE key = "length" -> [Writable EXCEPT !.enumerable = FALSE]
                          [] key = "callee" -> callee
+                         [] key = iterator -> [Writable EXCEPT !.enumerable = FALSE]
                          [] OTHER -> Writable],
       extensible |-> TRUE, prototype |-> ObjectPrototype, isCallable |-> FALSE,
       isConstructor |-> FALSE, isOpaque |-> FALSE, privates |-> <<>>, isArguments |-> TRUE]
@@ -4961,8 +4965,8 @@ ArgumentsObject(elements, thrower) ==
 \\* The arguments object of a call outside strict mode to a function with simple parameters, whose
 \\* callee is the function, and whose elements map the parameters that the call passes, holding their
 \\* values while they do. parameters holds the values of the rest.
-MappedArgumentsObject(elements, callee, count) ==
-  LET object == ArgumentsObject(elements, Undefined)
+MappedArgumentsObject(elements, callee, count, values) ==
+  LET object == ArgumentsObject(elements, Undefined, values)
   IN [field \\in DOMAIN object \\cup {"mapped", "parameters"} |->
         CASE field = "values" -> [object.values EXCEPT !["callee"] = callee]
           [] field = "attributes" ->
