@@ -719,21 +719,46 @@ const typeCallbacks = () => {
         ? undefined
         : declaration.parameters.at(method.startsWith("reduce") ? 3 : 2);
     const receiver = ts.isCallExpression(call) ? call.arguments[0] : undefined;
+    const getUses = (symbol: ts.Symbol | undefined) => {
+      const uses: ts.Identifier[] = [];
+      const findUses = (node: ts.Node): void => {
+        if (ts.isIdentifier(node) && checker.getSymbolAtLocation(node) === symbol) uses.push(node);
+        ts.forEachChild(node, findUses);
+      };
+      if (symbol !== undefined && declaration.body !== undefined) findUses(declaration.body);
+      return uses;
+    };
+    // A callback that only tests the array with instanceof takes it as an object, which the heap
+    // holds, where tla-ts keeps a value of the receiver's type, such as an error, outside it.
+    const arrayUses =
+      arrayParameter === undefined ? [] : getUses(checker.getSymbolAtLocation(arrayParameter.name));
+    const isTested =
+      arrayUses.length > 0 &&
+      arrayUses.every(
+        (use) =>
+          ts.isBinaryExpression(use.parent) &&
+          use.parent.operatorToken.kind === ts.SyntaxKind.InstanceOfKeyword &&
+          use.parent.left === use,
+      );
     const receiverType =
       receiver === undefined
         ? "any"
-        : ts.isIdentifier(receiver) &&
-            receiver.text !== "arguments" &&
-            declaration.parameters.every((parameter) => parameter.name.getText() !== receiver.text)
-          ? `typeof ${receiver.text}`
-          : checker
-              .typeToString(
-                checker.getTypeAtLocation(receiver),
-                undefined,
-                ts.TypeFormatFlags.NoTruncation,
+        : isTested
+          ? "object"
+          : ts.isIdentifier(receiver) &&
+              receiver.text !== "arguments" &&
+              declaration.parameters.every(
+                (parameter) => parameter.name.getText() !== receiver.text,
               )
-              // An empty object literal gets properties after it's made.
-              .replace(/^\{\}$/, "{ [key: string | symbol]: unknown }");
+            ? `typeof ${receiver.text}`
+            : checker
+                .typeToString(
+                  checker.getTypeAtLocation(receiver),
+                  undefined,
+                  ts.TypeFormatFlags.NoTruncation,
+                )
+                // An empty object literal gets properties after it's made.
+                .replace(/^\{\}$/, "{ [key: string | symbol]: unknown }");
     if (
       arrayParameter !== undefined &&
       arrayParameter.type === undefined &&
@@ -762,14 +787,7 @@ const typeCallbacks = () => {
     const isCompared = (use: ts.Node) =>
       ts.isTypeOfExpression(use.parent) ||
       (ts.isBinaryExpression(use.parent) && COMPARISONS.has(use.parent.operatorToken.kind));
-    const uses: ts.Identifier[] = [];
-    const findUses = (node: ts.Node): void => {
-      if (ts.isIdentifier(node) && checker.getSymbolAtLocation(node) === valueSymbol) {
-        uses.push(node);
-      }
-      ts.forEachChild(node, findUses);
-    };
-    if (valueSymbol !== undefined && declaration.body !== undefined) findUses(declaration.body);
+    const uses = getUses(valueSymbol);
     const isUnknownValue =
       valueParameter !== undefined &&
       valueParameter.type === undefined &&
