@@ -1316,6 +1316,22 @@ export const isAssigned = (symbol: ts.Symbol, node: ts.Node, context: Context): 
   );
 };
 
+// Whether a script assigns to a name inside a function other than the one around a read of it,
+// which TypeScript's narrowing at the read doesn't see.
+export const isAssignedElsewhere = (symbol: ts.Symbol, read: ts.Node, context: Context) => {
+  const around = ts.findAncestor(read, ts.isFunctionLike);
+  return (
+    findNodes(read.getSourceFile(), (inner): inner is ts.Node => {
+      const target = getAssignedTarget(inner);
+      return (
+        target !== undefined &&
+        isWrittenBy(target, symbol, context) &&
+        ts.findAncestor(inner, ts.isFunctionLike) !== around
+      );
+    }).length > 0
+  );
+};
+
 // Whether a variable that a script declares without a type or a value is assigned only as the
 // rest of object patterns, so that it holds undefined or an object.
 export const isRestOnly = (symbol: ts.Symbol, context: Context) => {
@@ -2867,6 +2883,25 @@ export const getAccessorFunctions = (node: ts.Node, field: "get" | "set", contex
   return found.get(field) ?? [];
 };
 
+const computedGetters = new WeakMap<ts.SourceFile, ts.GetAccessorDeclaration[]>();
+
+// The getters of object literals whose keys computed names give, which no type names, so that a
+// read runs the one it finds.
+const getComputedGetters = (node: ts.Node) => {
+  const file = node.getSourceFile();
+  const known = computedGetters.get(file);
+  if (known !== undefined) return known;
+  const found = findNodes(
+    file,
+    (inner): inner is ts.GetAccessorDeclaration =>
+      ts.isGetAccessorDeclaration(inner) &&
+      ts.isObjectLiteralExpression(inner.parent) &&
+      ts.isComputedPropertyName(inner.name),
+  );
+  computedGetters.set(file, found);
+  return found;
+};
+
 const setAccessors = new WeakMap<ts.SourceFile, ts.SetAccessorDeclaration[]>();
 
 // The setters that a script writes in object literals and classes under a key it names, of those
@@ -3023,6 +3058,7 @@ export const getGetters = (node: ts.Node, context: Context) =>
   [
     ...getAccessorFunctions(node, "get", context),
     ...getReturnedFunctions(node, context),
+    ...getComputedGetters(node),
     ...(isSuperAccess(node) ? getSuperGetters(node, context) : []),
   ].filter(
     (getter) =>

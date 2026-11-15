@@ -772,6 +772,7 @@ export const getSuperLookup = (node: ts.Node, scope: Scope, context: Context) =>
         start,
       ),
       receiver: receiver.value,
+      prototype: start,
     };
   }
   if (!ts.isClassLike(owner)) throw new TlaTypeScriptError("Unsupported expression: super", node);

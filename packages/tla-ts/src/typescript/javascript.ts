@@ -1,6 +1,6 @@
 import ts from "@typescript/typescript6";
 import type { Expression } from "../ast";
-import { type Context, getSymbol, getUndefined, share } from "./context";
+import { type Context, getSymbol, getUndefined, isAssignedElsewhere, share } from "./context";
 import { TlaTypeScriptError } from "../errors";
 import { formatString } from "../printer";
 import {
@@ -1535,6 +1535,15 @@ Get(heap, ref, key) ==
          [] OTHER -> Get(heap, Get(heap, ref.constructor, "prototype"), key)
   ELSE GetFrom(heap, ref, key, ref)
 
+\\* A read of a property of a value whose type doesn't tell what it is: an object, an array, an error,
+\\* or a function. tla-ts stops at a primitive, and at undefined or null, whose read throws.
+GetAny(heap, value, key) ==
+  CASE value \\in {Undefined, Null} ->
+         Assert(FALSE, "tla-ts can't throw the TypeError of reading a property of undefined or null")
+    [] IsRef(value) \\/ IsSequenceValue(value) \\/ IsError(value) \\/ TypeOf(value) = "function" ->
+         Get(heap, value, key)
+    [] OTHER -> Assert(FALSE, "tla-ts can't read a property of this value")
+
 \\* A generator object that tla-ts follows, which is neither a promise nor a function.
 IsGeneratorObject(heap, ref) ==
   LET object == heap.objects[ref[Ref]]
@@ -1775,7 +1784,32 @@ AccessorFieldOf(heap, ref, key, field) ==
 
 GetterOf(heap, ref, key) == AccessorFieldOf(heap, ref, key, "get")
 
+\\* The code of the first getter that RegExp.prototype's flags getter reads of an object that isn't
+\\* a regexp, as it reads the flags in order, or Undefined.
+FlagsFirstGetter(heap, receiver) ==
+  LET keys == <<"hasIndices", "global", "ignoreCase", "multiline", "dotAll", "unicode",
+                "unicodeSets", "sticky">>
+      read == {position \\in DOMAIN keys : GetterOf(heap, receiver, keys[position]) # Undefined}
+      first == CHOOSE position \\in read : \\A other \\in read : position <= other
+  IN IF IsHeap(receiver) /\\ ~IsProxy(heap, receiver) /\\ read # {}
+     THEN CodeOf(heap, GetterOf(heap, receiver, keys[first]))
+     ELSE Undefined
+
+\\* The code of the getter that an array-like object's first element reads, where its length isn't
+\\* 0, or Undefined.
+FirstElementGetter(heap, ref) ==
+  IF ToLength(Get(heap, ref, "length")) > 0 /\\ GetterOf(heap, ref, "0") # Undefined
+  THEN CodeOf(heap, GetterOf(heap, ref, "0"))
+  ELSE Undefined
+
 SetterOf(heap, ref, key) == AccessorFieldOf(heap, ref, key, "set")
+
+\\* The getter that an object that the heap holds reads its then through, where it isn't a promise, a
+\\* generator, or a proxy, whose then tla-ts reads otherwise.
+ThenGetter(heap, value) ==
+  IF IsHeap(value) /\\ ~heap.objects[value[Ref]].isOpaque /\\ ~IsProxy(heap, value)
+  THEN GetterOf(heap, value, "then")
+  ELSE Undefined
 
 \\* The TypeError that a read throws where it runs %ThrowTypeError% or a getter of a buffer or a view
 \\* on another kind of object, or "".
@@ -1970,6 +2004,14 @@ NewestSymbol(heap) == Symbols[Len(WellKnownSymbols) + Len(heap.symbols)]
 
 WellKnownSymbol(name) ==
   Symbols[CHOOSE position \\in DOMAIN WellKnownSymbols : WellKnownSymbols[position] = name]
+
+\\* The code of the getter that concat reads first, its receiver's @@isConcatSpreadable, or Undefined.
+ConcatSpreadableGetter(heap, ref) ==
+  IF /\\ IsHeap(ref)
+     /\\ ~IsProxy(heap, ref)
+     /\\ GetterOf(heap, ref, WellKnownSymbol("isConcatSpreadable")) # Undefined
+  THEN CodeOf(heap, GetterOf(heap, ref, WellKnownSymbol("isConcatSpreadable")))
+  ELSE Undefined
 
 \\* The heap after Symbol.for(key), which makes a symbol for the key where the registry holds none.
 RegisterSymbol(heap, key) ==
@@ -5199,6 +5241,22 @@ ArrayChange(heap, ref, method, items) == ArrayChangeOf(heap, ref, method, items,
 \\* backward where the indices it copies to overlap the end of those it copies from, where only the
 \\* indices that the object or its prototypes hold, and those that copy over them, change. The
 \\* indices are the numbers that its arguments give, and end is Undefined where it takes the length.
+\\* The code of the getter that copyWithin reads first, at the index it copies from first, where it
+\\* copies any, or Undefined.
+CopyWithinFirstGetter(heap, ref, target, start, end) ==
+  LET length == ToLength(Get(heap, ref, "length"))
+      to == ClampedIndex(target, length)
+      from == ClampedIndex(start, length)
+      final == IF end = Undefined THEN length ELSE ClampedIndex(end, length)
+      count == IF final - from < length - to THEN final - from ELSE length - to
+      first == IF from < to /\\ to < from + count THEN from + count - 1 ELSE from
+  IN IF /\\ IsHeap(ref)
+        /\\ ~IsProxy(heap, ref)
+        /\\ count > 0
+        /\\ GetterOf(heap, ref, ToString(first)) # Undefined
+     THEN CodeOf(heap, GetterOf(heap, ref, ToString(first)))
+     ELSE Undefined
+
 ArrayLikeCopyWithin(heap, ref, target, start, end) ==
   LET length == LengthOf(heap, ref)
       to == ClampedIndex(target, length)
@@ -6233,7 +6291,14 @@ export const getTypeNames = (type: ts.Type, checker: ts.TypeChecker): string[] |
 };
 
 export const translateTypeOf = (node: ts.TypeOfExpression, scope: Scope, context: Context) => {
-  const names = getTypeNames(context.checker.getTypeAtLocation(node.expression), context.checker);
+  const symbol = ts.isIdentifier(node.expression)
+    ? getSymbol(node.expression, context.checker)
+    : undefined;
+  const type =
+    symbol !== undefined && isAssignedElsewhere(symbol, node, context)
+      ? context.checker.getTypeOfSymbol(symbol)
+      : context.checker.getTypeAtLocation(node.expression);
+  const names = getTypeNames(type, context.checker);
   const known = names && [...new Set(names.map((name) => (name === "null" ? "object" : name)))];
   // Object.defineProperty can give a property a value of another type than TypeScript's.
   const read = ts.isParenthesizedExpression(node.expression)

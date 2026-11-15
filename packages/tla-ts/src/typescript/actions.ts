@@ -789,8 +789,12 @@ const getHeapWrite = (node: ts.Expression, path: Path, context: Context): HeapWr
     throw new TlaTypeScriptError("tla-ts can't replace a collection's methods", node);
   }
   const isBuiltIn = context.heap !== undefined && isBuiltInObject(receiver, context);
-  rejectAnyReceiver(receiver, context);
-  if (!isBuiltIn && getKind(receiver, context) !== "object") return undefined;
+  // A value of type any writes as an object, and the write stops where it holds another value.
+  const isAny =
+    context.heap !== undefined &&
+    (context.checker.getTypeAtLocation(receiver).flags & ts.TypeFlags.Any) !== 0;
+  if (!isAny) rejectAnyReceiver(receiver, context);
+  if (!isBuiltIn && !isAny && getKind(receiver, context) !== "object") return undefined;
   const symbol = context.heap;
   const heap = symbol === undefined ? undefined : path.scope.bindings.get(symbol);
   if (symbol === undefined || heap === undefined || !path.mutable.has(symbol)) {
@@ -1976,6 +1980,30 @@ export const translateCallStatement = (
       continueWith(path, translateExpression(expression, path.scope, context)),
     );
   }
+  // concat reads @@isConcatSpreadable of its receiver first, which a getter that only throws throws
+  // from.
+  const concatenated = expression.arguments.at(0);
+  if (
+    getArrayMethodCall(expression, context) === "concat" &&
+    concatenated !== undefined &&
+    ts.isIdentifier(concatenated) &&
+    getKind(concatenated, context) === "object" &&
+    getThrowingGetters(expression, context).length > 0
+  ) {
+    const heap = getHeap(path.scope, expression, context);
+    const object = translateExpression(concatenated, path.scope, context);
+    const code = useJavaScript("ConcatSpreadableGetter", [heap, object], context);
+    return throwFirstGetter(
+      expression,
+      apply("#", [code, getUndefined(context)]),
+      code,
+      object,
+      path,
+      context,
+      frame,
+      leaf(apply("Assert", [boolean(false), string("tla-ts can't run concat as a statement")])),
+    );
+  }
   const loop = getLoopCall(expression, path, context);
   // A receiver or a later argument that only statements can run runs first, where what evaluates
   // before it doesn't read what it changes.
@@ -2558,48 +2586,74 @@ export const translateCallStatement = (
     const heap = getHeap(path.scope, expression, context);
     const ref = translateExpression(arrayLikeChange.object, path.scope, context);
     const length = useJavaScript("Get", [heap, ref, string("length")], context);
-    // ToLength throws a TypeError where the length is a symbol or a BigInt.
+    // copyWithin throws from a getter at the index it reads first, before it writes.
+    const firstGetter =
+      arrayLikeChange.method === "copyWithin"
+        ? useJavaScript(
+            "CopyWithinFirstGetter",
+            [
+              heap,
+              ref,
+              ...translateCopyWithinArguments(arrayLikeChange.items, path.scope, context),
+            ],
+            context,
+          )
+        : undefined;
+    const run = bindOnce(
+      path,
+      changeName,
+      arrayLikeChange.method === "reverse"
+        ? useJavaScript("ArrayLikeReverse", [heap, ref], context)
+        : arrayLikeChange.method === "copyWithin"
+          ? useJavaScript(
+              "ArrayLikeCopyWithin",
+              [
+                heap,
+                ref,
+                ...translateCopyWithinArguments(arrayLikeChange.items, path.scope, context),
+              ],
+              context,
+            )
+          : useJavaScript(
+              "ArrayChange",
+              [
+                heap,
+                ref,
+                string(arrayLikeChange.method),
+                tuple(
+                  arrayLikeChange.items.map((item) =>
+                    translateExpression(item, path.scope, context),
+                  ),
+                ),
+              ],
+              context,
+            ),
+      ifThenElse(
+        field(change, "isThrown"),
+        throwTypeError(withHeap(field(change, "heap")), expression, context, frame),
+        continueWith(withHeap(field(change, "heap")), field(change, "value")),
+      ),
+    );
+    // ToLength throws a TypeError where the length is a symbol or a BigInt, before copyWithin reads
+    // an element.
     return ifThenElse(
       apply("\\/", [
         useJavaScript("IsSymbol", [length], context),
         useJavaScript("IsBigInt", [length], context),
       ]),
       throwTypeError(path, expression, context, frame),
-      bindOnce(
-        path,
-        changeName,
-        arrayLikeChange.method === "reverse"
-          ? useJavaScript("ArrayLikeReverse", [heap, ref], context)
-          : arrayLikeChange.method === "copyWithin"
-            ? useJavaScript(
-                "ArrayLikeCopyWithin",
-                [
-                  heap,
-                  ref,
-                  ...translateCopyWithinArguments(arrayLikeChange.items, path.scope, context),
-                ],
-                context,
-              )
-            : useJavaScript(
-                "ArrayChange",
-                [
-                  heap,
-                  ref,
-                  string(arrayLikeChange.method),
-                  tuple(
-                    arrayLikeChange.items.map((item) =>
-                      translateExpression(item, path.scope, context),
-                    ),
-                  ),
-                ],
-                context,
-              ),
-        ifThenElse(
-          field(change, "isThrown"),
-          throwTypeError(withHeap(field(change, "heap")), expression, context, frame),
-          continueWith(withHeap(field(change, "heap")), field(change, "value")),
-        ),
-      ),
+      firstGetter === undefined
+        ? run
+        : throwFirstGetter(
+            expression,
+            apply("#", [firstGetter, getUndefined(context)]),
+            firstGetter,
+            ref,
+            path,
+            context,
+            frame,
+            run,
+          ),
     );
   }
   // A call of a key under which a script stores a built-in method that changes its receiver or
@@ -3257,6 +3311,10 @@ export const translateCallStatement = (
       sizeOwner === undefined
         ? undefined
         : translateSizeGetter(sizeOwner, receiver, path.scope, context);
+    const getReceiverValue = () =>
+      receiver === undefined
+        ? getUndefined(context)
+        : translateExpression(receiver, path.scope, context);
     const run = isFunctionReceiver
       ? throwTypeError(path, expression, context, frame)
       : sizeOwner !== undefined
@@ -3266,23 +3324,29 @@ export const translateCallStatement = (
         : bindOnce(
             path,
             resultName,
-            useJavaScript(
-              "GetterCall",
-              [
-                heap,
-                getter,
-                receiver === undefined
-                  ? getUndefined(context)
-                  : translateExpression(receiver, path.scope, context),
-              ],
-              context,
-            ),
+            useJavaScript("GetterCall", [heap, getter, getReceiverValue()], context),
             ifThenElse(
               apply("=", [field(result, "error"), string("")]),
               continueWith(path, field(result, "value")),
               throwTypeError(path, expression, context, frame),
             ),
           );
+    // flags reads each flag of its receiver in order, so a getter of one that only throws throws.
+    const flagsGetter = () =>
+      useJavaScript("FlagsFirstGetter", [heap, getReceiverValue()], context);
+    const checked =
+      getterCall.path === "get RegExp.prototype.flags"
+        ? throwFirstGetter(
+            expression,
+            apply("#", [flagsGetter(), getUndefined(context)]),
+            flagsGetter(),
+            getReceiverValue(),
+            path,
+            context,
+            frame,
+            run,
+          )
+        : run;
     const builtIn = translateBuiltInValue(getterCall.path, expression, context);
     return ifThenElse(
       apply("/\\", [
@@ -3295,7 +3359,7 @@ export const translateCallStatement = (
             )
           : boolean(true),
       ]),
-      run,
+      checked,
       leaf(
         apply("Assert", [
           boolean(false),
@@ -9620,7 +9684,8 @@ const throwReadError = (
       (ts.isPropertyAccessExpression(accessed) && !ts.isPrivateIdentifier(accessed.name))) &&
     accessed.expression.kind !== ts.SyntaxKind.SuperKeyword &&
     (isBuiltInObject(accessed.expression, context) ||
-      getKind(accessed.expression, context) === "object")
+      getKind(accessed.expression, context) === "object" ||
+      context.checker.getTypeAtLocation(accessed.expression).getCallSignatures().length > 0)
     ? ifThenElse(
         apply("=", [
           useJavaScript(
@@ -10108,7 +10173,12 @@ const translateExpressionStatement = (
       throw new TlaTypeScriptError(`Unsupported statement: ${expression.getText()}`, expression);
     }
     const heap = useJavaScript("Delete", [deleted.heap, deleted.ref, deleted.key], context);
-    return ifThenElse(
+    const target = skipCasts(expression.expression);
+    // ToObject of the base throws on undefined or null, where a literal key converts nothing.
+    const isBaseChecked =
+      ts.isPropertyAccessExpression(target) ||
+      (ts.isElementAccessExpression(target) && isLiteral(target.argumentExpression));
+    const deletion = ifThenElse(
       useJavaScript("CanDelete", [deleted.heap, deleted.ref, deleted.key], context),
       shareHeap(
         {
@@ -10123,6 +10193,13 @@ const translateExpressionStatement = (
       ),
       throwTypeError(path, expression, context, frame),
     );
+    return isBaseChecked
+      ? ifThenElse(
+          apply("\\in", [deleted.ref, set([getUndefined(context), identifier("Null")])]),
+          throwTypeError(path, expression, context, frame),
+          deletion,
+        )
+      : deletion;
   }
   // A regexp that a statement makes of literals and drops, or an object whose members evaluate
   // nothing, changes nothing.
@@ -13207,6 +13284,60 @@ const translateUnrolled = (
   return iterate(path, 0);
 };
 
+// The getters that a script's descriptors give whose body only throws, which a built-in that reads
+// one before it changes anything throws from where it reads it.
+const getThrowingGetters = (node: ts.Node, context: Context) =>
+  [
+    ...getAccessorFunctions(node, "get", context),
+    ...findNodes(
+      node.getSourceFile(),
+      (inner): inner is ts.GetAccessorDeclaration =>
+        ts.isGetAccessorDeclaration(inner) && ts.isObjectLiteralExpression(inner.parent),
+    ),
+  ].filter(
+    (getter) =>
+      getter.body !== undefined &&
+      ts.isBlock(getter.body) &&
+      getter.body.statements.length === 1 &&
+      ts.isThrowStatement(getter.body.statements[0]) &&
+      getParameters(getter).length === 0 &&
+      getCandidateValue(getter, context) !== undefined,
+  );
+
+// Runs the getter whose code a built-in reads first, where it reads one and it only throws, which
+// throws from there; otherwise runs the built-in.
+const throwFirstGetter = (
+  node: ts.Node,
+  isRead: Expression,
+  code: Expression,
+  receiver: Expression,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  otherwise: Formula,
+) =>
+  getThrowingGetters(node, context).reduceRight<Formula>(
+    (rest, getter) =>
+      ifThenElse(
+        apply("/\\", [
+          isRead,
+          apply("=", [code, getCandidateValue(getter, context) ?? getUndefined(context)]),
+        ]),
+        inlineBody(
+          node,
+          getter,
+          [],
+          { value: receiver, method: getter },
+          path,
+          context,
+          frame,
+          () => otherwise,
+        ),
+        rest,
+      ),
+    otherwise,
+  );
+
 const translateLoop = (
   loop: ts.IterationStatement,
   path: Path,
@@ -13220,6 +13351,35 @@ const translateLoop = (
     return translateUnrolled(loop, unrolled, path, context, frame, continueWith);
   }
   const runLoop = (inner: Path) => translateIterations(loop, inner, context, frame, continueWith);
+  // A for-of of an array whose first element a getter that only throws gives throws before its
+  // first iteration, as the iterator's first next reads the element.
+  if (
+    ts.isForOfStatement(loop) &&
+    loop.awaitModifier === undefined &&
+    isHeapArray(loop.expression, context) &&
+    getThrowingGetters(loop, context).length > 0
+  ) {
+    return allocate(loop.expression, path, context, (inner) => {
+      const heap = getHeap(inner.scope, loop.expression, context);
+      const array = translateExpression(loop.expression, inner.scope, context);
+      return throwFirstGetter(
+        loop.expression,
+        apply("/\\", [
+          holdsArrayIteration(heap, loop.expression, context, array),
+          apply("#", [
+            useJavaScript("FirstElementGetter", [heap, array], context),
+            getUndefined(context),
+          ]),
+        ]),
+        useJavaScript("FirstElementGetter", [heap, array], context),
+        array,
+        inner,
+        context,
+        frame,
+        runLoop(inner),
+      );
+    });
+  }
   // A for-of or a for-in evaluates what it iterates once, before its first iteration.
   if (ts.isForOfStatement(loop) || ts.isForInStatement(loop)) {
     return allocate(loop.expression, path, context, runLoop);
@@ -16147,6 +16307,25 @@ export const translateStatements = (
   if (dropped !== undefined && droppedBuffer !== undefined) {
     return translateNewBufferStatement(dropped, droppedBuffer, path, context, frame, (after) =>
       shareHeap(after, context, continueWith),
+    );
+  }
+  // A read of super throws a TypeError where the object that holds the method has no prototype.
+  const superLookup =
+    dropped !== undefined &&
+    (ts.isPropertyAccessExpression(dropped) ||
+      (ts.isElementAccessExpression(dropped) && isLiteral(dropped.argumentExpression))) &&
+    dropped.expression.kind === ts.SyntaxKind.SuperKeyword
+      ? getSuperLookup(dropped, path.scope, context)
+      : undefined;
+  if (ts.isExpressionStatement(statement) && superLookup?.prototype !== undefined) {
+    return ifThenElse(
+      apply("=", [superLookup.prototype, identifier("Null")]),
+      throwTypeError(path, statement.expression, context, frame),
+      allocate(statement.expression, path, context, (inner) =>
+        translateExpressionStatement(statement.expression, inner, context, frame, (after) =>
+          shareHeap(after, context, continueWith),
+        ),
+      ),
     );
   }
   if (ts.isExpressionStatement(statement)) {

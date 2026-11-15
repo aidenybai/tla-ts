@@ -293,6 +293,56 @@ export const dispatchFollowed = (
       );
 };
 
+// A getter that a script defines as a then, whose body only throws a top-level variable, as
+// Object.defineProperty(object, "then", { get: function() { throw value; } }) does.
+interface ThrowingThen {
+  getter: ts.FunctionExpression | ts.ArrowFunction;
+  thrown: ts.Identifier;
+}
+
+const getThrowingThens = (node: ts.Node, context: Context) =>
+  findNodes(node.getSourceFile(), ts.isCallExpression).flatMap((call): ThrowingThen[] => {
+    const key = call.arguments.at(1);
+    const descriptor = call.arguments.at(2);
+    const getter =
+      descriptor !== undefined && ts.isObjectLiteralExpression(descriptor)
+        ? descriptor.properties.find(
+            (property): property is ts.PropertyAssignment =>
+              ts.isPropertyAssignment(property) &&
+              ts.isIdentifier(property.name) &&
+              property.name.text === "get",
+          )?.initializer
+        : undefined;
+    const statement =
+      getter !== undefined &&
+      (ts.isFunctionExpression(getter) || ts.isArrowFunction(getter)) &&
+      ts.isBlock(getter.body) &&
+      getter.body.statements.length === 1
+        ? getter.body.statements[0]
+        : undefined;
+    const thrown =
+      statement !== undefined && ts.isThrowStatement(statement) ? statement.expression : undefined;
+    const declaration =
+      thrown !== undefined && ts.isIdentifier(thrown)
+        ? getSymbol(thrown, context.checker)?.valueDeclaration
+        : undefined;
+    return ts.isPropertyAccessExpression(call.expression) &&
+      call.expression.name.text === "defineProperty" &&
+      getBuiltIn(call.expression.expression, context) === "Object" &&
+      key !== undefined &&
+      ts.isStringLiteral(key) &&
+      key.text === "then" &&
+      getter !== undefined &&
+      (ts.isFunctionExpression(getter) || ts.isArrowFunction(getter)) &&
+      thrown !== undefined &&
+      ts.isIdentifier(thrown) &&
+      declaration !== undefined &&
+      ts.isVariableDeclaration(declaration) &&
+      ts.isSourceFile(declaration.parent.parent.parent)
+      ? [{ getter, thrown }]
+      : [];
+  });
+
 // Resolves a promise with a value: a promise that tla-ts follows, which the promise then follows
 // a job later, or a value that it fulfills the promise with. tla-ts doesn't call the then of an
 // object that isn't a promise.
@@ -363,33 +413,57 @@ const resolve = (
       string("tla-ts can't resolve a promise with an object that has a then"),
     ]),
   );
+  // Reading a then that a getter throws from rejects the promise with what it throws.
+  const throwingThens = getThrowingThens(node, context);
   return dispatchPromise(path, node, value, valueNode, context, follow, () =>
-    ifThenElse(
-      useJavaScript(
-        "IsThenable",
-        [
-          heap,
-          value,
-          translateBuiltInValue("Array.prototype", node, context),
-          translateBuiltInValue("Object.prototype", node, context),
-        ],
-        context,
+    throwingThens.reduceRight<Formula>(
+      (otherwise, throwing) =>
+        ifThenElse(
+          apply("=", [
+            useJavaScript("ThenGetter", [heap, value], context),
+            getCandidateValue(throwing.getter, context) ?? getUndefined(context),
+          ]),
+          continueWith(
+            settle(
+              path,
+              node,
+              name,
+              translateExpression(throwing.thrown, path.scope, context),
+              true,
+              context,
+            ),
+          ),
+          otherwise,
+        ),
+      ifThenElse(
+        useJavaScript(
+          "IsThenable",
+          [
+            heap,
+            value,
+            translateBuiltInValue("Array.prototype", node, context),
+            translateBuiltInValue("Object.prototype", node, context),
+          ],
+          context,
+        ),
+        runsThen
+          ? ifThenElse(
+              useJavaScript("HasCallableThen", [heap, value], context),
+              callThen(),
+              cannotThen,
+            )
+          : cannotThen,
+        runsThen
+          ? leaf(
+              apply("Assert", [
+                boolean(false),
+                string(
+                  "tla-ts can't resolve a promise with a value whose type has a then it lacks",
+                ),
+              ]),
+            )
+          : continueWith(settle(path, node, name, value, false, context)),
       ),
-      runsThen
-        ? ifThenElse(
-            useJavaScript("HasCallableThen", [heap, value], context),
-            callThen(),
-            cannotThen,
-          )
-        : cannotThen,
-      runsThen
-        ? leaf(
-            apply("Assert", [
-              boolean(false),
-              string("tla-ts can't resolve a promise with a value whose type has a then it lacks"),
-            ]),
-          )
-        : continueWith(settle(path, node, name, value, false, context)),
     ),
   );
 };
