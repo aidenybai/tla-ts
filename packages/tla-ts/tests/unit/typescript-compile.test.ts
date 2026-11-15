@@ -28359,6 +28359,120 @@ describe("errors", () => {
     }
   });
 
+  describe("returns from an async generator after awaiting the value where the return happens", () => {
+    const cases = [
+      {
+        name: "a return at a yield inside try and finally",
+        getSource: (expected: string) => `
+        declare function setTimeout(callback: () => void): void;
+        let log = "";
+        async function* g(): AsyncGenerator<number, number, number> {
+          try {
+            yield 1;
+          } finally {
+            log += "f";
+          }
+          return 3;
+        }
+        const it = g();
+        it.next().then(() => it.return(5).then((result) => { log += "r" + result.value; }));
+        Promise.resolve()
+          .then(() => { log += "0"; })
+          .then(() => { log += "1"; })
+          .then(() => { log += "2"; });
+        setTimeout(() => {
+          if (log !== "${expected}") throw new Error(log);
+        });
+      `,
+        expected: "01f2r5",
+        wrong: "0f12r5",
+      },
+      {
+        name: "a return statement inside try and finally",
+        getSource: (expected: string) => `
+        declare function setTimeout(callback: () => void): void;
+        let log = "";
+        async function* g(): AsyncGenerator<number, number, number> {
+          try {
+            return 4;
+          } finally {
+            log += "f";
+          }
+        }
+        g().next().then((result) => { log += "r" + result.value; });
+        Promise.resolve()
+          .then(() => { log += "0"; })
+          .then(() => { log += "1"; })
+          .then(() => { log += "2"; });
+        setTimeout(() => {
+          if (log !== "${expected}") throw new Error(log);
+        });
+      `,
+        expected: "f0r412",
+        wrong: "0fr412",
+      },
+      {
+        name: "a return at a yield whose value rejects",
+        getSource: (expected: string) => `
+        declare function setTimeout(callback: () => void): void;
+        let log = "";
+        async function* g(): AsyncGenerator<number, number, number> {
+          try {
+            yield 1;
+          } catch (error) {
+            log += "c" + error;
+          }
+          return 3;
+        }
+        const it = g();
+        it.next().then(() => it.return(Promise.reject(9)).then((result) => { log += "r" + result.value; }));
+        Promise.resolve()
+          .then(() => { log += "0"; })
+          .then(() => { log += "1"; })
+          .then(() => { log += "2"; });
+        setTimeout(() => {
+          if (log !== "${expected}") throw new Error(log);
+        });
+      `,
+        expected: "01c92r3",
+        wrong: "0c912r3",
+      },
+      {
+        name: "a return at a yield whose finally returns",
+        getSource: (expected: string) => `
+        declare function setTimeout(callback: () => void): void;
+        let log = "";
+        async function* g(): AsyncGenerator<number, string | number, number> {
+          try {
+            yield 1;
+          } finally {
+            return "d";
+          }
+        }
+        const it = g();
+        it.next().then(() => it.return(5).then((result) => { log += "r" + result.value; }));
+        Promise.resolve()
+          .then(() => { log += "0"; })
+          .then(() => { log += "1"; })
+          .then(() => { log += "2"; });
+        setTimeout(() => {
+          if (log !== "${expected}") throw new Error(log);
+        });
+      `,
+        expected: "012rd",
+        wrong: "01r2d",
+      },
+    ];
+    for (const entry of cases) {
+      it(`matches Node on ${entry.name}`, async () => {
+        expect((await checkModel(entry.getSource(entry.expected))).failure).toBeUndefined();
+      });
+      it(`fails a wrong log on ${entry.name}`, async () => {
+        expect((await checkModel(entry.getSource(entry.wrong))).failure).toBeDefined();
+      });
+    }
+  });
+
   it("runs Array.fromAsync of the values() of an array written in place", async () => {
     // V8 rejects a job later than the spec, whose order a for await gives.
     const result = await checkModel(`

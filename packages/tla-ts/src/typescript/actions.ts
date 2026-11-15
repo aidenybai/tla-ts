@@ -451,7 +451,7 @@ interface Suspension {
   isGuarded: boolean;
   // Runs the rest of the body from a yield as a return or a throw there would, through the finally
   // blocks and catch clauses around it, where a plain yield suspended it. An async generator's
-  // return awaits its value there first, which tla-ts doesn't follow.
+  // return awaits its value there first.
   abort?: (path: Path, method: string, value: Expression | undefined) => Formula;
   isAsync: boolean;
   // The promises of the nexts that called an async generator while its body ran, which it settles
@@ -5675,25 +5675,7 @@ export const makeGenerator = (
     };
     const bodyFrame: Frame = {
       next: finish,
-      // An async generator's return awaits its value.
-      exit: (current, value) => {
-        if (!isAsync || value === undefined) return finish(current, value);
-        if (bound.scope.isCatching) {
-          throw new TlaTypeScriptError(
-            "tla-ts can't return a value inside try in an async generator",
-            callee,
-          );
-        }
-        return suspend(current, value, undefined, (resumed, settled, isRejected) => {
-          if (!isRejected) return finish(resumed, settled);
-          const caller = getCaller(resumed);
-          const left = leave(resumed, undefined);
-          const uncaught = apply("Assert", [boolean(false), string("An async generator threw")]);
-          return caller.throwTo === undefined
-            ? leaf(uncaught)
-            : caller.throwTo(left, { value: settled, uncaught });
-        });
-      },
+      exit: finish,
       breakTo: undefined,
       continueTo: undefined,
       throwTo: (current, thrown) => {
@@ -6860,9 +6842,9 @@ export const resumeGenerator = (
           sent,
         );
       }
-      // A throw resumes the body at its yield, which throws it there.
+      // A return or a throw resumes the body at its yield, which returns or throws there.
       if (resume !== undefined && suspension.isStarted && suspension.isGuarded) {
-        return method === "throw" && suspension.abort !== undefined
+        return suspension.abort !== undefined
           ? suspension.abort(
               {
                 ...made,
@@ -9799,8 +9781,9 @@ const delegateToGenerator = (
 // An async generator's yield* over a generator, which the async-from-sync iterator resumes with the
 // method and the value that resumed the async generator. It awaits each value that the generator
 // yields, and the value it returns, a job before the yield* awaits the iterator's result, as for
-// an array, and what the generator throws rejects that result. A value that rejects would close
-// the generator, which tla-ts doesn't follow.
+// an array, and what the generator throws rejects that result. A return that completes the
+// generator awaits its value again. A value that rejects would close the generator, which tla-ts
+// doesn't follow.
 const delegateToSyncGenerator = (
   node: ts.YieldExpression,
   iterated: ts.Expression,
@@ -9866,7 +9849,7 @@ const delegateToSyncGenerator = (
                 tick(fulfilled, (resumed) =>
                   isDone
                     ? method === "return"
-                      ? frame.exit(resumed, settled)
+                      ? awaitTo(resumed, settled, undefined, frame.exit, throwWith)
                       : continueWith(resumed)
                     : yieldTo(
                         resumed,
@@ -11019,10 +11002,19 @@ const translateYield = (
     yieldTo(current, value, continueWith, throwWith, {
       isDelegated: false,
       isGuarded: false,
+      // An async generator's yield awaits what a return gives, and throws where it rejects.
       abortRest: (aborted, method, abrupt) =>
         method === "throw"
           ? throwWith(aborted, abrupt ?? getUndefined(context))
-          : frame.exit(aborted, abrupt),
+          : frame.awaitTo === undefined
+            ? frame.exit(aborted, abrupt)
+            : frame.awaitTo(
+                aborted,
+                abrupt ?? getUndefined(context),
+                undefined,
+                frame.exit,
+                throwWith,
+              ),
     });
   // A yield of an increment yields what it gives.
   if (
@@ -17239,6 +17231,31 @@ export const translateStatements = (
   if (ts.isReturnStatement(statement)) {
     const returned = statement.expression;
     if (returned === undefined) return statementFrame.exit(path);
+    // An async generator's return awaits its value where it returns, before the finally blocks
+    // around it run, and throws there where the value rejects.
+    const owner = ts.findAncestor(statement.parent, ts.isFunctionLike);
+    const awaitTo = statementFrame.awaitTo;
+    const exit =
+      owner !== undefined &&
+      (ts.isFunctionDeclaration(owner) ||
+        ts.isFunctionExpression(owner) ||
+        ts.isMethodDeclaration(owner)) &&
+      isAsyncGenerator(owner) &&
+      awaitTo !== undefined
+        ? (current: Path, value?: Expression) =>
+            awaitTo(
+              current,
+              value ?? getUndefined(context),
+              returned,
+              statementFrame.exit,
+              (rejected, reason) => {
+                const uncaught = apply("Assert", [boolean(false), string(statement.getText())]);
+                return statementFrame.throwTo === undefined
+                  ? leaf(uncaught)
+                  : statementFrame.throwTo(rejected, { value: reason, uncaught });
+              },
+            )
+        : statementFrame.exit;
     if (statementFrame.inlining.size === 0) {
       throw new TlaTypeScriptError("Actions can't return a value", statement);
     }
@@ -17248,24 +17265,11 @@ export const translateStatements = (
     return allocate(returned, path, context, (inner) => {
       const constructed = getCast(returned);
       if (isPromiseConstruction(constructed, context)) {
-        return translatePromiseConstruction(
-          constructed,
-          inner,
-          context,
-          statementFrame,
-          statementFrame.exit,
-        );
+        return translatePromiseConstruction(constructed, inner, context, statementFrame, exit);
       }
       const constructor = getConstructorRun(returned, context);
       if (constructor !== undefined && ts.isNewExpression(returned)) {
-        return translateConstruction(
-          returned,
-          constructor,
-          inner,
-          context,
-          statementFrame,
-          statementFrame.exit,
-        );
+        return translateConstruction(returned, constructor, inner, context, statementFrame, exit);
       }
       if (
         ts.isCallExpression(returned) &&
@@ -17276,20 +17280,14 @@ export const translateStatements = (
           isStatementResult(returned, inner, context) ||
           isRemoving(returned, context))
       ) {
-        return translateCallStatement(
-          returned,
-          inner,
-          context,
-          statementFrame,
-          statementFrame.exit,
-        );
+        return translateCallStatement(returned, inner, context, statementFrame, exit);
       }
       return throwReadError(
         returned,
         inner,
         context,
         statementFrame,
-        statementFrame.exit(inner, translateExpression(returned, inner.scope, context)),
+        exit(inner, translateExpression(returned, inner.scope, context)),
       );
     });
   }
