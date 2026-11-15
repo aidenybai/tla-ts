@@ -658,9 +658,9 @@ const isVarConflict = (node: ts.Node, name: string) => {
   return declarations.some((declaration) => getBindingNames(declaration.name).includes(name));
 };
 
-// A function that a block or a case declares outside strict mode, which as Annex B.3.2 adds also
-// assigns a var of its name in its function or its script, unless such a var in its place would be
-// an early error or names a parameter. A function's arguments object takes the name arguments as a
+// A function that a block, a case, or an if's branch declares outside strict mode, which as Annex
+// B.3.2 and B.3.3 add also assigns a var of its name in its function or its script, unless such a
+// var in its place would be an early error or names a parameter. A function's arguments object takes the name arguments as a
 // parameter does, but in an arrow or beside a function declaration of that name.
 export const isVarFunction = (
   node: ts.Node,
@@ -681,6 +681,7 @@ export const isVarFunction = (
     !(
       ts.isCaseClause(parent) ||
       ts.isDefaultClause(parent) ||
+      ts.isIfStatement(parent) ||
       (ts.isBlock(parent) && !ts.isFunctionLike(parent.parent))
     )
   ) {

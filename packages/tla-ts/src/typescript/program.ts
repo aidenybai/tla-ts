@@ -1,6 +1,13 @@
 import ts from "@typescript/typescript6";
 import { TlaTypeScriptError } from "../errors";
-import { findNodes, getVarFunctionTarget, getVarScope, isVarFunction } from "./context";
+import {
+  findNodes,
+  getVarFunctionTarget,
+  getVarScope,
+  isPlain,
+  isStrictCode,
+  isVarFunction,
+} from "./context";
 import { rejectEarlyErrors } from "./early-errors";
 
 const COMPILER_OPTIONS: ts.CompilerOptions = {
@@ -75,21 +82,29 @@ const assignParameterProperties = (fileName: string, text: string) => {
 };
 
 // HACK: TypeScript binds every file as strict code, where a function that a block declares binds its
-// name only in the block. Outside strict mode, the text gains the var that Annex B.3.2 adds, which
-// such a function assigns, where its function or its script declares none. The text stays on the
-// same lines.
+// name only in the block. Outside strict mode, the text gains what Annex B.3.2 and B.3.3 add: a block
+// around a function that an if's branch declares, and the var that a function that a block declares
+// assigns, where its function or its script declares none. The text stays on the same lines.
 const declareVarFunctions = (fileName: string, text: string) => {
   const file = ts.createSourceFile(fileName, text, ts.ScriptTarget.ESNext, true);
-  const insertions = findNodes(file, isVarFunction).flatMap((node) => {
-    const scope = getVarScope(node);
-    return scope === undefined ||
-      getVarFunctionTarget(node) !== undefined ||
-      (node.name.text === "arguments" && !ts.isSourceFile(scope))
-      ? []
+  const insertions = findNodes(file, ts.isFunctionDeclaration).flatMap((node) => {
+    const blocks =
+      ts.isIfStatement(node.parent) && isPlain(node) && !isStrictCode(node)
+        ? [
+            { position: node.getStart(file), text: "{" },
+            { position: node.end, text: "}" },
+          ]
+        : [];
+    const name =
+      isVarFunction(node) && getVarFunctionTarget(node) === undefined ? node.name.text : undefined;
+    const scope = name === undefined ? undefined : getVarScope(node);
+    return scope === undefined || (name === "arguments" && !ts.isSourceFile(scope))
+      ? blocks
       : [
+          ...blocks,
           {
             position: ts.isSourceFile(scope) ? 0 : scope.getStart(file) + 1,
-            text: `var ${node.name.text}: any;`,
+            text: `var ${name}: any;`,
           },
         ];
   });

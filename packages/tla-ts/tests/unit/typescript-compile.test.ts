@@ -39621,4 +39621,39 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("first"))).failure?.message).toContain("second");
     });
   });
+
+  describe("declares a function in an if's branch outside strict mode", () => {
+    const getSource = (expected: string) => `
+      const seen: string[] = [];
+      (function () {
+        // @ts-ignore
+        seen.push(typeof f);
+        if (seen.length > 0) function f() {} else function g() {}
+        // @ts-ignore
+        seen.push(typeof f, typeof g);
+        let h = 1;
+        if (seen.length > 0) function h() {}
+        seen.push(typeof h);
+      })();
+      if (seen.join() !== "${expected}") throw new Error(seen.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("undefined,function,undefined,number"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation", async () => {
+      expect(
+        (await checkModel(getSource("undefined,function,function,number"))).failure?.message,
+      ).toContain("undefined,function,undefined,number");
+    });
+
+    it("rejects the function in strict mode", () => {
+      expect(() => compile(`"use strict";\n${getSource("")}`)).toThrow(
+        "SyntaxError: A declaration can't be the body of a statement",
+      );
+    });
+  });
 });
