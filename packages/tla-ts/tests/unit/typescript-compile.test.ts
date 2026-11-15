@@ -36092,4 +36092,55 @@ describe("BigInts", () => {
     `);
     expect(division.failure?.message).toContain("tla-ts can't throw the RangeError");
   });
+
+  describe("rejects a promise combinator's promise where iterating its argument throws", () => {
+    const getSource = (expected: string) => `
+      declare function setTimeout(callback: () => void): void;
+      let log = "";
+      const thrown = { reason: 1 };
+      const throwing = {
+        [Symbol.iterator]() {
+          return {
+            next(): IteratorResult<unknown> {
+              throw thrown;
+            },
+          };
+        },
+      };
+      Promise.all(throwing).then(undefined, (reason) => {
+        log += reason === thrown ? "thrown" : "other";
+      });
+      setTimeout(() => {
+        if (log !== "${expected}") throw new Error(log);
+      });
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("thrown"))).failure).toBeUndefined();
+    });
+
+    it("rejects another reason", async () => {
+      expect((await checkModel(getSource("other"))).failure).toBeDefined();
+    });
+
+    it("stops where an iterator gives an element", async () => {
+      const result = await checkModel(`
+        class Once {
+          isDone = false;
+          next() {
+            const result = { done: this.isDone, value: 1 };
+            this.isDone = true;
+            return result;
+          }
+          [Symbol.iterator]() {
+            return this;
+          }
+        }
+        Promise.all(new Once());
+      `);
+      expect(result.failure?.message).toContain(
+        "tla-ts can't follow an element that an iterator gives Promise.all",
+      );
+    });
+  });
 });
