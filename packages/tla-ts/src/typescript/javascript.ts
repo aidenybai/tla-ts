@@ -4101,14 +4101,43 @@ LOCAL RegExpResult(heap, prototype, regexp, text, match) ==
 \\* RegExp.prototype.exec, as the heap after it, the array of the match it finds, or null, and whether
 \\* it throws the TypeError of setting a lastIndex that isn't writable. The calls of a regexp's
 \\* methods below give the same.
-RegExpExecIn(heap, ref, value, prototype) ==
-  LET regexp == RegExpOwning(heap, ref, {"RegExp.prototype"}, RegExpFlagNames)
-      text == Text(value)
-      run == RegExpRun(heap, ref, regexp, text)
+LOCAL RegExpExecWith(heap, ref, regexp, text, prototype) ==
+  LET run == RegExpRun(heap, ref, regexp, text)
       made == RegExpResult(run.heap, prototype, regexp, text, run.match)
   IN  CASE run.isThrown -> [heap |-> run.heap, value |-> Null, isThrown |-> TRUE]
         [] run.match.end = -1 -> [heap |-> run.heap, value |-> Null, isThrown |-> FALSE]
         [] OTHER -> [heap |-> made, value |-> Allocated(made), isThrown |-> FALSE]
+
+RegExpExecIn(heap, ref, value, prototype) ==
+  RegExpExecWith(heap, ref, RegExpOwning(heap, ref, {"RegExp.prototype"}, RegExpFlagNames),
+                 Text(value), prototype)
+
+\\* RegExpBuiltinExec, which reads a regexp's lastIndex and the flags that it was made with, whatever
+\\* other properties a script gave it.
+RegExpBuiltinExecIn(heap, ref, value, prototype) ==
+  RegExpExecWith(heap, ref, heap.objects[ref[Ref]].regexp, value, prototype)
+
+IsRegExpIn(heap, value) == IsRegExp(heap, value)
+
+\\* What Get(R, "flags") gives, where the flags getter of RegExp.prototype reads each flag through Get.
+RegExpFlagsValue(heap, ref) ==
+  LET flags == << <<"d", "hasIndices">>, <<"g", "global">>, <<"i", "ignoreCase">>,
+                 <<"m", "multiline">>, <<"s", "dotAll">>, <<"u", "unicode">>,
+                 <<"v", "unicodeSets">>, <<"y", "sticky">> >>
+      RECURSIVE Join(_)
+      Join(rest) ==
+        CASE rest = <<>> -> ""
+          [] ToBoolean(Get(heap, ref, Head(rest)[2])) -> Head(rest)[1] \\o Join(Tail(rest))
+          [] OTHER -> Join(Tail(rest))
+  IN  IF GetterPath(GetterOf(heap, ref, "flags")) = "get RegExp.prototype.flags"
+      THEN Join(flags)
+      ELSE Get(heap, ref, "flags")
+
+HasFlag(flags, flag) == flag \\in CharactersOf(flags)
+
+\\* AdvanceStringIndex, which steps past a surrogate pair where the regexp reads code points.
+AdvanceStringIndex(text, index, isUnicode) ==
+  index + (IF isUnicode THEN CharacterWidth([unicode |-> TRUE], text, index) ELSE 1)
 
 \\* RegExp.prototype.test, as the heap after it and whether exec finds a match.
 RegExpTestIn(heap, ref, value) ==

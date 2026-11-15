@@ -30851,6 +30851,118 @@ describe("regular expressions", () => {
     `);
     expect(wrong.failure?.message).toContain("wrong");
   });
+
+  describe("runs Symbol.search as its steps, calling the exec that a script writes", () => {
+    const getSource = (expected: string) => `
+      let retVal: unknown = undefined;
+      const fakeRe = {
+        exec: function () {
+          return retVal;
+        },
+      };
+      const seen: string[] = [];
+      for (const value of [undefined, 86, "s", true]) {
+        retVal = value;
+        try {
+          RegExp.prototype[Symbol.search].call(fakeRe, "a");
+          seen.push("none");
+        } catch (error) {
+          seen.push(error instanceof TypeError ? "type" : "other");
+        }
+      }
+      const thrower = {
+        exec: function () {
+          throw new RangeError("x");
+        },
+        lastIndex: 3,
+      };
+      try {
+        RegExp.prototype[Symbol.search].call(thrower, "a");
+      } catch (error) {
+        seen.push(error instanceof RangeError ? "range" : "other");
+      }
+      seen.push(String(thrower.lastIndex));
+      try {
+        // @ts-ignore
+        RegExp.prototype[Symbol.search].call(5, "a");
+      } catch (error) {
+        seen.push(error instanceof TypeError ? "type" : "other");
+      }
+      const re = /b/g;
+      re.lastIndex = 2;
+      seen.push(String(RegExp.prototype[Symbol.search].call(re, "abc")), String(re.lastIndex));
+      if (seen.join(",") !== "${expected}") throw new Error(seen.join(","));
+    `;
+
+    it("agrees with Node on type,type,type,type,range,0,type,1,2", async () => {
+      expect(
+        (await checkModel(getSource("type,type,type,type,range,0,type,1,2"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects the expectation type,type,type,type,range,3,type,1,2", async () => {
+      expect(
+        (await checkModel(getSource("type,type,type,type,range,3,type,1,2"))).failure?.message,
+      ).toContain("type,type");
+    });
+  });
+
+  it("sets lastIndex to 0 for Symbol.search's exec only where it isn't already, by SameValue", async () => {
+    const getSource = (during: string) => `
+      const re = /(?:)/;
+      let execLastIndex: unknown = 7;
+      re.lastIndex = -0;
+      re.exec = function () {
+        execLastIndex = re.lastIndex;
+        return null;
+      };
+      const found = re[Symbol.search]("");
+      if (found !== -1 || !Object.is(execLastIndex, ${during}) || !Object.is(re.lastIndex, -0)) throw new Error("unexpected");
+    `;
+    expect((await checkModel(getSource("0"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("-0"))).failure?.message).toContain("unexpected");
+  });
+
+  describe("runs Symbol.match as its steps, calling the exec that a script writes", () => {
+    const getSource = (expected: string) => `
+      const seen: string[] = [];
+      const r = /./;
+      let calls = 0;
+      r.exec = function (this: unknown, text: string) {
+        calls += 1;
+        seen.push(String(this === r), text);
+        return null;
+      };
+      seen.push(String(r[Symbol.match]("xy")), String(calls));
+      let count = 0;
+      const fake = {
+        flags: "g",
+        lastIndex: 5,
+        exec: function () {
+          count += 1;
+          if (count > 3) return null;
+          return { 0: count === 2 ? "" : "m" + count };
+        },
+      };
+      const matched = RegExp.prototype[Symbol.match].call(fake, "abc");
+      seen.push(matched === null ? "null" : matched.join(","), String(fake.lastIndex), String(Array.isArray(matched)));
+      const plain = RegExp.prototype[Symbol.match].call(/a/g, "banana");
+      seen.push(plain === null ? "null" : plain.join(","));
+      if (seen.join("|") !== "${expected}") throw new Error(seen.join("|"));
+    `;
+
+    it("agrees with Node on true|xy|null|1|m1,,m3|1|true|a,a,a", async () => {
+      expect(
+        (await checkModel(getSource("true|xy|null|1|m1,,m3|1|true|a,a,a"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects the expectation true|xy|null|1|m1,,m3|5|true|a,a,a", async () => {
+      expect(
+        (await checkModel(getSource("true|xy|null|1|m1,,m3|5|true|a,a,a"))).failure?.message,
+      ).toContain("m1,,m3|1");
+    });
+  });
 });
 
 describe("calls through values", () => {

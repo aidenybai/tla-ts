@@ -344,6 +344,7 @@ import {
   type Receiver,
   type Scope,
 } from "./scope";
+import { getRegExpProtocolCall, runRegExpProtocolCall } from "./regexp-protocol";
 import { getThrownMessage, isSharedCall, translateSharedCall } from "./shared-calls";
 import {
   set,
@@ -2422,6 +2423,10 @@ export const translateCallStatement = (
         continueWith(path, useJavaScript("DecodeURI", [identifier(text), uriCall.kept], context)),
       ),
     );
+  }
+  const protocolCall = getRegExpProtocolCall(expression, context);
+  if (protocolCall !== undefined) {
+    return runRegExpProtocolCall(expression, protocolCall, path, context, frame, continueWith);
   }
   const regExpCall = getHeapRegExpCall(expression, context);
   if (regExpCall !== undefined) {
@@ -10988,6 +10993,7 @@ const isStatementResult = (node: ts.CallExpression, path: Path, context: Context
     getBound(node.expression, context) !== undefined ||
     getDateCall(node, context) !== undefined ||
     getHeapRegExpCall(node, context) !== undefined ||
+    getRegExpProtocolCall(node, context) !== undefined ||
     getURICall(node, context)?.isDecode === true ||
     getViewCall(node, context) !== undefined ||
     getGetterCall(node, context) !== undefined ||
@@ -12103,6 +12109,7 @@ const getEffects = (
     isProxyOperation(node, context) ||
     getDateCall(node, context) !== undefined ||
     getHeapRegExpCall(node, context) !== undefined ||
+    getRegExpProtocolCall(node, context) !== undefined ||
     getViewCall(node, context) !== undefined ||
     getHeapArrayChange(node, context) !== undefined ||
     isStoredChange(node, context) ||
@@ -15158,9 +15165,10 @@ const findLeadingCall = (
     }
     // A regexp's method under a well-known symbol reads no getter.
     const isRegExpMethod =
-      ts.isElementAccessExpression(node.expression) &&
-      getHeapRegExpCall(node, context) !== undefined &&
-      isPlainCallee(getCast(node.expression.expression), context, path.scope.results);
+      getRegExpProtocolCall(node, context) !== undefined ||
+      (ts.isElementAccessExpression(node.expression) &&
+        getHeapRegExpCall(node, context) !== undefined &&
+        isPlainCallee(getCast(node.expression.expression), context, path.scope.results));
     if (
       !isListed &&
       !isRegExpMethod &&
