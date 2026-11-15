@@ -66,6 +66,10 @@ const PORTED_INCLUDES = new Map([
     "promiseHelper.js",
     readFileSync(join(CONFORMANCE_DIRECTORY, "test262-promise-helper.ts"), "utf8"),
   ],
+  [
+    "decimalToHexString.js",
+    readFileSync(join(CONFORMANCE_DIRECTORY, "test262-decimal-to-hex-string.ts"), "utf8"),
+  ],
 ]);
 
 // An async test's harness defines $DONE, as doneprintHandle.js does.
