@@ -2217,7 +2217,20 @@ export const translateCallStatement = (
     const change = identifier(changeName);
     const heap = getHeap(path.scope, expression, context);
     const ref = translateExpression(arrayLikeChange.object, path.scope, context);
-    return bindOnce(
+    // copyWithin throws from a getter at the index it reads first, before it writes.
+    const firstGetter =
+      arrayLikeChange.method === "copyWithin"
+        ? useJavaScript(
+            "CopyWithinFirstGetter",
+            [
+              heap,
+              ref,
+              ...translateCopyWithinArguments(arrayLikeChange.items, path.scope, context),
+            ],
+            context,
+          )
+        : undefined;
+    const run = bindOnce(
       path,
       changeName,
       arrayLikeChange.method === "reverse"
@@ -2252,6 +2265,18 @@ export const translateCallStatement = (
         continueWith(withHeap(field(change, "heap")), field(change, "value")),
       ),
     );
+    return firstGetter === undefined
+      ? run
+      : throwFirstGetter(
+          expression,
+          apply("#", [firstGetter, getUndefined(context)]),
+          firstGetter,
+          ref,
+          path,
+          context,
+          frame,
+          run,
+        );
   }
   // A call of a key under which a script stores a built-in method that changes its receiver or
   // throws.
@@ -11933,6 +11958,53 @@ const translateUnrolled = (
   return iterate(path, 0);
 };
 
+// The getters that a script's descriptors give whose body only throws, which a built-in that reads
+// one before it changes anything throws from where it reads it.
+const getThrowingGetters = (node: ts.Node, context: Context) =>
+  getAccessorFunctions(node, "get", context).filter(
+    (getter) =>
+      getter.body !== undefined &&
+      ts.isBlock(getter.body) &&
+      getter.body.statements.length === 1 &&
+      ts.isThrowStatement(getter.body.statements[0]) &&
+      getParameters(getter).length === 0 &&
+      getCandidateValue(getter, context) !== undefined,
+  );
+
+// Runs the getter whose code a built-in reads first, where it reads one and it only throws, which
+// throws from there; otherwise runs the built-in.
+const throwFirstGetter = (
+  node: ts.Node,
+  isRead: Expression,
+  code: Expression,
+  receiver: Expression,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  otherwise: Formula,
+) =>
+  getThrowingGetters(node, context).reduceRight<Formula>(
+    (rest, getter) =>
+      ifThenElse(
+        apply("/\\", [
+          isRead,
+          apply("=", [code, getCandidateValue(getter, context) ?? getUndefined(context)]),
+        ]),
+        inlineBody(
+          node,
+          getter,
+          [],
+          { value: receiver, method: getter },
+          path,
+          context,
+          frame,
+          () => otherwise,
+        ),
+        rest,
+      ),
+    otherwise,
+  );
+
 const translateLoop = (
   loop: ts.IterationStatement,
   path: Path,
@@ -11948,44 +12020,29 @@ const translateLoop = (
   const runLoop = (inner: Path) => translateIterations(loop, inner, context, frame, continueWith);
   // A for-of of an array whose first element a getter that only throws gives throws before its
   // first iteration, as the iterator's first next reads the element.
-  const throwing =
+  if (
     ts.isForOfStatement(loop) &&
     loop.awaitModifier === undefined &&
-    isHeapArray(loop.expression, context)
-      ? getAccessorFunctions(loop, "get", context).filter(
-          (getter) =>
-            getter.body !== undefined &&
-            ts.isBlock(getter.body) &&
-            getter.body.statements.length === 1 &&
-            ts.isThrowStatement(getter.body.statements[0]) &&
-            getParameters(getter).length === 0 &&
-            getCandidateValue(getter, context) !== undefined,
-        )
-      : [];
-  if (ts.isForOfStatement(loop) && throwing.length > 0) {
+    isHeapArray(loop.expression, context) &&
+    getThrowingGetters(loop, context).length > 0
+  ) {
     return allocate(loop.expression, path, context, (inner) => {
       const heap = getHeap(inner.scope, loop.expression, context);
       const array = translateExpression(loop.expression, inner.scope, context);
-      const first = useJavaScript("FirstElementGetter", [heap, array], context);
-      return throwing.reduceRight<Formula>(
-        (otherwise, getter) =>
-          ifThenElse(
-            apply("/\\", [
-              holdsArrayIteration(heap, loop.expression, context, array),
-              apply("=", [first, getCandidateValue(getter, context) ?? getUndefined(context)]),
-            ]),
-            inlineBody(
-              loop.expression,
-              getter,
-              [],
-              { value: array, method: getter },
-              inner,
-              context,
-              frame,
-              () => runLoop(inner),
-            ),
-            otherwise,
-          ),
+      return throwFirstGetter(
+        loop.expression,
+        apply("/\\", [
+          holdsArrayIteration(heap, loop.expression, context, array),
+          apply("#", [
+            useJavaScript("FirstElementGetter", [heap, array], context),
+            getUndefined(context),
+          ]),
+        ]),
+        useJavaScript("FirstElementGetter", [heap, array], context),
+        array,
+        inner,
+        context,
+        frame,
         runLoop(inner),
       );
     });

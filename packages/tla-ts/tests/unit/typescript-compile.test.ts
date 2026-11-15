@@ -25508,4 +25508,34 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("stop,1,3"))).failure?.message).toContain("stop,0,3");
     });
   });
+
+  describe("throws from a getter that copyWithin reads first", () => {
+    const getSource = (expected: string) => `
+      class Stop extends Error {}
+      const like: { [key: string]: unknown } = { 1: "b", length: 2 };
+      Object.defineProperty(like, "0", {
+        get: function () {
+          throw new Stop();
+        },
+      });
+      let caught = "none";
+      try {
+        Array.prototype.copyWithin.call(like, 1, 0);
+      } catch (error) {
+        caught = error instanceof Stop ? "stop" : "other";
+      }
+      const plain: { [key: string]: unknown } = { 0: "a", 1: "b", length: 2 };
+      Array.prototype.copyWithin.call(plain, 1, 0);
+      const read = [caught, like[1], plain[1]].join();
+      if (read !== "${expected}") throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("stop,b,a"))).failure).toBeUndefined();
+    });
+
+    it("rejects the copy as written before the throw", async () => {
+      expect((await checkModel(getSource("stop,,a"))).failure?.message).toContain("stop,b,a");
+    });
+  });
 });

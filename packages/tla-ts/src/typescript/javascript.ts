@@ -4541,6 +4541,22 @@ ArrayChange(heap, ref, method, items) ==
 \\* backward where the indices it copies to overlap the end of those it copies from, where only the
 \\* indices that the object or its prototypes hold, and those that copy over them, change. The
 \\* indices are the numbers that its arguments give, and end is Undefined where it takes the length.
+\\* The code of the getter that copyWithin reads first, at the index it copies from first, where it
+\\* copies any, or Undefined.
+CopyWithinFirstGetter(heap, ref, target, start, end) ==
+  LET length == ToLength(Get(heap, ref, "length"))
+      to == ClampedIndex(target, length)
+      from == ClampedIndex(start, length)
+      final == IF end = Undefined THEN length ELSE ClampedIndex(end, length)
+      count == IF final - from < length - to THEN final - from ELSE length - to
+      first == IF from < to /\\ to < from + count THEN from + count - 1 ELSE from
+  IN IF /\\ IsHeap(ref)
+        /\\ ~IsProxy(heap, ref)
+        /\\ count > 0
+        /\\ GetterOf(heap, ref, ToString(first)) # Undefined
+     THEN CodeOf(heap, GetterOf(heap, ref, ToString(first)))
+     ELSE Undefined
+
 ArrayLikeCopyWithin(heap, ref, target, start, end) ==
   LET length == ToLength(Get(heap, ref, "length"))
       to == ClampedIndex(target, length)
