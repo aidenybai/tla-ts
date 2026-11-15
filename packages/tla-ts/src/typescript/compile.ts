@@ -43,7 +43,6 @@ import { type Exported, isDeclaration, type Model, readModel, type Variable } fr
 import {
   findNamespaces,
   getDynamicImports,
-  getNamespaceRead,
   isLiteralValue,
   rejectRunningModules,
 } from "./namespaces";
@@ -215,10 +214,12 @@ export const compile = (
       : (symbol.flags & ts.SymbolFlags.Alias ? program.checker.getAliasedSymbol(symbol) : symbol)
           .valueDeclaration;
   };
+  context.namespaces = findNamespaces(sourceFile, files, context);
   // A file that imports reads an export through a module's namespace object as the module's
-  // binding, other than a var's or a let's, whose binding tla-ts keeps as state. It reads a default
-  // export of an expression or of a class with no name, whose binding tla-ts doesn't make
-  // uninitialized, only where the module that declares it ran first.
+  // binding where tla-ts makes no namespace object for the module, and then other than a var's or
+  // a let's, whose binding tla-ts keeps as state. It reads a default export of an expression or of
+  // a class with no name, whose binding tla-ts doesn't make uninitialized, only where the module
+  // that declares it ran first.
   const rejectModuleReads = (node: ts.Node, file: ts.SourceFile): void => {
     const declaration = ts.isIdentifier(node) ? getDeclaration(node) : undefined;
     if (
@@ -237,6 +238,7 @@ export const compile = (
           : undefined;
       if (
         member !== undefined &&
+        !context.namespaces.has(declaration.getSourceFile()) &&
         ts.isVariableDeclaration(member) &&
         (ts.getCombinedNodeFlags(member) & ts.NodeFlags.Const) === 0
       ) {
@@ -251,7 +253,9 @@ export const compile = (
           : undefined;
       const isImported =
         ((program.checker.getSymbolAtLocation(node)?.flags ?? 0) & ts.SymbolFlags.Alias) !== 0 ||
-        (namespace !== undefined && ts.isSourceFile(namespace));
+        (namespace !== undefined &&
+          ts.isSourceFile(namespace) &&
+          !context.namespaces.has(namespace.getSourceFile()));
       if (
         isImported &&
         (ts.isExportAssignment(declaration) ||
@@ -269,7 +273,6 @@ export const compile = (
   order
     .filter((file) => file.statements.some(ts.isImportDeclaration))
     .forEach((file) => rejectModuleReads(file, file));
-  context.namespaces = findNamespaces(sourceFile, files, context);
   // The bindings that the namespace objects take, which their modules make as they run.
   const exported = [...context.namespaces.values()].flatMap((namespace) =>
     namespace.exports.flatMap((entry) => (ts.isSourceFile(entry.value) ? [] : [entry.value])),
@@ -531,7 +534,6 @@ export const compile = (
     (ts.isVariableDeclarationList(node) && (node.flags & ts.NodeFlags.Using) !== 0) ||
     node.kind === ts.SyntaxKind.AsyncKeyword ||
     isImportCall(node) ||
-    (ts.isIdentifier(node) && getNamespaceRead(node, program.checker) !== undefined) ||
     isHoleyArray(node, context) ||
     isThrownArray(node) ||
     isArrayLengthening(node, context) ||
@@ -607,7 +609,7 @@ export const compile = (
   if (
     heap !== undefined &&
     isScript(sourceFile) &&
-    (changedArrays.length > 0 || reached.some(usesObjects))
+    (changedArrays.length > 0 || reached.some(usesObjects) || context.namespaces.size > 0)
   ) {
     context.heap = heap;
     context.variables.set(heap, identifier(context.names.getFresh("heap")));

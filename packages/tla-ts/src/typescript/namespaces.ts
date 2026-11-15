@@ -134,6 +134,12 @@ export const getNamespaceRead = (node: ts.Identifier, checker: ts.TypeChecker) =
     : getModule(checker.getSymbolAtLocation(node), checker);
 };
 
+// The module whose namespace object a script reads where a namespace import names it.
+export const getNamespaceName = (node: ts.Identifier, context: Context) => {
+  const module = getModule(context.checker.getSymbolAtLocation(node), context.checker);
+  return module !== undefined && context.namespaces.has(module.file) ? module.file : undefined;
+};
+
 // The node whose value an export's binding holds once its module has run: the name that its
 // declaration binds, or the literal that a default export gives.
 const getBound = (symbol: ts.Symbol, node: ts.Node) => {
@@ -161,26 +167,15 @@ const getBound = (symbol: ts.Symbol, node: ts.Node) => {
 };
 
 // The modules whose namespace objects a script reads: those that an import() of a string names,
-// and those that a namespace import gives as a value, with the modules that their exports give as
-// namespace objects in turn.
+// those that a namespace import gives as a value, and those that a namespace import reads a var, a
+// let, or another namespace object from, whose binding tla-ts doesn't keep in the module's, with
+// the modules that their exports give as namespace objects in turn.
 export const findNamespaces = (
   sourceFile: ts.SourceFile,
   files: readonly ts.SourceFile[],
   context: Context,
 ) => {
   const checker = context.checker;
-  // The modules that the model imports run before the namespace objects take their exports, so
-  // only the model's code reads them.
-  const early = files
-    .flatMap((file) => findNodes(file, ts.isIdentifier))
-    .find((node) => getNamespaceRead(node, checker) !== undefined);
-  const importCall = files.flatMap((file) => findNodes(file, isImportCall)).at(0);
-  if (early !== undefined || importCall !== undefined) {
-    throw new TlaTypeScriptError(
-      "tla-ts can't read a module's namespace object in a module that the script imports",
-      early ?? importCall,
-    );
-  }
   const loaded = new Set(getDynamicImports(sourceFile, checker));
   const roots = [
     ...findNodes(sourceFile, isImportCall).flatMap((call) => {
@@ -191,6 +186,24 @@ export const findNamespaces = (
     ...findNodes(sourceFile, ts.isIdentifier).flatMap(
       (node) => getNamespaceRead(node, checker) ?? [],
     ),
+    ...findNodes(sourceFile, ts.isPropertyAccessExpression).flatMap((node) => {
+      const module = ts.isIdentifier(node.expression)
+        ? getModule(checker.getSymbolAtLocation(node.expression), checker)
+        : undefined;
+      const member = module && checker.getSymbolAtLocation(node.name);
+      const declaration = (
+        member !== undefined && member.flags & ts.SymbolFlags.Alias
+          ? checker.getAliasedSymbol(member)
+          : member
+      )?.valueDeclaration;
+      return module !== undefined &&
+        declaration !== undefined &&
+        (ts.isSourceFile(declaration) ||
+          (ts.isVariableDeclaration(declaration) &&
+            (ts.getCombinedNodeFlags(declaration) & ts.NodeFlags.Const) === 0))
+        ? [module]
+        : [];
+    }),
   ];
   const modules = new Map<ts.SourceFile, ts.Symbol>();
   const add = (module: { file: ts.SourceFile; symbol: ts.Symbol }): void => {
@@ -202,6 +215,37 @@ export const findNamespaces = (
     });
   };
   roots.forEach(add);
+  // The module whose namespace object a node reads: a namespace import as a value or to read an
+  // export, or an import() of a string.
+  const getRead = (node: ts.Node) => {
+    const module = isImportCall(node)
+      ? getModule(checker.getSymbolAtLocation(node.arguments.at(0) ?? node), checker)
+      : ts.isIdentifier(node)
+        ? (getNamespaceRead(node, checker) ??
+          (ts.isPropertyAccessExpression(node.parent) && node.parent.expression === node
+            ? getModule(checker.getSymbolAtLocation(node), checker)
+            : undefined))
+        : undefined;
+    return module?.file;
+  };
+  // The modules that the model imports run before the namespace objects take their exports, so
+  // only the model's code reads them.
+  const early = files.flatMap((file) =>
+    findNodes(file, (node): node is ts.Node => {
+      const read = getRead(node);
+      return (
+        isImportCall(node) ||
+        (ts.isIdentifier(node) && getNamespaceRead(node, checker) !== undefined) ||
+        (read !== undefined && modules.has(read))
+      );
+    }),
+  )[0];
+  if (early !== undefined) {
+    throw new TlaTypeScriptError(
+      "tla-ts can't read a module's namespace object in a module that the script imports",
+      early,
+    );
+  }
   // A binding that a function writes may change after its module has run, which the namespace
   // object wouldn't follow.
   const isChangedLater = (symbol: ts.Symbol) => {

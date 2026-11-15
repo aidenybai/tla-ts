@@ -40408,14 +40408,12 @@ describe("BigInts", () => {
     });
   });
 
-  it("stops at a variable that a script reads through a module's namespace object", () => {
+  it("reads a variable through a module's namespace object", async () => {
     const path = join(import.meta.dirname, "../fixtures/typescript/imports/namespace.ts");
-    expect(() =>
-      compile(
-        'import * as logged from "./log";\nif (logged.log.length !== 0) throw new Error();',
-        path,
-      ),
-    ).toThrow("tla-ts can't read the variable logged.log through a module's namespace object");
+    const getSource = (length: number) =>
+      `import * as logged from "./log";\nif (logged.log.length !== ${length}) throw new Error("length " + logged.log.length);`;
+    expect((await check(compile(getSource(0), path))).failure).toBeUndefined();
+    expect((await check(compile(getSource(1), path))).failure?.message).toContain("length 0");
   });
   describe("converts a primitive index that with() takes as ToNumber does", () => {
     const getSource = (expected: string) => `
