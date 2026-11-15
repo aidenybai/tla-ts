@@ -4027,7 +4027,7 @@ export const getRunFields = (node: HeapClass, context: Context) => {
       ts.isPropertyDeclaration(member) && !isStatic(member) && !isAmbient(member),
   );
   // A field whose call may throw defines itself as a statement too, so that what it throws leaves
-  // the new.
+  // the new, and so does one that assigns, which only a statement can run.
   const first = fields.findIndex((field) => {
     const created = field.initializer && getNewClass(field.initializer, context);
     const called = field.initializer && skipCasts(field.initializer);
@@ -4037,7 +4037,8 @@ export const getRunFields = (node: HeapClass, context: Context) => {
         : undefined;
     return (
       (created !== undefined && getRunConstructor(created, context) !== undefined) ||
-      (callee !== undefined && mayThrow(callee, context))
+      (callee !== undefined && mayThrow(callee, context)) ||
+      (called !== undefined && getAssignedTarget(called) !== undefined)
     );
   });
   return first === -1 ? [] : fields.slice(first);

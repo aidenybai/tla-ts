@@ -41637,4 +41637,46 @@ describe("BigInts", () => {
       ).toContain("seen 3,0,2,a,b,1,2,first,last,last,static");
     });
   });
+
+  describe("an instance field whose value assigns, which a new runs as a statement", () => {
+    const getSource = (expected: string) => `
+      let i = 0;
+      class Counter {
+        // @ts-ignore
+        [i++] = i++;
+        // @ts-ignore
+        static [i++] = i++;
+        // @ts-ignore
+        [i++] = i++;
+        total = (i += 10);
+        constructor() {
+          i *= 2;
+        }
+      }
+      const first = new Counter();
+      const second = new Counter();
+      const read = (made: object, key: number) => (made as Record<number, number>)[key];
+      const seen = [
+        i,
+        read(first, 0),
+        read(first, 2),
+        first.total,
+        read(second, 0),
+        read(second, 2),
+        second.total,
+        read(Counter, 1),
+      ];
+      if (seen.join() !== "${expected}") throw new Error("seen " + seen.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("88,4,5,16,32,33,44,3"))).failure).toBeUndefined();
+    });
+
+    it("rejects instance fields that run before the static ones", async () => {
+      expect((await checkModel(getSource("88,3,4,16,32,33,44,5"))).failure?.message).toContain(
+        "seen 88,4,5,16,32,33,44,3",
+      );
+    });
+  });
 });
