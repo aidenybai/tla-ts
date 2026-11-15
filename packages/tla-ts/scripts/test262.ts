@@ -274,10 +274,12 @@ const getPatternType = (name: ts.BindingName): string | undefined => {
       ? "Iterable<unknown>"
       : `[${elements.join(", ")}]`;
   }
+  // A rest element gathers each other key's value.
   const properties = name.elements.map((element) => {
+    if (element.dotDotDotToken !== undefined) return "[key: string | symbol]: unknown";
     const key = element.propertyName ?? element.name;
     const type = getPatternType(element.name);
-    if (element.dotDotDotToken !== undefined || type === undefined) return undefined;
+    if (type === undefined) return undefined;
     return ts.isIdentifier(key) || ts.isStringLiteral(key) || ts.isNumericLiteral(key)
       ? `${key.getText()}?: ${type}`
       : undefined;
@@ -285,6 +287,43 @@ const getPatternType = (name: ts.BindingName): string | undefined => {
   return properties.some((property) => property === undefined)
     ? undefined
     : `{ ${properties.join("; ")} }`;
+};
+
+// The writes of a top-level read's variable, which a top-level var statement declares with no value,
+// where only functions write it, each with =. tla-ts runs each function where Node does, so the read
+// sees the value it writes, and where none ran, a read of a property of undefined stops.
+const getCallbackWrites = (checker: ts.TypeChecker, node: ts.Node) => {
+  const symbol = checker.getSymbolAtLocation(node);
+  const declaration = symbol?.valueDeclaration;
+  if (
+    declaration === undefined ||
+    !ts.isVariableDeclaration(declaration) ||
+    declaration.initializer !== undefined ||
+    !ts.isSourceFile(declaration.parent.parent.parent) ||
+    ts.findAncestor(node, ts.isFunctionLike) !== undefined
+  ) {
+    return undefined;
+  }
+  const writes: ts.BinaryExpression[] = [];
+  const isWritten = (inner: ts.Node): boolean =>
+    ts.isIdentifier(inner) &&
+    inner !== declaration.name &&
+    checker.getSymbolAtLocation(inner) === symbol &&
+    ts.isBinaryExpression(inner.parent) &&
+    inner.parent.left === inner;
+  const visit = (inner: ts.Node) => {
+    if (isWritten(inner) && ts.isBinaryExpression(inner.parent)) writes.push(inner.parent);
+    ts.forEachChild(inner, visit);
+  };
+  visit(declaration.getSourceFile());
+  return writes.length > 0 &&
+    writes.every(
+      (write) =>
+        write.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+        ts.findAncestor(write, ts.isFunctionLike) !== undefined,
+    )
+    ? writes
+    : undefined;
 };
 
 const loosen = () => {
@@ -658,6 +697,25 @@ const loosen = () => {
       closeParen !== undefined
     ) {
       edits.set(closeParen.getEnd(), ": undefined");
+    }
+    // A variable that only functions write, which TypeScript reads as any, holds what they write.
+    const callbackWrites =
+      diagnostic.code === UNASSIGNED_READ_ERROR ? getCallbackWrites(checker, node) : undefined;
+    const callbackDeclaration = checker.getSymbolAtLocation(node)?.valueDeclaration;
+    const writtenTypes = callbackWrites?.map((write) =>
+      getMemberTypes(checker, checker.getTypeAtLocation(write.right)),
+    );
+    if (
+      writtenTypes !== undefined &&
+      writtenTypes.every((types) => types !== undefined) &&
+      callbackDeclaration !== undefined &&
+      ts.isVariableDeclaration(callbackDeclaration) &&
+      callbackDeclaration.type === undefined
+    ) {
+      edits.set(
+        callbackDeclaration.name.getEnd(),
+        `: ${getUnion(writtenTypes.flatMap((types) => types ?? [])).join(" | ")}`,
+      );
     }
     // A function that the test declares, which only throws, as a computed key that calls it in a
     // pattern does, returns never, which TypeScript infers as void.
@@ -1329,6 +1387,88 @@ const typeGenerators = () => {
   );
 };
 
+// A variable that an empty array literal initializes, and that the test pushes object literals to,
+// which the fix types as a union of arrays where no push fits each, holds an array of objects with
+// each property that a push gives, optional where another push lacks it.
+const typePushedArrays = () => {
+  const program = service.getProgram();
+  const sourceFile = program?.getSourceFile(PROGRAM_PATH);
+  if (program === undefined || sourceFile === undefined) return;
+  const checker = program.getTypeChecker();
+  const replacements: { start: number; end: number; text: string }[] = [];
+  const visit = (node: ts.Node) => {
+    ts.forEachChild(node, visit);
+    if (
+      !ts.isVariableDeclaration(node) ||
+      !ts.isIdentifier(node.name) ||
+      node.type === undefined ||
+      !ts.isUnionTypeNode(node.type) ||
+      !node.type.types.every(ts.isArrayTypeNode) ||
+      node.initializer === undefined ||
+      !ts.isArrayLiteralExpression(node.initializer) ||
+      node.initializer.elements.length > 0
+    ) {
+      return;
+    }
+    const symbol = checker.getSymbolAtLocation(node.name);
+    const pushed: ts.Expression[] = [];
+    const findPushes = (inner: ts.Node) => {
+      if (
+        ts.isCallExpression(inner) &&
+        ts.isPropertyAccessExpression(inner.expression) &&
+        inner.expression.name.text === "push" &&
+        checker.getSymbolAtLocation(inner.expression.expression) === symbol
+      ) {
+        pushed.push(...inner.arguments);
+      }
+      ts.forEachChild(inner, findPushes);
+    };
+    findPushes(sourceFile);
+    if (pushed.length === 0 || !pushed.every(ts.isObjectLiteralExpression)) return;
+    const types = pushed.map((argument) => checker.getTypeAtLocation(argument));
+    const names = [
+      ...new Set(types.flatMap((type) => type.getProperties().map((property) => property.name))),
+    ];
+    const properties = names.map((name) => {
+      const found = types.flatMap((type) => type.getProperty(name) ?? []);
+      // A property that holds this holds the object a method's call gives, and one that holds an
+      // array of any, such as [...arguments], holds an array of any value.
+      const members = found.map((property) => {
+        const declaration = property.valueDeclaration;
+        const type = checker.getTypeOfSymbolAtLocation(property, sourceFile);
+        const element = checker.isArrayType(type) ? checker.getTypeArguments(type)[0] : undefined;
+        return declaration !== undefined &&
+          ts.isPropertyAssignment(declaration) &&
+          declaration.initializer.kind === ts.SyntaxKind.ThisKeyword
+          ? ["{ [key: string | symbol]: unknown }"]
+          : element !== undefined && (element.flags & ts.TypeFlags.Any) !== 0
+            ? ["unknown[]"]
+            : getMemberTypes(checker, type);
+      });
+      if (members.some((member) => member === undefined)) return undefined;
+      const key = /^[A-Za-z_$][\w$]*$/.test(name) ? name : JSON.stringify(name);
+      const union = getUnion(members.flatMap((member) => member ?? [])).join(" | ");
+      return `${key}${found.length < types.length ? "?" : ""}: ${union}`;
+    });
+    if (properties.includes(undefined)) return;
+    replacements.push({
+      start: node.type.getStart(),
+      end: node.type.getEnd(),
+      text: `{ ${properties.join("; ")} }[]`,
+    });
+  };
+  visit(sourceFile);
+  setText(
+    replacements
+      .toSorted((left, right) => right.start - left.start)
+      .reduce(
+        (current, replacement) =>
+          current.slice(0, replacement.start) + replacement.text + current.slice(replacement.end),
+        file.text,
+      ),
+  );
+};
+
 // test262 is JavaScript, so its functions and variables have no types. This annotates them as
 // TypeScript's "Infer type from usage" fix does, with unknown where it infers any, then loosens
 // the types of the objects it describes.
@@ -1379,6 +1519,7 @@ const annotate = (text: string) => {
     if (annotated === file.text) break;
     setText(annotated);
   }
+  typePushedArrays();
   // A type that one loosening gives can show where another is needed.
   while (loosen());
   ignoreSoundErrors();
@@ -1391,16 +1532,21 @@ const annotate = (text: string) => {
 const MISSING_PROPERTY_ERROR = 2339;
 // A value of another type than an assignment's target or a call's parameter.
 const UNASSIGNABLE_ERRORS = new Set([2322, 2345]);
+// A value of a type that lacks many of the members of an assignment's target or a call's parameter.
+const MISSING_MEMBERS_ERROR = 2740;
 const UNTYPED_READ_ERRORS = new Set([MISSING_PROPERTY_ERROR, 2551, 7017, 7053]);
 const UNUSED_OPERAND_ERROR = 2695;
 // A delete of a property that the object's type doesn't make optional.
 const OPTIONAL_DELETE_ERROR = 2790;
 const UNRESOLVED_NAME_ERROR = 2304;
 const NOT_ITERABLE_ERROR = 2488;
+// A tuple's element past its end.
+const MISSING_ELEMENT_ERROR = 2493;
 
 // An argument of a type that a call's signatures don't take, which tla-ts converts where a string's
 // method or RegExp takes a primitive or an object.
-const CONVERTED_ARGUMENT_ERRORS = new Set([2345, 2769]);
+const NO_OVERLOAD_ERROR = 2769;
+const CONVERTED_ARGUMENT_ERRORS = new Set([2345, NO_OVERLOAD_ERROR]);
 // The array methods that tla-ts runs a reducer for on the values it gets, not its declared types,
 // where a test's reducer returns a type that the method's signatures don't take. Each needs a unit
 // test of such a call, since tla-ts reads a value by its declared type.
@@ -1651,7 +1797,8 @@ const ignoreSoundErrors = () => {
   // that the test declares, whose type TypeScript infers from the pattern's defaults alone. The
   // call passes the value whatever its type, and tla-ts destructures it as JavaScript does. An
   // array pattern takes only an array literal, since tla-ts reads another value's iterator only
-  // where its type says it has one.
+  // where its type says it has one. A parameter whose type is the loosest its pattern reads takes
+  // null, where a nested pattern throws the TypeError that tla-ts throws too.
   const isPatternArgument = (node: ts.Node) => {
     const call = ts.findAncestor(
       node,
@@ -1671,7 +1818,9 @@ const ignoreSoundErrors = () => {
       position !== -1 &&
       parameter !== undefined &&
       parameter.getSourceFile() === sourceFile &&
-      parameter.type === undefined &&
+      (parameter.type === undefined ||
+        (node.kind === ts.SyntaxKind.NullKeyword &&
+          parameter.type.getText() === getPatternType(parameter.name))) &&
       parameter.dotDotDotToken === undefined &&
       (ts.isObjectBindingPattern(parameter.name) ||
         (ts.isArrayBindingPattern(parameter.name) &&
@@ -1741,6 +1890,25 @@ const ignoreSoundErrors = () => {
       declaration !== undefined &&
       ts.isVariableDeclaration(declaration) &&
       ts.isCatchClause(declaration.parent)
+    );
+  };
+  // An element of an array pattern that a declaration initializes with an array literal, past the
+  // literal's end. JavaScript gives it undefined, as tla-ts does.
+  const isMissingElement = (node: ts.Node) => {
+    const element = ts.findAncestor(node, ts.isBindingElement);
+    const declaration = element?.parent.parent;
+    const initializer =
+      declaration !== undefined && ts.isVariableDeclaration(declaration)
+        ? declaration.initializer
+        : undefined;
+    return (
+      element !== undefined &&
+      ts.isArrayBindingPattern(element.parent) &&
+      element.dotDotDotToken === undefined &&
+      initializer !== undefined &&
+      ts.isArrayLiteralExpression(initializer) &&
+      !initializer.elements.some(ts.isSpreadElement) &&
+      element.parent.elements.indexOf(element) >= initializer.elements.length
     );
   };
   // A read in a catch's block of what the catch binds, which TypeScript can't tell is assigned where
@@ -2001,6 +2169,25 @@ const ignoreSoundErrors = () => {
           member.getSymbol()?.getName() ?? "",
         ),
       )
+    );
+  };
+  // Object.fromEntries of a name whose type has an iterator, which TypeScript rejects where the
+  // iterator's values aren't typed as entries. tla-ts steps the iterator and reads each entry as
+  // AddEntriesFromIterable does.
+  const isIteratedEntriesCall = (diagnostic: ts.Diagnostic) => {
+    const call = getErroredCall(diagnostic);
+    const argument = call?.arguments?.[0];
+    return (
+      call !== undefined &&
+      ts.isCallExpression(call) &&
+      call.expression.getText() === "Object.fromEntries" &&
+      call.arguments.length === 1 &&
+      argument !== undefined &&
+      ts.isIdentifier(argument) &&
+      checker
+        .getTypeAtLocation(argument)
+        .getProperties()
+        .some((property) => property.name.startsWith("__@iterator"))
     );
   };
   // A call of an array's method that SEARCHING_METHODS lists, of any value to search for and an
@@ -2326,11 +2513,16 @@ const ignoreSoundErrors = () => {
       ((diagnostic.code === NOT_ITERABLE_ERROR || NULLABLE_ERRORS.has(diagnostic.code)) &&
         isNullableArrayPattern(node)) ||
       (diagnostic.code === NOT_ITERABLE_ERROR && isCaughtArrayPattern(node)) ||
+      (diagnostic.code === MISSING_ELEMENT_ERROR && isMissingElement(node)) ||
       (diagnostic.code === UNASSIGNED_READ_ERROR &&
-        (isCaughtRead(node) || isVarRead(node) || isLaterGeneratorRead(node))) ||
+        (isCaughtRead(node) ||
+          isVarRead(node) ||
+          isLaterGeneratorRead(node) ||
+          getCallbackWrites(checker, node) !== undefined)) ||
       ((diagnostic.code === NOT_ITERABLE_ERROR || NULLABLE_ERRORS.has(diagnostic.code)) &&
         isTypeErrorPattern(node)) ||
-      (UNASSIGNABLE_ERRORS.has(diagnostic.code) && isPatternArgument(node)) ||
+      ((UNASSIGNABLE_ERRORS.has(diagnostic.code) || diagnostic.code === MISSING_MEMBERS_ERROR) &&
+        isPatternArgument(node)) ||
       (diagnostic.code === 2322 && isIteratorWrite(node)) ||
       (diagnostic.code === OPTIONAL_DELETE_ERROR && isDeletedIterator(node)) ||
       (diagnostic.code === 2322 && isWrittenExec(node, diagnostic)) ||
@@ -2343,6 +2535,7 @@ const ignoreSoundErrors = () => {
           isReducingCall(diagnostic) ||
           isSearchingCall(diagnostic) ||
           isTypedArrayNew(diagnostic))) ||
+      (diagnostic.code === NO_OVERLOAD_ERROR && isIteratedEntriesCall(diagnostic)) ||
       (diagnostic.code === UNKNOWN_CALLEE_ERROR && isStoredStringCall(node)) ||
       (diagnostic.code === UNCALLABLE_ERROR && isTypedUnionCall(node, diagnostic)) ||
       diagnostic.code === UNUSED_OPERAND_ERROR ||

@@ -16,9 +16,10 @@ import { type Formula, ifThenElse, leaf } from "./formula";
 import { getHeap } from "./heap";
 import { translateBuiltInValue } from "./intrinsics";
 import { useJavaScript } from "./javascript";
+import { runToPrimitive } from "./conversions";
 import { dispatchFollowed } from "./promises";
-import { bind, callMethod, getWrittenFunctions, isNullish, read } from "./protocols";
-import { apply, boolean, string, tuple } from "./tla";
+import { bind, callMethod, getWrittenFunctions, isNullish, read, withHeap } from "./protocols";
+import { apply, boolean, identifier, string, tuple } from "./tla";
 import { getCaughtElements } from "./scope";
 import { getCollectionType, isLibraryIterable } from "./types";
 
@@ -923,3 +924,104 @@ export const takeEvery = (
       ),
   );
 };
+
+// The most entries that Object.fromEntries takes from a script's iterator.
+const ENTRY_LIMIT = 4;
+
+// Object.fromEntries of an object that a script gives an iterator, as AddEntriesFromIterable runs
+// it: each step takes one entry and reads its key and value, then converts the key, before the next
+// step, since the iterator's next may see what they did. A throw from the step leaves the iterator
+// as it is, and one after it closes the iterator, whose return can't change what it throws.
+export const takeEntries = (
+  site: ts.Node,
+  iterable: Expression,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path, object: Expression) => Formula,
+) =>
+  openIterator(
+    site,
+    iterable,
+    path,
+    context,
+    frame,
+    (after) => throwTypeError(after, site, context, frame),
+    (opened, iterator, next) => {
+      const throwTo = frame.throwTo;
+      const closing: Frame = {
+        ...frame,
+        throwTo: (current, thrown) =>
+          closeQuietly(site, iterator, current, context, frame, (closed) =>
+            throwTo === undefined ? leaf(thrown.uncaught) : throwTo(closed, thrown),
+          ),
+      };
+      const finish = (current: Path, entries: readonly [Expression, Expression][]) =>
+        bind(
+          current,
+          "heap",
+          useJavaScript(
+            "Allocate",
+            [
+              getHeap(current.scope, site, context),
+              entries.reduce<Expression>(
+                (object, entry) => useJavaScript("Put", [object, ...entry], context),
+                identifier("EmptyObject"),
+              ),
+            ],
+            context,
+          ),
+          context,
+          (bound, heap) =>
+            continueWith(
+              withHeap(bound, heap, context),
+              useJavaScript("Allocated", [heap], context),
+            ),
+        );
+      const step = (current: Path, entries: readonly [Expression, Expression][]): Formula =>
+        entries.length >= ENTRY_LIMIT
+          ? leaf(
+              apply("Assert", [
+                boolean(false),
+                string(`tla-ts can't take more than ${ENTRY_LIMIT} entries`),
+              ]),
+            )
+          : stepIterator(
+              site,
+              iterator,
+              "next",
+              next,
+              [],
+              current,
+              context,
+              frame,
+              (after) => throwTypeError(after, site, context, frame),
+              (done) => finish(done, entries),
+              (stepped, result) =>
+                readValue(site, result, stepped, context, frame, (taken, entry) =>
+                  ifThenElse(
+                    isObject(site, taken, entry, context),
+                    read(site, entry, "0", taken, context, closing, (keyed, key) =>
+                      read(site, entry, "1", keyed, context, closing, (valued, value) =>
+                        runToPrimitive(
+                          site,
+                          key,
+                          "string",
+                          valued,
+                          context,
+                          closing,
+                          (converted, primitive) =>
+                            step(converted, [
+                              ...entries,
+                              [useJavaScript("PropertyKey", [primitive], context), value],
+                            ]),
+                        ),
+                      ),
+                    ),
+                    throwTypeError(taken, site, context, closing),
+                  ),
+                ),
+            );
+      return step(opened, []);
+    },
+  );
