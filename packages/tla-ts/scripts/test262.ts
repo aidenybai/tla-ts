@@ -66,19 +66,26 @@ const PORTED_INCLUDES = new Map([
     "promiseHelper.js",
     readFileSync(join(CONFORMANCE_DIRECTORY, "test262-promise-helper.ts"), "utf8"),
   ],
+  [
+    "detachArrayBuffer.js",
+    readFileSync(join(CONFORMANCE_DIRECTORY, "test262-detach-array-buffer.ts"), "utf8"),
+  ],
 ]);
 
 // An async test's harness defines $DONE, as doneprintHandle.js does.
 const DONE_HARNESS = readFileSync(join(CONFORMANCE_DIRECTORY, "test262-done.ts"), "utf8");
 
-// A test that reads $262 has the host's members that tla-ts can model.
+// A test that reads $262, itself or through an include, has the host's members that tla-ts can
+// model.
 const HOST_HARNESS = readFileSync(join(CONFORMANCE_DIRECTORY, "test262-host.ts"), "utf8");
 
 const getHarness = (metadata: Metadata, source: string) =>
   [
     HARNESS,
     ...(metadata.flags.includes("async") ? [DONE_HARNESS] : []),
-    ...(/\$262\b/.test(source) ? [HOST_HARNESS] : []),
+    ...(/\$262\b/.test(source) || metadata.includes.includes("detachArrayBuffer.js")
+      ? [HOST_HARNESS]
+      : []),
     ...metadata.includes.flatMap((include) => PORTED_INCLUDES.get(include) ?? []),
   ].join("\n");
 
