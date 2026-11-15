@@ -1483,6 +1483,11 @@ LOCAL RegExpGet(heap, path, receiver) ==
        [] IsRegExpPrototype(receiver) -> IF name = "source" THEN "(?:)" ELSE Undefined
        [] OTHER -> Assert(FALSE, "tla-ts can't throw the TypeError of a getter on another kind of object")
 
+\\* The @@species getters of the built-in constructors, which give the receiver.
+LOCAL SpeciesGetters ==
+  {"get " \\o owner \\o ".@@species" :
+     owner \\in {"Array", "RegExp", "Map", "Set", "Promise", "ArrayBuffer", "SharedArrayBuffer"}}
+
 \\* A read of a key from an object or its prototypes, where a getter that reads a buffer's or a view's
 \\* internal slots reads the receiver's. An array outside the heap, which a value typed only as
 \\* array-like may hold, holds its elements and its length, and reads the rest from its prototype.
@@ -1501,6 +1506,8 @@ GetFrom(heap, ref, key, receiver) ==
                    /\\ path \\in ViewGetters -> ViewGet(heap, path, receiver)
               [] key \\in DOMAIN object.values /\\ object.attributes[key].kind = "accessor"
                    /\\ path \\in RegExpGetters -> RegExpGet(heap, path, receiver)
+              [] key \\in DOMAIN object.values /\\ object.attributes[key].kind = "accessor"
+                   /\\ path \\in SpeciesGetters -> receiver
               [] key \\in DOMAIN object.values /\\ object.attributes[key].kind = "accessor"
                    /\\ IntlGetterKind(path) # "" -> IntlGet(heap, path, receiver)
               [] key \\in DOMAIN object.values /\\ object.attributes[key].kind = "accessor"
@@ -4025,10 +4032,7 @@ GetterCall(heap, getter, receiver) ==
               [] IntlMayWalk(heap, IntlGetterKind(path), receiver) ->
                    Assert(FALSE, "tla-ts can't run a proxy's internal method here")
               [] OTHER -> typeError
-       [] path \\in {"get " \\o owner \\o ".@@species" :
-                     owner \\in {"Array", "RegExp", "Map", "Set", "Promise", "ArrayBuffer",
-                                "SharedArrayBuffer"}} ->
-            give(receiver)
+       [] path \\in SpeciesGetters -> give(receiver)
        [] OTHER -> Assert(FALSE, "tla-ts can't tell which function this value holds")
 
 LOCAL LastIndexValue(heap, ref) == heap.objects[ref[Ref]].values["lastIndex"]

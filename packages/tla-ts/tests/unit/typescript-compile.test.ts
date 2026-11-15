@@ -31552,6 +31552,15 @@ describe("regular expressions", () => {
     expect((await checkModel(getSource("none"))).failure?.message).toContain("range");
   });
 
+  it("reads RegExp's species through its getter, which gives RegExp", async () => {
+    const getSource = (expected: string) => `
+      const parts = RegExp.prototype[Symbol.split].call(/b/, "abcb", 2);
+      if (parts.join(",") !== "${expected}") throw new Error(parts.join(","));
+    `;
+    expect((await checkModel(getSource("a,c"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("a,c,"))).failure?.message).toContain("a,c");
+  });
+
   it("throws a TypeError where Symbol.split's species isn't a constructor or its constructor isn't an object", async () => {
     const getSource = (expected: string) => `
       const seen: string[] = [];
