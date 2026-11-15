@@ -865,11 +865,229 @@ const typeCallbacks = () => {
   if (edits.size > 0) applyEdits(edits);
 };
 
+// TypeScript's errors for a generator whose yield gives a value, whose type it can't infer.
+const GENERATOR_ERRORS = new Set([7023, 7024, 7055, 7057]);
+
+const GENERATOR_ROUNDS = 8;
+
+interface GeneratorTypes {
+  yielded: string;
+  returned: string;
+  sent: string[];
+}
+
+// The type of each value that an expression may give, widened as TypeScript infers a generator's
+// types, or undefined where one is any.
+const getMemberTypes = (checker: ts.TypeChecker, type: ts.Type | undefined) => {
+  if (type === undefined) return undefined;
+  const members = (type.isUnion() ? type.types : [type]).map((member) =>
+    checker.typeToString(
+      checker.getBaseTypeOfLiteralType(member),
+      undefined,
+      ts.TypeFormatFlags.NoTruncation,
+    ),
+  );
+  return members.some((member) => /\b(?:any|this)\b/.test(member))
+    ? undefined
+    : members.map((member) => (member.includes("=>") ? `(${member})` : member));
+};
+
+const getUnion = (members: string[]) =>
+  members.length === 0 ? ["never"] : [...new Set(members)].toSorted();
+
+// A generator that the test declares, whose yield gives a value, takes the types of what it
+// yields, returns, and is sent: each yield's operand, each return's, undefined where its end is
+// reachable, and each argument that a next call passes it, with undefined, which a next with none
+// and a loop send. Each round types the generators by the round before, and TypeScript, which then
+// rejects any other argument for next, shows what more they're sent, until the types settle.
+const typeGenerators = () => {
+  const original = file.text;
+  const getGenerators = (sourceFile: ts.SourceFile) => {
+    const generators: (ts.FunctionDeclaration | ts.FunctionExpression | ts.MethodDeclaration)[] =
+      [];
+    const visit = (node: ts.Node) => {
+      if (
+        (ts.isFunctionDeclaration(node) ||
+          ts.isFunctionExpression(node) ||
+          ts.isMethodDeclaration(node)) &&
+        node.asteriskToken !== undefined
+      ) {
+        generators.push(node);
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(sourceFile);
+    return generators;
+  };
+  const getState = () => {
+    const program = service.getProgram();
+    const sourceFile = program?.getSourceFile(PROGRAM_PATH);
+    if (program === undefined || sourceFile === undefined) return undefined;
+    const getNode = (position: number) => {
+      const visit = (node: ts.Node): ts.Node =>
+        ts.forEachChild(node, (child) =>
+          child.getStart() <= position && position < child.getEnd() ? visit(child) : undefined,
+        ) ?? node;
+      return visit(sourceFile);
+    };
+    return {
+      checker: program.getTypeChecker(),
+      generators: getGenerators(sourceFile),
+      diagnostics: service.getSemanticDiagnostics(PROGRAM_PATH),
+      getNode,
+    };
+  };
+  const initial = getState();
+  if (initial === undefined) return false;
+  const targets = new Set(
+    initial.diagnostics
+      .filter((diagnostic) => GENERATOR_ERRORS.has(diagnostic.code))
+      .map((diagnostic) => {
+        const generator = ts.findAncestor(
+          initial.getNode(diagnostic.start ?? 0),
+          ts.isFunctionLike,
+        );
+        return initial.generators.findIndex((candidate) => candidate === generator);
+      })
+      .filter(
+        (position) =>
+          position !== -1 &&
+          initial.generators[position].type === undefined &&
+          initial.generators[position].body !== undefined,
+      ),
+  );
+  if (targets.size === 0) return false;
+  const isAsync = (generator: ts.FunctionLikeDeclaration) =>
+    generator.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) === true;
+  const settle = (types: Map<number, GeneratorTypes>, round: number): boolean => {
+    setText(original);
+    const before = getState();
+    if (before === undefined) return false;
+    applyEdits(
+      new Map(
+        [...types].map(([position, type]) => {
+          const generator = before.generators[position];
+          const closeParen = generator
+            .getChildren()
+            .find((child) => child.kind === ts.SyntaxKind.CloseParenToken);
+          return [
+            closeParen?.getEnd() ?? generator.parameters.end,
+            `: ${isAsync(generator) ? "AsyncGenerator" : "Generator"}<${type.yielded || "never"}, ${type.returned || "never"}, ${type.sent.join(" | ")}>`,
+          ];
+        }),
+      ),
+    );
+    const state = getState();
+    if (state === undefined) return false;
+    const checker = state.checker;
+    const sent = new Map<number, string[]>();
+    state.diagnostics
+      .filter((diagnostic) => CONVERTED_ARGUMENT_ERRORS.has(diagnostic.code))
+      .forEach((diagnostic) => {
+        const start = diagnostic.start ?? 0;
+        const call = ts.findAncestor(
+          state.getNode(start),
+          (ancestor): ancestor is ts.CallExpression =>
+            ts.isCallExpression(ancestor) &&
+            ancestor.arguments.length === 1 &&
+            ancestor.arguments[0].getStart() === start &&
+            ancestor.arguments[0].getEnd() === start + (diagnostic.length ?? 0),
+        );
+        if (
+          call === undefined ||
+          !ts.isPropertyAccessExpression(call.expression) ||
+          call.expression.name.text !== "next"
+        ) {
+          return;
+        }
+        const receiver = checker.getTypeAtLocation(call.expression.expression);
+        const members = getMemberTypes(checker, checker.getTypeAtLocation(call.arguments[0]));
+        [...types.keys()].forEach((position) => {
+          const annotation = state.generators[position].type;
+          if (
+            annotation !== undefined &&
+            (receiver.isUnion() ? receiver.types : [receiver]).includes(
+              checker.getTypeFromTypeNode(annotation),
+            )
+          ) {
+            sent.set(position, [...(sent.get(position) ?? []), ...(members ?? ["any"])]);
+          }
+        });
+      });
+    const next = new Map<number, GeneratorTypes>();
+    [...types].forEach(([position, type]) => {
+      const generator = state.generators[position];
+      const yields: ts.YieldExpression[] = [];
+      const returns: ts.ReturnStatement[] = [];
+      const visit = (node: ts.Node) => {
+        if (ts.isYieldExpression(node)) yields.push(node);
+        if (ts.isReturnStatement(node)) returns.push(node);
+        if (!ts.isFunctionLike(node)) ts.forEachChild(node, visit);
+      };
+      if (generator.body !== undefined) ts.forEachChild(generator.body, visit);
+      const getTypes = (operand: ts.Expression | undefined) => {
+        if (operand === undefined) return ["undefined"];
+        const value = checker.getTypeAtLocation(operand);
+        return getMemberTypes(checker, isAsync(generator) ? checker.getAwaitedType(value) : value);
+      };
+      const statements =
+        generator.body !== undefined && ts.isBlock(generator.body) ? generator.body.statements : [];
+      const last = statements.at(-1);
+      const isEndReachable =
+        last === undefined || !(ts.isReturnStatement(last) || ts.isThrowStatement(last));
+      // A yield* yields what another iterator does, which this doesn't type.
+      if (yields.some((node) => node.asteriskToken !== undefined)) return;
+      const yielded = yields.map((node) => getTypes(node.expression));
+      const returned = [
+        ...returns.map((node) => getTypes(node.expression)),
+        ...(isEndReachable ? [["undefined"]] : []),
+      ];
+      const sentTypes = getUnion([...type.sent, ...(sent.get(position) ?? [])]);
+      if (sentTypes.includes("any")) return;
+      // A round may type a yield's operand as any, where a later one may not.
+      const isTyped = [...yielded, ...returned].every((members) => members !== undefined);
+      next.set(position, {
+        yielded: isTyped ? getUnion(yielded.flatMap((members) => members ?? [])).join(" | ") : "",
+        returned: isTyped ? getUnion(returned.flatMap((members) => members ?? [])).join(" | ") : "",
+        sent: sentTypes,
+      });
+    });
+    const isSettled =
+      next.size === types.size &&
+      [...types].every(([position, type]) => {
+        const settled = next.get(position);
+        return (
+          settled !== undefined &&
+          settled.yielded !== "" &&
+          settled.yielded === type.yielded &&
+          settled.returned === type.returned &&
+          settled.sent.join(" | ") === type.sent.join(" | ")
+        );
+      });
+    if (isSettled) return true;
+    if (round === GENERATOR_ROUNDS || next.size === 0) {
+      setText(original);
+      return false;
+    }
+    return settle(next, round + 1);
+  };
+  return settle(
+    new Map(
+      [...targets].map((position) => [
+        position,
+        { yielded: "", returned: "", sent: ["undefined"] },
+      ]),
+    ),
+    0,
+  );
+};
+
 // test262 is JavaScript, so its functions and variables have no types. This annotates them as
 // TypeScript's "Infer type from usage" fix does, with unknown where it infers any, then loosens
 // the types of the objects it describes.
 const annotate = (text: string) => {
   setText(text);
+  typeGenerators();
   typeCallbacks();
   for (;;) {
     const sourceFile = service.getProgram()?.getSourceFile(PROGRAM_PATH);
