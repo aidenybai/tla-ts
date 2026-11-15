@@ -462,10 +462,12 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     outDegrees: [...outDegrees],
     fingerprintDistance: options.isFingerprintDistanceSkipped
       ? undefined
-      : getFingerprintDistance(runtime.distinctStates, runtime.generatedStates, () =>
-          search
-            ? search.getStoredFingerprints(states, fingerprintStates)
-            : BigInt64Array.from(states, runtime.getFingerprint),
+      : getFingerprintDistance(runtime.distinctStates, runtime.generatedStates, (visit) =>
+          visit(
+            search
+              ? search.getStoredFingerprints(states, fingerprintStates)
+              : BigInt64Array.from(states, runtime.getFingerprint),
+          ),
         ),
   });
 
@@ -1142,8 +1144,10 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       outDegrees: typed.outDegrees,
       fingerprintDistance: options.isFingerprintDistanceSkipped
         ? undefined
-        : getFingerprintDistance(typed.distinctStates, typed.generatedStates, () =>
-            typed.getFingerprints(),
+        : getFingerprintDistance(
+            typed.distinctStates,
+            typed.generatedStates,
+            typed.forEachFingerprintRun,
           ),
     };
   }

@@ -179,13 +179,13 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
     fingerprintDistance: getFingerprintDistance(
       statistics.distinctStates,
       statistics.generatedStates,
-      () => {
+      (visit) => {
         const fingerprints = new BigInt64Array(statistics.distinctStates);
         tlcFingerprints.reduce((offset, level) => {
           fingerprints.set(level, offset);
           return offset + level.length;
         }, 0);
-        return fingerprints;
+        visit(fingerprints);
       },
     ),
   });

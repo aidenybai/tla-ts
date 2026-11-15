@@ -231,7 +231,8 @@ export interface TypedResult {
   initialStates: { generated: number; distinct: number };
   outDegrees: number[];
   deadlock: TypedDeadlock | undefined;
-  getFingerprints: () => BigInt64Array;
+  // TLC's fingerprints of the states, in runs each below the next.
+  forEachFingerprintRun: (visit: (run: BigInt64Array) => void) => void;
 }
 
 // The path from an initial state to a state without successors, which the interpreter rebuilds
@@ -4305,6 +4306,7 @@ interface Arena {
 }
 
 const PAGE_SIZE = 1 << 24;
+const FINGERPRINT_PAGE_SIZE = 1 << 10;
 const EMPTY_PAGE = new Uint8Array(0);
 
 const createArena = (): Arena => {
@@ -5346,7 +5348,6 @@ const getImageCompareCode = (
 ): string => {
   const resolved = resolveType(type);
   if (!isPermuted(program, images, resolved)) return getCompareCode(program, type, code, other);
-  const [value, against, index] = ["f", "r", "k"].map((prefix) => getName(program, prefix));
   if (!isComparedInPlace(program, images, resolved)) {
     return getCompareCode(
       program,
@@ -5355,6 +5356,7 @@ const getImageCompareCode = (
       other,
     );
   }
+  const [value, against, index] = ["f", "r", "k"].map((prefix) => getName(program, prefix));
   const getLoop = (length: string, source: string, element: Type) =>
     `((${value}, ${against}) => { ${length} for (let ${index} = 0; ${index} < ${value}.length; ${index}++) { const c = ${getImageCompareCode(program, images, element, `${value}[${source}]`, `${against}[${index}]`)}; if (c !== 0) return c; } return 0; })(${code}, ${other})`;
   if (resolved.kind === "Seq") {
@@ -5402,7 +5404,6 @@ const getImageCompareCode = (
   return `((${value}, ${against}) => { let c; ${chain.join(" ")} return 0; })(${code}, ${other})`;
 };
 
-// Whether an image can change a value of the type, as getPermuteCode finds.
 // Whether an image of a value compares as it's read, without building the image. A function whose
 // domain an image keeps compares as its domain and then its values.
 const isComparedInPlace = (program: Program, images: Images[], resolved: Type) =>
@@ -5412,6 +5413,7 @@ const isComparedInPlace = (program: Program, images: Images[], resolved: Type) =
   (resolved.kind === "Map" && !isPermuted(program, images, resolved.keys)) ||
   (resolved.kind === "Rec" && resolved.shapes.length === 1);
 
+// Whether an image can change a value of the type, as getPermuteCode finds.
 const isPermuted = (
   program: Program,
   images: Images[],
@@ -6080,7 +6082,12 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
   const reader = { page: 0, data: keys.data, position: 0 };
   // The state each state was found from, to rebuild the path to a deadlock.
   const parents = { data: new Int32Array(check.isDeadlockChecked ? 1 << 16 : 0), size: 0 };
-  const fingerprints = { data: new Int32Array(1 << 16), size: 0 };
+  // TLC's fingerprints of the states, as low and high words in small pages, one list of pages for
+  // each top byte in signed order. Each list sorts alone, and none grows by copying.
+  const fingerprints = Array.from({ length: 256 }, () => ({
+    pages: new Array<Int32Array>(),
+    size: 0,
+  }));
   const expanding: { state: Plain[]; index: number } = { state: [], index: -1 };
   const isEncoded = images.length === 0 && check.view === undefined;
   const isImaged = images.length > 0;
@@ -6149,9 +6156,14 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
     : fingerprinter;
   const addFingerprint = (state: Plain[]) => {
     stateFingerprinter.fingerprint(isImaged ? compiled.represent(state) : state);
-    if (fingerprints.size + 2 > fingerprints.data.length) growWords(fingerprints);
-    fingerprints.data[fingerprints.size++] = stateFingerprinter.words[0];
-    fingerprints.data[fingerprints.size++] = stateFingerprinter.words[1];
+    const high = stateFingerprinter.words[1];
+    const bucket = fingerprints[(high >>> 24) ^ 128];
+    const offset = bucket.size % FINGERPRINT_PAGE_SIZE;
+    if (offset === 0) bucket.pages.push(new Int32Array(FINGERPRINT_PAGE_SIZE));
+    const page = bucket.pages[bucket.pages.length - 1];
+    page[offset] = stateFingerprinter.words[0];
+    page[offset + 1] = high;
+    bucket.size += 2;
   };
   // TLC's fingerprints of the states are taken a page at a time, as the page is reused or at the end.
   const addFingerprints = (data: Uint8Array, end: number) => {
@@ -6290,11 +6302,20 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
     initialStates,
     outDegrees,
     deadlock,
-    getFingerprints: () => {
+    forEachFingerprintRun: (visit) => {
       for (let page = reader.page; page < keys.pages.length; page++) {
         addFingerprints(keys.pages[page], keys.ends[page] ?? keys.size);
       }
-      return new BigInt64Array(fingerprints.data.buffer, 0, statistics.distinct);
+      fingerprints.forEach((bucket) => {
+        const run = new BigInt64Array(bucket.size >> 1);
+        const words = new Int32Array(run.buffer);
+        bucket.pages.forEach((page, index) => {
+          const start = index * FINGERPRINT_PAGE_SIZE;
+          words.set(page.subarray(0, Math.min(FINGERPRINT_PAGE_SIZE, bucket.size - start)), start);
+        });
+        bucket.pages = [];
+        visit(run);
+      });
     },
   });
   for (let index = 0; index < statistics.distinct; index++) {

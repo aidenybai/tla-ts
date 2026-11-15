@@ -69,30 +69,45 @@ export const getActualProbability = (distance: bigint) => {
   return Number(`${quotient + (isRoundedUp ? 1n : 0n)}e-${exponent + 1}`);
 };
 
+// The fingerprints come in runs, each of which holds only fingerprints below those of the next.
 export const getFingerprintDistance = (
   distinctStates: number,
   generatedStates: number,
-  getFingerprints: () => BigInt64Array,
+  forEachRun: (visit: (run: BigInt64Array) => void) => void,
 ) => {
   const probability = getOptimisticProbability(distinctStates, generatedStates);
   if (probability < ACTUAL_PROBABILITY_THRESHOLD) return undefined;
-  const fingerprints = getFingerprints().sort();
-  const words = new Int32Array(fingerprints.buffer);
   let narrowest = Number.POSITIVE_INFINITY;
   let widest = 0x7fff_ffff_ffff_ffffn;
-  for (let index = 1; index < fingerprints.length; index++) {
-    const high = words[2 * index + 1];
-    const previousHigh = words[2 * index - 1];
-    if (high < 0 !== previousHigh < 0) continue;
-    const highGap = high - previousHigh;
-    if (highGap <= 0x10_0000) {
-      const gap = highGap * 0x1_0000_0000 + (words[2 * index] >>> 0) - (words[2 * index - 2] >>> 0);
-      narrowest = Math.min(narrowest, gap);
-    } else {
-      const gap = fingerprints[index] - fingerprints[index - 1];
+  let previous: bigint | undefined;
+  forEachRun((run) => {
+    if (run.length === 0) return;
+    const fingerprints = run.sort();
+    if (previous !== undefined && previous < 0n === fingerprints[0] < 0n) {
+      const gap = fingerprints[0] - previous;
       if (gap < widest) widest = gap;
     }
-  }
+    previous = fingerprints[fingerprints.length - 1];
+    const words = new Int32Array(
+      fingerprints.buffer,
+      fingerprints.byteOffset,
+      fingerprints.length * 2,
+    );
+    for (let index = 1; index < fingerprints.length; index++) {
+      const high = words[2 * index + 1];
+      const previousHigh = words[2 * index - 1];
+      if (high < 0 !== previousHigh < 0) continue;
+      const highGap = high - previousHigh;
+      if (highGap <= 0x10_0000) {
+        const gap =
+          highGap * 0x1_0000_0000 + (words[2 * index] >>> 0) - (words[2 * index - 2] >>> 0);
+        narrowest = Math.min(narrowest, gap);
+      } else {
+        const gap = fingerprints[index] - fingerprints[index - 1];
+        if (gap < widest) widest = gap;
+      }
+    }
+  });
   if (narrowest === Number.POSITIVE_INFINITY) return widest;
   const narrow = BigInt(narrowest);
   return narrow < widest ? narrow : widest;
