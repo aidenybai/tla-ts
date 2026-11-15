@@ -1406,7 +1406,8 @@ const CONVERTED_ARGUMENT_ERRORS = new Set([2345, 2769]);
 // test of such a call, since tla-ts reads a value by its declared type.
 const REDUCING_METHODS = new Set(["reduce", "reduceRight"]);
 // The array methods that tla-ts searches by value for any value, from an index that ToNumber
-// converts from a primitive. Each needs a unit test of such a call.
+// converts from a primitive, or for undefined where a call passes no value, also on a typed array.
+// Each needs a unit test of such a call.
 const SEARCHING_METHODS = new Set(["includes", "indexOf", "lastIndexOf"]);
 // The positions of the index arguments that ToIntegerOrInfinity converts, of the methods of each
 // kind of receiver where tla-ts converts a primitive there as ToNumber does. Each needs a unit test
@@ -2080,6 +2081,33 @@ const ignoreSoundErrors = () => {
         )
     );
   };
+  // The kind of receiver of a type that INDEX_PARAMETERS lists methods for.
+  const getIndexedKind = (type: ts.Type) =>
+    checker.isArrayType(type)
+      ? "Array"
+      : (type.isUnion() ? type.types : [type]).every((member) =>
+            /^(Big)?(Int|Uint|Float)\d+(Clamped)?Array$/.test(member.getSymbol()?.getName() ?? ""),
+          )
+        ? "TypedArray"
+        : type.getSymbol()?.getName() === "DataView"
+          ? "DataView"
+          : undefined;
+  // A call of a method that SEARCHING_METHODS lists on an array or a typed array, without arguments,
+  // which searches for undefined. TypeScript reports it at the method's name.
+  const isShortSearchingCall = (node: ts.Node) => {
+    const callee = node.parent;
+    return (
+      ts.isPropertyAccessExpression(callee) &&
+      callee.name === node &&
+      SEARCHING_METHODS.has(callee.name.text) &&
+      ts.isCallExpression(callee.parent) &&
+      callee.parent.expression === callee &&
+      callee.parent.arguments.length === 0 &&
+      ["Array", "TypedArray"].includes(
+        getIndexedKind(checker.getTypeAtLocation(callee.expression)) ?? "",
+      )
+    );
+  };
   // A call of a method that INDEX_PARAMETERS lists, with a primitive other than a symbol or a BigInt
   // for an index that it converts, which the error is at.
   const isIndexCall = (diagnostic: ts.Diagnostic) => {
@@ -2093,15 +2121,7 @@ const ignoreSoundErrors = () => {
       return false;
     }
     const receiver = checker.getTypeAtLocation(call.expression.expression);
-    const kind = checker.isArrayType(receiver)
-      ? "Array"
-      : (receiver.isUnion() ? receiver.types : [receiver]).every((member) =>
-            /^(Big)?(Int|Uint|Float)\d+(Clamped)?Array$/.test(member.getSymbol()?.getName() ?? ""),
-          )
-        ? "TypedArray"
-        : receiver.getSymbol()?.getName() === "DataView"
-          ? "DataView"
-          : undefined;
+    const kind = getIndexedKind(receiver);
     const positions = kind && INDEX_PARAMETERS.get(kind)?.get(call.expression.name.text);
     const position = call.arguments.findIndex(
       (value) =>
@@ -2415,7 +2435,7 @@ const ignoreSoundErrors = () => {
     const node = getNode(diagnostic.start ?? 0);
     return (
       (diagnostic.code === ARGUMENT_COUNT_ERROR &&
-        (isShortBuiltInCall(node) || isShortReducingCall(node))) ||
+        (isShortBuiltInCall(node) || isShortReducingCall(node) || isShortSearchingCall(node))) ||
       (SHORT_CALL_ERRORS.has(diagnostic.code) && isShortProtocolCall(node, diagnostic)) ||
       (diagnostic.code === MISSING_PROPERTY_ERROR && isPatternRead(node)) ||
       ((diagnostic.code === NOT_ITERABLE_ERROR || NULLABLE_ERRORS.has(diagnostic.code)) &&

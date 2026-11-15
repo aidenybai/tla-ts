@@ -36210,4 +36210,31 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("searches a typed array for undefined where a call passes no value", () => {
+    const getSource = (expected: string) => `
+      const sample = new Int8Array([0, 1]);
+      // @ts-ignore
+      const found = [sample.indexOf(), sample.includes(), sample.lastIndexOf()].join();
+      let caught = "none";
+      try {
+        const prototype: Int8Array = Object.getPrototypeOf(Int8Array.prototype);
+        // @ts-ignore
+        prototype.includes();
+      } catch (error) {
+        caught = (error as Error).constructor.name;
+      }
+      if (found + "|" + caught !== "${expected}") throw new Error(found + "|" + caught);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("-1,false,-1|TypeError"))).failure).toBeUndefined();
+    });
+
+    it("rejects a wrong expectation", async () => {
+      expect((await checkModel(getSource("-1,true,-1|TypeError"))).failure?.message).toContain(
+        "-1,false,-1",
+      );
+    });
+  });
 });
