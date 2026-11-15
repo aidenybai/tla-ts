@@ -1,7 +1,7 @@
 import ts from "@typescript/typescript6";
 import { getWritten } from "./actions";
 import { getReplacers } from "./json";
-import { isSelfReturning, MUTATING_METHODS, REORDER_METHODS } from "./collections";
+import { isSelfReturning, MUTATING_METHODS } from "./collections";
 import {
   type Context,
   findNodes,
@@ -11,7 +11,14 @@ import {
   isMethodCall,
 } from "./context";
 import { TlaTypeScriptError } from "../errors";
-import { getKind, isArrayConstruction, isHeapArray, isHeapSetOrMap, isHeapType } from "./types";
+import {
+  getKind,
+  isArrayConstruction,
+  isHeapArray,
+  isHeapSetOrMap,
+  isHeapType,
+  REORDER_METHODS,
+} from "./types";
 
 const COPYING_METHODS = new Set([
   "slice",

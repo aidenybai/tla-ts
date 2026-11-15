@@ -66,7 +66,6 @@ import {
   IN_PLACE_METHODS,
   isSelfReturning,
   isUnheldSplice,
-  REORDER_METHODS,
   translateSpliced,
   translateNew,
   translateNewKeys,
@@ -148,6 +147,8 @@ import {
   isHeapSetOrMap,
   isOrderedCollection,
   isSetOrMapType,
+  REORDER_METHODS,
+  getReorderedArray,
 } from "./types";
 
 const SHORT_CIRCUITS = new Set([
@@ -3466,7 +3467,21 @@ const isArrayObjectUse = (node: ts.Expression, context: Context): boolean => {
     return isArrayObjectUse(parent, context);
   }
   if (ts.isPropertyAccessExpression(parent) || ts.isElementAccessExpression(parent)) {
-    return parent.expression === node;
+    // sort, reverse, fill, and copyWithin give the array, which the place that takes it reads, or
+    // a constant names, whose reads are the array's.
+    const call = parent.parent;
+    return (
+      parent.expression === node &&
+      (!ts.isPropertyAccessExpression(parent) ||
+        !REORDER_METHODS.has(parent.name.text) ||
+        !ts.isCallExpression(call) ||
+        call.expression !== parent ||
+        ts.isExpressionStatement(call.parent) ||
+        (ts.isVariableDeclaration(call.parent) &&
+          ts.isIdentifier(call.parent.name) &&
+          getReorderedArray(call.parent.name, context) !== undefined) ||
+        isArrayObjectUse(call, context))
+    );
   }
   if (ts.isTypeOfExpression(parent)) return true;
   // A for-of or a spread runs the array's iterator, which reads its elements as an object's, and a
@@ -5618,13 +5633,18 @@ export const findHeapArrays = (
       arrays.add(declaration);
     }
   });
+  // The source of what an expression holds, through the constants that name what a reorder gives.
+  const getSource = (node: ts.Expression): ts.Expression | undefined => {
+    const reordered = getReorderedArray(node, context);
+    return reordered === undefined ? getArraySource(node, context) : getSource(reordered);
+  };
   const check = (node: ts.Node) => {
     if (
       ts.isIdentifier(node) &&
       !(ts.isVariableDeclaration(node.parent) && node.parent.name === node) &&
       !isArrayObjectUse(node, context)
     ) {
-      const literal = getArraySource(node, context);
+      const literal = getSource(node);
       if (literal !== undefined && arrays.has(literal) && !changed.includes(literal)) {
         throw new TlaTypeScriptError(
           "Use an array that tla-ts holds as an object only through its properties",

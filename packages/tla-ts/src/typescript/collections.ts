@@ -106,6 +106,7 @@ import {
   isBuiltInIteratorType,
   isGeneratorType,
   TYPED_ARRAYS,
+  REORDER_METHODS,
 } from "./types";
 
 interface Unordered {
@@ -1739,9 +1740,6 @@ export const translateSortArguments = (
     boolean(isThrowing),
   ];
 };
-
-// The methods that reorder or overwrite an array in place, and give the array.
-export const REORDER_METHODS = new Set(["sort", "reverse", "fill", "copyWithin"]);
 
 // Whether a method gives the collection that it changes: sort, reverse, fill, or copyWithin of an
 // array, a set's add, or a map's set.

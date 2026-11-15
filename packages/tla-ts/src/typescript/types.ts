@@ -18,6 +18,7 @@ import {
   isNestedFunction,
   isRestOnly,
   isMadeOnly,
+  isMethodCall,
   isStatic,
   skipCasts,
 } from "./context";
@@ -521,12 +522,34 @@ export const isHeapArray = (node: ts.Expression, context: Context) => {
   return !isSetType(type) && !isMapType(type) && isHeld(node, context);
 };
 
+// The methods that reorder or overwrite an array in place, and give the array.
+export const REORDER_METHODS = new Set(["sort", "reverse", "fill", "copyWithin"]);
+
+// The array that a constant names where sort, reverse, fill, or copyWithin gave it, as
+// const sorted = list.sort() names list.
+export const getReorderedArray = (node: ts.Expression, context: Context) => {
+  const declaration = ts.isIdentifier(node)
+    ? getSymbol(node, context.checker)?.valueDeclaration
+    : undefined;
+  const call =
+    declaration !== undefined &&
+    ts.isVariableDeclaration(declaration) &&
+    (declaration.parent.flags & ts.NodeFlags.Const) !== 0
+      ? declaration.initializer
+      : undefined;
+  return call !== undefined && isMethodCall(call) && REORDER_METHODS.has(call.expression.name.text)
+    ? skipCasts(call.expression.expression)
+    : undefined;
+};
+
 // Whether an expression gives a collection that the heap holds: a literal or a new set or map that
 // it holds, or what a holder of them gives.
 const isHeld = (node: ts.Expression, context: Context): boolean => {
   if (ts.isParenthesizedExpression(node) || ts.isNonNullExpression(node)) {
     return isHeld(node.expression, context);
   }
+  const reordered = getReorderedArray(node, context);
+  if (reordered !== undefined && isHeld(reordered, context)) return true;
   // An element of the arrays that a holder holds, where the heap holds those elements.
   const isElementHeld = (outer: ts.Expression) => {
     const holders = getHolders(outer, context.checker);
@@ -542,13 +565,16 @@ const isHeld = (node: ts.Expression, context: Context): boolean => {
   };
   if (ts.isCallExpression(node)) {
     const called = getCalledFunction(node, context.checker);
-    // A set's add and a map's set give the collection that they change.
+    // A set's add, a map's set, and an array's sort, reverse, fill, and copyWithin give the
+    // collection that they change.
     return called !== undefined
       ? context.heapCollections.has(called)
       : ts.isPropertyAccessExpression(node.expression) &&
           ((node.expression.name.text === "at" && isElementHeld(node.expression.expression)) ||
             (["add", "set"].includes(node.expression.name.text) &&
               isSetOrMapType(node.expression.expression, context) &&
+              isHeld(node.expression.expression, context)) ||
+            (REORDER_METHODS.has(node.expression.name.text) &&
               isHeld(node.expression.expression, context)));
   }
   if (

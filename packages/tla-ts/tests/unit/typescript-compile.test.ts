@@ -37476,4 +37476,33 @@ describe("BigInts", () => {
       ).toContain("2147483649,4294967295,2,,,4294967295");
     });
   });
+
+  describe("reads what sort and reverse give of an array that the heap holds", () => {
+    const getSource = (expected: string) => `
+      const list = [3, 1, 2];
+      list.length = 5;
+      const length = list.sort().length;
+      const read = [length, list.reverse().join("-")].join();
+      if (read !== "${expected}") throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("5,--3-2-1"))).failure).toBeUndefined();
+    });
+
+    it("rejects the holes as sorted first", async () => {
+      expect((await checkModel(getSource("5,3-2-1--"))).failure?.message).toContain("5,--3-2-1");
+    });
+
+    it("stops where a parameter takes what sort gives as an array", () => {
+      expect(() =>
+        compile(`
+          const list = [3, 1, 2];
+          list.length = 5;
+          const getLength = (array: number[]) => array.length;
+          getLength(list.sort());
+        `),
+      ).toThrow("sort");
+    });
+  });
 });
