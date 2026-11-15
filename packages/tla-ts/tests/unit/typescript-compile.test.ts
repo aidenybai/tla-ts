@@ -44789,4 +44789,41 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("throws where an assignment or a declaration reads a strict function's caller", () => {
+    const getSource = (expected: string) => `
+      function strict() {
+        "use strict";
+      }
+      let temp: unknown = 0;
+      let log = "";
+      try {
+        temp = strict.caller;
+      } catch (error) {
+        log += (error as Error).name;
+      }
+      try {
+        temp = strict.arguments;
+      } catch (error) {
+        log += (error as Error).name;
+      }
+      try {
+        const other = strict.caller;
+      } catch (error) {
+        log += (error as Error).name;
+      }
+      const result = log + String(temp);
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("TypeErrorTypeErrorTypeError0"))).failure).toBeUndefined();
+    });
+
+    it("rejects a wrong log", async () => {
+      expect((await checkModel(getSource("TypeErrorTypeError0"))).failure?.message).toContain(
+        "TypeErrorTypeErrorTypeError0",
+      );
+    });
+  });
 });
