@@ -37691,4 +37691,125 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("6"))).failure?.message).toContain('"7"');
     });
   });
+
+  describe("reads what sort and reverse give of an array that the heap holds", () => {
+    const getSource = (expected: string) => `
+      const list = [3, 1, 2];
+      list.length = 5;
+      const length = list.sort().length;
+      const read = [length, list.reverse().join("-")].join();
+      if (read !== "${expected}") throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("5,--3-2-1"))).failure).toBeUndefined();
+    });
+
+    it("rejects the holes as sorted first", async () => {
+      expect((await checkModel(getSource("5,3-2-1--"))).failure?.message).toContain("5,--3-2-1");
+    });
+
+    it("stops where a parameter takes what sort gives as an array", () => {
+      expect(() =>
+        compile(`
+          const list = [3, 1, 2];
+          list.length = 5;
+          const getLength = (array: number[]) => array.length;
+          getLength(list.sort());
+        `),
+      ).toThrow("sort");
+    });
+  });
+
+  describe("reads a cast of an array that the heap holds as an object", () => {
+    const getSource = (expected: string) => `
+      const list: unknown = [1, 2, 3];
+      Object.defineProperty(list, "extra", { value: 4 });
+      const read = [(list as number[]).length, (list as number[])[1]].join();
+      if (read !== "${expected}") throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("3,2"))).failure).toBeUndefined();
+    });
+
+    it("rejects the length as the extra property's", async () => {
+      expect((await checkModel(getSource("4,2"))).failure?.message).toContain("3,2");
+    });
+
+    it("stops where a parameter typed as an object takes the array", async () => {
+      const result = await checkModel(`
+        const list = [1, 2, 3];
+        Object.defineProperty(list, "extra", { value: 4 });
+        const getLength = (value: object) => (value as number[]).length;
+        const read = String(getLength(list));
+        if (read !== "3") throw new Error(read);
+      `);
+      expect(result.failure?.message).toContain("tla-ts can't follow a cast");
+    });
+  });
+
+  describe("reads what Object.assign gives of an array's keys as an object", () => {
+    const getSource = (expected: string) => `
+      const list = [1, 2];
+      Object.defineProperty(list, "extra", { value: 3, enumerable: true });
+      const target = { size: 0 };
+      const isSame = Object.assign(target, list) === target;
+      const read = [isSame, Object.keys(target).join("/"), Array.isArray(target)].join();
+      if (read !== "${expected}") throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("true,0/1/size/extra,false"))).failure).toBeUndefined();
+    });
+
+    it("rejects the target as an array", async () => {
+      expect((await checkModel(getSource("true,0/1/size/extra,true"))).failure?.message).toContain(
+        "true,0/1/size/extra,false",
+      );
+    });
+
+    it("stops where the result's type is the array's", () => {
+      expect(() =>
+        compile(`
+          const list = [1, 2];
+          Object.defineProperty(list, "extra", { value: 3 });
+          const copy = Object.assign({}, list);
+          if (copy.length !== undefined) throw new Error(String(copy.length));
+        `),
+      ).toThrow("tla-ts can't read what Object.assign gives");
+    });
+  });
+
+  describe("reads a proxy of a set or a map as an object", () => {
+    const getSource = (expected: string) => `
+      const box = { size: 0 };
+      const proxy = new Proxy(new Set([1]), {});
+      const mapProxy = new Proxy(new Map([[1, 2]]), {});
+      box.size = 1;
+      const read = [typeof proxy, typeof mapProxy, proxy === (mapProxy as object)].join();
+      if (read !== "${expected}") throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("object,object,false"))).failure).toBeUndefined();
+    });
+
+    it("rejects the proxies as the same object", async () => {
+      expect((await checkModel(getSource("object,object,true"))).failure?.message).toContain(
+        "object,object,false",
+      );
+    });
+
+    it("stops where the script calls the collection's methods on the proxy", () => {
+      ["proxy.has(1);", "[...proxy];", "Set.prototype.has.call(proxy, 1);"].forEach((read) =>
+        expect(() =>
+          compile(`
+            const proxy = new Proxy(new Set([1]), {});
+            ${read}
+          `),
+        ).toThrow("tla-ts can't make a proxy of an array, a set, or a map"),
+      );
+    });
+  });
 });

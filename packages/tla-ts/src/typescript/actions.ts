@@ -36,7 +36,6 @@ import {
   translateMethodElements,
   MUTATING_METHODS,
   SEQUENCE_UPDATES,
-  REORDER_METHODS,
   isFreshReorder,
   translateSpliced,
   translateClampedIndex,
@@ -417,6 +416,7 @@ import {
   TYPED_ARRAYS,
   isNullishArrayMethodCall,
   getArrayMethodCall,
+  REORDER_METHODS,
 } from "./types";
 
 export interface Path {

@@ -18,6 +18,7 @@ import {
   isNestedFunction,
   isRestOnly,
   isMadeOnly,
+  isMethodCall,
   isStatic,
   skipCasts,
 } from "./context";
@@ -98,6 +99,10 @@ export const isSequenceType = (type: ts.Type, checker: ts.TypeChecker): boolean 
   type.isUnion()
     ? type.types.every((member) => isSequenceType(member, checker))
     : checker.isArrayType(type) || checker.isTupleType(type);
+
+// Whether any member of a type is a set or a map, weak or not.
+export const mayBeSetOrMapType = (type: ts.Type) =>
+  (type.isUnion() ? type.types : [type]).some((member) => isSetType(member) || isMapType(member));
 
 // Whether any member of a type is an array or a tuple, which a sequence holds without its identity.
 export const mayBeSequenceType = (type: ts.Type, checker: ts.TypeChecker) =>
@@ -494,17 +499,18 @@ export const isHeapSetOrMap = (node: ts.Expression, context: Context) => {
   );
 };
 
-// Whether an expression gives a proxy of an array, which the heap holds as an object.
-const isArrayProxy = (node: ts.Expression, context: Context): boolean => {
+// Whether an expression gives a proxy of an array, a set, or a map, which the heap holds as an
+// object.
+const isCollectionProxy = (node: ts.Expression, context: Context): boolean => {
   if (ts.isParenthesizedExpression(node) || ts.isNonNullExpression(node)) {
-    return isArrayProxy(node.expression, context);
+    return isCollectionProxy(node.expression, context);
   }
   const declaration = ts.isIdentifier(node)
     ? getSymbol(node, context.checker)?.valueDeclaration
     : undefined;
   return (
-    context.arrayProxies.has(node) ||
-    (declaration !== undefined && context.arrayProxies.has(declaration))
+    context.collectionProxies.has(node) ||
+    (declaration !== undefined && context.collectionProxies.has(declaration))
   );
 };
 
@@ -521,12 +527,41 @@ export const isHeapArray = (node: ts.Expression, context: Context) => {
   return !isSetType(type) && !isMapType(type) && isHeld(node, context);
 };
 
+// The methods that reorder or overwrite an array in place, and give the array.
+export const REORDER_METHODS = new Set(["sort", "reverse", "fill", "copyWithin"]);
+
+// The array that a constant names where sort, reverse, fill, or copyWithin gave it, as
+// const sorted = list.sort() names list.
+export const getReorderedArray = (node: ts.Expression, context: Context) => {
+  const declaration = ts.isIdentifier(node)
+    ? getSymbol(node, context.checker)?.valueDeclaration
+    : undefined;
+  const call =
+    declaration !== undefined &&
+    ts.isVariableDeclaration(declaration) &&
+    (declaration.parent.flags & ts.NodeFlags.Const) !== 0
+      ? declaration.initializer
+      : undefined;
+  return call !== undefined && isMethodCall(call) && REORDER_METHODS.has(call.expression.name.text)
+    ? skipCasts(call.expression.expression)
+    : undefined;
+};
+
 // Whether an expression gives a collection that the heap holds: a literal or a new set or map that
 // it holds, or what a holder of them gives.
 const isHeld = (node: ts.Expression, context: Context): boolean => {
-  if (ts.isParenthesizedExpression(node) || ts.isNonNullExpression(node)) {
+  // A cast gives the same collection whatever type it gives it.
+  if (
+    ts.isParenthesizedExpression(node) ||
+    ts.isNonNullExpression(node) ||
+    ts.isAsExpression(node) ||
+    ts.isTypeAssertionExpression(node) ||
+    ts.isSatisfiesExpression(node)
+  ) {
     return isHeld(node.expression, context);
   }
+  const reordered = getReorderedArray(node, context);
+  if (reordered !== undefined && isHeld(reordered, context)) return true;
   // An element of the arrays that a holder holds, where the heap holds those elements.
   const isElementHeld = (outer: ts.Expression) => {
     const holders = getHolders(outer, context.checker);
@@ -542,13 +577,16 @@ const isHeld = (node: ts.Expression, context: Context): boolean => {
   };
   if (ts.isCallExpression(node)) {
     const called = getCalledFunction(node, context.checker);
-    // A set's add and a map's set give the collection that they change.
+    // A set's add, a map's set, and an array's sort, reverse, fill, and copyWithin give the
+    // collection that they change.
     return called !== undefined
       ? context.heapCollections.has(called)
       : ts.isPropertyAccessExpression(node.expression) &&
           ((node.expression.name.text === "at" && isElementHeld(node.expression.expression)) ||
             (["add", "set"].includes(node.expression.name.text) &&
               isSetOrMapType(node.expression.expression, context) &&
+              isHeld(node.expression.expression, context)) ||
+            (REORDER_METHODS.has(node.expression.name.text) &&
               isHeld(node.expression.expression, context)));
   }
   if (
@@ -882,7 +920,7 @@ export const getWrappedThis = (node: ts.Node, context: Context) => {
 export const getKind = (node: ts.Expression, context: Context): Kind => {
   if (context.heap !== undefined && getWrappedThis(node, context) !== undefined) return "object";
   if (isHeapArray(node, context) || getBound(node, context) !== undefined) return "object";
-  if (isArrayProxy(node, context)) return "object";
+  if (isCollectionProxy(node, context)) return "object";
   const checker = context.checker;
   if (isHeldErrorName(node, context)) return "object";
   // An object stays one where TypeScript narrows its type, as instanceof Object narrows it to the
