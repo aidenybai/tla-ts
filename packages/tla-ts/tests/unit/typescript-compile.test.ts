@@ -36092,4 +36092,20 @@ describe("BigInts", () => {
     `);
     expect(division.failure?.message).toContain("tla-ts can't throw the RangeError");
   });
+
+  it("erases a declare global block, as Node runs the module without it", async () => {
+    const getSource = (limit: number) => `
+      declare global {
+        var hostLimit: number;
+      }
+      let count = 0;
+      export const step = () => {
+        if (count >= 2) return;
+        count++;
+      };
+      export const isBelow = () => count < ${limit};
+    `;
+    expect((await checkModel(getSource(3))).status).toBe("deadlock");
+    expect((await checkModel(getSource(2))).status).toBe("invariant-violation");
+  });
 });

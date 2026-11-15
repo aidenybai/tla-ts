@@ -6,6 +6,7 @@ import {
   getFunction,
   getOwnSymbol,
   getSymbol,
+  isAmbient,
   type HelperDeclaration,
   isHeapClass,
   isHeapFunction,
@@ -164,7 +165,8 @@ const getListDeclarations = (list: ts.VariableDeclarationList) =>
 const getDeclarations = (statement: ts.Statement): Declared[] => {
   if (ts.isModuleDeclaration(statement)) {
     const body = statement.body;
-    if (body === undefined) return [];
+    // A declare, such as declare global, only describes what the host gives.
+    if (body === undefined || isAmbient(statement)) return [];
     if (ts.isModuleDeclaration(body)) return getDeclarations(body);
     if (!ts.isModuleBlock(body)) return [];
     return body.statements.flatMap((inner) => {
