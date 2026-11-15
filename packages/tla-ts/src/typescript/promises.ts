@@ -43,6 +43,7 @@ import {
   isAsyncFunction,
   isAsyncGenerator,
   isHeapFunction,
+  isStrictCode,
   isTimerCall,
   skipCasts,
   translateString,
@@ -879,12 +880,26 @@ const getRunner = (node: ts.Expression | undefined, path: Path, context: Context
   }
   return getCallbackRunner(
     callee,
-    ts.isArrowFunction(callee) ? path.scope.receiver : undefined,
+    getCalledReceiver(callee, path.scope.receiver, context),
     path,
     context,
     frame,
   );
 };
+
+// The this of a function that JavaScript calls with undefined as its this, as a job calls a
+// reaction's handler and new Promise its executor: where an arrow function was written, and
+// undefined in strict code.
+const getCalledReceiver = (
+  callee: FunctionNode,
+  receiver: Receiver | undefined,
+  context: Context,
+): Receiver | undefined =>
+  ts.isArrowFunction(callee)
+    ? receiver
+    : isStrictCode(callee)
+      ? { value: getUndefined(context), method: callee }
+      : undefined;
 
 // A function that a then or a catch takes, which runs as a job with the promise's value.
 const getHandler = (
@@ -2139,7 +2154,7 @@ export const translatePromiseConstruction = (
               ...start.scope,
               bindings,
               isCatching: true,
-              receiver: ts.isArrowFunction(executor) ? start.scope.receiver : undefined,
+              receiver: getCalledReceiver(executor, start.scope.receiver, context),
             },
           },
           context,

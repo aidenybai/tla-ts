@@ -27296,6 +27296,25 @@ describe("errors", () => {
     expect((await checkModel(source("xr"))).failure).toBeDefined();
   });
 
+  it("gives an executor and a handler undefined as their this in strict code", async () => {
+    const source = (expected: string) => `
+      "use strict";
+      declare function setTimeout(callback: () => void): void;
+      let log = "";
+      new Promise(function (this: unknown) {
+        log += this === undefined ? "e" : "x";
+      });
+      Promise.resolve(1).then(function (this: unknown) {
+        log += this === undefined ? "t" : "x";
+      });
+      setTimeout(() => {
+        if (log !== "${expected}") throw new Error(log);
+      });
+    `;
+    expect((await checkModel(source("et"))).failure).toBeUndefined();
+    expect((await checkModel(source("ex"))).failure).toBeDefined();
+  });
+
   it("fulfills Promise.any with the first value, or rejects it with an AggregateError", async () => {
     const result = await checkModel(`
       declare function setTimeout(callback: () => void): void;
