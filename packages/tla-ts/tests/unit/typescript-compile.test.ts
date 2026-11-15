@@ -42382,4 +42382,49 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("reads a property of a value of type unknown", () => {
+    const getSource = (expected: string) => `
+      const values: { [key: string]: unknown } = {
+        text: "ab",
+        list: [5, 6],
+        add: (left: number, right: number) => left + right,
+      };
+      let log = "";
+      // @ts-ignore
+      log += values.text.length;
+      // @ts-ignore
+      log += values.text[1];
+      // @ts-ignore
+      log += values.text[7];
+      // @ts-ignore
+      log += values.list[1];
+      // @ts-ignore
+      log += values.list.length;
+      // @ts-ignore
+      log += values.add.length;
+      // @ts-ignore
+      log += values.text.slice === String.prototype.slice;
+      if (log !== "${expected}") throw new Error(log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("2bundefined622true"))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong length of a function", async () => {
+      expect((await checkModel(getSource("2bundefined621true"))).failure?.message).toContain(
+        "2bundefined622true",
+      );
+    });
+
+    it("stops at a property of a number", async () => {
+      const result = await checkModel(`
+        const values: { [key: string]: unknown } = { count: 5 };
+        // @ts-ignore
+        if (values.count.size !== undefined) throw new Error("size");
+      `);
+      expect(result.failure?.message).toContain("tla-ts can't read a property of this value");
+    });
+  });
 });

@@ -2266,12 +2266,18 @@ Get(heap, ref, key) ==
   ELSE GetFrom(heap, ref, key, ref)
 
 \\* A read of a property of a value whose type doesn't tell what it is: an object, an array, an error,
-\\* or a function. tla-ts stops at a primitive, and at undefined or null, whose read throws.
+\\* a function, or a string. tla-ts stops at another primitive, and at undefined or null, whose read
+\\* throws.
 GetAny(heap, value, key) ==
   CASE value \\in {Undefined, Null} ->
          Assert(FALSE, "tla-ts can't throw the TypeError of reading a property of undefined or null")
     [] IsRef(value) \\/ IsSequenceValue(value) \\/ IsError(value) \\/ TypeOf(value) = "function" ->
          Get(heap, value, key)
+    [] TypeOf(value) = "string" ->
+         CASE key = "length" -> Len(value)
+           [] TypedKey(key) = "index" /\\ ToIndex(key) < Len(value) ->
+                SubSeq(value, ToIndex(key) + 1, ToIndex(key) + 1)
+           [] OTHER -> GetFrom(heap, Ref :> "String.prototype", key, value)
     [] OTHER -> Assert(FALSE, "tla-ts can't read a property of this value")
 
 \\* A generator object that tla-ts follows, which is neither a promise nor a function.

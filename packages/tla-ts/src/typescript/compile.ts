@@ -565,15 +565,17 @@ export const compile = (
       [context.checker.getTypeAtLocation(node.left.expression)]
         .flatMap((type) => (type.isIntersection() ? type.types : [type]))
         .some((type) => context.checker.isArrayType(type) || context.checker.isTupleType(type))) ||
-    // A read of a property of a value of type any, which only the heap tells the kind of. A write
-    // to a primitive's property throws or does nothing without one.
+    // A read of a property of a value of type any or unknown, which only the heap tells the kind
+    // of. A write to a primitive's property throws or does nothing without one.
     ((ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) &&
       !(
         ts.isBinaryExpression(node.parent) &&
         node.parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
         node.parent.left === node
       ) &&
-      (context.checker.getTypeAtLocation(node.expression).flags & ts.TypeFlags.Any) !== 0) ||
+      (context.checker.getTypeAtLocation(node.expression).flags &
+        (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !==
+        0) ||
     // An array whose element a script deletes, which leaves a hole that only an object can hold.
     (ts.isDeleteExpression(node) &&
       ts.isElementAccessExpression(node.expression) &&
