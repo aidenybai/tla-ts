@@ -6372,25 +6372,6 @@ ${body}
       await expect(checkModel(getSource("1,1"))).rejects.toThrow("1,2");
     });
 
-    it("stops at a function that a block declares outside strict mode where code outside names it", () => {
-      expect(() =>
-        compile(`
-          const run = () => {
-            {
-              function h() {
-                return 1;
-              }
-            }
-            // @ts-ignore
-            return typeof h;
-          };
-          run();
-        `),
-      ).toThrow(
-        "tla-ts can't name a function that a block declares outside the block outside strict mode",
-      );
-    });
-
     it.each([
       [
         "a catch whose parameter has another name",
@@ -39559,5 +39540,55 @@ describe("BigInts", () => {
     expect(() => compile(getSource("let pending = new Set<number>();"))).toThrow(
       "pending would share an object that changes in place, so copy it",
     );
+  });
+
+  describe("binds the var of a function that a block declares outside strict mode", () => {
+    const getSource = (directive: string, expected: string) => `
+      ${directive}
+      const seen: string[] = [];
+      // @ts-ignore
+      seen.push(typeof f);
+      {
+        function f() {}
+      }
+      // @ts-ignore
+      seen.push(typeof f);
+      (function () {
+        var g: unknown = 1;
+        seen.push(typeof g);
+        switch (seen.length as number) {
+          default:
+            function g() {}
+        }
+        seen.push(typeof g);
+        let h = 2;
+        {
+          function h() {}
+        }
+        seen.push(typeof h);
+        try {
+          throw 3;
+        } catch (k) {
+          {
+            function k() {}
+          }
+          seen.push(typeof k);
+        }
+        // @ts-ignore
+        seen.push(typeof k);
+      })();
+      if (seen.join() !== "${expected}") throw new Error(seen.join());
+    `;
+    const sloppy = "undefined,function,number,function,number,number,function";
+    const strict = "undefined,undefined,number,number,number,number,undefined";
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("", sloppy))).failure).toBeUndefined();
+      expect((await checkModel(getSource('"use strict";', strict))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation", async () => {
+      expect((await checkModel(getSource("", strict))).failure?.message).toContain(sloppy);
+    });
   });
 });

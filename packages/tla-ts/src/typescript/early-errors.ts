@@ -11,14 +11,14 @@ const isLexical = (statement: ts.Statement, isFunctionBody: boolean) =>
   (ts.isVariableStatement(statement) &&
     (statement.declarationList.flags & ts.NodeFlags.BlockScoped) !== 0);
 
-const getBindingNames = (name: ts.BindingName): string[] =>
+export const getBindingNames = (name: ts.BindingName): string[] =>
   ts.isIdentifier(name)
     ? [name.text]
     : name.elements.flatMap((element) =>
         ts.isBindingElement(element) ? getBindingNames(element.name) : [],
       );
 
-const getLexicalNames = (statements: readonly ts.Statement[], isFunctionBody: boolean) =>
+export const getLexicalNames = (statements: readonly ts.Statement[], isFunctionBody: boolean) =>
   statements
     .filter((statement) => isLexical(statement, isFunctionBody))
     .flatMap((statement) => {

@@ -1,5 +1,6 @@
 import ts from "@typescript/typescript6";
 import { TlaTypeScriptError } from "../errors";
+import { findNodes, getVarFunctionTarget, getVarScope, isVarFunction } from "./context";
 import { rejectEarlyErrors } from "./early-errors";
 
 const COMPILER_OPTIONS: ts.CompilerOptions = {
@@ -73,6 +74,38 @@ const assignParameterProperties = (fileName: string, text: string) => {
   );
 };
 
+// HACK: TypeScript binds every file as strict code, where a function that a block declares binds its
+// name only in the block. Outside strict mode, the text gains the var that Annex B.3.2 adds, which
+// such a function assigns, where its function or its script declares none. The text stays on the
+// same lines.
+const declareVarFunctions = (fileName: string, text: string) => {
+  const file = ts.createSourceFile(fileName, text, ts.ScriptTarget.ESNext, true);
+  const insertions = findNodes(file, isVarFunction).flatMap((node) => {
+    const scope = getVarScope(node);
+    return scope === undefined ||
+      getVarFunctionTarget(node) !== undefined ||
+      (node.name.text === "arguments" && !ts.isSourceFile(scope))
+      ? []
+      : [
+          {
+            position: ts.isSourceFile(scope) ? 0 : scope.getStart(file) + 1,
+            text: `var ${node.name.text}: any;`,
+          },
+        ];
+  });
+  return [
+    ...new Map(
+      insertions.map((insertion) => [`${insertion.position} ${insertion.text}`, insertion]),
+    ).values(),
+  ]
+    .toSorted((left, right) => right.position - left.position)
+    .reduce(
+      (current, insertion) =>
+        current.slice(0, insertion.position) + insertion.text + current.slice(insertion.position),
+      text,
+    );
+};
+
 // The project of the nearest tsconfig.json, where it holds the file, as an editor finds it.
 const getProject = (path: string) => {
   if (!ts.sys.fileExists(path)) return undefined;
@@ -131,7 +164,7 @@ export const createProgram = (
           if (fileName === path) {
             return ts.createSourceFile(
               path,
-              assignParameterProperties(path, source),
+              declareVarFunctions(path, assignParameterProperties(path, source)),
               languageVersion,
               true,
             );
@@ -147,7 +180,7 @@ export const createProgram = (
           }
           return ts.createSourceFile(
             fileName,
-            assignParameterProperties(fileName, file.text),
+            declareVarFunctions(fileName, assignParameterProperties(fileName, file.text)),
             languageVersion,
             true,
           );

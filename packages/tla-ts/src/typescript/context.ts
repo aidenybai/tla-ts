@@ -15,6 +15,7 @@ import {
 } from "./types";
 import { TlaTypeScriptError } from "../errors";
 import { createNames, type Names } from "./names";
+import { getBindingNames, getLexicalNames } from "./early-errors";
 import { getKeptReads } from "./narrowing";
 import { mayThrow } from "./functions";
 import type { Link } from "./regions";
@@ -610,6 +611,139 @@ export const isStrictCode = (node: ts.Node): boolean =>
       (ts.isSourceFile(ancestor) &&
         (hasStrictDirective(ancestor.statements) || isModuleFile(ancestor))),
   ) !== undefined;
+
+// The body of the function, or the script, whose vars a node's code declares.
+export const getVarScope = (node: ts.Node) => {
+  const owner = ts.findAncestor(
+    node.parent,
+    (ancestor) => ts.isFunctionLike(ancestor) || ts.isSourceFile(ancestor),
+  );
+  return owner === undefined || ts.isSourceFile(owner)
+    ? owner
+    : "body" in owner && owner.body !== undefined && ts.isBlock(owner.body)
+      ? owner.body
+      : undefined;
+};
+
+// Whether a var of a name in place of a function that a block declares would be an early error
+// where a node around it declares the name: as a lexical declaration of a block, a case block, a
+// function's body, or a script, as a loop's lexical declaration, or in a catch's pattern. As in
+// Node, another function that a block declares there isn't one.
+const isVarConflict = (node: ts.Node, name: string) => {
+  const statements =
+    ts.isBlock(node) || ts.isSourceFile(node)
+      ? node.statements
+      : ts.isCaseBlock(node)
+        ? node.clauses.flatMap((clause) => [...clause.statements])
+        : undefined;
+  if (statements !== undefined) {
+    return getLexicalNames(
+      statements.filter(
+        (statement) => !(ts.isFunctionDeclaration(statement) && isPlain(statement)),
+      ),
+      ts.isSourceFile(node) || ts.isFunctionLike(node.parent),
+    ).includes(name);
+  }
+  const declarations =
+    (ts.isForStatement(node) || ts.isForInStatement(node) || ts.isForOfStatement(node)) &&
+    node.initializer !== undefined &&
+    ts.isVariableDeclarationList(node.initializer) &&
+    (node.initializer.flags & ts.NodeFlags.BlockScoped) !== 0
+      ? node.initializer.declarations
+      : ts.isCatchClause(node) &&
+          node.variableDeclaration !== undefined &&
+          !ts.isIdentifier(node.variableDeclaration.name)
+        ? [node.variableDeclaration]
+        : [];
+  return declarations.some((declaration) => getBindingNames(declaration.name).includes(name));
+};
+
+// A function that a block or a case declares outside strict mode, which as Annex B.3.2 adds also
+// assigns a var of its name in its function or its script, unless such a var in its place would be
+// an early error or names a parameter. A function's arguments object takes the name arguments as a
+// parameter does, but in an arrow or beside a function declaration of that name.
+export const isVarFunction = (
+  node: ts.Node,
+): node is ts.FunctionDeclaration & { name: ts.Identifier } => {
+  if (
+    !ts.isFunctionDeclaration(node) ||
+    node.name === undefined ||
+    node.body === undefined ||
+    !isPlain(node) ||
+    isStrictCode(node)
+  ) {
+    return false;
+  }
+  const parent = node.parent;
+  const scope = getVarScope(node);
+  if (
+    scope === undefined ||
+    !(
+      ts.isCaseClause(parent) ||
+      ts.isDefaultClause(parent) ||
+      (ts.isBlock(parent) && !ts.isFunctionLike(parent.parent))
+    )
+  ) {
+    return false;
+  }
+  const name = node.name.text;
+  const isConflict = (ancestor: ts.Node): boolean =>
+    !ts.isFunctionLike(ancestor) &&
+    (isVarConflict(ancestor, name) ||
+      (ancestor.parent !== undefined && isConflict(ancestor.parent)));
+  if (isConflict(parent)) return false;
+  const owner = scope.parent;
+  if (ts.isSourceFile(scope) || !ts.isFunctionLike(owner)) return true;
+  const isArgumentsObject =
+    !ts.isArrowFunction(owner) &&
+    !scope.statements.some(
+      (statement) => ts.isFunctionDeclaration(statement) && statement.name?.text === "arguments",
+    );
+  return (
+    !owner.parameters.some((parameter) => getBindingNames(parameter.name).includes(name)) &&
+    !(name === "arguments" && isArgumentsObject)
+  );
+};
+
+// The name of the var that a function that isVarFunction finds assigns: one that a var declaration
+// of its function or its script binds, or else a function declaration there.
+export const getVarFunctionTarget = (node: ts.FunctionDeclaration & { name: ts.Identifier }) => {
+  const scope = getVarScope(node);
+  if (scope === undefined) return undefined;
+  const name = node.name.text;
+  const declared = scope.statements.flatMap((statement) =>
+    findNodes(statement, (inner): inner is ts.Identifier => {
+      if (
+        !ts.isIdentifier(inner) ||
+        inner.text !== name ||
+        !(ts.isVariableDeclaration(inner.parent) || ts.isBindingElement(inner.parent)) ||
+        inner.parent.name !== inner
+      ) {
+        return false;
+      }
+      const holder = ts.findAncestor(
+        inner.parent,
+        (ancestor) =>
+          ts.isVariableDeclarationList(ancestor) ||
+          ts.isCatchClause(ancestor) ||
+          ts.isParameter(ancestor) ||
+          ts.isFunctionLike(ancestor),
+      );
+      return (
+        holder !== undefined &&
+        ts.isVariableDeclarationList(holder) &&
+        (holder.flags & ts.NodeFlags.BlockScoped) === 0 &&
+        getVarScope(holder) === scope
+      );
+    }),
+  );
+  return (
+    declared.at(0) ??
+    scope.statements
+      .filter(ts.isFunctionDeclaration)
+      .find((statement) => statement.name?.text === name)?.name
+  );
+};
 
 // The function whose arguments object a name reads, which for an arrow is the function around it.
 export const getArgumentsOwner = (node: ts.Node, checker: ts.TypeChecker) => {
@@ -1380,7 +1514,8 @@ export const getLiteralName = (node: ts.ObjectLiteralExpression, context: Contex
     : undefined;
 };
 
-// The target that an assignment, an increment, or a for-in or for-of without a declaration writes.
+// The target that an assignment, an increment, or a for-in or for-of without a declaration writes,
+// or the var that a function that a block declares assigns outside strict mode.
 export const getAssignedTarget = (node: ts.Node) =>
   ts.isBinaryExpression(node) &&
   node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
@@ -1393,7 +1528,9 @@ export const getAssignedTarget = (node: ts.Node) =>
       : (ts.isForInStatement(node) || ts.isForOfStatement(node)) &&
           !ts.isVariableDeclarationList(node.initializer)
         ? node.initializer
-        : undefined;
+        : isVarFunction(node)
+          ? getVarFunctionTarget(node)
+          : undefined;
 
 // Whether a script assigns to a name anywhere in a node, which for a whole file its index tells.
 export const isAssigned = (symbol: ts.Symbol, node: ts.Node, context: Context): boolean => {
