@@ -896,13 +896,19 @@ const translateSequenceOperation = (
   const argument = call.arguments[0];
   const getLength = () => apply("Len", [sequence]);
   // An index after ToNumber, which stops on an object.
-  const getIndex = (inner: ts.Expression) =>
-    isNumberLike(inner, context)
-      ? translate(inner)
-      : useJavaScript("ToNumber", [translate(inner)], context);
+  // An index that a call leaves out is undefined, which converts to 0.
+  const getIndex = (inner: ts.Expression | undefined) =>
+    inner === undefined
+      ? number(0)
+      : isNumberLike(inner, context)
+        ? translate(inner)
+        : useJavaScript("ToNumber", [translate(inner)], context);
   // An index that counts back from the end when it's negative, as at() and slice() take it.
-  const getRelative = (inner: ts.Expression, operator: "RelativeIndex" | "ClampedIndex") =>
-    ts.isNumericLiteral(inner) && Number.isInteger(Number(inner.text))
+  const getRelative = (
+    inner: ts.Expression | undefined,
+    operator: "RelativeIndex" | "ClampedIndex",
+  ) =>
+    inner !== undefined && ts.isNumericLiteral(inner) && Number.isInteger(Number(inner.text))
       ? translate(inner)
       : useJavaScript(operator, [getIndex(inner), getLength()], context);
   const orUndefined = (exists: Expression, value: Expression) => {
@@ -1128,7 +1134,11 @@ const translateSequenceOperation = (
       () =>
         useJavaScript(
           "SequenceWith",
-          [sequence, getIndex(argument), translate(call.arguments[1])],
+          [
+            sequence,
+            getIndex(argument),
+            call.arguments[1] === undefined ? getUndefined(context) : translate(call.arguments[1]),
+          ],
           context,
         ),
     ],
@@ -1972,7 +1982,12 @@ export const getUpdatedValue = (
       ? translateSetKey(argument, scope, context)
       : translateExpression(argument, scope, context),
   );
-  const updated = UPDATES.get(kind)?.get(node.expression.name.text)?.(current, values, context);
+  // A key or a value that a set's add or a map's set leaves out is undefined.
+  const passed =
+    kind === "set" || kind === "map"
+      ? [...values, getUndefined(context), getUndefined(context)]
+      : values;
+  const updated = UPDATES.get(kind)?.get(node.expression.name.text)?.(current, passed, context);
   return kind === "sequence" && updated !== undefined
     ? checkArrayMethod(updated, node, scope, context)
     : updated;
@@ -2287,7 +2302,9 @@ const getRegExpCall = (node: ts.Node, context: Context): RegExpCall | undefined 
   if (isSymbol) return undefined;
   // search and match make a regexp of a string.
   const isMade =
-    (method === "search" || method === "match") && getStringRegExp(values[0]) !== undefined;
+    (method === "search" || method === "match") &&
+    values[0] !== undefined &&
+    getStringRegExp(values[0]) !== undefined;
   if ((!isText(receiver) && !isWrapped) || (!isRegExp(values[0]) && !isMade)) return undefined;
   const limit = values.at(1);
   const isKnown =

@@ -1220,19 +1220,24 @@ SequenceWith(sequence, index, value) ==
      THEN [sequence EXCEPT ![relative + 1] = value]
      ELSE Assert(FALSE, "tla-ts can't throw the RangeError of with()")
 
-\\* fill() over the positions after start and up to end, as ClampedIndex gives them.
+\\* fill() over the positions after start and up to end, as ClampedIndex gives them, which it
+\\* converts though the sequence is empty.
 SequenceFill(sequence, value, start, end) ==
-  [position \\in DOMAIN sequence |->
-     IF position > start /\\ position <= end THEN value ELSE sequence[position]]
+  IF start = start /\\ end = end
+  THEN [position \\in DOMAIN sequence |->
+          IF position > start /\\ position <= end THEN value ELSE sequence[position]]
+  ELSE sequence
 
 \\* copyWithin(), which reads every element it copies before it writes any, as the spec's copy in
-\\* either direction does.
+\\* either direction does, and converts its indices though the sequence is empty.
 SequenceCopyWithin(sequence, target, start, end) ==
   LET count == IF end - start < Len(sequence) - target THEN end - start ELSE Len(sequence) - target
-  IN [position \\in DOMAIN sequence |->
-        IF position > target /\\ position <= target + count
-        THEN sequence[start + position - target]
-        ELSE sequence[position]]
+  IN IF count = count
+     THEN [position \\in DOMAIN sequence |->
+             IF position > target /\\ position <= target + count
+             THEN sequence[start + position - target]
+             ELSE sequence[position]]
+     ELSE sequence
 
 \\* Inserts a value after the sorted elements that don't come after it, which keeps equal elements
 \\* in their order, as sort() does.

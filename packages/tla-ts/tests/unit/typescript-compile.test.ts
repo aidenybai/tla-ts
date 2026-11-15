@@ -42576,4 +42576,194 @@ describe("BigInts", () => {
       );
     });
   });
+  describe("a built-in call's arguments past those it reads", () => {
+    const getSource = (expected: string) => `
+      "use strict";
+      let count = 0;
+      const bump = () => ++count;
+      // @ts-ignore
+      const has = new WeakMap().has({}, count++);
+      // @ts-ignore
+      const found = new Map().has(1, bump());
+      // @ts-ignore
+      const index = [1].indexOf(1, 0, count++);
+      const seen = [has, found, index, count].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("false,false,0,3"))).failure).toBeUndefined();
+    });
+
+    it("rejects an argument left unevaluated", async () => {
+      expect((await checkModel(getSource("false,false,0,1"))).failure?.message).toContain(
+        "seen false,false,0,3",
+      );
+    });
+  });
+
+  describe("an empty array's fill and copyWithin with an object index", () => {
+    const getSource = (expected: number) => `
+      "use strict";
+      let count = 0;
+      const index = { valueOf: () => ++count };
+      // @ts-ignore
+      [].fill(0, index);
+      // @ts-ignore
+      [].copyWithin(0, 0, index);
+      if (count !== ${expected}) throw new Error("count " + count);
+    `;
+
+    it("stops where Node converts the index", async () => {
+      expect((await checkModel(getSource(2))).failure?.message).toContain(
+        "tla-ts can't convert this object to a number",
+      );
+    });
+
+    it("rejects an index left unconverted", async () => {
+      expect((await checkModel(getSource(0))).failure?.message).toContain(
+        "tla-ts can't convert this object to a number",
+      );
+    });
+  });
+
+  describe("a built-in call that leaves out its only argument", () => {
+    const getSource = (expected: string) => `
+      "use strict";
+      const pair = [5, 6];
+      const added = new Set([1]);
+      // @ts-ignore
+      added.add();
+      // @ts-ignore
+      const seen = [[5, 6].at(), pair.at(), [5, 6].with().join("/"), pair.with().join("/"), added.size];
+      if (seen.join() !== "${expected}") throw new Error("seen " + seen.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("5,5,/6,/6,2"))).failure).toBeUndefined();
+    });
+
+    it("rejects an index other than 0", async () => {
+      expect((await checkModel(getSource("6,6,5/,5/,2"))).failure?.message).toContain(
+        "seen 5,5,/6,/6,2",
+      );
+    });
+
+    it("stops on match and search", () => {
+      expect(() => compile(`// @ts-ignore\nconst found = "".match();`)).toThrow(
+        'Unsupported call: "".match',
+      );
+      expect(() => compile(`// @ts-ignore\nconst found = "".search();`)).toThrow(
+        'Unsupported call: "".search',
+      );
+    });
+  });
+
+  describe("a property of an array that a call gives, read from Array.prototype", () => {
+    const getSource = (constructor: string) => `
+      "use strict";
+      const kept = {};
+      const made = Array.from([1]).constructor;
+      if (made !== ${constructor}) throw new Error("made another constructor");
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("Array"))).failure).toBeUndefined();
+    });
+
+    it("rejects a constructor other than Array", async () => {
+      expect((await checkModel(getSource("Object"))).failure?.message).toContain(
+        "made another constructor",
+      );
+    });
+
+    it("stops where Array.from runs with a this other than Array", () => {
+      expect(() =>
+        compile(`
+          "use strict";
+          const kept = {};
+          // @ts-ignore
+          const called = Array.from.call(Object, []).constructor;
+          if (called !== Object) throw new Error("called another constructor");
+        `),
+      ).toThrow("Unsupported call: Array.from.call");
+    });
+  });
+
+  describe("a chain of if statements whose joins take numbers that NaN makes special", () => {
+    const getSource = (expected: number) => `
+      "use strict";
+      let count = 0;
+      ${Array.from(
+        { length: 8 },
+        (_, index) => `
+          if (!new Number(NaN)) throw new Error("falsy");
+          else count++;
+          if (count !== ${index + 1}) throw new Error("count " + count);
+        `,
+      ).join("")}
+      if ((count as number) !== ${expected}) throw new Error("final " + count);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(8))).failure).toBeUndefined();
+    });
+
+    it("rejects another count", async () => {
+      expect((await checkModel(getSource(7))).failure?.message).toContain("final 8");
+    });
+  });
+
+  describe("a chain of a string's replace with a regexp, where a script makes objects", () => {
+    const getSource = (expected: string) => `
+      "use strict";
+      const kept = {};
+      const pattern = /(x)/;
+      const seen: string[] = [];
+      ${Array.from(
+        { length: 12 },
+        (_, index) => `seen.push("foo-x-bar".replace(pattern, "|$1${index + 1}|"));`,
+      ).join("\n")}
+      if (seen.join() !== "${expected}") throw new Error("seen " + seen.join());
+    `;
+    const getReplaced = (marker: string) =>
+      Array.from({ length: 12 }, (_, index) => `foo-|${marker}${index + 1}|-bar`).join();
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(getReplaced("x")))).failure).toBeUndefined();
+    });
+
+    it("rejects the capture left unreplaced", async () => {
+      expect((await checkModel(getSource(getReplaced("$1")))).failure?.message).toContain(
+        "seen foo-|x1|-bar",
+      );
+    });
+  });
+
+  describe("a call statement whose value nothing reads, where a script makes no objects", () => {
+    const getSource = (expected: string) => `
+      "use strict";
+      const seen: unknown[] = [];
+      const big: any = 1n;
+      try {
+        [1].fill(0, big);
+        seen.push("filled");
+      } catch (error) {
+        seen.push(error instanceof TypeError);
+      }
+      if (seen.join() !== "${expected}") throw new Error("seen " + seen.join());
+    `;
+
+    it("stops where Node throws as the call converts its argument", async () => {
+      expect((await checkModel(getSource("true"))).failure?.message).toContain(
+        "tla-ts can't throw the TypeError of converting a BigInt to a number",
+      );
+    });
+
+    it("rejects the call left unevaluated", async () => {
+      expect((await checkModel(getSource("filled"))).failure?.message).toContain(
+        "tla-ts can't throw the TypeError of converting a BigInt to a number",
+      );
+    });
+  });
 });

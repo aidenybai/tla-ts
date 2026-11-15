@@ -2836,138 +2836,142 @@ const translateCallStatementBody = (
   }
   const regExpCall = getHeapRegExpCall(expression, context);
   if (regExpCall !== undefined) {
-    const heap = getHeap(path.scope, expression, context);
-    const regexp = context.names.getFresh("regexp");
-    const changeName = context.names.getFresh("change");
-    const change = identifier(changeName);
-    const method = regExpCall.method;
-    const textName = context.names.getFresh("text");
-    const text = identifier(textName);
-    const replacer = regExpCall.values.find(
-      (value) =>
-        (method === "replace" || method === "replaceAll") &&
-        !isEvery(context.checker.getTypeAtLocation(value), ts.TypeFlags.StringLike),
-    );
-    const changeable = set([string("RegExp.prototype"), string("String.prototype")]);
-    const changed = withHeap(field(change, "heap"));
-    // A Set of a lastIndex that isn't writable throws a TypeError.
-    const continueUnlessThrown = (next: Formula) =>
-      ifThenElse(
-        field(change, "isThrown"),
-        throwTypeError(changed, expression, context, frame),
-        next,
+    // The paths where the regexp's string replaces as text, and where the regexp runs, join
+    // before what follows, which translates once.
+    return translateJoined(expression, path, context, continueWith, (next) => {
+      const heap = getHeap(path.scope, expression, context);
+      const regexp = context.names.getFresh("regexp");
+      const changeName = context.names.getFresh("change");
+      const change = identifier(changeName);
+      const method = regExpCall.method;
+      const textName = context.names.getFresh("text");
+      const text = identifier(textName);
+      const replacer = regExpCall.values.find(
+        (value) =>
+          (method === "replace" || method === "replaceAll") &&
+          !isEvery(context.checker.getTypeAtLocation(value), ts.TypeFlags.StringLike),
       );
-    // A replace function runs for each match once they're all found, with the heap after.
-    const run =
-      replacer === undefined
-        ? bindOnce(
-            path,
-            changeName,
-            useJavaScript(
-              regExpCall.heapOperator,
-              [
-                heap,
-                identifier(regexp),
-                text,
-                // exec and match make arrays, and split's limit is undefined where the call
-                // passes none.
-                ...(method === "exec" || method === "match"
-                  ? [translateBuiltInValue("Array.prototype", expression, context)]
-                  : method === "split" && regExpCall.values.length === 0
-                    ? [getUndefined(context)]
-                    : regExpCall.values.map((value) =>
-                        translateExpression(value, path.scope, context),
-                      )),
-              ],
-              context,
-            ),
-            continueUnlessThrown(continueWith(changed, field(change, "value"))),
-          )
-        : bindOnce(
-            path,
-            changeName,
-            useJavaScript("RegExpMatchesIn", [heap, identifier(regexp), text], context),
-            continueUnlessThrown(
-              continueWith(
-                changed,
-                translateRegExpReplacer(
-                  replacer,
-                  useJavaScript(
-                    "RegExpOf",
-                    [field(change, "heap"), identifier(regexp), changeable],
-                    context,
-                  ),
-                  text,
-                  field(change, "value"),
-                  changed.scope,
-                  context,
-                ),
-              ),
-            ),
-          );
-    // replaceAll throws a TypeError where the regexp isn't global, as its flags tell, and exec
-    // where the receiver is RegExp.prototype, which has no pattern.
-    const checked =
-      method === "replaceAll"
-        ? ifThenElse(
-            field(
-              useJavaScript("RegExpOf", [heap, identifier(regexp), changeable], context),
-              "global",
-            ),
-            run,
-            throwTypeError(path, expression, context, frame),
-          )
-        : method === "exec" || method === "test"
-          ? ifThenElse(
-              useJavaScript("IsRegExpPrototypeExec", [heap, identifier(regexp)], context),
-              throwTypeError(path, expression, context, frame),
-              run,
-            )
-          : run;
-    const replacedName = context.names.getFresh("replaced");
-    const replaced = identifier(replacedName);
-    // A string's replace or replaceAll replaces the regexp's string as text where the regexp's own
-    // @@replace is undefined.
-    const body =
-      (method === "replace" || method === "replaceAll") &&
-      regExpCall.isStringMethod &&
-      replacer === undefined
-        ? ifThenElse(
-            useJavaScript("IsUnreplacing", [heap, identifier(regexp)], context),
-            bindOnce(
+      const changeable = set([string("RegExp.prototype"), string("String.prototype")]);
+      const changed = withHeap(field(change, "heap"));
+      // A Set of a lastIndex that isn't writable throws a TypeError.
+      const continueUnlessThrown = (next: Formula) =>
+        ifThenElse(
+          field(change, "isThrown"),
+          throwTypeError(changed, expression, context, frame),
+          next,
+        );
+      // A replace function runs for each match once they're all found, with the heap after.
+      const run =
+        replacer === undefined
+          ? bindOnce(
               path,
-              replacedName,
+              changeName,
               useJavaScript(
-                "RegExpUnreplaced",
+                regExpCall.heapOperator,
                 [
                   heap,
                   identifier(regexp),
                   text,
-                  translateExpression(regExpCall.values[0], path.scope, context),
-                  boolean(method === "replaceAll"),
+                  // exec and match make arrays, and split's limit is undefined where the call
+                  // passes none.
+                  ...(method === "exec" || method === "match"
+                    ? [translateBuiltInValue("Array.prototype", expression, context)]
+                    : method === "split" && regExpCall.values.length === 0
+                      ? [getUndefined(context)]
+                      : regExpCall.values.map((value) =>
+                          translateExpression(value, path.scope, context),
+                        )),
                 ],
                 context,
               ),
-              ifThenElse(
-                apply("=", [field(replaced, "error"), string("")]),
-                continueWith(path, field(replaced, "value")),
-                throwTypeError(path, expression, context, frame),
+              continueUnlessThrown(next(changed, field(change, "value"))),
+            )
+          : bindOnce(
+              path,
+              changeName,
+              useJavaScript("RegExpMatchesIn", [heap, identifier(regexp), text], context),
+              continueUnlessThrown(
+                next(
+                  changed,
+                  translateRegExpReplacer(
+                    replacer,
+                    useJavaScript(
+                      "RegExpOf",
+                      [field(change, "heap"), identifier(regexp), changeable],
+                      context,
+                    ),
+                    text,
+                    field(change, "value"),
+                    changed.scope,
+                    context,
+                  ),
+                ),
               ),
-            ),
-            checked,
-          )
-        : checked;
-    return bindOnce(
-      path,
-      regexp,
-      translateExpression(regExpCall.regexp, path.scope, context),
-      bindOnce(
+            );
+      // replaceAll throws a TypeError where the regexp isn't global, as its flags tell, and exec
+      // where the receiver is RegExp.prototype, which has no pattern.
+      const checked =
+        method === "replaceAll"
+          ? ifThenElse(
+              field(
+                useJavaScript("RegExpOf", [heap, identifier(regexp), changeable], context),
+                "global",
+              ),
+              run,
+              throwTypeError(path, expression, context, frame),
+            )
+          : method === "exec" || method === "test"
+            ? ifThenElse(
+                useJavaScript("IsRegExpPrototypeExec", [heap, identifier(regexp)], context),
+                throwTypeError(path, expression, context, frame),
+                run,
+              )
+            : run;
+      const replacedName = context.names.getFresh("replaced");
+      const replaced = identifier(replacedName);
+      // A string's replace or replaceAll replaces the regexp's string as text where the regexp's own
+      // @@replace is undefined.
+      const body =
+        (method === "replace" || method === "replaceAll") &&
+        regExpCall.isStringMethod &&
+        replacer === undefined
+          ? ifThenElse(
+              useJavaScript("IsUnreplacing", [heap, identifier(regexp)], context),
+              bindOnce(
+                path,
+                replacedName,
+                useJavaScript(
+                  "RegExpUnreplaced",
+                  [
+                    heap,
+                    identifier(regexp),
+                    text,
+                    translateExpression(regExpCall.values[0], path.scope, context),
+                    boolean(method === "replaceAll"),
+                  ],
+                  context,
+                ),
+                ifThenElse(
+                  apply("=", [field(replaced, "error"), string("")]),
+                  next(path, field(replaced, "value")),
+                  throwTypeError(path, expression, context, frame),
+                ),
+              ),
+              checked,
+            )
+          : checked;
+      return bindOnce(
         path,
-        textName,
-        translateRegExpText(regExpCall, expression, path.scope, context),
-        body,
-      ),
-    );
+        regexp,
+        translateExpression(regExpCall.regexp, path.scope, context),
+        bindOnce(
+          path,
+          textName,
+          translateRegExpText(regExpCall, expression, path.scope, context),
+          body,
+        ),
+      );
+    });
   }
   const arrayLikeChange = getArrayLikeChange(expression, context);
   if (arrayLikeChange !== undefined) {
@@ -11611,7 +11615,7 @@ const translateExpressionStatement = (
   }
   if (ts.isCallExpression(expression)) {
     return translateCallStatement(expression, path, context, frame, (after, value) =>
-      value === undefined || context.heap === undefined
+      value === undefined
         ? continueWith(after)
         : ifThenElse(apply("=", [value, value]), continueWith(after), leaf(boolean(false))),
     );
@@ -14459,12 +14463,30 @@ export const translateJoined = (
   const exits: { path: Path; value?: Expression }[] = [];
   const joined = translateWith((inner, value) => {
     exits.push({ path: inner, value });
-    return leaf(
-      call(name, [
-        ...changed.flatMap((symbol) => getPassed(inner, symbol) ?? []),
-        ...captured.map((symbol) => getPassed(inner, symbol) ?? getUndefined(context)),
-        value ?? getUndefined(context),
-      ]),
+    const values = [
+      ...changed.flatMap((symbol) => getPassed(inner, symbol) ?? []),
+      ...captured.map((symbol) => getPassed(inner, symbol) ?? getUndefined(context)),
+      value ?? getUndefined(context),
+    ];
+    // Each value binds before the call, as an argument that the operator reads again after the
+    // state changes evaluates again, and so does each argument that it was made of, once per read.
+    const names = values.map((passedValue) =>
+      inner.isLooping || ["Identifier", "Number", "String"].includes(passedValue.kind)
+        ? undefined
+        : context.names.getFresh("joined"),
+    );
+    return names.reduceRight<Formula>(
+      (rest, bound, position) =>
+        bound === undefined ? rest : bindValue(bound, values[position], rest),
+      leaf(
+        call(
+          name,
+          values.map((passedValue, position) => {
+            const bound = names[position];
+            return bound === undefined ? passedValue : identifier(bound);
+          }),
+        ),
+      ),
     );
   });
   // Each exit leaves the generators as the first does, which may have completed them. Where they
@@ -17675,6 +17697,12 @@ const findLeadingCall = (
         : undefined;
     // An array literal's method runs its elements first.
     const isListed = receiver !== undefined && ts.isArrayLiteralExpression(receiver);
+    // A collection that new makes without arguments runs no code.
+    const isMadeCollection =
+      receiver !== undefined &&
+      ts.isNewExpression(receiver) &&
+      (receiver.arguments ?? []).length === 0 &&
+      COLLECTIONS.some((collection) => collection === getBuiltIn(receiver.expression, context));
     const fromReceiver =
       receiver !== undefined &&
       (ts.isCallExpression(receiver) ||
@@ -17708,6 +17736,7 @@ const findLeadingCall = (
         isPlainCallee(getCast(node.expression.expression), context, path.scope.results));
     if (
       !isListed &&
+      !isMadeCollection &&
       !isRegExpMethod &&
       !isPlainCallee(node.expression, context, path.scope.results)
     ) {
