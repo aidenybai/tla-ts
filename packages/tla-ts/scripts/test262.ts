@@ -1680,6 +1680,21 @@ const nameGlobalObject = (source: string) => {
   );
 };
 
+// A script's import(), import.source(), or import.defer() loads a module, which Node's vm can't do
+// without a linker, and whose fixture files tla-ts doesn't read.
+const isImportCallee = (node: ts.Node) =>
+  node.kind === ts.SyntaxKind.ImportKeyword ||
+  (ts.isMetaProperty(node) &&
+    node.keywordToken === ts.SyntaxKind.ImportKeyword &&
+    node.name.text !== "meta");
+
+const hasImportCall = (source: string) => {
+  const visit = (node: ts.Node): boolean =>
+    (ts.isCallExpression(node) && isImportCallee(node.expression)) ||
+    ts.forEachChild(node, visit) === true;
+  return visit(ts.createSourceFile(PROGRAM_PATH, source, ts.ScriptTarget.Latest));
+};
+
 const runTest = async (path: string): Promise<TestRun> => {
   const id = relative(TEST_DIRECTORY, path);
   const source = readFileSync(path, "utf8");
@@ -1689,6 +1704,9 @@ const runTest = async (path: string): Promise<TestRun> => {
   if (metadata.isSyntaxError) return runSyntaxTest(id, source, metadata);
   if (metadata.isModule && LINKED_MODULE.test(source.slice(source.indexOf("---*/")))) {
     return { id, outcome: "skipped", reason: "a module that imports or exports" };
+  }
+  if (!metadata.isModule && hasImportCall(source)) {
+    return { id, outcome: "skipped", reason: "a script that imports a module" };
   }
   // TypeScript itself fails on some syntax, such as import defer.
   const annotated = (() => {
