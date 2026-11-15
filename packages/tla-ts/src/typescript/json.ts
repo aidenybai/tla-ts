@@ -831,25 +831,20 @@ export const replaceJson = (
                             ),
                           );
                         };
-                        const replace = readNext((read, value) =>
-                          ifThenElse(
-                            useJavaScript(
-                              "JSONHasToJSON",
-                              [getHeap(read.scope, node, context), value, ...prototypes],
-                              context,
-                            ),
-                            leaf(
-                              apply("Assert", [boolean(false), string("tla-ts can't call toJSON")]),
-                            ),
+                        const stopToJSON = leaf(
+                          apply("Assert", [boolean(false), string("tla-ts can't call toJSON")]),
+                        );
+                        const replace = readNext((read, value) => {
+                          const proceed = (after: Path) =>
                             candidates.length === 0
-                              ? replaceWith(read, value, value)
+                              ? replaceWith(after, value, value)
                               : callValue(
                                   node,
                                   candidates,
                                   replacer,
                                   useJavaScript("JSONHolder", [frames], context),
                                   [useJavaScript("JSONKey", [frames], context), value],
-                                  read,
+                                  after,
                                   context,
                                   inner,
                                   () =>
@@ -860,9 +855,58 @@ export const replaceJson = (
                                       ]),
                                     ),
                                   (called, result) => replaceWith(called, value, result),
+                                );
+                          const readHeap = getHeap(read.scope, node, context);
+                          const checked = ifThenElse(
+                            useJavaScript(
+                              "JSONHasToJSON",
+                              [readHeap, value, ...prototypes],
+                              context,
+                            ),
+                            stopToJSON,
+                            proceed(read),
+                          );
+                          // SerializeJSONProperty reads an object's toJSON, which a getter may
+                          // answer.
+                          return getters.length === 0
+                            ? checked
+                            : ifThenElse(
+                                apply("/\\", [
+                                  useJavaScript("IsRef", [value], context),
+                                  apply("#", [
+                                    useJavaScript(
+                                      "GetterOf",
+                                      [readHeap, value, string("toJSON")],
+                                      context,
+                                    ),
+                                    getUndefined(context),
+                                  ]),
+                                ]),
+                                readWith(
+                                  node,
+                                  value,
+                                  string("toJSON"),
+                                  getters,
+                                  read,
+                                  context,
+                                  inner,
+                                  (after, toJSON) =>
+                                    ifThenElse(
+                                      apply("=", [
+                                        useJavaScript(
+                                          "TypeOfIn",
+                                          [getHeap(after.scope, node, context), toJSON],
+                                          context,
+                                        ),
+                                        string("function"),
+                                      ]),
+                                      stopToJSON,
+                                      proceed(after),
+                                    ),
                                 ),
-                          ),
-                        );
+                                checked,
+                              );
+                        });
                         return ifThenElse(
                           useJavaScript("JSONIsClosing", [frames], context),
                           close,

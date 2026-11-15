@@ -44793,4 +44793,39 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("runs the getter of toJSON that JSON.stringify reads of an object", () => {
+    const getSource = (expected: string) => `
+      let log = "";
+      const reads = {
+        get toJSON(): number {
+          log += "r";
+          return 1;
+        },
+        a: 2,
+      };
+      const text = JSON.stringify(reads);
+      try {
+        JSON.stringify({
+          get toJSON(): () => string {
+            throw new Error("t");
+          },
+        });
+      } catch (error) {
+        log += (error as Error).message;
+      }
+      const result = [log, text].join(",");
+      if (result !== '${expected}') throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource('rrt,{"toJSON":1,"a":2}'))).failure).toBeUndefined();
+    });
+
+    it("rejects a stringify that reads toJSON once", async () => {
+      expect((await checkModel(getSource('rt,{"toJSON":1,"a":2}'))).failure?.message).toContain(
+        'rrt,{\\"toJSON\\":1,\\"a\\":2}',
+      );
+    });
+  });
 });
