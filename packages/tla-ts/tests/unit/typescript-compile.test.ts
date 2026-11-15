@@ -43213,4 +43213,39 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("iterates an arguments object through its own @@iterator", () => {
+    const getSource = (expected: string) => `
+      let log = "";
+      function run(this: unknown, first: number, second?: number) {
+        const iterator = arguments[Symbol.iterator]();
+        let result = iterator.next();
+        log += result.value;
+        result = iterator.next();
+        log += result.value;
+        log += result.done;
+        result = iterator.next();
+        log += result.done;
+        log += \`|\${arguments[Symbol.iterator] === Array.prototype.values}\`;
+        log += \`|\${Object.getOwnPropertySymbols(arguments).length}\`;
+        log += \`|\${Object.keys(arguments).join(",")}\`;
+        const descriptor = Object.getOwnPropertyDescriptor(arguments, Symbol.iterator);
+        log += \`|\${descriptor?.writable}\${descriptor?.enumerable}\${descriptor?.configurable}\`;
+      }
+      run(2, 1);
+      if (log !== "${expected}") throw new Error(log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("21falsetrue|true|1|0,1|truefalsetrue"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects an arguments object without its own @@iterator", async () => {
+      expect(
+        (await checkModel(getSource("21falsetrue|true|0|0,1|truefalsetrue"))).failure?.message,
+      ).toContain("21falsetrue|true|1|0,1|truefalsetrue");
+    });
+  });
 });

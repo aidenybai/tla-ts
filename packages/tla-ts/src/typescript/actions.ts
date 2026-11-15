@@ -5767,12 +5767,21 @@ export const allocateArguments = (
     mapped !== undefined
       ? useJavaScript(
           "MappedArgumentsObject",
-          [list, translateFunctionValue(mapped, context), number(getParameters(callee).length)],
+          [
+            list,
+            translateFunctionValue(mapped, context),
+            number(getParameters(callee).length),
+            translateBuiltInValue("Array.prototype.values", node, context),
+          ],
           context,
         )
       : useJavaScript(
           "ArgumentsObject",
-          [list, translateBuiltInValue("get Function.prototype.arguments", node, context)],
+          [
+            list,
+            translateBuiltInValue("get Function.prototype.arguments", node, context),
+            translateBuiltInValue("Array.prototype.values", node, context),
+          ],
           context,
         );
   return {
