@@ -24211,9 +24211,59 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
     expect(() =>
       compile(
-        `const object = {};\nconst list = Object.freeze([1, 2]);\nif (list[0] !== 1) throw new Error("missed");`,
+        `const object = {};\nconst size = Object.freeze([1, 2]).length;\nif (size !== 2) throw new Error("missed");`,
       ),
     ).toThrow("Unsupported call: Object.freeze");
+  });
+
+  describe("holds the array literal that a variable takes from freeze, seal, or preventExtensions", () => {
+    const getSource = (expected: string) => `
+      const frozen = Object.freeze([2, 0, 1]);
+      const sealed = Object.seal([1]);
+      const fixed = Object.preventExtensions([1, 2]);
+      const thrown = (run: () => unknown) => {
+        try {
+          run();
+          return "none";
+        } catch (error) {
+          return error instanceof TypeError ? "TypeError" : "other";
+        }
+      };
+      const result = [
+        Object.isFrozen(frozen),
+        Object.isSealed(sealed),
+        Object.isFrozen(sealed),
+        Object.isExtensible(fixed),
+        frozen.toSorted().join(""),
+        frozen.with(0, 9).join(""),
+        frozen.length,
+        thrown(() => sealed.pop()),
+        frozen.join(""),
+      ];
+      if (result.join(",") !== "${expected}") throw new Error(result.join(","));
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("true,true,false,false,012,901,3,TypeError,201"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects the expectation that pop of a sealed array throws nothing", async () => {
+      expect(
+        (await checkModel(getSource("true,true,false,false,012,901,3,none,201"))).failure?.message,
+      ).toContain("true,true,false,false,012,901,3,TypeError,201");
+    });
+
+    it("stops where the script reads the array as a list", () => {
+      expect(() =>
+        compile(`
+          const frozen = Object.freeze([2, 0, 1]);
+          const first = (list: readonly number[]) => list[0];
+          if (first(frozen) !== 2) throw new Error("first");
+        `),
+      ).toThrow("Use an array that tla-ts holds as an object only through its properties");
+    });
   });
 
   it("compares the arrays that rest elements make by identity", async () => {

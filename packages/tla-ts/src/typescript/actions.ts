@@ -11098,6 +11098,8 @@ const isStatementResult = (node: ts.CallExpression, path: Path, context: Context
       (isReflectChange(node) ||
         isReflectSet(node) ||
         isHeapType(context.checker.getTypeAtLocation(node), context) ||
+        // An array that the heap holds, which a variable that it holds takes.
+        context.heapCollections.has(node.parent) ||
         // A change of an object gives the object, though TypeScript types what it gives as any.
         (node.arguments.length > 0 &&
           isHeapType(context.checker.getTypeAtLocation(node.arguments[0]), context)))) ||

@@ -5125,6 +5125,22 @@ export const findHeapArrays = (
       arrays.add(initializer);
       arrays.add(declaration);
     }
+    // So is the array literal that freeze, seal, or preventExtensions gives back, which the
+    // script must read only as an object.
+    const changedLiteral =
+      initializer !== undefined && isInPlaceChange(initializer, context)
+        ? initializer.arguments[0]
+        : undefined;
+    if (declaration !== undefined && changedLiteral !== undefined && arrays.has(changedLiteral)) {
+      const misused = reads.find((use) => !isArrayObjectUse(use, context));
+      if (misused !== undefined) {
+        throw new TlaTypeScriptError(
+          "Use an array that tla-ts holds as an object only through its properties",
+          misused,
+        );
+      }
+      arrays.add(declaration);
+    }
   });
   changed.forEach((node) => arrays.add(node));
   // The array that concat makes from an array that the heap holds and that may have holes, as a
@@ -5417,14 +5433,17 @@ const isQuietNew = (node: ts.Expression, context: Context): boolean => {
   );
 };
 
-// freeze, seal, or preventExtensions of what a quiet new makes, which nothing else can reach, so
-// that the statement changes nothing that anything reads.
-export const isUnreachableChange = (node: ts.Node, context: Context) =>
+// freeze, seal, or preventExtensions, which gives back the object it changes.
+export const isInPlaceChange = (node: ts.Node, context: Context): node is MethodCall =>
   isMethodCall(node) &&
   getBuiltIn(node.expression.expression, context) === "Object" &&
   ["freeze", "seal", "preventExtensions"].includes(node.expression.name.text) &&
-  node.arguments.length === 1 &&
-  isQuietNew(node.arguments[0], context);
+  node.arguments.length === 1;
+
+// freeze, seal, or preventExtensions of what a quiet new makes, which nothing else can reach, so
+// that the statement changes nothing that anything reads.
+export const isUnreachableChange = (node: ts.Node, context: Context) =>
+  isInPlaceChange(node, context) && isQuietNew(node.arguments[0], context);
 
 // Reflect.construct of a function with an empty body, without arguments, only checks that its
 // target and its newTarget are constructors, as harness/isConstructor.js uses it.
