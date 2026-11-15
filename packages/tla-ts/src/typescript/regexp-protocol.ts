@@ -224,16 +224,17 @@ const regExpExec = (
   );
 
 // The symbols that a protocol call may change: the heap, and what the functions it may call change,
-// which a join or a loop carries.
-const getProtocolChanged = (site: ts.Node, path: Path, context: Context) => [
-  ...new Set([
-    ...getChanged(site, path, context),
-    ...[...getExecMethods(site, context), ...getConversionFunctions(site, context)].flatMap(
-      (called) => getChanged(called, path, context),
-    ),
-    ...[...path.mutable].filter((symbol) => symbol === context.heap),
-  ]),
-];
+// which a join or a loop carries, once their declarations run.
+const getProtocolChanged = (site: ts.Node, path: Path, context: Context) =>
+  [
+    ...new Set([
+      ...getChanged(site, path, context),
+      ...[...getExecMethods(site, context), ...getConversionFunctions(site, context)].flatMap(
+        (called) => getChanged(called, path, context),
+      ),
+      ...[...path.mutable].filter((symbol) => symbol === context.heap),
+    ]),
+  ].filter((symbol) => !path.scope.uninitialized.has(symbol));
 
 // Joins the branches of a protocol's step, carrying what the protocol may change.
 const joinProtocol = (
@@ -512,12 +513,28 @@ export const runRegExpProtocolCall = (
             : translateExpression(argument, evaluated.scope, context),
           context,
           (given, value) =>
-            ifThenElse(
-              useJavaScript("IsObjectIn", [getHeap(given.scope, site, context), receiver], context),
-              toText(site, value, given, context, frame, (converted, text) =>
-                call.protocol(site, receiver, text, converted, context, frame, continueWith),
-              ),
-              throwTypeError(given, site, context, frame),
+            // Runs once as a loop does, so that the statements after the call follow each of its
+            // throws once.
+            loopStates(
+              site,
+              tuple([]),
+              getProtocolChanged(site, given, context),
+              given,
+              context,
+              frame,
+              (current, _state, inner, _again, end) =>
+                ifThenElse(
+                  useJavaScript(
+                    "IsObjectIn",
+                    [getHeap(current.scope, site, context), receiver],
+                    context,
+                  ),
+                  toText(site, value, current, context, inner, (converted, text) =>
+                    call.protocol(site, receiver, text, converted, context, inner, end),
+                  ),
+                  throwTypeError(current, site, context, inner),
+                ),
+              continueWith,
             ),
         ),
     ),
