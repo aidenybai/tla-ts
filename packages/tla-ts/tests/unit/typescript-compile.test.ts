@@ -36237,4 +36237,34 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("searches a typed array for a primitive of another type", () => {
+    const getSource = (expected: string) => `
+      const sample = new Int8Array([0, 1, 2]);
+      const found = [
+        // @ts-ignore
+        sample.includes(undefined),
+        // @ts-ignore
+        sample.includes("1"),
+        // @ts-ignore
+        sample.indexOf("1"),
+        // @ts-ignore
+        sample.lastIndexOf(null),
+        // @ts-ignore
+        sample.includes(false),
+        sample.includes(1),
+      ];
+      if (found.join() !== "${expected}") throw new Error(found.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("false,false,-1,-1,false,true"))).failure).toBeUndefined();
+    });
+
+    it("rejects a wrong expectation", async () => {
+      expect(
+        (await checkModel(getSource("false,true,-1,-1,false,true"))).failure?.message,
+      ).toContain("false,false,-1");
+    });
+  });
 });

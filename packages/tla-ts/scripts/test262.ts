@@ -2128,6 +2128,10 @@ const ignoreSoundErrors = () => {
         value.getStart() === diagnostic.start &&
         value.getEnd() === (diagnostic.start ?? 0) + (diagnostic.length ?? 0),
     );
+    // A typed array's search compares a value of another type by SameValueZero or ===, which no
+    // element equals.
+    const isSearched =
+      kind === "TypedArray" && SEARCHING_METHODS.has(call.expression.name.text) && position === 0;
     // A DataView's method converts littleEndian, its last argument, with ToBoolean, which runs
     // nothing, whatever its type.
     const isLittleEndian =
@@ -2136,8 +2140,7 @@ const ignoreSoundErrors = () => {
       position === (call.expression.name.text.startsWith("get") ? 1 : 2);
     return (
       isLittleEndian ||
-      (positions !== undefined &&
-        positions.includes(position) &&
+      ((isSearched || (positions !== undefined && positions.includes(position))) &&
         isEveryType(
           call.arguments[position],
           ts.TypeFlags.NumberLike |
