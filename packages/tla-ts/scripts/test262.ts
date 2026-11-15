@@ -2261,8 +2261,9 @@ const ignoreSoundErrors = () => {
       isGlobalIterator(heritage.types[0].expression, checker)
     );
   };
-  // A call that spreads arguments into a function expression without parameters, directly or through
-  // apply. The function reads them only through its arguments object, which takes any values.
+  // A call that spreads arguments into a function expression or a superclass's constructor without
+  // parameters, directly or through apply. It reads them only through its arguments object, which
+  // takes any values.
   const isUntypedSpreadCall = (node: ts.Node) => {
     const call = ts.findAncestor(node, ts.isCallExpression);
     if (call === undefined || node.getStart() < call.arguments.pos) return false;
@@ -2278,9 +2279,15 @@ const ignoreSoundErrors = () => {
       : ts.isCallExpression(spread)
         ? spread.arguments
         : [];
+    // super calls the constructor of the class that the class extends.
+    const declaration =
+      called.kind === ts.SyntaxKind.SuperKeyword
+        ? checker.getResolvedSignature(call)?.declaration
+        : called;
     return (
-      ts.isFunctionExpression(called) &&
-      called.parameters.length === 0 &&
+      declaration !== undefined &&
+      (ts.isFunctionExpression(declaration) || ts.isConstructorDeclaration(declaration)) &&
+      declaration.parameters.length === 0 &&
       elements.some(ts.isSpreadElement)
     );
   };
