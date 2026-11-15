@@ -906,8 +906,6 @@ const getRecordShapes = (resolved: RecType) =>
 
 const isScalar = (value: Value) => typeof value !== "object" || value.kind === "ModelValue";
 
-const isScalarType = (type: Type) => ["Int", "Str", "Bool"].includes(resolveType(type).kind);
-
 // Generates code that fingerprints a state's plains in the order given, as TLC fingerprints the
 // values they stand for, into words as its low and high words. Scalars it knows, such as atoms and
 // field names, extend by their extensions.
@@ -939,15 +937,11 @@ const createStateFingerprinter = (types: Type[], order: number[], plains: Plains
     if (resolved.kind === "Seq") {
       return `{ const ${name} = ${plain}; ${code.function(`${name}.length`)} for (let i${name} = 0; i${name} < ${name}.length; i${name}++) { ${code.integer(`(i${name} + 1)`)} ${getCode(resolved.element, `${name}[i${name}]`)} } }`;
     }
-    // Sets of scalars, and the keys of functions, are kept sorted in TLC's order.
-    if (resolved.kind === "Set" && isScalarType(resolved.element)) {
+    // Sets, and the keys of functions, are kept sorted in TLC's order.
+    if (resolved.kind === "Set") {
       return `{ const ${name} = ${plain}; ${code.set(`${name}.length`)} for (let i${name} = 0; i${name} < ${name}.length; i${name}++) { ${getCode(resolved.element, `${name}[i${name}]`)} } }`;
     }
-    if (
-      resolved.kind === "Map" &&
-      isScalarType(resolved.keys.element) &&
-      !isMask(resolved.keys, plains)
-    ) {
+    if (resolved.kind === "Map" && !isMask(resolved.keys, plains)) {
       return `{ const ${name} = ${plain}; const k${name} = ${name}[0]; const v${name} = ${name}[1]; ${code.function(`k${name}.length`)} for (let i${name} = 0; i${name} < k${name}.length; i${name}++) { ${getCode(resolved.keys.element, `k${name}[i${name}]`)} ${getCode(resolved.values.element, `v${name}[i${name}]`)} } }`;
     }
     if (resolved.kind === "Tup") {
@@ -979,7 +973,7 @@ const createStateFingerprinter = (types: Type[], order: number[], plains: Plains
           : `switch (${name}[0]) { ${cases.map((item, tag) => `case ${tag}: ${item} break;`).join(" ")} }`;
       return `{ const ${name} = ${plain}; ${body} }`;
     }
-    // A set of other elements, or a function with keys, is sorted as its value is built.
+    // Any other function is fingerprinted as the value it stands for, which sorts its domain.
     const read = createValueReader(type, plains);
     const fallback = fallbacks.push((item) => extendFingerprint(words, read(item))) - 1;
     return `W[0] = l; W[1] = h; X[${fallback}](${plain}); l = W[0]; h = W[1];`;
