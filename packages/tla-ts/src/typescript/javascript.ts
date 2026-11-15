@@ -3162,13 +3162,17 @@ RegExpSplitFrom(regexp, text, p, q) ==
                   \\o [position \\in 1..regexp.captures |-> RegExpCapture(text, found, position)]
                   \\o RegExpSplitFrom(regexp, text, found.end, found.end)
 
-\\* The pieces that RegExp.prototype[@@split] gives, at most ToUint32 of a limit that is undefined or
-\\* a number, where -1 is no limit, as ToUint32 of a negative integer is past any length.
+\\* The most pieces that RegExp.prototype[@@split] gives, ToUint32 of a limit that is undefined or a
+\\* number, where -1 is no limit, as ToUint32 of a negative integer is past any length.
+RegExpSplitCount(limit) ==
+  CASE limit = Undefined -> -1
+    [] limit \\in {NaN, Infinity, NegativeInfinity, NegativeZero} -> 0
+    [] IntegerOf(limit) < 0 -> -1
+    [] OTHER -> IntegerOf(limit)
+
+\\* The pieces that RegExp.prototype[@@split] gives, at most the count that its limit gives.
 LOCAL RegExpPieces(regexp, text, limit) ==
-  LET count == CASE limit = Undefined -> -1
-                 [] limit \\in {NaN, Infinity, NegativeInfinity, NegativeZero} -> 0
-                 [] IntegerOf(limit) < 0 -> -1
-                 [] OTHER -> IntegerOf(limit)
+  LET count == RegExpSplitCount(limit)
       pieces == CASE count = 0 -> <<>>
                   [] text = "" -> IF RegExpAt(regexp, text, 0).end # -1 THEN <<>> ELSE <<text>>
                   [] OTHER -> RegExpSplitFrom(regexp, text, 0, 0)
@@ -4147,6 +4151,39 @@ RegExpFlagsValue(heap, ref) ==
       ELSE Get(heap, ref, "flags")
 
 HasFlag(flags, flag) == flag \\in CharactersOf(flags)
+
+\\* The heap once RegExp.prototype[@@split] constructs its splitter through RegExp, of a regexp and
+\\* flags, which tla-ts makes where the flags differ from the regexp's only in d, g, and y, which
+\\* leave its pattern as it compiled.
+RegExpSplitterIn(heap, ref, flags, prototype) ==
+  LET regexp == heap.objects[ref[Ref]].regexp
+      names == "dgimsuvy"
+      kept(text) == CharactersOf(text) \\ {"d", "g", "y"}
+      RECURSIVE Ordered(_)
+      Ordered(position) ==
+        CASE position > Len(names) -> ""
+          [] SubSeq(names, position, position) \\in CharactersOf(flags) ->
+               SubSeq(names, position, position) \\o Ordered(position + 1)
+          [] OTHER -> Ordered(position + 1)
+  IN  IF /\\ IsRegExp(heap, ref)
+         /\\ CharactersOf(flags) \\subseteq CharactersOf(names)
+         /\\ Len(flags) = Cardinality(CharactersOf(flags))
+         /\\ kept(flags) = kept(regexp.flags)
+      THEN Allocate(heap, RegExpObject(prototype, [regexp EXCEPT
+                                                    !.flags = Ordered(1),
+                                                    !.hasIndices = "d" \\in CharactersOf(flags),
+                                                    !.global = "g" \\in CharactersOf(flags),
+                                                    !.sticky = TRUE]))
+      ELSE Assert(FALSE, "tla-ts can't make a regexp of other flags than those of the regexp it copies")
+
+\\* The pieces once RegExp.prototype[@@split] adds the captures of a match after its own: each
+\\* element of exec's result past the first, as many as its length tells, up to the count.
+RegExpSplitCaptures(heap, result, pieces, count) ==
+  LET length == ToLength(Get(heap, result, "length"))
+      captures == IF length > 1 THEN length - 1 ELSE 0
+      room == count - Len(pieces)
+      taken == IF count # -1 /\\ room < captures THEN room ELSE captures
+  IN  pieces \\o [position \\in 1..taken |-> Get(heap, result, ToString(position))]
 
 \\* AdvanceStringIndex, which steps past a surrogate pair where the regexp reads code points.
 AdvanceStringIndex(text, index, isUnicode) ==

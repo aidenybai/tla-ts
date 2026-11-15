@@ -767,6 +767,7 @@ export const translateBuiltInValue = (
     | "DisposableStack.prototype.move"
     | "AsyncDisposableStack.prototype.disposeAsync"
     | "AsyncDisposableStack.prototype.move"
+    | "RegExp"
     | "RegExp.prototype"
     | `RegExp.prototype.${string}`
     | "ArrayBuffer"

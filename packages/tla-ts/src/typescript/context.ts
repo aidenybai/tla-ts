@@ -3173,6 +3173,21 @@ export const isHeapFunction = (node: ts.Node, context: Context): node is HeapFun
     );
   };
   const sourceFile = node.getSourceFile();
+  // A species constructor that a script writes, which a built-in method constructs.
+  const written = node.parent;
+  if (
+    ts.isBinaryExpression(written) &&
+    written.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+    written.right === node &&
+    ts.isElementAccessExpression(written.left) &&
+    ts.isPropertyAccessExpression(written.left.argumentExpression) &&
+    getBuiltIn(written.left.argumentExpression.expression, context) === "Symbol" &&
+    written.left.argumentExpression.name.text === "species"
+  ) {
+    const isHeap = isPlain(node) && node.body !== undefined && isOnce(written);
+    heapFunctions.set(node, isHeap);
+    return isHeap;
+  }
   // A function that a new constructs where the script writes it, which the new makes once. A body
   // that runs no code takes only arguments and defaults that can't throw or change anything.
   const constructed = getInPlaceNew(node);

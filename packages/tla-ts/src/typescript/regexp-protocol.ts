@@ -9,14 +9,26 @@ import { getHeap } from "./heap";
 import { getBuiltIn, getBuiltInKey, translateBuiltInValue } from "./intrinsics";
 import { useJavaScript } from "./javascript";
 import { bind, callValue, getMethods, loopStates, withHeap } from "./protocols";
-import { apply, boolean, field, identifier, ifExpression, number, string, tuple } from "./tla";
+import {
+  apply,
+  boolean,
+  field,
+  identifier,
+  ifExpression,
+  index,
+  number,
+  string,
+  tuple,
+} from "./tla";
 
-// A method's steps, from the receiver and the string that it converts its argument to.
+// A method's steps, from the receiver, the string that it converts its first argument to, and the
+// values of the others.
 interface Protocol {
   (
     site: ts.Node,
     receiver: Expression,
     text: Expression,
+    rest: readonly Expression[],
     path: Path,
     context: Context,
     frame: Frame,
@@ -54,7 +66,8 @@ export const getRegExpProtocolCall = (
       owner.name.text === "prototype" &&
       getBuiltIn(owner.expression, context) === "RegExp"
     : context.checker.getTypeAtLocation(owner).getSymbol()?.name === "RegExp" &&
-      getExecMethods(node, context).length > 0;
+      (getExecMethods(node, context).length > 0 ||
+        (method === "split" && getSpeciesMethods(node, context).length > 0));
   return isTaken && receiver !== undefined && !node.arguments.some(ts.isSpreadElement)
     ? {
         method,
@@ -65,6 +78,8 @@ export const getRegExpProtocolCall = (
       }
     : undefined;
 };
+
+const stop = (message: string) => leaf(apply("Assert", [boolean(false), string(message)]));
 
 // ToString of a value, which runs a script's toString or Symbol.toPrimitive on an object, and
 // throws a TypeError on a symbol.
@@ -162,12 +177,7 @@ const regExpExec = (
               context,
             ),
             throwTypeError(current, site, context, frame),
-            leaf(
-              apply("Assert", [
-                boolean(false),
-                string("tla-ts can't run RegExp.prototype.exec on this receiver"),
-              ]),
-            ),
+            stop("tla-ts can't run RegExp.prototype.exec on this receiver"),
           ),
         );
       return bind(
@@ -193,13 +203,7 @@ const regExpExec = (
                 read,
                 context,
                 frame,
-                () =>
-                  leaf(
-                    apply("Assert", [
-                      boolean(false),
-                      string("tla-ts can't tell which function this call runs"),
-                    ]),
-                  ),
+                () => stop("tla-ts can't tell which function this call runs"),
                 (after, result) =>
                   bind(after, "result", result, context, (bound, held) =>
                     ifThenElse(
@@ -229,9 +233,11 @@ const getProtocolChanged = (site: ts.Node, path: Path, context: Context) =>
   [
     ...new Set([
       ...getChanged(site, path, context),
-      ...[...getExecMethods(site, context), ...getConversionFunctions(site, context)].flatMap(
-        (called) => getChanged(called, path, context),
-      ),
+      ...[
+        ...getExecMethods(site, context),
+        ...getSpeciesMethods(site, context),
+        ...getConversionFunctions(site, context),
+      ].flatMap((called) => getChanged(called, path, context)),
       ...[...path.mutable].filter((symbol) => symbol === context.heap),
     ]),
   ].filter((symbol) => !path.scope.uninitialized.has(symbol));
@@ -259,6 +265,7 @@ const search = (
   site: ts.Node,
   receiver: Expression,
   text: Expression,
+  _rest: readonly Expression[],
   path: Path,
   context: Context,
   frame: Frame,
@@ -344,6 +351,7 @@ const match = (
   site: ts.Node,
   receiver: Expression,
   text: Expression,
+  _rest: readonly Expression[],
   path: Path,
   context: Context,
   frame: Frame,
@@ -368,11 +376,11 @@ const match = (
             reset,
             context,
             frame,
-            (current, matches, inner, again, stop) =>
+            (current, matches, inner, again, end) =>
               regExpExec(site, receiver, text, current, context, inner, (ran, result) =>
                 ifThenElse(
                   apply("=", [result, identifier("Null")]),
-                  stop(ran, matches),
+                  end(ran, matches),
                   bind(
                     ran,
                     "matched",
@@ -465,10 +473,408 @@ const match = (
     ),
   );
 
+// The species constructors that a script writes, which @@split may construct.
+const getSpeciesMethods = (site: ts.Node, context: Context) =>
+  getMethods(site, "@@species", context).filter(
+    (candidate) => ts.isFunctionExpression(candidate) || ts.isFunctionDeclaration(candidate),
+  );
+
+// SpeciesConstructor(R, %RegExp%): R's constructor's @@species, or RegExp where either is
+// undefined, and a TypeError where the constructor isn't an object or the species isn't a
+// constructor.
+const speciesConstructor = (
+  site: ts.Node,
+  receiver: Expression,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path, constructor: Expression) => Formula,
+) => {
+  const regExp = translateBuiltInValue("RegExp", site, context);
+  return bind(
+    path,
+    "constructor",
+    useJavaScript(
+      "Get",
+      [getHeap(path.scope, site, context), receiver, string("constructor")],
+      context,
+    ),
+    context,
+    (read, constructor) =>
+      joinProtocol(
+        site,
+        read,
+        context,
+        (after, species) => continueWith(after, species ?? regExp),
+        (next) =>
+          ifThenElse(
+            apply("=", [constructor, getUndefined(context)]),
+            next(read, regExp),
+            ifThenElse(
+              useJavaScript(
+                "IsObjectIn",
+                [getHeap(read.scope, site, context), constructor],
+                context,
+              ),
+              bind(
+                read,
+                "species",
+                useJavaScript(
+                  "Get",
+                  [
+                    getHeap(read.scope, site, context),
+                    constructor,
+                    useJavaScript("WellKnownSymbol", [string("species")], context),
+                  ],
+                  context,
+                ),
+                context,
+                (got, species) =>
+                  ifThenElse(
+                    apply("\\/", [
+                      apply("=", [species, getUndefined(context)]),
+                      apply("=", [species, identifier("Null")]),
+                    ]),
+                    next(got, regExp),
+                    ifThenElse(
+                      useJavaScript(
+                        "IsConstructor",
+                        [getHeap(got.scope, site, context), species],
+                        context,
+                      ),
+                      next(got, species),
+                      throwTypeError(got, site, context, frame),
+                    ),
+                  ),
+              ),
+              throwTypeError(read, site, context, frame),
+            ),
+          ),
+      ),
+  );
+};
+
+// Construct(C, << R, flags >>): RegExp copies the regexp with the flags, and a function that the
+// script writes runs with a new object of C's prototype as this, giving it, or the object that it
+// returns.
+const construct = (
+  site: ts.Node,
+  constructor: Expression,
+  receiver: Expression,
+  flags: Expression,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path, splitter: Expression) => Formula,
+) =>
+  joinProtocol(
+    site,
+    path,
+    context,
+    (after, splitter) => continueWith(after, splitter ?? getUndefined(context)),
+    (next) => {
+      const heap = getHeap(path.scope, site, context);
+      const copied = bind(
+        path,
+        "heap",
+        useJavaScript(
+          "RegExpSplitterIn",
+          [heap, receiver, flags, translateBuiltInValue("RegExp.prototype", site, context)],
+          context,
+        ),
+        context,
+        (bound, made) =>
+          next(withHeap(bound, made, context), useJavaScript("Allocated", [made], context)),
+      );
+      const prototype = useJavaScript(
+        "PrototypeFromConstructor",
+        [heap, constructor, translateBuiltInValue("Object.prototype", site, context)],
+        context,
+      );
+      const called = bind(
+        path,
+        "heap",
+        useJavaScript(
+          "Allocate",
+          [heap, useJavaScript("WithPrototype", [identifier("EmptyObject"), prototype], context)],
+          context,
+        ),
+        context,
+        (bound, made) => {
+          const allocated = withHeap(bound, made, context);
+          return bind(
+            allocated,
+            "instance",
+            useJavaScript("Allocated", [made], context),
+            context,
+            (created, instance) =>
+              callValue(
+                site,
+                getSpeciesMethods(site, context),
+                constructor,
+                instance,
+                [receiver, flags],
+                created,
+                context,
+                frame,
+                () => stop("tla-ts can't tell which function this call runs"),
+                (after, result) =>
+                  bind(after, "result", result, context, (returned, held) =>
+                    ifThenElse(
+                      useJavaScript(
+                        "IsObjectIn",
+                        [getHeap(returned.scope, site, context), held],
+                        context,
+                      ),
+                      next(returned, held),
+                      next(returned, instance),
+                    ),
+                  ),
+                constructor,
+              ),
+          );
+        },
+      );
+      return ifThenElse(
+        apply("=", [constructor, translateBuiltInValue("RegExp", site, context)]),
+        copied,
+        called,
+      );
+    },
+  );
+
+// RegExp.prototype[@@split](string, limit): it constructs a sticky splitter through the species
+// constructor, and from each index execs it there, cutting the text where a match ends past the
+// last cut and adding the match's captures, up to the limit's count of pieces.
+const split = (
+  site: ts.Node,
+  receiver: Expression,
+  text: Expression,
+  rest: readonly Expression[],
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path, value: Expression) => Formula,
+) =>
+  joinProtocol(
+    site,
+    path,
+    context,
+    (after, value) => continueWith(after, value ?? getUndefined(context)),
+    (next) =>
+      speciesConstructor(site, receiver, path, context, frame, (found, constructor) =>
+        getFlags(site, receiver, found, context, frame, (read, flags) => {
+          const isUnicode = apply("\\/", [
+            hasFlag(flags, "u", context),
+            hasFlag(flags, "v", context),
+          ]);
+          const sticky = ifExpression(
+            hasFlag(flags, "y", context),
+            flags,
+            apply("\\o", [flags, string("y")]),
+          );
+          return construct(
+            site,
+            constructor,
+            receiver,
+            sticky,
+            read,
+            context,
+            frame,
+            (made, splitter) => {
+              const limit = rest.at(0) ?? getUndefined(context);
+              const length = apply("Len", [text]);
+              const empty = regExpExec(site, splitter, text, made, context, frame, (ran, result) =>
+                next(
+                  ran,
+                  ifExpression(apply("=", [result, identifier("Null")]), tuple([text]), tuple([])),
+                ),
+              );
+              const counted = bind(
+                made,
+                "count",
+                useJavaScript("RegExpSplitCount", [limit], context),
+                context,
+                (bound, count) =>
+                  ifThenElse(
+                    apply("=", [count, number(0)]),
+                    next(bound, tuple([])),
+                    ifThenElse(
+                      apply("=", [text, string("")]),
+                      empty,
+                      loopStates(
+                        site,
+                        tuple([number(0), number(0), tuple([])]),
+                        getProtocolChanged(site, bound, context),
+                        bound,
+                        context,
+                        frame,
+                        (current, state, inner, again, end) => {
+                          const start = index(state, [number(1)]);
+                          const position = index(state, [number(2)]);
+                          const pieces = index(state, [number(3)]);
+                          const advance = (next: Path) =>
+                            again(
+                              next,
+                              tuple([
+                                start,
+                                useJavaScript(
+                                  "AdvanceStringIndex",
+                                  [text, position, isUnicode],
+                                  context,
+                                ),
+                                pieces,
+                              ]),
+                            );
+                          return ifThenElse(
+                            apply(">=", [position, length]),
+                            end(
+                              current,
+                              apply("Append", [
+                                pieces,
+                                apply("SubSeq", [text, apply("+", [start, number(1)]), length]),
+                              ]),
+                            ),
+                            setLastIndex(site, splitter, position, current, context, inner, (set) =>
+                              regExpExec(site, splitter, text, set, context, inner, (ran, result) =>
+                                ifThenElse(
+                                  apply("=", [result, identifier("Null")]),
+                                  advance(ran),
+                                  bind(
+                                    ran,
+                                    "lastIndex",
+                                    useJavaScript(
+                                      "ToLength",
+                                      [
+                                        useJavaScript(
+                                          "Get",
+                                          [
+                                            getHeap(ran.scope, site, context),
+                                            splitter,
+                                            string("lastIndex"),
+                                          ],
+                                          context,
+                                        ),
+                                      ],
+                                      context,
+                                    ),
+                                    context,
+                                    (indexed, lastIndex) =>
+                                      bind(
+                                        indexed,
+                                        "matchEnd",
+                                        ifExpression(
+                                          apply(">", [lastIndex, length]),
+                                          length,
+                                          lastIndex,
+                                        ),
+                                        context,
+                                        (ended, matchEnd) =>
+                                          ifThenElse(
+                                            apply("=", [matchEnd, start]),
+                                            advance(ended),
+                                            bind(
+                                              ended,
+                                              "cut",
+                                              apply("Append", [
+                                                pieces,
+                                                apply("SubSeq", [
+                                                  text,
+                                                  apply("+", [start, number(1)]),
+                                                  position,
+                                                ]),
+                                              ]),
+                                              context,
+                                              (cutting, cut) =>
+                                                ifThenElse(
+                                                  apply("=", [apply("Len", [cut]), count]),
+                                                  end(cutting, cut),
+                                                  bind(
+                                                    cutting,
+                                                    "captured",
+                                                    useJavaScript(
+                                                      "RegExpSplitCaptures",
+                                                      [
+                                                        getHeap(cutting.scope, site, context),
+                                                        result,
+                                                        cut,
+                                                        count,
+                                                      ],
+                                                      context,
+                                                    ),
+                                                    context,
+                                                    (capturing, captured) =>
+                                                      ifThenElse(
+                                                        apply("=", [
+                                                          apply("Len", [captured]),
+                                                          count,
+                                                        ]),
+                                                        end(capturing, captured),
+                                                        again(
+                                                          capturing,
+                                                          tuple([matchEnd, matchEnd, captured]),
+                                                        ),
+                                                      ),
+                                                  ),
+                                                ),
+                                            ),
+                                          ),
+                                      ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          );
+                        },
+                        next,
+                      ),
+                    ),
+                  ),
+              );
+              return ifThenElse(
+                apply("\\/", [
+                  apply("=", [limit, getUndefined(context)]),
+                  apply("=", [useJavaScript("TypeOf", [limit], context), string("number")]),
+                ]),
+                counted,
+                ifThenElse(
+                  useJavaScript("IsSymbol", [limit], context),
+                  throwTypeError(made, site, context, frame),
+                  stop("tla-ts can't convert this limit to a number"),
+                ),
+              );
+            },
+          );
+        }),
+      ),
+  );
+
 const PROTOCOLS = new Map<string, Protocol>([
   ["search", search],
   ["match", match],
+  ["split", split],
 ]);
+
+// The values of a call's arguments, in order, the first undefined where the call passes none.
+const bindArguments = (
+  values: readonly ts.Expression[],
+  path: Path,
+  context: Context,
+  bound: readonly Expression[],
+  continueWith: (path: Path, values: readonly Expression[]) => Formula,
+): Formula => {
+  const value = values.at(bound.length);
+  if (value === undefined) {
+    return continueWith(path, bound.length === 0 ? [getUndefined(context)] : bound);
+  }
+  return bind(
+    path,
+    "argument",
+    translateExpression(value, path.scope, context),
+    context,
+    (next, held) => bindArguments(values, next, context, [...bound, held], continueWith),
+  );
+};
 
 // Runs a regexp's method under a well-known symbol as its steps in the spec do, where the call reads
 // the built-in method, on a receiver that must be an object, with the string that ToString makes
@@ -482,7 +888,6 @@ export const runRegExpProtocolCall = (
   continueWith: (path: Path, value?: Expression) => Formula,
 ) => {
   context.builtIns.add("RegExp.prototype");
-  const argument = call.values.at(0);
   const heap = getHeap(path.scope, site, context);
   const read = useJavaScript(
     "Get",
@@ -505,41 +910,41 @@ export const runRegExpProtocolCall = (
       translateExpression(call.receiver, path.scope, context),
       context,
       (evaluated, receiver) =>
-        bind(
-          evaluated,
-          "argument",
-          argument === undefined
-            ? getUndefined(context)
-            : translateExpression(argument, evaluated.scope, context),
-          context,
-          (given, value) =>
-            // Runs once as a loop does, so that the statements after the call follow each of its
-            // throws once.
-            loopStates(
-              site,
-              tuple([]),
-              getProtocolChanged(site, given, context),
-              given,
-              context,
-              frame,
-              (current, _state, inner, _again, end) =>
-                ifThenElse(
-                  useJavaScript(
-                    "IsObjectIn",
-                    [getHeap(current.scope, site, context), receiver],
-                    context,
-                  ),
-                  toText(site, value, current, context, inner, (converted, text) =>
-                    call.protocol(site, receiver, text, converted, context, inner, end),
-                  ),
-                  throwTypeError(current, site, context, inner),
+        bindArguments(call.values, evaluated, context, [], (given, values) =>
+          // Runs once as a loop does, so that the statements after the call follow each of its
+          // throws once.
+          loopStates(
+            site,
+            tuple([]),
+            getProtocolChanged(site, given, context),
+            given,
+            context,
+            frame,
+            (current, _state, inner, _again, end) =>
+              ifThenElse(
+                useJavaScript(
+                  "IsObjectIn",
+                  [getHeap(current.scope, site, context), receiver],
+                  context,
                 ),
-              continueWith,
-            ),
+                toText(site, values[0], current, context, inner, (converted, text) =>
+                  call.protocol(
+                    site,
+                    receiver,
+                    text,
+                    values.slice(1),
+                    converted,
+                    context,
+                    inner,
+                    end,
+                  ),
+                ),
+                throwTypeError(current, site, context, inner),
+              ),
+            continueWith,
+          ),
         ),
     ),
-    leaf(
-      apply("Assert", [boolean(false), string("tla-ts can't tell which function this call runs")]),
-    ),
+    stop("tla-ts can't tell which function this call runs"),
   );
 };

@@ -31395,6 +31395,126 @@ describe("regular expressions", () => {
     expect((await checkModel(getSource("x..x.a.yx..x.a.y"))).failure).toBeUndefined();
     expect((await checkModel(getSource("x.x.a.yx.x.a.y"))).failure?.message).toContain("x..x.a.y");
   });
+
+  describe("runs Symbol.split as its steps, constructing the species that a script writes", () => {
+    const getSource = (expected: string) => `
+      const seen: string[] = [];
+      const obj = {
+        constructor: function () {},
+      };
+      const fakeRe = {
+        lastIndex: 0,
+        exec: function () {
+          fakeRe.lastIndex = 1;
+          return { length: 2, 0: "foo", 1: "bar", 2: "baz" };
+        },
+      };
+      let flagsArg: unknown = undefined;
+      let calls = 0;
+      // @ts-ignore
+      obj.constructor[Symbol.species] = function (_: unknown, flags: unknown) {
+        calls += 1;
+        flagsArg = flags;
+        return fakeRe;
+      };
+      const result = RegExp.prototype[Symbol.split].call(obj, "a");
+      seen.push(result.join("/"), String(result.length), String(flagsArg), String(calls));
+      const zero = RegExp.prototype[Symbol.split].call(obj, "", 0);
+      seen.push(String(zero.length), String(calls));
+      try {
+        // @ts-ignore
+        RegExp.prototype[Symbol.split].call(obj, "a", Symbol.split);
+      } catch (error) {
+        seen.push(error instanceof TypeError ? "type" : "other");
+      }
+      if (seen.join("|") !== "${expected}") throw new Error(seen.join("|"));
+    `;
+
+    it("agrees with Node on /bar/|3|undefinedy|1|0|2|type", async () => {
+      expect(
+        (await checkModel(getSource("/bar/|3|undefinedy|1|0|2|type"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects the expectation /bar/|3|undefinedy|1|0|1|type", async () => {
+      expect(
+        (await checkModel(getSource("/bar/|3|undefinedy|1|0|1|type"))).failure?.message,
+      ).toContain("|0|2|");
+    });
+  });
+
+  describe("splits through Symbol.split's species, RegExp, and the captures that a match adds", () => {
+    const getSource = (expected: string) => `
+      const seen: string[] = [];
+      const re = /x/iy;
+      let args: unknown[] = [];
+      const reConstructor = function () {};
+      // @ts-ignore
+      re.constructor = reConstructor;
+      // @ts-ignore
+      reConstructor[Symbol.species] = function (pattern: unknown, flags: unknown) {
+        args = [pattern === re, flags];
+        return /[db]/y;
+      };
+      const result = re[Symbol.split]("abcde");
+      seen.push(result.join(","), String(args[0]), String(args[1]));
+      const plain = /(-)/;
+      // @ts-ignore
+      plain.constructor = undefined;
+      seen.push(plain[Symbol.split]("a-b-c", 3).join(","), plain[Symbol.split]("a-b-c").join(","));
+      const thrower = /x/;
+      const throwerConstructor = function () {};
+      // @ts-ignore
+      thrower.constructor = throwerConstructor;
+      // @ts-ignore
+      throwerConstructor[Symbol.species] = function () {
+        throw new RangeError("x");
+      };
+      try {
+        thrower[Symbol.split]("a");
+      } catch (error) {
+        seen.push(error instanceof RangeError ? "range" : "other");
+      }
+      const empty = /a*?/;
+      // @ts-ignore
+      empty.constructor = undefined;
+      seen.push(empty[Symbol.split]("ab").join(","), empty[Symbol.split]("").length + "");
+      if (seen.join("|") !== "${expected}") throw new Error(seen.join("|"));
+    `;
+
+    it("agrees with Node on a,c,e|true|iy|a,-,b|a,-,b,-,c|range|a,b|0", async () => {
+      expect(
+        (await checkModel(getSource("a,c,e|true|iy|a,-,b|a,-,b,-,c|range|a,b|0"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects the expectation a,c,e|true|iy|a,b|a,-,b,-,c|range|a,b|0", async () => {
+      expect(
+        (await checkModel(getSource("a,c,e|true|iy|a,b|a,-,b,-,c|range|a,b|0"))).failure?.message,
+      ).toContain("iy|a,-,b|");
+    });
+  });
+
+  it("throws a TypeError where Symbol.split's species isn't a constructor or its constructor isn't an object", async () => {
+    const getSource = (expected: string) => `
+      const seen: string[] = [];
+      const arrowed = { constructor: function () {} };
+      // @ts-ignore
+      arrowed.constructor[Symbol.species] = () => /x/y;
+      const numbered = { constructor: 1 };
+      for (const receiver of [arrowed, numbered]) {
+        try {
+          RegExp.prototype[Symbol.split].call(receiver, "abc");
+          seen.push("none");
+        } catch (error) {
+          seen.push(error instanceof TypeError ? "type" : "other");
+        }
+      }
+      if (seen.join("|") !== "${expected}") throw new Error(seen.join("|"));
+    `;
+    expect((await checkModel(getSource("type|type"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("type|none"))).failure?.message).toContain("type|type");
+  });
 });
 
 describe("calls through values", () => {
