@@ -153,6 +153,7 @@ import {
   isSetOrMapType,
   REORDER_METHODS,
   getReorderedArray,
+  isUntold,
 } from "./types";
 
 const SHORT_CIRCUITS = new Set([
@@ -4436,20 +4437,6 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
   const checker = context.checker;
   const isAnyOrUnknown = (node: ts.Expression) =>
     (checker.getTypeAtLocation(node).flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;
-  // A value whose type doesn't tell what it is, such as any, unknown, object, or {}, which may be an
-  // array or a map.
-  const isUntold = (node: ts.Expression) =>
-    [checker.getTypeAtLocation(node)]
-      .flatMap((type) => (type.isUnion() ? type.types : [type]))
-      .some(
-        (member) =>
-          (member.flags &
-            (ts.TypeFlags.Any | ts.TypeFlags.Unknown | ts.TypeFlags.NonPrimitive)) !==
-            0 ||
-          ((member.flags & ts.TypeFlags.Object) !== 0 &&
-            member.getProperties().length === 0 &&
-            member.getCallSignatures().length === 0),
-      );
   // A read that tells as it runs what a value whose type doesn't tell is: of a property of a value
   // of type any or unknown, as a pattern reads it too, or by in, Array.isArray, getPrototypeOf, or a
   // method of Object that lists its keys.
@@ -4463,7 +4450,7 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
           (ts.isVariableDeclaration(parent) &&
             parent.initializer === node &&
             ts.isObjectBindingPattern(parent.name)))) ||
-      (isUntold(node) &&
+      (isUntold(node, checker) &&
         ((ts.isBinaryExpression(parent) &&
           parent.operatorToken.kind === ts.SyntaxKind.InKeyword &&
           parent.right === node) ||

@@ -44295,4 +44295,34 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("tests a key of an array or an object whose type doesn't tell what it is with in", () => {
+    const getSource = (expected: string) => `
+      const has = (value: any, key: string | number) => key in value;
+      const log = [
+        has([1, 2], 0),
+        has([1, 2], "1"),
+        has([1, 2], 2),
+        has([1, 2], "length"),
+        has([1, 2], "push"),
+        has({ a: 1 }, "a"),
+        has({ a: 1 }, "toString"),
+        has({ a: 1 }, "b"),
+      ].join(",");
+      if (log !== "${expected}") throw new Error(log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("true,true,false,true,true,true,true,false"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects an inherited key as missing", async () => {
+      expect(
+        (await checkModel(getSource("true,true,false,true,false,true,false,false"))).failure
+          ?.message,
+      ).toContain("true,true,false,true,true,true,true,false");
+    });
+  });
 });

@@ -2417,6 +2417,18 @@ GetAny(heap, value, key, isEveryMapHeld) ==
            [] OTHER -> GetFrom(heap, Ref :> "String.prototype", key, value)
     [] OTHER -> Assert(FALSE, "tla-ts can't read a property of this value")
 
+\\* Whether in finds a key in a value whose type doesn't tell what it is, where a sequence is an array
+\\* where the heap holds every map, which has its elements and its length, and the rest from
+\\* Array.prototype.
+HasAny(heap, value, key, isEveryMapHeld) ==
+  CASE IsSequenceValue(value) /\\ ~isEveryMapHeld ->
+         Assert(FALSE, "tla-ts can't tell an array off the heap from a map")
+    [] IsSequenceValue(value) ->
+         \\/ key = "length"
+         \\/ TypedKey(key) = "index" /\\ ToIndex(key) < Len(value)
+         \\/ Has(heap, Ref :> "Array.prototype", key)
+    [] OTHER -> Has(heap, value, key)
+
 \\* Object.getPrototypeOf of a value whose type doesn't tell what it is, where a primitive gives the
 \\* prototype of the object that wraps it, an error the prototype of its constructor, and a sequence,
 \\* which is an array where the heap holds every map, Array.prototype.

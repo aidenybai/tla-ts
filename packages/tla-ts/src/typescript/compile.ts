@@ -79,6 +79,7 @@ import {
   isHeapSetOrMap,
   isRegExpArray,
   isSetOrMapType,
+  isUntold,
   TYPED_ARRAYS,
 } from "./types";
 
@@ -597,6 +598,12 @@ export const compile = (
       (context.checker.getTypeAtLocation(node.expression).flags &
         (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !==
         0) ||
+    // An in that tests a key of a value whose type doesn't tell what it is, which reads its
+    // prototypes too.
+    (ts.isBinaryExpression(node) &&
+      node.operatorToken.kind === ts.SyntaxKind.InKeyword &&
+      !ts.isPrivateIdentifier(node.left) &&
+      isUntold(node.right, context.checker)) ||
     // A pattern that reads the properties of a value of type any or unknown, as a read does.
     (ts.isObjectBindingPattern(node) &&
       (context.checker.getTypeAtLocation(node).flags &
