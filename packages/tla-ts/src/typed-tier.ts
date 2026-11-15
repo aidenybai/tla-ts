@@ -5347,6 +5347,14 @@ const getImageCompareCode = (
   const resolved = resolveType(type);
   if (!isPermuted(program, images, resolved)) return getCompareCode(program, type, code, other);
   const [value, against, index] = ["f", "r", "k"].map((prefix) => getName(program, prefix));
+  if (!isComparedInPlace(program, images, resolved)) {
+    return getCompareCode(
+      program,
+      type,
+      getPermuteCode(program, images, type, code) ?? code,
+      other,
+    );
+  }
   const getLoop = (length: string, source: string, element: Type) =>
     `((${value}, ${against}) => { ${length} for (let ${index} = 0; ${index} < ${value}.length; ${index}++) { const c = ${getImageCompareCode(program, images, element, `${value}[${source}]`, `${against}[${index}]`)}; if (c !== 0) return c; } return 0; })(${code}, ${other})`;
   if (resolved.kind === "Seq") {
@@ -5371,26 +5379,39 @@ const getImageCompareCode = (
     const sources = getName(program, "s");
     return getLoop(`const ${sources} = D[${base} + G];`, `${sources}[${index}]`, resolved.range);
   }
-  if (resolved.kind === "Tup" || (resolved.kind === "Rec" && resolved.shapes.length === 1)) {
-    const fields =
-      resolved.kind === "Tup"
-        ? resolved.elements.map((element, position) => ({ type: element, position }))
-        : resolved.shapes[0]
-            .toSorted((left, right) => compareValues(left, right))
-            .map((name) => ({
-              type: getFieldType(resolved, name),
-              position: resolved.shapes[0].indexOf(name),
-            }));
-    const chain = fields.map(
-      (field) =>
-        `c = ${getImageCompareCode(program, images, field.type, `${value}[${field.position}]`, `${against}[${field.position}]`)}; if (c !== 0) return c;`,
-    );
-    return `((${value}, ${against}) => { let c; ${chain.join(" ")} return 0; })(${code}, ${other})`;
-  }
-  return getCompareCode(program, type, getPermuteCode(program, images, type, code) ?? code, other);
+  const fields =
+    resolved.kind === "Tup"
+      ? resolved.elements.map((element, position) => ({ type: element, position }))
+      : resolved.kind === "Map"
+        ? [
+            { type: resolved.keys, position: 0 },
+            { type: resolved.values, position: 1 },
+          ]
+        : resolved.kind === "Rec"
+          ? resolved.shapes[0]
+              .toSorted((left, right) => compareValues(left, right))
+              .map((name) => ({
+                type: getFieldType(resolved, name),
+                position: resolved.shapes[0].indexOf(name),
+              }))
+          : unsupported();
+  const chain = fields.map(
+    (field) =>
+      `c = ${getImageCompareCode(program, images, field.type, `${value}[${field.position}]`, `${against}[${field.position}]`)}; if (c !== 0) return c;`,
+  );
+  return `((${value}, ${against}) => { let c; ${chain.join(" ")} return 0; })(${code}, ${other})`;
 };
 
 // Whether an image can change a value of the type, as getPermuteCode finds.
+// Whether an image of a value compares as it's read, without building the image. A function whose
+// domain an image keeps compares as its domain and then its values.
+const isComparedInPlace = (program: Program, images: Images[], resolved: Type) =>
+  resolved.kind === "Seq" ||
+  resolved.kind === "Fn" ||
+  resolved.kind === "Tup" ||
+  (resolved.kind === "Map" && !isPermuted(program, images, resolved.keys)) ||
+  (resolved.kind === "Rec" && resolved.shapes.length === 1);
+
 const isPermuted = (
   program: Program,
   images: Images[],
@@ -5697,25 +5718,38 @@ const compileSpec = (
   const viewWriters = keyOrder.map((index) =>
     getWriter(codec, program.variableTypes[index], smallest[index]),
   );
-  // An image is smaller from the first variable it changes for the smaller, and equal before it, so
-  // it's built only from there.
-  const imageComparisons = check.variableOrder.map((index, position) => {
+  // An image is smaller from the first variable it changes for the smaller, and equal before it. The
+  // variables after it note the image, and are built from it only when a comparison or the end
+  // reads them. One the comparison had to build keeps that image.
+  const pending = program.variableTypes.map(() => getName(program, "g"));
+  const built = getName(program, "b");
+  const imageComparisons = check.variableOrder.map((index) => {
     const type = program.variableTypes[index];
-    const comparison = getImageCompareCode(program, images, type, `v${index}`, smallest[index]);
-    return {
-      compare: `c = ${comparison}; if (c > 0) continue images; if (c < 0) { k = ${position}; break compare; }`,
-      build: `case ${position}: ${smallest[index]} = ${getPermuteCode(program, images, type, `v${index}`) ?? `v${index}`};`,
-    };
+    const permute = getPermuteCode(program, images, type, `v${index}`);
+    const build = permute
+      ? `if (${pending[index]} !== -1) { const G = ${pending[index]}; const P = A[G]; ${smallest[index]} = ${permute}; ${pending[index]} = -1; }`
+      : "";
+    const isBuilt = permute !== undefined && !isComparedInPlace(program, images, resolveType(type));
+    const comparison = isBuilt
+      ? getCompareCode(program, type, `(${built} = ${permute})`, smallest[index])
+      : getImageCompareCode(program, images, type, `v${index}`, smallest[index]);
+    const choose = isBuilt
+      ? `${smallest[index]} = ${built};`
+      : permute
+        ? `${pending[index]} = G;`
+        : "";
+    return { comparison, build, choose, note: permute ? `${pending[index]} = G;` : "" };
   });
-  const smallestCode = `${smallest.map((name, index) => `${name} = v${index};`).join(" ")}
+  const smallestCode = `${smallest.map((name, index) => `${name} = v${index}; ${pending[index]} = -1;`).join(" ")}
+      let ${built};
       images: for (let G = 0; G < A.length; G++) {
         const P = A[G];
         let c = 0;
         let k = -1;
-        compare: { ${imageComparisons.map((comparison) => comparison.compare).join(" ")} }
-        if (k === -1) continue;
-        switch (k) { ${imageComparisons.map((comparison) => comparison.build).join(" ")} }
-      }`;
+        compare: { ${imageComparisons.map((item, position) => `${item.build} c = ${item.comparison}; if (c > 0) continue images; if (c < 0) { k = ${position}; ${item.choose} break compare; }`).join(" ")} }
+        switch (k) { ${imageComparisons.map((_, position) => `case ${position}: ${imageComparisons[position + 1]?.note ?? ""}`).join(" ")} }
+      }
+      ${imageComparisons.map((item) => item.build).join(" ")}`;
   const viewKeyCode = `${smallestCode} ${viewWriters.join(" ")}`;
   const symmetricKeyCode = `Z.fill(0);
       ${signatures.join(" ")}
@@ -5765,7 +5799,7 @@ const compileSpec = (
     });
   const source = `let d, n, i, t, W, Y, E = [];
   const U = new Int32Array(2);
-  let ${smallest.join(", ")};
+  let ${smallest.join(", ")}, ${pending.join(", ")};
   const X = new Int32Array(${program.variableTypes.length + 1});
   const T = new Int32Array(Q.length);
   const rv = (first) => { let zigzag = first & 127; let shift = 7; let byte; do { byte = d[i++]; zigzag |= (byte & 127) << shift; shift += 7; } while (byte >= 128); return (zigzag >>> 1) ^ -(zigzag & 1); };
