@@ -903,7 +903,8 @@ const loosen = () => {
     const target = OPERAND_TYPE_ERRORS.has(diagnostic.code) ? getCompoundTarget(node) : undefined;
     if (target !== undefined) edits.set(target.name.getEnd(), ": any");
     // A test may assign an accessor's this, which a descriptor types as an object, to a variable
-    // that holds a number until then.
+    // that holds a number until then, which then holds any value, as tla-ts stops where a value of
+    // another kind goes into a typed variable.
     if (
       diagnostic.code === 2322 &&
       ts.isBinaryExpression(parent) &&
@@ -911,8 +912,18 @@ const loosen = () => {
       parent.left === node &&
       parent.right.kind === ts.SyntaxKind.ThisKeyword
     ) {
-      edits.set(parent.right.getStart(), "(");
-      edits.set(parent.right.getEnd(), " as any)");
+      const declaration = checker.getSymbolAtLocation(node)?.valueDeclaration;
+      if (
+        declaration !== undefined &&
+        ts.isVariableDeclaration(declaration) &&
+        ts.isIdentifier(declaration.name) &&
+        declaration.type === undefined
+      ) {
+        edits.set(declaration.name.getEnd(), ": any");
+      } else {
+        edits.set(parent.right.getStart(), "(");
+        edits.set(parent.right.getEnd(), " as any)");
+      }
     }
     // A function that returns no value, whose return type TypeScript can't infer where its type
     // depends on itself, as a pattern's default that calls it does, returns undefined.
