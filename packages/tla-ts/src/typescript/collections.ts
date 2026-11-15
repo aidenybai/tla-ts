@@ -904,11 +904,15 @@ const translateSequenceOperation = (
         ? translate(inner)
         : useJavaScript("ToNumber", [translate(inner)], context);
   // An index that counts back from the end when it's negative, as at() and slice() take it.
+  // A literal past 2^31 - 1 is a Wide integer, which isn't a position.
   const getRelative = (
     inner: ts.Expression | undefined,
     operator: "RelativeIndex" | "ClampedIndex",
   ) =>
-    inner !== undefined && ts.isNumericLiteral(inner) && Number.isInteger(Number(inner.text))
+    inner !== undefined &&
+    ts.isNumericLiteral(inner) &&
+    Number.isInteger(Number(inner.text)) &&
+    Number(inner.text) <= 2 ** 31 - 1
       ? translate(inner)
       : useJavaScript(operator, [getIndex(inner), getLength()], context);
   const orUndefined = (exists: Expression, value: Expression) => {
@@ -1381,6 +1385,19 @@ const translateSetMethod = (node: MethodCall, scope: Scope, context: Context) =>
   const kind = getKind(argument, context);
   if (method !== "has" && kind !== "set" && kind !== "map") {
     throw new TlaTypeScriptError(`Pass a Set or a Map to ${method}()`, argument);
+  }
+  const kinds = [node.expression.expression, argument].map((side) =>
+    getDeclaredKeyKinds(side, context.checker),
+  );
+  if (
+    method !== "has" &&
+    kinds.every((side) => side !== undefined) &&
+    new Set(kinds.flat()).size > 1
+  ) {
+    throw new TlaTypeScriptError(
+      `Pass ${method}() a Set or a Map of keys of the same kind, as TLC can't compare a number with a string`,
+      argument,
+    );
   }
   const values = translateExpression(node.expression.expression, scope, context);
   const other = translateSetKey(argument, scope, context);
@@ -3628,25 +3645,27 @@ export const translateStoredCall = (
 const getNewName = (node: ts.NewExpression, context: Context) =>
   (getConstruction(node, context)?.callee ?? node.expression).getText();
 
-// The kinds of the keys that a new Set or Map holds, which TLC compares, so that they must agree:
-// TLC stops where it compares a number with a string. Model values, such as undefined, null, and
-// symbols, compare with any value. Where the Set or Map's type doesn't tell, this reads the keys
-// that the script gives the variable that holds it.
-const getKeyKinds = (node: ts.NewExpression, context: Context) => {
-  const checker = context.checker;
-  const getKinds = (type: ts.Type) => {
-    const names = getTypeNames(type, checker);
-    return (
-      names &&
-      names
-        .filter((name) => !["undefined", "null", "symbol"].includes(name))
-        .map((name) => (name === "function" ? "object" : name))
-    );
-  };
+// The kinds of the values of a type that TLC compares, which must agree: TLC stops where it
+// compares a number with a string. Model values, such as undefined, null, and symbols, compare with
+// any value.
+const getComparedKinds = (type: ts.Type, checker: ts.TypeChecker) =>
+  getTypeNames(type, checker)
+    ?.filter((name) => !["undefined", "null", "symbol"].includes(name))
+    .map((name) => (name === "function" ? "object" : name));
+
+// The kinds of the keys that the type of a Set or a Map gives it.
+const getDeclaredKeyKinds = (node: ts.Expression, checker: ts.TypeChecker) => {
   const type = getCollectionType(checker.getTypeAtLocation(node));
   const keyType = isTypeReference(type) ? checker.getTypeArguments(type).at(0) : undefined;
-  const declared = keyType && getKinds(keyType);
-  if (declared !== undefined) return new Set(declared);
+  return keyType && getComparedKinds(keyType, checker);
+};
+
+// The kinds of the keys that a new Set or Map holds. This reads the keys that the script gives the
+// variable that holds the Set or Map, and where its type tells the kinds, adds them, as a key that
+// a type error lets through may be of another kind.
+const getKeyKinds = (node: ts.NewExpression, context: Context) => {
+  const checker = context.checker;
+  const declared = getDeclaredKeyKinds(node, checker);
   const holder = node.parent;
   const name = ts.isVariableDeclaration(holder)
     ? holder.name
@@ -3686,8 +3705,11 @@ const getKeyKinds = (node: ts.NewExpression, context: Context) => {
   const kinds = keys.map((key) =>
     key === undefined || ts.isSpreadElement(key)
       ? undefined
-      : getKinds(checker.getTypeAtLocation(key)),
+      : getComparedKinds(checker.getTypeAtLocation(key), checker),
   );
+  if (declared !== undefined) {
+    return new Set([...declared, ...kinds.flatMap((kind) => kind ?? [])]);
+  }
   return kinds.every((kind) => kind !== undefined) ? new Set(kinds.flat()) : undefined;
 };
 

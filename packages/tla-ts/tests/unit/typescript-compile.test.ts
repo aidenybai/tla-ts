@@ -42766,4 +42766,209 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("reads a property of a value of type unknown", () => {
+    const getSource = (expected: string) => `
+      const values: { [key: string]: unknown } = {
+        text: "ab",
+        list: [5, 6],
+        add: (left: number, right: number) => left + right,
+      };
+      let log = "";
+      // @ts-ignore
+      log += values.text.length;
+      // @ts-ignore
+      log += values.text[1];
+      // @ts-ignore
+      log += values.text[7];
+      // @ts-ignore
+      log += values.list[1];
+      // @ts-ignore
+      log += values.list.length;
+      // @ts-ignore
+      log += values.add.length;
+      // @ts-ignore
+      log += values.text.slice === String.prototype.slice;
+      if (log !== "${expected}") throw new Error(log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("2bundefined622true"))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong length of a function", async () => {
+      expect((await checkModel(getSource("2bundefined621true"))).failure?.message).toContain(
+        "2bundefined622true",
+      );
+    });
+
+    it("stops at a property of a number", async () => {
+      const result = await checkModel(`
+        const values: { [key: string]: unknown } = { count: 5 };
+        // @ts-ignore
+        if (values.count.size !== undefined) throw new Error("size");
+      `);
+      expect(result.failure?.message).toContain("tla-ts can't read a property of this value");
+    });
+  });
+
+  describe("reads a Map whose keys a type error may give another kind", () => {
+    const getSource = (key: string, expected: string) => `
+      const entries = new Map([
+        ["a", 1],
+        ["b", 2],
+      ]);
+      let log = "";
+      // @ts-ignore
+      log += entries.get(${key});
+      log += entries.size;
+      if (log !== "${expected}") throw new Error(log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource('"b"', "22"))).failure).toBeUndefined();
+    });
+
+    it("rejects the value of another key", async () => {
+      expect((await checkModel(getSource('"b"', "12"))).failure?.message).toContain("22");
+    });
+
+    it("stops at a key of another kind", () => {
+      expect(() => compile(getSource("2", "undefined2"))).toThrow(
+        "Give a Map keys of one kind, as TLC can't compare a number with a string",
+      );
+    });
+
+    it("stops at a Set that starts with keys of two kinds", () => {
+      expect(() =>
+        compile(`
+          // @ts-ignore
+          const keys = new Set<string>(["a", 1]);
+          if (keys.size !== 2) throw new Error("size");
+        `),
+      ).toThrow("Give a Set keys of one kind, as TLC can't compare a number with a string");
+    });
+  });
+
+  describe("combines a Set with a Set or a Map of keys of the same kind", () => {
+    const getSource = (other: string, expected: string) => `
+      const letters = new Set(["a", "b"]);
+      const joined = letters.union(new Set([${other}]));
+      const kept = letters.intersection(new Map([["b", 1]]));
+      let log = "";
+      log += joined.size;
+      log += kept.has("b");
+      log += letters.isDisjointFrom(new Set([${other}]));
+      if (log !== "${expected}") throw new Error(log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource('"c"', "3truetrue"))).failure).toBeUndefined();
+    });
+
+    it("rejects a union without the other key", async () => {
+      expect((await checkModel(getSource('"c"', "2truetrue"))).failure?.message).toContain(
+        "3truetrue",
+      );
+    });
+
+    it("stops at a Set of numbers", () => {
+      expect(() => compile(getSource("3", "3truetrue"))).toThrow(
+        "Pass union() a Set or a Map of keys of the same kind, as TLC can't compare a number with a string",
+      );
+    });
+  });
+
+  describe("slices an array-like object from an index past 2^31", () => {
+    const getSource = (expected: string) => `
+      const letters: { [key: string]: unknown } = { length: 2, 0: "a", 1: "b" };
+      let log = "";
+      log += Array.prototype.at.call(letters, 4294967294);
+      log += Array.prototype.slice.call(letters, 4294967294).length;
+      log += Array.prototype.slice.call(letters, 1, 4294967295).length;
+      log += Array.prototype.slice.call(letters, -4294967295).length;
+      if (log !== "${expected}") throw new Error(log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("undefined012"))).failure).toBeUndefined();
+    });
+
+    it("rejects a slice past the end with an element", async () => {
+      expect((await checkModel(getSource("undefined112"))).failure?.message).toContain(
+        "undefined012",
+      );
+    });
+  });
+
+  describe("switches on a value that may be a number, a string, or a boolean", () => {
+    const getSource = (expected: string) => `
+      const pick = (value: string | number | boolean | undefined) => {
+        switch (value) {
+          case 1:
+            return "one";
+          case "a":
+            return "letter";
+          case true:
+            return "yes";
+          case undefined:
+            return "none";
+          default:
+            return "other";
+        }
+      };
+      let log = "";
+      for (const value of ["a", 1, 2, true, undefined, "1"]) log += pick(value);
+      if (log !== "${expected}") throw new Error(log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("letteroneotheryesnoneother"))).failure).toBeUndefined();
+    });
+
+    it("rejects the string 1 as the number", async () => {
+      expect((await checkModel(getSource("letteroneotheryesnoneone"))).failure?.message).toContain(
+        "letteroneotheryesnoneother",
+      );
+    });
+  });
+
+  describe("writes a property of a value of type unknown", () => {
+    const getSource = (expected: string) => `
+      const values: { [key: string]: unknown } = { point: { x: 1 } };
+      let log = "";
+      // @ts-ignore
+      values.point.x = 4;
+      // @ts-ignore
+      values.point["y"] = "y";
+      // @ts-ignore
+      log += values.point.x;
+      // @ts-ignore
+      log += values.point.y;
+      // @ts-ignore
+      delete values.point.y;
+      // @ts-ignore
+      log += values.point.y;
+      if (log !== "${expected}") throw new Error(log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("4yundefined"))).failure).toBeUndefined();
+    });
+
+    it("rejects the value before the write", async () => {
+      expect((await checkModel(getSource("1yundefined"))).failure?.message).toContain(
+        "4yundefined",
+      );
+    });
+
+    it("stops at an element of an array", async () => {
+      const result = await checkModel(`
+        const values: { [key: string]: unknown } = { list: [1, 2] };
+        // @ts-ignore
+        values.list[0] = 5;
+      `);
+      expect(result.failure?.message).toContain("tla-ts can't read the properties of <<1, 2>>");
+    });
+  });
 });

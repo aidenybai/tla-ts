@@ -44,7 +44,7 @@ import { getUncaughtText } from "./exceptions";
 import { translateCondition, translateExpression, translateNegatedCondition } from "./expressions";
 import { type Formula, ifThenElse, letIn, render, leaf } from "./formula";
 import { getAllocated, getCandidateValue, getSuperLookup, translateObjectValue } from "./heap";
-import { mayBeNumber, useJavaScript } from "./javascript";
+import { isComparable, mayBeNumber, useJavaScript } from "./javascript";
 import {
   type Bound,
   bindNames,
@@ -1340,9 +1340,12 @@ export const translateSwitch = (
         );
       }
       const value = translateExpression(clause.expression, scope, context);
+      // TLC can't compare values of two kinds, such as a number with a string, with =.
       return context.hasSpecialNumbers && mayBeNumber(statement.expression, context)
         ? useJavaScript("StrictEquals", [subject, value], context)
-        : apply("=", [subject, value]);
+        : isComparable(statement.expression, clause.expression, context)
+          ? apply("=", [subject, value])
+          : useJavaScript("SameValue", [subject, value], context);
     });
     return ifThenElse(
       conditions.length === 1 ? conditions[0] : junction("Or", conditions),

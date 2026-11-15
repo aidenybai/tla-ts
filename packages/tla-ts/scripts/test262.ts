@@ -2119,6 +2119,33 @@ const ignoreSoundErrors = () => {
           UNKNOWN_BITWISE_OPERATORS.has(operation.operatorToken.kind)))
     );
   };
+  // A read or a write of a property of a value of type unknown, which tla-ts runs through the heap
+  // as JavaScript does where the value is an object, an array, a function, or a string, and stops
+  // on otherwise. A call of the property's value is left to the rules for calls.
+  const isUnknownAccess = (node: ts.Node, diagnostic: ts.Diagnostic) => {
+    const operand = ts.findAncestor(
+      node,
+      (ancestor) =>
+        ancestor.getStart() === diagnostic.start &&
+        ancestor.getEnd() === (diagnostic.start ?? 0) + (diagnostic.length ?? 0),
+    );
+    const access = operand?.parent;
+    return (
+      access !== undefined &&
+      (ts.isPropertyAccessExpression(access) || ts.isElementAccessExpression(access)) &&
+      access.expression === operand &&
+      !(
+        (ts.isCallExpression(access.parent) ||
+          ts.isNewExpression(access.parent) ||
+          ts.isTaggedTemplateExpression(access.parent)) &&
+        ts.skipParentheses(
+          ts.isTaggedTemplateExpression(access.parent)
+            ? access.parent.tag
+            : access.parent.expression,
+        ) === access
+      )
+    );
+  };
   const isUnnarrowed = (node: ts.Node, diagnostic: ts.Diagnostic) => {
     const comparison = ts.findAncestor(
       node,
@@ -3360,6 +3387,8 @@ const ignoreSoundErrors = () => {
       (diagnostic.code === UNINTENDED_COMPARISON_ERROR && isUnnarrowed(node, diagnostic)) ||
       (diagnostic.code === UNKNOWN_VALUE_ERROR &&
         (isUnknownArithmetic(node) || isConvertedUnknown(node, diagnostic))) ||
+      ((diagnostic.code === UNKNOWN_VALUE_ERROR || diagnostic.code === UNKNOWN_CALLEE_ERROR) &&
+        isUnknownAccess(node, diagnostic)) ||
       (UNTYPED_READ_ERRORS.has(diagnostic.code) && isObjectRead(node)) ||
       (diagnostic.code === NOT_ITERABLE_ERROR && isPlainObject(node)) ||
       (OPERAND_TYPE_ERRORS.has(diagnostic.code) && isConverted(node, diagnostic)) ||
