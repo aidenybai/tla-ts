@@ -20,6 +20,7 @@ import {
   translateToString,
 } from "./expressions";
 import { rejectBeforeDeclaration, type Scope } from "./scope";
+import { getMappedParameter } from "./actions";
 import { getKind, isBigIntLike } from "./types";
 import { apply, boolean, identifier, ifExpression, number, set, string } from "./tla";
 
@@ -1521,10 +1522,32 @@ GlobalHolds(heap, keys) ==
   \\/ GlobalObject[Ref] \\notin DOMAIN heap.changed
   \\/ \\A key \\in keys : HoldsGlobal(heap.changed[GlobalObject[Ref]], key)
 
+\\* An arguments object outside strict mode stops mapping a parameter where a change deletes its
+\\* element or makes it an accessor or read-only, and the parameter keeps the element's value, or the
+\\* value that made it read-only.
+LOCAL Unmap(before, after) ==
+  LET IsWritableData(object, key) ==
+        /\\ key \\in DOMAIN object.values
+        /\\ object.attributes[key].kind = "data"
+        /\\ object.attributes[key].writable
+      kept == {key \\in before.mapped : IsWritableData(after, key)}
+  IN [field \\in DOMAIN after \\cup {"mapped", "parameters"} |->
+        CASE field = "mapped" -> kept
+          [] field = "parameters" ->
+               [position \\in DOMAIN before.parameters |->
+                  LET key == ToString(position - 1)
+                  IN CASE key \\notin before.mapped \\/ key \\in kept -> before.parameters[position]
+                       [] key \\in DOMAIN after.values /\\ after.attributes[key].kind = "data" ->
+                            after.values[key]
+                       [] OTHER -> before.values[key]]
+          [] OTHER -> after[field]]
+
 Update(heap, ref, object) ==
   CASE IsHeap(ref) ->
          LET held == IF IsProxy(heap, ref) THEN ProxiedObject(heap, ref) ELSE ref
-         IN [heap EXCEPT !.objects[held[Ref]] = object]
+             before == heap.objects[held[Ref]]
+         IN [heap EXCEPT !.objects[held[Ref]] =
+               IF "mapped" \\in DOMAIN before THEN Unmap(before, object) ELSE object]
     [] ~IsRef(ref) /\\ TypeOf(ref) = "object" ->
          Assert(FALSE, "tla-ts can't change an object that the heap doesn't hold")
     [] /\\ BuiltInKey(ref) \\in IteratorPrototypes \\cap DOMAIN BuiltIns
@@ -4845,6 +4868,37 @@ ArgumentsObject(elements, thrower) ==
       extensible |-> TRUE, prototype |-> ObjectPrototype, isCallable |-> FALSE,
       isConstructor |-> FALSE, isOpaque |-> FALSE, privates |-> <<>>, isArguments |-> TRUE]
 
+\\* The arguments object of a call outside strict mode to a function with simple parameters, whose
+\\* callee is the function, and whose elements map the parameters that the call passes, holding their
+\\* values while they do. parameters holds the values of the rest.
+MappedArgumentsObject(elements, callee, count) ==
+  LET object == ArgumentsObject(elements, Undefined)
+  IN [field \\in DOMAIN object \\cup {"mapped", "parameters"} |->
+        CASE field = "values" -> [object.values EXCEPT !["callee"] = callee]
+          [] field = "attributes" ->
+               [object.attributes EXCEPT !["callee"] = [Writable EXCEPT !.enumerable = FALSE]]
+          [] field = "mapped" ->
+               {ToString(position - 1) : position \\in 1..(IF Len(elements) < count THEN Len(elements) ELSE count)}
+          [] field = "parameters" ->
+               [position \\in 1..count |-> IF position <= Len(elements) THEN elements[position] ELSE Undefined]
+          [] OTHER -> object[field]]
+
+\\* The value of the parameter at a position, which the arguments object's element holds while it
+\\* maps the parameter.
+MappedParameter(heap, ref, position) ==
+  LET object == heap.objects[ref[Ref]]
+      key == ToString(position - 1)
+  IN IF key \\in object.mapped THEN object.values[key] ELSE object.parameters[position]
+
+SetMappedParameter(heap, ref, position, value) ==
+  LET key == ToString(position - 1)
+  IN IF key \\in heap.objects[ref[Ref]].mapped
+     THEN [heap EXCEPT !.objects[ref[Ref]].values[key] = value]
+     ELSE [heap EXCEPT !.objects[ref[Ref]].parameters[position] = value]
+
+\\* Whether a value has one of the types that typeof names, where null's is null.
+HasTypeIn(heap, value, types) == (IF value = Null THEN "null" ELSE TypeOfIn(heap, value)) \\in types
+
 \\* The object that new Boolean, new Number, or new String makes, which holds the primitive it wraps,
 \\* and a string's characters under their indices and its length.
 WrapperObject(prototype, primitive) ==
@@ -8079,6 +8133,9 @@ export const translateTypeOf = (
   context: Context,
 ): Expression => {
   const read = skipCasts(node.expression);
+  // A write through an arguments object may give a parameter that it maps a value of another type.
+  const mapped = ts.isIdentifier(read) ? getMappedParameter(read, scope, context) : undefined;
+  if (mapped !== undefined) return useJavaScript("TypeOfIn", [mapped.heap, mapped.raw], context);
   const symbol = isImplicitGlobal(read, context) ? getSymbol(read, context.checker) : undefined;
   const global = symbol === undefined ? undefined : scope.bindings.get(symbol);
   const typeOf = translateTypeOfValue(node, scope, context);

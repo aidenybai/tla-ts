@@ -145,6 +145,7 @@ import {
   useJavaScript,
 } from "./javascript";
 import { getThisOwner, rejectBeforeDeclaration, type Scope } from "./scope";
+import { getMappedParameter } from "./actions";
 import {
   apply,
   boolean,
@@ -2428,6 +2429,8 @@ const translateIdentifier = (node: ts.Identifier, scope: Scope, context: Context
     return identifier(node.text);
   }
   rejectBeforeDeclaration(node, scope, context);
+  const mapped = getMappedParameter(node, scope, context);
+  if (mapped !== undefined) return mapped.value;
   const symbol = getSymbol(node, context.checker);
   const held = symbol === undefined ? undefined : scope.functions.get(symbol);
   if (held !== undefined) {

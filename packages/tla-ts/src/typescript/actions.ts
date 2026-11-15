@@ -906,6 +906,8 @@ const getTarget = (node: ts.Expression, path: Path, context: Context): Target =>
   if (isChainedChange(node, context)) return getTarget(node.expression.expression, path, context);
   if (ts.isIdentifier(node)) {
     rejectBeforeDeclaration(node, path.scope, context);
+    const mapped = getMappedTarget(node, path, context);
+    if (mapped !== undefined) return mapped;
     const symbol = getSymbol(node, context.checker);
     const current = symbol === undefined ? undefined : path.scope.bindings.get(symbol);
     const whole = ts.findAncestor(
@@ -5451,15 +5453,14 @@ export const isArgumentsRead = (read: ts.Identifier, context: Context) => {
 };
 
 // Outside strict mode, a function with simple parameters has an arguments object that maps them,
-// so that writing one changes the other, and whose callee is the function, which tla-ts's arguments
-// object doesn't follow. Only a read of the object other than of its length or its elements, or a
-// parameter that changes where the object's elements are read, shows the difference.
-const rejectMappedArguments = (callee: FunctionNode, context: Context) => {
-  const parameters = callee.parameters.filter(
-    (parameter) => !(ts.isIdentifier(parameter.name) && parameter.name.text === "this"),
-  );
+// so that writing one changes the other, and whose callee is the function. Only a read of the object
+// other than of its length or its elements, or a parameter that changes where the object's elements
+// are read, shows the difference from the arguments object of strict mode.
+export const isMappedArguments = (callee: FunctionNode, context: Context) => {
+  const parameters = getParameters(callee);
   if (
     isStrictCode(callee) ||
+    !isArgumentsNamed(callee, context) ||
     parameters.some(
       (parameter) =>
         !ts.isIdentifier(parameter.name) ||
@@ -5467,7 +5468,7 @@ const rejectMappedArguments = (callee: FunctionNode, context: Context) => {
         parameter.dotDotDotToken !== undefined,
     )
   ) {
-    return;
+    return false;
   }
   const names = new Set(parameters.map((parameter) => parameter.name));
   const symbols = new Set(
@@ -5483,15 +5484,139 @@ const rejectMappedArguments = (callee: FunctionNode, context: Context) => {
   const reads = getArgumentsReads(callee, context);
   const isLengthRead = (read: ts.Identifier) =>
     isArgumentsRead(read, context) && ts.isPropertyAccessExpression(read.parent);
-  if (
+  return (
     !reads.every((read) => isArgumentsRead(read, context)) ||
     (isParameterWritten && !reads.every(isLengthRead))
+  );
+};
+
+// The function that declares a parameter, which has its own arguments object.
+const getParameterOwner = (symbol: ts.Symbol | undefined) => {
+  const declaration = symbol?.valueDeclaration;
+  const owner =
+    declaration !== undefined && ts.isParameter(declaration) ? declaration.parent : undefined;
+  return owner !== undefined &&
+    (ts.isFunctionDeclaration(owner) ||
+      ts.isFunctionExpression(owner) ||
+      ts.isMethodDeclaration(owner) ||
+      ts.isConstructorDeclaration(owner) ||
+      ts.isAccessor(owner))
+    ? owner
+    : undefined;
+};
+
+// A read of a parameter that an arguments object maps, from the object, which holds the parameter's
+// value. A write through the object may give it a value of another type than the parameter's, which
+// tla-ts stops at.
+export const getMappedParameter = (node: ts.Identifier, scope: Scope, context: Context) => {
+  const symbol = getSymbol(node, context.checker);
+  const owner = getParameterOwner(symbol);
+  const ref = owner?.body === undefined ? undefined : scope.allocated.get(owner.body);
+  if (
+    owner === undefined ||
+    ref === undefined ||
+    context.heap === undefined ||
+    !isMappedArguments(owner, context)
+  ) {
+    return undefined;
+  }
+  const position = getParameters(owner).findIndex(
+    (parameter) => getSymbol(parameter.name, context.checker) === symbol,
+  );
+  const heap = getHeap(scope, node, context);
+  const value = useJavaScript("MappedParameter", [heap, ref, number(position + 1)], context);
+  const type = context.checker.getTypeAtLocation(node);
+  const members = type.isUnion() ? type.types : [type];
+  const types = getTypeNames(type, context.checker);
+  if ((type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0) {
+    return { heap, ref, position, raw: value, value };
+  }
+  if (
+    types === undefined ||
+    members.some(
+      (member) => member.isLiteral() || (member.flags & ts.TypeFlags.EnumLiteral) !== 0,
+    ) ||
+    members.filter((member) => (member.flags & ts.TypeFlags.BooleanLiteral) !== 0).length === 1
   ) {
     throw new TlaTypeScriptError(
-      "tla-ts can't follow an arguments object that maps its function's parameters outside strict mode",
-      reads[0],
+      "tla-ts can't follow a parameter of this type that an arguments object outside strict mode maps",
+      node,
     );
   }
+  context.prelude.add("Null");
+  return {
+    heap,
+    ref,
+    position,
+    raw: value,
+    value: share(value, "parameter", context, (shared) =>
+      ifExpression(
+        useJavaScript("HasTypeIn", [heap, shared, set(types.map((name) => string(name)))], context),
+        shared,
+        apply("Assert", [
+          boolean(false),
+          string(
+            `tla-ts can't read ${node.text}, which its arguments object gave a value of another type`,
+          ),
+        ]),
+      ),
+    ),
+  };
+};
+
+// Writes a parameter that an arguments object maps, through the object.
+const getMappedTarget = (node: ts.Identifier, path: Path, context: Context) => {
+  const mapped = getMappedParameter(node, path.scope, context);
+  const symbol = context.heap;
+  if (mapped === undefined || symbol === undefined) return undefined;
+  if (!path.mutable.has(symbol)) {
+    throw new TlaTypeScriptError("Change objects only in statements", node);
+  }
+  return {
+    symbol,
+    current: mapped.value,
+    update: (getValue: (current: Expression) => Expression) =>
+      useJavaScript(
+        "SetMappedParameter",
+        [mapped.heap, mapped.ref, number(mapped.position + 1), getValue(mapped.value)],
+        context,
+      ),
+  };
+};
+
+// What tla-ts doesn't follow of an arguments object that maps its function's parameters: that of a
+// generator or an async function, a parameter that a function inside reads or that holds a function
+// that the call inlines, and a callee that no model value stands for.
+// It gives the function that the callee holds.
+const rejectMappedArguments = (callee: FunctionNode, scope: Scope, context: Context) => {
+  const stop = (message: string, node: ts.Node): never => {
+    throw new TlaTypeScriptError(`tla-ts can't follow ${message} outside strict mode`, node);
+  };
+  if (isAnyGenerator(callee) || isAsyncFunction(callee)) {
+    stop("the arguments object of a generator or an async function", callee);
+  }
+  const parameters = getParameters(callee);
+  const symbols = parameters.map((parameter) => getSymbol(parameter.name, context.checker));
+  const inner = findNodes(
+    callee.body ?? callee,
+    (node): node is ts.Identifier =>
+      ts.isIdentifier(node) &&
+      symbols.includes(getSymbol(node, context.checker)) &&
+      ts.findAncestor(node.parent, ts.isFunctionLike) !== callee,
+  ).at(0);
+  if (inner !== undefined) {
+    stop("an arguments object that maps a parameter that a function inside reads", inner);
+  }
+  const held = parameters.find((parameter) => {
+    const symbol = getSymbol(parameter.name, context.checker);
+    return symbol !== undefined && scope.functions.has(symbol);
+  });
+  if (held !== undefined)
+    stop("an arguments object that maps a parameter that holds a function", held);
+  const value = getFunctionValue(callee, context);
+  return value === callee
+    ? value
+    : stop("an arguments object whose callee no model value stands for", callee);
 };
 
 export const allocateArguments = (
@@ -5506,13 +5631,22 @@ export const allocateArguments = (
   if (heapSymbol === undefined || body === undefined || !isArgumentsNamed(callee, context)) {
     return bound;
   }
-  rejectMappedArguments(callee, context);
+  const mapped = isMappedArguments(callee, context)
+    ? rejectMappedArguments(callee, bound.scope, context)
+    : undefined;
   const heap = context.names.getFresh("heap");
-  const made = useJavaScript(
-    "ArgumentsObject",
-    [list, translateBuiltInValue("get Function.prototype.arguments", node, context)],
-    context,
-  );
+  const made =
+    mapped !== undefined
+      ? useJavaScript(
+          "MappedArgumentsObject",
+          [list, translateFunctionValue(mapped, context), number(getParameters(callee).length)],
+          context,
+        )
+      : useJavaScript(
+          "ArgumentsObject",
+          [list, translateBuiltInValue("get Function.prototype.arguments", node, context)],
+          context,
+        );
   return {
     definitions: [
       ...bound.definitions,
@@ -13680,6 +13814,15 @@ const getEffects = (
       ? []
       : getWrittenRoots(written).flatMap((root) => {
           const symbol = ts.isIdentifier(root) ? getSymbol(root, context.checker) : undefined;
+          // A parameter that an arguments object maps holds its value on the heap.
+          const owner = getParameterOwner(symbol);
+          if (
+            context.heap !== undefined &&
+            owner !== undefined &&
+            isMappedArguments(owner, context)
+          ) {
+            return [symbol, context.heap].flatMap((changed) => changed ?? []);
+          }
           const access = ts.findAncestor(
             root,
             (ancestor) =>
@@ -16538,7 +16681,11 @@ const runAssignment = (
       ),
     );
   }
-  const target = ts.isIdentifier(node.left) ? getSymbol(node.left, context.checker) : undefined;
+  // A parameter that an arguments object maps holds its value on the heap.
+  const target =
+    ts.isIdentifier(node.left) && getMappedParameter(node.left, path.scope, context) === undefined
+      ? getSymbol(node.left, context.checker)
+      : undefined;
   // An assignment that runs before the rest of its statement makes its objects first, which the
   // statement, reading its result, doesn't make, unless a call made its parameters' defaults.
   return allocateAll(
