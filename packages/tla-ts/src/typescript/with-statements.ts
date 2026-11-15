@@ -100,10 +100,25 @@ const getCallee = (node: ts.Node) =>
       ? node.tag
       : undefined;
 
-// The name that a call, a new, or a tagged template calls through.
-const getCallHead = (node: ts.Node) => {
+// The name whose value a call needs, or an instanceof whose left operand is a name, with what it
+// does with the value. A call reads the name through the object's type where the type has it, and
+// tla-ts's instanceof can't. Each branch looks the right operand up before it reads the left one,
+// which only a proxy's trap or a getter could tell, where tla-ts stops.
+const getTypedName = (node: ts.Node) => {
   const callee = getCallee(node);
-  return callee === undefined ? undefined : getCalleeHead(callee);
+  const head = callee === undefined ? undefined : getCalleeHead(callee);
+  if (head !== undefined) return { name: head, action: "call a function", isTyped: true };
+  if (
+    !ts.isBinaryExpression(node) ||
+    node.operatorToken.kind !== ts.SyntaxKind.InstanceOfKeyword ||
+    !ts.isIdentifier(skipCasts(node.left))
+  ) {
+    return undefined;
+  }
+  const right = skipCasts(node.right);
+  return ts.isIdentifier(right)
+    ? { name: right, action: "test instanceof a class", isTyped: false }
+    : undefined;
 };
 
 const isLogicalAssignment = (kind: ts.SyntaxKind) =>
@@ -321,19 +336,37 @@ export const rewriteWithStatements = (file: ts.SourceFile, checker: ts.TypeCheck
           isDeclared(name) ? `${name.text} ${operator} ${right}` : throwReference(quoted),
       );
     }
-    // A call reads its name in each branch, through the object's type where it has the name.
-    const callHead = getCallHead(node);
-    return callHead === undefined
+    // A call or an instanceof reads its name in each branch, and a call reads it through the
+    // object's type where it has the name.
+    const typed = getTypedName(node);
+    return typed === undefined
       ? undefined
       : getNameForm(
-          callHead,
+          typed.name,
           (object, _quoted, _strict, statement) =>
-            hasMember(statement, callHead.text)
-              ? print(node, { name: callHead, text: `${object}.${callHead.text}` })
-              : `${WITH_STOP}("tla-ts can't call a function that a with statement's object holds")`,
+            typed.isTyped && hasMember(statement, typed.name.text)
+              ? print(node, { name: typed.name, text: `${object}.${typed.name.text}` })
+              : `${WITH_STOP}("tla-ts can't ${typed.action} that a with statement's object holds")`,
           (name, quoted) =>
             isDeclared(name) ? print(node, { name, text: name.text }) : throwReference(quoted),
         );
+  };
+  // A yield of a name, which tla-ts runs where the yield's operand is a name or a call.
+  const getStatementForm = (node: ts.Expression, head: Head | undefined): Form | undefined => {
+    const expression = skipCasts(node);
+    const yielded =
+      ts.isYieldExpression(expression) &&
+      expression.asteriskToken === undefined &&
+      expression.expression !== undefined
+        ? getForm(skipCasts(expression.expression), head)
+        : undefined;
+    return yielded === undefined
+      ? getForm(expression, head)
+      : {
+          ...yielded,
+          getBranch: (statement, object) => `yield ${yielded.getBranch(statement, object)}`,
+          base: `yield ${yielded.base}`,
+        };
   };
   const splice = (node: ts.Node, head: Head | undefined) => {
     const children: ts.Node[] = [];
@@ -410,7 +443,7 @@ export const rewriteWithStatements = (file: ts.SourceFile, checker: ts.TypeCheck
         : `${node.name.text}: ${printExpression(form)}`;
     }
     if (ts.isExpressionStatement(node)) {
-      const form = getForm(skipCasts(node.expression), head);
+      const form = getStatementForm(node.expression, head);
       if (form !== undefined) return printStatement(form);
     }
     const form = getForm(node, head);

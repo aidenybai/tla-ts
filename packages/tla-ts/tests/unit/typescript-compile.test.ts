@@ -41719,4 +41719,47 @@ describe("BigInts", () => {
       "tla-ts can't read a let that a line break follows as a name",
     );
   });
+
+  describe("yields and tests instanceof with the names a with statement's object binds outside strict mode", () => {
+    const getSource = (expected: string) => `
+      const seen: unknown[] = [];
+      function* values() {
+        var x = 1;
+        with ({ x: 2 }) {
+          yield x;
+        }
+        yield x;
+      }
+      const iterator = values();
+      seen.push(iterator.next().value, iterator.next().value);
+      try {
+        throw new TypeError("thrown");
+      } catch (error) {
+        with ({}) seen.push(error instanceof TypeError);
+      }
+      if (seen.join() !== "${expected}") throw new Error("seen " + seen.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("2,1,true"))).failure).toBeUndefined();
+    });
+
+    it("rejects a yield of the outer binding", async () => {
+      expect((await checkModel(getSource("1,1,true"))).failure?.message).toContain("seen 2,1,true");
+    });
+
+    it("stops where the object holds the class", async () => {
+      const result = await checkModel(`
+        const seen: unknown[] = [];
+        try {
+          throw new TypeError("thrown");
+        } catch (error) {
+          with ({ TypeError: RangeError }) seen.push(error instanceof TypeError);
+        }
+      `);
+      expect(result.failure?.message).toContain(
+        "tla-ts can't test instanceof a class that a with statement's object holds",
+      );
+    });
+  });
 });
