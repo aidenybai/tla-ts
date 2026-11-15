@@ -23,6 +23,8 @@ import type { Expression, OperatorDefinition } from "../ast";
 import {
   getHeapElements,
   getPatternHeap,
+  isMaybePrimitive,
+  isUniterable,
   translateArrayIteration,
   translatePatternIteration,
 } from "./collections";
@@ -103,8 +105,8 @@ export interface Destructured {
   // The elements that an array pattern takes from a value whose type doesn't tell that it's an
   // array, which stop where it's an object.
   iterated?: Expression;
-  // Whether an array that an array pattern iterates has no iterator method, as where a script
-  // deleted Array.prototype's, for which GetIterator throws a TypeError.
+  // Whether the value that an array pattern iterates has no iterator method, for which GetIterator
+  // throws a TypeError.
   isUniterable?: Expression;
 }
 
@@ -433,31 +435,25 @@ export const bindPatternInline = (
     isIterated && heap !== undefined
       ? translatePatternIteration(value, heap, pattern, type, context)
       : value;
+  // A parameter may take any value that a call passes, and a declaration's value may not have its
+  // pattern's type, so only the value's own type tells that it's no primitive.
+  const initializer = ts.isVariableDeclaration(pattern.parent)
+    ? pattern.parent.initializer
+    : undefined;
+  const uniterable = isIterated
+    ? isUniterable(
+        value,
+        heap,
+        pattern,
+        initializer === undefined ||
+          isMaybePrimitive(
+            context.checker.getNonNullableType(context.checker.getTypeAtLocation(initializer)),
+          ),
+        context,
+      )
+    : undefined;
   // A pattern whose type isn't an array's stops at once where its value is an object that tla-ts
   // can't iterate, though nothing reads what it binds.
-  const isUniterable =
-    isIterated && heap !== undefined
-      ? apply("/\\", [
-          apply("~", [
-            apply("/\\", [
-              useJavaScript("IsRef", [value], context),
-              apply("~", [useJavaScript("IsArray", [heap, value], context)]),
-            ]),
-          ]),
-          isNullish(
-            useJavaScript(
-              "Get",
-              [
-                heap,
-                translateBuiltInValue("Array.prototype", pattern, context),
-                useJavaScript("WellKnownSymbol", [string("iterator")], context),
-              ],
-              context,
-            ),
-            context,
-          ),
-        ])
-      : undefined;
   const destructuring: Scope = {
     ...scope,
     destructured: [
@@ -468,7 +464,7 @@ export const bindPatternInline = (
         ...(isIterated && heap !== undefined && !context.checker.isArrayLikeType(type)
           ? { iterated }
           : {}),
-        ...(isUniterable === undefined ? {} : { isUniterable }),
+        ...(uniterable === undefined ? {} : { isUniterable: uniterable }),
       },
     ],
   };

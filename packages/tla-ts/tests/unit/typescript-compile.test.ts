@@ -23534,6 +23534,69 @@ describe("errors", () => {
     expect((await checkModel(getSource("type,2,4"))).failure?.message).toContain("type,type,4");
   });
 
+  it("throws a TypeError from an array pattern whose value is null, undefined, or a primitive without an iterator", async () => {
+    const getSource = (expected: string) => `
+      const getName = (error: unknown) => (error instanceof TypeError ? "type" : "other");
+      let _: unknown;
+      let number = "none";
+      try {
+        // @ts-ignore
+        [] = 1;
+      } catch (error) {
+        number = getName(error);
+      }
+      let missing = "none";
+      try {
+        // @ts-ignore
+        [_] = undefined;
+      } catch (error) {
+        missing = getName(error);
+      }
+      let symbol = "none";
+      try {
+        // @ts-ignore
+        [, _] = Symbol();
+      } catch (error) {
+        symbol = getName(error);
+      }
+      let boolean = "none";
+      try {
+        // @ts-ignore
+        const [y]: [boolean] = true;
+      } catch (error) {
+        boolean = getName(error);
+      }
+      let parameter = "none";
+      try {
+        const f = ([y]: [number]) => y;
+        // @ts-ignore
+        f(2);
+      } catch (error) {
+        parameter = getName(error);
+      }
+      let loop = "none";
+      try {
+        // @ts-ignore
+        for ([] of [1]) {
+        }
+      } catch (error) {
+        loop = getName(error);
+      }
+      const lists: (number[] | undefined)[] = [[3, 4]];
+      let first: unknown;
+      // @ts-ignore
+      [first] = lists[0];
+      const text = \`\${number},\${missing},\${symbol},\${boolean},\${parameter},\${loop},\${first}\`;
+      if (text !== "${expected}") throw new Error(text);
+    `;
+    expect(
+      (await checkModel(getSource("type,type,type,type,type,type,3"))).failure,
+    ).toBeUndefined();
+    expect(
+      (await checkModel(getSource("type,type,type,type,none,type,3"))).failure?.message,
+    ).toContain("type,type,type,type,type,type,3");
+  });
+
   it("binds a parameter's array pattern from the generator object that a call passes", async () => {
     const getSource = (expected: string) => `
       let first = 0;

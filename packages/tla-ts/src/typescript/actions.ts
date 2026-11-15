@@ -23,6 +23,8 @@ import {
   translateHeapElements,
   translateArrayIteration,
   translatePatternIteration,
+  isMaybePrimitive,
+  isUniterable,
   getPatternHeap,
   holdsArrayIteration,
   ARRAY_ITERATOR_REPLACED,
@@ -1070,8 +1072,8 @@ interface TargetAssigner<Result> {
 }
 
 // What only statements can run as a pattern assigns: a default that assigns or yields, where the
-// value that its target takes is undefined, and the TypeError of a nested pattern that destructures
-// null or undefined.
+// value that its target takes is undefined, and the TypeError of a pattern that destructures null,
+// undefined, or a value that it can't iterate.
 interface PatternStatements<Result> {
   runDefault: (
     assignment: ts.BinaryExpression | Increment | ts.YieldExpression,
@@ -1079,7 +1081,7 @@ interface PatternStatements<Result> {
     path: Path,
     continueWith: (path: Path, value: Expression) => Result,
   ) => Result;
-  throwOnNullish: (value: Expression, path: Path, rest: () => Result) => Result;
+  throwTypeErrorIf: (condition: Expression, path: Path, rest: () => Result) => Result;
   readRest: (
     site: ts.Node,
     keys: readonly string[],
@@ -1137,7 +1139,9 @@ const assignPattern = <Result>(
     const assignWith = (after: Path, innerValue: Expression) =>
       statements !== undefined &&
       (ts.isArrayLiteralExpression(inner) || ts.isObjectLiteralExpression(inner))
-        ? statements.throwOnNullish(innerValue, after, () => assignInner(after, innerValue))
+        ? statements.throwTypeErrorIf(isNullish(innerValue, context), after, () =>
+            assignInner(after, innerValue),
+          )
         : assignInner(after, innerValue);
     return statements !== undefined &&
       assignment !== undefined &&
@@ -1328,9 +1332,31 @@ const assignPattern = <Result>(
               ]),
             },
           };
-    // A statement stops at once where a pattern whose type isn't an array's takes an object.
-    return statements !== undefined && type !== undefined && !context.checker.isArrayLikeType(type)
-      ? statements.throwOnNullish(iterated, path, () => assignFrom(0, start, boolean(false)))
+    // GetIterator throws a TypeError before the pattern assigns anything, and the elements of a
+    // pattern whose type isn't an array's stop at once where it takes an object.
+    return statements !== undefined && !isList && !isHeapSource && !isTaken(value)
+      ? statements.throwTypeErrorIf(
+          isUniterable(
+            value,
+            heap ?? (heapSymbol === undefined ? undefined : getHeap(path.scope, target, context)),
+            target,
+            isMaybePrimitive(
+              context.checker.getNonNullableType(
+                source === undefined
+                  ? (type ?? context.checker.getTypeOfAssignmentPattern(target))
+                  : context.checker.getTypeAtLocation(source),
+              ),
+            ),
+            context,
+          ),
+          path,
+          () =>
+            type !== undefined && !context.checker.isArrayLikeType(type)
+              ? statements.throwTypeErrorIf(isNullish(iterated, context), path, () =>
+                  assignFrom(0, start, boolean(false)),
+                )
+              : assignFrom(0, start, boolean(false)),
+        )
       : assignFrom(0, start, boolean(false));
   }
   if (ts.isObjectLiteralExpression(target)) {
@@ -1566,13 +1592,9 @@ const assignPatternWith = (
               next(current, part),
             ),
         ),
-      throwOnNullish: (innerValue, current, rest) => {
+      throwTypeErrorIf: (condition, current, rest) => {
         context.prelude.add("Null");
-        return ifThenElse(
-          isNullish(innerValue, context),
-          throwTypeError(current, target, context, frame),
-          rest(),
-        );
+        return ifThenElse(condition, throwTypeError(current, target, context, frame), rest());
       },
       readRest: (restSite, keys, innerValue, current, next) =>
         readRestGetters(restSite, keys, innerValue, current, context, frame, next),
@@ -10684,14 +10706,22 @@ const translateExpressionStatement = (
       ),
     );
   }
-  // An array pattern destructures an object that a script declares through its iterator, and a
-  // pattern whose default yields runs it as a statement.
+  // An array pattern destructures an object that a script declares through its iterator, or throws
+  // where it can't iterate a value that may be a primitive, and a pattern whose default yields runs
+  // it as a statement.
+  const assignedType = ts.isBinaryExpression(expression)
+    ? context.checker.getTypeAtLocation(expression.right)
+    : undefined;
   if (
     ts.isBinaryExpression(expression) &&
     expression.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
     ((ts.isArrayLiteralExpression(expression.left) &&
       (isIteratedPattern(expression.left, context) ||
-        isIterablePattern(expression.left, context))) ||
+        isIterablePattern(expression.left, context) ||
+        (assignedType !== undefined &&
+          !(assignedType.flags & ts.TypeFlags.StringLike) &&
+          (isMaybeNullish(assignedType) ||
+            isMaybePrimitive(context.checker.getNonNullableType(assignedType)))))) ||
       ((ts.isArrayLiteralExpression(expression.left) ||
         ts.isObjectLiteralExpression(expression.left)) &&
         hasYield(expression.left)))

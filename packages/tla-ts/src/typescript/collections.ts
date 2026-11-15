@@ -54,7 +54,7 @@ import {
   translateSymbolProperty,
 } from "./intrinsics";
 import { getTypeNames, isComparableType, useJavaScript } from "./javascript";
-import { getWrittenFunctions } from "./protocols";
+import { getWrittenFunctions, isNullish } from "./protocols";
 import { bindNames, bindPatternInline, type Receiver, type Scope } from "./scope";
 import {
   apply,
@@ -2939,6 +2939,97 @@ export const translatePatternIteration = (
           translateArrayIteration(iterated, heap, pattern, context),
         ),
       );
+
+// Whether a value of this type may be a primitive other than null or undefined, which an array
+// pattern iterates through its prototype.
+export const isMaybePrimitive = (type: ts.Type) =>
+  (type.isUnion() ? type.types : [type]).some(
+    (constituent) =>
+      !(
+        constituent.flags &
+        (ts.TypeFlags.Object | ts.TypeFlags.Undefined | ts.TypeFlags.Null | ts.TypeFlags.Void)
+      ),
+  );
+
+// Whether GetIterator throws a TypeError for the value that an array pattern destructures: null or
+// undefined, a primitive other than a string whose prototype holds no iterator method, or an array
+// once a script deleted Array.prototype's. An object that isn't an array iterates elsewhere.
+export const isUniterable = (
+  value: Expression,
+  heap: Expression | undefined,
+  node: ts.Node,
+  isPrimitive: boolean,
+  context: Context,
+) => {
+  const lacksIterator = (
+    prototype:
+      | "Array.prototype"
+      | "Number.prototype"
+      | "Boolean.prototype"
+      | "Symbol.prototype"
+      | "BigInt.prototype"
+      | "Function.prototype",
+  ) =>
+    heap === undefined
+      ? boolean(prototype !== "Array.prototype")
+      : isNullish(
+          useJavaScript(
+            "Get",
+            [
+              heap,
+              translateBuiltInValue(prototype, node, context),
+              useJavaScript("WellKnownSymbol", [string("iterator")], context),
+            ],
+            context,
+          ),
+          context,
+        );
+  return share(value, "iterable", context, (iterable) => {
+    const type = useJavaScript("TypeOf", [iterable], context);
+    const ofPrimitive = (
+      [
+        ["number", "Number.prototype"],
+        ["boolean", "Boolean.prototype"],
+        ["symbol", "Symbol.prototype"],
+        ["bigint", "BigInt.prototype"],
+        ["function", "Function.prototype"],
+      ] as const
+    ).reduceRight<Expression>(
+      (otherwise, [name, prototype]) =>
+        ifExpression(
+          apply("=", [type, string(name)]),
+          ifExpression(
+            lacksIterator(prototype),
+            boolean(true),
+            apply("Assert", [
+              boolean(false),
+              string("tla-ts can't iterate a primitive whose prototype a script gave an iterator"),
+            ]),
+          ),
+          otherwise,
+        ),
+      ifExpression(
+        apply("=", [type, string("string")]),
+        boolean(false),
+        lacksIterator("Array.prototype"),
+      ),
+    );
+    return ifExpression(
+      useJavaScript("IsRef", [iterable], context),
+      heap === undefined
+        ? boolean(false)
+        : apply("/\\", [
+            useJavaScript("IsArray", [heap, iterable], context),
+            lacksIterator("Array.prototype"),
+          ]),
+      ifExpression(
+        isNullish(iterable, context),
+        boolean(true),
+        isPrimitive ? ofPrimitive : lacksIterator("Array.prototype"),
+      ),
+    );
+  });
+};
 
 // The heap after a pattern runs an array's iterator. A pattern whose type isn't an array's first
 // takes its elements, which stop where its value is an object, though nothing reads them.
