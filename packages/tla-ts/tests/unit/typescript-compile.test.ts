@@ -25882,4 +25882,38 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("none,type"))).failure?.message).toContain("type,type");
     });
   });
+
+  describe("constructs Array.of's receiver with how many items it takes", () => {
+    const getSource = (expected: string) => `
+      const box = { size: 0 };
+      class Stop extends Error {}
+      let len: unknown = -1;
+      let hits = 0;
+      function C(length: number) {
+        len = length;
+        hits++;
+      }
+      function T() {
+        throw new Stop();
+      }
+      Array.of.call(C, "a", "b");
+      let caught = "none";
+      try {
+        Array.of.call(T);
+      } catch (error) {
+        caught = error instanceof Stop ? "stop" : "other";
+      }
+      box.size = hits;
+      const read = [len, hits, caught].join();
+      if (read !== "${expected}") throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("2,1,stop"))).failure).toBeUndefined();
+    });
+
+    it("rejects the constructor as taking the items", async () => {
+      expect((await checkModel(getSource("a,1,stop"))).failure?.message).toContain("2,1,stop");
+    });
+  });
 });

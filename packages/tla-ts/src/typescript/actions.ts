@@ -1768,6 +1768,39 @@ const getUpdate = (expression: ts.BinaryExpression, path: Path, context: Context
 const getRootCall = (node: ts.Expression | undefined): ts.Expression | undefined =>
   node !== undefined && ts.isPropertyAccessExpression(node) ? getRootCall(node.expression) : node;
 
+// The function that Array.of.call(F, ...items) constructs, where it reads neither this nor
+// new.target, returns nothing, and the items convert nothing.
+const getUnseenOfConstructor = (node: ts.CallExpression, context: Context) => {
+  const callee = node.expression;
+  const constructed = node.arguments.at(0);
+  const target =
+    ts.isPropertyAccessExpression(callee) &&
+    callee.name.text === "call" &&
+    ts.isPropertyAccessExpression(callee.expression) &&
+    callee.expression.name.text === "of" &&
+    getBuiltIn(callee.expression.expression, context) === "Array" &&
+    constructed !== undefined &&
+    ts.isIdentifier(constructed) &&
+    node.arguments.slice(1).every(isInertValue)
+      ? getCallee(constructed, context)
+      : undefined;
+  return target !== undefined &&
+    (ts.isFunctionDeclaration(target) || ts.isFunctionExpression(target)) &&
+    target.asteriskToken === undefined &&
+    (ts.getCombinedModifierFlags(target) & ts.ModifierFlags.Async) === 0 &&
+    target.body !== undefined &&
+    findNodes(
+      target.body,
+      (inner): inner is ts.Node =>
+        inner.kind === ts.SyntaxKind.ThisKeyword ||
+        ts.isMetaProperty(inner) ||
+        (ts.isReturnStatement(inner) && inner.expression !== undefined) ||
+        (ts.isFunctionLike(inner) && !ts.isArrowFunction(inner)),
+    ).length === 0
+    ? target
+    : undefined;
+};
+
 export const translateCallStatement = (
   expression: ts.CallExpression,
   path: Path,
@@ -1777,6 +1810,52 @@ export const translateCallStatement = (
 ): Formula => {
   if (expression.expression.kind === ts.SyntaxKind.SuperKeyword) {
     return translateSuperCall(expression, path, context, frame, continueWith);
+  }
+  // Array.of through call constructs its receiver with how many items it takes, and then defines
+  // them on what that gives, which a constructor that never reads its this nor returns an object
+  // makes fresh, so that only the constructor's run is seen.
+  const ofConstructor = getUnseenOfConstructor(expression, context);
+  if (ofConstructor !== undefined) {
+    const heap = getHeap(path.scope, expression, context);
+    return ifThenElse(
+      apply("/\\", [
+        useJavaScript(
+          "HoldsBuiltIn",
+          [
+            heap,
+            translateBuiltInValue("Array", expression, context),
+            string("of"),
+            string("Array.of"),
+          ],
+          context,
+        ),
+        useJavaScript(
+          "HoldsBuiltIn",
+          [
+            heap,
+            translateBuiltInValue("Function.prototype", expression, context),
+            string("call"),
+            string("Function.prototype.call"),
+          ],
+          context,
+        ),
+      ]),
+      inlineValues(
+        ofConstructor,
+        [number(expression.arguments.length - 1)],
+        undefined,
+        path,
+        context,
+        frame,
+        (after) => continueWith(after),
+      ),
+      leaf(
+        apply("Assert", [
+          boolean(false),
+          string("tla-ts can't tell which function this call runs"),
+        ]),
+      ),
+    );
   }
   const loop = getLoopCall(expression, path, context);
   // A receiver or a later argument that only statements can run runs first, where what evaluates
