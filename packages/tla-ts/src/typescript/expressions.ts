@@ -281,6 +281,11 @@ export const BIGINT_OPERATORS = new Map([
   [ts.SyntaxKind.SlashToken, "BigIntDivide"],
   [ts.SyntaxKind.PercentToken, "BigIntRemainder"],
   [ts.SyntaxKind.AsteriskAsteriskToken, "BigIntPower"],
+  [ts.SyntaxKind.AmpersandToken, "BigIntAnd"],
+  [ts.SyntaxKind.BarToken, "BigIntOr"],
+  [ts.SyntaxKind.CaretToken, "BigIntXor"],
+  [ts.SyntaxKind.LessThanLessThanToken, "BigIntLeftShift"],
+  [ts.SyntaxKind.GreaterThanGreaterThanToken, "BigIntRightShift"],
 ]);
 
 const LOGICAL_OPERATORS = new Map([

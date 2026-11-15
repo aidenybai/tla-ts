@@ -2021,8 +2021,9 @@ const getUpdate = (expression: ts.BinaryExpression, path: Path, context: Context
     return (current: Expression) =>
       ifExpression(isLogicallyWritten(expression, read ?? current, context), assigned, current);
   }
-  const arithmetic = ARITHMETIC_ASSIGNMENTS.get(kind);
-  const bigIntOperator = arithmetic === undefined ? undefined : BIGINT_OPERATORS.get(arithmetic);
+  const operatorKind = ARITHMETIC_ASSIGNMENTS.get(kind) ?? BITWISE_ASSIGNMENTS.get(kind);
+  const bigIntOperator =
+    operatorKind === undefined ? undefined : BIGINT_OPERATORS.get(operatorKind);
   if (
     bigIntOperator !== undefined &&
     isBigIntLike(expression.left, context) &&

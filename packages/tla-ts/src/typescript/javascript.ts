@@ -949,6 +949,44 @@ BitwiseOr(left, right) == BitwiseOperation("or", left, right)
 
 BitwiseXor(left, right) == BitwiseOperation("xor", left, right)
 
+\\* JavaScript's &, |, and ^ of BigInts, on their two's complement, where a negative BigInt's bits are
+\\* its magnitude less 1 complemented, with 1s past them without end.
+LOCAL BigIntBitwise(operation, left, right) ==
+  LET isLeftNegative == BigIntIsNegative(left)
+      isRightNegative == BigIntIsNegative(right)
+      leftNat == IF isLeftNegative THEN NatSubtract(BigIntNat(left), <<1>>) ELSE BigIntNat(left)
+      rightNat == IF isRightNegative THEN NatSubtract(BigIntNat(right), <<1>>) ELSE BigIntNat(right)
+      isNegative == BitOf(operation, IF isLeftNegative THEN 1 ELSE 0, IF isRightNegative THEN 1 ELSE 0) = 1
+      limb(nat, isComplemented, position) ==
+        IF isComplemented THEN Limb - 1 - LimbAt(nat, position) ELSE LimbAt(nat, position)
+      bits == [position \\in 1..(IF Len(leftNat) > Len(rightNat) THEN Len(leftNat) ELSE Len(rightNat)) |->
+                 LET result == Bits(operation, limb(leftNat, isLeftNegative, position),
+                                    limb(rightNat, isRightNegative, position))
+                 IN IF isNegative THEN Limb - 1 - result ELSE result]
+  IN BigIntOf(isNegative, IF isNegative THEN NatAdd(NatTrim(bits), <<1>>) ELSE NatTrim(bits))
+
+BigIntAnd(left, right) == BigIntBitwise("and", left, right)
+
+BigIntOr(left, right) == BigIntBitwise("or", left, right)
+
+BigIntXor(left, right) == BigIntBitwise("xor", left, right)
+
+\\* JavaScript's << of BigInts, where a negative count shifts right, rounding toward -Infinity.
+BigIntLeftShift(value, count) ==
+  LET nat == BigIntNat(value)
+      \\* A count beyond TLC's integers shifts every bit out, or stops.
+      bits == IF IsLimbs(count) THEN MaxBigIntBits + 1 ELSE Absolute(IntegerOfBigInt(count))
+  IN CASE nat = <<>> -> Big :> 0
+       [] ~BigIntIsNegative(count) ->
+            IF bits > MaxBigIntBits - NatBits(nat)
+            THEN TooBig
+            ELSE BigIntOf(BigIntIsNegative(value), NatShiftLeft(nat, bits))
+       [] BigIntIsNegative(value) ->
+            BigIntOf(TRUE, NatAdd(NatShiftRight(NatSubtract(nat, <<1>>), bits), <<1>>))
+       [] OTHER -> BigIntOf(FALSE, NatShiftRight(nat, bits))
+
+BigIntRightShift(value, count) == BigIntLeftShift(value, BigIntNegate(count))
+
 \\* JavaScript's ~.
 \\* JavaScript's ~, as -1 - x, which keeps -2^31 inside TLC's integers.
 BitwiseNot(value) == -1 - Int32(value)
