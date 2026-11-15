@@ -24,6 +24,9 @@ const COMPILER_OPTIONS: ts.CompilerOptions = {
   types: [],
 };
 
+// TypeScript's error for an if whose branch is the empty statement, which JavaScript runs.
+const EMPTY_IF_BRANCH_ERROR = 1313;
+
 // TypeScript's own declaration files, parsed once and shared by every program, since parsing them
 // takes most of a compile.
 const libraryFiles = new Map<string, ts.SourceFile>();
@@ -219,7 +222,11 @@ export const createProgram = (
     modelProgram.getSourceFiles().flatMap((file) => program.getSourceFile(file.fileName) ?? []);
   const getDiagnostics = (program: ts.Program) =>
     ts.sortAndDeduplicateDiagnostics(
-      getModelFiles(program).flatMap((file) => ts.getPreEmitDiagnostics(program, file)),
+      getModelFiles(program).flatMap((file) =>
+        ts
+          .getPreEmitDiagnostics(program, file)
+          .filter((diagnostic) => diagnostic.code !== EMPTY_IF_BRANCH_ERROR),
+      ),
     );
   const modelDiagnostics = getDiagnostics(modelProgram);
   // A model that type checks by itself keeps the program of its own files, which loads faster.

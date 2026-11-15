@@ -39684,4 +39684,24 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("runs an if whose branch is the empty statement", () => {
+    const getSource = (expected: string) => `
+      const seen: string[] = [];
+      let count = 0;
+      if (count++ > 0);
+      else seen.push("else");
+      if (count++ > 0);
+      seen.push(String(count));
+      if (seen.join() !== "${expected}") throw new Error(seen.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("else,2"))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation", async () => {
+      expect((await checkModel(getSource("else,1"))).failure?.message).toContain("else,2");
+    });
+  });
 });
