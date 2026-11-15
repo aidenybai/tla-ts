@@ -241,6 +241,7 @@ describe("the CLI with TypeScript files", () => {
 
   it("reports a file that doesn't compile and checks the rest", () => {
     const result = runCli(copyFixtures("failing"), ["division.ts", "overdraft.ts"]);
+    expect(result.stdout).toContain("Checking division.ts\n");
     expect(result.stderr).toContain(
       "TlaTypeScriptError: division.ts:4:11 Write division as Math.floor(a / b) or Math.trunc(a / b)",
     );
