@@ -19576,6 +19576,29 @@ export const translateScript = (
       context.implicitGlobals.has(symbol) ? getUnresolvable(context) : getUndefined(context),
     ]),
   ]);
+  // The prototype objects of the generator functions that the script declares.
+  const prototypes = [...context.generatorPrototypes.keys()].reduce<Expression>(
+    (heap, declaration) =>
+      useJavaScript(
+        "Allocate",
+        [
+          heap,
+          useJavaScript(
+            "GeneratorPrototypeObject",
+            [
+              translateBuiltInValue(
+                "%GeneratorFunction%.prototype.prototype",
+                declaration,
+                context,
+              ),
+            ],
+            context,
+          ),
+        ],
+        context,
+      ),
+    identifier("EmptyHeap"),
+  );
   const path: Path = {
     scope: {
       ...scope,
@@ -19586,37 +19609,18 @@ export const translateScript = (
               ...bindings,
               [
                 context.heap,
-                // The prototype objects of the generator functions that the script declares, and
-                // the namespace objects that it reads, which the modules fill in once they run.
-                useJavaScript(
-                  "AllocateEach",
-                  [
-                    [...context.generatorPrototypes.keys()].reduce<Expression>(
-                      (heap, declaration) =>
-                        useJavaScript(
-                          "Allocate",
-                          [
-                            heap,
-                            useJavaScript(
-                              "GeneratorPrototypeObject",
-                              [
-                                translateBuiltInValue(
-                                  "%GeneratorFunction%.prototype.prototype",
-                                  declaration,
-                                  context,
-                                ),
-                              ],
-                              context,
-                            ),
-                          ],
-                          context,
-                        ),
-                      identifier("EmptyHeap"),
+                // The namespace objects that the script reads, which take their exports once their
+                // modules run.
+                context.namespaces.size === 0
+                  ? prototypes
+                  : useJavaScript(
+                      "AllocateEach",
+                      [
+                        prototypes,
+                        tuple([...context.namespaces.keys()].map(() => identifier("EmptyObject"))),
+                      ],
+                      context,
                     ),
-                    tuple([...context.namespaces.keys()].map(() => identifier("EmptyObject"))),
-                  ],
-                  context,
-                ),
               ],
             ]),
       uninitialized: new Set(declared),
