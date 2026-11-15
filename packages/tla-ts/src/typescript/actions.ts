@@ -400,6 +400,7 @@ import {
   isPrimitiveIndex,
   isBuiltInIteratorType,
   isGeneratorType,
+  isScriptIteratorType,
   isSyncGeneratorType,
   isThrownToArrayPattern,
   isPrototypeRead,
@@ -2239,32 +2240,47 @@ export const translateCallStatement = (
   }
   const consumer = getGeneratorMethod(expression, context);
   const stepped = isGeneratorStep(expression, context) ? expression : undefined;
+  const consume =
+    consumer &&
+    ((current: Path) =>
+      translateHoldsArrayFrom(
+        consumer.method === "from",
+        expression,
+        current,
+        context,
+        (ITERATOR_HELPERS.has(consumer.method)
+          ? translateIteratorHelper
+          : translateGeneratorConsumer)(
+          expression,
+          consumer,
+          consumer.receiver !== undefined && isBuiltInIteratorType(consumer.receiver, context)
+            ? withBuiltInIterator(
+                expression,
+                current,
+                translateExpression(consumer.receiver, current.scope, context),
+                context,
+              )
+            : current,
+          context,
+          frame,
+          continueWith,
+        ),
+      ));
   const translateStep =
-    consumer !== undefined
+    consume !== undefined
       ? (current: Path) =>
-          translateHoldsArrayFrom(
-            consumer.method === "from",
-            expression,
-            current,
-            context,
-            (ITERATOR_HELPERS.has(consumer.method)
-              ? translateIteratorHelper
-              : translateGeneratorConsumer)(
-              expression,
-              consumer,
-              consumer.receiver !== undefined && isBuiltInIteratorType(consumer.receiver, context)
-                ? withBuiltInIterator(
-                    expression,
-                    current,
-                    translateExpression(consumer.receiver, current.scope, context),
-                    context,
-                  )
-                : current,
-              context,
-              frame,
-              continueWith,
-            ),
-          )
+          consumer?.receiver !== undefined &&
+          consumer.invalid === undefined &&
+          isScriptIteratorType(consumer.receiver, context)
+            ? withScriptIterator(
+                expression,
+                current,
+                translateExpression(consumer.receiver, current.scope, context),
+                context,
+                frame,
+                consume,
+              )
+            : consume(current)
       : stepped &&
         ((current: Path) => translateGeneratorStep(stepped, current, context, frame, continueWith));
   const generator = consumer?.receiver ?? stepped?.expression.expression;
@@ -5833,13 +5849,24 @@ const translateGeneratorConsumer = (
     resumeGenerator(node, receiver, "return", undefined, current, context, frame, (after) =>
       finish(after),
     );
-  // A callback that throws closes the generator before the error leaves the method.
+  // A callback that throws closes the generator before the error leaves the method, which wins over
+  // what the close throws.
   const callbackFrame = {
     ...frame,
-    throwTo: (current: Path, thrown: Thrown) =>
-      close(current, (after) =>
-        frame.throwTo === undefined ? leaf(thrown.uncaught) : frame.throwTo(after, thrown),
-      ),
+    throwTo: (current: Path, thrown: Thrown) => {
+      const rethrow = (after: Path) =>
+        frame.throwTo === undefined ? leaf(thrown.uncaught) : frame.throwTo(after, thrown);
+      return resumeGenerator(
+        node,
+        receiver,
+        "return",
+        undefined,
+        current,
+        context,
+        { ...frame, throwTo: rethrow },
+        rethrow,
+      );
+    },
   };
   const thisArgument = method === "from" ? consumer.values.at(1) : undefined;
   const callbackReceiver =
@@ -6132,6 +6159,109 @@ const withBuiltInIterator = (
   return leave(path, stepFrom(0));
 };
 
+// The most steps of a script's iterator that the code that steps generators follows, as each step
+// calls the iterator's next.
+const SCRIPT_ITERATOR_STEP_LIMIT = 16;
+
+// Steps an iterator that a script's class makes for the code that steps generators, by its
+// suspension. It reads the iterator's next once, as GetIteratorDirect does. Each next calls it and
+// reads the result's done and value, as IteratorStepValue does, where a throw, or the TypeError
+// for a result that isn't an object, leaves the iterator done. A return closes the iterator, as
+// IteratorClose does, which throws for the code that closes it.
+const withScriptIterator = (
+  node: ts.Node,
+  path: Path,
+  ref: Expression,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path) => Formula,
+): Formula => {
+  if ([...path.generators.values()].some((suspension) => isSameExpression(suspension.ref, ref))) {
+    return continueWith(path);
+  }
+  const name = context.names.getFresh("iterator");
+  const getCaller = (current: Path) => {
+    const caller = current.generators.get(name)?.caller;
+    if (caller === undefined) throw new TlaTypeScriptError("Unsupported iterator", node);
+    return caller;
+  };
+  const leave = (current: Path, resume: Suspension["resume"]): Path => ({
+    ...current,
+    generators: new Map([
+      ...current.generators,
+      [
+        name,
+        {
+          ref,
+          generator: undefined,
+          resume,
+          isStarted: true,
+          isGuarded: true,
+          abort: (closing, method) => {
+            if (method !== "return") {
+              return leaf(
+                apply("Assert", [boolean(false), string(`tla-ts can't ${method} this iterator`)]),
+              );
+            }
+            const caller = getCaller(closing);
+            const closeFrame = { ...frame, throwTo: caller.throwTo };
+            return closeIterator(
+              node,
+              ref,
+              closing,
+              context,
+              closeFrame,
+              (failed) => throwTypeError(failed, node, context, closeFrame),
+              (closed) => caller.step(leave(closed, undefined), undefined, true),
+            );
+          },
+          isAsync: false,
+          queue: [],
+        },
+      ],
+    ]),
+  });
+  const stepFrom =
+    (next: Expression, count: number) =>
+    (resumer: Path): Formula => {
+      if (count >= SCRIPT_ITERATOR_STEP_LIMIT) {
+        return leaf(
+          apply("Assert", [
+            boolean(false),
+            string(`tla-ts can't step an iterator more than ${SCRIPT_ITERATOR_STEP_LIMIT} times`),
+          ]),
+        );
+      }
+      const caller = getCaller(resumer);
+      const throwTo = caller.throwTo;
+      const stepFrame: Frame = {
+        ...frame,
+        throwTo: throwTo && ((current, thrown) => throwTo(leave(current, undefined), thrown)),
+      };
+      return stepIterator(
+        node,
+        ref,
+        "next",
+        next,
+        [],
+        resumer,
+        context,
+        stepFrame,
+        (failed) => throwTypeError(failed, node, context, stepFrame),
+        (done) => caller.step(leave(done, undefined), undefined, true),
+        (stepped, result) =>
+          readValue(node, result, stepped, context, stepFrame, (taken, value) =>
+            caller.step(leave(taken, stepFrom(next, count + 1)), value, false),
+          ),
+      );
+    };
+  return read(node, ref, "next", path, context, frame, (found, next) =>
+    bind(found, "next", next, context, (bound, held) =>
+      continueWith(leave(bound, stepFrom(held, 0))),
+    ),
+  );
+};
+
 // Runs the rest where Iterator still holds the built-in from, and Iterator.prototype the built-in
 // @@iterator that gives a generator object itself.
 const translateHoldsIteratorFrom = (node: ts.Node, path: Path, context: Context, rest: Formula) =>
@@ -6377,12 +6507,24 @@ const translateIteratorHelper = (
   });
   const getFrame = (caller: Caller): Frame => ({
     ...frame,
-    // A callback that throws closes the generator before the error leaves next.
-    throwTo: (current, thrown) =>
-      resumeGenerator(node, underlying, "return", undefined, current, context, frame, (after) => {
+    // A callback that throws closes the generator before the error leaves next, which wins over
+    // what the close throws.
+    throwTo: (current, thrown) => {
+      const rethrow = (after: Path) => {
         const left = leave(after, undefined);
         return caller.throwTo === undefined ? leaf(thrown.uncaught) : caller.throwTo(left, thrown);
-      }),
+      };
+      return resumeGenerator(
+        node,
+        underlying,
+        "return",
+        undefined,
+        current,
+        context,
+        { ...frame, throwTo: rethrow },
+        rethrow,
+      );
+    },
   });
   const translatedSteps = { count: 0 };
   // flatMap gives each element of the array that the mapper returns, as the array's iterator steps
@@ -6429,6 +6571,7 @@ const translateIteratorHelper = (
           throwTo: caller.throwTo,
         });
       }
+      // What the close throws leaves next, as the helper finishes.
       if (method === "take" && counter >= (limit ?? 0)) {
         return resumeGenerator(
           node,
@@ -6437,7 +6580,13 @@ const translateIteratorHelper = (
           undefined,
           resumer,
           context,
-          frame,
+          {
+            ...frame,
+            throwTo: (current, thrown) =>
+              caller.throwTo === undefined
+                ? leaf(thrown.uncaught)
+                : caller.throwTo(leave(current, undefined), thrown),
+          },
           (after) => give(after, undefined, true),
         );
       }
@@ -7356,10 +7505,20 @@ const getGeneratorMethod = (node: ts.CallExpression, context: Context) => {
   const method = isCall ? owner.name.text : accessed.name.text;
   const receiver = isCall || isFrom ? node.arguments.at(0) : owner;
   const invalid = isCall && receiver !== undefined ? getInvalidIterator(receiver) : undefined;
+  // A script's iterator runs Iterator.prototype's method where its class doesn't write one.
+  const isScriptIterator =
+    !isCall &&
+    !isFrom &&
+    receiver !== undefined &&
+    isScriptIteratorType(receiver, context) &&
+    (getSymbol(accessed.name, context.checker)?.declarations ?? []).every(
+      (declaration) => declaration.getSourceFile().isDeclarationFile,
+    );
   return (ITERATOR_CONSUMERS.has(method) || ITERATOR_HELPERS.has(method) || isFrom) &&
     receiver !== undefined &&
     (isGeneratorType(receiver, context) ||
       isBuiltInIteratorType(receiver, context) ||
+      isScriptIterator ||
       invalid !== undefined)
     ? {
         method,

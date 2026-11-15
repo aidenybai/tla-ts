@@ -8,6 +8,7 @@ import {
   getSymbol,
   getUndefined,
   isHeapClass,
+  getBuiltInBase,
   isFunctionObject,
   isHeapFunction,
   translateString,
@@ -959,6 +960,20 @@ export const isBuiltInIteratorType = (node: ts.Node, context: Context) =>
   getMembers(node, context).every((type) =>
     ["ArrayIterator", "StringIterator"].includes(type.getSymbol()?.name ?? ""),
   );
+
+// An object of a class that the script writes, which extends Iterator, whose next the code that
+// steps generators calls.
+export const isScriptIteratorType = (node: ts.Node, context: Context) =>
+  context.heap !== undefined &&
+  getMembers(node, context).every((type) => {
+    const declaration = type.getSymbol()?.valueDeclaration;
+    return (
+      declaration !== undefined &&
+      ts.isClassLike(declaration) &&
+      isHeapClass(declaration, context) &&
+      getBuiltInBase(declaration, context) === "Iterator"
+    );
+  });
 
 export const isGeneratorType = (node: ts.Node, context: Context) =>
   getMembers(node, context).every(isGeneratorMember);

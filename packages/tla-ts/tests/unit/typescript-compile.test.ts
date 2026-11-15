@@ -18676,6 +18676,67 @@ describe("errors", () => {
     }
   });
 
+  describe("steps an iterator that a class extending Iterator makes through its next and return", () => {
+    const getSource = (program: string) => `
+      const log: string[] = [];
+      function same(actual: unknown, expected: unknown, label: string) {
+        if (!Object.is(actual, expected)) throw new Error(label);
+      }
+      class Counter extends Iterator<number> {
+        count = 0;
+        isThrowing = false;
+        next(): IteratorResult<number, undefined> {
+          log.push("next");
+          this.count += 1;
+          return this.count > 3 ? { done: true, value: undefined } : { done: false, value: this.count };
+        }
+        return(): IteratorResult<number, undefined> {
+          log.push("return");
+          if (this.isThrowing) throw new RangeError();
+          return { done: true, value: undefined };
+        }
+      }
+      ${program}
+    `;
+    const gathered = `
+      const all = new Counter().toArray();
+      same(all.join(), "1,2,3", "toArray");
+      same(log.join(), "next,next,next,next", "log");
+    `;
+    const closed = `
+      const failing = new Counter();
+      failing.isThrowing = true;
+      const mapped = failing.map(() => {
+        throw new TypeError();
+      });
+      let caught: unknown;
+      try {
+        mapped.next();
+      } catch (error) {
+        caught = error;
+      }
+      same(caught instanceof TypeError, true, "thrown");
+      same(log.join(), "next,return", "log");
+    `;
+
+    it("gathers what next gives", async () => {
+      expect((await checkModel(getSource(gathered))).failure).toBeUndefined();
+    });
+
+    it("closes through return where map's callback throws", async () => {
+      expect((await checkModel(getSource(closed))).failure).toBeUndefined();
+    });
+
+    it.each([
+      ["toArray", gathered, '"1,2,3", "toArray"', '"1,2", "toArray"'],
+      ["thrown", closed, 'true, "thrown"', 'false, "thrown"'],
+    ])("rejects a wrong %s", async (label, program, expected, wrong) => {
+      expect(
+        (await checkModel(getSource(program.replace(expected, wrong)))).failure?.message,
+      ).toContain(`"${label}"`);
+    });
+  });
+
   it("flattens the arrays that flatMap's mapper returns", async () => {
     const source = `
       const holder = { count: 0 };

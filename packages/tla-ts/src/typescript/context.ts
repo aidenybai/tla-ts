@@ -1914,6 +1914,7 @@ export const getBuiltInBase = (
   context: Context,
 ):
   | "Object"
+  | "Iterator"
   | "Boolean"
   | "Number"
   | "String"
@@ -1927,7 +1928,13 @@ export const getBuiltInBase = (
     (clause) => clause.token === ts.SyntaxKind.ExtendsKeyword,
   )?.types[0]?.expression;
   const name = heritage === undefined ? undefined : getBuiltIn(heritage, context);
-  if (name === "Object" || name === "Boolean" || name === "Number" || name === "String") {
+  if (
+    name === "Object" ||
+    name === "Iterator" ||
+    name === "Boolean" ||
+    name === "Number" ||
+    name === "String"
+  ) {
     return hasConstructor ? undefined : name;
   }
   // A collection's subclass may add only static members, as the heap reads its instances as the
