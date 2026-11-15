@@ -44573,4 +44573,56 @@ describe("BigInts", () => {
       ).toThrow("Unsupported call: inner");
     });
   });
+
+  describe("passes a helper's function parameter on to another helper", () => {
+    const getSource = (expected: number) => `
+      type Step = (value: number) => number;
+      function double(value: number): number {
+        return value * 2;
+      }
+      function apply(step: Step, value: number): number {
+        return step(value);
+      }
+      function twice(step: Step, value: number): number {
+        return apply(step, apply(step, value));
+      }
+      const total = twice(double, 3) + twice((value) => value + 1, 3);
+      if (total !== ${expected}) throw new Error(String(total));
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(17))).failure).toBeUndefined();
+    });
+
+    it("rejects a wrong total", async () => {
+      await expect(checkModel(getSource(18))).rejects.toThrow("17");
+    });
+
+    it("stops where a function's operator would be a value", () => {
+      expect(() =>
+        compile(`
+          type Step = (value: number) => number;
+          function double(value: number): number {
+            return value * 2;
+          }
+          function outer(callback: (step: Step) => number): number {
+            return callback(double);
+          }
+          const total = outer((step) => 5);
+        `),
+      ).toThrow("tla-ts can't use double as a value here");
+      expect(() =>
+        compile(`
+          type Step = (value: number) => number;
+          function double(value: number): number {
+            return value * 2;
+          }
+          function apply(step: Step, callback: (inner: Step) => number): number {
+            return callback(step);
+          }
+          const total = apply(double, (inner) => 4);
+        `),
+      ).toThrow("tla-ts can't use step as a value here");
+    });
+  });
 });
