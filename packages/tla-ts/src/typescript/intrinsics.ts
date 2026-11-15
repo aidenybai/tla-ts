@@ -658,6 +658,7 @@ export const translateBuiltInValue = (
     | "%AsyncGeneratorFunction%.prototype.prototype"
     | "Promise"
     | "Promise.prototype"
+    | "Promise.prototype.catch"
     | "JSON"
     | "Intl"
     | `Intl.${string}.prototype`

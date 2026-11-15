@@ -25953,4 +25953,43 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("number,7,1"))).failure?.message).toContain("object,7,1");
     });
   });
+
+  describe("runs the then that Promise.prototype.catch invokes on a receiver", () => {
+    const getSource = (expected: string) => `
+      const box = { size: 0 };
+      const seen: unknown[] = [];
+      const thenable = {
+        then(onFulfilled: unknown, onRejected: unknown) {
+          seen.push(this === thenable, onFulfilled, typeof onRejected);
+          return "made";
+        },
+      };
+      Promise.prototype.catch.call(thenable);
+      class Stop extends Error {}
+      const thrower = {
+        then: function () {
+          throw new Stop();
+        },
+      };
+      let caught = "none";
+      try {
+        Promise.prototype.catch.call(thrower);
+      } catch (error) {
+        caught = error instanceof Stop ? "stop" : "other";
+      }
+      box.size = 1;
+      const read = [...seen, caught].join();
+      if (read !== "${expected}") throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("true,,undefined,stop"))).failure).toBeUndefined();
+    });
+
+    it("rejects then as running on another receiver", async () => {
+      expect((await checkModel(getSource("false,,undefined,stop"))).failure?.message).toContain(
+        "true,,undefined,stop",
+      );
+    });
+  });
 });

@@ -3724,26 +3724,68 @@ export const translateCallStatement = (
           (ts.isObjectLiteralExpression(argument) && argument.properties.length === 0),
       )
   ) {
-    return allocate(expression, path, context, (inner) =>
-      ifThenElse(
-        useJavaScript(
-          "ThrowsOnReceiver",
-          [
-            getHeap(inner.scope, expression, context),
-            translateExpression(calledMethod.expression, inner.scope, context),
-            translateExpression(expression.arguments[0], inner.scope, context),
-          ],
-          context,
-        ),
+    return allocate(expression, path, context, (inner) => {
+      const heap = getHeap(inner.scope, expression, context);
+      const method = translateExpression(calledMethod.expression, inner.scope, context);
+      const receiver = translateExpression(expression.arguments[0], inner.scope, context);
+      const stop = leaf(
+        apply("Assert", [
+          boolean(false),
+          string("tla-ts can't tell which function this call runs"),
+        ]),
+      );
+      // Promise.prototype.catch invokes the receiver's then with undefined and its argument, which
+      // runs a then that the script writes.
+      const caught =
+        expression.arguments.length <= 2
+          ? getThenMethods(expression.getSourceFile()).reduceRight<Formula>(
+              (rest, then) =>
+                ifThenElse(
+                  apply("/\\", [
+                    useJavaScript(
+                      "SameValue",
+                      [
+                        method,
+                        translateBuiltInValue("Promise.prototype.catch", expression, context),
+                      ],
+                      context,
+                    ),
+                    useJavaScript("IsHeap", [receiver], context),
+                    apply("~", [useJavaScript("IsProxy", [heap, receiver], context)]),
+                    apply("=", [
+                      useJavaScript("GetterOf", [heap, receiver, string("then")], context),
+                      getUndefined(context),
+                    ]),
+                    apply("=", [
+                      useJavaScript("Get", [heap, receiver, string("then")], context),
+                      getCandidateValue(then, context) ?? getUndefined(context),
+                    ]),
+                  ]),
+                  inlineValues(
+                    then,
+                    [
+                      getUndefined(context),
+                      expression.arguments[1] === undefined
+                        ? getUndefined(context)
+                        : translateExpression(expression.arguments[1], inner.scope, context),
+                    ],
+                    { value: receiver, method: then },
+                    inner,
+                    context,
+                    frame,
+                    continueWith,
+                  ),
+                  rest,
+                ),
+              stop,
+            )
+          : stop;
+      return ifThenElse(
+        useJavaScript("ThrowsOnReceiver", [heap, method, receiver], context),
         throwTypeError(inner, expression, context, frame),
-        leaf(
-          apply("Assert", [
-            boolean(false),
-            string("tla-ts can't tell which function this call runs"),
-          ]),
-        ),
-      ),
-    );
+        caught,
+      );
+    });
   }
   if (callee?.body === undefined) {
     throw new TlaTypeScriptError(`Unsupported statement: ${expression.getText()}`, expression);
@@ -15089,6 +15131,24 @@ export const writesState = (
 };
 
 // Whether an expression only names a value through identifiers and dots, as Map.prototype.get does.
+// The functions that a script writes as an object's then, other than arrows, which take no
+// receiver, generators, and async ones.
+const getThenMethods = (sourceFile: ts.SourceFile) =>
+  findNodes(
+    sourceFile,
+    (node): node is ts.PropertyAssignment | ts.MethodDeclaration =>
+      (ts.isPropertyAssignment(node) || ts.isMethodDeclaration(node)) &&
+      ts.isIdentifier(node.name) &&
+      node.name.text === "then",
+  ).flatMap((node) => {
+    const then = ts.isPropertyAssignment(node) ? node.initializer : node;
+    return (ts.isFunctionExpression(then) || ts.isMethodDeclaration(then)) &&
+      then.asteriskToken === undefined &&
+      (ts.getCombinedModifierFlags(then) & ts.ModifierFlags.Async) === 0
+      ? [then]
+      : [];
+  });
+
 const isNamePath = (node: ts.Expression): boolean =>
   ts.isIdentifier(node) ||
   (ts.isPropertyAccessExpression(node) &&
