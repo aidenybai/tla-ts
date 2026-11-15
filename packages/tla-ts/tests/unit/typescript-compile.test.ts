@@ -41670,4 +41670,20 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("import() of a module that throws as it runs", () => {
+    const path = join(import.meta.dirname, "../fixtures/typescript/imports/rejecting.ts");
+    const source = readFileSync(path, "utf8");
+
+    it("agrees with Node", async () => {
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects another error", async () => {
+      const wrong = source.replace("TypeError: thrown", "TypeError: throw");
+      expect((await check(compile(wrong, path))).failure?.message).toContain(
+        "A timer threw an exception",
+      );
+    });
+  });
 });

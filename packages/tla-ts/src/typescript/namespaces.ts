@@ -9,6 +9,8 @@ import {
   isInertValue,
   isWrittenBy,
 } from "./context";
+import { NATIVE_ERRORS } from "./exceptions";
+import { getBuiltIn } from "./intrinsics";
 import { useJavaScript } from "./javascript";
 import { isDeclaration } from "./model";
 import { identifier, number } from "./tla";
@@ -49,6 +51,26 @@ const isInert = (statement: ts.Statement) =>
     )) ||
   (ts.isExportAssignment(statement) && isInertValue(statement.expression));
 
+// The native error of literals that a module throws where its last statement throws it and its
+// code only declares before that, which the promise of each import() of it takes. A module that
+// imports other modules may throw what they throw first.
+export const getModuleThrow = (file: ts.SourceFile, checker: ts.TypeChecker) => {
+  const last = file.statements.at(-1);
+  const thrown = last !== undefined && ts.isThrowStatement(last) ? last.expression : undefined;
+  return thrown !== undefined &&
+    ts.isNewExpression(thrown) &&
+    NATIVE_ERRORS.has(getBuiltIn(thrown.expression, { checker }) ?? "") &&
+    (thrown.arguments ?? []).every(isLiteralValue) &&
+    file.statements.slice(0, -1).every(isInert) &&
+    !file.statements.some(
+      (statement) =>
+        (ts.isImportDeclaration(statement) || ts.isExportDeclaration(statement)) &&
+        statement.moduleSpecifier !== undefined,
+    )
+    ? thrown
+    : undefined;
+};
+
 // The ref of the namespace object of a module that a script reads, which the heap holds from the
 // start, after the generator prototypes.
 export const getNamespaceRef = (file: ts.SourceFile, context: Context) => {
@@ -63,9 +85,13 @@ export const getNamespaceRef = (file: ts.SourceFile, context: Context) => {
   );
 };
 
-// The modules that a file names in an import() of a string, which load as the script runs.
+// The modules that a file names in an import() of a string, which load as the script runs, but
+// those that throw as they run, which never make their namespace objects.
 export const getDynamicImports = (file: ts.SourceFile, checker: ts.TypeChecker) =>
-  findNodes(file, isImportCall).flatMap((call) => getImportedModule(call, checker) ?? []);
+  findNodes(file, isImportCall).flatMap((call) => {
+    const module = getImportedModule(call, checker);
+    return module === undefined || getModuleThrow(module, checker) !== undefined ? [] : [module];
+  });
 
 // tla-ts runs a module that only an import() loads before the script, as it runs the modules that
 // the script imports, where Node runs it once the import() loads it. Only a module whose code only
@@ -155,10 +181,12 @@ export const findNamespaces = (
       early ?? importCall,
     );
   }
+  const loaded = new Set(getDynamicImports(sourceFile, checker));
   const roots = [
     ...findNodes(sourceFile, isImportCall).flatMap((call) => {
       const specifier = call.arguments.at(0);
-      return (specifier && getModule(checker.getSymbolAtLocation(specifier), checker)) ?? [];
+      const module = specifier && getModule(checker.getSymbolAtLocation(specifier), checker);
+      return module !== undefined && loaded.has(module.file) ? [module] : [];
     }),
     ...findNodes(sourceFile, ts.isIdentifier).flatMap(
       (node) => getNamespaceRead(node, checker) ?? [],
