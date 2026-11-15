@@ -42893,4 +42893,40 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("checks the kind of a value of type any that a logical assignment gives", () => {
+    const getSource = (expected: string) => `
+      const values: any[] = [3, "b"];
+      let count: number | undefined;
+      count ??= values[0];
+      let label = "";
+      label ||= values[1];
+      let isSet = true;
+      isSet &&= values[0] === 3;
+      const log = [count === 3, label + "c", isSet].join();
+      if (log !== "${expected}") throw new Error(log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("true,bc,true"))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong log", async () => {
+      expect((await checkModel(getSource("true,b,true"))).failure?.message).toContain(
+        "true,bc,true",
+      );
+    });
+
+    it("stops at a value of another kind", async () => {
+      const result = await checkModel(`
+        const read = (): any => "a";
+        let count: number | undefined;
+        count ??= read();
+        if (count === 2) throw new Error("count");
+      `);
+      expect(result.failure?.message).toContain(
+        "tla-ts can't give a typed name, parameter, property, or element a value of another kind",
+      );
+    });
+  });
 });

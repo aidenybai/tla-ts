@@ -1802,6 +1802,14 @@ const translateKindCheck = (
     ),
   );
 
+// The assignments that give their target the value on their right.
+const SLOT_ASSIGNMENTS = new Set([
+  ts.SyntaxKind.EqualsToken,
+  ts.SyntaxKind.QuestionQuestionEqualsToken,
+  ts.SyntaxKind.BarBarEqualsToken,
+  ts.SyntaxKind.AmpersandAmpersandEqualsToken,
+]);
+
 // The kinds of the values of the slot that a script's value of type any or unknown goes into: a
 // typed variable, parameter, property, element, or return, which the script's code then compares
 // and combines as values of those kinds. A built-in's parameter takes a value of any kind, and a
@@ -1826,7 +1834,7 @@ const getSlotKinds = (node: ts.Expression, context: Context) => {
       parent.initializer === outer &&
       ts.isIdentifier(parent.name)) ||
     (ts.isBinaryExpression(parent) &&
-      parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      SLOT_ASSIGNMENTS.has(parent.operatorToken.kind) &&
       parent.right === outer &&
       !ts.isArrayLiteralExpression(parent.left) &&
       !ts.isObjectLiteralExpression(parent.left)) ||
