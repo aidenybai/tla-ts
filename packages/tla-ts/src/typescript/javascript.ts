@@ -7471,7 +7471,14 @@ LOCAL CanDefineOn(ref, key, descriptor) ==
          \\/ /\\ ~IsRef(ref)
             /\\ IsBuiltIn(ref)
             /\\ BuiltIns[ref].isCallable
-            /\\ BuiltIns[ref].prototype = Ref :> "Object.prototype",
+            /\\ BuiltIns[ref].prototype = Ref :> "Object.prototype"
+         \\* The combinators read Promise's resolve through Get, and stop where its accessor lacks
+         \\* a getter of the script.
+         \\/ /\\ ~IsRef(ref)
+            /\\ IsBuiltIn(ref)
+            /\\ "prototype" \\in DOMAIN BuiltIns[ref].values
+            /\\ BuiltIns[ref].values["prototype"] = Ref :> "Promise.prototype"
+            /\\ key = "resolve",
          "tla-ts can't define accessors on built-in objects")
 
 \\* A typed array's [[DefineOwnProperty]] of a key that is a number, which defines nothing where the

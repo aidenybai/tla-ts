@@ -61,7 +61,7 @@ import { getBuiltIn, translateBuiltInValue } from "./intrinsics";
 import { useJavaScript } from "./javascript";
 import { openIterator, readValue, stepIterator } from "./iterators";
 import { getModuleThrow, getNamespaceRef } from "./namespaces";
-import { isNullish } from "./protocols";
+import { getKeyGetters, isNullish, readWith } from "./protocols";
 import { getKeptIterator, getKind, isHeapArray } from "./types";
 import { type Bound, bindValues, type Receiver } from "./scope";
 import type { TrackedStack } from "./stacks";
@@ -1981,89 +1981,123 @@ const translatePromiseCombinator = (
     const catching = { ...made, scope: { ...made.scope, isCatching: true } };
     const value = iterable && translateExpression(iterable, made.scope, context);
     const heap = getHeap(made.scope, node, context);
+    // GetPromiseResolve reads Promise's resolve before the combinator iterates, where a getter that
+    // the script defines may answer, which rejects the promise where it throws.
+    const resolveGetters = getKeyGetters(node, "resolve", context);
+    const promise = translateBuiltInValue("Promise", node, context);
+    const readResolve = (rest: Formula) =>
+      resolveGetters.length === 0
+        ? guardBuiltIns(node, "Promise", ["resolve"], made, context, rest)
+        : ifThenElse(
+            apply("=", [
+              useJavaScript("GetterOf", [heap, promise, string("resolve")], context),
+              getUndefined(context),
+            ]),
+            guardBuiltIns(node, "Promise", ["resolve"], made, context, rest),
+            readWith(
+              node,
+              promise,
+              string("resolve"),
+              resolveGetters,
+              catching,
+              context,
+              rejectFrame,
+              () =>
+                leaf(
+                  apply("Assert", [
+                    boolean(false),
+                    string(
+                      `tla-ts can't call the resolve that a getter gives Promise.${combinator}`,
+                    ),
+                  ]),
+                ),
+            ),
+          );
     return guardBuiltIns(
       node,
       "Promise",
-      [combinator, "resolve"],
+      [combinator],
       made,
       context,
-      guardBuiltIns(
-        node,
-        "Promise.prototype",
-        ["then"],
-        made,
-        context,
-        value === undefined
-          ? start(made)
-          : translateJoined(
-              node,
-              catching,
-              context,
-              (after) => throwTypeError(after, node, context, rejectFrame),
-              (throwWith) =>
-                ifThenElse(
-                  apply("/\\", [
-                    useJavaScript("IsRef", [value], context),
-                    apply("~", [useJavaScript("IsProxy", [heap, value], context)]),
-                    apply("~", [useJavaScript("IsArray", [heap, value], context)]),
-                  ]),
-                  openIterator(
-                    node,
-                    value,
-                    catching,
-                    context,
-                    rejectFrame,
-                    throwWith,
-                    (opened, iterator, next) =>
-                      stepIterator(
-                        node,
-                        iterator,
-                        "next",
-                        next,
-                        [],
-                        opened,
-                        context,
-                        rejectFrame,
-                        throwWith,
-                        (done) => start(leave(done)),
-                        (stepped, result) =>
-                          readValue(node, result, stepped, context, rejectFrame, () =>
-                            leaf(
-                              apply("Assert", [
-                                boolean(false),
-                                string(
-                                  `tla-ts can't follow an element that an iterator gives Promise.${combinator}`,
-                                ),
-                              ]),
-                            ),
-                          ),
-                      ),
-                  ),
+      readResolve(
+        guardBuiltIns(
+          node,
+          "Promise.prototype",
+          ["then"],
+          made,
+          context,
+          value === undefined
+            ? start(made)
+            : translateJoined(
+                node,
+                catching,
+                context,
+                (after) => throwTypeError(after, node, context, rejectFrame),
+                (throwWith) =>
                   ifThenElse(
-                    apply("\\/", [
-                      isNullish(value, context),
-                      apply("\\in", [
-                        useJavaScript("TypeOf", [value], context),
-                        set([
-                          string("boolean"),
-                          string("number"),
-                          string("bigint"),
-                          string("symbol"),
+                    apply("/\\", [
+                      useJavaScript("IsRef", [value], context),
+                      apply("~", [useJavaScript("IsProxy", [heap, value], context)]),
+                      apply("~", [useJavaScript("IsArray", [heap, value], context)]),
+                    ]),
+                    openIterator(
+                      node,
+                      value,
+                      catching,
+                      context,
+                      rejectFrame,
+                      throwWith,
+                      (opened, iterator, next) =>
+                        stepIterator(
+                          node,
+                          iterator,
+                          "next",
+                          next,
+                          [],
+                          opened,
+                          context,
+                          rejectFrame,
+                          throwWith,
+                          (done) => start(leave(done)),
+                          (stepped, result) =>
+                            readValue(node, result, stepped, context, rejectFrame, () =>
+                              leaf(
+                                apply("Assert", [
+                                  boolean(false),
+                                  string(
+                                    `tla-ts can't follow an element that an iterator gives Promise.${combinator}`,
+                                  ),
+                                ]),
+                              ),
+                            ),
+                        ),
+                    ),
+                    ifThenElse(
+                      apply("\\/", [
+                        isNullish(value, context),
+                        apply("\\in", [
+                          useJavaScript("TypeOf", [value], context),
+                          set([
+                            string("boolean"),
+                            string("number"),
+                            string("bigint"),
+                            string("symbol"),
+                          ]),
                         ]),
                       ]),
-                    ]),
-                    throwWith(catching),
-                    leaf(
-                      apply("Assert", [
-                        boolean(false),
-                        string(
-                          `tla-ts can't iterate a string or an array that Promise.${combinator} takes`,
-                        ),
-                      ]),
+                      throwWith(catching),
+                      leaf(
+                        apply("Assert", [
+                          boolean(false),
+                          string(
+                            `tla-ts can't iterate a string or an array that Promise.${combinator} takes`,
+                          ),
+                        ]),
+                      ),
                     ),
                   ),
-                ),
-            ),
+              ),
+        ),
       ),
     );
   });

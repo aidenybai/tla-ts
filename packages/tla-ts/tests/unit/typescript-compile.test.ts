@@ -44828,4 +44828,47 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("rejects a combinator's promise where a getter of Promise's resolve throws", () => {
+    const getSource = (expected: string) => `
+      declare function setTimeout(callback: () => void): void;
+      let log = "";
+      Object.defineProperty(Promise, "resolve", {
+        get() {
+          log += "g";
+          throw new Error("resolve");
+        },
+      });
+      const iterable = {
+        get [Symbol.iterator](): () => Iterator<unknown> {
+          log += "i";
+          throw new Error("iterator");
+        },
+      };
+      Promise.race(iterable).catch((error: Error) => {
+        log += error.message;
+      });
+      Promise.all([1]).then(
+        () => {
+          log += "f";
+        },
+        (error: Error) => {
+          log += error.message;
+        },
+      );
+      setTimeout(() => {
+        if (log !== "${expected}") throw new Error(log);
+      });
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("ggresolveresolve"))).failure).toBeUndefined();
+    });
+
+    it("rejects a combinator that iterates before it reads resolve", async () => {
+      expect((await checkModel(getSource("giresolvegresolve"))).failure?.message).toContain(
+        "A timer threw an exception",
+      );
+    });
+  });
 });
