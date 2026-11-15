@@ -42427,4 +42427,42 @@ describe("BigInts", () => {
       expect(result.failure?.message).toContain("tla-ts can't read a property of this value");
     });
   });
+
+  describe("reads a Map whose keys a type error may give another kind", () => {
+    const getSource = (key: string, expected: string) => `
+      const entries = new Map([
+        ["a", 1],
+        ["b", 2],
+      ]);
+      let log = "";
+      // @ts-ignore
+      log += entries.get(${key});
+      log += entries.size;
+      if (log !== "${expected}") throw new Error(log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource('"b"', "22"))).failure).toBeUndefined();
+    });
+
+    it("rejects the value of another key", async () => {
+      expect((await checkModel(getSource('"b"', "12"))).failure?.message).toContain("22");
+    });
+
+    it("stops at a key of another kind", () => {
+      expect(() => compile(getSource("2", "undefined2"))).toThrow(
+        "Give a Map keys of one kind, as TLC can't compare a number with a string",
+      );
+    });
+
+    it("stops at a Set that starts with keys of two kinds", () => {
+      expect(() =>
+        compile(`
+          // @ts-ignore
+          const keys = new Set<string>(["a", 1]);
+          if (keys.size !== 2) throw new Error("size");
+        `),
+      ).toThrow("Give a Set keys of one kind, as TLC can't compare a number with a string");
+    });
+  });
 });

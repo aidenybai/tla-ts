@@ -3611,25 +3611,27 @@ export const translateStoredCall = (
 const getNewName = (node: ts.NewExpression, context: Context) =>
   (getConstruction(node, context)?.callee ?? node.expression).getText();
 
-// The kinds of the keys that a new Set or Map holds, which TLC compares, so that they must agree:
-// TLC stops where it compares a number with a string. Model values, such as undefined, null, and
-// symbols, compare with any value. Where the Set or Map's type doesn't tell, this reads the keys
-// that the script gives the variable that holds it.
-const getKeyKinds = (node: ts.NewExpression, context: Context) => {
-  const checker = context.checker;
-  const getKinds = (type: ts.Type) => {
-    const names = getTypeNames(type, checker);
-    return (
-      names &&
-      names
-        .filter((name) => !["undefined", "null", "symbol"].includes(name))
-        .map((name) => (name === "function" ? "object" : name))
-    );
-  };
+// The kinds of the values of a type that TLC compares, which must agree: TLC stops where it
+// compares a number with a string. Model values, such as undefined, null, and symbols, compare with
+// any value.
+const getComparedKinds = (type: ts.Type, checker: ts.TypeChecker) =>
+  getTypeNames(type, checker)
+    ?.filter((name) => !["undefined", "null", "symbol"].includes(name))
+    .map((name) => (name === "function" ? "object" : name));
+
+// The kinds of the keys that the type of a Set or a Map gives it.
+const getDeclaredKeyKinds = (node: ts.Expression, checker: ts.TypeChecker) => {
   const type = getCollectionType(checker.getTypeAtLocation(node));
   const keyType = isTypeReference(type) ? checker.getTypeArguments(type).at(0) : undefined;
-  const declared = keyType && getKinds(keyType);
-  if (declared !== undefined) return new Set(declared);
+  return keyType && getComparedKinds(keyType, checker);
+};
+
+// The kinds of the keys that a new Set or Map holds. This reads the keys that the script gives the
+// variable that holds the Set or Map, and where its type tells the kinds, adds them, as a key that
+// a type error lets through may be of another kind.
+const getKeyKinds = (node: ts.NewExpression, context: Context) => {
+  const checker = context.checker;
+  const declared = getDeclaredKeyKinds(node, checker);
   const holder = node.parent;
   const name = ts.isVariableDeclaration(holder)
     ? holder.name
@@ -3669,8 +3671,11 @@ const getKeyKinds = (node: ts.NewExpression, context: Context) => {
   const kinds = keys.map((key) =>
     key === undefined || ts.isSpreadElement(key)
       ? undefined
-      : getKinds(checker.getTypeAtLocation(key)),
+      : getComparedKinds(checker.getTypeAtLocation(key), checker),
   );
+  if (declared !== undefined) {
+    return new Set([...declared, ...kinds.flatMap((kind) => kind ?? [])]);
+  }
   return kinds.every((kind) => kind !== undefined) ? new Set(kinds.flat()) : undefined;
 };
 
