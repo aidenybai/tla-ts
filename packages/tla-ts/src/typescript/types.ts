@@ -6,6 +6,7 @@ import {
   getCallee,
   getHeapClass,
   getSymbol,
+  isAssigned,
   getUndefined,
   isHeapClass,
   getBuiltInBase,
@@ -842,6 +843,67 @@ export const isNullishArrayMethodCall = (node: ts.CallExpression, context: Conte
     )
   );
 };
+
+// A call of a Set's method that reads a set-like object, of an array that a literal makes, in a
+// script that gives nothing a size, which throws the TypeError of GetSetRecord, as ToNumber makes
+// the size it reads NaN.
+export const isSizelessSetLikeCall = (node: ts.CallExpression, context: Context) => {
+  const callee = node.expression;
+  const argument = node.arguments.at(0);
+  const symbol =
+    argument !== undefined && ts.isIdentifier(argument)
+      ? getSymbol(argument, context.checker)
+      : undefined;
+  const declaration = symbol?.valueDeclaration;
+  // Any size but a read of one, as set.size reads.
+  const isGiven = (inner: ts.Node): inner is ts.Node => {
+    const access = inner.parent;
+    const user = access?.parent;
+    const isRead =
+      access !== undefined &&
+      ts.isPropertyAccessExpression(access) &&
+      access.name === inner &&
+      !(
+        ts.isBinaryExpression(user) &&
+        user.left === access &&
+        user.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+        user.operatorToken.kind <= ts.SyntaxKind.LastAssignment
+      ) &&
+      !ts.isDeleteExpression(user) &&
+      !ts.isPrefixUnaryExpression(user) &&
+      !ts.isPostfixUnaryExpression(user);
+    return (
+      (ts.isIdentifier(inner) || ts.isPrivateIdentifier(inner) || ts.isStringLiteralLike(inner)) &&
+      inner.text === "size" &&
+      !isRead
+    );
+  };
+  return (
+    ts.isPropertyAccessExpression(callee) &&
+    SET_LIKE_METHODS.has(callee.name.text) &&
+    ts.isIdentifier(callee.expression) &&
+    isSet(callee.expression, context) &&
+    node.arguments.length === 1 &&
+    symbol !== undefined &&
+    declaration !== undefined &&
+    ts.isVariableDeclaration(declaration) &&
+    declaration.initializer !== undefined &&
+    ts.isArrayLiteralExpression(declaration.initializer) &&
+    !isAssigned(symbol, node.getSourceFile(), context) &&
+    findNodes(node.getSourceFile(), isGiven).length === 0
+  );
+};
+
+// A Set's methods that read a set-like object through GetSetRecord.
+export const SET_LIKE_METHODS = new Set([
+  "union",
+  "intersection",
+  "difference",
+  "symmetricDifference",
+  "isSubsetOf",
+  "isSupersetOf",
+  "isDisjointFrom",
+]);
 
 // The wrapper that ToObject makes of the boolean, number, or string that a call of
 // Array.prototype's method runs on, which the statement makes on the heap before the call runs.

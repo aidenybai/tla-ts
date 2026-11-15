@@ -36267,4 +36267,40 @@ describe("BigInts", () => {
       ).toContain("false,false,-1");
     });
   });
+
+  describe("throws the TypeError of a Set's method that reads an array as a set-like object", () => {
+    const getSource = (expected: string) => `
+      const set = new Set([1, 2]);
+      const list = [3];
+      let caught = "";
+      try {
+        // @ts-ignore
+        set.union(list);
+      } catch (error) {
+        caught += error instanceof TypeError ? "t" : "x";
+      }
+      try {
+        // @ts-ignore
+        const subset = set.isSubsetOf(list);
+        caught += String(subset);
+      } catch (error) {
+        caught += error instanceof TypeError ? "t" : "x";
+      }
+      try {
+        // @ts-ignore
+        set.isDisjointFrom(list);
+      } catch (error) {
+        caught += error instanceof TypeError ? "t" : "x";
+      }
+      if (caught !== "${expected}") throw new Error(caught);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("ttt"))).failure).toBeUndefined();
+    });
+
+    it("rejects a wrong expectation", async () => {
+      expect((await checkModel(getSource("tt"))).failure?.message).toContain("ttt");
+    });
+  });
 });

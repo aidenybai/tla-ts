@@ -10,6 +10,7 @@ import ts from "@typescript/typescript6";
 import { TlaTypeScriptError } from "../src/errors";
 import { check } from "../src/parallel";
 import { STRING_METHODS } from "../src/typescript/collections";
+import { SET_LIKE_METHODS } from "../src/typescript/types";
 import { compile } from "../src/typescript/compile";
 import { CONFORMANCE_DIRECTORY, CORPORA_DIRECTORY, listFiles } from "./corpora";
 
@@ -2151,6 +2152,23 @@ const ignoreSoundErrors = () => {
         ))
     );
   };
+  // A call of a Set's method that SET_LIKE_METHODS lists, of an array, which the error is at.
+  // tla-ts throws GetSetRecord's TypeError where the test gives nothing a size, and stops otherwise.
+  const isSetLikeArrayCall = (diagnostic: ts.Diagnostic) => {
+    const call = getErroredCall(diagnostic);
+    const value = call?.arguments?.[0];
+    return (
+      call !== undefined &&
+      ts.isCallExpression(call) &&
+      ts.isPropertyAccessExpression(call.expression) &&
+      SET_LIKE_METHODS.has(call.expression.name.text) &&
+      checker.getTypeAtLocation(call.expression.expression).getSymbol()?.getName() === "Set" &&
+      call.arguments.length === 1 &&
+      value !== undefined &&
+      value.getStart() === diagnostic.start &&
+      checker.isArrayType(checker.getTypeAtLocation(value))
+    );
+  };
   // A call of a method of RegExp.prototype that PROTOCOL_METHODS lists, on a regexp, as
   // rx[Symbol.search](s), or through call, as RegExp.prototype[Symbol.search].call(rx, s).
   // The method of a protocol call, under the well-known symbol that names it.
@@ -2461,6 +2479,7 @@ const ignoreSoundErrors = () => {
           isReducingCall(diagnostic) ||
           isSearchingCall(diagnostic) ||
           isIndexCall(diagnostic) ||
+          isSetLikeArrayCall(diagnostic) ||
           isTypedArrayNew(diagnostic))) ||
       (diagnostic.code === UNKNOWN_CALLEE_ERROR && isStoredStringCall(node)) ||
       (diagnostic.code === UNCALLABLE_ERROR && isTypedUnionCall(node, diagnostic)) ||

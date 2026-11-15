@@ -416,6 +416,7 @@ import {
   rejectGeneratorUse,
   TYPED_ARRAYS,
   isNullishArrayMethodCall,
+  isSizelessSetLikeCall,
   getArrayMethodCall,
 } from "./types";
 
@@ -2170,7 +2171,7 @@ export const translateCallStatement = (
       ),
     );
   }
-  if (isNullishArrayMethodCall(expression, context)) {
+  if (isNullishArrayMethodCall(expression, context) || isSizelessSetLikeCall(expression, context)) {
     return throwTypeError(path, expression, context, frame);
   }
   if (isUnseededReduce(expression, context)) {
@@ -11576,6 +11577,7 @@ const isStatementResult = (node: ts.CallExpression, path: Path, context: Context
     getHeapSetOrMapChange(node, context) !== undefined ||
     getArrayIteratorCall(node, context) !== undefined ||
     isNullishArrayMethodCall(node, context) ||
+    isSizelessSetLikeCall(node, context) ||
     getStringCall(node, context) !== undefined ||
     isBigIntStringify(node, context) ||
     getRevival(node, context) !== undefined ||
