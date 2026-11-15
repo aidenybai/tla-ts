@@ -18455,6 +18455,50 @@ const hoistVars = (statements: readonly ts.Statement[], path: Path, context: Con
       };
 };
 
+// The labels that name a statement, from the nearest out.
+const getLabels = (statement: ts.Statement): string[] =>
+  ts.isLabeledStatement(statement.parent)
+    ? [statement.parent.label.text, ...getLabels(statement.parent)]
+    : [];
+
+// Whether a statement gives the frame of what it encloses the target of a break, or of a continue: a
+// loop, a switch for a break, or for a break a labeled statement of another kind that a break names.
+const isJumpOwner = (node: ts.Node, isContinue: boolean): boolean => {
+  if (ts.isIterationStatement(node, false)) return true;
+  if (isContinue) return false;
+  if (ts.isSwitchStatement(node)) return true;
+  if (
+    !ts.isLabeledStatement(node) ||
+    ts.isLabeledStatement(node.statement) ||
+    ts.isIterationStatement(node.statement, false) ||
+    ts.isSwitchStatement(node.statement)
+  ) {
+    return false;
+  }
+  const labels = [node.label.text, ...getLabels(node)];
+  const isNamed = (inner: ts.Node): boolean =>
+    !ts.isFunctionLike(inner) &&
+    !ts.isClassLike(inner) &&
+    ((ts.isBreakStatement(inner) &&
+      inner.label !== undefined &&
+      labels.includes(inner.label.text)) ||
+      (ts.forEachChild(inner, isNamed) ?? false));
+  return isNamed(node.statement);
+};
+
+// Whether a break or a continue goes to the target that the frame holds: that of the nearest
+// statement that sets one, which a label must name.
+const isOwnJump = (jump: ts.BreakOrContinueStatement) => {
+  const isContinue = ts.isContinueStatement(jump);
+  const owner = ts.findAncestor(jump.parent, (ancestor) => isJumpOwner(ancestor, isContinue));
+  if (owner === undefined || !ts.isStatement(owner)) return false;
+  const label = jump.label;
+  if (label === undefined) return !ts.isLabeledStatement(owner);
+  return ts.isLabeledStatement(owner)
+    ? [owner.label.text, ...getLabels(owner)].includes(label.text)
+    : getLabels(owner).includes(label.text);
+};
+
 export const translateStatements = (
   statements: readonly ts.Statement[],
   entered: Path,
@@ -18661,6 +18705,13 @@ export const translateStatements = (
     return translateStatements(statement.statements, path, context, {
       ...statementFrame,
       next: continueWith,
+    });
+  }
+  if (ts.isLabeledStatement(statement)) {
+    return translateStatements([statement.statement], path, context, {
+      ...statementFrame,
+      next: continueWith,
+      breakTo: isJumpOwner(statement, false) ? continueWith : statementFrame.breakTo,
     });
   }
   if (ts.isEmptyStatement(statement)) return continueWith(path);
@@ -19297,13 +19348,13 @@ export const translateStatements = (
     });
   }
   if (ts.isBreakStatement(statement)) {
-    if (statementFrame.breakTo === undefined || statement.label !== undefined) {
+    if (statementFrame.breakTo === undefined || !isOwnJump(statement)) {
       throw new TlaTypeScriptError("Unsupported break", statement);
     }
     return statementFrame.breakTo(path);
   }
   if (ts.isContinueStatement(statement)) {
-    if (statementFrame.continueTo === undefined || statement.label !== undefined) {
+    if (statementFrame.continueTo === undefined || !isOwnJump(statement)) {
       throw new TlaTypeScriptError("Unsupported continue", statement);
     }
     return statementFrame.continueTo(path);

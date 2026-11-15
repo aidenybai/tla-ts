@@ -43573,4 +43573,74 @@ describe("BigInts", () => {
       ).toContain("21falsetrue|true|1|0,1|truefalsetrue");
     });
   });
+
+  describe("runs labeled statements and the breaks and continues that name them", () => {
+    const getSource = (expected: string) => `
+      const log: string[] = [];
+      outer: for (let index = 0; index < 3; index++) {
+        if (index === 1) continue outer;
+        if (index === 2) break outer;
+        log.push(\`loop\${index}\`);
+      }
+      block: {
+        log.push("a");
+        if (log.length > 0) break block;
+        log.push("b");
+      }
+      first: second: {
+        log.push("c");
+        break first;
+      }
+      length: 3000;
+      choice: switch (log.length) {
+        case 3:
+          log.push("d");
+          break choice;
+        default:
+          log.push("e");
+      }
+      run: while (true) {
+        try {
+          break run;
+        } finally {
+          log.push("f");
+        }
+      }
+      function sign(value: number) {
+        check: {
+          if (value > 0) break check;
+          return "negative";
+        }
+        return "positive";
+      }
+      log.push(sign(1), sign(-1));
+      if (log.join() !== "${expected}") throw new Error(log.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("loop0,a,c,d,f,positive,negative"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects a break that runs on past its label", async () => {
+      expect(
+        (await checkModel(getSource("loop0,a,b,c,d,f,positive,negative"))).failure?.message,
+      ).toContain("loop0,a,c,d,f,positive,negative");
+    });
+
+    it("stops at a break past the nearest loop", () => {
+      expect(() =>
+        compile(`
+          let count = 0;
+          outer: for (let index = 0; index < 2; index++) {
+            for (let inner = 0; inner < 2; inner++) {
+              count++;
+              break outer;
+            }
+          }
+        `),
+      ).toThrow("Unsupported break");
+    });
+  });
 });
