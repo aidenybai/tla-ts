@@ -2565,6 +2565,16 @@ LOCAL Mantissa(digits) ==
 LOCAL ExponentText(exponent) ==
   IF exponent >= 0 THEN "e+" \\o ToString(exponent) ELSE "e-" \\o ToString(-exponent)
 
+\\* Whether toFixed, toExponential, or toPrecision of a number throws the RangeError of digits outside
+\\* their range, which toExponential and toPrecision check only for a finite number, and
+\\* toPrecision only for digits that aren't undefined.
+NumberFormatThrows(method, value, digits) ==
+  LET count == IntegerOf(digits)
+      isOutside(least) == count \\in Infinities \\/ count < least \\/ count > 100
+  IN CASE method = "toFixed" -> isOutside(0)
+       [] method = "toExponential" -> IsFinite(value) /\\ isOutside(0)
+       [] OTHER -> digits # Undefined /\\ IsFinite(value) /\\ isOutside(1)
+
 \\* Number.prototype.toFixed, which writes a number with digits digits after the point.
 NumberToFixed(value, digits) ==
   LET count == IntegerOf(digits)

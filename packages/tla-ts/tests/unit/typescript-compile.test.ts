@@ -25253,4 +25253,34 @@ describe("BigInts", () => {
     `);
     expect(division.failure?.message).toContain("tla-ts can't throw the RangeError");
   });
+
+  describe("throws the RangeError of toFixed, toExponential, and toPrecision", () => {
+    const getSource = (expected: string) => `
+      const box = { size: 0 };
+      const getError = (run: () => string) => {
+        try {
+          return run();
+        } catch (error) {
+          return error instanceof RangeError ? "range" : "other";
+        }
+      };
+      const fixed = getError(() => (3).toFixed(101));
+      const exponential = getError(() => (3).toExponential(-1));
+      const precision = getError(() => (3).toPrecision(0));
+      const kept = getError(() => (3).toPrecision(1));
+      box.size = 1;
+      const read = [fixed, exponential, precision, kept].join();
+      if (read !== "${expected}") throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("range,range,range,3"))).failure).toBeUndefined();
+    });
+
+    it("rejects one precision digit as out of range", async () => {
+      expect((await checkModel(getSource("range,range,range,range"))).failure?.message).toContain(
+        "range,range,range,3",
+      );
+    });
+  });
 });

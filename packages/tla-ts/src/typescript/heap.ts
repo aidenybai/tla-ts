@@ -4647,7 +4647,29 @@ export const isUnreachableChange = (node: ts.Node, context: Context) =>
 // on another receiver and toISOString's RangeError of an invalid date, replaceAll's TypeError of a
 // regexp that isn't global, the SyntaxError of a pattern that isn't valid, and the URIError of a
 // malformed URI.
+// toFixed, toExponential, or toPrecision of a number and digits that a statement checks before it
+// writes the number, as digits outside their range throw a RangeError.
+export const getFormatCall = (node: ts.Node, context: Context) =>
+  ts.isCallExpression(node) &&
+  ts.isPropertyAccessExpression(node.expression) &&
+  ["toFixed", "toExponential", "toPrecision"].includes(node.expression.name.text) &&
+  isNumberLike(node.expression.expression, context) &&
+  isInertValue(
+    ts.isParenthesizedExpression(node.expression.expression)
+      ? node.expression.expression.expression
+      : node.expression.expression,
+  ) &&
+  node.arguments.length <= 1 &&
+  node.arguments.every((argument) => isInertValue(argument) && isNumberLike(argument, context))
+    ? {
+        method: node.expression.name.text,
+        receiver: node.expression.expression,
+        digits: node.arguments.at(0),
+      }
+    : undefined;
+
 export const getEngineErrors = (node: ts.Node, context: Context) => {
+  if (getFormatCall(node, context) !== undefined) return ["RangeError"];
   const isDefinition =
     isObjectChange(node, context) && node.expression.name.text.startsWith("define");
   const isFallible =

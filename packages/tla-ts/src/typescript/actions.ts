@@ -227,6 +227,7 @@ import {
   getOwnFunctionKeys,
   translatePropertyKey,
   translateErrorFields,
+  getFormatCall,
 } from "./heap";
 import {
   type Collection,
@@ -1776,6 +1777,24 @@ export const translateCallStatement = (
 ): Formula => {
   if (expression.expression.kind === ts.SyntaxKind.SuperKeyword) {
     return translateSuperCall(expression, path, context, frame, continueWith);
+  }
+  const formatCall = getFormatCall(expression, context);
+  if (formatCall !== undefined) {
+    return ifThenElse(
+      useJavaScript(
+        "NumberFormatThrows",
+        [
+          string(formatCall.method),
+          translateExpression(formatCall.receiver, path.scope, context),
+          formatCall.digits === undefined
+            ? getUndefined(context)
+            : translateExpression(formatCall.digits, path.scope, context),
+        ],
+        context,
+      ),
+      throwError("RangeError", path, expression, context, frame),
+      continueWith(path, translateExpression(expression, path.scope, context)),
+    );
   }
   const loop = getLoopCall(expression, path, context);
   // A receiver or a later argument that only statements can run runs first, where what evaluates
@@ -9721,7 +9740,8 @@ const isPromiseMaking = (node: ts.CallExpression, path: Path, context: Context) 
 // A call whose value only statements can compute, which an assignment or a declaration takes.
 const isStatementResult = (node: ts.CallExpression, path: Path, context: Context) =>
   getCalledError(node, context) === undefined &&
-  (isPromiseMaking(node, path, context) ||
+  (getFormatCall(node, context) !== undefined ||
+    isPromiseMaking(node, path, context) ||
     getBound(node.expression, context) !== undefined ||
     getDateCall(node, context) !== undefined ||
     getHeapRegExpCall(node, context) !== undefined ||
