@@ -1279,6 +1279,8 @@ const MISSING_PROPERTY_ERROR = 2339;
 const UNASSIGNABLE_ERRORS = new Set([2322, 2345]);
 const UNTYPED_READ_ERRORS = new Set([MISSING_PROPERTY_ERROR, 2551, 7017, 7053]);
 const UNUSED_OPERAND_ERROR = 2695;
+// A delete of a property that the object's type doesn't make optional.
+const OPTIONAL_DELETE_ERROR = 2790;
 const UNRESOLVED_NAME_ERROR = 2304;
 const NOT_ITERABLE_ERROR = 2488;
 
@@ -2001,6 +2003,17 @@ const ignoreSoundErrors = () => {
       access.parent.operatorToken.kind === ts.SyntaxKind.EqualsToken
     );
   };
+  // A delete of Array.prototype's iterator method, after which an array pattern's GetIterator
+  // throws a TypeError, as tla-ts throws where the method is undefined.
+  const isDeletedIterator = (node: ts.Node) => {
+    const access = ts.findAncestor(node, ts.isElementAccessExpression);
+    return (
+      access !== undefined &&
+      access.argumentExpression.getText() === "Symbol.iterator" &&
+      access.expression.getText() === "Array.prototype" &&
+      ts.isDeleteExpression(access.parent)
+    );
+  };
   // A member of a class that extends Iterator, which the member's own type types, whatever the
   // type of Iterator's member, as an iterator that the test writes to throw or misbehave does.
   const isIteratorMember = (node: ts.Node) => {
@@ -2028,6 +2041,7 @@ const ignoreSoundErrors = () => {
       (diagnostic.code === NOT_ITERABLE_ERROR && isCaughtArrayPattern(node)) ||
       (UNASSIGNABLE_ERRORS.has(diagnostic.code) && isPatternArgument(node)) ||
       (diagnostic.code === 2322 && isIteratorWrite(node)) ||
+      (diagnostic.code === OPTIONAL_DELETE_ERROR && isDeletedIterator(node)) ||
       (diagnostic.code === 2322 && isWrittenExec(node, diagnostic)) ||
       (BASE_MEMBER_ERRORS.has(diagnostic.code) && isIteratorMember(node)) ||
       (CONVERTED_ARGUMENT_ERRORS.has(diagnostic.code) &&
