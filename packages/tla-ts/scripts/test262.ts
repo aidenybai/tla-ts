@@ -92,6 +92,10 @@ const PORTED_INCLUDES = new Map([
     "compareIterator.js",
     readFileSync(join(CONFORMANCE_DIRECTORY, "test262-compare-iterator.ts"), "utf8"),
   ],
+  [
+    "nativeErrors.js",
+    readFileSync(join(CONFORMANCE_DIRECTORY, "test262-native-errors.ts"), "utf8"),
+  ],
 ]);
 
 // An async test's harness defines $DONE, as doneprintHandle.js does.
