@@ -2800,6 +2800,108 @@ NumberToString(value, radix) ==
         [] value < 0 -> "-" \\o RadixDigits(-value, base)
         [] OTHER -> RadixDigits(value, base)
 
+\\* The digits of a number other than 0, without its sign, and the power of 10 of the first: those
+\\* of its exact value, or the fewest that give it back.
+LOCAL Decimal(value, isShortest) ==
+  IF IsFraction(value)
+  THEN LET fraction == Fractions[FractionPosition(value)]
+       IN IF isShortest
+          THEN [digits |-> fraction.shortest, exponent |-> fraction.shortestExponent]
+          ELSE [digits |-> fraction.digits, exponent |-> fraction.exponent]
+  ELSE LET text == ToString(Absolute(Magnitude(value)))
+       IN [digits |-> IF isShortest THEN TrimZeros(text) ELSE text, exponent |-> Len(text) - 1]
+
+RECURSIVE TrimZeros(_)
+TrimZeros(text) ==
+  IF Len(text) > 1 /\\ SubSeq(text, Len(text), Len(text)) = "0"
+  THEN TrimZeros(SubSeq(text, 1, Len(text) - 1))
+  ELSE text
+
+RECURSIVE Incremented(_)
+Incremented(text) ==
+  IF text = ""
+  THEN "1"
+  ELSE LET last == DigitValue(SubSeq(text, Len(text), Len(text)))
+       IN IF last = 9
+          THEN Incremented(SubSeq(text, 1, Len(text) - 1)) \\o "0"
+          ELSE SubSeq(text, 1, Len(text) - 1) \\o SubSeq("0123456789", last + 2, last + 2)
+
+\\* The first count digits, rounded half up on the exact digits after them, which is the larger n of
+\\* two equally near, as toFixed, toExponential, and toPrecision pick. A carry adds a digit.
+LOCAL RoundedDigits(digits, count) ==
+  CASE count < 0 -> "0"
+    [] count = 0 -> IF DigitValue(SubSeq(digits, 1, 1)) >= 5 THEN "1" ELSE "0"
+    [] count >= Len(digits) -> digits \\o Repeated("0", count - Len(digits))
+    [] DigitValue(SubSeq(digits, count + 1, count + 1)) >= 5 -> Incremented(SubSeq(digits, 1, count))
+    [] OTHER -> SubSeq(digits, 1, count)
+
+\\* A number's count significant digits, and the power of 10 of the first.
+LOCAL Significant(value, count) ==
+  LET decimal == Decimal(value, FALSE)
+      rounded == RoundedDigits(decimal.digits, count)
+  IN IF Len(rounded) > count
+     THEN [digits |-> SubSeq(rounded, 1, count), exponent |-> decimal.exponent + 1]
+     ELSE [digits |-> rounded, exponent |-> decimal.exponent]
+
+LOCAL SignOf(value) == IF IsNegative(value) /\\ ~IsZero(value) THEN "-" ELSE ""
+
+LOCAL Mantissa(digits) ==
+  IF Len(digits) = 1 THEN digits ELSE SubSeq(digits, 1, 1) \\o "." \\o SubSeq(digits, 2, Len(digits))
+
+LOCAL ExponentText(exponent) ==
+  IF exponent >= 0 THEN "e+" \\o ToString(exponent) ELSE "e-" \\o ToString(-exponent)
+
+\\* Whether toFixed, toExponential, or toPrecision of a number throws the RangeError of digits outside
+\\* their range, which toExponential and toPrecision check only for a finite number, and
+\\* toPrecision only for digits that aren't undefined.
+NumberFormatThrows(method, value, digits) ==
+  LET count == IntegerOf(digits)
+      isOutside(least) == count \\in Infinities \\/ count < least \\/ count > 100
+  IN CASE method = "toFixed" -> isOutside(0)
+       [] method = "toExponential" -> IsFinite(value) /\\ isOutside(0)
+       [] OTHER -> digits # Undefined /\\ IsFinite(value) /\\ isOutside(1)
+
+\\* Number.prototype.toFixed, which writes a number with digits digits after the point.
+NumberToFixed(value, digits) ==
+  LET count == IntegerOf(digits)
+      decimal == Decimal(value, FALSE)
+      integer == IF IsZero(value) THEN "0" ELSE RoundedDigits(decimal.digits, decimal.exponent + 1 + count)
+      padded == IF Len(integer) <= count THEN Repeated("0", count + 1 - Len(integer)) \\o integer ELSE integer
+  IN CASE count \\in Infinities \\/ count < 0 \\/ count > 100 ->
+            Assert(FALSE, "tla-ts can't throw the RangeError of toFixed")
+       [] ~IsFinite(value) -> StringOf(value)
+       [] count = 0 -> SignOf(value) \\o integer
+       [] OTHER -> SignOf(value) \\o SubSeq(padded, 1, Len(padded) - count) \\o "."
+                     \\o SubSeq(padded, Len(padded) - count + 1, Len(padded))
+
+\\* Number.prototype.toExponential, which writes a number with digits digits after the point, or
+\\* with the fewest that give it back.
+NumberToExponential(value, digits) ==
+  LET count == IntegerOf(digits)
+      decimal == IF digits = Undefined THEN Decimal(value, TRUE) ELSE Significant(value, count + 1)
+  IN CASE ~IsFinite(value) -> StringOf(value)
+       [] count \\in Infinities \\/ count < 0 \\/ count > 100 ->
+            Assert(FALSE, "tla-ts can't throw the RangeError of toExponential")
+       [] IsZero(value) -> Mantissa(Repeated("0", count + 1)) \\o "e+0"
+       [] OTHER -> SignOf(value) \\o Mantissa(decimal.digits) \\o ExponentText(decimal.exponent)
+
+\\* Number.prototype.toPrecision, which writes a number with precision significant digits.
+NumberToPrecision(value, precision) ==
+  LET count == IntegerOf(precision)
+      decimal == IF IsZero(value) THEN [digits |-> Repeated("0", count), exponent |-> 0]
+                 ELSE Significant(value, count)
+      exponent == decimal.exponent
+  IN CASE precision = Undefined \\/ ~IsFinite(value) -> StringOf(value)
+       [] count \\in Infinities \\/ count < 1 \\/ count > 100 ->
+            Assert(FALSE, "tla-ts can't throw the RangeError of toPrecision")
+       [] exponent < -6 \\/ exponent >= count ->
+            SignOf(value) \\o Mantissa(decimal.digits) \\o ExponentText(exponent)
+       [] exponent = count - 1 -> SignOf(value) \\o decimal.digits
+       [] exponent >= 0 ->
+            SignOf(value) \\o SubSeq(decimal.digits, 1, exponent + 1) \\o "."
+              \\o SubSeq(decimal.digits, exponent + 2, count)
+       [] OTHER -> SignOf(value) \\o "0." \\o Repeated("0", -(exponent + 1)) \\o decimal.digits
+
 BigIntToString(value, radix) ==
   LET base == IF radix = Undefined THEN 10 ELSE IntegerOf(radix)
       integer == IntegerOfBigInt(ThisBigInt(value))

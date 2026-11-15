@@ -1288,6 +1288,47 @@ describe("top-level statements", () => {
 });
 
 describe("values", () => {
+  describe("writes numbers with toFixed, toExponential, and toPrecision as Node does", () => {
+    const getSource = (expected: string) => `
+      const half = 0.5;
+      const tiny = 0.0001;
+      const fifth = 0.05;
+      const written = [
+        (123.456).toFixed(2), (-0.0000001).toFixed(2), fifth.toFixed(1), (1.005).toFixed(2),
+        (995).toFixed(0), tiny.toFixed(), (123.456).toExponential(20), (0.9999).toExponential(2),
+        (-25).toExponential(0), (100).toExponential(), (1.1e-32).toExponential(),
+        (0).toExponential(2), (0.000001).toPrecision(2), (1e-7).toPrecision(1),
+        (99.99).toPrecision(3), (-7).toPrecision(21), (123).toPrecision(2), (0).toPrecision(3),
+        half.toPrecision(), (NaN).toFixed(2), new Number(-1.5).toFixed(0),
+      ];
+      if (written.join() !== "${expected}") throw new Error(written.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (
+          await checkModel(
+            getSource(
+              "123.46,-0.00,0.1,1.00,995,0,1.23456000000000003070e+2,1.00e+0,-3e+1,1e+2,1.1e-32,0.00e+0,0.0000010,1e-7,100,-7.00000000000000000000,1.2e+2,0.00,0.5,NaN,-2",
+            ),
+          )
+        ).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects 1.01 for (1.005).toFixed(2)", async () => {
+      expect(
+        (
+          await checkModel(
+            getSource(
+              "123.46,-0.00,0.1,1.01,995,0,1.23456000000000003070e+2,1.00e+0,-3e+1,1e+2,1.1e-32,0.00e+0,0.0000010,1e-7,100,-7.00000000000000000000,1.2e+2,0.00,0.5,NaN,-2",
+            ),
+          )
+        ).failure?.message,
+      ).toContain("1.00");
+    });
+  });
+
   it("updates records by key", async () => {
     const result = await checkModel(`
       type Account = "alice" | "bob";
@@ -31426,5 +31467,35 @@ describe("BigInts", () => {
       quotient = quotient / 0n;
     `);
     expect(division.failure?.message).toContain("tla-ts can't throw the RangeError");
+  });
+
+  describe("throws the RangeError of toFixed, toExponential, and toPrecision", () => {
+    const getSource = (expected: string) => `
+      const box = { size: 0 };
+      const getError = (run: () => string) => {
+        try {
+          return run();
+        } catch (error) {
+          return error instanceof RangeError ? "range" : "other";
+        }
+      };
+      const fixed = getError(() => (3).toFixed(101));
+      const exponential = getError(() => (3).toExponential(-1));
+      const precision = getError(() => (3).toPrecision(0));
+      const kept = getError(() => (3).toPrecision(1));
+      box.size = 1;
+      const read = [fixed, exponential, precision, kept].join();
+      if (read !== "${expected}") throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("range,range,range,3"))).failure).toBeUndefined();
+    });
+
+    it("rejects one precision digit as out of range", async () => {
+      expect((await checkModel(getSource("range,range,range,range"))).failure?.message).toContain(
+        "range,range,range,3",
+      );
+    });
   });
 });
