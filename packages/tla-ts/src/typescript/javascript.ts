@@ -1659,6 +1659,17 @@ AccessorFieldOf(heap, ref, key, field) ==
 
 GetterOf(heap, ref, key) == AccessorFieldOf(heap, ref, key, "get")
 
+\\* The code of the first getter that RegExp.prototype's flags getter reads of an object that isn't
+\\* a regexp, as it reads the flags in order, or Undefined.
+FlagsFirstGetter(heap, receiver) ==
+  LET keys == <<"hasIndices", "global", "ignoreCase", "multiline", "dotAll", "unicode",
+                "unicodeSets", "sticky">>
+      read == {position \\in DOMAIN keys : GetterOf(heap, receiver, keys[position]) # Undefined}
+      first == CHOOSE position \\in read : \\A other \\in read : position <= other
+  IN IF IsHeap(receiver) /\\ ~IsProxy(heap, receiver) /\\ read # {}
+     THEN CodeOf(heap, GetterOf(heap, receiver, keys[first]))
+     ELSE Undefined
+
 \\* The code of the getter that an array-like object's first element reads, where its length isn't
 \\* 0, or Undefined.
 FirstElementGetter(heap, ref) ==

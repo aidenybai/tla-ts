@@ -25538,4 +25538,33 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("stop,,a"))).failure?.message).toContain("stop,b,a");
     });
   });
+
+  describe("throws from a flag's getter that RegExp.prototype's flags getter reads", () => {
+    const getSource = (expected: string) => `
+      class Stop extends Error {}
+      const get = Object.getOwnPropertyDescriptor(RegExp.prototype, "flags")!.get!;
+      let caught = "none";
+      try {
+        get.call({
+          global: true,
+          get ignoreCase() {
+            throw new Stop();
+          },
+        });
+      } catch (error) {
+        caught = error instanceof Stop ? "stop" : "other";
+      }
+      const flags = get.call({ global: true, sticky: 1 });
+      const read = caught + "," + flags;
+      if (read !== "${expected}") throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("stop,gy"))).failure).toBeUndefined();
+    });
+
+    it("rejects the getter as skipped", async () => {
+      expect((await checkModel(getSource("none,gy"))).failure?.message).toContain("stop,gy");
+    });
+  });
 });

@@ -2779,6 +2779,10 @@ export const translateCallStatement = (
       sizeOwner === undefined
         ? undefined
         : translateSizeGetter(sizeOwner, receiver, path.scope, context);
+    const getReceiverValue = () =>
+      receiver === undefined
+        ? getUndefined(context)
+        : translateExpression(receiver, path.scope, context);
     const run = isFunctionReceiver
       ? throwTypeError(path, expression, context, frame)
       : sizeOwner !== undefined
@@ -2788,23 +2792,29 @@ export const translateCallStatement = (
         : bindOnce(
             path,
             resultName,
-            useJavaScript(
-              "GetterCall",
-              [
-                heap,
-                getter,
-                receiver === undefined
-                  ? getUndefined(context)
-                  : translateExpression(receiver, path.scope, context),
-              ],
-              context,
-            ),
+            useJavaScript("GetterCall", [heap, getter, getReceiverValue()], context),
             ifThenElse(
               apply("=", [field(result, "error"), string("")]),
               continueWith(path, field(result, "value")),
               throwTypeError(path, expression, context, frame),
             ),
           );
+    // flags reads each flag of its receiver in order, so a getter of one that only throws throws.
+    const flagsGetter = () =>
+      useJavaScript("FlagsFirstGetter", [heap, getReceiverValue()], context);
+    const checked =
+      getterCall.path === "get RegExp.prototype.flags"
+        ? throwFirstGetter(
+            expression,
+            apply("#", [flagsGetter(), getUndefined(context)]),
+            flagsGetter(),
+            getReceiverValue(),
+            path,
+            context,
+            frame,
+            run,
+          )
+        : run;
     const builtIn = translateBuiltInValue(getterCall.path, expression, context);
     return ifThenElse(
       apply("/\\", [
@@ -2817,7 +2827,7 @@ export const translateCallStatement = (
             )
           : boolean(true),
       ]),
-      run,
+      checked,
       leaf(
         apply("Assert", [
           boolean(false),
@@ -11961,7 +11971,14 @@ const translateUnrolled = (
 // The getters that a script's descriptors give whose body only throws, which a built-in that reads
 // one before it changes anything throws from where it reads it.
 const getThrowingGetters = (node: ts.Node, context: Context) =>
-  getAccessorFunctions(node, "get", context).filter(
+  [
+    ...getAccessorFunctions(node, "get", context),
+    ...findNodes(
+      node.getSourceFile(),
+      (inner): inner is ts.GetAccessorDeclaration =>
+        ts.isGetAccessorDeclaration(inner) && ts.isObjectLiteralExpression(inner.parent),
+    ),
+  ].filter(
     (getter) =>
       getter.body !== undefined &&
       ts.isBlock(getter.body) &&
