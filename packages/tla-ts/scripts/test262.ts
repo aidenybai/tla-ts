@@ -289,6 +289,43 @@ const getPatternType = (name: ts.BindingName): string | undefined => {
     : `{ ${properties.join("; ")} }`;
 };
 
+// The writes of a top-level read's variable, which a top-level var statement declares with no value,
+// where only functions write it, each with =. tla-ts runs each function where Node does, so the read
+// sees the value it writes, and where none ran, a read of a property of undefined stops.
+const getCallbackWrites = (checker: ts.TypeChecker, node: ts.Node) => {
+  const symbol = checker.getSymbolAtLocation(node);
+  const declaration = symbol?.valueDeclaration;
+  if (
+    declaration === undefined ||
+    !ts.isVariableDeclaration(declaration) ||
+    declaration.initializer !== undefined ||
+    !ts.isSourceFile(declaration.parent.parent.parent) ||
+    ts.findAncestor(node, ts.isFunctionLike) !== undefined
+  ) {
+    return undefined;
+  }
+  const writes: ts.BinaryExpression[] = [];
+  const isWritten = (inner: ts.Node): boolean =>
+    ts.isIdentifier(inner) &&
+    inner !== declaration.name &&
+    checker.getSymbolAtLocation(inner) === symbol &&
+    ts.isBinaryExpression(inner.parent) &&
+    inner.parent.left === inner;
+  const visit = (inner: ts.Node) => {
+    if (isWritten(inner) && ts.isBinaryExpression(inner.parent)) writes.push(inner.parent);
+    ts.forEachChild(inner, visit);
+  };
+  visit(declaration.getSourceFile());
+  return writes.length > 0 &&
+    writes.every(
+      (write) =>
+        write.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+        ts.findAncestor(write, ts.isFunctionLike) !== undefined,
+    )
+    ? writes
+    : undefined;
+};
+
 const loosen = () => {
   const program = service.getProgram();
   const sourceFile = program?.getSourceFile(PROGRAM_PATH);
@@ -660,6 +697,25 @@ const loosen = () => {
       closeParen !== undefined
     ) {
       edits.set(closeParen.getEnd(), ": undefined");
+    }
+    // A variable that only functions write, which TypeScript reads as any, holds what they write.
+    const callbackWrites =
+      diagnostic.code === UNASSIGNED_READ_ERROR ? getCallbackWrites(checker, node) : undefined;
+    const callbackDeclaration = checker.getSymbolAtLocation(node)?.valueDeclaration;
+    const writtenTypes = callbackWrites?.map((write) =>
+      getMemberTypes(checker, checker.getTypeAtLocation(write.right)),
+    );
+    if (
+      writtenTypes !== undefined &&
+      writtenTypes.every((types) => types !== undefined) &&
+      callbackDeclaration !== undefined &&
+      ts.isVariableDeclaration(callbackDeclaration) &&
+      callbackDeclaration.type === undefined
+    ) {
+      edits.set(
+        callbackDeclaration.name.getEnd(),
+        `: ${getUnion(writtenTypes.flatMap((types) => types ?? [])).join(" | ")}`,
+      );
     }
     // A function that the test declares, which only throws, as a computed key that calls it in a
     // pattern does, returns never, which TypeScript infers as void.
@@ -2346,7 +2402,9 @@ const ignoreSoundErrors = () => {
       (diagnostic.code === NOT_ITERABLE_ERROR && isCaughtArrayPattern(node)) ||
       (diagnostic.code === MISSING_ELEMENT_ERROR && isMissingElement(node)) ||
       (diagnostic.code === UNASSIGNED_READ_ERROR &&
-        (isCaughtRead(node) || isLaterGeneratorRead(node))) ||
+        (isCaughtRead(node) ||
+          isLaterGeneratorRead(node) ||
+          getCallbackWrites(checker, node) !== undefined)) ||
       ((diagnostic.code === NOT_ITERABLE_ERROR || NULLABLE_ERRORS.has(diagnostic.code)) &&
         isTypeErrorPattern(node)) ||
       ((UNASSIGNABLE_ERRORS.has(diagnostic.code) || diagnostic.code === MISSING_MEMBERS_ERROR) &&
