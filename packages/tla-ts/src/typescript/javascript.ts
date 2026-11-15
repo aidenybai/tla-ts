@@ -1795,6 +1795,12 @@ FlagsFirstGetter(heap, receiver) ==
      THEN CodeOf(heap, GetterOf(heap, receiver, keys[first]))
      ELSE Undefined
 
+\\* The code of the getter that a read of a key of an object runs, or Undefined.
+KeyGetter(heap, ref, key) ==
+  IF IsHeap(ref) /\\ ~IsProxy(heap, ref) /\\ GetterOf(heap, ref, key) # Undefined
+  THEN CodeOf(heap, GetterOf(heap, ref, key))
+  ELSE Undefined
+
 \\* The code of the getter that an array-like object's first element reads, where its length isn't
 \\* 0, or Undefined.
 FirstElementGetter(heap, ref) ==
@@ -2004,14 +2010,6 @@ NewestSymbol(heap) == Symbols[Len(WellKnownSymbols) + Len(heap.symbols)]
 
 WellKnownSymbol(name) ==
   Symbols[CHOOSE position \\in DOMAIN WellKnownSymbols : WellKnownSymbols[position] = name]
-
-\\* The code of the getter that concat reads first, its receiver's @@isConcatSpreadable, or Undefined.
-ConcatSpreadableGetter(heap, ref) ==
-  IF /\\ IsHeap(ref)
-     /\\ ~IsProxy(heap, ref)
-     /\\ GetterOf(heap, ref, WellKnownSymbol("isConcatSpreadable")) # Undefined
-  THEN CodeOf(heap, GetterOf(heap, ref, WellKnownSymbol("isConcatSpreadable")))
-  ELSE Undefined
 
 \\* The heap after Symbol.for(key), which makes a symbol for the key where the registry holds none.
 RegisterSymbol(heap, key) ==
@@ -4181,7 +4179,7 @@ GetterCall(heap, getter, receiver) ==
                    Assert(FALSE, "tla-ts can't run a proxy's internal method here")
               [] OTHER -> typeError
        [] path \\in {"get " \\o owner \\o ".@@species" :
-                     owner \\in {"Array", "RegExp", "Map", "Set", "Promise", "ArrayBuffer",
+                     owner \\in {"%Int8Array.[[Prototype]]%", "Array", "RegExp", "Map", "Set", "Promise", "ArrayBuffer",
                                 "SharedArrayBuffer"}} ->
             give(receiver)
        [] OTHER -> Assert(FALSE, "tla-ts can't tell which function this value holds")

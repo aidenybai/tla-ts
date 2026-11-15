@@ -1980,28 +1980,46 @@ export const translateCallStatement = (
       continueWith(path, translateExpression(expression, path.scope, context)),
     );
   }
-  // concat reads @@isConcatSpreadable of its receiver first, which a getter that only throws throws
-  // from.
-  const concatenated = expression.arguments.at(0);
+  // A built-in method that call runs reads a key of its receiver first, which a getter that only
+  // throws throws from, where the method's owner still holds it.
+  const firstRead = getFirstRead(expression, context);
+  const readFrom = expression.arguments.at(0);
   if (
-    getArrayMethodCall(expression, context) === "concat" &&
-    concatenated !== undefined &&
-    ts.isIdentifier(concatenated) &&
-    getKind(concatenated, context) === "object" &&
+    firstRead !== undefined &&
+    readFrom !== undefined &&
+    ts.isIdentifier(readFrom) &&
+    getKind(readFrom, context) === "object" &&
     getThrowingGetters(expression, context).length > 0
   ) {
     const heap = getHeap(path.scope, expression, context);
-    const object = translateExpression(concatenated, path.scope, context);
-    const code = useJavaScript("ConcatSpreadableGetter", [heap, object], context);
+    const object = translateExpression(readFrom, path.scope, context);
+    const code = useJavaScript("KeyGetter", [heap, object, firstRead.key], context);
     return throwFirstGetter(
       expression,
-      apply("#", [code, getUndefined(context)]),
+      apply("/\\", [
+        useJavaScript(
+          "HoldsBuiltIn",
+          [
+            heap,
+            translateBuiltInValue(firstRead.owner, expression, context),
+            string(firstRead.method),
+            string(`${firstRead.owner}.${firstRead.method}`),
+          ],
+          context,
+        ),
+        apply("#", [code, getUndefined(context)]),
+      ]),
       code,
       object,
       path,
       context,
       frame,
-      leaf(apply("Assert", [boolean(false), string("tla-ts can't run concat as a statement")])),
+      leaf(
+        apply("Assert", [
+          boolean(false),
+          string(`tla-ts can't run ${firstRead.owner}.${firstRead.method} as a statement`),
+        ]),
+      ),
     );
   }
   const loop = getLoopCall(expression, path, context);
@@ -13284,6 +13302,32 @@ const translateUnrolled = (
   return iterate(path, 0);
 };
 
+// The key that a built-in method reads of its receiver before anything else, where call runs it:
+// concat its @@isConcatSpreadable, and Promise.prototype.catch the then that it invokes.
+const getFirstRead = (node: ts.CallExpression, context: Context) => {
+  const callee = node.expression;
+  if (
+    getArrayMethodCall(node, context) === "concat" &&
+    ts.isPropertyAccessExpression(callee) &&
+    ts.isPropertyAccessExpression(callee.expression)
+  ) {
+    return {
+      owner: "Array.prototype" as const,
+      method: "concat",
+      key: useJavaScript("WellKnownSymbol", [string("isConcatSpreadable")], context),
+    };
+  }
+  return ts.isPropertyAccessExpression(callee) &&
+    callee.name.text === "call" &&
+    ts.isPropertyAccessExpression(callee.expression) &&
+    callee.expression.name.text === "catch" &&
+    ts.isPropertyAccessExpression(callee.expression.expression) &&
+    callee.expression.expression.name.text === "prototype" &&
+    getBuiltIn(callee.expression.expression.expression, context) === "Promise"
+    ? { owner: "Promise.prototype" as const, method: "catch", key: string("then") }
+    : undefined;
+};
+
 // The getters that a script's descriptors give whose body only throws, which a built-in that reads
 // one before it changes anything throws from where it reads it.
 const getThrowingGetters = (node: ts.Node, context: Context) =>
@@ -13306,7 +13350,7 @@ const getThrowingGetters = (node: ts.Node, context: Context) =>
 
 // Runs the getter whose code a built-in reads first, where it reads one and it only throws, which
 // throws from there; otherwise runs the built-in.
-const throwFirstGetter = (
+export const throwFirstGetter = (
   node: ts.Node,
   isRead: Expression,
   code: Expression,

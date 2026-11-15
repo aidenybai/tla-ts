@@ -10,6 +10,7 @@ import {
   inlineValues,
   type Path,
   throwError,
+  throwFirstGetter,
   throwTypeError,
   translateJoined,
 } from "./actions";
@@ -1925,12 +1926,25 @@ const runTrap = (
     then: (path: Path, method: Expression) => Formula,
   ) =>
     isHandler || !hasProxyHandler(site, context)
-      ? bind(
+      ? // A getter of the trap that only throws throws as GetMethod reads it.
+        throwFirstGetter(
+          site,
+          apply("#", [
+            useJavaScript("KeyGetter", [heap, handler, string(trap)], context),
+            getUndefined(context),
+          ]),
+          useJavaScript("KeyGetter", [heap, handler, string(trap)], context),
+          handler,
           current,
-          "trap",
-          useJavaScript("Get", [heap, handler, string(trap)], context),
           context,
-          then,
+          frame,
+          bind(
+            current,
+            "trap",
+            useJavaScript("Get", [heap, handler, string(trap)], context),
+            context,
+            then,
+          ),
         )
       : ifThenElse(
           useJavaScript("IsProxy", [heap, handler], context),

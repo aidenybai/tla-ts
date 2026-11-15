@@ -32036,4 +32036,88 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("none"))).failure?.message).toContain("stop");
     });
   });
+
+  describe("throws from a getter of a proxy's trap that the handler holds", () => {
+    const getSource = (expected: string) => `
+      class Stop extends Error {}
+      const handler = Object.defineProperty({}, "setPrototypeOf", {
+        get: function () {
+          throw new Stop();
+        },
+      });
+      const proxy = new Proxy({}, handler);
+      let caught = "none";
+      try {
+        Object.setPrototypeOf(proxy, {});
+      } catch (error) {
+        caught = error instanceof Stop ? "stop" : "other";
+      }
+      const plain = new Proxy({}, {});
+      Object.setPrototypeOf(plain, null);
+      const read = [caught, Object.getPrototypeOf(plain) === null].join();
+      if (read !== "${expected}") throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("stop,true"))).failure).toBeUndefined();
+    });
+
+    it("rejects the trap's getter as skipped", async () => {
+      expect((await checkModel(getSource("none,true"))).failure?.message).toContain("stop,true");
+    });
+  });
+
+  describe("throws from a getter of the then that Promise.prototype.catch invokes", () => {
+    const getSource = (expected: string) => `
+      class Stop extends Error {}
+      const poisoned = Object.defineProperty({}, "then", {
+        get: function () {
+          throw new Stop();
+        },
+      });
+      let caught = "none";
+      try {
+        Promise.prototype.catch.call(poisoned);
+      } catch (error) {
+        caught = error instanceof Stop ? "stop" : "other";
+      }
+      if (caught !== "${expected}") throw new Error(caught);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("stop"))).failure).toBeUndefined();
+    });
+
+    it("rejects the getter as skipped", async () => {
+      expect((await checkModel(getSource("none"))).failure?.message).toContain("stop");
+    });
+  });
+
+  describe("calls the getters of %TypedArray% that a descriptor gives", () => {
+    const getSource = (expected: string) => `
+      const box = { size: 0 };
+      const TypedArray = Object.getPrototypeOf(Int8Array);
+      const TypedArrayPrototype = TypedArray.prototype;
+      const getter = Object.getOwnPropertyDescriptor(TypedArrayPrototype, "buffer")!.get!;
+      const tag = Object.getOwnPropertyDescriptor(TypedArrayPrototype, Symbol.toStringTag)!.get!;
+      const species = Object.getOwnPropertyDescriptor(TypedArray, Symbol.species)!.get!;
+      let caught = "none";
+      try { getter.call({}); } catch (error) { caught = error instanceof TypeError ? "type" : "other"; }
+      const sample = new Int8Array(4);
+      const value = {};
+      box.size = 1;
+      const read = [caught, getter.call(sample) === sample.buffer, tag.call(42), tag.call(sample), species.call(value) === value].join();
+      if (read !== "${expected}") throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("type,true,,Int8Array,true"))).failure).toBeUndefined();
+    });
+
+    it("rejects @@toStringTag as giving a name for a number", async () => {
+      expect(
+        (await checkModel(getSource("type,true,Number,Int8Array,true"))).failure?.message,
+      ).toContain("type,true,,Int8Array,true");
+    });
+  });
 });
