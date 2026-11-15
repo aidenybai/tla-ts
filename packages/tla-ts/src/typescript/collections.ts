@@ -104,6 +104,7 @@ import {
   getOrderedIteration,
   isBuiltInIteratorType,
   isGeneratorType,
+  hasHeapType,
 } from "./types";
 
 interface Unordered {
@@ -505,6 +506,26 @@ const translateUnordered = (
       isEvery(context.checker.getTypeAtLocation(argument), ts.TypeFlags.ESSymbolLike)
     ) {
       return { set: set([]), isMapped: false };
+    }
+    // A value that any, unknown, {}, Object, or a union with an object types may be an object in
+    // the heap, whose reference has no fields that are its keys.
+    const type = context.checker.getNonNullableType(context.checker.getTypeAtLocation(argument));
+    if (
+      context.heap !== undefined &&
+      (hasHeapType(type, context) ||
+        (type.isUnion() ? type.types : [type]).some(
+          (member) =>
+            (member.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0 ||
+            member.getSymbol()?.name === "Object" ||
+            ((member.flags & ts.TypeFlags.Object) !== 0 &&
+              member.getProperties().length === 0 &&
+              member.getCallSignatures().length === 0),
+        ))
+    ) {
+      throw new TlaTypeScriptError(
+        "tla-ts can't list the keys of a value that may be an object or another value",
+        argument,
+      );
     }
     const record = translate(argument);
     const listed =

@@ -14729,6 +14729,24 @@ describe("errors", () => {
     ).toThrow("tla-ts can't destructure a value that may be an object or another value");
   });
 
+  describe("counts the keys of an object that a type which may hold another value names", () => {
+    const getSource = (type: string) => `
+      const count = (obj: ${type}) => Object.keys(obj).length;
+      const seen = [count({ a: 1, b: 2 }), count({ c: 3 })];
+      if (seen.join() !== "2,1") throw new Error("seen " + seen.join());
+    `;
+
+    it("agrees with Node where the type is an object's", async () => {
+      expect((await checkModel(getSource("object"))).failure).toBeUndefined();
+    });
+
+    it.each(["{}", "Object", "object | number", "any"])("stops where the type is %s", (type) => {
+      expect(() => compile(getSource(type))).toThrow(
+        "tla-ts can't list the keys of a value that may be an object or another value",
+      );
+    });
+  });
+
   it.each([
     ["Object in a script with objects", true, "const { keys } = Object;"],
     ["an alias of Object", true, "const O = Object;\nconst { keys } = O;"],
