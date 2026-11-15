@@ -4504,6 +4504,14 @@ const readPlain = (cursor: Cursor, type: Type, plains: Plains): Plain => {
   return resolved.kind === "Set" ? readItems(resolved.element) : unsupported();
 };
 
+// Appends a 1 bit for each of count states and then a 0 bit.
+const pushFinds = (bits: Words, count: number) => {
+  const end = bits.size + count + 1;
+  while (end > bits.data.length * 32) growWords(bits);
+  for (let bit = bits.size; bit < end - 1; bit++) bits.data[bit >> 5] |= 1 << (bit & 31);
+  bits.size = end;
+};
+
 const pushWord = (words: Words, word: number) => {
   if (words.size === words.data.length) growWords(words);
   words.data[words.size++] = word;
@@ -6139,8 +6147,10 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
   const compiled = compileSpec(program, check, atoms);
   const keys = createArena();
   const reader = { page: 0, data: keys.data, position: 0 };
-  // The state each state was found from, to rebuild the path to a deadlock.
-  const parents = { data: new Int32Array(check.isDeadlockChecked ? 1 << 16 : 0), size: 0 };
+  // For each state expanded, a 1 bit for each new state it found and then a 0 bit, to rebuild the
+  // path to a deadlock. States are expanded in the order they are found, so the 0 bits before a
+  // state's 1 bit count the state it was found from.
+  const finds = { data: new Int32Array(check.isDeadlockChecked ? 1 << 11 : 0), size: 0 };
   // TLC's fingerprints of the states, as low and high words in small pages, one list of pages for
   // each top byte in signed order. Each list sorts alone, and none grows by copying.
   const fingerprints = Array.from({ length: 256 }, () => ({
@@ -6245,7 +6255,6 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
       keys.size = keys.start;
       compiled.encode(state, keys);
     }
-    if (check.isDeadlockChecked) pushWord(parents, expanding.index);
     checkInvariants(state, parent);
     return statistics.distinct - 1;
   };
@@ -6262,9 +6271,20 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
   };
   // Each state on the path is the first successor of the one before it with its key, as it was found.
   const getPath = (index: number) => {
-    const indexes: number[] = [];
-    for (let position = index; position !== -1; position = parents.data[position]) {
-      indexes.unshift(position);
+    // A state's 1 bit comes after the one of the state it was found from, so one pass back over the
+    // bits of the states expanded before this one finds the whole path.
+    const indexes = [index];
+    let bit = finds.size;
+    let zeros = expanding.index;
+    let ones = finds.size - expanding.index;
+    while (indexes[0] >= initialStates.distinct) {
+      const found = indexes[0] - initialStates.distinct;
+      for (;;) {
+        bit--;
+        if (((finds.data[bit >> 5] >>> (bit & 31)) & 1) === 0) zeros--;
+        else if (--ones === found) break;
+      }
+      indexes.unshift(zeros);
     }
     const findFirst = (states: (emit: (state: Plain[]) => void) => void, target: number) => {
       const found: Plain[][] = [];
@@ -6415,6 +6435,7 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
       );
     }
     outDegrees[Math.min(expansion.newStates, OUT_DEGREE_BUCKETS - 1)]++;
+    if (check.isDeadlockChecked) pushFinds(finds, expansion.newStates);
   }
   if (live?.findViolation()) deopt();
   return getResult(undefined, 0);
