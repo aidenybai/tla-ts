@@ -9931,6 +9931,7 @@ describe("errors", () => {
 
   it("throws a TypeError where a read or a return finds %ThrowTypeError% as the getter", async () => {
     const getSource = (expected: number) => `
+      "use strict";
       function foo() {}
       const obj = foo.bind({}) as unknown as { arguments: unknown; caller: unknown };
       let thrown = 0;
@@ -20842,6 +20843,42 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("stops where an arguments object outside strict mode, whose callee is its function, leaves it", async () => {
+    const script = `
+      const box = { result: "none" };
+      function f(): unknown {
+        return arguments.callee;
+      }
+      try {
+        box.result = f() === f ? "callee" : "other";
+      } catch (error) {
+        box.result = error instanceof TypeError ? "type" : "other";
+      }
+      if (box.result !== "type") throw new Error("callee " + box.result);
+    `;
+    expect(() => compile(script)).toThrow(
+      "tla-ts can't follow an arguments object that maps its function's parameters outside strict mode",
+    );
+    expect((await checkModel(`"use strict";\n${script}`)).failure).toBeUndefined();
+    expect(
+      (await checkModel(`"use strict";\n${script.replace('!== "type"', '!== "callee"')}`)).failure
+        ?.message,
+    ).toContain("callee type");
+  });
+
+  it("reads the length and the elements of an arguments object outside strict mode", async () => {
+    const getSource = (expected: number) => `
+      const box = { count: 0 };
+      function first(a: number, b: number) {
+        return arguments[1] + arguments.length + a;
+      }
+      box.count = first(5, 7);
+      if (box.count !== ${expected}) throw new Error("count " + box.count);
+    `;
+    expect((await checkModel(getSource(14))).failure).toBeUndefined();
+    expect((await checkModel(getSource(12))).failure?.message).toContain("count 14");
+  });
+
   it("ends the program at a promise rejected with no handler once the jobs run out", async () => {
     const result = await checkModel(`
       const box = { seen: 0 };
@@ -25724,7 +25761,7 @@ describe("errors", () => {
   it("makes an arguments object for each call to a function that names it", async () => {
     const result = await check(
       compile(
-        `const object = {};\nfunction f(a: number, b: number) {\n  return arguments;\n}\nconst args = f(1, 2);\nconst other = f(1, 2);\nif (args === other) throw new Error("same");\nif (args.length !== 2 || args[0] !== 1 || args[1] !== 2) throw new Error("values");\nif (Object.prototype.toString.call(args) !== "[object Arguments]") throw new Error("tag");\nif (Object.keys(args).join() !== "0,1") throw new Error("keys");\nif (Object.getOwnPropertyNames(args).join() !== "0,1,length,callee") throw new Error("names");\nif (Object.getPrototypeOf(args) !== Object.prototype) throw new Error("proto");\nfunction g() {\n  arguments[0] = 5;\n  return arguments.length + (arguments[0] as number);\n}\nconst result = g();\nif (result !== 5) throw new Error("write");\nfunction h(a: number, b?: number, c?: number) {\n  const inner = function (b: number) {\n    return arguments.length + b;\n  };\n  const value = inner(3);\n  return arguments.length * 100 + value + (arguments[0] as number);\n}\nconst nested = h(7, 8, 9);\nif (nested !== 311) throw new Error("nested");`,
+        `"use strict";\nconst object = {};\nfunction f(a: number, b: number) {\n  return arguments;\n}\nconst args = f(1, 2);\nconst other = f(1, 2);\nif (args === other) throw new Error("same");\nif (args.length !== 2 || args[0] !== 1 || args[1] !== 2) throw new Error("values");\nif (Object.prototype.toString.call(args) !== "[object Arguments]") throw new Error("tag");\nif (Object.keys(args).join() !== "0,1") throw new Error("keys");\nif (Object.getOwnPropertyNames(args).join() !== "0,1,length,callee") throw new Error("names");\nif (Object.getPrototypeOf(args) !== Object.prototype) throw new Error("proto");\nfunction g() {\n  arguments[0] = 5;\n  return arguments.length + (arguments[0] as number);\n}\nconst result = g();\nif (result !== 5) throw new Error("write");\nfunction h(a: number, b?: number, c?: number) {\n  const inner = function (b: number) {\n    return arguments.length + b;\n  };\n  const value = inner(3);\n  return arguments.length * 100 + value + (arguments[0] as number);\n}\nconst nested = h(7, 8, 9);\nif (nested !== 311) throw new Error("nested");`,
       ),
     );
     expect(result.failure).toBeUndefined();
@@ -25918,6 +25955,7 @@ describe("errors", () => {
 
   it("runs a parenthesized call that makes an object as a statement", async () => {
     const result = await checkModel(`
+      "use strict";
       const held = (function (first: number) {
         return arguments;
       }(4));

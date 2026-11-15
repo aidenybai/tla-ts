@@ -4842,16 +4842,15 @@ export const isArgumentsRead = (read: ts.Identifier, context: Context) => {
 };
 
 // Outside strict mode, a function with simple parameters has an arguments object that maps them,
-// so that writing one changes the other, which tla-ts's arguments object doesn't follow. Only a
-// parameter that changes where the object's elements are read, or a parameter read where the
-// object changes or leaves the function, shows the difference.
+// so that writing one changes the other, and whose callee is the function, which tla-ts's arguments
+// object doesn't follow. Only a read of the object other than of its length or its elements, or a
+// parameter that changes where the object's elements are read, shows the difference.
 const rejectMappedArguments = (callee: FunctionNode, context: Context) => {
   const parameters = callee.parameters.filter(
     (parameter) => !(ts.isIdentifier(parameter.name) && parameter.name.text === "this"),
   );
   if (
     isStrictCode(callee) ||
-    parameters.length === 0 ||
     parameters.some(
       (parameter) =>
         !ts.isIdentifier(parameter.name) ||
@@ -4872,14 +4871,12 @@ const rejectMappedArguments = (callee: FunctionNode, context: Context) => {
       const written = getWritten(node);
       return written !== undefined && getWrittenRoots(written).some(isParameter);
     }).length > 0;
-  const isParameterRead =
-    findNodes(callee, (node): node is ts.Identifier => isParameter(node)).length > 0;
   const reads = getArgumentsReads(callee, context);
   const isLengthRead = (read: ts.Identifier) =>
     isArgumentsRead(read, context) && ts.isPropertyAccessExpression(read.parent);
   if (
-    (isParameterWritten && !reads.every(isLengthRead)) ||
-    (isParameterRead && !reads.every((read) => isArgumentsRead(read, context)))
+    !reads.every((read) => isArgumentsRead(read, context)) ||
+    (isParameterWritten && !reads.every(isLengthRead))
   ) {
     throw new TlaTypeScriptError(
       "tla-ts can't follow an arguments object that maps its function's parameters outside strict mode",
