@@ -5562,7 +5562,35 @@ export const makeGenerator = (
         ],
       ]),
     });
-    const enter = (resumer: Path, suspended: Path) => enterBody(resumer, suspended, isResumedOuter);
+    // A local of a function around the body that the script assigns has one value, which the body
+    // shares with the call that made it, so code that doesn't hold that call's locals, such as a
+    // job, can't resume the body.
+    const shared = new Set(
+      findNodes(callee, ts.isIdentifier).flatMap((identifier) => {
+        const symbol = getSymbol(identifier, context.checker);
+        const declaration = symbol?.valueDeclaration;
+        return symbol !== undefined &&
+          declaration !== undefined &&
+          isOuter(symbol) &&
+          ts.findAncestor(declaration.parent, ts.isFunctionLike) !== undefined &&
+          isAssigned(symbol, declaration.getSourceFile(), context)
+          ? [symbol]
+          : [];
+      }),
+    );
+    const enter = (resumer: Path, suspended: Path) => {
+      if (
+        [...shared].some(
+          (symbol) => suspended.scope.bindings.has(symbol) && !resumer.scope.bindings.has(symbol),
+        )
+      ) {
+        throw new TlaTypeScriptError(
+          "tla-ts can't resume a generator away from the call whose locals it shares",
+          node,
+        );
+      }
+      return enterBody(resumer, suspended, isResumedOuter);
+    };
     const finish = (current: Path, value?: Expression) =>
       getCaller(current).step(leave(current, undefined), value, true);
     // An async generator's body suspends at an await, which leaves the generator running, and a

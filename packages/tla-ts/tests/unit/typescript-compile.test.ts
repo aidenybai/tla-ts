@@ -2233,6 +2233,59 @@ if (!Object.is(text, "${text}")) throw new Error(text);
     });
   });
 
+  describe("resumes a generator that changes a local of its async call only where that call runs", () => {
+    const getSource = (resume: string) => `
+declare function setTimeout(callback: () => void): void;
+let seen = -1;
+const run = async () => {
+  let counter = 0;
+  function* values() {
+    try {
+      yield 1;
+      counter++;
+      yield 2;
+    } finally {
+      counter++;
+    }
+  }
+  const iterator = values();
+  iterator.next();
+  ${resume}
+  await 0;
+  await 0;
+  await 0;
+  await 0;
+  seen = counter;
+};
+run();
+setTimeout(() => {
+  if (!Object.is(seen, 2)) throw new Error(String(seen));
+});
+`;
+
+    it("keeps what the body changes where the async call resumes it", async () => {
+      expect(
+        (await checkModel(getSource("iterator.next();\n  iterator.return(undefined);"))).failure,
+      ).toBeUndefined();
+      expect((await checkModel(getSource("iterator.next();"))).failure?.message).toBeDefined();
+    });
+
+    it.each([
+      [
+        "a job",
+        "Promise.resolve().then(() => {\n    iterator.next();\n    iterator.return(undefined);\n  });",
+        "tla-ts can't resume a generator away from the call whose locals it shares",
+      ],
+      [
+        "Array.fromAsync",
+        'Array.fromAsync(iterator, () => {\n    throw "m";\n  }).catch(() => {});',
+        "tla-ts can't follow a function that runs later and reads a local that changes",
+      ],
+    ])("stops where %s resumes it", (_name, resume, message) => {
+      expect(() => compile(getSource(resume))).toThrow(message);
+    });
+  });
+
   it("runs an assignment in a unary operator's operand first", async () => {
     const getSource = (negated: number, voided: number) => `
       let x = 0;
