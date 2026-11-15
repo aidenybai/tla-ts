@@ -51,6 +51,7 @@ import {
 import { translateAsyncCall } from "./promises";
 import { useJavaScript } from "./javascript";
 import type { Scope } from "./scope";
+import { mayThrow } from "./functions";
 import { getThrownMessage } from "./shared-calls";
 import { getKind, isHeapPattern } from "./types";
 import {
@@ -1118,7 +1119,7 @@ export const readDescriptors = (
 };
 
 // The getters that the script defines under any key, which reading an object's values may run.
-const getOwnValueGetters = (node: ts.Node, context: Context) => [
+export const getOwnValueGetters = (node: ts.Node, context: Context) => [
   ...new Set([...getGetterKeys(node)].flatMap((key) => getKeyGetters(node, key, context))),
 ];
 
@@ -1313,8 +1314,8 @@ const isWritten = (node: ts.Expression) => {
 };
 
 // A read of a key that the script defines a getter under, on an object, where a getter that may
-// run changes something, so that the read runs as a statement. A read that a pure getter answers
-// runs as an expression.
+// run changes something or throws, so that the read runs as a statement. A read that a pure getter
+// answers runs as an expression.
 export const isGetterRead = (
   node: ts.Node,
   context: Context,
@@ -1331,7 +1332,7 @@ export const isGetterRead = (
   const pure = getGetters(node, context);
   const getters = getReadGetters(node, context);
   return (
-    getters.some((getter) => !pure.includes(getter)) &&
+    getters.some((getter) => !pure.includes(getter) || mayThrow(getter, context)) &&
     getters.every((getter) => isRunnableGetter(getter, context))
   );
 };

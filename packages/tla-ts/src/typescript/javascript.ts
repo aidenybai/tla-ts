@@ -5496,6 +5496,44 @@ LOCAL DataViewMade(heap, prototype, arguments) ==
                                         [] object.maxLength # Undefined -> -1
                                         [] OTHER -> Len(object.bytes) - offset))
 
+\\* Whether converting a value to a number runs no code and throws nothing.
+LOCAL IsPlainNumeric(value) ==
+  \\/ value = Null
+  \\/ ~IsRef(value) /\\ TypeOf(value) \\in {"undefined", "boolean", "number", "string"}
+
+\\* The index of the first element of an array-like object that a getter answers, as a built-in reads
+\\* each element in order and converts it to a number, where its length and each element before are
+\\* values that IsPlainNumeric holds, so that nothing before runs code or throws, or -1.
+LOCAL NumbersFirstGetter(heap, ref) ==
+  LET length == Get(heap, ref, "length")
+      count == ToLength(length)
+      read == {position \\in 0..(count - 1) : GetterOf(heap, ref, ToString(position)) # Undefined}
+      first == CHOOSE position \\in read : \\A other \\in read : position <= other
+  IN IF /\\ IsHeap(ref)
+        /\\ ~IsProxy(heap, ref)
+        /\\ ~IsTypedArray(heap, ref)
+        /\\ ~IsBuffer(heap, ref)
+        /\\ GetterOf(heap, ref, "length") = Undefined
+        /\\ IsPlainNumeric(length)
+        /\\ ~IsBig(length)
+        /\\ length # Infinity
+        /\\ count * 8 <= MaxBytes
+        /\\ read # {}
+        /\\ \\A position \\in 0..(first - 1) : IsPlainNumeric(Get(heap, ref, ToString(position)))
+     THEN first
+     ELSE -1
+
+\\* The code of the getter that new of a typed array runs first as it reads the elements of an
+\\* array-like object without an @@iterator, where nothing before runs code or throws, or Undefined.
+TypedArrayFirstGetter(heap, ref) ==
+  IF /\\ IsHeap(ref)
+     /\\ ~IsProxy(heap, ref)
+     /\\ GetterOf(heap, ref, WellKnownSymbol("iterator")) = Undefined
+     /\\ Get(heap, ref, WellKnownSymbol("iterator")) \\in {Undefined, Null}
+     /\\ NumbersFirstGetter(heap, ref) # -1
+  THEN CodeOf(heap, GetterOf(heap, ref, ToString(NumbersFirstGetter(heap, ref))))
+  ELSE Undefined
+
 \\* The heap with a new typed array of a length, of the elements of an array or a typed array, or
 \\* viewing a buffer, where isIterating tells whether an array still iterates through the built-in
 \\* iterator and next.
@@ -5827,6 +5865,44 @@ TypedArrayLength(heap, ref) ==
   IF IsTypedArray(heap, ref) /\\ ~IsOutOfBounds(heap, heap.objects[ref[Ref]])
   THEN ViewLength(heap, heap.objects[ref[Ref]])
   ELSE -1
+
+\\* The index of the first element of an array-like source that a getter answers as a typed array of
+\\* numbers sets its elements from it, where nothing that set does before throws or runs code, or -1.
+LOCAL SetFirstGetter(heap, ref, arguments) ==
+  LET offset == IF Len(arguments) >= 2 THEN arguments[2] ELSE Undefined
+      start == ToIntegerOrInfinity(ToNumber(offset))
+      view == heap.objects[ref[Ref]]
+      first == NumbersFirstGetter(heap, arguments[1])
+  IN IF /\\ IsTypedArray(heap, ref)
+        /\\ ~IsBigIntType(view.elementType)
+        /\\ Len(arguments) >= 1
+        /\\ IsPlainNumeric(offset)
+        /\\ start \\notin {Infinity, NegativeInfinity}
+        /\\ ~IsBig(start)
+        /\\ start >= 0
+        /\\ ~IsOutOfBounds(heap, view)
+        /\\ first # -1
+        /\\ ToLength(Get(heap, arguments[1], "length")) + start <= ViewLength(heap, view)
+     THEN first
+     ELSE -1
+
+\\* The code of the getter that %TypedArray%.prototype.set runs first as it reads an array-like
+\\* source, which SetFirstGetter gives, or Undefined.
+TypedArraySetFirstGetter(heap, ref, arguments) ==
+  IF SetFirstGetter(heap, ref, arguments) = -1
+  THEN Undefined
+  ELSE CodeOf(heap, GetterOf(heap, arguments[1], ToString(SetFirstGetter(heap, ref, arguments))))
+
+\\* The heap once set wrote the elements before the one that TypedArraySetFirstGetter reads.
+TypedArraySetBefore(heap, ref, arguments) ==
+  LET view == heap.objects[ref[Ref]]
+      start == ToIntegerOrInfinity(ToNumber(IF Len(arguments) >= 2 THEN arguments[2] ELSE Undefined))
+      values == [position \\in 1..SetFirstGetter(heap, ref, arguments) |->
+                   ToElement(view.elementType, Get(heap, arguments[1], ToString(position - 1)))]
+  IN IF values = <<>>
+     THEN heap
+     ELSE WithBytes(heap, view, view.byteOffset + start * ElementSize(view.elementType),
+                    NumbersBytes(view.elementType, values))
 
 \\* %TypedArray%.prototype's methods that read and write a typed array's elements, which give the
 \\* heap after them, their value, and the error they throw, if any. slice and subarray make their
@@ -7504,21 +7580,31 @@ SerializeJSON(heap, value, state, stack, indent) ==
             ELSE array(value, stack)
        [] OTHER -> Assert(FALSE, "tla-ts can't tell what JSON.stringify writes for " \\o ToString(value))
 
-\\* JSON.stringify, which can't call a replacer function.
-JSONStringify(heap, value, replacer, space, arrayPrototype, functionPrototype, isSequence) ==
+\\* The keys that JSON.stringify writes of each object, which a replacer array lists, or Undefined
+\\* where it writes all of them, as it can't call a replacer function.
+JSONList(heap, replacer, isSequence) ==
   LET isList == IsArray(heap, replacer)
                   \\/ (isSequence /\\ ~IsRef(replacer) /\\ SubSeq(ToString(replacer), 1, 2) = "<<")
-      keys == IF isList THEN JSONKeys(heap, replacer) ELSE Undefined
-      gap == JSONGap(heap, space)
-      state == [keys |-> keys, gap |-> gap, isSequence |-> isSequence,
-                arrayPrototype |-> arrayPrototype, functionPrototype |-> functionPrototype]
   IN CASE TypeOfIn(heap, replacer) = "function" -> Assert(FALSE, "tla-ts can't call a replacer")
        [] /\\ ~IsRef(replacer)
           /\\ TypeOf(replacer) = "object"
           /\\ replacer # Null
           /\\ ~isList ->
             Assert(FALSE, "tla-ts can't tell whether " \\o ToString(replacer) \\o " is an array")
-       [] keys = keys /\\ gap = gap -> SerializeJSON(heap, value, state, {}, "")
+       [] isList -> JSONKeys(heap, replacer)
+       [] OTHER -> Undefined
+
+\\* JSON.stringify of the keys that JSONList gives.
+JSONStringifyKeys(heap, value, keys, space, arrayPrototype, functionPrototype, isSequence) ==
+  LET gap == JSONGap(heap, space)
+      state == [keys |-> keys, gap |-> gap, isSequence |-> isSequence,
+                arrayPrototype |-> arrayPrototype, functionPrototype |-> functionPrototype]
+  IN IF keys = keys /\\ gap = gap THEN SerializeJSON(heap, value, state, {}, "") ELSE Undefined
+
+\\* JSON.stringify, which can't call a replacer function.
+JSONStringify(heap, value, replacer, space, arrayPrototype, functionPrototype, isSequence) ==
+  JSONStringifyKeys(heap, value, JSONList(heap, replacer, isSequence), space, arrayPrototype,
+                    functionPrototype, isSequence)
 
 \\* JSON.stringify where a replacer function replaces each value it writes, which a statement walks,
 \\* as it calls the function. Each frame of the walk holds an object that the walk writes, its keys,
@@ -7539,6 +7625,12 @@ JSONReplaced(frames) == frames[1].pairs[1][2]
 JSONHolder(frames) == JSONTop(frames).holder
 
 JSONKey(frames) == JSONTop(frames).keys[JSONTop(frames).position]
+
+\\* The getter that the walk runs to read the top frame's next key, or Undefined.
+JSONGetter(heap, frames) ==
+  IF IsHeap(JSONHolder(frames)) /\\ ~IsProxy(heap, JSONHolder(frames))
+  THEN GetterOf(heap, JSONHolder(frames), JSONKey(frames))
+  ELSE Undefined
 
 \\* The value that the walk reads at the top frame's next key. An array outside the heap that the
 \\* walk read from what holds it must still be the value that it holds, as the replacer may write it.
@@ -7575,10 +7667,11 @@ LOCAL JSONDescends(heap, value, isSequence) ==
     [] OTHER -> Assert(FALSE, "tla-ts can't tell what JSON.stringify writes for " \\o ToString(value))
 
 \\* The frames once the replacer gave a value for the top frame's next key, where it read another: a
-\\* frame for an object whose keys the walk writes, or else the value among those the top frame
-\\* gathered. An array outside the heap that may be the one the walk read must stay what holds it holds.
-\\* One that equals an array that the walk writes may be that array, which is a cycle, or another.
-JSONReplace(heap, frames, read, value, isSequence) ==
+\\* frame for an object whose keys the walk writes, which a list of keys may give, or else the value
+\\* among those the top frame gathered. An array outside the heap that may be the one the walk read
+\\* must stay what holds it holds. One that equals an array that the walk writes may be that array,
+\\* which is a cycle, or another.
+JSONReplace(heap, frames, read, value, isSequence, list) ==
   LET top == JSONTop(frames)
       advanced == [top EXCEPT !.position = @ + 1]
       below == SubSeq(frames, 1, Len(frames) - 1)
@@ -7586,6 +7679,7 @@ JSONReplace(heap, frames, read, value, isSequence) ==
       keys == CASE IsSequenceValue(value) -> [position \\in DOMAIN value |-> ToString(position - 1)]
                 [] isArray ->
                      [position \\in 1..ToLength(Get(heap, value, "length")) |-> ToString(position - 1)]
+                [] list # Undefined -> list
                 [] OTHER -> ObjectKeys(heap, value)
   IN CASE ~JSONDescends(heap, value, isSequence) ->
             Append(below, [advanced EXCEPT !.pairs = Append(@, <<JSONKey(frames), value>>)])

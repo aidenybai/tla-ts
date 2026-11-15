@@ -142,6 +142,7 @@ import {
   getBuiltJsonText,
   getJsonText,
   getReplacers,
+  getStringifyGetters,
   getRevival,
   isBigIntStringify,
   parseJson,
@@ -3389,6 +3390,10 @@ const translateCallStatementBody = (
         : viewCall.owner === "Atomics"
           ? "Atomics"
           : `${viewCall.owner}.prototype`;
+    const typedValues = viewCall.values.map((value) =>
+      translateExpression(value, path.scope, context),
+    );
+    const typedArguments = tuple(typedValues);
     const operation =
       viewCall.owner === "TypedArray"
         ? useJavaScript(
@@ -3397,9 +3402,7 @@ const translateCallStatementBody = (
               heap,
               ref,
               string(method),
-              tuple(
-                viewCall.values.map((value) => translateExpression(value, path.scope, context)),
-              ),
+              typedArguments,
               translateBuiltInValue("ArrayBuffer.prototype", expression, context),
               translateTypedConstructors(expression, context),
             ],
@@ -3462,7 +3465,7 @@ const translateCallStatementBody = (
                         ],
                         context,
                       );
-    const run = bindOnce(
+    const runOperation = bindOnce(
       path,
       changeName,
       operation,
@@ -3476,6 +3479,28 @@ const translateCallStatementBody = (
         ),
       ),
     );
+    // set of an array-like source writes each element in order, so the first that a getter which
+    // only throws answers throws once set wrote those before it, where nothing before runs code.
+    const setGetter = useJavaScript(
+      "TypedArraySetFirstGetter",
+      [heap, ref, typedArguments],
+      context,
+    );
+    const run =
+      viewCall.owner === "TypedArray" &&
+      method === "set" &&
+      getThrowingGetters(expression, context).length > 0
+        ? throwFirstGetter(
+            expression,
+            apply("#", [setGetter, getUndefined(context)]),
+            setGetter,
+            typedValues[0] ?? getUndefined(context),
+            withHeap(useJavaScript("TypedArraySetBefore", [heap, ref, typedArguments], context)),
+            context,
+            frame,
+            runOperation,
+          )
+        : runOperation;
     return bindOnce(
       path,
       receiver,
@@ -3667,8 +3692,17 @@ const translateCallStatementBody = (
     return translateBuiltJsonParse(expression, builtText, path, context, frame, continueWith);
   }
   const replacers = getReplacers(expression, context);
-  if (replacers !== undefined) {
-    return replaceJson(expression, replacers, path, context, frame, continueWith);
+  const stringifyGetters = getStringifyGetters(expression, context);
+  if (replacers !== undefined || stringifyGetters.length > 0) {
+    return replaceJson(
+      expression,
+      replacers ?? [],
+      stringifyGetters,
+      path,
+      context,
+      frame,
+      continueWith,
+    );
   }
   if (isBigIntStringify(expression, context)) {
     return allocateAll(
@@ -4374,10 +4408,31 @@ const translateCallStatementBody = (
           otherwise,
         );
       },
-      // Calling undefined or null throws a TypeError, as does calling a built-in method that needs
-      // a receiver without one, or RegExp.prototype.exec or test on one that isn't a RegExp.
+      // Calling a value that isn't a function throws a TypeError, as does calling a built-in method
+      // that needs a receiver without one, or RegExp.prototype.exec or test on one that isn't a
+      // RegExp.
       ifThenElse(
-        apply("\\in", [value, set([getUndefined(context), identifier("Null")])]),
+        apply("\\/", [
+          apply("\\in", [value, set([getUndefined(context), identifier("Null")])]),
+          ...(context.modelValues.size === 0
+            ? [
+                apply("/\\", [
+                  apply("\\/", [
+                    useJavaScript("IsHeap", [value], context),
+                    apply("~", [useJavaScript("IsRef", [value], context)]),
+                  ]),
+                  apply("#", [
+                    useJavaScript(
+                      "TypeOfIn",
+                      [getHeap(path.scope, expression, context), value],
+                      context,
+                    ),
+                    string("function"),
+                  ]),
+                ]),
+              ]
+            : []),
+        ]),
         throwTypeError(path, expression, context, frame),
         !ts.isPropertyAccessExpression(target) || expression.arguments.some(ts.isSpreadElement)
           ? ts.isIdentifier(skipCasts(target)) && expression.arguments.every(isInertValue)
@@ -12054,6 +12109,7 @@ const isStatementResult = (node: ts.CallExpression, path: Path, context: Context
     getRevival(node, context) !== undefined ||
     getBuiltJsonText(node, context) !== undefined ||
     getReplacers(node, context) !== undefined ||
+    getStringifyGetters(node, context).length > 0 ||
     isDescriptorsRead(node, context) ||
     isOwnValuesRead(node, context) ||
     isRevoke(node, context) ||
@@ -12270,6 +12326,46 @@ const translateNewBufferStatement = (
                   step(read, iterator, next, [...taken, value]),
                 ),
             );
+      // new of a typed array of numbers reads an array-like object's elements in order, so the
+      // first that a getter which only throws answers throws, where nothing before runs code.
+      const buffers = getNewBuffer(node, context) ?? [];
+      const code = useJavaScript(
+        "TypedArrayFirstGetter",
+        [getHeap(allocated.scope, node, context), values[0] ?? getUndefined(context)],
+        context,
+      );
+      const callee = translateExpression(construction.callee, allocated.scope, context);
+      const madeFrom =
+        values.length > 0 &&
+        construction.newTarget === construction.callee &&
+        buffers.length > 0 &&
+        buffers.every((buffer) => TYPED_ARRAYS.has(buffer) && !buffer.startsWith("Big")) &&
+        getThrowingGetters(node, context).length > 0
+          ? throwFirstGetter(
+              node,
+              apply("/\\", [
+                getBuiltIn(construction.callee, context) === undefined
+                  ? junction(
+                      "Or",
+                      buffers.map((buffer) =>
+                        useJavaScript(
+                          "SameValue",
+                          [callee, translateBuiltInValue(buffer, node, context)],
+                          context,
+                        ),
+                      ),
+                    )
+                  : boolean(true),
+                apply("#", [code, getUndefined(context)]),
+              ]),
+              code,
+              values[0],
+              allocated,
+              context,
+              frame,
+              make(allocated, values),
+            )
+          : make(allocated, values);
       return isIteratedTypedArray(node, context)
         ? ifThenElse(
             useJavaScript(
@@ -12286,9 +12382,9 @@ const translateNewBufferStatement = (
               throwWith,
               (opened, iterator, next) => step(opened, iterator, next, []),
             ),
-            make(allocated, values),
+            madeFrom,
           )
-        : make(allocated, values);
+        : madeFrom;
     },
   );
 
@@ -13120,6 +13216,7 @@ const getEffects = (
     ...getTrapFunctions(node, context),
     ...getDescriptorGetters(node, context),
     ...getOwnValuesGetters(node, context),
+    ...getStringifyGetters(node, context),
     ...getReadFunctions(node, context),
     ...getLoopGetters(node, context),
     ...getRemovedGetters(node, context),
@@ -16538,6 +16635,12 @@ const findLeadingCall = (
         ? findLeadingCall(receiver, before, path, context)
         : none;
     if (fromReceiver.call !== undefined || fromReceiver.isBlocked) return fromReceiver;
+    // A call whose callee a getter that may change something answers runs the getter before it
+    // evaluates its arguments.
+    const callee = skipCasts(node.expression);
+    if (!path.scope.results.has(callee) && isGetterRead(callee, context)) {
+      return { call: undefined, isBlocked: true, read: callee };
+    }
     // A method of what new makes runs the calls in new's arguments first.
     if (receiver !== undefined && ts.isNewExpression(receiver)) {
       const evaluated: ts.Node[] = [];

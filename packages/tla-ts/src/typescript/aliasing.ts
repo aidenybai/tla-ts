@@ -1,6 +1,6 @@
 import ts from "@typescript/typescript6";
 import { getWritten } from "./actions";
-import { getReplacers } from "./json";
+import { getReplacers, getStringifyGetters } from "./json";
 import { isSelfReturning, MUTATING_METHODS, REORDER_METHODS } from "./collections";
 import {
   type Context,
@@ -414,8 +414,13 @@ const getEscapes = (
       }
       if (COPYING_METHODS.has(method)) return getFrom(parent, getCopy(depths));
     }
-    // A replacer may change what JSON.stringify's value holds while JSON.stringify walks it.
-    if (parent.arguments[0] === node && getReplacers(parent, context) !== undefined) {
+    // A replacer or a getter may change what JSON.stringify's value holds while JSON.stringify
+    // walks it.
+    if (
+      parent.arguments[0] === node &&
+      (getReplacers(parent, context) !== undefined ||
+        getStringifyGetters(parent, context).length > 0)
+    ) {
       return land(undefined, depths);
     }
     const callee = getCallee(parent.expression, context);

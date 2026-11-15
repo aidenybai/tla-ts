@@ -37476,4 +37476,181 @@ describe("BigInts", () => {
       ).toContain("2147483649,4294967295,2,,,4294967295");
     });
   });
+  describe("runs a getter that answers a call's callee before the arguments", () => {
+    const getSource = (expected: string) => `
+      const box = { count: 0 };
+      const record: unknown[] = [];
+      function note() {
+        record.push(box.count);
+        return 1;
+      }
+      const o: { [key: string | symbol]: unknown } = {};
+      Object.defineProperty(o, "made", {
+        get: function () {
+          box.count += 1;
+          return function (this: unknown, value: number) {
+            return this === o ? value + 10 : -1;
+          };
+        },
+      });
+      Object.defineProperty(o, "plain", {
+        get: function (this: { [key: string | symbol]: unknown }) {
+          this.seen = box.count;
+          box.count += 1;
+          return 42;
+        },
+      });
+      const called = (o.made as (value: number) => number)(note());
+      let caught = "none";
+      try {
+        (o.plain as (value: number) => number)(note());
+      } catch (error) {
+        caught = (error as Error).name;
+      }
+      const read = [called, caught, o.seen, ...record].join();
+      if (read !== "${expected}") throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("11,TypeError,1,1,2"))).failure).toBeUndefined();
+    });
+
+    it("rejects the arguments as running before the getter", async () => {
+      expect((await checkModel(getSource("11,TypeError,1,0,1"))).failure?.message).toContain(
+        "11,TypeError,1,1,2",
+      );
+    });
+  });
+
+  describe("runs a getter that may throw as a statement where a read answers it", () => {
+    const getSource = (expected: string) => `
+      const box = { size: 0 };
+      const o: { [key: string | symbol]: unknown } = {};
+      Object.defineProperty(o, "risky", {
+        get: function () {
+          return check(box.size);
+        },
+      });
+      function check(size: number): number {
+        if (size === 0) throw new RangeError("empty");
+        return size;
+      }
+      const caught: string[] = [];
+      try {
+        o.risky;
+      } catch (error) {
+        caught.push((error as Error).name);
+      }
+      box.size = 3;
+      const read = [...caught, o.risky].join();
+      if (read !== "${expected}") throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("RangeError,3"))).failure).toBeUndefined();
+    });
+
+    it("rejects the read as throwing nothing", async () => {
+      expect((await checkModel(getSource("3"))).failure?.message).toContain("RangeError,3");
+    });
+  });
+
+  describe("runs the getters that JSON.stringify reads in order", () => {
+    const getSource = (expected: string) => `
+      const log = { text: "" };
+      const inner = {
+        get deep() {
+          log.text += "deep,";
+          return 7;
+        },
+        flat: "x",
+      };
+      const o: { [key: string]: unknown } = {
+        b: 1,
+        get a() {
+          log.text += "a,";
+          delete o.c;
+          o.z = 9;
+          return inner;
+        },
+        c: 3,
+      };
+      const plain = JSON.stringify(o);
+      const listed = JSON.stringify(o, ["z", "1", "a", "deep", "a"]);
+      const read = [plain, listed, log.text].join("|");
+      if (read !== '${expected}') throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (
+          await checkModel(
+            getSource('{"b":1,"a":{"deep":7,"flat":"x"}}|{"z":9,"a":{"deep":7}}|a,deep,a,deep,'),
+          )
+        ).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects a key that a getter deleted as still written", async () => {
+      expect(
+        (
+          await checkModel(
+            getSource(
+              '{"b":1,"a":{"deep":7,"flat":"x"},"c":3}|{"z":9,"a":{"deep":7}}|a,deep,a,deep,',
+            ),
+          )
+        ).failure?.message,
+      ).toContain('{\\"b\\":1,\\"a\\":{\\"deep\\":7,\\"flat\\":\\"x\\"}}|');
+    });
+  });
+
+  describe("throws from the first element getter that a typed array reads of an array-like object", () => {
+    const getSource = (expected: string) => `
+      const box = { size: 0 };
+      const beyond: { length: number; [key: number]: number | string } = { length: 2, 0: 5, 1: "7" };
+      Object.defineProperty(beyond, "2", {
+        get() {
+          throw new RangeError("beyond");
+        },
+      });
+      const made = new Uint8Array(beyond as ArrayLike<number>);
+      const first = { length: 3, 0: 1 };
+      Object.defineProperty(first, "1", {
+        get() {
+          throw new RangeError("first");
+        },
+      });
+      const source = { length: 3, 0: 42, 1: 43 };
+      Object.defineProperty(source, "2", {
+        get() {
+          throw new RangeError("source");
+        },
+      });
+      const sample = new Int16Array([1, 2, 3, 4, 5]);
+      const caught: string[] = [];
+      try {
+        new Float64Array(first);
+      } catch (error) {
+        caught.push((error as Error).message);
+      }
+      try {
+        sample.set(source, 1);
+      } catch (error) {
+        caught.push((error as Error).message);
+      }
+      box.size = 1;
+      const read = [made.join(), ...caught, sample.join()].join("|");
+      if (read !== "${expected}") throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("5,7|first|source|1,42,43,4,5"))).failure).toBeUndefined();
+    });
+
+    it("rejects set as writing nothing before the getter throws", async () => {
+      expect(
+        (await checkModel(getSource("5,7|first|source|1,2,3,4,5"))).failure?.message,
+      ).toContain("5,7|first|source|1,42,43,4,5");
+    });
+  });
 });

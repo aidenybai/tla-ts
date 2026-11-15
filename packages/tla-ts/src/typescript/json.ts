@@ -32,6 +32,7 @@ import {
   bind,
   callValue,
   getFunctionCandidates,
+  getOwnValueGetters,
   isRunnableGetter,
   loopStates,
   readWith,
@@ -614,14 +615,29 @@ export const getReplacers = (node: ts.Node, context: Context) => {
   return candidates.length > 0 ? candidates : undefined;
 };
 
-// JSON.stringify with a replacer function, as SerializeJSONProperty runs it: it wraps the value in
-// an object under "", and then reads each key in turn, calls toJSON, which tla-ts stops at, and
-// the replacer with the holder as this, and walks the keys of an object that the replacer gives
-// before the next key. The values that the replacer gave make new objects, which JSONStringify
-// writes once the walk ends.
+// JSON.stringify of an object where the script defines getters that tla-ts can run, which only a
+// statement runs, as it reads each key in turn and runs the getter that it holds: the getters that
+// it may run.
+export const getStringifyGetters = (node: ts.Node, context: Context) => {
+  const value =
+    ts.isCallExpression(node) && isStringify(node, context) ? node.arguments.at(0) : undefined;
+  const getters =
+    value === undefined || ts.isSpreadElement(value) || getKind(value, context) !== "object"
+      ? []
+      : getOwnValueGetters(node, context);
+  return getters.every((getter) => isRunnableGetter(getter, context)) ? getters : [];
+};
+
+// JSON.stringify with a replacer function or of an object whose getters may run, as
+// SerializeJSONProperty runs it: it wraps the value in an object under "", and then reads each key
+// in turn, running its getter, calls toJSON, which tla-ts stops at, and the replacer with the
+// holder as this, and walks the keys of an object that the replacer gives before the next key, or
+// those that a replacer array lists. The values that the replacer gave make new objects, which
+// JSONStringify writes once the walk ends.
 export const replaceJson = (
   node: ts.CallExpression,
   candidates: readonly FunctionNode[],
+  getters: readonly FunctionNode[],
   path: Path,
   context: Context,
   frame: Frame,
@@ -676,7 +692,7 @@ export const replaceJson = (
   );
   if (object !== undefined) {
     throw new TlaTypeScriptError(
-      `tla-ts can't call a replacer that changes ${object.name}, which the heap doesn't hold`,
+      `tla-ts can't call a ${candidates.length > 0 ? "replacer" : "getter"} that changes ${object.name}, which the heap doesn't hold`,
       node,
     );
   }
@@ -688,137 +704,193 @@ export const replaceJson = (
       const values = translateStringifyArguments(node, allocated.scope, context);
       const prototypes = getStringifyPrototypes(node, context);
       const heap = getHeap(allocated.scope, node, context);
-      // JSON.stringify converts its space before it calls the replacer.
+      // JSON.stringify lists a replacer array's keys, and then converts its space, before it calls
+      // the replacer.
       const walk = bind(allocated, "replacer", values[1], context, (bound, replacer) =>
         bind(
           bound,
-          "space",
-          useJavaScript("JSONSpace", [heap, values[2]], context),
+          "list",
+          candidates.length > 0
+            ? getUndefined(context)
+            : useJavaScript("JSONList", [heap, replacer, prototypes[2]], context),
           context,
-          (spaced, space) =>
+          (listed, list) =>
             bind(
-              spaced,
-              "heap",
-              useJavaScript(
-                "Allocate",
-                [
-                  heap,
-                  useJavaScript("PairsObject", [tuple([tuple([string(""), values[0]])])], context),
-                ],
-                context,
-              ),
+              listed,
+              "space",
+              useJavaScript("JSONSpace", [heap, values[2]], context),
               context,
-              (wrapped, wrappedHeap) =>
-                loopStates(
-                  node,
+              (spaced, space) =>
+                bind(
+                  spaced,
+                  "heap",
                   useJavaScript(
-                    "JSONReplacing",
-                    [useJavaScript("Allocated", [wrappedHeap], context)],
+                    "Allocate",
+                    [
+                      heap,
+                      useJavaScript(
+                        "PairsObject",
+                        [tuple([tuple([string(""), values[0]])])],
+                        context,
+                      ),
+                    ],
                     context,
                   ),
-                  // The walk makes objects of what the replacer gives, which the heap holds.
-                  [
-                    ...new Set([
-                      ...getChanged(node, wrapped, context),
-                      ...(context.heap === undefined ? [] : [context.heap]),
-                    ]),
-                  ],
-                  withHeap(wrapped, wrappedHeap, context),
                   context,
-                  frame,
-                  (current, frames, inner, again, stop) => {
-                    const currentHeap = getHeap(current.scope, node, context);
-                    const close = ifThenElse(
-                      apply("=", [apply("Len", [frames]), number(1)]),
-                      stop(current, useJavaScript("JSONReplaced", [frames], context)),
-                      bind(
-                        current,
-                        "closed",
-                        useJavaScript("JSONClose", [currentHeap, frames], context),
-                        context,
-                        (closed, record) =>
-                          again(
-                            withHeap(closed, field(record, "heap"), context),
-                            field(record, "frames"),
-                          ),
-                      ),
-                    );
-                    const replace = bind(
-                      current,
-                      "value",
-                      useJavaScript("JSONRead", [currentHeap, frames], context),
-                      context,
-                      (read, value) =>
-                        ifThenElse(
-                          useJavaScript(
-                            "JSONHasToJSON",
-                            [getHeap(read.scope, node, context), value, ...prototypes],
-                            context,
-                          ),
-                          leaf(
-                            apply("Assert", [boolean(false), string("tla-ts can't call toJSON")]),
-                          ),
-                          callValue(
-                            node,
-                            candidates,
-                            replacer,
-                            useJavaScript("JSONHolder", [frames], context),
-                            [useJavaScript("JSONKey", [frames], context), value],
-                            read,
-                            context,
-                            inner,
-                            () =>
-                              leaf(
-                                apply("Assert", [
-                                  boolean(false),
-                                  string("tla-ts can't tell which function replaces this"),
-                                ]),
-                              ),
-                            (called, result) => {
-                              const calledHeap = getHeap(called.scope, node, context);
-                              return ifThenElse(
-                                useJavaScript("JSONIsBigInt", [calledHeap, result], context),
-                                throwTypeError(called, node, context, inner),
-                                again(
-                                  called,
-                                  useJavaScript(
-                                    "JSONReplace",
-                                    [calledHeap, frames, value, result, prototypes[2]],
-                                    context,
-                                  ),
-                                ),
-                              );
-                            },
-                          ),
-                        ),
-                    );
-                    return ifThenElse(
-                      useJavaScript("JSONIsClosing", [frames], context),
-                      close,
-                      replace,
-                    );
-                  },
-                  (after, replaced) =>
-                    bind(
-                      after,
-                      "stringified",
+                  (wrapped, wrappedHeap) =>
+                    loopStates(
+                      node,
                       useJavaScript(
-                        "JSONStringify",
-                        [
-                          getHeap(after.scope, node, context),
-                          replaced,
-                          getUndefined(context),
-                          space,
-                          ...prototypes,
-                        ],
+                        "JSONReplacing",
+                        [useJavaScript("Allocated", [wrappedHeap], context)],
                         context,
                       ),
+                      // The walk makes objects of what the replacer gives, which the heap holds.
+                      [
+                        ...new Set([
+                          ...getChanged(node, wrapped, context),
+                          ...(context.heap === undefined ? [] : [context.heap]),
+                        ]),
+                      ],
+                      withHeap(wrapped, wrappedHeap, context),
                       context,
-                      (done, text) =>
-                        ifThenElse(
-                          useJavaScript("IsError", [text], context),
-                          throwTypeError(done, node, context, frame),
-                          continueWith(done, text),
+                      frame,
+                      (current, frames, inner, again, stop) => {
+                        const currentHeap = getHeap(current.scope, node, context);
+                        const close = ifThenElse(
+                          apply("=", [apply("Len", [frames]), number(1)]),
+                          stop(current, useJavaScript("JSONReplaced", [frames], context)),
+                          bind(
+                            current,
+                            "closed",
+                            useJavaScript("JSONClose", [currentHeap, frames], context),
+                            context,
+                            (closed, record) =>
+                              again(
+                                withHeap(closed, field(record, "heap"), context),
+                                field(record, "frames"),
+                              ),
+                          ),
+                        );
+                        const got = useJavaScript("JSONRead", [currentHeap, frames], context);
+                        const readNext = (next: (path: Path, value: Expression) => Formula) =>
+                          getters.length === 0
+                            ? bind(current, "value", got, context, next)
+                            : bind(
+                                current,
+                                "getter",
+                                useJavaScript("JSONGetter", [currentHeap, frames], context),
+                                context,
+                                (bound, getter) =>
+                                  callValue(
+                                    node,
+                                    getters,
+                                    getter,
+                                    useJavaScript("JSONHolder", [frames], context),
+                                    [],
+                                    bound,
+                                    context,
+                                    inner,
+                                    (otherwise) => otherwise(bound, got),
+                                    // An array outside the heap that a getter gives may not be
+                                    // the one that a later read checks the walk still holds.
+                                    (after, value) =>
+                                      ifThenElse(
+                                        apply("/\\", [
+                                          apply("#", [getter, getUndefined(context)]),
+                                          useJavaScript("IsSequenceValue", [value], context),
+                                        ]),
+                                        leaf(
+                                          apply("Assert", [
+                                            boolean(false),
+                                            string(
+                                              "tla-ts can't walk an array outside the heap that a getter gives",
+                                            ),
+                                          ]),
+                                        ),
+                                        bind(after, "value", value, context, next),
+                                      ),
+                                  ),
+                              );
+                        const replaceWith = (
+                          called: Path,
+                          value: Expression,
+                          result: Expression,
+                        ) => {
+                          const calledHeap = getHeap(called.scope, node, context);
+                          return ifThenElse(
+                            useJavaScript("JSONIsBigInt", [calledHeap, result], context),
+                            throwTypeError(called, node, context, inner),
+                            again(
+                              called,
+                              useJavaScript(
+                                "JSONReplace",
+                                [calledHeap, frames, value, result, prototypes[2], list],
+                                context,
+                              ),
+                            ),
+                          );
+                        };
+                        const replace = readNext((read, value) =>
+                          ifThenElse(
+                            useJavaScript(
+                              "JSONHasToJSON",
+                              [getHeap(read.scope, node, context), value, ...prototypes],
+                              context,
+                            ),
+                            leaf(
+                              apply("Assert", [boolean(false), string("tla-ts can't call toJSON")]),
+                            ),
+                            candidates.length === 0
+                              ? replaceWith(read, value, value)
+                              : callValue(
+                                  node,
+                                  candidates,
+                                  replacer,
+                                  useJavaScript("JSONHolder", [frames], context),
+                                  [useJavaScript("JSONKey", [frames], context), value],
+                                  read,
+                                  context,
+                                  inner,
+                                  () =>
+                                    leaf(
+                                      apply("Assert", [
+                                        boolean(false),
+                                        string("tla-ts can't tell which function replaces this"),
+                                      ]),
+                                    ),
+                                  (called, result) => replaceWith(called, value, result),
+                                ),
+                          ),
+                        );
+                        return ifThenElse(
+                          useJavaScript("JSONIsClosing", [frames], context),
+                          close,
+                          replace,
+                        );
+                      },
+                      (after, replaced) =>
+                        bind(
+                          after,
+                          "stringified",
+                          useJavaScript(
+                            "JSONStringifyKeys",
+                            [
+                              getHeap(after.scope, node, context),
+                              replaced,
+                              list,
+                              space,
+                              ...prototypes,
+                            ],
+                            context,
+                          ),
+                          context,
+                          (done, text) =>
+                            ifThenElse(
+                              useJavaScript("IsError", [text], context),
+                              throwTypeError(done, node, context, frame),
+                              continueWith(done, text),
+                            ),
                         ),
                     ),
                 ),
