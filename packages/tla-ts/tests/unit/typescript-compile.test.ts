@@ -43140,4 +43140,42 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("stops at a call of a value that holds eval or Function", () => {
+    const getSource = (index: number, expected: number) => `
+      const measure = (code: string) => code.length;
+      const runners: ((code: string) => unknown)[] = [measure, eval, Function];
+      const result = runners[${index}]("1 + 1");
+      if (result !== ${expected}) throw new Error(String(result));
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(0, 5))).failure).toBeUndefined();
+    });
+
+    it("rejects a function that gives another value", async () => {
+      expect((await checkModel(getSource(0, 4))).failure?.message).toContain("5");
+    });
+
+    it("names eval", async () => {
+      expect((await checkModel(getSource(1, 2))).failure?.message).toContain(
+        "tla-ts can't run eval",
+      );
+    });
+
+    it("names Function", async () => {
+      expect((await checkModel(getSource(2, 2))).failure?.message).toContain(
+        "tla-ts can't run Function",
+      );
+    });
+
+    it("names Function where call runs it", async () => {
+      const result = await checkModel(`
+        const found = Object.hasOwn({}, "x");
+        Function.call(globalThis, "return 1");
+        if (found) throw new Error("found");
+      `);
+      expect(result.failure?.message).toContain("tla-ts can't run Function");
+    });
+  });
 });

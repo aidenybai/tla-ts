@@ -292,6 +292,7 @@ import {
   translateBuiltInValue,
   translateHoldsCallee,
   getGeneratorPrototypeRef,
+  stopUnknownCall,
 } from "./intrinsics";
 import { getTypeNames, getURICall, translateToNumber, useJavaScript } from "./javascript";
 import { getNamespaceRef, isLiteralValue } from "./namespaces";
@@ -4530,12 +4531,7 @@ const translateCallStatementBody = (
         path,
         context,
         frame,
-        leaf(
-          apply("Assert", [
-            boolean(false),
-            string("tla-ts can't tell which function this call runs"),
-          ]),
-        ),
+        leaf(stopUnknownCall(value, context)),
       );
       return dispatched.reduceRight(
         (otherwise, candidate) => {
@@ -4782,12 +4778,7 @@ const translateCallStatementBody = (
         ifThenElse(
           useJavaScript("HasReceiverlessValue", [value], context),
           continueWith(path, useJavaScript("ReceiverlessValue", [value], context)),
-          leaf(
-            apply("Assert", [
-              boolean(false),
-              string("tla-ts can't tell which function this call runs"),
-            ]),
-          ),
+          leaf(stopUnknownCall(value, context)),
         ),
       ),
     );
@@ -4818,12 +4809,7 @@ const translateCallStatementBody = (
       const heap = getHeap(inner.scope, expression, context);
       const method = translateExpression(calledMethod.expression, inner.scope, context);
       const receiver = translateExpression(expression.arguments[0], inner.scope, context);
-      const stop = leaf(
-        apply("Assert", [
-          boolean(false),
-          string("tla-ts can't tell which function this call runs"),
-        ]),
-      );
+      const stop = leaf(stopUnknownCall(method, context));
       // Promise.prototype.catch invokes the receiver's then with undefined and its argument, which
       // runs a then that the script writes.
       const caught =
