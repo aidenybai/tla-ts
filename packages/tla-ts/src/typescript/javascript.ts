@@ -6591,8 +6591,10 @@ export const translateTypeOf = (node: ts.TypeOfExpression, scope: Scope, context
     ts.isNewExpression(inner) ||
     ts.isTaggedTemplateExpression(inner) ||
     (!ts.isFunctionLike(inner) && ts.forEachChild(inner, hasCall) === true);
-  if (known?.length === 1 && !isProperty && !hasCall(read)) return string(known[0]);
-  if (known?.length === 1 && !isProperty) {
+  // A call that TypeScript doesn't check, as under @ts-ignore, may give a this of another type.
+  const isThis = read.kind === ts.SyntaxKind.ThisKeyword;
+  if (known?.length === 1 && !isProperty && !isThis && !hasCall(read)) return string(known[0]);
+  if (known?.length === 1 && !isProperty && !isThis) {
     const operand = translateExpression(node.expression, scope, context);
     return ifExpression(apply("=", [operand, operand]), string(known[0]), string(known[0]));
   }
