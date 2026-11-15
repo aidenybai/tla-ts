@@ -3441,6 +3441,38 @@ if (!Object.is(text, "${text}")) throw new Error(text);
     ).toContain("true,true,true,false,false,false,false,false");
   });
 
+  it("makes an AggregateError with its message, its cause, and the array of its errors", async () => {
+    const getSource = (expected: string) => `
+      const inner = new TypeError("inner");
+      const cause = { message: "cause" };
+      const error = new AggregateError([inner, 1], undefined, { cause });
+      const errors = Object.getOwnPropertyDescriptor(error, "errors");
+      const caused = Object.getOwnPropertyDescriptor(error, "cause");
+      const named = new AggregateError([], "named");
+      const result = [
+        Object.hasOwn(error, "message"),
+        caused?.enumerable,
+        error.cause === cause,
+        Object.getPrototypeOf(error) === AggregateError.prototype,
+        error instanceof Error,
+        errors?.enumerable,
+        errors?.writable,
+        error.errors.length,
+        error.errors[0] === inner,
+        named.message,
+        named.errors.length,
+      ];
+      if (result.join(",") !== "${expected}") throw new Error(result.join(","));
+    `;
+    expect(
+      (await checkModel(getSource("false,false,true,true,true,false,true,2,true,named,0"))).failure,
+    ).toBeUndefined();
+    expect(
+      (await checkModel(getSource("false,false,true,true,true,false,true,1,true,named,0"))).failure
+        ?.message,
+    ).toContain("false,false,true,true,true,false,true,2,true,named,0");
+  });
+
   it("runs the constructors of a class that extends Error, which give its error a message and a cause", async () => {
     const getSource = (expected: string) => `
       class BaseError extends Error {
@@ -27650,10 +27682,13 @@ ${call}
     });
   });
 
-  it("rejects new AggregateError, whose first argument isn't a message", () => {
-    expect(() => compile(`const error = new AggregateError([1], "message");`)).toThrow(
-      "Unsupported constructor: new AggregateError",
-    );
+  it("rejects new AggregateError of errors that an iterable other than an array gives", () => {
+    expect(() =>
+      compile(`
+        const errors: Iterable<number> = new Set([1]);
+        const error = new AggregateError(errors, "message");
+      `),
+    ).toThrow("Unsupported constructor: new AggregateError");
   });
 
   it("stops where a promise's callback reads a local that changes", () => {

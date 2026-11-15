@@ -7,6 +7,7 @@ import { type Collection, getBuiltIn, isHeldBuiltInObject } from "./intrinsics";
 import {
   type BufferName,
   getArrayMethodCall,
+  getKind,
   isBufferName,
   isCollectionName,
   isHeapArray,
@@ -3434,14 +3435,18 @@ export const isHeldError = (
   const name = getBuiltIn(node.expression, context);
   const holder = node.parent;
   const isSuppressed = name === "SuppressedError";
+  // An AggregateError takes the array of its errors before its message and its options.
+  const errors = name === "AggregateError" ? node.arguments?.at(0) : undefined;
   const message = node.arguments?.at(isSuppressed ? 2 : 0);
   if (
     name === undefined ||
     !NATIVE_ERRORS.has(name) ||
-    (node.arguments ?? []).length > (isSuppressed ? 3 : 1) ||
-    (message !== undefined &&
-      getTypeNames(context.checker.getTypeAtLocation(message), context.checker)?.join() !==
-        "string") ||
+    (name === "AggregateError"
+      ? errors === undefined || getKind(errors, context) !== "sequence"
+      : (node.arguments ?? []).length > (isSuppressed ? 3 : 1) ||
+        (message !== undefined &&
+          getTypeNames(context.checker.getTypeAtLocation(message), context.checker)?.join() !==
+            "string")) ||
     !ts.isVariableDeclaration(holder) ||
     holder.initializer !== node ||
     !ts.isIdentifier(holder.name)

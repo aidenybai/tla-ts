@@ -59,6 +59,7 @@ import {
 } from "./context";
 import { TlaTypeScriptError } from "../errors";
 import {
+  ARRAY_ITERATOR_REPLACED,
   ARRAY_LIKE_METHODS,
   holdsArrayIteration,
   IN_PLACE_METHODS,
@@ -1562,6 +1563,25 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
         context,
       );
     const parts = node.arguments ?? [];
+    // An AggregateError defines its message and its cause, and then the array of its errors.
+    if (getBuiltIn(node.expression, context) === "AggregateError") {
+      return ifExpression(
+        holdsArrayIteration(heap, node, context),
+        useJavaScript(
+          "Allocate",
+          [
+            heap,
+            define(
+              translateErrorFields(error, parts.slice(1), heap, scope, context),
+              "errors",
+              translateExpression(parts[0], scope, context),
+            ),
+          ],
+          context,
+        ),
+        apply("Assert", [boolean(false), string(ARRAY_ITERATOR_REPLACED)]),
+      );
+    }
     const isSuppressed = getBuiltIn(node.expression, context) === "SuppressedError";
     const message = parts.at(isSuppressed ? 2 : 0);
     const described =

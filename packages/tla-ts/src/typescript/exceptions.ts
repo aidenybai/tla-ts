@@ -19,6 +19,7 @@ import { translateExpression } from "./expressions";
 import { getHeap, translateObjectValue } from "./heap";
 import { getGeneratorPrototypeRef, translateBuiltInInstanceOf } from "./intrinsics";
 import { getTypeNames, useJavaScript } from "./javascript";
+import { ARRAY_ITERATOR_REPLACED, holdsArrayIteration } from "./collections";
 import type { Scope } from "./scope";
 import { getKind, isGeneratorType, isHeapArray } from "./types";
 import { apply, boolean, field, identifier, ifExpression, record, set, string } from "./tla";
@@ -293,10 +294,20 @@ export const translateNewError = (
 ) => {
   const native = classes.find(isNative);
   if (native === undefined) throw new TlaTypeScriptError("Unknown error class", node);
-  // A SuppressedError takes the error and the suppressed error before its message.
-  const held = native.name === "SuppressedError" ? ["error", "suppressed"] : [];
+  // A SuppressedError takes the error and the suppressed error before its message, and an
+  // AggregateError the array of its errors.
+  const held =
+    native.name === "SuppressedError"
+      ? ["error", "suppressed"]
+      : native.name === "AggregateError"
+        ? ["errors"]
+        : [];
   const argumentNodes = node.arguments ?? [];
-  if (classes.some((symbol) => isNative(symbol) && symbol.name === "AggregateError")) {
+  const errors = native.name === "AggregateError" ? argumentNodes.at(0) : undefined;
+  if (
+    native.name === "AggregateError" &&
+    (errors === undefined || getKind(errors, context) !== "sequence")
+  ) {
     throw new TlaTypeScriptError("Unsupported constructor: new AggregateError", node);
   }
   if (argumentNodes.length > held.length + 1) {
@@ -315,7 +326,7 @@ export const translateNewError = (
         : translateExpression(message, scope, context);
   if (native === classes[0]) includeError(native.name, context);
   const identity = scope.allocated.get(node);
-  return record("Record", [
+  const error = record("Record", [
     { name: "constructor", value: getConstructor(classes[0], context) },
     ...(identity === undefined ? [] : [{ name: "identity", value: identity }]),
     { name: "message", value },
@@ -331,6 +342,13 @@ export const translateNewError = (
       };
     }),
   ]);
+  return errors === undefined || context.heap === undefined
+    ? error
+    : ifExpression(
+        holdsArrayIteration(getHeap(scope, node, context), node, context),
+        error,
+        apply("Assert", [boolean(false), string(ARRAY_ITERATOR_REPLACED)]),
+      );
 };
 
 // A caught value, or what a SuppressedError holds, which may be any value.
