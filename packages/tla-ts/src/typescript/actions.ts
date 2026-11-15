@@ -17140,6 +17140,9 @@ const getFirstLeading = (
   );
 };
 
+const isFunctionExpressionCall = (node: ts.Node): node is ts.CallExpression =>
+  ts.isCallExpression(node) && ts.isFunctionExpression(skipCasts(node.expression));
+
 // The await or the yield that a node evaluates before anything else.
 const getLeadingAwaitOrYield = (
   node: ts.Expression,
@@ -17187,6 +17190,15 @@ const getLeadingAwaitOrYield = (
       context,
     );
   }
+  // A call of a function expression evaluates the function, which runs nothing, then its arguments.
+  if (isFunctionExpressionCall(node)) {
+    const index = node.arguments.findIndex(ts.isSpreadElement);
+    return getFirstLeading(
+      index === -1 ? node.arguments : node.arguments.slice(0, index),
+      results,
+      context,
+    );
+  }
   if (!ts.isBinaryExpression(node)) return undefined;
   const kind = node.operatorToken.kind;
   if (kind === ts.SyntaxKind.EqualsToken) {
@@ -17223,9 +17235,11 @@ const getEarlierNames = (
       ? [parent.left, parent.right]
       : ts.isArrayLiteralExpression(parent)
         ? [...parent.elements]
-        : ts.isTemplateExpression(parent)
-          ? parent.templateSpans.map((span) => span.expression)
-          : [];
+        : isFunctionExpressionCall(parent)
+          ? [...parent.arguments]
+          : ts.isTemplateExpression(parent)
+            ? parent.templateSpans.map((span) => span.expression)
+            : [];
   const position = operands.findIndex((operand) => operand === node);
   return [
     ...getEarlierNames(parent, root, results, context),

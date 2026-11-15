@@ -41726,4 +41726,33 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("passes the value that a yield gives to a function expression that a call runs", () => {
+    const getSource = (expected: string) => `
+      let x = "a";
+      function* g(): Generator<number, string, string> {
+        const first = (function (arg: string) {
+          return arg + "!";
+        })(yield 1);
+        return (function (left: string, right: string) {
+          return first + left + right;
+        })(x, yield 2);
+      }
+      const iter = g();
+      iter.next();
+      iter.next("b");
+      x = "c";
+      const result = iter.next("d");
+      const log = result.value + "," + x;
+      if (log !== "${expected}") throw new Error("log " + log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("b!ad,c"))).failure).toBeUndefined();
+    });
+
+    it("rejects an argument that it reads after the yield", async () => {
+      expect((await checkModel(getSource("b!cd,c"))).failure?.message).toContain("log b!ad,c");
+    });
+  });
 });
