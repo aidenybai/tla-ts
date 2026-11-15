@@ -300,6 +300,14 @@ export const callValue = (
           rest,
         );
       }, otherwise(next)),
+    // What follows joins the paths through each candidate, which may change what the site doesn't
+    // name, as a closure's environment.
+    [
+      ...new Set([
+        ...getChanged(site, path, context),
+        ...candidates.flatMap((candidate) => getChanged(candidate, path, context)),
+      ]),
+    ],
   );
 
 // Calls a method that the iterator protocol read, which throws a TypeError where it isn't callable.

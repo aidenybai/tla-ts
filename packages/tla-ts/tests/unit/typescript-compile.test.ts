@@ -43013,4 +43013,36 @@ describe("BigInts", () => {
       ).rejects.toThrow("tla-ts can't tell the code of a character outside ASCII");
     });
   });
+
+  describe("joins the paths through a script iterator's next that changes its receiver", () => {
+    const getSource = (expected: string) => `
+      let log = "";
+      class Countdown extends Iterator<number> {
+        counter = 2;
+        // @ts-ignore
+        next() {
+          if (this.counter <= 0) {
+            return { done: true, value: undefined };
+          } else {
+            this.counter -= 1;
+            return { done: false, value: this.counter };
+          }
+        }
+      }
+      const countdown = new Countdown();
+      countdown.forEach((value) => {
+        log += value;
+      });
+      log += \`|\${countdown.counter}\`;
+      if (log !== "${expected}") throw new Error(log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("10|0"))).failure).toBeUndefined();
+    });
+
+    it("rejects a step that leaves the counter", async () => {
+      expect((await checkModel(getSource("10|1"))).failure?.message).toContain("10|0");
+    });
+  });
 });
