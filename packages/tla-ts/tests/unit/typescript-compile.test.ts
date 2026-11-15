@@ -6161,7 +6161,7 @@ describe("calls", () => {
     });
   });
 
-  it("passes a helper's operator only the variables that it reads or changes, as the call sees them", async () => {
+  it("passes a helper's operator the variables that the script's functions name, as the call sees them", async () => {
     const getSource = (expected: string) => `
       const box = { count: 0 };
       let seen = 0;
@@ -6181,11 +6181,14 @@ describe("calls", () => {
         return \`\${first},\${second},\${read()},\${other}\`;
       };
       const text = run();
+      let length = 0;
+      length = text.length;
       if (text !== "${expected}") throw new Error(text);
     `;
+    // Only the script's own statements name text and length, so no operator takes them.
     const printed = printModule(compile(getSource("5,7,8,7")).source);
-    expect(printed).toMatch(/^read\(\w+, box\w*, seen\w*\) ==/m);
-    expect(printed).toMatch(/^bump\(by\w*, \w+, box\w*, other\w*\) ==/m);
+    expect(printed).toMatch(/^read\(\w+, box\w*, seen\w*, other\w*\) ==/m);
+    expect(printed).toMatch(/^bump\(by\w*, \w+, box\w*, seen\w*, other\w*\) ==/m);
     expect((await checkModel(getSource("5,7,8,7"))).failure).toBeUndefined();
     expect((await checkModel(getSource("0,2,7,7"))).failure?.message).toContain("5,7,8,7");
   });
@@ -6211,6 +6214,47 @@ describe("calls", () => {
     expect((await checkModel(getSource("4,6,2"))).failure).toBeUndefined();
     expect((await checkModel(getSource("0,0,2"))).failure?.message).toContain("4,6,2");
   });
+
+  it.each([
+    [
+      "an object's property",
+      "const holder: { test: (value: unknown) => boolean } = { test: isOne };",
+      "holder.test(value)",
+    ],
+    [
+      "an array's callback",
+      "const tests: ((value: unknown) => boolean)[] = [isOne];",
+      "tests.some((test) => test(value))",
+    ],
+  ])(
+    "passes a helper's operator the variables of the functions that a call through %s may run",
+    async (_name, held, called) => {
+      const getSource = (expected: string) => `
+        let limit = 1;
+        const box = { count: 0 };
+        function isLimit(value: unknown) {
+          return value === limit;
+        }
+        function isOne(value: unknown) {
+          return value === 1;
+        }
+        ${held}
+        const run = (value: unknown) => {
+          box.count++;
+          const found = ${called};
+          return found;
+        };
+        limit = 2;
+        const text = \`\${run(1)},\${run(2)},\${box.count}\`;
+        if (!Object.is(text, "${expected}")) throw new Error(text);
+      `;
+      expect(printModule(compile(getSource("true,false,2")).source)).toMatch(/^run\(/m);
+      expect((await checkModel(getSource("true,false,2"))).failure).toBeUndefined();
+      expect((await checkModel(getSource("false,true,2"))).failure?.message).toContain(
+        "true,false,2",
+      );
+    },
+  );
 
   it("passes a helper's operator a class that its callback names", async () => {
     const getSource = (expected: string) => `

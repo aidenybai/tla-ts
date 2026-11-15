@@ -57,7 +57,7 @@ export interface SharedCall {
 export interface SharedHelper {
   read: ts.Symbol[];
   changed: ts.Symbol[];
-  // The variables that it, what it runs, and every function that runs through a value name.
+  // The variables that a function or a class of the script names, which its operator takes.
   state: ts.Symbol[];
 }
 
