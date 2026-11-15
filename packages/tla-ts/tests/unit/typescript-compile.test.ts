@@ -28012,6 +28012,34 @@ export const step = () => {
 });
 
 describe("proxies", () => {
+  describe("reads a property through a proxy without a get trap from its target", () => {
+    const getSource = (expected: string) => `
+      "use strict";
+      class Counter {
+        static #count = 1;
+        static read() {
+          return this.#count;
+        }
+      }
+      const proxy = new Proxy(Counter, {});
+      let caught = "none";
+      try {
+        proxy.read();
+      } catch (error) {
+        caught = error instanceof TypeError ? "type" : "other";
+      }
+      if (\`\${caught},\${Counter.read()}\` !== "${expected}") throw new Error(caught);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("type,1"))).failure).toBeUndefined();
+    });
+
+    it("rejects a call through the proxy that reads the private field", async () => {
+      expect((await checkModel(getSource("none,1"))).failure?.message).toContain("type");
+    });
+  });
+
   it("runs a proxy's get and has traps with the target, the key, and the proxy", async () => {
     const result = await checkModel(`
       const target: { attr: number; other?: number } = { attr: 1 };
@@ -28891,18 +28919,35 @@ describe("proxies", () => {
       );
     });
 
-    it.each([
-      [
-        "reads a revoked proxy",
-        "const keysOf = (value: object) => Object.keys(value).join(); const made = Proxy.revocable({ a: 1 }, {}); made.revoke(); keysOf(made.proxy);",
-      ],
-      [
-        "reads a proxy of a proxy whose handler has a trap",
-        "const keysOf = (value: object) => Object.keys(value).join(); keysOf(new Proxy(new Proxy({ a: 1 }, { has: () => true }), {}));",
-      ],
-    ])("stops where a script %s", async (_, source) => {
+    describe("reads a proxy of a proxy whose handler has only another trap", () => {
+      const getSource = (expected: string) => `
+        const box = { size: 0 };
+        const keysOf = (value: object) => Object.keys(value).join();
+        box.size = 1;
+        const read = keysOf(new Proxy(new Proxy({ a: 1 }, { has: () => true }), {}));
+        if (read !== "${expected}") throw new Error(read);
+      `;
+
+      it("agrees with Node", async () => {
+        expect((await checkModel(getSource("a"))).failure).toBeUndefined();
+      });
+
+      it("rejects the keys as empty", async () => {
+        expect((await checkModel(getSource(""))).failure?.message).toContain('"a"');
+      });
+    });
+
+    it("stops where a script catches the TypeError of reading a revoked proxy", async () => {
+      const source = `
+        const keysOf = (value: object) => Object.keys(value).join();
+        const made = Proxy.revocable({ a: 1 }, {});
+        made.revoke();
+        try {
+          keysOf(made.proxy);
+        } catch {}
+      `;
       expect((await checkModel(source)).failure?.message).toContain(
-        "tla-ts can't run a proxy's internal method here",
+        "tla-ts can't throw the TypeError of a revoked proxy's target",
       );
     });
   });
@@ -31495,6 +31540,117 @@ describe("BigInts", () => {
     it("rejects one precision digit as out of range", async () => {
       expect((await checkModel(getSource("range,range,range,range"))).failure?.message).toContain(
         "range,range,range,3",
+      );
+    });
+  });
+  describe("defines an accessor under a new key of Date.prototype and RegExp.prototype", () => {
+    const getSource = (expected: string) => `
+      let data = "data";
+      Object.defineProperty(Date.prototype, "prop", {
+        get: function () {
+          return data;
+        },
+        set: function (value: string) {
+          data = value;
+        },
+        enumerable: true,
+        configurable: true,
+      });
+      Object.defineProperty(RegExp.prototype, "tag", {
+        get: function () {
+          return "regexp";
+        },
+        enumerable: true,
+        configurable: true,
+      });
+      const date = new Date(0) as unknown as { prop: string; hasOwnProperty(key: string): boolean };
+      date.prop = "own";
+      const regexp = new RegExp("a") as unknown as { tag: string };
+      let seen = "";
+      for (const key in regexp) seen += key;
+      const read = [date.hasOwnProperty("prop"), date.prop, data, regexp.tag, seen].join();
+      if (read !== "${expected}") throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("false,own,own,regexp,tag"))).failure).toBeUndefined();
+    });
+
+    it("rejects the write as an own property", async () => {
+      expect((await checkModel(getSource("true,own,data,regexp,tag"))).failure?.message).toContain(
+        "false,own,own,regexp,tag",
+      );
+    });
+  });
+
+  describe("runs the internal methods of a proxy without traps on its target", () => {
+    const getSource = (expected: string) => `
+      const target: { [key: string]: unknown } = { attr: 1, other: 2 };
+      const proxy = new Proxy(target, {});
+      const descriptor = Object.getOwnPropertyDescriptor(proxy, "attr")!;
+      proxy.attr = 3;
+      delete proxy.other;
+      const read = [
+        descriptor.value,
+        descriptor.enumerable,
+        Object.prototype.hasOwnProperty.call(proxy, "attr"),
+        Object.prototype.propertyIsEnumerable.call(proxy, "attr"),
+        target.attr,
+        "other" in target,
+        "attr" in proxy,
+        Object.keys(proxy).join("|"),
+      ].join();
+      if (read !== "${expected}") throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("1,true,true,true,3,false,true,attr"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects the write as kept on the proxy", async () => {
+      expect(
+        (await checkModel(getSource("1,true,true,true,1,false,true,attr"))).failure?.message,
+      ).toContain("1,true,true,true,3,false,true,attr");
+    });
+  });
+
+  describe("runs instanceof on a proxy through its getPrototypeOf trap", () => {
+    const getSource = (expected: string) => `
+      function Custom() {}
+      function Other() {}
+      const proxy = new Proxy(
+        {},
+        {
+          getPrototypeOf() {
+            return Custom.prototype;
+          },
+        },
+      );
+      const fixed = {};
+      Object.preventExtensions(fixed);
+      const lying = new Proxy(fixed, {
+        getPrototypeOf() {
+          return Custom.prototype;
+        },
+      });
+      const read: unknown[] = [proxy instanceof Custom, proxy instanceof Other, proxy instanceof Object];
+      try {
+        read.push(lying instanceof Custom);
+      } catch (error) {
+        read.push(error instanceof TypeError ? "type" : "other");
+      }
+      if (read.join() !== "${expected}") throw new Error(read.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("true,false,true,type"))).failure).toBeUndefined();
+    });
+
+    it("rejects the trap's prototype for a fixed target as allowed", async () => {
+      expect((await checkModel(getSource("true,false,true,true"))).failure?.message).toContain(
+        "true,false,true,type",
       );
     });
   });
