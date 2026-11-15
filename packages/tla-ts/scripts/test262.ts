@@ -1470,8 +1470,8 @@ const typeGenerators = () => {
 };
 
 // A variable that an empty array literal initializes, and that the test pushes object literals to,
-// which the fix types as a union of arrays where no push fits each, holds an array of objects with
-// each property that a push gives, optional where another push lacks it.
+// which getArrayOfUnion types as an array of a union where no push fits each, holds an array of
+// objects with each property that a push gives, optional where another push lacks it.
 const typePushedArrays = () => {
   const program = service.getProgram();
   const sourceFile = program?.getSourceFile(PROGRAM_PATH);
@@ -1484,8 +1484,9 @@ const typePushedArrays = () => {
       !ts.isVariableDeclaration(node) ||
       !ts.isIdentifier(node.name) ||
       node.type === undefined ||
-      !ts.isUnionTypeNode(node.type) ||
-      !node.type.types.every(ts.isArrayTypeNode) ||
+      !ts.isArrayTypeNode(node.type) ||
+      !ts.isParenthesizedTypeNode(node.type.elementType) ||
+      !ts.isUnionTypeNode(node.type.elementType.type) ||
       node.initializer === undefined ||
       !ts.isArrayLiteralExpression(node.initializer) ||
       node.initializer.elements.length > 0
