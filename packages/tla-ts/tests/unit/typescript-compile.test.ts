@@ -44660,4 +44660,63 @@ describe("BigInts", () => {
       ).toContain("cmctorcfctorcsctorcuctor,3");
     });
   });
+
+  describe("runs the getter that a typed array's construction or set reads first of an object", () => {
+    const getSource = (expected: string) => `
+      let log = "";
+      const sized = {};
+      Object.defineProperty(sized, "length", {
+        get() {
+          throw new Error("length");
+        },
+      });
+      const iterable = {};
+      Object.defineProperty(iterable, Symbol.iterator, {
+        get() {
+          throw new Error("iterator");
+        },
+      });
+      const big: Record<string, unknown> = { length: 3, 0: 1n };
+      Object.defineProperty(big, "1", {
+        get() {
+          throw new Error("element");
+        },
+      });
+      const target = new BigInt64Array([5n, 6n, 7n]);
+      try {
+        new Uint8Array(sized as ArrayLike<number>);
+      } catch (error) {
+        log += (error as Error).message;
+      }
+      try {
+        new Uint8Array(iterable as ArrayLike<number>);
+      } catch (error) {
+        log += (error as Error).message;
+      }
+      try {
+        new BigInt64Array(big as unknown as ArrayLike<bigint>);
+      } catch (error) {
+        log += (error as Error).message;
+      }
+      try {
+        target.set(big as unknown as ArrayLike<bigint>);
+      } catch (error) {
+        log += (error as Error).message;
+      }
+      const result = [log, target.join("-")].join(",");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("lengthiteratorelementelement,1-6-7"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects a set that writes nothing before the getter throws", async () => {
+      expect(
+        (await checkModel(getSource("lengthiteratorelementelement,5-6-7"))).failure?.message,
+      ).toContain("lengthiteratorelementelement,1-6-7");
+    });
+  });
 });

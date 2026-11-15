@@ -13408,11 +13408,17 @@ const translateNewBufferStatement = (
                   step(read, iterator, next, [...taken, value], finish),
                 ),
             );
-      // new of a typed array of numbers reads an array-like object's elements in order, so the
-      // first that a getter which only throws answers throws, where nothing before runs code.
+      // new of a typed array reads an object's @@iterator, and else its length and its elements in
+      // order, so the first that a getter which only throws answers throws, where nothing before
+      // runs code. The typed arrays of numbers and those of BigInts convert the elements apart.
+      const isBig = buffers.every((buffer) => buffer.startsWith("Big"));
       const code = useJavaScript(
         "TypedArrayFirstGetter",
-        [getHeap(allocated.scope, node, context), values[0] ?? getUndefined(context)],
+        [
+          getHeap(allocated.scope, node, context),
+          values[0] ?? getUndefined(context),
+          boolean(isBig),
+        ],
         context,
       );
       const callee = translateExpression(construction.callee, allocated.scope, context);
@@ -13420,7 +13426,7 @@ const translateNewBufferStatement = (
         values.length > 0 &&
         construction.newTarget === construction.callee &&
         buffers.length > 0 &&
-        buffers.every((buffer) => TYPED_ARRAYS.has(buffer) && !buffer.startsWith("Big")) &&
+        buffers.every((buffer) => TYPED_ARRAYS.has(buffer) && buffer.startsWith("Big") === isBig) &&
         getThrowingGetters(node, context).length > 0
           ? throwFirstGetter(
               node,

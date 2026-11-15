@@ -6182,10 +6182,14 @@ LOCAL IsPlainNumeric(value) ==
   \\/ value = Null
   \\/ ~IsRef(value) /\\ TypeOf(value) \\in {"undefined", "boolean", "number", "string"}
 
+\\* Whether converting a value to a BigInt runs no code and throws nothing.
+LOCAL IsPlainBigInt(value) == ~IsRef(value) /\\ TypeOf(value) \\in {"bigint", "boolean"}
+
 \\* The index of the first element of an array-like object that a getter answers, as a built-in reads
-\\* each element in order and converts it to a number, where its length and each element before are
-\\* values that IsPlainNumeric holds, so that nothing before runs code or throws, or -1.
-LOCAL NumbersFirstGetter(heap, ref) ==
+\\* each element in order and converts it to a number, or a BigInt where isBig holds, where its length
+\\* and each element before are values that convert without running code or throwing, so that nothing
+\\* before runs code or throws, or -1.
+LOCAL NumbersFirstGetter(heap, ref, isBig) ==
   LET length == Get(heap, ref, "length")
       count == ToLength(length)
       read == {position \\in 0..(count - 1) : GetterOf(heap, ref, ToString(position)) # Undefined}
@@ -6200,20 +6204,25 @@ LOCAL NumbersFirstGetter(heap, ref) ==
         /\\ length # Infinity
         /\\ count * 8 <= MaxBytes
         /\\ read # {}
-        /\\ \\A position \\in 0..(first - 1) : IsPlainNumeric(Get(heap, ref, ToString(position)))
+        /\\ \\A position \\in 0..(first - 1) :
+             LET value == Get(heap, ref, ToString(position))
+             IN IF isBig THEN IsPlainBigInt(value) ELSE IsPlainNumeric(value)
      THEN first
      ELSE -1
 
-\\* The code of the getter that new of a typed array runs first as it reads the elements of an
-\\* array-like object without an @@iterator, where nothing before runs code or throws, or Undefined.
-TypedArrayFirstGetter(heap, ref) ==
-  IF /\\ IsHeap(ref)
-     /\\ ~IsProxy(heap, ref)
-     /\\ GetterOf(heap, ref, WellKnownSymbol("iterator")) = Undefined
-     /\\ Get(heap, ref, WellKnownSymbol("iterator")) \\in {Undefined, Null}
-     /\\ NumbersFirstGetter(heap, ref) # -1
-  THEN CodeOf(heap, GetterOf(heap, ref, ToString(NumbersFirstGetter(heap, ref))))
-  ELSE Undefined
+\\* The code of the getter that new of a typed array of numbers, or of BigInts where isBig holds,
+\\* runs first as it reads an object: its @@iterator's, and else, where it has none, its length's or
+\\* that of the first element that NumbersFirstGetter gives, or Undefined.
+TypedArrayFirstGetter(heap, ref, isBig) ==
+  LET getter(key) == GetterOf(heap, ref, key)
+      iterator == WellKnownSymbol("iterator")
+  IN CASE ~IsHeap(ref) \\/ IsProxy(heap, ref) -> Undefined
+       [] getter(iterator) # Undefined -> CodeOf(heap, getter(iterator))
+       [] Get(heap, ref, iterator) \\notin {Undefined, Null} -> Undefined
+       [] getter("length") # Undefined -> CodeOf(heap, getter("length"))
+       [] NumbersFirstGetter(heap, ref, isBig) # -1 ->
+            CodeOf(heap, getter(ToString(NumbersFirstGetter(heap, ref, isBig))))
+       [] OTHER -> Undefined
 
 \\* The heap with a new typed array of a length, of the elements of an array or a typed array, or
 \\* viewing a buffer, where isIterating tells whether an array still iterates through the built-in
@@ -6303,6 +6312,7 @@ IteratesScriptMethod(heap, value) ==
   /\\ IsHeap(value)
   /\\ ~IsTypedArray(heap, value)
   /\\ ~IsBuffer(heap, value)
+  /\\ GetterOf(heap, value, WellKnownSymbol("iterator")) = Undefined
   /\\ LET method == Get(heap, value, WellKnownSymbol("iterator"))
      IN method \\notin {Undefined, Null} /\\ ~(IsRef(method) /\\ ~IsHeap(method))
 
@@ -6560,9 +6570,8 @@ LOCAL SetFirstGetter(heap, ref, arguments) ==
   LET offset == IF Len(arguments) >= 2 THEN arguments[2] ELSE Undefined
       start == ToIntegerOrInfinity(ToNumber(offset))
       view == heap.objects[ref[Ref]]
-      first == NumbersFirstGetter(heap, arguments[1])
+      first == NumbersFirstGetter(heap, arguments[1], IsBigIntType(view.elementType))
   IN IF /\\ IsTypedArray(heap, ref)
-        /\\ ~IsBigIntType(view.elementType)
         /\\ Len(arguments) >= 1
         /\\ IsPlainNumeric(offset)
         /\\ start \\notin {Infinity, NegativeInfinity}
