@@ -18,6 +18,7 @@ import { createNames, type Names } from "./names";
 import { getBindingNames, getLexicalNames } from "./early-errors";
 import { getKeptReads } from "./narrowing";
 import { mayThrow } from "./functions";
+import type { Namespace } from "./namespaces";
 import type { Link } from "./regions";
 import { apply, define, identifier, ifExpression, index, letExpression, string } from "./tla";
 
@@ -151,6 +152,9 @@ export interface Context {
   // The generator functions that a script declares at its top, or that a variable there holds,
   // whose prototype objects the heap holds from the start, by the place on the heap of each.
   generatorPrototypes: Map<ts.FunctionDeclaration | ts.FunctionExpression, number>;
+  // The modules whose namespace objects a script reads, which the heap holds from the start, after
+  // the generator prototypes, and which take the modules' exports once the modules have run.
+  namespaces: ReadonlyMap<ts.SourceFile, Namespace>;
   // Whether a script gives Array.prototype or Object.prototype properties, which an array reads
   // past its end.
   hasInheritedElements: boolean;
@@ -511,6 +515,7 @@ export const createContext = (
     checkedGlobals: new Set(),
     implicitGlobals,
     generatorPrototypes: new Map(),
+    namespaces: new Map(),
     hasInheritedElements: false,
     characters: new Set(),
     passed: new Map(),
@@ -4430,6 +4435,22 @@ export const isNameRead = (name: ts.Identifier, within: ts.Node, context: Contex
       other !== name &&
       (other.text === "arguments" || getSymbol(other, context.checker) === symbol),
   );
+};
+
+// A call of import(), which loads a module as a script runs.
+export const isImportCall = (node: ts.Node): node is ts.ImportCall =>
+  ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword;
+
+// The module that an import() of a string names.
+export const getImportedModule = (node: ts.CallExpression, checker: ts.TypeChecker) => {
+  const specifier = node.arguments.at(0);
+  const module =
+    specifier !== undefined && ts.isStringLiteralLike(specifier)
+      ? checker.getSymbolAtLocation(specifier)?.valueDeclaration
+      : undefined;
+  return module !== undefined && ts.isSourceFile(module) && !module.isDeclarationFile
+    ? module
+    : undefined;
 };
 
 export const findNodes = <T extends ts.Node>(root: ts.Node, test: (node: ts.Node) => node is T) => {

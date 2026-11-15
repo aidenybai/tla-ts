@@ -1390,6 +1390,9 @@ EmptyObject ==
    prototype |-> ObjectPrototype, isCallable |-> FALSE, isConstructor |-> FALSE, isOpaque |-> FALSE,
    privates |-> <<>>]
 
+\\* Whether an object is a module namespace object, which NamespaceObject makes.
+IsNamespace(object) == "isNamespace" \\in DOMAIN object
+
 \\* A heap holds the objects a script makes, and the built-in objects it has changed, by key.
 EmptyHeap == [objects |-> <<>>, changed |-> <<>>, symbols |-> <<>>, registry |-> <<>>]
 
@@ -1775,7 +1778,7 @@ KeyPosition(key) ==
 \\* An object's own string keys, with the indices first in order, which their digits give.
 OwnKeys(object) ==
   LET strings == SelectSeq(object.keys, LAMBDA key : ~IsSymbol(key))
-  IN SortSeq(SelectSeq(strings, IsIndex),
+  IN IF IsNamespace(object) THEN strings ELSE SortSeq(SelectSeq(strings, IsIndex),
              LAMBDA left, right :
                Len(left) < Len(right) \\/ (Len(left) = Len(right) /\\ DigitsBelow(left, right)))
        \\o SelectSeq(strings, LAMBDA key : ~IsIndex(key))
@@ -2601,9 +2604,9 @@ IsProtoWrite(heap, ref, key) == GetterPath(SetterOf(heap, ref, key)) = "set Obje
 RECURSIVE IsWritable(_, _, _)
 IsWritable(heap, ref, key) ==
   LET object == PropertiesOf(heap, ref, key)
-  IN IF key \\in DOMAIN object.values
-     THEN object.attributes[key].writable
-     ELSE object.prototype = Null \\/ IsWritable(heap, object.prototype, key)
+  IN CASE IsNamespace(object) -> FALSE
+       [] key \\in DOMAIN object.values -> object.attributes[key].writable
+       [] OTHER -> object.prototype = Null \\/ IsWritable(heap, object.prototype, key)
 
 \\* Whether a write runs %ThrowTypeError%, the setter of Function.prototype's arguments and caller,
 \\* which throws a TypeError outside strict mode too.
@@ -2823,6 +2826,24 @@ NewestSymbol(heap) == Symbols[Len(WellKnownSymbols) + Len(heap.symbols)]
 
 WellKnownSymbol(name) ==
   Symbols[CHOOSE position \\in DOMAIN WellKnownSymbols : WellKnownSymbols[position] = name]
+
+\\* A module namespace object, which holds the values of a module's exports under their names, in
+\\* order, writable and enumerable but unconfigurable, and an unwritable @@toStringTag of "Module".
+\\* It has no prototype and can't grow, and its own [[Set]] and [[DefineOwnProperty]] change nothing.
+NamespaceObject(names, values) ==
+  LET tag == WellKnownSymbol("toStringTag")
+      keys == {names[position] : position \\in DOMAIN names}
+      isTag(key) == IsSymbol(key) /\\ key = tag
+  IN [keys |-> names \\o <<tag>>,
+      values |-> [key \\in keys \\cup {tag} |->
+                    IF isTag(key)
+                    THEN "Module"
+                    ELSE values[CHOOSE position \\in DOMAIN names : names[position] = key]],
+      attributes |-> [key \\in keys \\cup {tag} |->
+                        [writable |-> ~isTag(key), enumerable |-> ~isTag(key),
+                         configurable |-> FALSE, kind |-> "data"]],
+      extensible |-> FALSE, prototype |-> Null, isCallable |-> FALSE, isConstructor |-> FALSE,
+      isOpaque |-> FALSE, privates |-> <<>>, isNamespace |-> TRUE]
 
 \\* Whether a built-in method throws a TypeError on a receiver, as one does on undefined or null
 \\* where it needs a receiver, and as one that needs an internal slot, or a primitive of its own
@@ -4490,6 +4511,13 @@ LOCAL CanApply(object, key, descriptor) ==
       current == object.attributes[key]
       isSame(field) == SameValue(descriptor[field], object.values[key][field])
   IN CASE key \\notin DOMAIN object.values -> object.extensible
+       \\* A namespace object's export keeps its attributes and the value of its binding.
+       [] IsNamespace(object) /\\ ~IsSymbol(key) ->
+            /\\ ~(has("configurable") /\\ descriptor.configurable)
+            /\\ ~(has("enumerable") /\\ ~descriptor.enumerable)
+            /\\ ~descriptor.isAccessor
+            /\\ ~(has("writable") /\\ ~descriptor.writable)
+            /\\ has("value") => SameValue(descriptor.value, object.values[key])
        [] current.configurable -> TRUE
        [] has("configurable") /\\ descriptor.configurable -> FALSE
        [] has("enumerable") /\\ descriptor.enumerable # current.enumerable -> FALSE
@@ -7415,9 +7443,11 @@ LOCAL Restrict(heap, ref, isFrozen) ==
         [key \\in DOMAIN object.attributes |->
           [object.attributes[key] EXCEPT !.configurable = FALSE,
                                          !.writable = IF isFrozen THEN FALSE ELSE @]]
-  IN IF RestrictsTypedArray(heap, ref, TRUE)
-     THEN Update(heap, ref, [object EXCEPT !.extensible = FALSE, !.attributes = attributes])
-     ELSE heap
+  IN CASE isFrozen /\\ IsNamespace(object) /\\ OwnKeys(object) # <<>> ->
+            Assert(FALSE, "tla-ts can't throw the TypeError of freezing a module namespace object")
+       [] RestrictsTypedArray(heap, ref, TRUE) ->
+            Update(heap, ref, [object EXCEPT !.extensible = FALSE, !.attributes = attributes])
+       [] OTHER -> heap
 
 PreventExtensions(heap, ref) ==
   IF RestrictsTypedArray(heap, ref, FALSE)

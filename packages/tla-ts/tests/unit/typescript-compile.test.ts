@@ -8601,15 +8601,18 @@ describe("definitions", () => {
     );
   });
 
-  it("stops at a namespace object that a script uses other than to read an export", () => {
+  it("reads a namespace object that a script uses other than to read an export", async () => {
     const path = join(import.meta.dirname, "../fixtures/typescript/imports/namespace.ts");
     const source = readFileSync(path, "utf8");
-    expect(() =>
-      compile(source.replace("first.getFirst() !== 1", "Object.isExtensible(first)"), path),
-    ).toThrow("tla-ts can't make a module's namespace object");
-    expect(() =>
-      compile(source.replace("first.getFirst() !== 1", "Object.keys(first).length !== 1"), path),
-    ).toThrow("tla-ts can't make a module's namespace object");
+    const getSource = (condition: string) => source.replace("first.getFirst() !== 1", condition);
+    expect(
+      (await check(compile(getSource("Object.isExtensible(first)"), path))).failure,
+    ).toBeUndefined();
+    expect(
+      (await check(compile(getSource("Object.keys(first).length !== 1"), path))).failure,
+    ).toBeUndefined();
+    const wrong = await check(compile(getSource("Object.keys(first).length !== 2"), path));
+    expect(wrong.failure?.message).toContain("the namespace's getFirst");
   });
 
   it("constructs a class that another file declares", async () => {
@@ -40405,14 +40408,12 @@ describe("BigInts", () => {
     });
   });
 
-  it("stops at a variable that a script reads through a module's namespace object", () => {
+  it("reads a variable through a module's namespace object", async () => {
     const path = join(import.meta.dirname, "../fixtures/typescript/imports/namespace.ts");
-    expect(() =>
-      compile(
-        'import * as logged from "./log";\nif (logged.log.length !== 0) throw new Error();',
-        path,
-      ),
-    ).toThrow("tla-ts can't read the variable logged.log through a module's namespace object");
+    const getSource = (length: number) =>
+      `import * as logged from "./log";\nif (logged.log.length !== ${length}) throw new Error("length " + logged.log.length);`;
+    expect((await check(compile(getSource(0), path))).failure).toBeUndefined();
+    expect((await check(compile(getSource(1), path))).failure?.message).toContain("length 0");
   });
   describe("converts a primitive index that with() takes as ToNumber does", () => {
     const getSource = (expected: string) => `
@@ -42256,6 +42257,128 @@ describe("BigInts", () => {
     it("rejects a receiver other than undefined", async () => {
       expect((await checkModel(getSource("null//2/0,//2/0,true"))).failure?.message).toContain(
         "seen //2/0",
+      );
+    });
+  });
+
+  describe("a promise's method that a string names", () => {
+    const getSource = (expected: string) => `
+      declare function setTimeout(callback: () => void): void;
+      let log = "";
+      Promise.resolve(1)["then"]((value) => value + 1).then((value) => {
+        log += value;
+      });
+      Promise.reject(2)["catch"]((value) => value + 1).then((value) => {
+        log += value;
+      });
+      setTimeout(() => {
+        if (log !== "${expected}") throw new Error("log " + log);
+      });
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("23"))).failure).toBeUndefined();
+    });
+
+    it("rejects the reactions in another order", async () => {
+      expect((await checkModel(getSource("32"))).failure?.message).toContain(
+        "A timer threw an exception",
+      );
+    });
+  });
+
+  describe("a module's namespace object", () => {
+    const path = join(import.meta.dirname, "../fixtures/typescript/imports/namespacing.ts");
+    const source = readFileSync(path, "utf8");
+
+    it("agrees with Node", async () => {
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects a namespace object that takes a write", async () => {
+      const wrong = source.replace("[object Module],false,", "[object Module],true,");
+      expect((await check(compile(wrong, path))).failure?.message).toContain(
+        "[object Module],false,",
+      );
+    });
+
+    it("stops at an export that a function may change after its module runs", () => {
+      expect(() =>
+        compile('import * as bumping from "./bumping";\nObject.keys(bumping);', path),
+      ).toThrow(
+        "tla-ts can't make a module's namespace object whose count may change after the module runs",
+      );
+    });
+
+    it("stops at the namespace object of the script before its exports hold their values", () => {
+      expect(() =>
+        compile(
+          'import * as self from "./namespacing";\nObject.keys(self);\nexport const late = 1;',
+          path,
+        ),
+      ).toThrow(
+        "tla-ts can't read the script's own namespace object where its exports may not hold their values",
+      );
+    });
+
+    it("stops at a namespace object outside a script", () => {
+      const model = [
+        'import * as first from "./first";',
+        "let count = 0;",
+        "export const step = () => {",
+        "  count += Object.keys(first).length;",
+        "};",
+      ].join("\n");
+      expect(() => compile(model, path)).toThrow(
+        "tla-ts can't make a module's namespace object outside a script",
+      );
+    });
+
+    it("follows the script's own namespace object as its exports change", async () => {
+      const ownPath = join(import.meta.dirname, "../fixtures/typescript/imports/selfish.ts");
+      const own = readFileSync(ownPath, "utf8");
+      expect((await check(compile(own, ownPath))).failure).toBeUndefined();
+      const wrong = own.replace("5,true,7,8", "5,true,7,7");
+      expect((await check(compile(wrong, ownPath))).failure?.message).toContain(
+        "A timer threw an exception",
+      );
+    });
+  });
+
+  describe("import() of a module", () => {
+    const path = join(import.meta.dirname, "../fixtures/typescript/imports/importing.ts");
+    const source = readFileSync(path, "utf8");
+
+    it("agrees with Node", async () => {
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects a namespace object without the module's exports", async () => {
+      const wrong = source.replace("renamed 3 42", "renamed 3 41");
+      expect((await check(compile(wrong, path))).failure?.message).toContain(
+        "A timer threw an exception",
+      );
+    });
+
+    it("stops at a module whose code does more than declare", () => {
+      expect(() => compile('void import("./first");', path)).toThrow(
+        "tla-ts can't run a module that import() loads, as its code does more than declare",
+      );
+    });
+  });
+
+  describe("import() of a module that throws as it runs", () => {
+    const path = join(import.meta.dirname, "../fixtures/typescript/imports/rejecting.ts");
+    const source = readFileSync(path, "utf8");
+
+    it("agrees with Node", async () => {
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects another error", async () => {
+      const wrong = source.replace("TypeError: thrown", "TypeError: throw");
+      expect((await check(compile(wrong, path))).failure?.message).toContain(
+        "A timer threw an exception",
       );
     });
   });

@@ -145,6 +145,7 @@ import {
   translateTypeOf,
   useJavaScript,
 } from "./javascript";
+import { getNamespaceName, getNamespaceRef } from "./namespaces";
 import { getThisOwner, rejectBeforeDeclaration, type Scope } from "./scope";
 import { getMappedParameter } from "./actions";
 import {
@@ -2427,6 +2428,8 @@ export const readGlobal = (name: ts.Identifier, value: Expression, context: Cont
 
 const translateIdentifier = (node: ts.Identifier, scope: Scope, context: Context) => {
   if (node.text === "undefined") return getUndefined(context);
+  const namespace = getNamespaceName(node, context);
+  if (namespace !== undefined) return getNamespaceRef(namespace, context);
   rejectGeneratorUse(node, context);
   if (
     context.hasSpecialNumbers &&
@@ -2740,6 +2743,17 @@ const translatePropertyAccess = (
   if (ts.isPrivateIdentifier(node.name)) return translatePrivateRead(node, scope, context);
   if (node.expression.kind === ts.SyntaxKind.SuperKeyword) {
     return translateSuperRead(node, string(node.name.text), scope, context);
+  }
+  // A read through a namespace object that tla-ts makes reads the object.
+  const namespace = ts.isIdentifier(node.expression)
+    ? getNamespaceName(node.expression, context)
+    : undefined;
+  if (namespace !== undefined) {
+    return useJavaScript(
+      "Get",
+      [getHeap(scope, node, context), getNamespaceRef(namespace, context), string(node.name.text)],
+      context,
+    );
   }
   const property = getSymbol(node, context.checker);
   // A module's namespace object holds what the module's bindings hold.

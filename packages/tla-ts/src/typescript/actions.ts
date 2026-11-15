@@ -293,6 +293,7 @@ import {
   getGeneratorPrototypeRef,
 } from "./intrinsics";
 import { getTypeNames, getURICall, translateToNumber, useJavaScript } from "./javascript";
+import { getNamespaceRef, isLiteralValue } from "./namespaces";
 import {
   bindFactory,
   forceHeap,
@@ -19434,6 +19435,10 @@ export const translateStatements = (
   if (ts.isFunctionDeclaration(statement)) {
     return translateVarFunction(statement, path, context, continueWith);
   }
+  // A default export of a literal runs nothing, as a read of the export takes the literal.
+  if (ts.isExportAssignment(statement) && isLiteralValue(statement.expression)) {
+    return continueWith(path);
+  }
   const stop = ts.isClassDeclaration(statement) ? getClassStop(statement, context) : undefined;
   throw new TlaTypeScriptError(stop ?? `Unsupported statement: ${statement.getText()}`, statement);
 };
@@ -19559,8 +19564,68 @@ export const translateLocalStatements = (
   );
 };
 
+// The heap where the namespace objects of modules hold what their exports hold, after a statement of
+// the script ran, before which a let, a const, a class, or a default export that it declares holds
+// nothing that a read can see.
+const fillNamespaces = (
+  files: readonly ts.SourceFile[],
+  ran: ts.Statement | undefined,
+  path: Path,
+  context: Context,
+  continueWith: (path: Path) => Formula,
+) => {
+  const heapSymbol = context.heap;
+  const heap = heapSymbol === undefined ? undefined : path.scope.bindings.get(heapSymbol);
+  if (heapSymbol === undefined || heap === undefined) {
+    throw new TlaTypeScriptError("tla-ts can't make a module's namespace object here");
+  }
+  const getExports = (file: ts.SourceFile) => context.namespaces.get(file)?.exports ?? [];
+  const name = context.names.getFresh("heap");
+  return bindOnce(
+    path,
+    name,
+    files.reduce(
+      (current, file) =>
+        useJavaScript(
+          "Update",
+          [
+            current,
+            getNamespaceRef(file, context),
+            useJavaScript(
+              "NamespaceObject",
+              [
+                tuple(getExports(file).map((exported) => string(exported.name))),
+                tuple(
+                  getExports(file).map((exported) =>
+                    ts.isSourceFile(exported.value)
+                      ? getNamespaceRef(exported.value, context)
+                      : exported.declared !== undefined &&
+                          (ran === undefined || exported.declared.pos > ran.pos)
+                        ? getUndefined(context)
+                        : translateExpression(exported.value, path.scope, context),
+                  ),
+                ),
+              ],
+              context,
+            ),
+          ],
+          context,
+        ),
+      heap,
+    ),
+    continueWith({
+      ...path,
+      scope: {
+        ...path.scope,
+        bindings: new Map([...path.scope.bindings, [heapSymbol, identifier(name)]]),
+      },
+    }),
+  );
+};
+
 export const translateScript = (
   statements: readonly ts.Statement[],
+  sourceFile: ts.SourceFile,
   isLast: boolean,
   context: Context,
 ): Formula => {
@@ -19602,101 +19667,149 @@ export const translateScript = (
       context.implicitGlobals.has(symbol) ? getUnresolvable(context) : getUndefined(context),
     ]),
   ]);
-  return translateStatements(
-    statements,
-    {
-      scope: {
-        ...scope,
-        bindings:
-          context.heap === undefined
-            ? bindings
-            : new Map([
-                ...bindings,
-                [
-                  context.heap,
-                  // The prototype objects of the generator functions that the script declares.
-                  [...context.generatorPrototypes.keys()].reduce<Expression>(
-                    (heap, declaration) =>
-                      useJavaScript(
-                        "Allocate",
-                        [
-                          heap,
-                          useJavaScript(
-                            "GeneratorPrototypeObject",
-                            [
-                              translateBuiltInValue(
-                                "%GeneratorFunction%.prototype.prototype",
-                                declaration,
-                                context,
-                              ),
-                            ],
-                            context,
-                          ),
-                        ],
-                        context,
-                      ),
-                    identifier("EmptyHeap"),
-                  ),
-                ],
-              ]),
-        uninitialized: new Set(declared),
-      },
-      mutable: new Set([...context.variables.keys(), ...locals]),
-      isAssigned: false,
-      isLast,
-      isLooping: false,
-      generators: new Map(),
-      tasks: EMPTY_TASKS,
-    },
-    context,
-    {
-      next: (path) => drainTasks(path, context, finish),
-      exit: (path) => drainTasks(path, context, finish),
-      breakTo: undefined,
-      continueTo: undefined,
-      throwTo: undefined,
-      yieldTo: undefined,
-      // A module's body awaits as an async function's body does: the jobs run until the promise
-      // settles, and then a job runs the rest of the body, with the state that the jobs left.
-      awaitTo: (current, value, operand, onFulfilled, onRejected) =>
-        awaitIn(
-          current,
-          operand ?? statements[0],
-          value,
-          operand,
-          context,
-          (resumer, settled, isRejected) =>
-            (isRejected ? onRejected : onFulfilled)(
-              enterBody(
-                resumer,
-                current,
-                (symbol) => context.variables.has(symbol) || symbol === context.heap,
+  // The prototype objects of the generator functions that the script declares.
+  const prototypes = [...context.generatorPrototypes.keys()].reduce<Expression>(
+    (heap, declaration) =>
+      useJavaScript(
+        "Allocate",
+        [
+          heap,
+          useJavaScript(
+            "GeneratorPrototypeObject",
+            [
+              translateBuiltInValue(
+                "%GeneratorFunction%.prototype.prototype",
+                declaration,
+                context,
               ),
-              settled,
-            ),
-          // The jobs ran out before a job resumed the body, which Node reports for a script.
-          (suspended) =>
-            drainTasks(suspended, context, (unsettled) =>
-              isLast
-                ? leaf(
-                    apply("Assert", [
-                      boolean(false),
-                      string(
-                        `${UNSETTLED_AWAIT_WARNING}${getNodeLocation(
-                          ts.findAncestor(operand, ts.isAwaitExpression) ??
-                            operand ??
-                            statements[0],
-                          true,
-                        )}`,
-                      ),
-                    ]),
-                  )
-                : finish(unsettled),
-            ),
-        ),
-      inlining: new Set(),
-    },
+            ],
+            context,
+          ),
+        ],
+        context,
+      ),
+    identifier("EmptyHeap"),
   );
+  const path: Path = {
+    scope: {
+      ...scope,
+      bindings:
+        context.heap === undefined
+          ? bindings
+          : new Map([
+              ...bindings,
+              [
+                context.heap,
+                // The namespace objects that the script reads, which take their exports once their
+                // modules run.
+                context.namespaces.size === 0
+                  ? prototypes
+                  : useJavaScript(
+                      "AllocateEach",
+                      [
+                        prototypes,
+                        tuple([...context.namespaces.keys()].map(() => identifier("EmptyObject"))),
+                      ],
+                      context,
+                    ),
+              ],
+            ]),
+      uninitialized: new Set(declared),
+    },
+    mutable: new Set([...context.variables.keys(), ...locals]),
+    isAssigned: false,
+    isLast,
+    isLooping: false,
+    generators: new Map(),
+    tasks: EMPTY_TASKS,
+  };
+  const frame: Frame = {
+    next: (ended) => drainTasks(ended, context, finish),
+    exit: (ended) => drainTasks(ended, context, finish),
+    breakTo: undefined,
+    continueTo: undefined,
+    throwTo: undefined,
+    yieldTo: undefined,
+    // A module's body awaits as an async function's body does: the jobs run until the promise
+    // settles, and then a job runs the rest of the body, with the state that the jobs left.
+    awaitTo: (current, value, operand, onFulfilled, onRejected) =>
+      awaitIn(
+        current,
+        operand ?? statements[0],
+        value,
+        operand,
+        context,
+        (resumer, settled, isRejected) =>
+          (isRejected ? onRejected : onFulfilled)(
+            enterBody(
+              resumer,
+              current,
+              (symbol) => context.variables.has(symbol) || symbol === context.heap,
+            ),
+            settled,
+          ),
+        // The jobs ran out before a job resumed the body, which Node reports for a script.
+        (suspended) =>
+          drainTasks(suspended, context, (unsettled) =>
+            isLast
+              ? leaf(
+                  apply("Assert", [
+                    boolean(false),
+                    string(
+                      `${UNSETTLED_AWAIT_WARNING}${getNodeLocation(
+                        ts.findAncestor(operand, ts.isAwaitExpression) ?? operand ?? statements[0],
+                        true,
+                      )}`,
+                    ),
+                  ]),
+                )
+              : finish(unsettled),
+          ),
+      ),
+    inlining: new Set(),
+  };
+  // The modules that the script imports run first, and then the namespace objects that the script
+  // reads take what their modules' exports hold. The script's own namespace object takes them again
+  // before a statement that follows a statement that declared or wrote one, and as the script ends.
+  const changes = context.namespaces.get(sourceFile)?.changes ?? [];
+  const getChange = (before: number, refreshed: ts.Statement | undefined) =>
+    changes
+      .filter(
+        (change) => change.end <= before && (refreshed === undefined || change.pos > refreshed.pos),
+      )
+      .at(-1);
+  const translateOwn = (
+    own: readonly ts.Statement[],
+    refreshed: ts.Statement | undefined,
+    current: Path,
+  ): Formula => {
+    const at = own.findIndex((statement) => getChange(statement.pos, refreshed) !== undefined);
+    const change = getChange(at === -1 ? Number.POSITIVE_INFINITY : own[at].pos, refreshed);
+    return change === undefined
+      ? translateStatements(own, current, context, frame)
+      : translateStatements(at === -1 ? own : own.slice(0, at), current, context, {
+          ...frame,
+          next: (ran) =>
+            fillNamespaces([sourceFile], change, ran, context, (filled) =>
+              at === -1 ? frame.next(filled) : translateOwn(own.slice(at), change, filled),
+            ),
+        });
+  };
+  const boundary = statements.findIndex((statement) => statement.getSourceFile() === sourceFile);
+  return context.namespaces.size === 0
+    ? translateStatements(statements, path, context, frame)
+    : translateStatements(
+        boundary === -1 ? statements : statements.slice(0, boundary),
+        path,
+        context,
+        {
+          ...frame,
+          next: (imported) =>
+            fillNamespaces([...context.namespaces.keys()], undefined, imported, context, (filled) =>
+              translateOwn(boundary === -1 ? [] : statements.slice(boundary), undefined, filled),
+            ),
+        },
+      );
 };
 
 const getRoot = (node: ts.Expression): ts.Expression => {
