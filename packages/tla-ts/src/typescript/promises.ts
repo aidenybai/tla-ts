@@ -29,6 +29,7 @@ import {
   type Context,
   type FunctionNode,
   findNodes,
+  getAssignedTarget,
   getLocalCaptures,
   getFunctionOfKind,
   getKeptLocals,
@@ -54,7 +55,7 @@ import { type Formula, ifThenElse, leaf, letIn } from "./formula";
 import { getCandidateValue, getHeap, translateFunctionValue } from "./heap";
 import { getBuiltIn, translateBuiltInValue } from "./intrinsics";
 import { useJavaScript } from "./javascript";
-import { getKeptIterator } from "./types";
+import { getKeptIterator, isHeapArray } from "./types";
 import { type Bound, bindValues, type Receiver } from "./scope";
 import type { TrackedStack } from "./stacks";
 import {
@@ -1572,6 +1573,37 @@ const getPromiseFunction = (node: ts.CallExpression, context: Context) => {
 
 const COMBINATORS = ["all", "allSettled", "any", "race"];
 
+// The array literal that a variable which nothing assigns holds, where the script reads the
+// variable only as the combinator's argument or for its length, so the array keeps its elements.
+const getHeldLiteral = (node: ts.Identifier, context: Context) => {
+  const symbol = getSymbol(node, context.checker);
+  const declaration = symbol?.valueDeclaration;
+  if (declaration === undefined || !ts.isVariableDeclaration(declaration)) return undefined;
+  const initializer = declaration.initializer && getCast(declaration.initializer);
+  const uses = findNodes(
+    node.getSourceFile(),
+    (inner): inner is ts.Identifier =>
+      ts.isIdentifier(inner) &&
+      inner !== declaration.name &&
+      getSymbol(inner, context.checker) === symbol,
+  );
+  return symbol !== undefined &&
+    initializer !== undefined &&
+    ts.isArrayLiteralExpression(initializer) &&
+    !isAssigned(symbol, node.getSourceFile(), context) &&
+    uses.every(
+      (use) =>
+        use === node ||
+        (ts.isPropertyAccessExpression(use.parent) &&
+          use.parent.expression === use &&
+          use.parent.name.text === "length" &&
+          getAssignedTarget(use.parent.parent) !== use.parent &&
+          !ts.isDeleteExpression(use.parent.parent)),
+    )
+    ? initializer
+    : undefined;
+};
+
 // A combinator of an array written in place, which follows the promises that PromiseResolve gives
 // for the elements. Promise.all fulfills with their values once each fulfills, or rejects with the
 // first reason. Promise.allSettled fulfills with an object for each once all settle. Promise.any
@@ -1586,7 +1618,10 @@ const translatePromiseCombinator = (
   continueWith: (path: Path, value?: Expression) => Formula,
 ): Formula => {
   const argument = node.arguments.at(0);
-  const elements = argument && getCast(argument);
+  const cast = argument && getCast(argument);
+  const variable = cast !== undefined && ts.isIdentifier(cast) ? cast : undefined;
+  const held = variable && getHeldLiteral(variable, context);
+  const elements = held ?? cast;
   if (
     node.arguments.length !== 1 ||
     elements === undefined ||
@@ -1597,9 +1632,12 @@ const translatePromiseCombinator = (
   ) {
     throw new TlaTypeScriptError(`Pass Promise.${combinator} an array written in place`, node);
   }
-  const ran = runLeadingCall(elements, path, context, frame, (after) =>
-    translatePromiseCombinator(node, combinator, after, context, frame, continueWith),
-  );
+  const ran =
+    held === undefined
+      ? runLeadingCall(elements, path, context, frame, (after) =>
+          translatePromiseCombinator(node, combinator, after, context, frame, continueWith),
+        )
+      : undefined;
   if (ran !== undefined) return ran;
   return makePromise(path, node, context, (made, name) => {
     const count = elements.elements.length;
@@ -1694,7 +1732,20 @@ const translatePromiseCombinator = (
         );
       }
       const element = elements.elements[position];
-      const value = translateExpression(element, current.scope, context);
+      // A held array's element that a statement ran keeps the value it gave then.
+      const kept = held && current.scope.results.get(element);
+      const array = held && variable && translateExpression(variable, current.scope, context);
+      const value =
+        kept ??
+        (array === undefined || variable === undefined
+          ? translateExpression(element, current.scope, context)
+          : isHeapArray(variable, context)
+            ? useJavaScript(
+                "Get",
+                [getHeap(current.scope, node, context), array, string(String(position))],
+                context,
+              )
+            : index(array, [number(position + 1)]));
       const next = (after: Path, followed: string) =>
         follow(addReaction(after, node, followed, getReaction(position), context), position + 1);
       return dispatchPromise(

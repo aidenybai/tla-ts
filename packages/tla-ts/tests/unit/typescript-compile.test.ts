@@ -26281,6 +26281,40 @@ describe("errors", () => {
     expect((await checkModel(source("b ba"))).failure).toBeDefined();
   });
 
+  it("runs Promise.any of an array that a variable holds and nothing changes", async () => {
+    const source = (expected: string) => `
+      declare function setTimeout(callback: () => void): void;
+      let joined = "";
+      let resolution: unknown = undefined;
+      const rejections = [Promise.reject("a"), new Promise((_, reject) => reject("b"))];
+      Promise.any(rejections).then(
+        () => {},
+        (error: AggregateError) => {
+          joined = \`\${error.errors.length === rejections.length} \${error.errors.join("")}\`;
+        },
+      );
+      let fulfillables = [Promise.reject("c"), Promise.resolve("d")];
+      Promise.any(fulfillables).then((value) => {
+        resolution = value;
+      });
+      setTimeout(() => {
+        if (\`\${joined} \${String(resolution)}\` !== "${expected}") throw new Error(\`\${joined} \${String(resolution)}\`);
+      });
+    `;
+    expect((await checkModel(source("true ab d"))).failure).toBeUndefined();
+    expect((await checkModel(source("true ba d"))).failure).toBeDefined();
+  });
+
+  it("stops at Promise.all of an array that a variable holds and the script changes", () => {
+    expect(() =>
+      compile(`
+        const promises = [Promise.resolve(1)];
+        promises.push(Promise.resolve(2));
+        Promise.all(promises);
+      `),
+    ).toThrow("Pass Promise.all an array written in place");
+  });
+
   it("fulfills Promise.any with the first value, or rejects it with an AggregateError", async () => {
     const result = await checkModel(`
       declare function setTimeout(callback: () => void): void;
