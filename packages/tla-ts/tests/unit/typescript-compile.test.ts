@@ -32269,6 +32269,29 @@ describe("regular expressions", () => {
     );
   });
 
+  it("runs Symbol.match on what an exec that a script writes returns, of another type than an exec array", async () => {
+    const getSource = (expected: string) => `
+      const r = /b/;
+      // @ts-ignore
+      r.exec = function () {
+        return { 0: "a", index: 3 };
+      };
+      const matched = r[Symbol.match]("abc");
+      const g = /b/g;
+      let count = 0;
+      // @ts-ignore
+      g.exec = function () {
+        count += 1;
+        return count > 2 ? null : { 0: count };
+      };
+      const all = g[Symbol.match]("abc");
+      const found = matched === null ? "null" : String(matched[0]) + String(matched.index);
+      if (found + "|" + (all === null ? "null" : all.join(",")) !== "${expected}") throw new Error("unexpected");
+    `;
+    expect((await checkModel(getSource("a3|1,2"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("a3|1"))).failure?.message).toContain("unexpected");
+  });
+
   it("throws a TypeError where Symbol.split's species isn't a constructor or its constructor isn't an object", async () => {
     const getSource = (expected: string) => `
       const seen: string[] = [];

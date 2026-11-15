@@ -1773,6 +1773,27 @@ const ignoreSoundErrors = () => {
     const call = getErroredCall(diagnostic);
     return call !== undefined && isProtocolCall(call);
   };
+  // A function that a test assigns to a regexp's exec, which returns a value of another type than
+  // RegExpExecArray or null. tla-ts calls it where a protocol method that PROTOCOL_METHODS lists
+  // runs RegExpExec, which throws a TypeError on a result that isn't an object or null and reads
+  // the rest through Get, and stops where a built-in method reads a regexp whose exec a script
+  // changed. TypeScript reports it at the assignment's target.
+  const isWrittenExec = (node: ts.Node, diagnostic: ts.Diagnostic) => {
+    const target = ts.findAncestor(node, ts.isPropertyAccessExpression);
+    const assignment = target?.parent;
+    return (
+      target !== undefined &&
+      assignment !== undefined &&
+      target.getStart() === diagnostic.start &&
+      target.getEnd() === (diagnostic.start ?? 0) + (diagnostic.length ?? 0) &&
+      target.name.text === "exec" &&
+      checker.getTypeAtLocation(target.expression).getSymbol()?.getName() === "RegExp" &&
+      ts.isBinaryExpression(assignment) &&
+      assignment.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      assignment.left === target &&
+      (ts.isFunctionExpression(assignment.right) || ts.isArrowFunction(assignment.right))
+    );
+  };
   // A call of an array's method that REDUCING_METHODS lists, whose reducer is a function that the
   // test writes and that takes each value it gets: the initial value, an element, or what it
   // returns as the accumulator, then an element, an index, and the array. The call's result, which
@@ -1908,6 +1929,7 @@ const ignoreSoundErrors = () => {
       (diagnostic.code === NOT_ITERABLE_ERROR && isCaughtArrayPattern(node)) ||
       (UNASSIGNABLE_ERRORS.has(diagnostic.code) && isPatternArgument(node)) ||
       (diagnostic.code === 2322 && isIteratorWrite(node)) ||
+      (diagnostic.code === 2322 && isWrittenExec(node, diagnostic)) ||
       (CONVERTED_ARGUMENT_ERRORS.has(diagnostic.code) &&
         (isConvertedCall(diagnostic) ||
           isConvertedProtocolCall(diagnostic) ||
