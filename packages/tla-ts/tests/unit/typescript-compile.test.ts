@@ -36347,4 +36347,35 @@ describe("BigInts", () => {
     `);
     expect(division.failure?.message).toContain("tla-ts can't throw the RangeError");
   });
+
+  it("rejects yield as a name in a generator outside strict mode", async () => {
+    const getSource = (expected: number) => `
+      var yield = "key";
+      const keyed = {
+        *[yield]() {},
+      };
+      function* count() {
+        const read = () => {
+          var yield = 2;
+          return yield;
+        };
+        yield read();
+      }
+      const iterator = count();
+      let value: unknown = iterator.next().value;
+      if (value !== ${expected} || !("key" in keyed)) throw new Error("read " + value);
+    `;
+    expect((await checkModel(getSource(2))).failure).toBeUndefined();
+    expect((await checkModel(getSource(3))).failure?.message).toContain("read 2");
+    for (const source of [
+      "var count = function* yield() {};",
+      "function* count() {\n  var yield = 1;\n}",
+      "function* count(yield: number) {}",
+      "function* count() {\n  try {\n  } catch (yield) {}\n}",
+      "const counter = {\n  *count() {\n    var yield = 1;\n  },\n};",
+    ]) {
+      expect(() => compile(source)).toThrow("'yield' is a reserved word in strict mode");
+    }
+    expect(() => compile("function* yield() {}")).not.toThrow();
+  });
 });

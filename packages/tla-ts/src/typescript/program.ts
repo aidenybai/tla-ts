@@ -14,6 +14,23 @@ const getNodeAt = (node: ts.Node, position: number): ts.Node =>
       : undefined,
   ) ?? node;
 
+// A generator reserves yield in its parameters and its body, and a generator expression in its own
+// name, outside strict mode too. A function declaration's or a method's name, and an arrow
+// function's parameters, take the yield of the code around them, and an arrow function's body
+// doesn't.
+const isGeneratorYield = (node: ts.Node) => {
+  if (!ts.isIdentifier(node) || node.text !== "yield") return false;
+  const owner = ts.findAncestor(node.parent, (ancestor) =>
+    ts.isArrowFunction(ancestor)
+      ? node.pos >= ancestor.body.pos && "quit"
+      : ts.isFunctionLike(ancestor) &&
+        (ts.isFunctionExpression(ancestor) ||
+          ancestor.name === undefined ||
+          node.pos >= ancestor.name.end),
+  );
+  return owner !== undefined && "asteriskToken" in owner && owner.asteriskToken !== undefined;
+};
+
 const COMPILER_OPTIONS: ts.CompilerOptions = {
   strict: true,
   noEmit: true,
@@ -178,7 +195,8 @@ export const createProgram = (
       (diagnostic) =>
         !RESERVED_WORD_ERRORS.has(diagnostic.code) ||
         diagnostic.file === undefined ||
-        isStrictCode(getNodeAt(diagnostic.file, diagnostic.start ?? 0)),
+        isStrictCode(getNodeAt(diagnostic.file, diagnostic.start ?? 0)) ||
+        isGeneratorYield(getNodeAt(diagnostic.file, diagnostic.start ?? 0)),
     );
   if (diagnostics.length > 0) throw new TlaTypeScriptError(ts.formatDiagnostics(diagnostics, host));
   return {
