@@ -3917,7 +3917,9 @@ export const translateCallStatement = (
           : { value: receiver, method: candidate };
         return ifThenElse(
           apply("=", [
-            isClosure(candidate, context) || isNestedFunction(candidate, context)
+            isClosure(candidate, context) ||
+            isNestedFunction(candidate, context) ||
+            isHeapFunction(candidate, context)
               ? useJavaScript("CodeOf", [getHeap(path.scope, expression, context), value], context)
               : value,
             candidateValue,

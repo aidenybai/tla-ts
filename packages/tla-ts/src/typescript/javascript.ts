@@ -934,6 +934,9 @@ ArrowObject(functionPrototype, name, length) ==
 FunctionObject(functionPrototype, code) ==
   [code |-> code] @@ [ClassObject(functionPrototype) EXCEPT !.isOpaque = TRUE]
 
+\\* A function on the heap, which holds the model value of its code.
+WithCode(object, code) == [code |-> code] @@ object
+
 \\* A method that a function makes each time it runs, which can't construct.
 MethodObject(functionPrototype, code) ==
   [FunctionObject(functionPrototype, code) EXCEPT !.isConstructor = FALSE]

@@ -894,14 +894,16 @@ const translateClass = (
           [methods, string(getPrivateKey(staticBranded, context)), boolean(true)],
           context,
         );
-  const object =
-    ts.isClassLike(node) && isOnceField(node)
+  // A function holds the model value of its code, so that a call of a value can tell which it is.
+  const object = ts.isClassLike(node)
+    ? isOnceField(node)
       ? useJavaScript(
           "PrivateAdd",
           [branded, string(getClassKey(node, context)), boolean(true)],
           context,
         )
-      : branded;
+      : branded
+    : useJavaScript("WithCode", [branded, translateFunctionValue(node, context)], context);
   return useJavaScript(
     "Allocate",
     [useJavaScript("Allocate", [heap, prototype], context), object],

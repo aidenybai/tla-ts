@@ -9562,15 +9562,16 @@ describe("errors", () => {
       ).toContain("unexpected");
     });
 
-    it("stops at a call of the function through the property", async () => {
-      const result = await checkModel(`
+    it("calls the function through the property, as its object holds its code", async () => {
+      const getCall = (expected: number) => `
         const obj = { make: function (value: number) { return value + 1; } };
         // @ts-ignore
         obj.make.tag = "t";
         const seen = obj.make(1);
-        if (seen !== 2) throw new Error("unexpected");
-      `);
-      expect(result.failure?.message).toContain("tla-ts can't tell which function this call runs");
+        if (seen !== ${expected}) throw new Error("unexpected");
+      `;
+      expect((await checkModel(getCall(2))).failure).toBeUndefined();
+      expect((await checkModel(getCall(3))).failure?.message).toContain("unexpected");
     });
   });
 
