@@ -34014,4 +34014,34 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("holds an array's index and length from 2^31", () => {
+    const getSource = (expected: string) => `
+      const box = { size: 0 };
+      const list: number[] = [0, 1, 2];
+      list[2147483648] = 7;
+      const middle = list.length;
+      list[4294967294] = 8;
+      const last = list.length;
+      list.length = 2;
+      const kept = [list.length, list[4294967294], list[2147483648]].join();
+      const other: number[] = [];
+      Object.defineProperty(other, "length", { value: 4294967295 });
+      box.size = 1;
+      const read = [middle, last, kept, other.length].join();
+      if (read !== "${expected}") throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("2147483649,4294967295,2,,,4294967295"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects the length as 2^31 past the last index", async () => {
+      expect(
+        (await checkModel(getSource("2147483648,4294967295,2,,,4294967295"))).failure?.message,
+      ).toContain("2147483649,4294967295,2,,,4294967295");
+    });
+  });
 });

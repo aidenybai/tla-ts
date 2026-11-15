@@ -986,7 +986,7 @@ TruncDivide(left, right) == Quotient(left, right, FALSE)
 \\* index, or is past any sequence's end, as an integer beyond 32 bits is.
 ElementPosition(value) ==
   CASE value = NegativeZero -> 1
-    [] value \\in SpecialNumbers \\/ IsFraction(value) \\/ IsBig(value) -> 0
+    [] value \\in SpecialNumbers \\/ IsFraction(value) \\/ IsBig(value) \\/ value = MaxInteger -> 0
     [] OTHER -> value + 1
 
 \\* The value that a Set or a Map keeps as a key, where -0 is 0.
@@ -1539,44 +1539,35 @@ DigitsBelow(left, right) ==
      /\\ \\/ digit(left) < digit(right)
         \\/ digit(left) = digit(right) /\\ DigitsBelow(Tail(left), Tail(right))
 
-\\* An array index is below 2^32 - 1, where TLC's integers hold only those below 2^31.
+\\* Whether a key is an array index, below 2^32 - 1, which an object lists before its other keys.
 LOCAL IsIndex(key) ==
   /\\ ~IsSymbol(key)
   /\\ Len(key) > 0
   /\\ \\A position \\in 1..Len(key) : SubSeq(key, position, position) \\in Digits \\ {"-"}
   /\\ Len(key) = 1 \\/ SubSeq(key, 1, 1) # "0"
-  /\\ \\/ Len(key) < 10
-     \\/ /\\ Len(key) = 10
-        /\\ Assert(~DigitsBelow(key, "4294967295"), "tla-ts can't order keys this big")
-        /\\ FALSE
+  /\\ Len(key) < 10 \\/ (Len(key) = 10 /\\ DigitsBelow(key, "4294967295"))
 
+\\* The number that an index's digits give, which is Wide from 2^31.
 RECURSIVE ToIndex(_)
 ToIndex(key) ==
-  IF key = ""
-  THEN 0
-  ELSE 10 * ToIndex(SubSeq(key, 1, Len(key) - 1))
-         + (CHOOSE digit \\in 0..9 : ToString(digit) = SubSeq(key, Len(key), Len(key)))
+  CASE key = "" -> 0
+    [] Len(key) = 10 -> Add(Multiply(ToIndex(SubSeq(key, 1, 1)), 1000000000), ToIndex(SubSeq(key, 2, 10)))
+    [] OTHER -> 10 * ToIndex(SubSeq(key, 1, Len(key) - 1))
+                  + (CHOOSE digit \\in 0..9 : ToString(digit) = SubSeq(key, Len(key), Len(key)))
 
 \\* The position in a sequence that a key reads, which may be a number or an index's string.
 KeyPosition(key) ==
   CASE TypeOf(key) = "number" -> ElementPosition(key)
-    [] TypeOf(key) = "string" /\\ IsIndex(key) -> ToIndex(key) + 1
+    [] TypeOf(key) = "string" /\\ IsIndex(key) -> ElementPosition(ToIndex(key))
     [] OTHER -> Assert(FALSE, "tla-ts can't read this key of an array")
-
-\\* Whether a key is an array index, below 2^32 - 1, which an object lists before its other keys.
-LOCAL IsListedIndex(key) ==
-  /\\ Len(key) > 0
-  /\\ \\A position \\in 1..Len(key) : SubSeq(key, position, position) \\in Digits \\ {"-"}
-  /\\ Len(key) = 1 \\/ SubSeq(key, 1, 1) # "0"
-  /\\ Len(key) < 10 \\/ (Len(key) = 10 /\\ DigitsBelow(key, "4294967295"))
 
 \\* An object's own string keys, with the indices first in order, which their digits give.
 OwnKeys(object) ==
   LET strings == SelectSeq(object.keys, LAMBDA key : ~IsSymbol(key))
-  IN SortSeq(SelectSeq(strings, IsListedIndex),
+  IN SortSeq(SelectSeq(strings, IsIndex),
              LAMBDA left, right :
                Len(left) < Len(right) \\/ (Len(left) = Len(right) /\\ DigitsBelow(left, right)))
-       \\o SelectSeq(strings, LAMBDA key : ~IsListedIndex(key))
+       \\o SelectSeq(strings, LAMBDA key : ~IsIndex(key))
 
 LOCAL EnumerableKeys(object) ==
   SelectSeq(OwnKeys(object), LAMBDA key : object.attributes[key].enumerable)
@@ -1750,11 +1741,12 @@ NumberOfBytes(type, bytes) ==
 \\* How a typed array reads a key: as an index, as a number that is no index, or as a property. A
 \\* key that Number::toString can't write is a property: one that starts with "+", ".", a 0 before
 \\* another digit, or "0.000000", which it writes with an exponent, one whose fraction ends in 0 or
-\\* is empty, and 22 digits or more, which it writes with an exponent.
+\\* is empty, and 22 digits or more, which it writes with an exponent. An index from 2^31 is past the
+\\* end of every typed array and sequence, as a number that is no index is.
 TypedKey(key) ==
   LET has(character) == \\E position \\in 1..Len(key) : SubSeq(key, position, position) = character
   IN CASE IsSymbol(key) -> "property"
-    [] IsIndex(key) -> "index"
+    [] IsIndex(key) -> IF IsBig(ToIndex(key)) THEN "number" ELSE "index"
     [] key \\in {"-0", "Infinity", "-Infinity", "NaN"} -> "number"
     [] Len(key) > 1 /\\ SubSeq(key, 1, 1) = "-" /\\ IsIndex(SubSeq(key, 2, Len(key))) -> "number"
     [] \\E position \\in DOMAIN Fractions : Fractions[position].text = key -> "number"
@@ -2763,13 +2755,20 @@ IndexKeys(heap, ref) ==
   IN {key \\in DOMAIN object.values : IsIndex(key)}
        \\cup IF object.prototype = Null THEN {} ELSE IndexKeys(heap, object.prototype)
 
+\\* Whether a key is an index below 2^31 - 1, which TLC's integers hold with the length past it.
+LOCAL IsShortIndex(key) == IsIndex(key) /\\ (Len(key) < 10 \\/ DigitsBelow(key, "2147483647"))
+
+\\* The indices below 2^31 - 1 that an object or its prototypes hold, which are all those below a
+\\* length that TLC's integers hold.
+LOCAL HeldIndices(heap, ref) == {ToIndex(key) : key \\in {key \\in IndexKeys(heap, ref) : IsShortIndex(key)}}
+
 \\* The position that a loop over an array-like object visits after a hole, in its order: the next
 \\* index that the object or a prototype holds, as no other has a property. A typed array, a proxy,
 \\* or an object that tla-ts follows may have others.
 NextElementPosition(heap, ref, position, length, isReversed) ==
   IF ~IsHeap(ref) \\/ IsTypedArray(heap, ref) \\/ IsProxy(heap, ref) \\/ heap.objects[ref[Ref]].isOpaque
   THEN IF isReversed THEN position - 1 ELSE position + 1
-  ELSE LET held == {ToIndex(key) + 1 : key \\in IndexKeys(heap, ref)}
+  ELSE LET held == {index + 1 : index \\in HeldIndices(heap, ref)}
            later == {other \\in held :
                        IF isReversed THEN other < position ELSE other > position /\\ other <= length}
        IN CASE later = {} -> IF isReversed THEN 0 ELSE length + 1
@@ -2815,7 +2814,7 @@ HeldLength(heap, ref, length) ==
          Assert(FALSE, "tla-ts can't order keys this big")
     [] IndexKeys(heap, ref) = {} -> 0
     [] OTHER ->
-         LET held == {ToIndex(key) : key \\in IndexKeys(heap, ref)}
+         LET held == HeldIndices(heap, ref)
          IN 1 + CHOOSE greatest \\in held : \\A other \\in held : other <= greatest
 
 \\* The elements that an array-like object or its prototypes hold below its length, in order, with
@@ -2825,7 +2824,7 @@ PresentElements(heap, ref) ==
   LET raw == Get(heap, ref, "length")
       isBeyond == IsLong(raw)
       length == IF isBeyond THEN raw ELSE LengthOf(heap, ref)
-      present == {position \\in {ToIndex(key) : key \\in IndexKeys(heap, ref)} :
+      present == {position \\in HeldIndices(heap, ref) :
                     isBeyond \\/ position < length}
       indices == [position \\in 1..Cardinality(present) |->
                    CHOOSE element \\in present :
@@ -5163,7 +5162,7 @@ LOCAL ArrayLengthOf(value) ==
     [] value = NegativeZero -> 0
     \\* ToUint32 of a Double differs from it.
     [] IsDouble(value) -> -1
-    [] IsWide(value) -> IF IsNegative(value) \\/ value[Wide][1] >= 2 THEN -1 ELSE BeyondInteger
+    [] IsWide(value) -> IF IsNegative(value) \\/ value[Wide][1] >= 2 THEN -1 ELSE value
     [] IsInteger(value) /\\ value >= 0 -> value
     [] IsNumber(value) \\/ value = Undefined -> -1
     [] OTHER -> Assert(FALSE, "tla-ts can't convert this value to an array length")
@@ -5174,19 +5173,21 @@ LOCAL Ordinary(object, key, descriptor) ==
   ELSE [object |-> object, isDone |-> FALSE, isRangeError |-> FALSE]
 
 \\* ArraySetLength, which deletes the elements past a smaller length, from the last, and stops at
-\\* one it can't delete.
+\\* one it can't delete. A length or an index from 2^31 is Wide.
 LOCAL SetLength(object, descriptor) ==
   LET length == ArrayLengthOf(descriptor.value)
-      removed == {key \\in DOMAIN object.values : IsIndex(key) /\\ ToIndex(key) >= length}
+      removed == {key \\in DOMAIN object.values : IsIndex(key) /\\ ~LessThan(ToIndex(key), length)}
       blocked == {ToIndex(key) : key \\in {other \\in removed : ~object.attributes[other].configurable}}
-      kept == IF blocked = {} THEN length ELSE (CHOOSE index \\in blocked : \\A other \\in blocked : other <= index) + 1
-      deleted == {key \\in removed : ToIndex(key) >= kept}
+      kept == IF blocked = {}
+              THEN length
+              ELSE Add(CHOOSE index \\in blocked : \\A other \\in blocked : ~LessThan(index, other), 1)
+      deleted == {key \\in removed : ~LessThan(ToIndex(key), kept)}
       remaining == DOMAIN object.values \\ deleted
       trimmed == [object EXCEPT !.keys = SelectSeq(@, LAMBDA key : key \\notin deleted),
                                 !.values = [key \\in remaining |-> @[key]],
                                 !.attributes = [key \\in remaining |-> @[key]]]
-  IN CASE length < 0 -> [object |-> object, isDone |-> FALSE, isRangeError |-> TRUE]
-       [] length >= object.values["length"] ->
+  IN CASE IsNegative(length) -> [object |-> object, isDone |-> FALSE, isRangeError |-> TRUE]
+       [] ~LessThan(length, object.values["length"]) ->
             Ordinary(object, "length", [descriptor EXCEPT !.value = length])
        [] ~object.attributes["length"].writable -> [object |-> object, isDone |-> FALSE, isRangeError |-> FALSE]
        [] ~CanApply(object, "length", [descriptor EXCEPT !.value = length, !.writable = TRUE]) ->
@@ -5201,12 +5202,12 @@ LOCAL DefineOwn(object, key, descriptor) ==
   CASE ~IsArrayObject(object) -> Ordinary(object, key, descriptor)
     [] key = "length" /\\ "value" \\in descriptor.fields -> SetLength(object, descriptor)
     [] IsIndex(key) ->
-         LET length == object.values["length"]
+         LET isBefore == LessThan(ToIndex(key), object.values["length"])
              defined == Ordinary(object, key, descriptor)
-         IN CASE ToIndex(key) >= length /\\ ~object.attributes["length"].writable ->
+         IN CASE ~isBefore /\\ ~object.attributes["length"].writable ->
                    [object |-> object, isDone |-> FALSE, isRangeError |-> FALSE]
-              [] ~defined.isDone \\/ ToIndex(key) < length -> defined
-              [] OTHER -> [defined EXCEPT !.object.values["length"] = ToIndex(key) + 1]
+              [] ~defined.isDone \\/ isBefore -> defined
+              [] OTHER -> [defined EXCEPT !.object.values["length"] = Add(ToIndex(key), 1)]
     [] OTHER -> Ordinary(object, key, descriptor)
 
 \\* The descriptor of a write, which changes a property's value or makes a writable one.
@@ -5806,7 +5807,7 @@ SetProperty(heap, ref, key, value) == SetPropertyOf(heap, Forward(heap, ref, {"s
 \\* below its length is its own plain data property.
 LOCAL DenseElements(heap, ref) ==
   LET object == Lookup(heap, ref)
-      length == object.values["length"]
+      length == ToLength(object.values["length"])
   IN IF /\\ IsArrayObject(object)
         /\\ \\A position \\in 0..(length - 1) :
              /\\ ToString(position) \\in DOMAIN object.values
@@ -5833,8 +5834,10 @@ LOCAL WithElements(heap, ref, elements, length) ==
 
 \\* The elements that an array holds at its own indices, by index, where it may have holes.
 LOCAL OwnElements(object) ==
-  [position \\in {ToIndex(key) : key \\in {key \\in DOMAIN object.values : IsIndex(key)}} |->
-     object.values[ToString(position)]]
+  IF \\E key \\in DOMAIN object.values : IsIndex(key) /\\ ~IsShortIndex(key)
+  THEN Assert(FALSE, "tla-ts can't reorder an array with an index from 2^31 - 1")
+  ELSE [position \\in {ToIndex(key) : key \\in {key \\in DOMAIN object.values : IsIndex(key)}} |->
+          object.values[ToString(position)]]
 
 \\* The heap after an array's elements become the given ones by index, where each index that the
 \\* elements leave out becomes a hole. Only an array whose elements are ordinary data properties,
@@ -5866,7 +5869,7 @@ LOCAL WithOwnElements(heap, ref, elements, isWriting) ==
 ArrayReverse(heap, ref) ==
   LET object == Lookup(heap, ref)
       elements == OwnElements(object)
-      last == object.values["length"] - 1
+      last == ToLength(object.values["length"]) - 1
   IN WithOwnElements(heap, ref,
        [position \\in {last - index : index \\in DOMAIN elements} |-> elements[last - position]],
        last > 0)
@@ -5909,7 +5912,7 @@ ArraySort(heap, ref, IsBefore(_, _), mayThrow) ==
 ArrayCopyWithin(heap, ref, target, start, end) ==
   LET object == Lookup(heap, ref)
       elements == OwnElements(object)
-      length == object.values["length"]
+      length == ToLength(object.values["length"])
       to == ClampedIndex(target, length)
       from == ClampedIndex(start, length)
       final == IF end = Undefined THEN length ELSE ClampedIndex(end, length)
@@ -5931,6 +5934,8 @@ LOCAL ArraySet(heap, ref, key, value) ==
        [] AccessorOf(heap, ref, key) # Undefined ->
             [heap |-> SetProperty(heap, ref, key, value), isThrown |-> FALSE]
        [] written.isDone -> [heap |-> Update(heap, ref, written.object), isThrown |-> FALSE]
+       [] written.isRangeError ->
+            Assert(FALSE, "tla-ts can't throw the RangeError of an invalid array length")
        [] OTHER -> [heap |-> heap, isThrown |-> TRUE]
 
 \\* DeletePropertyOrThrow of an index of an array that the heap holds.
@@ -5976,8 +5981,8 @@ ArraySets(state, ref, from, items) ==
 \\* gives are those it read, which a getter may have answered before the heap became this one.
 ArrayChangeFrom(heap, ref, method, items, length, first) ==
   LET object == Lookup(heap, ref)
-      indices == {ToIndex(key) : key \\in IndexKeys(heap, ref)}
-      own == {ToIndex(key) : key \\in {key \\in DOMAIN object.values : IsIndex(key)}}
+      indices == HeldIndices(heap, ref)
+      own == {ToIndex(key) : key \\in {key \\in DOMAIN object.values : IsShortIndex(key)}}
       count == Len(items)
       start == [heap |-> heap, isThrown |-> FALSE]
       setLength(state, value) == AndThen(state, LAMBDA after : ArraySet(after, ref, "length", value))
@@ -6260,7 +6265,7 @@ LOCAL ShortCopyWithin(heap, ref, target, start, end) ==
       from == ClampedIndex(start, length)
       final == IF end = Undefined THEN length ELSE ClampedIndex(end, length)
       count == IF final - from < length - to THEN final - from ELSE length - to
-      indices == {ToIndex(key) : key \\in IndexKeys(heap, ref)}
+      indices == HeldIndices(heap, ref)
       froms == {index \\in indices \\cup {index - to + from : index \\in indices} :
                   index >= from /\\ index < from + count}
       state == ArrayMoves([heap |-> heap, isThrown |-> FALSE], ref, froms, to - from,
@@ -6305,7 +6310,7 @@ ArrayLikeSwaps(state, ref, lowers, length) ==
 \\* only the indices that the object or its prototypes hold, and those they swap with, change.
 ArrayLikeReverse(heap, ref) ==
   LET length == LengthOf(heap, ref)
-      indices == {ToIndex(key) : key \\in IndexKeys(heap, ref)}
+      indices == HeldIndices(heap, ref)
       lowers == {index \\in indices \\cup {length - index - 1 : index \\in indices} :
                    index >= 0 /\\ index < length \\div 2}
       state == ArrayLikeSwaps([heap |-> heap, isThrown |-> FALSE], ref, lowers, length)
@@ -6593,7 +6598,7 @@ DefineProperties(heap, ref, properties) ==
 RevivedKeys(heap, ref) ==
   LET object == Lookup(heap, ref)
   IN IF IsArrayObject(object)
-     THEN [position \\in 1..object.values["length"] |-> ToString(position - 1)]
+     THEN [position \\in 1..ToLength(object.values["length"]) |-> ToString(position - 1)]
      ELSE EnumerableKeys(object)
 
 \\* What InternalizeJSONProperty does with the value a reviver gave for a key, which deletes the key
