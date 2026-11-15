@@ -73,9 +73,11 @@ interface BoolType {
 // class of atoms holds at most one type of model value, and then no strings.
 interface StrType {
   kind: "Str";
-  target: StrType | MixType | RecType | OptType | undefined;
+  target: Type | undefined;
   modelValueTypes: Set<string>;
   hasString: boolean;
+  // A model value written in the spec, such as None for a missing sequence, can meet a structure.
+  isStandIn: boolean;
 }
 
 // Integers and untyped model values, which TLC compares only for equality. An atom is 2^32 plus its
@@ -258,6 +260,7 @@ const createStr = (): StrType => ({
   target: undefined,
   modelValueTypes: new Set(),
   hasString: false,
+  isStandIn: false,
 });
 
 const checkAtoms = (type: StrType) =>
@@ -358,6 +361,8 @@ const getShapeIndex = (record: RecType, names: string[]) =>
       (shape.length === names.length && shape.every((name, index) => name === names[index])),
   );
 
+const isStructure = (type: Type) => ["Seq", "Tup", "Empty", "Fn", "Map", "Set"].includes(type.kind);
+
 const unify = (left: Type, right: Type): void => {
   const leftType = resolveType(left);
   const rightType = resolveType(right);
@@ -369,6 +374,14 @@ const unify = (left: Type, right: Type): void => {
   if (rightType.kind === "Var") {
     rightType.target = leftType;
     return;
+  }
+  // The structure takes the stand-in's type, and the code deopts where the stand-in is taken.
+  if (rightType.kind === "Str" && rightType.isStandIn && isStructure(leftType)) {
+    rightType.target = leftType;
+    return;
+  }
+  if (leftType.kind === "Str" && leftType.isStandIn && isStructure(rightType)) {
+    return unify(rightType, leftType);
   }
   if (leftType.kind === "Tup" || rightType.kind === "Tup") {
     if (
@@ -413,6 +426,7 @@ const unify = (left: Type, right: Type): void => {
     if (leftType.kind === "Str" && rightType.kind === "Str") {
       rightType.modelValueTypes.forEach((type) => leftType.modelValueTypes.add(type));
       leftType.hasString ||= rightType.hasString;
+      leftType.isStandIn &&= rightType.isStandIn;
       checkAtoms(leftType);
     }
     if (leftType.kind === "Int" && rightType.kind === "Int") {
@@ -1029,6 +1043,17 @@ const hasStreamedDuplicates = (value: Value) =>
 
 const compileConstant = (program: Program, value: Value): Compiled => {
   const type = getValueType(value, program.plains);
+  if (type.kind === "Str" && typeof value === "object") {
+    type.isStandIn = true;
+    return {
+      type,
+      emit: once(() =>
+        isStructure(resolveType(type))
+          ? "H.deopt()"
+          : getPlainCode(program, toPlain(value, type, program.plains)),
+      ),
+    };
+  }
   if (type.kind === "Set" && hasStreamedDuplicates(value)) return unsupported();
   if (type.kind === "Set" && getElements(value).length === 0) {
     return { type, emit: () => (isMask(type, program.plains) ? "0" : "H.EMPTY") };

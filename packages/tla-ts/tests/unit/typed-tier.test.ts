@@ -102,6 +102,7 @@ describe("typed tier matches TLC", () => {
     ["DomainFunctions", 41],
     ["SubsetDifference", 14],
     ["EmptyResponses", 19],
+    ["MissingSegments", 145],
   ])("counts each successor TLC generates in %s", async (name, generatedStates) => {
     const results = await Promise.all([checkFixture(name, false), checkFixture(name, true)]);
     expect(results.map((result) => result.generatedStates)).toEqual([
@@ -127,6 +128,7 @@ describe("typed tier matches TLC", () => {
     ["OperatorDomains", "error", undefined],
     ["SubSeqRanges", "error", undefined],
     ["MissingFields", "error", undefined],
+    ["MissingSegmentRead", "error", undefined],
   ])("reports the property %s violates, as TLC does", async (name, status, property) => {
     const result = await checkFixture(name, true);
     expect([result.status, result.violation?.name]).toEqual([status, property]);
