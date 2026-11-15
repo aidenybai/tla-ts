@@ -394,7 +394,12 @@ const getConstructorDef = (manager: AstManager, constructor: number) =>
     manager.funcDecls[constructor].parameters[0]
   ];
 
-const mkAccessor = (manager: AstManager, sort: number, constructorIndex: number, index: number) => {
+export const instantiateAccessor = (
+  manager: AstManager,
+  sort: number,
+  constructorIndex: number,
+  index: number,
+) => {
   const def = getDef(manager, sort);
   const constructor = def.constructors[constructorIndex];
   const accessor = constructor.accessors[index];
@@ -434,7 +439,7 @@ export const getConstructorAccessors = (manager: AstManager, constructor: number
   if (existing !== undefined) return existing;
   const funcDecl = manager.funcDecls[constructor];
   const accessors = getConstructorDef(manager, constructor).accessors.map((_accessor, index) =>
-    mkAccessor(manager, funcDecl.range, funcDecl.parameters[0], index),
+    instantiateAccessor(manager, funcDecl.range, funcDecl.parameters[0], index),
   );
   manager.constructorAccessors[constructor] = accessors;
   return accessors;
@@ -501,13 +506,6 @@ export const instantiateConstructor = (
   index: number,
   parameters: number[],
 ) => getDatatypeConstructors(manager, instantiateDef(manager, def, parameters))[index];
-
-export const instantiateAccessor = (
-  manager: AstManager,
-  sort: number,
-  constructorIndex: number,
-  index: number,
-) => mkAccessor(manager, sort, constructorIndex, index);
 
 const getArrayRangeRec = (manager: AstManager, sort: number) => {
   let current = sort;

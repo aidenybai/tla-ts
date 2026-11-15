@@ -11,13 +11,7 @@ import { instantiate, instantiateTypes, type Thm } from "../pure/thm";
 import { emptyTyEnv, matchTypes, substType, type TyEnv } from "../pure/type";
 import { getFact, readTerms, type IsarContext } from "./context";
 import { rewriteRule } from "./method";
-import type { AttributeSource, FactReference, OuterToken } from "./theory";
-
-const syntaxError = (token: OuterToken | undefined) =>
-  new TlaIsabelleError(
-    "ERROR",
-    `Outer syntax error at: ${token === undefined ? "end of input" : token.text}`,
-  );
+import { syntaxError, type AttributeSource, type FactReference, type OuterToken } from "./theory";
 
 const isInnerToken = (token: OuterToken | undefined) =>
   token !== undefined &&

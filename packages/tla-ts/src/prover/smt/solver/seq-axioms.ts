@@ -47,7 +47,7 @@ export interface SeqAxiomsHost {
   pushTrail(undo: () => void): void;
 }
 
-const getMinLengthOf = (manager: AstManager, seq: number): number => {
+export const getMinLengthOf = (manager: AstManager, seq: number): number => {
   const getLength = (expr: number) =>
     manager.getOp(expr) === OP_SEQ_UNIT ? 1 : (manager.getString(expr)?.length ?? 0);
   let result = 0;
@@ -89,8 +89,6 @@ export const getMaxLengthOf = (manager: AstManager, seq: number): number => {
   }
   return add(getLength(current), result);
 };
-
-export { getMinLengthOf };
 
 export class SeqAxioms {
   readonly skolem: SeqSkolem;

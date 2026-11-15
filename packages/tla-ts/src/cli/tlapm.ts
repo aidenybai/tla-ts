@@ -305,6 +305,8 @@ const proveModule = async (
   return unproved.length > 0;
 };
 
+const REWRITE_FLAGS = ["rwsetext", "rw", "rw+"];
+
 const DEBUG_FLAGS = new Set([
   "tempfiles",
   "hidden",
@@ -321,7 +323,9 @@ export const runTlapm = async (args: string[]) => {
   const parsed = TLAPM_COMMAND.parse(args);
   const isProcessing = !parsed.has("-N") && !parsed.has("--summary");
   const debugFlags = parsed.options
-    .flatMap((option) => (option.name === "--debug" ? option.values[0].split(",") : []))
+    .flatMap((option) =>
+      option.name === "--debug" ? option.values.flatMap((value) => value.split(",")) : [],
+    )
     .reduce(
       (flags, flag) =>
         flag.startsWith("-")
@@ -333,7 +337,7 @@ export const runTlapm = async (args: string[]) => {
     isShowingHidden: debugFlags.has("hidden"),
     isShowingAllDefinitions: debugFlags.has("alldefs"),
   };
-  const rewriteFlags = ["rwsetext", "rw", "rw+"].filter((flag) => debugFlags.has(flag));
+  const rewriteFlags = REWRITE_FLAGS.filter((flag) => debugFlags.has(flag));
   const isTyped = debugFlags.has("smarter_types") && !debugFlags.has("disable_arithmetic");
   // tla-ts rewrites sets before it types expressions, though tlapm types them first.
   const unsupportedFlag =
@@ -448,7 +452,7 @@ export const runTlapm = async (args: string[]) => {
         : (parsed.get("--smt-logic")?.[0] ?? "UFNIA"),
       smtEncoding: {
         isArithmetic: !debugFlags.has("disable_arithmetic"),
-        rewriteLevel: ["rwsetext", "rw", "rw+"].findLastIndex((flag) => debugFlags.has(flag)) + 1,
+        rewriteLevel: REWRITE_FLAGS.findLastIndex((flag) => debugFlags.has(flag)) + 1,
         isSetExtensional: !debugFlags.has("no_smt_set_extensionality"),
         isTyped,
       },

@@ -404,6 +404,7 @@ const mkIsInfOfInt = (
           ? mkCompare(OP_LE, -threshold)
           : manager.falseExpr;
   }
+  if (maxExp - sbits > 4294967295) return -1;
   const maxFinite = mpfToRational(mkMaxValue(ebits, sbits, false)).num;
   const halfUlp = 1n << BigInt(maxExp - sbits);
   return rm === MPF_ROUND_NEAREST_TEVEN || rm === MPF_ROUND_NEAREST_TAWAY
@@ -432,11 +433,10 @@ const mkIsInf = (manager: AstManager, arg: number): Result => {
   const folded = mkPredicate(manager, arg, isInf);
   if (folded !== undefined) return folded;
   const toFp = getToFpOfInt(manager, arg);
-  if (toFp !== undefined)
-    return rewrite(
-      mkIsInfOfInt(manager, toFp.rm, toFp.ebits, toFp.sbits, toFp.integer),
-      BR_REWRITE_FULL,
-    );
+  if (toFp !== undefined) {
+    const infCond = mkIsInfOfInt(manager, toFp.rm, toFp.ebits, toFp.sbits, toFp.integer);
+    if (infCond !== -1) return rewrite(infCond, BR_REWRITE_FULL);
+  }
   return mkPredicateOfIte(manager, arg, isInf);
 };
 
@@ -444,14 +444,12 @@ const mkIsNormal = (manager: AstManager, arg: number): Result => {
   const folded = mkPredicate(manager, arg, isNormal);
   if (folded !== undefined) return folded;
   const toFp = getToFpOfInt(manager, arg);
-  if (toFp !== undefined)
-    return rewrite(
-      manager.mkAnd([
-        manager.mkNot(manager.mkEq(toFp.integer, manager.mkNumeral(0n))),
-        manager.mkNot(mkIsInfOfInt(manager, toFp.rm, toFp.ebits, toFp.sbits, toFp.integer)),
-      ]),
-      BR_REWRITE_FULL,
-    );
+  if (toFp !== undefined) {
+    const notZero = manager.mkNot(manager.mkEq(toFp.integer, manager.mkNumeral(0n)));
+    const infCond = mkIsInfOfInt(manager, toFp.rm, toFp.ebits, toFp.sbits, toFp.integer);
+    if (infCond === -1) return undefined;
+    return rewrite(manager.mkAnd([notZero, manager.mkNot(infCond)]), BR_REWRITE_FULL);
+  }
   return mkPredicateOfIte(manager, arg, isNormal);
 };
 

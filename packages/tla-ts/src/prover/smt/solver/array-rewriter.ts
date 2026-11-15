@@ -15,12 +15,10 @@ import {
   SORT_BOOL,
 } from "./ast";
 import { isAstLess } from "./ast-lt";
+import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
 import { InvVarShifter, type Rewrite, VarShifter } from "./rewriter-tpl";
 import { getFreeVarSorts, VarSubst } from "./var-subst";
 
-const L_TRUE = 1;
-const L_FALSE = -1;
-const L_UNDEF = 0;
 const MAX_SQUASH_ROUNDS = 10;
 
 export class ArrayRewriter {

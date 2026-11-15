@@ -83,7 +83,7 @@ const getProverMethod = (
   rlimit: number | undefined,
   tactic: string | undefined,
 ): Method => {
-  const known = PROVERS[name];
+  const known = Object.hasOwn(PROVERS, name) ? PROVERS[name] : undefined;
   if (!known) throw new TlaProverError(`Unknown prover: ${name}`);
   return {
     prover: known.prover,
@@ -169,7 +169,7 @@ const computeMethod = (settings: PragmaSetting[], args: Expr[], use: Locus | und
   if (values.args.length > 0) throw new TlaMethodError("Too many arguments", use);
   if (values.prover === undefined)
     throw new TlaMethodError("Missing prover name", settings[0].location);
-  const known = PROVERS[values.prover];
+  const known = Object.hasOwn(PROVERS, values.prover) ? PROVERS[values.prover] : undefined;
   if (!known) throw new TlaMethodError(`Unknown prover: ${values.prover}`, values.proverLocus);
   if (values.rlimit !== undefined && !known.isBudgeted)
     throw new TlaMethodError(
@@ -268,7 +268,9 @@ export const parseDefaultMethods = (text: string) =>
     if (name === "auto" || name === "blast" || name === "force")
       return getProverMethod("isabelle", seconds, undefined, name);
     if (name === "fail") return { prover: "fail", timeLimitMs: Infinity };
-    const known = DEFAULT_METHOD_NAMES[name];
+    const known = Object.hasOwn(DEFAULT_METHOD_NAMES, name)
+      ? DEFAULT_METHOD_NAMES[name]
+      : undefined;
     if (known === undefined)
       throw new TlaProverError(`--method: unknown method ${JSON.stringify(name)}`);
     return getProverMethod(known, seconds, undefined, undefined);

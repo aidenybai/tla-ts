@@ -28,7 +28,6 @@ export class SpacerDlInterface implements Engine {
     const spacerRules = new RuleSet(context);
     spacerRules.replaceRules(rules);
     spacerRules.close();
-    context.recordTransformedRules();
     context.reopen();
     context.replaceRules(oldRules);
     context.manager.limit.checkpoint();

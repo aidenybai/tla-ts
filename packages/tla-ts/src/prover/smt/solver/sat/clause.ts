@@ -18,7 +18,7 @@ const grow = (array: Int32Array<ArrayBuffer>, size: number) => {
   return grown;
 };
 
-export const getApprox = (lits: ArrayLike<number>, size: number) => {
+const getApprox = (lits: ArrayLike<number>, size: number) => {
   let approx = 0;
   for (let index = 0; index < size; index++) approx |= 1 << ((lits[index] >> 1) & 31);
   return approx;
@@ -84,12 +84,6 @@ export class ClauseArena {
     this.freeIds.push(id);
   }
 
-  reset() {
-    this.top = 0;
-    this.freeIds = [];
-    this.numIds = 0;
-  }
-
   get(id: number, index: number) {
     return this.lits[this.start[id] + index];
   }
@@ -103,13 +97,6 @@ export class ClauseArena {
     const lit = this.lits[base + first];
     this.lits[base + first] = this.lits[base + second];
     this.lits[base + second] = lit;
-  }
-
-  contains(id: number, lit: number) {
-    const base = this.start[id];
-    for (let index = 0; index < this.size[id]; index++)
-      if (this.lits[base + index] === lit) return true;
-    return false;
   }
 
   getLits(id: number) {

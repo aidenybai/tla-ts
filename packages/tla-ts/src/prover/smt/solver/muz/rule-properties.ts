@@ -3,6 +3,7 @@ import { SmtTacticError, SmtUnsupportedError } from "../../../../errors";
 import {
   type AstManager,
   FAMILY_USER,
+  getSymbolName,
   KIND_APP,
   KIND_QUANTIFIER,
   KIND_VAR,
@@ -119,7 +120,7 @@ export class RuleProperties {
     const first = this.uninterpretedFuncs.keys().next();
     if (first.done !== true)
       throw new SmtTacticError(
-        `Uninterpreted '${this.manager.funcDecls[first.value].name}' in a rule`,
+        `Uninterpreted '${getSymbolName(this.manager.funcDecls[first.value].name)}' in a rule`,
       );
   }
 

@@ -28,11 +28,10 @@ export type RangePredicate = number[];
 
 export const mkTopRange = (manager: AstManager): RangePredicate => [0, manager.maxChar];
 
-export const mkSingletonRange = (code: number): RangePredicate => [code, code];
+const mkSingletonRange = (code: number): RangePredicate => [code, code];
 
-export const mkRangeOf = (lo: number, hi: number, maxChar: number): RangePredicate => {
-  return lo <= hi && lo <= maxChar ? [lo, Math.min(hi, maxChar)] : [];
-};
+const mkRangeOf = (lo: number, hi: number, maxChar: number): RangePredicate =>
+  lo <= hi && lo <= maxChar ? [lo, Math.min(hi, maxChar)] : [];
 
 const appendMerged = (result: RangePredicate, lo: number, hi: number) => {
   if (result.length > 0 && result[result.length - 1] + 1 >= lo) {
@@ -78,7 +77,7 @@ export const intersectRanges = (first: RangePredicate, second: RangePredicate) =
   return result;
 };
 
-export const complementRanges = (ranges: RangePredicate, maxChar: number) => {
+const complementRanges = (ranges: RangePredicate, maxChar: number) => {
   const result: RangePredicate = [];
   let cursor = 0;
   for (let index = 0; index < ranges.length; index += 2) {

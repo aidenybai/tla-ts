@@ -4,12 +4,9 @@ import {
   type AstManager,
   FAMILY_SEQ,
   OP_AND,
-  OP_CHAR_LE,
-  OP_EQ,
   OP_GE,
   OP_ITE,
   OP_LT,
-  OP_NOT,
   OP_OR,
   OP_RE_COMPLEMENT,
   OP_RE_CONCAT,
@@ -39,8 +36,6 @@ import {
   OP_STRING_LE,
   SORT_BOOL,
 } from "./ast";
-import { flattenAndVector } from "./ast-util";
-import { ExprSafeReplace } from "./expr-safe-replace";
 import { L_FALSE, L_TRUE } from "./lbool";
 import { RefVector } from "./ref-vector";
 import { KERNEL_REWRITER_OPTIONS, Rewriter } from "./rewriter";
@@ -59,7 +54,6 @@ import { RegexWitness } from "./seq-regex-witness";
 import {
   UINT_MAX,
   canBeMember,
-  getCharConstRange,
   getLoopBounds,
   getLoopLower,
   getRangeChars,
@@ -408,7 +402,7 @@ export class ReRewriter {
     return this.mkReAppend(tailReverse, headReverse);
   }
 
-  mkRegexUnionNormalize(first: number, second: number) {
+  private mkRegexUnionNormalize(first: number, second: number) {
     const manager = this.manager;
     if (first === second || isReEmpty(manager, second) || isFullSeq(manager, first)) return first;
     if (isReEmpty(manager, first) || isFullSeq(manager, second)) return second;
@@ -442,7 +436,7 @@ export class ReRewriter {
     );
   }
 
-  mkRegexInterNormalize(inputFirst: number, inputSecond: number) {
+  private mkRegexInterNormalize(inputFirst: number, inputSecond: number) {
     const manager = this.manager;
     const isSwapped = isEpsilon(manager, inputSecond);
     const first = isSwapped ? inputSecond : inputFirst;
@@ -1105,116 +1099,6 @@ export class ReRewriter {
 
   private mkReOpt(regex: number): Result {
     return this.mkUnion(this.mkToRe(mkEmptySeq(this.manager, this.getSeqSort(regex))), regex);
-  }
-
-  elimCondition(element: number, inputCondition: number) {
-    const manager = this.manager;
-    const maxChar = this.manager.maxChar;
-    const conds = new RefVector(manager);
-    const rangeConds = new RefVector(manager);
-    conds.push(inputCondition);
-    flattenAndVector(manager, conds);
-    let isAllRanges = false;
-    if (manager.isCharSort(manager.sorts[element])) {
-      isAllRanges = true;
-      let ranges = [0, maxChar];
-      const intersect = (lo: number, hi: number, current: number[]) => {
-        const result: number[] = [];
-        for (let index = 0; index < current.length; index += 2) {
-          if (hi < current[index]) break;
-          if (current[index + 1] >= lo)
-            result.push(Math.max(current[index], lo), Math.min(current[index + 1], hi));
-        }
-        return result;
-      };
-      const excludeRange = (lower: number, upper: number) => {
-        if (lower === 0) ranges = upper === maxChar ? [] : intersect(upper + 1, maxChar, ranges);
-        else if (upper === maxChar) ranges = intersect(0, lower - 1, ranges);
-        else
-          ranges = [...intersect(0, lower - 1, ranges), ...intersect(upper + 1, maxChar, ranges)];
-      };
-      const getConstChars = (expr: number, op: number) => {
-        if (manager.getOp(expr) !== op || manager.getNumArgs(expr) !== 2) return undefined;
-        const first = manager.getChar(manager.getArg(expr, 0));
-        const second = manager.getChar(manager.getArg(expr, 1));
-        return first !== -1 && second !== -1 ? [first, second] : undefined;
-      };
-      const isSelfEq = (expr: number) =>
-        manager.getOp(expr) === OP_EQ && manager.getArg(expr, 0) === manager.getArg(expr, 1);
-      for (const cond of conds.items) {
-        const range = getCharConstRange(manager, element, cond);
-        const negated = manager.getOp(cond) === OP_NOT ? manager.getArg(cond, 0) : -1;
-        const charsEq = negated === -1 ? undefined : getConstChars(negated, OP_EQ);
-        const charsLe = getConstChars(cond, OP_CHAR_LE);
-        const negatedCharsLe = negated === -1 ? undefined : getConstChars(negated, OP_CHAR_LE);
-        if (range !== undefined) {
-          if (range.lo > range.hi) {
-            if (range.isNegated) continue;
-            ranges = [];
-          } else if (range.isNegated) excludeRange(range.lo, range.hi);
-          else ranges = intersect(range.lo, range.hi, ranges);
-          rangeConds.push(cond);
-        } else if (manager.isTrue(cond) || isSelfEq(cond)) continue;
-        else if (charsEq !== undefined && charsEq[0] !== charsEq[1]) continue;
-        else if (charsLe !== undefined && charsLe[0] <= charsLe[1]) continue;
-        else if (negatedCharsLe !== undefined && negatedCharsLe[0] > negatedCharsLe[1]) continue;
-        else if (
-          manager.isFalse(cond) ||
-          (negated !== -1 && isSelfEq(negated)) ||
-          charsLe !== undefined ||
-          negatedCharsLe !== undefined
-        )
-          ranges = [];
-        else {
-          isAllRanges = false;
-          break;
-        }
-        if (ranges.length === 0) break;
-      }
-      if (isAllRanges) {
-        const trivial =
-          ranges.length === 0
-            ? manager.falseExpr
-            : manager.isUninterpretedConst(element)
-              ? manager.trueExpr
-              : -1;
-        if (trivial !== -1) {
-          rangeConds.reset();
-          conds.reset();
-          return trivial;
-        }
-        conds.reset();
-        for (const cond of rangeConds.items) conds.push(cond);
-      }
-    }
-    let solution = -1;
-    for (const cond of conds.items) {
-      if (manager.getOp(cond) !== OP_EQ) continue;
-      const lhs = manager.getArg(cond, 0);
-      const rhs = manager.getArg(cond, 1);
-      if (lhs !== element && rhs !== element) continue;
-      solution = rhs === element ? lhs : rhs;
-      break;
-    }
-    let result = inputCondition;
-    if (solution !== -1) {
-      const replace = new ExprSafeReplace(manager);
-      replace.insert(element, solution);
-      result = replace.apply(inputCondition);
-      replace.release();
-      manager.releaseLater(result);
-      if (!manager.isUninterpretedConst(element))
-        result = this.mkBool(OP_AND, [manager.mkEq(element, solution), result]);
-    } else if (isAllRanges)
-      result =
-        conds.size === 0
-          ? manager.trueExpr
-          : conds.size === 1
-            ? conds.items[0]
-            : this.mkBool(OP_AND, [...conds.items]);
-    rangeConds.reset();
-    conds.reset();
-    return result;
   }
 
   private reduceReIsEmpty(regex: number): Result {

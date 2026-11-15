@@ -48,7 +48,6 @@ import { CR_CONTINUE, CR_DONE, CR_GIVEUP } from "../sat/solver";
 import type { ArithBound } from "./arith-internalize";
 import { ArithAxioms } from "./arith-axioms";
 import { type Enode, NULL_THEORY_VAR } from "./egraph";
-import type { EufSolver } from "./euf-solver";
 import { addDependency, type Dependencies } from "./th-solver";
 
 const SMALL_LEMMA_SIZE = 16;
@@ -84,10 +83,6 @@ export class ArithSolver extends ArithAxioms {
   private isUsingNraModel = false;
   private assumeEqCandidates: [number, number][] = [];
   private assumeEqHead = 0;
-
-  constructor(ctx: EufSolver, id: number) {
-    super(ctx, id);
-  }
 
   override asserted(lit: number) {
     this.forcePush();

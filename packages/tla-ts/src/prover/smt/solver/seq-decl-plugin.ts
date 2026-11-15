@@ -569,11 +569,9 @@ export const getSeqSignature = (
       return mkSignature(kind, name, domain, manager.mkStringSort());
     }
     case OP_INTERNAL_REGEXP_FULL_CHAR:
-      return getEmptyReSignature(manager, kind, OP_RE_FULL_CHAR_SET, "re.allchar", range);
     case OP_RE_FULL_CHAR_SET:
       return getEmptyReSignature(manager, kind, OP_RE_FULL_CHAR_SET, "re.allchar", range);
     case OP_INTERNAL_REGEXP_EMPTY:
-      return getEmptyReSignature(manager, kind, OP_RE_EMPTY_SET, "re.none", range);
     case OP_RE_EMPTY_SET:
       return getEmptyReSignature(manager, kind, OP_RE_EMPTY_SET, "re.none", range);
     case OP_RE_FULL_SEQ_SET:
@@ -617,7 +615,6 @@ export const getSeqSignature = (
       return typeof rng === "string" ? rng : mkSignature(kind, getPsig(kind).name, domain, rng);
     }
     case OP_SEQ_CONCAT:
-      return getAssocFun(manager, kind, OP_SEQ_CONCAT, domain, range, 1);
     case OP_INTERNAL_STRING_CONCAT:
       return getAssocFun(manager, kind, OP_SEQ_CONCAT, domain, range, 1);
     case OP_INTERNAL_STRING_FROM_CHAR:
@@ -633,7 +630,7 @@ export const getSeqSignature = (
   }
 };
 
-export const getStringConstSignature = (manager: AstManager, chars: readonly number[]) => {
+const getStringConstSignature = (manager: AstManager, chars: readonly number[]) => {
   const id = manager.mkStringValueId(chars);
   return mkSignature(
     OP_STRING_CONST,
@@ -765,7 +762,7 @@ export const mkConcatOf = (manager: AstManager, args: readonly number[], sort: n
       ? args[0]
       : mkSeqApp(manager, OP_SEQ_CONCAT, [...args]);
 
-export const mkUnitChar = (manager: AstManager, code: number) =>
+const mkUnitChar = (manager: AstManager, code: number) =>
   mkSeqApp(manager, OP_SEQ_UNIT, [manager.mkChar(code)]);
 
 export const isEmptySeq = (manager: AstManager, expr: number) =>

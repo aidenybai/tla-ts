@@ -120,7 +120,7 @@ export interface GoalState {
   readonly goal: Thm;
 }
 
-export type ContextTactic = (state: GoalState) => Seq<GoalState>;
+type ContextTactic = (state: GoalState) => Seq<GoalState>;
 
 export type Method = (facts: readonly Thm[]) => ContextTactic;
 

@@ -30,7 +30,7 @@ import {
   type SatExtension,
   type Solver,
 } from "../sat/solver";
-import { Egraph, type Enode, getClass, mkExternal, NULL_BOOL_VAR } from "./egraph";
+import { Egraph, type Enode, getClass, mkExternal, NULL_BOOL_VAR, type ThEq } from "./egraph";
 import {
   addDependency,
   type Dependencies,
@@ -574,14 +574,6 @@ export class EufSolver implements SatExtension {
     }
   }
 
-  getEqAntecedents(first: Enode, second: Enode, antecedents: number[]) {
-    this.egraph.beginExplain();
-    this.explanation = [];
-    this.egraph.explainEq(this.explanation, first, second);
-    this.explainQueue(antecedents);
-    this.egraph.endExplain();
-  }
-
   addEqAntecedent(first: Enode, second: Enode) {
     this.egraph.explainEq(this.explanation, first, second);
   }
@@ -702,11 +694,7 @@ export class EufSolver implements SatExtension {
     this.egraph.merge(node, ante ?? this.mkTrue(), literalPayload(lit));
   }
 
-  private isSelfPropagated(eq: {
-    readonly id: number;
-    readonly child: Enode;
-    readonly root: Enode | null;
-  }) {
+  private isSelfPropagated(eq: ThEq) {
     if (eq.root === null) return false;
     const egraph = this.egraph;
     egraph.beginExplain();

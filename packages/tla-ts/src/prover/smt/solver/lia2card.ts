@@ -257,7 +257,7 @@ export const lia2card = (
     const replaced = replace.apply(goal.forms.items[index]);
     const rewritten = rewriter.rewrite(replaced);
     manager.decRef(replaced);
-    goal.update(index, rewritten);
+    goal.update(index, rewritten, goal.getDependency(index));
     manager.decRef(rewritten);
   }
   for (const axiom of axioms) goal.assert(axiom);

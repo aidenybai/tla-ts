@@ -261,7 +261,8 @@ export class Derive {
     }
     if (isReBinary(manager, regex, OP_RE_XOR)) {
       const firstNullable = this.isNullable(first);
-      return bool.mkEq(bool.mkNot(firstNullable), this.isNullable(second));
+      const secondNullable = this.isNullable(second);
+      return bool.mkEq(bool.mkNot(firstNullable), secondNullable);
     }
     const loop = getLoopLower(manager, regex) ?? getLoopBounds(manager, regex);
     if (

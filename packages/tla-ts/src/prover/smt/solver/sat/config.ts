@@ -59,11 +59,11 @@ export const getBool = (params: SatParams, name: string, defaultValue: boolean) 
   return typeof value === "boolean" ? value : defaultValue;
 };
 
-const getSymbol = <T>(
+const getSymbol = <Value>(
   params: SatParams,
   name: string,
   defaultValue: string,
-  values: Map<string, T>,
+  values: Map<string, Value>,
   message: string,
 ) => {
   const value = values.get(String(params.get(name) ?? defaultValue));

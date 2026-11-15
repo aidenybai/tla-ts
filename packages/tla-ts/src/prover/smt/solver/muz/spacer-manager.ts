@@ -126,8 +126,4 @@ export class SpacerManager {
   formulaN2o(expr: number, oIndex: number) {
     return this.shiftExpr(expr, 0, oIndex + 1);
   }
-
-  formulaO2o(expr: number, sourceIndex: number, targetIndex: number) {
-    return this.shiftExpr(expr, sourceIndex + 1, targetIndex + 1);
-  }
 }

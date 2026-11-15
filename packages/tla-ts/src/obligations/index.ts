@@ -288,10 +288,9 @@ export const getObligations = (
     }
   }
   const missing = [...requested.keys()].filter((name) => !found.has(name)).sort(compareNames);
-  missing.forEach((name) => {
-    const message = `Unknown module ${JSON.stringify(name)}`;
-    warnError(onWarning, requested.get(name), message);
-  });
+  missing.forEach((name) =>
+    warnError(onWarning, requested.get(name), `Unknown module ${JSON.stringify(name)}`),
+  );
   if (missing.length > 0)
     throw new TlaProofError(`Unknown module ${JSON.stringify(missing[0])}`, {
       failure: "Module.Parser.load_module",

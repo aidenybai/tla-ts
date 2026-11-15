@@ -43,7 +43,7 @@ const PARAM_INT = 0;
 const PARAM_AST = 1;
 const PARAM_SYMBOL = 2;
 const PARAM_ZSTRING = 3;
-const PARAM_RATIONAL = 3;
+const PARAM_RATIONAL = 4;
 const PARAM_EXTERNAL = 6;
 
 const compareValues = (first: number, second: number) =>

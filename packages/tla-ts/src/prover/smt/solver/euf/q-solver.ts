@@ -28,7 +28,7 @@ import { Mbqi } from "./q-mbi";
 import { ThSolver } from "./th-solver";
 
 // The family id Z3 gives "quant" when the q solver registers it.
-export const FAMILY_QUANT = 15;
+const FAMILY_QUANT = 15;
 
 export class QSolver extends ThSolver {
   private flats = new Map<number, number>();

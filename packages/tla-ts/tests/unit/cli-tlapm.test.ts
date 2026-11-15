@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vite-plus/test";
@@ -190,6 +190,34 @@ describe("tlapm proves with tla-ts's provers and prints what tlapm prints", () =
     const result = runTlapm("obligations", ["-C", "Proofs.tla"]);
     expect(result.status).toBe(1);
     expect(result.stderr).toBe("Error: tla-ts tlapm does not support the tlapm option -C.\n");
+  });
+
+  it("reports a --debug without its flags", () => {
+    const result = runTlapm("obligations", ["Proofs.tla", "--debug"]);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toBe("Error: option '--debug' needs an argument.\n");
+  });
+
+  it.each(["constructor", "toString", "__proto__"])(
+    "reports the unknown prover %s of a pragma",
+    (prover) => {
+      const directory = mkdtempSync(join(tmpdir(), "tla-ts-tlapm-"));
+      copies.push(directory);
+      writeFileSync(
+        join(directory, "Pragma.tla"),
+        `---- MODULE Pragma ----\nEXTENDS Naturals, TLAPS\nMine == TRUE (*{ by (prover:"${prover}") }*)\nTHEOREM \\A x \\in Nat : x + 0 = x\n  BY Mine\n====\n`,
+      );
+      const result = runTlapmIn(directory, ["--threads", "1", "--toolbox", "0", "0", "Pragma.tla"]);
+      expect(result.stderr).toContain(
+        `@!!type:warning\n@!!msg:File "./Pragma.tla", line 3, characters 22-27 :\nUnknown prover: ${prover}\n@!!END\n`,
+      );
+      expect(result.stderr).toContain("@!!prover:fail\n@!!meth:time-limit: inf\n");
+    },
+  );
+
+  it.each(["constructor", "toString", "__proto__"])("reports the unknown --method %s", (method) => {
+    const result = runTlapm("obligations", ["--method", method, "Proofs.tla"]);
+    expect(result.stderr).toContain(`--method: unknown method "${method}"\n`);
   });
 });
 

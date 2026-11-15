@@ -1272,7 +1272,6 @@ export class Context extends Internalizer {
     return generated;
   }
 
-  // add_rec_funs gives each named expression without an interpretation its expression.
   getLastFailureMessage() {
     if (this.lastSearchFailure === FAILURE_CANCELED) return "canceled";
     if (this.lastSearchFailure === FAILURE_NUM_CONFLICTS) return "max-conflicts-reached";
@@ -1584,7 +1583,8 @@ export class Context extends Internalizer {
     this.assumptionVars.clear();
     this.popToBaseLevel();
     this.searchLevel = this.baseLevel;
-    this.unsatCore = [...core].sort((left, right) => left - right);
+    const ids = this.manager.ids;
+    this.unsatCore = [...core].sort((left, right) => ids[left] - ids[right]);
     return L_FALSE;
   }
 

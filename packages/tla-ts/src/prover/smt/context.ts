@@ -73,6 +73,14 @@ export const createPrinter = (declared: Map<string, Identifier>) => {
     const renames = new Map<string, string[]>();
     const scopes: QuantifierScope[] = [];
     const lets = new Map<number, LetScope>();
+    const bindName = (index: number, scope: QuantifierScope) => {
+      const raw = tokens[index][0];
+      const identifier = context.adjoin(raw.replace(/(:\w+)?#\d+$/, ""));
+      const stack = renames.get(raw) ?? [];
+      renames.set(raw, [...stack, identifier.name]);
+      scope.exits.push(context.enter(identifier), () => renames.set(raw, stack));
+      replacements.set(index, identifier.name);
+    };
     let position = 0;
     let depth = 0;
     while (position < tokens.length) {
@@ -91,12 +99,7 @@ export const createPrinter = (declared: Map<string, Identifier>) => {
         scopes.push(scope);
         position += 3;
         while (tokens[position]?.[0] === "(") {
-          const raw = tokens[position + 1][0];
-          const identifier = context.adjoin(raw.replace(/(:\w+)?#\d+$/, ""));
-          const stack = renames.get(raw) ?? [];
-          renames.set(raw, [...stack, identifier.name]);
-          scope.exits.push(context.enter(identifier), () => renames.set(raw, stack));
-          replacements.set(position + 1, identifier.name);
+          bindName(position + 1, scope);
           position += 4;
         }
         position++;
@@ -118,14 +121,7 @@ export const createPrinter = (declared: Map<string, Identifier>) => {
       const letScope = lets.get(position);
       if (letScope !== undefined) {
         const scope: QuantifierScope = { depth: letScope.depth, exits: [] };
-        letScope.names.toReversed().forEach((index) => {
-          const raw = tokens[index][0];
-          const identifier = context.adjoin(raw.replace(/(:\w+)?#\d+$/, ""));
-          const stack = renames.get(raw) ?? [];
-          renames.set(raw, [...stack, identifier.name]);
-          scope.exits.push(context.enter(identifier), () => renames.set(raw, stack));
-          replacements.set(index, identifier.name);
-        });
+        letScope.names.toReversed().forEach((index) => bindName(index, scope));
         scopes.push(scope);
       }
       position++;

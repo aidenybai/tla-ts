@@ -510,8 +510,7 @@ const resolveSelectors = (
     return { ...stripParensAndAtomic(abstracted), isAtomic: true };
   }
   if (state.expression.isAtomic) {
-    const message = "Expression has no subexpressions";
-    warnError(onWarning, state.expression.location, message);
+    warnError(onWarning, state.expression.location, "Expression has no subexpressions");
     return UNRESOLVED;
   }
   const expression = isLabel ? state.expression : stripParens(state.expression);

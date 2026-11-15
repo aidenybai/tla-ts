@@ -7,8 +7,6 @@ import { NULL_LITERAL } from "./clause";
 import { ModelConverter } from "./model-converter";
 import type { Solver } from "./solver";
 
-const SMALL_LBD = 3;
-
 const mkNot = (manager: AstManager, expr: number) =>
   manager.isNot(expr) ? manager.getArg(expr, 0) : manager.mkNot(expr);
 
@@ -164,7 +162,6 @@ export const sat2goal = (
   const arena = solver.arena;
   for (const clause of solver.clauses) {
     checkpoint();
-    if (arena.glue[clause] > SMALL_LBD && arena.isLearned(clause)) continue;
     goal.assert(manager.mkOr(arena.getLits(clause).map(getExpr)));
   }
   goal.addDefinitions(converter.entries);

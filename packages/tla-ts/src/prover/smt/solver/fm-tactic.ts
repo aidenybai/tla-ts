@@ -4,6 +4,7 @@ import {
   type AstManager,
   FAMILY_ARITH,
   KIND_APP,
+  KIND_QUANTIFIER,
   OP_ADD,
   OP_DIV,
   OP_GE,
@@ -309,6 +310,11 @@ class Fm {
       for (let expr = todo.pop(); expr !== undefined; expr = todo.pop()) {
         if (visited.has(expr)) continue;
         visited.add(expr);
+        if (manager.kinds[expr] === KIND_QUANTIFIER) {
+          const data = manager.getQuantifier(expr);
+          todo.push(data.body, ...data.patterns, ...data.noPatterns);
+          continue;
+        }
         if (manager.kinds[expr] !== KIND_APP) continue;
         if (
           manager.isUninterpretedConst(expr) &&

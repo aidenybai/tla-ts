@@ -2414,14 +2414,13 @@ export class AstManager {
       op === OP_CHAR_CONST ||
       (op >= OP_FPA_RM_NEAREST_TIES_TO_EVEN && op <= OP_FPA_RM_TOWARD_ZERO) ||
       (op === OP_CONST_ARRAY && this.isUniqueValue(this.getArg(expr, 0))) ||
-      (op === OP_DT_CONSTRUCTOR &&
-        this.mapArgs(expr, (arg) => this.isUniqueValue(arg)).every((isUnique) => isUnique)) ||
+      (op === OP_DT_CONSTRUCTOR && this.everyArg(expr, (arg) => this.isUniqueValue(arg))) ||
       (op === OP_FPA_FP && this.isUniqueFp(expr))
     );
   }
 
   private isUniqueFp(expr: number) {
-    if (!this.mapArgs(expr, (arg) => this.isValue(arg)).every((isValue) => isValue)) return false;
+    if (!this.everyArg(expr, (arg) => this.isValue(arg))) return false;
     const exponent = this.getArg(expr, 1);
     const value = this.getBvNumeralValue(exponent);
     return value !== 0n && value !== (1n << BigInt(this.getBvSize(this.sorts[exponent]))) - 1n;
@@ -2436,7 +2435,7 @@ export class AstManager {
     }
     if (this.getOp(current) === OP_CONST_ARRAY) return this.isValue(this.getArg(current, 0));
     if (this.getOp(current) === OP_DT_CONSTRUCTOR || this.getOp(current) === OP_FPA_FP)
-      return this.mapArgs(current, (arg) => this.isValue(arg)).every((isValue) => isValue);
+      return this.everyArg(current, (arg) => this.isValue(arg));
     if (this.getOp(current) >= OP_FPA_NUM && this.getOp(current) <= OP_FPA_MINUS_ZERO) return true;
     if (this.getOp(current) === OP_ALGEBRAIC_NUM) return true;
     if (this.getFamily(current) === FAMILY_SEQ) return this.isSeqValue(current);

@@ -49,7 +49,7 @@ export interface ArithBound {
 
 export const SOURCE_INEQUALITY = 0;
 export const SOURCE_EQUALITY = 1;
-export const SOURCE_DEFINITION = 2;
+const SOURCE_DEFINITION = 2;
 
 interface InternalizeState {
   terms: number[];
@@ -118,10 +118,6 @@ export abstract class ArithInternalize extends ThSolver {
 
   protected isIntVar(thVar: number) {
     return this.manager.isInt(this.var2expr(thVar));
-  }
-
-  protected isRealVar(thVar: number) {
-    return this.manager.isReal(this.var2expr(thVar));
   }
 
   protected isBoolVar(thVar: number) {

@@ -620,13 +620,13 @@ export class NlsatSolver {
         const index = tags.indexOf(tag);
         if (index !== -1) core.push(assumptions[index]);
       }
-    const isAssumed = (clause: Clause) => {
+    const isKept = (clause: Clause) => {
       const isFound = linearize([clause.assumptions]).some((tag) => tags.includes(tag));
       if (isFound) this.delClause(clause);
       return !isFound;
     };
-    this.clauses = this.clauses.filter(isAssumed);
-    this.learned = this.learned.filter(isAssumed);
+    this.clauses = this.clauses.filter(isKept);
+    this.learned = this.learned.filter(isKept);
     assumptions.length = 0;
     assumptions.push(...core);
     return result;
@@ -739,13 +739,13 @@ export class NlsatSolver {
 
   retract(tag: number, maxLemmas = Infinity) {
     this.initSearch();
-    const isTagged = (clause: Clause) => {
+    const isKept = (clause: Clause) => {
       const isFound = linearize([clause.assumptions]).includes(tag);
       if (isFound) this.delClause(clause);
       return !isFound;
     };
-    this.clauses = this.clauses.filter(isTagged);
-    this.learned = this.learned.filter(isTagged);
+    this.clauses = this.clauses.filter(isKept);
+    this.learned = this.learned.filter(isKept);
     if (this.learned.length <= maxLemmas) return;
     this.learned.sort((first, second) => first.literals.length - second.literals.length);
     for (const clause of this.learned.splice(maxLemmas)) this.delClause(clause);

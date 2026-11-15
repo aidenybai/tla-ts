@@ -567,20 +567,15 @@ class PredTransformer {
     );
   }
 
-  private addLemmaCore(lemma: Lemma, isGroundOnly = false) {
+  private addLemmaCore(lemma: Lemma) {
     const level = lemma.level;
     const expr = lemma.getExpr();
     if (!isInftyLevel(level)) this.ensureLevel(level);
     this.solver.assertExpr(expr, level);
-    for (const use of this.uses) use.addLemmaFromChild(this, lemma, nextLevel(level), isGroundOnly);
+    for (const use of this.uses) use.addLemmaFromChild(this, lemma, nextLevel(level));
   }
 
-  private addLemmaFromChild(
-    child: PredTransformer,
-    lemma: Lemma,
-    level: number,
-    _isGroundOnly: boolean,
-  ) {
+  private addLemmaFromChild(child: PredTransformer, lemma: Lemma, level: number) {
     this.ensureLevel(level);
     for (const fml of this.mkAssumptions(child.head, lemma.getExpr()))
       this.solver.assertExpr(fml, level);
@@ -700,7 +695,7 @@ class PredTransformer {
     );
     this.reachSolver.assertExpr(fml);
     const fakeLemma = new Lemma(this.context, INFTY_LEVEL, fml);
-    for (const use of this.uses) use.addLemmaFromChild(this, fakeLemma, INFTY_LEVEL, false);
+    for (const use of this.uses) use.addLemmaFromChild(this, fakeLemma, INFTY_LEVEL);
   }
 
   getLastRfTag() {
@@ -983,7 +978,7 @@ class PredTransformer {
     return this.extendLit;
   }
 
-  mkRf(pob: Pob, model: ProtoModel, rule: Rule) {
+  mkRf(model: ProtoModel, rule: Rule) {
     const manager = this.manager;
     const context = this.context;
     const spacer = this.spacer;
@@ -1008,7 +1003,6 @@ class PredTransformer {
     result = this.mbp(vars, result, model, true);
     const reachFact = new ReachFact(rule, result, isElimAux ? [] : auxVars);
     reachFact.justifications.push(...children);
-    void pob;
     return reachFact;
   }
 
@@ -1222,7 +1216,7 @@ export class SpacerContext {
     pob.level = saved;
     if (reach.result !== L_TRUE || !reach.isConcrete) return false;
     if (reach.rule !== undefined && reach.rule.uninterpretedSize > 0)
-      pob.pt.addRf(pob.pt.mkRf(pob, reach.model as ProtoModel, reach.rule));
+      pob.pt.addRf(pob.pt.mkRf(reach.model as ProtoModel, reach.rule));
     const derivation = pob.derivation;
     pob.derivation = undefined;
     pob.close();
@@ -1273,7 +1267,7 @@ export class SpacerContext {
         if (reach.isConcrete) {
           const isRoot = this.pobQueue.isRoot(pob);
           if (reach.rule !== undefined && (reach.rule.uninterpretedSize > 0 || isRoot))
-            pob.pt.addRf(pob.pt.mkRf(pob, model, reach.rule), isRoot);
+            pob.pt.addRf(pob.pt.mkRf(model, reach.rule), isRoot);
           const derivation = pob.derivation;
           pob.derivation = undefined;
           pob.close();

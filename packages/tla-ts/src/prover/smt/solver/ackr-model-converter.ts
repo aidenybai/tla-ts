@@ -70,13 +70,7 @@ const addEntry = (
 
 const convert = (info: AckrInfo, source: ProtoModel, target: ProtoModel) => {
   const manager = source.manager;
-  for (const entry of source.funcInterps) {
-    const copied = new FuncInterp(manager, entry[1].arity);
-    for (const funcEntry of entry[1].entries)
-      copied.insertNewEntry(funcEntry.args, funcEntry.result);
-    if (entry[1].elseExpr !== null) copied.setElse(entry[1].elseExpr);
-    target.registerFunc(entry[0], copied);
-  }
+  for (const entry of source.funcInterps) target.registerFunc(entry[0], entry[1].copy());
   for (const sort of source.getUninterpretedSorts())
     for (const value of source.getKnownUniverse(sort)) target.registerValue(value);
   const interpretations = new ObjMap<FuncInterp>((decl) => manager.getDeclHash(decl));

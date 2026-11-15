@@ -98,10 +98,6 @@ export class ModelConverter {
     this.addElimStack(entry);
   }
 
-  isEmpty() {
-    return this.entries.length === 0;
-  }
-
   flush(source: ModelConverter) {
     this.entries.push(...source.entries);
     this.exposedLim += source.exposedLim;

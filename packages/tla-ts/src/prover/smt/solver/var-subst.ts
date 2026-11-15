@@ -75,6 +75,7 @@ export const replaceFreeVars = (
   replace: (variable: number, index: number, shift: number) => number,
 ) => {
   const cache = new Map<number, number>();
+  const numNodes = manager.kinds.length;
   const frames: ReplaceFrame[] = [];
   const results: number[] = [];
   const visit = (current: number, shift: number) => {
@@ -82,7 +83,7 @@ export const replaceFreeVars = (
       results.push(current);
       return;
     }
-    const key = current * 64 + shift;
+    const key = shift * numNodes + current;
     const cached = cache.get(key);
     if (cached !== undefined) results.push(cached);
     else if (manager.kinds[current] !== KIND_VAR)
@@ -120,7 +121,7 @@ export const replaceFreeVars = (
               noPatterns: [],
             });
     frames.pop();
-    cache.set(current * 64 + frame.shift, result);
+    cache.set(frame.shift * numNodes + current, result);
     results.push(result);
   }
   return results[0];
@@ -135,7 +136,7 @@ export const getFreeVarSorts = (manager: AstManager, expr: number, count: number
     const delta = deltas.pop() ?? 0;
     if (manager.freeVarBounds[current] <= delta) continue;
     if (manager.getRefCount(current) > 1) {
-      const key = current * 64 + delta;
+      const key = delta * manager.kinds.length + current;
       if (visited.has(key)) continue;
       visited.add(key);
     }

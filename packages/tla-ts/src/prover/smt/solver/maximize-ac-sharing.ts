@@ -15,7 +15,6 @@ const MAX_NUM_ARGS_FOR_OPT = 128;
 const SHARED_OPS = new Set([OP_BADD, OP_BMUL, OP_BOR, OP_BAND, OP_OR, OP_ADD]);
 
 export class MaxBvSharing extends RewriterTpl {
-  // Z3 compares the kind without the family, and bvmul has the kind of or and of +, so those are shared.
   private isInit = false;
   private entries: SharingEntry[] = [];
   private pairCache = new Map<number, Map<number, Set<number>>>();

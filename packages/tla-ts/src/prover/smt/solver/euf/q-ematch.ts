@@ -236,7 +236,12 @@ class Eval {
     return L_TRUE;
   }
 
-  evalExpr(numDecls: number, binding: readonly Enode[], expr: number, evidence: EnodePair[]) {
+  private evalExpr(
+    numDecls: number,
+    binding: readonly Enode[],
+    expr: number,
+    evidence: EnodePair[],
+  ) {
     const ctx = this.ctx;
     const manager = ctx.manager;
     const evals = this.evals;

@@ -25,7 +25,7 @@ export const KIND_CONGRUENCE = 4;
 
 export const STATE_NEW = 0;
 export const STATE_DELAYED = 1;
-export const STATE_APPLIED = 2;
+const STATE_APPLIED = 2;
 
 export interface AxiomRecord {
   readonly kind: number;

@@ -23,8 +23,8 @@ class AuxContext {
   private context: Context;
   private asserted: AssertedFormulas;
 
-  // now, so setup_context can run at once. init_aux_context copies the kernel's smt_params and
-  // theories, so the context has a model finder too, though it never sees a quantifier.
+  // init_aux_context copies the kernel's smt_params and theories, so the context has a model
+  // finder too, though it never sees a quantifier.
   constructor(parent: Context) {
     this.asserted = new AssertedFormulas(parent.manager);
     this.context = new Context(parent.manager, {

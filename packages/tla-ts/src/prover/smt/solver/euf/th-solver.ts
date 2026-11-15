@@ -127,7 +127,6 @@ export abstract class ThSolver {
   hasUnhandled() {
     return false;
   }
-  collectStatistics(_stats: Map<string, number>) {}
 
   protected visit(_expr: number) {
     return false;
@@ -187,11 +186,6 @@ export abstract class ThSolver {
 
   getThVar(node: Enode) {
     return node.getThVar(this.id);
-  }
-
-  getThVarOf(expr: number) {
-    const node = this.ctx.getEnode(expr);
-    return node === undefined ? NULL_THEORY_VAR : node.getThVar(this.id);
   }
 
   getRepresentative(thVar: number) {
