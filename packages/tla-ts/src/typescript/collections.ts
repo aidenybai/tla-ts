@@ -3071,7 +3071,19 @@ export const translateStringIteration = (
   heap: Expression | undefined,
   node: ts.Node,
   context: Context,
-  getOther = (other: Expression) => other,
+  // A value of type any or unknown outside the heap may be a set or a map, whose elements a
+  // sequence's indices don't hold.
+  getOther = (other: Expression) =>
+    heap === undefined && (type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0
+      ? ifExpression(
+          useJavaScript("IsSequenceValue", [other], context),
+          other,
+          apply("Assert", [
+            boolean(false),
+            string("tla-ts can't destructure this value through its iterator"),
+          ]),
+        )
+      : other,
 ) => {
   const getCharacters = (text: Expression) => {
     const characters = useJavaScript("StringCharacters", [text], context);

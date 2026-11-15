@@ -42647,4 +42647,35 @@ describe("BigInts", () => {
       expect(result.failure?.message).toContain("tla-ts can't call getters");
     });
   });
+
+  describe("destructures an array pattern of a value of type any outside the heap", () => {
+    const getSource = (expected: string) => `
+      const pair = (value: any) => {
+        const [first, second] = value;
+        return \`\${first}\${second}\`;
+      };
+      const log = pair("ab") + pair([5, 6]);
+      if (log !== "${expected}") throw new Error(log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("ab56"))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong elements", async () => {
+      await expect(checkModel(getSource("ab65"))).rejects.toThrow("ab56");
+    });
+
+    it("stops at a set", async () => {
+      await expect(
+        checkModel(`
+          const pair = (value: any) => {
+            const [first, second] = value;
+            return \`\${first}\${second}\`;
+          };
+          if (pair(new Set([5, 6])) !== "56") throw new Error("pair");
+        `),
+      ).rejects.toThrow("tla-ts can't destructure this value through its iterator");
+    });
+  });
 });
