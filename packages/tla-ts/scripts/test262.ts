@@ -2416,8 +2416,8 @@ const getFailedRun = (id: string, reason: string): TestRun => ({
 // TypeScript's syntax and grammar errors, and its semantic errors that ECMAScript makes early
 // errors, such as a redeclared let.
 const EARLY_ERRORS = new Set([
-  2300, 2335, 2337, 2357, 2364, 2392, 2406, 2451, 2462, 2481, 2487, 2523, 2524, 2660, 2777, 2779,
-  2804, 2815, 5076, 6188, 6189, 18006, 18011, 18012, 18013, 18016, 18026, 18037, 18041, 18061,
+  2300, 2335, 2337, 2357, 2364, 2392, 2406, 2451, 2462, 2480, 2481, 2487, 2523, 2524, 2660, 2777,
+  2779, 2804, 2815, 5076, 6188, 6189, 18006, 18011, 18012, 18013, 18016, 18026, 18037, 18041, 18061,
 ]);
 
 const isEarlyError = (code: number) =>
