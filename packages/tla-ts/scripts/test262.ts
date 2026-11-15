@@ -11,6 +11,7 @@ import ts from "@typescript/typescript6";
 import { TlaTypeScriptError } from "../src/errors";
 import { check } from "../src/parallel";
 import { STRING_METHODS } from "../src/typescript/collections";
+import { getIndexedKind, INDEX_PARAMETERS, SET_LIKE_METHODS } from "../src/typescript/types";
 import { compile } from "../src/typescript/compile";
 import { CONFORMANCE_DIRECTORY, CORPORA_DIRECTORY, listFiles } from "./corpora";
 
@@ -1584,7 +1585,8 @@ const CONVERTED_ARGUMENT_ERRORS = new Set([2345, NO_OVERLOAD_ERROR]);
 // test of such a call, since tla-ts reads a value by its declared type.
 const REDUCING_METHODS = new Set(["reduce", "reduceRight"]);
 // The array methods that tla-ts searches by value for any value, from an index that ToNumber
-// converts from a primitive. Each needs a unit test of such a call.
+// converts from a primitive, or for undefined where a call passes no value, also on a typed array.
+// Each needs a unit test of such a call.
 const SEARCHING_METHODS = new Set(["includes", "indexOf", "lastIndexOf"]);
 // The promise combinators, which tla-ts runs on any value a test passes them, not only an iterable.
 const PROMISE_COMBINATORS = new Set(["all", "allSettled", "any", "race"]);
@@ -2270,6 +2272,103 @@ const ignoreSoundErrors = () => {
         )
     );
   };
+  // A call of a method that SEARCHING_METHODS lists on an array or a typed array, without arguments,
+  // which searches for undefined. TypeScript reports it at the method's name.
+  const isShortSearchingCall = (node: ts.Node) => {
+    const callee = node.parent;
+    return (
+      ts.isPropertyAccessExpression(callee) &&
+      callee.name === node &&
+      SEARCHING_METHODS.has(callee.name.text) &&
+      ts.isCallExpression(callee.parent) &&
+      callee.parent.expression === callee &&
+      callee.parent.arguments.length === 0 &&
+      ["Array", "TypedArray"].includes(
+        getIndexedKind(checker.getTypeAtLocation(callee.expression), checker) ?? "",
+      )
+    );
+  };
+  // A call of a method that INDEX_PARAMETERS lists, with a primitive other than a BigInt for an index
+  // that it converts, which the error is at. tla-ts throws the TypeError of a symbol where nothing
+  // runs before, and stops otherwise.
+  const isIndexCall = (diagnostic: ts.Diagnostic) => {
+    const call = getErroredCall(diagnostic);
+    if (
+      call === undefined ||
+      !ts.isCallExpression(call) ||
+      !ts.isPropertyAccessExpression(call.expression) ||
+      call.arguments.some(ts.isSpreadElement)
+    ) {
+      return false;
+    }
+    const receiver = checker.getTypeAtLocation(call.expression.expression);
+    const kind = getIndexedKind(receiver, checker);
+    const positions = kind && INDEX_PARAMETERS.get(kind)?.get(call.expression.name.text);
+    const position = call.arguments.findIndex(
+      (value) =>
+        value.getStart() === diagnostic.start &&
+        value.getEnd() === (diagnostic.start ?? 0) + (diagnostic.length ?? 0),
+    );
+    // A typed array's search compares a value of another type by SameValueZero or ===, which no
+    // element equals.
+    const isSearched =
+      kind === "TypedArray" && SEARCHING_METHODS.has(call.expression.name.text) && position === 0;
+    // A DataView's method converts littleEndian, its last argument, with ToBoolean, which runs
+    // nothing, whatever its type.
+    const isLittleEndian =
+      kind === "DataView" &&
+      positions !== undefined &&
+      position === (call.expression.name.text.startsWith("get") ? 1 : 2);
+    const primitives =
+      ts.TypeFlags.NumberLike |
+      ts.TypeFlags.StringLike |
+      ts.TypeFlags.BooleanLike |
+      ts.TypeFlags.Null |
+      ts.TypeFlags.Undefined;
+    return (
+      isLittleEndian ||
+      (isSearched && isEveryType(call.arguments[position], primitives)) ||
+      (positions !== undefined &&
+        positions.includes(position) &&
+        isEveryType(call.arguments[position], primitives | ts.TypeFlags.ESSymbolLike))
+    );
+  };
+  // A call of a Set's method that SET_LIKE_METHODS lists, of an array, which the error is at.
+  // tla-ts throws GetSetRecord's TypeError where the test gives nothing a size, and stops otherwise.
+  const isSetLikeArrayCall = (diagnostic: ts.Diagnostic) => {
+    const call = getErroredCall(diagnostic);
+    const value = call?.arguments?.[0];
+    return (
+      call !== undefined &&
+      ts.isCallExpression(call) &&
+      ts.isPropertyAccessExpression(call.expression) &&
+      SET_LIKE_METHODS.has(call.expression.name.text) &&
+      checker.getTypeAtLocation(call.expression.expression).getSymbol()?.getName() === "Set" &&
+      call.arguments.length === 1 &&
+      value !== undefined &&
+      value.getStart() === diagnostic.start &&
+      checker.isArrayType(checker.getTypeAtLocation(value))
+    );
+  };
+  // An error in the template object of a call of String.raw, which tla-ts reads as it is, as
+  // String.raw reads any object, throwing the TypeErrors of its steps and stopping where it would
+  // run a getter or convert an object.
+  const isRawTemplate = (diagnostic: ts.Diagnostic) => {
+    const start = diagnostic.start ?? 0;
+    const call = ts.findAncestor(getNode(start), ts.isCallExpression);
+    const template = call?.arguments[0];
+    return (
+      call !== undefined &&
+      template !== undefined &&
+      ts.isPropertyAccessExpression(call.expression) &&
+      call.expression.name.text === "raw" &&
+      ts.isIdentifier(call.expression.expression) &&
+      call.expression.expression.text === "String" &&
+      isGlobal(call.expression.expression) &&
+      template.getStart() <= start &&
+      start + (diagnostic.length ?? 0) <= template.getEnd()
+    );
+  };
   // A call of a method of RegExp.prototype that PROTOCOL_METHODS lists, on a regexp, as
   // rx[Symbol.search](s), or through call, as RegExp.prototype[Symbol.search].call(rx, s).
   // The method of a protocol call, under the well-known symbol that names it.
@@ -2557,7 +2656,7 @@ const ignoreSoundErrors = () => {
     const node = getNode(diagnostic.start ?? 0);
     return (
       (diagnostic.code === ARGUMENT_COUNT_ERROR &&
-        (isShortBuiltInCall(node) || isShortReducingCall(node))) ||
+        (isShortBuiltInCall(node) || isShortReducingCall(node) || isShortSearchingCall(node))) ||
       (SHORT_CALL_ERRORS.has(diagnostic.code) && isShortProtocolCall(node, diagnostic)) ||
       (diagnostic.code === MISSING_PROPERTY_ERROR && isPatternRead(node)) ||
       ((diagnostic.code === NOT_ITERABLE_ERROR || NULLABLE_ERRORS.has(diagnostic.code)) &&
@@ -2589,8 +2688,12 @@ const ignoreSoundErrors = () => {
           isReducingCall(diagnostic) ||
           isSearchingCall(diagnostic) ||
           (diagnostic.code === 2769 && isCombinedCall(diagnostic)) ||
+          isIndexCall(diagnostic) ||
+          isSetLikeArrayCall(diagnostic) ||
           isTypedArrayNew(diagnostic))) ||
       (diagnostic.code === NO_OVERLOAD_ERROR && isIteratedEntriesCall(diagnostic)) ||
+      ((CONVERTED_ARGUMENT_ERRORS.has(diagnostic.code) || diagnostic.code === 2322) &&
+        isRawTemplate(diagnostic)) ||
       (diagnostic.code === UNKNOWN_CALLEE_ERROR && isStoredStringCall(node)) ||
       (diagnostic.code === UNCALLABLE_ERROR && isTypedUnionCall(node, diagnostic)) ||
       diagnostic.code === UNUSED_OPERAND_ERROR ||

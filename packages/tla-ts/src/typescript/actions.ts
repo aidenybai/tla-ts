@@ -426,6 +426,8 @@ import {
   rejectGeneratorUse,
   TYPED_ARRAYS,
   isNullishArrayMethodCall,
+  isSizelessSetLikeCall,
+  isSymbolIndexCall,
   getArrayMethodCall,
   REORDER_METHODS,
 } from "./types";
@@ -2395,8 +2397,55 @@ const translateCallStatementBody = (
       ),
     );
   }
-  if (isNullishArrayMethodCall(expression, context)) {
+  if (
+    isNullishArrayMethodCall(expression, context) ||
+    isSizelessSetLikeCall(expression, context) ||
+    isSymbolIndexCall(expression, context)
+  ) {
     return throwTypeError(path, expression, context, frame);
+  }
+  if (isRawCall(expression, context)) {
+    const heap = getHeap(path.scope, expression, context);
+    const name = context.names.getFresh("raw");
+    const raw = identifier(name);
+    const translate = (argument: ts.Expression) =>
+      translateExpression(argument, path.scope, context);
+    return ifThenElse(
+      useJavaScript(
+        "HoldsBuiltIn",
+        [
+          heap,
+          translateBuiltInValue("String", expression, context),
+          string("raw"),
+          string("String.raw"),
+        ],
+        context,
+      ),
+      bindOnce(
+        path,
+        name,
+        useJavaScript(
+          "StringRaw",
+          [
+            heap,
+            translate(expression.arguments[0]),
+            tuple(expression.arguments.slice(1).map(translate)),
+          ],
+          context,
+        ),
+        ifThenElse(
+          field(raw, "isThrown"),
+          throwTypeError(path, expression, context, frame),
+          continueWith(path, field(raw, "text")),
+        ),
+      ),
+      leaf(
+        apply("Assert", [
+          boolean(false),
+          string("tla-ts can't call String.raw where a script replaced it"),
+        ]),
+      ),
+    );
   }
   if (isUnseededReduce(expression, context)) {
     const name = context.names.getFresh("reduced");
@@ -10979,6 +11028,15 @@ const throwRangeError = (
   );
 };
 
+// A call of String.raw, rather than a tag, which reads the raw strings of any object.
+const isRawCall = (node: ts.CallExpression, context: Context) =>
+  context.heap !== undefined &&
+  ts.isPropertyAccessExpression(node.expression) &&
+  node.expression.name.text === "raw" &&
+  getBuiltIn(node.expression.expression, context) === "String" &&
+  node.arguments.length > 0 &&
+  !node.arguments.some(ts.isSpreadElement);
+
 // A read of an object's property throws a TypeError where it runs %ThrowTypeError%, or a buffer's or
 // a view's getter on another kind of object, and otherwise goes on as read.
 const throwReadError = (
@@ -12400,6 +12458,9 @@ const isStatementResult = (node: ts.CallExpression, path: Path, context: Context
     getHeapSetOrMapChange(node, context) !== undefined ||
     getArrayIteratorCall(node, context) !== undefined ||
     isNullishArrayMethodCall(node, context) ||
+    isSizelessSetLikeCall(node, context) ||
+    isSymbolIndexCall(node, context) ||
+    isRawCall(node, context) ||
     getStringCall(node, context) !== undefined ||
     isBigIntStringify(node, context) ||
     getRevival(node, context) !== undefined ||

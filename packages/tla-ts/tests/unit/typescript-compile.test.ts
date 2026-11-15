@@ -39966,4 +39966,330 @@ describe("BigInts", () => {
       ),
     ).toThrow("tla-ts can't read the variable logged.log through a module's namespace object");
   });
+  describe("converts a primitive index that with() takes as ToNumber does", () => {
+    const getSource = (expected: string) => `
+      const list = [0, 1, 2, 3];
+      const held = [0, 1, 2, 3];
+      // @ts-ignore
+      held.tag = 1;
+      const replaced = [
+        // @ts-ignore
+        list.with("1", 7).join(),
+        // @ts-ignore
+        list.with(true, 7).join(),
+        // @ts-ignore
+        list.with(null, 7).join(),
+        // @ts-ignore
+        list.with(undefined, 7).join(),
+        // @ts-ignore
+        list.with(" -1 ", 7).join(),
+        // @ts-ignore
+        list.with("one", 7).join(),
+        // @ts-ignore
+        held.with("2", 7).join(),
+      ];
+      if (replaced.join("|") !== "${expected}") throw new Error(replaced.join("|"));
+    `;
+
+    it("agrees with Node", async () => {
+      const expected = "0,7,2,3|0,7,2,3|7,1,2,3|7,1,2,3|0,1,2,7|7,1,2,3|0,1,7,3";
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects a wrong expectation", async () => {
+      const wrong = "0,7,2,3|0,7,2,3|7,1,2,3|7,1,2,3|0,1,2,7|7,1,2,3|0,7,2,3";
+      expect((await checkModel(getSource(wrong))).failure?.message).toContain("0,1,7,3");
+    });
+  });
+
+  describe("converts a primitive index of a typed array's method as ToNumber does", () => {
+    const getSource = (expected: string) => `
+      const sample = new Int8Array([40, 41, 42, 43]);
+      const copied = new Int8Array([0, 1, 2, 3]);
+      // @ts-ignore
+      copied.copyWithin("x", true, undefined);
+      const filled = new Int8Array([0, 1, 2, 3]);
+      // @ts-ignore
+      filled.fill(9, "1", null);
+      // @ts-ignore
+      filled.fill(8, false, "2");
+      const read = [
+        // @ts-ignore
+        sample.at("1"),
+        // @ts-ignore
+        sample.slice(true, "3").join(),
+        // @ts-ignore
+        sample.subarray(null, " -1 ").join(),
+        copied.join(),
+        filled.join(),
+        // @ts-ignore
+        sample.includes(40, true),
+        // @ts-ignore
+        sample.indexOf(42, "2"),
+        // @ts-ignore
+        sample.lastIndexOf(43, null),
+      ];
+      if (read.join("|") !== "${expected}") throw new Error(read.join("|"));
+    `;
+
+    it("agrees with Node", async () => {
+      const expected = "41|41,42|40,41,42|1,2,3,3|8,8,2,3|false|2|-1";
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects a wrong expectation", async () => {
+      const wrong = "41|41,42|40,41,42|1,2,3,3|8,8,2,3|false|2|3";
+      expect((await checkModel(getSource(wrong))).failure?.message).toContain("2|-1");
+    });
+  });
+
+  describe("converts a primitive index and littleEndian of a DataView's method", () => {
+    const getSource = (expected: string) => `
+      const view = new DataView(new ArrayBuffer(4));
+      // @ts-ignore
+      view.setInt16("0", 258, null);
+      // @ts-ignore
+      view.setUint8(true, 7);
+      const read: unknown[] = [
+        // @ts-ignore
+        view.getInt16(false, null),
+        // @ts-ignore
+        view.getInt16(null, "yes"),
+        // @ts-ignore
+        view.getUint8("1"),
+        // @ts-ignore
+        view.getUint8(undefined),
+        // @ts-ignore
+        view.getUint16("2", 0),
+      ];
+      let caught = "none";
+      try {
+        // @ts-ignore
+        view.getInt8("-1");
+      } catch (error) {
+        caught = (error as Error).constructor.name;
+      }
+      read.push(caught);
+      if (read.join("|") !== "${expected}") throw new Error(read.join("|"));
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("263|1793|7|1|0|RangeError"))).failure).toBeUndefined();
+    });
+
+    it("rejects a wrong expectation", async () => {
+      expect((await checkModel(getSource("263|1793|7|1|0|TypeError"))).failure?.message).toContain(
+        "RangeError",
+      );
+    });
+  });
+
+  describe("searches a typed array for undefined where a call passes no value", () => {
+    const getSource = (expected: string) => `
+      const sample = new Int8Array([0, 1]);
+      // @ts-ignore
+      const found = [sample.indexOf(), sample.includes(), sample.lastIndexOf()].join();
+      let caught = "none";
+      try {
+        const prototype: Int8Array = Object.getPrototypeOf(Int8Array.prototype);
+        // @ts-ignore
+        prototype.includes();
+      } catch (error) {
+        caught = (error as Error).constructor.name;
+      }
+      if (found + "|" + caught !== "${expected}") throw new Error(found + "|" + caught);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("-1,false,-1|TypeError"))).failure).toBeUndefined();
+    });
+
+    it("rejects a wrong expectation", async () => {
+      expect((await checkModel(getSource("-1,true,-1|TypeError"))).failure?.message).toContain(
+        "-1,false,-1",
+      );
+    });
+  });
+
+  describe("searches a typed array for a primitive of another type", () => {
+    const getSource = (expected: string) => `
+      const sample = new Int8Array([0, 1, 2]);
+      const found = [
+        // @ts-ignore
+        sample.includes(undefined),
+        // @ts-ignore
+        sample.includes("1"),
+        // @ts-ignore
+        sample.indexOf("1"),
+        // @ts-ignore
+        sample.lastIndexOf(null),
+        // @ts-ignore
+        sample.includes(false),
+        sample.includes(1),
+      ];
+      if (found.join() !== "${expected}") throw new Error(found.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("false,false,-1,-1,false,true"))).failure).toBeUndefined();
+    });
+
+    it("rejects a wrong expectation", async () => {
+      expect(
+        (await checkModel(getSource("false,true,-1,-1,false,true"))).failure?.message,
+      ).toContain("false,false,-1");
+    });
+  });
+
+  describe("throws the TypeError of a Set's method that reads an array as a set-like object", () => {
+    const getSource = (expected: string) => `
+      const set = new Set([1, 2]);
+      const list = [3];
+      let caught = "";
+      try {
+        // @ts-ignore
+        set.union(list);
+      } catch (error) {
+        caught += error instanceof TypeError ? "t" : "x";
+      }
+      try {
+        // @ts-ignore
+        const subset = set.isSubsetOf(list);
+        caught += String(subset);
+      } catch (error) {
+        caught += error instanceof TypeError ? "t" : "x";
+      }
+      try {
+        // @ts-ignore
+        set.isDisjointFrom(list);
+      } catch (error) {
+        caught += error instanceof TypeError ? "t" : "x";
+      }
+      if (caught !== "${expected}") throw new Error(caught);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("ttt"))).failure).toBeUndefined();
+    });
+
+    it("rejects a wrong expectation", async () => {
+      expect((await checkModel(getSource("tt"))).failure?.message).toContain("ttt");
+    });
+  });
+
+  describe("runs String.raw on a template object that a call passes", () => {
+    const getSource = (expected: string) => `
+      const symbol = Symbol("s");
+      const results: string[] = [];
+      try {
+        // @ts-ignore
+        const text = String.raw({ raw: { length: 4, 0: "e", 1: null, 2: undefined, 3: 12, 4: "x" } });
+        results.push(text);
+      } catch (error) {
+        results.push(error instanceof TypeError ? "TypeError" : "other");
+      }
+      try {
+        // @ts-ignore
+        const text = String.raw({ raw: ["a", "b", "c"] }, 1, true);
+        results.push(text);
+      } catch (error) {
+        results.push(error instanceof TypeError ? "TypeError" : "other");
+      }
+      try {
+        // @ts-ignore
+        const text = String.raw({ raw: { length: "2", 0: "a", 1: "b" } }, null);
+        results.push(text);
+      } catch (error) {
+        results.push(error instanceof TypeError ? "TypeError" : "other");
+      }
+      try {
+        // @ts-ignore
+        const text = String.raw({ raw: { length: null } });
+        results.push(text);
+      } catch (error) {
+        results.push(error instanceof TypeError ? "TypeError" : "other");
+      }
+      try {
+        // @ts-ignore
+        const text = String.raw(null);
+        results.push(text);
+      } catch (error) {
+        results.push(error instanceof TypeError ? "TypeError" : "other");
+      }
+      try {
+        // @ts-ignore
+        const text = String.raw({ raw: undefined });
+        results.push(text);
+      } catch (error) {
+        results.push(error instanceof TypeError ? "TypeError" : "other");
+      }
+      try {
+        // @ts-ignore
+        const text = String.raw({ raw: { length: symbol } });
+        results.push(text);
+      } catch (error) {
+        results.push(error instanceof TypeError ? "TypeError" : "other");
+      }
+      try {
+        // @ts-ignore
+        const text = String.raw({ raw: { length: 1, 0: symbol } });
+        results.push(text);
+      } catch (error) {
+        results.push(error instanceof TypeError ? "TypeError" : "other");
+      }
+      if (results.join("|") !== "${expected}") throw new Error(results.join("|"));
+    `;
+
+    it("agrees with Node", async () => {
+      const expected = "enullundefined12|a1btruec|anullb||TypeError|TypeError|TypeError|TypeError";
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects a wrong expectation", async () => {
+      const wrong = "enullundefined12|a1btruec|anullb|null|TypeError|TypeError|TypeError|TypeError";
+      expect((await checkModel(getSource(wrong))).failure?.message).toContain("anullb||");
+    });
+  });
+
+  describe("throws the TypeError of a symbol for an index that a method converts", () => {
+    const getSource = (expected: string) => `
+      const symbol = Symbol("1");
+      const list = [0, 1, 2];
+      const sample = new Int8Array([0, 1, 2]);
+      const view = new DataView(new ArrayBuffer(4));
+      let caught = "";
+      try {
+        // @ts-ignore
+        list.copyWithin(0, symbol);
+      } catch (error) {
+        caught += error instanceof TypeError ? "t" : "x";
+      }
+      try {
+        // @ts-ignore
+        sample.fill(1, 0, symbol);
+      } catch (error) {
+        caught += error instanceof TypeError ? "t" : "x";
+      }
+      try {
+        // @ts-ignore
+        view.getInt8(symbol);
+      } catch (error) {
+        caught += error instanceof TypeError ? "t" : "x";
+      }
+      // @ts-ignore
+      const little = view.getInt16(0, symbol);
+      const read = caught + "|" + little + "|" + list.join() + "|" + sample.join();
+      if (read !== "${expected}") throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("ttt|0|0,1,2|0,1,2"))).failure).toBeUndefined();
+    });
+
+    it("rejects a wrong expectation", async () => {
+      expect((await checkModel(getSource("ttt|0|0,1,2|1,1,2"))).failure?.message).toContain(
+        "ttt|0|0,1,2|0,1,2",
+      );
+    });
+  });
 });

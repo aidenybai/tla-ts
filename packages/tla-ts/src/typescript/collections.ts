@@ -1125,7 +1125,7 @@ const translateSequenceOperation = (
       () =>
         useJavaScript(
           "SequenceWith",
-          [sequence, translate(argument), translate(call.arguments[1])],
+          [sequence, getIndex(argument), translate(call.arguments[1])],
           context,
         ),
     ],
