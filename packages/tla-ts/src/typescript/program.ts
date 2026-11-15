@@ -1,6 +1,18 @@
 import ts from "@typescript/typescript6";
 import { TlaTypeScriptError } from "../errors";
+import { isStrictCode } from "./context";
 import { rejectEarlyErrors } from "./early-errors";
+
+// TypeScript checks every file as a module, so it rejects a word that only strict mode reserves, as
+// yield or public, even as a name outside strict mode.
+const RESERVED_WORD_ERRORS = new Set([1212, 1213, 1214]);
+
+const getNodeAt = (node: ts.Node, position: number): ts.Node =>
+  ts.forEachChild(node, (child) =>
+    child.getStart() <= position && position < child.getEnd()
+      ? getNodeAt(child, position)
+      : undefined,
+  ) ?? node;
 
 const COMPILER_OPTIONS: ts.CompilerOptions = {
   strict: true,
@@ -160,7 +172,14 @@ export const createProgram = (
   if (syntaxErrors.length > 0)
     throw new TlaTypeScriptError(ts.formatDiagnostics(syntaxErrors, host));
   rejectEarlyErrors(sourceFile);
-  const diagnostics = ts.getPreEmitDiagnostics(program);
+  const diagnostics = ts
+    .getPreEmitDiagnostics(program)
+    .filter(
+      (diagnostic) =>
+        !RESERVED_WORD_ERRORS.has(diagnostic.code) ||
+        diagnostic.file === undefined ||
+        isStrictCode(getNodeAt(diagnostic.file, diagnostic.start ?? 0)),
+    );
   if (diagnostics.length > 0) throw new TlaTypeScriptError(ts.formatDiagnostics(diagnostics, host));
   return {
     sourceFile,
