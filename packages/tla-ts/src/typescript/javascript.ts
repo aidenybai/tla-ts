@@ -36,7 +36,8 @@ export const WELL_KNOWN_SYMBOLS = [
 export const JAVASCRIPT_MODULE = `------------------------------ MODULE JavaScript ------------------------------
 EXTENDS Integers, Sequences, FiniteSets, TLC
 
-CONSTANTS Undefined, Null, Ref, Big, BuiltIns, ConstantFunctions, Symbols, Fractions,
+CONSTANTS Undefined, Null, Ref, Big, Wide, Double, BuiltIns, ConstantFunctions, Symbols, Fractions,
+          Doubles,
           Characters, Cases, Normals, NaN, Infinity, NegativeInfinity, NegativeZero
 
 LOCAL Digits == {"-", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9"}
@@ -78,6 +79,21 @@ IsBigInt(value) ==
   LET text == ToString(value)
   IN Len(text) >= 7 /\\ SubSeq(text, 1, 7) = "(Big :>"
 
+\\* An integer beyond TLC's 32 bits, which tla-ts holds as two halves under the model value Wide.
+IsWide(value) ==
+  LET text == ToString(value)
+  IN Len(text) >= 8 /\\ SubSeq(text, 1, 8) = "(Wide :>"
+
+\\* A number that is neither an integer up to 2^53 either way nor a fraction that a literal gives,
+\\* which tla-ts holds exactly under the model value Double, as its sign, the power of 2 of its odd
+\\* significand's last bit, and that significand's two halves.
+IsDouble(value) ==
+  LET text == ToString(value)
+  IN Len(text) >= 10 /\\ SubSeq(text, 1, 10) = "(Double :>"
+
+\\* Whether a number may hold no TLC integer, so that no comparison with an integer may read it.
+LOCAL IsBig(value) == IsWide(value) \\/ IsDouble(value)
+
 TypeOf(value) ==
   LET text == ToString(value)
       first == SubSeq(text, 1, 1)
@@ -88,6 +104,7 @@ TypeOf(value) ==
        [] first = "\\"" -> "string"
        [] \\A i \\in 1..Len(text) : SubSeq(text, i, i) \\in Digits -> "number"
        [] IsBigInt(value) -> "bigint"
+       [] IsWide(value) \\/ IsDouble(value) -> "number"
        [] first \\in {"[", "<", "{", "("} \\cup Digits -> "object"
        [] IsSymbol(value) -> "symbol"
        [] IsFraction(value) -> "number"
@@ -96,30 +113,416 @@ TypeOf(value) ==
 \\* TLC can't tell whether a value that isn't an integer is in Int, so this asks TypeOf.
 IsNumber(value) == TypeOf(value) = "number"
 
-LOCAL IsInteger(value) == IsNumber(value) /\\ value \\notin SpecialNumbers /\\ ~IsFraction(value)
+LOCAL IsInteger(value) ==
+  IsNumber(value) /\\ value \\notin SpecialNumbers /\\ ~IsFraction(value) /\\ ~IsBig(value)
+
+\\* Whether a value is an integer from 0 to a maximum.
+IsIntegerWithin(value, maximum) == IsInteger(value) /\\ value \\in 0..maximum
 
 \\* Whether a value is a number other than NaN and the infinities.
-IsFinite(value) == IsInteger(value) \\/ value = NegativeZero \\/ IsFraction(value)
+IsFinite(value) == IsInteger(value) \\/ value = NegativeZero \\/ IsFraction(value) \\/ IsBig(value)
 
-LOCAL IsZero(value) == value = 0 \\/ value = NegativeZero
+\\* Number.isSafeInteger, where a Wide integer is past 2^53 - 1 only at 2^53 either way.
+IsSafeInteger(value) ==
+  /\\ IsFinite(value)
+  /\\ ~IsFraction(value)
+  /\\ ~IsDouble(value)
+  /\\ ~(IsWide(value) /\\ value[Wide][1] \\in {-4194304, 4194304} /\\ value[Wide][2] = 0)
+
+LOCAL IsZero(value) == value = NegativeZero \\/ (~IsBig(value) /\\ value = 0)
 
 LOCAL IsNegative(value) ==
   \\/ value = NegativeZero
   \\/ value = NegativeInfinity
   \\/ IsFraction(value) /\\ Floor(value) < 0
+  \\/ IsWide(value) /\\ value[Wide][1] < 0
+  \\/ IsDouble(value) /\\ value[Double][1]
   \\/ IsInteger(value) /\\ value < 0
 
 LOCAL Magnitude(value) == IF value = NegativeZero THEN 0 ELSE value
 
 LOCAL Absolute(value) == IF value < 0 THEN -value ELSE value
 
+LOCAL MaxInteger == 2147483647
+
+\\* A Wide integer is high * 2^31 + low, with low from 0 to 2^31 - 1, so that each half fits TLC's
+\\* integers. tla-ts holds an integer as Wide only outside them, and only up to 2^53 either way,
+\\* where every integer is a number.
+LOCAL Halves(value) ==
+  CASE IsWide(value) -> value[Wide]
+    [] value >= 0 -> <<0, value>>
+    [] OTHER -> <<-1, value + MaxInteger + 1>>
+
+LOCAL WideOf(halves) ==
+  CASE halves[1] = 0 -> halves[2]
+    [] halves[1] = -1 -> halves[2] - MaxInteger - 1
+    [] \\/ halves[1] > 4194304
+       \\/ halves[1] = 4194304 /\\ halves[2] > 0
+       \\/ halves[1] < -4194304 ->
+         Assert(FALSE, "tla-ts can't hold an integer beyond 2^53")
+    [] OTHER -> Wide :> halves
+
+LOCAL WideNegate(value) ==
+  LET halves == Halves(value)
+  IN WideOf(IF halves[2] = 0
+            THEN <<-halves[1], 0>>
+            ELSE <<-halves[1] - 1, MaxInteger - halves[2] + 1>>)
+
+LOCAL WideAdd(left, right) ==
+  LET augend == Halves(left)
+      addend == Halves(right)
+      isCarried == augend[2] > MaxInteger - addend[2]
+  IN WideOf(<<augend[1] + addend[1] + (IF isCarried THEN 1 ELSE 0),
+              IF isCarried THEN augend[2] - (MaxInteger - addend[2]) - 1 ELSE augend[2] + addend[2]>>)
+
+\\* The halves of a sum of two integers from 0 that halves give, whose high half may pass 2^22.
+LOCAL RawAdd(augend, addend) ==
+  LET isCarried == augend[2] > MaxInteger - addend[2]
+  IN <<augend[1] + addend[1] + (IF isCarried THEN 1 ELSE 0),
+       IF isCarried THEN augend[2] - (MaxInteger - addend[2]) - 1 ELSE augend[2] + addend[2]>>
+
+\\* The halves of an integer from 0 below 2^31 times 2^shift, for a shift from 1 to 30.
+LOCAL RawShifted(value, shift) ==
+  <<value \\div 2^(31 - shift), (value % 2^(31 - shift)) * 2^shift>>
+
+\\* The halves of the product of two integers from 0 below 2^31, from the products of their 16-bit
+\\* halves.
+LOCAL RawProduct(left, right) ==
+  LET leftHigh == left \\div 65536
+      leftLow == left % 65536
+      rightHigh == right \\div 65536
+      rightLow == right % 65536
+  IN RawAdd(RawAdd(<<2 * leftHigh * rightHigh, 0>>, RawShifted(leftHigh * rightLow, 16)),
+            RawAdd(RawAdd(RawShifted(leftLow * rightHigh, 16), RawShifted((leftLow \\div 256) * rightLow, 8)),
+                   <<0, (leftLow % 256) * rightLow>>))
+
+\\* Whether halves hold an integer up to 2^53.
+LOCAL FitsWide(halves) == halves[1] < 4194304 \\/ (halves[1] = 4194304 /\\ halves[2] = 0)
+
+\\* The decimal digits of high * 2^31 + low, from 0, each a division by 10 with 2^31 as
+\\* 10 * 214748364 + 8.
+RECURSIVE WideDigits(_, _)
+WideDigits(high, low) ==
+  IF high = 0
+  THEN ToString(low)
+  ELSE LET part == (high % 10) * 8 + (low % 10)
+       IN WideDigits(high \\div 10, (high % 10) * 214748364 + low \\div 10 + part \\div 10)
+            \\o ToString(part % 10)
+
+LOCAL WideText(value) ==
+  IF value[Wide][1] < 0
+  THEN "-" \\o WideDigits(WideNegate(value)[Wide][1], WideNegate(value)[Wide][2])
+  ELSE WideDigits(value[Wide][1], value[Wide][2])
+
+LOCAL BeyondInteger == Assert(FALSE, "tla-ts can't use an integer beyond 32 bits here")
+
+\\* An integer's magnitude, which is Wide for -2^31.
+LOCAL Unsigned(value) == IF IsNegative(value) THEN WideNegate(value) ELSE value
+
+\\* The bits that an integer from 0 below 2^31 takes.
+RECURSIVE BitLength(_)
+BitLength(value) == IF value = 0 THEN 0 ELSE 1 + BitLength(value \\div 2)
+
+LOCAL HalvesBits(halves) == IF halves[1] = 0 THEN BitLength(halves[2]) ELSE 31 + BitLength(halves[1])
+
+LOCAL Halved(halves) == <<halves[1] \\div 2, (halves[1] % 2) * 1073741824 + halves[2] \\div 2>>
+
+LOCAL Doubled(halves) == <<halves[1] * 2 + halves[2] \\div 1073741824, (halves[2] % 1073741824) * 2>>
+
+RECURSIVE ShiftedLeft(_, _)
+ShiftedLeft(halves, count) == IF count = 0 THEN halves ELSE ShiftedLeft(Doubled(halves), count - 1)
+
+\\* The halves of an integer other than 0 without its trailing zero bits, and how many it had.
+RECURSIVE OddPart(_, _)
+OddPart(halves, zeros) ==
+  CASE halves = <<0, 0>> -> Assert(FALSE, "tla-ts can't take the binary form of 0")
+    [] halves[2] % 2 = 1 -> <<halves, zeros>>
+    [] OTHER -> OddPart(Halved(halves), zeros + 1)
+
+\\* A finite number other than 0 as a Double holds it: its sign, the power of 2 of its odd
+\\* significand's last bit, and the significand's halves.
+LOCAL Binary(value) ==
+  CASE IsDouble(value) -> value[Double]
+    [] IsFraction(value) -> Fractions[FractionPosition(value)].binary
+    [] OTHER -> LET odd == OddPart(Halves(Unsigned(value)), 0)
+                IN <<IsNegative(value), odd[2], odd[1][1], odd[1][2]>>
+
+\\* The number of a binary form: an integer up to 2^53 either way as an integer, a fraction that a
+\\* literal gives as that fraction, and any other as a Double, so that each number has one form.
+\\* Past the largest number it's an infinity, and tla-ts stops where it would round below the least.
+LOCAL FromBinary(binary) ==
+  LET significand == <<binary[3], binary[4]>>
+      top == binary[2] + HalvesBits(significand) - 1
+  IN CASE top > 1023 -> IF binary[1] THEN NegativeInfinity ELSE Infinity
+       [] binary[2] < -1074 -> Assert(FALSE, "tla-ts can't round a number below 2^-1074")
+       [] binary[2] >= 0 /\\ (top < 53 \\/ (significand = <<0, 1>> /\\ top = 53)) ->
+            LET magnitude == WideOf(ShiftedLeft(significand, binary[2]))
+            IN IF binary[1] THEN WideNegate(magnitude) ELSE magnitude
+       [] \\E position \\in DOMAIN Fractions : Fractions[position].binary = binary ->
+            Fractions[CHOOSE position \\in DOMAIN Fractions : Fractions[position].binary = binary].value
+       [] OTHER -> Double :> binary
+
+\\* The power of 2 that an integer other than 0 is, either way, or -1.
+LOCAL TwoPower(value) ==
+  IF (IsInteger(value) \\/ IsWide(value)) /\\ ~IsZero(value) /\\ <<Binary(value)[3], Binary(value)[4]>> = <<0, 1>>
+  THEN Binary(value)[2]
+  ELSE -1
+
+\\* Whether one binary form's magnitude is below another's, by the power of 2 of their first bits,
+\\* then by their significands with 53 bits each.
+LOCAL MagnitudeBelow(left, right) ==
+  LET leftBits == HalvesBits(<<left[3], left[4]>>)
+      rightBits == HalvesBits(<<right[3], right[4]>>)
+      leftTop == left[2] + leftBits - 1
+      rightTop == right[2] + rightBits - 1
+      leftSignificand == ShiftedLeft(<<left[3], left[4]>>, 53 - leftBits)
+      rightSignificand == ShiftedLeft(<<right[3], right[4]>>, 53 - rightBits)
+  IN \\/ leftTop < rightTop
+     \\/ /\\ leftTop = rightTop
+        /\\ \\/ leftSignificand[1] < rightSignificand[1]
+           \\/ leftSignificand[1] = rightSignificand[1] /\\ leftSignificand[2] < rightSignificand[2]
+
+\\* The order of numbers where one is a Double.
+LOCAL BinaryLessThan(left, right) ==
+  CASE left = NegativeInfinity -> right # NegativeInfinity
+    [] right = Infinity -> left # Infinity
+    [] left = Infinity \\/ right = NegativeInfinity -> FALSE
+    [] IsZero(left) -> ~IsZero(right) /\\ ~IsNegative(right)
+    [] IsZero(right) -> IsNegative(left)
+    [] IsNegative(left) # IsNegative(right) -> IsNegative(left)
+    [] IsNegative(left) -> MagnitudeBelow(Binary(right), Binary(left))
+    [] OTHER -> MagnitudeBelow(Binary(left), Binary(right))
+
+
+\\* Exact arithmetic on naturals as sequences of 14-bit limbs, the least first, without a last 0, so
+\\* that a product of two limbs and a carry stays inside TLC's integers.
+LOCAL Limb == 16384
+
+RECURSIVE NatTrim(_)
+NatTrim(nat) == IF nat # <<>> /\\ nat[Len(nat)] = 0 THEN NatTrim(SubSeq(nat, 1, Len(nat) - 1)) ELSE nat
+
+LOCAL NatOf(value) == NatTrim(<<value % Limb, (value \\div Limb) % Limb, value \\div (Limb * Limb)>>)
+
+LOCAL LimbAt(nat, position) == IF position <= Len(nat) THEN nat[position] ELSE 0
+
+RECURSIVE NatSum(_, _, _, _)
+NatSum(left, right, position, carry) ==
+  IF position > Len(left) /\\ position > Len(right) /\\ carry = 0
+  THEN <<>>
+  ELSE LET total == LimbAt(left, position) + LimbAt(right, position) + carry
+       IN <<total % Limb>> \\o NatSum(left, right, position + 1, total \\div Limb)
+
+LOCAL NatAdd(left, right) == NatTrim(NatSum(left, right, 1, 0))
+
+\\* The limbs of left - right from a position on, where left isn't below right.
+RECURSIVE NatDifference(_, _, _, _)
+NatDifference(left, right, position, borrow) ==
+  IF position > Len(left)
+  THEN <<>>
+  ELSE LET total == LimbAt(left, position) - LimbAt(right, position) - borrow
+       IN <<IF total < 0 THEN total + Limb ELSE total>>
+            \\o NatDifference(left, right, position + 1, IF total < 0 THEN 1 ELSE 0)
+
+LOCAL NatSubtract(left, right) == NatTrim(NatDifference(left, right, 1, 0))
+
+RECURSIVE NatBelowFrom(_, _, _)
+NatBelowFrom(left, right, position) ==
+  /\\ position >= 1
+  /\\ \\/ left[position] < right[position]
+     \\/ left[position] = right[position] /\\ NatBelowFrom(left, right, position - 1)
+
+LOCAL NatBelow(left, right) ==
+  \\/ Len(left) < Len(right)
+  \\/ Len(left) = Len(right) /\\ NatBelowFrom(left, right, Len(left))
+
+\\* The limbs of a natural times a factor below Limb, from a position on.
+RECURSIVE NatTimesFrom(_, _, _, _)
+NatTimesFrom(nat, factor, position, carry) ==
+  IF position > Len(nat)
+  THEN NatOf(carry)
+  ELSE LET total == nat[position] * factor + carry
+       IN <<total % Limb>> \\o NatTimesFrom(nat, factor, position + 1, total \\div Limb)
+
+LOCAL NatTimes(nat, factor) == NatTrim(NatTimesFrom(nat, factor, 1, 0))
+
+LOCAL NatShiftLimbs(nat, count) == IF nat = <<>> THEN <<>> ELSE [position \\in 1..count |-> 0] \\o nat
+
+RECURSIVE NatProduct(_, _)
+NatProduct(left, right) ==
+  IF right = <<>>
+  THEN <<>>
+  ELSE NatAdd(NatTimes(left, Head(right)), NatShiftLimbs(NatProduct(left, Tail(right)), 1))
+
+LOCAL NatShiftLeft(nat, bits) == NatShiftLimbs(NatTimes(nat, 2^(bits % 14)), bits \\div 14)
+
+\\* The limbs of a natural's quotient by a divisor below Limb, the highest limbs divided first.
+RECURSIVE NatQuotientFrom(_, _, _, _)
+NatQuotientFrom(nat, divisor, position, remainder) ==
+  IF position = 0
+  THEN <<>>
+  ELSE LET current == remainder * Limb + nat[position]
+       IN NatQuotientFrom(nat, divisor, position - 1, current % divisor) \\o <<current \\div divisor>>
+
+\\* A natural divided by 2^bits, rounded down.
+LOCAL NatShiftRight(nat, bits) ==
+  LET kept == IF bits \\div 14 >= Len(nat) THEN <<>> ELSE SubSeq(nat, bits \\div 14 + 1, Len(nat))
+  IN NatTrim(NatQuotientFrom(kept, 2^(bits % 14), Len(kept), 0))
+
+LOCAL NatBits(nat) == IF nat = <<>> THEN 0 ELSE 14 * (Len(nat) - 1) + BitLength(nat[Len(nat)])
+
+LOCAL NatIsOdd(nat) == nat # <<>> /\\ nat[1] % 2 = 1
+
+LOCAL NatOfHalves(halves) == NatAdd(NatShiftLeft(NatOf(halves[1]), 31), NatOf(halves[2]))
+
+\\* The halves of a natural below 2^54, whose third limb straddles bit 31.
+LOCAL NatHalves(nat) ==
+  <<LimbAt(nat, 3) \\div 8 + LimbAt(nat, 4) * 2048,
+    LimbAt(nat, 1) + LimbAt(nat, 2) * Limb + (LimbAt(nat, 3) % 8) * 268435456>>
+
+\\* A natural's quotient and remainder by another, one bit at a time from the highest.
+RECURSIVE NatDivideFrom(_, _, _, _, _)
+NatDivideFrom(nat, divisor, bit, quotient, remainder) ==
+  IF bit < 0
+  THEN <<quotient, remainder>>
+  ELSE LET current == NatAdd(NatShiftLeft(remainder, 1),
+                             IF NatIsOdd(NatShiftRight(nat, bit)) THEN <<1>> ELSE <<>>)
+           fits == ~NatBelow(current, divisor)
+       IN NatDivideFrom(nat, divisor, bit - 1,
+                        NatAdd(NatShiftLeft(quotient, 1), IF fits THEN <<1>> ELSE <<>>),
+                        IF fits THEN NatSubtract(current, divisor) ELSE current)
+
+LOCAL NatDivide(nat, divisor) == NatDivideFrom(nat, divisor, NatBits(nat) - 1, <<>>, <<>>)
+
+\\* A natural other than 0 below 2^54 times 2^exponent as a number.
+LOCAL FromNat(isNegative, nat, exponent) ==
+  LET odd == OddPart(NatHalves(nat), 0)
+  IN FromBinary(<<isNegative, exponent + odd[2], odd[1][1], odd[1][2]>>)
+
+\\* A natural other than 0 times 2^exponent, rounded to the nearest number, an even significand where
+\\* two are as near, as IEEE 754 rounds: 53 bits, or fewer where the number is below 2^-1022.
+LOCAL Rounded(isNegative, nat, exponent) ==
+  LET bits == NatBits(nat)
+      shift == IF bits - 53 > -1074 - exponent THEN bits - 53 ELSE -1074 - exponent
+      kept == NatShiftRight(nat, shift)
+      rest == NatSubtract(nat, NatShiftLeft(kept, shift))
+      half == NatShiftLeft(<<1>>, shift - 1)
+      rounded == IF NatBelow(half, rest) \\/ (rest = half /\\ NatIsOdd(kept))
+                 THEN NatAdd(kept, <<1>>)
+                 ELSE kept
+  IN CASE shift <= 0 -> FromNat(isNegative, nat, exponent)
+       [] rounded = <<>> -> IF isNegative THEN NegativeZero ELSE 0
+       [] OTHER -> FromNat(isNegative, rounded, exponent + shift)
+
+LOCAL Significand(binary) == NatOfHalves(<<binary[3], binary[4]>>)
+
+\\* A finite number other than 0 times 2^count, which is exact unless it falls below 2^-1022, where it
+\\* may need rounding.
+LOCAL Scaled(value, count) ==
+  LET binary == Binary(value)
+  IN IF binary[2] + count < -1074
+     THEN Rounded(binary[1], Significand(binary), binary[2] + count)
+     ELSE FromBinary(<<binary[1], binary[2] + count, binary[3], binary[4]>>)
+
+\\* The sum of two finite numbers other than 0, rounded.
+LOCAL ExactSum(left, right) ==
+  LET a == Binary(left)
+      b == Binary(right)
+      low == IF a[2] < b[2] THEN a[2] ELSE b[2]
+      aligned(binary) == NatShiftLeft(Significand(binary), binary[2] - low)
+  IN CASE a[1] = b[1] -> Rounded(a[1], NatAdd(aligned(a), aligned(b)), low)
+       [] aligned(a) = aligned(b) -> 0
+       [] NatBelow(aligned(b), aligned(a)) -> Rounded(a[1], NatSubtract(aligned(a), aligned(b)), low)
+       [] OTHER -> Rounded(b[1], NatSubtract(aligned(b), aligned(a)), low)
+
+\\* The product of two finite numbers other than 0, rounded.
+LOCAL ExactProduct(left, right) ==
+  LET a == Binary(left)
+      b == Binary(right)
+  IN Rounded(a[1] # b[1], NatProduct(Significand(a), Significand(b)), a[2] + b[2])
+
+\\* The quotient of two finite numbers other than 0, rounded, from 55 bits of it or more and whether
+\\* any remain, which decide the rounding.
+LOCAL ExactQuotient(left, right) ==
+  LET a == Binary(left)
+      b == Binary(right)
+      spare == 55 + NatBits(Significand(b)) - NatBits(Significand(a))
+      shift == IF spare > 0 THEN spare ELSE 0
+      division == NatDivide(NatShiftLeft(Significand(a), shift), Significand(b))
+  IN Rounded(a[1] # b[1],
+             NatAdd(NatShiftLeft(division[1], 1), IF division[2] = <<>> THEN <<>> ELSE <<1>>),
+             a[2] - b[2] - shift - 1)
+
+LOCAL NatModulo(nat, modulus) == NatDivide(nat, modulus)[2]
+
+\\* 2^exponent modulo a natural, by squaring.
+RECURSIVE TwoPowerModulo(_, _)
+TwoPowerModulo(exponent, modulus) ==
+  IF exponent = 0
+  THEN NatModulo(<<1>>, modulus)
+  ELSE LET half == TwoPowerModulo(exponent \\div 2, modulus)
+           squared == NatModulo(NatProduct(half, half), modulus)
+       IN IF exponent % 2 = 1 THEN NatModulo(NatShiftLeft(squared, 1), modulus) ELSE squared
+
+\\* The remainder of two finite numbers other than 0, which is exact, with the dividend's sign. A
+\\* dividend below the divisor is the remainder, and the divisor's significand divides one that its
+\\* power of 2 shifts.
+LOCAL ExactRemainder(left, right) ==
+  LET a == Binary(left)
+      b == Binary(right)
+      remainder ==
+        IF a[2] >= b[2]
+        THEN NatModulo(NatProduct(NatModulo(Significand(a), Significand(b)),
+                                  TwoPowerModulo(a[2] - b[2], Significand(b))),
+                       Significand(b))
+        ELSE NatModulo(Significand(a), NatShiftLeft(Significand(b), b[2] - a[2]))
+      low == IF a[2] < b[2] THEN a[2] ELSE b[2]
+  IN CASE b[2] - a[2] >= 54 -> left
+       [] remainder = <<>> -> IF a[1] THEN NegativeZero ELSE 0
+       [] OTHER -> Rounded(a[1], remainder, low)
+
+
+\\* 5^count, by squaring.
+RECURSIVE FivePower(_)
+FivePower(count) ==
+  IF count = 0
+  THEN <<1>>
+  ELSE LET half == FivePower(count \\div 2)
+           squared == NatProduct(half, half)
+       IN IF count % 2 = 1 THEN NatTimes(squared, 5) ELSE squared
+
+\\* The decimal digits of a natural, four at a time from the least.
+RECURSIVE NatText(_)
+NatText(nat) ==
+  IF NatBelow(nat, <<10000>>)
+  THEN ToString(LimbAt(nat, 1))
+  ELSE LET quotient == NatTrim(NatQuotientFrom(nat, 10000, Len(nat), 0))
+           rest == ToString(LimbAt(NatSubtract(nat, NatTimes(quotient, 10000)), 1))
+       IN NatText(quotient) \\o SubSeq("000", 1, 4 - Len(rest)) \\o rest
+
+\\* The exact decimal digits of a finite number other than 0, without its sign, and the power of 10
+\\* of the first: its significand times 2^exponent, or, below 1, times 5^-exponent over 10^-exponent.
+LOCAL ExactDecimal(value) ==
+  LET binary == Binary(value)
+      text == NatText(IF binary[2] >= 0
+                      THEN NatShiftLeft(Significand(binary), binary[2])
+                      ELSE NatProduct(Significand(binary), FivePower(-binary[2])))
+  IN [digits |-> text, exponent |-> Len(text) - 1 + (IF binary[2] >= 0 THEN 0 ELSE binary[2])]
+
+\\* Number.isInteger.
+IsIntegral(value) ==
+  IsFinite(value) /\\ ~IsFraction(value) /\\ ~(IsDouble(value) /\\ value[Double][2] < 0)
+
 Negate(value) ==
   CASE value = NaN -> NaN
     [] value = Infinity -> NegativeInfinity
     [] value = NegativeInfinity -> Infinity
     [] value = NegativeZero -> 0
+    [] IsDouble(value) ->
+         Double :> <<~value[Double][1], value[Double][2], value[Double][3], value[Double][4]>>
+    [] IsWide(value) -> WideNegate(value)
     [] value = 0 -> NegativeZero
     [] IsFraction(value) -> Fractions[Len(Fractions) + 1 - FractionPosition(value)].value
+    [] value = -2147483647 - 1 -> WideNegate(value)
     [] OTHER -> -value
 
 Add(left, right) ==
@@ -129,9 +532,30 @@ Add(left, right) ==
     [] right \\in Infinities -> right
     [] left = NegativeZero -> right
     [] right = NegativeZero -> left
+    [] IsDouble(left) \\/ IsDouble(right) ->
+         CASE IsDouble(left) /\\ IsDouble(right) /\\ left = Negate(right) -> 0
+           [] IsDouble(left) /\\ IsDouble(right) /\\ left = right -> Scaled(left, 1)
+           [] IsZero(left) -> right
+           [] IsZero(right) -> left
+           [] OTHER -> ExactSum(left, right)
+    \\* Wide integers below 2^52 either way add to one up to 2^53.
+    [] IsWide(left) /\\ IsZero(right) -> left
+    [] IsWide(right) /\\ IsZero(left) -> right
+    [] IsWide(left) \\/ IsWide(right) ->
+         IF /\\ ~IsFraction(left) /\\ ~IsFraction(right)
+            /\\ ~IsWide(left) \\/ (left[Wide][1] >= -2097152 /\\ left[Wide][1] < 2097152)
+            /\\ ~IsWide(right) \\/ (right[Wide][1] >= -2097152 /\\ right[Wide][1] < 2097152)
+         THEN WideAdd(left, right)
+         ELSE ExactSum(left, right)
     [] left = 0 -> right
     [] right = 0 -> left
-    [] IsFraction(left) \\/ IsFraction(right) -> Assert(FALSE, "tla-ts can't add fractions")
+    \\* A number plus itself is twice it, and plus its negation 0, exactly.
+    [] IsFraction(left) /\\ IsFraction(right) /\\ left = right -> Scaled(left, 1)
+    [] IsFraction(left) /\\ IsFraction(right) /\\ left = Negate(right) -> 0
+    [] IsFraction(left) \\/ IsFraction(right) -> ExactSum(left, right)
+    [] \\/ right > 0 /\\ left > MaxInteger - right
+       \\/ right < 0 /\\ left < -MaxInteger - 1 - right ->
+         WideAdd(left, right)
     [] OTHER -> left + right
 
 Subtract(left, right) == Add(left, Negate(right))
@@ -144,17 +568,38 @@ Multiply(left, right) ==
               [] isNegative -> NegativeInfinity
               [] OTHER -> Infinity
        [] IsZero(left) \\/ IsZero(right) -> IF isNegative THEN NegativeZero ELSE 0
+       [] (IsDouble(left) \\/ IsFraction(left)) /\\ TwoPower(right) >= 0 ->
+            IF IsNegative(right) THEN Negate(Scaled(left, TwoPower(right))) ELSE Scaled(left, TwoPower(right))
+       [] (IsDouble(right) \\/ IsFraction(right)) /\\ TwoPower(left) >= 0 ->
+            IF IsNegative(left) THEN Negate(Scaled(right, TwoPower(left))) ELSE Scaled(right, TwoPower(left))
+       [] IsDouble(left) \\/ IsDouble(right) -> ExactProduct(left, right)
+       [] IsWide(left) \\/ IsWide(right) ->
+            LET wide == Unsigned(IF IsWide(left) THEN left ELSE right)
+                factor == Unsigned(IF IsWide(left) THEN right ELSE left)
+                signed(product) == IF isNegative THEN WideNegate(product) ELSE product
+            IN CASE IsFraction(left) \\/ IsFraction(right) \\/ IsWide(factor) -> ExactProduct(left, right)
+                 [] factor = 1 -> signed(wide)
+                 [] wide[Wide][1] > 4194304 \\div factor -> ExactProduct(left, right)
+                 [] OTHER ->
+                      LET raw == RawAdd(<<wide[Wide][1] * factor, 0>>, RawProduct(wide[Wide][2], factor))
+                      IN IF FitsWide(raw) THEN signed(WideOf(raw)) ELSE ExactProduct(left, right)
        [] left = 1 -> right
        [] right = 1 -> left
        [] left = -1 -> Negate(right)
        [] right = -1 -> Negate(left)
-       [] IsFraction(left) \\/ IsFraction(right) -> Assert(FALSE, "tla-ts can't multiply fractions")
+       [] IsFraction(left) \\/ IsFraction(right) -> ExactProduct(left, right)
+       \\* -2^31 has no negation that TLC holds.
+       [] -2147483647 - 1 \\in {left, right} -> ExactProduct(left, right)
+       [] Absolute(left) > MaxInteger \\div Absolute(right) ->
+            LET raw == RawProduct(Absolute(left), Absolute(right))
+            IN IF FitsWide(raw)
+               THEN IF isNegative THEN WideNegate(WideOf(raw)) ELSE WideOf(raw)
+               ELSE ExactProduct(left, right)
        [] OTHER ->
             LET product == Magnitude(left) * Magnitude(right)
             IN IF product = 0 /\\ isNegative THEN NegativeZero ELSE product
 
-\\* JavaScript's /, where tla-ts represents only a quotient that is an integer, an infinity, NaN,
-\\* or -0.
+\\* JavaScript's /, rounded as IEEE 754 rounds.
 Divide(left, right) ==
   LET isNegative == IsNegative(left) # IsNegative(right)
       signed(magnitude) == CASE magnitude = 0 /\\ isNegative -> NegativeZero
@@ -166,26 +611,40 @@ Divide(left, right) ==
        [] IsZero(right) /\\ IsZero(left) -> NaN
        [] IsZero(right) -> IF isNegative THEN NegativeInfinity ELSE Infinity
        [] IsZero(left) -> signed(0)
+       [] IsDouble(right) -> ExactQuotient(left, right)
+       [] TwoPower(right) >= 0 /\\ (IsDouble(left) \\/ IsFraction(left) \\/ IsBig(right) \\/ IsWide(left)) ->
+            IF IsNegative(right) THEN Negate(Scaled(left, -TwoPower(right))) ELSE Scaled(left, -TwoPower(right))
+       [] IsBig(left) \\/ IsBig(right) -> ExactQuotient(left, right)
        [] right = 1 -> left
-       [] IsFraction(left) \\/ IsFraction(right) -> Assert(FALSE, "tla-ts can't divide fractions")
+       [] IsFraction(left) \\/ IsFraction(right) \\/ -2147483647 - 1 \\in {left, right} ->
+            ExactQuotient(left, right)
        [] Absolute(Magnitude(left)) % Absolute(Magnitude(right)) = 0 ->
             signed(Absolute(Magnitude(left)) \\div Absolute(Magnitude(right)))
-       [] OTHER -> Assert(FALSE, "tla-ts can't represent the fraction " \\o ToString(left) \\o " / "
-                                 \\o ToString(right))
+       [] TwoPower(right) >= 0 ->
+            IF IsNegative(right) THEN Negate(Scaled(left, -TwoPower(right))) ELSE Scaled(left, -TwoPower(right))
+       [] OTHER -> ExactQuotient(left, right)
 
 \\* JavaScript's %, whose result has the sign of the dividend.
 Remainder(left, right) ==
   CASE left = NaN \\/ right = NaN \\/ left \\in Infinities \\/ IsZero(right) -> NaN
     [] right \\in Infinities \\/ IsZero(left) -> left
-    [] IsFraction(left) \\/ IsFraction(right) ->
-         Assert(FALSE, "tla-ts can't compute the remainder of fractions")
+    [] IsFraction(left) \\/ IsFraction(right) \\/ IsBig(left) \\/ IsBig(right) ->
+         ExactRemainder(left, right)
+    [] -2147483647 - 1 \\in {left, right} -> ExactRemainder(left, right)
     [] OTHER ->
          LET remainder == Absolute(left) % Absolute(right)
          IN CASE left > 0 -> remainder
               [] remainder = 0 -> NegativeZero
               [] OTHER -> -remainder
 
-LOCAL IsOdd(value) == IsInteger(value) /\\ value % 2 = 1
+\\* 2^31 is even, so a Wide integer is odd where its low half is.
+LOCAL IsOdd(value) ==
+  \\/ IsInteger(value) /\\ value % 2 = 1
+  \\/ IsWide(value) /\\ value[Wide][2] % 2 = 1
+
+\\* An integer to a power, one product at a time, where each may need a Wide integer.
+RECURSIVE WidePower(_, _)
+WidePower(base, exponent) == IF exponent = 0 THEN 1 ELSE Multiply(base, WidePower(base, exponent - 1))
 
 \\* JavaScript's **, as Number::exponentiate defines it.
 Power(base, exponent) ==
@@ -198,48 +657,61 @@ Power(base, exponent) ==
            [] ~IsNegative(exponent) -> Infinity
            [] IsOdd(exponent) -> NegativeZero
            [] OTHER -> 0
-    [] base = 0 -> IF IsNegative(exponent) THEN Infinity ELSE 0
+    [] /\\ IsNegative(base)
+       /\\ base # NegativeZero
+       /\\ exponent \\notin Infinities
+       /\\ ~IsIntegral(exponent) -> NaN
+    [] IsBig(base) /\\ exponent \\notin Infinities -> BeyondInteger
+    [] ~IsBig(base) /\\ base = 0 -> IF IsNegative(exponent) THEN Infinity ELSE 0
     [] base = NegativeZero ->
          CASE ~IsNegative(exponent) /\\ IsOdd(exponent) -> NegativeZero
            [] ~IsNegative(exponent) -> 0
            [] IsOdd(exponent) -> NegativeInfinity
            [] OTHER -> Infinity
     [] exponent \\in Infinities ->
-         LET exceedsOne == IF IsFraction(base)
-                           THEN Floor(base) >= 1 \\/ Floor(base) <= -2
-                           ELSE Absolute(base) > 1
-         IN CASE base \\in {1, -1} -> NaN
+         LET exceedsOne == CASE IsFraction(base) -> Floor(base) >= 1 \\/ Floor(base) <= -2
+                              [] IsWide(base) -> TRUE
+                              [] IsDouble(base) -> MagnitudeBelow(<<FALSE, 0, 0, 1>>, Binary(base))
+                              [] OTHER -> Absolute(base) > 1
+         IN CASE ~IsBig(base) /\\ base \\in {1, -1} -> NaN
               [] exceedsOne = (exponent = Infinity) -> Infinity
               [] OTHER -> 0
     [] IsFraction(base) \\/ IsFraction(exponent) ->
          Assert(FALSE, "tla-ts can't raise fractions to a power")
-    [] exponent >= 0 -> base ^ exponent
+    [] IsBig(base) \\/ IsBig(exponent) -> BeyondInteger
+    [] exponent >= 0 -> IF Absolute(base) <= 1 THEN base ^ exponent ELSE WidePower(base, exponent)
     [] Absolute(base) = 1 -> IF IsOdd(exponent) THEN base ELSE 1
     \\* 2 ** -1075 is half the least number above 0, so it and any power nearer 0 round to 0.
     [] exponent <= -1075 -> IF IsNegative(base) /\\ IsOdd(exponent) THEN NegativeZero ELSE 0
+    \\* A power of 2 to a power is a power of 2, which a double holds exactly.
+    [] TwoPower(base) > 0 ->
+         FromBinary(<<IsNegative(base) /\\ IsOdd(exponent), TwoPower(base) * exponent, 0, 1>>)
     [] OTHER -> Assert(FALSE, "tla-ts can't represent this value")
 
 \\* The order of numbers, by their kind, then their floor, then their position in Fractions, where
 \\* an integer comes before the fractions above it.
 LOCAL Rank(value) ==
-  CASE value = NegativeInfinity -> <<0, 0, 0>>
-    [] value = Infinity -> <<2, 0, 0>>
-    [] IsFraction(value) -> <<1, Floor(value), FractionPosition(value)>>
-    [] OTHER -> <<1, Magnitude(value), 0>>
+  CASE value = NegativeInfinity -> <<0, 0, 0, 0>>
+    [] value = Infinity -> <<2, 0, 0, 0>>
+    [] IsFraction(value) -> <<1, Halves(Floor(value))[1], Halves(Floor(value))[2], FractionPosition(value)>>
+    [] OTHER -> <<1, Halves(Magnitude(value))[1], Halves(Magnitude(value))[2], 0>>
 
 LOCAL Precedes(left, right) ==
   \\E position \\in DOMAIN left :
     /\\ left[position] < right[position]
     /\\ \\A earlier \\in 1..(position - 1) : left[earlier] = right[earlier]
 
-LessThan(left, right) == left # NaN /\\ right # NaN /\\ Precedes(Rank(left), Rank(right))
+LessThan(left, right) ==
+  /\\ left # NaN
+  /\\ right # NaN
+  /\\ IF IsDouble(left) \\/ IsDouble(right)
+     THEN BinaryLessThan(left, right)
+     ELSE Precedes(Rank(left), Rank(right))
 
 LessOrEqual(left, right) == left # NaN /\\ right # NaN /\\ ~LessThan(right, left)
 
 \\* TLC's integers have 32 bits, where a BigInt has as many as it needs, so tla-ts stops where one
 \\* would leave them.
-LOCAL MaxInteger == 2147483647
-
 \\* The integer that a BigInt holds, where TypeScript's types may let another value through.
 LOCAL IntegerOfBigInt(value) ==
   IF IsBigInt(value)
@@ -301,10 +773,14 @@ BigIntPower(base, exponent) ==
        [] OTHER -> BigIntPowerOf(base, count)
 
 \\* The order of numbers and BigInts, which compares their mathematical values.
-LOCAL NumericRank(value) == IF IsBigInt(value) THEN <<1, value[Big], 0>> ELSE Rank(value)
+LOCAL NumericRank(value) ==
+  IF IsBigInt(value) THEN <<1, Halves(value[Big])[1], Halves(value[Big])[2], 0>> ELSE Rank(value)
 
 NumericLessThan(left, right) ==
-  left # NaN /\\ right # NaN /\\ Precedes(NumericRank(left), NumericRank(right))
+  CASE (IsDouble(left) \\/ IsDouble(right)) /\\ (IsBigInt(left) \\/ IsBigInt(right)) ->
+         Assert(FALSE, "tla-ts can't compare a BigInt with this number")
+    [] IsDouble(left) \\/ IsDouble(right) -> LessThan(left, right)
+    [] OTHER -> left # NaN /\\ right # NaN /\\ Precedes(NumericRank(left), NumericRank(right))
 
 NumericLessOrEqual(left, right) == left # NaN /\\ right # NaN /\\ ~NumericLessThan(right, left)
 
@@ -313,17 +789,29 @@ AbsoluteValue(value) == IF IsNegative(value) THEN Negate(value) ELSE value
 
 \\* Math.sign.
 Sign(value) ==
-  CASE value \\in {NaN, NegativeZero, 0} -> value
+  CASE value \\in {NaN, NegativeZero} \\/ IsZero(value) -> value
     [] IsNegative(value) -> -1
     [] OTHER -> 1
 
 \\* Math.round, which tla-ts works out for each fraction as it compiles.
-Round(value) == IF IsFraction(value) THEN Fractions[FractionPosition(value)].round ELSE value
+Round(value) ==
+  CASE IsFraction(value) -> Fractions[FractionPosition(value)].round
+    [] IsDouble(value) /\\ value[Double][2] < 0 -> Assert(FALSE, "tla-ts can't round this number")
+    [] OTHER -> value
 
 \\* ToInt32 of a number. TLC keeps integers in 32 bits, so it leaves an integer as it is.
 LOCAL Int32(value) ==
   CASE value \\in SpecialNumbers -> 0
     [] IsFraction(value) -> Truncate(value)
+    [] IsWide(value) ->
+         IF value[Wide][1] % 2 = 1 THEN value[Wide][2] - MaxInteger - 1 ELSE value[Wide][2]
+    \\* A Double that is an integer keeps the low 32 bits of its magnitude, negated with it.
+    [] IsDouble(value) /\\ value[Double][2] >= 0 ->
+         LET magnitude == NatShiftLeft(Significand(value[Double]), value[Double][2])
+             low == NatHalves(NatSubtract(magnitude, NatShiftLeft(NatShiftRight(magnitude, 32), 32)))
+             signed == IF low[1] = 1 THEN low[2] - MaxInteger - 1 ELSE low[2]
+         IN IF ~value[Double][1] \\/ signed = -MaxInteger - 1 THEN signed ELSE -signed
+    [] IsDouble(value) -> Assert(FALSE, "tla-ts can't convert this number to 32 bits")
     [] OTHER -> value
 
 \\* The count that a shift takes: ToUint32 of its right operand, modulo 32.
@@ -359,7 +847,8 @@ BitwiseOr(left, right) == BitwiseOperation("or", left, right)
 BitwiseXor(left, right) == BitwiseOperation("xor", left, right)
 
 \\* JavaScript's ~.
-BitwiseNot(value) == -Int32(value) - 1
+\\* JavaScript's ~, as -1 - x, which keeps -2^31 inside TLC's integers.
+BitwiseNot(value) == -1 - Int32(value)
 
 \\* Math.imul: the low 32 bits of a product. Each integer splits into halves of 16 bits, and each
 \\* product of halves into bytes, so no step leaves TLC's 32 bits.
@@ -412,6 +901,7 @@ Hypot(values) ==
        [] has({NaN}) -> NaN
        [] \\E position \\in DOMAIN values : IsFraction(values[position]) ->
             Assert(FALSE, "tla-ts can't represent a fraction")
+       [] \\E position \\in DOMAIN values : IsBig(values[position]) -> BeyondInteger
        [] root * root # square -> Assert(FALSE, "tla-ts can't represent a fraction")
        [] OTHER -> root
 
@@ -432,14 +922,14 @@ SignedRightShift(left, right) ==
        [] a < 0 -> -1
        [] OTHER -> 0
 
-\\* JavaScript's >>>, which reads its left operand as unsigned. tla-ts can't hold an integer from
-\\* 2^31 that the shift doesn't make smaller.
+\\* JavaScript's >>>, which reads its left operand as unsigned, so that a shift by 0 of an integer
+\\* below 0 gives a Wide integer.
 UnsignedRightShift(left, right) ==
   LET a == Int32(left)
       count == ShiftCount(right)
   IN CASE a >= 0 /\\ count < 31 -> a \\div 2 ^ count
        [] a >= 0 -> 0
-       [] count = 0 -> Assert(FALSE, "tla-ts can't hold " \\o ToString(a) \\o " >>> 0 in an integer")
+       [] count = 0 -> WideOf(<<1, a + MaxInteger + 1>>)
        [] count = 31 -> 1
        [] OTHER -> a \\div 2 ^ count + 2 ^ (31 - count) + 2 ^ (31 - count)
 
@@ -475,6 +965,11 @@ LOCAL Quotient(left, right, isFloor) ==
        [] IsZero(left) /\\ IsZero(right) -> NaN
        [] left \\in Infinities \\/ IsZero(right) -> signed(Infinity)
        [] right \\in Infinities \\/ IsZero(left) -> signed(0)
+       [] IsBig(left) \\/ IsBig(right) ->
+            IF /\\ ~IsBig(right) /\\ right = 1
+               /\\ IsWide(left) \\/ (IsDouble(left) /\\ left[Double][2] >= 0)
+            THEN left
+            ELSE Assert(FALSE, "tla-ts can't divide this number exactly")
        [] IsFraction(left) /\\ right = 1 ->
             LET whole == IF isFloor THEN Floor(left) ELSE Truncate(left)
             IN IF whole = 0 /\\ isNegative THEN NegativeZero ELSE whole
@@ -488,14 +983,17 @@ FloorDivide(left, right) == Quotient(left, right, TRUE)
 TruncDivide(left, right) == Quotient(left, right, FALSE)
 
 \\* The position, counting from 1, of the element that a number reads, or 0 where it isn't an
-\\* index.
+\\* index, or is past any sequence's end, as an integer beyond 32 bits is.
 ElementPosition(value) ==
   CASE value = NegativeZero -> 1
-    [] value \\in SpecialNumbers \\/ IsFraction(value) -> 0
+    [] value \\in SpecialNumbers \\/ IsFraction(value) \\/ IsBig(value) -> 0
     [] OTHER -> value + 1
 
 \\* The value that a Set or a Map keeps as a key, where -0 is 0.
-KeyOf(value) == IF value = NegativeZero THEN 0 ELSE value
+KeyOf(value) ==
+  CASE value = NegativeZero -> 0
+    [] IsBig(value) -> BeyondInteger
+    [] OTHER -> value
 
 \\* The map that new Map makes from an array of entries, each a key and its value, where a later
 \\* entry of a key replaces an earlier one's value.
@@ -522,6 +1020,10 @@ RelativeIndex(index, length) ==
     [] index = Infinity -> length
     [] index = NegativeInfinity -> -1
     [] IsFraction(index) -> IF Truncate(index) < 0 THEN length + Truncate(index) ELSE Truncate(index)
+    \\* An integer past 2^31 either way lies past either end of any array that tla-ts holds.
+    [] IsWide(index) \\/ (IsDouble(index) /\\ index[Double][2] >= 0) ->
+         IF IsNegative(index) THEN -1 ELSE length
+    [] IsBig(index) -> BeyondInteger
     [] index < 0 -> length + index
     [] OTHER -> index
 
@@ -535,6 +1037,9 @@ ClampedCount(count, maximum) ==
     [] count = Infinity -> maximum
     [] IsFraction(count) ->
          IF Truncate(count) < 0 THEN 0 ELSE IF Truncate(count) > maximum THEN maximum ELSE Truncate(count)
+    [] IsWide(count) \\/ (IsDouble(count) /\\ count[Double][2] >= 0) ->
+         IF IsNegative(count) THEN 0 ELSE maximum
+    [] IsBig(count) -> BeyondInteger
     [] count < 0 -> 0
     [] count > maximum -> maximum
     [] OTHER -> count
@@ -1058,11 +1563,20 @@ KeyPosition(key) ==
     [] TypeOf(key) = "string" /\\ IsIndex(key) -> ToIndex(key) + 1
     [] OTHER -> Assert(FALSE, "tla-ts can't read this key of an array")
 
-\\* An object's own string keys, with the indices first in order.
+\\* Whether a key is an array index, below 2^32 - 1, which an object lists before its other keys.
+LOCAL IsListedIndex(key) ==
+  /\\ Len(key) > 0
+  /\\ \\A position \\in 1..Len(key) : SubSeq(key, position, position) \\in Digits \\ {"-"}
+  /\\ Len(key) = 1 \\/ SubSeq(key, 1, 1) # "0"
+  /\\ Len(key) < 10 \\/ (Len(key) = 10 /\\ DigitsBelow(key, "4294967295"))
+
+\\* An object's own string keys, with the indices first in order, which their digits give.
 OwnKeys(object) ==
   LET strings == SelectSeq(object.keys, LAMBDA key : ~IsSymbol(key))
-  IN SortSeq(SelectSeq(strings, IsIndex), LAMBDA left, right : ToIndex(left) < ToIndex(right))
-       \\o SelectSeq(strings, LAMBDA key : ~IsIndex(key))
+  IN SortSeq(SelectSeq(strings, IsListedIndex),
+             LAMBDA left, right :
+               Len(left) < Len(right) \\/ (Len(left) = Len(right) /\\ DigitsBelow(left, right)))
+       \\o SelectSeq(strings, LAMBDA key : ~IsListedIndex(key))
 
 LOCAL EnumerableKeys(object) ==
   SelectSeq(OwnKeys(object), LAMBDA key : object.attributes[key].enumerable)
@@ -1193,28 +1707,26 @@ BitsValue(bits, from, count) ==
 LOCAL ByteBits(bytes) ==
   [position \\in 0..(8 * Len(bytes) - 1) |-> (bytes[position \\div 8 + 1] \\div 2^(position % 8)) % 2]
 
-\\* A float's little-endian bytes as a number, which stops at a fraction, or at a number past TLC's
-\\* integers.
+\\* A float's little-endian bytes as the number they hold exactly: its significand, with the leading
+\\* bit that a normal float leaves out, times a power of 2.
 LOCAL FloatOf(bytes, exponentBits, fractionBits) ==
   LET bits == ByteBits(bytes)
       isNegative == bits[8 * Len(bytes) - 1] = 1
       exponent == BitsValue(bits, fractionBits, exponentBits)
-      power == exponent - (2^(exponentBits - 1) - 1)
-      shift == fractionBits - power
       isFractionZero == \\A position \\in 0..(fractionBits - 1) : bits[position] = 0
-      magnitude ==
-        IF shift >= 0
-        THEN 2^power + BitsValue(bits, shift, fractionBits - shift)
-        ELSE 2^power + BitsValue(bits, 0, fractionBits) * 2^(-shift)
+      leading == IF exponent = 0 THEN 0 ELSE 1
+      significand ==
+        IF fractionBits < 31
+        THEN <<0, BitsValue(bits, 0, fractionBits) + leading * 2^fractionBits>>
+        ELSE <<BitsValue(bits, 31, fractionBits - 31) + leading * 2^(fractionBits - 31),
+               BitsValue(bits, 0, 31)>>
+      odd == OddPart(significand, 0)
+      power == (IF exponent = 0 THEN 1 ELSE exponent) - (2^(exponentBits - 1) - 1) - fractionBits
   IN CASE exponent = 2^exponentBits - 1 /\\ isFractionZero ->
             IF isNegative THEN NegativeInfinity ELSE Infinity
        [] exponent = 2^exponentBits - 1 -> NaN
        [] exponent = 0 /\\ isFractionZero -> IF isNegative THEN NegativeZero ELSE 0
-       [] power < 0 \\/ \\E position \\in 0..(shift - 1) : bits[position] = 1 ->
-            Assert(FALSE, "tla-ts can't represent a fraction")
-       [] power > 30 -> Assert(FALSE, "tla-ts can't represent a number this big")
-       [] isNegative -> -magnitude
-       [] OTHER -> magnitude
+       [] OTHER -> FromBinary(<<isNegative, power + odd[2], odd[1][1], odd[1][2]>>)
 
 \\* An element's little-endian bytes as the number or the BigInt they hold, where tla-ts holds only a
 \\* BigInt within 32 bits.
@@ -1747,6 +2259,7 @@ ToLength(value) ==
     [] value = Infinity -> Assert(FALSE, "tla-ts can't represent this value")
     [] value \\in SpecialNumbers -> 0
     [] IsFraction(value) -> IF Floor(value) < 0 THEN 0 ELSE Floor(value)
+    [] IsBig(value) -> IF IsNegative(value) THEN 0 ELSE BeyondInteger
     [] TypeOf(value) = "number" -> IF value < 0 THEN 0 ELSE value
     [] TypeOf(value) = "string" -> ToLengthOfText(value)
     [] value = <<>> -> 0
@@ -1971,6 +2484,8 @@ RECURSIVE Differs(_, _)
 Differs(left, right) ==
   CASE TypeOf(left) # TypeOf(right) -> TRUE
     [] IsRef(left) \\/ IsRef(right) -> ToString(left) # ToString(right)
+    \\* A number beyond TLC's integers has one form, which TLC can't compare with an integer.
+    [] IsBig(left) \\/ IsBig(right) -> ToString(left) # ToString(right)
     [] HasIdentity(left) \\/ HasIdentity(right) -> left # right
     [] IsSequenceValue(left) /\\ IsSequenceValue(right) ->
          \\/ Len(left) # Len(right)
@@ -1984,13 +2499,13 @@ SameValue(left, right) ==
 \\* JavaScript's ===, where NaN differs from itself and -0 equals 0.
 StrictEquals(left, right) ==
   IF IsNumber(left) /\\ IsNumber(right)
-  THEN left # NaN /\\ right # NaN /\\ Magnitude(left) = Magnitude(right)
+  THEN left # NaN /\\ right # NaN /\\ SameValue(Magnitude(left), Magnitude(right))
   ELSE SameValue(left, right)
 
 \\* What includes and Set compare by, where NaN equals itself and -0 equals 0.
 SameValueZero(left, right) ==
   IF IsNumber(left) /\\ IsNumber(right)
-  THEN Magnitude(left) = Magnitude(right)
+  THEN SameValue(Magnitude(left), Magnitude(right))
   ELSE SameValue(left, right)
 
 \\* Whether a value that a proxy's get or set trap gives or takes agrees with a property that the
@@ -2018,6 +2533,11 @@ StringOf(value) ==
     [] value = NegativeInfinity -> "-Infinity"
     [] value = NegativeZero -> "0"
     [] IsFraction(value) -> Fractions[FractionPosition(value)].text
+    [] IsWide(value) -> WideText(value)
+    \\* Doubles holds the text of each Double that a literal gives.
+    [] IsDouble(value) /\\ \\E position \\in DOMAIN Doubles : Doubles[position].binary = value[Double] ->
+         Doubles[CHOOSE position \\in DOMAIN Doubles : Doubles[position].binary = value[Double]].text
+    [] IsDouble(value) -> Assert(FALSE, "tla-ts can't write this number")
     [] TypeOf(value) = "number" -> ToString(value)
     [] IsBigInt(value) -> ToString(value[Big])
     [] OTHER -> Assert(FALSE, "tla-ts can't convert objects to strings")
@@ -2256,18 +2776,65 @@ NextElementPosition(heap, ref, position, length, isReversed) ==
             [] isReversed -> CHOOSE other \\in later : \\A more \\in later : more <= other
             [] OTHER -> CHOOSE other \\in later : \\A more \\in later : other <= more
 
+\\* Whether a length is Infinity or an integer past 2^31, which ToLength clamps to 2^53 - 1, and
+\\* which lies past every index that TLC's integers hold.
+LOCAL IsLong(length) ==
+  \\/ length = Infinity
+  \\/ IsWide(length) /\\ ~IsNegative(length)
+  \\/ IsDouble(length) /\\ ~IsNegative(length) /\\ length[Double][2] >= 0
+
+\\* The integer of a key of decimal digits from 10 on, below 2^53.
+RECURSIVE DecimalOf(_)
+DecimalOf(text) ==
+  IF Len(text) <= 9
+  THEN ParseDigits(text, 10)
+  ELSE Add(Multiply(DecimalOf(SubSeq(text, 1, Len(text) - 9)), 1000000000),
+           ParseDigits(SubSeq(text, Len(text) - 8, Len(text)), 10))
+
+\\* Whether a key is an integer below 2^53 in its canonical decimal form.
+LOCAL IsLongKey(key) ==
+  /\\ ~IsSymbol(key)
+  /\\ Len(key) > 0
+  /\\ Len(key) <= 16
+  /\\ \\A position \\in 1..Len(key) : SubSeq(key, position, position) \\in Digits \\ {"-"}
+  /\\ Len(key) = 1 \\/ SubSeq(key, 1, 1) # "0"
+  /\\ Len(key) < 16 \\/ DigitsBelow(key, "9007199254740992")
+
+\\* The keys below 2^53 that an object or its prototypes hold.
+RECURSIVE LongKeys(_, _)
+LongKeys(heap, ref) ==
+  LET object == Lookup(heap, ref)
+  IN {key \\in DOMAIN object.values : IsLongKey(key)}
+       \\cup IF object.prototype = Null THEN {} ELSE LongKeys(heap, object.prototype)
+
+\\* The length that a loop over an array-like object visits, past which a length beyond 2^31 holds
+\\* only holes: one more than the greatest index that the object or its prototypes hold.
+HeldLength(heap, ref, length) ==
+  CASE ~IsLong(length) -> ToLength(length)
+    [] \\E key \\in LongKeys(heap, ref) : Len(key) >= 10 ->
+         Assert(FALSE, "tla-ts can't order keys this big")
+    [] IndexKeys(heap, ref) = {} -> 0
+    [] OTHER ->
+         LET held == {ToIndex(key) : key \\in IndexKeys(heap, ref)}
+         IN 1 + CHOOSE greatest \\in held : \\A other \\in held : other <= greatest
+
 \\* The elements that an array-like object or its prototypes hold below its length, in order, with
 \\* their indices. The array methods that skip holes visit these. A record holds the length, so TLC
 \\* reads it even when no element is present.
 PresentElements(heap, ref) ==
-  LET length == LengthOf(heap, ref)
-      present == {position \\in {ToIndex(key) : key \\in IndexKeys(heap, ref)} : position < length}
+  LET raw == Get(heap, ref, "length")
+      isBeyond == IsLong(raw)
+      length == IF isBeyond THEN raw ELSE LengthOf(heap, ref)
+      present == {position \\in {ToIndex(key) : key \\in IndexKeys(heap, ref)} :
+                    isBeyond \\/ position < length}
       indices == [position \\in 1..Cardinality(present) |->
                    CHOOSE element \\in present :
                      Cardinality({other \\in present : other < element}) = position - 1]
-  IN [length |-> length,
-      indices |-> indices,
-      values |-> Read([position \\in DOMAIN indices |-> Get(heap, ref, ToString(indices[position]))])]
+  IN IF isBeyond /\\ \\E key \\in LongKeys(heap, ref) : Len(key) >= 10
+     THEN Assert(FALSE, "tla-ts can't order keys this big")
+     ELSE [length |-> length,
+           indices |-> indices,
+           values |-> Read([position \\in DOMAIN indices |-> Get(heap, ref, ToString(indices[position]))])]
 
 \\* Whether a function's call is still Function.prototype.call, which it reads from
 \\* Function.prototype where the heap holds no object of its own for it.
@@ -2425,6 +2992,7 @@ NumberOfBigInt(value) == IntegerOfBigInt(value)
 LOCAL IntegerOf(value) ==
   CASE value \\in {Undefined, NaN, NegativeZero} -> 0
     [] IsFraction(value) -> Truncate(value)
+    [] IsBig(value) -> BeyondInteger
     [] OTHER -> value
 
 \\* An integer or an infinity, clamped to 0..length.
@@ -2537,7 +3105,9 @@ LOCAL CodeUnit(code) ==
 \\* RangeError for a number that isn't a code point and writes one past 2^16 as a surrogate pair.
 LOCAL FromCharCode(code, isCodePoint) ==
   LET point == CASE code \\in {NaN, Infinity, NegativeInfinity, NegativeZero} -> 0
+                 [] isCodePoint /\\ IsBig(code) -> BeyondInteger
                  [] isCodePoint -> code
+                 [] IsBig(code) -> Int32(code) % 65536
                  [] OTHER -> IntegerOf(code) % 65536
   IN  CASE isCodePoint /\\ (code \\in {NaN, Infinity, NegativeInfinity} \\/ IsFraction(code) \\/ point < 0 \\/ point > 1114111) ->
              Assert(FALSE, "tla-ts can't throw the RangeError of String.fromCodePoint")
@@ -3022,26 +3592,33 @@ NumberToString(value, radix) ==
              Assert(FALSE, "tla-ts can't throw the RangeError of a radix outside 2 to 36")
         [] IsFraction(value) /\\ base # 10 ->
              Assert(FALSE, "tla-ts can't write a fraction in a radix other than 10")
+        [] IsBig(value) /\\ base # 10 -> BeyondInteger
         [] ~IsInteger(value) \\/ base = 10 -> StringOf(value)
         [] value < 0 -> "-" \\o RadixDigits(-value, base)
         [] OTHER -> RadixDigits(value, base)
-
-\\* The digits of a number other than 0, without its sign, and the power of 10 of the first: those
-\\* of its exact value, or the fewest that give it back.
-LOCAL Decimal(value, isShortest) ==
-  IF IsFraction(value)
-  THEN LET fraction == Fractions[FractionPosition(value)]
-       IN IF isShortest
-          THEN [digits |-> fraction.shortest, exponent |-> fraction.shortestExponent]
-          ELSE [digits |-> fraction.digits, exponent |-> fraction.exponent]
-  ELSE LET text == ToString(Absolute(Magnitude(value)))
-       IN [digits |-> IF isShortest THEN TrimZeros(text) ELSE text, exponent |-> Len(text) - 1]
 
 RECURSIVE TrimZeros(_)
 TrimZeros(text) ==
   IF Len(text) > 1 /\\ SubSeq(text, Len(text), Len(text)) = "0"
   THEN TrimZeros(SubSeq(text, 1, Len(text) - 1))
   ELSE text
+
+\\* The digits of a number other than 0, without its sign, and the power of 10 of the first: those
+\\* of its exact value, or the fewest that give it back.
+LOCAL Decimal(value, isShortest) ==
+  CASE IsFraction(value) /\\ isShortest ->
+         [digits |-> Fractions[FractionPosition(value)].shortest,
+          exponent |-> Fractions[FractionPosition(value)].shortestExponent]
+    [] IsDouble(value) /\\ isShortest ->
+         IF \\E position \\in DOMAIN Doubles : Doubles[position].binary = value[Double]
+         THEN LET double == Doubles[CHOOSE position \\in DOMAIN Doubles :
+                                      Doubles[position].binary = value[Double]]
+              IN [digits |-> double.shortest, exponent |-> double.shortestExponent]
+         ELSE Assert(FALSE, "tla-ts can't write this number")
+    [] IsFraction(value) \\/ IsDouble(value) -> ExactDecimal(value)
+    [] OTHER ->
+         LET text == StringOf(Unsigned(Magnitude(value)))
+         IN [digits |-> IF isShortest THEN TrimZeros(text) ELSE text, exponent |-> Len(text) - 1]
 
 RECURSIVE Incremented(_)
 Incremented(text) ==
@@ -3077,15 +3654,15 @@ LOCAL Mantissa(digits) ==
 LOCAL ExponentText(exponent) ==
   IF exponent >= 0 THEN "e+" \\o ToString(exponent) ELSE "e-" \\o ToString(-exponent)
 
-\\* Whether toFixed, toExponential, or toPrecision of a number throws the RangeError of digits outside
-\\* their range, which toExponential and toPrecision check only for a finite number, and
-\\* toPrecision only for digits that aren't undefined.
-NumberFormatThrows(method, value, digits) ==
-  LET count == IntegerOf(digits)
+\\* Whether toFixed, toExponential, or toPrecision throws the RangeError of its digits argument,
+\\* which toExponential and toPrecision check only for a finite number, and toPrecision only where
+\\* the argument isn't undefined.
+NumberMethodThrows(method, value, argument) ==
+  LET count == IntegerOf(argument)
       isOutside(least) == count \\in Infinities \\/ count < least \\/ count > 100
   IN CASE method = "toFixed" -> isOutside(0)
        [] method = "toExponential" -> IsFinite(value) /\\ isOutside(0)
-       [] OTHER -> digits # Undefined /\\ IsFinite(value) /\\ isOutside(1)
+       [] OTHER -> argument # Undefined /\\ IsFinite(value) /\\ isOutside(1)
 
 \\* Number.prototype.toFixed, which writes a number with digits digits after the point.
 NumberToFixed(value, digits) ==
@@ -3096,6 +3673,7 @@ NumberToFixed(value, digits) ==
   IN CASE count \\in Infinities \\/ count < 0 \\/ count > 100 ->
             Assert(FALSE, "tla-ts can't throw the RangeError of toFixed")
        [] ~IsFinite(value) -> StringOf(value)
+       [] ~IsZero(value) /\\ decimal.exponent >= 21 -> StringOf(value)
        [] count = 0 -> SignOf(value) \\o integer
        [] OTHER -> SignOf(value) \\o SubSeq(padded, 1, Len(padded) - count) \\o "."
                      \\o SubSeq(padded, Len(padded) - count + 1, Len(padded))
@@ -3571,7 +4149,7 @@ RegExpSplit(regexp, value, limit) == RegExpPieces(regexp, Text(value), limit)
 ToBoolean(value) ==
   CASE value \\in {Undefined, Null} -> FALSE
     [] TypeOf(value) = "boolean" -> value
-    [] TypeOf(value) = "number" -> value \\notin {0, NaN, NegativeZero}
+    [] TypeOf(value) = "number" -> value # NaN /\\ ~IsZero(value)
     [] TypeOf(value) = "string" -> value # ""
     [] IsBigInt(value) -> value[Big] # 0
     [] OTHER -> TRUE
@@ -3666,6 +4244,21 @@ LOCAL IsArrayObject(object) == "isArray" \\in DOMAIN object /\\ object.isArray
 \\* IsArray, which reads a proxy's target, where an array outside the heap is a sequence. The global
 \\* object is an ordinary object.
 RECURSIVE IsArray(_, _)
+\\* Whether an array method throws the RangeError of making an array of an object's length, which is
+\\* Infinity or an integer from 2^32, for an ordinary object that isn't an array and whose length is
+\\* a data property.
+ArrayCreateThrows(heap, ref) ==
+  /\\ IsHeap(ref)
+  /\\ ~IsProxy(heap, ref)
+  /\\ ~heap.objects[ref[Ref]].isOpaque
+  /\\ ~IsArray(heap, ref)
+  \\* A length that a getter gives is left to the call, which runs the getter.
+  /\\ GetterOf(heap, ref, "length") = Undefined
+  /\\ LET length == Get(heap, ref, "length")
+     IN \\/ length = Infinity
+        \\/ IsWide(length) /\\ ~IsNegative(length) /\\ length[Wide][1] >= 2
+        \\/ IsDouble(length) /\\ ~IsNegative(length) /\\ length[Double][2] >= 0
+
 IsArray(heap, value) ==
   CASE IsRef(value) /\\ ~IsHeap(value) /\\ value = GlobalObject -> FALSE
     [] IsProxy(heap, value) ->
@@ -3905,7 +4498,7 @@ LessOrEqualPrimitives(left, right) ==
 
 \\* A number in a script that holds only integers, which can't hold NaN, the infinities, or -0.
 PlainNumber(value) ==
-  IF value \\in SpecialNumbers
+  IF value \\in SpecialNumbers \\/ IsBig(value)
   THEN Assert(FALSE, "tla-ts can't represent " \\o ToString(value) \\o " in this script")
   ELSE value
 
@@ -4050,21 +4643,44 @@ LOCAL TimeClip(time) ==
 LOCAL ToIntegerOrInfinity(value) ==
   CASE value \\in {NaN, NegativeZero} -> 0
     [] IsFraction(value) -> Truncate(value)
+    [] IsBig(value) -> BeyondInteger
     [] OTHER -> value
 
 LOCAL AreFinite(values) == \\A position \\in DOMAIN values : IsFinite(values[position])
 
+\\* The quotient and the remainder of remainder * 2^(bit + 1) + low % 2^(bit + 1) by a divisor below
+\\* 2^30, one bit at a time, after a quotient's bits so far.
+RECURSIVE DivideLow(_, _, _, _, _)
+DivideLow(remainder, low, bit, quotient, divisor) ==
+  IF bit < 0
+  THEN <<quotient, remainder>>
+  ELSE LET next == 2 * remainder + ((low \\div 2^bit) % 2)
+       IN IF next >= divisor
+          THEN DivideLow(next - divisor, low, bit - 1, 2 * quotient + 1, divisor)
+          ELSE DivideLow(next, low, bit - 1, 2 * quotient, divisor)
+
+\\* The time value of a Wide integer, whose day is outside TLC's integers only past what TimeClip
+\\* allows.
+LOCAL WideTime(value) ==
+  LET halves == Halves(value)
+      low == DivideLow(halves[1] % MsPerDay, halves[2], 30, 0, MsPerDay)
+      day == WideOf(<<halves[1] \\div MsPerDay, low[1]>>)
+  IN IF IsWide(day) THEN NaN ELSE TimeClip([day |-> day, ms |-> low[2]])
+
 \\* The time value that new Date or setTime makes from a number.
 TimeFromNumber(value) ==
-  IF IsFinite(value) THEN TimeClip(TimeValue(0, ToIntegerOrInfinity(value))) ELSE NaN
+  CASE IsWide(value) -> WideTime(value)
+    [] IsDouble(value) -> IF value[Double][2] >= 0 THEN NaN ELSE BeyondInteger
+    [] IsFinite(value) -> TimeClip(TimeValue(0, ToIntegerOrInfinity(value)))
+    [] OTHER -> NaN
 
-\\* The number that a time value is, where it fits TLC's integers.
+\\* The number that a time value is.
 TimeNumber(time) ==
   CASE time = NaN -> NaN
     [] time.day \\in -24..23 -> time.day * MsPerDay + time.ms
     [] time.day = 24 /\\ time.ms <= 73883647 -> 23 * MsPerDay + (time.ms + MsPerDay)
     [] time.day = -25 /\\ time.ms >= 12516352 -> -24 * MsPerDay + (time.ms - MsPerDay)
-    [] OTHER -> Assert(FALSE, "tla-ts can't hold a time value this far from 1970 in a number")
+    [] OTHER -> Add(Multiply(time.day, MsPerDay), time.ms)
 
 LOCAL DayFromYear(year) ==
   365 * (year - 1970) + (year - 1969) \\div 4 - (year - 1901) \\div 100 + (year - 1601) \\div 400
@@ -4353,7 +4969,7 @@ LOCAL SetLastIndex(heap, ref, value) ==
 \\* whatever the flags.
 LOCAL RegExpRun(heap, ref, regexp, text) ==
   LET read == LastIndexValue(heap, ref)
-      start == IF read = Infinity THEN Len(text) + 1 ELSE ToLength(read)
+      start == IF IsLong(read) THEN Len(text) + 1 ELSE ToLength(read)
       isUpdating == regexp.global \\/ regexp.sticky
       found == CASE ~isUpdating /\\ start = start -> RegExpSearch(regexp, text, 0)
                  [] start > Len(text) -> RegExpFailure
@@ -4545,6 +5161,9 @@ LOCAL ArrayLengthOf(value) ==
          ReadNumber(value, LAMBDA kind, isNegative, magnitude :
            IF kind = "integer" /\\ (~isNegative \\/ magnitude = 0) THEN magnitude ELSE -1)
     [] value = NegativeZero -> 0
+    \\* ToUint32 of a Double differs from it.
+    [] IsDouble(value) -> -1
+    [] IsWide(value) -> IF IsNegative(value) \\/ value[Wide][1] >= 2 THEN -1 ELSE BeyondInteger
     [] IsInteger(value) /\\ value >= 0 -> value
     [] IsNumber(value) \\/ value = Undefined -> -1
     [] OTHER -> Assert(FALSE, "tla-ts can't convert this value to an array length")
@@ -4606,38 +5225,45 @@ LOCAL FractionBits(type) == CASE type = "Float16" -> 10 [] type = "Float32" -> 2
 
 LOCAL BitsBytes(bits, size) == [position \\in 1..size |-> BitsValue(bits, 8 * (position - 1), 8)]
 
-\\* The little-endian bytes of a float that holds a number exactly, which stops where it would round.
+\\* The little-endian bytes of a float that holds a number exactly, which stops where it would round:
+\\* the number's binary form shifted so that its first bit leads the fraction, which a normal float
+\\* leaves out, or so that its last bit is the least that a subnormal float holds.
 LOCAL FloatBytes(value, type) ==
   LET size == ElementSize(type)
       exponentBits == ExponentBits(type)
       fractionBits == FractionBits(type)
       top == 8 * size - 1
       ones == 2^exponentBits - 1
+      bias == 2^(exponentBits - 1) - 1
       encode(isNegative, exponent, fraction) ==
         BitsBytes([position \\in 0..top |->
                      CASE position = top -> IF isNegative THEN 1 ELSE 0
                        [] position >= fractionBits -> (exponent \\div 2^(position - fractionBits)) % 2
                        [] OTHER -> fraction[position]], size)
       none == [position \\in 0..(fractionBits - 1) |-> 0]
-      magnitude == IF value < 0 THEN -value ELSE value
-      power == CHOOSE candidate \\in 0..30 : magnitude \\div 2^candidate = 1
-      shift == fractionBits - power
-      rest == magnitude - 2^power
+      binary == Binary(value)
+      significand == <<binary[3], binary[4]>>
+      count == HalvesBits(significand)
+      lead == binary[2] + count - 1
+      least == 1 - bias - fractionBits
+      isSubnormal == lead < 1 - bias
+      shifted == ShiftedLeft(significand, IF isSubnormal THEN binary[2] - least ELSE fractionBits - (count - 1))
+      bit(position) ==
+        IF position < 31
+        THEN (shifted[2] \\div 2^position) % 2
+        ELSE (shifted[1] \\div 2^(position - 31)) % 2
   IN CASE value = NaN ->
             encode(FALSE, ones, [position \\in 0..(fractionBits - 1) |->
                                    IF position = fractionBits - 1 THEN 1 ELSE 0])
        [] value = Infinity -> encode(FALSE, ones, none)
        [] value = NegativeInfinity -> encode(TRUE, ones, none)
        [] value = NegativeZero -> encode(TRUE, 0, none)
-       [] value = 0 -> encode(FALSE, 0, none)
-       [] IsFraction(value) -> Assert(FALSE, "tla-ts can't write a fraction's bits")
-       [] value = -2147483647 - 1 -> Assert(FALSE, "tla-ts can't represent a number this big")
-       [] (shift < 0 /\\ magnitude % 2^(-shift) # 0) \\/ power + 2^(exponentBits - 1) - 1 >= ones ->
+       [] IsZero(value) -> encode(FALSE, 0, none)
+       [] lead > bias \\/ count - 1 > fractionBits \\/ binary[2] < least ->
             Assert(FALSE, "tla-ts can't round a number to a float")
        [] OTHER ->
-            encode(value < 0, power + 2^(exponentBits - 1) - 1,
-                   [position \\in 0..(fractionBits - 1) |->
-                      IF position < shift THEN 0 ELSE (rest \\div 2^(position - shift)) % 2])
+            encode(binary[1], IF isSubnormal THEN 0 ELSE lead + bias,
+                   [position \\in 0..(fractionBits - 1) |-> bit(position)])
 
 \\* The little-endian bytes that an element of a type holds for a number, or for a BigInt, which
 \\* extends its sign past its 32 bits.
@@ -4646,6 +5272,15 @@ NumberBytes(type, value) ==
          [position \\in 1..8 |-> IF position <= 4 THEN (value[Big] \\div 2^(8 * (position - 1))) % 256
                                 ELSE IF value[Big] < 0 THEN 255 ELSE 0]
     [] type \\in {"Float16", "Float32", "Float64"} -> FloatBytes(value, type)
+    \\* An integer type keeps the low bits, which a Wide integer's ToInt32 holds, and a Double from 2^32
+    \\* has none set.
+    [] IsWide(value) /\\ type = "Uint8Clamped" -> <<IF IsNegative(value) THEN 0 ELSE 255>>
+    [] IsWide(value) -> [position \\in 1..ElementSize(type) |-> (Int32(value) \\div 2^(8 * (position - 1))) % 256]
+    [] IsDouble(value) /\\ value[Double][2] >= 32 ->
+         IF type = "Uint8Clamped"
+         THEN <<IF IsNegative(value) THEN 0 ELSE 255>>
+         ELSE [position \\in 1..ElementSize(type) |-> 0]
+    [] IsBig(value) -> BeyondInteger
     [] IsFraction(value) /\\ type = "Uint8Clamped" ->
          Assert(FALSE, "tla-ts can't round a fraction to a byte")
     [] IsFraction(value) ->
@@ -4704,6 +5339,8 @@ IndexOfArgument(value) ==
   IN CASE number \\in {NaN, NegativeZero} -> 0
        [] number \\in {Infinity, NegativeInfinity} -> -1
        [] IsFraction(number) -> IF Truncate(number) < 0 THEN -1 ELSE Truncate(number)
+       [] IsDouble(number) -> IF IsNegative(number) \\/ number[Double][2] >= 0 THEN -1 ELSE BeyondInteger
+       [] IsWide(number) -> IF IsNegative(number) \\/ number[Wide][1] = 4194304 THEN -1 ELSE BeyondInteger
        [] number < 0 -> -1
        [] OTHER -> number
 
@@ -4862,10 +5499,14 @@ DataViewGet(heap, ref, type, request, littleEndian) ==
       isLittle == ToBoolean(littleEndian)
       size == ElementSize(type)
       bytes == SubSeq(ViewedBytes(heap, view), view.byteOffset + index + 1, view.byteOffset + index + size)
+      ordered == IF isLittle THEN bytes ELSE Reversed(bytes)
   IN CASE index = -1 -> Thrown(heap, "RangeError")
        [] isLittle = isLittle /\\ IsOutOfBounds(heap, view) -> Thrown(heap, "TypeError")
        [] index + size > ViewLength(heap, view) -> Thrown(heap, "RangeError")
-       [] OTHER -> Returned(heap, NumberOfBytes(type, IF isLittle THEN bytes ELSE Reversed(bytes)))
+       \\* A script that names DataView holds integers beyond 32 bits, as a Uint32 from 2^31 is.
+       [] type = "Uint32" /\\ ordered[4] >= 128 ->
+            Returned(heap, WideOf(<<1, BitsValue(ByteBits(ordered), 0, 31)>>))
+       [] OTHER -> Returned(heap, NumberOfBytes(type, ordered))
 
 \\* Whether a WeakRef or a FinalizationRegistry can hold a value: an object, or a symbol that the
 \\* registry doesn't hold.
@@ -4982,11 +5623,11 @@ BufferSlice(heap, ref, start, end, isShared, constructor) ==
   LET object == heap.objects[ref[Ref]]
       length == Len(object.bytes)
       clamped(index) == IF index < 0 THEN 0 ELSE IF index > length THEN length ELSE index
-      first == clamped(RelativeIndex(ToIntegerOrInfinity(ToNumber(start)), length))
+      first == clamped(RelativeIndex(ToNumber(start), length))
       final ==
         IF end = Undefined
         THEN length
-        ELSE clamped(RelativeIndex(ToIntegerOrInfinity(ToNumber(end)), length))
+        ELSE clamped(RelativeIndex(ToNumber(end), length))
       species == Get(heap, ref, "constructor")
   IN CASE ~IsBuffer(heap, ref) \\/ object.isShared # isShared -> Thrown(heap, "TypeError")
        [] object.isDetached -> Thrown(heap, "TypeError")
@@ -5385,15 +6026,217 @@ ArrayChangeOf(heap, ref, method, items, length) ==
   ArrayChangeFrom(heap, ref, method, items, length,
                   Get(heap, ref, ToString(IF method = "pop" THEN length - 1 ELSE 0)))
 
-ArrayChange(heap, ref, method, items) == ArrayChangeOf(heap, ref, method, items, LengthOf(heap, ref))
+\\* 2^53 - 1, the greatest length.
+LOCAL MaxLength == Wide :> <<4194303, 2147483647>>
 
-\\* copyWithin() on an array-like object that the heap holds, as the spec runs it index by index,
-\\* backward where the indices it copies to overlap the end of those it copies from, where only the
-\\* indices that the object or its prototypes hold, and those that copy over them, change. The
-\\* indices are the numbers that its arguments give, and end is Undefined where it takes the length.
+LOCAL LongLength(length) ==
+  IF IsWide(length) /\\ length[Wide] # <<4194304, 0>> THEN length ELSE MaxLength
+
+\\* Whether an object that the heap holds has a length past 2^31 that no getter or trap gives.
+HasLongLength(heap, ref) ==
+  /\\ IsHeap(ref)
+  /\\ ~IsProxy(heap, ref)
+  /\\ GetterOf(heap, ref, "length") = Undefined
+  /\\ IsLong(Get(heap, ref, "length"))
+
+\\* indexOf or lastIndexOf on an array-like object whose length is past 2^31, which searches only the
+\\* keys that the object or its prototypes hold, from an index that an integer or an infinity gives.
+LongSearch(heap, ref, target, from, isLast) ==
+  LET length == LongLength(Get(heap, ref, "length"))
+      last == Add(length, -1)
+      given == IF from = NegativeZero THEN 0 ELSE from
+      start ==
+        CASE given = Undefined -> IF isLast THEN last ELSE 0
+          [] given \\in {Infinity, NegativeInfinity} \\/ IsWide(given) \\/ IsInteger(given) ->
+               CASE given = NegativeInfinity -> IF isLast THEN -1 ELSE 0
+                 [] ~IsNegative(given) -> IF isLast /\\ LessThan(last, given) THEN last ELSE given
+                 [] LessThan(Add(length, given), 0) -> IF isLast THEN -1 ELSE 0
+                 [] OTHER -> Add(length, given)
+          [] OTHER -> Assert(FALSE, "tla-ts can't search an array-like object from this index")
+      isSearched(value) ==
+        IF isLast
+        THEN ~LessThan(start, value)
+        ELSE ~LessThan(value, start) /\\ LessThan(value, length)
+      found == {key \\in LongKeys(heap, ref) :
+                  isSearched(DecimalOf(key)) /\\ StrictEquals(Get(heap, ref, key), target)}
+  IN CASE IsProxy(heap, ref) \\/ IsTypedArray(heap, ref) \\/ heap.objects[ref[Ref]].isOpaque ->
+            Assert(FALSE, "tla-ts can't search this object")
+       [] found = {} -> -1
+       [] OTHER ->
+            DecimalOf(CHOOSE key \\in found :
+                        \\A other \\in found :
+                          IF isLast
+                          THEN ~LessThan(DecimalOf(key), DecimalOf(other))
+                          ELSE ~LessThan(DecimalOf(other), DecimalOf(key)))
+
+\\* Writes items to an array-like object from an index that may be past 2^31.
+RECURSIVE LongSets(_, _, _, _)
+LongSets(state, ref, from, items) ==
+  IF state.isThrown \\/ items = <<>>
+  THEN state
+  ELSE LongSets(AndThen(state, LAMBDA heap : ArraySet(heap, ref, StringOf(from), Head(items))),
+                ref, Add(from, 1), Tail(items))
+
+\\* pop or push on an array-like object whose length is past 2^31, which moves no element: pop
+\\* reads and deletes the last index, and push throws a TypeError past 2^53 - 1.
+LOCAL LongChange(heap, ref, method, items, length) ==
+  IF method = "pop"
+  THEN LET last == Add(length, -1)
+           value == Get(heap, ref, StringOf(last))
+           state == AndThen(ArrayDelete(heap, ref, StringOf(last)),
+                            LAMBDA after : ArraySet(after, ref, "length", last))
+       IN [heap |-> state.heap, value |-> value, isThrown |-> state.isThrown]
+  ELSE LET total == Add(length, Len(items))
+           state == AndThen(LongSets([heap |-> heap, isThrown |-> FALSE], ref, length, items),
+                            LAMBDA after : ArraySet(after, ref, "length", total))
+       IN IF LessThan(MaxLength, total)
+          THEN [heap |-> heap, value |-> Undefined, isThrown |-> TRUE]
+          ELSE [heap |-> state.heap, value |-> total, isThrown |-> state.isThrown]
+
+\\* Moves the elements of an array-like object at keys below 2^53 by an offset, from the lowest key
+\\* or from the highest, where a hole deletes the key it moves to.
+RECURSIVE LongMoves(_, _, _, _, _)
+LongMoves(state, ref, froms, offset, isAscending) ==
+  IF state.isThrown \\/ froms = {}
+  THEN state
+  ELSE LET from == CHOOSE key \\in froms :
+                     \\A other \\in froms :
+                       IF isAscending
+                       THEN ~LessThan(DecimalOf(other), DecimalOf(key))
+                       ELSE ~LessThan(DecimalOf(key), DecimalOf(other))
+           key == StringOf(Add(DecimalOf(from), offset))
+           value == Get(state.heap, ref, from)
+       IN LongMoves(
+            CASE ~Has(state.heap, ref, from) -> ArrayDelete(state.heap, ref, key)
+              \\* HACK: TLC reads a value only where it needs it, and Get runs before a write that
+              \\* fails, so comparing the value reads it first.
+              [] value = value -> ArraySet(state.heap, ref, key, value),
+            ref, froms \\ {from}, offset, isAscending)
+
+\\* unshift on an array-like object whose length is past 2^31, which throws a TypeError where the
+\\* length it gives passes 2^53 - 1, and moves only the keys that the object or its prototypes
+\\* hold, or that a move deletes.
+LOCAL LongUnshift(heap, ref, items, length) ==
+  LET count == Len(items)
+      total == Add(length, count)
+      own == {key \\in DOMAIN Lookup(heap, ref).values : IsLongKey(key)}
+      isMoved(value) == ~IsNegative(value) /\\ LessThan(value, length)
+      froms == IF count = 0
+               THEN {}
+               ELSE {key \\in LongKeys(heap, ref) : isMoved(DecimalOf(key))}
+                      \\cup {StringOf(Add(DecimalOf(key), -count)) :
+                            key \\in {key \\in own : isMoved(Add(DecimalOf(key), -count))}}
+      state == AndThen(ArraySets(LongMoves([heap |-> heap, isThrown |-> FALSE], ref, froms, count, FALSE),
+                                 ref, 0, items),
+                       LAMBDA after : ArraySet(after, ref, "length", total))
+  IN CASE ~IsHeap(ref) \\/ IsProxy(heap, ref) \\/ IsTypedArray(heap, ref) \\/ heap.objects[ref[Ref]].isOpaque ->
+            Assert(FALSE, "tla-ts can't unshift onto this object")
+       [] count > 0 /\\ LessThan(MaxLength, total) ->
+            [heap |-> heap, value |-> Undefined, isThrown |-> TRUE]
+       [] OTHER -> [heap |-> state.heap, value |-> total, isThrown |-> state.isThrown]
+
+ArrayChange(heap, ref, method, items) ==
+  LET raw == Get(heap, ref, "length")
+  IN CASE method \\in {"pop", "push"} /\\ IsLong(raw) ->
+            LongChange(heap, ref, method, items, LongLength(raw))
+       [] method = "unshift" /\\ IsLong(raw) -> LongUnshift(heap, ref, items, LongLength(raw))
+       [] OTHER -> ArrayChangeOf(heap, ref, method, items, LengthOf(heap, ref))
+
+\\* The index that a relative index argument gives for an array-like object's length.
+LOCAL LongIndex(value, length) ==
+  CASE value \\in {Undefined, NegativeZero, NegativeInfinity} -> 0
+    [] value = Infinity -> length
+    \\* An integer that a double holds is beyond 2^53, so past every length.
+    [] IsDouble(value) /\\ value[Double][2] >= 0 -> IF IsNegative(value) THEN 0 ELSE length
+    [] IsWide(value) \\/ IsInteger(value) ->
+         CASE ~IsNegative(value) -> IF LessThan(length, value) THEN length ELSE value
+           [] LessThan(Add(length, value), 0) -> 0
+           [] OTHER -> Add(length, value)
+    [] OTHER -> Assert(FALSE, "tla-ts can't use this index of an array-like object")
+
+\\* fill on an array-like object that the heap holds, which writes the value at each index from start
+\\* to end, and throws a TypeError where a write fails.
+ArrayLikeFill(heap, ref, value, start, end) ==
+  LET raw == Get(heap, ref, "length")
+      length == IF IsLong(raw) THEN LongLength(raw) ELSE ToLength(raw)
+      first == LongIndex(start, length)
+      final == IF end = Undefined THEN length ELSE LongIndex(end, length)
+      count == IF LessThan(first, final) THEN Subtract(final, first) ELSE 0
+  IN CASE ~IsHeap(ref) \\/ IsProxy(heap, ref) \\/ IsTypedArray(heap, ref) \\/ heap.objects[ref[Ref]].isOpaque ->
+            Assert(FALSE, "tla-ts can't fill this object")
+       [] IsBig(count) -> Assert(FALSE, "tla-ts can't fill this many elements")
+       [] OTHER ->
+            LET state == LongSets([heap |-> heap, isThrown |-> FALSE], ref, first,
+                                  [position \\in 1..count |-> value])
+            IN [heap |-> state.heap, value |-> ref, isThrown |-> state.isThrown]
+
+\\* slice of an array-like object whose length is past 2^31, which gives the elements from start to
+\\* end where the object or its prototypes hold each.
+LongSlice(heap, ref, start, end) ==
+  LET length == LongLength(Get(heap, ref, "length"))
+      first == LongIndex(start, length)
+      final == IF end = Undefined THEN length ELSE LongIndex(end, length)
+      count == IF LessThan(first, final) THEN Subtract(final, first) ELSE 0
+      keys == [position \\in 1..count |-> StringOf(Add(first, position - 1))]
+  IN CASE IsProxy(heap, ref) \\/ IsTypedArray(heap, ref) \\/ heap.objects[ref[Ref]].isOpaque ->
+            Assert(FALSE, "tla-ts can't slice this object")
+       [] IsBig(count) -> Assert(FALSE, "tla-ts can't slice this many elements")
+       [] \\E position \\in 1..count : ~Has(heap, ref, keys[position]) ->
+            Assert(FALSE, "tla-ts can't slice an array-like object with holes")
+       [] OTHER -> [position \\in 1..count |-> Get(heap, ref, keys[position])]
+
+\\* toSpliced of an array-like object whose length is past 2^31, which reads each index it keeps,
+\\* where count is how many of start and skipCount a call passes.
+LongToSpliced(heap, ref, start, skip, items, count) ==
+  LET length == LongLength(Get(heap, ref, "length"))
+      first == IF count = 0 THEN 0 ELSE LongIndex(start, length)
+      rest == Subtract(length, first)
+      skipped == CASE count = 0 -> 0
+                   [] count = 1 -> rest
+                   [] skip \\in {Undefined, NegativeZero, NegativeInfinity} -> 0
+                   [] skip = Infinity -> rest
+                   [] IsDouble(skip) /\\ skip[Double][2] >= 0 -> IF IsNegative(skip) THEN 0 ELSE rest
+                   [] IsWide(skip) \\/ IsInteger(skip) ->
+                        CASE IsNegative(skip) -> 0
+                          [] LessThan(rest, skip) -> rest
+                          [] OTHER -> skip
+                   [] OTHER -> Assert(FALSE, "tla-ts can't use this index of an array-like object")
+      after == Add(first, skipped)
+      kept == Subtract(length, after)
+      read(from, size) == [position \\in 1..size |-> Get(heap, ref, StringOf(Add(from, position - 1)))]
+  IN CASE IsProxy(heap, ref) \\/ IsTypedArray(heap, ref) \\/ heap.objects[ref[Ref]].isOpaque ->
+            Assert(FALSE, "tla-ts can't splice this object")
+       [] IsBig(first) \\/ IsBig(kept) -> Assert(FALSE, "tla-ts can't splice this many elements")
+       [] OTHER -> read(0, first) \\o items \\o read(after, kept)
+
+\\* copyWithin on an array-like object whose length is past 2^31, which moves only the keys that the
+\\* object or its prototypes hold, and those that copy over them.
+LOCAL LongCopyWithin(heap, ref, target, start, end) ==
+  LET length == LongLength(Get(heap, ref, "length"))
+      to == LongIndex(target, length)
+      from == LongIndex(start, length)
+      final == IF end = Undefined THEN length ELSE LongIndex(end, length)
+      count == IF LessThan(Subtract(final, from), Subtract(length, to))
+               THEN Subtract(final, from)
+               ELSE Subtract(length, to)
+      offset == Subtract(to, from)
+      isFrom(value) == ~LessThan(value, from) /\\ LessThan(value, Add(from, count))
+      keys == LongKeys(heap, ref)
+      froms == {key \\in keys : isFrom(DecimalOf(key))}
+                 \\cup {StringOf(Subtract(DecimalOf(key), offset)) :
+                       key \\in {key \\in keys : isFrom(Subtract(DecimalOf(key), offset))}}
+      state == LongMoves([heap |-> heap, isThrown |-> FALSE], ref, froms, offset,
+                         ~(LessThan(from, to) /\\ LessThan(to, Add(from, count))))
+  IN CASE IsProxy(heap, ref) \\/ IsTypedArray(heap, ref) \\/ heap.objects[ref[Ref]].isOpaque ->
+            Assert(FALSE, "tla-ts can't copy within this object")
+       [] ~LessThan(0, count) -> [heap |-> heap, value |-> ref, isThrown |-> FALSE]
+       [] OTHER -> [heap |-> state.heap, value |-> ref, isThrown |-> state.isThrown]
+
 \\* The code of the getter that copyWithin reads first, at the index it copies from first, where it
 \\* copies any, or Undefined.
+\\* An object whose length is past 2^31 reads its elements as copyWithin moves them.
 CopyWithinFirstGetter(heap, ref, target, start, end) ==
+  IF HasLongLength(heap, ref) THEN Undefined ELSE
   LET length == ToLength(Get(heap, ref, "length"))
       to == ClampedIndex(target, length)
       from == ClampedIndex(start, length)
@@ -5407,7 +6250,11 @@ CopyWithinFirstGetter(heap, ref, target, start, end) ==
      THEN CodeOf(heap, GetterOf(heap, ref, ToString(first)))
      ELSE Undefined
 
-ArrayLikeCopyWithin(heap, ref, target, start, end) ==
+\\* copyWithin() on an array-like object that the heap holds, as the spec runs it index by index,
+\\* backward where the indices it copies to overlap the end of those it copies from, where only the
+\\* indices that the object or its prototypes hold, and those that copy over them, change. The
+\\* indices are the numbers that its arguments give, and end is Undefined where it takes the length.
+LOCAL ShortCopyWithin(heap, ref, target, start, end) ==
   LET length == LengthOf(heap, ref)
       to == ClampedIndex(target, length)
       from == ClampedIndex(start, length)
@@ -5421,6 +6268,11 @@ ArrayLikeCopyWithin(heap, ref, target, start, end) ==
   IN IF count <= 0
      THEN [heap |-> heap, value |-> ref, isThrown |-> FALSE]
      ELSE [heap |-> state.heap, value |-> ref, isThrown |-> state.isThrown]
+
+ArrayLikeCopyWithin(heap, ref, target, start, end) ==
+  IF HasLongLength(heap, ref)
+  THEN LongCopyWithin(heap, ref, target, start, end)
+  ELSE ShortCopyWithin(heap, ref, target, start, end)
 
 \\* Swaps the elements of an array-like object at each index below the middle of its length and the
 \\* index as far from its end, from the lowest, where a hole deletes the index it swaps with.
@@ -6141,6 +6993,10 @@ LOCAL JSONGap(heap, space) ==
   LET value == JSONSpace(heap, space)
       count == CASE value \\in {NaN, NegativeInfinity, NegativeZero} -> 0
                  [] IsFraction(value) -> IF Truncate(value) > 10 THEN 10 ELSE Truncate(value)
+                 [] IsWide(value) -> IF IsNegative(value) THEN 0 ELSE 10
+                 [] IsDouble(value) /\\ (IsNegative(value) \\/ value[Double][2] >= 0) ->
+                      IF IsNegative(value) THEN 0 ELSE 10
+                 [] IsDouble(value) -> BeyondInteger
                  [] value = Infinity -> 10
                  [] value > 10 -> 10
                  [] OTHER -> value

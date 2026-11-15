@@ -1288,6 +1288,714 @@ describe("top-level statements", () => {
 });
 
 describe("values", () => {
+  describe("keeps the RangeError of a Date method that call runs", () => {
+    const getSource = (expected: string) => `
+      "use strict";
+      const box = { size: 0 };
+      const toISOString = Date.prototype.toISOString;
+      let caught = "none";
+      try {
+        toISOString.call(new Date(NaN));
+      } catch (error) {
+        caught = error instanceof RangeError ? "range" : "other";
+      }
+      if (caught !== "${expected}" || box.size !== 0) throw new Error(caught);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("range"))).failure).toBeUndefined();
+    });
+
+    it("rejects the error as another kind", async () => {
+      expect((await checkModel(getSource("other"))).failure?.message).toContain("range");
+    });
+  });
+
+  describe("throws the errors of toFixed, toExponential, and toPrecision", () => {
+    const getSource = (expected: string) => `
+      "use strict";
+      const box = { size: 0 };
+      const toFixed = Number.prototype.toFixed;
+      const fix = () => (3).toFixed(101);
+      const precise = () => (3).toPrecision(0);
+      let caught = "";
+      try {
+        fix();
+      } catch (error) {
+        caught += error instanceof RangeError ? "range," : "other,";
+      }
+      try {
+        precise();
+      } catch (error) {
+        caught += error instanceof RangeError ? "range," : "other,";
+      }
+      try {
+        toFixed.call("3", 1);
+      } catch (error) {
+        caught += error instanceof TypeError ? "type" : "other";
+      }
+      if (caught !== "${expected}" || box.size !== 0) throw new Error(caught);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("range,range,type"))).failure).toBeUndefined();
+    });
+
+    it("rejects a string receiver as a number", async () => {
+      expect((await checkModel(getSource("range,range,other"))).failure?.message).toContain(
+        "range,range,type",
+      );
+    });
+  });
+
+  describe("writes the exact digits of doubles with toFixed, toExponential, and toPrecision", () => {
+    const getSource = (expected: string) => `
+      const box = { size: 0 };
+      const M = Number.MAX_VALUE;
+      const written = [
+        (0.1).toFixed(20), (1e21).toFixed(2), (123.456).toExponential(20), (M / 2).toPrecision(5),
+        (5e-324).toExponential(3), (2 ** 60).toFixed(0), (1 / 3).toFixed(18),
+        (9007199254740993).toPrecision(17), (-1e-7).toExponential(),
+      ];
+      if (written.join(" | ") !== "${expected}" || box.size !== 0) throw new Error(written.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (
+          await checkModel(
+            getSource(
+              "0.10000000000000000555 | 1e+21 | 1.23456000000000003070e+2 | 8.9885e+307 | 4.941e-324 | 1152921504606846976 | 0.333333333333333315 | 9007199254740992.0 | -1e-7",
+            ),
+          )
+        ).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects half of the largest number rounded down", async () => {
+      expect(
+        (
+          await checkModel(
+            getSource(
+              "0.10000000000000000555 | 1e+21 | 1.23456000000000003070e+2 | 8.9884e+307 | 4.941e-324 | 1152921504606846976 | 0.333333333333333315 | 9007199254740992.0 | -1e-7",
+            ),
+          )
+        ).failure?.message,
+      ).toContain("8.9885e+307");
+    });
+  });
+
+  describe("writes numbers with toFixed, toExponential, and toPrecision as Node does", () => {
+    const getSource = (expected: string) => `
+      const half = 0.5;
+      const tiny = 0.0001;
+      const fifth = 0.05;
+      const written = [
+        (123.456).toFixed(2), (-0.0000001).toFixed(2), fifth.toFixed(1), (1.005).toFixed(2),
+        (995).toFixed(0), tiny.toFixed(), (123.456).toExponential(20), (0.9999).toExponential(2),
+        (-25).toExponential(0), (100).toExponential(), (1.1e-32).toExponential(),
+        (0).toExponential(2), (0.000001).toPrecision(2), (1e-7).toPrecision(1),
+        (99.99).toPrecision(3), (-7).toPrecision(21), (123).toPrecision(2), (0).toPrecision(3),
+        half.toPrecision(), (NaN).toFixed(2), new Number(-1.5).toFixed(0),
+      ];
+      if (written.join() !== "${expected}") throw new Error(written.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (
+          await checkModel(
+            getSource(
+              "123.46,-0.00,0.1,1.00,995,0,1.23456000000000003070e+2,1.00e+0,-3e+1,1e+2,1.1e-32,0.00e+0,0.0000010,1e-7,100,-7.00000000000000000000,1.2e+2,0.00,0.5,NaN,-2",
+            ),
+          )
+        ).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects 1.01 for (1.005).toFixed(2)", async () => {
+      expect(
+        (
+          await checkModel(
+            getSource(
+              "123.46,-0.00,0.1,1.01,995,0,1.23456000000000003070e+2,1.00e+0,-3e+1,1e+2,1.1e-32,0.00e+0,0.0000010,1e-7,100,-7.00000000000000000000,1.2e+2,0.00,0.5,NaN,-2",
+            ),
+          )
+        ).failure?.message,
+      ).toContain("1.00");
+    });
+  });
+
+  describe("multiplies and raises integers beyond 32 bits as Node does", () => {
+    const getSource = (expected: string) => `
+      const box = { size: 0 };
+      const values = [
+        2 ** 32, Math.pow(2, 53), 2 ** 53 - 1, -(-2147483648), -1 >>> 0, (2 ** 40) * 3,
+        -(2 ** 33) * 1000, (-Infinity) ** 2147483649, (-2) ** 31, 3 ** 30, 4294967296 * -2,
+      ];
+      if (values.join() !== "${expected}" || box.size !== 0) throw new Error(values.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (
+          await checkModel(
+            getSource(
+              "4294967296,9007199254740992,9007199254740991,2147483648,4294967295,3298534883328,-8589934592000,-Infinity,-2147483648,205891132094649,-8589934592",
+            ),
+          )
+        ).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects an even power of -Infinity for an odd Wide exponent", async () => {
+      expect(
+        (
+          await checkModel(
+            getSource(
+              "4294967296,9007199254740992,9007199254740991,2147483648,4294967295,3298534883328,-8589934592000,Infinity,-2147483648,205891132094649,-8589934592",
+            ),
+          )
+        ).failure?.message,
+      ).toContain("-Infinity");
+    });
+  });
+
+  it("stops where a script without objects raises an integer beyond 32 bits", async () => {
+    await expect(
+      checkModel(`
+        const n = Math.pow(2, 32);
+        if (String(n) !== "4294967296") throw new Error(String(n));
+      `),
+    ).rejects.toThrow("tla-ts can't represent");
+  });
+
+  describe("raises an integer beyond 32 bits in a script with no other special numbers", () => {
+    const getSource = (expected: string) => `
+      const box = { size: 0 };
+      const n = Math.pow(2, 32) - (2 ** 31 >>> 0);
+      if (String(n) !== "${expected}" || box.size !== 0) throw new Error(String(n));
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("2147483648"))).failure).toBeUndefined();
+    });
+
+    it("rejects 2^32 itself", async () => {
+      expect((await checkModel(getSource("4294967296"))).failure?.message).toContain("2147483648");
+    });
+  });
+
+  describe("rounds sums, products, quotients, and remainders as IEEE 754 does", () => {
+    const getSource = (third: string) => `
+      const box = { size: 0 };
+      const M = Number.MAX_VALUE;
+      const pairs: [number, number][] = [
+        [0.1 + 0.2, 0.30000000000000004],
+        [M * 1.1, Infinity],
+        [1 / 3, ${third}],
+        [2147483647 * 2147483647, 4611686014132420600],
+        [1e300 % 123.456, 90.98823479642961],
+        [1e-300 / 4294967296, 2.3283064365387e-310],
+        [-2147483648 % 7, -2],
+        [9007199254740991 + 2147483647, 9007201402224638],
+        [0.1 * 3, 0.30000000000000004],
+        [7 % -2.5, 2],
+        [5e-324 / 2, 0],
+        [-1e-7 % 5e-324, -0],
+      ];
+      pairs.forEach((pair, index) => {
+        if (!Object.is(pair[0], pair[1]) || box.size !== 0) throw new Error(\`pair \${index}\`);
+      });
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("0.3333333333333333"))).failure).toBeUndefined();
+    });
+
+    it("rejects 1 / 3 rounded to 16 digits", async () => {
+      expect((await checkModel(getSource("0.3333333333333334"))).failure?.message).toContain(
+        "pair 2",
+      );
+    });
+  });
+
+  describe("adds a double or a fraction to itself and to its negation exactly", () => {
+    const getSource = (expected: string) => `
+      const box = { size: 0 };
+      const M = Number.MAX_VALUE;
+      const sums = [M + M, -M - M, 0.1 + 0.1 === 0.2, 1.5 + -1.5, 1e308 + 1e308, (-M + M) + M === M];
+      if (sums.join() !== "${expected}" || box.size !== 0) throw new Error(sums.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("Infinity,-Infinity,true,0,Infinity,true"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects 0.1 + 0.1 as other than 0.2", async () => {
+      expect(
+        (await checkModel(getSource("Infinity,-Infinity,false,0,Infinity,true"))).failure?.message,
+      ).toContain("Infinity,-Infinity,true");
+    });
+  });
+
+  describe("writes the doubles that literals give as Node does", () => {
+    const getSource = (expected: string) => `
+      const box = { size: 0 };
+      const texts = [String(Number.MAX_VALUE), String(-Number.MAX_VALUE), String(1e21), \`\${-1e21}\`];
+      if (texts.join() !== "${expected}" || box.size !== 0) throw new Error(texts.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (
+          await checkModel(
+            getSource("1.7976931348623157e+308,-1.7976931348623157e+308,1e+21,-1e+21"),
+          )
+        ).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects 1e21 written without its sign", async () => {
+      expect(
+        (
+          await checkModel(
+            getSource("1.7976931348623157e+308,-1.7976931348623157e+308,1e21,-1e+21"),
+          )
+        ).failure?.message,
+      ).toContain("1e+21");
+    });
+  });
+
+  describe("compares and scales exact doubles as Node does", () => {
+    const getSource = (expected: string) => `
+      const box = { size: 0 };
+      const MAX = Number.MAX_VALUE;
+      const MIN = Number.MIN_VALUE;
+      const checks = [
+        MAX > MAX / 2, MAX / 2 < MAX, MIN < MIN * 2, MIN * 2 > MIN, -MAX < MAX, MAX === MAX,
+        MAX * 2 === Infinity, -MAX + MAX === 0, MAX > 1.1, 0.1 < MIN * 2 === false,
+        Number.isInteger(MAX), Number.isInteger(MIN * 4), MAX % Infinity === MAX, typeof (MAX / 4),
+        1 / 2 === 0.5, 3 / 4 > 0.5, -MAX < -1e300,
+      ];
+      if (checks.join() !== "${expected}" || box.size !== 0) throw new Error(checks.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (
+          await checkModel(
+            getSource(
+              "true,true,true,true,true,true,true,true,true,true,true,false,true,number,true,true,true",
+            ),
+          )
+        ).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects a subnormal times 4 as an integer", async () => {
+      expect(
+        (
+          await checkModel(
+            getSource(
+              "true,true,true,true,true,true,true,true,true,true,true,true,true,number,true,true,true",
+            ),
+          )
+        ).failure?.message,
+      ).toContain("true,false,true");
+    });
+  });
+
+  describe("keeps the low bits of numbers beyond 32 bits in bytes, codes, and ToInt32", () => {
+    const getSource = (expected: string) => `
+      const view = new DataView(new ArrayBuffer(4));
+      view.setInt16(0, 4294967296 + 513);
+      view.setInt16(2, -4294967296 - 1);
+      const clamped = new Uint8ClampedArray(2);
+      clamped[0] = 2 ** 40;
+      clamped[1] = -(2 ** 40);
+      const kept = [
+        view.getUint8(0), view.getUint8(1), view.getUint8(2), view.getUint8(3), clamped[0],
+        clamped[1], String.fromCharCode(4294967296 + 65, 2 ** 53 + 66), (2 ** 53 + 66) | 0,
+        (-(2 ** 60) + 3) | 0, (2 ** 63) | 0, (-(2 ** 53) - 4) | 0, (2 ** 53 + 2 ** 31) | 0,
+      ];
+      if (kept.join() !== "${expected}") throw new Error(kept.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("2,1,255,255,255,0,AB,66,0,0,-4,-2147483648"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects 2^31 past 2^53 as 2^31", async () => {
+      expect(
+        (await checkModel(getSource("2,1,255,255,255,0,AB,66,0,0,-4,2147483648"))).failure?.message,
+      ).toContain("-2147483648");
+    });
+  });
+
+  describe("treats indices beyond 32 bits as past either end, and keeps ~ inside 32 bits", () => {
+    const getSource = (expected: string) => `
+      const box = { size: 0 };
+      const buffer = new ArrayBuffer(4);
+      const list = [1, 2, 3];
+      const read = [
+        ~-2147483648, ~2147483647, list.slice(-(2 ** 40), 2 ** 40).length, list.at(2 ** 40),
+        list.toSpliced(1, 2 ** 40).length, buffer.slice(0, 2 ** 53).byteLength,
+      ].join();
+      if (read !== "${expected}" || box.size !== 0) throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("2147483647,-2147483648,3,,1,4"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects a splice count past 2^31 as 0", async () => {
+      expect(
+        (await checkModel(getSource("2147483647,-2147483648,3,,3,4"))).failure?.message,
+      ).toContain("2147483647,-2147483648,3,,1,4");
+    });
+  });
+
+  describe("throws the RangeError of mapping an object whose length is from 2^32", () => {
+    const getSource = (expected: string) => `
+      "use strict";
+      const like = { 0: 9, length: Infinity };
+      const wide = { 0: 1, length: 2 ** 32 };
+      const small = { 0: 5, length: 1 };
+      const double = (value: unknown): unknown => (value as number) * 2;
+      let caught = "";
+      try {
+        Array.prototype.map.call(like, double);
+      } catch (error) {
+        caught += error instanceof RangeError ? "range," : "other,";
+      }
+      try {
+        const made = Array.prototype.map.call(wide, double);
+        caught += String(made.length);
+      } catch (error) {
+        caught += error instanceof RangeError ? "range," : "other,";
+      }
+      const mapped = Array.prototype.map.call(small, double);
+      if (\`\${caught}\${mapped[0]}\` !== "${expected}") throw new Error(caught);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("range,range,10"))).failure).toBeUndefined();
+    });
+
+    it("rejects the second map as another error", async () => {
+      expect((await checkModel(getSource("range,other,10"))).failure?.message).toContain(
+        "range,range,",
+      );
+    });
+  });
+
+  describe("pops and pushes on array-like objects whose length is near 2^53", () => {
+    const getSource = (expected: string) => `
+      const like: { [key: string]: unknown } = { "9007199254740990": "last", length: 2 ** 53 - 1 };
+      const popped = Array.prototype.pop.call(like);
+      const pushed = Array.prototype.push.call(like, "new");
+      let caught = "none";
+      try {
+        Array.prototype.push.call(like, "a", "b");
+      } catch (error) {
+        caught = error instanceof TypeError ? "type" : "other";
+      }
+      const read = [popped, pushed, like.length, like["9007199254740990"], caught].join();
+      if (read !== "${expected}") throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("last,9007199254740991,9007199254740991,new,type"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects a push past 2^53 - 1 as allowed", async () => {
+      expect(
+        (await checkModel(getSource("last,9007199254740991,9007199254740991,new,none"))).failure
+          ?.message,
+      ).toContain("new,type");
+    });
+  });
+
+  describe("reads Number's greatest constants through a key", () => {
+    const getSource = (expected: string) => `
+      const box = { size: 0 };
+      const constants = Number as unknown as { [key: string]: unknown };
+      const keys = ["MAX_VALUE", "MAX_SAFE_INTEGER", "MIN_SAFE_INTEGER"];
+      box.size = 1;
+      const read = keys.map((key) => String(constants[key])).join();
+      if (read !== "${expected}") throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("1.7976931348623157e+308,9007199254740991,-9007199254740991")))
+          .failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects the greatest safe integer as 2^53", async () => {
+      expect(
+        (await checkModel(getSource("1.7976931348623157e+308,9007199254740992,-9007199254740991")))
+          .failure?.message,
+      ).toContain("1.7976931348623157e+308,9007199254740991,-9007199254740991");
+    });
+  });
+
+  describe("raises a negative number to a power that isn't an integer as NaN", () => {
+    const getSource = (expected: string) => `
+      const box = { size: 0 };
+      const bases = [-1.7976931348623157e308, -1.5, -2, -0];
+      const exponents = [0.5, -Math.PI];
+      box.size = 1;
+      const read = bases
+        .flatMap((base) => exponents.map((exponent) => String(Math.pow(base, exponent))))
+        .join();
+      if (read !== "${expected}") throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("NaN,NaN,NaN,NaN,NaN,NaN,0,Infinity"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects -0 to a fraction as NaN", async () => {
+      expect(
+        (await checkModel(getSource("NaN,NaN,NaN,NaN,NaN,NaN,NaN,Infinity"))).failure?.message,
+      ).toContain("NaN,NaN,NaN,NaN,NaN,NaN,0,Infinity");
+    });
+  });
+
+  describe("fails a global regexp's match from a lastIndex past 2^31", () => {
+    const getSource = (expected: string) => `
+      const box = { size: 0 };
+      const global = /./g;
+      const plain = /./;
+      const read: string[] = [];
+      const indices = [1 / 0, 2 ** 32 + 1, 2 ** 53 - 1, 1.7976931348623157e308, -(2 ** 40)];
+      for (const lastIndex of indices) {
+        global.lastIndex = lastIndex;
+        plain.lastIndex = lastIndex;
+        const found = global.exec("test");
+        const kept = plain.exec("test");
+        read.push(
+          \`\${found === null ? "null" : found[0]}:\${global.lastIndex}:\${kept === null ? "null" : kept[0]}:\${plain.lastIndex}\`,
+        );
+      }
+      box.size = 1;
+      if (read.join() !== "${expected}") throw new Error(read.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (
+          await checkModel(
+            getSource(
+              "null:0:t:Infinity,null:0:t:4294967297,null:0:t:9007199254740991,null:0:t:1.7976931348623157e+308,t:1:t:-1099511627776",
+            ),
+          )
+        ).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects a match from 2^32 + 1 as found", async () => {
+      expect(
+        (
+          await checkModel(
+            getSource(
+              "null:0:t:Infinity,t:1:t:4294967297,null:0:t:9007199254740991,null:0:t:1.7976931348623157e+308,t:1:t:-1099511627776",
+            ),
+          )
+        ).failure?.message,
+      ).toContain(
+        "null:0:t:Infinity,null:0:t:4294967297,null:0:t:9007199254740991,null:0:t:1.7976931348623157e+308,t:1:t:-1099511627776",
+      );
+    });
+  });
+
+  describe("unshifts onto array-like objects whose length is near 2^53 or Infinity", () => {
+    const getSource = (expected: string) => `
+      const like: { [key: string]: unknown } = {
+        "9007199254740987": "a",
+        "9007199254740989": "b",
+        length: 2 ** 53 - 2,
+      };
+      Object.defineProperty(like, "9007199254740988", { value: "n", writable: false });
+      let moved = "none";
+      try {
+        Array.prototype.unshift.call(like, "x");
+      } catch (error) {
+        moved = error instanceof TypeError ? "type" : "other";
+      }
+      const endless: { [key: string]: unknown } = { length: Infinity };
+      const kept = Array.prototype.unshift.call(endless);
+      let caught = "none";
+      try {
+        Array.prototype.unshift.call(endless, "y");
+      } catch (error) {
+        caught = error instanceof TypeError ? "type" : "other";
+      }
+      const read = [
+        moved,
+        like.length,
+        like["9007199254740987"],
+        like["9007199254740988"],
+        like["9007199254740989"],
+        like["9007199254740990"],
+        0 in like,
+        kept,
+        endless.length,
+        caught,
+      ].join();
+      if (read !== "${expected}") throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (
+          await checkModel(
+            getSource("type,9007199254740990,a,n,n,b,false,9007199254740991,9007199254740991,type"),
+          )
+        ).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects a hole that moves as kept", async () => {
+      expect(
+        (
+          await checkModel(
+            getSource("type,9007199254740990,a,n,b,b,false,9007199254740991,9007199254740991,type"),
+          )
+        ).failure?.message,
+      ).toContain("a,n,n,b");
+    });
+  });
+
+  describe("skips holes of array-like objects whose length is Infinity or beyond 32 bits", () => {
+    const getSource = (expected: string) => `
+      const like = { 0: 12, 1: 9, length: Infinity };
+      const wide = { 0: 1, 2: 3, length: 2 ** 40 };
+      const read = [
+        Array.prototype.every.call(like, (value: unknown) => (value as number) > 10),
+        Array.prototype.some.call(like, (value: unknown) => value === 9),
+        Array.prototype.indexOf.call(wide, 3),
+      ].join();
+      if (read !== "${expected}") throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("false,true,2"))).failure).toBeUndefined();
+    });
+
+    it("rejects an index past the length as missing", async () => {
+      expect((await checkModel(getSource("false,true,-1"))).failure?.message).toContain(
+        "false,true,2",
+      );
+    });
+  });
+
+  describe("stops where an array-like object past 2^31 holds a key from 2^32", () => {
+    const getSource = (key: string) => `
+      const wide: { [key: string]: unknown } = { 0: 1, "${key}": 3, length: 2 ** 40 };
+      const found = Array.prototype.some.call(
+        wide,
+        (value: unknown, index: number) => value === 3 && index === 2,
+      );
+      if (!found) throw new Error("missing");
+    `;
+
+    it("stops at a key past 2^32", async () => {
+      expect((await checkModel(getSource("10000000000"))).failure?.message).toContain(
+        "tla-ts can't order keys this big",
+      );
+    });
+
+    it("finds a key below 2^31 as Node does", async () => {
+      expect((await checkModel(getSource("2"))).failure).toBeUndefined();
+    });
+
+    it("rejects a key below 2^31 at another index", async () => {
+      expect((await checkModel(getSource("1"))).failure?.message).toContain("missing");
+    });
+  });
+
+  describe("converts lengths and indices beyond 32 bits as Node does", () => {
+    const getSource = (expected: string) => `
+      const like = { 0: 12, length: -4294967294 };
+      const every = Array.prototype.every.call(like, (value: unknown) => value === 0);
+      let caught = "";
+      try {
+        new ArrayBuffer(9007199254740992);
+      } catch (error) {
+        caught += error instanceof RangeError ? "buffer" : "other";
+      }
+      try {
+        Object.defineProperty([], "length", { value: 4294967296 });
+      } catch (error) {
+        caught += error instanceof RangeError ? "length" : "other";
+      }
+      if (\`\${every},\${caught}\` !== "${expected}") throw new Error(\`\${every},\${caught}\`);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("true,bufferlength"))).failure).toBeUndefined();
+    });
+
+    it("rejects a length below 0 that every reads past", async () => {
+      expect((await checkModel(getSource("false,bufferlength"))).failure?.message).toContain(
+        "true,bufferlength",
+      );
+    });
+  });
+
+  describe("holds integers beyond 32 bits, such as time values, as Node does", () => {
+    const getSource = (expected: string) => `
+      const date = new Date(2016, 6, 6);
+      const time = date.getTime();
+      const written = [
+        time, time - 1467763200001, time + 1 > time, new Date(time).getUTCDate(), 100000 * -100000,
+        2147483647 + 1, -2147483647 - 2, new Date(8.64e15 + 1).getTime(),
+        Math.abs(-9007199254740991), Number.isSafeInteger(-9007199254740991),
+        Number.isSafeInteger(9007199254740992), time === 1467763200000,
+        new Date(-8.64e15).getUTCFullYear(),
+      ];
+      if (written.join() !== "${expected}") throw new Error(written.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (
+          await checkModel(
+            getSource(
+              "1467763200000,-1,true,6,-10000000000,2147483648,-2147483649,NaN,9007199254740991,true,false,true,-271821",
+            ),
+          )
+        ).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects 2^53 as a safe integer", async () => {
+      expect(
+        (
+          await checkModel(
+            getSource(
+              "1467763200000,-1,true,6,-10000000000,2147483648,-2147483649,NaN,9007199254740991,true,true,true,-271821",
+            ),
+          )
+        ).failure?.message,
+      ).toContain("true,false,true");
+    });
+  });
+
   describe("writes numbers with toFixed, toExponential, and toPrecision as Node does", () => {
     const getSource = (expected: string) => `
       const half = 0.5;
@@ -1442,12 +2150,20 @@ describe("values", () => {
     expect(result.status).toBe("success");
   });
 
-  it("stops where >>> gives an integer that TLC can't hold", async () => {
-    const result = await checkModel(`
+  describe("gives the integer beyond 32 bits that >>> gives", () => {
+    const getSource = (expected: number) => `
       const box = { value: -1 };
       box.value = box.value >>> 0;
-    `);
-    expect(result.failure?.message).toContain("tla-ts can't hold -1 >>> 0 in an integer");
+      if (box.value !== ${expected}) throw new Error("unsigned");
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(4294967295))).failure).toBeUndefined();
+    });
+
+    it("rejects 2^32", async () => {
+      expect((await checkModel(getSource(4294967296))).failure?.message).toContain("unsigned");
+    });
   });
 
   it("assigns with the compound forms of %, **, and the bitwise operators", async () => {
@@ -1481,7 +2197,7 @@ describe("values", () => {
     it("stops where tla-ts can't follow it", async () => {
       await expect(
         checkModel(
-          "const exponent = -1;\nconst value = 2 ** exponent;\nif (value > 5) throw new Error();",
+          "const exponent = -1;\nconst value = 3 ** exponent;\nif (value > 5) throw new Error();",
         ),
       ).rejects.toThrow("tla-ts can't represent this value");
     });
@@ -7945,7 +8661,7 @@ describe("errors", () => {
     expect((await checkModel(getSource(60))).failure?.message).toContain("0,0");
   });
 
-  it("gives Date.UTC's time value where it fits TLC's integers", async () => {
+  it("gives Date.UTC's time value, beyond TLC's integers too", async () => {
     const result = await checkModel(`
       const same = (actual: unknown, expected: unknown) => {
         if (!Object.is(actual, expected)) throw new Error("same");
@@ -7955,10 +8671,9 @@ describe("errors", () => {
       same(Date.UTC(1970, Infinity), NaN);
       const late = Date.UTC(2016, 6);
       same(late > 0, true);
+      same(late, 1467331200000);
     `);
-    expect(result.failure?.message).toContain(
-      "tla-ts can't hold a time value this far from 1970 in a number",
-    );
+    expect(result.failure).toBeUndefined();
   });
 
   it("tells whether a value inherits from a built-in constructor's prototype", async () => {
@@ -23285,7 +24000,7 @@ describe("errors", () => {
     ).toContain("tla-ts can't call valueOf");
   });
 
-  it("divides numbers in a script with objects, and stops on a fraction", async () => {
+  it("divides numbers in a script with objects, and gives a fraction exactly", async () => {
     const result = await checkModel(`
       const negative = 1 / -0;
       const zero = 1 / -Infinity;
@@ -23298,9 +24013,15 @@ describe("errors", () => {
     const fraction = await checkModel(`
       const object = {};
       const half = 7 / 2;
+      if (half !== 3.5) throw new Error("missed");
+    `);
+    expect(fraction.failure).toBeUndefined();
+    const truncated = await checkModel(`
+      const object = {};
+      const half = 7 / 2;
       if (half !== 3) throw new Error("missed");
     `);
-    expect(fraction.failure?.message).toContain("tla-ts can't represent the fraction 7 / 2");
+    expect(truncated.failure?.message).toContain("missed");
   });
 
   describe("compares, writes, and truncates the fractions that literals give", () => {
@@ -23364,9 +24085,9 @@ describe("errors", () => {
       const sum = await checkModel(`
       const object = {};
       const sum = 0.1 + 0.2;
-      if (sum === 0.3) throw new Error("missed");
+      if (sum !== 0.3) throw new Error("missed");
     `);
-      expect(sum.failure?.message).toContain("tla-ts can't add fractions");
+      expect(sum.failure?.message).toContain("missed");
     });
   });
 
@@ -32032,6 +32753,378 @@ describe("BigInts", () => {
       quotient = quotient / 0n;
     `);
     expect(division.failure?.message).toContain("tla-ts can't throw the RangeError");
+  });
+
+  describe("searches an array-like object whose length is past 2^31 through the keys it holds", () => {
+    const getSource = (expected: string) => `
+      const el = {};
+      const like: { [key: string]: unknown } = { 0: "zero", length: Number.MAX_SAFE_INTEGER };
+      like[Number.MAX_SAFE_INTEGER - 1] = el;
+      like[Number.MAX_SAFE_INTEGER - 3] = el;
+      const wide: { [key: string]: unknown } = { 0: el, 4294967294: el, 4294967295: el, length: 4294967296 };
+      const from = Number.MAX_SAFE_INTEGER - 2;
+      const before = -2;
+      const read = [
+        Array.prototype.indexOf.call(like, el, from),
+        Array.prototype.lastIndexOf.call(like, el, from),
+        Array.prototype.lastIndexOf.call(like, el, before),
+        Array.prototype.indexOf.call(wide, el),
+        Array.prototype.lastIndexOf.call(wide, el),
+      ].join();
+      if (read !== "${expected}") throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (
+          await checkModel(
+            getSource("9007199254740990,9007199254740988,9007199254740988,0,4294967295"),
+          )
+        ).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects the last index below 2^32 - 1 as the last", async () => {
+      expect(
+        (
+          await checkModel(
+            getSource("9007199254740990,9007199254740988,9007199254740988,0,4294967294"),
+          )
+        ).failure?.message,
+      ).toContain("9007199254740990,9007199254740988,9007199254740988,0,4294967295");
+    });
+  });
+
+  describe("throws the RangeError of toReversed and with on an object whose length is from 2^32", () => {
+    const getSource = (expected: string) => `
+      const huge = { length: 2 ** 32 };
+      const small = { 0: "a", 1: "b", length: 2 };
+      const read: string[] = [];
+      try {
+        Array.prototype.toReversed.call(huge);
+        read.push("none");
+      } catch (error) {
+        read.push(error instanceof RangeError ? "range" : "other");
+      }
+      try {
+        Array.prototype.with.call(huge, 0, 1);
+        read.push("none");
+      } catch (error) {
+        read.push(error instanceof RangeError ? "range" : "other");
+      }
+      const reversed = Array.prototype.toReversed.call(small);
+      read.push(reversed.join(""));
+      if (read.join() !== "${expected}") throw new Error(read.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("range,range,ba"))).failure).toBeUndefined();
+    });
+
+    it("rejects with as allowed", async () => {
+      expect((await checkModel(getSource("range,none,ba"))).failure?.message).toContain(
+        "range,range,ba",
+      );
+    });
+  });
+
+  describe("raises a power of 2 to a negative power exactly", () => {
+    const getSource = (expected: string) => `
+      const box = { size: 0 };
+      box.size = 1;
+      const read = [
+        2 ** -1 === 0.5,
+        (-2) ** -3 === -0.125,
+        2 ** -1 * 2,
+        1024 ** -10 * 2 ** 100,
+        2 ** -1074 > 0,
+        2 ** -1074 / 2 === 0,
+        8 ** -2 === 0.015625,
+      ].join();
+      if (read !== "${expected}") throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("true,true,1,1,true,true,true"))).failure).toBeUndefined();
+    });
+
+    it("rejects 2 ** -1 as 0", async () => {
+      expect(
+        (await checkModel(getSource("false,true,0,1,true,true,true"))).failure?.message,
+      ).toContain("true,true,1,1,true,true,true");
+    });
+  });
+
+  describe("copies within an array-like object whose length is past 2^31", () => {
+    const getSource = (expected: string) => `
+      const max = Number.MAX_SAFE_INTEGER;
+      const like: { [key: string]: unknown } = { 0: 0, 1: 1, 2: 2, length: max };
+      like[max - 3] = -3;
+      like[max - 1] = -1;
+      Array.prototype.copyWithin.call(like, 0, max - 3, max);
+      const shifted: { [key: string]: unknown } = { length: max };
+      shifted[max - 4] = "a";
+      shifted[max - 3] = "b";
+      Array.prototype.copyWithin.call(shifted, max - 3, max - 4, max - 2);
+      const read = [like[0], 1 in like, like[2], shifted[max - 4], shifted[max - 3], shifted[max - 2]].join();
+      if (read !== "${expected}") throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("-3,false,-1,a,a,b"))).failure).toBeUndefined();
+    });
+
+    it("rejects an overlapping copy as forward", async () => {
+      expect((await checkModel(getSource("-3,false,-1,a,a,a"))).failure?.message).toContain(
+        "-3,false,-1,a,a,b",
+      );
+    });
+  });
+
+  describe("slices an array-like object whose length is past 2^31", () => {
+    const getSource = (expected: string) => `
+      const like: { [key: string]: unknown } = {
+        "9007199254740988": "a",
+        "9007199254740989": "b",
+        "9007199254740990": "c",
+        length: 2 ** 53 + 2,
+      };
+      const far = 2 ** 60;
+      const read = [
+        Array.prototype.slice.call(like, 9007199254740989).join(""),
+        Array.prototype.slice.call(like, -3, -1).join(""),
+        Array.prototype.slice.call(like, 9007199254740988, far).length,
+      ].join();
+      if (read !== "${expected}") throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("bc,ab,3"))).failure).toBeUndefined();
+    });
+
+    it("rejects the length as unclamped", async () => {
+      expect((await checkModel(getSource("bc,ab,4"))).failure?.message).toContain("bc,ab,3");
+    });
+  });
+
+  describe("splices a copy of an array-like object whose length is past 2^53", () => {
+    const getSource = (expected: string) => `
+      const like: { [key: string]: unknown } = {
+        "9007199254740989": "a",
+        "9007199254740990": "b",
+        length: 2 ** 53 + 20,
+      };
+      const read = [
+        Array.prototype.toSpliced.call(like, 0, 2 ** 53 - 3).join(""),
+        Array.prototype.toSpliced.call(like, 0, 2 ** 53 - 2).join(""),
+        Array.prototype.toSpliced.call(like, 0, 2 ** 53).length,
+      ].join();
+      if (read !== "${expected}") throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("ab,b,0"))).failure).toBeUndefined();
+    });
+
+    it("rejects the length as unclamped", async () => {
+      expect((await checkModel(getSource("ab,b,1"))).failure?.message).toContain("ab,b,0");
+    });
+  });
+
+  describe("fills an array-like object, whose length may pass 2^31", () => {
+    const getSource = (expected: string) => `
+      const max = Number.MAX_SAFE_INTEGER;
+      const long: { [key: string]: unknown } = { length: max };
+      Array.prototype.fill.call(long, "v", max - 3, max - 1);
+      const short: { [key: string]: unknown } = { 0: "a", 1: "b", 2: "c", length: 3 };
+      Array.prototype.fill.call(short, "z", -2);
+      const locked: { [key: string]: unknown } = { length: 2 };
+      Object.defineProperty(locked, "1", { value: "kept", writable: false });
+      let caught = "none";
+      try {
+        Array.prototype.fill.call(locked, "w");
+      } catch (error) {
+        caught = error instanceof TypeError ? "type" : "other";
+      }
+      const read = [long[max - 3], long[max - 2], max - 1 in long, short[0], short[1], short[2], locked[0], locked[1], caught].join();
+      if (read !== "${expected}") throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("v,v,false,a,z,z,w,kept,type"))).failure).toBeUndefined();
+    });
+
+    it("rejects the failed write as allowed", async () => {
+      expect((await checkModel(getSource("v,v,false,a,z,z,w,w,none"))).failure?.message).toContain(
+        "v,v,false,a,z,z,w,kept,type",
+      );
+    });
+  });
+
+  describe("gives NaN where arithmetic converts a value that isn't a number", () => {
+    const getSource = (expected: string) => `
+      const box = { size: 0 };
+      const empty = {};
+      let missing;
+      // @ts-expect-error multiplication converts an object to a number
+      const product = 1 * empty;
+      // @ts-expect-error an increment converts undefined to a number
+      missing++;
+      // @ts-expect-error slice converts a string to an integer
+      const sliced = "undefined".slice("e", 3);
+      box.size = 1;
+      const read = [product, missing, sliced].join();
+      if (read !== "${expected}") throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("NaN,NaN,und"))).failure).toBeUndefined();
+    });
+
+    it("rejects the product as 0", async () => {
+      expect((await checkModel(getSource("0,NaN,und"))).failure?.message).toContain("NaN,NaN,und");
+    });
+  });
+
+  describe("converts a string that writes a fraction to that fraction", () => {
+    const getSource = (expected: string) => `
+      const box = { size: 0 };
+      const texts = ["-1.234", "1.9"];
+      // @ts-expect-error a shift converts a string to a number
+      const shifted = texts[0] << 0;
+      // @ts-expect-error indexOf converts a string to an integer
+      const found = "aaaa".indexOf("a", texts[1]);
+      box.size = 1;
+      const read = [shifted, found].join();
+      if (read !== "${expected}") throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("-1,1"))).failure).toBeUndefined();
+    });
+
+    it("rejects the shift as rounding away from 0", async () => {
+      expect((await checkModel(getSource("-2,1"))).failure?.message).toContain("-1,1");
+    });
+  });
+
+  describe("writes and reads a float's bits exactly", () => {
+    const getSource = (expected: string) => `
+      const box = { size: 0 };
+      const view = new DataView(new ArrayBuffer(8));
+      const read32 = (value: number) => {
+        view.setFloat32(0, value);
+        return [view.getUint8(0), view.getUint8(1), view.getUint8(2), view.getUint8(3)].join(" ");
+      };
+      const read16 = (value: number) => {
+        view.setFloat16(0, value);
+        return [view.getUint8(0), view.getUint8(1)].join(" ");
+      };
+      view.setFloat64(0, 0.1);
+      const tenth = [view.getUint8(0), view.getUint8(7), view.getFloat64(0) === 0.1].join(" ");
+      view.setFloat64(0, -2147483648);
+      const most = view.getFloat64(0);
+      const half = read32(1.5);
+      const tiny = read16(2 ** -24);
+      const large = read32(4294967296);
+      box.size = 1;
+      const read = [tenth, most, half, tiny, large].join();
+      if (read !== "${expected}") throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("63 154 true,-2147483648,63 192 0 0,0 1,79 128 0 0"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects 1.5 as having another fraction", async () => {
+      expect(
+        (await checkModel(getSource("63 154 true,-2147483648,63 160 0 0,0 1,79 128 0 0"))).failure
+          ?.message,
+      ).toContain("63 154 true,-2147483648,63 192 0 0,0 1,79 128 0 0");
+    });
+  });
+
+  describe("reads a Uint32 from 2^31 through DataView", () => {
+    const getSource = (expected: string) => `
+      const box = { size: 0 };
+      const view = new DataView(new ArrayBuffer(4));
+      view.setUint8(0, 255);
+      view.setUint8(1, 1);
+      const big = view.getUint32(0);
+      const little = view.getUint32(0, true);
+      view.setUint32(0, 4294967295);
+      const most = view.getUint32(0);
+      box.size = 1;
+      const read = [big, little, most, big + 1].join();
+      if (read !== "${expected}") throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("4278255616,511,4294967295,4278255617"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects the read as signed", async () => {
+      expect(
+        (await checkModel(getSource("-16711680,511,4294967295,4278255617"))).failure?.message,
+      ).toContain("4278255616,511,4294967295,4278255617");
+    });
+  });
+
+  describe("reads no element at an index beyond 32 bits", () => {
+    const getSource = (expected: string) => `
+      const box = { size: 0 };
+      const text = String("hello world");
+      const items = [1, 2];
+      const past = text[Math.pow(2, 32) - 1];
+      const isIn = Math.pow(2, 32) in items;
+      const last = items[2 ** 40];
+      box.size = 1;
+      const read = [past, isIn, last, text[1]].join();
+      if (read !== "${expected}") throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(",false,,e"))).failure).toBeUndefined();
+    });
+
+    it("rejects the index as inside the array", async () => {
+      expect((await checkModel(getSource(",true,,e"))).failure?.message).toContain(",false,,e");
+    });
+  });
+
+  describe("lists an object's indices of 10 digits in order", () => {
+    const getSource = (expected: string) => `
+      const box = { size: 0 };
+      const keyed: { [key: string]: boolean } = {
+        12345678900: true,
+        b: true,
+        1: true,
+        4294967294: true,
+        4294967295: true,
+        999999999: true,
+      };
+      const keys = Object.keys(keyed).join(" ");
+      box.size = 1;
+      const read = [keys].join();
+      if (read !== "${expected}") throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("1 999999999 4294967294 12345678900 b 4294967295"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects 4294967295 as an index", async () => {
+      expect(
+        (await checkModel(getSource("1 999999999 4294967294 4294967295 12345678900 b"))).failure
+          ?.message,
+      ).toContain("1 999999999 4294967294 12345678900 b 4294967295");
+    });
   });
 
   describe("throws the RangeError of toFixed, toExponential, and toPrecision", () => {

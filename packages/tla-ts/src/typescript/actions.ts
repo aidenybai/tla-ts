@@ -45,6 +45,7 @@ import {
   translateSizeGetter,
   translateSortArguments,
   flattenReturned,
+  translateLongRead,
 } from "./collections";
 import {
   findNodes,
@@ -968,7 +969,9 @@ const getTarget = (node: ts.Expression, path: Path, context: Context): Target =>
             context,
             (length) =>
               ifExpression(
-                apply("\\in", [length, apply("..", [number(0), apply("Len", [sequence])])]),
+                context.hasSpecialNumbers
+                  ? useJavaScript("IsIntegerWithin", [length, apply("Len", [sequence])], context)
+                  : apply("\\in", [length, apply("..", [number(0), apply("Len", [sequence])])]),
                 apply("SubSeq", [sequence, number(1), length]),
                 apply("Assert", [
                   boolean(false),
@@ -1985,6 +1988,48 @@ const getUnseenOfConstructor = (node: ts.CallExpression, context: Context) => {
     ? target
     : undefined;
 };
+// Whether Array.prototype.map.call on an object that isn't an array, with a callback, throws the
+// RangeError of making an array of the object's length, from 2^32.
+// Whether Array.prototype.map, toReversed, toSorted, or with, through call, throws the RangeError of
+// making an array of an object's length, after map reads a callback and with an index, which
+// convert nothing.
+const getArrayCreateThrows = (expression: ts.Expression, path: Path, context: Context) => {
+  if (!ts.isCallExpression(expression)) return undefined;
+  const method = getArrayMethodCall(expression, context);
+  const passed = expression.arguments.map(skipCasts);
+  const object = passed.at(0);
+  const rest = passed.slice(1);
+  const isPassed =
+    (method === "map" && rest.length === 1 && ts.isIdentifier(rest[0])) ||
+    ((method === "toReversed" || method === "toSorted") && rest.length === 0) ||
+    (method === "with" &&
+      rest.length === 2 &&
+      ts.isNumericLiteral(rest[0]) &&
+      isLiteral(rest[1]) &&
+      !ts.isRegularExpressionLiteral(rest[1]));
+  if (context.heap === undefined || object === undefined || !ts.isIdentifier(object) || !isPassed) {
+    return undefined;
+  }
+  const heap = getHeap(path.scope, expression, context);
+  const isCreateThrowing = useJavaScript(
+    "ArrayCreateThrows",
+    [heap, translateExpression(object, path.scope, context)],
+    context,
+  );
+  return method === "map"
+    ? apply("/\\", [
+        apply("=", [
+          useJavaScript(
+            "TypeOfIn",
+            [heap, translateExpression(rest[0], path.scope, context)],
+            context,
+          ),
+          string("function"),
+        ]),
+        isCreateThrowing,
+      ])
+    : isCreateThrowing;
+};
 
 export const translateCallStatement = (
   expression: ts.CallExpression,
@@ -2000,7 +2045,7 @@ export const translateCallStatement = (
   if (formatCall !== undefined) {
     return ifThenElse(
       useJavaScript(
-        "NumberFormatThrows",
+        "NumberMethodThrows",
         [
           string(formatCall.method),
           translateExpression(formatCall.receiver, path.scope, context),
@@ -2102,6 +2147,25 @@ export const translateCallStatement = (
       ),
     );
   }
+
+  const createThrows = getArrayCreateThrows(expression, path, context);
+  if (createThrows !== undefined) {
+    return ifThenElse(
+      createThrows,
+      throwError("RangeError", path, expression, context, frame),
+      translateCallStatementBody(expression, path, context, frame, continueWith),
+    );
+  }
+  return translateCallStatementBody(expression, path, context, frame, continueWith);
+};
+
+const translateCallStatementBody = (
+  expression: ts.CallExpression,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path, value?: Expression) => Formula,
+): Formula => {
   const loop = getLoopCall(expression, path, context);
   // A receiver or a later argument that only statements can run runs first, where what evaluates
   // before it doesn't read what it changes.
@@ -2712,20 +2776,35 @@ export const translateCallStatement = (
               ],
               context,
             )
-          : useJavaScript(
-              "ArrayChange",
-              [
-                heap,
-                ref,
-                string(arrayLikeChange.method),
-                tuple(
-                  arrayLikeChange.items.map((item) =>
-                    translateExpression(item, path.scope, context),
+          : arrayLikeChange.method === "fill"
+            ? useJavaScript(
+                "ArrayLikeFill",
+                [
+                  heap,
+                  ref,
+                  ...[0, 1, 2].map((position) => {
+                    const item = arrayLikeChange.items.at(position);
+                    return item === undefined
+                      ? getUndefined(context)
+                      : translateExpression(item, path.scope, context);
+                  }),
+                ],
+                context,
+              )
+            : useJavaScript(
+                "ArrayChange",
+                [
+                  heap,
+                  ref,
+                  string(arrayLikeChange.method),
+                  tuple(
+                    arrayLikeChange.items.map((item) =>
+                      translateExpression(item, path.scope, context),
+                    ),
                   ),
-                ),
-              ],
-              context,
-            ),
+                ],
+                context,
+              ),
       ifThenElse(
         field(change, "isThrown"),
         throwTypeError(withHeap(field(change, "heap")), expression, context, frame),
@@ -7920,7 +7999,50 @@ const getLoopCall = (node: ts.Expression, path: Path, context: Context): LoopCal
 
 // Runs an array method's callback on each element in turn, as statements. An array is a value
 // that the callback can't change, so the method visits each of the elements it had.
+// An array-like object whose length is past 2^31 reads only the keys that it holds, where slice,
+// toSpliced, indexOf, or lastIndexOf reads it.
 const translateLoopCall = (
+  expression: ts.CallExpression,
+  loop: LoopCall,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path, value?: Expression) => Formula,
+): Formula => {
+  const isCalledThrough = expression.arguments.at(0) === loop.receiver;
+  const owner = translateExpression(loop.receiver, path.scope, context);
+  const long =
+    loop.isArrayLike && !loop.isTyped
+      ? translateLongRead(
+          loop.method,
+          owner,
+          isCalledThrough ? expression.arguments.slice(1) : expression.arguments,
+          expression,
+          path.scope,
+          context,
+        )
+      : undefined;
+  return long === undefined
+    ? translateShortLoopCall(expression, loop, path, context, frame, continueWith)
+    : ifThenElse(
+        useJavaScript("HasLongLength", [getHeap(path.scope, expression, context), owner], context),
+        continueWith(path, long),
+        translateShortLoopCall(expression, loop, path, context, frame, continueWith),
+      );
+};
+
+// The array methods that skip holes, whose callbacks and results never read the length.
+const BOUNDED_METHODS = new Set([
+  "every",
+  "some",
+  "filter",
+  "forEach",
+  "reduce",
+  "reduceRight",
+  "flatMap",
+]);
+
+const translateShortLoopCall = (
   expression: ts.CallExpression,
   loop: LoopCall,
   path: Path,
@@ -8678,7 +8800,19 @@ const translateLoopCall = (
           const seeded = (current: Path) =>
             letIn(
               [
-                define(lengthName, [], useJavaScript("ToLength", [value], context)),
+                define(
+                  lengthName,
+                  [],
+                  // A length past 2^31 holds only holes past the greatest index that the object
+                  // or its prototypes hold, which these methods skip and don't give.
+                  BOUNDED_METHODS.has(method)
+                    ? useJavaScript(
+                        "HeldLength",
+                        [getHeap(current.scope, expression, context), owner, value],
+                        context,
+                      )
+                    : useJavaScript("ToLength", [value], context),
+                ),
                 ...(isSpliced
                   ? [
                       define(
@@ -9974,6 +10108,47 @@ const getMisreceivedCall = (node: ts.CallExpression, context: Context) => {
     BUILT_INS[`${collection}.prototype.${method.name.text}`] !== undefined
     ? { collection, method: method.name.text }
     : undefined;
+};
+
+// The Number.prototype methods whose digits argument throws a RangeError outside its range.
+const RANGED_NUMBER_METHODS = new Set(["toFixed", "toExponential", "toPrecision"]);
+
+// A call of toFixed, toExponential, or toPrecision on a number throws the RangeError of a digits
+// argument outside its range, and otherwise goes on as read.
+const throwRangeError = (
+  expression: ts.Expression,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  read: Formula,
+) => {
+  const call = skipCasts(expression);
+  if (
+    !ts.isCallExpression(call) ||
+    !ts.isPropertyAccessExpression(call.expression) ||
+    !RANGED_NUMBER_METHODS.has(call.expression.name.text) ||
+    !isNumberLike(call.expression.expression, context) ||
+    call.arguments.length > 1 ||
+    !call.arguments.every((argument) => isNumberLike(argument, context))
+  ) {
+    return read;
+  }
+  const argument = call.arguments.at(0);
+  return ifThenElse(
+    useJavaScript(
+      "NumberMethodThrows",
+      [
+        string(call.expression.name.text),
+        translateExpression(call.expression.expression, path.scope, context),
+        argument === undefined
+          ? getUndefined(context)
+          : translateExpression(argument, path.scope, context),
+      ],
+      context,
+    ),
+    throwError("RangeError", path, expression, context, frame),
+    read,
+  );
 };
 
 // A read of an object's property throws a TypeError where it runs %ThrowTypeError%, or a buffer's or
@@ -11743,6 +11918,28 @@ export const translateDeclarations = (
   if (isUnrun(declaration, path, context)) {
     return translateDeclarations(declarations.slice(1), path, context, frame, continueWith);
   }
+
+  const createThrows =
+    initializer === undefined ? undefined : getArrayCreateThrows(initializer, path, context);
+  if (initializer !== undefined && createThrows !== undefined) {
+    return ifThenElse(
+      createThrows,
+      throwError("RangeError", path, initializer, context, frame),
+      translateCheckedDeclarations(declarations, path, context, frame, continueWith),
+    );
+  }
+  return translateCheckedDeclarations(declarations, path, context, frame, continueWith);
+};
+
+const translateCheckedDeclarations = (
+  declarations: readonly ts.VariableDeclaration[],
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path) => Formula,
+): Formula => {
+  const declaration = declarations[0];
+  const initializer = declaration.initializer;
   // An assignment that a later declaration's initializer evaluates first runs after the
   // declarations before it.
   const hoisted =
@@ -16528,7 +16725,13 @@ export const translateStatements = (
         inner,
         context,
         frame,
-        frame.exit(inner, translateExpression(returned, inner.scope, context)),
+        throwRangeError(
+          returned,
+          inner,
+          context,
+          frame,
+          frame.exit(inner, translateExpression(returned, inner.scope, context)),
+        ),
       );
     });
   }

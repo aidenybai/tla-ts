@@ -9,6 +9,7 @@ import {
   getParameters,
   getSymbol,
   getUndefined,
+  isInertValue,
   isMethodCall,
   isNameRead,
   type MethodCall,
@@ -3084,7 +3085,7 @@ export const translateArrayLikeCall = (
   // A search from an index counts from the length, which the present elements don't have.
   const isSkippingHoles =
     HOLE_SKIPPING_METHODS.has(method) && (!method.endsWith("ndexOf") || methodArguments.length < 2);
-  return share(translateExpression(object, scope, context), "object", context, (owner) =>
+  const translateElements = (owner: Expression) =>
     isSkippingHoles
       ? share(
           translateMethodElements(method, owner, "PresentElements", node, scope, context),
@@ -3104,8 +3105,69 @@ export const translateArrayLikeCall = (
           "sequence",
           context,
           (sequence) => operate(owner, sequence),
-        ),
-  );
+        );
+  return share(translateExpression(object, scope, context), "object", context, (owner) => {
+    const long = translateLongRead(method, owner, methodArguments, node, scope, context);
+    return long === undefined
+      ? translateElements(owner)
+      : ifExpression(
+          useJavaScript("HasLongLength", [getHeap(scope, node, context), owner], context),
+          long,
+          translateElements(owner),
+        );
+  });
+};
+
+// What slice, toSpliced, indexOf, or lastIndexOf gives on an object whose length is past 2^31, which
+// reads only the keys that it holds, where the arguments convert nothing.
+export const translateLongRead = (
+  method: string,
+  owner: Expression,
+  methodArguments: readonly ts.Expression[],
+  node: ts.Node,
+  scope: Scope,
+  context: Context,
+) => {
+  if (
+    !(
+      ((method === "indexOf" || method === "lastIndexOf" || method === "slice") &&
+        methodArguments.length <= 2) ||
+      method === "toSpliced"
+    ) ||
+    !methodArguments.every((argument) => isInertValue(argument) || isNumberArithmetic(argument))
+  ) {
+    return undefined;
+  }
+  const heap = getHeap(scope, node, context);
+  const passed = [0, 1].map((position) => {
+    const argument = methodArguments[position];
+    return argument === undefined
+      ? getUndefined(context)
+      : translateExpression(argument, scope, context);
+  });
+  return method === "slice"
+    ? useJavaScript("LongSlice", [heap, owner, ...passed], context)
+    : method === "toSpliced"
+      ? useJavaScript(
+          "LongToSpliced",
+          [
+            heap,
+            owner,
+            ...passed,
+            tuple(
+              methodArguments
+                .slice(2)
+                .map((argument) => translateExpression(argument, scope, context)),
+            ),
+            number(Math.min(methodArguments.length, 2)),
+          ],
+          context,
+        )
+      : useJavaScript(
+          "LongSearch",
+          [heap, owner, ...passed, boolean(method === "lastIndexOf")],
+          context,
+        );
 };
 
 // The array methods that read an array-like object, and those that change it in place, which a
@@ -3126,11 +3188,12 @@ const STORED_ARRAY_CHANGES = new Set(["push", "pop", "shift", "unshift", "revers
 export const getArrayLikeChange = (node: ts.CallExpression, context: Context) => {
   const method = getArrayMethodCall(node, context);
   const object = node.arguments.at(0);
-  // reverse and copyWithin give the object, whose type the call's says is an array, so only a
-  // statement drops it.
+  // reverse, copyWithin, and fill give the object, whose type the call's says is an array, so only
+  // a statement drops it.
   return method !== undefined &&
-    (STORED_ARRAY_CHANGES.has(method) || method === "copyWithin") &&
-    (!["reverse", "copyWithin"].includes(method) || ts.isExpressionStatement(node.parent)) &&
+    (STORED_ARRAY_CHANGES.has(method) || method === "copyWithin" || method === "fill") &&
+    (!["reverse", "copyWithin", "fill"].includes(method) ||
+      ts.isExpressionStatement(node.parent)) &&
     object !== undefined &&
     getKind(object, context) === "object" &&
     !node.arguments.some(ts.isSpreadElement)
@@ -3381,8 +3444,13 @@ export const translateArrayConstruction = (
   if (argument === undefined || elements.length > 1 || !isNumberLike(argument, context)) {
     return tuple(elements);
   }
+  if (ts.isNumericLiteral(argument) && Number(argument.text) > 2 ** 31 - 1) {
+    throw new TlaTypeScriptError("tla-ts can't hold an array this long", argument);
+  }
   return ifExpression(
-    apply("=", [elements[0], number(0)]),
+    context.hasSpecialNumbers
+      ? useJavaScript("IsIntegerWithin", [elements[0], number(0)], context)
+      : apply("=", [elements[0], number(0)]),
     tuple([]),
     apply("Assert", [boolean(false), string("TLA+ sequences can't have holes")]),
   );
@@ -3581,3 +3649,20 @@ const translateNewCollection = (
   }
   return getMapOf(argument);
 };
+
+// Whether an expression is arithmetic of numeric literals, which converts nothing.
+const isNumberArithmetic = (node: ts.Expression): boolean =>
+  ts.isNumericLiteral(node) ||
+  (ts.isParenthesizedExpression(node) && isNumberArithmetic(node.expression)) ||
+  (ts.isPrefixUnaryExpression(node) &&
+    node.operator === ts.SyntaxKind.MinusToken &&
+    isNumberArithmetic(node.operand)) ||
+  (ts.isBinaryExpression(node) &&
+    [
+      ts.SyntaxKind.PlusToken,
+      ts.SyntaxKind.MinusToken,
+      ts.SyntaxKind.AsteriskToken,
+      ts.SyntaxKind.AsteriskAsteriskToken,
+    ].includes(node.operatorToken.kind) &&
+    isNumberArithmetic(node.left) &&
+    isNumberArithmetic(node.right));

@@ -13,7 +13,7 @@ import {
   isScript,
 } from "./context";
 import { type CompiledSpec, createSections, emit, type Sections } from "./emit";
-import { getNumberValue } from "./expressions";
+import { getBinary, getNumberValue } from "./expressions";
 import { render } from "./formula";
 import { translateBody } from "./functions";
 import {
@@ -69,28 +69,17 @@ import {
 
 const NORMAL_FORMS = ["NFC", "NFD", "NFKC", "NFKD"];
 
-// A state variable starts at its initializer, or at every value of its type without one.
-// The digits of a fraction's exact value and the fewest that give it back, without its sign, each
-// with the power of 10 of its first digit, which toFixed, toExponential, and toPrecision round.
-// A double is its integer significand times a power of 2, below 0 for a fraction, so its exact
-// value is the significand times 5 to the power's negation, over a power of 10.
-const getDecimalFields = (value: number) => {
-  const view = new DataView(new ArrayBuffer(8));
-  view.setFloat64(0, Math.abs(value));
-  const bits = view.getBigUint64(0);
-  const biased = Number(bits >> 52n);
-  const significand = biased === 0 ? bits : (bits & ((1n << 52n) - 1n)) | (1n << 52n);
-  const power = Math.max(biased, 1) - 1075;
-  const exact = (significand * 5n ** BigInt(-power)).toString();
+// The fewest digits that give a number back, without its sign, and the power of 10 of the first,
+// as Number::toString finds them, which toExponential writes where a call gives no digits.
+const getShortestFields = (value: number) => {
   const shortest = /^(\d)(?:\.(\d+))?e([+-]\d+)$/.exec(Math.abs(value).toExponential());
   return [
-    { name: "digits", value: string(exact.replace(/0+$/, "")) },
-    { name: "exponent", value: number(exact.length - 1 + power) },
     { name: "shortest", value: string(`${shortest?.[1]}${shortest?.[2] ?? ""}`) },
     { name: "shortestExponent", value: number(Number(shortest?.[3])) },
   ];
 };
 
+// A state variable starts at its initializer, or at every value of its type without one.
 const translateInitial = (variable: Variable, context: Context) => {
   const declaration = variable.declaration;
   const name = context.variables.get(variable.symbol);
@@ -139,6 +128,26 @@ const translateExported = (
 // Without a file system, as in a browser, libraries holds TypeScript's declaration files by name.
 // Where the CLI runs a script in Node's place, isNodeScript has the script report a throw or a
 // rejection that nothing handles with the text Node prints.
+// The operators that convert their operands to numbers, which may give NaN.
+const NAN_OPERATORS = new Set([
+  ts.SyntaxKind.MinusToken,
+  ts.SyntaxKind.AsteriskToken,
+  ts.SyntaxKind.PercentToken,
+  ts.SyntaxKind.LessThanLessThanToken,
+  ts.SyntaxKind.GreaterThanGreaterThanToken,
+  ts.SyntaxKind.AmpersandToken,
+  ts.SyntaxKind.BarToken,
+  ts.SyntaxKind.CaretToken,
+  ts.SyntaxKind.MinusEqualsToken,
+  ts.SyntaxKind.AsteriskEqualsToken,
+  ts.SyntaxKind.PercentEqualsToken,
+  ts.SyntaxKind.LessThanLessThanEqualsToken,
+  ts.SyntaxKind.GreaterThanGreaterThanEqualsToken,
+  ts.SyntaxKind.AmpersandEqualsToken,
+  ts.SyntaxKind.BarEqualsToken,
+  ts.SyntaxKind.CaretEqualsToken,
+]);
+
 export const compile = (
   source: string,
   fileName = "spec.ts",
@@ -497,6 +506,12 @@ export const compile = (
     context.heap = heap;
     context.variables.set(heap, identifier(context.names.getFresh("heap")));
     // A name, or a string that keys a property by it, as in Object.getOwnPropertyDescriptor.
+    const isTyped = (node: ts.Expression, flags: ts.TypeFlags) => {
+      const type = context.checker.getTypeAtLocation(node);
+      return (type.isUnion() ? type.types : [type]).every((member) => (member.flags & flags) !== 0);
+    };
+    const isNumeric = (node: ts.Expression) =>
+      isTyped(node, ts.TypeFlags.NumberLike | ts.TypeFlags.BigIntLike);
     const usesSpecialNumbers = (node: ts.Node): boolean =>
       ((ts.isIdentifier(node) || ts.isStringLiteral(node)) &&
         [
@@ -505,9 +520,12 @@ export const compile = (
           "Infinity",
           "POSITIVE_INFINITY",
           "NEGATIVE_INFINITY",
-          // The properties of Number and Math that hold fractions.
+          // The properties of Number and Math that hold fractions or integers beyond 32 bits.
           "EPSILON",
           "MIN_VALUE",
+          "MAX_VALUE",
+          "MAX_SAFE_INTEGER",
+          "MIN_SAFE_INTEGER",
           "E",
           "LN10",
           "LN2",
@@ -521,15 +539,52 @@ export const compile = (
           "Float16Array",
           "Float32Array",
           "Float64Array",
+          // A time value may be NaN or an integer beyond 32 bits, as may a power.
+          "Date",
+          "pow",
         ].includes(node.text)) ||
       (ts.isPrefixUnaryExpression(node) &&
         node.operator === ts.SyntaxKind.MinusToken &&
         ts.isNumericLiteral(node.operand) &&
         Number(node.operand.text) === 0) ||
-      // Division may give an infinity or -0.
-      (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.SlashToken) ||
-      // A literal may give a fraction, and a string may key a typed array by one.
-      (ts.isNumericLiteral(node) && !Number.isInteger(Number(node.text))) ||
+      // Division may give an infinity or -0, and ** and >>> an integer beyond 32 bits.
+      (ts.isBinaryExpression(node) &&
+        [
+          ts.SyntaxKind.SlashToken,
+          ts.SyntaxKind.AsteriskAsteriskToken,
+          ts.SyntaxKind.AsteriskAsteriskEqualsToken,
+          ts.SyntaxKind.GreaterThanGreaterThanGreaterThanToken,
+          ts.SyntaxKind.GreaterThanGreaterThanGreaterThanEqualsToken,
+        ].includes(node.operatorToken.kind)) ||
+      // Converting a value that isn't a number, as arithmetic or a call does, may give NaN.
+      (ts.isBinaryExpression(node) &&
+        (NAN_OPERATORS.has(node.operatorToken.kind) ||
+          ((node.operatorToken.kind === ts.SyntaxKind.PlusToken ||
+            node.operatorToken.kind === ts.SyntaxKind.PlusEqualsToken) &&
+            !isTyped(node.left, ts.TypeFlags.StringLike) &&
+            !isTyped(node.right, ts.TypeFlags.StringLike))) &&
+        !(isNumeric(node.left) && isNumeric(node.right))) ||
+      ((ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
+        node.operator !== ts.SyntaxKind.ExclamationToken &&
+        !isNumeric(node.operand)) ||
+      ((ts.isCallExpression(node) || ts.isNewExpression(node)) &&
+        (node.arguments ?? []).some((argument) => {
+          // A parameter that takes a number, or leaves it out.
+          const expected = context.checker.getContextualType(argument);
+          const members =
+            expected === undefined ? [] : expected.isUnion() ? expected.types : [expected];
+          return (
+            members.some((member) => (member.flags & ts.TypeFlags.Number) !== 0) &&
+            members.every(
+              (member) => (member.flags & (ts.TypeFlags.Number | ts.TypeFlags.Undefined)) !== 0,
+            ) &&
+            !isNumeric(argument)
+          );
+        })) ||
+      // A literal may give a fraction or an integer beyond 32 bits, and a string may key a typed
+      // array by a fraction.
+      (ts.isNumericLiteral(node) &&
+        (!Number.isInteger(Number(node.text)) || Number(node.text) > 2 ** 31 - 1)) ||
       (ts.isStringLiteral(node) && isFractionKey(node.text)) ||
       (ts.forEachChild(node, usesSpecialNumbers) ?? false);
     context.hasSpecialNumbers = roots.some(usesSpecialNumbers);
@@ -541,6 +596,7 @@ export const compile = (
       ts.forEachChild(node, addFractionKeys);
     };
     roots.forEach(addFractionKeys);
+
     // A variable may hold any typed array's constructor, so the heap holds them all, their
     // prototypes, and the methods that they share.
     const usesTypedArrays = (node: ts.Node): boolean =>
@@ -686,7 +742,9 @@ export const compile = (
                 { name: "value", value: identifier(fraction[1]) },
                 { name: "text", value: string(String(fraction[0])) },
                 { name: "floor", value: number(Math.floor(fraction[0])) },
-                ...getDecimalFields(fraction[0]),
+
+                { name: "binary", value: getBinary(fraction[0]) },
+                ...getShortestFields(fraction[0]),
                 {
                   name: "round",
                   value: Object.is(Math.round(fraction[0]), -0)
@@ -695,6 +753,19 @@ export const compile = (
                 },
               ]),
             ),
+        ),
+      ),
+      define(
+        "UsedDoubles",
+        [],
+        tuple(
+          [...context.doubles].map((value) =>
+            record("Record", [
+              { name: "binary", value: getBinary(value) },
+              { name: "text", value: string(String(value)) },
+              ...getShortestFields(value),
+            ]),
+          ),
         ),
       ),
       define(

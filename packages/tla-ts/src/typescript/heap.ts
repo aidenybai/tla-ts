@@ -159,6 +159,7 @@ import {
   getCollection,
   isHeapSetOrMap,
   isOrderedCollection,
+  getArrayMethodCall,
 } from "./types";
 
 const SHORT_CIRCUITS = new Set([
@@ -5457,8 +5458,34 @@ export const getFormatCall = (node: ts.Node, context: Context) =>
       }
     : undefined;
 
-export const getEngineErrors = (node: ts.Node, context: Context) => {
-  if (getFormatCall(node, context) !== undefined) return ["RangeError"];
+export const getEngineErrors = (node: ts.Node, context: Context) => [
+  ...getNumberMethodErrors(node, context),
+  // Array.prototype.map, toReversed, toSorted, and with make an array of an object's length, which
+  // throws a RangeError from 2^32.
+  ...(ts.isCallExpression(node) &&
+  ["map", "toReversed", "toSorted", "with"].includes(getArrayMethodCall(node, context) ?? "")
+    ? ["RangeError"]
+    : []),
+  ...getOwnEngineErrors(node, context),
+];
+
+// toFixed, toExponential, and toPrecision throw a RangeError for digits outside their range, and a
+// Number.prototype method that a value holds a TypeError where call gives it another receiver.
+const getNumberMethodErrors = (node: ts.Node, context: Context) =>
+  ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)
+    ? [
+        ...(["toFixed", "toExponential", "toPrecision"].includes(node.expression.name.text) &&
+        isNumberLike(node.expression.expression, context)
+          ? ["RangeError"]
+          : []),
+        ...(node.expression.name.text === "call" &&
+        ts.isIdentifier(skipCasts(node.expression.expression))
+          ? ["TypeError"]
+          : []),
+      ]
+    : [];
+
+const getOwnEngineErrors = (node: ts.Node, context: Context) => {
   const isDefinition =
     isObjectChange(node, context) && node.expression.name.text.startsWith("define");
   const isFallible =
