@@ -937,51 +937,58 @@ const translateSequenceOperation = (
     use: (isFound: (position: Expression) => Expression) => Expression,
   ) => {
     // A search compares by identity, which a sequence lacks: an array that a literal makes is no
-    // element, and SameValue stops where an element equals another array.
-    const isSequence = getKind(argument, context) === "sequence";
+    // element, and SameValue stops where an element equals another array. A search without a
+    // value searches for undefined.
+    const isSequence = argument !== undefined && getKind(argument, context) === "sequence";
     const isFresh = isSequence && ts.isArrayLiteralExpression(skipCasts(argument));
-    return share(translate(argument), "value", context, (value) => {
-      const checker = context.checker;
-      const elementType = call.elementType;
-      const isComparableElement =
-        !isSequence &&
-        elementType !== undefined &&
-        isComparableType(elementType, checker.getTypeAtLocation(argument), checker);
-      // includes compares by SameValueZero, and indexOf by ===, where NaN differs from itself.
-      const getEqual = (position: Expression) =>
-        isFresh
-          ? boolean(false)
-          : context.hasSpecialNumbers
-            ? useJavaScript(
-                method === "includes" ? "SameValueZero" : "StrictEquals",
-                [index(sequence, [position]), value],
-                context,
-              )
-            : isComparableElement
-              ? apply("=", [index(sequence, [position]), value])
-              : useJavaScript("SameValue", [index(sequence, [position]), value], context);
-      const from = call.arguments[1];
-      // An undefined fromIndex is 0, where indexOf starts anyway but lastIndexOf stops.
-      const isUndefined =
-        from !== undefined &&
-        (context.checker.getTypeAtLocation(from).flags & ts.TypeFlags.Undefined) !== 0;
-      if (from === undefined || (isUndefined && !isLast)) return use(getEqual);
-      if (!isUndefined && !isPrimitiveIndex(from, context)) {
-        throw new TlaTypeScriptError("Pass a primitive as the index to search from", from);
-      }
-      const start = isUndefined ? number(0) : getRelative(from, "RelativeIndex");
-      // A search back from index start reaches position start + 1, as positions count from 1.
-      return share(start, "start", context, (shared) =>
-        use((position) =>
-          junction("And", [
-            isLast
-              ? apply("<=", [position, apply("+", [shared, number(1)])])
-              : apply(">", [position, shared]),
-            getEqual(position),
-          ]),
-        ),
-      );
-    });
+    return share(
+      argument === undefined ? getUndefined(context) : translate(argument),
+      "value",
+      context,
+      (value) => {
+        const checker = context.checker;
+        const elementType = call.elementType;
+        const isComparableElement =
+          argument !== undefined &&
+          !isSequence &&
+          elementType !== undefined &&
+          isComparableType(elementType, checker.getTypeAtLocation(argument), checker);
+        // includes compares by SameValueZero, and indexOf by ===, where NaN differs from itself.
+        const getEqual = (position: Expression) =>
+          isFresh
+            ? boolean(false)
+            : context.hasSpecialNumbers
+              ? useJavaScript(
+                  method === "includes" ? "SameValueZero" : "StrictEquals",
+                  [index(sequence, [position]), value],
+                  context,
+                )
+              : isComparableElement
+                ? apply("=", [index(sequence, [position]), value])
+                : useJavaScript("SameValue", [index(sequence, [position]), value], context);
+        const from = call.arguments[1];
+        // An undefined fromIndex is 0, where indexOf starts anyway but lastIndexOf stops.
+        const isUndefined =
+          from !== undefined &&
+          (context.checker.getTypeAtLocation(from).flags & ts.TypeFlags.Undefined) !== 0;
+        if (from === undefined || (isUndefined && !isLast)) return use(getEqual);
+        if (!isUndefined && !isPrimitiveIndex(from, context)) {
+          throw new TlaTypeScriptError("Pass a primitive as the index to search from", from);
+        }
+        const start = isUndefined ? number(0) : getRelative(from, "RelativeIndex");
+        // A search back from index start reaches position start + 1, as positions count from 1.
+        return share(start, "start", context, (shared) =>
+          use((position) =>
+            junction("And", [
+              isLast
+                ? apply("<=", [position, apply("+", [shared, number(1)])])
+                : apply(">", [position, shared]),
+              getEqual(position),
+            ]),
+          ),
+        );
+      },
+    );
   };
   const getSearchIndex = (isLast: boolean) => () =>
     withSearch(isLast, (isFound) => {

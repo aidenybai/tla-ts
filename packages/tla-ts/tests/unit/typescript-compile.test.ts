@@ -694,6 +694,36 @@ describe("top-level statements", () => {
     });
   });
 
+  describe("searches an array for undefined where a call passes no value", () => {
+    const source = `
+      function same(actual: unknown, expected: unknown, label: string) {
+        if (!Object.is(actual, expected)) throw new Error(label);
+      }
+      const list: unknown[] = [1, , 3];
+      list.push(undefined);
+      const items = { 0: 1, 1: undefined, length: 2 };
+      // @ts-ignore
+      same([list.indexOf(), list.includes(), list.lastIndexOf()].join(), "3,true,3", "heap");
+      // @ts-ignore
+      same([[0, , 2].indexOf(), [0, , 2].includes()].join(), "-1,true", "holes");
+      // @ts-ignore
+      same(Array.prototype.indexOf.call(items), 1, "call");
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(source)).failure).toBeUndefined();
+    });
+
+    it.each([
+      ["heap", '"3,true,3"', '"-1,true,-1"'],
+      ["holes", '"-1,true"', '"1,true"'],
+    ])("rejects a wrong %s", async (label, expected, wrong) => {
+      expect((await checkModel(source.replace(expected, wrong))).failure?.message).toContain(
+        `"${label}"`,
+      );
+    });
+  });
+
   describe("searches an array from an object index that valueOf or toString converts", () => {
     const source = `
       const seen: unknown[] = [];
