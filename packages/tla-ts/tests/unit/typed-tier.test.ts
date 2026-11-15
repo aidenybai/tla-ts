@@ -182,6 +182,9 @@ describe("typed tier matches TLC", () => {
   it.each([
     ["Torus", 90153, 45076, 2.8e-13],
     ["SymmetricTorus", 191254, 63751, 1.1e-12],
+    ["ProjectedTorus", 90153, 45076, 5.4e-13],
+    ["SymmetricProjection", 191254, 63751, 2e-12],
+    ["MaskedCounters", 114245, 28561, 2.9e-13],
   ])(
     "finds the fingerprint distance TLC reports in %s, as the interpreter does",
     async (name, generatedStates, distinctStates, probability) => {

@@ -722,7 +722,6 @@ export interface Search {
         symmetry: Images[] | undefined;
         view: Expression | undefined;
         variableOrder: number[];
-        getFingerprint: (state: Value[]) => bigint;
         liveness: Solution[] | undefined;
       }
     | undefined;
@@ -1096,16 +1095,15 @@ export const createSearch = (
   };
   const getViewValue = (expression: Expression, state: Value[]) =>
     evaluate(expression, getContext(environment, state, undefined));
-  const getRepresentativeFingerprint = (representative: Value[]) =>
-    getTlcFingerprint(
+  const getTlcStateFingerprint = (state: Value[]) => {
+    const representative =
+      symmetryGroup === undefined ? state : getRepresentative(state, symmetryGroup, getTlcOrder());
+    return getTlcFingerprint(
       view === undefined
         ? getTlcOrder().map((index) => representative[index])
         : [getViewValue(view.expression, representative)],
     );
-  const getTlcStateFingerprint = (state: Value[]) =>
-    getRepresentativeFingerprint(
-      symmetryGroup === undefined ? state : getRepresentative(state, symmetryGroup, getTlcOrder()),
-    );
+  };
   const findFailedInitialPredicate = (state: Value[]) =>
     isCoveredHeld(coveredInitialPredicates, state)
       ? undefined
@@ -1270,7 +1268,6 @@ export const createSearch = (
             symmetry: symmetryGroup,
             view: view?.expression,
             variableOrder: getTlcOrder(),
-            getFingerprint: getRepresentativeFingerprint,
             liveness,
           };
     },

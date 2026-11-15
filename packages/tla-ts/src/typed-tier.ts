@@ -215,8 +215,6 @@ export interface TypedCheck {
   view: Expression | undefined;
   // The variables in the order TLC compares states in.
   variableOrder: number[];
-  // Fingerprints a state that is the smallest of its images.
-  getFingerprint: (state: Value[]) => bigint;
   // The solutions of the temporal properties the search checks, without symmetry or a view.
   liveness: Solution[] | undefined;
 }
@@ -907,9 +905,9 @@ const getRecordShapes = (resolved: RecType) =>
 const isScalar = (value: Value) => typeof value !== "object" || value.kind === "ModelValue";
 
 // Generates code that fingerprints a state's plains in the order given, as TLC fingerprints the
-// values they stand for, into words as its low and high words. Scalars it knows, such as atoms and
-// field names, extend by their extensions.
-const createStateFingerprinter = (types: Type[], order: number[], plains: Plains) => {
+// values they stand for, into words as its low and high words. A projection fingerprints as the
+// tuple it stands for. Scalars it knows, such as atoms and field names, extend by their extensions.
+const createStateFingerprinter = (types: Type[], order: Projection[], plains: Plains) => {
   const atoms = Int32Array.from(plains.values.flatMap(getScalarExtension));
   const domains: Int32Array[] = [];
   const fallbacks: ((plain: Plain) => void)[] = [];
@@ -941,7 +939,10 @@ const createStateFingerprinter = (types: Type[], order: number[], plains: Plains
     if (resolved.kind === "Set") {
       return `{ const ${name} = ${plain}; ${code.set(`${name}.length`)} for (let i${name} = 0; i${name} < ${name}.length; i${name}++) { ${getCode(resolved.element, `${name}[i${name}]`)} } }`;
     }
-    if (resolved.kind === "Map" && !isMask(resolved.keys, plains)) {
+    if (resolved.kind === "Map" && isMask(resolved.keys, plains)) {
+      return `{ const ${name} = ${plain}; const k${name} = ${name}[0]; const v${name} = ${name}[1]; ${code.function(`H.count(k${name})`)} for (let r${name} = k${name}, i${name} = 0; r${name} !== 0; r${name} &= r${name} - 1, i${name}++) { ${code.integer(`(31 - Math.clz32(r${name} & -r${name}))`)} ${getCode(resolved.values.element, `v${name}[i${name}]`)} } }`;
+    }
+    if (resolved.kind === "Map") {
       return `{ const ${name} = ${plain}; const k${name} = ${name}[0]; const v${name} = ${name}[1]; ${code.function(`k${name}.length`)} for (let i${name} = 0; i${name} < k${name}.length; i${name}++) { ${getCode(resolved.keys.element, `k${name}[i${name}]`)} ${getCode(resolved.values.element, `v${name}[i${name}]`)} } }`;
     }
     if (resolved.kind === "Tup") {
@@ -978,7 +979,11 @@ const createStateFingerprinter = (types: Type[], order: number[], plains: Plains
     const fallback = fallbacks.push((item) => extendFingerprint(words, read(item))) - 1;
     return `W[0] = l; W[1] = h; X[${fallback}](${plain}); l = W[0]; h = W[1];`;
   };
-  const body = order.map((variable) => getCode(types[variable], `s[${variable}]`)).join("\n");
+  const getProjectionCode = (projection: Projection): string =>
+    typeof projection === "number"
+      ? getCode(types[projection], `s[${projection}]`)
+      : `${code.function(String(projection.length))} ${projection.map((item, index) => `${code.integer(String(index + 1))} ${getProjectionCode(item)}`).join(" ")}`;
+  const body = order.map(getProjectionCode).join("\n");
   const tables = getFingerprintTables();
   const fingerprint: (state: Plain[]) => void = new Function(
     "H0",
@@ -4043,26 +4048,31 @@ const compileAssignment = (
   return () => `${loop.header(name)} { ${tail()} }`;
 };
 
-const getProjectedVariables = (
-  program: Program,
-  expression: Expression,
-  scope: TierScope,
-): number[] => {
+// The variables a tuple of variables stands for, nested as its tuples are.
+type Projection = number | Projection[];
+
+const getProjection = (program: Program, expression: Expression, scope: TierScope): Projection => {
   if (expression.kind === "Tuple") {
-    return expression.elements.flatMap((element) => getProjectedVariables(program, element, scope));
+    return expression.elements.map((element) => getProjection(program, element, scope));
   }
   if (expression.kind !== "Identifier" || scope.has(expression.name)) return unsupported();
   const global = findGlobalName(expression.name, program.environment);
-  if (global?.kind === "Variable") return [global.index];
+  if (global?.kind === "Variable") return global.index;
   if (
     global?.kind === "Definition" &&
     global.definition.kind === "Operator" &&
     global.definition.params.length === 0
   ) {
-    return getProjectedVariables(program, global.definition.body, new Map());
+    return getProjection(program, global.definition.body, new Map());
   }
   return unsupported();
 };
+
+const getVariables = (projection: Projection): number[] =>
+  typeof projection === "number" ? [projection] : projection.flatMap(getVariables);
+
+const getProjectedVariables = (program: Program, expression: Expression, scope: TierScope) =>
+  getVariables(getProjection(program, expression, scope));
 
 const deopt = (): never => {
   throw DEOPT;
@@ -5603,21 +5613,19 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
     check.variableOrder,
     program.plains,
   );
-  const readers = program.variableTypes.map((type) => createValueReader(type, program.plains));
+  // TLC fingerprints the view of a state in place of the state.
+  const stateFingerprinter = check.view
+    ? createStateFingerprinter(
+        program.variableTypes,
+        [getProjection(program, check.view, new Map())],
+        program.plains,
+      )
+    : fingerprinter;
   const addFingerprint = (state: Plain[]) => {
-    const representative = isImaged ? compiled.represent(state) : state;
+    stateFingerprinter.fingerprint(isImaged ? compiled.represent(state) : state);
     if (fingerprints.size + 2 > fingerprints.data.length) growWords(fingerprints);
-    if (check.view !== undefined) {
-      const fingerprint = check.getFingerprint(
-        representative.map((plain, variable) => readers[variable](plain)),
-      );
-      fingerprints.data[fingerprints.size++] = Number(BigInt.asIntN(32, fingerprint));
-      fingerprints.data[fingerprints.size++] = Number(BigInt.asIntN(32, fingerprint >> 32n));
-      return;
-    }
-    fingerprinter.fingerprint(representative);
-    fingerprints.data[fingerprints.size++] = fingerprinter.words[0];
-    fingerprints.data[fingerprints.size++] = fingerprinter.words[1];
+    fingerprints.data[fingerprints.size++] = stateFingerprinter.words[0];
+    fingerprints.data[fingerprints.size++] = stateFingerprinter.words[1];
   };
   // TLC's fingerprints of the states are taken a page at a time, as the page is reused or at the end.
   const addFingerprints = (data: Uint8Array, end: number) => {
