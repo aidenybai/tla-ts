@@ -13,7 +13,7 @@ import { install } from "virtual:site-data";
 import { getTest262Percent, TEST262_RUNS } from "./test262";
 
 export const App = () => (
-  <main className="mx-auto max-w-[700px] px-4 pt-16 pb-16 text-prose lg:pt-[92px]">
+  <main className="mx-auto max-w-[692px] px-6 py-16 text-prose sm:py-28">
     <Hero.Root>
       <Hero.Title>TLA-ts</Hero.Title>
       <Hero.Body>
@@ -21,22 +21,33 @@ export const App = () => (
           Formally verify TypeScript code with{" "}
           <Link href="https://lamport.azurewebsites.net/tla/tla.html">TLA+</Link>.
         </p>
-        <div className="flex gap-2">
-          <a
-            href="https://github.com/aidenybai/tla-ts"
-            className={buttonVariants({ variant: "primary" })}
-          >
-            <GitHubIcon />
-            GitHub
-          </a>
-          <a href="/playground" className={cn(buttonVariants(), "text-foreground")}>
-            <Play weight="fill" className="size-3" />
-            Playground
-          </a>
+        <div className="mt-4 flex flex-col gap-1 rounded-2xl p-1 shadow-raised">
+          <Code.Root source={install}>
+            <Code.Content />
+            <Code.Actions>
+              <Code.Copy />
+            </Code.Actions>
+          </Code.Root>
+          <div className="flex gap-1">
+            <a
+              href="https://github.com/aidenybai/tla-ts"
+              className={cn(buttonVariants({ variant: "card", size: "lg" }), "flex-1")}
+            >
+              <GitHubIcon />
+              GitHub
+            </a>
+            <a
+              href="/playground"
+              className={cn(buttonVariants({ variant: "card", size: "lg" }), "flex-1")}
+            >
+              <Play weight="fill" className="size-3" />
+              Playground
+            </a>
+          </div>
         </div>
       </Hero.Body>
     </Hero.Root>
-    <div className="mt-12 flex flex-col gap-12">
+    <div className="mt-20 flex flex-col gap-20">
       <Section.Root>
         <Section.Title>How it works</Section.Title>
         <ol className="flex list-decimal flex-col gap-1.5 pl-5 text-pretty marker:text-faint">
@@ -51,18 +62,6 @@ export const App = () => (
           <Example.Source />
           <Example.Hint />
         </Example.Root>
-      </Section.Root>
-      <Section.Root>
-        <Section.Title>Install</Section.Title>
-        <Code.Root source={install}>
-          <Code.Content />
-          <Code.Actions>
-            <Code.Copy />
-          </Code.Actions>
-        </Code.Root>
-        <p className="text-pretty">
-          Or skip the install and run <InlineCode>npx tla-ts [file].ts</InlineCode> directly.
-        </p>
       </Section.Root>
       <Reference />
       <Section.Root>
@@ -85,7 +84,7 @@ export const App = () => (
         <Test262Chart />
       </Section.Root>
     </div>
-    <footer className="mt-16 flex items-center justify-between border-t pt-6">
+    <footer className="mt-24 flex items-center justify-between border-t pt-6">
       <p className="text-sm text-muted-foreground">
         Made by <Link href="https://aidenybai.com">Aiden Bai</Link>
       </p>
