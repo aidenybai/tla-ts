@@ -6,7 +6,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
-import { runInNewContext, Script } from "node:vm";
+import { constants, createContext, runInContext, Script } from "node:vm";
 import ts from "@typescript/typescript6";
 import { TlaTypeScriptError } from "../src/errors";
 import { check } from "../src/parallel";
@@ -149,7 +149,9 @@ process.on("unhandledRejection", (reason) => {
   rejections.push(reason);
 });
 
-// Runs a test in Node, with its jobs and then its timers, as an async test checks $DONE in one.
+// Runs a test in Node, with its jobs and then its timers, as an async test checks $DONE in one. The
+// global object is an ordinary one, as a script's is. vm's default global intercepts each access, so
+// that a global var named __proto__, or a global getter that deletes itself, behaves otherwise.
 const getNodeError = async (source: string, isSloppy: boolean) => {
   const timers: (() => void)[] = [];
   try {
@@ -161,12 +163,15 @@ const getNodeError = async (source: string, isSloppy: boolean) => {
         alwaysStrict: !isSloppy,
       },
     }).outputText;
-    runInNewContext(output, {
-      exports: {},
-      setTimeout: (callback: () => void) => {
-        timers.push(callback);
-      },
-    });
+    runInContext(
+      output,
+      Object.assign(createContext(constants.DONT_CONTEXTIFY), {
+        exports: {},
+        setTimeout: (callback: () => void) => {
+          timers.push(callback);
+        },
+      }),
+    );
     await new Promise((resolve) => {
       setImmediate(resolve);
     });
