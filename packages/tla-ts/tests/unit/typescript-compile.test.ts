@@ -43744,4 +43744,43 @@ describe("BigInts", () => {
       ).toContain("tla-ts can't hold a BigInt beyond 4096 bits");
     });
   });
+
+  describe("reads and writes a DataView's 64-bit BigInts in either byte order", () => {
+    const getSource = (expected: string) => `
+      const view = new DataView(new ArrayBuffer(16));
+      const log: string[] = [];
+      view.setBigInt64(0, -2n);
+      view.setBigUint64(8, 0x0102030405060708n, true);
+      log.push(\`\${view.getBigInt64(0)},\${view.getBigUint64(0)},\${view.getBigUint64(0, true)}\`);
+      log.push(\`\${view.getBigInt64(8)},\${view.getBigUint64(8, true)}\`);
+      view.setBigInt64(4, 2n ** 64n + 0x80n, true);
+      log.push(\`\${view.getBigInt64(1)},\${view.getBigUint64(3, true)},\${view.getUint8(4)}\`);
+      view.setBigUint64(0, -(2n ** 70n) - 1n);
+      log.push(\`\${view.getBigInt64(0)},\${view.getBigUint64(0)}\`);
+      try {
+        view.getBigInt64(9);
+      } catch (error) {
+        log.push(String(error instanceof RangeError));
+      }
+      if (log.join("|") !== "${expected}") throw new Error(log.join("|"));
+    `;
+    const expected = [
+      "-2,18446744073709551614,18374686479671623679|578437695752307201,72623859790382856",
+      "-549755813888,33023,128|-1,18446744073709551615|true",
+    ].join("|");
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects a little-endian read as big-endian", async () => {
+      expect(
+        (
+          await checkModel(
+            getSource(expected.replace("18374686479671623679", "18446744073709551614")),
+          )
+        ).failure?.message,
+      ).toContain(expected);
+    });
+  });
 });

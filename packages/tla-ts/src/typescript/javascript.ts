@@ -6302,7 +6302,7 @@ FinalizationRegistryUnregister(heap, ref, token) ==
 DataViewSet(heap, ref, type, request, value, littleEndian) ==
   LET view == heap.objects[ref[Ref]]
       index == IndexOfArgument(request)
-      number == ToNumber(value)
+      number == ToElement(type, value)
       isLittle == ToBoolean(littleEndian)
       bytes == NumberBytes(type, number)
   IN CASE index = -1 -> Thrown(heap, "RangeError")
