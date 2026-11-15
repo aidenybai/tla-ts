@@ -121,6 +121,7 @@ import {
   translateFunctionObject,
   getOwnFunctionKeys,
   translatePropertyKey,
+  getAnyProperty,
 } from "./heap";
 import {
   getBuiltIn,
@@ -2939,13 +2940,10 @@ const translatePropertyAccess = (
       (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !==
       0
   ) {
-    // A value of type any or unknown may be an array or a string, which read their other
-    // properties from their prototypes.
-    context.builtIns.add("Array.prototype");
-    context.builtIns.add("String.prototype");
-    return useJavaScript(
-      "GetAny",
-      [getHeap(scope, node, context), translateExpression(receiver, scope, context), string(name)],
+    return getAnyProperty(
+      getHeap(scope, node, context),
+      translateExpression(receiver, scope, context),
+      string(name),
       context,
     );
   }
@@ -3307,15 +3305,10 @@ const translateElementRead = (
       (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !==
       0
   ) {
-    context.builtIns.add("Array.prototype");
-    context.builtIns.add("String.prototype");
-    return useJavaScript(
-      "GetAny",
-      [
-        getHeap(scope, node, context),
-        translateExpression(node.expression, scope, context),
-        translatePropertyKey(node.argumentExpression, scope, context),
-      ],
+    return getAnyProperty(
+      getHeap(scope, node, context),
+      translateExpression(node.expression, scope, context),
+      translatePropertyKey(node.argumentExpression, scope, context),
       context,
     );
   }

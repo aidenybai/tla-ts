@@ -42587,4 +42587,64 @@ describe("BigInts", () => {
       expect(result.failure?.message).toContain("tla-ts can't read the properties of <<1, 2>>");
     });
   });
+
+  describe("destructures a value of type any", () => {
+    const getSource = (expected: string) => `
+      let log = "";
+      const read = (value: any) => {
+        const { length, 0: first } = value;
+        log += length;
+        log += first;
+      };
+      const assign = (value: any) => {
+        let size: any;
+        let last: any;
+        ({ length: size, 1: last } = value);
+        log += size;
+        log += last;
+      };
+      read("ab");
+      read([5, 6]);
+      assign("xyz");
+      assign([7, 8]);
+      if (log !== "${expected}") throw new Error(log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("2a253y28"))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong length of a string", async () => {
+      expect((await checkModel(getSource("3a253y28"))).failure?.message).toContain("2a253y28");
+    });
+
+    it("stops at a property of a number", async () => {
+      const result = await checkModel(`
+        const read = (value: any) => {
+          const { size } = value;
+          return size;
+        };
+        if (read(5) !== undefined) throw new Error("size");
+      `);
+      expect(result.failure?.message).toContain("tla-ts can't read a property of this value");
+    });
+
+    it("stops at a getter that the pattern runs", async () => {
+      const result = await checkModel(`
+        let count = 0;
+        const counter = {
+          get size() {
+            count += 1;
+            return count;
+          },
+        };
+        const read = (value: any) => {
+          const { size } = value;
+        };
+        read(counter);
+        if (count !== 1) throw new Error(String(count));
+      `);
+      expect(result.failure?.message).toContain("tla-ts can't call getters");
+    });
+  });
 });

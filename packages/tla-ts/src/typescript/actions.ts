@@ -277,6 +277,7 @@ import {
   translateErrorFields,
   getFormatCall,
   translateFunctionValue,
+  getAnyProperty,
 } from "./heap";
 import {
   COLLECTIONS,
@@ -1426,7 +1427,13 @@ const assignPattern = <Result>(
         ? patternType
         : context.checker.getTypeOfAssignmentPattern(target),
     );
-    const isHeapObject = isHeapPattern(type, target, context);
+    // A value of type any or unknown, whose properties the pattern reads as a member read does.
+    const isAny =
+      context.heap !== undefined &&
+      (context.checker.getTypeOfAssignmentPattern(target).flags &
+        (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !==
+        0;
+    const isHeapObject = isAny || isHeapPattern(type, target, context);
     // A rest alone of a primitive copies what the object that wraps it owns, and of null or
     // undefined, which leave no other type, throws the TypeError of its pattern first.
     const isPrimitiveRest =
@@ -1540,13 +1547,15 @@ const assignPattern = <Result>(
         ts.isIdentifier(property.name) || ts.isStringLiteral(property.name)
           ? property.name.text
           : undefined;
-      const part = isHeapObject
-        ? useJavaScript("Get", [getHeap(current.scope, property, context), value, key], context)
-        : field === undefined
-          ? undefined
-          : defaulted.initializer === undefined
-            ? getField(value, field)
-            : getOptionalField(value, field, context);
+      const part = isAny
+        ? getAnyProperty(getHeap(current.scope, property, context), value, key, context)
+        : isHeapObject
+          ? useJavaScript("Get", [getHeap(current.scope, property, context), value, key], context)
+          : field === undefined
+            ? undefined
+            : defaulted.initializer === undefined
+              ? getField(value, field)
+              : getOptionalField(value, field, context);
       if (part === undefined) {
         throw new TlaTypeScriptError(`Can't assign to ${property.getText()}`, property);
       }
@@ -14762,6 +14771,17 @@ const bindElement = (
     }
     const key = inner.propertyName ?? inner.name;
     if (!(ts.isIdentifier(key) || ts.isStringLiteral(key))) return undefined;
+    if (
+      context.heap !== undefined &&
+      (type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0
+    ) {
+      return getAnyProperty(
+        getHeap(path.scope, inner, context),
+        element,
+        string(key.text),
+        context,
+      );
+    }
     return isHeapObject
       ? useJavaScript(
           "Get",

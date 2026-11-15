@@ -43,7 +43,7 @@ import {
   string,
   tuple,
 } from "./tla";
-import { getHeap, translatePropertyKey } from "./heap";
+import { getAnyProperty, getHeap, translatePropertyKey } from "./heap";
 import { translateBuiltInValue } from "./intrinsics";
 import { useJavaScript } from "./javascript";
 import { getField, getPathStep, getPropertyKey, isHeapPattern, isSequenceType } from "./types";
@@ -429,6 +429,10 @@ export const bindPatternInline = (
     );
   }
   const type = context.checker.getNonNullableType(context.checker.getTypeAtLocation(pattern));
+  // A value of type any or unknown, which may be an object, an array, or a primitive, and whose
+  // properties the pattern reads as a member read does.
+  const isAny =
+    heapSymbol !== undefined && (type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;
   // An array pattern runs the iterator of an array, which may be one that a script replaced.
   const isIterated =
     ts.isArrayBindingPattern(pattern) &&
@@ -623,6 +627,16 @@ export const bindPatternInline = (
             };
       return bindPatternInline(element.name, withDefault(part), taken, context);
     }
+    if (isAny) {
+      return bindPatternInline(
+        element.name,
+        withDefault(
+          getAnyProperty(getHeap(current, element, context), value, string(key), context),
+        ),
+        current,
+        context,
+      );
+    }
     if (isSequenceType(context.checker.getTypeAtLocation(pattern), context.checker)) {
       if (key !== "length" && !/^(0|[1-9][0-9]*)$/.test(key)) {
         throw new TlaTypeScriptError(`Unsupported array property: ${key}`, element);
@@ -658,7 +672,8 @@ export const bindPatternInline = (
     return bindPatternInline(element.name, withDefault(part), current, context);
   }, iterating);
   if (heapSymbol === undefined) return bound;
-  const isHeapObject = ts.isObjectBindingPattern(pattern) && isHeapPattern(type, pattern, context);
+  const isHeapObject =
+    ts.isObjectBindingPattern(pattern) && (isAny || isHeapPattern(type, pattern, context));
   // A nested pattern may destructure an element that an array lacks, which throws a TypeError
   // that TLC would find only where something reads what the pattern binds.
   if (!isHeapObject && !ts.isBindingElement(pattern.parent)) return bound;
