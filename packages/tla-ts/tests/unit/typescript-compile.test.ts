@@ -621,6 +621,50 @@ describe("top-level statements", () => {
     });
   });
 
+  describe("runs a typed array's callback whose result the method's signature doesn't take", () => {
+    const source = `
+      "use strict";
+      function same(actual: unknown, expected: unknown, label: string) {
+        if (!Object.is(actual, expected)) throw new Error(label);
+      }
+      const sample = new Int8Array([1, 2, 3]);
+      let calls = 0;
+      // @ts-ignore
+      same(sample.every(() => { calls++; }), false, "every");
+      // @ts-ignore
+      same(sample.findIndex(() => "x"), 0, "findIndex");
+      // @ts-ignore
+      same(sample.filter(() => (calls > 0 ? 0 : {})).length, 0, "filter");
+      // @ts-ignore
+      same(new BigInt64Array([1n, 2n]).findLast(() => "a"), 2n, "findLast");
+      let seen: unknown = 1;
+      // @ts-ignore
+      sample.find(function (this: { [key: string]: unknown }) {
+        seen = this;
+      });
+      same(seen, undefined, "this");
+      // @ts-ignore
+      same(sample.map(() => {}).join(), "0,0,0", "map");
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(source)).failure).toBeUndefined();
+    });
+
+    it.each([
+      ["every", 'false, "every"', 'true, "every"'],
+      ["findIndex", '0, "findIndex"', '-1, "findIndex"'],
+      ["filter", '0, "filter"', '3, "filter"'],
+      ["findLast", '2n, "findLast"', '1n, "findLast"'],
+      ["this", 'undefined, "this"', 'sample, "this"'],
+      ["map", '"0,0,0"', '"NaN,NaN,NaN"'],
+    ])("rejects a wrong %s", async (label, expected, wrong) => {
+      expect((await checkModel(source.replace(expected, wrong))).failure?.message).toContain(
+        `"${label}"`,
+      );
+    });
+  });
+
   describe("runs a reduce's call with no initial value on an array-like object", () => {
     const source = `
       const seen: number[] = [];
