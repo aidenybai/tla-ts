@@ -1306,6 +1306,12 @@ const PROTOCOL_METHODS = new Set(["match", "search", "split"]);
 const SHORT_CALL_ERRORS = new Set([ARGUMENT_COUNT_ERROR, 2555]);
 // A call of a value of type unknown, which tla-ts runs where a key stores a String.prototype method.
 const UNKNOWN_CALLEE_ERROR = 2571;
+// A spread argument that TypeScript can't count against a function's parameters, an argument past
+// them, or apply's arguments where the function takes none.
+const SPREAD_CALL_ERRORS = new Set([ARGUMENT_COUNT_ERROR, 2345, 2556]);
+
+const skipParentheses = (node: ts.Expression): ts.Expression =>
+  ts.isParenthesizedExpression(node) ? skipParentheses(node.expression) : node;
 
 // An operator's operand of a type that the operator doesn't take, or that is null or undefined,
 // which tla-ts converts to a primitive where it's an object that the test declares, a wrapper, or a
@@ -2044,6 +2050,29 @@ const ignoreSoundErrors = () => {
       isGlobalIterator(heritage.types[0].expression, checker)
     );
   };
+  // A call that spreads arguments into a function expression without parameters, directly or through
+  // apply. The function reads them only through its arguments object, which takes any values.
+  const isUntypedSpreadCall = (node: ts.Node) => {
+    const call = ts.findAncestor(node, ts.isCallExpression);
+    if (call === undefined || node.getStart() < call.arguments.pos) return false;
+    const callee = skipParentheses(call.expression);
+    const isApply =
+      ts.isPropertyAccessExpression(callee) &&
+      callee.name.text === "apply" &&
+      call.arguments.length === 2;
+    const called = isApply ? skipParentheses(callee.expression) : callee;
+    const spread = isApply ? call.arguments[1] : call;
+    const elements = ts.isArrayLiteralExpression(spread)
+      ? spread.elements
+      : ts.isCallExpression(spread)
+        ? spread.arguments
+        : [];
+    return (
+      ts.isFunctionExpression(called) &&
+      called.parameters.length === 0 &&
+      elements.some(ts.isSpreadElement)
+    );
+  };
   const isSound = (diagnostic: ts.Diagnostic) => {
     const node = getNode(diagnostic.start ?? 0);
     return (
@@ -2060,6 +2089,7 @@ const ignoreSoundErrors = () => {
       (diagnostic.code === 2322 && isWrittenExec(node, diagnostic)) ||
       (BASE_MEMBER_ERRORS.has(diagnostic.code) && isIteratorMember(node)) ||
       (ABSTRACT_MEMBER_ERRORS.has(diagnostic.code) && isIteratorClass(node)) ||
+      (SPREAD_CALL_ERRORS.has(diagnostic.code) && isUntypedSpreadCall(node)) ||
       (CONVERTED_ARGUMENT_ERRORS.has(diagnostic.code) &&
         (isConvertedCall(diagnostic) ||
           isConvertedProtocolCall(diagnostic) ||
