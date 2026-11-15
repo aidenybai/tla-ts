@@ -3,9 +3,8 @@
 // Usage: bun scripts/run.ts test262 [--verbose] [test path prefixes]
 
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { dirname, join, relative } from "node:path";
+import { readFileSync } from "node:fs";
+import { join, relative } from "node:path";
 import { runInNewContext, Script } from "node:vm";
 import ts from "@typescript/typescript6";
 import { TlaTypeScriptError } from "../src/errors";
@@ -37,9 +36,11 @@ const TEST_DIRECTORY = join(CORPORA_DIRECTORY, "test262", "test");
 
 const HARNESS = readFileSync(join(CONFORMANCE_DIRECTORY, "test262-harness.ts"), "utf8");
 
-const SKIPPED_FLAGS = new Set(["raw"]);
+// Compiled TypeScript is a strict mode module.
+const SKIPPED_FLAGS = new Set(["noStrict", "raw"]);
 
-// A module that imports or exports, which the corpus pairs with fixture files.
+// A module that imports or exports, which the corpus pairs with fixture files, and whose exported
+// functions tla-ts would read as a spec's actions.
 const LINKED_MODULE = /^\s*(?:import|export)\b|\bimport\s*[(.]/m;
 // Includes that the harness already defines, as compareArray.js is now part of assert.js.
 const HARNESS_INCLUDES = new Set(["compareArray.js"]);
@@ -65,35 +66,19 @@ const PORTED_INCLUDES = new Map([
     "promiseHelper.js",
     readFileSync(join(CONFORMANCE_DIRECTORY, "test262-promise-helper.ts"), "utf8"),
   ],
-  [
-    "decimalToHexString.js",
-    readFileSync(join(CONFORMANCE_DIRECTORY, "test262-decimal-to-hex-string.ts"), "utf8"),
-  ],
-  ["regExpUtils.js", readFileSync(join(CONFORMANCE_DIRECTORY, "test262-reg-exp-utils.ts"), "utf8")],
-  [
-    "detachArrayBuffer.js",
-    readFileSync(join(CONFORMANCE_DIRECTORY, "test262-detach-array-buffer.ts"), "utf8"),
-  ],
-  [
-    "resizableArrayBufferUtils.js",
-    readFileSync(join(CONFORMANCE_DIRECTORY, "test262-resizable-array-buffer-utils.ts"), "utf8"),
-  ],
 ]);
 
 // An async test's harness defines $DONE, as doneprintHandle.js does.
 const DONE_HARNESS = readFileSync(join(CONFORMANCE_DIRECTORY, "test262-done.ts"), "utf8");
 
-// A test that reads $262, itself or through an include, has the host's members that tla-ts can
-// model.
+// A test that reads $262 has the host's members that tla-ts can model.
 const HOST_HARNESS = readFileSync(join(CONFORMANCE_DIRECTORY, "test262-host.ts"), "utf8");
 
 const getHarness = (metadata: Metadata, source: string) =>
   [
     HARNESS,
     ...(metadata.flags.includes("async") ? [DONE_HARNESS] : []),
-    ...(/\$262\b/.test(source) || metadata.includes.includes("detachArrayBuffer.js")
-      ? [HOST_HARNESS]
-      : []),
+    ...(/\$262\b/.test(source) ? [HOST_HARNESS] : []),
     ...metadata.includes.flatMap((include) => PORTED_INCLUDES.get(include) ?? []),
   ].join("\n");
 
@@ -122,10 +107,6 @@ const getMetadata = (source: string): Metadata => {
   };
 };
 
-// A property escape test's buildString call, which makes a string of each code point in ranges
-// that reach past a million, more than TLC can hold.
-const BUILT_STRING = /\bbuildString\(/;
-
 // Tests that end Node itself, such as with a segmentation fault, which would end this script.
 const NODE_CRASHES = new Set([
   "language/statements/await-using/syntax/await-using-invalid-assignment-next-expression-for.js",
@@ -149,15 +130,14 @@ process.on("unhandledRejection", (reason) => {
 });
 
 // Runs a test in Node, with its jobs and then its timers, as an async test checks $DONE in one.
-const getNodeError = async (source: string, isSloppy: boolean) => {
+const getNodeError = async (source: string) => {
   const timers: (() => void)[] = [];
   try {
     const output = ts.transpileModule(source, {
       compilerOptions: {
         module: ts.ModuleKind.CommonJS,
         target: ts.ScriptTarget.ESNext,
-        moduleDetection: isSloppy ? ts.ModuleDetectionKind.Legacy : ts.ModuleDetectionKind.Force,
-        alwaysStrict: !isSloppy,
+        moduleDetection: ts.ModuleDetectionKind.Force,
       },
     }).outputText;
     runInNewContext(output, {
@@ -183,22 +163,14 @@ const getNodeError = async (source: string, isSloppy: boolean) => {
 
 // Runs a module test in a Node of its own, as a module's body can await. Node reports a rejected
 // body as it reports an uncaught error, and a body that never settles with its own exit.
-const transpileModule = (source: string) =>
-  ts.transpileModule(source, {
+const getModuleError = (source: string) => {
+  const output = ts.transpileModule(source, {
     compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ESNext },
   }).outputText;
-
-// Runs a module in Node, from the path of a test that imports fixtures, which Node runs from files.
-const getModuleError = (source: string, path?: string) => {
-  const output = transpileModule(source);
-  if (path !== undefined) writeFileSync(path, output);
-  const run =
-    path === undefined
-      ? spawnSync(process.execPath, ["--input-type=module", "-"], {
-          input: output,
-          encoding: "utf8",
-        })
-      : spawnSync(process.execPath, [path], { encoding: "utf8" });
+  const run = spawnSync(process.execPath, ["--input-type=module", "-"], {
+    input: output,
+    encoding: "utf8",
+  });
   if (run.status === 0) return undefined;
   return run.stderr.split("\n").find((line) => /^\w*Error\b/.test(line)) ?? `exit ${run.status}`;
 };
@@ -226,29 +198,27 @@ const SHORT_CALLED_BUILT_INS = new Set(["RegExp"]);
 
 const PROGRAM_PATH = "/test262.ts";
 
-// The file that the service annotates, which is a module test's own path where it imports fixtures.
-const file = { path: PROGRAM_PATH, text: "", version: 0 };
+const file = { text: "", version: 0 };
 
 const service = ts.createLanguageService({
   getCompilationSettings: () => ({
     strict: true,
     target: ts.ScriptTarget.ESNext,
     module: ts.ModuleKind.ESNext,
-    moduleResolution: ts.ModuleResolutionKind.Bundler,
     moduleDetection: ts.ModuleDetectionKind.Force,
     lib: ["lib.esnext.d.ts"],
     types: [],
   }),
-  getScriptFileNames: () => [file.path],
-  getScriptVersion: (path) => (path === file.path ? String(file.version) : "0"),
+  getScriptFileNames: () => [PROGRAM_PATH],
+  getScriptVersion: (path) => (path === PROGRAM_PATH ? String(file.version) : "0"),
   getScriptSnapshot: (path) => {
-    const text = path === file.path ? file.text : ts.sys.readFile(path);
+    const text = path === PROGRAM_PATH ? file.text : ts.sys.readFile(path);
     return text === undefined ? undefined : ts.ScriptSnapshot.fromString(text);
   },
   getCurrentDirectory: () => "/",
   getDefaultLibFileName: ts.getDefaultLibFilePath,
-  fileExists: (path) => path === file.path || ts.sys.fileExists(path),
-  readFile: (path) => (path === file.path ? file.text : ts.sys.readFile(path)),
+  fileExists: (path) => path === PROGRAM_PATH || ts.sys.fileExists(path),
+  readFile: (path) => (path === PROGRAM_PATH ? file.text : ts.sys.readFile(path)),
 });
 
 const setText = (text: string) => {
@@ -319,7 +289,7 @@ const getPatternType = (name: ts.BindingName): string | undefined => {
 
 const loosen = () => {
   const program = service.getProgram();
-  const sourceFile = program?.getSourceFile(file.path);
+  const sourceFile = program?.getSourceFile(PROGRAM_PATH);
   if (program === undefined || sourceFile === undefined) return false;
   const checker = program.getTypeChecker();
   const getNode = (position: number) => {
@@ -353,7 +323,7 @@ const loosen = () => {
       : undefined;
   };
   const edits = new Map<number, string>();
-  service.getSemanticDiagnostics(file.path).forEach((diagnostic) => {
+  service.getSemanticDiagnostics(PROGRAM_PATH).forEach((diagnostic) => {
     const node = getNode(diagnostic.start ?? 0);
     const parent = node.parent;
     // A value that may be null or undefined, which the test reads as Node does.
@@ -384,31 +354,6 @@ const loosen = () => {
         ts.isParenthesizedExpression(nullable);
       if (!isOperand) edits.set(nullable.getStart(), "(");
       edits.set(nullable.getEnd(), isOperand ? "!" : ")!");
-    }
-    // The object that verifyProperty checks, which it reads a descriptor of, so a test that Node
-    // passes gives one there, such as an accessor's function that a descriptor holds.
-    const verified =
-      diagnostic.code === 2345
-        ? ts.findAncestor(
-            node,
-            (ancestor): ancestor is ts.Expression =>
-              ts.isCallExpression(ancestor.parent) &&
-              ts.isIdentifier(ancestor.parent.expression) &&
-              ancestor.parent.expression.text === "verifyProperty" &&
-              ancestor.parent.arguments[0] === ancestor,
-          )
-        : undefined;
-    if (
-      verified !== undefined &&
-      verified.getStart() === diagnostic.start &&
-      (ts.isIdentifier(verified) ||
-        ts.isPropertyAccessExpression(verified) ||
-        ts.isElementAccessExpression(verified) ||
-        ts.isCallExpression(verified)) &&
-      checker.getNonNullableType(checker.getTypeAtLocation(verified)) !==
-        checker.getTypeAtLocation(verified)
-    ) {
-      edits.set(verified.getEnd(), "!");
     }
     // A variable that holds an object literal may get properties that the literal lacks.
     const accessed =
@@ -818,14 +763,6 @@ const typeIteratorBases = () => {
 // type, or an accessor where the base has a method.
 const BASE_MEMBER_ERRORS = new Set([2416, 2423]);
 
-// TypeScript's errors for a computed key of a class field or a type literal's member whose type
-// isn't a literal's, which TypeScript leaves out of the type, so a read of it types as any.
-const COMPUTED_MEMBER_ERRORS = new Set([1166, 1170]);
-
-// TypeScript's error for a getter with a path that returns no value. One that never returns a
-// value gives undefined, which its type, void, says.
-const GETTER_RETURN_ERROR = 2378;
-
 // TypeScript's errors for a class that doesn't write an abstract member of its base, in a
 // declaration or an expression.
 const ABSTRACT_MEMBER_ERRORS = new Set([2515, 2653]);
@@ -847,9 +784,6 @@ const returnsValue = (node: ts.Node): boolean =>
   (ts.isReturnStatement(node) && node.expression !== undefined) ||
   (!ts.isFunctionLike(node) &&
     (ts.forEachChild(node, (child) => returnsValue(child) || undefined) ?? false));
-
-const isVoidGetter = (node: ts.GetAccessorDeclaration | undefined) =>
-  node?.body !== undefined && !returnsValue(node.body);
 
 // Whether a function's body reads this, outside the functions it makes that have their own.
 const readsThis = (node: ts.Node): boolean =>
@@ -886,7 +820,7 @@ const ARRAY_CALLBACK_METHODS = new Set([
 // doesn't give.
 const typeCallbacks = () => {
   const program = service.getProgram();
-  const sourceFile = program?.getSourceFile(file.path);
+  const sourceFile = program?.getSourceFile(PROGRAM_PATH);
   if (program === undefined || sourceFile === undefined) return;
   const checker = program.getTypeChecker();
   const references = new Map<ts.FunctionDeclaration, ts.Identifier[]>();
@@ -1395,104 +1329,16 @@ const typeGenerators = () => {
   );
 };
 
-// A variable that an empty array literal initializes, and that the test pushes object literals to,
-// which the fix types as a union of arrays where no push fits each, holds an array of objects with
-// each property that a push gives, optional where another push lacks it.
-const typePushedArrays = () => {
-  const program = service.getProgram();
-  const sourceFile = program?.getSourceFile(PROGRAM_PATH);
-  if (program === undefined || sourceFile === undefined) return;
-  const checker = program.getTypeChecker();
-  const replacements: { start: number; end: number; text: string }[] = [];
-  const visit = (node: ts.Node) => {
-    ts.forEachChild(node, visit);
-    if (
-      !ts.isVariableDeclaration(node) ||
-      !ts.isIdentifier(node.name) ||
-      node.type === undefined ||
-      !ts.isUnionTypeNode(node.type) ||
-      !node.type.types.every(ts.isArrayTypeNode) ||
-      node.initializer === undefined ||
-      !ts.isArrayLiteralExpression(node.initializer) ||
-      node.initializer.elements.length > 0
-    ) {
-      return;
-    }
-    const symbol = checker.getSymbolAtLocation(node.name);
-    const pushed: ts.Expression[] = [];
-    const findPushes = (inner: ts.Node) => {
-      if (
-        ts.isCallExpression(inner) &&
-        ts.isPropertyAccessExpression(inner.expression) &&
-        inner.expression.name.text === "push" &&
-        checker.getSymbolAtLocation(inner.expression.expression) === symbol
-      ) {
-        pushed.push(...inner.arguments);
-      }
-      ts.forEachChild(inner, findPushes);
-    };
-    findPushes(sourceFile);
-    if (pushed.length === 0 || !pushed.every(ts.isObjectLiteralExpression)) return;
-    const types = pushed.map((argument) => checker.getTypeAtLocation(argument));
-    const names = [
-      ...new Set(types.flatMap((type) => type.getProperties().map((property) => property.name))),
-    ];
-    const properties = names.map((name) => {
-      const found = types.flatMap((type) => type.getProperty(name) ?? []);
-      const members = found.map((property) =>
-        getMemberTypes(checker, checker.getTypeOfSymbolAtLocation(property, sourceFile)),
-      );
-      if (members.some((member) => member === undefined)) return undefined;
-      const key = /^[A-Za-z_$][\w$]*$/.test(name) ? name : JSON.stringify(name);
-      const union = getUnion(members.flatMap((member) => member ?? [])).join(" | ");
-      return `${key}${found.length < types.length ? "?" : ""}: ${union}`;
-    });
-    if (properties.includes(undefined)) return;
-    replacements.push({
-      start: node.type.getStart(),
-      end: node.type.getEnd(),
-      text: `{ ${properties.join("; ")} }[]`,
-    });
-  };
-  visit(sourceFile);
-  setText(
-    replacements
-      .toSorted((left, right) => right.start - left.start)
-      .reduce(
-        (current, replacement) =>
-          current.slice(0, replacement.start) + replacement.text + current.slice(replacement.end),
-        file.text,
-      ),
-  );
-};
-
 // test262 is JavaScript, so its functions and variables have no types. This annotates them as
 // TypeScript's "Infer type from usage" fix does, with unknown where it infers any, then loosens
 // the types of the objects it describes.
-// A union of array types that the fix infers for an empty array that the test pushes values of
-// several types to, as unknown[][] | IArguments[], whose push takes only what every member's does.
-// An array of the union of their elements takes each.
-const getArrayOfUnion = (inferred: string) => {
-  const sourceFile = ts.createSourceFile(
-    PROGRAM_PATH,
-    `type Inferred = ${inferred.replace(/^:/, "")};`,
-    ts.ScriptTarget.Latest,
-  );
-  const alias = sourceFile.statements[0];
-  const type = alias !== undefined && ts.isTypeAliasDeclaration(alias) ? alias.type : undefined;
-  return type !== undefined && ts.isUnionTypeNode(type) && type.types.every(ts.isArrayTypeNode)
-    ? `: (${type.types.map((member) => member.elementType.getText(sourceFile)).join(" | ")})[]`
-    : inferred;
-};
-
-const annotate = (text: string, path = PROGRAM_PATH) => {
-  file.path = path;
+const annotate = (text: string) => {
   setText(text);
   typeIteratorBases();
   typeGenerators();
   typeCallbacks();
   for (;;) {
-    const sourceFile = service.getProgram()?.getSourceFile(file.path);
+    const sourceFile = service.getProgram()?.getSourceFile(PROGRAM_PATH);
     // A variable that an empty array literal initializes holds an array, which the fix infers as
     // unknown where the test only destructures it.
     const isEmptyArrayName = (node: ts.Node, position: number): boolean =>
@@ -1503,40 +1349,36 @@ const annotate = (text: string, path = PROGRAM_PATH) => {
         node.initializer.elements.length === 0) ||
       (ts.forEachChild(node, (child) => isEmptyArrayName(child, position) || undefined) ?? false);
     const fix = service
-      .getSemanticDiagnostics(file.path)
+      .getSemanticDiagnostics(PROGRAM_PATH)
       .values()
       .filter((diagnostic) => IMPLICIT_ANY_ERRORS.has(diagnostic.code))
       .flatMap((diagnostic) => {
         const start = diagnostic.start ?? 0;
         const end = start + (diagnostic.length ?? 0);
-        return service.getCodeFixesAtPosition(file.path, start, end, [diagnostic.code], {}, {});
+        return service.getCodeFixesAtPosition(PROGRAM_PATH, start, end, [diagnostic.code], {}, {});
       })
       .find((candidate) => candidate.fixName === "inferFromUsage");
     const annotated =
       fix === undefined
         ? file.text
         : fix.changes
-            .filter((change) => change.fileName === file.path)
             .flatMap((change) => change.textChanges)
             .toSorted((left, right) => right.span.start - left.span.start)
             .reduce((current, change) => {
               const inferred = change.newText.replaceAll(/\bany\b/g, "unknown");
-              const isEmptyArray =
-                sourceFile !== undefined && isEmptyArrayName(sourceFile, change.span.start);
               return (
                 current.slice(0, change.span.start) +
-                (inferred === ": unknown" && isEmptyArray
+                (inferred === ": unknown" &&
+                sourceFile !== undefined &&
+                isEmptyArrayName(sourceFile, change.span.start)
                   ? ": unknown[]"
-                  : isEmptyArray
-                    ? getArrayOfUnion(inferred)
-                    : inferred) +
+                  : inferred) +
                 current.slice(change.span.start + change.span.length)
               );
             }, file.text);
     if (annotated === file.text) break;
     setText(annotated);
   }
-  typePushedArrays();
   // A type that one loosening gives can show where another is needed.
   while (loosen());
   ignoreSoundErrors();
@@ -1566,20 +1408,6 @@ const REDUCING_METHODS = new Set(["reduce", "reduceRight"]);
 // The array methods that tla-ts searches by value for any value, from an index that ToNumber
 // converts from a primitive. Each needs a unit test of such a call.
 const SEARCHING_METHODS = new Set(["includes", "indexOf", "lastIndexOf"]);
-// The typed arrays' methods that call a callback for each element, which tla-ts runs on what the
-// callback returns: ToBoolean of it for a test, the element type's conversion of it for map, and
-// nothing for forEach. Each needs a unit test of a callback that returns another type.
-const TYPED_ARRAY_CALLBACK_METHODS = new Set([
-  "every",
-  "filter",
-  "find",
-  "findIndex",
-  "findLast",
-  "findLastIndex",
-  "forEach",
-  "map",
-  "some",
-]);
 // RegExp.prototype's methods under well-known symbols that tla-ts runs as their steps where a test
 // calls them through call, on any receiver, or on a regexp with a string, a limit, or a replaceValue
 // of another type than their signatures take. Each needs a unit test of such a call.
@@ -1599,10 +1427,6 @@ const UNCALLABLE_ERROR = 2349;
 // The typed arrays' methods that tla-ts runs on the elements of any typed array, where a test calls
 // them on a union of typed arrays. Each needs a unit test of such a call.
 const TYPED_UNION_METHODS = new Set(["findLast", "reduce", "reduceRight"]);
-
-// A call that gives a function no this where the function types one, which tla-ts runs with the this
-// that a call by name gives: undefined, or the global object outside strict mode.
-const UNTYPED_THIS_ERROR = 2684;
 
 // An operator's operand of a type that the operator doesn't take, or that is null or undefined,
 // which tla-ts converts to a primitive where it's an object that the test declares, a wrapper, or a
@@ -1691,7 +1515,7 @@ const isCondition = (node: ts.Node): boolean => {
 // such as undefined in a pattern, still throws, so its error stays.
 const ignoreSoundErrors = () => {
   const program = service.getProgram();
-  const sourceFile = program?.getSourceFile(file.path);
+  const sourceFile = program?.getSourceFile(PROGRAM_PATH);
   if (program === undefined || sourceFile === undefined) return;
   const checker = program.getTypeChecker();
   const getNode = (position: number) => {
@@ -2169,71 +1993,6 @@ const ignoreSoundErrors = () => {
       )
     );
   };
-  // A call of a typed array's method that TYPED_ARRAY_CALLBACK_METHODS lists, directly or through
-  // call, whose callback is a function that the test writes and that takes each value the method
-  // passes it, an element, an index, and the array, but returns another type than the method's
-  // signature does, or declares a this.
-  const isTypedArrayCallback = (diagnostic: ts.Diagnostic) => {
-    const call = getErroredCall(diagnostic);
-    if (call === undefined || !ts.isCallExpression(call)) return false;
-    const callee = skipParentheses(call.expression);
-    const isCall = ts.isPropertyAccessExpression(callee) && callee.name.text === "call";
-    const method = isCall ? skipParentheses(callee.expression) : callee;
-    const callback = call.arguments[isCall ? 1 : 0];
-    if (callback === undefined || call.arguments.some(ts.isSpreadElement)) return false;
-    const declaration = ts.isIdentifier(callback)
-      ? checker.getSymbolAtLocation(callback)?.valueDeclaration
-      : callback;
-    const written =
-      declaration !== undefined &&
-      ts.isVariableDeclaration(declaration) &&
-      declaration.initializer !== undefined
-        ? skipParentheses(declaration.initializer)
-        : declaration;
-    if (
-      written === undefined ||
-      written.getSourceFile() !== sourceFile ||
-      !(
-        ts.isFunctionDeclaration(written) ||
-        ts.isFunctionExpression(written) ||
-        ts.isArrowFunction(written)
-      ) ||
-      written.parameters.some(
-        (parameter) => parameter.dotDotDotToken !== undefined || !ts.isIdentifier(parameter.name),
-      )
-    ) {
-      return false;
-    }
-    const parameters = written.parameters.filter(
-      (parameter) => !(ts.isIdentifier(parameter.name) && parameter.name.text === "this"),
-    );
-    return checker
-      .getSignaturesOfType(checker.getTypeAtLocation(method), ts.SignatureKind.Call)
-      .some((signature) => {
-        const declared = signature.getDeclaration();
-        const taken = signature.parameters[0];
-        return (
-          declared.getSourceFile().isDeclarationFile &&
-          ts.isMethodSignature(declared) &&
-          TYPED_ARRAY_CALLBACK_METHODS.has(declared.name.getText()) &&
-          ts.isInterfaceDeclaration(declared.parent) &&
-          /^(Big)?(Int|Uint|Float)\d+(Clamped)?Array$/.test(declared.parent.name.text) &&
-          taken !== undefined &&
-          checker
-            .getSignaturesOfType(checker.getTypeOfSymbol(taken), ts.SignatureKind.Call)
-            .every(
-              (passed) =>
-                parameters.length <= passed.parameters.length &&
-                parameters.every((parameter, position) =>
-                  checker.isTypeAssignableTo(
-                    checker.getTypeOfSymbol(passed.parameters[position]),
-                    checker.getTypeAtLocation(parameter),
-                  ),
-                ),
-            )
-        );
-      });
-  };
   // A call of an array's method that SEARCHING_METHODS lists, of any value to search for and an
   // index to search from that tla-ts converts: a primitive, an object that the test declares, or a
   // wrapper.
@@ -2502,9 +2261,8 @@ const ignoreSoundErrors = () => {
       isGlobalIterator(heritage.types[0].expression, checker)
     );
   };
-  // A call that spreads arguments into a function expression or a superclass's constructor without
-  // parameters, directly or through apply. It reads them only through its arguments object, which
-  // takes any values.
+  // A call that spreads arguments into a function expression without parameters, directly or through
+  // apply. The function reads them only through its arguments object, which takes any values.
   const isUntypedSpreadCall = (node: ts.Node) => {
     const call = ts.findAncestor(node, ts.isCallExpression);
     if (call === undefined || node.getStart() < call.arguments.pos) return false;
@@ -2520,15 +2278,9 @@ const ignoreSoundErrors = () => {
       : ts.isCallExpression(spread)
         ? spread.arguments
         : [];
-    // super calls the constructor of the class that the class extends.
-    const declaration =
-      called.kind === ts.SyntaxKind.SuperKeyword
-        ? checker.getResolvedSignature(call)?.declaration
-        : called;
     return (
-      declaration !== undefined &&
-      (ts.isFunctionExpression(declaration) || ts.isConstructorDeclaration(declaration)) &&
-      declaration.parameters.length === 0 &&
+      ts.isFunctionExpression(called) &&
+      called.parameters.length === 0 &&
       elements.some(ts.isSpreadElement)
     );
   };
@@ -2554,23 +2306,9 @@ const ignoreSoundErrors = () => {
       )
     );
   };
-  const isPlainCall = (node: ts.Node) => {
-    const callee = ts.findAncestor(
-      node,
-      (ancestor) => !ts.isParenthesizedExpression(ancestor.parent),
-    );
-    return (
-      callee !== undefined &&
-      ts.isCallExpression(callee.parent) &&
-      callee.parent.expression === callee &&
-      (ts.isIdentifier(ts.skipParentheses(callee)) ||
-        ts.isFunctionExpression(ts.skipParentheses(callee)))
-    );
-  };
   const isSound = (diagnostic: ts.Diagnostic) => {
     const node = getNode(diagnostic.start ?? 0);
     return (
-      (diagnostic.code === UNTYPED_THIS_ERROR && isPlainCall(node)) ||
       (diagnostic.code === ARGUMENT_COUNT_ERROR &&
         (isShortBuiltInCall(node) || isShortReducingCall(node))) ||
       (SHORT_CALL_ERRORS.has(diagnostic.code) && isShortProtocolCall(node, diagnostic)) ||
@@ -2588,17 +2326,12 @@ const ignoreSoundErrors = () => {
       (diagnostic.code === 2322 && isWrittenExec(node, diagnostic)) ||
       (BASE_MEMBER_ERRORS.has(diagnostic.code) && isIteratorMember(node)) ||
       (ABSTRACT_MEMBER_ERRORS.has(diagnostic.code) && isIteratorClass(node)) ||
-      (diagnostic.code === GETTER_RETURN_ERROR &&
-        isVoidGetter(ts.findAncestor(node, ts.isGetAccessorDeclaration))) ||
-      (COMPUTED_MEMBER_ERRORS.has(diagnostic.code) &&
-        ts.findAncestor(node, ts.isComputedPropertyName) !== undefined) ||
       (SPREAD_CALL_ERRORS.has(diagnostic.code) && isUntypedSpreadCall(node)) ||
       (CONVERTED_ARGUMENT_ERRORS.has(diagnostic.code) &&
         (isConvertedCall(diagnostic) ||
           isConvertedProtocolCall(diagnostic) ||
           isReducingCall(diagnostic) ||
           isSearchingCall(diagnostic) ||
-          isTypedArrayCallback(diagnostic) ||
           isTypedArrayNew(diagnostic))) ||
       (diagnostic.code === UNKNOWN_CALLEE_ERROR && isStoredStringCall(node)) ||
       (diagnostic.code === UNCALLABLE_ERROR && isTypedUnionCall(node, diagnostic)) ||
@@ -2615,7 +2348,7 @@ const ignoreSoundErrors = () => {
   };
   const getLine = (diagnostic: ts.Diagnostic) =>
     sourceFile.getLineAndCharacterOfPosition(diagnostic.start ?? 0).line;
-  const diagnostics = service.getSemanticDiagnostics(file.path);
+  const diagnostics = service.getSemanticDiagnostics(PROGRAM_PATH);
   // @ts-ignore hides each error on its line, so a line with an error that stays keeps it.
   const kept = new Set(
     diagnostics
@@ -2693,8 +2426,7 @@ const runSyntaxTest = (id: string, source: string, metadata: Metadata): TestRun 
   if (!isRejected) {
     return { id, outcome: "skipped", reason: "Node accepts it" };
   }
-  const program = `${strict}${getHarness(metadata, source)}
-${source}`;
+  const program = `${getHarness(metadata, source)}\n${source}`;
   try {
     compile(program, "test262.ts");
   } catch (error) {
@@ -2751,54 +2483,6 @@ const hasImportCall = (source: string) => {
   return visit(ts.createSourceFile(PROGRAM_PATH, source, ts.ScriptTarget.Latest));
 };
 
-// The directory of the module tests that import fixtures, where each file of the corpus is
-// TypeScript that tla-ts reads and JavaScript that Node runs.
-const MODULE_DIRECTORY = mkdtempSync(join(tmpdir(), "test262-"));
-writeFileSync(join(MODULE_DIRECTORY, "package.json"), '{ "type": "module" }');
-process.on("exit", () => rmSync(MODULE_DIRECTORY, { recursive: true, force: true }));
-
-const getModulePath = (path: string) =>
-  join(MODULE_DIRECTORY, relative(TEST_DIRECTORY, path)).replace(/\.js$/, ".ts");
-
-// The fixtures that a module test imports, by path, each through a static import of a relative
-// path, or undefined where a file imports another way, such as dynamically or with attributes.
-const getFixtures = (path: string) => {
-  const fixtures = new Map<string, string>();
-  const isLinked = (file: string, text: string): boolean => {
-    const sourceFile = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
-    const isDynamic = (node: ts.Node): boolean =>
-      (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) ||
-      (ts.isMetaProperty(node) && node.keywordToken === ts.SyntaxKind.ImportKeyword) ||
-      (ts.forEachChild(node, isDynamic) ?? false);
-    return (
-      !isDynamic(sourceFile) &&
-      sourceFile.statements.every((statement) => {
-        if (!ts.isImportDeclaration(statement) && !ts.isExportDeclaration(statement)) return true;
-        const specifier = statement.moduleSpecifier;
-        if (specifier === undefined) return true;
-        const imported =
-          ts.isStringLiteral(specifier) && /^\.\.?\//.test(specifier.text)
-            ? join(dirname(file), specifier.text)
-            : undefined;
-        if (
-          imported === undefined ||
-          !existsSync(imported) ||
-          statement.attributes !== undefined ||
-          (ts.isImportDeclaration(statement) &&
-            statement.importClause?.phaseModifier === ts.SyntaxKind.DeferKeyword)
-        ) {
-          return false;
-        }
-        if (imported === path || fixtures.has(imported)) return true;
-        const importedText = readFileSync(imported, "utf8");
-        fixtures.set(imported, importedText);
-        return isLinked(imported, importedText);
-      })
-    );
-  };
-  return isLinked(path, readFileSync(path, "utf8")) ? fixtures : undefined;
-};
-
 const runTest = async (path: string): Promise<TestRun> => {
   const id = relative(TEST_DIRECTORY, path);
   const source = readFileSync(path, "utf8");
@@ -2806,32 +2490,17 @@ const runTest = async (path: string): Promise<TestRun> => {
   const skipReason = NODE_CRASHES.has(id) ? "Node crashes" : getSkipReason(metadata);
   if (skipReason !== undefined) return { id, outcome: "skipped", reason: skipReason };
   if (metadata.isSyntaxError) return runSyntaxTest(id, source, metadata);
-  if (BUILT_STRING.test(source)) {
-    return { id, outcome: "skipped", reason: "a string of every code point in large ranges" };
-  }
-  const isLinked = metadata.isModule && LINKED_MODULE.test(source.slice(source.indexOf("---*/")));
-  const fixtures = isLinked ? getFixtures(path) : new Map<string, string>();
-  if (fixtures === undefined) {
-    return { id, outcome: "skipped", reason: "a module that imports other than from a fixture" };
+  if (metadata.isModule && LINKED_MODULE.test(source.slice(source.indexOf("---*/")))) {
+    return { id, outcome: "skipped", reason: "a module that imports or exports" };
   }
   if (!metadata.isModule && hasImportCall(source)) {
     return { id, outcome: "skipped", reason: "a script that imports a module" };
   }
-  // A fixture is a module, so its code is strict.
-  fixtures.forEach((text, fixture) => {
-    const modulePath = getModulePath(fixture);
-    mkdirSync(dirname(modulePath), { recursive: true });
-    writeFileSync(modulePath, `"use strict"; ${text}`);
-    writeFileSync(modulePath.replace(/\.ts$/, ".js"), transpileModule(text));
-  });
-  const programPath = isLinked ? getModulePath(path) : PROGRAM_PATH;
-  if (isLinked) mkdirSync(dirname(programPath), { recursive: true });
   // TypeScript itself fails on some syntax, such as import defer.
   const annotated = (() => {
     try {
       return annotate(
         `${getHarness(metadata, source)}\n${metadata.isModule ? source : nameGlobalObject(source)}`,
-        programPath,
       );
     } catch (error) {
       if (error instanceof Error && error.message.startsWith("Debug Failure.")) return undefined;
@@ -2839,21 +2508,14 @@ const runTest = async (path: string): Promise<TestRun> => {
     }
   })();
   if (annotated === undefined) return { id, outcome: "skipped", reason: "TypeScript fails" };
-  const isSloppy = metadata.flags.includes("noStrict");
-  const nodeError = metadata.isModule
-    ? getModuleError(annotated, isLinked ? programPath.replace(/\.ts$/, ".js") : undefined)
-    : await getNodeError(annotated, isSloppy);
+  const nodeError = metadata.isModule ? getModuleError(annotated) : await getNodeError(annotated);
   if (nodeError !== undefined) {
     return { id, outcome: "skipped", reason: `Node fails: ${getFirstLine(nodeError)}` };
   }
   try {
-    // A noStrict test runs outside strict mode, as a script, and any other runs in strict mode, as
-    // Node runs it as a module.
-    const program = isSloppy ? annotated : `"use strict"; ${annotated}`;
-    const result = await check({
-      ...compile(program, isLinked ? programPath : "test262.ts"),
-      onPrint: () => {},
-    });
+    // Node runs the test as a module, which is strict code, so tla-ts compiles it as strict too.
+    const strict = `"use strict"; ${annotated}`;
+    const result = await check({ ...compile(strict, "test262.ts"), onPrint: () => {} });
     if (result.status === "success" || result.status === "deadlock") {
       return { id, outcome: "pass", reason: "" };
     }

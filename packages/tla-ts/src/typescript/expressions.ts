@@ -520,25 +520,6 @@ export const translateIteratedSequence = (
   return Array.isArray(values) ? tuple(values) : values;
 };
 
-// What a read of a literal's hole gives: what Array.prototype holds at its index.
-export const translateHole = (
-  literal: ts.ArrayLiteralExpression,
-  position: number,
-  scope: Scope,
-  context: Context,
-) =>
-  context.heap === undefined
-    ? getUndefined(context)
-    : useJavaScript(
-        "Get",
-        [
-          getHeap(scope, literal, context),
-          translateBuiltInValue("Array.prototype", literal, context),
-          string(String(position)),
-        ],
-        context,
-      );
-
 // The elements that an array literal or a call's arguments list, where runs of plain elements become
 // tuples, and each spread array stays a sequence of its own. A hole of a literal that only an
 // iterator reads gives what Array.prototype holds at its index.
@@ -554,7 +535,17 @@ export const translateElements = (
         literal !== undefined && ts.isOmittedExpression(element) && isPrototypeHoled(literal);
       const value = !isHole
         ? translateExpression(element, scope, context)
-        : translateHole(literal, position, scope, context);
+        : context.heap === undefined
+          ? getUndefined(context)
+          : useJavaScript(
+              "Get",
+              [
+                getHeap(scope, literal, context),
+                translateBuiltInValue("Array.prototype", literal, context),
+                string(String(position)),
+              ],
+              context,
+            );
       const last = result.at(-1);
       return Array.isArray(last)
         ? [...result.slice(0, -1), [...last, value]]
@@ -3578,9 +3569,8 @@ export const translateNode = (
     }
     return getUndefined(context);
   }
-  // A module's this is undefined, and a script's outside strict mode is the global object, which
-  // an arrow function outside any other function reads too.
-  const isTopLevelThis =
+  // A module's this is undefined, which an arrow function outside any other function reads too.
+  if (
     node.kind === ts.SyntaxKind.ThisKeyword &&
     ts.isSourceFile(
       ts.findAncestor(
@@ -3590,12 +3580,10 @@ export const translateNode = (
           (ts.isFunctionLike(ancestor) && !ts.isArrowFunction(ancestor)) ||
           ts.isClassLike(ancestor),
       ) ?? node,
-    );
-  if (isTopLevelThis && isModuleFile(node.getSourceFile())) return getUndefined(context);
-  if (isTopLevelThis && !isStrictCode(node)) {
-    context.prelude.add("JavaScript");
-    context.builtIns.add("globalThis");
-    return identifier("GlobalObject");
+    ) &&
+    isModuleFile(node.getSourceFile())
+  ) {
+    return getUndefined(context);
   }
   // A static field's or static block's this is its class, which an arrow function there reads
   // wherever it runs, where nothing assigns the class's name. A class expression has the name of

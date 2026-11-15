@@ -1810,16 +1810,8 @@ IsWritable(heap, ref, key) ==
      THEN object.attributes[key].writable
      ELSE object.prototype = Null \\/ IsWritable(heap, object.prototype, key)
 
-\\* Whether a write runs %ThrowTypeError%, the setter of Function.prototype's arguments and caller,
-\\* which throws a TypeError outside strict mode too.
-IsThrowingSet(heap, ref, key) ==
-  LET accessor == AccessorOf(heap, ref, key)
-  IN /\\ ~(IsTypedArray(heap, ref) /\\ TypedKey(key) # "property")
-     /\\ accessor # Undefined
-     /\\ accessor.set # Undefined
-     /\\ GetterPath(accessor.set) = "get Function.prototype.arguments"
-
-\\* Whether a write puts its value without a TypeError.
+\\* Whether a write puts its value without a TypeError. %ThrowTypeError%, the setter of
+\\* Function.prototype's arguments and caller, always throws one.
 CanPut(heap, ref, key) ==
   LET accessor == AccessorOf(heap, ref, key)
       object == PropertiesOf(heap, ref, key)
@@ -1827,7 +1819,9 @@ CanPut(heap, ref, key) ==
        [] accessor = Undefined ->
             /\\ IsWritable(heap, ref, key)
             /\\ key \\in DOMAIN object.values \\/ object.extensible
-       [] OTHER -> accessor.set # Undefined /\\ ~IsThrowingSet(heap, ref, key)
+       [] OTHER ->
+            /\\ accessor.set # Undefined
+            /\\ GetterPath(accessor.set) # "get Function.prototype.arguments"
 
 RECURSIVE IsPrototypeOf(_, _, _)
 IsPrototypeOf(heap, owner, ref) ==
@@ -4645,12 +4639,6 @@ LOCAL TypedArrayMade(heap, type, prototype, bufferPrototype, arguments, isIterat
        [] offset + length * size > byteLength -> Failed("RangeError")
        [] OTHER -> view(heap, first, offset, length)
 
-\\* The RangeError that a typed array viewing a buffer throws for its byteOffset, which it checks
-\\* before it converts its length.
-TypedArrayOffsetError(type, arguments) ==
-  LET offset == IndexOfArgument(IF Len(arguments) >= 2 THEN arguments[2] ELSE Undefined)
-  IN IF offset = -1 \\/ offset % ElementSize(type) # 0 THEN "RangeError" ELSE ""
-
 \\* The prototype that an instance takes from the constructor that a construction names as its
 \\* newTarget, or the default where newTarget's prototype property isn't an object.
 PrototypeFromConstructor(heap, newTarget, default) ==
@@ -6597,10 +6585,8 @@ export const translateTypeOf = (node: ts.TypeOfExpression, scope: Scope, context
     ts.isNewExpression(inner) ||
     ts.isTaggedTemplateExpression(inner) ||
     (!ts.isFunctionLike(inner) && ts.forEachChild(inner, hasCall) === true);
-  // A call that TypeScript doesn't check, as under @ts-ignore, may give a this of another type.
-  const isThis = read.kind === ts.SyntaxKind.ThisKeyword;
-  if (known?.length === 1 && !isProperty && !isThis && !hasCall(read)) return string(known[0]);
-  if (known?.length === 1 && !isProperty && !isThis) {
+  if (known?.length === 1 && !isProperty && !hasCall(read)) return string(known[0]);
+  if (known?.length === 1 && !isProperty) {
     const operand = translateExpression(node.expression, scope, context);
     return ifExpression(apply("=", [operand, operand]), string(known[0]), string(known[0]));
   }

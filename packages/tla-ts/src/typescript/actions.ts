@@ -3807,63 +3807,6 @@ export const translateCallStatement = (
       ),
     );
   }
-  const applied = getAppliedCall(expression, path, context);
-  if (applied !== undefined) {
-    const appliedReceiver = ts.isArrowFunction(applied.callee)
-      ? path.scope.receiver
-      : {
-          value:
-            applied.thisArgument === undefined
-              ? getUndefined(context)
-              : translateExpression(applied.thisArgument, path.scope, context),
-          method: applied.callee,
-        };
-    const appliedCall = isAsyncFunction(applied.callee)
-      ? translateAsyncCall(
-          expression,
-          applied.callee,
-          appliedReceiver,
-          path,
-          context,
-          frame,
-          continueWith,
-          applied.argumentNodes,
-        )
-      : inlineBody(
-          expression,
-          applied.callee,
-          applied.argumentNodes,
-          appliedReceiver,
-          path,
-          context,
-          frame,
-          continueWith,
-        );
-    const method = applied.isApply ? "apply" : "call";
-    return context.heap === undefined
-      ? appliedCall
-      : ifThenElse(
-          useJavaScript(
-            "HoldsBuiltIn",
-            [
-              getHeap(path.scope, expression, context),
-              isHeapFunction(applied.callee, context)
-                ? translateExpression(applied.target, path.scope, context)
-                : translateBuiltInValue("Function.prototype", expression, context),
-              string(method),
-              string(`Function.prototype.${method}`),
-            ],
-            context,
-          ),
-          appliedCall,
-          leaf(
-            apply("Assert", [
-              boolean(false),
-              string("tla-ts can't tell which function this call runs"),
-            ]),
-          ),
-        );
-  }
   const callee = called?.method ?? getCallback(expression.expression, path, context);
   const bound = callee === undefined ? getBound(expression.expression, context) : undefined;
   if (bound !== undefined && !bound.isSteady) {
@@ -4223,7 +4166,7 @@ export const translateCallStatement = (
     expression,
     callee,
     expression.arguments,
-    getReceiver(path.scope, context, called, { node: expression, callee }),
+    getReceiver(path.scope, context, called),
     path,
     context,
     frame,
@@ -4256,41 +4199,6 @@ const getCalledThrough = (node: ts.CallExpression, context: Context) => {
     !node.arguments.some(ts.isSpreadElement) &&
     getKind(thisArgument, context) === "object"
     ? called
-    : undefined;
-};
-
-// A call of a script's function or async function through Function.prototype.call or apply,
-// with the this and the arguments that it passes. apply's CreateListFromArrayLike takes no
-// arguments from undefined or null, and an array literal's elements, with undefined at its holes.
-const getAppliedCall = (node: ts.CallExpression, path: Path, context: Context) => {
-  if (!isMethodCall(node) || !["call", "apply"].includes(node.expression.name.text)) {
-    return undefined;
-  }
-  const isApply = node.expression.name.text === "apply";
-  const target = getCast(node.expression.expression);
-  const callee =
-    ts.isIdentifier(target) || ts.isFunctionExpression(target) || ts.isArrowFunction(target)
-      ? (getCallback(target, path, context) ?? getAsyncCallee(target, path, context))
-      : undefined;
-  const listed = isApply ? node.arguments.at(1) : undefined;
-  const list = listed === undefined ? undefined : getCast(listed);
-  const argumentNodes = !isApply
-    ? node.arguments.slice(1)
-    : list === undefined ||
-        list.kind === ts.SyntaxKind.NullKeyword ||
-        isUndefinedLiteral(list, context)
-      ? []
-      : ts.isArrayLiteralExpression(list)
-        ? list.elements
-        : undefined;
-  return callee?.body !== undefined &&
-    (ts.isFunctionDeclaration(callee) ||
-      ts.isFunctionExpression(callee) ||
-      ts.isArrowFunction(callee)) &&
-    argumentNodes !== undefined &&
-    (!isApply || node.arguments.length <= 2) &&
-    !node.arguments.slice(0, isApply ? 2 : 1).some(ts.isSpreadElement)
-    ? { callee, target, argumentNodes, thisArgument: node.arguments.at(0), isApply }
     : undefined;
 };
 
@@ -4934,15 +4842,16 @@ export const isArgumentsRead = (read: ts.Identifier, context: Context) => {
 };
 
 // Outside strict mode, a function with simple parameters has an arguments object that maps them,
-// so that writing one changes the other, and whose callee is the function, which tla-ts's arguments
-// object doesn't follow. Only a read of the object other than of its length or its elements, or a
-// parameter that changes where the object's elements are read, shows the difference.
+// so that writing one changes the other, which tla-ts's arguments object doesn't follow. Only a
+// parameter that changes where the object's elements are read, or a parameter read where the
+// object changes or leaves the function, shows the difference.
 const rejectMappedArguments = (callee: FunctionNode, context: Context) => {
   const parameters = callee.parameters.filter(
     (parameter) => !(ts.isIdentifier(parameter.name) && parameter.name.text === "this"),
   );
   if (
     isStrictCode(callee) ||
+    parameters.length === 0 ||
     parameters.some(
       (parameter) =>
         !ts.isIdentifier(parameter.name) ||
@@ -4963,12 +4872,14 @@ const rejectMappedArguments = (callee: FunctionNode, context: Context) => {
       const written = getWritten(node);
       return written !== undefined && getWrittenRoots(written).some(isParameter);
     }).length > 0;
+  const isParameterRead =
+    findNodes(callee, (node): node is ts.Identifier => isParameter(node)).length > 0;
   const reads = getArgumentsReads(callee, context);
   const isLengthRead = (read: ts.Identifier) =>
     isArgumentsRead(read, context) && ts.isPropertyAccessExpression(read.parent);
   if (
-    !reads.every((read) => isArgumentsRead(read, context)) ||
-    (isParameterWritten && !reads.every(isLengthRead))
+    (isParameterWritten && !reads.every(isLengthRead)) ||
+    (isParameterRead && !reads.every((read) => isArgumentsRead(read, context)))
   ) {
     throw new TlaTypeScriptError(
       "tla-ts can't follow an arguments object that maps its function's parameters outside strict mode",
@@ -10828,8 +10739,7 @@ const translateExpressionStatement = (
       continueWith,
     );
   }
-  // Deleting a property that can't change throws a TypeError in strict mode, and outside it
-  // changes nothing.
+  // Deleting a property that can't change throws a TypeError, as scripts run in strict mode.
   if (ts.isDeleteExpression(expression)) {
     const deleted = getHeapWrite(expression.expression, path, context);
     if (deleted === undefined) {
@@ -10849,9 +10759,7 @@ const translateExpressionStatement = (
         context,
         continueWith,
       ),
-      isStrictCode(expression)
-        ? throwTypeError(path, expression, context, frame)
-        : continueWith(path),
+      throwTypeError(path, expression, context, frame),
     );
   }
   // A regexp that a statement makes of literals and drops, or an object whose members evaluate
@@ -11195,7 +11103,7 @@ const translateWriteStatement = (
   if (assigned === undefined) {
     throw new TlaTypeScriptError(`Unsupported statement: ${expression.getText()}`, expression);
   }
-  // A write to a property that can't change throws a TypeError in strict mode.
+  // A write to a property that can't change throws a TypeError, as scripts run in strict mode.
   const write = written === undefined ? undefined : getHeapWrite(written, path, context);
   // A write to a property of null or undefined throws a TypeError.
   const receiver =
@@ -11221,32 +11129,12 @@ const translateWriteStatement = (
       forceHeap(path.scope, assigned.scope, continueWith(assigned), leaf(boolean(false)), context),
     );
   }
-  // Outside strict mode, a write that fails changes nothing, which tla-ts follows where what it
-  // writes changes nothing else either.
-  const isWritingRight =
-    ts.isBinaryExpression(expression) &&
-    findNodes(expression.right, (node): node is ts.Expression => isAssignment(node)).length > 0;
-  const failWrite = (next: (path: Path) => Formula) =>
-    isStrictCode(expression)
-      ? throwTypeError(path, expression, context, frame)
-      : isWritingRight
-        ? leaf(
-            apply("Assert", [
-              boolean(false),
-              string("tla-ts can't ignore a failed write outside strict mode"),
-            ]),
-          )
-        : ifThenElse(
-            useJavaScript("IsThrowingSet", [write.heap, write.ref, write.key], context),
-            throwTypeError(path, expression, context, frame),
-            next(path),
-          );
   const translateWrite = (next: (path: Path) => Formula) =>
     throwOnNullish(
       ifThenElse(
         useJavaScript("CanPut", [write.heap, write.ref, write.key], context),
         shareHeap(assigned, context, next),
-        failWrite(next),
+        throwTypeError(path, expression, context, frame),
       ),
     );
   // A write of __proto__ runs Object.prototype's setter where the object inherits it.
@@ -11679,7 +11567,6 @@ const isStatementResult = (node: ts.CallExpression, path: Path, context: Context
     getIntlMethodCall(node, context) !== undefined ||
     getThisSymbolCall(node, context) !== undefined ||
     getCalledThrough(node, context) !== undefined ||
-    getAppliedCall(node, path, context) !== undefined ||
     getMisreceivedCall(node, context) !== undefined ||
     getStackCall(node, context) !== undefined ||
     getIteratorDisposeCall(node, context) !== undefined ||
@@ -11805,15 +11692,6 @@ const translateIntlError = (node: ts.Expression, path: Path, context: Context, f
 const getBufferConstruction = (node: ts.Expression, context: Context) =>
   getNewBuffer(node, context) && getConstruction(node, context);
 
-// new of a typed array whose byteOffset or length may be an object, which it converts to a
-// primitive where it views a buffer, running the object's valueOf and toString.
-const isIndexConvertingNew = (node: ts.Node, context: Context) =>
-  ts.isExpression(node) &&
-  (getNewBuffer(node, context) ?? []).every((buffer) => TYPED_ARRAYS.has(buffer)) &&
-  (getBufferConstruction(node, context)?.arguments ?? [])
-    .slice(1, 3)
-    .some((value) => !isPrimitiveIndex(getCast(value), context));
-
 // Runs new of a buffer, a DataView, or a typed array, which throws the error its constructor does,
 // and makes a typed array of an object's iterator's values where a script's @@iterator method
 // gives them.
@@ -11862,7 +11740,7 @@ const translateNewBufferStatement = (
             tuple(madeArguments),
             current.scope,
             context,
-            "error",
+            true,
           ),
           ifThenElse(
             apply("=", [error, string("")]),
@@ -11887,57 +11765,6 @@ const translateNewBufferStatement = (
           ),
         );
       };
-      // A typed array that views a buffer throws its byteOffset's RangeError before it converts
-      // its length.
-      const isConverted = isIndexConvertingNew(node, context);
-      const toIndex = (
-        current: Path,
-        value: Expression,
-        next: (path: Path, primitive: Expression) => Formula,
-      ) =>
-        runToPrimitive(node, value, "number", current, context, frame, (after, primitive) =>
-          ifThenElse(
-            junction("Or", [
-              useJavaScript("IsSymbol", [primitive], context),
-              useJavaScript("IsBigInt", [primitive], context),
-            ]),
-            throwTypeError(after, node, context, frame),
-            next(after, primitive),
-          ),
-        );
-      const makeViewing = (current: Path, madeArguments: Expression[]) =>
-        !isConverted
-          ? make(current, madeArguments)
-          : ifThenElse(
-              useJavaScript(
-                "IsBuffer",
-                [getHeap(current.scope, node, context), madeArguments[0]],
-                context,
-              ),
-              toIndex(current, madeArguments[1] ?? getUndefined(context), (offsetPath, offset) =>
-                ifThenElse(
-                  apply("=", [
-                    translateNewBufferOf(
-                      node,
-                      construction,
-                      getHeap(offsetPath.scope, node, context),
-                      tuple([madeArguments[0], offset]),
-                      offsetPath.scope,
-                      context,
-                      "offset error",
-                    ),
-                    string("RangeError"),
-                  ]),
-                  throwError("RangeError", offsetPath, node, context, frame),
-                  madeArguments[2] === undefined
-                    ? make(offsetPath, [madeArguments[0], offset])
-                    : toIndex(offsetPath, madeArguments[2], (lengthPath, length) =>
-                        make(lengthPath, [madeArguments[0], offset, length]),
-                      ),
-                ),
-              ),
-              make(current, madeArguments),
-            );
       const throwWith = (after: Path) => throwTypeError(after, node, context, frame);
       const step = (
         current: Path,
@@ -11986,9 +11813,9 @@ const translateNewBufferStatement = (
               throwWith,
               (opened, iterator, next) => step(opened, iterator, next, []),
             ),
-            makeViewing(allocated, values),
+            make(allocated, values),
           )
-        : makeViewing(allocated, values);
+        : make(allocated, values);
     },
   );
 
@@ -12789,8 +12616,7 @@ const getEffects = (
   // of an array's length.
   const conversions =
     (ts.isExpression(node) && getConversion(node, context) !== undefined) ||
-    (isObjectChange(node, context) && mayDefineObjectLength(node, context)) ||
-    isIndexConvertingNew(node, context)
+    (isObjectChange(node, context) && mayDefineObjectLength(node, context))
       ? getConversionFunctions(node, context)
       : undefined;
   // A definition that reads its descriptor's fields, a read of a key with getters, or an
@@ -13136,34 +12962,24 @@ export const translateJoined = (
         ? path.scope.bindings.get(entry[0]) === entry[1] || changed.includes(entry[0])
         : !isVarInside(entry[0]),
     );
-  // A name of a function that the statement calls, such as a parameter that a callback binds, is out
-  // of scope after the call, where no function that it makes reads it.
-  const isCalleeLocal = (symbol: ts.Symbol) => {
-    const owner =
-      symbol.valueDeclaration && ts.findAncestor(symbol.valueDeclaration.parent, ts.isFunctionLike);
+  // What follows holds the functions held before, which the operator can't take, so each exit holds
+  // the same ones for each name that code after the statement can read. That leaves out the names
+  // that the statement declares and that don't outlive it, and those of the functions it called.
+  const isReadAfter = (symbol: ts.Symbol) => {
+    const declaration = symbol.valueDeclaration;
+    if (declaration === undefined) return true;
+    if (ts.findAncestor(declaration, (ancestor) => ancestor === node) !== undefined) {
+      return isVarInside(symbol);
+    }
+    const owner = ts.findAncestor(declaration.parent, ts.isFunctionLike);
     return (
-      owner !== undefined &&
-      ts.findAncestor(node, (ancestor) => ancestor === owner) === undefined &&
-      findNodes(owner, ts.isIdentifier).every(
-        (name) =>
-          getSymbol(name, context.checker) !== symbol ||
-          ts.findAncestor(name.parent, ts.isFunctionLike) === owner,
-      )
+      owner === undefined || ts.findAncestor(node, (ancestor) => ancestor === owner) !== undefined
     );
   };
-  // What follows holds the functions held before, which the operator can't take, so each exit holds
-  // the same ones, apart from those of names that the statement declares, or that the functions it
-  // calls declare, and that don't outlive it.
   const isHeldAsBefore = (functions: Map<ts.Symbol, FunctionNode>) =>
-    [...path.scope.functions].every((entry) => functions.get(entry[0]) === entry[1]) &&
-    [...functions].every(
-      (entry) =>
-        path.scope.functions.get(entry[0]) === entry[1] ||
-        (entry[0].valueDeclaration !== undefined &&
-          (ts.findAncestor(entry[0].valueDeclaration, (ancestor) => ancestor === node) !==
-            undefined ||
-            isCalleeLocal(entry[0])) &&
-          !isVarInside(entry[0])),
+    [...new Set([...path.scope.functions.keys(), ...functions.keys()])].every(
+      (symbol) =>
+        !isReadAfter(symbol) || functions.get(symbol) === path.scope.functions.get(symbol),
     );
   const exits: { path: Path; value?: Expression }[] = [];
   const joined = translateWith((inner, value) => {
@@ -15871,9 +15687,6 @@ interface LeadingCall {
   increment?: Increment;
   // A new Promise, whose executor runs as a statement, so nothing after it can run before it.
   construction?: ts.NewExpression;
-  // A new of a typed array of a value that may be an iterable, whose iterator runs as a
-  // statement, so nothing after it can run before it.
-  typedArray?: ts.NewExpression;
 }
 
 // The first call in a node's evaluation order that only statements can run, with the nodes that
@@ -15967,7 +15780,6 @@ const findLeadingCall = (
       : { call: undefined, isBlocked: true, read: node };
   }
   if (ts.isArrayLiteralExpression(node)) return inOrder(node.elements);
-  if (ts.isOmittedExpression(node)) return none;
   if (ts.isObjectLiteralExpression(node)) {
     return node.properties.every(
       (property) =>
@@ -16111,11 +15923,7 @@ const findLeadingCall = (
       getNewBuffer(node, context) !== undefined)
   ) {
     const found = inOrder(node.arguments ?? []);
-    return found.call !== undefined || found.isBlocked
-      ? found
-      : isIteratedTypedArray(node, context)
-        ? { ...blocked, typedArray: node }
-        : evaluate(node);
+    return found.call !== undefined || found.isBlocked ? found : evaluate(node);
   }
   if (ts.isNewExpression(node)) {
     const found = inOrder([node.expression, ...(node.arguments ?? [])]);
@@ -16158,12 +15966,11 @@ const findLeadingCall = (
         ? findLeadingCall(receiver, before, path, context)
         : none;
     if (fromReceiver.call !== undefined || fromReceiver.isBlocked) return fromReceiver;
-    // A method of what new makes runs the calls in new's arguments first, and a typed array's
-    // iterator.
+    // A method of what new makes runs the calls in new's arguments first.
     if (receiver !== undefined && ts.isNewExpression(receiver)) {
       const evaluated: ts.Node[] = [];
       const fromNew = findLeadingCall(receiver, evaluated, path, context);
-      if (fromNew.call !== undefined || fromNew.typedArray !== undefined) {
+      if (fromNew.call !== undefined) {
         before.push(...evaluated);
         return fromNew;
       }
@@ -16553,34 +16360,6 @@ const getHoistedConstruction = (statement: ts.Statement, path: Path, context: Co
   if (evaluated === undefined) return undefined;
   const before: ts.Node[] = [];
   const node = findLeadingCall(evaluated, before, path, context).construction;
-  const outer = skipCasts(evaluated);
-  if (
-    node === undefined ||
-    node === outer ||
-    (ts.isBinaryExpression(outer) &&
-      outer.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-      skipCasts(outer.right) === node)
-  ) {
-    return undefined;
-  }
-  rejectEarlyRun(
-    node,
-    [node],
-    before.filter((inner) => ts.findAncestor(inner, (ancestor) => ancestor === node) === undefined),
-    path,
-    context,
-  );
-  return node;
-};
-
-// The new of a typed array of a value that may be an iterable inside a statement's expression, which
-// it evaluates first, other than one that the statement itself runs, which runs as its own
-// statement. Nothing that the statement evaluates before it may read what its iterator changes.
-const getHoistedTypedArray = (statement: ts.Statement, path: Path, context: Context) => {
-  const evaluated = getEvaluated(statement);
-  if (evaluated === undefined) return undefined;
-  const before: ts.Node[] = [];
-  const node = findLeadingCall(evaluated, before, path, context).typedArray;
   const outer = skipCasts(evaluated);
   if (
     node === undefined ||
@@ -17382,27 +17161,6 @@ export const translateStatements = (
         context,
         frame,
       ),
-    );
-  }
-  const typedArray = getHoistedTypedArray(statement, path, context);
-  const typedConstruction = typedArray && getBufferConstruction(typedArray, context);
-  if (typedArray !== undefined && typedConstruction !== undefined) {
-    return translateNewBufferStatement(
-      typedArray,
-      typedConstruction,
-      path,
-      context,
-      statementFrame,
-      (after, value) =>
-        translateStatements(
-          statements,
-          {
-            ...after,
-            scope: { ...after.scope, results: new Map([...after.scope.results, [typedArray, value]]) },
-          },
-          context,
-          frame,
-        ),
     );
   }
   const hoistedRead = getHoistedRead(statement, path, context);

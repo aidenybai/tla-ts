@@ -2804,13 +2804,10 @@ export const getNewBuffer = (node: ts.Node, context: Context) => {
   return candidates.length === names.length ? candidates : undefined;
 };
 
-type NewBufferResult = "heap" | "error" | "offset error";
-
-// What new of a buffer, a DataView, or a typed array gives, of the values of its arguments: the
-// heap after it, the error, if any, that it throws, or the RangeError that a typed array throws for
-// a byteOffset before it converts its length. It branches on the constructor that its callee holds
-// where it isn't the global. Reflect.construct throws a TypeError where its newTarget isn't a
-// constructor, and otherwise gives the instance its newTarget's prototype.
+// The heap after new of a buffer, a DataView, or a typed array, of the values of its arguments,
+// or with isError the error, if any, that it throws, which branches on the constructor that its
+// callee holds where it isn't the global. Reflect.construct throws a TypeError where its newTarget
+// isn't a constructor, and otherwise gives the instance its newTarget's prototype.
 export const translateNewBufferOf = (
   node: ts.Expression,
   construction: Construction,
@@ -2818,9 +2815,8 @@ export const translateNewBufferOf = (
   values: Expression,
   scope: Scope,
   context: Context,
-  result: NewBufferResult = "heap",
+  isError = false,
 ) => {
-  const isError = result !== "heap";
   const buffers = getNewBuffer(node, context) ?? [];
   const callee = translateExpression(construction.callee, scope, context);
   const newTarget =
@@ -2837,14 +2833,14 @@ export const translateNewBufferOf = (
                 [callee, translateBuiltInValue(buffer, node, context)],
                 context,
               ),
-              translateNewBuffer(buffer, heap, values, newTarget, node, context, result),
+              translateNewBuffer(buffer, heap, values, newTarget, node, context, isError),
               rest,
             ),
           isError
             ? string("")
             : apply("Assert", [boolean(false), string("tla-ts can't call this constructor")]),
         )
-      : translateNewBuffer(buffers[0], heap, values, newTarget, node, context, result);
+      : translateNewBuffer(buffers[0], heap, values, newTarget, node, context, isError);
   return newTarget === undefined || !isError
     ? made
     : ifExpression(
@@ -2861,7 +2857,7 @@ const translateNewBuffer = (
   newTarget: Expression | undefined,
   node: ts.Expression,
   context: Context,
-  result: NewBufferResult,
+  isError: boolean,
 ) => {
   // The constructor, which the prototype's constructor property holds.
   context.builtIns.add(buffer);
@@ -2871,12 +2867,7 @@ const translateNewBuffer = (
       ? fallback
       : useJavaScript("PrototypeFromConstructor", [heap, newTarget, fallback], context);
   const type = TYPED_ARRAYS.get(buffer);
-  if (result === "offset error") {
-    return type === undefined
-      ? string("")
-      : useJavaScript("TypedArrayOffsetError", [string(type), values], context);
-  }
-  const suffix = result === "error" ? "Error" : "";
+  const suffix = isError ? "Error" : "";
   return type !== undefined
     ? useJavaScript(
         `NewTypedArray${suffix}`,

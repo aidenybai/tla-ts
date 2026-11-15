@@ -122,42 +122,6 @@ describe("actions", () => {
     expect([result.status, result.distinctStates]).toEqual(["deadlock", 3]);
   });
 
-  it("keeps a file that exports a function a spec, whose exported const is a value", async () => {
-    const result = await checkModel(`
-      export const limit = 2;
-      let count = 0;
-      export const step = () => {
-        if (count < limit) count += 1;
-      };
-    `);
-    expect([result.status, result.distinctStates]).toEqual(["deadlock", 3]);
-  });
-
-  describe("runs a file that exports only values as a script", () => {
-    const getSource = (expected: string) => `
-      export const label = "box";
-      let count = 0;
-      count += 1;
-      {
-        var nested = count + 1;
-      }
-      const made = { label, count, nested };
-      if (JSON.stringify(made) !== '${expected}') throw new Error(JSON.stringify(made));
-    `;
-
-    it("agrees with Node", async () => {
-      const result = await checkModel(getSource('{"label":"box","count":1,"nested":2}'));
-      expect(result.failure).toBeUndefined();
-    });
-
-    it("rejects another result", async () => {
-      const result = await checkModel(getSource('{"label":"box","count":1,"nested":3}'));
-      expect(result.failure?.message).toContain(
-        '{\\"label\\":\\"box\\",\\"count\\":1,\\"nested\\":2}',
-      );
-    });
-  });
-
   it("inlines a helper that changes state", async () => {
     const result = await checkModel(`
       /** @noDeadlock */
@@ -621,50 +585,6 @@ describe("top-level statements", () => {
     });
   });
 
-  describe("runs a typed array's callback whose result the method's signature doesn't take", () => {
-    const source = `
-      "use strict";
-      function same(actual: unknown, expected: unknown, label: string) {
-        if (!Object.is(actual, expected)) throw new Error(label);
-      }
-      const sample = new Int8Array([1, 2, 3]);
-      let calls = 0;
-      // @ts-ignore
-      same(sample.every(() => { calls++; }), false, "every");
-      // @ts-ignore
-      same(sample.findIndex(() => "x"), 0, "findIndex");
-      // @ts-ignore
-      same(sample.filter(() => (calls > 0 ? 0 : {})).length, 0, "filter");
-      // @ts-ignore
-      same(new BigInt64Array([1n, 2n]).findLast(() => "a"), 2n, "findLast");
-      let seen: unknown = 1;
-      // @ts-ignore
-      sample.find(function (this: { [key: string]: unknown }) {
-        seen = this;
-      });
-      same(seen, undefined, "this");
-      // @ts-ignore
-      same(sample.map(() => {}).join(), "0,0,0", "map");
-    `;
-
-    it("agrees with Node", async () => {
-      expect((await checkModel(source)).failure).toBeUndefined();
-    });
-
-    it.each([
-      ["every", 'false, "every"', 'true, "every"'],
-      ["findIndex", '0, "findIndex"', '-1, "findIndex"'],
-      ["filter", '0, "filter"', '3, "filter"'],
-      ["findLast", '2n, "findLast"', '1n, "findLast"'],
-      ["this", 'undefined, "this"', 'sample, "this"'],
-      ["map", '"0,0,0"', '"NaN,NaN,NaN"'],
-    ])("rejects a wrong %s", async (label, expected, wrong) => {
-      expect((await checkModel(source.replace(expected, wrong))).failure?.message).toContain(
-        `"${label}"`,
-      );
-    });
-  });
-
   describe("runs a reduce's call with no initial value on an array-like object", () => {
     const source = `
       const seen: number[] = [];
@@ -953,71 +873,6 @@ describe("top-level statements", () => {
         (await checkModel(source.replace("true,4,7,2,2,0,0-3,true,4,7,2,2,0,0-3", wrong))).failure
           ?.message,
       ).toContain('"seen"');
-    });
-  });
-
-  describe("converts the byteOffset and the length of a typed array that views a buffer in order", () => {
-    const expected =
-      "offset,length,2,1,odd,length,failing,true,offset,length,2,8,odd,true,failing,true";
-    const getSource = (seen: string) => `
-      const seen: unknown[] = [];
-      let size = 1;
-      const offset = {
-        valueOf: function () {
-          seen.push("offset");
-          return size;
-        },
-      };
-      const length = {
-        toString: function () {
-          seen.push("length");
-          return "2";
-        },
-      };
-      const odd = {
-        valueOf: function () {
-          seen.push("odd");
-          return 1;
-        },
-      };
-      const failing = {
-        valueOf: function () {
-          seen.push("failing");
-          throw new EvalError();
-        },
-      };
-      for (const TA of [Int8Array, Float64Array]) {
-        size = TA.BYTES_PER_ELEMENT;
-        const buffer = new ArrayBuffer(size * 4);
-        // @ts-ignore
-        const view = new TA(buffer, offset, length);
-        seen.push(view.length, view.byteOffset);
-        try {
-          // @ts-ignore
-          new TA(buffer, odd, length);
-        } catch (thrown) {
-          seen.push(thrown instanceof RangeError);
-        }
-        try {
-          // @ts-ignore
-          new TA(buffer, failing, length);
-        } catch (thrown) {
-          seen.push(thrown instanceof EvalError);
-        }
-      }
-      if (seen.join() !== "${seen}") throw new Error("seen " + seen.join());
-    `;
-
-    it("agrees with Node", async () => {
-      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
-    });
-
-    it.each([
-      "offset,length,2,1,odd,length,failing,true,offset,length,2,8,odd,length,true,failing,true",
-      "offset,length,2,1,odd,length,failing,length,true,offset,length,2,8,odd,true,failing,true",
-      "offset,length,2,1,odd,length,failing,true,offset,length,2,8,odd,false,failing,true",
-    ])("rejects the expectation %s", async (wrong) => {
-      expect((await checkModel(getSource(wrong))).failure?.message).toContain(`seen ${expected}`);
     });
   });
 
@@ -3660,77 +3515,6 @@ ${body}
     );
   });
 
-  const getFailedWriteSource = (directive: string, expected: string) => `
-    ${directive}
-    const results: string[] = [];
-    const frozen: { x: number } = { x: 1 };
-    Object.freeze(frozen);
-    const fixed: { y?: number } = { y: 2 };
-    Object.defineProperty(fixed, "y", { configurable: false });
-    try {
-      frozen.x = 2;
-      results.push("wrote");
-    } catch (error) {
-      results.push(error instanceof TypeError ? "type" : "other");
-    }
-    try {
-      frozen.x += 1;
-      results.push("wrote");
-    } catch (error) {
-      results.push(error instanceof TypeError ? "type" : "other");
-    }
-    try {
-      delete fixed.y;
-      results.push("deleted");
-    } catch (error) {
-      results.push(error instanceof TypeError ? "type" : "other");
-    }
-    const outcomes = [...results, frozen.x, fixed.y].join(",");
-    if (outcomes !== "${expected}") throw new Error("outcomes " + outcomes);
-  `;
-
-  it("ignores a write or a delete that fails outside strict mode", async () => {
-    expect(
-      (await checkModel(getFailedWriteSource("", "wrote,wrote,deleted,1,2"))).failure,
-    ).toBeUndefined();
-    expect(
-      (await checkModel(getFailedWriteSource("", "type,type,type,1,2"))).failure?.message,
-    ).toContain("outcomes wrote,wrote,deleted,1,2");
-    expect(
-      (await checkModel(getFailedWriteSource('"use strict";', "type,type,type,1,2"))).failure,
-    ).toBeUndefined();
-  });
-
-  const getProxyFailureSource = (directive: string, expected: string) => `
-    ${directive}
-    const results: string[] = [];
-    const proxy = new Proxy<{ z?: number }>({}, { set: () => false, deleteProperty: () => false });
-    try {
-      proxy.z = 1;
-      results.push("wrote");
-    } catch (error) {
-      results.push(error instanceof TypeError ? "type" : "other");
-    }
-    try {
-      delete proxy.z;
-      results.push("deleted");
-    } catch (error) {
-      results.push(error instanceof TypeError ? "type" : "other");
-    }
-    const outcomes = results.join(",");
-    if (outcomes !== "${expected}") throw new Error("outcomes " + outcomes);
-  `;
-
-  it("ignores a write or a delete that a proxy's trap refuses outside strict mode", async () => {
-    expect((await checkModel(getProxyFailureSource("", "wrote,deleted"))).failure).toBeUndefined();
-    expect((await checkModel(getProxyFailureSource("", "type,type"))).failure?.message).toContain(
-      "outcomes wrote,deleted",
-    );
-    expect(
-      (await checkModel(getProxyFailureSource('"use strict";', "type,type"))).failure,
-    ).toBeUndefined();
-  });
-
   it("stops where a write outside strict mode names no binding", () => {
     expect(() =>
       compile(`
@@ -3740,29 +3524,6 @@ ${body}
         count = 1;
       `),
     ).toThrow("tla-ts can't write a global outside strict mode");
-  });
-
-  it.each([
-    ["a pattern", "({ missing } = { missing: 42 });"],
-    ["a for-of head", "for (missing of [1]) count += 1;"],
-    ["a pattern's default", "[missing = 1] = [];"],
-    ["a pattern that names NaN", "[NaN] = [1];"],
-  ])("stops where %s outside strict mode writes a global", (_, statement) => {
-    expect(() => compile(`let count = 0;\n// @ts-ignore\n${statement}\ncount = 1;`)).toThrow(
-      "tla-ts can't write a global outside strict mode",
-    );
-  });
-
-  it("writes a var that a pattern and a for-of head outside strict mode name", async () => {
-    const getSource = (expected: string) => `
-      var x: number;
-      let y = 0;
-      [x, y = 2] = [1];
-      for (x of [3]) y += x;
-      if ([x, y].join() !== "${expected}") throw new Error("written " + [x, y].join());
-    `;
-    expect((await checkModel(getSource("3,5"))).failure).toBeUndefined();
-    expect((await checkModel(getSource("1,2"))).failure?.message).toContain("written 3,5");
   });
 
   it("gives undefined as the type of a name that no binding has", async () => {
@@ -5423,74 +5184,6 @@ ${body}
     `;
     expect((await checkModel(getSource("0,1,2;xnnnj"))).failure).toBeUndefined();
     expect((await checkModel(getSource("0,1,2;nnnxj"))).failure?.message).toContain("0,1,2;xnnnj");
-  });
-
-  describe("call and apply", () => {
-    it("call passes a function its this and the arguments after it", async () => {
-      const getSource = (expected: string) => `
-        "use strict";
-        function show(this: unknown, a?: unknown, ...rest: unknown[]) {
-          return [this === undefined ? "u" : typeof this, a, arguments.length].join("|");
-        }
-        const result = [show.call(0, 1, 2), show.call(undefined)].join(";");
-        if (result !== "${expected}") throw new Error(result);
-      `;
-      expect((await checkModel(getSource("number|1|2;u||0"))).failure).toBeUndefined();
-      expect((await checkModel(getSource("number|1|2;u||1"))).failure?.message).toContain(
-        "number|1|2;u||0",
-      );
-    });
-
-    it("apply passes a function expression an array literal's elements, or none for null", async () => {
-      const getSource = (expected: string) => `
-        "use strict";
-        const target = {};
-        const show = function (this: unknown, ...rest: unknown[]) {
-          return [this === target, arguments.length, arguments[2]].join("|");
-        };
-        const result = [show.apply(target, [3, 4, 5]), show.apply(null)].join(";");
-        if (result !== "${expected}") throw new Error(result);
-      `;
-      expect((await checkModel(getSource("true|3|5;false|0|"))).failure).toBeUndefined();
-      expect((await checkModel(getSource("true|2|5;false|0|"))).failure?.message).toContain(
-        "true|3|5;false|0|",
-      );
-    });
-
-    it("call runs an async function with the this and the arguments that it passes", async () => {
-      const getSource = (expected: string) => `
-        "use strict";
-        let log = "";
-        async function show(this: unknown, value?: unknown, ...rest: unknown[]) {
-          log += "s";
-          const awaited = await value;
-          return [this, awaited, arguments.length].join();
-        }
-        show.call("t", Promise.resolve(5), 2).then((result) => {
-          log += result;
-          if (log !== "${expected}") throw new Error(log);
-        });
-        log += "m";
-      `;
-      expect((await checkModel(getSource("smt,5,2"))).failure).toBeUndefined();
-      // The then's promise rejects with the error, which nothing handles.
-      expect((await checkModel(getSource("mst,5,2"))).failure?.message).toContain(
-        "A promise rejected with no handler",
-      );
-    });
-
-    it("apply passes a hole as what Array.prototype holds at its index", async () => {
-      const getSource = (expected: string) => `
-        Object.defineProperty(Array.prototype, "1", { value: "proto", configurable: true });
-        function show(a?: unknown, b?: unknown, ...rest: unknown[]) {
-          return [arguments.length, a, b, rest.length].join();
-        }
-        const result = show.apply(null, [1, , 2]);
-        if (result !== "${expected}") throw new Error(result);
-      `;
-      expect((await checkModel(getSource("3,1,proto,1"))).failure).toBeUndefined();
-      expect((await checkModel(getSource("3,1,,1"))).failure?.message).toContain("3,1,proto,1");
-    });
   });
 
   it("forwards a rest parameter that a function spreads into another's call", async () => {
@@ -9083,21 +8776,7 @@ describe("errors", () => {
       "a function that redeclares a catch parameter",
       "try {} catch (error) {\n  function error() {}\n}",
     ],
-    [
-      "two functions with one name in a block in strict mode",
-      '"use strict";\n{\n  function step() {}\n  function step() {}\n}',
-    ],
-    [
-      "a generator and a function with one name in a block",
-      "{\n  function* step() {}\n  function step() {}\n}",
-    ],
-    ["a function as an if's branch in strict mode", '"use strict";\nif (true) function step() {}'],
-    ["a labelled function as the body of a loop", "while (false) label: function step() {}"],
-    ["an arrow that names a parameter twice", "const step = (a: number, a: number) => a;"],
-    [
-      "a function that names a parameter twice in strict mode",
-      '"use strict";\nfunction step(a: number, a: number) {\n  return a;\n}',
-    ],
+    ["two functions with one name in a block", "{\n  function step() {}\n  function step() {}\n}"],
     ["a class as the body of an if", "if (true) class Step {}"],
     ["a function as the body of a loop", "while (false) function step() {}"],
     [
@@ -9105,32 +8784,10 @@ describe("errors", () => {
       "class Box {\n  #size = 1;\n  read() {\n    const { #size: size } = this;\n  }\n}",
     ],
     ["an escape in new.target", "function make() {\n  return new.t\\u0061rget;\n}"],
-    [
-      "assigning arguments in strict mode",
-      '"use strict";\nfunction make() {\n  [arguments] = [[]];\n}',
-    ],
+    ["assigning arguments", "function make() {\n  [arguments] = [[]];\n}"],
     ["an export name with a lone surrogate", 'function step() {}\nexport { step as "\\uD83D" };'],
   ])("rejects %s as a SyntaxError", (_, source) => {
     expect(() => compile(source)).toThrow(/^spec\.ts:\d+:\d+ SyntaxError: /);
-  });
-
-  it.each([
-    ["a function as an if's branch", "if (true) function step() {}", "statement's body"],
-    ["a labelled function", "label: function step() {}", "statement's body"],
-    [
-      "two functions with one name in a block",
-      "{\n  function step() {}\n  function step() {}\n}",
-      "declares a function twice",
-    ],
-    ["assigning arguments", "function make() {\n  [arguments] = [[]];\n}", "write arguments"],
-    [
-      "a function that names a parameter twice",
-      "function step(a: number, a: number) {\n  return a;\n}",
-      "names a parameter twice",
-    ],
-  ])("stops at %s, which only strict mode rejects", (_, source, message) => {
-    expect(() => compile(source)).toThrow(`tla-ts can't`);
-    expect(() => compile(source)).toThrow(message);
   });
 
   it("accepts a var beside a function in a function body", () => {
@@ -9337,6 +8994,11 @@ describe("errors", () => {
       "a callback that changes state and types its array as an object",
       "let calls = 0;\nconst list = [1, 2];\nconst isTwo = (value: number, index: number, array: { length: number }) => {\n  calls++;\n  return array.length === 2;\n};\nlet isAll = list.every(isTwo);",
       "Type a callback's array parameter as an array",
+    ],
+    [
+      "this in a function inside a method",
+      "const box = {\n  read() {\n    const inner = function (this: unknown) {\n      return this;\n    };\n    return inner();\n  },\n};\nlet value = box.read();",
+      "Unsupported expression: this",
     ],
   ])("rejects %s in a script", (_, source, message) => {
     expect(() => compile(source)).toThrow(message);
@@ -10198,7 +9860,6 @@ describe("errors", () => {
 
   it("throws a TypeError where a read or a return finds %ThrowTypeError% as the getter", async () => {
     const getSource = (expected: number) => `
-      "use strict";
       function foo() {}
       const obj = foo.bind({}) as unknown as { arguments: unknown; caller: unknown };
       let thrown = 0;
@@ -13214,9 +12875,8 @@ describe("errors", () => {
     });
   });
 
-  describe("throws the TypeError of deleting a typed array's element in strict mode", () => {
+  describe("throws the TypeError of deleting a typed array's element", () => {
     const getSource = (expected: string) => `
-      "use strict";
       const typed = new Int8Array(2);
       const remove = (key: string) => {
         try {
@@ -21110,42 +20770,6 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
-  it("stops where an arguments object outside strict mode, whose callee is its function, leaves it", async () => {
-    const script = `
-      const box = { result: "none" };
-      function f(): unknown {
-        return arguments.callee;
-      }
-      try {
-        box.result = f() === f ? "callee" : "other";
-      } catch (error) {
-        box.result = error instanceof TypeError ? "type" : "other";
-      }
-      if (box.result !== "type") throw new Error("callee " + box.result);
-    `;
-    expect(() => compile(script)).toThrow(
-      "tla-ts can't follow an arguments object that maps its function's parameters outside strict mode",
-    );
-    expect((await checkModel(`"use strict";\n${script}`)).failure).toBeUndefined();
-    expect(
-      (await checkModel(`"use strict";\n${script.replace('!== "type"', '!== "callee"')}`)).failure
-        ?.message,
-    ).toContain("callee type");
-  });
-
-  it("reads the length and the elements of an arguments object outside strict mode", async () => {
-    const getSource = (expected: number) => `
-      const box = { count: 0 };
-      function first(a: number, b: number) {
-        return arguments[1] + arguments.length + a;
-      }
-      box.count = first(5, 7);
-      if (box.count !== ${expected}) throw new Error("count " + box.count);
-    `;
-    expect((await checkModel(getSource(14))).failure).toBeUndefined();
-    expect((await checkModel(getSource(12))).failure?.message).toContain("count 14");
-  });
-
   it("ends the program at a promise rejected with no handler once the jobs run out", async () => {
     const result = await checkModel(`
       const box = { seen: 0 };
@@ -25942,7 +25566,7 @@ describe("errors", () => {
     ).toThrow("spec.ts:4:28 Unsupported expression: this");
   });
 
-  it("reads a module's this as undefined, and stops on a strict script's", async () => {
+  it("reads a module's this as undefined, and stops on a script's", async () => {
     const source = `
       const box = { seen: 0 };
       const read = () => this;
@@ -25955,9 +25579,9 @@ describe("errors", () => {
     expect((await checkModel(wrong)).failure?.message).toContain('"this"');
     expect(() =>
       compile(
-        '"use strict";\nconst box = { seen: 0 };\nconst read = () => this;\nif (read() !== undefined) box.seen = 1;',
+        "const box = { seen: 0 };\nconst read = () => this;\nif (read() !== undefined) box.seen = 1;",
       ),
-    ).toThrow("spec.ts:3:20 Unsupported expression: this");
+    ).toThrow("spec.ts:2:20 Unsupported expression: this");
   });
 
   const getCallbackThisSource = (directive: string, expected: string) => `
@@ -25983,95 +25607,6 @@ describe("errors", () => {
     expect(
       (await checkModel(getCallbackThisSource('"use strict";', "false,undefined,holder"))).failure,
     ).toBeUndefined();
-  });
-
-  it("gives a function that a call names undefined as its this", async () => {
-    const getSource = (expected: string) => `
-      const seen: string[] = [];
-      function sloppy(this: unknown) {
-        return typeof this;
-      }
-      function strict(this: unknown) {
-        "use strict";
-        const read = () => typeof this;
-        return read();
-      }
-      seen.push(sloppy(), strict());
-      seen.push(
-        (function (this: unknown) {
-          return this === globalThis;
-        })()
-          ? "global"
-          : "other",
-      );
-      const holder = {
-        strict,
-        sloppy,
-        read() {
-          const inner = function (this: unknown) {
-            return this;
-          };
-          return inner() === globalThis ? "inner" : "other";
-        },
-      };
-      seen.push(holder.strict(), holder.sloppy(), holder.read());
-      if (seen.join() !== "${expected}") throw new Error("seen " + seen.join());
-    `;
-    expect(
-      (await checkModel(getSource("object,undefined,global,object,object,inner"))).failure,
-    ).toBeUndefined();
-    expect(
-      (await checkModel(getSource("undefined,undefined,other,object,object,other"))).failure
-        ?.message,
-    ).toContain("seen object,undefined,global,object,object,inner");
-  });
-
-  it("reads the type of the this that a call gives, not the type that the function names", async () => {
-    const getSource = (expected: string) => `
-      const box = { count: 0 };
-      function strict(this: { [key: string]: unknown }) {
-        "use strict";
-        return typeof this;
-      }
-      function sloppy(this: void) {
-        return typeof this;
-      }
-      // @ts-ignore
-      const kinds = [strict(), sloppy()].join();
-      if (kinds !== "${expected}") throw new Error("kinds " + kinds);
-    `;
-    expect((await checkModel(getSource("undefined,object"))).failure).toBeUndefined();
-    expect((await checkModel(getSource("object,undefined"))).failure?.message).toContain(
-      "kinds undefined,object",
-    );
-  });
-
-  it("reads the global object as the this of a script outside strict mode", async () => {
-    const getSource = (expected: boolean) => `
-      const box = { count: 0 };
-      var global = this;
-      const read = () => this;
-      function isGlobal(this: void) {
-        return this === global && read() === globalThis;
-      }
-      if (isGlobal() !== ${expected}) throw new Error("not global");
-    `;
-    expect((await checkModel(getSource(true))).failure).toBeUndefined();
-    expect((await checkModel(getSource(false))).failure?.message).toContain("not global");
-  });
-
-  it("names a variable with a word that only strict mode reserves outside strict mode", async () => {
-    const getSource = (expected: number) => `
-      var yield = 23;
-      var public = 1, static = 2;
-      const read = (value = yield) => value + public + static;
-      if (read() !== ${expected}) throw new Error("read " + read());
-    `;
-    expect((await checkModel(getSource(26))).failure).toBeUndefined();
-    expect((await checkModel(getSource(23))).failure?.message).toContain("read 26");
-    expect(() => compile('function read() {\n  "use strict";\n  var yield = 1;\n}')).toThrow(
-      "'yield' is a reserved word in strict mode",
-    );
   });
 
   it("stops where a function outside strict mode gets a primitive as its this", async () => {
@@ -26117,7 +25652,7 @@ describe("errors", () => {
   it("makes an arguments object for each call to a function that names it", async () => {
     const result = await check(
       compile(
-        `"use strict";\nconst object = {};\nfunction f(a: number, b: number) {\n  return arguments;\n}\nconst args = f(1, 2);\nconst other = f(1, 2);\nif (args === other) throw new Error("same");\nif (args.length !== 2 || args[0] !== 1 || args[1] !== 2) throw new Error("values");\nif (Object.prototype.toString.call(args) !== "[object Arguments]") throw new Error("tag");\nif (Object.keys(args).join() !== "0,1") throw new Error("keys");\nif (Object.getOwnPropertyNames(args).join() !== "0,1,length,callee") throw new Error("names");\nif (Object.getPrototypeOf(args) !== Object.prototype) throw new Error("proto");\nfunction g() {\n  arguments[0] = 5;\n  return arguments.length + (arguments[0] as number);\n}\nconst result = g();\nif (result !== 5) throw new Error("write");\nfunction h(a: number, b?: number, c?: number) {\n  const inner = function (b: number) {\n    return arguments.length + b;\n  };\n  const value = inner(3);\n  return arguments.length * 100 + value + (arguments[0] as number);\n}\nconst nested = h(7, 8, 9);\nif (nested !== 311) throw new Error("nested");`,
+        `const object = {};\nfunction f(a: number, b: number) {\n  return arguments;\n}\nconst args = f(1, 2);\nconst other = f(1, 2);\nif (args === other) throw new Error("same");\nif (args.length !== 2 || args[0] !== 1 || args[1] !== 2) throw new Error("values");\nif (Object.prototype.toString.call(args) !== "[object Arguments]") throw new Error("tag");\nif (Object.keys(args).join() !== "0,1") throw new Error("keys");\nif (Object.getOwnPropertyNames(args).join() !== "0,1,length,callee") throw new Error("names");\nif (Object.getPrototypeOf(args) !== Object.prototype) throw new Error("proto");\nfunction g() {\n  arguments[0] = 5;\n  return arguments.length + (arguments[0] as number);\n}\nconst result = g();\nif (result !== 5) throw new Error("write");\nfunction h(a: number, b?: number, c?: number) {\n  const inner = function (b: number) {\n    return arguments.length + b;\n  };\n  const value = inner(3);\n  return arguments.length * 100 + value + (arguments[0] as number);\n}\nconst nested = h(7, 8, 9);\nif (nested !== 311) throw new Error("nested");`,
       ),
     );
     expect(result.failure).toBeUndefined();
@@ -26311,7 +25846,6 @@ describe("errors", () => {
 
   it("runs a parenthesized call that makes an object as a statement", async () => {
     const result = await checkModel(`
-      "use strict";
       const held = (function (first: number) {
         return arguments;
       }(4));
@@ -32659,7 +32193,6 @@ describe("proxies", () => {
 
   it("runs a proxy's set and deleteProperty traps, and Reflect's", async () => {
     const result = await checkModel(`
-      "use strict";
       const target: { attr?: number; fixed?: number } = {};
       let seen: unknown[] = [];
       const handler = {
@@ -32687,7 +32220,6 @@ describe("proxies", () => {
 
   it("sets and deletes the target's key where the handler has no trap", async () => {
     const result = await checkModel(`
-      "use strict";
       const target: { attr?: number; fixed?: number } = {};
       Object.defineProperty(target, "fixed", { value: 1 });
       const proxy = new Proxy(target, {});

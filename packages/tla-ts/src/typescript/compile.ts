@@ -12,7 +12,6 @@ import {
   hasObjectMembers,
   isInertValue,
   isScript,
-  rejectSloppyGlobalWrites,
 } from "./context";
 import { type CompiledSpec, createSections, emit, type Sections } from "./emit";
 import { getNumberValue } from "./expressions";
@@ -129,7 +128,6 @@ export const compile = (
   const path = fileName.replaceAll("\\", "/");
   const program = createProgram(source, path, libraries);
   const context = createContext(program.checker, program.files);
-  program.files.forEach((file) => rejectSloppyGlobalWrites(file, context));
   const sourceFile = program.sourceFile;
   // The files that the model imports, each after the files it imports, as they run.
   const visited = new Set([sourceFile]);

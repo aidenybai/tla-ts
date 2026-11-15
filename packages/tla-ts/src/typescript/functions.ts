@@ -50,8 +50,6 @@ import {
   createStateScope,
   declareParameters,
   getArrowReceivers,
-  getThisOwner,
-  type Receiver,
   type Scope,
 } from "./scope";
 import {
@@ -264,20 +262,9 @@ export const getDefinition = (declaration: HelperDeclaration, context: Context):
 // Substitutes the arguments into a function's body, which then reads the state as it is now.
 // The object that this names in the method a call inlines, which is the one the call reads the
 // method from. Other calls keep the caller's, which this reads only in that method.
-// A call by a function's name, or of a function written in place, gives it undefined as its this.
-export const getReceiver = (
-  scope: Scope,
-  context: Context,
-  called?: CalledMethod,
-  call?: { node: ts.CallExpression; callee: FunctionNode },
-): Receiver | undefined =>
+export const getReceiver = (scope: Scope, context: Context, called?: CalledMethod) =>
   called === undefined
-    ? call !== undefined &&
-      (ts.isFunctionDeclaration(call.callee) || ts.isFunctionExpression(call.callee)) &&
-      (ts.isIdentifier(skipCasts(call.node.expression)) ||
-        ts.isFunctionExpression(skipCasts(call.node.expression)))
-      ? { value: getUndefined(context), method: call.callee }
-      : scope.receiver
+    ? scope.receiver
     : {
         value:
           called.receiver.kind === ts.SyntaxKind.SuperKeyword
@@ -323,7 +310,6 @@ const inlineCall = (
   scope: Scope,
   context: Context,
   called?: CalledMethod,
-  node?: ts.CallExpression,
 ) => {
   if (callee.body === undefined) throw new TlaTypeScriptError("Give this a body", callee);
   const passedCallbacks = getParameters(callee).flatMap(
@@ -416,7 +402,7 @@ const inlineCall = (
       allocated: new Map([...bound.scope.allocated].filter(isOutside)),
       results: new Map([...bound.scope.results].filter(isOutside)),
       functions: new Map([...bound.scope.functions, ...callbacks]),
-      receiver: getReceiver(scope, context, called, node && { node, callee }),
+      receiver: getReceiver(scope, context, called),
       arrowReceivers: getArrowReceivers(callbacks, scope),
     },
     context,
@@ -608,20 +594,6 @@ export const translateHelperCall = (
   rejectCaught(node ?? declaration, declaration, scope, context);
   const helper = getHelper(declaration, context);
   const helperScope = bindFactory(declaration, scope, context);
-  // A function that reads its this runs inline, where the call gives it its this.
-  const readsThis =
-    helper !== undefined &&
-    findNodes(
-      helper,
-      (inner): inner is ts.ThisExpression =>
-        inner.kind === ts.SyntaxKind.ThisKeyword && getThisOwner(inner) === helper,
-    ).length > 0;
-  if (node !== undefined && helper !== undefined && readsThis) {
-    if (context.inProgress.has(helper)) {
-      return translateStateCall(declaration, helper, node, scope, context);
-    }
-    return inlineCall(helper, node.arguments, helperScope, context, undefined, node);
-  }
   if (
     node !== undefined &&
     helper !== undefined &&
@@ -940,7 +912,7 @@ export const translateLocalCall = (
   }
   rejectCaught(node, callee, scope, context);
   if (context.inProgress.has(callee)) return translateLiftedCall(callee, node, scope, context);
-  return inlineCall(callee, node.arguments, scope, context, called, node);
+  return inlineCall(callee, node.arguments, scope, context, called);
 };
 
 // A read of a property that a heap class's getter computes.

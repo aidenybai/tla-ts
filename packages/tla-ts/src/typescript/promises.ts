@@ -21,7 +21,6 @@ import {
   resumeGenerator,
   runLeadingCall,
   throwError,
-  throwTypeError,
   translateCallStatement,
   translateJoined,
   translateStatements,
@@ -57,9 +56,7 @@ import { type Formula, ifThenElse, leaf, letIn } from "./formula";
 import { getCandidateValue, getHeap, translateFunctionValue } from "./heap";
 import { getBuiltIn, translateBuiltInValue } from "./intrinsics";
 import { useJavaScript } from "./javascript";
-import { openIterator, readValue, stepIterator } from "./iterators";
-import { isNullish } from "./protocols";
-import { getKeptIterator, getKind, isHeapArray } from "./types";
+import { getKeptIterator, isHeapArray } from "./types";
 import { type Bound, bindValues, type Receiver } from "./scope";
 import type { TrackedStack } from "./stacks";
 import {
@@ -1700,9 +1697,7 @@ const getHeldLiteral = (node: ts.Identifier, context: Context) => {
 };
 
 // A combinator of an array written in place, which follows the promises that PromiseResolve gives
-// for the elements, or of a value other than an array, which it iterates through the value's
-// iterator: what opening or stepping the iterator throws rejects the promise, and tla-ts follows an
-// iterator only where it ends before it gives an element. Promise.all fulfills with their values once each fulfills, or rejects with the
+// for the elements. Promise.all fulfills with their values once each fulfills, or rejects with the
 // first reason. Promise.allSettled fulfills with an object for each once all settle. Promise.any
 // fulfills with the first value, or rejects with an AggregateError of the reasons once each
 // rejects. Promise.race settles as the first does.
@@ -1718,36 +1713,26 @@ const translatePromiseCombinator = (
   const cast = argument && getCast(argument);
   const variable = cast !== undefined && ts.isIdentifier(cast) ? cast : undefined;
   const held = variable && getHeldLiteral(variable, context);
-  const literal = held ?? cast;
-  const elements =
-    literal !== undefined && ts.isArrayLiteralExpression(literal) ? literal : undefined;
-  const iterable =
-    elements === undefined &&
-    cast !== undefined &&
-    context.heap !== undefined &&
-    !isHeapArray(cast, context) &&
-    getKind(cast, context) !== "sequence"
-      ? cast
-      : undefined;
+  const elements = held ?? cast;
   if (
     node.arguments.length !== 1 ||
-    (iterable === undefined && elements === undefined) ||
-    elements?.elements.some(
+    elements === undefined ||
+    !ts.isArrayLiteralExpression(elements) ||
+    elements.elements.some(
       (element) => ts.isSpreadElement(element) || ts.isOmittedExpression(element),
     )
   ) {
     throw new TlaTypeScriptError(`Pass Promise.${combinator} an array written in place`, node);
   }
   const ran =
-    held === undefined && elements !== undefined
+    held === undefined
       ? runLeadingCall(elements, path, context, frame, (after) =>
           translatePromiseCombinator(node, combinator, after, context, frame, continueWith),
         )
       : undefined;
   if (ran !== undefined) return ran;
   return makePromise(path, node, context, (made, name) => {
-    const parts = elements?.elements ?? [];
-    const count = parts.length;
+    const count = elements.elements.length;
     // Takes an element's value, or none at the end, and fulfills the promise once none remain.
     const take = (
       current: Path,
@@ -1838,7 +1823,7 @@ const translatePromiseCombinator = (
           continueWith(after, getPromise(after, node, name).ref),
         );
       }
-      const element = parts[position];
+      const element = elements.elements[position];
       // A held array's element that a statement ran keeps the value it gave then.
       const kept = held && current.scope.results.get(element);
       const array = held && variable && translateExpression(variable, current.scope, context);
@@ -1878,116 +1863,20 @@ const translatePromiseCombinator = (
           ),
       );
     };
-    const start = (current: Path) =>
-      follow(
-        setPromise(current, node, name, {
-          ...getPromise(current, node, name),
-          combined: {
-            values: Array.from({ length: count }, () => getUndefined(context)),
-            remaining: count + 1,
-          },
-        }),
-        0,
-      );
-    const leave = (current: Path) => ({
-      ...current,
-      scope: { ...current.scope, isCatching: made.scope.isCatching },
+    const start = setPromise(made, node, name, {
+      ...getPromise(made, node, name),
+      combined: {
+        values: elements.elements.map(() => getUndefined(context)),
+        remaining: count + 1,
+      },
     });
-    const rejectFrame: Frame = {
-      ...frame,
-      throwTo: (current, thrown) =>
-        continueWith(
-          settle(leave(current), node, name, thrown.value, true, context),
-          getPromise(current, node, name).ref,
-        ),
-    };
-    const catching = { ...made, scope: { ...made.scope, isCatching: true } };
-    const value = iterable && translateExpression(iterable, made.scope, context);
-    const heap = getHeap(made.scope, node, context);
     return guardBuiltIns(
       node,
       "Promise",
       [combinator, "resolve"],
-      made,
+      start,
       context,
-      guardBuiltIns(
-        node,
-        "Promise.prototype",
-        ["then"],
-        made,
-        context,
-        value === undefined
-          ? start(made)
-          : translateJoined(
-              node,
-              catching,
-              context,
-              (after) => throwTypeError(after, node, context, rejectFrame),
-              (throwWith) =>
-                ifThenElse(
-                  apply("/\\", [
-                    useJavaScript("IsRef", [value], context),
-                    apply("~", [useJavaScript("IsProxy", [heap, value], context)]),
-                    apply("~", [useJavaScript("IsArray", [heap, value], context)]),
-                  ]),
-                  openIterator(
-                    node,
-                    value,
-                    catching,
-                    context,
-                    rejectFrame,
-                    throwWith,
-                    (opened, iterator, next) =>
-                      stepIterator(
-                        node,
-                        iterator,
-                        "next",
-                        next,
-                        [],
-                        opened,
-                        context,
-                        rejectFrame,
-                        throwWith,
-                        (done) => start(leave(done)),
-                        (stepped, result) =>
-                          readValue(node, result, stepped, context, rejectFrame, () =>
-                            leaf(
-                              apply("Assert", [
-                                boolean(false),
-                                string(
-                                  `tla-ts can't follow an element that an iterator gives Promise.${combinator}`,
-                                ),
-                              ]),
-                            ),
-                          ),
-                      ),
-                  ),
-                  ifThenElse(
-                    apply("\\/", [
-                      isNullish(value, context),
-                      apply("\\in", [
-                        useJavaScript("TypeOf", [value], context),
-                        set([
-                          string("boolean"),
-                          string("number"),
-                          string("bigint"),
-                          string("symbol"),
-                        ]),
-                      ]),
-                    ]),
-                    throwWith(catching),
-                    leaf(
-                      apply("Assert", [
-                        boolean(false),
-                        string(
-                          `tla-ts can't iterate a string or an array that Promise.${combinator} takes`,
-                        ),
-                      ]),
-                    ),
-                  ),
-                ),
-            ),
-      ),
+      guardBuiltIns(node, "Promise.prototype", ["then"], start, context, follow(start, 0)),
     );
   });
 };
@@ -3779,7 +3668,6 @@ export const translateAsyncCall = (
   context: Context,
   frame: Frame,
   continueWith: (path: Path, value?: Expression) => Formula,
-  argumentNodes: readonly ts.Expression[] = ts.isCallExpression(node) ? node.arguments : [],
 ): Formula =>
   runAsyncBody(
     node,
@@ -3788,7 +3676,16 @@ export const translateAsyncCall = (
     context,
     frame,
     (made, rejectFrame, bindWith) =>
-      bindCall(node, callee, argumentNodes, receiver, made, context, rejectFrame, bindWith),
+      bindCall(
+        node,
+        callee,
+        ts.isCallExpression(node) ? node.arguments : [],
+        receiver,
+        made,
+        context,
+        rejectFrame,
+        bindWith,
+      ),
     continueWith,
   );
 
