@@ -92,8 +92,9 @@ type Check<State> = (
 interface BehaviorChecks<State> {
   states: Check<State>[];
   actions: Check<State>[];
-  // The state predicates of each tableau node.
-  nodes: Check<State>[][];
+  // The state predicates of each tableau node, or, where its checks share results and it has only
+  // state atoms and their negations, each atom's id * 2 plus 1 if it must hold.
+  nodes: (Check<State>[] | Int32Array)[];
 }
 
 interface BehaviorGraph<State> {
@@ -390,11 +391,25 @@ export const createLiveGraph = <State>(
   const isShared = evaluation.isShared;
   const atoms = evaluation.atoms;
   const evaluateFrom = evaluation.evaluateFrom;
-  const stateAtoms = new Map<LiveExpression, number>();
-  const getAtomId = (atom: LiveExpression) => {
+  const stateAtoms = new Map<LiveState | LiveEnabled, number>();
+  const atomsById: (LiveState | LiveEnabled)[] = [];
+  const getAtomId = (atom: LiveState | LiveEnabled) => {
     const id = stateAtoms.get(atom) ?? stateAtoms.size;
     stateAtoms.set(atom, id);
+    atomsById[id] = atom;
     return id;
+  };
+  const getLiterals = (expression: LiveExpression): number[] | undefined => {
+    if (expression.kind === "State" || expression.kind === "Enabled") {
+      return [getAtomId(expression) * 2 + 1];
+    }
+    if (expression.kind === "Not") {
+      const body = expression.body;
+      return body.kind === "State" || body.kind === "Enabled" ? [getAtomId(body) * 2] : undefined;
+    }
+    if (expression.kind !== "And") return undefined;
+    const operands = expression.operands.map(getLiterals);
+    return operands.every((operand) => operand !== undefined) ? operands.flat() : undefined;
   };
   // The rows of states, one after another, hold whether each state atom holds of a state: 1 or 0,
   // or -1 before it is evaluated.
@@ -463,7 +478,13 @@ export const createLiveGraph = <State>(
     checks: {
       states: solution.stateChecks.map(compileCheck),
       actions: solution.actionChecks.map(compileCheck),
-      nodes: solution.tableau?.nodes.map((node) => node.statePredicates.map(compileCheck)) ?? [],
+      nodes:
+        solution.tableau?.nodes.map((node) => {
+          const literals = isShared
+            ? getLiterals({ kind: "And", operands: node.statePredicates })
+            : undefined;
+          return literals ? Int32Array.from(literals) : node.statePredicates.map(compileCheck);
+        }) ?? [],
     },
     actionIds: Int32Array.from(solution.actionChecks, (predicate) => {
       const key = getTermKey(predicate);
@@ -535,6 +556,25 @@ export const createLiveGraph = <State>(
         results[resultOffset + position] = edges[edge];
       }
     });
+  const holdsNode = (
+    behavior: BehaviorGraph<State>,
+    node: number,
+    state: State,
+    row: Int8Array,
+    offset: number,
+  ) => {
+    const checks = behavior.checks.nodes[node];
+    if (!(checks instanceof Int32Array)) {
+      return checks.every((check) => runCheck(check, state, row, offset));
+    }
+    for (let position = 0; position < checks.length; position++) {
+      const literal: number = checks[position];
+      const cell = offset + (literal >> 1);
+      if (row[cell] === -1) row[cell] = atoms.holdsState(atomsById[literal >> 1], state) ? 1 : 0;
+      if (row[cell] !== (literal & 1)) return false;
+    }
+    return true;
+  };
   const isConsistent = (
     behavior: BehaviorGraph<State>,
     node: number,
@@ -542,10 +582,8 @@ export const createLiveGraph = <State>(
     state: State,
     row: Int8Array,
     offset: number,
-  ) =>
-    evaluateFrom(source, () =>
-      behavior.checks.nodes[node].every((check) => runCheck(check, state, row, offset)),
-    );
+  ) => evaluateFrom(source, () => holdsNode(behavior, node, state, row, offset));
+
   const isAccepting = (tableau: Tableau, node: number) => {
     if (!isAcceptingFound) return false;
     const tableauNode = tableau.nodes[node];
@@ -744,20 +782,15 @@ export const createLiveGraph = <State>(
     const atomCount = stateAtoms.size;
     // Whether each successor is consistent with each tableau node, node by node.
     const consistency = new Uint8Array(tableau.nodes.length * set.length);
-    tableau.nodes.forEach((_tableauNode, node) =>
-      set.forEach((successor, position) => {
-        consistency[node * set.length + position] = isConsistent(
-          behavior,
-          node,
-          index,
-          successor.state,
-          rows,
-          position * atomCount,
-        )
-          ? 1
-          : 0;
-      }),
-    );
+    evaluateFrom(index, () => {
+      for (let node = 0; node < tableau.nodes.length; node++) {
+        for (let position = 0; position < set.length; position++) {
+          if (holdsNode(behavior, node, set[position].state, rows, position * atomCount)) {
+            consistency[node * set.length + position] = 1;
+          }
+        }
+      }
+    });
     behavior.isDone[index] = true;
     // TLC expands the nodes recorded before the loop, not the ones the loop records.
     for (const node of getStateNodes(behavior, index)) {
