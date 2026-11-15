@@ -5655,6 +5655,21 @@ PutEntries(heap, object, entries) ==
 \\* "1". A later entry's value replaces an earlier one's, where the key keeps its place.
 FromEntries(heap, entries) == Allocate(heap, PutEntries(heap, EmptyObject, entries))
 
+RECURSIVE GroupedObject(_, _, _)
+GroupedObject(object, elements, keys) ==
+  IF elements = <<>>
+  THEN object
+  ELSE LET key == PropertyKey(Head(keys))
+           grouped == IF key \\in DOMAIN object.values
+                      THEN [object EXCEPT !.values[key] = Append(@, Head(elements))]
+                      ELSE Put(object, key, <<Head(elements)>>)
+       IN GroupedObject(grouped, Tail(elements), Tail(keys))
+
+\\* Object.groupBy of an array's elements and the key that its callback gives each: an object without
+\\* a prototype, whose keys, in the order they first come, hold the arrays of their elements.
+GroupBy(heap, elements, keys) ==
+  Allocate(heap, GroupedObject([EmptyObject EXCEPT !.prototype = Null], elements, keys))
+
 \\* Object.create as a change, which fails where it throws a TypeError.
 CreateChange(heap, prototype, properties) ==
   LET created == Allocate(heap, [EmptyObject EXCEPT !.prototype = prototype])

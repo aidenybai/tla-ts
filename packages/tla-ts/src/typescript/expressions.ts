@@ -88,6 +88,7 @@ import {
   isValueOfCall,
   getDescribedValue,
   isFromEntries,
+  isGroupBy,
   isFunctionValue,
   isSymbolCall,
   isNewObject,
@@ -1363,6 +1364,13 @@ const translateBuiltInCall = (
       throw new TlaTypeScriptError("Make objects only where a statement always runs", node);
     }
     return revocable;
+  }
+  if (isGroupBy(node, context)) {
+    const grouped = scope.allocated.get(node);
+    if (grouped === undefined) {
+      throw new TlaTypeScriptError("Make objects only where a statement always runs", node);
+    }
+    return grouped;
   }
   const isFromEntriesCall = isFromEntries(node, context);
   if (isCreation(node, context) || isFromEntriesCall) {

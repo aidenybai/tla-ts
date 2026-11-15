@@ -62,6 +62,7 @@ import {
   ARRAY_ITERATOR_REPLACED,
   ARRAY_LIKE_METHODS,
   holdsArrayIteration,
+  translateMapped,
   IN_PLACE_METHODS,
   isUnheldSplice,
   REORDER_METHODS,
@@ -2004,6 +2005,23 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
       context,
     );
   }
+  if (ts.isCallExpression(node) && isGroupBy(node, context)) {
+    return ifExpression(
+      holdsArrayIteration(heap, node, context),
+      share(
+        translateExpression(node.arguments[0], scope, context),
+        "elements",
+        context,
+        (elements) =>
+          useJavaScript(
+            "GroupBy",
+            [heap, elements, translateMapped(node.arguments[1], elements, scope, context)],
+            context,
+          ),
+      ),
+      apply("Assert", [boolean(false), string(ARRAY_ITERATOR_REPLACED)]),
+    );
+  }
   if (ts.isCallExpression(node) && isFromEntries(node, context)) {
     return useJavaScript(
       "FromEntries",
@@ -2157,6 +2175,83 @@ export const isFromEntries = (node: ts.Node, context: Context) =>
   node.arguments.length > 0 &&
   getKind(node.arguments[0], context) === "sequence";
 
+// The syntax that may change something, call a function, or throw, which a callback that
+// Object.groupBy runs as an expression lacks, as it does this.
+const IMPURE_SYNTAX = new Set([
+  ts.SyntaxKind.CallExpression,
+  ts.SyntaxKind.NewExpression,
+  ts.SyntaxKind.TaggedTemplateExpression,
+  ts.SyntaxKind.DeleteExpression,
+  ts.SyntaxKind.ThrowStatement,
+  ts.SyntaxKind.YieldExpression,
+  ts.SyntaxKind.AwaitExpression,
+  ts.SyntaxKind.PostfixUnaryExpression,
+  ts.SyntaxKind.ThisKeyword,
+]);
+
+const isPrimitiveType = (node: ts.Node, context: Context) =>
+  getTypeNames(context.checker.getTypeAtLocation(node), context.checker)?.every(
+    (name) => name !== "object" && name !== "function",
+  ) === true;
+
+// Object.groupBy of an array of primitives that tla-ts keeps outside the heap, whose callback
+// gives each a primitive key without calling anything or changing anything, and which a script
+// reads as an object.
+export const isGroupBy = (node: ts.Node, context: Context) => {
+  if (
+    !isMethodCall(node) ||
+    getBuiltIn(node.expression.expression, context) !== "Object" ||
+    node.expression.name.text !== "groupBy" ||
+    node.arguments.length !== 2
+  ) {
+    return false;
+  }
+  const items = node.arguments[0];
+  const callback = skipCasts(node.arguments[1]);
+  const element = context.checker.getIndexTypeOfType(
+    context.checker.getTypeAtLocation(items),
+    ts.IndexKind.Number,
+  );
+  return (
+    isHeapType(context.checker.getTypeAtLocation(node), context) &&
+    getKind(items, context) === "sequence" &&
+    element !== undefined &&
+    getTypeNames(element, context.checker)?.every(
+      (name) => name !== "object" && name !== "function",
+    ) === true &&
+    (ts.isArrowFunction(callback) || ts.isFunctionExpression(callback)) &&
+    callback.asteriskToken === undefined &&
+    (ts.getModifiers(callback) ?? []).length === 0 &&
+    callback.parameters.length <= 2 &&
+    callback.parameters.every(
+      (parameter) =>
+        parameter.dotDotDotToken === undefined &&
+        parameter.initializer === undefined &&
+        ts.isIdentifier(parameter.name),
+    ) &&
+    findNodes(
+      callback.body,
+      (child): child is ts.Node =>
+        IMPURE_SYNTAX.has(child.kind) ||
+        (ts.isBinaryExpression(child) &&
+          child.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+          child.operatorToken.kind <= ts.SyntaxKind.LastAssignment) ||
+        (ts.isPrefixUnaryExpression(child) &&
+          (child.operator === ts.SyntaxKind.PlusPlusToken ||
+            child.operator === ts.SyntaxKind.MinusMinusToken)) ||
+        // A value that may be an object, whose conversion or getter may run its methods.
+        (ts.isIdentifier(child) &&
+          !(ts.isPropertyAccessExpression(child.parent) && child.parent.name === child) &&
+          !isPrimitiveType(child, context)),
+    ).length === 0 &&
+    findNodes(callback.body, ts.isReturnStatement).every(
+      (returned) =>
+        returned.expression !== undefined && isPrimitiveType(returned.expression, context),
+    ) &&
+    (ts.isBlock(callback.body) || isPrimitiveType(callback.body, context))
+  );
+};
+
 // A call of Symbol, which changes the heap as an allocation does, to record the symbol it makes.
 export const isSymbolCall = (node: ts.Node, context: Context) =>
   ts.isCallExpression(node) &&
@@ -2221,6 +2316,7 @@ export const isAllocation = (node: ts.Node, context: Context) =>
       isCreation(node, context) ||
       isFromEntries(node, context) ||
       isSymbolCall(node, context))) ||
+  isGroupBy(node, context) ||
   isNewObject(node, context) ||
   isNewDate(node, context) ||
   getNewIntl(node, context) !== undefined ||

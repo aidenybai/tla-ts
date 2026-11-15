@@ -24308,6 +24308,49 @@ describe("errors", () => {
     ).toThrow("Unsupported call: Object.freeze");
   });
 
+  describe("groups an array's elements with Object.groupBy", () => {
+    const getSource = (expected: string) => `
+      const parity = Object.groupBy([1, 2, 3], function (value) {
+        return value % 2 === 0 ? "even" : "odd";
+      });
+      const lengths = Object.groupBy(["hello", "test", "world"], (word) => word.length);
+      const result = [
+        Object.keys(parity).join("|"),
+        parity.even?.join("|"),
+        parity.odd?.join("|"),
+        Object.getPrototypeOf(parity) === null,
+        Object.keys(lengths).join("|"),
+        lengths[5]?.join("|"),
+      ];
+      if (result.join(",") !== "${expected}") throw new Error(result.join(","));
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("odd|even,2,1|3,true,4|5,hello|world"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects the expectation that the keys come in the order of their elements", async () => {
+      expect(
+        (await checkModel(getSource("odd|even,2,1|3,true,5|4,hello|world"))).failure?.message,
+      ).toContain("odd|even,2,1|3,true,4|5,hello|world");
+    });
+
+    it("stops where the callback changes a variable", () => {
+      expect(() =>
+        compile(`
+          let count = 0;
+          const object = {};
+          const grouped = Object.groupBy([1, 2], (value) => {
+            count++;
+            return value;
+          });
+        `),
+      ).toThrow("Unsupported call: Object.groupBy");
+    });
+  });
+
   describe("holds the array literal that a variable takes from freeze, seal, or preventExtensions", () => {
     const getSource = (expected: string) => `
       const frozen = Object.freeze([2, 0, 1]);

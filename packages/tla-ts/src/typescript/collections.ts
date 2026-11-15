@@ -239,6 +239,24 @@ const translateCallback = (callback: ts.Expression, scope: Scope, context: Conte
     : callLifted(callee, callback, passed, scope, context);
 };
 
+// What a callback gives for each element of a sequence, as map gives it.
+export const translateMapped = (
+  callback: ts.Expression,
+  sequence: Expression,
+  scope: Scope,
+  context: Context,
+) => {
+  const position = context.names.getFresh("index");
+  return functionOf(
+    [bound(position, apply("DOMAIN", [sequence]))],
+    translateCallback(
+      callback,
+      bindIndexed(callback, sequence, identifier(position), scope, context),
+      context,
+    ),
+  );
+};
+
 const translateTest = (callback: ts.Expression, scope: Scope, context: Context) => {
   const callee = getCallbackFunction(callback, scope, context);
   const signature = callee && context.checker.getSignatureFromDeclaration(callee);
