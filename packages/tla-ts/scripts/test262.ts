@@ -385,6 +385,31 @@ const loosen = () => {
       if (!isOperand) edits.set(nullable.getStart(), "(");
       edits.set(nullable.getEnd(), isOperand ? "!" : ")!");
     }
+    // The object that verifyProperty checks, which it reads a descriptor of, so a test that Node
+    // passes gives one there, such as an accessor's function that a descriptor holds.
+    const verified =
+      diagnostic.code === 2345
+        ? ts.findAncestor(
+            node,
+            (ancestor): ancestor is ts.Expression =>
+              ts.isCallExpression(ancestor.parent) &&
+              ts.isIdentifier(ancestor.parent.expression) &&
+              ancestor.parent.expression.text === "verifyProperty" &&
+              ancestor.parent.arguments[0] === ancestor,
+          )
+        : undefined;
+    if (
+      verified !== undefined &&
+      verified.getStart() === diagnostic.start &&
+      (ts.isIdentifier(verified) ||
+        ts.isPropertyAccessExpression(verified) ||
+        ts.isElementAccessExpression(verified) ||
+        ts.isCallExpression(verified)) &&
+      checker.getNonNullableType(checker.getTypeAtLocation(verified)) !==
+        checker.getTypeAtLocation(verified)
+    ) {
+      edits.set(verified.getEnd(), "!");
+    }
     // A variable that holds an object literal may get properties that the literal lacks.
     const accessed =
       diagnostic.code === 2339 && ts.isPropertyAccessExpression(parent)
@@ -793,6 +818,14 @@ const typeIteratorBases = () => {
 // type, or an accessor where the base has a method.
 const BASE_MEMBER_ERRORS = new Set([2416, 2423]);
 
+// TypeScript's errors for a computed key of a class field or a type literal's member whose type
+// isn't a literal's, which TypeScript leaves out of the type, so a read of it types as any.
+const COMPUTED_MEMBER_ERRORS = new Set([1166, 1170]);
+
+// TypeScript's error for a getter with a path that returns no value. One that never returns a
+// value gives undefined, which its type, void, says.
+const GETTER_RETURN_ERROR = 2378;
+
 // TypeScript's errors for a class that doesn't write an abstract member of its base, in a
 // declaration or an expression.
 const ABSTRACT_MEMBER_ERRORS = new Set([2515, 2653]);
@@ -814,6 +847,9 @@ const returnsValue = (node: ts.Node): boolean =>
   (ts.isReturnStatement(node) && node.expression !== undefined) ||
   (!ts.isFunctionLike(node) &&
     (ts.forEachChild(node, (child) => returnsValue(child) || undefined) ?? false));
+
+const isVoidGetter = (node: ts.GetAccessorDeclaration | undefined) =>
+  node?.body !== undefined && !returnsValue(node.body);
 
 // Whether a function's body reads this, outside the functions it makes that have their own.
 const readsThis = (node: ts.Node): boolean =>
@@ -2473,6 +2509,10 @@ const ignoreSoundErrors = () => {
       (diagnostic.code === 2322 && isWrittenExec(node, diagnostic)) ||
       (BASE_MEMBER_ERRORS.has(diagnostic.code) && isIteratorMember(node)) ||
       (ABSTRACT_MEMBER_ERRORS.has(diagnostic.code) && isIteratorClass(node)) ||
+      (diagnostic.code === GETTER_RETURN_ERROR &&
+        isVoidGetter(ts.findAncestor(node, ts.isGetAccessorDeclaration))) ||
+      (COMPUTED_MEMBER_ERRORS.has(diagnostic.code) &&
+        ts.findAncestor(node, ts.isComputedPropertyName) !== undefined) ||
       (SPREAD_CALL_ERRORS.has(diagnostic.code) && isUntypedSpreadCall(node)) ||
       (CONVERTED_ARGUMENT_ERRORS.has(diagnostic.code) &&
         (isConvertedCall(diagnostic) ||
