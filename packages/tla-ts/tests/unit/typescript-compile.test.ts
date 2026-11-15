@@ -25847,6 +25847,20 @@ describe("errors", () => {
     expect((await checkModel(getSource(false))).failure?.message).toContain("not global");
   });
 
+  it("names a variable with a word that only strict mode reserves outside strict mode", async () => {
+    const getSource = (expected: number) => `
+      var yield = 23;
+      var public = 1, static = 2;
+      const read = (value = yield) => value + public + static;
+      if (read() !== ${expected}) throw new Error("read " + read());
+    `;
+    expect((await checkModel(getSource(26))).failure).toBeUndefined();
+    expect((await checkModel(getSource(23))).failure?.message).toContain("read 26");
+    expect(() => compile('function read() {\n  "use strict";\n  var yield = 1;\n}')).toThrow(
+      "'yield' is a reserved word in strict mode",
+    );
+  });
+
   it("stops where a function outside strict mode gets a primitive as its this", async () => {
     const source = `
       const seen: string[] = [];
