@@ -1,7 +1,16 @@
 import ts from "@typescript/typescript6";
 import { TlaTypeScriptError } from "../errors";
-import { type Context, findNodes, getAssignedTarget, isWrittenBy } from "./context";
+import {
+  type Context,
+  findNodes,
+  getAssignedTarget,
+  getImportedModule,
+  isImportCall,
+  isInertValue,
+  isWrittenBy,
+} from "./context";
 import { useJavaScript } from "./javascript";
+import { isDeclaration } from "./model";
 import { identifier, number } from "./tla";
 
 // An export of a module's namespace object: the name that a script reads it by, and the name or
@@ -27,6 +36,19 @@ export const isLiteralValue = (node: ts.Expression) =>
     node.operator === ts.SyntaxKind.MinusToken &&
     ts.isNumericLiteral(node.operand));
 
+// A statement that only declares, which runs the same before a script as where Node runs it.
+const isInert = (statement: ts.Statement) =>
+  isDeclaration(statement) ||
+  ts.isExportDeclaration(statement) ||
+  ts.isEmptyStatement(statement) ||
+  (ts.isExpressionStatement(statement) && ts.isStringLiteral(statement.expression)) ||
+  (ts.isVariableStatement(statement) &&
+    statement.declarationList.declarations.every(
+      (declaration) =>
+        declaration.initializer === undefined || isInertValue(declaration.initializer),
+    )) ||
+  (ts.isExportAssignment(statement) && isInertValue(statement.expression));
+
 // The ref of the namespace object of a module that a script reads, which the heap holds from the
 // start, after the generator prototypes.
 export const getNamespaceRef = (file: ts.SourceFile, context: Context) => {
@@ -39,6 +61,23 @@ export const getNamespaceRef = (file: ts.SourceFile, context: Context) => {
     [identifier("Ref"), number(context.generatorPrototypes.size + position + 1)],
     context,
   );
+};
+
+// The modules that a file names in an import() of a string, which load as the script runs.
+export const getDynamicImports = (file: ts.SourceFile, checker: ts.TypeChecker) =>
+  findNodes(file, isImportCall).flatMap((call) => getImportedModule(call, checker) ?? []);
+
+// tla-ts runs a module that only an import() loads before the script, as it runs the modules that
+// the script imports, where Node runs it once the import() loads it. Only a module whose code only
+// declares runs the same either way.
+export const rejectRunningModules = (files: readonly ts.SourceFile[]) => {
+  const running = files.flatMap((file) => file.statements).find((statement) => !isInert(statement));
+  if (running !== undefined) {
+    throw new TlaTypeScriptError(
+      "tla-ts can't run a module that import() loads, as its code does more than declare",
+      running,
+    );
+  }
 };
 
 // The module that a symbol names, through an alias.
@@ -95,8 +134,9 @@ const getBound = (symbol: ts.Symbol, node: ts.Node) => {
   );
 };
 
-// The modules whose namespace objects a script reads: those that a namespace import gives as a
-// value, with the modules that their exports give as namespace objects in turn.
+// The modules whose namespace objects a script reads: those that an import() of a string names,
+// and those that a namespace import gives as a value, with the modules that their exports give as
+// namespace objects in turn.
 export const findNamespaces = (
   sourceFile: ts.SourceFile,
   files: readonly ts.SourceFile[],
@@ -108,15 +148,22 @@ export const findNamespaces = (
   const early = files
     .flatMap((file) => findNodes(file, ts.isIdentifier))
     .find((node) => getNamespaceRead(node, checker) !== undefined);
-  if (early !== undefined) {
+  const importCall = files.flatMap((file) => findNodes(file, isImportCall)).at(0);
+  if (early !== undefined || importCall !== undefined) {
     throw new TlaTypeScriptError(
       "tla-ts can't read a module's namespace object in a module that the script imports",
-      early,
+      early ?? importCall,
     );
   }
-  const roots = findNodes(sourceFile, ts.isIdentifier).flatMap(
-    (node) => getNamespaceRead(node, checker) ?? [],
-  );
+  const roots = [
+    ...findNodes(sourceFile, isImportCall).flatMap((call) => {
+      const specifier = call.arguments.at(0);
+      return (specifier && getModule(checker.getSymbolAtLocation(specifier), checker)) ?? [];
+    }),
+    ...findNodes(sourceFile, ts.isIdentifier).flatMap(
+      (node) => getNamespaceRead(node, checker) ?? [],
+    ),
+  ];
   const modules = new Map<ts.SourceFile, ts.Symbol>();
   const add = (module: { file: ts.SourceFile; symbol: ts.Symbol }): void => {
     if (modules.has(module.file)) return;

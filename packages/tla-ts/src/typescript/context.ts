@@ -4404,6 +4404,22 @@ export const isNameRead = (name: ts.Identifier, within: ts.Node, context: Contex
   );
 };
 
+// A call of import(), which loads a module as a script runs.
+export const isImportCall = (node: ts.Node): node is ts.ImportCall =>
+  ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword;
+
+// The module that an import() of a string names.
+export const getImportedModule = (node: ts.CallExpression, checker: ts.TypeChecker) => {
+  const specifier = node.arguments.at(0);
+  const module =
+    specifier !== undefined && ts.isStringLiteralLike(specifier)
+      ? checker.getSymbolAtLocation(specifier)?.valueDeclaration
+      : undefined;
+  return module !== undefined && ts.isSourceFile(module) && !module.isDeclarationFile
+    ? module
+    : undefined;
+};
+
 export const findNodes = <T extends ts.Node>(root: ts.Node, test: (node: ts.Node) => node is T) => {
   const found: T[] = [];
   const visit = (node: ts.Node) => {

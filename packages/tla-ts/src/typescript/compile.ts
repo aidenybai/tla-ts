@@ -11,6 +11,7 @@ import {
   getTopLevelDeclaration,
   hasObjectMembers,
   isInertValue,
+  isImportCall,
   isScript,
   rejectSloppyGlobalWrites,
   isVarFunction,
@@ -39,7 +40,13 @@ import {
 } from "./intrinsics";
 import { WELL_KNOWN_SYMBOLS } from "./javascript";
 import { type Exported, isDeclaration, type Model, readModel, type Variable } from "./model";
-import { findNamespaces, getNamespaceRead, isLiteralValue } from "./namespaces";
+import {
+  findNamespaces,
+  getDynamicImports,
+  getNamespaceRead,
+  isLiteralValue,
+  rejectRunningModules,
+} from "./namespaces";
 import { createProgram } from "./program";
 import { link } from "./regions";
 import { translateCall, translateInvariant, translateProperty, VALUE_TAGS } from "./properties";
@@ -190,6 +197,15 @@ export const compile = (
       files.push(imported);
     });
   visitImports(sourceFile);
+  // The modules that only an import() of a string loads, which run after those the model imports.
+  const loaded = files.length;
+  getDynamicImports(sourceFile, program.checker).forEach((file) => {
+    if (visited.has(file)) return;
+    visited.add(file);
+    visitImports(file);
+    files.push(file);
+  });
+  rejectRunningModules(files.slice(loaded));
   // The files in the order they run, the model's last.
   const order = [...files, sourceFile];
   const getDeclaration = (node: ts.Node) => {
@@ -514,6 +530,7 @@ export const compile = (
       ].includes(node.text)) ||
     (ts.isVariableDeclarationList(node) && (node.flags & ts.NodeFlags.Using) !== 0) ||
     node.kind === ts.SyntaxKind.AsyncKeyword ||
+    isImportCall(node) ||
     (ts.isIdentifier(node) && getNamespaceRead(node, program.checker) !== undefined) ||
     isHoleyArray(node, context) ||
     isThrownArray(node) ||

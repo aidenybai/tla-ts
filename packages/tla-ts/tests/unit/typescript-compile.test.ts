@@ -41648,4 +41648,26 @@ describe("BigInts", () => {
       ).toThrow("tla-ts can't make the namespace object of a module that hasn't run");
     });
   });
+
+  describe("import() of a module", () => {
+    const path = join(import.meta.dirname, "../fixtures/typescript/imports/importing.ts");
+    const source = readFileSync(path, "utf8");
+
+    it("agrees with Node", async () => {
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects a namespace object without the module's exports", async () => {
+      const wrong = source.replace("renamed 3 42", "renamed 3 41");
+      expect((await check(compile(wrong, path))).failure?.message).toContain(
+        "A timer threw an exception",
+      );
+    });
+
+    it("stops at a module whose code does more than declare", () => {
+      expect(() => compile('void import("./first");', path)).toThrow(
+        "tla-ts can't run a module that import() loads, as its code does more than declare",
+      );
+    });
+  });
 });

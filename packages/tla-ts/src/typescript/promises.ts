@@ -33,6 +33,7 @@ import {
   getAssignedTarget,
   getLocalCaptures,
   getFunctionOfKind,
+  getImportedModule,
   getKeptLocals,
   getLiveMaker,
   getKeptMaker,
@@ -44,6 +45,7 @@ import {
   isAsyncFunction,
   isAsyncGenerator,
   isHeapFunction,
+  isImportCall,
   isStrictCode,
   isTimerCall,
   skipCasts,
@@ -58,6 +60,7 @@ import { getCandidateValue, getHeap, translateFunctionValue } from "./heap";
 import { getBuiltIn, translateBuiltInValue } from "./intrinsics";
 import { useJavaScript } from "./javascript";
 import { openIterator, readValue, stepIterator } from "./iterators";
+import { getNamespaceRef } from "./namespaces";
 import { isNullish } from "./protocols";
 import { getKeptIterator, getKind, isHeapArray } from "./types";
 import { type Bound, bindValues, type Receiver } from "./scope";
@@ -2813,6 +2816,7 @@ const callExecutor = (
 };
 
 export const isPromiseCall = (node: ts.CallExpression, context: Context) =>
+  isImportCall(node) ||
   isFromAsync(node, context) ||
   getCalledPromiseFunction(node, context) !== undefined ||
   isCapabilityExecutor(node.expression, context) ||
@@ -3229,6 +3233,39 @@ const callResolving = (
 };
 
 // A call that makes a promise or reacts to one, which gives the promise it makes.
+// import() of a string makes a promise, and a later job fulfills it with the namespace object of
+// the module that the string names, which ran before the script.
+const translateImportCall = (
+  node: ts.CallExpression,
+  path: Path,
+  context: Context,
+  continueWith: (path: Path, value?: Expression) => Formula,
+) => {
+  // Options that are undefined, or that have no with, ask for no import attributes.
+  const options = node.arguments.at(1);
+  const cast = options && getCast(options);
+  if (
+    cast !== undefined &&
+    !(ts.isIdentifier(cast) && cast.text === "undefined") &&
+    !(ts.isObjectLiteralExpression(cast) && cast.properties.length === 0)
+  ) {
+    throw new TlaTypeScriptError("tla-ts can't import a module with options", node);
+  }
+  const module = getImportedModule(node, context.checker);
+  if (module === undefined) {
+    throw new TlaTypeScriptError("tla-ts can't import a module that no string literal names", node);
+  }
+  const namespace = getNamespaceRef(module, context);
+  return makePromise(path, node, context, (made, name) =>
+    continueWith(
+      enqueue(made, node, {
+        run: (current, next) => next(settle(current, node, name, namespace, false, context)),
+      }),
+      getPromise(made, node, name).ref,
+    ),
+  );
+};
+
 export const translatePromiseCall = (
   node: ts.CallExpression,
   path: Path,
@@ -3236,6 +3273,7 @@ export const translatePromiseCall = (
   frame: Frame,
   continueWith: (path: Path, value?: Expression) => Formula,
 ): Formula => {
+  if (isImportCall(node)) return translateImportCall(node, path, context, continueWith);
   const argument = node.arguments.at(0);
   if (node.arguments.some(ts.isSpreadElement)) {
     throw new TlaTypeScriptError("Pass a promise's functions without spreads", node);
