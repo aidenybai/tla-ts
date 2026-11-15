@@ -26224,4 +26224,32 @@ describe("BigInts", () => {
       ).toContain("63 154 true,-2147483648,63 192 0 0,0 1,79 128 0 0");
     });
   });
+
+  describe("reads a Uint32 from 2^31 through DataView", () => {
+    const getSource = (expected: string) => `
+      const box = { size: 0 };
+      const view = new DataView(new ArrayBuffer(4));
+      view.setUint8(0, 255);
+      view.setUint8(1, 1);
+      const big = view.getUint32(0);
+      const little = view.getUint32(0, true);
+      view.setUint32(0, 4294967295);
+      const most = view.getUint32(0);
+      box.size = 1;
+      const read = [big, little, most, big + 1].join();
+      if (read !== "${expected}") throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("4278255616,511,4294967295,4278255617"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects the read as signed", async () => {
+      expect(
+        (await checkModel(getSource("-16711680,511,4294967295,4278255617"))).failure?.message,
+      ).toContain("4278255616,511,4294967295,4278255617");
+    });
+  });
 });

@@ -4809,10 +4809,14 @@ DataViewGet(heap, ref, type, request, littleEndian) ==
       isLittle == ToBoolean(littleEndian)
       size == ElementSize(type)
       bytes == SubSeq(ViewedBytes(heap, view), view.byteOffset + index + 1, view.byteOffset + index + size)
+      ordered == IF isLittle THEN bytes ELSE Reversed(bytes)
   IN CASE index = -1 -> Thrown(heap, "RangeError")
        [] isLittle = isLittle /\\ IsOutOfBounds(heap, view) -> Thrown(heap, "TypeError")
        [] index + size > ViewLength(heap, view) -> Thrown(heap, "RangeError")
-       [] OTHER -> Returned(heap, NumberOfBytes(type, IF isLittle THEN bytes ELSE Reversed(bytes)))
+       \\* A script that names DataView holds integers beyond 32 bits, as a Uint32 from 2^31 is.
+       [] type = "Uint32" /\\ ordered[4] >= 128 ->
+            Returned(heap, WideOf(<<1, BitsValue(ByteBits(ordered), 0, 31)>>))
+       [] OTHER -> Returned(heap, NumberOfBytes(type, ordered))
 
 DataViewSet(heap, ref, type, request, value, littleEndian) ==
   LET view == heap.objects[ref[Ref]]
