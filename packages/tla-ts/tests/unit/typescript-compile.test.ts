@@ -34014,4 +34014,50 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("runs a getter that answers a call's callee before the arguments", () => {
+    const getSource = (expected: string) => `
+      const box = { count: 0 };
+      const record: unknown[] = [];
+      function note() {
+        record.push(box.count);
+        return 1;
+      }
+      const o: { [key: string | symbol]: unknown } = {};
+      Object.defineProperty(o, "made", {
+        get: function () {
+          box.count += 1;
+          return function (this: unknown, value: number) {
+            return this === o ? value + 10 : -1;
+          };
+        },
+      });
+      Object.defineProperty(o, "plain", {
+        get: function (this: { [key: string | symbol]: unknown }) {
+          this.seen = box.count;
+          box.count += 1;
+          return 42;
+        },
+      });
+      const called = (o.made as (value: number) => number)(note());
+      let caught = "none";
+      try {
+        (o.plain as (value: number) => number)(note());
+      } catch (error) {
+        caught = (error as Error).name;
+      }
+      const read = [called, caught, o.seen, ...record].join();
+      if (read !== "${expected}") throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("11,TypeError,1,1,2"))).failure).toBeUndefined();
+    });
+
+    it("rejects the arguments as running before the getter", async () => {
+      expect((await checkModel(getSource("11,TypeError,1,0,1"))).failure?.message).toContain(
+        "11,TypeError,1,1,2",
+      );
+    });
+  });
 });

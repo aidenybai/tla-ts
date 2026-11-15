@@ -4259,10 +4259,31 @@ const translateCallStatementBody = (
           otherwise,
         );
       },
-      // Calling undefined or null throws a TypeError, as does calling a built-in method that needs
-      // a receiver without one, or RegExp.prototype.exec or test on one that isn't a RegExp.
+      // Calling a value that isn't a function throws a TypeError, as does calling a built-in method
+      // that needs a receiver without one, or RegExp.prototype.exec or test on one that isn't a
+      // RegExp.
       ifThenElse(
-        apply("\\in", [value, set([getUndefined(context), identifier("Null")])]),
+        apply("\\/", [
+          apply("\\in", [value, set([getUndefined(context), identifier("Null")])]),
+          ...(context.modelValues.size === 0
+            ? [
+                apply("/\\", [
+                  apply("\\/", [
+                    useJavaScript("IsHeap", [value], context),
+                    apply("~", [useJavaScript("IsRef", [value], context)]),
+                  ]),
+                  apply("#", [
+                    useJavaScript(
+                      "TypeOfIn",
+                      [getHeap(path.scope, expression, context), value],
+                      context,
+                    ),
+                    string("function"),
+                  ]),
+                ]),
+              ]
+            : []),
+        ]),
         throwTypeError(path, expression, context, frame),
         !ts.isPropertyAccessExpression(target) || expression.arguments.some(ts.isSpreadElement)
           ? ts.isIdentifier(skipCasts(target)) && expression.arguments.every(isInertValue)
@@ -15537,6 +15558,12 @@ const findLeadingCall = (
         ? findLeadingCall(receiver, before, path, context)
         : none;
     if (fromReceiver.call !== undefined || fromReceiver.isBlocked) return fromReceiver;
+    // A call whose callee a getter that may change something answers runs the getter before it
+    // evaluates its arguments.
+    const callee = skipCasts(node.expression);
+    if (!path.scope.results.has(callee) && isGetterRead(callee, context)) {
+      return { call: undefined, isBlocked: true, read: callee };
+    }
     // A method of what new makes runs the calls in new's arguments first.
     if (receiver !== undefined && ts.isNewExpression(receiver)) {
       const evaluated: ts.Node[] = [];
