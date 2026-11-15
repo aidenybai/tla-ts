@@ -6339,6 +6339,7 @@ LOCAL JSONDescends(heap, value, isSequence) ==
 \\* The frames once the replacer gave a value for the top frame's next key, where it read another: a
 \\* frame for an object whose keys the walk writes, or else the value among those the top frame
 \\* gathered. An array outside the heap that may be the one the walk read must stay what holds it holds.
+\\* One that equals an array that the walk writes may be that array, which is a cycle, or another.
 JSONReplace(heap, frames, read, value, isSequence) ==
   LET top == JSONTop(frames)
       advanced == [top EXCEPT !.position = @ + 1]
@@ -6353,6 +6354,11 @@ JSONReplace(heap, frames, read, value, isSequence) ==
        [] \\E position \\in 2..Len(frames) :
             IsRef(frames[position].holder) /\\ ToString(frames[position].holder) = ToString(value) ->
             Assert(FALSE, "tla-ts can't throw the TypeError of JSON.stringify of a cycle")
+       [] \\E position \\in 2..Len(frames) :
+            /\\ IsSequenceValue(frames[position].holder)
+            /\\ IsSequenceValue(value)
+            /\\ frames[position].holder = value ->
+            Assert(FALSE, "tla-ts can't tell a cycle of arrays outside the heap")
        [] OTHER ->
             below \\o <<advanced, [holder |-> value, keys |-> keys, position |-> 1, pairs |-> <<>>,
                                   key |-> JSONKey(frames), isArray |-> isArray,

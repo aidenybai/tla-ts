@@ -10877,6 +10877,14 @@ describe("errors", () => {
         `,
         "tla-ts can't throw the TypeError of JSON.stringify of a cycle",
       ],
+      [
+        "an array outside the heap that a replacer gives inside itself",
+        `
+          const circular = [{}];
+          JSON.stringify(circular, (key: string, found: unknown) => circular);
+        `,
+        "tla-ts can't tell a cycle of arrays outside the heap",
+      ],
     ])("stops at %s", async (_, source, message) => {
       expect((await checkModel(source)).failure?.message).toContain(message);
     });
