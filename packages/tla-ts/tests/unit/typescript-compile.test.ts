@@ -27213,6 +27213,32 @@ describe("errors", () => {
     });
   });
 
+  describe("runs an assignment pattern whose default yields, alone or inside another assignment", () => {
+    const getSource = (expected: string) => `
+      let x = 0;
+      let y = 0;
+      let result: number[] = [1];
+      const vals: number[] = [];
+      const holder: { y?: number } = {};
+      function* g(): Generator<number, void, number> {
+        result = [x = yield 1] = vals;
+        ({ y = yield 2 } = holder);
+      }
+      const iter = g();
+      iter.next();
+      iter.next(3);
+      iter.next(4);
+      const log = x + "," + y + "," + result.length;
+      if (log !== "${expected}") throw new Error(log);
+    `;
+    it("matches Node", async () => {
+      expect((await checkModel(getSource("3,4,0"))).failure).toBeUndefined();
+    });
+    it("fails a wrong log", async () => {
+      expect((await checkModel(getSource("3,4,1"))).failure?.message).toContain("3,4,0");
+    });
+  });
+
   describe("passes a return or a throw through a yield* to the iterator", () => {
     const cases = [
       {

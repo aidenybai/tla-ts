@@ -10414,12 +10414,17 @@ const translateExpressionStatement = (
       ),
     );
   }
-  // An array pattern destructures an object that a script declares through its iterator.
+  // An array pattern destructures an object that a script declares through its iterator, and a
+  // pattern whose default yields runs it as a statement.
   if (
     ts.isBinaryExpression(expression) &&
     expression.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-    ts.isArrayLiteralExpression(expression.left) &&
-    (isIteratedPattern(expression.left, context) || isIterablePattern(expression.left, context))
+    ((ts.isArrayLiteralExpression(expression.left) &&
+      (isIteratedPattern(expression.left, context) ||
+        isIterablePattern(expression.left, context))) ||
+      ((ts.isArrayLiteralExpression(expression.left) ||
+        ts.isObjectLiteralExpression(expression.left)) &&
+        hasYield(expression.left)))
   ) {
     return assignPatternWith(
       expression,
