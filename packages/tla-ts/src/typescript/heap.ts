@@ -5957,6 +5957,14 @@ export const translateObjectChange = (node: MethodCall, scope: Scope, context: C
   ) {
     throw new TlaTypeScriptError(`Unsupported statement: ${node.getText()}`, node);
   }
+  // Object.assign gives its target, an object, which TypeScript types with its sources, so that a
+  // source's array, set, or map type would read it as a value outside the heap.
+  if (isAssign && !ts.isExpressionStatement(node.parent) && isOutside(node)) {
+    throw new TlaTypeScriptError(
+      "tla-ts can't read what Object.assign gives as the array, set, or map that its type says",
+      node,
+    );
+  }
   const values = used.map((argument, position) =>
     (method === "defineProperty" || method === "deleteProperty") && position === 1
       ? translatePropertyKey(argument, scope, context)

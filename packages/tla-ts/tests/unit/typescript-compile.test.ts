@@ -37533,4 +37533,36 @@ describe("BigInts", () => {
       expect(result.failure?.message).toContain("tla-ts can't follow a cast");
     });
   });
+
+  describe("reads what Object.assign gives of an array's keys as an object", () => {
+    const getSource = (expected: string) => `
+      const list = [1, 2];
+      Object.defineProperty(list, "extra", { value: 3, enumerable: true });
+      const target = { size: 0 };
+      const isSame = Object.assign(target, list) === target;
+      const read = [isSame, Object.keys(target).join("/"), Array.isArray(target)].join();
+      if (read !== "${expected}") throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("true,0/1/size/extra,false"))).failure).toBeUndefined();
+    });
+
+    it("rejects the target as an array", async () => {
+      expect((await checkModel(getSource("true,0/1/size/extra,true"))).failure?.message).toContain(
+        "true,0/1/size/extra,false",
+      );
+    });
+
+    it("stops where the result's type is the array's", () => {
+      expect(() =>
+        compile(`
+          const list = [1, 2];
+          Object.defineProperty(list, "extra", { value: 3 });
+          const copy = Object.assign({}, list);
+          if (copy.length !== undefined) throw new Error(String(copy.length));
+        `),
+      ).toThrow("tla-ts can't read what Object.assign gives");
+    });
+  });
 });
