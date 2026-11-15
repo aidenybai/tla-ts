@@ -41640,10 +41640,25 @@ describe("BigInts", () => {
       );
     });
 
-    it("stops at the namespace object of the module that the script is", () => {
+    it("stops at the namespace object of the script before its exports hold their values", () => {
       expect(() =>
-        compile('import * as self from "./namespacing";\nObject.keys(self);', path),
-      ).toThrow("tla-ts can't make the namespace object of a module that hasn't run");
+        compile(
+          'import * as self from "./namespacing";\nObject.keys(self);\nexport const late = 1;',
+          path,
+        ),
+      ).toThrow(
+        "tla-ts can't read the script's own namespace object where its exports may not hold their values",
+      );
+    });
+
+    it("follows the script's own namespace object as its exports change", async () => {
+      const ownPath = join(import.meta.dirname, "../fixtures/typescript/imports/selfish.ts");
+      const own = readFileSync(ownPath, "utf8");
+      expect((await check(compile(own, ownPath))).failure).toBeUndefined();
+      const wrong = own.replace("5,true,7,8", "5,true,7,7");
+      expect((await check(compile(wrong, ownPath))).failure?.message).toContain(
+        "A timer threw an exception",
+      );
     });
   });
 

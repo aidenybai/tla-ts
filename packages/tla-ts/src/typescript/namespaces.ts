@@ -20,12 +20,17 @@ import { identifier, number } from "./tla";
 export interface NamespaceExport {
   name: string;
   value: ts.Expression | ts.SourceFile;
+  // The script's statement that declares the export's let, const, class, or default export, which
+  // holds nothing that a read can see until the statement runs.
+  declared: ts.Statement | undefined;
 }
 
 // A module whose namespace object a script reads, which takes its exports, in the order of their
-// names, once the modules that the script imports have run.
+// names, once the modules that the script imports have run. The script's own namespace object takes
+// them again after each of its statements that declares or writes one.
 export interface Namespace {
   exports: readonly NamespaceExport[];
+  changes: readonly ts.Statement[];
 }
 
 // A literal, which a default export of runs nothing, as a reader of the export takes the literal.
@@ -140,6 +145,19 @@ export const getNamespaceName = (node: ts.Identifier, context: Context) => {
   return module !== undefined && context.namespaces.has(module.file) ? module.file : undefined;
 };
 
+// The script's statement that a node is in.
+const getStatement = (node: ts.Node) =>
+  ts.findAncestor(node, (ancestor): ancestor is ts.Statement => ts.isSourceFile(ancestor.parent));
+
+// Whether a statement declares a let, a const, a class, or a default export, whose binding a read
+// can't see before the statement runs.
+const isLexical = (statement: ts.Statement | undefined) =>
+  statement !== undefined &&
+  ((ts.isVariableStatement(statement) &&
+    (statement.declarationList.flags & ts.NodeFlags.BlockScoped) !== 0) ||
+    ts.isClassDeclaration(statement) ||
+    ts.isExportAssignment(statement));
+
 // The node whose value an export's binding holds once its module has run: the name that its
 // declaration binds, or the literal that a default export gives.
 const getBound = (symbol: ts.Symbol, node: ts.Node) => {
@@ -174,14 +192,16 @@ export const findNamespaces = (
   sourceFile: ts.SourceFile,
   files: readonly ts.SourceFile[],
   context: Context,
-) => {
+): ReadonlyMap<ts.SourceFile, Namespace> => {
   const checker = context.checker;
   const loaded = new Set(getDynamicImports(sourceFile, checker));
   const roots = [
     ...findNodes(sourceFile, isImportCall).flatMap((call) => {
       const specifier = call.arguments.at(0);
       const module = specifier && getModule(checker.getSymbolAtLocation(specifier), checker);
-      return module !== undefined && loaded.has(module.file) ? [module] : [];
+      return module !== undefined && (loaded.has(module.file) || module.file === sourceFile)
+        ? [module]
+        : [];
     }),
     ...findNodes(sourceFile, ts.isIdentifier).flatMap(
       (node) => getNamespaceRead(node, checker) ?? [],
@@ -262,45 +282,148 @@ export const findNamespaces = (
       }).length > 0
     );
   };
+  const getExports = (file: ts.SourceFile, symbol: ts.Symbol) =>
+    checker
+      .getExportsOfModule(symbol)
+      .flatMap((exported): NamespaceExport[] => {
+        const target =
+          exported.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(exported) : exported;
+        if ((target.flags & ts.SymbolFlags.Value) === 0) return [];
+        const nested = getModule(exported, checker);
+        if (nested !== undefined) {
+          return [{ name: exported.name, value: nested.file, declared: undefined }];
+        }
+        const declaration = target.valueDeclaration;
+        if (file !== sourceFile && declaration?.getSourceFile() === sourceFile) {
+          throw new TlaTypeScriptError(
+            "tla-ts can't make the namespace object of a module that hasn't run",
+            declaration,
+          );
+        }
+        if (exported.name === "then") {
+          throw new TlaTypeScriptError(
+            "tla-ts can't make the namespace object of a module that exports then",
+            declaration ?? file,
+          );
+        }
+        if (isChangedLater(target)) {
+          throw new TlaTypeScriptError(
+            `tla-ts can't make a module's namespace object whose ${exported.name} may change after the module runs`,
+            declaration ?? file,
+          );
+        }
+        const value = getBound(target, file);
+        const statement = getStatement(value);
+        return [
+          {
+            name: exported.name,
+            value,
+            declared:
+              value.getSourceFile() === sourceFile && isLexical(statement) ? statement : undefined,
+          },
+        ];
+      })
+      .toSorted((left, right) => (left.name < right.name ? -1 : 1));
   return new Map(
     [...modules].map(([file, symbol]): [ts.SourceFile, Namespace] => {
-      if (file === sourceFile) {
-        throw new TlaTypeScriptError(
-          "tla-ts can't make the namespace object of a module that hasn't run",
-          file,
-        );
-      }
-      const exports = checker
-        .getExportsOfModule(symbol)
-        .flatMap((exported): NamespaceExport[] => {
-          const target =
-            exported.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(exported) : exported;
-          if ((target.flags & ts.SymbolFlags.Value) === 0) return [];
-          const nested = getModule(exported, checker);
-          if (nested !== undefined) return [{ name: exported.name, value: nested.file }];
-          const declaration = target.valueDeclaration;
-          if (declaration?.getSourceFile() === sourceFile) {
-            throw new TlaTypeScriptError(
-              "tla-ts can't make the namespace object of a module that hasn't run",
-              declaration,
-            );
-          }
-          if (exported.name === "then") {
-            throw new TlaTypeScriptError(
-              "tla-ts can't make the namespace object of a module that exports then",
-              declaration ?? file,
-            );
-          }
-          if (isChangedLater(target)) {
-            throw new TlaTypeScriptError(
-              `tla-ts can't make a module's namespace object whose ${exported.name} may change after the module runs`,
-              declaration ?? file,
-            );
-          }
-          return [{ name: exported.name, value: getBound(target, file) }];
-        })
-        .toSorted((left, right) => (left.name < right.name ? -1 : 1));
-      return [file, { exports }];
+      const exports = getExports(file, symbol);
+      return [
+        file,
+        {
+          exports,
+          changes:
+            file === sourceFile
+              ? getChanges(sourceFile, exports, (node) => getRead(node) === sourceFile, context)
+              : [],
+        },
+      ];
     }),
   );
+};
+
+// A statement that only declares, or assigns names values that run nothing, which runs no code that
+// might read a namespace object.
+const isPlainChange = (statement: ts.Statement) => {
+  const isPlainWrite = (node: ts.Expression): boolean =>
+    (ts.isBinaryExpression(node) &&
+      node.operatorToken.kind === ts.SyntaxKind.CommaToken &&
+      isPlainWrite(node.left) &&
+      isPlainWrite(node.right)) ||
+    (ts.isBinaryExpression(node) &&
+      node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+      node.operatorToken.kind <= ts.SyntaxKind.LastAssignment &&
+      ts.isIdentifier(node.left) &&
+      isInertValue(node.right)) ||
+    ((ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
+      ts.isIdentifier(node.operand));
+  return (
+    isInert(statement) ||
+    (ts.isExpressionStatement(statement) && isPlainWrite(statement.expression))
+  );
+};
+
+// The script's statements after which its own namespace object takes its exports again: those
+// that declare or write one. A read of the namespace object, or an import() of the script, finds
+// the exports that it holds where it runs after every statement that declares a let, a const, a
+// class, or a default export, in a statement that writes none, and outside a function that a
+// declaration hoists. A statement that writes one runs no code that might read it first, and the
+// script awaits nothing at its top level, where a job might read it.
+const getChanges = (
+  sourceFile: ts.SourceFile,
+  exports: readonly NamespaceExport[],
+  isOwnRead: (node: ts.Node) => boolean,
+  context: Context,
+) => {
+  const symbols = exports.flatMap((exported) =>
+    ts.isSourceFile(exported.value) || !ts.isIdentifier(exported.value)
+      ? []
+      : (context.checker.getSymbolAtLocation(exported.value) ?? []),
+  );
+  const changes = sourceFile.statements.filter(
+    (statement) =>
+      exports.some(
+        (exported) =>
+          !ts.isSourceFile(exported.value) && getStatement(exported.value) === statement,
+      ) ||
+      findNodes(statement, (node): node is ts.Node => {
+        const target = getAssignedTarget(node);
+        return (
+          target !== undefined && symbols.some((symbol) => isWrittenBy(target, symbol, context))
+        );
+      }).length > 0,
+  );
+  const lexicalEnd = Math.max(
+    0,
+    ...exports.flatMap((exported) =>
+      exported.declared === undefined ? [] : [exported.declared.end],
+    ),
+  );
+  const unset = findNodes(sourceFile, (node): node is ts.Node => {
+    if (!isOwnRead(node)) return false;
+    const statement = getStatement(node);
+    return (
+      statement === undefined ||
+      statement.pos < lexicalEnd ||
+      changes.includes(statement) ||
+      ts.findAncestor(
+        node,
+        (ancestor) => ts.isFunctionDeclaration(ancestor) && ts.isSourceFile(ancestor.parent),
+      ) !== undefined
+    );
+  })[0];
+  const awaiting = findNodes(
+    sourceFile,
+    (node): node is ts.Node =>
+      (ts.isAwaitExpression(node) ||
+        (ts.isForOfStatement(node) && node.awaitModifier !== undefined)) &&
+      ts.findAncestor(node.parent, ts.isFunctionLike) === undefined,
+  )[0];
+  const failed = unset ?? changes.find((change) => !isPlainChange(change)) ?? awaiting;
+  if (failed !== undefined) {
+    throw new TlaTypeScriptError(
+      "tla-ts can't read the script's own namespace object where its exports may not hold their values",
+      failed,
+    );
+  }
+  return changes;
 };

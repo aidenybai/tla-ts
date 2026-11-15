@@ -289,7 +289,7 @@ import {
   getGeneratorPrototypeRef,
 } from "./intrinsics";
 import { getTypeNames, getURICall, translateToNumber, useJavaScript } from "./javascript";
-import { getNamespaceRef } from "./namespaces";
+import { getNamespaceRef, isLiteralValue } from "./namespaces";
 import {
   bindFactory,
   forceHeap,
@@ -19345,6 +19345,10 @@ export const translateStatements = (
   if (ts.isFunctionDeclaration(statement)) {
     return translateVarFunction(statement, path, context, continueWith);
   }
+  // A default export of a literal runs nothing, as a read of the export takes the literal.
+  if (ts.isExportAssignment(statement) && isLiteralValue(statement.expression)) {
+    return continueWith(path);
+  }
   throw new TlaTypeScriptError(`Unsupported statement: ${statement.getText()}`, statement);
 };
 
@@ -19469,19 +19473,28 @@ export const translateLocalStatements = (
   );
 };
 
-// The heap where each namespace object that a script reads holds what its module's exports hold.
-const fillNamespaces = (path: Path, context: Context, continueWith: (path: Path) => Formula) => {
+// The heap where the namespace objects of modules hold what their exports hold, after a statement of
+// the script ran, before which a let, a const, a class, or a default export that it declares holds
+// nothing that a read can see.
+const fillNamespaces = (
+  files: readonly ts.SourceFile[],
+  ran: ts.Statement | undefined,
+  path: Path,
+  context: Context,
+  continueWith: (path: Path) => Formula,
+) => {
   const heapSymbol = context.heap;
   const heap = heapSymbol === undefined ? undefined : path.scope.bindings.get(heapSymbol);
   if (heapSymbol === undefined || heap === undefined) {
     throw new TlaTypeScriptError("tla-ts can't make a module's namespace object here");
   }
+  const getExports = (file: ts.SourceFile) => context.namespaces.get(file)?.exports ?? [];
   const name = context.names.getFresh("heap");
   return bindOnce(
     path,
     name,
-    [...context.namespaces].reduce(
-      (current, [file, namespace]) =>
+    files.reduce(
+      (current, file) =>
         useJavaScript(
           "Update",
           [
@@ -19490,12 +19503,15 @@ const fillNamespaces = (path: Path, context: Context, continueWith: (path: Path)
             useJavaScript(
               "NamespaceObject",
               [
-                tuple(namespace.exports.map((exported) => string(exported.name))),
+                tuple(getExports(file).map((exported) => string(exported.name))),
                 tuple(
-                  namespace.exports.map((exported) =>
+                  getExports(file).map((exported) =>
                     ts.isSourceFile(exported.value)
                       ? getNamespaceRef(exported.value, context)
-                      : translateExpression(exported.value, path.scope, context),
+                      : exported.declared !== undefined &&
+                          (ran === undefined || exported.declared.pos > ran.pos)
+                        ? getUndefined(context)
+                        : translateExpression(exported.value, path.scope, context),
                   ),
                 ),
               ],
@@ -19658,7 +19674,32 @@ export const translateScript = (
     inlining: new Set(),
   };
   // The modules that the script imports run first, and then the namespace objects that the script
-  // reads take what their modules' exports hold.
+  // reads take what their modules' exports hold. The script's own namespace object takes them again
+  // before a statement that follows a statement that declared or wrote one, and as the script ends.
+  const changes = context.namespaces.get(sourceFile)?.changes ?? [];
+  const getChange = (before: number, refreshed: ts.Statement | undefined) =>
+    changes
+      .filter(
+        (change) => change.end <= before && (refreshed === undefined || change.pos > refreshed.pos),
+      )
+      .at(-1);
+  const translateOwn = (
+    own: readonly ts.Statement[],
+    refreshed: ts.Statement | undefined,
+    current: Path,
+  ): Formula => {
+    const at = own.findIndex((statement) => getChange(statement.pos, refreshed) !== undefined);
+    const change = getChange(at === -1 ? Number.POSITIVE_INFINITY : own[at].pos, refreshed);
+    return change === undefined
+      ? translateStatements(own, current, context, frame)
+      : translateStatements(at === -1 ? own : own.slice(0, at), current, context, {
+          ...frame,
+          next: (ran) =>
+            fillNamespaces([sourceFile], change, ran, context, (filled) =>
+              at === -1 ? frame.next(filled) : translateOwn(own.slice(at), change, filled),
+            ),
+        });
+  };
   const boundary = statements.findIndex((statement) => statement.getSourceFile() === sourceFile);
   return context.namespaces.size === 0
     ? translateStatements(statements, path, context, frame)
@@ -19669,13 +19710,8 @@ export const translateScript = (
         {
           ...frame,
           next: (imported) =>
-            fillNamespaces(imported, context, (filled) =>
-              translateStatements(
-                boundary === -1 ? [] : statements.slice(boundary),
-                filled,
-                context,
-                frame,
-              ),
+            fillNamespaces([...context.namespaces.keys()], undefined, imported, context, (filled) =>
+              translateOwn(boundary === -1 ? [] : statements.slice(boundary), undefined, filled),
             ),
         },
       );
