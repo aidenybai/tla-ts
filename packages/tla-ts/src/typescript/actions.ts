@@ -158,6 +158,7 @@ import {
   isIterablePattern,
   isIteratedPattern,
   isSteppedPattern,
+  isIterableValue,
   isIteratedValue,
   isTaken,
   isUntypedPattern,
@@ -167,6 +168,8 @@ import {
   stepIterator,
   takeFromIterable,
   takeFromIterator,
+  openFromIterator,
+  takeEvery,
   takeSpreads,
 } from "./iterators";
 import {
@@ -2195,6 +2198,24 @@ export const translateCallStatement = (
           give(after, generator ?? getUndefined(context)),
         )
       : give(path, translateExpression(value, path.scope, context));
+  }
+  const iterable = getIterableFrom(expression, context);
+  if (iterable !== undefined) {
+    return translateHoldsArrayFrom(
+      true,
+      expression,
+      path,
+      context,
+      takeEvery(
+        expression,
+        translateExpression(iterable, path.scope, context),
+        path,
+        context,
+        frame,
+        continueWith,
+        openFromIterator,
+      ),
+    );
   }
   const consumer = getGeneratorMethod(expression, context);
   const stepped = isGeneratorStep(expression, context) ? expression : undefined;
@@ -7184,6 +7205,27 @@ const getGeneratorMethod = (node: ts.CallExpression, context: Context) => {
     : undefined;
 };
 
+// The value that Array.from(value) iterates through the iterator of an object whose type has one,
+// which only statements can run. Evaluating the value can't throw or change anything.
+const getIterableFrom = (node: ts.Node, context: Context) => {
+  if (!ts.isCallExpression(node) || !isMethodCall(node) || node.arguments.length !== 1) {
+    return undefined;
+  }
+  const argument = node.arguments[0];
+  return node.expression.name.text === "from" &&
+    getBuiltIn(node.expression.expression, context) === "Array" &&
+    !ts.isSpreadElement(argument) &&
+    isInertValue(argument) &&
+    getKind(argument, context) !== "sequence" &&
+    isIterableValue(argument, context) &&
+    context.checker
+      .getTypeAtLocation(argument)
+      .getProperties()
+      .some((property) => property.name.startsWith("__@iterator"))
+    ? argument
+    : undefined;
+};
+
 // What a call of Iterator.prototype's method gives as its receiver, where the method throws a
 // TypeError for it: a primitive, which isn't an object, or an object literal of literals whose next
 // a step can't call. Evaluating either changes nothing.
@@ -11105,6 +11147,7 @@ const isStatementResult = (node: ts.CallExpression, path: Path, context: Context
           isHeapType(context.checker.getTypeAtLocation(node.arguments[0]), context)))) ||
     isGeneratorStep(node, context) ||
     getGeneratorMethod(node, context) !== undefined ||
+    getIterableFrom(node, context) !== undefined ||
     getIteratorFrom(node, context) !== undefined ||
     isPromiseCall(node, context) ||
     getCreatedGenerator(node, path, context) !== undefined ||
@@ -12153,10 +12196,11 @@ const getEffects = (
       (ts.isYieldExpression(node) && node.asteriskToken !== undefined)) &&
       node.expression !== undefined &&
       getKind(node.expression, context) !== "sequence" &&
-      isIteratedValue(node.expression, context)) ||
+      isIterableValue(node.expression, context)) ||
     (ts.isForOfStatement(node) &&
       getKind(node.expression, context) !== "sequence" &&
-      isIteratedValue(node.expression, context));
+      isIterableValue(node.expression, context)) ||
+    getIterableFrom(node, context) !== undefined;
   // A method call on a generator object, a call it's passed to, or a pattern, a for-of, a spread,
   // or a yield* that iterates one resumes the body of a generator that may have made it.
   const isResumed =
@@ -15007,7 +15051,7 @@ const findLeadingCall = (
   if (
     ts.isSpreadElement(node) &&
     ts.isArrayLiteralExpression(node.parent) &&
-    isSteppedValue(node.expression, context) &&
+    (isSteppedValue(node.expression, context) || isIterableValue(node.expression, context)) &&
     !isArrayIteration(getCast(node.expression), context)
   ) {
     // The spread runs a call that makes what it steps as it steps it.
@@ -15625,7 +15669,13 @@ const getHoistedIncrement = (statement: ts.Statement, path: Path, context: Conte
 // before it may read what stepping it changes.
 const getHoistedSpread = (statement: ts.Statement, path: Path, context: Context) => {
   const evaluated = getEvaluated(statement);
-  if (evaluated === undefined) return undefined;
+  // A statement that drops the array of its spreads runs them as it translates.
+  if (
+    evaluated === undefined ||
+    (ts.isExpressionStatement(statement) && getIteratedSpreads(evaluated, context) !== undefined)
+  ) {
+    return undefined;
+  }
   const before: ts.Node[] = [];
   const spread = findLeadingCall(evaluated, before, path, context).spread;
   if (spread === undefined) return undefined;
@@ -16307,37 +16357,44 @@ export const translateStatements = (
   const spread = getHoistedSpread(statement, path, context);
   if (spread !== undefined) {
     const made = getCast(spread.expression);
-    const gather = (current: Path) =>
-      translateGeneratorConsumer(
-        spread,
-        { method: "from", receiver: spread.expression, values: [], invalid: undefined },
-        isBuiltInIteratorType(spread.expression, context)
-          ? withBuiltInIterator(
-              spread,
-              current,
-              translateExpression(spread.expression, current.scope, context),
-              context,
-            )
-          : current,
+    const rest = (after: Path, values?: Expression) =>
+      translateStatements(
+        statements,
+        {
+          ...after,
+          scope: {
+            ...after.scope,
+            results: new Map([...after.scope.results, [spread, values ?? getUndefined(context)]]),
+          },
+        },
         context,
         frame,
-        (after, values) =>
-          translateStatements(
-            statements,
-            {
-              ...after,
-              scope: {
-                ...after.scope,
-                results: new Map([
-                  ...after.scope.results,
-                  [spread, values ?? getUndefined(context)],
-                ]),
-              },
-            },
+      );
+    const gather = (current: Path) =>
+      isIterableValue(spread.expression, context)
+        ? takeEvery(
+            spread,
+            translateExpression(spread.expression, current.scope, context),
+            current,
             context,
             frame,
-          ),
-      );
+            rest,
+          )
+        : translateGeneratorConsumer(
+            spread,
+            { method: "from", receiver: spread.expression, values: [], invalid: undefined },
+            isBuiltInIteratorType(spread.expression, context)
+              ? withBuiltInIterator(
+                  spread,
+                  current,
+                  translateExpression(spread.expression, current.scope, context),
+                  context,
+                )
+              : current,
+            context,
+            frame,
+            rest,
+          );
     return ts.isCallExpression(made) && !path.scope.results.has(made)
       ? translateCallStatement(made, path, context, frame, (after, value) =>
           gather({

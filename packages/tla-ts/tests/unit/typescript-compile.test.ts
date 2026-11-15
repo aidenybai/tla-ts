@@ -22310,6 +22310,56 @@ describe("errors", () => {
     expect((await checkModel(getSource("2,1"))).failure?.message).toContain("2,2");
   });
 
+  describe("spreads an object through the iterator that a script gives it after making it", () => {
+    const getSource = (statement: string, expected: string) => `
+      let log = "";
+      var iter = {} as unknown as { [key: string | symbol]: unknown } & Iterable<unknown>;
+      iter[Symbol.iterator] = function () {
+        log += "i";
+        let count = 0;
+        return { next: function () { count++; log += "n"; return { value: count, done: count > 2 }; } };
+      };
+      const mark = function () { log += "x"; return 0; };
+      ${statement};
+      if ([a.join(), log].join(";") !== "${expected}") throw new Error([a.join(), log].join(";"));
+    `;
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("const a = [mark(), ...iter, ...iter]", "0,1,2,1,2;xinnninnn")))
+          .failure,
+      ).toBeUndefined();
+    });
+    it("rejects the expectation that the spread reads the iterator before what comes before it", async () => {
+      expect(
+        (await checkModel(getSource("const a = [mark(), ...iter]", "0,1,2;innnx"))).failure
+          ?.message,
+      ).toContain("0,1,2;xinnn");
+    });
+    it("makes an array with Array.from", async () => {
+      expect(
+        (await checkModel(getSource("const a = Array.from(iter)", "1,2;innn"))).failure,
+      ).toBeUndefined();
+      expect(
+        (await checkModel(getSource("const a = Array.from(iter)", "1,2;inn"))).failure?.message,
+      ).toContain("1,2;innn");
+    });
+  });
+
+  it("throws a TypeError where the iterator that a spread runs gives what isn't an object", async () => {
+    const getSource = (expected: string) => `
+      var iter = {} as unknown as { [key: string | symbol]: unknown } & Iterable<unknown>;
+      // @ts-ignore: next gives what isn't an iterator's result.
+      iter[Symbol.iterator] = function () {
+        return { next: function () { return 1; } };
+      };
+      let caught = "";
+      try { const a = [...iter]; caught = String(a.length); } catch (error) { caught = error instanceof TypeError ? "type" : "other"; }
+      if (caught !== "${expected}") throw new Error(caught);
+    `;
+    expect((await checkModel(getSource("type"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("other"))).failure?.message).toContain("type");
+  });
+
   it("throws what the iterator that a script gives an object throws, though nothing reads the pattern", async () => {
     const getSource = (expected: string) => `
       var iter = {} as unknown as { [key: string | symbol]: unknown } & Iterable<unknown>;

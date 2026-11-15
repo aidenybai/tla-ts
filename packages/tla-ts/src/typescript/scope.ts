@@ -327,7 +327,7 @@ const isCaughtPattern = (pattern: ts.BindingPattern): boolean => {
 export const getCaughtElements = (
   value: Expression,
   heap: Expression,
-  pattern: ts.ArrayBindingPattern | ts.ArrayLiteralExpression,
+  pattern: ts.Node,
   context: Context,
 ) =>
   getTakenValue(

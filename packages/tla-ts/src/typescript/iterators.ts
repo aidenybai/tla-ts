@@ -385,6 +385,17 @@ const openWith =
 // Calls an object's Symbol.iterator method, and reads the next method of the iterator it makes.
 export const openIterator = openWith(ITERATOR_KEY, (found, throwWith) => throwWith(found));
 
+// Calls an object's Symbol.iterator method as Array.from does, which reads an object without one as
+// an array-like object, which tla-ts doesn't follow.
+export const openFromIterator = openWith(ITERATOR_KEY, () =>
+  leaf(
+    apply("Assert", [
+      boolean(false),
+      string("tla-ts can't call Array.from of an object without Symbol.iterator"),
+    ]),
+  ),
+);
+
 // Calls an object's Symbol.asyncIterator method, and reads the next method of the iterator it makes.
 // An object without one iterates through an async-from-sync iterator, which tla-ts doesn't follow.
 export const openAsyncIterator = openWith(ASYNC_ITERATOR_KEY, () =>
@@ -615,6 +626,44 @@ export const getIteratedSpreads = (node: ts.Expression, context: Context) => {
     : undefined;
 };
 
+// Steps an iterator to its end, as a spread does, reading each value it gives.
+const stepAll = (
+  site: ts.Node,
+  iterator: Expression,
+  next: Expression,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  throwWith: (path: Path) => Formula,
+  continueWith: (path: Path, values: Expression[]) => Formula,
+) => {
+  const step = (current: Path, values: Expression[]): Formula =>
+    values.length > TAKE_LIMIT
+      ? leaf(
+          apply("Assert", [
+            boolean(false),
+            string(`tla-ts can't spread more than ${TAKE_LIMIT} values`),
+          ]),
+        )
+      : stepIterator(
+          site,
+          iterator,
+          "next",
+          next,
+          [],
+          current,
+          context,
+          frame,
+          throwWith,
+          (done) => continueWith(done, values),
+          (stepped, result) =>
+            readValue(site, result, stepped, context, frame, (taken, value) =>
+              step(taken, [...values, value]),
+            ),
+        );
+  return step(path, []);
+};
+
 // Runs spreads that iterate objects, which take and read each value of the objects' iterators, for
 // a statement that drops what they take.
 export const takeSpreads = (
@@ -647,35 +696,69 @@ export const takeSpreads = (
                   context,
                   frame,
                   throwWith,
-                  (opened, iterator, next) => {
-                    const step = (stepping: Path, count: number): Formula =>
-                      count >= TAKE_LIMIT
-                        ? leaf(
-                            apply("Assert", [
-                              boolean(false),
-                              string(`tla-ts can't spread more than ${TAKE_LIMIT} values`),
-                            ]),
-                          )
-                        : stepIterator(
-                            site,
-                            iterator,
-                            "next",
-                            next,
-                            [],
-                            stepping,
-                            context,
-                            frame,
-                            throwWith,
-                            (done) => spread(done, rest.slice(1)),
-                            (stepped, result) =>
-                              readValue(site, result, stepped, context, frame, (taken) =>
-                                step(taken, count + 1),
-                              ),
-                          );
-                    return step(opened, 0);
-                  },
+                  (opened, iterator, next) =>
+                    stepAll(site, iterator, next, opened, context, frame, throwWith, (done) =>
+                      spread(done, rest.slice(1)),
+                    ),
                 );
           return spread(path, iterables);
         },
       ),
   );
+
+// A value that a spread or Array.from iterates, which is an object that a script declares, or one
+// whose type is a library Iterable and which may be an array or an object that a script gives a
+// Symbol.iterator method.
+export const isIterableValue = (node: ts.Expression, context: Context) => {
+  const type = context.checker.getTypeAtLocation(node);
+  return (
+    isIteratedType(type, context) ||
+    (context.heap !== undefined &&
+      (type.isIntersection() ? type.types : [type]).some(isLibraryIterable))
+  );
+};
+
+// Takes every value that a spread or Array.from takes from a value: an object's through its
+// iterator, an array's through the array's, and null's or undefined's TypeError.
+export const takeEvery = (
+  site: ts.Node,
+  value: Expression,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path, values: Expression) => Formula,
+  open = openIterator,
+) => {
+  const heap = getHeap(path.scope, site, context);
+  return translateJoined(
+    site,
+    path,
+    context,
+    (after) => throwTypeError(after, site, context, frame),
+    (throwWith) =>
+      translateJoined(
+        site,
+        path,
+        context,
+        (after, values) => continueWith(after, values ?? tuple([])),
+        (rejoin) =>
+          ifThenElse(
+            apply("/\\", [
+              useJavaScript("IsRef", [value], context),
+              apply("~", [useJavaScript("IsProxy", [heap, value], context)]),
+              apply("~", [useJavaScript("IsArray", [heap, value], context)]),
+            ]),
+            open(site, value, path, context, frame, throwWith, (opened, iterator, next) =>
+              stepAll(site, iterator, next, opened, context, frame, throwWith, (done, values) =>
+                rejoin(done, tuple(values)),
+              ),
+            ),
+            ifThenElse(
+              isNullish(value, context),
+              throwWith(path),
+              rejoin(path, getCaughtElements(value, heap, site, context)),
+            ),
+          ),
+      ),
+  );
+};
