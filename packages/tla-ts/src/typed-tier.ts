@@ -1678,7 +1678,7 @@ const compileBound = (
         elements.map((inner) => toPlain(inner, element, program.plains)),
       ),
     );
-    return { element, header: (name) => `for (const ${name} of ${getCode()})` };
+    return { element, header: (name) => getIndexedLoop(program, name, getCode()) };
   }
   const expansion =
     setExpression.kind === "Apply" ? getExpansion(program, setExpression, frame) : undefined;
@@ -1735,7 +1735,11 @@ const compileBound = (
     return {
       element: base.type,
       header: (name) =>
-        `for (const ${name} of H.${isMask(base.type, program.plains) ? "subsetMasks" : "subsets"}(${base.emit()}))`,
+        getIndexedLoop(
+          program,
+          name,
+          `H.${isMask(base.type, program.plains) ? "subsetMasks" : "subsets"}(${base.emit()})`,
+        ),
     };
   }
   const isInterval =
@@ -1771,7 +1775,13 @@ const compileBound = (
           : range.emit();
         const sequences = `H.sequences(${elements}, ${limits()})`;
         const items = getName(program, "s");
-        return `for (const ${name} of ${getMap(type) ? `Array.from(${sequences}, (${items}) => ${writeSequence(program, type, items)})` : sequences})`;
+        return getIndexedLoop(
+          program,
+          name,
+          getMap(type)
+            ? `Array.from(${sequences}, (${items}) => ${writeSequence(program, type, items)})`
+            : sequences,
+        );
       },
     };
   }
@@ -1797,7 +1807,11 @@ const compileBound = (
           );
         }
         if (resolved.kind === "Fn") {
-          return `for (const ${name} of (${target.emit()}, ${addConstant(program, getKeys(program, resolved))}))`;
+          return getIndexedLoop(
+            program,
+            name,
+            `(${target.emit()}, ${addConstant(program, getKeys(program, resolved))})`,
+          );
         }
         const end = getName(program, "e");
         return `for (let ${name} = 1, ${end} = (${target.emit()}).length; ${name} <= ${end}; ${name}++)`;
@@ -1807,8 +1821,15 @@ const compileBound = (
   return getSetBound(program, compileValue(program, setExpression, frame));
 };
 
+// Generated code loops over an array by index, which runs faster than for-of in its large functions.
+const getIndexedLoop = (program: Program, name: string, array: string) => {
+  const index = getName(program, "i");
+  const items = getName(program, "a");
+  return `for (let ${index} = 0, ${items} = ${array}, ${name}; ${index} < ${items}.length && ((${name} = ${items}[${index}]), true); ${index}++)`;
+};
+
 const getSetHeader = (program: Program, set: Compiled, name: string) => {
-  if (!isMask(set.type, program.plains)) return `for (const ${name} of ${set.emit()})`;
+  if (!isMask(set.type, program.plains)) return getIndexedLoop(program, name, set.emit());
   const mask = getName(program, "m");
   return `for (let ${mask} = ${set.emit()}, ${name} = 0; ${mask} !== 0; ${mask} >>>= 1, ${name}++) if ((${mask} & 1) !== 0)`;
 };
@@ -4840,7 +4861,7 @@ const getSequenceWriter = (codec: Codec, type: SeqType | SetType) => {
   codec.writers.set(type, name);
   const element = `${name}e`;
   codec.functions.push(
-    `const ${name} = (${name}s) => { t = ${name}s.length; if (t < 128) d[n++] = t; else n = H.varint(d, n, t); for (const ${element} of ${name}s) { if (n + ${RESERVED_BYTES} > d.length) { W.size = n; H.addPage(W); d = W.data; n = W.size; } ${getWriter(codec, type.element, element)} } };`,
+    `const ${name} = (${name}s) => { t = ${name}s.length; if (t < 128) d[n++] = t; else n = H.varint(d, n, t); for (let ${name}i = 0; ${name}i < ${name}s.length; ${name}i++) { const ${element} = ${name}s[${name}i]; if (n + ${RESERVED_BYTES} > d.length) { W.size = n; H.addPage(W); d = W.data; n = W.size; } ${getWriter(codec, type.element, element)} } };`,
   );
   return name;
 };
@@ -5217,7 +5238,7 @@ const getSignatureCode = (
   const getLoop = (element: Type, elements: string) => {
     const name = getName(program, "e");
     const inner = getSignatureCode(program, sites, element, name, scale);
-    return inner && `for (const ${name} of ${elements}) { ${inner} }`;
+    return inner && `${getIndexedLoop(program, name, elements)} { ${inner} }`;
   };
   // No image moves an integer, a boolean or a set of integers, which is a mask.
   const getScalarCode = (scalar: Type, scalarCode: string) => {
