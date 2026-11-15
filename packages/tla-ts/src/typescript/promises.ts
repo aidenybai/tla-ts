@@ -753,14 +753,15 @@ const allocateObject = (
   );
 };
 
-// Makes a pending promise on the heap.
+// Makes a pending promise on the heap, whose properties a read finds on Promise.prototype.
 const makePromise = (
   path: Path,
   node: ts.Node,
   context: Context,
   continueWith: (path: Path, name: string) => Formula,
-) =>
-  allocateObject(path, node, context, identifier("PromiseObject"), (made, ref, name) =>
+) => {
+  context.builtIns.add("Promise.prototype");
+  return allocateObject(path, node, context, identifier("PromiseObject"), (made, ref, name) =>
     continueWith(
       setPromise(made, node, name, {
         ref,
@@ -777,6 +778,7 @@ const makePromise = (
       name,
     ),
   );
+};
 
 // A function that a then or a catch takes, which runs as a job with the promise's value.
 const getHandler = (

@@ -27252,6 +27252,32 @@ describe("errors", () => {
     });
   });
 
+  describe("read a promise's properties from Promise.prototype", () => {
+    const getSource = (expected: string) => `
+      const made = new Promise<number>((resolve) => resolve(1));
+      const run = async () => 1;
+      const results = [
+        made.constructor === Promise,
+        run().constructor === Promise,
+        Promise.resolve(2).constructor === Promise,
+        made.toString(),
+      ];
+      if (results.join() !== "${expected}") throw new Error(results.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("true,true,true,[object Promise]"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects the expectation true,false,true,[object Promise]", async () => {
+      expect(
+        (await checkModel(getSource("true,false,true,[object Promise]"))).failure?.message,
+      ).toContain("true,true,true,[object Promise]");
+    });
+  });
+
   describe("resolve with a thenable whose then is a function expression of one parameter", () => {
     const getSource = (expected: string) => `
       declare function setTimeout(callback: () => void): void;
