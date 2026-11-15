@@ -17133,7 +17133,8 @@ const getFirstLeading = (
   if (first === undefined) return undefined;
   return (
     getLeadingAwaitOrYield(first, results, context) ??
-    (isSettled(first, results) || isReadName(first, context)
+    // The private name that the left of an in names evaluates nothing.
+    (isSettled(first, results) || isReadName(first, context) || ts.isPrivateIdentifier(first)
       ? getFirstLeading(rest, results, context)
       : undefined)
   );

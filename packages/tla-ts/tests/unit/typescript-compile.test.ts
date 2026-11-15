@@ -41697,4 +41697,33 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("checks a private name with in on the value that a yield gives", () => {
+    const getSource = (expected: string) => `
+      class C {
+        #field = 1;
+        static *has(): Generator<number, boolean, object> {
+          return #field in (yield 1);
+        }
+      }
+      const first = C.has();
+      first.next();
+      const second = C.has();
+      second.next();
+      const a = first.next(new C());
+      const b = second.next({});
+      const log = a.value + "," + b.value;
+      if (log !== "${expected}") throw new Error("log " + log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("true,false"))).failure).toBeUndefined();
+    });
+
+    it("rejects an object without the private name that passes the check", async () => {
+      expect((await checkModel(getSource("true,true"))).failure?.message).toContain(
+        "log true,false",
+      );
+    });
+  });
 });
