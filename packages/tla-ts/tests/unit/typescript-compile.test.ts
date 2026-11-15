@@ -36092,4 +36092,40 @@ describe("BigInts", () => {
     `);
     expect(division.failure?.message).toContain("tla-ts can't throw the RangeError");
   });
+
+  describe("converts a primitive index that with() takes as ToNumber does", () => {
+    const getSource = (expected: string) => `
+      const list = [0, 1, 2, 3];
+      const held = [0, 1, 2, 3];
+      // @ts-ignore
+      held.tag = 1;
+      const replaced = [
+        // @ts-ignore
+        list.with("1", 7).join(),
+        // @ts-ignore
+        list.with(true, 7).join(),
+        // @ts-ignore
+        list.with(null, 7).join(),
+        // @ts-ignore
+        list.with(undefined, 7).join(),
+        // @ts-ignore
+        list.with(" -1 ", 7).join(),
+        // @ts-ignore
+        list.with("one", 7).join(),
+        // @ts-ignore
+        held.with("2", 7).join(),
+      ];
+      if (replaced.join("|") !== "${expected}") throw new Error(replaced.join("|"));
+    `;
+
+    it("agrees with Node", async () => {
+      const expected = "0,7,2,3|0,7,2,3|7,1,2,3|7,1,2,3|0,1,2,7|7,1,2,3|0,1,7,3";
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects a wrong expectation", async () => {
+      const wrong = "0,7,2,3|0,7,2,3|7,1,2,3|7,1,2,3|0,1,2,7|7,1,2,3|0,7,2,3";
+      expect((await checkModel(getSource(wrong))).failure?.message).toContain("0,1,7,3");
+    });
+  });
 });

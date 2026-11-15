@@ -1408,6 +1408,22 @@ const REDUCING_METHODS = new Set(["reduce", "reduceRight"]);
 // The array methods that tla-ts searches by value for any value, from an index that ToNumber
 // converts from a primitive. Each needs a unit test of such a call.
 const SEARCHING_METHODS = new Set(["includes", "indexOf", "lastIndexOf"]);
+// The positions of the index arguments that ToIntegerOrInfinity converts, of the methods of each
+// kind of receiver where tla-ts converts a primitive there as ToNumber does. Each needs a unit test
+// of such a call.
+const INDEX_PARAMETERS = new Map([
+  [
+    "Array",
+    new Map([
+      ["at", [0]],
+      ["copyWithin", [0, 1, 2]],
+      ["fill", [1, 2]],
+      ["slice", [0, 1]],
+      ["toSpliced", [0, 1]],
+      ["with", [0]],
+    ]),
+  ],
+]);
 // RegExp.prototype's methods under well-known symbols that tla-ts runs as their steps where a test
 // calls them through call, on any receiver, or on a regexp with a string, a limit, or a replaceValue
 // of another type than their signatures take. Each needs a unit test of such a call.
@@ -2023,6 +2039,39 @@ const ignoreSoundErrors = () => {
         )
     );
   };
+  // A call of a method that INDEX_PARAMETERS lists, with a primitive other than a symbol or a BigInt
+  // for an index that it converts, which the error is at.
+  const isIndexCall = (diagnostic: ts.Diagnostic) => {
+    const call = getErroredCall(diagnostic);
+    if (
+      call === undefined ||
+      !ts.isCallExpression(call) ||
+      !ts.isPropertyAccessExpression(call.expression) ||
+      call.arguments.some(ts.isSpreadElement)
+    ) {
+      return false;
+    }
+    const receiver = checker.getTypeAtLocation(call.expression.expression);
+    const kind = checker.isArrayType(receiver) ? "Array" : undefined;
+    const positions = kind && INDEX_PARAMETERS.get(kind)?.get(call.expression.name.text);
+    const position = call.arguments.findIndex(
+      (value) =>
+        value.getStart() === diagnostic.start &&
+        value.getEnd() === (diagnostic.start ?? 0) + (diagnostic.length ?? 0),
+    );
+    return (
+      positions !== undefined &&
+      positions.includes(position) &&
+      isEveryType(
+        call.arguments[position],
+        ts.TypeFlags.NumberLike |
+          ts.TypeFlags.StringLike |
+          ts.TypeFlags.BooleanLike |
+          ts.TypeFlags.Null |
+          ts.TypeFlags.Undefined,
+      )
+    );
+  };
   // A call of a method of RegExp.prototype that PROTOCOL_METHODS lists, on a regexp, as
   // rx[Symbol.search](s), or through call, as RegExp.prototype[Symbol.search].call(rx, s).
   // The method of a protocol call, under the well-known symbol that names it.
@@ -2332,6 +2381,7 @@ const ignoreSoundErrors = () => {
           isConvertedProtocolCall(diagnostic) ||
           isReducingCall(diagnostic) ||
           isSearchingCall(diagnostic) ||
+          isIndexCall(diagnostic) ||
           isTypedArrayNew(diagnostic))) ||
       (diagnostic.code === UNKNOWN_CALLEE_ERROR && isStoredStringCall(node)) ||
       (diagnostic.code === UNCALLABLE_ERROR && isTypedUnionCall(node, diagnostic)) ||
