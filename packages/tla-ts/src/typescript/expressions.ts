@@ -2891,7 +2891,7 @@ const translatePropertyAccess = (
   // An array holds only its elements and its length, so it reads any other property, such as its
   // constructor, from its prototypes.
   if (getKind(receiver, context) === "sequence" && context.heap !== undefined) {
-    return useJavaScript(
+    const read = useJavaScript(
       "Get",
       [
         getHeap(scope, node, context),
@@ -2900,6 +2900,10 @@ const translatePropertyAccess = (
       ],
       context,
     );
+    if (isInertValue(receiver)) return read;
+    // The array still runs what makes it, such as a call.
+    const array = translateExpression(receiver, scope, context);
+    return ifExpression(apply("=", [array, array]), read, read);
   }
   if (
     getKind(receiver, context) !== "other" ||

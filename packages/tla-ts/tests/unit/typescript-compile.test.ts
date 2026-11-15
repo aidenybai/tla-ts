@@ -42342,4 +42342,35 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("a property of an array that a call gives, read from Array.prototype", () => {
+    const getSource = (constructor: string) => `
+      "use strict";
+      const kept = {};
+      const made = Array.from([1]).constructor;
+      if (made !== ${constructor}) throw new Error("made another constructor");
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("Array"))).failure).toBeUndefined();
+    });
+
+    it("rejects a constructor other than Array", async () => {
+      expect((await checkModel(getSource("Object"))).failure?.message).toContain(
+        "made another constructor",
+      );
+    });
+
+    it("stops where Array.from runs with a this other than Array", () => {
+      expect(() =>
+        compile(`
+          "use strict";
+          const kept = {};
+          // @ts-ignore
+          const called = Array.from.call(Object, []).constructor;
+          if (called !== Object) throw new Error("called another constructor");
+        `),
+      ).toThrow("Unsupported call: Array.from.call");
+    });
+  });
 });
