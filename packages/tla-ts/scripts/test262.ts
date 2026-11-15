@@ -639,17 +639,6 @@ const loosen = () => {
       edits.set(parent.right.getStart(), "(");
       edits.set(parent.right.getEnd(), " as any)");
     }
-    // A class that extends Iterator, whose type takes the type of the values it gives, gives any
-    // value.
-    const heritage = ts.findAncestor(node, ts.isExpressionWithTypeArguments);
-    if (
-      diagnostic.code === BASE_TYPE_ARGUMENTS_ERROR &&
-      heritage !== undefined &&
-      heritage.typeArguments === undefined &&
-      isGlobalIterator(heritage.expression, checker)
-    ) {
-      edits.set(heritage.expression.getEnd(), "<unknown>");
-    }
     // A function that returns no value, whose return type TypeScript can't infer where its type
     // depends on itself, as a pattern's default that calls it does, returns undefined.
     const returning = RETURN_TYPE_ERRORS.has(diagnostic.code)
@@ -739,15 +728,36 @@ const loosen = () => {
   return edits.size > 0;
 };
 
-// TypeScript's error for a class that extends a generic constructor without its type arguments.
-const BASE_TYPE_ARGUMENTS_ERROR = 2508;
-
 const isGlobalIterator = (node: ts.Expression, checker: ts.TypeChecker) =>
   ts.isIdentifier(node) &&
   node.text === "Iterator" &&
   (checker.getSymbolAtLocation(node)?.declarations ?? []).every(
     (declaration) => declaration.getSourceFile().isDeclarationFile,
   );
+
+// A class that extends Iterator, whose type takes the type of the values it gives, gives any value.
+// It's typed before the fixes that infer types from usage, which would otherwise type its
+// callbacks' parameters and results from a base that TypeScript can't type.
+const typeIteratorBases = () => {
+  const program = service.getProgram();
+  const sourceFile = program?.getSourceFile(PROGRAM_PATH);
+  if (program === undefined || sourceFile === undefined) return;
+  const checker = program.getTypeChecker();
+  const edits = new Map<number, string>();
+  const visit = (node: ts.Node) => {
+    if (
+      ts.isExpressionWithTypeArguments(node) &&
+      node.typeArguments === undefined &&
+      node.parent.token === ts.SyntaxKind.ExtendsKeyword &&
+      isGlobalIterator(node.expression, checker)
+    ) {
+      edits.set(node.expression.getEnd(), "<unknown>");
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  if (edits.size > 0) applyEdits(edits);
+};
 
 // TypeScript's errors for a class member that its base type's member doesn't match: one of another
 // type, or an accessor where the base has a method.
@@ -1283,6 +1293,7 @@ const typeGenerators = () => {
 // the types of the objects it describes.
 const annotate = (text: string) => {
   setText(text);
+  typeIteratorBases();
   typeGenerators();
   typeCallbacks();
   for (;;) {
