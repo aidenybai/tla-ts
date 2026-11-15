@@ -2186,6 +2186,98 @@ const REGEXP_FLAGS = [
   ["y", "sticky"],
 ] as const;
 
+// The flags as the flags getter writes them, in its order.
+const getFlagsText = (flags: string) =>
+  REGEXP_FLAGS.filter(([flag]) => flags.includes(flag))
+    .map(([flag]) => flag)
+    .join("");
+
+// The match that RegExpSearch finds from index 0 of a text, where a pattern is a class, which
+// matches the first character in it, or a class that a quantifier repeats between a ^ and a $ outside
+// multiline mode, which matches the whole text where it holds each character and the count allows,
+// or undefined for other patterns.
+const getDecidedSearch = (matcher: Matcher, flags: string, text: string) => {
+  const items = matcher.kind === "sequence" ? matcher.items : [matcher];
+  const [first, second, third] = items;
+  const repeat =
+    items.length === 3 &&
+    first.kind === "start" &&
+    second.kind === "repeat" &&
+    third.kind === "end" &&
+    !first.flags.includes("m") &&
+    !third.flags.includes("m")
+      ? second
+      : undefined;
+  const set = repeat === undefined ? (items.length === 1 ? first : undefined) : repeat.body;
+  if (set?.kind !== "set" || /[iy]/.test(flags)) return undefined;
+  // The characters that the regexp reads, where with the u or v flag a surrogate pair is one.
+  const characters = /[uv]/.test(flags) ? [...text] : text.split("");
+  const isIn = (character: string) => set.set(character.codePointAt(0) ?? 0) !== set.isInverted;
+  const found =
+    repeat === undefined
+      ? characters.findIndex(isIn)
+      : characters.length >= repeat.min &&
+          (repeat.max === -1 || characters.length <= repeat.max) &&
+          characters.every(isIn)
+        ? 0
+        : -1;
+  if (found === -1) {
+    return record("Record", [
+      { name: "start", value: number(-1) },
+      { name: "end", value: number(-1) },
+      { name: "captures", value: tuple([]) },
+    ]);
+  }
+  const start = characters.slice(0, found).join("").length;
+  return record("Record", [
+    { name: "start", value: number(start) },
+    {
+      name: "end",
+      value: number(repeat === undefined ? start + characters[found].length : text.length),
+    },
+    { name: "captures", value: tuple([]) },
+    { name: "direction", value: number(1) },
+  ]);
+};
+
+// Each long literal's text with the match that a search from index 0 finds of each regexp whose
+// search tla-ts decides as it compiles, as the module can't tell the codes of the text's code units.
+// The engine that tla-ts runs on tells which code points a property escape holds.
+export const translateSearches = (context: Context) => {
+  const regExps = [
+    ...new Map(
+      context.regExps.map((regExp) => [`${regExp.source}/${getFlagsText(regExp.flags)}`, regExp]),
+    ).values(),
+  ].map((regExp) => ({
+    ...regExp,
+    matcher: parsePattern(regExp.pattern, regExp.flags, regExp.node, context.characters).pattern,
+  }));
+  return tuple(
+    [...context.longLiterals].map((text) =>
+      record("Record", [
+        { name: "text", value: string(text) },
+        {
+          name: "matches",
+          value: tuple(
+            regExps.flatMap((regExp) => {
+              const match = getDecidedSearch(regExp.matcher, regExp.flags, text);
+              return match === undefined
+                ? []
+                : [
+                    record("Record", [
+                      { name: "source", value: string(regExp.source) },
+                      { name: "flags", value: string(getFlagsText(regExp.flags)) },
+                      { name: "match", value: match },
+                    ]),
+                  ];
+            }),
+          ),
+        },
+      ]),
+    ),
+  );
+};
+
 // A pattern and its flags as the record that the JavaScript module's RegExp operators read, which
 // holds its matchers, its groups, its source, and its flags.
 const translateRegExp = (
@@ -2197,6 +2289,7 @@ const translateRegExp = (
 ) => {
   const parsed = parsePattern(pattern, flags, node, context.characters);
   context.prelude.add("JavaScript");
+  context.regExps.push({ pattern, flags, source, node });
   return record("Record", [
     { name: "pattern", value: translateMatcher(parsed.pattern, flags, context.characters) },
     { name: "captures", value: number(parsed.count) },
@@ -2210,11 +2303,7 @@ const translateRegExp = (
     { name: "source", value: string(source) },
     {
       name: "flags",
-      value: string(
-        REGEXP_FLAGS.filter(([flag]) => flags.includes(flag))
-          .map(([flag]) => flag)
-          .join(""),
-      ),
+      value: string(getFlagsText(flags)),
     },
     ...REGEXP_FLAGS.map(([flag, property]) => ({
       name: property,

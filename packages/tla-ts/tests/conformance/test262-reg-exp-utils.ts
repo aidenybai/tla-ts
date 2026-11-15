@@ -1,39 +1,11 @@
-// test262's harness/regExpUtils.js, typed so that tla-ts can compile it. Its apply calls are
-// spreads, which pass the same code points.
-
-interface CodePointRanges {
-  loneCodePoints: number[];
-  ranges: number[][];
-}
+// test262's harness/regExpUtils.js, typed so that tla-ts can compile it. The runner writes each
+// buildString call as the literal of the string it makes.
 
 interface StringsClass {
   regExp: RegExp;
   expression: string;
   matchStrings: string[];
   nonMatchStrings?: string[];
-}
-
-// oxlint-disable-next-line no-unused-vars
-function buildString(args: CodePointRanges) {
-  const loneCodePoints = args.loneCodePoints;
-  const ranges = args.ranges;
-  const CHUNK_SIZE = 10000;
-  let result = String.fromCodePoint(...loneCodePoints);
-  for (let i = 0; i < ranges.length; i++) {
-    const range = ranges[i];
-    const start = range[0];
-    const end = range[1];
-    let codePoints: number[] = [];
-    for (let codePoint = start; codePoint <= end; codePoint++) {
-      codePoints.push(codePoint);
-      if (codePoints.length === CHUNK_SIZE) {
-        result += String.fromCodePoint(...codePoints);
-        codePoints = [];
-      }
-    }
-    result += String.fromCodePoint(...codePoints);
-  }
-  return result;
 }
 
 function printCodePoint(codePoint: number | undefined) {

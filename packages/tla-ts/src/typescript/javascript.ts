@@ -48,7 +48,7 @@ EXTENDS Integers, Sequences, FiniteSets, TLC
 
 CONSTANTS Undefined, Null, Ref, Big, Wide, Double, BuiltIns, ConstantFunctions, Symbols, Fractions,
           Doubles,
-          Characters, Cases, Normals, NaN, Infinity, NegativeInfinity, NegativeZero
+          Characters, Searches, Cases, Normals, NaN, Infinity, NegativeInfinity, NegativeZero
 
 LOCAL Digits == {"-", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9"}
 
@@ -4282,16 +4282,27 @@ LOCAL RegExpAt(regexp, text, index) ==
               captures |-> [position \\in 1..regexp.captures |-> <<>>], direction |-> 1],
              <<>>)
 
+\\* The match that a regexp's search from index 0 finds on the text of a long literal, which tla-ts
+\\* decides as it compiles, as the module can't tell the codes of the text's code units, or {} where
+\\* it doesn't decide it.
+LOCAL DecidedSearches(regexp, text) ==
+  LET used == {Searches[position] : position \\in DOMAIN Searches}
+      entries == UNION {{searched.matches[position] : position \\in DOMAIN searched.matches} :
+                          searched \\in {searched \\in used : searched.text = text}}
+  IN  {entry.match : entry \\in {entry \\in entries : entry.source = regexp.source /\\ entry.flags = regexp.flags}}
+
 RECURSIVE RegExpSearch(_, _, _)
 \\* The match that RegExpBuiltinExec finds from an index on: at that index alone for a sticky
-\\* regexp, and else at the first index where the matcher succeeds.
+\\* regexp, and else at the first index where the matcher succeeds, unless tla-ts decided it.
 RegExpSearch(regexp, text, index) ==
-  IF index > Len(text)
-  THEN RegExpFailure
-  ELSE LET found == RegExpAt(regexp, text, index)
-       IN  IF found.end # -1 \\/ regexp.sticky
-           THEN found
-           ELSE RegExpSearch(regexp, text, index + CharacterWidth(regexp, text, index))
+  LET decided == IF index = 0 /\\ Searches # <<>> THEN DecidedSearches(regexp, text) ELSE {}
+  IN  CASE decided # {} -> CHOOSE match \\in decided : TRUE
+        [] index > Len(text) -> RegExpFailure
+        [] OTHER ->
+             LET found == RegExpAt(regexp, text, index)
+             IN  IF found.end # -1 \\/ regexp.sticky
+                 THEN found
+                 ELSE RegExpSearch(regexp, text, index + CharacterWidth(regexp, text, index))
 
 \\* The text of a match's capture, where 0 is the whole match, or undefined where it took no part.
 LOCAL RegExpCapture(text, match, index) ==
