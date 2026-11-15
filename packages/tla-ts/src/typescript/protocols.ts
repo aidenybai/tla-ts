@@ -24,7 +24,6 @@ import {
   getSetters,
   getCallee,
   getReturnedFunctions,
-  getSymbol,
   getUndefined,
   isClosure,
   isInertValue,
@@ -35,7 +34,7 @@ import {
   skipCasts,
 } from "./context";
 import { TlaTypeScriptError } from "../errors";
-import { getReached } from "./aliasing";
+import { readsUninitialized } from "./aliasing";
 import { translateExpression } from "./expressions";
 import { type Formula, ifThenElse, leaf, letIn, render } from "./formula";
 import { getBuiltIn } from "./intrinsics";
@@ -198,18 +197,6 @@ export const bind = (
   return bindOnce(path, fresh, value, continueWith(path, identifier(fresh)));
 };
 
-// Whether a function, or one that it calls, reads a let or a const of the script whose declaration
-// hasn't run yet, which the state doesn't hold, as a getter of an object that the script makes
-// later may.
-const readsUninitialized = (candidate: FunctionNode, path: Path, context: Context) =>
-  path.scope.uninitialized.size > 0 &&
-  getReached([candidate], context).some((reached) =>
-    findNodes(reached, ts.isIdentifier).some((name) => {
-      const symbol = getSymbol(name, context.checker);
-      return symbol !== undefined && path.scope.uninitialized.has(symbol);
-    }),
-  );
-
 // Calls a value with a receiver and arguments, branching on which of the candidates it is, or
 // does what otherwise does with the call's continuation where it's none of them.
 export const callValue = (
@@ -272,7 +259,7 @@ export const callValue = (
         );
         return ifThenElse(
           apply("=", [useJavaScript("CodeOf", [heap, value], context), candidateValue]),
-          readsUninitialized(candidate, path, context)
+          readsUninitialized([candidate], path.scope, context)
             ? leaf(
                 apply("Assert", [
                   boolean(false),

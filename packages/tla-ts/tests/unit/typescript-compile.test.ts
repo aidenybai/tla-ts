@@ -44826,4 +44826,61 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("reads a const through a function only after its declaration", () => {
+    const getSource = (expected: number) => `
+      function getLate() {
+        return late + 1;
+      }
+      const getDouble = () => late * 2;
+      const late = 2;
+      const total = getLate() + getDouble();
+      if (total !== ${expected}) throw new Error(String(total));
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(7))).failure).toBeUndefined();
+    });
+
+    it("rejects a wrong total", async () => {
+      await expect(checkModel(getSource(8))).rejects.toThrow("7");
+    });
+
+    it("stops where a function reads a let or a const before its declaration", async () => {
+      const message =
+        "tla-ts can't throw the ReferenceError of reading late before its declaration";
+      await expect(
+        checkModel(`
+          function getLate() {
+            return late + 1;
+          }
+          const early = getLate();
+          const late = 2;
+        `),
+      ).rejects.toThrow(message);
+      expect(
+        (
+          await checkModel(`
+            function double() {
+              return late * 2;
+            }
+            let early = 0;
+            early = double();
+            let late = 3;
+          `)
+        ).failure?.message,
+      ).toContain(message);
+      await expect(
+        checkModel(`
+          function count(steps: number): number {
+            return steps === 0 ? late : count(steps - 1);
+          }
+          const early = count(2);
+          const late = 3;
+        `),
+      ).rejects.toThrow(
+        "tla-ts can't call a function that reads a let or a const before it's declared",
+      );
+    });
+  });
 });

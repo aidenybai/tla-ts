@@ -231,6 +231,18 @@ export const isOwnClassName = (name: ts.Node, declaration: ts.Declaration) =>
   ts.isClassDeclaration(declaration) &&
   ts.findAncestor(name, (ancestor) => ancestor === declaration) !== undefined;
 
+// Whether a read of a let, a const, or a class runs where its binding is still uninitialized,
+// which throws a ReferenceError.
+export const isBeforeDeclaration = (name: ts.Identifier, symbol: ts.Symbol, scope: Scope) => {
+  const declaration = symbol.valueDeclaration;
+  return (
+    declaration !== undefined &&
+    scope.uninitialized.has(symbol) &&
+    !isOwnClassName(name, declaration) &&
+    (isTopLevelLexical(declaration) || !scope.bindings.has(symbol))
+  );
+};
+
 export const rejectBeforeDeclaration = (node: ts.Identifier, scope: Scope, context: Context) => {
   const symbol = getSymbol(node, context.checker);
   const declaration = symbol?.valueDeclaration;
