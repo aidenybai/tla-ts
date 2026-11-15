@@ -260,8 +260,10 @@ const IMPLICIT_ANY_ERRORS = new Set([
 // TypeScript's errors for a value that may be null or undefined.
 const NULLABLE_ERRORS = new Set([2531, 2532, 2533, 2721, 2722, 18047, 18048, 18049]);
 
-// TypeScript's error for a use of a value of type unknown.
+// TypeScript's errors for a use of a value of type unknown, the second where the value is a
+// property's or a call's, such as a String.prototype method that a key stores.
 const UNKNOWN_VALUE_ERROR = 18046;
+const UNKNOWN_CALLEE_ERROR = 2571;
 const ARGUMENT_COUNT_ERROR = 2554;
 
 // The built-ins that tla-ts runs with undefined for each argument that a call leaves out, as
@@ -496,6 +498,41 @@ const getCallbackWrites = (checker: ts.TypeChecker, node: ts.Node) => {
     )
     ? writes
     : undefined;
+};
+
+// The values that a variable holds: its initializer's, or where it has none, those that =
+// assigns it.
+const getHeld = (checker: ts.TypeChecker, declaration: ts.VariableDeclaration) => {
+  if (declaration.initializer !== undefined) return [declaration.initializer];
+  const symbol = checker.getSymbolAtLocation(declaration.name);
+  const assigned: ts.Expression[] = [];
+  const visit = (node: ts.Node) => {
+    if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      ts.isIdentifier(node.left) &&
+      checker.getSymbolAtLocation(node.left) === symbol
+    ) {
+      assigned.push(node.right);
+    }
+    ts.forEachChild(node, visit);
+  };
+  if (symbol !== undefined) visit(declaration.getSourceFile());
+  return assigned;
+};
+
+// A variable that holds only what catches bind holds any value, as they do.
+const isCaughtHeld = (checker: ts.TypeChecker, declaration: ts.VariableDeclaration) => {
+  const held = getHeld(checker, declaration);
+  return (
+    held.length > 0 &&
+    held.every((value) => {
+      const caught = checker.getSymbolAtLocation(value)?.valueDeclaration;
+      return (
+        caught !== undefined && ts.isVariableDeclaration(caught) && ts.isCatchClause(caught.parent)
+      );
+    })
+  );
 };
 
 const loosen = () => {
@@ -734,6 +771,22 @@ const loosen = () => {
           ? "this: { [key: string | symbol]: unknown }"
           : "this: { [key: string | symbol]: unknown }, ",
       );
+    }
+    // A value that a catch binds, which TypeScript types as unknown in strict mode and as any
+    // outside it, is any where the test reads it, as a test reads an error's properties, and so is
+    // a variable that holds only such values.
+    const caught =
+      diagnostic.code === UNKNOWN_VALUE_ERROR || diagnostic.code === UNKNOWN_CALLEE_ERROR
+        ? checker.getSymbolAtLocation(node)?.valueDeclaration
+        : undefined;
+    if (
+      caught !== undefined &&
+      ts.isVariableDeclaration(caught) &&
+      ts.isIdentifier(caught.name) &&
+      caught.type === undefined &&
+      (ts.isCatchClause(caught.parent) || isCaughtHeld(checker, caught))
+    ) {
+      edits.set(caught.name.getEnd(), ": any");
     }
     // A test may call new on a function that isn't a constructor, to check that it throws.
     const created = ts.findAncestor(node, ts.isNewExpression);
@@ -1582,8 +1635,8 @@ const typeGenerators = () => {
 };
 
 // A variable that an empty array literal initializes, and that the test pushes object literals to,
-// which the fix types as a union of arrays where no push fits each, holds an array of objects with
-// each property that a push gives, optional where another push lacks it.
+// which getArrayOfUnion types as an array of a union where no push fits each, holds an array of
+// objects with each property that a push gives, optional where another push lacks it.
 const typePushedArrays = () => {
   const program = service.getProgram();
   const sourceFile = program?.getSourceFile(PROGRAM_PATH);
@@ -1596,8 +1649,9 @@ const typePushedArrays = () => {
       !ts.isVariableDeclaration(node) ||
       !ts.isIdentifier(node.name) ||
       node.type === undefined ||
-      !ts.isUnionTypeNode(node.type) ||
-      !node.type.types.every(ts.isArrayTypeNode) ||
+      !ts.isArrayTypeNode(node.type) ||
+      !ts.isParenthesizedTypeNode(node.type.elementType) ||
+      !ts.isUnionTypeNode(node.type.elementType.type) ||
       node.initializer === undefined ||
       !ts.isArrayLiteralExpression(node.initializer) ||
       node.initializer.elements.length > 0
@@ -1689,16 +1743,13 @@ const annotate = (text: string, path = PROGRAM_PATH) => {
   typeGenerators();
   typeCallbacks();
   for (;;) {
-    const sourceFile = service.getProgram()?.getSourceFile(file.path);
-    // A variable that an empty array literal initializes holds an array, which the fix infers as
-    // unknown where the test only destructures it.
-    const isEmptyArrayName = (node: ts.Node, position: number): boolean =>
-      (ts.isVariableDeclaration(node) &&
-        node.name.getEnd() === position &&
-        node.initializer !== undefined &&
-        ts.isArrayLiteralExpression(node.initializer) &&
-        node.initializer.elements.length === 0) ||
-      (ts.forEachChild(node, (child) => isEmptyArrayName(child, position) || undefined) ?? false);
+    const program = service.getProgram();
+    const sourceFile = program?.getSourceFile(file.path);
+    const checker = program?.getTypeChecker();
+    const getDeclaration = (node: ts.Node, position: number): ts.VariableDeclaration | undefined =>
+      ts.isVariableDeclaration(node) && node.name.getEnd() === position
+        ? node
+        : ts.forEachChild(node, (child) => getDeclaration(child, position));
     const fix = service
       .getSemanticDiagnostics(file.path)
       .values()
@@ -1718,15 +1769,44 @@ const annotate = (text: string, path = PROGRAM_PATH) => {
             .toSorted((left, right) => right.span.start - left.span.start)
             .reduce((current, change) => {
               const inferred = change.newText.replaceAll(/\bany\b/g, "unknown");
-              const isEmptyArray =
-                sourceFile !== undefined && isEmptyArrayName(sourceFile, change.span.start);
+              const declaration =
+                sourceFile === undefined
+                  ? undefined
+                  : getDeclaration(sourceFile, change.span.start);
+              const held =
+                declaration === undefined || checker === undefined
+                  ? []
+                  : getHeld(checker, declaration);
+              // A variable that holds only empty array literals holds an array, which the fix
+              // infers as unknown where the test only destructures it or fills it in a function.
+              const isEmptyArrayHeld =
+                held.length > 0 &&
+                held.every(
+                  (value) => ts.isArrayLiteralExpression(value) && value.elements.length === 0,
+                );
+              // A variable that only numbers are assigned to, which the fix infers as unknown where
+              // a function reads it, holds a number.
+              const isNumberHeld =
+                held.length > 0 &&
+                held.every(
+                  (value) =>
+                    checker !== undefined &&
+                    (checker.getTypeAtLocation(value).flags & ts.TypeFlags.NumberLike) !== 0,
+                );
               return (
                 current.slice(0, change.span.start) +
-                (inferred === ": unknown" && isEmptyArray
-                  ? ": unknown[]"
-                  : isEmptyArray
-                    ? getArrayOfUnion(inferred)
-                    : inferred) +
+                (inferred === ": unknown" &&
+                checker !== undefined &&
+                declaration !== undefined &&
+                isCaughtHeld(checker, declaration)
+                  ? ": any"
+                  : inferred === ": unknown" && isEmptyArrayHeld
+                    ? ": unknown[]"
+                    : isEmptyArrayHeld
+                      ? getArrayOfUnion(inferred)
+                      : inferred === ": unknown" && isNumberHeld
+                        ? ": number"
+                        : inferred) +
                 current.slice(change.span.start + change.span.length)
               );
             }, file.text);
@@ -1793,8 +1873,6 @@ const TYPED_ARRAY_CALLBACK_METHODS = new Set([
 const PROTOCOL_METHODS = new Set(["match", "search", "split", "replace"]);
 // TypeScript's errors for a call with fewer arguments than its signature takes.
 const SHORT_CALL_ERRORS = new Set([ARGUMENT_COUNT_ERROR, 2555]);
-// A call of a value of type unknown, which tla-ts runs where a key stores a String.prototype method.
-const UNKNOWN_CALLEE_ERROR = 2571;
 // A spread argument that TypeScript can't count against a function's parameters, an argument past
 // them, or apply's arguments where the function takes none.
 const SPREAD_CALL_ERRORS = new Set([ARGUMENT_COUNT_ERROR, 2345, 2556]);
@@ -1815,6 +1893,31 @@ const UNTYPED_THIS_ERROR = 2684;
 // which tla-ts converts to a primitive where it's an object that the test declares, a wrapper, or a
 // primitive.
 const OPERAND_TYPE_ERRORS = new Set([2362, 2363, 2365, 18050]);
+
+// The arithmetic operators, which tla-ts takes only numbers for, or strings for +.
+const UNKNOWN_ARITHMETIC_OPERATORS = new Set([
+  ts.SyntaxKind.PlusToken,
+  ts.SyntaxKind.MinusToken,
+  ts.SyntaxKind.AsteriskToken,
+  ts.SyntaxKind.AsteriskAsteriskToken,
+  ts.SyntaxKind.PercentToken,
+  ts.SyntaxKind.SlashToken,
+]);
+
+// The operators whose operands tla-ts converts to numbers whatever their types.
+const UNKNOWN_UNARY_OPERATORS = new Set([
+  ts.SyntaxKind.MinusToken,
+  ts.SyntaxKind.PlusToken,
+  ts.SyntaxKind.TildeToken,
+]);
+const UNKNOWN_BITWISE_OPERATORS = new Set([
+  ts.SyntaxKind.AmpersandToken,
+  ts.SyntaxKind.BarToken,
+  ts.SyntaxKind.CaretToken,
+  ts.SyntaxKind.LessThanLessThanToken,
+  ts.SyntaxKind.GreaterThanGreaterThanToken,
+  ts.SyntaxKind.GreaterThanGreaterThanGreaterThanToken,
+]);
 
 const COMPOUND_ASSIGNMENTS = new Set([
   ts.SyntaxKind.PlusEqualsToken,
@@ -1983,6 +2086,37 @@ const ignoreSoundErrors = () => {
       operands.every(
         (operand) => isPlainObject(operand) || isWrapper(operand) || isPrimitive(operand),
       )
+    );
+  };
+  // An arithmetic operation on values of type unknown, which tla-ts refuses to compile, so it
+  // stops where the operation runs.
+  const isUnknownArithmetic = (node: ts.Node) => {
+    const operation = node.parent;
+    const isUnknown = (operand: ts.Expression): boolean =>
+      (checker.getTypeAtLocation(operand).flags & ts.TypeFlags.Unknown) !== 0 ||
+      (ts.isBinaryExpression(operand) && isUnknownArithmetic(operand.left));
+    return (
+      ts.isBinaryExpression(operation) &&
+      UNKNOWN_ARITHMETIC_OPERATORS.has(operation.operatorToken.kind) &&
+      isUnknown(operation.left) &&
+      isUnknown(operation.right)
+    );
+  };
+  // An operand of type unknown of a unary -, +, or ~, or of a bitwise or shift operator, which
+  // tla-ts converts as JavaScript does where the value is a primitive, and stops on otherwise.
+  const isConvertedUnknown = (node: ts.Node, diagnostic: ts.Diagnostic) => {
+    const operand = ts.findAncestor(
+      node,
+      (ancestor) =>
+        ancestor.getStart() === diagnostic.start &&
+        ancestor.getEnd() === (diagnostic.start ?? 0) + (diagnostic.length ?? 0),
+    );
+    const operation = operand?.parent;
+    return (
+      operation !== undefined &&
+      ((ts.isPrefixUnaryExpression(operation) && UNKNOWN_UNARY_OPERATORS.has(operation.operator)) ||
+        (ts.isBinaryExpression(operation) &&
+          UNKNOWN_BITWISE_OPERATORS.has(operation.operatorToken.kind)))
     );
   };
   const isUnnarrowed = (node: ts.Node, diagnostic: ts.Diagnostic) => {
@@ -2531,8 +2665,22 @@ const ignoreSoundErrors = () => {
   };
   // A promise combinator's call of a value other than an iterable, which tla-ts iterates as the
   // combinator does: it rejects the promise where the value isn't an object or its iterator throws.
+  // The error is at the value or in it, such as at an object literal's iterator method, where
+  // no call is nearer.
   const isCombinedCall = (diagnostic: ts.Diagnostic) => {
-    const call = getErroredCall(diagnostic);
+    const node = getNode(diagnostic.start ?? 0);
+    const nearest = ts.findAncestor(
+      node,
+      (ancestor): ancestor is ts.CallExpression | ts.NewExpression =>
+        ts.isCallExpression(ancestor) || ts.isNewExpression(ancestor),
+    );
+    const call =
+      getErroredCall(diagnostic) ??
+      (nearest?.arguments?.some(
+        (value) => value.getStart() <= node.getStart() && node.getEnd() <= value.getEnd(),
+      )
+        ? nearest
+        : undefined);
     return (
       call !== undefined &&
       ts.isCallExpression(call) &&
@@ -2543,6 +2691,93 @@ const ignoreSoundErrors = () => {
       PROMISE_COMBINATORS.has(call.expression.name.text) &&
       call.arguments.length === 1 &&
       !ts.isSpreadElement(call.arguments[0])
+    );
+  };
+  // A call of Atomics' function, which tla-ts runs on its arguments' values as the function does:
+  // it throws where the first isn't a typed array of an element type that the function takes,
+  // converts the others, and stops where it can't.
+  const isAtomicsCall = (diagnostic: ts.Diagnostic) => {
+    const call = getErroredCall(diagnostic);
+    return (
+      call !== undefined &&
+      ts.isCallExpression(call) &&
+      ts.isPropertyAccessExpression(call.expression) &&
+      ts.isIdentifier(call.expression.expression) &&
+      call.expression.expression.text === "Atomics" &&
+      isGlobal(call.expression.expression) &&
+      !call.arguments.some(ts.isSpreadElement)
+    );
+  };
+  // A call of an array's concat of values other than arrays, which tla-ts adds as concat does: it
+  // spreads an array or an object that Symbol.isConcatSpreadable marks, and adds any other value.
+  const isConcatCall = (diagnostic: ts.Diagnostic) => {
+    const call = getErroredCall(diagnostic);
+    return (
+      call !== undefined &&
+      ts.isCallExpression(call) &&
+      ts.isPropertyAccessExpression(call.expression) &&
+      call.expression.name.text === "concat" &&
+      checker.isArrayType(checker.getTypeAtLocation(call.expression.expression)) &&
+      !call.arguments.some(ts.isSpreadElement)
+    );
+  };
+  // A call of bind, call, or apply on a function that the test declares with a this, which
+  // passes null or undefined for the this. tla-ts gives the function that this, or the global
+  // object where the function isn't strict, as JavaScript does.
+  const isNullThisCall = (diagnostic: ts.Diagnostic) => {
+    const call = getErroredCall(diagnostic);
+    const callee = call?.expression;
+    const thisArgument = call?.arguments?.[0];
+    const declarations =
+      callee !== undefined && ts.isPropertyAccessExpression(callee)
+        ? checker
+            .getTypeAtLocation(callee.expression)
+            .getCallSignatures()
+            .map((signature) => signature.getDeclaration())
+        : [];
+    return (
+      call !== undefined &&
+      ts.isCallExpression(call) &&
+      callee !== undefined &&
+      ts.isPropertyAccessExpression(callee) &&
+      ["bind", "call", "apply"].includes(callee.name.text) &&
+      thisArgument !== undefined &&
+      diagnostic.start === thisArgument.getStart() &&
+      (thisArgument.kind === ts.SyntaxKind.NullKeyword ||
+        (ts.isIdentifier(thisArgument) &&
+          thisArgument.text === "undefined" &&
+          isGlobal(thisArgument))) &&
+      declarations.length > 0 &&
+      declarations.every(
+        (declaration) =>
+          declaration.getSourceFile() === sourceFile &&
+          declaration.parameters[0]?.name.getText() === "this",
+      )
+    );
+  };
+  // A call of Object.keys, Object.values, or Object.entries of an object, null, or undefined, which
+  // tla-ts reads as the function does: it throws where the value is null or undefined.
+  const isOwnKeysCall = (diagnostic: ts.Diagnostic) => {
+    const call = getErroredCall(diagnostic);
+    const argument = call?.arguments?.[0];
+    return (
+      call !== undefined &&
+      ts.isCallExpression(call) &&
+      ts.isPropertyAccessExpression(call.expression) &&
+      ts.isIdentifier(call.expression.expression) &&
+      call.expression.expression.text === "Object" &&
+      isGlobal(call.expression.expression) &&
+      ["keys", "values", "entries"].includes(call.expression.name.text) &&
+      call.arguments.length === 1 &&
+      argument !== undefined &&
+      !ts.isSpreadElement(argument) &&
+      isEveryType(
+        argument,
+        ts.TypeFlags.Object |
+          ts.TypeFlags.NonPrimitive |
+          ts.TypeFlags.Null |
+          ts.TypeFlags.Undefined,
+      )
     );
   };
   // A call of a typed array's method that TYPED_ARRAY_CALLBACK_METHODS lists, directly or through
@@ -3043,6 +3278,29 @@ const ignoreSoundErrors = () => {
         ts.isFunctionExpression(ts.skipParentheses(callee)))
     );
   };
+  // An assignment of an object literal to a function's or a class's caller or an arguments
+  // object's callee, which the test makes to check that it throws. tla-ts throws the TypeError that JavaScript does
+  // where the property is %ThrowTypeError% or isn't writable.
+  const isRestrictedWrite = (node: ts.Node) => {
+    const write = ts.findAncestor(node, ts.isBinaryExpression);
+    const target = write?.left;
+    return (
+      write !== undefined &&
+      target !== undefined &&
+      ts.isPropertyAccessExpression(target) &&
+      target.getStart() === node.getStart() &&
+      write.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      ts.isObjectLiteralExpression(write.right) &&
+      ((target.name.text === "caller" &&
+        [ts.SignatureKind.Call, ts.SignatureKind.Construct].some(
+          (kind) =>
+            checker.getSignaturesOfType(checker.getTypeAtLocation(target.expression), kind).length >
+            0,
+        )) ||
+        (target.name.text === "callee" &&
+          checker.getTypeAtLocation(target.expression).getSymbol()?.name === "IArguments"))
+    );
+  };
   const isSound = (diagnostic: ts.Diagnostic) => {
     const node = getNode(diagnostic.start ?? 0);
     return (
@@ -3069,6 +3327,7 @@ const ignoreSoundErrors = () => {
       ((UNASSIGNABLE_ERRORS.has(diagnostic.code) || diagnostic.code === MISSING_MEMBERS_ERROR) &&
         isPatternArgument(node)) ||
       (diagnostic.code === 2322 && isIteratorWrite(node)) ||
+      (diagnostic.code === MISSING_MEMBERS_ERROR && isRestrictedWrite(node)) ||
       (diagnostic.code === OPTIONAL_DELETE_ERROR && isDeletedIterator(node)) ||
       (diagnostic.code === 2322 && isWrittenExec(node, diagnostic)) ||
       (BASE_MEMBER_ERRORS.has(diagnostic.code) && isIteratorMember(node)) ||
@@ -3084,6 +3343,10 @@ const ignoreSoundErrors = () => {
           isReducingCall(diagnostic) ||
           isSearchingCall(diagnostic) ||
           (diagnostic.code === 2769 && isCombinedCall(diagnostic)) ||
+          isAtomicsCall(diagnostic) ||
+          isOwnKeysCall(diagnostic) ||
+          isNullThisCall(diagnostic) ||
+          isConcatCall(diagnostic) ||
           isIndexCall(diagnostic) ||
           isSetLikeArrayCall(diagnostic) ||
           isTypedArrayCallback(diagnostic) ||
@@ -3095,6 +3358,8 @@ const ignoreSoundErrors = () => {
       (diagnostic.code === UNCALLABLE_ERROR && isTypedUnionCall(node, diagnostic)) ||
       diagnostic.code === UNUSED_OPERAND_ERROR ||
       (diagnostic.code === UNINTENDED_COMPARISON_ERROR && isUnnarrowed(node, diagnostic)) ||
+      (diagnostic.code === UNKNOWN_VALUE_ERROR &&
+        (isUnknownArithmetic(node) || isConvertedUnknown(node, diagnostic))) ||
       (UNTYPED_READ_ERRORS.has(diagnostic.code) && isObjectRead(node)) ||
       (diagnostic.code === NOT_ITERABLE_ERROR && isPlainObject(node)) ||
       (OPERAND_TYPE_ERRORS.has(diagnostic.code) && isConverted(node, diagnostic)) ||
