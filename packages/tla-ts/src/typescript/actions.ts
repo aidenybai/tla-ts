@@ -1782,6 +1782,30 @@ export const translateCallStatement = (
   if (expression.expression.kind === ts.SyntaxKind.SuperKeyword) {
     return translateSuperCall(expression, path, context, frame, continueWith);
   }
+  // concat reads @@isConcatSpreadable of its receiver first, which a getter that only throws throws
+  // from.
+  const concatenated = expression.arguments.at(0);
+  if (
+    getArrayMethodCall(expression, context) === "concat" &&
+    concatenated !== undefined &&
+    ts.isIdentifier(concatenated) &&
+    getKind(concatenated, context) === "object" &&
+    getThrowingGetters(expression, context).length > 0
+  ) {
+    const heap = getHeap(path.scope, expression, context);
+    const object = translateExpression(concatenated, path.scope, context);
+    const code = useJavaScript("ConcatSpreadableGetter", [heap, object], context);
+    return throwFirstGetter(
+      expression,
+      apply("#", [code, getUndefined(context)]),
+      code,
+      object,
+      path,
+      context,
+      frame,
+      leaf(apply("Assert", [boolean(false), string("tla-ts can't run concat as a statement")])),
+    );
+  }
   const loop = getLoopCall(expression, path, context);
   // A receiver or a later argument that only statements can run runs first, where what evaluates
   // before it doesn't read what it changes.

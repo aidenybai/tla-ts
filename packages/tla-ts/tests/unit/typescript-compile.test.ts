@@ -25567,4 +25567,31 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("none,gy"))).failure?.message).toContain("stop,gy");
     });
   });
+
+  describe("throws from a getter of the Symbol.isConcatSpreadable that concat reads first", () => {
+    const getSource = (expected: string) => `
+      class Stop extends Error {}
+      const o = {};
+      Object.defineProperty(o, Symbol.isConcatSpreadable, {
+        get: function () {
+          throw new Stop();
+        },
+      });
+      let caught = "none";
+      try {
+        Array.prototype.concat.call(o);
+      } catch (error) {
+        caught = error instanceof Stop ? "stop" : "other";
+      }
+      if (caught !== "${expected}") throw new Error(caught);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("stop"))).failure).toBeUndefined();
+    });
+
+    it("rejects the getter as skipped", async () => {
+      expect((await checkModel(getSource("none"))).failure?.message).toContain("stop");
+    });
+  });
 });
