@@ -42805,4 +42805,37 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("a delete outside strict mode of a property that its type makes read-only", () => {
+    const getSource = (expected: string) => `
+      const seen: unknown[] = [];
+      const getter = {
+        get value() {
+          return 1;
+        },
+      };
+      delete getter.value;
+      seen.push("value" in getter);
+      const frozen = Object.freeze({ value: 2 });
+      delete frozen.value;
+      seen.push(frozen.value);
+      delete Math.E;
+      seen.push(Math.E > 2);
+      if (seen.join() !== "${expected}") throw new Error("seen " + seen.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("false,2,true"))).failure).toBeUndefined();
+    });
+
+    it("rejects the getter kept", async () => {
+      expect((await checkModel(getSource("true,2,true"))).failure?.message).toContain(
+        "seen false,2,true",
+      );
+    });
+
+    it("keeps the type error in strict mode", () => {
+      expect(() => compile(`"use strict"; delete Math.E;`)).toThrow("TS2704");
+    });
+  });
 });
