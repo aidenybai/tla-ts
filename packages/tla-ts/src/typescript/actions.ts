@@ -148,6 +148,7 @@ import {
   getConversion,
   getConversionFunctions,
   isCompoundAssignment,
+  isObjectOperand,
   runConversion,
   runToPrimitive,
 } from "./conversions";
@@ -2757,6 +2758,35 @@ const translateCallStatementBody = (
     const setter = getDateSetter(dateCall.method, dateCall.values, context);
     const changeName = context.names.getFresh("change");
     const change = identifier(changeName);
+    const convertedTimeName = context.names.getFresh("time");
+    const changeDate = (
+      current: Path,
+      read: Expression,
+      position: number,
+      numbers: readonly Expression[],
+    ) =>
+      bindOnce(
+        current,
+        changeName,
+        useJavaScript(
+          "DateChange",
+          [
+            getHeap(current.scope, expression, context),
+            identifier(receiver),
+            read,
+            string(dateCall.method),
+            number(position),
+            tuple([...numbers]),
+          ],
+          context,
+        ),
+        // A time value too far from 1970 for TLC's integers is only a number where something
+        // reads it.
+        continueWith(
+          withHeap(field(change, "heap"), current),
+          isStatement ? undefined : useJavaScript("TimeNumber", [field(change, "time")], context),
+        ),
+      );
     const run = dateCall.isSetter
       ? setter === undefined
         ? leaf(
@@ -2765,34 +2795,55 @@ const translateCallStatementBody = (
               string("tla-ts can't convert the arguments of this Date setter"),
             ]),
           )
-        : bindOnce(
-            path,
-            changeName,
-            useJavaScript(
-              "DateChange",
-              [
-                heap,
-                identifier(receiver),
-                time,
-                string(dateCall.method),
-                number(setter.position),
-                tuple(
-                  dateCall.values.map((argument) =>
-                    translateToNumber(argument, expression, path.scope, context),
+        : dateCall.values.some((argument) => isObjectOperand(argument, context))
+          ? // The setter converts its arguments in turn, which runs their valueOf and toString,
+            // and changes the heap that they leave. Node reads the time value once the first
+            // converts, where the spec reads it before.
+            runConversion(
+              expression,
+              {
+                operands: dateCall.values,
+                hints: dateCall.values.map(() => "number" as const),
+                combine: (primitives) =>
+                  tuple(
+                    primitives.map((primitive) => {
+                      const converted = useJavaScript("ToNumber", [primitive], context);
+                      return context.hasSpecialNumbers
+                        ? converted
+                        : useJavaScript("PlainNumber", [converted], context);
+                    }),
                   ),
-                ),
-              ],
+                afterFirst: (after, _, next) =>
+                  bindOnce(
+                    after,
+                    convertedTimeName,
+                    useJavaScript(
+                      "TimeOfDate",
+                      [getHeap(after.scope, expression, context), identifier(receiver)],
+                      context,
+                    ),
+                    next(after),
+                  ),
+              },
+              path,
               context,
-            ),
-            // A time value too far from 1970 for TLC's integers is only a number where something
-            // reads it.
-            continueWith(
-              withHeap(field(change, "heap")),
-              isStatement
-                ? undefined
-                : useJavaScript("TimeNumber", [field(change, "time")], context),
-            ),
-          )
+              frame,
+              (after, numbers) =>
+                changeDate(
+                  after,
+                  identifier(convertedTimeName),
+                  setter.position,
+                  dateCall.values.map((_, position) => index(numbers, [number(position + 1)])),
+                ),
+            )
+          : changeDate(
+              path,
+              time,
+              setter.position,
+              dateCall.values.map((argument) =>
+                translateToNumber(argument, expression, path.scope, context),
+              ),
+            )
       : dateCall.method === "toISOString"
         ? ifThenElse(
             apply("=", [time, identifier("NaN")]),
@@ -13058,6 +13109,11 @@ const isIndexConvertingNew = (node: ts.Node, context: Context) =>
     .slice(1, 3)
     .some((value) => !isPrimitiveIndex(getCast(value), context));
 
+// A call of a Date's setter with an object, which it converts to a number, running the object's
+// valueOf and toString.
+const isObjectDateCall = (node: ts.Node, context: Context) =>
+  getDateCall(node, context)?.values.some((value) => isObjectOperand(value, context)) === true;
+
 // Runs new of a buffer, a DataView, or a typed array, which throws the error its constructor does,
 // and makes a typed array of an object's iterator's values where a script's @@iterator method
 // gives them.
@@ -14138,7 +14194,8 @@ const getEffects = (
   const conversions =
     (ts.isExpression(node) && getConversion(node, context) !== undefined) ||
     (isObjectChange(node, context) && mayDefineObjectLength(node, context)) ||
-    isIndexConvertingNew(node, context)
+    isIndexConvertingNew(node, context) ||
+    isObjectDateCall(node, context)
       ? getConversionFunctions(node, context)
       : undefined;
   // A definition that reads its descriptor's fields, a read of a key with getters, or an

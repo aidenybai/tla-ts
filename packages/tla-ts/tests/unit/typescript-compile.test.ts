@@ -44521,4 +44521,44 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("3,2,0,b"))).failure?.message).toContain("3,2,,b");
     });
   });
+
+  describe("converts the objects that a Date setter takes in turn", () => {
+    const getSource = (expected: string) => `
+      const effects: string[] = [];
+      const date = new Date(2016, 6);
+      const hour = { valueOf() { effects.push("hour"); date.setTime(0); return 3; } };
+      const minute = {
+        valueOf: null,
+        toString() { effects.push("minute"); date.setTime(86400000); return "4"; },
+      };
+      const second = { [Symbol.toPrimitive]() { effects.push("second"); return 5; } };
+      // @ts-ignore
+      const returned = date.setHours(hour, minute, second);
+      const invalid = new Date(NaN);
+      // @ts-ignore
+      const nan = invalid.setMinutes({ valueOf() { effects.push("nan"); return 1; } });
+      let thrown = "";
+      try {
+        // @ts-ignore
+        date.setMonth({ valueOf() { return Symbol(); } }, { valueOf() { effects.push("no"); } });
+      } catch (error) {
+        thrown = (error as Error).constructor.name;
+      }
+      const log = [effects.join("/"), returned, Number.isNaN(nan), thrown].join(",");
+      if (log !== "${expected}") throw new Error(log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("hour/minute/second/nan,11045000,true,TypeError"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects the time value from after every conversion", async () => {
+      expect(
+        (await checkModel(getSource("hour/minute/second/nan,97445000,true,TypeError"))).failure
+          ?.message,
+      ).toContain("hour/minute/second/nan,11045000,true,TypeError");
+    });
+  });
 });

@@ -103,6 +103,7 @@ import {
 } from "./javascript";
 import { isDescriptorsRead, isProxyOperation } from "./protocols";
 import { getReached } from "./aliasing";
+import { isObjectOperand } from "./conversions";
 import { createStateScope, type Scope } from "./scope";
 import { getIntlOutcome, getLocalesOutcome } from "./locales";
 import { BUILT_INS } from "./built-ins";
@@ -2803,7 +2804,8 @@ export const getPrototypeMethod = (node: ts.Expression, owner: string, context: 
 };
 
 // The position of the first field that a Date setter sets, and how many it takes, where its
-// arguments convert to numbers without running code.
+// arguments are primitives that ToNumber converts without running code, or objects whose valueOf
+// and toString ToPrimitive runs.
 export const getDateSetter = (
   method: string,
   values: readonly ts.Expression[],
@@ -2813,7 +2815,12 @@ export const getDateSetter = (
   return setter !== undefined &&
     values.length >= 1 &&
     values.length <= setter.arity &&
-    values.every((argument) => isNumeric(argument, context))
+    values.every(
+      (argument) =>
+        isNumeric(argument, context) ||
+        isEvery(context.checker.getTypeAtLocation(argument), ts.TypeFlags.StringLike) ||
+        isObjectOperand(argument, context),
+    )
     ? setter
     : undefined;
 };
