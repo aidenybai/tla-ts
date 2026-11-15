@@ -81,7 +81,13 @@ interface Pool<Data extends Int32Array | Uint8Array> {
   create: (length: number) => Data;
 }
 
-type Check<State> = (state: State, row: Int8Array, next: State | undefined) => boolean;
+// A check reads and fills the state atoms of a state in its row, which starts at offset.
+type Check<State> = (
+  state: State,
+  row: Int8Array,
+  offset: number,
+  next: State | undefined,
+) => boolean;
 
 interface BehaviorChecks<State> {
   states: Check<State>[];
@@ -149,14 +155,18 @@ const writeToPool = <Data extends Int32Array | Uint8Array>(
   pool: Pool<Data>,
   offset: number,
   values: ArrayLike<number>,
+  start = 0,
+  length = values.length - start,
 ) => {
-  const end = offset + values.length;
+  const end = offset + length;
   if (end > pool.data.length) {
     const data = pool.create(Math.max(2 * pool.data.length, end));
     data.set(pool.data);
     pool.data = data;
   }
-  pool.data.set(values, offset);
+  for (let position = 0; position < length; position++) {
+    pool.data[offset + position] = values[start + position];
+  }
   pool.length = Math.max(pool.length, end);
 };
 
@@ -386,12 +396,20 @@ export const createLiveGraph = <State>(
     stateAtoms.set(atom, id);
     return id;
   };
-  // A row holds whether each state atom holds of a state: 1 or 0, or -1 before it is evaluated.
-  const createRow = () => new Int8Array(stateAtoms.size).fill(-1);
-  // An edge row holds the result of each action check, shared by the behaviors that check it.
-  const createEdgeRow = () => new Int8Array(actionIds.size).fill(-1);
+  // The rows of states, one after another, hold whether each state atom holds of a state: 1 or 0,
+  // or -1 before it is evaluated.
+  const createRows = (count: number) => new Int8Array(count * stateAtoms.size).fill(-1);
+  // The edge rows of steps hold the result of each action check, shared by the behaviors that
+  // check it.
+  const createEdgeRows = (count: number) => new Int8Array(count * actionIds.size).fill(-1);
   // Unless the checks share results, each check evaluates its atoms afresh.
-  const getRow = (row: Int8Array) => (isShared ? row : createRow());
+  const runCheck = (
+    check: Check<State>,
+    state: State,
+    row: Int8Array,
+    offset: number,
+    next?: State,
+  ) => (isShared ? check(state, row, offset, next) : check(state, createRows(1), 0, next));
   const compileCheck = (expression: LiveExpression): Check<State> => {
     switch (expression.kind) {
       case "Boolean": {
@@ -401,33 +419,37 @@ export const createLiveGraph = <State>(
       case "State":
       case "Enabled": {
         const id = getAtomId(expression);
-        return (state, row) => {
-          if (row[id] === -1) row[id] = atoms.holdsState(expression, state) ? 1 : 0;
-          return row[id] === 1;
+        return (state, row, offset) => {
+          if (row[offset + id] === -1) {
+            row[offset + id] = atoms.holdsState(expression, state) ? 1 : 0;
+          }
+          return row[offset + id] === 1;
         };
       }
       case "Action": {
         const enabled = expression.enabled && getAtomId(expression.enabled);
-        return (state, row, next) =>
-          !(enabled !== undefined && row[enabled] === 0) &&
+        return (state, row, offset, next) =>
+          !(enabled !== undefined && row[offset + enabled] === 0) &&
           next !== undefined &&
           atoms.holdsAction(expression, state, next);
       }
       case "Not": {
         const body = compileCheck(expression.body);
-        return (state, row, next) => !body(state, row, next);
+        return (state, row, offset, next) => !body(state, row, offset, next);
       }
       case "And": {
         const operands = expression.operands.map(compileCheck);
-        return (state, row, next) => operands.every((operand) => operand(state, row, next));
+        return (state, row, offset, next) =>
+          operands.every((operand) => operand(state, row, offset, next));
       }
       case "Or": {
         const operands = expression.operands.map(compileCheck);
-        return (state, row, next) => operands.some((operand) => operand(state, row, next));
+        return (state, row, offset, next) =>
+          operands.some((operand) => operand(state, row, offset, next));
       }
       case "Next": {
         const body = compileCheck(expression.body);
-        return (state, _row, next) => body(next ?? state, createRow(), undefined);
+        return (state, _row, _offset, next) => body(next ?? state, createRows(1), 0, undefined);
       }
       case "Always":
       case "Eventually":
@@ -469,30 +491,49 @@ export const createLiveGraph = <State>(
     source: number,
     state: State,
     row: Int8Array,
+    offset: number,
   ) =>
-    evaluateFrom(source, () =>
-      Uint8Array.from(behavior.checks.states, (check) =>
-        check(state, getRow(row), undefined) ? 1 : 0,
-      ),
-    );
+    evaluateFrom(source, () => {
+      const checks = behavior.checks.states;
+      const results = new Uint8Array(checks.length);
+      checks.forEach((check, position) => {
+        results[position] = runCheck(check, state, row, offset) ? 1 : 0;
+      });
+      return results;
+    });
+  // Writes the result of each action check of the step to successor at resultOffset in results.
   const checkAction = (
     behavior: BehaviorGraph<State>,
     source: number,
     state: State,
     row: Int8Array,
+    offset: number,
     successor: State,
-    edge: Int8Array,
+    edges: Int8Array,
+    edgeOffset: number,
+    results: Uint8Array,
+    resultOffset: number,
   ) =>
     evaluateFrom(source, () => {
       const actions = behavior.checks.actions;
-      if (!isShared) {
-        return Uint8Array.from(actions, (check) => (check(state, createRow(), successor) ? 1 : 0));
+      for (let position = 0; position < actions.length; position++) {
+        if (!isShared) {
+          results[resultOffset + position] = runCheck(
+            actions[position],
+            state,
+            row,
+            offset,
+            successor,
+          )
+            ? 1
+            : 0;
+          continue;
+        }
+        const edge = edgeOffset + behavior.actionIds[position];
+        if (edges[edge] === -1)
+          edges[edge] = actions[position](state, row, offset, successor) ? 1 : 0;
+        results[resultOffset + position] = edges[edge];
       }
-      return Uint8Array.from(behavior.actionIds, (actionId, position) => {
-        if (edge[actionId] === -1)
-          edge[actionId] = actions[position](state, row, successor) ? 1 : 0;
-        return edge[actionId];
-      });
     });
   const isConsistent = (
     behavior: BehaviorGraph<State>,
@@ -500,9 +541,10 @@ export const createLiveGraph = <State>(
     source: number | undefined,
     state: State,
     row: Int8Array,
+    offset: number,
   ) =>
     evaluateFrom(source, () =>
-      behavior.checks.nodes[node].every((check) => check(state, getRow(row), undefined)),
+      behavior.checks.nodes[node].every((check) => runCheck(check, state, row, offset)),
     );
   const isAccepting = (tableau: Tableau, node: number) => {
     if (!isAcceptingFound) return false;
@@ -543,18 +585,26 @@ export const createLiveGraph = <State>(
     writeToPool(behavior.lastNodes, state, [node]);
     return node;
   };
+  // The action results of the edge to each target are at its position in actions.
   const writeNode = (
     behavior: BehaviorGraph<State>,
     node: number,
     targets: number[],
-    actions: Uint8Array[],
+    actionResults: Uint8Array,
+    actions: number[],
     stateResults: Uint8Array,
   ) => {
     const start = behavior.edgeTargets.length;
     const actionCount = behavior.solution.actionChecks.length;
     writeToPool(behavior.edgeTargets, start, targets);
-    actions.forEach((results, position) =>
-      writeToPool(behavior.edgeActions, (start + position) * actionCount, results),
+    actions.forEach((position, edge) =>
+      writeToPool(
+        behavior.edgeActions,
+        (start + edge) * actionCount,
+        actionResults,
+        position * actionCount,
+        actionCount,
+      ),
     );
     writeToPool(
       behavior.stateResults,
@@ -615,17 +665,19 @@ export const createLiveGraph = <State>(
     index: number,
     node: number,
     row: Int8Array,
+    offset: number,
   ) => {
-    const stateResults = checkState(behavior, index, state, row);
+    const stateResults = checkState(behavior, index, state, row, offset);
     const tableauNode = tableau.nodes[behavior.nodeTableaux[node]];
-    const actions: Uint8Array[] = [];
+    const actionCount = behavior.checks.actions.length;
+    const actions: number[] = [];
     const successors: number[] = [];
-    const selfActions =
-      tableauNode.successors.length > 0
-        ? checkAction(behavior, index, state, row, state, createEdgeRow())
-        : new Uint8Array(0);
+    const selfResults = new Uint8Array(actionCount);
+    if (tableauNode.successors.length > 0) {
+      checkAction(behavior, index, state, row, offset, state, createEdgeRows(1), 0, selfResults, 0);
+    }
     for (const next of tableauNode.successors) {
-      if (!isConsistent(behavior, next, index, state, row)) continue;
+      if (!isConsistent(behavior, next, index, state, row, offset)) continue;
       if (
         isAccepting(tableau, next) &&
         behavior.errorNode === undefined &&
@@ -638,71 +690,102 @@ export const createLiveGraph = <State>(
       if (existing !== undefined && successors.includes(existing)) continue;
       const target = existing ?? recordNode(behavior, index, next);
       successors.push(target);
-      actions.push(selfActions);
-      if (existing === undefined) expandLate(behavior, tableau, state, index, target, row);
+      actions.push(0);
+      if (existing === undefined) expandLate(behavior, tableau, state, index, target, row, offset);
     }
-    for (const successor of search.getSuccessors(index, state)) {
-      const successorRow = createRow();
-      const successorActions = checkAction(
+    const nextStates = search.getSuccessors(index, state);
+    // The results of the step to the state itself come first, then those of each successor.
+    const actionResults = new Uint8Array((nextStates.length + 1) * actionCount);
+    actionResults.set(selfResults);
+    const edges = createEdgeRows(nextStates.length);
+    nextStates.forEach((successor, position) => {
+      const successorRow = createRows(1);
+      checkAction(
         behavior,
         index,
         state,
         row,
+        offset,
         successor.state,
-        createEdgeRow(),
+        edges,
+        position * actionIds.size,
+        actionResults,
+        (position + 1) * actionCount,
       );
       const isDone = behavior.isDone[successor.index] === true;
       for (const next of tableauNode.successors) {
-        if (!isConsistent(behavior, next, index, successor.state, successorRow)) continue;
+        if (!isConsistent(behavior, next, index, successor.state, successorRow, 0)) continue;
         // Deviation from TLC: TLC records the node of a successor the search never stored, which it never expands.
         if (successor.index === -1) continue;
         const existing = getNodeId(behavior, successor.index, next);
         if (existing !== undefined && successors.includes(existing)) continue;
         const target = existing ?? recordNode(behavior, successor.index, next);
         successors.push(target);
-        actions.push(successorActions);
+        actions.push(position + 1);
         if (existing === undefined && isDone) {
-          expandLate(behavior, tableau, successor.state, successor.index, target, successorRow);
+          expandLate(behavior, tableau, successor.state, successor.index, target, successorRow, 0);
         }
       }
+    });
+    if (successors.length > 0) {
+      writeNode(behavior, node, successors, actionResults, actions, stateResults);
     }
-    if (successors.length > 0) writeNode(behavior, node, successors, actions, stateResults);
   };
 
   const addTableauState = (
     behavior: BehaviorGraph<State>,
     tableau: Tableau,
     set: LiveSuccessor<State>[],
-    rows: Int8Array[],
-    actionResults: Uint8Array[],
+    rows: Int8Array,
+    actionResults: Uint8Array,
     stateResults: Uint8Array,
     index: number,
   ) => {
-    const consistency = tableau.nodes.map((_tableauNode, node) =>
-      set.map((successor, position) =>
-        isConsistent(behavior, node, index, successor.state, rows[position]),
-      ),
+    const atomCount = stateAtoms.size;
+    // Whether each successor is consistent with each tableau node, node by node.
+    const consistency = new Uint8Array(tableau.nodes.length * set.length);
+    tableau.nodes.forEach((_tableauNode, node) =>
+      set.forEach((successor, position) => {
+        consistency[node * set.length + position] = isConsistent(
+          behavior,
+          node,
+          index,
+          successor.state,
+          rows,
+          position * atomCount,
+        )
+          ? 1
+          : 0;
+      }),
     );
     behavior.isDone[index] = true;
     // TLC expands the nodes recorded before the loop, not the ones the loop records.
     for (const node of getStateNodes(behavior, index)) {
       const successors: number[] = [];
-      const actions: Uint8Array[] = [];
+      const actions: number[] = [];
       set.forEach((successor, position) => {
         const isDone = behavior.isDone[successor.index] === true;
         for (const next of tableau.nodes[behavior.nodeTableaux[node]].successors) {
-          if (!consistency[next][position]) continue;
+          if (consistency[next * set.length + position] === 0) continue;
           const existing = getNodeId(behavior, successor.index, next);
           if (existing !== undefined && successors.includes(existing)) continue;
           const target = existing ?? recordNode(behavior, successor.index, next);
           successors.push(target);
-          actions.push(actionResults[position]);
+          actions.push(position);
           if (existing === undefined && isDone) {
-            expandLate(behavior, tableau, successor.state, successor.index, target, rows[position]);
+            expandLate(
+              behavior,
+              tableau,
+              successor.state,
+              successor.index,
+              target,
+              rows,
+              position * atomCount,
+            );
           }
         }
       });
-      writeNode(behavior, node, successors, actions, stateResults);
+      writeNode(behavior, node, successors, actionResults, actions, stateResults);
     }
     return behavior.errorNode === undefined
       ? undefined
@@ -712,19 +795,19 @@ export const createLiveGraph = <State>(
   const addPlainState = (
     behavior: BehaviorGraph<State>,
     set: LiveSuccessor<State>[],
-    actionResults: Uint8Array[],
+    actionResults: Uint8Array,
     stateResults: Uint8Array,
     index: number,
   ) => {
     while (behavior.nodeStates.length <= index) pushNode(behavior, behavior.nodeStates.length, -1);
     const successors: number[] = [];
-    const actions: Uint8Array[] = [];
+    const actions: number[] = [];
     set.forEach((successor, position) => {
       if (isWritten(behavior, successor.index) && successors.includes(successor.index)) return;
       successors.push(successor.index);
-      actions.push(actionResults[position]);
+      actions.push(position);
     });
-    writeNode(behavior, index, successors, actions, stateResults);
+    writeNode(behavior, index, successors, actionResults, actions, stateResults);
   };
 
   const getPath = (behavior: BehaviorGraph<State>, target: number) => {
@@ -987,7 +1070,7 @@ export const createLiveGraph = <State>(
   return {
     branches: behaviors.length,
     addInitialState: (index, state) => {
-      const row = createRow();
+      const row = createRows(1);
       for (const behavior of behaviors) {
         const tableau = behavior.solution.tableau;
         if (!tableau) {
@@ -995,7 +1078,7 @@ export const createLiveGraph = <State>(
           continue;
         }
         for (let node = 0; node < tableau.initialCount; node++) {
-          if (!isConsistent(behavior, node, undefined, state, row)) continue;
+          if (!isConsistent(behavior, node, undefined, state, row, 0)) continue;
           behavior.initial.push(
             getNodeId(behavior, index, node) ?? recordNode(behavior, index, node),
           );
@@ -1004,15 +1087,28 @@ export const createLiveGraph = <State>(
     },
     addState: (index, state, successors) => {
       const set = getSuccessorSet(index, state, successors);
-      const rows = set.map(createRow);
+      const rows = createRows(set.length);
       // The set holds the state itself, as a successor of the same index.
-      const row = rows[set.findIndex((successor) => successor.index === index)];
-      const edges = set.map(createEdgeRow);
+      const offset = set.findIndex((successor) => successor.index === index) * stateAtoms.size;
+      const edges = createEdgeRows(set.length);
       for (const behavior of behaviors) {
-        const actionResults = set.map((successor, position) =>
-          checkAction(behavior, index, state, row, successor.state, edges[position]),
+        const actionCount = behavior.checks.actions.length;
+        const actionResults = new Uint8Array(set.length * actionCount);
+        set.forEach((successor, position) =>
+          checkAction(
+            behavior,
+            index,
+            state,
+            rows,
+            offset,
+            successor.state,
+            edges,
+            position * actionIds.size,
+            actionResults,
+            position * actionCount,
+          ),
         );
-        const stateResults = checkState(behavior, index, state, row);
+        const stateResults = checkState(behavior, index, state, rows, offset);
         const tableau = behavior.solution.tableau;
         if (!tableau) {
           addPlainState(behavior, set, actionResults, stateResults, index);
