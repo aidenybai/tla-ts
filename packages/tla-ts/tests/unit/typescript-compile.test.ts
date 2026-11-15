@@ -34014,4 +34014,31 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("stops where a proxy defines an accessor on an array that the heap doesn't hold", () => {
+    const getSource = (descriptor: string) => `
+      const box = { size: 0 };
+      const getArray = (): number[] => [];
+      const target: object = getArray();
+      const proxy = new Proxy(target, {});
+      let read = "none";
+      try {
+        Object.defineProperty(proxy, "constructor", ${descriptor});
+      } catch (error) {
+        read = error instanceof TypeError ? "TypeError" : "other";
+      }
+      box.size = 1;
+      if (read !== "TypeError") throw new Error(read);
+    `;
+
+    it("agrees with Node where the descriptor isn't valid", async () => {
+      expect((await checkModel(getSource("{ get: () => 1, value: 1 }"))).failure).toBeUndefined();
+    });
+
+    it("stops where the descriptor is an accessor's", async () => {
+      expect((await checkModel(getSource("{ get: () => 1 }"))).failure?.message).toContain(
+        "tla-ts can't change an object that the heap doesn't hold",
+      );
+    });
+  });
 });
