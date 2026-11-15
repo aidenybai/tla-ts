@@ -3515,6 +3515,77 @@ ${body}
     );
   });
 
+  const getFailedWriteSource = (directive: string, expected: string) => `
+    ${directive}
+    const results: string[] = [];
+    const frozen: { x: number } = { x: 1 };
+    Object.freeze(frozen);
+    const fixed: { y?: number } = { y: 2 };
+    Object.defineProperty(fixed, "y", { configurable: false });
+    try {
+      frozen.x = 2;
+      results.push("wrote");
+    } catch (error) {
+      results.push(error instanceof TypeError ? "type" : "other");
+    }
+    try {
+      frozen.x += 1;
+      results.push("wrote");
+    } catch (error) {
+      results.push(error instanceof TypeError ? "type" : "other");
+    }
+    try {
+      delete fixed.y;
+      results.push("deleted");
+    } catch (error) {
+      results.push(error instanceof TypeError ? "type" : "other");
+    }
+    const outcomes = [...results, frozen.x, fixed.y].join(",");
+    if (outcomes !== "${expected}") throw new Error("outcomes " + outcomes);
+  `;
+
+  it("ignores a write or a delete that fails outside strict mode", async () => {
+    expect(
+      (await checkModel(getFailedWriteSource("", "wrote,wrote,deleted,1,2"))).failure,
+    ).toBeUndefined();
+    expect(
+      (await checkModel(getFailedWriteSource("", "type,type,type,1,2"))).failure?.message,
+    ).toContain("outcomes wrote,wrote,deleted,1,2");
+    expect(
+      (await checkModel(getFailedWriteSource('"use strict";', "type,type,type,1,2"))).failure,
+    ).toBeUndefined();
+  });
+
+  const getProxyFailureSource = (directive: string, expected: string) => `
+    ${directive}
+    const results: string[] = [];
+    const proxy = new Proxy<{ z?: number }>({}, { set: () => false, deleteProperty: () => false });
+    try {
+      proxy.z = 1;
+      results.push("wrote");
+    } catch (error) {
+      results.push(error instanceof TypeError ? "type" : "other");
+    }
+    try {
+      delete proxy.z;
+      results.push("deleted");
+    } catch (error) {
+      results.push(error instanceof TypeError ? "type" : "other");
+    }
+    const outcomes = results.join(",");
+    if (outcomes !== "${expected}") throw new Error("outcomes " + outcomes);
+  `;
+
+  it("ignores a write or a delete that a proxy's trap refuses outside strict mode", async () => {
+    expect((await checkModel(getProxyFailureSource("", "wrote,deleted"))).failure).toBeUndefined();
+    expect((await checkModel(getProxyFailureSource("", "type,type"))).failure?.message).toContain(
+      "outcomes wrote,deleted",
+    );
+    expect(
+      (await checkModel(getProxyFailureSource('"use strict";', "type,type"))).failure,
+    ).toBeUndefined();
+  });
+
   it("stops where a write outside strict mode names no binding", () => {
     expect(() =>
       compile(`
@@ -12875,8 +12946,9 @@ describe("errors", () => {
     });
   });
 
-  describe("throws the TypeError of deleting a typed array's element", () => {
+  describe("throws the TypeError of deleting a typed array's element in strict mode", () => {
     const getSource = (expected: string) => `
+      "use strict";
       const typed = new Int8Array(2);
       const remove = (key: string) => {
         try {
@@ -32193,6 +32265,7 @@ describe("proxies", () => {
 
   it("runs a proxy's set and deleteProperty traps, and Reflect's", async () => {
     const result = await checkModel(`
+      "use strict";
       const target: { attr?: number; fixed?: number } = {};
       let seen: unknown[] = [];
       const handler = {
@@ -32220,6 +32293,7 @@ describe("proxies", () => {
 
   it("sets and deletes the target's key where the handler has no trap", async () => {
     const result = await checkModel(`
+      "use strict";
       const target: { attr?: number; fixed?: number } = {};
       Object.defineProperty(target, "fixed", { value: 1 });
       const proxy = new Proxy(target, {});
