@@ -4922,7 +4922,13 @@ export const inlineValues = (
   if (frame.inlining.has(callee)) {
     throw new TlaTypeScriptError("Functions that change state can't call themselves", callee);
   }
-  const bound = bindValues(getParameters(callee), values, path.scope, context);
+  const bound = allocateArguments(
+    callee,
+    values,
+    callee,
+    bindValues(getParameters(callee), values, path.scope, context),
+    context,
+  );
   const back = (after: Path, result?: Expression) =>
     continueWith({ ...after, scope: { ...after.scope, previous: path.scope.previous } }, result);
   return letIn(

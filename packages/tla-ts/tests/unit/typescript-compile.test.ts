@@ -27028,6 +27028,25 @@ describe("errors", () => {
     expect((await checkModel(source("ab0t4u61v12r234"))).failure).toBeDefined();
   });
 
+  it("gives a reaction's function the arguments that the job passes it", async () => {
+    const source = (expected: string) => `
+      declare function setTimeout(callback: () => void): void;
+      let log = "";
+      Promise.resolve(1)
+        .finally(function () {
+          log += \`f\${arguments.length}\`;
+        })
+        .then(function (value) {
+          log += \`t\${arguments.length}\${value}\`;
+        });
+      setTimeout(() => {
+        if (log !== "${expected}") throw new Error(log);
+      });
+    `;
+    expect((await checkModel(source("f0t11"))).failure).toBeUndefined();
+    expect((await checkModel(source("f1t11"))).failure).toBeDefined();
+  });
+
   it("fulfills Promise.any with the first value, or rejects it with an AggregateError", async () => {
     const result = await checkModel(`
       declare function setTimeout(callback: () => void): void;
