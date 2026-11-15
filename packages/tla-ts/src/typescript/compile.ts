@@ -386,9 +386,9 @@ export const compile = (
         : !isDeclaration(statement),
     ),
   );
-  const getWrittenSymbols = (roots: readonly ts.Node[]) =>
+  const getWrittenSymbols = (reachedNodes: readonly ts.Node[]) =>
     new Set(
-      getReached(roots, context).flatMap((reached) =>
+      reachedNodes.flatMap((reached) =>
         findNodes(reached, (node): node is ts.Node => getWritten(node) !== undefined).flatMap(
           (node) => {
             const target = getWritten(node);
@@ -400,10 +400,11 @@ export const compile = (
       ),
     );
   const getImported = (run: readonly ts.Statement[]): ts.Statement[] => {
-    const written = getWrittenSymbols([sourceFile, ...run]);
+    const reachedNodes = getReached([sourceFile, ...run], context);
+    const written = getWrittenSymbols(reachedNodes);
     // Where any of them changes, every variable that the model reaches runs where its file
     // declares it, as its value may read one that changes.
-    const declared = getReached([sourceFile, ...run], context).flatMap((node) => {
+    const declared = reachedNodes.flatMap((node) => {
       const statement = node.parent?.parent;
       const symbol = ts.isVariableDeclaration(node)
         ? getSymbol(node.name, context.checker)
@@ -431,7 +432,7 @@ export const compile = (
         ? declared
         : declared.filter((state) => isMakingObjects(state.statement, context));
     // A class of an imported file that the model reaches, which its file makes where it declares it.
-    const classes = getReached([sourceFile, ...run], context).filter(
+    const classes = reachedNodes.filter(
       (node): node is ts.ClassDeclaration =>
         ts.isClassDeclaration(node) &&
         ts.isSourceFile(node.parent) &&
@@ -441,7 +442,7 @@ export const compile = (
     const next = effects.filter(
       (statement) =>
         run.includes(statement) ||
-        [...getWrittenSymbols([statement])].some((symbol) =>
+        [...getWrittenSymbols(getReached([statement], context))].some((symbol) =>
           declared.some((state) => state.isChanged && state.symbol === symbol),
         ),
     );
@@ -542,6 +543,15 @@ export const compile = (
       [context.checker.getTypeAtLocation(node.left.expression)]
         .flatMap((type) => (type.isIntersection() ? type.types : [type]))
         .some((type) => context.checker.isArrayType(type) || context.checker.isTupleType(type))) ||
+    // A read of a property of a value of type any, which only the heap tells the kind of. A write
+    // to a primitive's property throws or does nothing without one.
+    ((ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) &&
+      !(
+        ts.isBinaryExpression(node.parent) &&
+        node.parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+        node.parent.left === node
+      ) &&
+      (context.checker.getTypeAtLocation(node.expression).flags & ts.TypeFlags.Any) !== 0) ||
     // An array whose element a script deletes, which leaves a hole that only an object can hold.
     (ts.isDeleteExpression(node) &&
       ts.isElementAccessExpression(node.expression) &&

@@ -478,7 +478,8 @@ export const getReached = (roots: readonly ts.Node[], context: Context) => {
     const declarations = ts.isIdentifier(node)
       ? (getSymbol(node, context.checker)?.declarations ?? [])
       : [];
-    for (const declaration of declarations) {
+    // A module's namespace object reaches only the exports that a script reads through it.
+    for (const declaration of declarations.filter((inner) => !ts.isSourceFile(inner))) {
       const file = declaration.getSourceFile();
       if (seen.has(file) || file.isDeclarationFile || seen.has(declaration)) continue;
       seen.add(declaration);

@@ -3215,10 +3215,9 @@ const getOrigin = (node: ts.Expression, context: Context): ts.Expression => {
 
 // A read of the proxy or the revoke function that Proxy.revocable gives, as TypeScript declares it.
 const isRevocableMember = (node: ts.Expression, name: string, context: Context) => {
-  const method = getSymbol(node, context.checker)?.declarations?.at(0)?.parent.parent;
+  if (!ts.isPropertyAccessExpression(node) || node.name.text !== name) return false;
+  const method = getSymbol(node, context.checker)?.declarations?.at(0)?.parent?.parent;
   return (
-    ts.isPropertyAccessExpression(node) &&
-    node.name.text === name &&
     method !== undefined &&
     ts.isMethodSignature(method) &&
     method.name.getText() === "revocable" &&

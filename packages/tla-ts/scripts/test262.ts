@@ -75,6 +75,10 @@ const PORTED_INCLUDES = new Map([
     "detachArrayBuffer.js",
     readFileSync(join(CONFORMANCE_DIRECTORY, "test262-detach-array-buffer.ts"), "utf8"),
   ],
+  [
+    "resizableArrayBufferUtils.js",
+    readFileSync(join(CONFORMANCE_DIRECTORY, "test262-resizable-array-buffer-utils.ts"), "utf8"),
+  ],
 ]);
 
 // An async test's harness defines $DONE, as doneprintHandle.js does.

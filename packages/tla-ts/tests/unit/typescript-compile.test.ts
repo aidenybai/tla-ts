@@ -40192,6 +40192,122 @@ describe("BigInts", () => {
     });
   });
 
+  describe("throws a TypeError where an array iterator steps a typed array out of bounds", () => {
+    const getSource = (expected: string) => `
+      const rab = new ArrayBuffer(3, { maxByteLength: 4 });
+      const fixed = new Uint8Array(rab, 0, 3);
+      fixed[1] = 7;
+      let log = "";
+      const keys = Array.prototype.keys.call(fixed);
+      const values = Array.prototype.values.call(fixed);
+      const entries = fixed.entries();
+      const first = values.next();
+      log += first.value;
+      rab.resize(2);
+      try {
+        Array.from(keys);
+      } catch (error) {
+        log += error instanceof TypeError ? "k" : "other";
+      }
+      try {
+        values.next();
+      } catch (error) {
+        log += error instanceof TypeError ? "v" : "other";
+      }
+      try {
+        entries.next();
+      } catch (error) {
+        log += error instanceof TypeError ? "e" : "other";
+      }
+      rab.resize(3);
+      const second = values.next();
+      const third = entries.next();
+      log += second.value;
+      log += JSON.stringify(third.value);
+      if (log !== "${expected}") throw new Error(log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("0kve7[0,0]"))).failure).toBeUndefined();
+    });
+
+    it("rejects an iterator that a throw moves on", async () => {
+      expect((await checkModel(getSource("0kve0[0,0]"))).failure?.message).toContain("0kve7[0,0]");
+    });
+  });
+
+  it("reads a constant, a function, an object, and a class through a module's namespace object", async () => {
+    const path = join(import.meta.dirname, "../fixtures/typescript/imports/boxing.ts");
+    const source = readFileSync(path, "utf8");
+    expect((await check(compile(source, path))).failure).toBeUndefined();
+    const wrong = await check(compile(source.replace('"34274true"', '"34274false"'), path));
+    expect(wrong.failure?.message).toContain("34274true");
+  });
+
+  describe("reads a property of a value of type any in a script that makes no objects", () => {
+    const getSource = (expected: string) => `
+      const list: any = [1, 2];
+      const empty: any = [];
+      let log = "";
+      log += list.length;
+      log += list[1];
+      log += empty[0];
+      if (log !== "${expected}") throw new Error(log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("22undefined"))).failure).toBeUndefined();
+    });
+
+    it("rejects the element before it", async () => {
+      expect((await checkModel(getSource("21undefined"))).failure?.message).toContain(
+        "22undefined",
+      );
+    });
+
+    it("stops at a property of a number", async () => {
+      const result = await checkModel(`
+        const count: any = 5;
+        if (count.size !== undefined) throw new Error("size");
+      `);
+      expect(result.failure?.message).toContain("tla-ts can't read a property of this value");
+    });
+  });
+
+  describe("steps an array iterator again after it throws for a typed array out of bounds", () => {
+    const getSource = (expected: string) => `
+      const rab = new ArrayBuffer(3, { maxByteLength: 4 });
+      const fixed = new Uint8Array(rab, 0, 3);
+      fixed[0] = 9;
+      const values = fixed.values();
+      let log = "";
+      rab.resize(2);
+      try {
+        Array.from(values);
+      } catch (error) {
+        log += error instanceof TypeError ? "a" : "other";
+      }
+      try {
+        Array.from(values);
+      } catch (error) {
+        log += error instanceof TypeError ? "b" : "other";
+      }
+      rab.resize(3);
+      const listed = Array.from(values);
+      const again = Array.from(values);
+      log += listed.join("") + again.length;
+      if (log !== "${expected}") throw new Error(log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("ab9000"))).failure).toBeUndefined();
+    });
+
+    it("rejects an iterator that its first steps leave done", async () => {
+      expect((await checkModel(getSource("ab0"))).failure?.message).toContain("ab9000");
+    });
+  });
+
   it("stops at a variable that a script reads through a module's namespace object", () => {
     const path = join(import.meta.dirname, "../fixtures/typescript/imports/namespace.ts");
     expect(() =>

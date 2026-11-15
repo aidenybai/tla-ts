@@ -477,6 +477,9 @@ interface Suspension {
   queue: readonly string[];
   // The call that resumed the body, while it runs, which takes what it yields or returns.
   caller?: Caller;
+  // Whether a step may make the suspension again once it's gone, as an array's or a string's
+  // iterator, whose next reads where it is from the heap.
+  isRestartable?: boolean;
 }
 
 interface Caller {
@@ -4265,341 +4268,329 @@ const translateCallStatementBody = (
   const dispatched =
     callee === undefined ? getDispatched(expression, path.scope.functions, context) : undefined;
   if (dispatched !== undefined) {
-    const target = getCast(expression.expression);
-    const value = translateExpression(target, path.scope, context);
-    const receiver = isSuperAccess(target)
-      ? getSuperLookup(target.expression, path.scope, context).receiver
-      : ts.isPropertyAccessExpression(target) || ts.isElementAccessExpression(target)
-        ? translateObjectValue(target.expression, path.scope, context)
-        : getUndefined(context);
-    if (dispatched.some(isAnyGenerator)) rejectGeneratorUse(expression, context);
-    context.prelude.add("Null");
-    const accessor = ts.isPropertyAccessExpression(target)
-      ? /^__(define|lookup)([GS])etter__$/.exec(target.name.text)
-      : null;
-    const keyNode = expression.arguments.at(0);
-    // Object.prototype's legacy accessor methods, where a script calls one through a key that it
-    // may hold.
-    const translateAccessor = (method: string, half: string, key: ts.Expression) => {
-      const isKey =
-        getTypeNames(context.checker.getTypeAtLocation(key), context.checker)?.every((name) =>
-          ["string", "number", "symbol"].includes(name),
-        ) ?? false;
-      // ToPropertyKey, which runs an object's toString or valueOf.
-      const withKey = (then: (after: Path, converted: Expression) => Formula) =>
-        isKey
-          ? then(path, translatePropertyKey(key, path.scope, context))
-          : runToPrimitive(
-              expression,
-              translateExpression(key, path.scope, context),
-              "string",
-              path,
-              context,
-              frame,
-              (after, primitive) => then(after, useJavaScript("PropertyKey", [primitive], context)),
-            );
-      if (method === "lookup") {
-        return withKey((after, converted) =>
-          continueWith(
-            after,
+    // Each function that the value may be continues to one copy of what follows the call.
+    return translateJoined(expression, path, context, continueWith, (continueCall) => {
+      const target = getCast(expression.expression);
+      const value = translateExpression(target, path.scope, context);
+      const receiver = isSuperAccess(target)
+        ? getSuperLookup(target.expression, path.scope, context).receiver
+        : ts.isPropertyAccessExpression(target) || ts.isElementAccessExpression(target)
+          ? translateObjectValue(target.expression, path.scope, context)
+          : getUndefined(context);
+      if (dispatched.some(isAnyGenerator)) rejectGeneratorUse(expression, context);
+      context.prelude.add("Null");
+      const accessor = ts.isPropertyAccessExpression(target)
+        ? /^__(define|lookup)([GS])etter__$/.exec(target.name.text)
+        : null;
+      const keyNode = expression.arguments.at(0);
+      // Object.prototype's legacy accessor methods, where a script calls one through a key that it
+      // may hold.
+      const translateAccessor = (method: string, half: string, key: ts.Expression) => {
+        const isKey =
+          getTypeNames(context.checker.getTypeAtLocation(key), context.checker)?.every((name) =>
+            ["string", "number", "symbol"].includes(name),
+          ) ?? false;
+        // ToPropertyKey, which runs an object's toString or valueOf.
+        const withKey = (then: (after: Path, converted: Expression) => Formula) =>
+          isKey
+            ? then(path, translatePropertyKey(key, path.scope, context))
+            : runToPrimitive(
+                expression,
+                translateExpression(key, path.scope, context),
+                "string",
+                path,
+                context,
+                frame,
+                (after, primitive) =>
+                  then(after, useJavaScript("PropertyKey", [primitive], context)),
+              );
+        if (method === "lookup") {
+          return withKey((after, converted) =>
+            continueCall(
+              after,
+              useJavaScript(
+                "AccessorFieldOf",
+                [getHeap(after.scope, expression, context), receiver, converted, string(half)],
+                context,
+              ),
+            ),
+          );
+        }
+        const functionNode = expression.arguments.at(1);
+        const translatedFunction =
+          functionNode === undefined
+            ? getUndefined(context)
+            : translateExpression(functionNode, path.scope, context);
+        const change = context.names.getFresh("change");
+        // The definition throws where the function isn't callable before it converts the key.
+        return ifThenElse(
+          apply("=", [
             useJavaScript(
-              "AccessorFieldOf",
-              [getHeap(after.scope, expression, context), receiver, converted, string(half)],
+              "TypeOfIn",
+              [getHeap(path.scope, expression, context), translatedFunction],
               context,
             ),
+            string("function"),
+          ]),
+          withKey((after, converted) =>
+            bindOnce(
+              after,
+              change,
+              useJavaScript(
+                "DefineLegacyAccessor",
+                [
+                  getHeap(after.scope, expression, context),
+                  receiver,
+                  converted,
+                  string(half),
+                  translatedFunction,
+                ],
+                context,
+              ),
+              ifThenElse(
+                field(identifier(change), "isDone"),
+                continueCall(
+                  withHeap(field(identifier(change), "heap"), after),
+                  getUndefined(context),
+                ),
+                throwTypeError(after, expression, context, frame),
+              ),
+            ),
           ),
+          throwTypeError(path, expression, context, frame),
         );
-      }
-      const functionNode = expression.arguments.at(1);
-      const translatedFunction =
-        functionNode === undefined
-          ? getUndefined(context)
-          : translateExpression(functionNode, path.scope, context);
-      const change = context.names.getFresh("change");
-      // The definition throws where the function isn't callable before it converts the key.
-      return ifThenElse(
-        apply("=", [
+      };
+      // %ArrayIteratorPrototype%.next or %StringIteratorPrototype%.next, which throws a TypeError for
+      // a receiver that isn't an iterator of its kind.
+      const translateBuiltInNext = (current: Path, next: Expression, receiverValue: Expression) => {
+        const changeName = context.names.getFresh("change");
+        const change = identifier(changeName);
+        return bindOnce(
+          current,
+          changeName,
           useJavaScript(
-            "TypeOfIn",
-            [getHeap(path.scope, expression, context), translatedFunction],
+            "BuiltInIteratorStepOf",
+            [getHeap(current.scope, expression, context), receiverValue, next],
             context,
           ),
-          string("function"),
-        ]),
-        withKey((after, converted) =>
-          bindOnce(
-            after,
-            change,
+          ifThenElse(
+            field(change, "isThrown"),
+            throwTypeError(current, expression, context, frame),
+            continueCall(withHeap(field(change, "heap")), field(change, "value")),
+          ),
+        );
+      };
+      // An Iterator.prototype method of an object that tla-ts doesn't follow as an iterator, which
+      // closes the object and throws a TypeError where its callback isn't callable. A throw while it
+      // closes gives way to the TypeError.
+      const rejectCallback = (name: string) => {
+        const callback = expression.arguments.at(0);
+        const closing = {
+          ...frame,
+          throwTo: (after: Path) => throwTypeError(after, expression, context, frame),
+        };
+        return ifThenElse(
+          apply("=", [
             useJavaScript(
-              "DefineLegacyAccessor",
+              "TypeOfIn",
               [
-                getHeap(after.scope, expression, context),
-                receiver,
-                converted,
-                string(half),
-                translatedFunction,
+                getHeap(path.scope, expression, context),
+                callback === undefined
+                  ? getUndefined(context)
+                  : translateExpression(callback, path.scope, context),
               ],
               context,
             ),
+            string("function"),
+          ]),
+          leaf(
+            apply("Assert", [
+              boolean(false),
+              string(`tla-ts can't run Iterator.prototype.${name} on an object it doesn't follow`),
+            ]),
+          ),
+          read(expression, receiver, "return", path, context, closing, (found, method) =>
             ifThenElse(
-              field(identifier(change), "isDone"),
-              continueWith(
-                withHeap(field(identifier(change), "heap"), after),
-                getUndefined(context),
+              isNullish(method, context),
+              throwTypeError(found, expression, context, frame),
+              callMethod(
+                expression,
+                "return",
+                method,
+                receiver,
+                [],
+                found,
+                context,
+                closing,
+                (after) => throwTypeError(after, expression, context, frame),
+                (after) => throwTypeError(after, expression, context, frame),
               ),
-              throwTypeError(after, expression, context, frame),
             ),
           ),
-        ),
-        throwTypeError(path, expression, context, frame),
-      );
-    };
-    // %ArrayIteratorPrototype%.next or %StringIteratorPrototype%.next, which throws a TypeError for
-    // a receiver that isn't an iterator of its kind.
-    const translateBuiltInNext = (current: Path, next: Expression, receiverValue: Expression) => {
-      const changeName = context.names.getFresh("change");
-      const change = identifier(changeName);
-      return bindOnce(
-        current,
-        changeName,
-        useJavaScript(
-          "BuiltInIteratorStepOf",
-          [getHeap(current.scope, expression, context), receiverValue, next],
-          context,
-        ),
-        ifThenElse(
-          field(change, "isThrown"),
-          throwTypeError(current, expression, context, frame),
-          continueWith(withHeap(field(change, "heap")), field(change, "value")),
-        ),
-      );
-    };
-    // An Iterator.prototype method of an object that tla-ts doesn't follow as an iterator, which
-    // closes the object and throws a TypeError where its callback isn't callable. A throw while it
-    // closes gives way to the TypeError.
-    const rejectCallback = (name: string) => {
-      const callback = expression.arguments.at(0);
-      const closing = {
-        ...frame,
-        throwTo: (after: Path) => throwTypeError(after, expression, context, frame),
+        );
       };
-      return ifThenElse(
-        apply("=", [
-          useJavaScript(
-            "TypeOfIn",
-            [
-              getHeap(path.scope, expression, context),
-              callback === undefined
-                ? getUndefined(context)
-                : translateExpression(callback, path.scope, context),
-            ],
-            context,
-          ),
-          string("function"),
-        ]),
+      const unknown = translateStoredRegExpCall(
+        expression,
+        value,
+        receiver,
+        path,
+        context,
+        frame,
         leaf(
           apply("Assert", [
             boolean(false),
-            string(`tla-ts can't run Iterator.prototype.${name} on an object it doesn't follow`),
+            string("tla-ts can't tell which function this call runs"),
           ]),
-        ),
-        read(expression, receiver, "return", path, context, closing, (found, method) =>
-          ifThenElse(
-            isNullish(method, context),
-            throwTypeError(found, expression, context, frame),
-            callMethod(
-              expression,
-              "return",
-              method,
-              receiver,
-              [],
-              found,
-              context,
-              closing,
-              (after) => throwTypeError(after, expression, context, frame),
-              (after) => throwTypeError(after, expression, context, frame),
-            ),
-          ),
         ),
       );
-    };
-    const unknown = translateStoredRegExpCall(
-      expression,
-      value,
-      receiver,
-      path,
-      context,
-      frame,
-      leaf(
-        apply("Assert", [
-          boolean(false),
-          string("tla-ts can't tell which function this call runs"),
-        ]),
-      ),
-    );
-    return dispatched.reduceRight(
-      (otherwise, candidate) => {
-        const candidateValue = getCandidateValue(candidate, context);
-        if (candidateValue === undefined || frame.inlining.has(candidate)) return otherwise;
-        const candidateReceiver = ts.isArrowFunction(candidate)
-          ? undefined
-          : { value: receiver, method: candidate };
-        return ifThenElse(
-          apply("=", [
-            isClosure(candidate, context) ||
-            isNestedFunction(candidate, context) ||
-            isHeapFunction(candidate, context)
-              ? useJavaScript("CodeOf", [getHeap(path.scope, expression, context), value], context)
-              : value,
-            candidateValue,
-          ]),
-          !isAnyGenerator(candidate) && !isAsyncFunction(candidate)
-            ? isClosure(candidate, context)
-              ? enterClosure(candidate, value, path, context, frame, (inner, innerFrame, leave) =>
-                  inlineBody(
-                    expression,
-                    candidate,
-                    expression.arguments,
-                    candidateReceiver,
-                    inner,
+      return dispatched.reduceRight(
+        (otherwise, candidate) => {
+          const candidateValue = getCandidateValue(candidate, context);
+          if (candidateValue === undefined || frame.inlining.has(candidate)) return otherwise;
+          const candidateReceiver = ts.isArrowFunction(candidate)
+            ? undefined
+            : { value: receiver, method: candidate };
+          return ifThenElse(
+            apply("=", [
+              isClosure(candidate, context) ||
+              isNestedFunction(candidate, context) ||
+              isHeapFunction(candidate, context)
+                ? useJavaScript(
+                    "CodeOf",
+                    [getHeap(path.scope, expression, context), value],
                     context,
-                    innerFrame,
-                    (after, result) => continueWith(leave(after), result),
-                  ),
-                )
-              : inlineBody(
-                  expression,
-                  candidate,
-                  expression.arguments,
-                  candidateReceiver,
-                  path,
-                  context,
-                  frame,
-                  continueWith,
-                )
-            : isAnyGenerator(candidate)
-              ? makeGenerator(
-                  expression,
-                  candidate,
-                  expression.arguments,
-                  candidateReceiver,
-                  path,
-                  context,
-                  frame,
-                  continueWith,
-                )
-              : isClosure(candidate, context)
+                  )
+                : value,
+              candidateValue,
+            ]),
+            !isAnyGenerator(candidate) && !isAsyncFunction(candidate)
+              ? isClosure(candidate, context)
                 ? enterClosure(candidate, value, path, context, frame, (inner, innerFrame, leave) =>
-                    translateAsyncCall(
+                    inlineBody(
                       expression,
                       candidate,
+                      expression.arguments,
                       candidateReceiver,
                       inner,
                       context,
                       innerFrame,
-                      (after, result) => continueWith(leave(after), result),
+                      (after, result) => continueCall(leave(after), result),
                     ),
                   )
-                : translateAsyncCall(
+                : inlineBody(
                     expression,
                     candidate,
+                    expression.arguments,
                     candidateReceiver,
                     path,
                     context,
                     frame,
-                    continueWith,
-                  ),
-          otherwise,
-        );
-      },
-      // Calling a value that isn't a function throws a TypeError, as does calling a built-in method
-      // that needs a receiver without one, or RegExp.prototype.exec or test on one that isn't a
-      // RegExp.
-      ifThenElse(
-        apply("\\/", [
-          apply("\\in", [value, set([getUndefined(context), identifier("Null")])]),
-          ...(context.modelValues.size === 0
-            ? [
-                apply("/\\", [
-                  apply("\\/", [
-                    useJavaScript("IsHeap", [value], context),
-                    apply("~", [useJavaScript("IsRef", [value], context)]),
-                  ]),
-                  apply("#", [
-                    useJavaScript(
-                      "TypeOfIn",
-                      [getHeap(path.scope, expression, context), value],
+                    continueCall,
+                  )
+              : isAnyGenerator(candidate)
+                ? makeGenerator(
+                    expression,
+                    candidate,
+                    expression.arguments,
+                    candidateReceiver,
+                    path,
+                    context,
+                    frame,
+                    continueCall,
+                  )
+                : isClosure(candidate, context)
+                  ? enterClosure(
+                      candidate,
+                      value,
+                      path,
                       context,
-                    ),
-                    string("function"),
-                  ]),
-                ]),
-              ]
-            : []),
-        ]),
-        throwTypeError(path, expression, context, frame),
-        !ts.isPropertyAccessExpression(target) || expression.arguments.some(ts.isSpreadElement)
-          ? ts.isIdentifier(skipCasts(target)) && expression.arguments.every(isInertValue)
-            ? ifThenElse(
-                useJavaScript("ThrowsWithoutReceiver", [value], context),
-                throwTypeError(path, expression, context, frame),
-                ifThenElse(
-                  useJavaScript("HasReceiverlessValue", [value], context),
-                  continueWith(path, useJavaScript("ReceiverlessValue", [value], context)),
-                  unknown,
-                ),
-              )
-            : unknown
-          : target.name.text === "next" && expression.arguments.length === 0
-            ? ifThenElse(
-                useJavaScript("IsBuiltInIteratorNext", [value], context),
-                translateBuiltInNext(path, value, receiver),
-                unknown,
-              )
-            : ITERATOR_CALLBACK_METHODS.has(target.name.text)
-              ? ifThenElse(
-                  apply("=", [
-                    value,
-                    translateBuiltInValue(
-                      `Iterator.prototype.${target.name.text}`,
+                      frame,
+                      (inner, innerFrame, leave) =>
+                        translateAsyncCall(
+                          expression,
+                          candidate,
+                          candidateReceiver,
+                          inner,
+                          context,
+                          innerFrame,
+                          (after, result) => continueCall(leave(after), result),
+                        ),
+                    )
+                  : translateAsyncCall(
                       expression,
+                      candidate,
+                      candidateReceiver,
+                      path,
                       context,
+                      frame,
+                      continueCall,
                     ),
+            otherwise,
+          );
+        },
+        // Calling a value that isn't a function throws a TypeError, as does calling a built-in method
+        // that needs a receiver without one, or RegExp.prototype.exec or test on one that isn't a
+        // RegExp.
+        ifThenElse(
+          apply("\\/", [
+            apply("\\in", [value, set([getUndefined(context), identifier("Null")])]),
+            ...(context.modelValues.size === 0
+              ? [
+                  apply("/\\", [
+                    apply("\\/", [
+                      useJavaScript("IsHeap", [value], context),
+                      apply("~", [useJavaScript("IsRef", [value], context)]),
+                    ]),
+                    apply("#", [
+                      useJavaScript(
+                        "TypeOfIn",
+                        [getHeap(path.scope, expression, context), value],
+                        context,
+                      ),
+                      string("function"),
+                    ]),
                   ]),
-                  rejectCallback(target.name.text),
+                ]
+              : []),
+          ]),
+          throwTypeError(path, expression, context, frame),
+          !ts.isPropertyAccessExpression(target) || expression.arguments.some(ts.isSpreadElement)
+            ? ts.isIdentifier(skipCasts(target)) && expression.arguments.every(isInertValue)
+              ? ifThenElse(
+                  useJavaScript("ThrowsWithoutReceiver", [value], context),
+                  throwTypeError(path, expression, context, frame),
+                  ifThenElse(
+                    useJavaScript("HasReceiverlessValue", [value], context),
+                    continueCall(path, useJavaScript("ReceiverlessValue", [value], context)),
+                    unknown,
+                  ),
+                )
+              : unknown
+            : target.name.text === "next" && expression.arguments.length === 0
+              ? ifThenElse(
+                  useJavaScript("IsBuiltInIteratorNext", [value], context),
+                  translateBuiltInNext(path, value, receiver),
                   unknown,
                 )
-              : OWN_CHECKS.has(target.name.text) &&
-                  expression.arguments.length === 1 &&
-                  keyNode !== undefined &&
-                  isInertValue(keyNode) &&
-                  isEvery(context.checker.getTypeAtLocation(keyNode), ts.TypeFlags.StringLike)
+              : ITERATOR_CALLBACK_METHODS.has(target.name.text)
                 ? ifThenElse(
                     apply("=", [
                       value,
                       translateBuiltInValue(
-                        `Object.prototype.${target.name.text}`,
+                        `Iterator.prototype.${target.name.text}`,
                         expression,
                         context,
                       ),
                     ]),
-                    continueWith(
-                      path,
-                      useJavaScript(
-                        target.name.text === "hasOwnProperty" ? "HasOwn" : "IsEnumerableOwn",
-                        [
-                          getHeap(path.scope, expression, context),
-                          receiver,
-                          translateExpression(keyNode, path.scope, context),
-                        ],
-                        context,
-                      ),
-                    ),
+                    rejectCallback(target.name.text),
                     unknown,
                   )
-                : accessor === null || keyNode === undefined
-                  ? unknown
-                  : ifThenElse(
+                : OWN_CHECKS.has(target.name.text) &&
+                    expression.arguments.length === 1 &&
+                    keyNode !== undefined &&
+                    isInertValue(keyNode) &&
+                    isEvery(context.checker.getTypeAtLocation(keyNode), ts.TypeFlags.StringLike)
+                  ? ifThenElse(
                       apply("=", [
                         value,
                         translateBuiltInValue(
@@ -4608,11 +4599,41 @@ const translateCallStatementBody = (
                           context,
                         ),
                       ]),
-                      translateAccessor(accessor[1], accessor[2] === "G" ? "get" : "set", keyNode),
+                      continueCall(
+                        path,
+                        useJavaScript(
+                          target.name.text === "hasOwnProperty" ? "HasOwn" : "IsEnumerableOwn",
+                          [
+                            getHeap(path.scope, expression, context),
+                            receiver,
+                            translateExpression(keyNode, path.scope, context),
+                          ],
+                          context,
+                        ),
+                      ),
                       unknown,
-                    ),
-      ),
-    );
+                    )
+                  : accessor === null || keyNode === undefined
+                    ? unknown
+                    : ifThenElse(
+                        apply("=", [
+                          value,
+                          translateBuiltInValue(
+                            `Object.prototype.${target.name.text}`,
+                            expression,
+                            context,
+                          ),
+                        ]),
+                        translateAccessor(
+                          accessor[1],
+                          accessor[2] === "G" ? "get" : "set",
+                          keyNode,
+                        ),
+                        unknown,
+                      ),
+        ),
+      );
+    });
   }
   // An array method whose callback changes nothing, or one that only reads the array, evaluates as
   // an expression, though the statement drops its value.
@@ -6690,12 +6711,22 @@ const withBuiltInIterator = (
     ...current,
     generators: new Map([...current.generators, [name, getSuspension(resume)]]),
   });
+  // A throw leaves the iterator where it was, without its suspension, so that a later step makes it
+  // again from where the heap says it is, and the code after it holds the generators it held before.
+  const drop = (current: Path): Path => {
+    const generators = new Map([...current.generators].filter((entry) => entry[0] !== name));
+    const isAsBefore =
+      generators.size === path.generators.size &&
+      [...generators].every((entry) => path.generators.get(entry[0]) === entry[1]);
+    return { ...current, generators: isAsBefore ? path.generators : generators };
+  };
   const getSuspension = (resume: Suspension["resume"]): Suspension => ({
     ref,
     generator: undefined,
     resume,
     isStarted: true,
     isGuarded: true,
+    isRestartable: true,
     abort: (current, method) =>
       method === "return"
         ? ifThenElse(
@@ -6726,8 +6757,10 @@ const withBuiltInIterator = (
     isAsync: false,
     queue: [],
   });
+  // A step throws the TypeError of a typed array out of bounds where the step before it didn't, so
+  // only where something besides the step before it changed the heap.
   const stepFrom =
-    (count: number) =>
+    (count: number, stepped?: Expression) =>
     (resumer: Path): Formula => {
       if (count >= BUILT_IN_ITERATOR_STEP_LIMIT) {
         return leaf(
@@ -6742,7 +6775,7 @@ const withBuiltInIterator = (
       const caller = getCaller(resumer);
       const heap = getHeap(resumer.scope, node, context);
       const stepName = context.names.getFresh("step");
-      const stepped = identifier(stepName);
+      const step = identifier(stepName);
       const heapSymbol = context.heap;
       const after =
         heapSymbol === undefined
@@ -6751,23 +6784,31 @@ const withBuiltInIterator = (
               ...resumer,
               scope: {
                 ...resumer.scope,
-                bindings: new Map([
-                  ...resumer.scope.bindings,
-                  [heapSymbol, field(stepped, "heap")],
-                ]),
+                bindings: new Map([...resumer.scope.bindings, [heapSymbol, field(step, "heap")]]),
               },
             };
+      const continued = ifThenElse(
+        field(step, "isDone"),
+        caller.step(leave(after, undefined), undefined, true),
+        caller.step(
+          leave(after, stepFrom(count + 1, field(step, "heap"))),
+          field(step, "value"),
+          false,
+        ),
+      );
       return ifThenElse(
         useJavaScript("HoldsIteratorNext", [heap, ref], context),
         bindOnce(
           resumer,
           stepName,
           useJavaScript("BuiltInIteratorStep", [heap, ref], context),
-          ifThenElse(
-            field(stepped, "isDone"),
-            caller.step(leave(after, undefined), undefined, true),
-            caller.step(leave(after, stepFrom(count + 1)), field(stepped, "value"), false),
-          ),
+          stepped !== undefined && isSameExpression(heap, stepped)
+            ? continued
+            : ifThenElse(
+                field(step, "isThrown"),
+                throwTypeError(drop(resumer), node, context, caller),
+                continued,
+              ),
         ),
         leaf(
           apply("Assert", [
@@ -9418,26 +9459,34 @@ const translateShortLoopCall = (
                   ),
             ),
           )
-        : ifThenElse(
-            apply("=", [length, number(0)]),
-            getSeeded(current, getStart(undefined)),
-            runToPrimitive(
-              expression,
-              identifier(fromName),
-              "number",
-              current,
-              context,
-              frame,
-              (after, primitive) =>
-                ifThenElse(
-                  junction("Or", [
-                    useJavaScript("IsSymbol", [primitive], context),
-                    useJavaScript("IsBigInt", [primitive], context),
-                  ]),
-                  throwTypeError(after, expression, context, frame),
-                  getSeeded(after, getStart(useJavaScript("ToNumber", [primitive], context))),
+        : // The search runs once, from the start that each way to it gives.
+          translateJoined(
+            expression,
+            current,
+            context,
+            (after, start) => getSeeded(after, start ?? getStart(undefined)),
+            (next) =>
+              ifThenElse(
+                apply("=", [length, number(0)]),
+                next(current, getStart(undefined)),
+                runToPrimitive(
+                  expression,
+                  identifier(fromName),
+                  "number",
+                  current,
+                  context,
+                  frame,
+                  (after, primitive) =>
+                    ifThenElse(
+                      junction("Or", [
+                        useJavaScript("IsSymbol", [primitive], context),
+                        useJavaScript("IsBigInt", [primitive], context),
+                      ]),
+                      throwTypeError(after, expression, context, frame),
+                      next(after, getStart(useJavaScript("ToNumber", [primitive], context))),
+                    ),
                 ),
-            ),
+              ),
           );
   // The value that a search looks for and its fromIndex, which evaluate before the method runs.
   const searchedDefinition = define(
@@ -13020,7 +13069,7 @@ export const throwError = (
   path: Path,
   node: ts.Node,
   context: Context,
-  frame: Frame,
+  frame: Pick<Frame, "throwTo">,
 ) => {
   const uncaught = apply("Assert", [boolean(false), string(name)]);
   return frame.throwTo === undefined
@@ -13028,8 +13077,12 @@ export const throwError = (
     : frame.throwTo(path, { value: translateEngineError(name, node, context), uncaught });
 };
 
-export const throwTypeError = (path: Path, node: ts.Node, context: Context, frame: Frame) =>
-  throwError("TypeError", path, node, context, frame);
+export const throwTypeError = (
+  path: Path,
+  node: ts.Node,
+  context: Context,
+  frame: Pick<Frame, "throwTo">,
+) => throwError("TypeError", path, node, context, frame);
 
 // Names a value after a statement changes it, so that later statements read the name rather than
 // repeat what made the value.
@@ -14006,18 +14059,18 @@ const changesObjects = (node: ts.Node, path: Path, context: Context) =>
 // code after a join, outside the branches, can still name each one.
 const isCompletedFrom = (generators: Path["generators"], before: Path["generators"]) =>
   generators === before ||
-  (generators.size === before.size &&
-    [...generators].every((entry) => {
-      const previous = before.get(entry[0]);
-      return (
-        previous !== undefined &&
-        (entry[1] === previous ||
-          (entry[1].ref === previous.ref &&
-            entry[1].resume === undefined &&
-            entry[1].caller === undefined &&
-            entry[1].queue.length === 0))
-      );
-    }));
+  ([...generators].every((entry) => {
+    const previous = before.get(entry[0]);
+    return (
+      previous !== undefined &&
+      (entry[1] === previous ||
+        (entry[1].ref === previous.ref &&
+          entry[1].resume === undefined &&
+          entry[1].caller === undefined &&
+          entry[1].queue.length === 0))
+    );
+  }) &&
+    [...before].every((entry) => generators.has(entry[0]) || entry[1].isRestartable === true));
 
 export const translateJoined = (
   node: ts.Node,
@@ -14139,12 +14192,36 @@ export const translateJoined = (
       ]),
     );
   });
+  // Each exit leaves the generators as the first does, which may have completed them. Where they
+  // differ only in the done array's or string's iterators that the statement made, the code after
+  // it holds none of those, as a later step makes their suspensions again.
+  const getSettled = (generators: Path["generators"]) =>
+    new Map(
+      [...generators].filter(
+        (entry) =>
+          path.generators.has(entry[0]) ||
+          entry[1].isRestartable !== true ||
+          entry[1].resume !== undefined,
+      ),
+    );
+  const isSameEntries = (left: Path["generators"], right: Path["generators"]) =>
+    left.size === right.size && [...left].every((entry) => right.get(entry[0]) === entry[1]);
+  const pruned = exits.every((exit) => exit.path.generators === exits[0].path.generators)
+    ? undefined
+    : getSettled(exits[0].path.generators);
+  const settled =
+    pruned === undefined
+      ? exits[0]?.path.generators
+      : isSameEntries(pruned, path.generators)
+        ? path.generators
+        : pruned;
   const isJoinable = exits.every(
     (exit) =>
       changed.every((symbol) => exit.path.scope.bindings.has(symbol)) &&
-      // Each exit leaves the generators as the first does, which may have completed them.
-      exit.path.generators === exits[0].path.generators &&
-      isCompletedFrom(exit.path.generators, path.generators) &&
+      settled !== undefined &&
+      (exit.path.generators === settled ||
+        isSameEntries(getSettled(exit.path.generators), settled)) &&
+      isCompletedFrom(settled, path.generators) &&
       exit.path.tasks === path.tasks &&
       exit.path.disposal === path.disposal &&
       // Each exit initialized the this of the same constructors.
@@ -14177,7 +14254,7 @@ export const translateJoined = (
   const rest = continueWith(
     {
       ...path,
-      generators: exits[0].path.generators,
+      generators: settled ?? exits[0].path.generators,
       unboundThis: exits[0].path.unboundThis,
       scope: {
         ...path.scope,

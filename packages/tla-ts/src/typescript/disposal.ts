@@ -297,8 +297,7 @@ export const addResource = (
       getDisposingFrame(disposal, context),
     );
   };
-  return ifThenElse(
-    isNullish(value, context),
+  const addNullish = () =>
     isAsync
       ? add(path, {
           site,
@@ -310,9 +309,18 @@ export const addResource = (
           isWrapped: false,
           isCallback: false,
         })
-      : continueWith(path, frame),
-    readResource(site, value, isAsync, path, context, frame, add),
-  );
+      : continueWith(path, frame);
+  const addObject = () => readResource(site, value, isAsync, path, context, frame, add);
+  // A declaration of null or of an object literal adds what it adds without the branch for the
+  // other kind of value, which would copy the rest of the block.
+  const initializer =
+    ts.isVariableDeclaration(site) && site.initializer !== undefined
+      ? skipCasts(site.initializer)
+      : undefined;
+  if (initializer?.kind === ts.SyntaxKind.NullKeyword) return addNullish();
+  return initializer !== undefined && ts.isObjectLiteralExpression(initializer)
+    ? addObject()
+    : ifThenElse(isNullish(value, context), addNullish(), addObject());
 };
 
 export const isAwaitUsing = (list: ts.VariableDeclarationList) =>
