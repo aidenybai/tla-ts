@@ -1538,6 +1538,44 @@ const ignoreSoundErrors = () => {
         ).length
     );
   };
+  // A call of the call method of an array's method that REDUCING_METHODS lists, with a this value
+  // and a reducer that the method's signature with no initial value takes. TypeScript checks call
+  // against the method's last signature alone, which takes an initial value.
+  const isShortReducingCall = (node: ts.Node) => {
+    const call = ts.findAncestor(node, ts.isCallExpression);
+    const method =
+      call !== undefined &&
+      ts.isPropertyAccessExpression(call.expression) &&
+      call.expression.name.text === "call" &&
+      ts.isPropertyAccessExpression(call.expression.expression) &&
+      REDUCING_METHODS.has(call.expression.expression.name.text)
+        ? call.expression.expression
+        : undefined;
+    const reducer = call?.arguments[1];
+    return (
+      method !== undefined &&
+      reducer !== undefined &&
+      call?.arguments.length === 2 &&
+      !call.arguments.some(ts.isSpreadElement) &&
+      checker
+        .getSignaturesOfType(checker.getTypeAtLocation(method), ts.SignatureKind.Call)
+        .some((signature) => {
+          const declaration = signature.getDeclaration();
+          const parameter = signature.parameters[0];
+          return (
+            declaration.getSourceFile().isDeclarationFile &&
+            ts.isInterfaceDeclaration(declaration.parent) &&
+            declaration.parent.name.text === "Array" &&
+            signature.parameters.length === 1 &&
+            parameter !== undefined &&
+            checker.isTypeAssignableTo(
+              checker.getTypeAtLocation(reducer),
+              checker.getTypeOfSymbol(parameter),
+            )
+          );
+        })
+    );
+  };
   const isEveryType = (node: ts.Node, flags: ts.TypeFlags) => {
     const type = checker.getTypeAtLocation(node);
     return (type.isUnion() ? type.types : [type]).every((member) => (member.flags & flags) !== 0);
@@ -1861,7 +1899,8 @@ const ignoreSoundErrors = () => {
   const isSound = (diagnostic: ts.Diagnostic) => {
     const node = getNode(diagnostic.start ?? 0);
     return (
-      (diagnostic.code === ARGUMENT_COUNT_ERROR && isShortBuiltInCall(node)) ||
+      (diagnostic.code === ARGUMENT_COUNT_ERROR &&
+        (isShortBuiltInCall(node) || isShortReducingCall(node))) ||
       (SHORT_CALL_ERRORS.has(diagnostic.code) && isShortProtocolCall(node)) ||
       (diagnostic.code === MISSING_PROPERTY_ERROR && isPatternRead(node)) ||
       ((diagnostic.code === NOT_ITERABLE_ERROR || NULLABLE_ERRORS.has(diagnostic.code)) &&

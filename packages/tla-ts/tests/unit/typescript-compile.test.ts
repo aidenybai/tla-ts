@@ -508,6 +508,48 @@ describe("top-level statements", () => {
     });
   });
 
+  describe("runs a reduce's call with no initial value on an array-like object", () => {
+    const source = `
+      const seen: number[] = [];
+      function same(actual: unknown, expected: unknown, label: string) {
+        if (!Object.is(actual, expected)) throw new Error(label);
+      }
+      const items = { 0: 1, 2: 3, length: 3 };
+      function add(previous: number, current: number, index: number) {
+        seen.push(index);
+        return previous + current;
+      }
+      // @ts-ignore
+      same(Array.prototype.reduce.call(items, add), 4, "reduce");
+      // @ts-ignore
+      same(Array.prototype.reduceRight.call(items, add), 4, "reduceRight");
+      let isThrown = false;
+      try {
+        // @ts-ignore
+        Array.prototype.reduce.call({ length: 0 }, add);
+      } catch (error) {
+        isThrown = error instanceof TypeError;
+      }
+      same(isThrown, true, "empty");
+      same(seen.join(), "2,0", "seen");
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(source)).failure).toBeUndefined();
+    });
+
+    it.each([
+      ["reduce", '4, "reduce"', '1, "reduce"'],
+      ["reduceRight", '4, "reduceRight"', '3, "reduceRight"'],
+      ["empty", 'true, "empty"', 'false, "empty"'],
+      ["seen", '"2,0"', '"0,2"'],
+    ])("rejects a wrong %s", async (label, expected, wrong) => {
+      expect((await checkModel(source.replace(expected, wrong))).failure?.message).toContain(
+        `"${label}"`,
+      );
+    });
+  });
+
   describe("searches an array for any value from a primitive index that ToNumber converts", () => {
     const source = `
       function same(actual: unknown, expected: unknown, label: string) {
