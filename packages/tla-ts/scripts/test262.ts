@@ -1657,7 +1657,8 @@ const ignoreSoundErrors = () => {
   // that the test declares, whose type TypeScript infers from the pattern's defaults alone. The
   // call passes the value whatever its type, and tla-ts destructures it as JavaScript does. An
   // array pattern takes only an array literal, since tla-ts reads another value's iterator only
-  // where its type says it has one.
+  // where its type says it has one. A parameter whose type is the loosest its pattern reads takes
+  // null, where a nested pattern throws the TypeError that tla-ts throws too.
   const isPatternArgument = (node: ts.Node) => {
     const call = ts.findAncestor(
       node,
@@ -1677,7 +1678,9 @@ const ignoreSoundErrors = () => {
       position !== -1 &&
       parameter !== undefined &&
       parameter.getSourceFile() === sourceFile &&
-      parameter.type === undefined &&
+      (parameter.type === undefined ||
+        (node.kind === ts.SyntaxKind.NullKeyword &&
+          parameter.type.getText() === getPatternType(parameter.name))) &&
       parameter.dotDotDotToken === undefined &&
       (ts.isObjectBindingPattern(parameter.name) ||
         (ts.isArrayBindingPattern(parameter.name) &&
