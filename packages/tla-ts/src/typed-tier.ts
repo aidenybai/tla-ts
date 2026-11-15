@@ -5150,11 +5150,13 @@ const getSignatureCode = (
 
 interface CompiledSpec {
   next: (state: Plain[], emit: (successor: Plain[]) => void) => void;
-  invariants: ((state: Plain[]) => boolean)[];
+  // A state predicate holds of a successor that has its parent's values of the variables it reads,
+  // since it held of the parent.
+  invariants: ((state: Plain[], parent?: Plain[]) => boolean)[];
   actionProperties: ((state: Plain[], next: Plain[]) => boolean)[];
   // Whether each atom of the temporal properties holds of a state, or of a step to next.
   liveAtoms: ((state: Plain[], next: Plain[]) => boolean)[];
-  constraints: ((state: Plain[]) => boolean)[];
+  constraints: ((state: Plain[], parent?: Plain[]) => boolean)[];
   encode: (state: Plain[], arena: Arena) => void;
   // Reads the state at a cursor, and moves the cursor past it.
   decode: (cursor: Cursor) => Plain[];
@@ -5247,7 +5249,20 @@ const compileSpec = (
   program.variableTypes.forEach(closeType);
   const parameters = program.variableTypes.map((_, index) => `v${index}`).join(", ");
   const unpack = `const [${parameters}] = state;`;
-  const predicate = (compiled: Compiled) => `(state) => { ${unpack} return ${compiled.emit()}; }`;
+  // A state predicate reads the state through the variables it unpacks, so it holds of a successor
+  // with its parent's values of those.
+  const getStatePredicate = (compiled: Compiled) => {
+    const body = compiled.emit();
+    const reads = new Set(
+      [...body.matchAll(/\bv(\d+)\b/g)]
+        .map((match) => Number(match[1]))
+        .filter((index) => index < program.variableTypes.length),
+    );
+    const guard = /\b(state|parent)\b/.test(body)
+      ? ""
+      : `if (parent !== undefined${[...reads].map((index) => ` && state[${index}] === parent[${index}]`).join("")}) return true;`;
+    return `(state, parent) => { ${guard} ${unpack} return ${body}; }`;
+  };
   const codec: Codec = {
     plains: program.plains,
     functions: [],
@@ -5341,8 +5356,8 @@ const compileSpec = (
       n = W.start + m;`;
   // Emitting adds the comparers the code calls, so all of it is emitted before they are joined.
   const nextCode = next();
-  const invariantCodes = invariants.map(predicate);
-  const constraintCodes = constraints.map(predicate);
+  const invariantCodes = invariants.map(getStatePredicate);
+  const constraintCodes = constraints.map(getStatePredicate);
   const liveAtomCodes = liveAtoms.map(
     (atom) =>
       `(state, next) => { ${unpack} const [${successor.join(", ")}] = next; return ${atom()}; }`,
@@ -5566,10 +5581,10 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
   const keyHash = new Int32Array(2);
   const statistics = { generated: 0, distinct: 0, depth: 0 };
   const outDegrees = Array.from({ length: OUT_DEGREE_BUCKETS }, () => 0);
-  const isInModel = (state: Plain[]) =>
-    compiled.constraints.every((constraint) => constraint(state));
-  const checkInvariants = (state: Plain[]) => {
-    for (const invariant of compiled.invariants) if (!invariant(state)) deopt();
+  const isInModel = (state: Plain[], parent?: Plain[]) =>
+    compiled.constraints.every((constraint) => constraint(state, parent));
+  const checkInvariants = (state: Plain[], parent?: Plain[]) => {
+    for (const invariant of compiled.invariants) if (!invariant(state, parent)) deopt();
   };
   const grow = () => {
     const old = table.slots;
@@ -5635,10 +5650,10 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
     while (cursor.position < end) addFingerprint(compiled.decode(cursor));
   };
   // Returns the index of a state in the model, or -1 for a state outside it.
-  const visit = (state: Plain[]) => {
+  const visit = (state: Plain[], parent?: Plain[]) => {
     statistics.generated++;
-    if (!isInModel(state)) {
-      checkInvariants(state);
+    if (!isInModel(state, parent)) {
+      checkInvariants(state, parent);
       return -1;
     }
     writeKey(state);
@@ -5649,7 +5664,7 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
       compiled.encode(state, keys);
     }
     if (check.isDeadlockChecked) pushWord(parents, expanding.index);
-    checkInvariants(state);
+    checkInvariants(state, parent);
     return statistics.distinct - 1;
   };
   const readState = () => {
@@ -5751,7 +5766,7 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
     }
     expansion.successors++;
     const distinct = statistics.distinct;
-    const index = visit(successor);
+    const index = visit(successor, expanding.state);
     if (live && index !== -1) liveSuccessors.push({ index, state: successor });
     if (statistics.distinct > distinct) {
       expansion.newStates++;
