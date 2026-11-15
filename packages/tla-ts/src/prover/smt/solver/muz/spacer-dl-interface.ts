@@ -1,7 +1,8 @@
 // Ported from Z3 (src/muz/spacer/spacer_dl_interface.cpp), MIT license, see z3-license.txt.
 import { SmtUnsupportedError } from "../../../../errors";
 import { L_FALSE } from "../lbool";
-import type { DatalogContext, Engine } from "./dl-context";
+import { ProtoModel } from "../proto-model";
+import type { DatalogContext, Engine, ModelConverter } from "./dl-context";
 import { MkSlice } from "./dl-mk-slice";
 import { RuleSet } from "./dl-rule-set";
 import { applyDefaultTransformation, transformRules } from "./dl-rule-transformer";
@@ -10,6 +11,9 @@ import { SpacerContext } from "./spacer-context";
 // Each query gets a fresh spacer context, where Z3 keeps the lemmas of a previous query whose
 // rules subsume the new ones.
 export class SpacerDlInterface implements Engine {
+  private spacer: SpacerContext | undefined;
+  private modelConverters: readonly ModelConverter[] = [];
+
   constructor(private context: DatalogContext) {}
 
   query(query: number) {
@@ -31,10 +35,19 @@ export class SpacerDlInterface implements Engine {
     context.reopen();
     context.replaceRules(oldRules);
     context.manager.limit.checkpoint();
-    const spacer = new SpacerContext(context, params, context.manager);
+    const spacer = new SpacerContext(context);
+    this.spacer = spacer;
+    this.modelConverters = context.modelConverters ?? [];
     spacer.setQuery(queryPred);
     spacer.updateRules(spacerRules);
     if (spacerRules.rules.length === 0) return L_FALSE;
     return spacer.solve(params.getUint("spacer.min_level", 0));
+  }
+
+  getModel() {
+    return this.modelConverters.reduceRight(
+      (model, convert) => convert(model),
+      this.spacer?.getModel() ?? new ProtoModel(this.context.manager),
+    );
   }
 }

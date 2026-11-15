@@ -116,7 +116,7 @@ export abstract class ThSolver {
   }
   addValue(_node: Enode, _model: ProtoModel, _values: (number | undefined)[]) {}
   addDep(node: Enode, deps: Dependencies) {
-    deps.set(node, deps.get(node) ?? null);
+    deps.set(node, null);
     return true;
   }
   includeFuncInterp(_decl: number) {

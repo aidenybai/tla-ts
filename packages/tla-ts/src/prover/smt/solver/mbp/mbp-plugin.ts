@@ -10,6 +10,7 @@ import {
   OP_EQ,
   OP_IMPLIES,
   OP_ITE,
+  OP_NUM,
   OP_OR,
   OP_XOR,
   SORT_BOOL,
@@ -58,6 +59,14 @@ export class MbpContext {
 
 const isIff = (manager: AstManager, expr: number) =>
   isAppOf(manager, expr, OP_EQ) && manager.sorts[manager.getArg(expr, 0)] === SORT_BOOL;
+
+export const getBinaryArgs = (manager: AstManager, expr: number, op: number) =>
+  isAppOf(manager, expr, op) && manager.getNumArgs(expr) === 2
+    ? [manager.getArg(expr, 0), manager.getArg(expr, 1)]
+    : undefined;
+
+export const getNumeral = (manager: AstManager, expr: number) =>
+  isAppOf(manager, expr, OP_NUM) ? manager.getRationalValue(expr) : undefined;
 
 export const markRec = (manager: AstManager, visited: Set<number>, expr: number) => {
   const todo = [expr];

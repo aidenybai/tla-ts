@@ -65,6 +65,13 @@ export abstract class MaxsmtSolverBase {
     return this.context.getSolver();
   }
 
+  protected isTrueIn(model: ProtoModel, expr: number) {
+    const value = model.eval(expr, true);
+    const isTrue = value === this.manager.trueExpr;
+    this.manager.decRef(value);
+    return isTrue;
+  }
+
   protected init() {
     this.lower = Rational.zero;
     this.upper = Rational.zero;

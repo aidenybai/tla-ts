@@ -8,7 +8,6 @@ import {
   FAMILY_DATATYPE,
   FAMILY_SEQ,
   KIND_APP,
-  KIND_QUANTIFIER,
   OP_EQ,
   SORT_BOOL,
 } from "./ast";
@@ -20,23 +19,9 @@ import { applyMbpQel } from "./mbp/mbp-qel";
 import { filterRefVector } from "./mbp/mbp-term-graph";
 import type { ProtoModel } from "./proto-model";
 import { applyQel } from "./qel";
+import { hasSubterm } from "./recfun-decl-plugin";
 import { RefVector } from "./ref-vector";
 import { Rewriter, TACTIC_REWRITER_OPTIONS } from "./rewriter";
-
-const getSubterms = (manager: AstManager, roots: readonly number[]) => {
-  const visited = new Set<number>();
-  const todo = [...roots];
-  for (let expr = todo.pop(); expr !== undefined; expr = todo.pop()) {
-    if (visited.has(expr)) continue;
-    visited.add(expr);
-    if (manager.kinds[expr] === KIND_APP) manager.pushArgs(expr, todo);
-    else if (manager.kinds[expr] === KIND_QUANTIFIER) todo.push(manager.getQuantifier(expr).body);
-  }
-  return visited;
-};
-
-const isOccurring = (manager: AstManager, variable: number, expr: number) =>
-  getSubterms(manager, [expr]).has(variable);
 
 const hasSortFamily = (manager: AstManager, expr: number, families: readonly number[]) =>
   families.includes(manager.getSortFamily(manager.sorts[expr])) ||
@@ -58,7 +43,7 @@ export class Mbproj {
   apply(isForceElim: boolean, vars: RefVector, model: ProtoModel, fmls: RefVector) {
     const manager = this.manager;
     const context = new MbpContext(manager, model);
-    const isUnsupportedTh = [...getSubterms(manager, fmls.items)].some((expr) =>
+    const isUnsupportedTh = hasSubterm(manager, fmls.items, (expr) =>
       hasSortFamily(manager, expr, [FAMILY_SEQ, FAMILY_CHAR]),
     );
     if (isUnsupportedTh) this.mbp(context, isForceElim, vars, fmls);
@@ -96,7 +81,7 @@ export class Mbproj {
     const manager = this.manager;
     // The term graph's rules for arrays and datatypes, and spacer_qe_lite, are not ported.
     if (
-      [...getSubterms(manager, [formula])].some((expr) =>
+      hasSubterm(manager, [formula], (expr) =>
         hasSortFamily(manager, expr, [FAMILY_ARRAY, FAMILY_DATATYPE]),
       )
     )
@@ -117,7 +102,7 @@ export class Mbproj {
       if (
         !vars.items.includes(innerVar) &&
         !otherVars.items.includes(innerVar) &&
-        isOccurring(manager, innerVar, result)
+        hasSubterm(manager, [result], (expr) => expr === innerVar)
       )
         otherVars.push(innerVar);
     if (otherVars.size > 0) {
@@ -161,7 +146,8 @@ export class Mbproj {
       }
       const term = terms.find(
         (candidate) =>
-          context.eval(candidate, false) === value && !isOccurring(manager, innerVar, candidate),
+          context.eval(candidate, false) === value &&
+          !hasSubterm(manager, [candidate], (expr) => expr === innerVar),
       );
       if (term === undefined) {
         vars.set(kept++, innerVar);
@@ -221,13 +207,13 @@ export class Mbproj {
     filterRefVector(vars, (innerVar) => visited.has(innerVar));
     this.projectBools(context, vars, fmls);
     let isProgress = true;
-    while (isProgress && vars.size > 0 && fmls.size > 0) {
+    while (isProgress && vars.size > 0 && fmls.size > 0 && manager.limit.inc()) {
       const newVars = new RefVector(manager);
       isProgress = false;
       const remaining = [...vars.items];
       arith.project(remaining, fmls);
       filterRefVector(vars, (innerVar) => remaining.includes(innerVar));
-      while (vars.size > 0 && fmls.size > 0) {
+      while (vars.size > 0 && fmls.size > 0 && manager.limit.inc()) {
         const innerVar = vars.items[vars.size - 1];
         manager.incRef(innerVar);
         vars.pop();
@@ -236,7 +222,7 @@ export class Mbproj {
         else newVars.push(innerVar);
         manager.decRef(innerVar);
       }
-      if (!isProgress && newVars.size > 0 && fmls.size > 0 && isForceElim) {
+      if (!isProgress && newVars.size > 0 && fmls.size > 0 && isForceElim && manager.limit.inc()) {
         const innerVar = newVars.items[newVars.size - 1];
         const subst = new ExprSafeReplace(manager);
         subst.insert(innerVar, context.eval(innerVar));
@@ -251,6 +237,10 @@ export class Mbproj {
         fmls.shrink(kept);
         subst.release();
         isProgress = true;
+      }
+      if (!manager.limit.inc()) {
+        newVars.reset();
+        return;
       }
       for (const innerVar of newVars.items) vars.push(innerVar);
       newVars.reset();

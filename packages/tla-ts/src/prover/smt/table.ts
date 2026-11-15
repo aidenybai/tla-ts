@@ -130,7 +130,7 @@ export const TYPED_SYMBOLS = [
   "TIntLteq",
 ];
 
-export type AxiomArgument = number | string | AxiomArgument[];
+export type AxiomArgument = number | bigint | string | AxiomArgument[];
 
 export interface Axiom {
   name: string;
@@ -151,7 +151,8 @@ export const axiom = (
   formula,
 });
 
-export const getAxiomKey = (entry: Axiom) => `${entry.name} ${JSON.stringify(entry.args)}`;
+export const getAxiomKey = (entry: Axiom) =>
+  `${entry.name} ${JSON.stringify(entry.args, (_key, value: unknown) => (typeof value === "bigint" ? `${value}n` : value))}`;
 
 const getAxiomRank = (entry: Axiom) => {
   const constant = CONSTANT_AXIOMS.indexOf(entry.name);

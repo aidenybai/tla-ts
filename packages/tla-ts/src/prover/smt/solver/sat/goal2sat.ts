@@ -185,7 +185,7 @@ export class Goal2Sat implements SatInternalizer, EufInternalizer {
 
   private addVar(isExternal: boolean, expr: number) {
     const replayed = this.expr2varReplay?.get(expr);
-    return replayed ?? this.solver.mkVar(isExternal, true);
+    return replayed ?? this.solver.mkVar(isExternal);
   }
 
   private mkBoolVar(expr: number) {

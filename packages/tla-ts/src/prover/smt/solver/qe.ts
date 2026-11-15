@@ -31,6 +31,7 @@ import { ObjHashtable } from "./hashtable";
 import { L_TRUE, L_UNDEF } from "./lbool";
 import type { ProtoModel } from "./proto-model";
 import { ArithPlugin } from "./qe-arith-plugin";
+import { hasSubterm } from "./recfun-decl-plugin";
 import { RefVector } from "./ref-vector";
 import { Rewriter, TACTIC_REWRITER_OPTIONS } from "./rewriter";
 import { InvVarShifter, RewriterTpl, VarShifter } from "./rewriter-tpl";
@@ -1206,33 +1207,49 @@ class QuantElim {
     const result = this.eliminateExists(vars, formula, freeVars, false);
     const bound = freeVars.filter((x) => new ContainsApp(manager, x).has(result));
     if (bound.length === 0) return result;
-    return this.pin(mkExistsOver(manager, bound, result, this));
+    return this.pin(mkQuantifierOver(manager, QUANTIFIER_EXISTS, bound, result, this));
   }
 }
 
-// expr_abstract and mk_exists: binds the constants, the last one to (:var 0).
-const mkExistsOver = (
+// mk_exists and mk_forall over the constants an abstracted body had.
+export const mkQuantifierOfConsts = (
   manager: AstManager,
+  kind: number,
   vars: readonly number[],
-  formula: number,
-  quantElim: QuantElim,
-) => {
-  const replace = new ExprSafeReplace(manager);
-  vars.forEach((x, index) =>
-    replace.insert(x, quantElim.pin(manager.mkVar(vars.length - 1 - index, manager.sorts[x]))),
-  );
-  const body = quantElim.pinOwned(replace.apply(formula));
-  replace.release();
-  return manager.mkQuantifier({
-    kind: QUANTIFIER_EXISTS,
+  body: number,
+  weight: number,
+) =>
+  manager.mkQuantifier({
+    kind,
     sorts: vars.map((x) => manager.sorts[x]),
     names: vars.map((x) => manager.getDeclName(x)),
     body,
     patterns: [],
     noPatterns: [],
-    weight: 1,
+    weight,
     qid: "",
   });
+
+interface Pins {
+  pin(expr: number): number;
+  pinOwned(expr: number): number;
+}
+
+// expr_abstract and mk_quantifier: binds the constants, the last one to (:var 0).
+const mkQuantifierOver = (
+  manager: AstManager,
+  kind: number,
+  vars: readonly number[],
+  formula: number,
+  pins: Pins,
+) => {
+  const replace = new ExprSafeReplace(manager);
+  vars.forEach((x, index) =>
+    replace.insert(x, pins.pin(manager.mkVar(vars.length - 1 - index, manager.sorts[x]))),
+  );
+  const body = pins.pinOwned(replace.apply(formula));
+  replace.release();
+  return mkQuantifierOfConsts(manager, kind, vars, body, 1);
 };
 
 // The body of the quantifier over fresh constants for its variables, with a reference.
@@ -1430,22 +1447,7 @@ class SimplifyRewriter extends RewriterTpl {
       manager.incRef(result);
       return result;
     }
-    const replace = new ExprSafeReplace(manager);
-    vars.forEach((x, index) =>
-      replace.insert(x, context.pin(manager.mkVar(vars.length - 1 - index, manager.sorts[x]))),
-    );
-    const abstracted = context.pinOwned(replace.apply(result));
-    replace.release();
-    const quantifier = manager.mkQuantifier({
-      kind: data.kind,
-      sorts: vars.map((x) => manager.sorts[x]),
-      names: vars.map((x) => manager.getDeclName(x)),
-      body: abstracted,
-      patterns: [],
-      noPatterns: [],
-      weight: 1,
-      qid: "",
-    });
+    const quantifier = mkQuantifierOver(manager, data.kind, vars, result, context);
     manager.incRef(quantifier);
     return quantifier;
   }
@@ -1484,25 +1486,15 @@ export const runQe = (manager: AstManager) => (goal: Goal) => {
   }
 };
 
-const hasUnsupportedSort = (manager: AstManager, formula: number) => {
-  const visited = new Set<number>();
-  const todo = [formula];
-  for (let expr = todo.pop(); expr !== undefined; expr = todo.pop()) {
-    if (visited.has(expr)) continue;
-    visited.add(expr);
-    const family = manager.getSortFamily(manager.sorts[expr]);
-    if (family === FAMILY_ARRAY || family === FAMILY_DATATYPE) return true;
-    if (manager.kinds[expr] === KIND_APP) manager.pushArgs(expr, todo);
-    else if (manager.kinds[expr] === KIND_QUANTIFIER) {
-      const data = manager.getQuantifier(expr);
-      if (
-        data.sorts.some((sort) =>
-          [FAMILY_ARRAY, FAMILY_DATATYPE].includes(manager.getSortFamily(sort)),
-        )
-      )
-        return true;
-      todo.push(data.body);
-    }
-  }
-  return false;
-};
+const isArrayOrDatatype = (manager: AstManager, sort: number) =>
+  manager.getSortFamily(sort) === FAMILY_ARRAY || manager.getSortFamily(sort) === FAMILY_DATATYPE;
+
+const hasUnsupportedSort = (manager: AstManager, formula: number) =>
+  hasSubterm(
+    manager,
+    [formula],
+    (expr) =>
+      isArrayOrDatatype(manager, manager.sorts[expr]) ||
+      (manager.kinds[expr] === KIND_QUANTIFIER &&
+        manager.getQuantifier(expr).sorts.some((sort) => isArrayOrDatatype(manager, sort))),
+  );

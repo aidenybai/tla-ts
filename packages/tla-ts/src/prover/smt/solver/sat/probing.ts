@@ -135,26 +135,30 @@ export class Probing {
     this.big.init(solver, true);
     const numVars = solver.numVars();
     this.assigned = new Uint8Array(2 * numVars);
-    for (let index = 0; index < numVars; index++) {
-      const boolVar = (this.stoppedAt + index) % numVars;
-      if (this.counter < -this.limit) {
-        this.stoppedAt = boolVar;
-        isComplete = false;
-        break;
-      }
-      if (solver.isInconsistent) break;
-      if (solver.valueVar(boolVar) !== L_UNDEF || solver.wasEliminated(boolVar)) {
-        if (this.isCaching) {
-          this.resetCache(2 * boolVar);
-          this.resetCache(2 * boolVar + 1);
+    try {
+      for (let index = 0; index < numVars; index++) {
+        const boolVar = (this.stoppedAt + index) % numVars;
+        if (this.counter < -this.limit) {
+          this.stoppedAt = boolVar;
+          isComplete = false;
+          break;
         }
-        continue;
+        if (solver.isInconsistent) break;
+        if (solver.valueVar(boolVar) !== L_UNDEF || solver.wasEliminated(boolVar)) {
+          if (this.isCaching) {
+            this.resetCache(2 * boolVar);
+            this.resetCache(2 * boolVar + 1);
+          }
+          continue;
+        }
+        solver.checkpoint();
+        const oldCounter = this.counter;
+        const oldNumAssigned = this.numAssigned;
+        this.processCore(boolVar);
+        if (this.numAssigned > oldNumAssigned) this.counter = oldCounter;
       }
-      solver.checkpoint();
-      const oldCounter = this.counter;
-      const oldNumAssigned = this.numAssigned;
-      this.processCore(boolVar);
-      if (this.numAssigned > oldNumAssigned) this.counter = oldCounter;
+    } finally {
+      solver.isProbing = wasProbing;
     }
     if (isComplete) this.stoppedAt = 0;
     this.counter = -this.counter;
@@ -163,7 +167,6 @@ export class Probing {
     this.assignedLits.length = 0;
     this.toAssert.length = 0;
     this.cachedBins = [];
-    solver.isProbing = wasProbing;
     return isComplete;
   }
 }

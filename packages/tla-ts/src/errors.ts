@@ -28,7 +28,7 @@ export interface SyntaxFailure {
   line: number;
   column: number;
   isEnd: boolean;
-  proof?: { stop: { line: number; column: number }; exception: string };
+  proof?: { stop: { line: number; column: number }; exception: string; printed: string };
 }
 
 export interface SanyError {

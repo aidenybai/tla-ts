@@ -1,4 +1,6 @@
 // Ported from Z3 (src/ast/fpa/fpa2bv_converter.cpp), MIT license, see z3-license.txt.
+// A statement that discards its result builds a term that upstream builds and never uses, so the
+// terms after it get the ids Z3 gives them.
 import { SmtUnsupportedError } from "../../../errors";
 import {
   type AstManager,
@@ -103,14 +105,14 @@ export class Fpa2BvConverter {
       manager.decDeclRef(entry[0]);
       manager.decRef(entry[1]);
     }
+    for (const entry of this.uf2BvUf) {
+      manager.decDeclRef(entry[0]);
+      manager.decDeclRef(entry[1]);
+    }
     for (const entry of this.minMaxUfs) {
       manager.decDeclRef(entry[0]);
       manager.decRef(entry[1][0]);
       manager.decRef(entry[1][1]);
-    }
-    for (const entry of this.uf2BvUf) {
-      manager.decDeclRef(entry[0]);
-      manager.decDeclRef(entry[1]);
     }
     this.constants.clear();
     this.rmConstants.clear();
@@ -1413,10 +1415,12 @@ export class Fpa2BvConverter {
     if (manager.getOp(x) !== OP_NUM) return this.mkToFpSymbolicReal(sort, rm, x);
     const value = manager.getRationalValue(x);
     if (value.isZero()) return this.mkPzero(sort);
-    if (manager.isBvNumeral(rm))
+    if (manager.isBvNumeral(rm)) {
+      const mode = Number(manager.getBvNumeralValue(rm));
       return this.mkFpOfMpf(
-        mpfFromRational(ebits, sbits, Number(manager.getBvNumeralValue(rm)), 0n, value),
+        mpfFromRational(ebits, sbits, mode > BV_RM_TO_ZERO ? BV_RM_TO_ZERO : mode, 0n, value),
       );
+    }
     const rmNta = this.mkIsRm(rm, BV_RM_TIES_TO_AWAY);
     const rmNte = this.mkIsRm(rm, BV_RM_TIES_TO_EVEN);
     const rmTp = this.mkIsRm(rm, BV_RM_TO_POSITIVE);

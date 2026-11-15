@@ -118,6 +118,8 @@ export const pushNotOwned = (manager: AstManager, expr: number): number => {
 
 const ASSOCIATIVE_OPS = new Set([OP_AND, OP_OR, OP_XOR, OP_ADD, OP_MUL, OP_SEQ_CONCAT]);
 
+export const isAssociativeOp = (op: number) => ASSOCIATIVE_OPS.has(op) || isAssociativeBvOp(op);
+
 // Like Z3, marks only the expressions with several references, and counts an associative
 // application of n arguments as n - 1 binary ones.
 export const getNumExprs = (manager: AstManager, root: number) => {
@@ -145,7 +147,7 @@ export const getNumExprs = (manager: AstManager, root: number) => {
     }
     const op = manager.getOp(expr);
     const numArgs = manager.getNumArgs(expr);
-    count += ASSOCIATIVE_OPS.has(op) || isAssociativeBvOp(op) ? numArgs - 1 : 1;
+    count += isAssociativeOp(op) ? numArgs - 1 : 1;
     for (let index = 0; index < numArgs; index++) {
       const arg = manager.getArg(expr, index);
       if (isUnvisited(arg)) todo.push(arg);

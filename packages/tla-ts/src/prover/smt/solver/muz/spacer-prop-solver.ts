@@ -186,9 +186,7 @@ export class PropSolver {
   private random: RandomGen;
   core: number[] | undefined;
   model: { value: ProtoModel | undefined } | undefined;
-  isSubsetBasedCore = false;
   usesLevel = INFTY_LEVEL;
-  isDeltaLevel = false;
   isInLevel = false;
   currentLevel = 0;
 
@@ -225,10 +223,8 @@ export class PropSolver {
   }
 
   private assertLevelAtoms(level: number) {
-    for (let index = 0; index < this.levelPreds.length; index++) {
-      const isActive = this.isDeltaLevel ? index === level : index >= level;
-      this.context.pushBg(isActive ? this.negLevelAtoms[index] : this.posLevelAtoms[index]);
-    }
+    for (let index = 0; index < this.levelPreds.length; index++)
+      this.context.pushBg(index >= level ? this.negLevelAtoms[index] : this.posLevelAtoms[index]);
   }
 
   assertExpr(form: number, level = INFTY_LEVEL) {
@@ -324,7 +320,6 @@ export class PropSolver {
     if (context.getNumBg() > numBg) context.popBg(context.getNumBg() - numBg);
     this.core = undefined;
     this.model = undefined;
-    this.isSubsetBasedCore = false;
     return result;
   }
 

@@ -20,10 +20,11 @@ import {
   SORT_INT,
   SORT_REAL,
 } from "./ast";
-import type { Goal } from "./goal";
+import { type Dependency, type Goal, joinDependencies } from "./goal";
 import type { ProtoModel } from "./proto-model";
 import { getGcd, getLcm, Rational } from "./rational";
 import { RefVector } from "./ref-vector";
+import { UINT_MAX } from "./sat/clause";
 
 export interface FmOptions {
   isRealOnly: boolean;
@@ -44,9 +45,8 @@ interface Constraint {
   c: Rational;
   isStrict: boolean;
   isDead: boolean;
+  dependency: Dependency | undefined;
 }
-
-const UINT_MAX = 4294967295;
 
 class ConstraintSet {
   private id2pos: number[] = [];
@@ -110,6 +110,7 @@ class Fm {
   private idGen = new IdGen();
   private counter = 0;
   private isInconsistent = false;
+  private inconsistentCore: Dependency | undefined;
   private subTodo = new ConstraintSet();
   readonly converter: { decl: number; clauses: RefVector }[] = [];
 
@@ -211,6 +212,7 @@ class Fm {
     as: Rational[],
     c: Rational,
     isStrict: boolean,
+    dependency: Dependency | undefined,
   ): Constraint {
     return {
       id: this.idGen.mk(),
@@ -220,6 +222,7 @@ class Fm {
       c,
       isStrict,
       isDead: false,
+      dependency,
     };
   }
 
@@ -397,7 +400,7 @@ class Fm {
     return isNegated ? -bvar : bvar;
   }
 
-  private addConstraint(form: number) {
+  private addConstraint(form: number, dependency: Dependency | undefined) {
     const manager = this.manager;
     const lits: number[] = [];
     const xs: number[] = [];
@@ -440,7 +443,7 @@ class Fm {
         c = c.sub(Rational.one);
       }
     }
-    this.registerConstraint(this.mkConstraint(lits, xs, as, c, isStrict));
+    this.registerConstraint(this.mkConstraint(lits, xs, as, c, isStrict, dependency));
   }
 
   private isFalse(constraint: Constraint) {
@@ -469,7 +472,7 @@ class Fm {
       this.subTodo.insert(constraint);
       return;
     }
-    this.goal.assert(this.toExpr(constraint));
+    this.goal.assert(this.toExpr(constraint), constraint.dependency);
     this.delConstraint(constraint);
   }
 
@@ -589,15 +592,17 @@ class Fm {
     }
     for (const lit of lower.lits) this.bvar2sign[Math.abs(lit)] = 0;
     if (isTautology) return undefined;
+    const newDependency = joinDependencies(lower.dependency, upper.dependency);
     if (
       newLits.length === 0 &&
       newXs.length === 0 &&
       (newC.isNegative() || (isNewStrict && newC.isZero()))
     ) {
       this.isInconsistent = true;
+      this.inconsistentCore = newDependency;
       return undefined;
     }
-    return this.mkConstraint(newLits, newXs, newAs, newC, isNewStrict);
+    return this.mkConstraint(newLits, newXs, newAs, newC, isNewStrict, newDependency);
   }
 
   private tryEliminate(variable: number) {
@@ -640,7 +645,7 @@ class Fm {
       for (const constraint of list) {
         if (constraint.isDead) continue;
         constraint.isDead = true;
-        this.goal.assert(this.toExpr(constraint));
+        this.goal.assert(this.toExpr(constraint), constraint.dependency);
       }
   }
 
@@ -650,17 +655,18 @@ class Fm {
     this.initForbiddenSet();
     const forms = new RefVector(manager);
     for (const form of goal.forms.items) forms.push(form);
+    const dependencies = goal.dependencies;
     goal.reset();
     goal.depth++;
-    for (const form of forms.items) {
+    for (const [index, form] of forms.items.entries()) {
       if (this.isInconsistent) break;
-      if (this.isOcc(form)) this.addConstraint(form);
-      else goal.assert(form);
+      if (this.isOcc(form)) this.addConstraint(form, dependencies[index]);
+      else goal.assert(form, dependencies[index]);
     }
     forms.reset();
     if (this.isInconsistent) {
       goal.reset();
-      goal.assert(manager.falseExpr);
+      goal.assert(manager.falseExpr, this.inconsistentCore);
       return false;
     }
     this.subsume();
@@ -671,7 +677,7 @@ class Fm {
       this.tryEliminate(variable);
       if (this.isInconsistent) {
         goal.reset();
-        goal.assert(manager.falseExpr);
+        goal.assert(manager.falseExpr, this.inconsistentCore);
         return false;
       }
     }

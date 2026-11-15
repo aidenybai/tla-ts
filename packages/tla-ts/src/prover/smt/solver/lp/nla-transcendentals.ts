@@ -189,27 +189,60 @@ export class NlaTranscendentals {
     return true;
   }
 
-  // exp is increasing, and so is log on positive arguments.
-  private checkMonotonicity(app: TranscendentalApp) {
-    if (app.op !== "exp" && app.op !== "log") return false;
+  // x1 < x2 implies exp(x1) < exp(x2).
+  private checkExpMonotonicity(app: TranscendentalApp) {
+    if (app.op !== "exp") return false;
     const core = this.core;
     const arg = core.val(app.arg);
-    if (app.op === "log" && !arg.isPositive()) return false;
     const val = core.val(app.val);
     for (const other of this.apps) {
-      if (other.op !== app.op || other.arg === app.arg) continue;
+      if (other.op !== "exp" || other.arg === app.arg) continue;
       const otherArg = core.val(other.arg);
-      if (app.op === "log" && !otherArg.isPositive()) continue;
       const otherVal = core.val(other.val);
-      const isLess = arg.compare(otherArg) < 0 && val.compare(otherVal) >= 0;
-      if (!isLess && !(arg.compare(otherArg) > 0 && val.compare(otherVal) <= 0)) continue;
-      const lemma = new LemmaBuilder(core);
-      if (app.op === "log")
-        lemma.addIneq(mkIneq(app.arg, KIND_LE, 0)).addIneq(mkIneq(other.arg, KIND_LE, 0));
-      lemma
-        .addIneq(mkIneq(mkTerm(app.arg, 1, other.arg, -1), isLess ? KIND_GE : KIND_LE, 0))
-        .addIneq(mkIneq(mkTerm(app.val, 1, other.val, -1), isLess ? KIND_LT : KIND_GT, 0));
-      return true;
+      if (arg.compare(otherArg) < 0 && val.compare(otherVal) >= 0) {
+        new LemmaBuilder(core)
+          .addIneq(mkIneq(mkTerm(app.arg, 1, other.arg, -1), KIND_GE, 0))
+          .addIneq(mkIneq(mkTerm(app.val, 1, other.val, -1), KIND_LT, 0));
+        return true;
+      }
+      if (arg.compare(otherArg) > 0 && val.compare(otherVal) <= 0) {
+        new LemmaBuilder(core)
+          .addIneq(mkIneq(mkTerm(app.arg, 1, other.arg, -1), KIND_LE, 0))
+          .addIneq(mkIneq(mkTerm(app.val, 1, other.val, -1), KIND_GT, 0));
+        return true;
+      }
+    }
+    return false;
+  }
+
+  // 0 < x1 < x2 implies log(x1) < log(x2).
+  private checkLogMonotonicity(app: TranscendentalApp) {
+    if (app.op !== "log") return false;
+    const core = this.core;
+    const arg = core.val(app.arg);
+    if (!arg.isPositive()) return false;
+    const val = core.val(app.val);
+    for (const other of this.apps) {
+      if (other.op !== "log" || other.arg === app.arg) continue;
+      const otherArg = core.val(other.arg);
+      if (!otherArg.isPositive()) continue;
+      const otherVal = core.val(other.val);
+      if (arg.compare(otherArg) < 0 && val.compare(otherVal) >= 0) {
+        new LemmaBuilder(core)
+          .addIneq(mkIneq(app.arg, KIND_LE, 0))
+          .addIneq(mkIneq(other.arg, KIND_LE, 0))
+          .addIneq(mkIneq(mkTerm(app.arg, 1, other.arg, -1), KIND_GE, 0))
+          .addIneq(mkIneq(mkTerm(app.val, 1, other.val, -1), KIND_LT, 0));
+        return true;
+      }
+      if (arg.compare(otherArg) > 0 && val.compare(otherVal) <= 0) {
+        new LemmaBuilder(core)
+          .addIneq(mkIneq(app.arg, KIND_LE, 0))
+          .addIneq(mkIneq(other.arg, KIND_LE, 0))
+          .addIneq(mkIneq(mkTerm(app.arg, 1, other.arg, -1), KIND_LE, 0))
+          .addIneq(mkIneq(mkTerm(app.val, 1, other.val, -1), KIND_GT, 0));
+        return true;
+      }
     }
     return false;
   }
@@ -221,9 +254,9 @@ export class NlaTranscendentals {
       this.checkLinearMajorant(app) ||
       this.checkSignOnPiRange(app) ||
       this.checkExpLowerBound(app) ||
-      (app.op === "exp" && this.checkMonotonicity(app)) ||
+      this.checkExpMonotonicity(app) ||
       this.checkLogUpperBound(app) ||
-      (app.op === "log" && this.checkMonotonicity(app))
+      this.checkLogMonotonicity(app)
     )
       return true;
     const arg = this.core.val(app.arg).toDouble();

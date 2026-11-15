@@ -24,7 +24,13 @@ class BlastTermIte extends RewriterTpl {
   reduceApp(decl: number, args: number[], sort: number): number | Rewrite {
     const manager = this.manager;
     if (decl === OP_ITE) return -1;
-    if (this.initTermSize > 0 && this.maxInflation * this.initTermSize < this.numFresh) return -1;
+    // The product wraps as Z3's unsigned one does.
+    if (
+      this.maxInflation < 0xffffffff &&
+      this.initTermSize > 0 &&
+      Math.imul(this.maxInflation, this.initTermSize) >>> 0 < this.numFresh
+    )
+      return -1;
     for (let index = 0; index < args.length; index++) {
       const arg = args[index];
       if (manager.sorts[arg] === SORT_BOOL || manager.getOp(arg) !== OP_ITE) continue;

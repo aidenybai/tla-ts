@@ -1,6 +1,5 @@
 // Ported from Z3 (src/sat/smt/q_clause.h, src/sat/smt/q_eval.cpp, src/sat/smt/q_queue.cpp,
-// src/sat/smt/q_ematch.cpp, src/smt/smt_quantifier_stat.h, src/util/dlist.h), MIT license, see
-// z3-license.txt.
+// src/sat/smt/q_ematch.cpp, src/util/dlist.h), MIT license, see z3-license.txt.
 import { KIND_VAR, OP_DISTINCT, OP_EQ, QUANTIFIER_EXISTS, QUANTIFIER_FORALL } from "../ast";
 import { flattenOrVector, mkNot } from "../ast-util";
 import { PatternInferenceRw } from "../asserted-formulas";
@@ -22,13 +21,6 @@ export interface QLit {
   readonly sign: boolean;
 }
 
-// q::quantifier_stat, with the fields the default cost function reads.
-interface QuantifierStat {
-  readonly generation: number;
-  maxGeneration: number;
-  maxCost: number;
-}
-
 // q::binding: a match of a clause's quantifier, in a circular list of the clause's bindings.
 export class Binding {
   next: Binding = this;
@@ -36,10 +28,7 @@ export class Binding {
 
   constructor(
     readonly clause: Clause,
-    readonly pattern: number,
     readonly maxGeneration: number,
-    readonly minTopGeneration: number,
-    readonly maxTopGeneration: number,
     readonly nodes: readonly Enode[],
   ) {}
 }
@@ -54,15 +43,11 @@ export class Clause {
     readonly lits: readonly QLit[],
     readonly q: number,
     readonly numDecls: number,
-    readonly stat: QuantifierStat,
   ) {}
 }
 
 // q::justification: the evidence for a propagation from a binding.
 interface Justification {
-  readonly lhs: number;
-  readonly rhs: number;
-  readonly sign: boolean;
   readonly generation: number;
   readonly explain: readonly number[];
   readonly clause: Clause;
@@ -217,7 +202,13 @@ class Eval {
     evidence: EnodePair[],
   ) {
     const manager = this.ctx.manager;
-    if (s === t) return L_TRUE;
+    if (
+      s === t ||
+      (manager.isAlgebraicNumeral(s) &&
+        manager.isAlgebraicNumeral(t) &&
+        manager.compareArithValues(s, t) === 0)
+    )
+      return L_TRUE;
     if (manager.areDistinct(s, t)) return L_FALSE;
     if (!manager.isApp(s) || !manager.isApp(t)) return L_UNDEF;
     if (manager.decls[s] !== manager.decls[t]) return L_UNDEF;
@@ -280,11 +271,7 @@ class Eval {
         else todo.push(arg);
       }
       if (args.length !== manager.getNumArgs(term)) continue;
-      const node = ctx.egraph.findCongruent(
-        manager.decls[term],
-        args,
-        args.length === 2 && manager.getOp(term) === OP_EQ,
-      );
+      const node = ctx.egraph.findCongruent(manager.decls[term], args);
       if (node === undefined) return null;
       for (let index = args.length; index-- > 0;) {
         const first = args[index];
@@ -323,14 +310,8 @@ class Queue {
     this.subst = new VarSubst(ctx.manager, true);
   }
 
-  private getCost(binding: Binding) {
-    const cost = this.ctx.manager.getQuantifier(binding.clause.q).weight + binding.maxGeneration;
-    binding.clause.stat.maxCost = Math.max(binding.clause.stat.maxCost, cost);
-    return cost;
-  }
-
   insert(binding: Binding) {
-    const cost = this.getCost(binding);
+    const cost = this.ctx.manager.getQuantifier(binding.clause.q).weight + binding.maxGeneration;
     if (this.newEntries.length === 0) this.ctx.trail.push(() => (this.newEntries = []));
     this.newEntries.push({ binding, cost, isInstantiated: false });
   }
@@ -392,19 +373,13 @@ class Queue {
   }
 }
 
-interface Prop {
-  readonly isConflict: boolean;
-  readonly idx: number;
-  readonly justification: number;
-}
-
 const GENERATION_PROPAGATION_THRESHOLD = 3;
 
 export class Ematch {
   private eval: Eval;
   private bindings = new Set<string>();
   private queue: Queue;
-  private props: Prop[] = [];
+  private props: number[] = [];
   private inferPatterns: PatternInferenceRw;
   private mam: Mam;
   private lazyMam: Mam | null = null;
@@ -419,7 +394,6 @@ export class Ematch {
   private evidence: EnodePair[] = [];
   private names: DefinedNames;
   private nnf: Nnf;
-  private numInstantiations = 0;
   private subst: VarSubst;
 
   constructor(
@@ -453,14 +427,8 @@ export class Ematch {
   }
 
   // mk_justification: the explanation of the evidence, taken while it is created.
-  private mkJustification(
-    idx: number,
-    generation: number,
-    clause: Clause,
-    binding: readonly Enode[],
-  ) {
+  private mkJustification(generation: number, clause: Clause, binding: readonly Enode[]) {
     const ctx = this.ctx;
-    const lit = idx === -1 ? null : clause.lits[idx];
     const explain: number[] = [];
     ctx.egraph.beginExplain();
     for (const pair of this.evidence) {
@@ -469,9 +437,6 @@ export class Ematch {
     }
     ctx.egraph.endExplain();
     const justification: Justification = {
-      lhs: lit === null ? -1 : lit.lhs,
-      rhs: lit === null ? -1 : lit.rhs,
-      sign: lit === null ? false : lit.sign,
       generation,
       explain,
       clause,
@@ -555,14 +520,7 @@ export class Ematch {
     return `${clause.q}:${nodes.map((node) => node.owner).join(",")}`;
   }
 
-  private allocBinding(
-    clause: Clause,
-    pattern: number,
-    nodes: readonly Enode[],
-    maxGeneration: number,
-    minTopGeneration: number,
-    maxTopGeneration: number,
-  ) {
+  private allocBinding(clause: Clause, nodes: readonly Enode[], maxGeneration: number) {
     if (this.bindings.has(this.getBindingKey(clause, nodes))) return null;
     if (
       this.bindings.has(
@@ -573,14 +531,7 @@ export class Ematch {
       )
     )
       return null;
-    const binding = new Binding(
-      clause,
-      pattern,
-      maxGeneration,
-      minTopGeneration,
-      maxTopGeneration,
-      [...nodes],
-    );
+    const binding = new Binding(clause, maxGeneration, [...nodes]);
     const key = this.getBindingKey(clause, binding.nodes);
     this.bindings.add(key);
     this.ctx.trail.push(() => this.bindings.delete(key));
@@ -589,21 +540,12 @@ export class Ematch {
 
   private onBinding = (
     quantifier: number,
-    pattern: number,
+    _pattern: number,
     nodes: readonly Enode[],
     maxGeneration: number,
-    minTopGeneration: number,
-    maxTopGeneration: number,
   ) => {
     const clause = this.clauses[this.q2clauses.get(quantifier) as number];
-    const binding = this.allocBinding(
-      clause,
-      pattern,
-      nodes,
-      maxGeneration,
-      minTopGeneration,
-      maxTopGeneration,
-    );
+    const binding = this.allocBinding(clause, nodes, maxGeneration);
     if (binding === null) return;
     if (this.propagate(false, nodes, maxGeneration, clause).isDone) return;
     pushToFront(clause, binding);
@@ -629,14 +571,9 @@ export class Ematch {
     if (evaluated.value === L_UNDEF && maxGeneration > GENERATION_PROPAGATION_THRESHOLD)
       return { isDone: false, isPropagated: false };
     const owned = isOwned ? binding : [...binding];
-    const justification = this.mkJustification(evaluated.idx, maxGeneration, clause, owned);
+    const justification = this.mkJustification(maxGeneration, clause, owned);
     if (isOwned) this.propagateJustification(justification);
-    else
-      this.props.push({
-        isConflict: evaluated.value === L_FALSE,
-        idx: evaluated.idx,
-        justification,
-      });
+    else this.props.push(justification);
     return { isDone: true, isPropagated: true };
   }
 
@@ -652,21 +589,14 @@ export class Ematch {
   private flushPropQueue() {
     if (this.props.length === 0) return false;
     for (let index = 0; index < this.props.length; index++)
-      this.propagateJustification(this.props[index].justification);
+      this.propagateJustification(this.props[index]);
     this.props = [];
     return true;
   }
 
-  private instantiateBinding(binding: Binding) {
-    const stat = binding.clause.stat;
-    stat.maxGeneration = Math.max(stat.maxGeneration, binding.maxGeneration, stat.generation);
-    this.numInstantiations++;
-    this.queue.insert(binding);
-  }
-
   addInstantiation(clause: Clause, binding: Binding, lit: number) {
     this.evidence = [];
-    this.ctx.propagate(lit, this.mkJustification(-1, binding.maxGeneration, clause, binding.nodes));
+    this.ctx.propagate(lit, this.mkJustification(binding.maxGeneration, clause, binding.nodes));
   }
 
   private instantiateLit(generation: number, binding: readonly Enode[], lit: QLit) {
@@ -750,15 +680,12 @@ export class Ematch {
       manager.decRef(q);
       q = inferred;
     }
-    const node = ctx.egraph.find(quantifier);
-    const generation = node === undefined ? ctx.generation : node.generation;
     return new Clause(
       this.clauses.length,
       isExists ? literal ^ 1 : literal,
       lits,
       q,
       manager.getQuantifier(q).sorts.length,
-      { generation, maxGeneration: 0, maxCost: 0 },
     );
   }
 
@@ -852,7 +779,7 @@ export class Ematch {
       isPropagated ||= result.isPropagated;
       if (result.isDone) toRemove.push(binding);
       else if (isFlushing) {
-        this.instantiateBinding(binding);
+        this.queue.insert(binding);
         toRemove.push(binding);
         isPropagated = true;
       }

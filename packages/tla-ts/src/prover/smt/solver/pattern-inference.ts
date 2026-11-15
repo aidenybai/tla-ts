@@ -53,7 +53,7 @@ export class PatternInference {
 
   private isForbidden(expr: number) {
     const manager = this.manager;
-    if (manager.isGround(expr)) return false;
+    if (manager.isGroundApp(expr)) return false;
     const decl = manager.funcDecls[manager.decls[expr]];
     if (decl.isSkolem) return true;
     if (decl.family === FAMILY_BASIC) return decl.op !== OP_TRUE && decl.op !== OP_FALSE;
@@ -227,7 +227,7 @@ export class PatternInference {
       args[index] = args[args.length - 1];
       index--;
       args.pop();
-      if (manager.isGround(arg)) continue;
+      if (manager.isGroundApp(arg)) continue;
       for (let argIndex = 0; argIndex < manager.getNumArgs(arg); argIndex++) {
         const innerArg = manager.getArg(arg, argIndex);
         if (manager.kinds[innerArg] !== KIND_APP) return manager.mkPattern([candidate]);

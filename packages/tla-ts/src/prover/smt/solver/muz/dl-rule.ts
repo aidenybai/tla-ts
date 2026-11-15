@@ -3,6 +3,7 @@
 import { SmtTacticError, SmtUnsupportedError } from "../../../../errors";
 import {
   type AstManager,
+  getSymbolName,
   KIND_APP,
   KIND_QUANTIFIER,
   KIND_VAR,
@@ -14,12 +15,31 @@ import {
 } from "../ast";
 import { flattenAndVector } from "../ast-util";
 import { RefVector } from "../ref-vector";
+import { DEFAULT_PRINT_OPTIONS, printExpr } from "../smt2-printer";
 import { getFreeVarSorts, VarSubst } from "../var-subst";
 import { simplifyQuantifiers } from "../qe";
 import { QuantifierHoister } from "../quant-hoist";
 import type { DatalogContext } from "./dl-context";
 import { Hnf } from "./hnf";
 import type { RuleSet } from "./dl-rule-set";
+
+const PRINT_ENVIRONMENT = {
+  options: DEFAULT_PRINT_OPTIONS,
+  isUsed: () => false,
+  isClashing: () => false,
+};
+
+export const mkPp = (manager: AstManager, expr: number) =>
+  printExpr(manager, PRINT_ENVIRONMENT, expr);
+
+// output_predicate of src/muz/base/dl_util.cpp.
+const outputPredicate = (manager: AstManager, predicate: number) =>
+  `${getSymbolName(manager.funcDecls[manager.decls[predicate]].name)}(${manager
+    .getArgs(predicate)
+    .map((arg) =>
+      manager.kinds[arg] === KIND_VAR ? `#${manager.values[arg]}` : mkPp(manager, arg),
+    )
+    .join(",")})`;
 
 // The tail lists the positive predicates, then the negated ones, then the interpreted formulas.
 export class Rule {
@@ -44,6 +64,24 @@ export class Rule {
     for (let index = 0; index < this.uninterpretedSize; index++)
       if (this.isNegated[index]) return true;
     return false;
+  }
+
+  // symbol::str of the name, where the empty name is the null symbol.
+  getNameText() {
+    return this.name === "" ? "<null>" : this.name;
+  }
+
+  display(context: DatalogContext) {
+    const manager = context.manager;
+    const head = `${this.getNameText()}:\n${outputPredicate(manager, this.head)}`;
+    if (this.tail.length === 0) return `${head}.\n`;
+    const tail = this.tail.map(
+      (literal, index) =>
+        `\n ${this.isNegated[index] ? "not " : ""}${
+          context.isPredicate(literal) ? outputPredicate(manager, literal) : mkPp(manager, literal)
+        }`,
+    );
+    return `${head} :- ${tail.join(",")}.\n`;
   }
 }
 
@@ -100,46 +138,71 @@ export class BindVariables {
     const bound = new Map<number, number>();
     const names: string[] = [];
     const sorts: number[] = [];
+    const todo: number[] = [];
+    // The arguments of an application are abstracted last to first, as Z3's stack pops them.
     const abstract = (term: number, scope: number, cache: Map<number, number>): number => {
-      const cached = cache.get(term);
-      if (cached !== undefined) return cached;
-      const kind = manager.kinds[term];
-      const result = (() => {
-        if (kind === KIND_VAR) return term;
-        if (kind === KIND_QUANTIFIER) {
-          const data = manager.getQuantifier(term);
+      const size = todo.length;
+      todo.push(term);
+      while (todo.length > size) {
+        const current = todo[todo.length - 1];
+        if (cache.has(current)) {
+          todo.pop();
+          continue;
+        }
+        const kind = manager.kinds[current];
+        if (kind === KIND_VAR) cache.set(current, current);
+        else if (kind === KIND_QUANTIFIER) {
+          const data = manager.getQuantifier(current);
           const innerScope = scope + data.sorts.length;
           const innerCache = new Map<number, number>();
           const patterns = data.patterns.map((pattern) =>
             abstract(pattern, innerScope, innerCache),
           );
-          return manager.mkQuantifier({
-            ...data,
-            patterns,
-            body: abstract(data.body, innerScope, innerCache),
-          });
-        }
-        if (this.vars.includes(term)) {
+          cache.set(
+            current,
+            manager.mkQuantifier({
+              ...data,
+              patterns,
+              body: abstract(data.body, innerScope, innerCache),
+            }),
+          );
+        } else if (this.vars.includes(current)) {
           const existing =
-            bound.get(term) ??
+            bound.get(current) ??
             (() => {
-              const variable = manager.mkVar(names.length, manager.sorts[term]);
-              names.push(manager.getDeclName(term));
-              sorts.push(manager.sorts[term]);
-              bound.set(term, variable);
+              const variable = manager.mkVar(names.length, manager.sorts[current]);
+              names.push(manager.getDeclName(current));
+              sorts.push(manager.sorts[current]);
+              bound.set(current, variable);
               return variable;
             })();
-          return scope === 0
-            ? existing
-            : manager.mkVar(scope + manager.values[existing], manager.sorts[existing]);
+          cache.set(
+            current,
+            scope === 0
+              ? existing
+              : manager.mkVar(scope + manager.values[existing], manager.sorts[existing]),
+          );
+        } else {
+          const args: number[] = [];
+          let isAllVisited = true;
+          for (const arg of manager.getArgs(current)) {
+            const abstracted = cache.get(arg);
+            if (abstracted === undefined) {
+              todo.push(arg);
+              isAllVisited = false;
+            } else if (isAllVisited) args.push(abstracted);
+          }
+          if (!isAllVisited) continue;
+          cache.set(
+            current,
+            args.every((arg, index) => arg === manager.getArg(current, index))
+              ? current
+              : manager.mkApp(manager.decls[current], args, manager.sorts[current]),
+          );
         }
-        const args = manager.getArgs(term).map((arg) => abstract(arg, scope, cache));
-        return args.every((arg, index) => arg === manager.getArg(term, index))
-          ? term
-          : manager.mkApp(manager.decls[term], args, manager.sorts[term]);
-      })();
-      cache.set(term, result);
-      return result;
+        todo.pop();
+      }
+      return cache.get(term) ?? term;
     };
     const body = abstract(fml, 0, new Map());
     if (names.length === 0) return body;
@@ -359,6 +422,7 @@ export class RuleManager {
     names.reverse();
     const queryPredicate = this.context.mkFreshHeadPredicate("query", "", domain);
     rules.setOutputPredicate(queryPredicate);
+    this.context.addGenericModelConverter([{ decl: queryPredicate, def: -1 }]);
     const head = manager.mkApp(
       queryPredicate,
       domain.map((sort, index) => manager.mkVar(domain.length - index - 1, sort)),

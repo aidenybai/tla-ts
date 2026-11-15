@@ -132,8 +132,10 @@ export const DEFAULT_CONFIG: SmtConfig = {
   isFindingMacros: false,
 };
 
-const setupUnknown = (config: SmtConfig) => {
+// setup_unknown(), which closes with setup_relevancy.
+const setupUnknown = (config: SmtConfig, features: StaticFeatures) => {
   config.theories.push(...UNKNOWN_THEORIES);
+  if (features.hasBv && features.numQuantifiers === 0) config.relevancyLevel = 0;
 };
 
 const setupQfUf = (config: SmtConfig) => {
@@ -364,8 +366,6 @@ const DEFAULT_SETUPS = new Map<string, (config: SmtConfig) => void>([
   ["QF_FP", setupQfFp],
   ["QF_FPBV", setupQfFp],
   ["QF_BVFP", setupQfFp],
-  ["QF_S", setupUnknown],
-  ["QF_SLIA", setupUnknown],
   ["QF_DT", setupQfDt],
   ["QF_FF", setupFf],
   ["QF_FFA", setupFf],
@@ -409,10 +409,10 @@ const setupUnknownByFeatures = (config: SmtConfig, features: StaticFeatures, set
   else if (numTheories === 1 && isDiffLogic(features)) {
     if (features.hasReal && !features.hasInt) setupQfRdlByFeatures(config, features);
     else if (!features.hasReal && features.hasInt) setupQfIdlByFeatures(config, features, setup);
-    else setupUnknown(config);
+    else setupUnknown(config, features);
   } else if (isTwoWithUf && isDiffLogic(features)) {
     if (!features.hasReal && features.hasInt) setupQfUfIdlByFeatures(config, features);
-    else setupUnknown(config);
+    else setupUnknown(config, features);
   } else if (numTheories === 1 && isArith(features)) {
     if ((features.hasInt && features.hasReal) || !isLinear) config.theories.push(FAMILY_ARITH);
     else if (features.hasReal) setupQfLraByFeatures(config, features);
@@ -420,7 +420,7 @@ const setupUnknownByFeatures = (config: SmtConfig, features: StaticFeatures, set
   } else if (isTwoWithUf && isArith(features)) {
     if (!features.hasReal && isLinear) setupQfUfLiaByFeatures(config, features);
     else if (!features.hasInt && isLinear) setupQfUfLia(config);
-    else setupUnknown(config);
+    else setupUnknown(config, features);
   } else if (numTheories === 1 && features.hasBv) setupQfBv(config);
   else if (numTheories === 1 && features.hasFpa) setupQfFp(config);
   else if (numTheories === 2 && features.hasFpa && features.hasBv) setupQfFp(config);
@@ -429,7 +429,7 @@ const setupUnknownByFeatures = (config: SmtConfig, features: StaticFeatures, set
     setupQfAufBv(config);
   else if (isTwoWithUf && features.hasArrays && features.hasInt)
     setupQfAufLiaByFeatures(config, features);
-  else setupUnknown(config);
+  else setupUnknown(config, features);
 };
 
 const AUTO_SETUPS = new Map<
@@ -477,8 +477,14 @@ export const getSmtConfig = (
 ) => {
   const config: SmtConfig = { ...base, theories: [] };
   const logic = setup?.logic ?? "";
-  if (setup === undefined || !setup.isAutoConfig) setupUnknown(config);
-  else if (!isUsingStaticFeatures) (DEFAULT_SETUPS.get(logic) ?? setupUnknown)(config);
+  const defaultSetup = isUsingStaticFeatures ? undefined : DEFAULT_SETUPS.get(logic);
+  if (
+    setup === undefined ||
+    !setup.isAutoConfig ||
+    (!isUsingStaticFeatures && defaultSetup === undefined)
+  )
+    setupUnknown(config, collectStaticFeatures(manager, formulas));
+  else if (defaultSetup !== undefined) defaultSetup(config);
   // setup_auto_config skips the static features of the logics whose setups ignore them.
   else if (logic === "QF_BV") setupQfBv(config);
   else if (logic === "QF_AUFBV" || logic === "QF_ABV" || logic === "QF_UFBV") setupQfAufBv(config);

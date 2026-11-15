@@ -50,7 +50,6 @@ import {
   uniteRanges,
 } from "./seq-range-predicate";
 import { RegexBisim } from "./seq-regex-bisim";
-import { RegexWitness } from "./seq-regex-witness";
 import {
   UINT_MAX,
   canBeMember,
@@ -771,8 +770,7 @@ export class ReRewriter {
     };
     const isEveryInterArmEndingWithFullSeq = (regex: number) => {
       const todo = [regex];
-      while (todo.length > 0) {
-        const current = todo.pop()!;
+      for (let current = todo.pop(); current !== undefined; current = todo.pop()) {
         const split = this.getSplit(current, OP_RE_INTERSECT);
         if (split !== undefined) todo.push(split.head, split.tail);
         else if (!isEndingWithFullSeq(current)) return false;
@@ -1169,12 +1167,5 @@ export class ReRewriter {
       : status === L_FALSE
         ? manager.falseExpr
         : undefined;
-  }
-
-  someStringInRe(regex: number) {
-    const witness = new RegexWitness(this.manager, this);
-    const result = witness.getWitness(regex);
-    witness.release();
-    return result;
   }
 }

@@ -6,7 +6,16 @@ import {
   SmtTacticError,
   SmtUnsupportedError,
 } from "../../../errors";
-import { type AstManager, KIND_APP, OP_ITE, SORT_BOOL } from "./ast";
+import {
+  type AstManager,
+  KIND_APP,
+  OP_DIV0,
+  OP_IDIV0,
+  OP_ITE,
+  OP_MOD0,
+  OP_POWER0,
+  SORT_BOOL,
+} from "./ast";
 import { createQfufbvAckrTactic, runAckermannizeBv } from "./ackermannize-bv-tactic";
 import { AssertedFormulas } from "./asserted-formulas";
 import { createAigTactic } from "./aig-tactic";
@@ -332,6 +341,10 @@ export const getSatParams = (parameters: ReadonlyMap<string, string>) =>
       }),
   );
 
+// sat_params reads what using-params leaves unset from the sat module's global parameters.
+const getSatTacticParams = (environment: TacticEnvironment, params: TacticParams) =>
+  new Map([...getSatParams(environment.parameters), ...params]);
+
 const runSmt = (environment: TacticEnvironment, params: TacticParams) => (goal: Goal) => {
   const manager = environment.manager;
   // mk_smt_tactic: with sat.euf, the smt tactic is the sat tactic.
@@ -526,6 +539,8 @@ const SAT_DESCRS = getDescrs("sat", [
   ["search.sat.conflicts", PARAM_UINT, 400, true],
   ["search.unsat.conflicts", PARAM_UINT, 400, true],
   ["restart.initial", PARAM_UINT, 2, true],
+  ["restart.max", PARAM_UINT, UINT_MAX, true],
+  ["inprocess.max", PARAM_UINT, UINT_MAX, true],
   ["random_seed", PARAM_UINT, 0, true],
   ["burst_search", PARAM_UINT, 100, true],
   ["enable_pre_simplify", PARAM_BOOL, false, true],
@@ -728,6 +743,8 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
       build: (environment, params) =>
         inPlace((goal) => {
           const manager = environment.manager;
+          const original = new RefVector(manager);
+          for (const form of goal.forms.items) original.push(form);
           try {
             tseitinCnf(manager, goal);
           } catch (error) {
@@ -738,6 +755,8 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
               isKeepingDistinct: false,
             });
             tseitinCnf(manager, goal);
+          } finally {
+            original.reset();
           }
         }),
     },
@@ -799,6 +818,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   [
     "lia2card",
     {
+      isTrackingDependencies: true,
       descrs: getDescrs("", [["compile_equality", PARAM_BOOL, true, true]]),
       build: (environment, params) =>
         inPlace((goal) =>
@@ -864,6 +884,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
           ["lia2pb_total_bits", PARAM_UINT, 2048, true],
         ]),
       ]),
+      isTrackingDependencies: true,
       build: (environment, params) =>
         inPlace((goal) =>
           lia2pb(environment.manager, goal, {
@@ -906,6 +927,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   [
     "fm",
     {
+      isTrackingDependencies: true,
       descrs: new Map([
         ...REWRITER_DESCRS,
         ...getDescrs("", [
@@ -929,6 +951,8 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
               new Map([...params, ["arith_lhs", true], ["elim_and", true], ["som", true]]),
             ),
           );
+          // and_then stops at a decided goal.
+          if (goal.isDecided()) return;
           fm(manager, goal, {
             isRealOnly: getBool(params, "fm_real_only", true),
             limit: getUint(params, "fm_limit", 5000000),
@@ -996,6 +1020,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   [
     "fix-dl-var",
     {
+      isTrackingDependencies: true,
       descrs: REWRITER_DESCRS,
       build: (environment, params) =>
         inPlace((goal) =>
@@ -1006,6 +1031,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   [
     "factor",
     {
+      isTrackingDependencies: true,
       descrs: getDescrs("", [
         ["split_factors", PARAM_BOOL, true, true],
         ["max_search_size", PARAM_UINT, UINT_MAX],
@@ -1087,7 +1113,14 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
       build: (environment) => inPlace((goal) => occf(environment.manager, goal)),
     },
   ],
-  ["fpa2bv", { descrs: new Map(), build: (environment) => runFpa2Bv(environment.manager) }],
+  [
+    "fpa2bv",
+    {
+      descrs: new Map(),
+      isTrackingDependencies: true,
+      build: (environment) => runFpa2Bv(environment.manager),
+    },
+  ],
   [
     "elim-small-bv",
     {
@@ -1282,7 +1315,8 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     {
       descrs: SAT_DESCRS,
       isRejectingUnknown: false,
-      build: (environment, params) => createSatTactic(environment.manager, params),
+      build: (environment, params) =>
+        createSatTactic(environment.manager, getSatTacticParams(environment, params)),
     },
   ],
   [
@@ -1290,7 +1324,8 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     {
       descrs: SAT_DESCRS,
       isRejectingUnknown: false,
-      build: (environment, params) => createFdTactic(environment.manager, params),
+      build: (environment, params) =>
+        createFdTactic(environment.manager, getSatTacticParams(environment, params)),
     },
   ],
   [
@@ -1298,7 +1333,8 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     {
       descrs: SAT_DESCRS,
       isRejectingUnknown: false,
-      build: (environment, params) => createSatTactic(environment.manager, params),
+      build: (environment, params) =>
+        createSatTactic(environment.manager, getSatTacticParams(environment, params)),
     },
   ],
   [
@@ -1317,6 +1353,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     "aig",
     {
       descrs: getDescrs("", [["max_memory", PARAM_UINT, UINT_MAX, true]]),
+      isTrackingDependencies: true,
       build: (environment) => createAigTactic(environment.manager),
     },
   ],
@@ -1845,7 +1882,12 @@ interface TacticCheck {
   status: number;
   model: ProtoModel | undefined;
   core: Dependency | undefined;
+  // What check_sat leaves in reason_unknown, or undefined where the port does not track it.
+  reasonUnknown: string | undefined;
 }
+
+// The port's declarations of division by zero leave out their domain; Z3's have two arguments.
+const DIVISION_BY_ZERO_DECLS = new Set([OP_DIV0, OP_IDIV0, OP_MOD0, OP_POWER0]);
 
 // A constant of an uninterpreted sort the model lacks puts its value in that sort's universe.
 const applyDefinitions = (definitions: Definition[], model: ProtoModel) => {
@@ -1860,7 +1902,9 @@ const applyDefinitions = (definitions: Definition[], model: ProtoModel) => {
       continue;
     }
     const value = evaluator.rewrite(definition.def);
-    const arity = manager.funcDecls[definition.decl].domain.length;
+    const arity = DIVISION_BY_ZERO_DECLS.has(definition.decl)
+      ? 2
+      : manager.funcDecls[definition.decl].domain.length;
     if (arity > 0) {
       const oldInterp = model.funcInterps.get(definition.decl);
       const isChanged = oldInterp?.elseExpr !== value;
@@ -1907,23 +1951,31 @@ export const convertModel = (goal: Goal, model: ProtoModel) =>
   }, model);
 
 export const checkSatUsing = (tactic: Tactic, goal: Goal): TacticCheck => {
+  const undecided = { status: L_UNDEF, model: undefined, core: undefined };
   const goals = (() => {
     try {
       return tactic(goal);
     } catch (error) {
-      if (error instanceof SmtTacticError || error instanceof SmtCanceledError) return undefined;
+      if (error instanceof SmtTacticError) return error.message;
+      if (error instanceof SmtCanceledError) return undefined;
       throw error;
     }
   })();
-  if (goals !== undefined && isDecidedSat(goals))
-    return {
-      status: L_TRUE,
-      model: convertModel(goals[0], goals[0].model ?? new ProtoModel(goal.manager)),
-      core: undefined,
-    };
+  if (typeof goals === "string") return { ...undecided, reasonUnknown: goals };
+  if (goals !== undefined && isDecidedSat(goals)) {
+    const model = convertModel(goals[0], goals[0].model ?? new ProtoModel(goal.manager));
+    return goal.manager.limit.inc()
+      ? { status: L_TRUE, model, core: undefined, reasonUnknown: "" }
+      : { ...undecided, model, reasonUnknown: "canceled" };
+  }
   if (goals !== undefined && isDecidedUnsat(goals))
-    return { status: L_FALSE, model: undefined, core: goals[0].getDependency(0) };
-  return { status: L_UNDEF, model: undefined, core: undefined };
+    return {
+      status: L_FALSE,
+      model: undefined,
+      core: goals[0].getDependency(0),
+      reasonUnknown: "",
+    };
+  return { ...undecided, reasonUnknown: undefined };
 };
 
 export const applyTactic = (tactic: Tactic, goal: Goal) => {

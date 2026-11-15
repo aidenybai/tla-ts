@@ -144,7 +144,7 @@ export class FuncInterp {
     const manager = this.manager;
     if (manager.getOp(expr) !== OP_ITE) return undefined;
     const condition = manager.getArg(expr, 0);
-    if (!manager.isGround(manager.getArg(expr, 1)) || this.arity === 0) return undefined;
+    if (!manager.isGroundApp(manager.getArg(expr, 1)) || this.arity === 0) return undefined;
     if (this.arity === 1 && manager.getOp(condition) !== OP_EQ) return undefined;
     if (
       this.arity > 1 &&
@@ -189,7 +189,7 @@ export class FuncInterp {
 
   isConstant() {
     const elseExpr = this.elseExpr;
-    if (elseExpr === null || !this.manager.isGround(elseExpr)) return false;
+    if (elseExpr === null || !this.manager.isGroundApp(elseExpr)) return false;
     return this.entries.every((entry) => entry.result === elseExpr);
   }
 
@@ -211,7 +211,7 @@ export class FuncInterp {
   compress() {
     const manager = this.manager;
     const elseExpr = this.elseExpr;
-    if (elseExpr === null || this.entries.length === 0 || !manager.isGround(elseExpr)) return;
+    if (elseExpr === null || this.entries.length === 0 || !manager.isGroundApp(elseExpr)) return;
     const kept = this.entries.filter((entry) => {
       if (entry.result !== elseExpr) return true;
       this.releaseEntry(entry);
@@ -252,10 +252,10 @@ export class FuncInterp {
     if (elseExpr === null) return undefined;
     const domain = manager.funcDecls[decl].domain;
     const isGround =
-      manager.isGround(elseExpr) &&
+      manager.isGroundApp(elseExpr) &&
       this.entries.every(
         (entry) =>
-          manager.isGround(entry.result) && entry.args.every((arg) => manager.isGround(arg)),
+          manager.isGroundApp(entry.result) && entry.args.every((arg) => manager.isGroundApp(arg)),
       );
     if (!isGround) {
       const interp = this.getInterp();

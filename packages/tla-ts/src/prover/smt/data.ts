@@ -46,6 +46,7 @@ import {
   UNION,
 } from "./format";
 import { getUntypedSpec } from "./arithmetic";
+import type { SmtEncoding } from "./rewrite";
 import { axiom, type Axiom } from "./table";
 import { getTypeKey, getTypeName, IDV, type Type } from "./types";
 
@@ -58,12 +59,11 @@ export interface SymbolSpec {
 }
 
 export interface CollectState {
-  isArithmetic: boolean;
-  isSetExtensional: boolean;
+  encoding: SmtEncoding;
   recordFields: Map<string, string[]>;
   setTypes: Map<string, Type>;
   strings: string[];
-  integers: number[];
+  integers: string[];
   isFunConstr: boolean;
   isFunSet: boolean;
   isExcept: boolean;
@@ -434,7 +434,8 @@ export const getSymbolSpec = (name: string, state: CollectState): SymbolSpec => 
       axiom("SetOfIntro", [count], undefined),
       axiom("SetOfElim", [count], undefined),
     ];
-    if (!state.isSetExtensional) return createSpec(getOmittedDeclaration(name), ["Mem"], axioms);
+    if (!state.encoding.isSetExtensional)
+      return createSpec(getOmittedDeclaration(name), ["Mem"], axioms);
     return createSpec(
       getOmittedDeclaration(name),
       ["Mem", "IsSetOf"],
@@ -466,23 +467,27 @@ export const getSymbolSpec = (name: string, state: CollectState): SymbolSpec => 
   }
   const integer = /^IntLit_(\d+)$/.exec(name);
   if (integer) {
-    const value = Number(integer[1]);
+    const value = integer[1];
     const distinct = state.integers.map((other) =>
-      axiom("IntLitDistinct", [other, value], `(distinct ${tla(`IntLit_${other}`)} ${symbol})`),
+      axiom(
+        "IntLitDistinct",
+        [BigInt(other), BigInt(value)],
+        `(distinct ${tla(`IntLit_${other}`)} ${symbol})`,
+      ),
     );
     state.integers.push(value);
     const zero = tla("IntLit_0");
-    const isPositivityNeeded = value === 0 && !state.isArithmetic;
+    const isPositivityNeeded = value === "0" && !state.encoding.isArithmetic;
     return declareSpec(
       name,
       0,
       ["Mem", "IntSet", "IntLit_0", "IntLteq", ...(isPositivityNeeded ? ["IntLit_1"] : [])],
       [
-        axiom("IntLitIsint", [value], `(${MEM} ${symbol} ${INT_SET})`),
+        axiom("IntLitIsint", [BigInt(value)], `(${MEM} ${symbol} ${INT_SET})`),
         axiom(
           "IntLitZeroCmp",
-          [value],
-          value === 0 ? `(${INT_LTEQ} ${symbol} ${zero})` : `(${INT_LTEQ} ${zero} ${symbol})`,
+          [BigInt(value)],
+          value === "0" ? `(${INT_LTEQ} ${symbol} ${zero})` : `(${INT_LTEQ} ${zero} ${symbol})`,
         ),
         ...distinct,
         ...(isPositivityNeeded
@@ -501,7 +506,7 @@ export const getSymbolSpec = (name: string, state: CollectState): SymbolSpec => 
   if (tuple) {
     const count = Number(tuple[1]);
     state.tuples.push(count);
-    const indexes = state.isArithmetic
+    const indexes = state.encoding.isArithmetic
       ? ["Cast_Int"]
       : count === 0
         ? ["IntLit_0"]
@@ -514,7 +519,7 @@ export const getSymbolSpec = (name: string, state: CollectState): SymbolSpec => 
       name,
       count,
       deps,
-      getTupleAxioms(count, state.isExcept, state.isArithmetic),
+      getTupleAxioms(count, state.isExcept, state.encoding.isArithmetic),
     );
   }
   const product = /^Product_(\d+)$/.exec(name);
@@ -527,14 +532,14 @@ export const getSymbolSpec = (name: string, state: CollectState): SymbolSpec => 
         "Mem",
         `Tuple_${count}`,
         "FunApp",
-        ...(state.isArithmetic ? ["Cast_Int", "Proj_Int"] : getLiteralNames(count)),
+        ...(state.encoding.isArithmetic ? ["Cast_Int", "Proj_Int"] : getLiteralNames(count)),
       ],
       getComponentSet(
         "Product",
         [count],
         symbol,
         tla(`Tuple_${count}`),
-        getIntegers(count, state.isArithmetic),
+        getIntegers(count, state.encoding.isArithmetic),
         "t",
       ),
     );
@@ -590,7 +595,7 @@ export const getSymbolSpec = (name: string, state: CollectState): SymbolSpec => 
   }
   const anonymous = state.anonymous.get(name);
   if (anonymous !== undefined) return declareSpec(name, anonymous, [], []);
-  const untyped = state.isArithmetic ? undefined : getUntypedSpec(name);
+  const untyped = state.encoding.isArithmetic ? undefined : getUntypedSpec(name);
   if (untyped) return untyped;
   const known = STATIC_SPECS.get(name);
   if (known) return known;
@@ -617,7 +622,7 @@ export const getSymbolSpec = (name: string, state: CollectState): SymbolSpec => 
           "IntSet",
           "NatSet",
           "Tuple_0",
-          state.isArithmetic ? "Proj_Int" : "IntLteq",
+          state.encoding.isArithmetic ? "Proj_Int" : "IntLteq",
         ],
         [
           axiom("SeqSelectseqTyping", [], undefined),
@@ -628,48 +633,49 @@ export const getSymbolSpec = (name: string, state: CollectState): SymbolSpec => 
         ],
       );
     case "Mem":
-      if (!state.isSetExtensional) return declareSpec(name, 2, [], [], "Bool");
       return declareSpec(
-        "Mem",
+        name,
         2,
-        ["SetExtTrigger"],
-        [
-          axiom(
-            "SetExt",
-            [],
-            `(forall ((x Idv) (y Idv)) (! (=> (forall ((z Idv)) (= (${MEM} z x) (${MEM} z y))) (= x y)) :pattern ((${SET_EXT_TRIGGER} x y))))`,
-          ),
-        ],
+        state.encoding.isSetExtensional ? ["SetExtTrigger"] : [],
+        state.encoding.isSetExtensional
+          ? [
+              axiom(
+                "SetExt",
+                [],
+                `(forall ((x Idv) (y Idv)) (! (=> (forall ((z Idv)) (= (${MEM} z x) (${MEM} z y))) (= x y)) :pattern ((${SET_EXT_TRIGGER} x y))))`,
+              ),
+            ]
+          : [],
         "Bool",
       );
     case "Cap":
-      if (!state.isSetExtensional)
-        return declareSpec(
-          name,
-          2,
-          ["Mem"],
-          [getSetOperationDef("Cap", `(and (${MEM} x a) (${MEM} x b))`)],
-        );
       return declareSpec(
-        "Cap",
+        name,
         2,
-        ["Mem", "SetEnum_0", "SetExtTrigger"],
+        ["Mem", ...(state.encoding.isSetExtensional ? ["SetEnum_0", "SetExtTrigger"] : [])],
         [
           getSetOperationDef("Cap", `(and (${MEM} x a) (${MEM} x b))`),
-          axiom(
-            "DisjointTrigger",
-            [],
-            `(forall ((x Idv) (y Idv)) (! (${SET_EXT_TRIGGER} (${CAP} x y) ${tla("SetEnum_0")}) :pattern ((${CAP} x y))))`,
-          ),
+          ...(state.encoding.isSetExtensional
+            ? [
+                axiom(
+                  "DisjointTrigger",
+                  [],
+                  `(forall ((x Idv) (y Idv)) (! (${SET_EXT_TRIGGER} (${CAP} x y) ${tla("SetEnum_0")}) :pattern ((${CAP} x y))))`,
+                ),
+              ]
+            : []),
         ],
       );
     case "SetSt":
-      if (!state.isSetExtensional)
-        return createSpec(getOmittedDeclaration(name), ["Mem"], [axiom("SetStDef", [], undefined)]);
       return createSpec(
         getOmittedDeclaration(name),
-        ["Mem", "SetEnum_0", "SetExtTrigger"],
-        [axiom("SetStDef", [], undefined), axiom("EmptyComprehensionTrigger", [], undefined)],
+        ["Mem", ...(state.encoding.isSetExtensional ? ["SetEnum_0", "SetExtTrigger"] : [])],
+        [
+          axiom("SetStDef", [], undefined),
+          ...(state.encoding.isSetExtensional
+            ? [axiom("EmptyComprehensionTrigger", [], undefined)]
+            : []),
+        ],
       );
     case "FunSet":
       state.isFunSet = true;
@@ -734,7 +740,7 @@ export const getSymbolSpec = (name: string, state: CollectState): SymbolSpec => 
             [],
             `(forall ((f Idv) (x Idv) (y Idv) (z Idv)) (! (=> (${MEM} z (${FUN_DOM} f)) (and (=> (= z x) (= (${FUN_APP} ${updated} z) y)) (=> (distinct z x) (= (${FUN_APP} ${updated} z) (${FUN_APP} f z))))) :pattern ((${FUN_APP} ${updated} z)) :pattern (${updated} (${FUN_APP} f z))))`,
           ),
-          ...state.tuples.flatMap((count) => getTupleExcepts(count, state.isArithmetic)),
+          ...state.tuples.flatMap((count) => getTupleExcepts(count, state.encoding.isArithmetic)),
           ...state.records.flatMap(getRecordExcepts),
         ],
       );

@@ -1,5 +1,5 @@
-// tlapm's method pragmas: the new (*{ by (prover:"zenon"; timeout:@) }*) after a definition, and
-// the old (*{ by (zenon) }*) of Method_prs.
+// tlapm's method pragmas: the new (*{ by (prover:"zenon"; timeout:@) }*) after a definition, which
+// E_parser.read_new_method reads, and the old (*{ by (zenon) }*) of Method_prs.
 
 import type { Locus } from "./expression";
 

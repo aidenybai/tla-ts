@@ -12,7 +12,6 @@ import { RuleSet } from "./dl-rule-set";
 
 export interface RuleTransformerPlugin {
   readonly priority: number;
-  readonly canDestratifyNegation?: boolean;
   apply(source: RuleSet): RuleSet | undefined;
 }
 
@@ -50,7 +49,6 @@ export const transformRules = (context: DatalogContext, plugins: RuleTransformer
     context.manager.limit.checkpoint();
     const result = plugin.apply(rules);
     if (result === undefined) continue;
-    if (plugin.canDestratifyNegation === true && !result.isClosed() && !result.close()) continue;
     isModified = true;
     rules = result;
     rules.ensureClosed();

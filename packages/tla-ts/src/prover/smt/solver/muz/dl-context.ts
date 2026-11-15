@@ -11,6 +11,9 @@ import {
   SORT_BOOL,
   SORT_SIZE_INFINITE,
 } from "../ast";
+import type { Definition } from "../goal";
+import { ModelEvaluator } from "../model-evaluator";
+import { FuncInterp, type ProtoModel } from "../proto-model";
 import { type RewriterOptions, Rewriter } from "../rewriter";
 import { RefVector } from "../ref-vector";
 import { applyQeLiteToConjuncts } from "../qe-lite";
@@ -56,8 +59,45 @@ export class FpParams {
   }
 }
 
+export type ModelConverter = (model: ProtoModel) => ProtoModel;
+
+// generic_model_converter::operator() over predicates, where a definition of -1 hides the
+// declaration.
+const applyDefinitions = (definitions: readonly Definition[], model: ProtoModel) => {
+  const manager = model.manager;
+  let evaluator = new ModelEvaluator(manager, model);
+  evaluator.setModelCompletion(true);
+  for (let index = definitions.length - 1; index >= 0; index--) {
+    const definition = definitions[index];
+    if (definition.def === -1) {
+      model.unregisterDecl(definition.decl);
+      continue;
+    }
+    const value = evaluator.rewrite(definition.def);
+    const arity = manager.funcDecls[definition.decl].domain.length;
+    const oldInterp = model.funcInterps.get(definition.decl);
+    const old = arity === 0 ? model.constInterps.get(definition.decl) : oldInterp?.elseExpr;
+    if (old !== value) {
+      if (arity === 0) model.registerConst(definition.decl, value);
+      else {
+        const interp = new FuncInterp(manager, arity);
+        interp.setElse(value);
+        model.registerFunc(definition.decl, interp);
+      }
+    }
+    manager.decRef(value);
+    if (old === value || (arity === 0 ? old === undefined : oldInterp === undefined)) continue;
+    evaluator.release();
+    evaluator = new ModelEvaluator(manager, model);
+    evaluator.setModelCompletion(true);
+  }
+  evaluator.release();
+  return model;
+};
+
 export interface Engine {
   query(query: number): number;
+  getModel(): ProtoModel;
 }
 
 type EngineFactory = (context: DatalogContext, engine: number) => Engine;
@@ -77,12 +117,13 @@ export class DatalogContext {
   private engineType = ENGINE_LAST;
   private engine: Engine | undefined;
   readonly rewriter: Rewriter;
-  hasModelConverter = false;
+  // m_mc: the converters since the last query, or undefined before one.
+  modelConverters: ModelConverter[] | undefined;
 
   constructor(
     readonly manager: AstManager,
     readonly params: FpParams,
-    rewriterOptions: RewriterOptions,
+    readonly rewriterOptions: RewriterOptions,
     private engineFactory: EngineFactory,
   ) {
     this.ruleManager = new RuleManager(manager, this);
@@ -288,10 +329,23 @@ export class DatalogContext {
   }
 
   query(query: number) {
-    this.hasModelConverter = true;
+    this.modelConverters = [];
     this.getEngine(query);
     this.flushAddRules();
     return this.ensureEngine(query).query(query);
+  }
+
+  addGenericModelConverter(definitions: readonly Definition[]) {
+    if (this.modelConverters === undefined) return;
+    for (const definition of definitions) {
+      this.manager.incDeclRef(definition.decl);
+      if (definition.def !== -1) this.manager.incRef(definition.def);
+    }
+    this.modelConverters.push((model) => applyDefinitions(definitions, model));
+  }
+
+  getModel() {
+    return this.ensureEngine().getModel();
   }
 
   // engine_base::query over one relation.

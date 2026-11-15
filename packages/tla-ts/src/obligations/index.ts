@@ -2,6 +2,7 @@ import { TlaProofError, TlaSyntaxError, type SyntaxFailure } from "../errors";
 import { createAnonymizer } from "./anonymize";
 import {
   getAtPrefix,
+  getErrorNote,
   getErrorSetting,
   getLocusPosition,
   getLocusPrefix,
@@ -19,7 +20,7 @@ import {
 import { compareNames, flatten, getDependencies, STANDARD_MODULES, type Mule } from "./module";
 import { expandInstance, normalize, type Pipeline } from "./normalize";
 import { formatObligation, type PrinterOptions } from "./printer";
-import type { Counter, ObligationKind } from "./proof";
+import { getUnique, type Counter, type ObligationKind } from "./proof";
 import type { OldMethod } from "./pragma";
 import { createSimplifier } from "./simplify";
 import { createModuleConverter } from "./source";
@@ -139,7 +140,8 @@ const loadMule = (
       endLine: proofFailure.stop.line,
       endColumn: proofFailure.stop.column,
     };
-    warnError(onWarning, locus, parsed[0].reason);
+    onWarning(getErrorNote(locus, proofFailure.printed));
+    onWarning(getErrorSetting(locus, parsed[0].reason));
     throw new TlaProofError(parsed[0].reason, { failure: proofFailure.exception });
   }
   if (Array.isArray(parsed)) {
@@ -297,7 +299,7 @@ export const getObligations = (
     });
   const pipeline: Pipeline = {
     anonymizer: createAnonymizer(
-      counter,
+      () => `_a${getUnique(counter)}`,
       (scope, definition) => expandInstance(pipeline, scope, definition),
       onWarning,
     ),

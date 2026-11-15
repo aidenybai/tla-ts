@@ -267,7 +267,7 @@ const mkNonNira =
       const divisor = manager.getArg(expr, 1);
       if (isLinear)
         return !manager.isNumeral(divisor) || manager.getRationalValue(divisor).isZero();
-      return !manager.isGround(manager.getArg(expr, 0)) || !manager.isGround(divisor);
+      return !manager.isGroundApp(manager.getArg(expr, 0)) || !manager.isGroundApp(divisor);
     }
     if (op === OP_IS_INT) return isReal;
     if (op === OP_TO_INT || op === OP_TO_REAL) return false;

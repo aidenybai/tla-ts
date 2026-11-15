@@ -465,7 +465,7 @@ export class MacroManager {
     if (!isAppOf(manager, expr, OP_EQ)) return undefined;
     const lhs = manager.getArg(expr, 0);
     const rhs = manager.getArg(expr, 1);
-    if (!manager.isGround(lhs) && !manager.isGround(rhs)) return undefined;
+    if (!manager.isGroundApp(lhs) && !manager.isGroundApp(rhs)) return undefined;
     const sort = manager.sorts[lhs];
     if (manager.isUninterpretedSort(sort) || manager.getSortSize(sort) === 1n) return undefined;
     if (isMacroHead(manager, lhs, numDecls)) return { head: lhs, value: rhs };

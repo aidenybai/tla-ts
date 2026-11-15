@@ -77,6 +77,8 @@ const PROVERS: Record<string, { prover: Prover; seconds: number; isBudgeted?: bo
   ...Object.fromEntries([...FRONTENDS].map((name) => [name, { prover: name, seconds: 0 }])),
 };
 
+const UNTIMED_PROVERS = new Set<Prover>(["cooper", "fail", "trivial", ...FRONTENDS]);
+
 const getProverMethod = (
   name: string,
   timeout: number | undefined,
@@ -87,7 +89,10 @@ const getProverMethod = (
   if (!known) throw new TlaProverError(`Unknown prover: ${name}`);
   return {
     prover: known.prover,
-    timeLimitMs: rlimit === undefined ? (timeout ?? known.seconds) * 1000 : Infinity,
+    timeLimitMs:
+      rlimit !== undefined
+        ? Infinity
+        : ((UNTIMED_PROVERS.has(known.prover) ? undefined : timeout) ?? known.seconds) * 1000,
     ...(rlimit !== undefined && { rlimit }),
     ...(known.prover === "isabelle" && { tactic: tactic ?? "auto" }),
   };
@@ -96,9 +101,51 @@ const getProverMethod = (
 const BUDGET_FORMS =
   'a number of seconds (wall-clock timeout), or a deterministic Z3 rlimit budget of the form "rN" (e.g. "r5")';
 
+const HEX_FLOAT =
+  /^[\t-\r ]*[+-]?0x(?=\.?[\da-f])([\da-f]*)\.?([\da-f]*)(?:p([\t-\r ]*[+-]?\d+))?$/i;
+const DECIMAL_FLOAT = /^[\t-\r ]*[+-]?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?$/i;
+const SPECIAL_FLOAT = /^[\t-\r ]*[+-]?(?:(inf(?:inity)?)|nan(?:\([^)]*\))?)$/i;
+
+// OCaml's float_of_string_opt: caml_float_of_string drops underscores, then reads a C99 float.
+export const parseOcamlFloat = (text: string) => {
+  const digits = text.replaceAll("_", "");
+  const sign = digits.trimStart().startsWith("-") ? -1 : 1;
+  const hex = HEX_FLOAT.exec(digits);
+  if (hex) {
+    const mantissa = Number(BigInt(`0x${hex[1]}${hex[2]}`));
+    return mantissa === 0 ? 0 : sign * mantissa * 2 ** (Number(hex[3] ?? 0) - 4 * hex[2].length);
+  }
+  const special = SPECIAL_FLOAT.exec(digits);
+  if (special) return special[1] === undefined ? NaN : sign * Infinity;
+  return DECIMAL_FLOAT.test(digits) ? Number(digits) : undefined;
+};
+
+const OCAML_INT =
+  /^([+-]?)(?:0x([\da-f][\da-f_]*)|0o([0-7][0-7_]*)|0b([01][01_]*)|(0u)?(\d[\d_]*))$/i;
+
+// OCaml's int_of_string_opt: only an unprefixed decimal is range-checked as a signed 63-bit integer.
+export const parseOcamlInt = (text: string) => {
+  const match = OCAML_INT.exec(text);
+  if (!match) return undefined;
+  const isNegative = match[1] === "-";
+  const prefixed =
+    match[2] === undefined
+      ? match[3] === undefined
+        ? match[4] === undefined
+          ? match[6]
+          : `0b${match[4]}`
+        : `0o${match[3]}`
+      : `0x${match[2]}`;
+  const magnitude = BigInt(prefixed.replaceAll("_", ""));
+  const isSigned = prefixed === match[6] && match[5] === undefined;
+  if (magnitude > (isSigned ? 2n ** 62n - (isNegative ? 0n : 1n) : 2n ** 63n - 1n))
+    return undefined;
+  return Number(BigInt.asIntN(63, isNegative ? -magnitude : magnitude));
+};
+
 const getRlimit = (budget: string, locus: Locus | undefined) => {
-  const count = Number(budget.slice(1));
-  if (!/^[rR]./.test(budget) || !Number.isFinite(count) || count <= 0)
+  const count = parseOcamlFloat(budget.slice(1));
+  if (!/^[rR]./s.test(budget) || count === undefined || !Number.isFinite(count) || count <= 0)
     throw new TlaMethodError(
       `Invalid SMT budget ${JSON.stringify(budget)}: expected ${BUDGET_FORMS}.`,
       locus,

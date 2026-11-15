@@ -1,18 +1,20 @@
 // Ported from Z3 (src/ast/substitution/substitution.cpp, src/ast/substitution/unifier.cpp), MIT
 // license, see z3-license.txt.
 import { type AstManager, KIND_APP, KIND_VAR } from "../ast";
+import { VarShifter } from "../rewriter-tpl";
 
 interface Binding {
   expr: number;
   offset: number;
 }
 
-const getKey = (index: number, offset: number) => `${offset}:${index}`;
+// A variable index or an expression at one of the two offsets.
+const getKey = (index: number, offset: number) => 2 * index + offset;
 
 // Bindings of variables at offsets to expressions at offsets. Applying it renames each unbound
 // variable at offset i by deltas[i].
 export class Substitution {
-  private bindings = new Map<string, Binding>();
+  private bindings = new Map<number, Binding>();
 
   constructor(private manager: AstManager) {}
 
@@ -24,13 +26,15 @@ export class Substitution {
   // bindings of variables to variables, where the larger class becomes the root.
   unify(first: number, firstOffset: number, second: number, secondOffset: number) {
     const manager = this.manager;
-    const parents = new Map<string, Binding>();
-    const sizes = new Map<string, number>();
-    const getNodeKey = (node: Binding) => `${node.expr}@${node.offset}`;
+    const parents = new Map<number, Binding>();
+    const sizes = new Map<number, number>();
+    const getNodeKey = (node: Binding) => getKey(node.expr, node.offset);
     for (const [key, root] of [...this.bindings].reverse()) {
       if (manager.kinds[root.expr] !== KIND_VAR) continue;
-      const [offset, index] = key.split(":").map(Number);
-      const child = { expr: manager.mkVar(index, manager.sorts[root.expr]), offset };
+      const child = {
+        expr: manager.mkVar(Math.floor(key / 2), manager.sorts[root.expr]),
+        offset: key % 2,
+      };
       const childSize = sizes.get(getNodeKey(child)) ?? 1;
       const rootSize = sizes.get(getNodeKey(root)) ?? 1;
       parents.set(getNodeKey(child), root);
@@ -95,8 +99,8 @@ export class Substitution {
 
   private isAcyclic() {
     const manager = this.manager;
-    const visiting = new Set<string>();
-    const done = new Set<string>();
+    const visiting = new Set<number>();
+    const done = new Set<number>();
     const visit = (expr: number, offset: number): boolean => {
       if (manager.isGround(expr)) return true;
       if (manager.kinds[expr] === KIND_VAR) {
@@ -113,11 +117,9 @@ export class Substitution {
       if (manager.kinds[expr] !== KIND_APP) return true;
       return manager.getArgs(expr).every((arg) => visit(arg, offset));
     };
-    for (const key of this.bindings.keys()) {
-      const [offset, index] = key.split(":").map(Number);
-      const binding = this.bindings.get(key) as Binding;
+    for (const [key, binding] of this.bindings) {
       visiting.clear();
-      visiting.add(getKey(index, offset));
+      visiting.add(key);
       if (!visit(binding.expr, binding.offset)) return false;
     }
     return true;
@@ -125,30 +127,79 @@ export class Substitution {
 
   apply(expr: number, offset: number, deltas: readonly number[] = [0]) {
     const manager = this.manager;
-    const cache = new Map<string, number>();
-    const visit = (current: number, currentOffset: number): number => {
-      if (manager.isGround(current)) return current;
-      const key = getKey(current, currentOffset);
-      const cached = cache.get(key);
-      if (cached !== undefined) return cached;
-      const result = (() => {
-        if (manager.kinds[current] === KIND_VAR) {
-          const binding = this.bindings.get(getKey(manager.values[current], currentOffset));
-          if (binding !== undefined) return visit(binding.expr, binding.offset);
-          const delta = deltas[currentOffset] ?? 0;
-          return delta === 0
-            ? current
-            : manager.mkVar(manager.values[current] + delta, manager.sorts[current]);
+    const cache = new Map<number, number>();
+    const todo = [{ expr, offset }];
+    while (todo.length > 0) {
+      const node = todo[todo.length - 1];
+      const key = getKey(node.expr, node.offset);
+      if (cache.has(key)) {
+        todo.pop();
+        continue;
+      }
+      const kind = manager.kinds[node.expr];
+      if (manager.isGround(node.expr)) cache.set(key, node.expr);
+      else if (kind === KIND_VAR) {
+        const binding = this.bindings.get(getKey(manager.values[node.expr], node.offset));
+        const bound =
+          binding === undefined ? undefined : cache.get(getKey(binding.expr, binding.offset));
+        if (binding !== undefined && bound === undefined) {
+          todo.push(binding);
+          continue;
         }
-        if (manager.kinds[current] !== KIND_APP) return current;
-        const args = manager.getArgs(current).map((arg) => visit(arg, currentOffset));
-        return args.every((arg, index) => arg === manager.getArg(current, index))
-          ? current
-          : manager.mkApp(manager.decls[current], args, manager.sorts[current]);
-      })();
-      cache.set(key, result);
-      return result;
-    };
-    return visit(expr, offset);
+        const delta = deltas[node.offset] ?? 0;
+        cache.set(
+          key,
+          bound ??
+            (delta === 0
+              ? node.expr
+              : manager.mkVar(manager.values[node.expr] + delta, manager.sorts[node.expr])),
+        );
+      } else if (kind === KIND_APP) {
+        let isVisited = true;
+        for (let index = manager.getNumArgs(node.expr); index > 0; index--) {
+          const arg = manager.getArg(node.expr, index - 1);
+          if (cache.has(getKey(arg, node.offset))) continue;
+          todo.push({ expr: arg, offset: node.offset });
+          isVisited = false;
+        }
+        if (!isVisited) continue;
+        const args = manager
+          .getArgs(node.expr)
+          .map((arg) => cache.get(getKey(arg, node.offset)) ?? arg);
+        cache.set(
+          key,
+          args.every((arg, index) => arg === manager.getArg(node.expr, index))
+            ? node.expr
+            : manager.mkApp(manager.decls[node.expr], args, manager.sorts[node.expr]),
+        );
+      } else cache.set(key, this.applyQuantifier(node.expr, node.offset, deltas));
+      todo.pop();
+    }
+    return cache.get(getKey(expr, offset)) ?? expr;
+  }
+
+  // The bindings move under the bound variables, by offset and then by variable.
+  private applyQuantifier(expr: number, offset: number, deltas: readonly number[]) {
+    const manager = this.manager;
+    const quantifier = manager.getQuantifier(expr);
+    const numVars = quantifier.sorts.length;
+    const nested = new Substitution(manager);
+    const shifter = new VarShifter(manager);
+    const shifted = [...this.bindings]
+      .sort((first, second) => (first[0] % 2) - (second[0] % 2) || first[0] - second[0])
+      .map((entry) => {
+        const moved = shifter.shift(entry[1].expr, 0, numVars, 0);
+        nested.bindings.set(entry[0] + 2 * numVars, { expr: moved, offset: entry[1].offset });
+        return moved;
+      });
+    const patterns = quantifier.patterns.map((pattern) => nested.apply(pattern, offset, deltas));
+    const noPatterns = quantifier.noPatterns.map((pattern) =>
+      nested.apply(pattern, offset, deltas),
+    );
+    const body = nested.apply(quantifier.body, offset, deltas);
+    const result = manager.mkQuantifier({ ...quantifier, patterns, noPatterns, body });
+    for (const moved of shifted) manager.decRef(moved);
+    shifter.release();
+    return result;
   }
 }

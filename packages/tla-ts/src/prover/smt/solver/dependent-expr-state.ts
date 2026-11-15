@@ -34,6 +34,22 @@ export class DependentExprState {
     }
   }
 
+  // A rewrite of -1 leaves the formula. The last result stays referenced until the next one.
+  rewriteEach(rewrite: (form: number) => number) {
+    const manager = this.manager;
+    const goal = this.goal;
+    let rewritten = -1;
+    this.forEachIndex((index) => {
+      const form = this.get(index);
+      const next = rewrite(form);
+      if (next === -1) return;
+      if (rewritten !== -1) manager.decRef(rewritten);
+      rewritten = next;
+      if (rewritten !== form) goal.update(index, rewritten, goal.getDependency(index));
+    });
+    if (rewritten !== -1) manager.decRef(rewritten);
+  }
+
   hasQuantifiers() {
     let isFound = false;
     for (let index = 0; index < this.goal.forms.size; index++)

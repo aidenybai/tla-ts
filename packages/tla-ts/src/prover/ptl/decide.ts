@@ -1,4 +1,3 @@
-import { TlaSyntaxError } from "../../errors";
 import type { DecideOptions, Verdict } from "../verdict";
 import { getSatisfiability, type BinaryKind, type PtlFormula } from "./tableau";
 
@@ -39,90 +38,71 @@ const RESERVED = /^(skolem|hidden|constant|NV_V\w*|NVV\w*)$/;
 
 const MAX_LS4_IDENTIFIER = 31;
 
-const parseLs4 = (text: string): PtlFormula => {
+// ptl_to_trp and LS4 reach no verdict on text that this reads as undefined.
+const parseLs4 = (text: string): PtlFormula | undefined => {
   const tokens = text.replace(/;.*/g, "").match(/<=>|<->|=>|->|[A-Za-z]\w*|\S/g) ?? [];
   let position = 0;
-  const reject = (reason: string): never => {
-    throw new TlaSyntaxError(`LS4 reaches no verdict: ${reason}`);
-  };
-  const peek = () => tokens[position] ?? "";
-  const take = (expected?: string) => {
-    const token = tokens[position++];
-    if (token === undefined || (expected !== undefined && token !== expected))
-      return reject(`expected ${expected ?? "a formula"}, found ${token ?? "the end"}`);
-    return token;
-  };
-  const checkIdentifier = (token: string) => {
-    if (!/^[A-Za-z]/.test(token) || KEYWORDS.has(token))
-      reject(`expected an identifier, found ${token}`);
-    if (RESERVED.test(token)) reject(`${token} is reserved`);
-    return token;
-  };
-  const takeIdentifier = () => checkIdentifier(take());
+  const isIdentifier = (token: string | undefined): token is string =>
+    token !== undefined && /^[A-Za-z]/.test(token) && !KEYWORDS.has(token) && !RESERVED.test(token);
   const takeList = () => {
-    const items = [takeIdentifier()];
-    while (peek() === ",") {
-      take();
-      items.push(takeIdentifier());
+    const items: string[] = [];
+    for (;;) {
+      const token = tokens[position++];
+      if (!isIdentifier(token)) return undefined;
+      items.push(token);
+      if (tokens[position] !== ",") return items;
+      position += 1;
     }
-    return items;
   };
-  const parsePrefix = (): PtlFormula => {
-    const token = take();
+  const parsePrefix = (): PtlFormula | undefined => {
+    const token = tokens[position++];
+    if (token === undefined) return undefined;
     const prefix = PREFIX_OPERATORS.get(token);
     if (prefix !== undefined) {
       const body = parsePrefix();
-      return prefix === "Past"
-        ? reject(`ptl_to_trp does not translate ${token}`)
-        : { kind: prefix, body };
+      // ptl_to_trp does not translate the past operators.
+      return body === undefined || prefix === "Past" ? undefined : { kind: prefix, body };
     }
     if (token === "!" || token === "?") {
-      take("[");
-      // foyacc.mly checks only that the last variable of the list is uppercase.
+      if (tokens[position++] !== "[") return undefined;
       const variables = takeList();
-      if (!/^[A-Z]/.test(variables[variables.length - 1]))
-        reject(`${variables[variables.length - 1]} is not uppercase`);
-      take("]");
-      return parsePrefix();
+      // foyacc.mly checks only that the last variable of the list is uppercase.
+      return variables !== undefined &&
+        /^[A-Z]/.test(variables[variables.length - 1]) &&
+        tokens[position++] === "]"
+        ? parsePrefix()
+        : undefined;
     }
     if (token === "(") {
       const inner = parseBinary(0);
-      take(")");
-      return inner;
+      return tokens[position++] === ")" ? inner : undefined;
     }
     if (token === "True" || token === "False") return { kind: "Constant", value: token === "True" };
-    const name = checkIdentifier(token);
-    if (peek() === "(") {
-      take();
-      takeList();
-      take(")");
-      reject(`LS4 does not read the predicate ${name} with arguments`);
-    }
-    if (name.length > MAX_LS4_IDENTIFIER) reject(`the identifier ${name} is too long`);
-    return { kind: "Atom", name };
+    // LS4 reads no predicate with arguments and no identifier longer than 31 characters.
+    return isIdentifier(token) && tokens[position] !== "(" && token.length <= MAX_LS4_IDENTIFIER
+      ? { kind: "Atom", name: token }
+      : undefined;
   };
-  const parseOperators = (level: number, left: PtlFormula): PtlFormula => {
-    const kind = BINARY_LEVELS[level].get(peek());
-    if (kind === undefined) return left;
-    take();
-    return parseOperators(level, { kind, left, right: parseBinary(level + 1) });
+  const parseOperators = (level: number, left: PtlFormula | undefined): PtlFormula | undefined => {
+    const kind = BINARY_LEVELS[level].get(tokens[position] ?? "");
+    if (left === undefined || kind === undefined) return left;
+    position += 1;
+    const right = parseBinary(level + 1);
+    return right === undefined ? undefined : parseOperators(level, { kind, left, right });
   };
-  const parseBinary = (level: number): PtlFormula =>
+  const parseBinary = (level: number): PtlFormula | undefined =>
     level === BINARY_LEVELS.length ? parsePrefix() : parseOperators(level, parseBinary(level + 1));
   const formula = parseBinary(0);
-  if (position < tokens.length) reject(`expected the end, found ${peek()}`);
-  return formula;
+  return position < tokens.length ? undefined : formula;
 };
 
 export const decidePtl = (text: string, options: DecideOptions): Verdict => {
   const deadline = performance.now() + options.timeLimitMs;
-  try {
-    return getSatisfiability(
-      parseLs4(text),
-      () => options.signal?.aborted === true || performance.now() > deadline,
-    );
-  } catch (error) {
-    if (error instanceof TlaSyntaxError) return "unknown";
-    throw error;
-  }
+  const formula = parseLs4(text);
+  return formula === undefined
+    ? "unknown"
+    : getSatisfiability(
+        formula,
+        () => options.signal?.aborted === true || performance.now() > deadline,
+      );
 };

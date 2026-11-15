@@ -162,8 +162,10 @@ export class Optsmt {
   }
 
   add(term: number) {
-    const rewritten = new Rewriter(this.manager, TACTIC_REWRITER_OPTIONS).rewrite(term);
+    const rewriter = new Rewriter(this.manager, TACTIC_REWRITER_OPTIONS);
+    const rewritten = rewriter.rewrite(term);
     this.objs.push(rewritten);
+    rewriter.release();
     this.manager.decRef(rewritten);
     this.lower.push(ObjectiveValue.minusInfinity);
     this.upper.push(ObjectiveValue.infinity);
@@ -438,8 +440,9 @@ export class Optsmt {
       this.params.supremumRlimit,
     );
     const result = optimized.result;
+    if (!result.hasModel) return NLSAT_NO_RESULT;
     const model = result.model;
-    if (model === null) return NLSAT_NO_RESULT;
+    const certified = result.sup;
     this.nlsatModels.push(model);
     if (result.isUnbounded) {
       this.model = model;
@@ -447,20 +450,20 @@ export class Optsmt {
       this.upper[index] = this.lower[index];
       return NLSAT_CERTIFIED;
     }
-    if (result.isOpen && result.sup !== null) {
+    if (certified?.isOpen === true) {
       // The model is a feasible witness below the limit.
       this.model = model;
-      const lower = InfEps.of(result.supLower, Rational.minusOne);
+      const lower = InfEps.of(certified.lower, Rational.minusOne);
       this.setBest(index, lower);
-      this.lower[index] = new ObjectiveValue(lower, result.sup);
+      this.lower[index] = new ObjectiveValue(lower, certified.value);
       this.upper[index] = new ObjectiveValue(
-        InfEps.of(result.supUpper, Rational.minusOne),
-        result.sup,
+        InfEps.of(certified.upper, Rational.minusOne),
+        certified.value,
       );
       return NLSAT_CERTIFIED;
     }
     const value = InfEps.of(result.lower);
-    if (value.compare(this.getLower(index)) < 0 || result.value === null) return NLSAT_NO_RESULT;
+    if (value.compare(this.getLower(index)) < 0) return NLSAT_NO_RESULT;
     this.model = model;
     this.setBest(index, value);
     if (optimized.status === L_TRUE) {
@@ -468,7 +471,7 @@ export class Optsmt {
       this.upper[index] = new ObjectiveValue(InfEps.of(result.upper), result.value);
       return NLSAT_CERTIFIED;
     }
-    const sup = result.hasSup ? minInfEps(InfEps.of(result.supUpper), upper) : upper;
+    const sup = certified === null ? upper : minInfEps(InfEps.of(certified.upper), upper);
     this.upper[index] = new ObjectiveValue(
       sup.compare(this.getLower(index)) < 0 ? this.getLower(index) : sup,
     );

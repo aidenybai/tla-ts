@@ -41,19 +41,34 @@ describe("parseSmtlib builtin operators", () => {
   });
 
   it.each([
-    ["(not p p)", "not"],
-    ["(=> p)", "=>"],
-    ["(ite p 1)", "ite"],
-    ["(ite 1 2 3)", "ite"],
-    ["(= (mod x) 1)", "mod"],
-    ["(= (abs x x) 1)", "abs"],
-    ["(and 1 p)", "and"],
-  ])("rejects %s as an ill-sorted application of %s", (formula, operator) => {
+    [
+      "(not p p)",
+      "Wrong number of arguments (2) passed to function (declare-fun not (Bool) Bool) \narg: p\n\narg: p",
+    ],
+    [
+      "(=> p)",
+      "Wrong number of arguments (1) passed to function (declare-fun => (Bool Bool) Bool) \narg: p",
+    ],
+    ["(ite p 1)", "unknown constant ite (Bool Int) "],
+    [
+      "(ite 1 2 3)",
+      "Sort mismatch at argument #1 for function (declare-fun ite (Bool Int Int) Int) supplied sort is Int",
+    ],
+    [
+      "(= (mod x) 1)",
+      "Wrong number of arguments (1) passed to function (declare-fun mod (Int Int) Int) \narg: x",
+    ],
+    [
+      "(= (abs x x) 1)",
+      "Wrong number of arguments (2) passed to function (declare-fun abs (Int) Int) \narg: x\n\narg: x",
+    ],
+    [
+      "(and 1 p)",
+      "Sort mismatch at argument #1 for function (declare-fun and (Bool Bool) Bool) supplied sort is Int",
+    ],
+  ])("rejects %s as Z3 does", (formula, message) => {
     expect(() => decideAssertion(formula)).toThrow(
-      expect.objectContaining({
-        name: "SmtParseError",
-        message: `ill-sorted application of ${operator}`,
-      }),
+      expect.objectContaining({ name: "SmtParseError", message }),
     );
   });
 

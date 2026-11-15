@@ -15,7 +15,6 @@ import {
   OP_LT,
   OP_MOD,
   OP_MUL,
-  OP_NUM,
   OP_OR,
   OP_SUB,
   OP_UMINUS,
@@ -23,7 +22,7 @@ import {
   SORT_INT,
   SORT_REAL,
 } from "../ast";
-import { getExtendedNumeral, isAppOf, mkNot } from "../ast-util";
+import { getExtendedNumeral, mkNot } from "../ast-util";
 import { ExprSafeReplace } from "../expr-safe-replace";
 import { ObjMap } from "../hashtable";
 import {
@@ -44,18 +43,10 @@ import {
 } from "../model-based-opt";
 import { getEuclideanDiv, getEuclideanMod, Rational } from "../rational";
 import type { RefVector } from "../ref-vector";
-import { markRec, type MbpContext } from "./mbp-plugin";
+import { getBinaryArgs, getNumeral, markRec, type MbpContext } from "./mbp-plugin";
 
 const isArith = (manager: AstManager, expr: number) =>
   manager.sorts[expr] === SORT_INT || manager.sorts[expr] === SORT_REAL;
-
-const getBinaryArgs = (manager: AstManager, expr: number, op: number) =>
-  isAppOf(manager, expr, op) && manager.getNumArgs(expr) === 2
-    ? [manager.getArg(expr, 0), manager.getArg(expr, 1)]
-    : undefined;
-
-const getNumeral = (manager: AstManager, expr: number) =>
-  isAppOf(manager, expr, OP_NUM) ? manager.getRationalValue(expr) : undefined;
 
 const insertMul = (terms: ObjMap<Rational>, expr: number, value: Rational) =>
   terms.set(expr, (terms.get(expr) ?? Rational.zero).add(value));

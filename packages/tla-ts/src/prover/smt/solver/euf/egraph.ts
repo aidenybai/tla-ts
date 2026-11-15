@@ -1,6 +1,23 @@
 // Ported from Z3 (src/ast/euf/euf_egraph.h, src/ast/euf/euf_egraph.cpp, src/ast/euf/euf_enode.h,
 // src/ast/euf/euf_enode.cpp, src/ast/euf/euf_justification.h), MIT license, see z3-license.txt.
-import { type AstManager, OP_EQ } from "../ast";
+import {
+  type AstManager,
+  OP_ADD,
+  OP_AND,
+  OP_ARRAY_EXT,
+  OP_ARRAY_MAP,
+  OP_BADD,
+  OP_BAND,
+  OP_BCOMP,
+  OP_BMUL,
+  OP_BOR,
+  OP_BXNOR,
+  OP_BXOR,
+  OP_EQ,
+  OP_MUL,
+  OP_OR,
+  OP_XOR,
+} from "../ast";
 import { CgTable } from "../cg-table";
 import { L_FALSE, L_TRUE, L_UNDEF } from "../lbool";
 
@@ -10,35 +27,28 @@ export const NULL_BOOL_VAR = -1;
 const J_AXIOM = 0;
 export const J_CONGRUENCE = 1;
 export const J_EXTERNAL = 2;
-export const J_EQUALITY = 3;
 
 export interface Justification {
   readonly kind: number;
   readonly isCommutative: boolean;
   readonly external: number;
-  readonly lhs: Enode | null;
-  readonly rhs: Enode | null;
 }
 
 export const AXIOM: Justification = {
   kind: J_AXIOM,
   isCommutative: false,
   external: 0,
-  lhs: null,
-  rhs: null,
 };
 
 const CONGRUENCES: readonly Justification[] = [
-  { kind: J_CONGRUENCE, isCommutative: false, external: 0, lhs: null, rhs: null },
-  { kind: J_CONGRUENCE, isCommutative: true, external: 0, lhs: null, rhs: null },
+  { kind: J_CONGRUENCE, isCommutative: false, external: 0 },
+  { kind: J_CONGRUENCE, isCommutative: true, external: 0 },
 ];
 
 export const mkExternal = (external: number): Justification => ({
   kind: J_EXTERNAL,
   isCommutative: false,
   external,
-  lhs: null,
-  rhs: null,
 });
 
 interface ThVar {
@@ -78,11 +88,15 @@ export class Enode {
     readonly decl: number,
     readonly args: readonly Enode[],
     readonly generation: number,
-    readonly isEq: boolean,
+    readonly isCommutative: boolean,
   ) {}
 
   get numArgs() {
     return this.args.length;
+  }
+
+  get isCommutativeTable() {
+    return this.isCommutative;
   }
 
   getArg(index: number) {
@@ -135,7 +149,7 @@ export class Enode {
   congruent(other: Enode) {
     if (this.decl !== other.decl || this.args.length !== other.args.length) return false;
     if (
-      this.isEq &&
+      this.isCommutative &&
       this.args[0].root === other.args[1].root &&
       this.args[1].root === other.args[0].root
     )
@@ -213,15 +227,39 @@ interface UpdateRecord {
 
 const TO_MERGE_PLAIN = 0;
 const TO_MERGE_COMM = 1;
-const TO_JUSTIFIED = 2;
-const TO_ADD_LITERAL = 3;
+const TO_ADD_LITERAL = 2;
 
 interface ToMerge {
   a: Enode;
   b: Enode | null;
   kind: number;
-  justification: Justification;
 }
+
+// func_decl_info::is_commutative, which the decl plugins set by family and kind.
+export const isCommutativeDecl = (manager: AstManager, decl: number): boolean => {
+  const funcDecl = manager.funcDecls[decl];
+  switch (funcDecl.op) {
+    case OP_EQ:
+    case OP_AND:
+    case OP_OR:
+    case OP_XOR:
+    case OP_ADD:
+    case OP_MUL:
+    case OP_BADD:
+    case OP_BMUL:
+    case OP_BAND:
+    case OP_BOR:
+    case OP_BXOR:
+    case OP_BXNOR:
+    case OP_BCOMP:
+    case OP_ARRAY_EXT:
+      return true;
+    case OP_ARRAY_MAP:
+      return isCommutativeDecl(manager, funcDecl.parameters[0]);
+    default:
+      return false;
+  }
+};
 
 export class Egraph {
   readonly nodes: Enode[] = [];
@@ -264,8 +302,12 @@ export class Egraph {
     return this.expr2enode[expr];
   }
 
-  findCongruent(decl: number, args: readonly Enode[], isEq: boolean) {
-    return this.table.findFor(decl, args, isEq);
+  findCongruent(decl: number, args: readonly Enode[]) {
+    return this.table.findFor(
+      decl,
+      args,
+      args.length === 2 && isCommutativeDecl(this.manager, decl),
+    );
   }
 
   enodesOf(decl: number) {
@@ -292,7 +334,7 @@ export class Egraph {
       decl,
       args,
       generation,
-      args.length === 2 && isApp && manager.getOp(expr) === OP_EQ,
+      args.length === 2 && isApp && isCommutativeDecl(manager, decl),
     );
     if (this.isDefaultRelevant) node.isRelevant = true;
     this.nodes.push(node);
@@ -330,7 +372,7 @@ export class Egraph {
   }
 
   private isComm(node: Enode, other: Enode) {
-    return node.isEq && node.args[0].root !== other.args[0].root;
+    return node.isCommutative && node.args[0].root !== other.args[0].root;
   }
 
   private insertTable(node: Enode) {
@@ -349,7 +391,7 @@ export class Egraph {
 
   private queueLiteral(node: Enode, ante: Enode | null) {
     if (this.onPropagateLiteral !== null)
-      this.toMerge.push({ a: node, b: ante, kind: TO_ADD_LITERAL, justification: AXIOM });
+      this.toMerge.push({ a: node, b: ante, kind: TO_ADD_LITERAL });
   }
 
   private updateChildren(node: Enode) {
@@ -358,12 +400,7 @@ export class Egraph {
   }
 
   private pushMerge(a: Enode, b: Enode, isComm: boolean) {
-    this.toMerge.push({
-      a,
-      b,
-      kind: isComm ? TO_MERGE_COMM : TO_MERGE_PLAIN,
-      justification: AXIOM,
-    });
+    this.toMerge.push({ a, b, kind: isComm ? TO_MERGE_COMM : TO_MERGE_PLAIN });
   }
 
   pushScope() {
@@ -455,6 +492,7 @@ export class Egraph {
     }
     const rootVar = root.getThVar(id);
     node.replaceThVar(thVar, id);
+    // Deviation from Z3: the undo restores the variable of the node; Z3 records that of the root.
     this.updates.push({
       tag: U_REPLACE_TH_VAR,
       r1: node,
@@ -550,7 +588,7 @@ export class Egraph {
           this.toggleCgcEnabled(r1, true);
           break;
         case U_TOGGLE_MERGE_TF:
-          r1.isMergeTfEnabled = !r1.isMergeTfEnabled;
+          r1.isMergeTfEnabled = !r1.mergeTf;
           break;
         case U_SET_PARENT:
           this.undoEq(r1, record.n1 as Enode, record.num);
@@ -716,9 +754,6 @@ export class Egraph {
         case TO_MERGE_COMM:
           this.mergeWith(item.a, item.b as Enode, CONGRUENCES[item.kind]);
           break;
-        case TO_JUSTIFIED:
-          this.mergeWith(item.a, item.b as Enode, item.justification);
-          break;
         case TO_ADD_LITERAL:
           this.addLiteral(item.a, item.b);
           break;
@@ -833,8 +868,6 @@ export class Egraph {
     if (justification.kind === J_EXTERNAL) justifications.push(justification.external);
     else if (justification.kind === J_CONGRUENCE)
       this.pushCongruence(a, b, justification.isCommutative);
-    else if (justification.kind === J_EQUALITY)
-      this.explainEq(justifications, justification.lhs as Enode, justification.rhs as Enode);
   }
 
   explainEq(justifications: number[], a: Enode, b: Enode) {

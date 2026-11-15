@@ -410,13 +410,15 @@ export class Mbqi {
         )
           continue;
         visited.add(value);
+        const replaced = this.replaceModelValue(value);
         veqs.push(this.pin(manager.mkEq(sk, expr)));
-        meqs.push(this.pin(manager.mkEq(sk, this.replaceModelValue(value))));
+        meqs.push(this.pin(manager.mkEq(sk, replaced)));
         bound--;
       }
       if (veqs.length === 0) continue;
-      this.assertExpr(manager.mkOr(meqs));
+      const meq = manager.mkOr(meqs);
       qb.domainEqs.push(manager.mkOr(veqs));
+      this.assertExpr(meq);
     }
   }
 

@@ -118,7 +118,7 @@ export const replaceFreeVars = (
               ...data,
               body: children[0],
               patterns: children.slice(1, 1 + data.patterns.length),
-              noPatterns: [],
+              noPatterns: children.slice(1 + data.patterns.length),
             });
     frames.pop();
     cache.set(frame.shift * numNodes + current, result);
@@ -177,7 +177,7 @@ export class UnusedVarsEliminator {
         manager.kinds[expr] === KIND_QUANTIFIER && !manager.isLambda(expr)
           ? manager.getQuantifier(expr)
           : null;
-      const kept = data === null ? expr : manager.isGround(data.body) ? data.body : -1;
+      const kept = data === null ? expr : manager.isGroundApp(data.body) ? data.body : -1;
       if (kept !== -1 || data === null) {
         manager.incRef(kept);
         return kept;

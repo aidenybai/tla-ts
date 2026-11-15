@@ -11,17 +11,7 @@ export const runMaxBvSharing = (manager: AstManager) => (goal: Goal) => {
   runSimplifier(goal, false, (state) => {
     const rewriter = new MaxBvSharing(manager);
     return {
-      reduce: () => {
-        let rewritten = -1;
-        state.forEachIndex((index) => {
-          const form = state.get(index);
-          const next = rewriter.rewrite(form);
-          if (rewritten !== -1) manager.decRef(rewritten);
-          rewritten = next;
-          if (rewritten !== form) goal.update(index, rewritten);
-        });
-        if (rewritten !== -1) manager.decRef(rewritten);
-      },
+      reduce: () => state.rewriteEach((form) => rewriter.rewrite(form)),
       release: () => rewriter.release(),
     };
   });

@@ -3,15 +3,23 @@
 // Muenchen, and contributors, see LICENSE.
 
 import { TlaIsabelleError } from "../../../errors";
+import { addUnsafeDest, addUnsafeElim, addUnsafeIntro, withClaset } from "../provers/classical";
 import { asmRl, compIncr, genAll, multiResolves, zeroVarIndexes } from "../pure/drule";
+import { addSimps } from "../pure/raw-simplifier";
 import { chopSeq } from "../pure/seq";
 import { stripImpConcl } from "../pure/logic";
-import { fastypeOf, type Term, type Var } from "../pure/term";
+import { fastypeOf, type Var } from "../pure/term";
 import { instantiate, instantiateTypes, type Thm } from "../pure/thm";
 import { emptyTyEnv, matchTypes, substType, type TyEnv } from "../pure/type";
-import { getFact, readTerms, type IsarContext } from "./context";
-import { rewriteRule } from "./method";
-import { syntaxError, type AttributeSource, type FactReference, type OuterToken } from "./theory";
+import { getFact, readTerms, varsOf, type IsarContext } from "./context";
+import { rewriteRule, type ProofContext } from "./method";
+import {
+  innerText,
+  syntaxError,
+  type AttributeSource,
+  type FactReference,
+  type OuterToken,
+} from "./theory";
 
 const isInnerToken = (token: OuterToken | undefined) =>
   token !== undefined &&
@@ -19,11 +27,6 @@ const isInnerToken = (token: OuterToken | undefined) =>
     token.kind === "cartouche" ||
     token.kind === "word" ||
     token.kind === "var");
-
-const innerText = (token: OuterToken) =>
-  token.kind === "cartouche"
-    ? token.text.slice("\\<open>".length, -"\\<close>".length)
-    : token.text;
 
 export const parseFactReferences = (tokens: readonly OuterToken[]): FactReference[] => {
   const references: FactReference[] = [];
@@ -66,25 +69,6 @@ export const parseFactReferences = (tokens: readonly OuterToken[]): FactReferenc
   return references;
 };
 
-// Vars.add_vars: the variables in the order they occur.
-const varsOf = (terms: readonly Term[]): Var[] => {
-  const found: Var[] = [];
-  const visit = (term: Term) => {
-    if (
-      term.kind === "Var" &&
-      !found.some((other) => other.name === term.name && other.index === term.index)
-    )
-      found.push(term);
-    if (term.kind === "Abs") visit(term.body);
-    if (term.kind === "App") {
-      visit(term.fun);
-      visit(term.arg);
-    }
-  };
-  for (const term of terms) visit(term);
-  return found;
-};
-
 const varsOfThm = (thm: Thm) => varsOf([...thm.tpairs.flat(), thm.prop]);
 
 // Rule_Insts.where_rule: the terms are read against the variables' types, whose type variables
@@ -98,7 +82,10 @@ const whereRule = (
   const targets = insts.map((inst) => {
     const variable = vars.find((other) => other.name === inst.name && other.index === inst.index);
     if (variable === undefined)
-      throw new TlaIsabelleError("ERROR", `No such variable in theorem: ?${inst.name}`);
+      throw new TlaIsabelleError(
+        "ERROR",
+        `No such variable in theorem: "?${inst.name}${inst.index === 0 ? "" : inst.index}"`,
+      );
     return variable;
   });
   const terms = readTerms(
@@ -154,14 +141,17 @@ const parseWhere = (args: readonly OuterToken[]) => {
   const insts: { name: string; index: number; text: string }[] = [];
   let position = 0;
   while (position < args.length) {
-    if (args[position].kind === "symbol" && args[position].text === "?") position += 1;
     const variable = args[position];
-    if (variable?.kind !== "word" || variable.text.startsWith("'")) throw syntaxError(variable);
+    if ((variable.kind !== "word" && variable.kind !== "var") || variable.text.startsWith("'"))
+      throw syntaxError(variable);
     const digits = /\d*$/.exec(variable.text)?.[0] ?? "";
     if (args[position + 1]?.text !== "=" || !isInnerToken(args[position + 2]))
       throw syntaxError(args[position + 1]);
     insts.push({
-      name: variable.text.slice(0, variable.text.length - digits.length),
+      name: variable.text.slice(
+        variable.kind === "var" ? 1 : 0,
+        variable.text.length - digits.length,
+      ),
       index: Number(digits || 0),
       text: innerText(args[position + 2]),
     });
@@ -186,28 +176,79 @@ const ofFacts = (context: IsarContext, rule: Thm, facts: readonly Thm[]): Thm =>
 const rulify = (context: IsarContext, thm: Thm): Thm =>
   zeroVarIndexes(genAll(rewriteRule(context.tactics.limits, context.tactics.rulifyRules, thm)));
 
-export const applyAttribute = (context: IsarContext, attribute: AttributeSource, thm: Thm): Thm => {
+// Simplifier.simp_add and Classical's unsafe_intro, unsafe_elim and unsafe_dest: the declarations
+// that add the theorem to a set the methods read.
+const declareRule = (tactics: ProofContext, name: string, thm: Thm): ProofContext => {
+  if (name === "simp")
+    return {
+      ...tactics,
+      simpset: addSimps({ limits: tactics.limits, simpset: tactics.simpset, bounds: 0 }, [thm]),
+    };
+  const classical = tactics.classical;
+  const add = name === "intro" ? addUnsafeIntro : name === "elim" ? addUnsafeElim : addUnsafeDest;
+  return {
+    ...tactics,
+    classical: withClaset(classical, add(classical, thm, tactics.atomizeRules)),
+  };
+};
+
+// Thm.apply_attribute: a rule attribute changes the theorem, a declaration the context.
+const applyAttribute = (
+  context: IsarContext,
+  attribute: AttributeSource,
+  thm: Thm,
+): [IsarContext, Thm] => {
   switch (attribute.name) {
     case "of":
-      return ofRule(context, attribute.args, thm);
+      return [context, ofRule(context, attribute.args, thm)];
     case "where":
-      return whereRule(context, parseWhere(attribute.args), thm);
+      return [context, whereRule(context, parseWhere(attribute.args), thm)];
     case "rule_format":
       if (attribute.args.length > 0) throw syntaxError(attribute.args[0]);
-      return rulify(context, thm);
+      return [context, rulify(context, thm)];
     case "OF":
-      return ofFacts(context, thm, getThms(context, parseFactReferences(attribute.args)));
+      return [
+        context,
+        ofFacts(context, thm, getThms(context, parseFactReferences(attribute.args))),
+      ];
+    case "simp":
+    case "intro":
+    case "elim":
+    case "dest":
+      if (attribute.args.length > 0)
+        throw new TlaIsabelleError("ERROR", `Unsupported ${attribute.name} attribute arguments`);
+      return [{ ...context, tactics: declareRule(context.tactics, attribute.name, thm) }, thm];
     default:
       throw new TlaIsabelleError("ERROR", `Unsupported attribute: ${attribute.name}`);
   }
 };
 
-export const getThms = (context: IsarContext, references: readonly FactReference[]): Thm[] =>
-  references.flatMap((reference) =>
-    getFact(context, reference.name).map((thm) =>
-      reference.attributes.reduce(
-        (result, attribute) => applyAttribute(context, attribute, result),
-        thm,
-      ),
-    ),
+// Thm.proof_attributes over a fact's theorems: each attribute sees what those before it declared.
+export const applyAttributes = (
+  context: IsarContext,
+  attributes: readonly AttributeSource[],
+  thms: readonly Thm[],
+): [IsarContext, Thm[]] =>
+  thms.reduce<[IsarContext, Thm[]]>(
+    ([current, results], thm) => {
+      const [declared, result] = attributes.reduce<[IsarContext, Thm]>(
+        ([inner, changed], attribute) => applyAttribute(inner, attribute, changed),
+        [current, thm],
+      );
+      return [declared, [...results, result]];
+    },
+    [context, []],
   );
+
+// The facts a command or a method cites, where the port keeps no declaration.
+export const getThms = (context: IsarContext, references: readonly FactReference[]): Thm[] =>
+  references.flatMap((reference) => {
+    const [declared, thms] = applyAttributes(
+      context,
+      reference.attributes,
+      getFact(context, reference.name),
+    );
+    if (declared !== context)
+      throw new TlaIsabelleError("ERROR", "Unsupported declaration in a fact reference");
+    return thms;
+  });

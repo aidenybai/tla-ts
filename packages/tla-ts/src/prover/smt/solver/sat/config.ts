@@ -2,6 +2,7 @@
 // src/sat/sat_simplifier_params.pyg, src/sat/sat_asymm_branch_params.pyg,
 // src/sat/sat_scc_params.pyg), MIT license, see z3-license.txt.
 import { SmtTacticError } from "../../../../errors";
+import { UINT_MAX } from "./clause";
 
 export const PS_ALWAYS_TRUE = 0;
 export const PS_ALWAYS_FALSE = 1;
@@ -20,8 +21,6 @@ export const GC_PSM = 1;
 export const GC_GLUE = 2;
 export const GC_GLUE_PSM = 3;
 export const GC_PSM_GLUE = 4;
-
-const UINT_MAX = 4294967295;
 
 export type SatParams = ReadonlyMap<string, boolean | number | string>;
 
@@ -91,11 +90,12 @@ export const getSatConfig = (params: SatParams) => ({
     "invalid phase selection strategy: always_false, always_true, basic_caching, caching, random",
   ),
   rephaseBase: getNumber(params, "rephase.base", 1000),
-  activityScale: getNumber(params, "reorder.activity_scale", 100),
   searchSatConflicts: getNumber(params, "search.sat.conflicts", 400),
   searchUnsatConflicts: getNumber(params, "search.unsat.conflicts", 400),
   restartInitial: getNumber(params, "restart.initial", 2),
   restartFactor: getNumber(params, "restart.factor", 1.5),
+  restartMax: getNumber(params, "restart.max", UINT_MAX),
+  inprocessMax: getNumber(params, "inprocess.max", UINT_MAX),
   randomFreq: getNumber(params, "random_freq", 0.01),
   randomSeed: getNumber(params, "random_seed", 0),
   burstSearch: getNumber(params, "burst_search", 100),

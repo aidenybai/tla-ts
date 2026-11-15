@@ -85,7 +85,7 @@ import {
 } from "./ast";
 import { mkBvApp } from "./bv-decl-plugin";
 import { type ArithRewriterOptions, PolyRewriter } from "./poly-rewriter";
-import { Rational } from "./rational";
+import { getMultInverse, Rational } from "./rational";
 import type { Rewrite } from "./rewriter-tpl";
 
 type Result = number | Rewrite | undefined;
@@ -94,6 +94,7 @@ export interface BvRewriterOptions {
   readonly isHiDiv0: boolean;
   readonly isMul2concat: boolean;
   readonly isSplitConcatEq: boolean;
+  readonly isMkbv2num?: boolean;
 }
 
 export const DEFAULT_BV_OPTIONS: Omit<BvRewriterOptions, "isHiDiv0"> = {
@@ -115,20 +116,6 @@ const getMod = (value: bigint, modulus: bigint) => ((value % modulus) + modulus)
 const getPowerOfTwoExponent = (value: bigint) => {
   if (value <= 0n || (value & (value - 1n)) !== 0n) return -1;
   return value.toString(2).length - 1;
-};
-
-const getMultInverse = (value: bigint, bits: number) => {
-  if (value === 1n) return 1n;
-  if (value % 2n === 0n) return undefined;
-  const modulus = getPowerOfTwo(bits);
-  let [oldRemainder, remainder] = [getMod(value, modulus), modulus];
-  let [oldCoefficient, coefficient] = [1n, 0n];
-  while (remainder !== 0n) {
-    const quotient = oldRemainder / remainder;
-    [oldRemainder, remainder] = [remainder, oldRemainder - quotient * remainder];
-    [oldCoefficient, coefficient] = [coefficient, oldCoefficient - quotient * coefficient];
-  }
-  return getMod(oldCoefficient, modulus);
 };
 
 const getAbs = (value: bigint) => (value < 0n ? -value : value);
@@ -405,7 +392,7 @@ export class BvRewriter extends PolyRewriter {
           2,
         );
       case OP_MKBV:
-        return undefined;
+        return this.mkMkbv(args);
       case OP_BIT2BOOL:
         return this.mkBit2boolIndex(args[0], parameters[0]);
       case OP_BSMUL_NO_OVFL:
@@ -1555,6 +1542,17 @@ export class BvRewriter extends PolyRewriter {
     const size = this.getSize(product[0]);
     const kept = this.mkExtractTerm(size - shift - 1, 0, product[1]);
     return rewrite(this.mkConcatTerm([kept, this.mkZero(shift)]), 2);
+  }
+
+  private mkMkbv(args: number[]) {
+    const manager = this.manager;
+    if (this.bvOptions.isMkbv2num !== true) return undefined;
+    let value = 0n;
+    for (let index = args.length - 1; index >= 0; index--) {
+      if (!manager.isTrue(args[index]) && !manager.isFalse(args[index])) return undefined;
+      value = value * 2n + (manager.isTrue(args[index]) ? 1n : 0n);
+    }
+    return this.mkBv(value, args.length);
   }
 
   private mkBit2boolIndex(arg: number, index: number): Result {

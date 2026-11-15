@@ -82,8 +82,7 @@ const sortRecordFields = (expression: Expr): Expr =>
 
 const collectSymbols = (entries: Entry[], encoder: Encoder) => {
   const state: CollectState = {
-    isArithmetic: encoder.encoding.isArithmetic,
-    isSetExtensional: encoder.encoding.isSetExtensional,
+    encoding: encoder.encoding,
     recordFields: encoder.recordFields,
     setTypes: encoder.setTypes,
     strings: [],

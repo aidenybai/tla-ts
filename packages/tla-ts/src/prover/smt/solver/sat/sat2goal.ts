@@ -10,20 +10,16 @@ import type { Solver } from "./solver";
 const mkNot = (manager: AstManager, expr: number) =>
   manager.isNot(expr) ? manager.getArg(expr, 0) : manager.mkNot(expr);
 
+export const isLiteral = (manager: AstManager, expr: number) =>
+  manager.isUninterpretedConst(expr) ||
+  (manager.isNot(expr) && manager.isUninterpretedConst(manager.getArg(expr, 0)));
+
 class Sat2GoalConverter {
   readonly smc = new ModelConverter();
   var2expr: number[] = [];
   readonly entries: Definition[] = [];
 
   constructor(private manager: AstManager) {}
-
-  private isLiteral(expr: number) {
-    const manager = this.manager;
-    return (
-      manager.isUninterpretedConst(expr) ||
-      (manager.isNot(expr) && manager.isUninterpretedConst(manager.getArg(expr, 0)))
-    );
-  }
 
   private add(expr: number, def: number) {
     const manager = this.manager;
@@ -60,7 +56,7 @@ class Sat2GoalConverter {
           def = manager.mkNot(def);
         }
         const expr = this.lit2expr(first);
-        if (this.isLiteral(expr)) this.add(expr, def);
+        if (isLiteral(manager, expr)) this.add(expr, def);
         clause.length = 0;
         continue;
       }
@@ -79,7 +75,7 @@ class Sat2GoalConverter {
           root ^= 1;
         }
         const expr = this.lit2expr(first);
-        if (this.isLiteral(expr)) this.add(expr, this.lit2expr(root));
+        if (isLiteral(manager, expr)) this.add(expr, this.lit2expr(root));
         index += 5;
         continue;
       }
@@ -164,5 +160,8 @@ export const sat2goal = (
     checkpoint();
     goal.assert(manager.mkOr(arena.getLits(clause).map(getExpr)));
   }
+  const formulas: number[] = [];
+  solver.ext?.toFormulas(getExpr, formulas);
+  for (const formula of formulas) goal.assert(formula);
   goal.addDefinitions(converter.entries);
 };

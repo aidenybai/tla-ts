@@ -201,8 +201,11 @@ const expandEnabledCdot = (
       throw new TlaProverError("ENABLEDaxioms depends on assumptions of level > 1 \n\n");
     return implicationToEnabled(sequent, locus, onWarning);
   }
+  // An obligation has no proof step to label and no instance to expand.
   const anonymizer = createAnonymizer(
-    { value: 0 },
+    () => {
+      throw new TlapmBugError();
+    },
     () => {
       throw new TlapmBugError();
     },

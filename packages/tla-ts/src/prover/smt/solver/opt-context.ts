@@ -23,7 +23,7 @@ import { mkBvApp } from "./bv-decl-plugin";
 import { Goal } from "./goal";
 import { getPbSum } from "./lia2card";
 import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
-import type { MaxsatContext, MaxsatParams } from "./maxsmt-base";
+import type { MaxsatContext, MaxsatParams, MaxsatSolver } from "./maxsmt-base";
 import { Maxsmt } from "./maxsmt";
 import { isInNraFragment } from "./opt-nlsat";
 import { canReuseNlsatSolver, giaPareto, ParetoNlsatSolver, type ParetoSolver } from "./opt-pareto";
@@ -245,19 +245,20 @@ export class OptContext {
   private getMaxsatContext(optSolver: OptSolver, options: OptOptions): MaxsatContext {
     const getSolver = () => this.satSolver ?? optSolver;
     const isSatEnabled = () => this.satSolver !== null;
+    const solver: MaxsatSolver = {
+      assertExpr: (expr) => getSolver().assertExpr(expr),
+      checkSat: (assumptions) => getSolver().check(assumptions),
+      getModel: () => getSolver().getModel(),
+      getUnsatCore: () => getSolver().getUnsatCore(),
+      findMutexes: (vars) => ({ status: L_TRUE, mutexes: getSolver().findMutexes(vars) }),
+    };
     return {
       manager: this.manager,
       params: options.maxsat,
       get isSatEnabled() {
         return isSatEnabled();
       },
-      getSolver: () => ({
-        assertExpr: (expr) => getSolver().assertExpr(expr),
-        checkSat: (assumptions) => getSolver().check(assumptions),
-        getModel: () => getSolver().getModel(),
-        getUnsatCore: () => getSolver().getUnsatCore(),
-        findMutexes: (vars) => ({ status: L_TRUE, mutexes: getSolver().findMutexes(vars) }),
-      }),
+      getSolver: () => solver,
       getBaseModel: () => this.rawModel,
       hide: (decl) => {
         this.hiddenDecls.push(decl);

@@ -841,28 +841,19 @@ export class AstManager {
     domain: number[],
     range: number,
   ) {
-    const decl = this.funcDecls.length;
-    this.declHashes[decl] = this.getFuncDeclHash(
+    return this.addDecl(
       name,
+      FAMILY_RECFUN,
+      op,
       domain,
       range,
+      parameters,
       getInfoHash(
         Z3_RECFUN_FAMILY,
         op - RECFUN_OP_BASE,
         op === OP_FUN_CASE_PRED ? [parameters[0], this.declHashes[parameters[1]]] : parameters,
       ),
     );
-    this.funcDecls.push({
-      name,
-      family: FAMILY_RECFUN,
-      op,
-      domain,
-      range,
-      isSkolem: false,
-      smallId: this.mkSmallId(),
-      parameters,
-    });
-    return decl;
   }
 
   private getSignature(expr: number) {
@@ -1112,35 +1103,33 @@ export class AstManager {
   }
 
   mkSort(name: SmtSymbol) {
-    this.sortHashes.push(
+    const sort = this.addSort(
+      getSymbolName(name),
+      FAMILY_USER,
+      [],
       combineHash(
         getSymbolHash(name),
         getInfoHash(Z3_USER_SORT_FAMILY, this.getUserSortKind(name), []),
       ),
     );
-    this.sortNames.push(getSymbolName(name));
-    this.sortFamilies.push(FAMILY_USER);
-    this.sortWidths.push(0);
-    this.sortSbits.push(0);
-    this.sortParameters.push([]);
-    this.sortSizes.push(SORT_SIZE_INFINITE);
     this.mkSmallId();
-    return this.sortNames.length - 1;
+    return sort;
   }
 
   mkBvSort(width: number) {
     const existing = this.bvSorts.get(width);
     if (existing !== undefined) return existing;
-    this.sortHashes.push(combineHash(getSymbolHash("bv"), getInfoHash(Z3_BV_FAMILY, 0, [width])));
-    this.sortNames.push("bv");
-    this.sortFamilies.push(FAMILY_BV);
-    this.sortWidths.push(width);
-    this.sortSbits.push(0);
-    this.sortParameters.push([]);
-    this.sortSizes.push(width < 64 ? 1n << BigInt(width) : SORT_SIZE_VERY_BIG);
+    const sort = this.addSort(
+      "bv",
+      FAMILY_BV,
+      [],
+      combineHash(getSymbolHash("bv"), getInfoHash(Z3_BV_FAMILY, 0, [width])),
+      width,
+      0,
+      width < 64 ? 1n << BigInt(width) : SORT_SIZE_VERY_BIG,
+    );
     // bv_decl_plugin makes the sorts up to 64 bits when Z3 starts.
     if (width > 64) this.mkSmallId();
-    const sort = this.sortNames.length - 1;
     this.bvSorts.set(width, sort);
     return sort;
   }
@@ -1149,40 +1138,35 @@ export class AstManager {
     const key = `${ebits}:${sbits}`;
     const existing = this.fpSorts.get(key);
     if (existing !== undefined) return existing;
-    this.sortHashes.push(
+    const sort = this.addSort(
+      "FloatingPoint",
+      FAMILY_FPA,
+      [],
       combineHash(
         getSymbolHash("FloatingPoint"),
         getInfoHash(Z3_FPA_FAMILY, Z3_FLOATING_POINT_SORT, [ebits, sbits]),
       ),
+      ebits,
+      sbits,
+      SORT_SIZE_VERY_BIG,
     );
-    this.sortNames.push("FloatingPoint");
-    this.sortFamilies.push(FAMILY_FPA);
-    this.sortWidths.push(ebits);
-    this.sortSbits.push(sbits);
-    this.sortParameters.push([]);
-    this.sortSizes.push(SORT_SIZE_VERY_BIG);
     this.mkSmallId();
-    const sort = this.sortNames.length - 1;
     this.fpSorts.set(key, sort);
     return sort;
   }
 
   mkRmSort() {
     if (this.rmSort !== -1) return this.rmSort;
-    this.sortHashes.push(
+    this.rmSort = this.addSort(
+      "RoundingMode",
+      FAMILY_FPA,
+      [],
       combineHash(
         getSymbolHash("RoundingMode"),
         getInfoHash(Z3_FPA_FAMILY, Z3_ROUNDING_MODE_SORT, []),
       ),
     );
-    this.sortNames.push("RoundingMode");
-    this.sortFamilies.push(FAMILY_FPA);
-    this.sortWidths.push(0);
-    this.sortSbits.push(0);
-    this.sortParameters.push([]);
-    this.sortSizes.push(SORT_SIZE_INFINITE);
     this.mkSmallId();
-    this.rmSort = this.sortNames.length - 1;
     return this.rmSort;
   }
 
@@ -1202,27 +1186,44 @@ export class AstManager {
     return this.sortSbits[sort];
   }
 
-  mkFpaDecl(op: number, name: string, parameters: number[], domain: number[], range: number) {
-    const key = `${op}:${name}:${parameters.join(",")}:${domain.join(",")}:${range}`;
-    const existing = this.fpaDecls.get(key);
-    if (existing !== undefined) return existing;
+  private addDecl(
+    name: SmtSymbol,
+    family: number,
+    op: number,
+    domain: number[],
+    range: number,
+    parameters: number[],
+    infoHash: number,
+    hasSmallId = true,
+  ) {
     const decl = this.funcDecls.length;
-    this.declHashes[decl] = this.getFuncDeclHash(
-      name,
-      domain,
-      range,
-      getInfoHash(Z3_FPA_FAMILY, op - FPA_OP_BASE, parameters),
-    );
+    this.declHashes[decl] = this.getFuncDeclHash(name, domain, range, infoHash);
     this.funcDecls.push({
       name,
-      family: FAMILY_FPA,
+      family,
       op,
       domain,
       range,
       isSkolem: false,
-      smallId: this.mkSmallId(),
+      smallId: hasSmallId ? this.mkSmallId() : -1,
       parameters,
     });
+    return decl;
+  }
+
+  mkFpaDecl(op: number, name: string, parameters: number[], domain: number[], range: number) {
+    const key = `${op}:${name}:${parameters.join(",")}:${domain.join(",")}:${range}`;
+    const existing = this.fpaDecls.get(key);
+    if (existing !== undefined) return existing;
+    const decl = this.addDecl(
+      name,
+      FAMILY_FPA,
+      op,
+      domain,
+      range,
+      parameters,
+      getInfoHash(Z3_FPA_FAMILY, op - FPA_OP_BASE, parameters),
+    );
     this.fpaDecls.set(key, decl);
     return decl;
   }
@@ -1232,12 +1233,13 @@ export class AstManager {
     const key = `${op}:${parameters.join(",")}:${domain.join(",")}`;
     const existing = this.pbDecls.get(key);
     if (existing !== undefined) return existing;
-    const decl = this.funcDecls.length;
-    const name = PB_OP_NAMES[op - PB_OP_BASE];
-    this.declHashes[decl] = this.getFuncDeclHash(
-      name,
+    const decl = this.addDecl(
+      PB_OP_NAMES[op - PB_OP_BASE],
+      FAMILY_PB,
+      op,
       domain,
       SORT_BOOL,
+      [],
       getInfoHash(
         Z3_PB_FAMILY,
         op - PB_OP_BASE,
@@ -1248,16 +1250,6 @@ export class AstManager {
         ),
       ),
     );
-    this.funcDecls.push({
-      name,
-      family: FAMILY_PB,
-      op,
-      domain,
-      range: SORT_BOOL,
-      isSkolem: false,
-      smallId: this.mkSmallId(),
-      parameters: [],
-    });
     this.pbParameters.set(decl, parameters);
     this.pbDecls.set(key, decl);
     return decl;
@@ -1280,14 +1272,22 @@ export class AstManager {
     return this.fpValues[id];
   }
 
-  private addSort(name: string, family: number, parameters: number[], hash: number) {
+  private addSort(
+    name: string,
+    family: number,
+    parameters: number[],
+    hash: number,
+    width = 0,
+    sbits = 0,
+    size = SORT_SIZE_INFINITE,
+  ) {
     this.sortHashes.push(hash);
     this.sortNames.push(name);
     this.sortFamilies.push(family);
-    this.sortWidths.push(0);
-    this.sortSbits.push(0);
+    this.sortWidths.push(width);
+    this.sortSbits.push(sbits);
     this.sortParameters.push(parameters);
-    this.sortSizes.push(SORT_SIZE_INFINITE);
+    this.sortSizes.push(size);
     return this.sortNames.length - 1;
   }
 
@@ -1394,27 +1394,19 @@ export class AstManager {
     const existing = this.seqDecls.get(key);
     if (existing !== undefined) return existing;
     const isChar = op >= CHAR_OP_BASE;
-    const decl = this.funcDecls.length;
-    this.declHashes[decl] = this.getFuncDeclHash(
+    const decl = this.addDecl(
       name,
+      isChar ? FAMILY_CHAR : FAMILY_SEQ,
+      op,
       domain,
       range,
+      parameters,
       getInfoHash(
         isChar ? Z3_CHAR_FAMILY : Z3_SEQ_FAMILY,
         op - (isChar ? CHAR_OP_BASE : SEQ_OP_BASE),
         parameterHashes,
       ),
     );
-    this.funcDecls.push({
-      name,
-      family: isChar ? FAMILY_CHAR : FAMILY_SEQ,
-      op,
-      domain,
-      range,
-      isSkolem: false,
-      smallId: this.mkSmallId(),
-      parameters,
-    });
     this.seqDecls.set(key, decl);
     return decl;
   }
@@ -1468,7 +1460,10 @@ export class AstManager {
     const key = parameters.join(",");
     const existing = this.arraySorts.get(key);
     if (existing !== undefined) return existing;
-    this.sortHashes.push(
+    const sort = this.addSort(
+      "Array",
+      FAMILY_ARRAY,
+      parameters,
       combineHash(
         getSymbolHash("Array"),
         getInfoHash(
@@ -1477,15 +1472,11 @@ export class AstManager {
           parameters.map((parameter) => this.sortHashes[parameter]),
         ),
       ),
+      0,
+      0,
+      this.getArraySortSize(parameters),
     );
-    this.sortNames.push("Array");
-    this.sortFamilies.push(FAMILY_ARRAY);
-    this.sortWidths.push(0);
-    this.sortSbits.push(0);
-    this.sortParameters.push(parameters);
-    this.sortSizes.push(this.getArraySortSize(parameters));
     this.mkSmallId();
-    const sort = this.sortNames.length - 1;
     this.arraySorts.set(key, sort);
     return sort;
   }
@@ -1535,7 +1526,6 @@ export class AstManager {
     const key = `${op}:${parameters.join(",")}:${domain.join(",")}`;
     const existing = this.arrayDecls.get(key);
     if (existing !== undefined) return existing;
-    const decl = this.funcDecls.length;
     const parameterHashes = parameters.map((parameter) =>
       op === OP_CONST_ARRAY
         ? this.sortHashes[parameter]
@@ -1544,22 +1534,15 @@ export class AstManager {
             (this.getDeclHash(parameter) ?? 0)
           : parameter,
     );
-    this.declHashes[decl] = this.getFuncDeclHash(
+    const decl = this.addDecl(
       name,
-      domain,
-      range,
-      getInfoHash(Z3_ARRAY_FAMILY, op - ARRAY_OP_BASE, parameterHashes),
-    );
-    this.funcDecls.push({
-      name,
-      family: FAMILY_ARRAY,
+      FAMILY_ARRAY,
       op,
       domain,
       range,
-      isSkolem: false,
-      smallId: this.mkSmallId(),
       parameters,
-    });
+      getInfoHash(Z3_ARRAY_FAMILY, op - ARRAY_OP_BASE, parameterHashes),
+    );
     this.arrayDecls.set(key, decl);
     return decl;
   }
@@ -1573,14 +1556,12 @@ export class AstManager {
     const key = `${family}:${typeof name}:${name}:${parameters.join(",")}`;
     const existing = this.parametricSorts.get(key);
     if (existing !== undefined) return existing;
-    this.sortHashes.push(combineHash(getSymbolHash(name), infoHash));
-    this.sortNames.push(getSymbolName(name));
-    this.sortFamilies.push(family);
-    this.sortWidths.push(0);
-    this.sortSbits.push(0);
-    this.sortParameters.push(parameters);
-    this.sortSizes.push(SORT_SIZE_INFINITE);
-    const sort = this.sortNames.length - 1;
+    const sort = this.addSort(
+      getSymbolName(name),
+      family,
+      parameters,
+      combineHash(getSymbolHash(name), infoHash),
+    );
     this.sortSmallIds[sort] = this.mkSmallId();
     this.parametricSorts.set(key, sort);
     return sort;
@@ -1653,23 +1634,15 @@ export class AstManager {
     const key = `${op}:${name}:${parameters.join(",")}:${domain.join(",")}:${range}`;
     const existing = this.datatypeDecls.get(key);
     if (existing !== undefined) return existing;
-    const decl = this.funcDecls.length;
-    this.declHashes[decl] = this.getFuncDeclHash(
+    const decl = this.addDecl(
       name,
-      domain,
-      range,
-      getInfoHash(Z3_DATATYPE_FAMILY, op - DATATYPE_OP_BASE, parameterHashes),
-    );
-    this.funcDecls.push({
-      name,
-      family: FAMILY_DATATYPE,
+      FAMILY_DATATYPE,
       op,
       domain,
       range,
-      isSkolem: false,
-      smallId: this.mkSmallId(),
       parameters,
-    });
+      getInfoHash(Z3_DATATYPE_FAMILY, op - DATATYPE_OP_BASE, parameterHashes),
+    );
     this.datatypeDecls.set(key, decl);
     return decl;
   }
@@ -1686,23 +1659,16 @@ export class AstManager {
     const key = `${op}:${parameters.join(",")}:${domain.join(",")}`;
     const existing = this.bvDecls.get(key);
     if (existing !== undefined) return existing;
-    const decl = this.funcDecls.length;
-    this.declHashes[decl] = this.getFuncDeclHash(
+    const decl = this.addDecl(
       name,
-      domain,
-      range,
-      getInfoHash(Z3_BV_FAMILY, op - BV_OP_BASE, parameters),
-    );
-    this.funcDecls.push({
-      name,
-      family: FAMILY_BV,
+      FAMILY_BV,
       op,
       domain,
       range,
-      isSkolem: false,
-      smallId: UNCACHED_BV_OPS.has(op) ? -1 : this.mkSmallId(),
       parameters,
-    });
+      getInfoHash(Z3_BV_FAMILY, op - BV_OP_BASE, parameters),
+      !UNCACHED_BV_OPS.has(op),
+    );
     this.bvDecls.set(key, decl);
     return decl;
   }
@@ -2207,7 +2173,7 @@ export class AstManager {
     const noPatterns = data.patterns.length > 0 ? [] : data.noPatterns;
     const key = `q${data.kind}:${data.sorts.join(",")}:${JSON.stringify(data.names)}:${
       data.body
-    }:${data.patterns.join(",")}:${noPatterns.join(",")}:${data.weight}`;
+    }:${data.patterns.join(",")}:${noPatterns.join(",")}:${data.weight}:${data.qid}`;
     const existing = this.table.get(key);
     if (existing !== undefined) {
       // A dead quantifier comes back as the new one Z3 makes, with its skolem id.
@@ -2270,27 +2236,19 @@ export class AstManager {
     const name = op === OP_LABEL_LIT ? "lbl-lit" : isPositive ? "lblpos" : "lblneg";
     const domain = op === OP_LABEL ? [SORT_BOOL] : [];
     const parameterHashes = names.map(getSymbolHash);
-    const decl = this.funcDecls.length;
-    this.declHashes[decl] = this.getFuncDeclHash(
+    const decl = this.addDecl(
       name,
+      FAMILY_LABEL,
+      op,
       domain,
       SORT_BOOL,
+      parameters,
       getInfoHash(
         Z3_LABEL_FAMILY,
         op - LABEL_OP_BASE,
         op === OP_LABEL ? [isPositive ? 1 : 0, ...parameterHashes] : parameterHashes,
       ),
     );
-    this.funcDecls.push({
-      name,
-      family: FAMILY_LABEL,
-      op,
-      domain,
-      range: SORT_BOOL,
-      isSkolem: false,
-      smallId: this.mkSmallId(),
-      parameters,
-    });
     this.labelDecls.set(key, decl);
     return decl;
   }

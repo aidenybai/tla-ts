@@ -116,7 +116,7 @@ describe("Zenon agrees with tlapm's Zenon", () => {
     (fixture) => {
       expect(decideZenon(fixture.text, { timeLimitMs: TIME_LIMIT_MS })).toEqual({
         verdict: "unsat",
-        proof: fixture.isar,
+        output: fixture.isar,
       });
     },
   );
@@ -125,7 +125,7 @@ describe("Zenon agrees with tlapm's Zenon", () => {
     "prints the proof of $path that tlapm writes, up to the names of variables",
     (fixture) => {
       const decision = decideZenon(fixture.text, { timeLimitMs: TIME_LIMIT_MS });
-      const proof = decision.verdict === "unsat" ? decision.proof : "";
+      const proof = decision.output ?? "";
       expect(proof).not.toBe(fixture.isar);
       expect(isEqualUpToRenaming(proof, fixture.isar)).toBe(true);
     },
@@ -181,6 +181,14 @@ const FALSE_GOALS = {
 describe("Zenon finds no proof of a false goal", () => {
   it.each(Object.entries(FALSE_GOALS))("%s", (_, text) => {
     expect(decideZenon(text, { timeLimitMs: 1000 }).verdict).toBe("unknown");
+  });
+
+  it("finds no proof where Zenon's not_subseteq_cap rule gives one that Isabelle rejects", () => {
+    const text = '$hyp "h" (TLA.subseteq a c)\n$goal (TLA.subseteq a (TLA.cap b c))';
+    const run = runZenon(text, { timeLimitMs: TIME_LIMIT_MS });
+    expect(run.proof).toBeUndefined();
+    expect(run.isar).toBeUndefined();
+    expect(run.failure).toBe("exhausted");
   });
 });
 

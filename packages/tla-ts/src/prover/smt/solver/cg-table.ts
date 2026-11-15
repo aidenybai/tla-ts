@@ -7,7 +7,9 @@ export interface CgNode {
   readonly owner: number;
   readonly decl: number;
   readonly numArgs: number;
-  readonly isEq: boolean;
+  readonly isCommutative: boolean;
+  // Whether cg_table::mk_table_for gives the declaration the binary commutative table.
+  readonly isCommutativeTable: boolean;
   readonly root: CgNode;
   getArg(index: number): CgNode;
 }
@@ -17,8 +19,8 @@ const getEqHash = (decl: number, first: number, second: number) =>
     ? (Math.imul(Math.imul(decl, 0x9e3779b1) + first, 0x85ebca6b) + second) | 0
     : (Math.imul(Math.imul(decl, 0x9e3779b1) + second, 0x85ebca6b) + first) | 0;
 
-const getHash = (decl: number, args: readonly CgNode[], isEq: boolean) => {
-  if (isEq) return getEqHash(decl, args[0].root.owner, args[1].root.owner);
+const getHash = (decl: number, args: readonly CgNode[], isCommutativeTable: boolean) => {
+  if (isCommutativeTable) return getEqHash(decl, args[0].root.owner, args[1].root.owner);
   let hash = decl;
   for (let index = 0; index < args.length; index++)
     hash = (Math.imul(hash, 0x9e3779b1) + args[index].root.owner) | 0;
@@ -26,25 +28,26 @@ const getHash = (decl: number, args: readonly CgNode[], isEq: boolean) => {
 };
 
 const getNodeHash = (node: CgNode) => {
-  if (node.isEq) return getEqHash(node.decl, node.getArg(0).root.owner, node.getArg(1).root.owner);
+  if (node.isCommutativeTable)
+    return getEqHash(node.decl, node.getArg(0).root.owner, node.getArg(1).root.owner);
   let hash = node.decl;
   for (let index = 0; index < node.numArgs; index++)
     hash = (Math.imul(hash, 0x9e3779b1) + node.getArg(index).root.owner) | 0;
   return hash;
 };
 
-const isPairCongruentTo = (node: CgNode, first: CgNode, second: CgNode, isEq: boolean) => {
+const isPairCongruentTo = (node: CgNode, first: CgNode, second: CgNode, isCommutative: boolean) => {
   const nodeFirst = node.getArg(0).root;
   const nodeSecond = node.getArg(1).root;
   return (
     (nodeFirst === first.root && nodeSecond === second.root) ||
-    (isEq && nodeFirst === second.root && nodeSecond === first.root)
+    (isCommutative && nodeFirst === second.root && nodeSecond === first.root)
   );
 };
 
-const isCongruentTo = (node: CgNode, decl: number, args: readonly CgNode[], isEq: boolean) => {
+const isCongruentTo = (node: CgNode, decl: number, args: readonly CgNode[]) => {
   if (node.decl !== decl || node.numArgs !== args.length) return false;
-  if (isEq) return isPairCongruentTo(node, args[0], args[1], true);
+  if (node.isCommutative) return isPairCongruentTo(node, args[0], args[1], true);
   for (let index = 0; index < args.length; index++)
     if (node.getArg(index).root !== args[index].root) return false;
   return true;
@@ -53,14 +56,16 @@ const isCongruentTo = (node: CgNode, decl: number, args: readonly CgNode[], isEq
 export const isCongruent = (first: CgNode, second: CgNode) => {
   if (first.decl !== second.decl || first.numArgs !== second.numArgs) return false;
   if (first.numArgs === 2)
-    return isPairCongruentTo(first, second.getArg(0), second.getArg(1), first.isEq);
+    return isPairCongruentTo(first, second.getArg(0), second.getArg(1), first.isCommutative);
   for (let index = 0; index < first.numArgs; index++)
     if (first.getArg(index).root !== second.getArg(index).root) return false;
   return true;
 };
 
 export const getCongruenceJustification = (node: Enode, congruent: Enode) =>
-  CONGRUENCE_JUSTIFICATIONS[node.isEq && congruent.getArg(0).root !== node.getArg(0).root ? 1 : 0];
+  CONGRUENCE_JUSTIFICATIONS[
+    node.isCommutative && congruent.getArg(0).root !== node.getArg(0).root ? 1 : 0
+  ];
 
 const EMPTY = 0;
 const FULL = 1;
@@ -73,7 +78,7 @@ export class CgTable<Node extends CgNode = Enode> {
   private numFull = 0;
   private numDeleted = 0;
 
-  private find(decl: number, args: readonly CgNode[], isEq: boolean, hash: number) {
+  private find(decl: number, args: readonly CgNode[], hash: number) {
     const mask = this.states.length - 1;
     for (let slot = hash & mask; this.states[slot] !== EMPTY; slot = (slot + 1) & mask) {
       const node = this.nodes[slot];
@@ -81,7 +86,7 @@ export class CgTable<Node extends CgNode = Enode> {
         this.states[slot] === FULL &&
         this.hashes[slot] === hash &&
         node !== null &&
-        isCongruentTo(node, decl, args, isEq)
+        isCongruentTo(node, decl, args)
       )
         return node;
     }
@@ -143,8 +148,8 @@ export class CgTable<Node extends CgNode = Enode> {
     }
   }
 
-  findFor(decl: number, args: readonly CgNode[], isEq: boolean) {
-    return this.find(decl, args, isEq, getHash(decl, args, isEq));
+  findFor(decl: number, args: readonly CgNode[], isCommutativeTable: boolean) {
+    return this.find(decl, args, getHash(decl, args, isCommutativeTable));
   }
 
   findCongruent(node: CgNode) {

@@ -1,6 +1,7 @@
 // Ported from Z3 (src/muz/transforms/dl_mk_subsumption_checker.cpp,
 // src/muz/base/dl_rule_subsumption_index.cpp), MIT license, see z3-license.txt.
 import { KIND_VAR } from "../ast";
+import { ObjHashtable } from "../hashtable";
 import type { DatalogContext } from "./dl-context";
 import type { Rule } from "./dl-rule";
 import { RuleSet } from "./dl-rule-set";
@@ -28,14 +29,16 @@ class RuleSubsumptionIndex {
 }
 
 export class MkSubsumptionChecker implements RuleTransformerPlugin {
-  private totalRelations = new Set<number>();
+  private totalRelations: ObjHashtable;
   private definingRules = new Map<number, Rule>();
   private hasNewTotalRule = false;
 
   constructor(
     private context: DatalogContext,
     readonly priority: number,
-  ) {}
+  ) {
+    this.totalRelations = new ObjHashtable((decl) => context.manager.getDeclHash(decl));
+  }
 
   private isTotalRule(rule: Rule) {
     const manager = this.context.manager;
@@ -136,6 +139,10 @@ export class MkSubsumptionChecker implements RuleTransformerPlugin {
       index.add(transformed);
     }
     target.inheritPredicates(source);
+    if (this.totalRelations.size > 0)
+      this.context.addGenericModelConverter(
+        [...this.totalRelations].map((decl) => ({ decl, def: manager.trueExpr })),
+      );
     return isModified;
   }
 

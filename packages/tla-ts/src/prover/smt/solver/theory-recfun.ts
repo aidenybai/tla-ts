@@ -112,8 +112,8 @@ export class TheoryRecfun extends Theory {
     for (const expr of exprs) this.keep(expr);
     this.propagationQueue.push({ kind, exprs });
     this.context.pushTrail(() => {
-      for (const expr of (this.propagationQueue.pop() as PropagationItem).exprs)
-        this.manager.decRef(expr);
+      this.propagationQueue.pop();
+      for (const expr of exprs) this.manager.decRef(expr);
     });
   }
 

@@ -366,7 +366,9 @@ describe("the Horn engine reports what Z3 reports", () => {
       ),
     );
     expect(() => runHorn(manager, new Map(), TACTIC_REWRITER_OPTIONS)(goal)).toThrow(
-      new SmtTacticError("Uninterpreted 'k!7' in a rule"),
+      new SmtTacticError(
+        "Uninterpreted 'k!7' in <null>:\np(#0) :- \n (= (k!7 (:var 0)) (:var 0)).\n",
+      ),
     );
   });
 });

@@ -76,7 +76,7 @@ class DivRewriter extends RewriterTpl {
       manager.incRef(result);
       return result;
     }
-    if (!manager.isGround(num) || !manager.isGround(den)) return -1;
+    if (!manager.isGroundApp(num) || !manager.isGroundApp(den)) return -1;
     const name = manager.mkFreshConst("div", SORT_REAL);
     this.trail.push(name);
     this.trail.push(num);
@@ -315,7 +315,7 @@ class Nlqsat {
           isUnsignedPositive(manager.getRationalValue(exponent))
         )
           continue;
-        if (op === OP_DIV && manager.isGround(current)) {
+        if (op === OP_DIV && manager.isGroundApp(current)) {
           hasDivs = true;
           continue;
         }

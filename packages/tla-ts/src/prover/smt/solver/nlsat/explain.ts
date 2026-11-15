@@ -102,6 +102,11 @@ export class Explain {
     this.result = null;
   }
 
+  reset() {
+    this.resetResult();
+    this.core.reset();
+  }
+
   private collectPolys(literals: readonly number[]) {
     return literals.flatMap((literal) => {
       const atom = this.getAtom(literal);

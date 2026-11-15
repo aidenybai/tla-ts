@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import { join } from "node:path";
-import { createProgress, getHost } from "../scripts/hosts";
+import { createProgress, getHost, runTest } from "../scripts/hosts";
 import {
   getContexts,
   getCorrection,
@@ -146,6 +146,34 @@ describe("getHost", () => {
       "--library=/a b",
       "-deadlock",
     ]);
+  });
+});
+
+describe("runTest on the input of a backend", () => {
+  const test = parseTest(
+    join(SUITE_DIRECTORY, "tlapm/backends/z3/sample.smt"),
+    "(*---\ndescription: A test.\noutcome: unsat\n---*)\n(check-sat)\n",
+  );
+  if (!test) throw new Error("expected a test");
+  const runScript = (script: string) =>
+    runTest({ backend: ["node", "-e", script] }, test, getContexts(test)[0]);
+
+  it("tells the input of a backend from a module", () => {
+    expect(test.kind).toBe("backend");
+    expect(parseSample(SOURCE).kind).toBe("tlc");
+    expect(parseTest(join(SUITE_DIRECTORY, "tlapm/proofs/sample.tla"), SOURCE)?.kind).toBe("tlapm");
+  });
+
+  it("gives the backend's name and file to a host's command", async () => {
+    expect(await runScript("console.log(process.argv.slice(1).join(' '))")).toEqual({
+      exit: 0,
+      exceeded: undefined,
+      transcript: "z3 sample.smt",
+    });
+  });
+
+  it("reports the exit status of a host that throws", async () => {
+    expect((await runScript("throw new Error('no verdict')")).exit).toBe(1);
   });
 });
 

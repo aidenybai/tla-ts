@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { availableParallelism } from "node:os";
-import { TlaProofError } from "../errors";
+import { TlaProofError, TlaProverError } from "../errors";
 import { EXIT_STATUS } from "../exit-codes";
 import type { LineRange } from "../obligations/generate";
 import { getAtPrefix, getLocusText, type ObligationWarning } from "../obligations/expression";
@@ -15,7 +15,7 @@ import {
 } from "../obligations";
 import { format, renderDoc } from "../obligations/format";
 import { printSequent, type PrinterOptions } from "../obligations/printer";
-import { parseDefaultMethods } from "../prover/prep/methods";
+import { parseDefaultMethods, parseOcamlFloat, parseOcamlInt } from "../prover/prep/methods";
 import {
   encodeProofTheory,
   formatNormalized,
@@ -39,7 +39,186 @@ import { formatTlcDate } from "../tlc/messages";
 import { TLAPM_COMMAND, USAGE, type ParsedArgs } from "./options";
 import { getInputPaths } from "./shared";
 
-const TLAPM_INTEGER_OPTIONS = new Set(["--toolbox", "--line", "--threads", "--nofpl"]);
+interface TlapmArgument {
+  name: string;
+  values: ("int" | "float" | "string")[];
+  doc: string;
+}
+
+const BLANK_ARGUMENT: TlapmArgument = { name: "", values: [], doc: " " };
+
+// The option list of tlapm_args.ml's init.
+const TLAPM_ARGUMENTS: TlapmArgument[] = [
+  BLANK_ARGUMENT,
+  { name: "(basic options)", values: [], doc: " " },
+  BLANK_ARGUMENT,
+  { name: "--help", values: [], doc: " show this help message and exit" },
+  { name: "-help", values: [], doc: " (same as --help)" },
+  { name: "--version", values: [], doc: " show version number and exit" },
+  { name: "--verbose", values: [], doc: " produce verbose messages" },
+  { name: "-v", values: [], doc: " (same as --verbose)" },
+  BLANK_ARGUMENT,
+  { name: "--where", values: [], doc: " show location of standard library and exit" },
+  { name: "--config", values: [], doc: " show configuration and exit" },
+  { name: "--summary", values: [], doc: " show summary of theorems (implies -N and not -C)" },
+  {
+    name: "--strict",
+    values: [],
+    doc: " report incomplete proofs, empty proof targets and failed obligations as errors and exit with a non-zero status",
+  },
+  { name: "--timing", values: [], doc: " show runtime statistics" },
+  BLANK_ARGUMENT,
+  { name: "-I", values: ["string"], doc: "<dir> add <dir> to search path" },
+  { name: "-d", values: ["string"], doc: "" },
+  BLANK_ARGUMENT,
+  { name: "-k", values: [], doc: " keep going on backend failures" },
+  { name: "-N", values: [], doc: " do not run any backend verifiers" },
+  { name: "-C", values: [], doc: " check proofs in Isabelle/TLA+" },
+  BLANK_ARGUMENT,
+  { name: "--threads", values: ["int"], doc: "<int> set number of worker threads to <int>" },
+  {
+    name: "--method",
+    values: ["string"],
+    doc: "<meth> set default method to <meth> (try --method help)",
+  },
+  { name: "--solver", values: ["string"], doc: "<solver> set SMT solver to <solver>" },
+  { name: "--smt-logic", values: ["string"], doc: "<logic> set SMT logic to <logic>" },
+  { name: "--stretch", values: ["float"], doc: "<f> multiply all timeouts by <f>" },
+  { name: "--fast-isabelle", values: [], doc: "" },
+  BLANK_ARGUMENT,
+  { name: "(advanced options)", values: [], doc: " " },
+  BLANK_ARGUMENT,
+  { name: "--noflatten", values: [], doc: " do not flatten obligations" },
+  { name: "--nonormal", values: [], doc: " do not normalize obligations before printing" },
+  { name: "--debug", values: ["string"], doc: "{[-]<flag>} enable/disable debugging flags" },
+  { name: "--paranoid", values: [], doc: "" },
+  { name: "--isaprove", values: [], doc: "" },
+  BLANK_ARGUMENT,
+  { name: "--toolbox", values: ["int", "int"], doc: "<int><int> toolbox mode" },
+  {
+    name: "--toolbox-vsn",
+    values: ["int"],
+    doc: "<int> Toolbox protocol version, 1|2, 1 by default.",
+  },
+  { name: "--line", values: ["int"], doc: "<int> line to prove" },
+  {
+    name: "--wait",
+    values: ["int"],
+    doc: "<time> wait for <time> before printing obligations in progress",
+  },
+  {
+    name: "--stdin",
+    values: [],
+    doc: " read the tla file from stdin instead of file system. Only applies if single tla file is provided as input.",
+  },
+  {
+    name: "--prefer-stdlib",
+    values: [],
+    doc: " prefer built-in standard modules if the module search path contains files with the same names as modules in stdlib.",
+  },
+  {
+    name: "--parser",
+    values: ["string"],
+    doc: " Set parser backend to use: TLAPM (default) or SANY.",
+  },
+  {
+    name: "--module-jar",
+    values: ["string"],
+    doc: " Add a path to a .jar file containing additional TLA+ modules, such\n        as the community modules. Multiple .jar files can be added by using\n        this option multiple times.",
+  },
+  { name: "--noproving", values: [], doc: " do not prove, report fingerprinted results only" },
+  BLANK_ARGUMENT,
+  { name: "--printallobs", values: [], doc: " print obligations in all toolbox messages" },
+  BLANK_ARGUMENT,
+  { name: "--fpdir", values: ["string"], doc: "" },
+  { name: "--safefp", values: [], doc: " check tlapm, zenon, Isabelle versions for fingerprints" },
+  {
+    name: "--nofp",
+    values: [],
+    doc: " do not use existing fingerprints, but overwrite any preexisting fingerprints associated with the current proof obligations, using the newly computed fingerprints and results",
+  },
+  {
+    name: "--nofpl",
+    values: ["int", "int"],
+    doc: "<int><int> disable fingerprint use between given lines",
+  },
+  { name: "--cleanfp", values: [], doc: " erase fingerprint file before starting" },
+  BLANK_ARGUMENT,
+  {
+    name: "--erasefp",
+    values: ["string", "string"],
+    doc: "<f><back> erase from file <f> all results of backend <back>",
+  },
+  {
+    name: "--printfp",
+    values: ["string"],
+    doc: "<f> print the fingerprints stored in file <f> and quit",
+  },
+  {
+    name: "--usefp",
+    values: ["string"],
+    doc: "<f> load fingerprints from file <f> (save as usual)",
+  },
+  { name: "--fpp", values: [], doc: " print the fingerprints of obligations in toolbox messages" },
+  {
+    name: "--cache-dir",
+    values: ["string"],
+    doc: '<directory> save auxiliary and temporary files under <directory>. Alternatively, this directory can be defined via the variable `TLAPM_CACHE_DIR` of the runtime environment. The command-line parameter takes precedence over the environment variable. If neither is specified, the default value is ".tlacache".',
+  },
+];
+
+const getMetavariableLength = (doc: string) => /^[^ ]* */.exec(doc)?.[0].length ?? 0;
+
+// OCaml's Arg.align and Arg.usage_string.
+const getArgumentUsage = () => {
+  const width = Math.max(
+    ...TLAPM_ARGUMENTS.map(
+      (argument) => argument.name.length + getMetavariableLength(argument.doc),
+    ),
+  );
+  return `Usage: tla-ts tlapm <options> FILE ...\noptions are:\n${TLAPM_ARGUMENTS.filter(
+    (argument) => argument.doc !== "",
+  )
+    .map((argument) => {
+      const cut = getMetavariableLength(argument.doc);
+      return `  ${argument.name} ${argument.doc.slice(0, cut)}${" ".repeat(width - argument.name.length - cut)}${argument.doc.slice(cut)}\n`;
+    })
+    .join("")}`;
+};
+
+// OCaml's Arg.parse_argv: the first argument it rejects, with the Arg.Bad of tlapm_args.ml's setters.
+const getArgumentError = (args: string[]) => {
+  for (let index = 0; index < args.length; index++) {
+    const name = args[index];
+    if (name === "--version") return undefined;
+    if (!name.startsWith("-")) continue;
+    const argument = TLAPM_ARGUMENTS.find((innerArgument) => innerArgument.name === name);
+    if (!argument) return `unknown option '${name}'`;
+    for (const kind of argument.values) {
+      index++;
+      if (index === args.length) return `option '${name}' needs an argument`;
+      const value = args[index];
+      if (kind === "int" && parseOcamlInt(value) === undefined)
+        return `wrong argument '${value}'; option '${name}' expects an integer`;
+      if (kind === "float" && parseOcamlFloat(value) === undefined)
+        return `wrong argument '${value}'; option '${name}' expects a float`;
+    }
+    const value = args[index];
+    if (name === "--threads" && (parseOcamlInt(value) ?? 0) < 0)
+      return "--threads requires a positive argument";
+    if (name === "--debug" && value.split(",").includes("oldsmt"))
+      return "--debug oldsmt: the old SMT encoding has been removed";
+    if (name === "--method") {
+      try {
+        parseDefaultMethods(value);
+      } catch (error) {
+        if (!(error instanceof TlaProverError)) throw error;
+        return error.message;
+      }
+    }
+  }
+  return undefined;
+};
 
 const getLibraryDirectories = (parsed: ParsedArgs) => [
   ".",
@@ -93,6 +272,8 @@ const checkStrictly = (module: ModuleObligations, isTargeted: boolean, isSummary
 
 const TLAPM_FAILURE_STATUS = 3;
 
+const TLAPM_USAGE_STATUS = 2;
+
 const UNPROVED_ENDING = [
   ' tlapm ending abnormally with Failure("backend errors: there are unproved obligations")',
   'Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33',
@@ -130,17 +311,18 @@ const reportAbnormalEnding = (
     );
 };
 
-const generateObligations = (
-  generate: (errorSetting: ErrorSetting) => ModuleObligations[],
-  isToolbox: boolean,
-) => {
-  const errorSetting: ErrorSetting = { message: "" };
+type Outcome<Value> = { kind: "done"; value: Value } | { kind: "aborted"; error: TlaProofError };
+
+const getAbortedOutcome = (error: unknown): Outcome<never> => {
+  if (!(error instanceof TlaProofError)) throw error;
+  return { kind: "aborted", error };
+};
+
+const generateObligations = (generate: () => ModuleObligations[]): Outcome<ModuleObligations[]> => {
   try {
-    return generate(errorSetting);
+    return { kind: "done", value: generate() };
   } catch (error) {
-    if (!(error instanceof TlaProofError)) throw error;
-    reportAbnormalEnding(error, errorSetting, isToolbox);
-    return undefined;
+    return getAbortedOutcome(error);
   }
 };
 
@@ -162,8 +344,15 @@ const printAttempt = (
   const reason = getFailureReason(attempt);
   const isProved = isProvedAttempt(attempt);
   const isReused = attempt.kind === "reused";
-  const note = attempt.kind === "decided" || attempt.kind === "failed" ? attempt.note : undefined;
-  const shipped = attempt.kind === "failed" || isReused ? attempt.shipped : undefined;
+  const note =
+    attempt.kind === "decided"
+      ? attempt.note
+      : attempt.kind === "refused"
+        ? `${attempt.reason}\nObligation:\n\n`
+        : attempt.kind === "unavailable"
+          ? `\n\\* ${attempt.warning}\n`
+          : undefined;
+  const shipped = attempt.kind === "unavailable" || isReused ? attempt.shipped : undefined;
   printObligationMessage(obligation, isProved ? "proved" : "failed", [
     `prover:${attempt.method.prover}`,
     ...(method === "" ? [] : [`meth:${method}`]),
@@ -262,19 +451,21 @@ const proveModule = async (
       report.attempts.forEach((attempt) => {
         if (attempt.kind === "decided" && attempt.errorOutput !== undefined)
           process.stdout.write(attempt.errorOutput);
-        if (attempt.kind === "failed" && attempt.warning !== undefined)
-          process.stderr.write(`${attempt.warning}\n`);
+        if (attempt.kind === "unavailable") process.stderr.write(`${attempt.warning}\n`);
       });
       report.warnings.forEach((warning) => printWarning(warning, settings.isToolbox));
       if (!settings.isToolbox) return;
-      if (report.obligation.status === "trivial")
-        return printObligationMessage(obligation, "trivial", ["prover:tlapm", "already:false"]);
       if (obligation.kind.kind === "Error") return printFailedObligation(obligation, "user error");
       report.attempts.forEach((attempt) => printAttempt(obligation, attempt, settings.printing));
+      if (report.obligation.status === "trivial")
+        printObligationMessage(obligation, "trivial", ["prover:tlapm", "already:false"]);
     },
   });
   const theoryPath = `${directory}/${module.name}.thy`;
-  writeFileSync(theoryPath, encodeProofTheory(module.name, reports, module.obligations));
+  writeFileSync(
+    theoryPath,
+    encodeProofTheory(module.name, reports, module.obligations, settings.backends.isFlattened),
+  );
   console.log(`(* created new ${JSON.stringify(theoryPath)} *)`);
   knownResults.save(fingerprintsPath);
   console.log(`(* fingerprints written in ${JSON.stringify(fingerprintsPath)} *)`);
@@ -344,6 +535,15 @@ export const runTlapm = async (args: string[]) => {
     isTyped && rewriteFlags.length > 0
       ? `smarter_types with --debug ${rewriteFlags.at(-1)}`
       : [...debugFlags].find((flag) => !DEBUG_FLAGS.has(flag));
+  const argumentError = getArgumentError(args);
+  if (argumentError !== undefined) {
+    console.error(`tla-ts tlapm: ${argumentError}.\n${getArgumentUsage()}`);
+    return TLAPM_USAGE_STATUS;
+  }
+  if (parsed.has("--version")) {
+    console.log(TLAPM_VERSION);
+    return EXIT_STATUS.success;
+  }
   const unsupported =
     parsed.unknown[0] ??
     (isProcessing && parsed.has("--printallobs") ? "--printallobs" : undefined) ??
@@ -351,27 +551,6 @@ export const runTlapm = async (args: string[]) => {
   if (unsupported !== undefined) {
     console.error(`Error: tla-ts tlapm does not support the tlapm option ${unsupported}.`);
     return 1;
-  }
-  if (parsed.incomplete) {
-    console.error(`Error: option '${parsed.incomplete.name}' needs an argument.`);
-    return 1;
-  }
-  const nonInteger = parsed.options.find(
-    (option) =>
-      TLAPM_INTEGER_OPTIONS.has(option.name) &&
-      option.values.some((value) => !/^-?\d+$/.test(value)),
-  );
-  if (nonInteger) {
-    console.error(`Error: option '${nonInteger.name}' expects an integer.`);
-    return 1;
-  }
-  if (parsed.get("--stretch")?.some((value) => Number.isNaN(Number(value)))) {
-    console.error("Error: option '--stretch' expects a float.");
-    return 1;
-  }
-  if (parsed.has("--version")) {
-    console.log(TLAPM_VERSION);
-    return EXIT_STATUS.success;
   }
   const files = getInputPaths(parsed.positionals).map((input) => input.path);
   const modulePaths = files.map((path) => (path.endsWith(".tla") ? path : `${path}.tla`));
@@ -386,7 +565,7 @@ export const runTlapm = async (args: string[]) => {
     );
   }
   const lines = parsed.options.reduce<LineRange>((range, option) => {
-    const [start, end] = option.values.map(Number);
+    const [start, end] = option.values.map((value) => parseOcamlInt(value) ?? 0);
     if (option.name === "--toolbox") return { start, end: end === 0 ? Infinity : end };
     if (option.name === "--line") return start === 0 ? WHOLE_MODULE : { start, end: start };
     return range;
@@ -396,7 +575,8 @@ export const runTlapm = async (args: string[]) => {
     getLibraryDirectories(parsed),
   );
   const moduleNames = new Set<string>();
-  const modules = generateObligations((errorSetting) => {
+  const errorSettings: ObligationWarning[] = [];
+  const generation = generateObligations(() => {
     const missingIndex = modulePaths.findIndex((path) => !existsSync(path));
     if (missingIndex !== -1) {
       const missing = files[missingIndex];
@@ -416,25 +596,40 @@ export const runTlapm = async (args: string[]) => {
         lines,
         printing,
         onWarning: (warning) => {
-          if (warning.channel === "error") {
-            errorSetting.location = warning.locus && getLocusText(warning.locus);
-            errorSetting.message = `${warning.text}\n\n${errorSetting.message}`;
-            return;
-          }
-          printWarning(warning, isToolbox);
+          if (warning.channel === "error") errorSettings.push(warning);
+          else printWarning(warning, isToolbox);
         },
       },
     );
-  }, isToolbox);
-  if (!modules) return TLAPM_FAILURE_STATUS;
+  });
+  if (generation.kind === "aborted") {
+    const lastLocus = errorSettings.at(-1)?.locus;
+    // Errors.set keeps the last location and puts each message before the earlier ones.
+    reportAbnormalEnding(
+      generation.error,
+      {
+        location: lastLocus && getLocusText(lastLocus),
+        message: errorSettings
+          .toReversed()
+          .map((setting) => `${setting.text}\n\n`)
+          .join(""),
+      },
+      isToolbox,
+    );
+    return TLAPM_FAILURE_STATUS;
+  }
+  const modules = generation.value;
   const cacheDirectory =
     parsed.get("--cache-dir")?.[0] ?? process.env.TLAPM_CACHE_DIR ?? ".tlacache";
-  const forgottenLines = parsed.get("--nofpl")?.map(Number) ?? [0, 0];
+  const forgottenLines = parsed.get("--nofpl")?.map((value) => parseOcamlInt(value) ?? 0) ?? [0, 0];
   const methods = parsed.get("--method")?.[0];
   const settings: ProvingSettings = {
     isToolbox,
     isProving: !parsed.has("--noproving"),
-    workers: Math.max(1, Number(parsed.get("--threads")?.[0] ?? availableParallelism())),
+    workers: Math.max(
+      1,
+      parseOcamlInt(parsed.get("--threads")?.[0] ?? "") ?? availableParallelism(),
+    ),
     isFingerprinted: (obligation) =>
       !parsed.has("--nofp") &&
       !(
@@ -445,8 +640,10 @@ export const runTlapm = async (args: string[]) => {
     fingerprints: new Map(),
     backends: {
       defaultMethods: methods === undefined ? undefined : parseDefaultMethods(methods),
-      stretch: Number(parsed.get("--stretch")?.[0] ?? 1),
-      isFlattened: !parsed.has("--noflatten"),
+      stretch: parseOcamlFloat(parsed.get("--stretch")?.[0] ?? "1") ?? 1,
+      isFlattened:
+        !parsed.has("--noflatten") &&
+        ["yes", "true", undefined].includes(process.env.TLAPM_FLATTEN),
       smtLogic: debugFlags.has("disable_arithmetic")
         ? "UF"
         : (parsed.get("--smt-logic")?.[0] ?? "UFNIA"),
@@ -501,26 +698,22 @@ export const runTlapm = async (args: string[]) => {
         (name) => `${name}.tla`,
       ),
     );
-    const isFailed = await proveModule(module, directory, fingerprintsPath, settings).catch(
-      (error: unknown) => {
-        if (!(error instanceof TlaProofError)) throw error;
-        return error;
-      },
+    const proving = await proveModule(module, directory, fingerprintsPath, settings).then(
+      (isFailed): Outcome<boolean> => ({ kind: "done", value: isFailed }),
+      getAbortedOutcome,
     );
-    if (isFailed instanceof TlaProofError) {
-      console.error(`${getAtPrefix(isFailed.locus)}Error: ${isFailed.message}`);
+    if (proving.kind === "aborted") {
+      const error = proving.error;
+      console.error(`${getAtPrefix(error.locus)}Error: ${error.message}`);
       reportAbnormalEnding(
-        isFailed,
-        {
-          location: isFailed.locus && getLocusText(isFailed.locus),
-          message: isFailed.message,
-        },
+        error,
+        { location: error.locus && getLocusText(error.locus), message: error.message },
         isToolbox,
       );
       return TLAPM_FAILURE_STATUS;
     }
-    if (isFailed && parsed.has("--strict")) statuses.push(STRICT_EXIT_STATUS.failed);
-    if (isFailed && !parsed.has("--strict") && !isToolbox) {
+    if (proving.value && parsed.has("--strict")) statuses.push(STRICT_EXIT_STATUS.failed);
+    if (proving.value && !parsed.has("--strict") && !isToolbox) {
       console.error(UNPROVED_ENDING);
       return TLAPM_FAILURE_STATUS;
     }

@@ -51,20 +51,9 @@ import {
 } from "./datatype-decl-plugin";
 import type { Definition, Goal } from "./goal";
 import { getManagerSomeValue } from "./proto-model";
-import { Rational } from "./rational";
+import { getMultInverse, Rational } from "./rational";
 import { RefVector } from "./ref-vector";
 import { RewriterTpl } from "./rewriter-tpl";
-
-const getModInverse = (value: bigint, modulus: bigint) => {
-  let [oldRemainder, remainder] = [((value % modulus) + modulus) % modulus, modulus];
-  let [oldCoefficient, coefficient] = [1n, 0n];
-  while (remainder !== 0n) {
-    const quotient = oldRemainder / remainder;
-    [oldRemainder, remainder] = [remainder, oldRemainder - quotient * remainder];
-    [oldCoefficient, coefficient] = [coefficient, oldCoefficient - quotient * coefficient];
-  }
-  return oldRemainder === 1n ? ((oldCoefficient % modulus) + modulus) % modulus : undefined;
-};
 
 export const collectUnconstrained = (manager: AstManager, goal: Goal) => {
   const visited = new Set<number>();
@@ -381,7 +370,7 @@ class UncnstrRewriter extends RewriterTpl {
         }
         if (args.length !== 2 || !this.isUncnstr(args[1]) || !manager.isBvNumeral(args[0]))
           return -1;
-        const inverse = getModInverse(manager.getBvNumeralValue(args[0]), 1n << BigInt(width));
+        const inverse = getMultInverse(manager.getBvNumeralValue(args[0]), width);
         if (inverse === undefined) return -1;
         const found = this.mkFreshFor(decl, args, sort);
         if (found.isNew)
@@ -502,7 +491,7 @@ class UncnstrRewriter extends RewriterTpl {
 
   reduceApp(decl: number, args: number[], sort: number) {
     const manager = this.manager;
-    if (args.length === 0 || !args.every((arg) => manager.isGround(arg))) return -1;
+    if (args.length === 0 || !args.every((arg) => manager.isGroundApp(arg))) return -1;
     const info = manager.funcDecls[decl];
     const result =
       info.family === FAMILY_BASIC

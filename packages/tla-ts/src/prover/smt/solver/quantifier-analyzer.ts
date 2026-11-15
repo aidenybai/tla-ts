@@ -232,7 +232,7 @@ export class QuantifierAnalyzer {
 
   private isVarPlusGround(expr: number) {
     const manager = this.manager;
-    if (manager.getOp(expr) !== OP_ADD || manager.isGround(expr)) return undefined;
+    if (manager.getOp(expr) !== OP_ADD || manager.isGroundApp(expr)) return undefined;
     const args: number[] = [];
     let variable: number | undefined;
     let isInverted = false;
@@ -247,7 +247,7 @@ export class QuantifierAnalyzer {
         isStopped = true;
       }
       const negated = this.manager.getTimesMinusOneArg(arg);
-      if (this.manager.isGround(arg)) args.push(arg);
+      if (this.manager.isGroundApp(arg)) args.push(arg);
       else if (this.isVar(arg)) {
         if (variable !== undefined) return undefined;
         variable = arg;
@@ -267,12 +267,12 @@ export class QuantifierAnalyzer {
   }
 
   private isVarAndGround(lhs: number, rhs: number) {
-    if (this.isVar(lhs) && this.manager.isGround(rhs))
+    if (this.isVar(lhs) && this.manager.isGroundApp(rhs))
       return { variable: lhs, term: rhs, isInverted: false };
-    if (this.isVar(rhs) && this.manager.isGround(lhs))
+    if (this.isVar(rhs) && this.manager.isGroundApp(lhs))
       return { variable: rhs, term: lhs, isInverted: false };
     const left = this.isVarPlusGround(lhs);
-    if (left !== undefined && this.manager.isGround(rhs))
+    if (left !== undefined && this.manager.isGroundApp(rhs))
       return {
         variable: left.variable,
         term: left.isInverted
@@ -281,7 +281,7 @@ export class QuantifierAnalyzer {
         isInverted: left.isInverted,
       };
     const right = this.isVarPlusGround(rhs);
-    if (right !== undefined && this.manager.isGround(lhs))
+    if (right !== undefined && this.manager.isGroundApp(lhs))
       return {
         variable: right.variable,
         term: right.isInverted
@@ -337,7 +337,7 @@ export class QuantifierAnalyzer {
   }
 
   private visitFormula(expr: number, polarity: Polarity) {
-    if (this.manager.isGround(expr)) return;
+    if (this.manager.isGroundApp(expr)) return;
     const cache = polarity === "pos" ? this.posCache : this.negCache;
     if (cache.has(expr)) return;
     this.ftodo.push([expr, polarity]);
@@ -345,7 +345,7 @@ export class QuantifierAnalyzer {
   }
 
   private visitTerm(expr: number) {
-    if (this.manager.isGround(expr) || this.posCache.has(expr)) return;
+    if (this.manager.isGroundApp(expr) || this.posCache.has(expr)) return;
     this.ttodo.push(expr);
     this.posCache.add(expr);
   }
@@ -531,7 +531,7 @@ export class QuantifierAnalyzer {
       for (const literal of literals) {
         const isNegated = manager.isNot(literal);
         const atom = isNegated ? manager.getArg(literal, 0) : literal;
-        if (!this.manager.isGround(atom)) this.processLiteral(atom, isNegated);
+        if (!this.manager.isGroundApp(atom)) this.processLiteral(atom, isNegated);
       }
     } else this.visitFormula(body, "pos");
     while (this.ftodo.length > 0 || this.ttodo.length > 0) {

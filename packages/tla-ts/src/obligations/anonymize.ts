@@ -44,8 +44,6 @@ import { resolveSubexpression } from "./subexpression";
 import { getTime } from "./temporal";
 import {
   getStepName,
-  getUnique,
-  type Counter,
   type Proof,
   type Step,
   type StepNumber,
@@ -80,7 +78,7 @@ interface AnonContext {
 }
 
 export const createAnonymizer = (
-  counter: Counter,
+  getStepLabel: () => string,
   expandInstance: (
     scope: Scope | undefined,
     definition: Extract<Defn, { kind: "Instance" }>,
@@ -473,7 +471,7 @@ export const createAnonymizer = (
         ? {
             kind: "Named",
             level: original.step.level,
-            label: `_a${getUnique(counter)}`,
+            label: getStepLabel(),
             isAnonymous: true,
           }
         : original.step;

@@ -405,7 +405,9 @@ export class NlsatSolver {
       this.checkpoint();
       if (this.value(literal) === L_FALSE) continue;
       if (this.value(literal) === L_TRUE) return true;
-      const atom = this.atoms.getAtom(literal)!;
+      const atom = this.atoms.getAtom(literal);
+      if (atom === null)
+        throw new SmtInvariantError("a literal of an arithmetic clause has no atom");
       const set = this.evaluator.infeasibleIntervals(atom, (literal & 1) === 1, clause);
       if (set === null) {
         this.propagate(literal, null);
@@ -657,8 +659,7 @@ export class NlsatSolver {
     for (let index = 0; index < sorted.length; index++) clauses[index] = sorted[index];
   }
 
-  private projectModel() {
-    const cube = new ScopedLiterals(this.atoms);
+  private projectModel(cube: ScopedLiterals) {
     const seen = new Set<number>();
     for (const clause of this.clauses) {
       this.checkpoint();
@@ -670,15 +671,17 @@ export class NlsatSolver {
     }
     // Strict sector bounds keep every point of the projection extensible.
     this.explain.isFullDimensional = false;
-    for (let variable = this.isInt.length - 1; variable >= 1 && cube.size > 0; variable--) {
-      this.checkpoint();
-      const projected = new ScopedLiterals(this.atoms);
-      this.explain.projectVariable(variable, cube.literals, projected);
-      cube.reset();
-      for (const literal of projected.literals) cube.push(literal);
+    const projected = new ScopedLiterals(this.atoms);
+    try {
+      for (let variable = this.isInt.length - 1; variable >= 1 && cube.size > 0; variable--) {
+        this.checkpoint();
+        projected.reset();
+        this.explain.projectVariable(variable, cube.literals, projected);
+        [cube.literals, projected.literals] = [projected.literals, cube.literals];
+      }
+    } finally {
       projected.reset();
     }
-    return cube;
   }
 
   private getCubeSup(cube: ScopedLiterals) {
@@ -717,28 +720,36 @@ export class NlsatSolver {
         this.checkpoint();
         const status = this.check();
         if (status !== L_TRUE) return status;
-        const cube = this.projectModel();
-        const sup = this.getCubeSup(cube);
-        if (
-          limit === null
-            ? sup === null
-            : sup !== null && !sup.isAttained && this.am.compare(sup.sup, limit) === 0
-        )
-          return L_TRUE;
-        this.mkExternalClause(
-          cube.literals.map((literal) => literal ^ 1),
-          tag,
-        );
-        cube.reset();
+        const cube = new ScopedLiterals(this.atoms);
+        try {
+          this.projectModel(cube);
+          const sup = this.getCubeSup(cube);
+          if (
+            limit === null
+              ? sup === null
+              : sup !== null && !sup.isAttained && this.am.compare(sup.sup, limit) === 0
+          )
+            return L_TRUE;
+          this.mkExternalClause(
+            cube.literals.map((literal) => literal ^ 1),
+            tag,
+          );
+        } finally {
+          cube.reset();
+        }
       }
     } finally {
-      this.maxVar = savedMaxVar;
       this.retract(tag);
+      this.maxVar = savedMaxVar;
     }
   }
 
   retract(tag: number, maxLemmas = Infinity) {
     this.initSearch();
+    this.explain.reset();
+    this.lemma.reset();
+    this.lazyClause.reset();
+    this.lemmaAssumptions = null;
     const isKept = (clause: Clause) => {
       const isFound = linearize([clause.assumptions]).includes(tag);
       if (isFound) this.delClause(clause);
@@ -748,7 +759,7 @@ export class NlsatSolver {
     this.learned = this.learned.filter(isKept);
     if (this.learned.length <= maxLemmas) return;
     this.learned.sort((first, second) => first.literals.length - second.literals.length);
-    for (const clause of this.learned.splice(maxLemmas)) this.delClause(clause);
+    for (const clause of this.learned.splice(maxLemmas).reverse()) this.delClause(clause);
   }
 
   // Like Z3, only a falsified clause restores the assignment.

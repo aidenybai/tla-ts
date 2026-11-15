@@ -13,7 +13,6 @@ import {
   OP_FPA_TO_SBV,
   OP_FPA_TO_UBV,
   OP_IMPLIES,
-  OP_ITE,
   OP_ULEQ,
   SORT_BOOL,
 } from "./ast";
@@ -182,15 +181,12 @@ export class TheoryFpa extends Theory {
     context.setVarTheory(boolVar, this.id);
     for (let index = 0; index < manager.getNumArgs(atom); index++)
       context.internalize(manager.getArg(atom, index), false);
-    manager.withTemporaries(
-      () => {
-        const bvAtom = this.rewriter.convert(this.theoryRewriter, atom);
-        manager.releaseLater(bvAtom);
-        const withSideConditions = this.rewrite(manager.mkAnd([bvAtom, this.mkSideConditions()]));
-        this.assertCnstr(manager.mkEq(atom, withSideConditions));
-      },
-      () => [],
-    );
+    const outer = manager.beginTemporaries();
+    const bvAtom = this.rewriter.convert(this.theoryRewriter, atom);
+    manager.releaseLater(bvAtom);
+    const withSideConditions = this.rewrite(manager.mkAnd([bvAtom, this.mkSideConditions()]));
+    this.assertCnstr(manager.mkEq(atom, withSideConditions));
+    manager.endTemporaries(outer);
     return true;
   }
 
@@ -202,14 +198,12 @@ export class TheoryFpa extends Theory {
     const node = context.getEnode(term) ?? context.mkEnode(term, false, false, true);
     if (this.isAttachedToVar(node)) return true;
     this.attachNewThVar(node);
-    if (CONVERTED_OPS.has(manager.getOp(term)))
-      manager.withTemporaries(
-        () => {
-          this.assertCnstr(manager.mkEq(term, this.convert(term)));
-          this.assertCnstr(this.mkSideConditions());
-        },
-        () => [],
-      );
+    if (CONVERTED_OPS.has(manager.getOp(term))) {
+      const outer = manager.beginTemporaries();
+      this.assertCnstr(manager.mkEq(term, this.convert(term)));
+      this.assertCnstr(this.mkSideConditions());
+      manager.endTemporaries(outer);
+    }
     if (!context.relevancy.isEnabled) this.relevantEh(term);
     return true;
   }
@@ -219,14 +213,12 @@ export class TheoryFpa extends Theory {
     if (this.isAttachedToVar(node)) return;
     this.attachNewThVar(node);
     const owner = node.owner;
-    if (manager.isRmSort(manager.sorts[owner]) && manager.getOp(owner) !== OP_FPA_BV2RM)
-      manager.withTemporaries(
-        () => {
-          const limit = manager.mkBvNumeral(4n, 3);
-          this.assertCnstr(mkBvApp(manager, OP_ULEQ, [this.converter.wrap(owner), limit]));
-        },
-        () => [],
-      );
+    if (manager.isRmSort(manager.sorts[owner]) && manager.getOp(owner) !== OP_FPA_BV2RM) {
+      const outer = manager.beginTemporaries();
+      const limit = manager.mkBvNumeral(4n, 3);
+      this.assertCnstr(mkBvApp(manager, OP_ULEQ, [this.converter.wrap(owner), limit]));
+      manager.endTemporaries(outer);
+    }
     if (!this.context.relevancy.isEnabled) this.relevantEh(owner);
   }
 
@@ -244,57 +236,48 @@ export class TheoryFpa extends Theory {
     const secondExpr = this.getExpr(second);
     if (manager.getOp(firstExpr) === OP_FPA_BVWRAP || manager.getOp(secondExpr) === OP_FPA_BVWRAP)
       return;
-    manager.withTemporaries(
-      () => {
-        const firstConverted = this.convert(firstExpr);
-        const secondConverted = this.convert(secondExpr);
-        const isFloatPair = this.isFloat(firstExpr) && this.isFloat(secondExpr);
-        const eq = isFloatPair
-          ? this.converter.mkEq(firstConverted, secondConverted)
-          : manager.mkEq(firstConverted, secondConverted);
-        const condition = this.rewrite(isNegated ? manager.mkNot(eq) : eq);
-        const exprEq = manager.mkEq(firstExpr, secondExpr);
-        this.assertCnstr(manager.mkEq(isNegated ? manager.mkNot(exprEq) : exprEq, condition));
-        this.assertCnstr(this.mkSideConditions());
-      },
-      () => [],
-    );
+    const outer = manager.beginTemporaries();
+    const firstConverted = this.convert(firstExpr);
+    const secondConverted = this.convert(secondExpr);
+    const isFloatPair = this.isFloat(firstExpr) && this.isFloat(secondExpr);
+    const eq = isFloatPair
+      ? this.converter.mkEq(firstConverted, secondConverted)
+      : manager.mkEq(firstConverted, secondConverted);
+    const condition = this.rewrite(isNegated ? manager.mkNot(eq) : eq);
+    const exprEq = manager.mkEq(firstExpr, secondExpr);
+    this.assertCnstr(manager.mkEq(isNegated ? manager.mkNot(exprEq) : exprEq, condition));
+    this.assertCnstr(this.mkSideConditions());
+    manager.endTemporaries(outer);
   }
 
   override assignEh(boolVar: BoolVar, isTrue: boolean) {
     const manager = this.manager;
     const expr = this.context.boolVar2Expr[boolVar];
-    manager.withTemporaries(
-      () => {
-        const converted = manager.mkAnd([this.convert(expr), this.mkSideConditions()]);
-        const constraint = isTrue
-          ? manager.mkApp(OP_IMPLIES, [expr, converted], SORT_BOOL)
-          : manager.mkApp(OP_IMPLIES, [converted, expr], SORT_BOOL);
-        this.assertCnstr(this.rewrite(constraint));
-      },
-      () => [],
-    );
+    const outer = manager.beginTemporaries();
+    const converted = manager.mkAnd([this.convert(expr), this.mkSideConditions()]);
+    const constraint = isTrue
+      ? manager.mkApp(OP_IMPLIES, [expr, converted], SORT_BOOL)
+      : manager.mkApp(OP_IMPLIES, [converted, expr], SORT_BOOL);
+    this.assertCnstr(this.rewrite(constraint));
+    manager.endTemporaries(outer);
   }
 
   override relevantEh(expr: number) {
     const manager = this.manager;
     const op = manager.getOp(expr);
     if (!this.isFloat(expr)) {
-      if (manager.getFamily(expr) === FAMILY_FPA && CONVERTED_OPS.has(op))
-        manager.withTemporaries(
-          () => {
-            this.assertCnstr(manager.mkEq(expr, this.convert(expr)));
-            this.assertCnstr(this.mkSideConditions());
-          },
-          () => [],
-        );
+      if (manager.getFamily(expr) === FAMILY_FPA && CONVERTED_OPS.has(op)) {
+        const outer = manager.beginTemporaries();
+        this.assertCnstr(manager.mkEq(expr, this.convert(expr)));
+        this.assertCnstr(this.mkSideConditions());
+        manager.endTemporaries(outer);
+      }
       return;
     }
     if (op === OP_FPA_FP) return;
-    manager.withTemporaries(
-      () => this.assertValueConstraints(expr),
-      () => [],
-    );
+    const outer = manager.beginTemporaries();
+    this.assertValueConstraints(expr);
+    manager.endTemporaries(outer);
   }
 
   private assertValueConstraints(expr: number) {
@@ -359,21 +342,6 @@ export class TheoryFpa extends Theory {
     this.trailLimits.length = newLevel;
     this.rewriter.reset();
     super.popScopeEh(numScopes);
-  }
-
-  private getIteValue(expr: number) {
-    const context = this.context;
-    const manager = this.manager;
-    let current = expr;
-    while (manager.getOp(current) === OP_ITE && context.isEInternalized(current)) {
-      const root = context.getEnode(current)?.root;
-      const thenExpr = manager.getArg(current, 1);
-      const elseExpr = manager.getArg(current, 2);
-      if (context.getEnode(thenExpr)?.root === root) current = thenExpr;
-      else if (context.getEnode(elseExpr)?.root === root) current = elseExpr;
-      else break;
-    }
-    return current;
   }
 
   override mkValue(node: Enode): number | DependentValue | undefined {

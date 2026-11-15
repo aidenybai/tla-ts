@@ -110,7 +110,7 @@ class PurifyState {
   private initCannotPurify() {
     const manager = this.manager;
     this.forEachApp((expr) => {
-      if (manager.getArgs(expr).some((arg) => !manager.isGround(arg)))
+      if (manager.getArgs(expr).some((arg) => !manager.isGroundApp(arg)))
         this.cannotPurify.add(manager.decls[expr]);
     });
   }
@@ -253,7 +253,7 @@ class PurifyRewriter extends RewriterTpl {
     const expr = this.mk(decl, args, SORT_INT);
     const processed = this.state.appToFresh.get(expr);
     if (processed !== undefined) return processed;
-    this.processIdiv(OP_IDIV, args);
+    this.processIdiv(decl, args);
     return this.state.appToFresh.get(expr) as number;
   }
 
@@ -377,9 +377,9 @@ class PurifyRewriter extends RewriterTpl {
     return -1;
   }
 
-  // Inside [-1, 1], k is asin or acos on its principal range. Outside it, k is asin-u or acos-u
-  // when the purification is complete.
-  private processInverse(decl: number, x: number) {
+  // Inside [-1, 1], k is asin on its principal range. Outside it, k is asin-u when the
+  // purification is complete.
+  private processAsin(decl: number, x: number) {
     const state = this.state;
     if (!state.options.isElimInverses) return -1;
     const expr = this.mk(decl, [x], SORT_REAL);
@@ -387,27 +387,61 @@ class PurifyRewriter extends RewriterTpl {
     if (processed !== undefined) return processed;
     const fresh = this.mkFreshVar(false);
     this.cacheResult(expr, fresh);
-    const isAsin = decl === OP_ASIN;
     const one = this.mkNumeral(Rational.one, false);
     const minusOne = this.mkNumeral(Rational.minusOne, false);
-    const upper = isAsin ? this.mkHalfPi(1n) : this.manager.piExpr;
-    const lower = isAsin ? this.mkHalfPi(-1n) : this.mkNumeral(Rational.zero, false);
+    const halfPi = this.mkHalfPi(1n);
+    const minusHalfPi = this.mkHalfPi(-1n);
     const xGeMinusOne = this.mk(OP_GE, [x, minusOne]);
+    const xLtMinusOne = this.mk(OP_NOT, [xGeMinusOne]);
     const xLeOne = this.mk(OP_LE, [x, one]);
-    const outside = this.mk(OP_OR, [this.mk(OP_NOT, [xGeMinusOne]), this.mk(OP_NOT, [xLeOne])]);
-    const inverseEq = this.mk(OP_EQ, [x, this.mk(isAsin ? OP_SIN : OP_COS, [fresh], SORT_REAL)]);
-    const freshGeLower = this.mk(OP_GE, [fresh, lower]);
+    const outside = this.mk(OP_OR, [xLtMinusOne, this.mk(OP_NOT, [xLeOne])]);
+    const sinEq = this.mk(OP_EQ, [x, this.mk(OP_SIN, [fresh], SORT_REAL)]);
+    const freshGeMinusHalfPi = this.mk(OP_GE, [fresh, minusHalfPi]);
     this.pushConstraint(
       this.mk(OP_OR, [
         outside,
         this.mk(OP_AND, [
-          inverseEq,
-          this.mk(OP_AND, [freshGeLower, this.mk(OP_LE, [fresh, upper])]),
+          sinEq,
+          this.mk(OP_AND, [freshGeMinusHalfPi, this.mk(OP_LE, [fresh, halfPi])]),
         ]),
       ]),
     );
     if (state.options.isComplete) {
-      const unspecified = this.mk(isAsin ? OP_U_ASIN : OP_U_ACOS, [x], SORT_REAL);
+      const unspecified = this.mk(OP_U_ASIN, [x], SORT_REAL);
+      this.pushConstraint(this.mk(OP_OR, [xGeMinusOne, this.mk(OP_EQ, [fresh, unspecified])]));
+      this.pushConstraint(this.mk(OP_OR, [xLeOne, this.mk(OP_EQ, [fresh, unspecified])]));
+    }
+    return fresh;
+  }
+
+  // Inside [-1, 1], k is acos on its principal range. Outside it, k is acos-u when the
+  // purification is complete.
+  private processAcos(decl: number, x: number) {
+    const state = this.state;
+    if (!state.options.isElimInverses) return -1;
+    const expr = this.mk(decl, [x], SORT_REAL);
+    const processed = state.appToFresh.get(expr);
+    if (processed !== undefined) return processed;
+    const fresh = this.mkFreshVar(false);
+    this.cacheResult(expr, fresh);
+    const one = this.mkNumeral(Rational.one, false);
+    const minusOne = this.mkNumeral(Rational.minusOne, false);
+    const pi = this.manager.piExpr;
+    const zero = this.mkNumeral(Rational.zero, false);
+    const xGeMinusOne = this.mk(OP_GE, [x, minusOne]);
+    const xLtMinusOne = this.mk(OP_NOT, [xGeMinusOne]);
+    const xLeOne = this.mk(OP_LE, [x, one]);
+    const outside = this.mk(OP_OR, [xLtMinusOne, this.mk(OP_NOT, [xLeOne])]);
+    const cosEq = this.mk(OP_EQ, [x, this.mk(OP_COS, [fresh], SORT_REAL)]);
+    const freshGeZero = this.mk(OP_GE, [fresh, zero]);
+    this.pushConstraint(
+      this.mk(OP_OR, [
+        outside,
+        this.mk(OP_AND, [cosEq, this.mk(OP_AND, [freshGeZero, this.mk(OP_LE, [fresh, pi])])]),
+      ]),
+    );
+    if (state.options.isComplete) {
+      const unspecified = this.mk(OP_U_ACOS, [x], SORT_REAL);
       this.pushConstraint(this.mk(OP_OR, [xGeMinusOne, this.mk(OP_EQ, [fresh, unspecified])]));
       this.pushConstraint(this.mk(OP_OR, [xLeOne, this.mk(OP_EQ, [fresh, unspecified])]));
     }
@@ -459,8 +493,9 @@ class PurifyRewriter extends RewriterTpl {
       case OP_POWER:
         return this.processPower(decl, args);
       case OP_ASIN:
+        return this.processAsin(decl, args[0]);
       case OP_ACOS:
-        return this.processInverse(decl, args[0]);
+        return this.processAcos(decl, args[0]);
       case OP_SIN:
         return this.processSinCos(true, decl, args[0]);
       case OP_COS:

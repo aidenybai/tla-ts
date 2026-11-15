@@ -101,9 +101,15 @@ export const mkPbEq = (
   return mkPbApp(manager, OP_PB_EQ, [normalized.k, ...normalized.coeffs], args);
 };
 
-// ast_util's mk_not.
-const mkNot = (manager: AstManager, expr: number) =>
-  manager.isNot(expr) ? manager.getArg(expr, 0) : manager.mkNot(expr);
+// ast_util's mk_not and pb_util's negate.
+const negate = (manager: AstManager, expr: number) =>
+  expr === manager.trueExpr
+    ? manager.falseExpr
+    : expr === manager.falseExpr
+      ? manager.trueExpr
+      : manager.isNot(expr)
+        ? manager.getArg(expr, 0)
+        : manager.mkNot(expr);
 
 const mkAnd = (manager: AstManager, args: number[]) =>
   args.length === 0 ? manager.trueExpr : manager.mkAnd(args);
@@ -111,7 +117,7 @@ const mkAnd = (manager: AstManager, args: number[]) =>
 const unique = (manager: AstManager, args: PbArg[], bound: { k: Rational }) => {
   for (const arg of args)
     if (manager.isNot(arg.expr)) {
-      arg.expr = mkNot(manager, arg.expr);
+      arg.expr = negate(manager, arg.expr);
       bound.k = bound.k.sub(arg.coeff);
       arg.coeff = arg.coeff.neg();
     }
@@ -119,7 +125,8 @@ const unique = (manager: AstManager, args: PbArg[], bound: { k: Rational }) => {
     if (arg.expr === manager.trueExpr) bound.k = bound.k.sub(arg.coeff);
     return arg.expr !== manager.trueExpr && arg.expr !== manager.falseExpr;
   });
-  kept.sort((first, second) => first.expr - second.expr);
+  const ids = manager.ids;
+  kept.sort((first, second) => ids[first.expr] - ids[second.expr]);
   const coalesced: PbArg[] = [];
   for (const arg of kept) {
     const last = coalesced[coalesced.length - 1];
@@ -204,13 +211,6 @@ const normalizePb = (manager: AstManager, args: PbArg[], bound: { k: Rational },
   return L_UNDEF;
 };
 
-const negate = (manager: AstManager, expr: number) =>
-  expr === manager.trueExpr
-    ? manager.falseExpr
-    : expr === manager.falseExpr
-      ? manager.trueExpr
-      : mkNot(manager, expr);
-
 const prune = (manager: AstManager, args: PbArg[], bound: { k: Rational }, isEq: boolean) => {
   if (isEq) return;
   let nlt = Rational.zero;
@@ -258,7 +258,7 @@ export const mkPbAppCore = (
   const size = vec.length;
   if (isEq) {
     if (size === 0) return k.isZero() ? manager.trueExpr : manager.falseExpr;
-    if (k.isZero()) return mkNot(manager, manager.mkOr(exprs));
+    if (k.isZero()) return negate(manager, manager.mkOr(exprs));
     if (k.equals(Rational.one) && isAllUnit && size === 1) return exprs[0];
     if (slack.equals(k)) return mkAnd(manager, exprs);
     return mkPbEq(manager, coeffs, exprs, k);

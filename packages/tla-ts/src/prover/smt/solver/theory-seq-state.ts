@@ -348,7 +348,6 @@ export abstract class TheorySeqState extends Theory {
   protected intStrings: number[] = [];
   protected hasLengthSet = new Set<number>();
   protected lengths: number[] = [];
-  protected lengthLimitMap = new Map<number, number>();
   protected lengthLimits: number[] = [];
   protected replay: (() => void)[] = [];
   protected strRewriter: Rewriter;
@@ -600,8 +599,7 @@ export abstract class TheorySeqState extends Theory {
     const manager = this.manager;
     let value = Rational.zero;
     const todo = [input];
-    while (todo.length > 0) {
-      const expr = todo.pop()!;
+    for (let expr = todo.pop(); expr !== undefined; expr = todo.pop()) {
       const op = manager.getOp(expr);
       const chars = manager.getString(expr);
       if (this.isConcat(expr)) todo.push(manager.getArg(expr, 0), manager.getArg(expr, 1));
@@ -748,8 +746,13 @@ export abstract class TheorySeqState extends Theory {
     isAddingToEqs = true,
   ) {
     const context = this.context;
+    const manager = this.manager;
+    manager.incRef(firstExpr);
+    manager.incRef(secondExpr);
     const first = this.ensureEnodeOf(firstExpr);
     const second = this.ensureEnodeOf(secondExpr);
+    manager.decRef(secondExpr);
+    manager.decRef(firstExpr);
     if (first.root === second.root) return false;
     context.markAsRelevant(first.owner);
     context.markAsRelevant(second.owner);

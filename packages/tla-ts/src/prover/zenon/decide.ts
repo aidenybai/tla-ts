@@ -1,7 +1,7 @@
 // Ported from Zenon's main.ml, as shipped in tlapm. Copyright 1997 INRIA, see LICENSE.
 
 import { TlaZenonError } from "../../errors";
-import type { DecideOptions } from "../verdict";
+import type { DecideOptions, Decision } from "../verdict";
 import { checkProof } from "./check/check";
 import { createRelations } from "./eqrel";
 import { createExpressions } from "./expr";
@@ -87,16 +87,14 @@ export const runZenon = (text: string, options: DecideOptions): ZenonRun => {
   };
 };
 
-type ZenonDecision = { verdict: "unsat"; proof: string } | { verdict: "unknown"; error?: string };
+const FAILURE_ERRORS = new Map<ZenonRun["failure"], string>([
+  ["exhausted", "Zenon error: exhausted search space without finding a proof\n"],
+  ["memory limit", "Zenon error: could not find a proof within the memory size limit\n"],
+]);
 
-const FAILURE_ERRORS: Partial<Record<SearchFailure | "zenon error", string>> = {
-  exhausted: "Zenon error: exhausted search space without finding a proof\n",
-  "memory limit": "Zenon error: could not find a proof within the memory size limit\n",
-};
-
-export const decideZenon = (text: string, options: DecideOptions): ZenonDecision => {
+export const decideZenon = (text: string, options: DecideOptions): Omit<Decision, "timeUsedMs"> => {
   const run = runZenon(text, options);
-  if (run.isar !== undefined) return { verdict: "unsat", proof: run.isar };
-  const error = run.failure && FAILURE_ERRORS[run.failure];
-  return { verdict: "unknown", ...(error !== undefined && { error }) };
+  return run.isar === undefined
+    ? { verdict: "unknown", errorOutput: FAILURE_ERRORS.get(run.failure) }
+    : { verdict: "unsat", output: run.isar };
 };

@@ -27,11 +27,10 @@ import { L_FALSE, L_TRUE } from "./lbool";
 import { RefVector } from "./ref-vector";
 import { Rewriter } from "./rewriter";
 import { convertModel, getRewriterOptions } from "./tactic";
+import { UINT_MAX } from "./sat/clause";
 import type { SatParams } from "./sat/config";
 import { IncSatSolver } from "./sat/inc-sat-solver";
 import { SubstReplacer } from "./solve-eqs";
-
-const UINT_MAX = 4294967295;
 
 const getNumBits = (value: bigint) => {
   let bound = 1n;

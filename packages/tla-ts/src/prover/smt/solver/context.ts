@@ -187,7 +187,7 @@ export class Context extends Internalizer {
   private phaseDefault = false;
   private lubyIndex = 1;
   private finalCheckIndex = 0;
-  private assumptionVars = new Map<BoolVar, number>();
+  private literalAssumptions = new Map<Literal, number>();
   unsatCore: number[] = [];
   private r1ParentGenerations = new Map<Enode, number>();
   private erasedGenerations = new Map<Enode, number>();
@@ -1494,7 +1494,8 @@ export class Context extends Internalizer {
   }
 
   initAssumptions(assumptions: number[], asserted: AssertedFormulas) {
-    this.assumptionVars.clear();
+    this.literalAssumptions.clear();
+    for (const assumption of this.unsatCore) this.manager.decRef(assumption);
     this.unsatCore = [];
     if (assumptions.length > 0) {
       this.propagate();
@@ -1515,7 +1516,7 @@ export class Context extends Internalizer {
         this.internalizeAssertion(proxy, 0);
         const literal = this.getLiteral(proxy);
         if (literal === this.trueLiteral || literal === this.falseLiteral) continue;
-        this.assumptionVars.set(getVar(literal), assumptions[index]);
+        this.literalAssumptions.set(literal, assumptions[index]);
       }
     }
     this.searchLevel = this.scopeLevel;
@@ -1566,25 +1567,34 @@ export class Context extends Internalizer {
   }
 
   isAssumption(boolVar: BoolVar) {
-    return this.assumptionVars.has(boolVar);
+    return (
+      this.literalAssumptions.has(mkLiteral(boolVar)) ||
+      this.literalAssumptions.has(mkLiteral(boolVar, true))
+    );
   }
 
   isTrackingAssumptions() {
-    return this.assumptionVars.size > 0 && this.searchLevel > this.baseLevel;
+    return this.literalAssumptions.size > 0 && this.searchLevel > this.baseLevel;
   }
 
   mkUnsatCore(result: number) {
     if (result !== L_FALSE || !this.isTrackingAssumptions()) return result;
-    const core = new Set<number>();
+    const literalAssumptions = this.literalAssumptions;
+    const found = new Set<Literal>();
+    const core: number[] = [];
     for (const literal of this.conflictResolution.unsatCore) {
-      const assumption = this.assumptionVars.get(getVar(literal));
-      if (assumption !== undefined) core.add(assumption);
+      const assumed = literalAssumptions.has(literal) ? literal : negate(literal);
+      const assumption = literalAssumptions.get(assumed);
+      if (assumption === undefined || found.has(assumed)) continue;
+      found.add(assumed);
+      this.manager.incRef(assumption);
+      core.push(assumption);
     }
-    this.assumptionVars.clear();
+    literalAssumptions.clear();
     this.popToBaseLevel();
     this.searchLevel = this.baseLevel;
     const ids = this.manager.ids;
-    this.unsatCore = [...core].sort((left, right) => ids[left] - ids[right]);
+    this.unsatCore = core.sort((left, right) => ids[left] - ids[right]);
     return L_FALSE;
   }
 

@@ -6,10 +6,18 @@ import {
   FAMILY_USER,
   KIND_APP,
   KIND_QUANTIFIER,
+  OP_ADD,
   OP_AND,
+  OP_BADD,
+  OP_BAND,
+  OP_BMUL,
+  OP_BOR,
+  OP_BXNOR,
+  OP_BXOR,
   OP_EQ,
   OP_IMPLIES,
   OP_ITE,
+  OP_MUL,
   OP_NOT,
   OP_OR,
   OP_XOR,
@@ -36,6 +44,7 @@ import {
   NO_ENODES,
   UnitResolutionJustification,
 } from "./enode";
+import { isCommutativeDecl } from "./euf/egraph";
 import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
 import {
   BoolVar,
@@ -83,6 +92,26 @@ export const BV_QUANTIFIER = 1 << 30;
 export const BV_THEORY = 1 << 31;
 export const UNDO_ADD_EQ = 8;
 export const UNDO_TH_VAR = 9;
+
+// func_decl_info::is_flat_associative of a commutative declaration. cg_table::mk_table_for gives
+// such a declaration the n-ary table, not the binary commutative one.
+const isFlatAssociativeDecl = (manager: AstManager, decl: number) => {
+  switch (manager.funcDecls[decl].op) {
+    case OP_AND:
+    case OP_OR:
+    case OP_ADD:
+    case OP_MUL:
+    case OP_BADD:
+    case OP_BMUL:
+    case OP_BAND:
+    case OP_BOR:
+    case OP_BXOR:
+    case OP_BXNOR:
+      return true;
+    default:
+      return false;
+  }
+};
 
 interface NewEq {
   lhs: Enode;
@@ -306,7 +335,13 @@ export abstract class Internalizer {
   }
 
   findCongruent(decl: number, args: Enode[]) {
-    return this.cgTable.findFor(decl, args, decl === OP_EQ);
+    return this.cgTable.findFor(
+      decl,
+      args,
+      args.length === 2 &&
+        isCommutativeDecl(this.manager, decl) &&
+        !isFlatAssociativeDecl(this.manager, decl),
+    );
   }
 
   isDiseq(first: Enode, second: Enode, isCheckingValues = true) {
@@ -552,15 +587,19 @@ export abstract class Internalizer {
     const moreArgs: Enode[] = numArgs > 2 ? [] : NO_ENODES;
     for (let index = 2; index < numArgs; index++) moreArgs.push(this.getArgEnode(expr, index));
     const isEq = !isSuppressingArgs && manager.getOp(expr) === OP_EQ;
+    const decl = manager.decls[expr];
+    const isCommutative = isEq || (numArgs === 2 && isCommutativeDecl(manager, decl));
     const node = new Enode(
       expr,
-      manager.decls[expr],
+      decl,
       numArgs,
       numArgs > 0 ? this.getArgEnode(expr, 0) : null,
       numArgs > 1 ? this.getArgEnode(expr, 1) : null,
       moreArgs,
       generation,
       isEq,
+      isCommutative,
+      isEq || (isCommutative && !isFlatAssociativeDecl(manager, decl)),
       manager.sorts[expr] === SORT_BOOL,
       isMergeTf,
       isCgcEnabled,

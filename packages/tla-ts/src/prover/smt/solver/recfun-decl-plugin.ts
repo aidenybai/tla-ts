@@ -10,6 +10,7 @@ import {
   SORT_BOOL,
 } from "./ast";
 import { ExprSafeReplace } from "./expr-safe-replace";
+import { ObjMap } from "./hashtable";
 
 const getChildren = (manager: AstManager, expr: number, isUnderQuantifiers: boolean) =>
   manager.kinds[expr] === KIND_QUANTIFIER
@@ -32,28 +33,43 @@ export const getSubterms = (manager: AstManager, expr: number, isUnderQuantifier
   return [...visited];
 };
 
+// Whether a subterm of the roots satisfies the predicate, which the walk calls in no particular
+// order.
+export const hasSubterm = (
+  manager: AstManager,
+  roots: readonly number[],
+  predicate: (term: number) => boolean,
+  isUnderQuantifiers = true,
+) => {
+  const visited = new Set<number>();
+  const todo = [...roots];
+  for (let current = todo.pop(); current !== undefined; current = todo.pop()) {
+    if (visited.has(current)) continue;
+    visited.add(current);
+    if (predicate(current)) return true;
+    if (manager.kinds[current] === KIND_APP) manager.pushArgs(current, todo);
+    else if (isUnderQuantifiers && manager.kinds[current] === KIND_QUANTIFIER)
+      todo.push(manager.getQuantifier(current).body);
+  }
+  return false;
+};
+
 export const isDefinedApp = (manager: AstManager, expr: number) =>
   manager.getOp(expr) === OP_FUN_DEFINED;
 
-const hasPredicate = (
-  manager: AstManager,
-  expr: number,
-  predicate: (term: number) => boolean,
-  isUnderQuantifiers = false,
-) => getSubterms(manager, expr, isUnderQuantifiers).some(predicate);
-
 export const containsDef = (manager: AstManager, expr: number) =>
-  hasPredicate(manager, expr, (term) => isDefinedApp(manager, term));
+  hasSubterm(manager, [expr], (term) => isDefinedApp(manager, term), false);
 
 // An ite on a condition without a defined function, with one in a branch.
 const containsIte = (manager: AstManager, expr: number) =>
-  hasPredicate(
+  hasSubterm(
     manager,
-    expr,
+    [expr],
     (term) =>
       manager.getOp(term) === OP_ITE &&
       !containsDef(manager, manager.getArg(term, 0)) &&
       containsDef(manager, term),
+    false,
   );
 
 interface ChoiceList {
@@ -153,12 +169,7 @@ const computeCases = (manager: AstManager, def: RecFunDef, isMacro: boolean, rhs
         const caseRhs = subst.apply(rhs);
         const guards = conditions.map((condition) => subst.apply(condition));
         subst.release();
-        const isImmediate = !hasPredicate(
-          manager,
-          caseRhs,
-          (term) => isDefinedApp(manager, term),
-          true,
-        );
+        const isImmediate = !hasSubterm(manager, [caseRhs], (term) => isDefinedApp(manager, term));
         addCase(manager, def, guards, caseRhs, isImmediate);
         manager.decRef(caseRhs);
         for (const guard of guards) manager.decRef(guard);
@@ -168,7 +179,8 @@ const computeCases = (manager: AstManager, def: RecFunDef, isMacro: boolean, rhs
   }
 };
 
-// compute_scores: the number of ites on the paths from the root to each subterm.
+// compute_scores: the number of ites on the paths from the root to each subterm. The scores are in
+// an obj_map, whose order decides which of the ites with the highest score redirect_ite takes.
 const computeScores = (manager: AstManager, expr: number) => {
   const parents = new Map<number, number[]>([[expr, []]]);
   const byDepth = new Map<number, number[]>();
@@ -182,7 +194,8 @@ const computeScores = (manager: AstManager, expr: number) => {
     const depth = manager.depths[term];
     byDepth.set(depth, [...(byDepth.get(depth) ?? []), term]);
   }
-  const scores = new Map<number, number>([[expr, 0]]);
+  const scores = new ObjMap<number>((term) => manager.hashes[term]);
+  scores.set(expr, 0);
   for (let depth = manager.depths[expr]; depth > 0; depth--)
     for (const term of byDepth.get(depth) ?? []) {
       const score = (parents.get(term) ?? []).reduce(
@@ -211,8 +224,9 @@ const redirectIte = (manager: AstManager, def: RecFunDef, rhs: number) => {
         maxScore = score;
       }
     if (maxScore <= 4) break;
+    // mk_fresh_id gives the id after the increment.
     const decl = manager.mkRecFuncDecl(
-      `fold-rec-${manager.mkFreshId()}`,
+      `fold-rec-${manager.mkFreshId() + 1}`,
       domain,
       manager.sorts[maxExpr],
     );

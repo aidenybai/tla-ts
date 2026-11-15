@@ -628,7 +628,7 @@ export class LarSolver {
   }
 
   hasIntVar() {
-    return this.localIsInt.some((isInt) => isInt);
+    return this.localIsInt.includes(true);
   }
 
   // Columns added after the backup get basic values from their rows, as the tableau requires.

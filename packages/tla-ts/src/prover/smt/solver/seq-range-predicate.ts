@@ -2,6 +2,7 @@
 // src/ast/rewriter/seq_range_collapse.cpp), MIT license, see z3-license.txt.
 import {
   type AstManager,
+  FAMILY_CHAR,
   OP_AND,
   OP_CHAR_LE,
   OP_EQ,
@@ -10,6 +11,7 @@ import {
   OP_RE_COMPLEMENT,
   OP_RE_DIFF,
   OP_RE_INTERSECT,
+  OP_RE_OF_PRED,
   OP_SEQ_UNIT,
   OP_RE_RANGE,
   OP_RE_UNION,
@@ -202,7 +204,18 @@ export const regexToRangePredicate = (
     const pair = getPair(first, second);
     return pair === undefined ? undefined : intersectRanges(pair[0], pair[1]);
   }
-  return undefined;
+  if (!isReUnary(manager, regex, OP_RE_OF_PRED) || !manager.isLambda(manager.getArg(regex, 0)))
+    return undefined;
+  const lambda = manager.getQuantifier(manager.getArg(regex, 0));
+  if (lambda.sorts.length !== 1) return undefined;
+  const variable = manager.mkVar(0, lambda.sorts[0]);
+  manager.incRef(variable);
+  const ranges =
+    manager.getSortFamily(lambda.sorts[0]) === FAMILY_CHAR
+      ? guardToRangePredicate(manager, variable, lambda.body)
+      : undefined;
+  manager.decRef(variable);
+  return ranges;
 };
 
 export const rangePredicateToRegex = (

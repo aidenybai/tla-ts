@@ -9,8 +9,11 @@ import {
   FAMILY_DATATYPE,
   FAMILY_FINITE_SET,
   FAMILY_FPA,
+  FAMILY_LABEL,
   FAMILY_MODEL_VALUE,
   FAMILY_PB,
+  FAMILY_POLY,
+  FAMILY_RECFUN,
   FAMILY_SEQ,
   FAMILY_USER,
   KIND_APP,
@@ -128,6 +131,8 @@ const FAMILY_NAMES = new Map([
   [FAMILY_FPA, "fpa"],
   [FAMILY_CHAR, "char"],
   [FAMILY_PB, "pb"],
+  [FAMILY_RECFUN, "recfun"],
+  [FAMILY_POLY, "polymorphic"],
 ]);
 
 const NONLINEAR = "logic does not support nonlinear arithmetic";
@@ -262,7 +267,7 @@ export const createLogicChecker = (manager: AstManager, logic: string | undefine
       if (op === OP_EQ) return checkDiffPredicate(expr);
       return op === OP_DISTINCT || op === OP_ITE ? checkDiffArgs(expr) : undefined;
     }
-    if (family === FAMILY_MODEL_VALUE) return undefined;
+    if (family === FAMILY_MODEL_VALUE || family === FAMILY_LABEL) return undefined;
     if (family === FAMILY_SEQ || manager.isCharSort(manager.sorts[expr])) return undefined;
     if (family === FAMILY_DATATYPE && flags.isDt) return undefined;
     if (family === FAMILY_PB && logic !== undefined && logicHasPb(logic)) return undefined;

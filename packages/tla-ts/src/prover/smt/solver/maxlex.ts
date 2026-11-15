@@ -24,13 +24,6 @@ export class Maxlex extends MaxsmtSolverBase {
     );
   }
 
-  private isTrueIn(model: ProtoModel, expr: number) {
-    const value = model.eval(expr, true);
-    const isTrue = value === this.manager.trueExpr;
-    this.manager.decRef(value);
-    return isTrue;
-  }
-
   private assertValue(soft: Soft) {
     if (soft.value === L_TRUE) this.solver.assertExpr(soft.expr);
     else if (soft.value === L_FALSE) {

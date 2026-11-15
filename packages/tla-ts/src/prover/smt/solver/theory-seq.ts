@@ -3,7 +3,6 @@ import { SmtUnsupportedError } from "../../../errors";
 import {
   FAMILY_SEQ,
   OP_EQ,
-  OP_ITE,
   OP_SEQ_AT,
   OP_SEQ_CONTAINS,
   OP_SEQ_EXTRACT,
@@ -79,29 +78,26 @@ export class TheorySeq extends TheorySeqRegex {
   finalCheckEh() {
     if (!this.hasSeq) return FC_DONE;
     this.isNewPropagation = false;
-    const checks = [
-      () => this.simplifyAndSolveEqs(),
-      () => this.checkEquationConflict(),
-      () => this.checkLts(),
-      () => this.solveNqs(0),
-      () => this.checkFixedLength(true, false),
-      () => this.checkFixedLength(false, false),
-      () => this.checkFixedLength(false, true),
-      () => this.checkContains(),
-      () => this.checkIntString(),
-      () => this.reduceLengthEq(),
-      () => this.branchUnitVariable(),
-      () => this.branchBinaryVariable(),
-      () => this.branchVariable(),
-      () => this.checkLengthCoherence(),
-      () => !this.checkExtensionality(),
-      () => this.branchNqs(),
-      () => this.branchItos(),
-      () => this.checkFixedLength(false, true),
-      () => this.solveRecfuns(),
-      () => this.finalCheckRegex(),
-    ];
-    if (checks.some((check) => check())) return FC_CONTINUE;
+    if (this.simplifyAndSolveEqs()) return FC_CONTINUE;
+    if (this.checkEquationConflict()) return FC_CONTINUE;
+    if (this.checkLts()) return FC_CONTINUE;
+    if (this.solveNqs(0)) return FC_CONTINUE;
+    if (this.checkFixedLength(true, false)) return FC_CONTINUE;
+    if (this.checkFixedLength(false, false)) return FC_CONTINUE;
+    if (this.checkFixedLength(false, true)) return FC_CONTINUE;
+    if (this.checkContains()) return FC_CONTINUE;
+    if (this.checkIntString()) return FC_CONTINUE;
+    if (this.reduceLengthEq()) return FC_CONTINUE;
+    if (this.branchUnitVariable()) return FC_CONTINUE;
+    if (this.branchBinaryVariable()) return FC_CONTINUE;
+    if (this.branchVariable()) return FC_CONTINUE;
+    if (this.checkLengthCoherence()) return FC_CONTINUE;
+    if (!this.checkExtensionality()) return FC_CONTINUE;
+    if (this.branchNqs()) return FC_CONTINUE;
+    if (this.branchItos()) return FC_CONTINUE;
+    if (this.checkFixedLength(false, true)) return FC_CONTINUE;
+    if (this.solveRecfuns()) return FC_CONTINUE;
+    if (this.finalCheckRegex()) return FC_CONTINUE;
     if (this.unhandledExpr !== undefined) return FC_GIVEUP;
     return this.eqs.size === 0 && this.ncs.size === 0 ? FC_DONE : FC_GIVEUP;
   }
@@ -140,8 +136,9 @@ export class TheorySeq extends TheorySeqRegex {
     if (op === OP_STRING_UBVTOS || op === OP_STRING_SBVTOS)
       throw new SmtUnsupportedError("str.from_ubv in the theory of sequences");
     if (op === OP_SEQ_LENGTH) this.mkVar(this.ensureEnodeOf(manager.getArg(term, 0)));
-    if (context.isEInternalized(term)) {
-      this.mkVar(context.getEnode(term)!);
+    const existing = context.getEnode(term);
+    if (existing !== undefined) {
+      this.mkVar(existing);
       return true;
     }
     const isBool = manager.isBool(term);
@@ -155,10 +152,7 @@ export class TheorySeq extends TheorySeqRegex {
       context.setVarTheory(context.mkBoolVar(term), this.id);
       context.markAsRelevant(term);
     }
-    const node = context.isEInternalized(term)
-      ? context.getEnode(term)!
-      : context.mkEnode(term, false, isBool, true);
-    this.mkVar(node);
+    this.mkVar(context.getEnode(term) ?? context.mkEnode(term, false, isBool, true));
     if (!context.relevancy.isEnabled) this.relevantEh(term);
     return true;
   }
@@ -389,8 +383,7 @@ export class TheorySeq extends TheorySeqRegex {
   private addLengthLimit(input: number, limit: number, isSearching: boolean) {
     const manager = this.manager;
     const todo = [input];
-    while (todo.length > 0) {
-      const expr = todo.pop()!;
+    for (let expr = todo.pop(); expr !== undefined; expr = todo.pop()) {
       if (this.isConcat(expr)) {
         todo.push(...manager.getArgs(expr));
         continue;
@@ -810,16 +803,16 @@ export class TheorySeq extends TheorySeqRegex {
           minSeq = limit.seq;
       }
     }
-    if (minLimit < MAX_UNFOLDING) {
+    if (minSeq !== undefined && minLimit < MAX_UNFOLDING) {
       this.maxUnfoldingDepth++;
       let limit = minLimit * 2;
-      if (this.isSeq(minSeq!)) {
-        limit = Math.max(this.getMinLength(minSeq!), limit);
-        const lower = this.lowerBound2(minSeq!);
+      if (this.isSeq(minSeq)) {
+        limit = Math.max(this.getMinLength(minSeq), limit);
+        const lower = this.lowerBound2(minSeq);
         if (lower !== undefined && !lower.isNegative() && lower.num <= 0xffffffffn)
           limit = Math.max(Number(lower.num), limit);
       }
-      this.addLengthLimit(minSeq!, limit, false);
+      this.addLengthLimit(minSeq, limit, false);
       return true;
     }
     if (hasMaxUnfolding) {
@@ -860,21 +853,6 @@ export class TheorySeq extends TheorySeqRegex {
     this.rep.popScope(1);
   }
 
-  private getIteValue(input: number) {
-    const context = this.context;
-    const manager = this.manager;
-    let expr = input;
-    while (this.isOp(expr, OP_ITE) && context.isEInternalized(expr)) {
-      const root = context.getEnode(expr)!.root;
-      const thenExpr = manager.getArg(expr, 1);
-      const elseExpr = manager.getArg(expr, 2);
-      if (context.getEnode(thenExpr)!.root === root) expr = thenExpr;
-      else if (context.getEnode(elseExpr)!.root === root) expr = elseExpr;
-      else break;
-    }
-    return expr;
-  }
-
   mkValue(node: Enode): number | DependentValue {
     const manager = this.manager;
     const context = this.context;
@@ -882,8 +860,8 @@ export class TheorySeq extends TheorySeqRegex {
     if (!this.isSeq(expr)) return this.mkValueOf(expr);
     const concats: number[] = [];
     const todo = [expr];
-    while (todo.length > 0) {
-      const current = this.rep.find(this.getIteValue(this.rep.find(todo.pop()!)));
+    for (let next = todo.pop(); next !== undefined; next = todo.pop()) {
+      const current = this.rep.find(this.getIteValue(this.rep.find(next)));
       if (this.isConcat(current)) todo.push(manager.getArg(current, 1), manager.getArg(current, 0));
       else concats.push(current);
     }

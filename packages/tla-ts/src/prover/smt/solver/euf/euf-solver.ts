@@ -580,7 +580,9 @@ export class EufSolver implements SatExtension {
 
   getThAntecedents(explain: ThExplain, antecedents: number[]) {
     for (const lit of explain.lits) antecedents.push(lit);
-    for (const eq of explain.eqs) this.egraph.explainEq(this.explanation, eq[0], eq[1]);
+    for (const eq of explain.eqs)
+      if (eq[0].owner > eq[1].owner) this.egraph.explainEq(this.explanation, eq[1], eq[0]);
+      else this.egraph.explainEq(this.explanation, eq[0], eq[1]);
   }
 
   explainDiseq(justifications: number[], first: Enode, second: Enode) {
@@ -853,23 +855,31 @@ export class EufSolver implements SatExtension {
     const replay = new Map<number, number>();
     for (const reinit of this.reinits) replay.set(reinit.expr, reinit.boolVar);
     si.setExpr2VarReplay(replay);
-    for (const reinit of this.reinits) {
-      const expr = reinit.expr;
-      const oldGeneration = this.generation;
-      this.generation = reinit.generation;
-      const lit = si.isBoolOp(expr) ? 2 * (replay.get(expr) as number) : si.internalize(expr);
-      const isConnective =
-        manager.getFamily(expr) === FAMILY_BASIC &&
-        (si.isBoolOp(expr) ||
-          (manager.getOp(expr) === OP_EQ && manager.isBool(manager.getArg(expr, 0))));
-      if (this.egraph.find(expr) === undefined && !isConnective) {
-        const args = manager.isApp(expr)
-          ? manager.getArgs(expr).map((arg) => this.eInternalize(arg))
-          : [];
-        this.internalizeTerm(expr);
-        if (this.egraph.find(expr) === undefined) this.mkEnode(expr, args);
-      } else this.attachLit(lit, expr);
-      this.generation = oldGeneration;
+    // scoped_suspend_rlimit: the replay runs to its end even when the limit is spent.
+    const limit = manager.limit;
+    const wasSuspended = limit.isSuspended;
+    limit.isSuspended = true;
+    try {
+      for (const reinit of this.reinits) {
+        const expr = reinit.expr;
+        const oldGeneration = this.generation;
+        this.generation = reinit.generation;
+        const lit = si.isBoolOp(expr) ? 2 * (replay.get(expr) as number) : si.internalize(expr);
+        const isConnective =
+          manager.getFamily(expr) === FAMILY_BASIC &&
+          (si.isBoolOp(expr) ||
+            (manager.getOp(expr) === OP_EQ && manager.isBool(manager.getArg(expr, 0))));
+        if (this.egraph.find(expr) === undefined && !isConnective) {
+          const args = manager.isApp(expr)
+            ? manager.getArgs(expr).map((arg) => this.eInternalize(arg))
+            : [];
+          this.internalizeTerm(expr);
+          if (this.egraph.find(expr) === undefined) this.mkEnode(expr, args);
+        } else this.attachLit(lit, expr);
+        this.generation = oldGeneration;
+      }
+    } finally {
+      limit.isSuspended = wasSuspended;
     }
     for (const entry of replay)
       if (si.isBoolOp(entry[0]) && !si.isCached(entry[0], 2 * entry[1]))
@@ -918,6 +928,13 @@ export class EufSolver implements SatExtension {
   initUseList() {}
 
   findMutexes() {}
+
+  // Every theory solver but pb's returns false from to_formulas, which ends the walk.
+  toFormulas(_lit2expr: (lit: number) => number, formulas: number[]) {
+    if (this.solvers.length > 0) return;
+    for (const node of this.egraph.nodes)
+      if (node.root !== node) formulas.push(this.manager.mkEq(node.owner, node.root.owner));
+  }
 
   saveModel(model: ProtoModel | null) {
     model?.incRef();

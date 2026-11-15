@@ -46,12 +46,6 @@ export class UseList {
       this.numRedundant[arena.get(clause, index)]++;
   }
 
-  unblock(clause: number) {
-    const arena = this.arena;
-    for (let index = 0; index < arena.size[clause]; index++)
-      this.numRedundant[arena.get(clause, index)]--;
-  }
-
   erase(clause: number, exceptLit = NULL_LITERAL) {
     const arena = this.arena;
     const isLearned = arena.isLearned(clause);

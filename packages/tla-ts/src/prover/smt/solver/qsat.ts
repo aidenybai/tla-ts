@@ -14,12 +14,13 @@ import {
 } from "./ast";
 import { hasUninterpreted, isAppOf, pushNotOwned } from "./ast-util";
 import { MBQI_MAX_ITERATIONS } from "./context";
-import { extractVars } from "./qe";
+import { extractVars, mkQuantifierOfConsts } from "./qe";
 import type { Goal } from "./goal";
 import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
 import type { ProtoModel } from "./proto-model";
 import { Mbproj } from "./qe-mbp";
 import { QuantifierHoister } from "./quant-hoist";
+import { hasSubterm } from "./recfun-decl-plugin";
 import { RefVector } from "./ref-vector";
 import { SmtKernel } from "./smt-kernel";
 
@@ -59,18 +60,6 @@ const hasQuantifiedUninterpreted = (manager: AstManager, expr: number) => {
     } else if (manager.kinds[current] === KIND_APP) manager.pushArgs(current, todo);
   }
   return false;
-};
-
-const isGround = (manager: AstManager, expr: number) => {
-  const visited = new Set<number>();
-  const todo = [expr];
-  for (let current = todo.pop(); current !== undefined; current = todo.pop()) {
-    if (visited.has(current)) continue;
-    visited.add(current);
-    if (manager.kinds[current] !== KIND_APP) return false;
-    manager.pushArgs(current, todo);
-  }
-  return true;
 };
 
 // pred_abs::get_free_vars: the uninterpreted constants of a formula.
@@ -182,22 +171,27 @@ class PredAbs {
       return;
     }
     if (level === 0) return;
-    const evaluate = (pred: number) => {
+    const isFalseIn = (pred: number) => {
       const value = model.eval(pred, true);
       const isFalse = manager.isFalse(value);
       manager.decRef(value);
-      return isFalse ? this.pin(manager.mkNot(pred)) : pred;
+      return isFalse;
     };
     for (let index = 0; index <= level - 1; index++)
-      for (const pred of this.preds[index]) this.asms.push(evaluate(pred));
+      for (const pred of this.preds[index]) {
+        const isFalse = isFalseIn(pred);
+        if (!manager.limit.inc()) return;
+        this.asms.push(isFalse ? this.pin(manager.mkNot(pred)) : pred);
+      }
     for (const asm of this.asms.items) asms.push(asm);
     for (let index = level + 1; index < this.preds.length; index += 2)
       for (const pred of this.preds[index]) {
+        if (!manager.limit.inc()) return;
         const predLevel = this.elevel.get(pred) as MaxLevel;
         const isUsed =
           (predLevel.fa === index && (predLevel.ex === NO_LEVEL || predLevel.ex < level)) ||
           (predLevel.ex === index && (predLevel.fa === NO_LEVEL || predLevel.fa < level));
-        if (isUsed) asms.push(evaluate(pred));
+        if (isUsed) asms.push(isFalseIn(pred) ? this.pin(manager.mkNot(pred)) : pred);
       }
   }
 
@@ -430,22 +424,25 @@ class Qsat {
     for (;;) {
       manager.limit.checkpoint();
       const asms = new RefVector(manager);
-      for (const asm of this.asms.items) asms.push(asm);
-      this.predAbs.getAssumptions(this.model, asms);
-      const kernel = this.getKernel(this.level).solver;
-      const result = kernel.check(asms.items);
-      if (result === L_TRUE) {
-        this.setModel(kernel.context.getModel());
-        if (this.level === 0) this.setModelSave(this.model);
-        this.push();
-      } else if (result === L_FALSE) {
-        if (this.level === 0) return L_FALSE;
-        if (this.level === 1 && this.mode === QSAT_SAT) return L_TRUE;
-        if (this.model === undefined) this.pop(1);
-        else if (this.level === 1) this.projectQe(asms);
-        else if (!this.project(asms)) return L_UNDEF;
-      } else return result;
-      asms.reset();
+      try {
+        for (const asm of this.asms.items) asms.push(asm);
+        this.predAbs.getAssumptions(this.model, asms);
+        const kernel = this.getKernel(this.level).solver;
+        const result = kernel.check(asms.items);
+        if (result === L_TRUE) {
+          this.setModel(kernel.context.getModel());
+          if (this.level === 0) this.setModelSave(this.model);
+          this.push();
+        } else if (result === L_FALSE) {
+          if (this.level === 0) return L_FALSE;
+          if (this.level === 1 && this.mode === QSAT_SAT) return L_TRUE;
+          if (this.model === undefined) this.pop(1);
+          else if (this.level === 1) this.projectQe(asms);
+          else if (!this.project(asms)) return L_UNDEF;
+        } else return result;
+      } finally {
+        asms.reset();
+      }
     }
   }
 
@@ -506,28 +503,31 @@ class Qsat {
     const pullInto = (target: RefVector) => {
       result = this.pinOwned(hoister.pullQuantifier(isForall, result, target));
     };
-    if (this.mode !== QSAT_SAT) {
-      isForall = true;
-      const vars = new RefVector(manager);
-      pullInto(vars);
-      this.vars.push(vars);
-      this.filterVars(vars);
-    } else {
-      const vars = new RefVector(manager);
-      pullInto(vars);
-      for (const innerVar of vars.items) freeVars.push(innerVar);
-      this.filterVars(vars);
-      vars.reset();
+    try {
+      if (this.mode !== QSAT_SAT) {
+        isForall = true;
+        const vars = new RefVector(manager);
+        pullInto(vars);
+        this.vars.push(vars);
+        this.filterVars(vars);
+      } else {
+        const vars = new RefVector(manager);
+        pullInto(vars);
+        for (const innerVar of vars.items) freeVars.push(innerVar);
+        this.filterVars(vars);
+        vars.reset();
+      }
+      for (;;) {
+        isForall = !isForall;
+        const vars = new RefVector(manager);
+        pullInto(vars);
+        this.vars.push(vars);
+        this.filterVars(vars);
+        if (vars.size === 0) break;
+      }
+    } finally {
+      hoister.release();
     }
-    for (;;) {
-      isForall = !isForall;
-      const vars = new RefVector(manager);
-      pullInto(vars);
-      this.vars.push(vars);
-      this.filterVars(vars);
-      if (vars.size === 0) break;
-    }
-    hoister.release();
     this.initializeLevels();
     return result;
   }
@@ -683,38 +683,32 @@ class Qsat {
     if (manager.hasQuantifierFlags[formula]) return -1;
     this.reset();
     const exists = this.pin(
-      manager.mkQuantifier({
-        kind: QUANTIFIER_EXISTS,
-        sorts: vars.items.map((innerVar) => manager.sorts[innerVar]),
-        names: vars.items.map((innerVar) => manager.getDeclName(innerVar)),
-        body: this.abstractVars(vars, formula),
-        patterns: [],
-        noPatterns: [],
-        weight: 0,
-        qid: "",
-      }),
+      mkQuantifierOfConsts(
+        manager,
+        QUANTIFIER_EXISTS,
+        vars.items,
+        this.abstractVars(vars, formula),
+        0,
+      ),
     );
     const hoisted = this.hoist(this.pinOwned(pushNotOwned(manager, exists)));
     this.assertFormula(hoisted);
     if (this.checkSat() !== L_FALSE) return -1;
     let result = this.pin(manager.mkAnd(this.answer.items));
     const freeVars = this.freeVars.items.filter((innerVar) =>
-      isOccurringIn(manager, innerVar, result),
+      hasSubterm(manager, [result], (expr) => expr === innerVar),
     );
     if (freeVars.length > 0) {
       const subVars = new RefVector(manager);
       for (const innerVar of freeVars) subVars.push(innerVar);
       result = this.pin(
-        manager.mkQuantifier({
-          kind: QUANTIFIER_EXISTS,
-          sorts: freeVars.map((innerVar) => manager.sorts[innerVar]),
-          names: freeVars.map((innerVar) => manager.getDeclName(innerVar)),
-          body: this.abstractVars(subVars, result),
-          patterns: [],
-          noPatterns: [],
-          weight: 0,
-          qid: "",
-        }),
+        mkQuantifierOfConsts(
+          manager,
+          QUANTIFIER_EXISTS,
+          freeVars,
+          this.abstractVars(subVars, result),
+          0,
+        ),
       );
       subVars.reset();
     }
@@ -753,7 +747,7 @@ class Qsat {
 
   private assertFormula(formula: number) {
     const manager = this.manager;
-    if (!isGround(manager, formula)) throw new SmtTacticError("formula is not hoistable");
+    if (!manager.isGroundApp(formula)) throw new SmtTacticError("formula is not hoistable");
     const defs = new RefVector(manager);
     this.predAbs.abstractAtoms(formula, mkLevel(), defs);
     const abstracted = this.predAbs.mkAbstract(formula);
@@ -810,20 +804,6 @@ class Qsat {
     }
   }
 }
-
-const isOccurringIn = (manager: AstManager, variable: number, expr: number) => {
-  const visited = new Set<number>();
-  const todo = [expr];
-  for (let current = todo.pop(); current !== undefined; current = todo.pop()) {
-    if (current === variable) return true;
-    if (visited.has(current)) continue;
-    visited.add(current);
-    if (manager.kinds[current] === KIND_APP) manager.pushArgs(current, todo);
-    else if (manager.kinds[current] === KIND_QUANTIFIER)
-      todo.push(manager.getQuantifier(current).body);
-  }
-  return false;
-};
 
 export const runQsat = (manager: AstManager, mode: number) => (goal: Goal) => {
   const qsat = new Qsat(manager, mode);

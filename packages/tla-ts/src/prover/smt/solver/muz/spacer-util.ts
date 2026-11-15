@@ -16,7 +16,6 @@ import {
   FAMILY_BASIC,
   SORT_BOOL,
 } from "../ast";
-import { compareAsts } from "../ast-lt";
 import { flattenAndVector } from "../ast-util";
 import { pickEquality, MbpContext } from "../mbp/mbp-plugin";
 import type { ProtoModel } from "../proto-model";
@@ -54,8 +53,9 @@ export const flattenAnd = (manager: AstManager, exprs: readonly number[]) => {
   return result;
 };
 
+// std::sort under ast_lt_proc, which orders by id.
 export const sortByAstLt = (manager: AstManager, exprs: number[]) =>
-  exprs.sort((first, second) => compareAsts(manager, first, second));
+  exprs.sort((first, second) => manager.ids[first] - manager.ids[second]);
 
 export const isTrueIn = (model: ProtoModel, expr: number) =>
   model.manager.isTrue(model.eval(pin(model.manager, expr), false));

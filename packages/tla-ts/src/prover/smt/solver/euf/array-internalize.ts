@@ -42,20 +42,31 @@ export interface VarData {
   readonly parentSelects: Enode[];
 }
 
-const getAxiomKey = (record: AxiomRecord) =>
-  record.kind === KIND_SELECT
-    ? `${record.kind},${record.node.owner},${(record.select as Enode).args
-        .slice(1)
-        .map((arg) => arg.owner)
-        .join(",")}`
-    : `${record.kind},${record.node.owner},${record.select?.owner ?? -1}`;
+const PACKED_EXPR_LIMIT = 2 ** 24;
+
+// The kind, the node and the select or its only index in one exact integer, when both
+// expressions are small enough.
+const getAxiomKey = (record: AxiomRecord) => {
+  const node = record.node.owner;
+  const select = record.select;
+  const isSelect = record.kind === KIND_SELECT && select !== null;
+  if (isSelect && select.args.length !== 2)
+    return `${record.kind},${node},${select.args
+      .slice(1)
+      .map((arg) => arg.owner)
+      .join(",")}`;
+  const other = select === null ? 0 : (isSelect ? select.args[1].owner : select.owner) + 1;
+  return node < PACKED_EXPR_LIMIT && other < PACKED_EXPR_LIMIT
+    ? (node * PACKED_EXPR_LIMIT + other) * 8 + record.kind
+    : `${record.kind},${node},${other}`;
+};
 
 export abstract class ArrayInternalize extends ThSolver {
   protected readonly varData: VarData[] = [];
   protected readonly find: UnionFind;
   private sort2diffs = new Map<number, number[]>();
   protected readonly axiomTrail: AxiomRecord[] = [];
-  private axioms = new Map<string, number>();
+  private axioms = new Map<number | string, number>();
   protected qhead = 0;
   protected delayQhead = 0;
   protected isDelayEnabled = true;

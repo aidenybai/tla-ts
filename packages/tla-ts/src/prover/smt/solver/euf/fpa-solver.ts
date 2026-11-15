@@ -152,18 +152,13 @@ export class FpaSolver extends ThSolver {
     const owner = node.owner;
     if (this.isOp(owner, OP_ITE)) return;
     this.attachNewThVar(node);
-    manager.withTemporaries(
-      () => {
-        if (this.isRm(owner) && !this.isOp(owner, OP_FPA_BV2RM)) {
-          const limit = manager.mkBvNumeral(4n, 3);
-          this.addUnit(
-            this.mkLiteral(mkBvApp(manager, OP_ULEQ, [this.converter.wrap(owner), limit])),
-          );
-        }
-        this.activate(owner);
-      },
-      () => [],
-    );
+    const outer = manager.beginTemporaries();
+    if (this.isRm(owner) && !this.isOp(owner, OP_FPA_BV2RM)) {
+      const limit = manager.mkBvNumeral(4n, 3);
+      this.addUnit(this.mkLiteral(mkBvApp(manager, OP_ULEQ, [this.converter.wrap(owner), limit])));
+    }
+    this.activate(owner);
+    manager.endTemporaries(outer);
   }
 
   override unitPropagate() {
@@ -172,11 +167,11 @@ export class FpaSolver extends ThSolver {
     this.ctx.trail.push(() => {
       this.nodesQhead = qhead;
     });
-    for (; this.nodesQhead < this.nodes.length; this.nodesQhead++)
-      this.manager.withTemporaries(
-        () => this.propagateNode(this.nodes[this.nodesQhead]),
-        () => [],
-      );
+    for (; this.nodesQhead < this.nodes.length; this.nodesQhead++) {
+      const outer = this.manager.beginTemporaries();
+      this.propagateNode(this.nodes[this.nodesQhead]);
+      this.manager.endTemporaries(outer);
+    }
     return true;
   }
 
@@ -227,23 +222,20 @@ export class FpaSolver extends ThSolver {
     const firstExpr = this.var2expr(first);
     const secondExpr = this.var2expr(second);
     if (this.isOp(firstExpr, OP_FPA_BVWRAP) || this.isOp(secondExpr, OP_FPA_BVWRAP)) return;
-    manager.withTemporaries(
-      () => {
-        const firstConverted = this.convert(firstExpr);
-        const secondConverted = this.convert(secondExpr);
-        const isFloatPair =
-          (this.isFloat(firstExpr) && this.isFloat(secondExpr)) ||
-          (this.isRm(firstExpr) && this.isRm(secondExpr));
-        const eq = isFloatPair
-          ? this.converter.mkEq(firstConverted, secondConverted)
-          : manager.mkEq(firstConverted, secondConverted);
-        const condition = this.theoryRewriter.rewrite(eq);
-        manager.releaseLater(condition);
-        this.addEquiv(this.eqInternalize(firstExpr, secondExpr), this.mkLiteral(condition));
-        this.addUnits(this.mkSideConditions());
-      },
-      () => [],
-    );
+    const outer = manager.beginTemporaries();
+    const firstConverted = this.convert(firstExpr);
+    const secondConverted = this.convert(secondExpr);
+    const isFloatPair =
+      (this.isFloat(firstExpr) && this.isFloat(secondExpr)) ||
+      (this.isRm(firstExpr) && this.isRm(secondExpr));
+    const eq = isFloatPair
+      ? this.converter.mkEq(firstConverted, secondConverted)
+      : manager.mkEq(firstConverted, secondConverted);
+    const condition = this.theoryRewriter.rewrite(eq);
+    manager.releaseLater(condition);
+    this.addEquiv(this.eqInternalize(firstExpr, secondExpr), this.mkLiteral(condition));
+    this.addUnits(this.mkSideConditions());
+    manager.endTemporaries(outer);
   }
 
   override newEqEh(eq: ThEq) {
@@ -259,26 +251,20 @@ export class FpaSolver extends ThSolver {
   }
 
   override asserted(lit: number) {
-    this.manager.withTemporaries(
-      () => {
-        const converted = this.mkLiteral(this.convert(this.boolVar2expr(lit >> 1) as number));
-        const conds = this.mkSideConditions();
-        conds.push(converted);
-        if ((lit & 1) === 1) {
-          for (const cond of conds) this.addClause([lit, cond]);
-          return;
-        }
-        this.addClause([...conds.map((cond) => cond ^ 1), lit]);
-      },
-      () => [],
-    );
+    const outer = this.manager.beginTemporaries();
+    const converted = this.mkLiteral(this.convert(this.boolVar2expr(lit >> 1) as number));
+    const conds = this.mkSideConditions();
+    conds.push(converted);
+    if ((lit & 1) === 1) for (const cond of conds) this.addClause([lit, cond]);
+    else this.addClause([...conds.map((cond) => cond ^ 1), lit]);
+    this.manager.endTemporaries(outer);
   }
 
   private getWrappedNode(expr: number) {
-    return this.manager.withTemporaries(
-      () => this.expr2enode(this.converter.wrap(expr)),
-      () => [],
-    );
+    const outer = this.manager.beginTemporaries();
+    const wrapped = this.expr2enode(this.converter.wrap(expr));
+    this.manager.endTemporaries(outer);
+    return wrapped;
   }
 
   override addValue(node: Enode, _model: ProtoModel, values: (number | undefined)[]) {

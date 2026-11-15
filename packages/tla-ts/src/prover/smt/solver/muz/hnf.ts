@@ -47,8 +47,10 @@ export class Hnf {
       if (visited.has(current)) continue;
       visited.add(current);
       const kind = manager.kinds[current];
-      if (kind === KIND_QUANTIFIER) todo.push(manager.getQuantifier(current).body);
-      else if (kind === KIND_APP) {
+      if (kind === KIND_QUANTIFIER) {
+        const quantifier = manager.getQuantifier(current);
+        todo.push(quantifier.body, ...quantifier.patterns, ...quantifier.noPatterns);
+      } else if (kind === KIND_APP) {
         if (this.isPredicate(current)) return true;
         manager.pushArgs(current, todo);
       }
@@ -172,12 +174,11 @@ export class Hnf {
     used.forEach((sort, index) => {
       if (sort !== undefined) args.push(manager.mkVar(index, sort));
     });
+    // Z3 passes an empty suffix that is not the null symbol, so the name has two separators.
     const decl = manager.mkFreshFuncDecl(
-      this.name,
+      `${this.name}!`,
       args.map((arg) => manager.sorts[arg]),
       SORT_BOOL,
-      true,
-      "",
     );
     manager.incDeclRef(decl);
     this.freshPredicates.push(decl);

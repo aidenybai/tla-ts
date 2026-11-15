@@ -36,10 +36,11 @@ import {
   type IsarContext,
   type ReadMode,
 } from "./context";
+import { applyAttributes } from "./attrib";
 import { evaluate, finishTac, normHhfTac, unfoldGoals, unfoldRule, type GoalState } from "./method";
 import { applyCase, dropJudgment } from "./rule-cases";
 import { parseType } from "./inner-syntax";
-import type { FixedVariable, MethodText, StatementPart } from "./theory";
+import type { AttributeSource, FixedVariable, MethodText, StatementPart } from "./theory";
 
 const initGoal = (prop: Term) =>
   instantiate([{ variable: mkVar("A", 0, propT), term: prop }], protectI);
@@ -162,7 +163,7 @@ const theResult = <Item>(seq: Seq<Item>, message: string): Item => {
 };
 
 // Proof.end_proof: the closing method, then the goal must have no subgoals.
-const endProof = (state: State, text: MethodText | undefined, isImmediate: boolean): Seq<State> => {
+const endProof = (state: State, text: MethodText | undefined): Seq<State> => {
   assertMode(state, ["forward"]);
   const closed = usingFacts(closeBlock(state), []);
   if (top(closed).goal === undefined) throw error("No goal in this block");
@@ -173,7 +174,7 @@ const endProof = (state: State, text: MethodText | undefined, isImmediate: boole
       (result: State) =>
         mapSeq(
           (thm: Thm) => provideGoal(result, thm),
-          finishTac(contextOf(result).tactics.limits, isImmediate)(findGoal(result)[2].goal),
+          finishTac(contextOf(result).tactics.limits)(findGoal(result)[2].goal),
         ),
       finish,
     ),
@@ -199,7 +200,7 @@ const genericQed = (state: State): State => {
 };
 
 export const qed = (state: State, text: MethodText | undefined): State =>
-  genericQed(theResult(endProof(state, text, true), "Failed to finish proof"));
+  genericQed(theResult(endProof(state, text), "Failed to finish proof"));
 
 // Proof.terminal_proof, as by: the first initial result that the terminal method finishes.
 export const terminalProof = (
@@ -209,7 +210,7 @@ export const terminalProof = (
 ): State =>
   genericQed(
     theResult(
-      mapsSeq((result: State) => endProof(result, terminal, true), proof(state, initial)),
+      mapsSeq((result: State) => endProof(result, terminal), proof(state, initial)),
       "Failed to finish proof",
     ),
   );
@@ -294,14 +295,15 @@ const localResults = (
   parts: readonly StatementPart[],
   results: readonly (readonly Thm[])[],
 ): State => {
-  const named = parts.reduce(
-    (context, part, index) =>
-      part.name === undefined ? context : putFacts(context, part.name, results[index]),
-    contextOf(state),
-  );
+  const noted: Thm[] = [];
+  const named = parts.reduce((context, part, index) => {
+    const [declared, thms] = applyAttributes(context, part.attributes, results[index]);
+    noted.push(...thms);
+    return part.name === undefined ? declared : putFacts(declared, part.name, thms);
+  }, contextOf(state));
   return putFactsOf(
     mapContext(state, () => named),
-    results.flat(),
+    noted,
   );
 };
 
@@ -421,23 +423,33 @@ export const collect = (state: State, isFinal: boolean): State => {
 // Proof.assume: each group of propositions becomes hypotheses, which a named group names.
 const assumeProps = (
   state: State,
-  groups: readonly { readonly name: string | undefined; readonly props: readonly Term[] }[],
+  groups: readonly {
+    readonly name: string | undefined;
+    readonly attributes: readonly AttributeSource[];
+    readonly props: readonly Term[];
+  }[],
 ): State => {
   assertMode(state, ["forward"]);
   const props = groups.flatMap((group) => group.props);
   const [thms, context] = addAssumptions(contextOf(state), false, props);
   let offset = 0;
+  const noted: Thm[] = [];
   const named = groups.reduce(
     (current, group) => {
-      const slice = thms.slice(offset, offset + group.props.length);
+      const [declared, slice] = applyAttributes(
+        current,
+        group.attributes,
+        thms.slice(offset, offset + group.props.length),
+      );
       offset += group.props.length;
-      return group.name === undefined ? current : putFacts(current, group.name, slice);
+      noted.push(...slice);
+      return group.name === undefined ? declared : putFacts(declared, group.name, slice);
     },
     props.reduce(declareTerm, context),
   );
   return putFactsOf(
     mapContext(state, () => named),
-    thms,
+    noted,
   );
 };
 
@@ -446,7 +458,11 @@ export const assume = (state: State, parts: readonly StatementPart[]): State => 
   const statement = readStatement(contextOf(state), parts, "default");
   return assumeProps(
     mapContext(state, (context) => bindAll(context, statement.binds)),
-    parts.map((part, index) => ({ name: part.name, props: statement.props[index] })),
+    parts.map((part, index) => ({
+      name: part.name,
+      attributes: part.attributes,
+      props: statement.props[index],
+    })),
   );
 };
 
@@ -491,6 +507,7 @@ export const invokeCase = (
     mapContext(state, () => updateCases(bound, applied.cases)),
     applied.assumes.map((assumption) => ({
       name: assumption.name === "" ? undefined : `${caseName}.${assumption.name}`,
+      attributes: [],
       props: assumption.props,
     })),
   );

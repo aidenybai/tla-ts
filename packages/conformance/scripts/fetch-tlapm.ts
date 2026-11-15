@@ -44,9 +44,11 @@ if (getVersion(TLAPM_BINARY, ["--version"]) !== REVISION.slice(0, 7)) {
   rmSync(checkout, { recursive: true, force: true });
 }
 const z3Link = join(TLAPM_BACKENDS, "z3");
-const isLinked = lstatSync(z3Link).isSymbolicLink() && readlinkSync(z3Link) === z3;
+const isLinked =
+  lstatSync(z3Link, { throwIfNoEntry: false })?.isSymbolicLink() === true &&
+  readlinkSync(z3Link) === z3;
 if (!isLinked) {
-  rmSync(z3Link);
+  rmSync(z3Link, { force: true });
   symlinkSync(z3, z3Link);
 }
 console.log(
