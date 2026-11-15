@@ -25851,4 +25851,35 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("throws the TypeError of Error.prototype.toString on a message that can't convert", () => {
+    const getSource = (expected: string) => `
+      const box = { size: 0 };
+      const read: string[] = [];
+      const record = (run: () => void) => {
+        try {
+          run();
+          read.push("none");
+        } catch (error) {
+          read.push(error instanceof TypeError ? "type" : "other");
+        }
+      };
+      record(() => {
+        Error.prototype.toString.call({ message: { valueOf: undefined, toString: undefined } });
+      });
+      record(() => {
+        Error.prototype.toString.call({ name: "N", message: { valueOf: 1, toString: null } });
+      });
+      box.size = read.length;
+      if (read.join() !== "${expected}") throw new Error(read.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("type,type"))).failure).toBeUndefined();
+    });
+
+    it("rejects the message as converting", async () => {
+      expect((await checkModel(getSource("none,type"))).failure?.message).toContain("type,type");
+    });
+  });
 });

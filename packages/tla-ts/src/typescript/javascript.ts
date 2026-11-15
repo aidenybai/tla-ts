@@ -1697,66 +1697,6 @@ ReceiverlessValue(value) ==
     [] value[Ref] = "Function.prototype.@@hasInstance" -> FALSE
     [] OTHER -> Undefined
 
-\\* Whether a built-in method throws a TypeError on a receiver, as one does on undefined or null
-\\* where it needs a receiver, and as one that needs an internal slot, or a primitive of its own
-\\* type, does on another primitive or on an ordinary object or array.
-ThrowsOnReceiver(heap, value, receiver) ==
-  /\\ IsRef(value)
-  /\\ TypeOf(value[Ref]) = "string"
-  /\\ LET path == value[Ref]
-         isUnder(name) ==
-           \\E prefix \\in {name \\o ".", "get " \\o name \\o "."} :
-             Len(path) > Len(prefix) /\\ SubSeq(path, 1, Len(prefix)) = prefix
-         isEnding(suffix) ==
-           Len(path) >= Len(suffix) /\\ SubSeq(path, Len(path) - Len(suffix) + 1, Len(path)) = suffix
-         isMethod == ~isEnding(".constructor") /\\ ~isEnding("@@toStringTag") /\\ ~isEnding("@@hasInstance")
-         isPrimitive == ~IsRef(receiver) /\\ TypeOf(receiver) \\notin {"object", "function"}
-         isOrdinary ==
-           \\/ IsSequenceValue(receiver)
-           \\/ /\\ IsHeap(receiver)
-              /\\ LET object == heap.objects[receiver[Ref]]
-                 IN /\\ DOMAIN object \\ {"isArray", "isArguments"} = DOMAIN EmptyObject
-                    /\\ ~object.isOpaque
-                    /\\ ~object.isCallable
-         \\* The type of the primitive that a wrapper object holds, or "".
-         wrapped ==
-           IF IsHeap(receiver) /\\ "primitive" \\in DOMAIN heap.objects[receiver[Ref]]
-           THEN TypeOf(heap.objects[receiver[Ref]].primitive)
-           ELSE ""
-         \\* An object without the internal slot a method needs: an ordinary one, a wrapper, or a
-         \\* function, which holds no slot of these but [[Call]].
-         isSlotless(isFunctionHeld) ==
-           \\/ isOrdinary
-           \\/ wrapped # ""
-           \\/ isFunctionHeld /\\ TypeOfIn(heap, receiver) = "function"
-     IN \\/ receiver \\in {Undefined, Null} /\\ ThrowsWithoutReceiver(value)
-        \\* catch invokes the receiver's then, which a data property holds that isn't a function.
-        \\/ /\\ path = "Promise.prototype.catch"
-           /\\ IsHeap(receiver)
-           /\\ ~IsProxy(heap, receiver)
-           /\\ ~heap.objects[receiver[Ref]].isOpaque
-           /\\ GetterOf(heap, receiver, "then") = Undefined
-           /\\ TypeOfIn(heap, Get(heap, receiver, "then")) # "function"
-        \\/ /\\ isMethod
-           /\\ \\/ \\E name \\in {"Map.prototype", "Set.prototype", "WeakMap.prototype",
-                             "WeakSet.prototype", "WeakRef.prototype", "FinalizationRegistry.prototype",
-                             "%GeneratorFunction%.prototype.prototype",
-                             "%RegExpStringIteratorPrototype%"} :
-                   isUnder(name)
-              \\/ path = "Promise.prototype.then"
-           /\\ receiver \\in {Undefined, Null} \\/ isPrimitive \\/ isSlotless(TRUE)
-        \\/ /\\ isMethod
-           /\\ isUnder("Function.prototype")
-           /\\ receiver \\in {Undefined, Null} \\/ isPrimitive \\/ isSlotless(FALSE)
-        \\/ /\\ isMethod
-           /\\ \\E pair \\in {<<"Symbol", "symbol">>, <<"BigInt", "bigint">>, <<"Number", "number">>,
-                          <<"Boolean", "boolean">>} :
-                /\\ isUnder(pair[1] \\o ".prototype")
-                /\\ \\/ isPrimitive /\\ TypeOf(receiver) # pair[2]
-                   \\/ wrapped \\notin {"", pair[2]}
-                   \\/ isOrdinary
-                   \\/ TypeOfIn(heap, receiver) = "function"
-
 \\* The TypeError that a read throws where it runs %ThrowTypeError% or a getter of a buffer or a view
 \\* on another kind of object, or "".
 ReadError(heap, ref, key) ==
@@ -1930,6 +1870,80 @@ NewestSymbol(heap) == Symbols[Len(WellKnownSymbols) + Len(heap.symbols)]
 
 WellKnownSymbol(name) ==
   Symbols[CHOOSE position \\in DOMAIN WellKnownSymbols : WellKnownSymbols[position] = name]
+
+\\* Whether a built-in method throws a TypeError on a receiver, as one does on undefined or null
+\\* where it needs a receiver, and as one that needs an internal slot, or a primitive of its own
+\\* type, does on another primitive or on an ordinary object or array.
+ThrowsOnReceiver(heap, value, receiver) ==
+  /\\ IsRef(value)
+  /\\ TypeOf(value[Ref]) = "string"
+  /\\ LET path == value[Ref]
+         isUnder(name) ==
+           \\E prefix \\in {name \\o ".", "get " \\o name \\o "."} :
+             Len(path) > Len(prefix) /\\ SubSeq(path, 1, Len(prefix)) = prefix
+         isEnding(suffix) ==
+           Len(path) >= Len(suffix) /\\ SubSeq(path, Len(path) - Len(suffix) + 1, Len(path)) = suffix
+         isMethod == ~isEnding(".constructor") /\\ ~isEnding("@@toStringTag") /\\ ~isEnding("@@hasInstance")
+         isPrimitive == ~IsRef(receiver) /\\ TypeOf(receiver) \\notin {"object", "function"}
+         isOrdinary ==
+           \\/ IsSequenceValue(receiver)
+           \\/ /\\ IsHeap(receiver)
+              /\\ LET object == heap.objects[receiver[Ref]]
+                 IN /\\ DOMAIN object \\ {"isArray", "isArguments"} = DOMAIN EmptyObject
+                    /\\ ~object.isOpaque
+                    /\\ ~object.isCallable
+         \\* The type of the primitive that a wrapper object holds, or "".
+         wrapped ==
+           IF IsHeap(receiver) /\\ "primitive" \\in DOMAIN heap.objects[receiver[Ref]]
+           THEN TypeOf(heap.objects[receiver[Ref]].primitive)
+           ELSE ""
+         \\* An object without the internal slot a method needs: an ordinary one, a wrapper, or a
+         \\* function, which holds no slot of these but [[Call]].
+         isSlotless(isFunctionHeld) ==
+           \\/ isOrdinary
+           \\/ wrapped # ""
+           \\/ isFunctionHeld /\\ TypeOfIn(heap, receiver) = "function"
+     IN \\/ receiver \\in {Undefined, Null} /\\ ThrowsWithoutReceiver(value)
+        \\* Error.prototype.toString converts the message, whose ToPrimitive finds no method to call
+        \\* where its data properties hold neither toString nor valueOf as a function.
+        \\/ /\\ path = "Error.prototype.toString"
+           /\\ IsHeap(receiver)
+           /\\ ~IsProxy(heap, receiver)
+           /\\ GetterOf(heap, receiver, "name") = Undefined
+           /\\ TypeOf(Get(heap, receiver, "name")) \\in {"undefined", "string"}
+           /\\ GetterOf(heap, receiver, "message") = Undefined
+           /\\ LET message == Get(heap, receiver, "message")
+              IN /\\ IsHeap(message)
+                 /\\ ~IsProxy(heap, message)
+                 /\\ \\A key \\in {"toString", "valueOf", WellKnownSymbol("toPrimitive")} :
+                      /\\ GetterOf(heap, message, key) = Undefined
+                      /\\ TypeOfIn(heap, Get(heap, message, key)) # "function"
+        \\* catch invokes the receiver's then, which a data property holds that isn't a function.
+        \\/ /\\ path = "Promise.prototype.catch"
+           /\\ IsHeap(receiver)
+           /\\ ~IsProxy(heap, receiver)
+           /\\ ~heap.objects[receiver[Ref]].isOpaque
+           /\\ GetterOf(heap, receiver, "then") = Undefined
+           /\\ TypeOfIn(heap, Get(heap, receiver, "then")) # "function"
+        \\/ /\\ isMethod
+           /\\ \\/ \\E name \\in {"Map.prototype", "Set.prototype", "WeakMap.prototype",
+                             "WeakSet.prototype", "WeakRef.prototype", "FinalizationRegistry.prototype",
+                             "%GeneratorFunction%.prototype.prototype",
+                             "%RegExpStringIteratorPrototype%"} :
+                   isUnder(name)
+              \\/ path = "Promise.prototype.then"
+           /\\ receiver \\in {Undefined, Null} \\/ isPrimitive \\/ isSlotless(TRUE)
+        \\/ /\\ isMethod
+           /\\ isUnder("Function.prototype")
+           /\\ receiver \\in {Undefined, Null} \\/ isPrimitive \\/ isSlotless(FALSE)
+        \\/ /\\ isMethod
+           /\\ \\E pair \\in {<<"Symbol", "symbol">>, <<"BigInt", "bigint">>, <<"Number", "number">>,
+                          <<"Boolean", "boolean">>} :
+                /\\ isUnder(pair[1] \\o ".prototype")
+                /\\ \\/ isPrimitive /\\ TypeOf(receiver) # pair[2]
+                   \\/ wrapped \\notin {"", pair[2]}
+                   \\/ isOrdinary
+                   \\/ TypeOfIn(heap, receiver) = "function"
 
 \\* The heap after Symbol.for(key), which makes a symbol for the key where the registry holds none.
 RegisterSymbol(heap, key) ==
