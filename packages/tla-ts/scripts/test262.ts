@@ -596,6 +596,26 @@ const loosen = () => {
       edits.set(parent.right.getStart(), "(");
       edits.set(parent.right.getEnd(), " as any)");
     }
+    // A function that returns no value, whose return type TypeScript can't infer where its type
+    // depends on itself, as a pattern's default that calls it does, returns undefined.
+    const returning = RETURN_TYPE_ERRORS.has(diagnostic.code)
+      ? ts.findAncestor(node, ts.isFunctionLike)
+      : undefined;
+    const closeParen = returning
+      ?.getChildren()
+      .find((child) => child.kind === ts.SyntaxKind.CloseParenToken);
+    if (
+      returning !== undefined &&
+      (ts.isFunctionExpression(returning) || ts.isFunctionDeclaration(returning)) &&
+      returning.asteriskToken === undefined &&
+      !returning.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) &&
+      returning.type === undefined &&
+      returning.body !== undefined &&
+      !returnsValue(returning.body) &&
+      closeParen !== undefined
+    ) {
+      edits.set(closeParen.getEnd(), ": undefined");
+    }
   });
   const visit = (node: ts.Node) => {
     const initializer = ts.isVariableDeclaration(node) ? node.initializer : undefined;
@@ -636,6 +656,15 @@ const loosen = () => {
   if (edits.size > 0) applyEdits(edits);
   return edits.size > 0;
 };
+
+// TypeScript's errors for a function whose return type depends on itself.
+const RETURN_TYPE_ERRORS = new Set([7023, 7024]);
+
+// Whether a function's body returns a value, outside the functions it makes.
+const returnsValue = (node: ts.Node): boolean =>
+  (ts.isReturnStatement(node) && node.expression !== undefined) ||
+  (!ts.isFunctionLike(node) &&
+    (ts.forEachChild(node, (child) => returnsValue(child) || undefined) ?? false));
 
 // Whether a function's body reads this, outside the functions it makes that have their own.
 const readsThis = (node: ts.Node): boolean =>
