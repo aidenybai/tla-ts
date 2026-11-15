@@ -44709,4 +44709,38 @@ describe("BigInts", () => {
       ).toContain("4,7,-4,-8,9,valueOf/toString/valueOf/toString");
     });
   });
+
+  describe("converts the index and values that an Atomics function takes in turn", () => {
+    const getSource = (expected: string) => `
+      const effects: string[] = [];
+      const view = new Int32Array(new SharedArrayBuffer(16));
+      const index: any = { valueOf() { effects.push("index"); return 1; } };
+      const value: any = { toString() { effects.push("value"); return "5"; }, valueOf: false };
+      const old = Atomics.add(view, index, value);
+      let caught = "";
+      try {
+        // @ts-ignore
+        Atomics.store(view, { valueOf() { effects.push("far"); return 4; } }, { valueOf() { effects.push("never"); return 1; } });
+      } catch (error) {
+        caught = (error as Error).constructor.name;
+      }
+      const notified = Atomics.notify(view, index, value);
+      const log = [old, view[1], Atomics.load(view, index), notified, effects.join("/"), caught].join(",");
+      if (log !== "${expected}") throw new Error(log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("0,5,5,0,index/value/far/index/value/index,RangeError")))
+          .failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects a value that converts before the index's RangeError", async () => {
+      expect(
+        (await checkModel(getSource("0,5,5,0,index/value/far/never/index/value/index,RangeError")))
+          .failure?.message,
+      ).toContain("0,5,5,0,index/value/far/index/value/index,RangeError");
+    });
+  });
 });

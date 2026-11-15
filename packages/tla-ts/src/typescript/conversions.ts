@@ -127,7 +127,7 @@ const hasFlags = (node: ts.Expression, flags: ts.TypeFlags, context: Context) =>
 // A primitive operand, which ToPrimitive gives back.
 // A value of type any, which the conversion tells apart as it runs: ToPrimitive converts an object
 // that the heap holds, and gives back a primitive. Any other value stops the check.
-const isAnyOperand = (node: ts.Expression, context: Context) =>
+export const isAnyOperand = (node: ts.Expression, context: Context) =>
   hasFlags(node, ts.TypeFlags.Any, context);
 
 const PRIMITIVE_FLAGS =

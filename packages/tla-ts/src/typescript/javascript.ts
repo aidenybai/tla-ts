@@ -6406,6 +6406,24 @@ AddBytes(left, right, carry) ==
   ELSE LET sum == Head(left) + Head(right) + carry
        IN <<sum % 256>> \\o AddBytes(Tail(left), Tail(right), sum \\div 256)
 
+\\* Whether an Atomics function throws a TypeError for the typed array it takes, which it checks
+\\* before it converts its index.
+AtomicsRejects(heap, method, ref) ==
+  LET view == heap.objects[ref[Ref]]
+      type == view.elementType
+  IN \\/ ~IsTypedArray(heap, ref)
+     \\/ IsOutOfBounds(heap, view)
+     \\/ method \\in {"notify", "wait", "waitAsync"} /\\ type \\notin {"Int32", "BigInt64"}
+     \\/ type \\in {"Uint8Clamped", "Float16", "Float32", "Float64"}
+     \\/ method \\in {"wait", "waitAsync"} /\\ ~heap.objects[view.viewed[Ref]].isShared
+
+\\* What notify gives once it checks its typed array and index, which it doesn't check again after it
+\\* converts its count. tla-ts runs one agent, so notify wakes no one.
+AtomicsNotified(heap, count) ==
+  IF count = Undefined \\/ IsNumber(ToNumber(count))
+  THEN Returned(heap, 0)
+  ELSE Thrown(heap, "TypeError")
+
 \\* Atomics' functions, which give the heap after them, their value, and the error they throw, if
 \\* any. tla-ts runs one agent, so nothing waits on a buffer: notify wakes no one, and a wait that
 \\* reads the value it expects times out.
@@ -6437,13 +6455,7 @@ AtomicsCall(heap, method, arguments, objectPrototype) ==
             IF argument(1) = Undefined \\/ IsInteger(argument(1)) \\/ argument(1) = NegativeZero
             THEN Returned(heap, Undefined)
             ELSE Thrown(heap, "TypeError")
-       [] ~IsTypedArray(heap, ref) -> Thrown(heap, "TypeError")
-       [] IsOutOfBounds(heap, view) -> Thrown(heap, "TypeError")
-       [] method \\in {"notify", "wait", "waitAsync"} /\\ type \\notin {"Int32", "BigInt64"} ->
-            Thrown(heap, "TypeError")
-       [] type \\in {"Uint8Clamped", "Float16", "Float32", "Float64"} -> Thrown(heap, "TypeError")
-       [] method \\in {"wait", "waitAsync"} /\\ ~heap.objects[view.viewed[Ref]].isShared ->
-            Thrown(heap, "TypeError")
+       [] AtomicsRejects(heap, method, ref) -> Thrown(heap, "TypeError")
        [] index = -1 \\/ index >= ViewLength(heap, view) -> Thrown(heap, "RangeError")
        [] method = "load" -> Returned(heap, NumberOfBytes(type, old))
        [] method = "store" -> Returned(WithBytes(heap, view, start, bytes(3)), converted(3))
@@ -6456,8 +6468,7 @@ AtomicsCall(heap, method, arguments, objectPrototype) ==
             LET expected == bytes(3)
                 replacement == bytes(4)
             IN modified(IF expected = old THEN replacement ELSE old)
-       [] method = "notify" /\\ (argument(3) = Undefined \\/ IsNumber(ToNumber(argument(3)))) ->
-            Returned(heap, 0)
+       [] method = "notify" -> AtomicsNotified(heap, argument(3))
        [] isEqual /\\ timeout \\in {NaN, Infinity} ->
             Assert(FALSE, "tla-ts can't wait for a value that nothing changes")
        [] method = "wait" -> Returned(heap, IF isEqual THEN "timed-out" ELSE "not-equal")
