@@ -2997,8 +2997,9 @@ const ignoreSoundErrors = () => {
     isWrapper(value);
   // A call of a method that DATE_SETTER_NAME or VIEW_ACCESSOR_NAME matches, on a Date or a DataView,
   // or through call on Date.prototype's or DataView.prototype's method, which a statement runs
-  // where it's a Date's, whose arguments isConvertedNumber takes. tla-ts converts them, and stops
-  // where it can't, such as on a symbol for a Date or a littleEndian that isn't a literal.
+  // where it's a Date's, whose arguments isConvertedNumber takes, or that passes too few. tla-ts
+  // converts them, and undefined for a Date setter called without any, and stops where it can't,
+  // such as on a symbol for a Date or a littleEndian that isn't a literal.
   const isNumberConvertingCall = (diagnostic: ts.Diagnostic) => {
     const call = getErroredCall(diagnostic);
     if (
@@ -3445,7 +3446,9 @@ const ignoreSoundErrors = () => {
           isReceiverlessCall(node) ||
           isShortPatternCall(node))) ||
       (diagnostic.code === ARGUMENT_COUNT_ERROR &&
-        (isShortReducingCall(node) || isShortSearchingCall(node))) ||
+        (isShortReducingCall(node) ||
+          isShortSearchingCall(node) ||
+          isNumberConvertingCall(diagnostic))) ||
       (SHORT_CALL_ERRORS.has(diagnostic.code) && isShortProtocolCall(node, diagnostic)) ||
       (diagnostic.code === MISSING_PROPERTY_ERROR && isPatternRead(node)) ||
       ((diagnostic.code === NOT_ITERABLE_ERROR || NULLABLE_ERRORS.has(diagnostic.code)) &&
