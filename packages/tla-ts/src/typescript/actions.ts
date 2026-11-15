@@ -2759,6 +2759,12 @@ const translateCallStatementBody = (
     const changeName = context.names.getFresh("change");
     const change = identifier(changeName);
     const convertedTimeName = context.names.getFresh("time");
+    const toNumber = (primitive: Expression) => {
+      const converted = useJavaScript("ToNumber", [primitive], context);
+      return context.hasSpecialNumbers
+        ? converted
+        : useJavaScript("PlainNumber", [converted], context);
+    };
     const changeDate = (
       current: Path,
       read: Expression,
@@ -2804,15 +2810,7 @@ const translateCallStatementBody = (
               {
                 operands: dateCall.values,
                 hints: dateCall.values.map(() => "number" as const),
-                combine: (primitives) =>
-                  tuple(
-                    primitives.map((primitive) => {
-                      const converted = useJavaScript("ToNumber", [primitive], context);
-                      return context.hasSpecialNumbers
-                        ? converted
-                        : useJavaScript("PlainNumber", [converted], context);
-                    }),
-                  ),
+                combine: (primitives) => tuple(primitives.map(toNumber)),
                 afterFirst: (after, _, next) =>
                   bindOnce(
                     after,
@@ -2840,9 +2838,12 @@ const translateCallStatementBody = (
               path,
               time,
               setter.position,
-              dateCall.values.map((argument) =>
-                translateToNumber(argument, expression, path.scope, context),
-              ),
+              // A call without arguments converts undefined.
+              dateCall.values.length === 0
+                ? [toNumber(getUndefined(context))]
+                : dateCall.values.map((argument) =>
+                    translateToNumber(argument, expression, path.scope, context),
+                  ),
             )
       : dateCall.method === "toISOString"
         ? ifThenElse(

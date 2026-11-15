@@ -2813,7 +2813,6 @@ export const getDateSetter = (
 ) => {
   const setter = DATE_SETTERS.get(method);
   return setter !== undefined &&
-    values.length >= 1 &&
     values.length <= setter.arity &&
     values.every(
       (argument) =>

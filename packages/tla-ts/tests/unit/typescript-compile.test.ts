@@ -44626,4 +44626,27 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("runs a Date setter called without arguments on undefined", () => {
+    const getSource = (expected: string) => `
+      const date = new Date(2016, 6);
+      // @ts-ignore
+      const hours = date.setHours();
+      const other = new Date(0);
+      // @ts-ignore
+      const time = other.setTime();
+      const log = [hours, date.getTime(), time].join(",");
+      if (log !== "${expected}") throw new Error(log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("NaN,NaN,NaN"))).failure).toBeUndefined();
+    });
+
+    it("rejects a setter that keeps the time value", async () => {
+      expect((await checkModel(getSource("NaN,1467331200000,NaN"))).failure?.message).toContain(
+        "NaN,NaN,NaN",
+      );
+    });
+  });
 });
