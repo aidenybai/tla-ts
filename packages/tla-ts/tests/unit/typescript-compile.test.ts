@@ -39653,4 +39653,36 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("runs the iterator of new of a typed array inside a function", () => {
+    const getSource = (expected: string) => `
+      const seen: unknown[] = [];
+      const iterable: unknown = {
+        [Symbol.iterator]: function () {
+          seen.push("iterator");
+          let index = 0;
+          return {
+            next: function () {
+              index += 1;
+              return { value: index, done: index > 2 };
+            },
+          };
+        },
+      };
+      function getLength() {
+        const made = new Int8Array(iterable as Iterable<number>);
+        return made.length;
+      }
+      seen.push(getLength());
+      if (seen.join() !== "${expected}") throw new Error("seen " + seen.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("iterator,2"))).failure).toBeUndefined();
+    });
+
+    it("rejects the iterator as not running", async () => {
+      expect((await checkModel(getSource("2"))).failure?.message).toContain("seen iterator,2");
+    });
+  });
 });

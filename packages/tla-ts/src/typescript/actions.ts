@@ -13531,8 +13531,8 @@ const getEffects = (
     ...getStoredLengthConversions(node, context),
     ...(written === undefined ? [] : getRestCopyGetters(written, context)),
   ];
-  // A pattern that destructures an object, or a for-of, a spread, or a yield* that iterates one,
-  // runs the functions of the object's iterator.
+  // A pattern that destructures an object, or a for-of, a spread, a yield*, or new of a typed array
+  // that iterates one, runs the functions of the object's iterator.
   const isIterated =
     (ts.isArrayBindingPattern(node) &&
       (isIteratedPattern(node, context) || isIterablePattern(node, context))) ||
@@ -13548,7 +13548,8 @@ const getEffects = (
     (ts.isForOfStatement(node) &&
       getKind(node.expression, context) !== "sequence" &&
       isIterableValue(node.expression, context)) ||
-    getIterableFrom(node, context) !== undefined;
+    getIterableFrom(node, context) !== undefined ||
+    (ts.isExpression(node) && isIteratedTypedArray(node, context));
   // A method call on a generator object, a call it's passed to, or a pattern, a for-of, a spread,
   // or a yield* that iterates one resumes the body of a generator that may have made it.
   const isResumed =
