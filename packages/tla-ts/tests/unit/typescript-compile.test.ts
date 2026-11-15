@@ -26723,6 +26723,46 @@ describe("errors", () => {
     });
   });
 
+  describe("throws the TypeError of a capability whose constructor is a built-in function", () => {
+    const getSource = (expected: string) => `
+      const thrown = (run: () => unknown) => {
+        try {
+          run();
+          return "none";
+        } catch (error) {
+          return error instanceof TypeError ? "type" : "other";
+        }
+      };
+      const results = [
+        thrown(() => Promise.reject.call(eval)),
+        thrown(() => Promise.withResolvers.call(parseInt)),
+        thrown(() => Promise.resolve.call(isNaN, 1)),
+      ];
+      if (results.join() !== "${expected}") throw new Error(results.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("type,type,type"))).failure).toBeUndefined();
+    });
+
+    it("rejects the expectation type,none,type", async () => {
+      expect((await checkModel(getSource("type,none,type"))).failure?.message).toContain(
+        "type,type,type",
+      );
+    });
+
+    it("stops at a built-in constructor", async () => {
+      const source = `
+        try {
+          Promise.reject.call(Array, 1);
+        } catch {}
+      `;
+      expect((await checkModel(source)).failure?.message).toContain(
+        "can't follow a promise that a built-in constructor makes",
+      );
+    });
+  });
+
   describe("resolve with a thenable whose then is a function expression of one parameter", () => {
     const getSource = (expected: string) => `
       declare function setTimeout(callback: () => void): void;

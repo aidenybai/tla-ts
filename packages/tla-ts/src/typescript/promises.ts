@@ -1912,9 +1912,10 @@ const isInert = (node: ts.Expression): boolean =>
   (ts.isObjectLiteralExpression(node) && node.properties.length === 0);
 
 // Whether NewPromiseCapability(C) throws a TypeError before it runs any code: C isn't an object or
-// a constructor, or its body is empty, so it never calls the executor.
+// a constructor, or its body is empty, so it never calls the executor. A global's built-in function
+// may be a constructor, which the check then stops at.
 const isIncapable = (node: ts.Expression | undefined, path: Path, context: Context) => {
-  if (node === undefined) return true;
+  if (node === undefined || getBuiltIn(getCast(node), context) !== undefined) return true;
   const isRead =
     isInert(node) ||
     (ts.isIdentifier(node) && getSymbol(node, context.checker)?.valueDeclaration !== undefined) ||
@@ -2760,7 +2761,25 @@ export const translatePromiseCall = (
           path,
           context,
           constructor === undefined
-            ? throwError("TypeError", path, node, context, frame)
+            ? argument !== undefined && getBuiltIn(getCast(argument), context) !== undefined
+              ? ifThenElse(
+                  useJavaScript(
+                    "IsConstructor",
+                    [
+                      getHeap(path.scope, node, context),
+                      translateExpression(argument, path.scope, context),
+                    ],
+                    context,
+                  ),
+                  leaf(
+                    apply("Assert", [
+                      boolean(false),
+                      string("tla-ts can't follow a promise that a built-in constructor makes"),
+                    ]),
+                  ),
+                  throwError("TypeError", path, node, context, frame),
+                )
+              : throwError("TypeError", path, node, context, frame)
             : translateCapability(
                 node,
                 constructor,
