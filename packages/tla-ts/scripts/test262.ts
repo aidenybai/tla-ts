@@ -780,6 +780,10 @@ const ABSTRACT_MEMBER_ERRORS = new Set([2515, 2653]);
 // isn't a literal's, which TypeScript leaves out of the type, so a read of it types as any.
 const COMPUTED_MEMBER_ERRORS = new Set([1166, 1170]);
 
+// TypeScript's error for a getter with a path that returns no value. One that never returns a
+// value gives undefined, which its type, void, says.
+const GETTER_RETURN_ERROR = 2378;
+
 // TypeScript's errors for a function whose return type depends on itself.
 const RETURN_TYPE_ERRORS = new Set([7023, 7024]);
 
@@ -797,6 +801,9 @@ const returnsValue = (node: ts.Node): boolean =>
   (ts.isReturnStatement(node) && node.expression !== undefined) ||
   (!ts.isFunctionLike(node) &&
     (ts.forEachChild(node, (child) => returnsValue(child) || undefined) ?? false));
+
+const isVoidGetter = (node: ts.GetAccessorDeclaration | undefined) =>
+  node?.body !== undefined && !returnsValue(node.body);
 
 // Whether a function's body reads this, outside the functions it makes that have their own.
 const readsThis = (node: ts.Node): boolean =>
@@ -2339,6 +2346,8 @@ const ignoreSoundErrors = () => {
       (diagnostic.code === 2322 && isWrittenExec(node, diagnostic)) ||
       (BASE_MEMBER_ERRORS.has(diagnostic.code) && isIteratorMember(node)) ||
       (ABSTRACT_MEMBER_ERRORS.has(diagnostic.code) && isIteratorClass(node)) ||
+      (diagnostic.code === GETTER_RETURN_ERROR &&
+        isVoidGetter(ts.findAncestor(node, ts.isGetAccessorDeclaration))) ||
       (COMPUTED_MEMBER_ERRORS.has(diagnostic.code) &&
         ts.findAncestor(node, ts.isComputedPropertyName) !== undefined) ||
       (SPREAD_CALL_ERRORS.has(diagnostic.code) && isUntypedSpreadCall(node)) ||
