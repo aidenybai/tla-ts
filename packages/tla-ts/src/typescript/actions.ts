@@ -346,6 +346,8 @@ import {
   getOptionalField,
   getThisOwner,
   initialize,
+  isOwnClassName,
+  isTopLevelLexical,
   rejectBeforeDeclaration,
   type Receiver,
   type Scope,
@@ -16284,6 +16286,15 @@ export const runLeadingCall = (
   );
 };
 
+// A class that a block or a script declares, whose name, as a let's, it binds only where its
+// declaration runs.
+const getClassSymbols = (statement: ts.Statement, context: Context) =>
+  ts.isClassDeclaration(statement) &&
+  statement.name !== undefined &&
+  isHeapClass(statement, context)
+    ? (getSymbol(statement.name, context.checker) ?? [])
+    : [];
+
 const getHoistedAssignment = (statement: ts.Statement, path: Path, context: Context) => {
   const results = path.scope.results;
   if (ts.isExpressionStatement(statement)) {
@@ -16577,7 +16588,7 @@ export const translateStatements = (
                   ? (getSymbol(declaration.name, context.checker) ?? [])
                   : [],
               )
-            : [],
+            : getClassSymbols(inner, context),
         )
       : [];
   if (lexical.some((symbol) => !path.scope.uninitialized.has(symbol))) {
@@ -16692,7 +16703,8 @@ export const translateStatements = (
       isUnresolved(name, context) ||
       (symbol !== undefined &&
         path.scope.uninitialized.has(symbol) &&
-        ((declaration !== undefined && ts.isSourceFile(declaration.parent.parent.parent)) ||
+        (declaration === undefined || !isOwnClassName(name, declaration)) &&
+        ((declaration !== undefined && isTopLevelLexical(declaration)) ||
           !path.scope.bindings.has(symbol)))
     );
   };
@@ -17105,7 +17117,16 @@ export const translateStatements = (
         },
         context,
         statementFrame,
-        continueWith,
+        (defined) =>
+          continueWith({
+            ...defined,
+            scope: {
+              ...defined.scope,
+              uninitialized: new Set(
+                [...defined.scope.uninitialized].filter((other) => other !== symbol),
+              ),
+            },
+          }),
       );
     });
   }
@@ -17513,7 +17534,7 @@ export const translateScript = (
       ? statement.declarationList.declarations.flatMap(
           (declaration) => getSymbol(declaration.name, context.checker) ?? [],
         )
-      : [],
+      : getClassSymbols(statement, context),
   );
   const scope = createStateScope(context);
   if (context.heap !== undefined) context.prelude.add("JavaScript");

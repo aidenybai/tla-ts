@@ -208,6 +208,19 @@ export const declareParameters = (
   context: Context,
 ) => parameters.map((parameter) => declareParameter(parameter, context));
 
+// A let, a const, or a class that a script declares at its top level, which a state variable holds.
+export const isTopLevelLexical = (declaration: ts.Declaration) =>
+  ts.isSourceFile(
+    ts.isVariableDeclaration(declaration) ? declaration.parent.parent.parent : declaration.parent,
+  );
+
+// A class's name inside its own body names the class's inner binding, which the class initializes
+// before its static elements run, though its declaration's binding stays uninitialized until they
+// finish.
+export const isOwnClassName = (name: ts.Node, declaration: ts.Declaration) =>
+  ts.isClassDeclaration(declaration) &&
+  ts.findAncestor(name, (ancestor) => ancestor === declaration) !== undefined;
+
 export const rejectBeforeDeclaration = (node: ts.Identifier, scope: Scope, context: Context) => {
   const symbol = getSymbol(node, context.checker);
   const declaration = symbol?.valueDeclaration;
@@ -215,16 +228,20 @@ export const rejectBeforeDeclaration = (node: ts.Identifier, scope: Scope, conte
     !scope.isCatching ||
     symbol === undefined ||
     declaration === undefined ||
-    !ts.isVariableDeclaration(declaration) ||
-    !ts.isVariableDeclarationList(declaration.parent) ||
-    (declaration.parent.flags & ts.NodeFlags.BlockScoped) === 0
+    isOwnClassName(node, declaration) ||
+    !(
+      ts.isClassDeclaration(declaration) ||
+      (ts.isVariableDeclaration(declaration) &&
+        ts.isVariableDeclarationList(declaration.parent) &&
+        (declaration.parent.flags & ts.NodeFlags.BlockScoped) !== 0)
+    )
   ) {
     return;
   }
   // A function other than the one that declares the let may run after its declaration, wherever
   // its text is.
   const isUninitialized =
-    ts.isSourceFile(declaration.parent.parent.parent) ||
+    isTopLevelLexical(declaration) ||
     ts.findAncestor(node, ts.isFunctionLike) !== ts.findAncestor(declaration, ts.isFunctionLike)
       ? scope.uninitialized.has(symbol)
       : node.getStart() < declaration.getStart();

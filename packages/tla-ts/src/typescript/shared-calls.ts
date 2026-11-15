@@ -306,8 +306,14 @@ export const classifySharedHelpers = (reached: readonly ts.Node[], context: Cont
     // The operator gives back the state and the names from outside that the helper changes.
     const changed = findChanged(callee, new Map(), context);
     const outsideNames = outside.map((entry) => entry[0]);
+    // A script's class that the helper runs is also a binding that its declaration initializes.
+    const classes = [...reach].flatMap((node) =>
+      ts.isClassDeclaration(node) && ts.isSourceFile(node.parent) && node.name !== undefined
+        ? (getSymbol(node.name, context.checker) ?? [])
+        : [],
+    );
     return {
-      read: outsideNames,
+      read: [...outsideNames, ...classes],
       state: sharedState,
       changed: [...new Set([...context.variables.keys(), ...outsideNames])].filter((symbol) =>
         changed.has(symbol),
