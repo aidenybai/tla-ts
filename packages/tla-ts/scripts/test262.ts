@@ -753,6 +753,10 @@ const isGlobalIterator = (node: ts.Expression, checker: ts.TypeChecker) =>
 // type, or an accessor where the base has a method.
 const BASE_MEMBER_ERRORS = new Set([2416, 2423]);
 
+// TypeScript's errors for a class that doesn't write an abstract member of its base, in a
+// declaration or an expression.
+const ABSTRACT_MEMBER_ERRORS = new Set([2515, 2653]);
+
 // TypeScript's errors for a function whose return type depends on itself.
 const RETURN_TYPE_ERRORS = new Set([7023, 7024]);
 
@@ -2029,6 +2033,17 @@ const ignoreSoundErrors = () => {
       isGlobalIterator(heritage.expression, checker)
     );
   };
+  // A class that extends Iterator without a next, which Iterator types as abstract but doesn't have.
+  const isIteratorClass = (node: ts.Node) => {
+    const declaration = ts.findAncestor(node, ts.isClassLike);
+    const heritage = declaration?.heritageClauses?.[0];
+    return (
+      heritage !== undefined &&
+      heritage.token === ts.SyntaxKind.ExtendsKeyword &&
+      node.getEnd() <= heritage.getStart() &&
+      isGlobalIterator(heritage.types[0].expression, checker)
+    );
+  };
   const isSound = (diagnostic: ts.Diagnostic) => {
     const node = getNode(diagnostic.start ?? 0);
     return (
@@ -2044,6 +2059,7 @@ const ignoreSoundErrors = () => {
       (diagnostic.code === OPTIONAL_DELETE_ERROR && isDeletedIterator(node)) ||
       (diagnostic.code === 2322 && isWrittenExec(node, diagnostic)) ||
       (BASE_MEMBER_ERRORS.has(diagnostic.code) && isIteratorMember(node)) ||
+      (ABSTRACT_MEMBER_ERRORS.has(diagnostic.code) && isIteratorClass(node)) ||
       (CONVERTED_ARGUMENT_ERRORS.has(diagnostic.code) &&
         (isConvertedCall(diagnostic) ||
           isConvertedProtocolCall(diagnostic) ||
