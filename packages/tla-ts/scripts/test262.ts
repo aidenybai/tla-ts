@@ -1545,7 +1545,8 @@ const MISSING_ELEMENT_ERROR = 2493;
 
 // An argument of a type that a call's signatures don't take, which tla-ts converts where a string's
 // method or RegExp takes a primitive or an object.
-const CONVERTED_ARGUMENT_ERRORS = new Set([2345, 2769]);
+const NO_OVERLOAD_ERROR = 2769;
+const CONVERTED_ARGUMENT_ERRORS = new Set([2345, NO_OVERLOAD_ERROR]);
 // The array methods that tla-ts runs a reducer for on the values it gets, not its declared types,
 // where a test's reducer returns a type that the method's signatures don't take. Each needs a unit
 // test of such a call, since tla-ts reads a value by its declared type.
@@ -2160,6 +2161,25 @@ const ignoreSoundErrors = () => {
       )
     );
   };
+  // Object.fromEntries of a name whose type has an iterator, which TypeScript rejects where the
+  // iterator's values aren't typed as entries. tla-ts steps the iterator and reads each entry as
+  // AddEntriesFromIterable does.
+  const isIteratedEntriesCall = (diagnostic: ts.Diagnostic) => {
+    const call = getErroredCall(diagnostic);
+    const argument = call?.arguments?.[0];
+    return (
+      call !== undefined &&
+      ts.isCallExpression(call) &&
+      call.expression.getText() === "Object.fromEntries" &&
+      call.arguments.length === 1 &&
+      argument !== undefined &&
+      ts.isIdentifier(argument) &&
+      checker
+        .getTypeAtLocation(argument)
+        .getProperties()
+        .some((property) => property.name.startsWith("__@iterator"))
+    );
+  };
   // A call of an array's method that SEARCHING_METHODS lists, of any value to search for and an
   // index to search from that tla-ts converts: a primitive, an object that the test declares, or a
   // wrapper.
@@ -2504,6 +2524,7 @@ const ignoreSoundErrors = () => {
           isReducingCall(diagnostic) ||
           isSearchingCall(diagnostic) ||
           isTypedArrayNew(diagnostic))) ||
+      (diagnostic.code === NO_OVERLOAD_ERROR && isIteratedEntriesCall(diagnostic)) ||
       (diagnostic.code === UNKNOWN_CALLEE_ERROR && isStoredStringCall(node)) ||
       (diagnostic.code === UNCALLABLE_ERROR && isTypedUnionCall(node, diagnostic)) ||
       diagnostic.code === UNUSED_OPERAND_ERROR ||
