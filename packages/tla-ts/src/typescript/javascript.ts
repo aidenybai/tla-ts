@@ -398,11 +398,12 @@ LOCAL FromNat(isNegative, nat, exponent) ==
   LET odd == OddPart(NatHalves(nat), 0)
   IN FromBinary(<<isNegative, exponent + odd[2], odd[1][1], odd[1][2]>>)
 
-\\* A natural other than 0 times 2^exponent, rounded to the nearest number, an even significand where
-\\* two are as near, as IEEE 754 rounds: 53 bits, or fewer where the number is below 2^-1022.
-LOCAL Rounded(isNegative, nat, exponent) ==
+\\* A natural other than 0 times 2^exponent, rounded to the nearest number whose significand has
+\\* precision bits and whose last bit is 2^least or above, an even significand where two are as near,
+\\* as IEEE 754 rounds.
+LOCAL RoundedTo(isNegative, nat, exponent, precision, least) ==
   LET bits == NatBits(nat)
-      shift == IF bits - 53 > -1074 - exponent THEN bits - 53 ELSE -1074 - exponent
+      shift == IF bits - precision > least - exponent THEN bits - precision ELSE least - exponent
       kept == NatShiftRight(nat, shift)
       rest == NatSubtract(nat, NatShiftLeft(kept, shift))
       half == NatShiftLeft(<<1>>, shift - 1)
@@ -412,6 +413,9 @@ LOCAL Rounded(isNegative, nat, exponent) ==
   IN CASE shift <= 0 -> FromNat(isNegative, nat, exponent)
        [] rounded = <<>> -> IF isNegative THEN NegativeZero ELSE 0
        [] OTHER -> FromNat(isNegative, rounded, exponent + shift)
+
+\\* A natural other than 0 times 2^exponent, rounded to a double: 53 bits, or fewer below 2^-1022.
+LOCAL Rounded(isNegative, nat, exponent) == RoundedTo(isNegative, nat, exponent, 53, -1074)
 
 LOCAL Significand(binary) == NatOfHalves(<<binary[3], binary[4]>>)
 
@@ -904,6 +908,162 @@ Hypot(values) ==
        [] \\E position \\in DOMAIN values : IsBig(values[position]) -> BeyondInteger
        [] root * root # square -> Assert(FALSE, "tla-ts can't represent a fraction")
        [] OTHER -> root
+
+\\* A natural's integer square root and the remainder, from its highest two bits down.
+RECURSIVE NatRootFrom(_, _, _, _)
+NatRootFrom(nat, pair, root, remainder) ==
+  IF pair < 0
+  THEN <<root, remainder>>
+  ELSE LET current == NatAdd(NatShiftLeft(remainder, 2), NatOf(LimbAt(NatShiftRight(nat, 2 * pair), 1) % 4))
+           trial == NatAdd(NatShiftLeft(root, 2), <<1>>)
+           fits == ~NatBelow(current, trial)
+       IN NatRootFrom(nat, pair - 1,
+                      NatAdd(NatShiftLeft(root, 1), IF fits THEN <<1>> ELSE <<>>),
+                      IF fits THEN NatSubtract(current, trial) ELSE current)
+
+\\* Math.sqrt, rounded from a root of 55 bits or more and whether any remainder is left, as for a
+\\* quotient. The significand shifts by an amount that leaves its power of 2 even.
+Sqrt(value) ==
+  CASE value \\in {NaN, NegativeInfinity} -> NaN
+    [] value = Infinity \\/ IsZero(value) -> value
+    [] IsNegative(value) -> NaN
+    [] OTHER ->
+         LET binary == Binary(value)
+             least == 110 - NatBits(Significand(binary))
+             shift == least + ((binary[2] - least) % 2)
+             root == NatRootFrom(NatShiftLeft(Significand(binary), shift), 55, <<>>, <<>>)
+         IN Rounded(FALSE,
+                    NatAdd(NatShiftLeft(root[1], 1), IF root[2] = <<>> THEN <<>> ELSE <<1>>),
+                    (binary[2] - shift) \\div 2 - 1)
+
+\\* Math.fround: the nearest single-precision float, with 24 bits, or fewer below 2^-126, which is
+\\* an infinity from 2^128 on.
+Fround(value) ==
+  IF value \\in SpecialNumbers \\/ IsZero(value)
+  THEN value
+  ELSE LET binary == Binary(value)
+           rounded == RoundedTo(binary[1], Significand(binary), binary[2], 24, -149)
+       IN CASE IsZero(rounded) \\/ rounded \\in Infinities -> rounded
+            [] Binary(rounded)[2] + HalvesBits(<<Binary(rounded)[3], Binary(rounded)[4]>>) > 128 ->
+                 IF binary[1] THEN NegativeInfinity ELSE Infinity
+            [] OTHER -> rounded
+
+\\* The specification fixes the results of most Math functions only at a few numbers, and leaves the
+\\* rest to how an engine approximates them, so tla-ts stops there.
+LOCAL Approximated(name) == Assert(FALSE, "tla-ts can't compute Math." \\o name \\o " of this number")
+
+Cbrt(value) == IF value \\in SpecialNumbers \\/ IsZero(value) THEN value ELSE Approximated("cbrt")
+
+LOCAL IsOne(value) == ~IsBig(value) /\\ value = 1
+
+LOCAL IsBeyondOne(value) == LessThan(value, -1) \\/ LessThan(1, value)
+
+Sin(value) ==
+  CASE value \\in Infinities -> NaN
+    [] value = NaN \\/ IsZero(value) -> value
+    [] OTHER -> Approximated("sin")
+
+Cos(value) ==
+  CASE value \\in Infinities \\/ value = NaN -> NaN
+    [] IsZero(value) -> 1
+    [] OTHER -> Approximated("cos")
+
+Tan(value) ==
+  CASE value \\in Infinities -> NaN
+    [] value = NaN \\/ IsZero(value) -> value
+    [] OTHER -> Approximated("tan")
+
+Asin(value) ==
+  CASE value = NaN \\/ IsZero(value) -> value
+    [] IsBeyondOne(value) -> NaN
+    [] OTHER -> Approximated("asin")
+
+Acos(value) ==
+  CASE value = NaN \\/ IsBeyondOne(value) -> NaN
+    [] IsOne(value) -> 0
+    [] OTHER -> Approximated("acos")
+
+\\* Math.atan, where angles holds the numbers nearest pi/4, pi/2, 3pi/4, and pi, as engines give
+\\* them at infinities.
+Atan(value, angles) ==
+  CASE value = NaN \\/ IsZero(value) -> value
+    [] value = Infinity -> angles[2]
+    [] value = NegativeInfinity -> Negate(angles[2])
+    [] OTHER -> Approximated("atan")
+
+\\* Math.atan2 of y and x, whose angle takes the sign of y.
+Atan2(y, x, angles) ==
+  LET signed(angle) == IF IsNegative(y) THEN Negate(angle) ELSE angle
+      infinite == CASE x = Infinity -> angles[1]
+                    [] x = NegativeInfinity -> angles[3]
+                    [] OTHER -> angles[2]
+  IN CASE y = NaN \\/ x = NaN -> NaN
+       [] y \\in Infinities -> signed(infinite)
+       [] IsZero(y) -> IF IsNegative(x) THEN signed(angles[4]) ELSE y
+       [] x = Infinity -> signed(0)
+       [] x = NegativeInfinity -> signed(angles[4])
+       [] IsZero(x) -> signed(angles[2])
+       [] OTHER -> Approximated("atan2")
+
+Sinh(value) == IF value \\in SpecialNumbers \\/ IsZero(value) THEN value ELSE Approximated("sinh")
+
+Cosh(value) ==
+  CASE value = NaN -> NaN
+    [] value \\in Infinities -> Infinity
+    [] IsZero(value) -> 1
+    [] OTHER -> Approximated("cosh")
+
+Tanh(value) ==
+  CASE value = NaN \\/ IsZero(value) -> value
+    [] value = Infinity -> 1
+    [] value = NegativeInfinity -> -1
+    [] OTHER -> Approximated("tanh")
+
+Asinh(value) == IF value \\in SpecialNumbers \\/ IsZero(value) THEN value ELSE Approximated("asinh")
+
+Acosh(value) ==
+  CASE value \\in {NaN, Infinity} -> value
+    [] IsOne(value) -> 0
+    [] LessThan(value, 1) -> NaN
+    [] OTHER -> Approximated("acosh")
+
+Atanh(value) ==
+  CASE value = NaN \\/ IsZero(value) -> value
+    [] IsBeyondOne(value) -> NaN
+    [] IsOne(value) -> Infinity
+    [] IsOne(Negate(value)) -> NegativeInfinity
+    [] OTHER -> Approximated("atanh")
+
+Exp(value) ==
+  CASE value \\in {NaN, Infinity} -> value
+    [] IsZero(value) -> 1
+    [] value = NegativeInfinity -> 0
+    [] OTHER -> Approximated("exp")
+
+Expm1(value) ==
+  CASE value \\in {NaN, Infinity} \\/ IsZero(value) -> value
+    [] value = NegativeInfinity -> -1
+    [] OTHER -> Approximated("expm1")
+
+\\* Math.log, Math.log2, and Math.log10, which agree where the specification fixes them.
+LOCAL Logarithm(name, value) ==
+  CASE value \\in {NaN, Infinity} -> value
+    [] IsZero(value) -> NegativeInfinity
+    [] IsNegative(value) -> NaN
+    [] IsOne(value) -> 0
+    [] OTHER -> Approximated(name)
+
+Log(value) == Logarithm("log", value)
+
+Log2(value) == Logarithm("log2", value)
+
+Log10(value) == Logarithm("log10", value)
+
+Log1p(value) ==
+  CASE value \\in {NaN, Infinity} \\/ IsZero(value) -> value
+    [] IsOne(Negate(value)) -> NegativeInfinity
+    [] LessThan(value, -1) -> NaN
+    [] OTHER -> Approximated("log1p")
 
 \\* JavaScript's <<. The bit below the shifted bits becomes the sign bit.
 LeftShift(left, right) ==

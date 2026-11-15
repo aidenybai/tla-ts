@@ -40971,4 +40971,221 @@ describe("BigInts", () => {
       );
     });
   });
+  describe("computes Math.sqrt correctly rounded", () => {
+    const getSource = (expected: string) => `
+      const inputs = [2, 0.1, 1e-310, 5e-324, 1.7976931348623157e308, 9007199254740994, -1, -0, NaN];
+      const expected = [${expected}];
+      inputs.forEach((value, index) => {
+        if (!Object.is(Math.sqrt(value), expected[index])) throw new Error("wrong at " + index);
+      });
+      if (Math.sqrt(Infinity) !== Infinity) throw new Error("wrong at the end");
+    `;
+
+    it("agrees with Node", async () => {
+      const result = await checkModel(
+        getSource(
+          "1.4142135623730951, 0.31622776601683794, 9.999999999999986e-156, 2.2227587494850775e-162, 1.3407807929942596e154, 94906265.62425156, NaN, -0, NaN",
+        ),
+      );
+      expect(result.failure).toBeUndefined();
+    });
+
+    it("rejects a root one bit off", async () => {
+      const result = await checkModel(
+        getSource(
+          "1.4142135623730951, 0.3162277660168379, 9.999999999999986e-156, 2.2227587494850775e-162, 1.3407807929942596e154, 94906265.62425156, NaN, -0, NaN",
+        ),
+      );
+      expect(result.failure?.message).toContain("wrong at 1");
+    });
+
+    it("stops at a root that a script of integers can't hold", async () => {
+      const result = await checkModel(`
+        let root = Math.sqrt(16);
+        root = Math.sqrt(root + 1);
+      `);
+      expect(result.failure?.message).toContain("tla-ts can't represent");
+    });
+  });
+
+  describe("rounds with Math.fround to the nearest single-precision float", () => {
+    const getSource = (expected: string) => `
+      const inputs = [
+        1.0000000596046448, 1.0000001788139343, 4294967297, 0.1, 3.4028235677973362e38,
+        3.4028235677973366e38, -1e39, 7.006492321624085e-46, 7.006492321624087e-46, -1e-46,
+        1.7976931348623157e308, NaN,
+      ];
+      const expected = [${expected}];
+      inputs.forEach((value, index) => {
+        if (!Object.is(Math.fround(value), expected[index])) throw new Error("wrong at " + index);
+      });
+    `;
+
+    it("agrees with Node", async () => {
+      const result = await checkModel(
+        getSource(
+          "1, 1.000000238418579, 4294967296, 0.10000000149011612, 3.4028234663852886e38, Infinity, -Infinity, 0, 1.401298464324817e-45, -0, Infinity, NaN",
+        ),
+      );
+      expect(result.failure).toBeUndefined();
+    });
+
+    it("rejects a tie rounded away from the even float", async () => {
+      const result = await checkModel(
+        getSource(
+          "1.0000001192092896, 1.000000238418579, 4294967296, 0.10000000149011612, 3.4028234663852886e38, Infinity, -Infinity, 0, 1.401298464324817e-45, -0, Infinity, NaN",
+        ),
+      );
+      expect(result.failure?.message).toContain("wrong at 0");
+    });
+  });
+
+  describe("computes Math.cbrt where the specification fixes it", () => {
+    const getSource = (expected: string) => `
+      const inputs = [NaN, -Infinity, Infinity, -0, 0];
+      const expected = [${expected}];
+      inputs.forEach((value, index) => {
+        if (!Object.is(Math.cbrt(value), expected[index])) throw new Error("wrong at " + index);
+      });
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("NaN, -Infinity, Infinity, -0, 0"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects 0 as the root of -0", async () => {
+      const result = await checkModel(getSource("NaN, -Infinity, Infinity, 0, 0"));
+      expect(result.failure?.message).toContain("wrong at 3");
+    });
+
+    it("stops at a perfect cube", async () => {
+      const result = await checkModel(`
+        if (Object.is(Math.cbrt(8), 3)) throw new Error("wrong");
+      `);
+      expect(result.failure?.message).toContain("tla-ts can't compute Math.cbrt of this number");
+    });
+  });
+
+  describe("computes the trigonometric functions of Math where the specification fixes them", () => {
+    const getSource = (expected: string) => `
+      const results = [
+        Math.sin(-0), Math.sin(Infinity), Math.cos(-0), Math.cos(-Infinity), Math.tan(-0),
+        Math.tan(Infinity), Math.asin(-0), Math.asin(1.0000000000000002), Math.acos(1),
+        Math.acos(-1.5), Math.atan(-0), Math.atan(-Infinity), Math.atan2(Infinity, -Infinity),
+        Math.atan2(-Infinity, Infinity), Math.atan2(-0, -0), Math.atan2(0, 1),
+        Math.atan2(-1e300, -Infinity), Math.atan2(5e-324, -0), Math.atan2(-1, Infinity),
+        Math.atan2(NaN, 1),
+      ];
+      const expected = [${expected}];
+      results.forEach((value, index) => {
+        if (!Object.is(value, expected[index])) throw new Error("wrong at " + index);
+      });
+    `;
+
+    it("agrees with Node", async () => {
+      const result = await checkModel(
+        getSource(
+          "-0, NaN, 1, NaN, -0, NaN, -0, NaN, 0, NaN, -0, -1.5707963267948966, 2.356194490192345, -0.7853981633974483, -3.141592653589793, 0, -3.141592653589793, 1.5707963267948966, -0, NaN",
+        ),
+      );
+      expect(result.failure).toBeUndefined();
+    });
+
+    it("rejects 3pi/4 one bit off", async () => {
+      const result = await checkModel(
+        getSource(
+          "-0, NaN, 1, NaN, -0, NaN, -0, NaN, 0, NaN, -0, -1.5707963267948966, 2.3561944901923453, -0.7853981633974483, -3.141592653589793, 0, -3.141592653589793, 1.5707963267948966, -0, NaN",
+        ),
+      );
+      expect(result.failure?.message).toContain("wrong at 12");
+    });
+
+    it("stops where an engine approximates", async () => {
+      const result = await checkModel(`
+        if (Object.is(Math.atan2(1, 1), 0)) throw new Error("wrong");
+      `);
+      expect(result.failure?.message).toContain("tla-ts can't compute Math.atan2 of this number");
+    });
+  });
+
+  describe("computes the hyperbolic functions of Math where the specification fixes them", () => {
+    const getSource = (expected: string) => `
+      const results = [
+        Math.sinh(-0), Math.sinh(-Infinity), Math.cosh(-0), Math.cosh(-Infinity), Math.tanh(-0),
+        Math.tanh(-Infinity), Math.asinh(-Infinity), Math.acosh(1), Math.acosh(0.9999999999999999),
+        Math.acosh(Infinity), Math.atanh(-1), Math.atanh(1.0000000000000002), Math.atanh(-0),
+      ];
+      const expected = [${expected}];
+      results.forEach((value, index) => {
+        if (!Object.is(value, expected[index])) throw new Error("wrong at " + index);
+      });
+    `;
+
+    it("agrees with Node", async () => {
+      const result = await checkModel(
+        getSource(
+          "-0, -Infinity, 1, Infinity, -0, -1, -Infinity, 0, NaN, Infinity, -Infinity, NaN, -0",
+        ),
+      );
+      expect(result.failure).toBeUndefined();
+    });
+
+    it("rejects Infinity as Math.atanh(-1)", async () => {
+      const result = await checkModel(
+        getSource(
+          "-0, -Infinity, 1, Infinity, -0, -1, -Infinity, 0, NaN, Infinity, Infinity, NaN, -0",
+        ),
+      );
+      expect(result.failure?.message).toContain("wrong at 10");
+    });
+
+    it("stops where an engine approximates", async () => {
+      const result = await checkModel(`
+        if (Object.is(Math.acosh(2), 0)) throw new Error("wrong");
+      `);
+      expect(result.failure?.message).toContain("tla-ts can't compute Math.acosh of this number");
+    });
+  });
+
+  describe("computes the exponentials and logarithms of Math where the specification fixes them", () => {
+    const getSource = (expected: string) => `
+      const results = [
+        Math.exp(-0), Math.exp(-Infinity), Math.exp(Infinity), Math.expm1(-0), Math.expm1(-Infinity),
+        Math.log(-0), Math.log(1), Math.log(-5e-324), Math.log2(0), Math.log2(-Infinity),
+        Math.log10(1), Math.log10(Infinity), Math.log1p(-1), Math.log1p(-1.0000000000000002),
+        Math.log1p(-0),
+      ];
+      const expected = [${expected}];
+      results.forEach((value, index) => {
+        if (!Object.is(value, expected[index])) throw new Error("wrong at " + index);
+      });
+    `;
+
+    it("agrees with Node", async () => {
+      const result = await checkModel(
+        getSource(
+          "1, 0, Infinity, -0, -1, -Infinity, 0, NaN, -Infinity, NaN, 0, Infinity, -Infinity, NaN, -0",
+        ),
+      );
+      expect(result.failure).toBeUndefined();
+    });
+
+    it("rejects -0 as Math.exp(-Infinity)", async () => {
+      const result = await checkModel(
+        getSource(
+          "1, -0, Infinity, -0, -1, -Infinity, 0, NaN, -Infinity, NaN, 0, Infinity, -Infinity, NaN, -0",
+        ),
+      );
+      expect(result.failure?.message).toContain("wrong at 1");
+    });
+
+    it("stops where an engine approximates", async () => {
+      const result = await checkModel(`
+        if (Object.is(Math.log2(8), 0)) throw new Error("wrong");
+      `);
+      expect(result.failure?.message).toContain("tla-ts can't compute Math.log2 of this number");
+    });
+  });
 });

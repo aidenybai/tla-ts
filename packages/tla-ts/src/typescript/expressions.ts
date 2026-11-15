@@ -692,6 +692,32 @@ const translateInt32Literal = (node: ts.Expression) => {
     : number(unsigned > 2 ** 31 ? unsigned - 2 ** 32 : unsigned);
 };
 
+// The Math functions that the JavaScript module computes from their arguments alone.
+export const MATH_OPERATORS = new Map([
+  ["sqrt", "Sqrt"],
+  ["fround", "Fround"],
+  ["cbrt", "Cbrt"],
+  ["sin", "Sin"],
+  ["cos", "Cos"],
+  ["tan", "Tan"],
+  ["asin", "Asin"],
+  ["acos", "Acos"],
+  ["atan", "Atan"],
+  ["atan2", "Atan2"],
+  ["sinh", "Sinh"],
+  ["cosh", "Cosh"],
+  ["tanh", "Tanh"],
+  ["asinh", "Asinh"],
+  ["acosh", "Acosh"],
+  ["atanh", "Atanh"],
+  ["exp", "Exp"],
+  ["expm1", "Expm1"],
+  ["log", "Log"],
+  ["log1p", "Log1p"],
+  ["log2", "Log2"],
+  ["log10", "Log10"],
+]);
+
 const translateMath = (node: ts.CallExpression, method: string, scope: Scope, context: Context) => {
   const isSpecial = context.hasSpecialNumbers;
   // Math's functions convert their arguments to numbers. A statement converts the objects among
@@ -725,6 +751,32 @@ const translateMath = (node: ts.CallExpression, method: string, scope: Scope, co
   if (method === "pow" && node.arguments.length === 2) {
     const power = useJavaScript("Power", node.arguments.map(translate), context);
     return isSpecial ? power : useJavaScript("PlainNumber", [power], context);
+  }
+  const operator = MATH_OPERATORS.get(method);
+  if (
+    operator !== undefined &&
+    node.arguments.length === (method === "atan2" ? 2 : 1) &&
+    !node.arguments.some(ts.isSpreadElement)
+  ) {
+    // The numbers nearest pi/4, pi/2, 3pi/4, and pi, which a script of integers holds as Doubles
+    // that it can't represent.
+    const angles = ["atan", "atan2"].includes(method)
+      ? [
+          tuple(
+            [1, 2, 3, 4].map(
+              (quarters) =>
+                getNumberValue((quarters * Math.PI) / 4, context) ??
+                useJavaScript(
+                  ":>",
+                  [identifier("Double"), getBinary((quarters * Math.PI) / 4)],
+                  context,
+                ),
+            ),
+          ),
+        ]
+      : [];
+    const result = useJavaScript(operator, [...node.arguments.map(translate), ...angles], context);
+    return isSpecial ? result : useJavaScript("PlainNumber", [result], context);
   }
   if ((method === "round" || method === "sign") && node.arguments.length === 1) {
     return useJavaScript(method === "round" ? "Round" : "Sign", [translate(argument)], context);

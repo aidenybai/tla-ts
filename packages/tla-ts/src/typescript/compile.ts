@@ -16,7 +16,7 @@ import {
   isVarFunction,
 } from "./context";
 import { type CompiledSpec, createSections, emit, type Sections } from "./emit";
-import { getBinary, getNumberValue } from "./expressions";
+import { getBinary, getNumberValue, MATH_OPERATORS } from "./expressions";
 import { render } from "./formula";
 import { translateBody } from "./functions";
 import {
@@ -657,6 +657,10 @@ export const compile = (
             !isNumeric(argument)
           );
         })) ||
+      // Math's functions that may give a fraction or NaN.
+      (ts.isPropertyAccessExpression(node) &&
+        node.expression.getText() === "Math" &&
+        MATH_OPERATORS.has(node.name.text)) ||
       // A literal may give a fraction or an integer beyond 32 bits, and a string may key a typed
       // array by a fraction.
       (ts.isNumericLiteral(node) &&
