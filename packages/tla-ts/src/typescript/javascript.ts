@@ -1165,9 +1165,9 @@ KeyOf(value) ==
     [] IsBig(value) -> BeyondInteger
     [] OTHER -> value
 
-\\* Whether TLC can compare a key with the keys of a Set or a Map, of the kinds that typeof gives
-\\* them. Model values, such as undefined, null, and symbols, compare with any value.
-IsComparableKey(value, kinds) ==
+\\* Whether TLC can compare a value with values of the kinds that typeof gives them. Model values,
+\\* such as undefined, null, and symbols, compare with any value.
+IsComparableKind(value, kinds) ==
   \\/ value \\in {Undefined, Null}
   \\/ TypeOf(value) \\in kinds \\cup {"symbol"}
 

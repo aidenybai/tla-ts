@@ -10194,16 +10194,16 @@ describe("errors", () => {
         `)
       ).failure?.message;
     expect(await converts("number", "new Date(value)", "made.getTime()", "5")).toContain(
-      "tla-ts can't convert this object to a number",
+      "tla-ts can't give a typed name, parameter, property, or element a value of another kind",
     );
     expect(await converts("number", "new Date(2020, 1, value)", "made.getDate()", "5")).toContain(
-      "tla-ts can't convert this object to a number",
+      "tla-ts can't give a typed name, parameter, property, or element a value of another kind",
     );
     expect(await converts("number", "new Number(value)", "made.valueOf()", "5")).toContain(
-      "tla-ts can't convert this object to a number",
+      "tla-ts can't give a typed name, parameter, property, or element a value of another kind",
     );
     expect(await converts("string", "new String(value)", "made.valueOf()", '"x"')).toContain(
-      "tla-ts can't convert this object to a string",
+      "tla-ts can't give a typed name, parameter, property, or element a value of another kind",
     );
     const result = await checkModel(`
       const time = 5;
@@ -42783,6 +42783,68 @@ describe("BigInts", () => {
           if (make(["a", 1]) !== 2) throw new Error("size");
         `),
       ).toThrow("Give a Set keys of one kind, as TLC can't compare a number with a string");
+    });
+  });
+
+  describe("checks the kind of a value of type any that a typed slot takes", () => {
+    const getSource = (expected: string) => `
+      const values: any[] = [2, "b", undefined];
+      const isTwo = (value: number) => value === 2;
+      const getName = (): string => values[1];
+      const counts: number[] = [0];
+      counts[0] = values[0];
+      counts.push(values[2]);
+      var total = 1;
+      total = values[0];
+      const label: string = values[1];
+      const log = [
+        isTwo(values[0]),
+        isTwo(values[2]),
+        getName() === "b",
+        counts.indexOf(2),
+        total === 2,
+        label + "c",
+      ].join();
+      if (log !== "${expected}") throw new Error(log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("true,false,true,0,true,bc"))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong log", async () => {
+      expect((await checkModel(getSource("true,true,true,0,true,bc"))).failure?.message).toContain(
+        "true,false,true,0,true,bc",
+      );
+    });
+
+    it.each([
+      [
+        "a parameter",
+        "const isTwo = (value: number) => value === 2; if (isTwo(name)) throw new Error();",
+      ],
+      ["a variable", "const count: number = name; if (count === 2) throw new Error();"],
+      ["an element", "const counts = [1]; counts[0] = name; counts.indexOf(2);"],
+      ["a pushed element", "const counts = [1]; counts.push(name); counts.indexOf(2);"],
+      [
+        "a Map's value",
+        "const sizes = new Map([['a', 1]]); sizes.set('a', name); if (sizes.get('a') === 2) throw 1;",
+      ],
+      [
+        "a property",
+        "const point = { x: 1 }; point.x = name; if (point.x === 2) throw new Error();",
+      ],
+      ["a return", "const getCount = (): number => name; if (getCount() === 2) throw new Error();"],
+      ["an assigned var", "var count = 1; count = name; if (count === 2) throw new Error();"],
+    ])("stops at a value of another kind in %s", async (_, code) => {
+      const result = await checkModel(`
+        const read = (): any => "a";
+        const name = read();
+        ${code}
+      `).catch((error: unknown) => ({ failure: { message: String(error) } }));
+      expect(result.failure?.message).toContain(
+        "tla-ts can't give a typed name, parameter, property, or element a value of another kind",
+      );
     });
   });
 });
