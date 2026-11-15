@@ -547,8 +547,41 @@ const toSequence = (type: Type): Type => {
   return sequence;
 };
 
-// A type left open, such as the element of a set that is always empty, holds no values.
-const closeType = (type: Type): Type => {
+const getInnerTypes = (type: Type): Type[] => {
+  switch (type.kind) {
+    case "Seq":
+    case "Set":
+      return [type.element];
+    case "Tup":
+      return type.elements;
+    case "Map":
+      return [type.keys, type.values];
+    case "Fn":
+      return [type.range];
+    case "Rec":
+      return [...type.fields.values()];
+    default:
+      return [];
+  }
+};
+
+// A record of several shapes can hold one of its own type in a field some shapes lack, as a message
+// holds the request it answers. The code for such a record calls itself.
+const isRecursive = (record: RecType) => {
+  const visited = new Set<Type>();
+  const isReaching = (type: Type): boolean => {
+    const resolved = resolveType(type);
+    if (resolved === record) return true;
+    if (visited.has(resolved)) return false;
+    visited.add(resolved);
+    return getInnerTypes(resolved).some(isReaching);
+  };
+  return record.shapes.length > 1 && getInnerTypes(record).some(isReaching);
+};
+
+// A type left open, such as the element of a set that is always empty, holds no values. A type
+// holds itself only through a record that can, and closing stops there.
+const closeType = (type: Type, path: Type[] = []): Type => {
   const resolved = resolveType(type);
   // A function built lazily is only applied, never compared or stored.
   if (resolved.kind === "Lambda") return unsupported();
@@ -562,11 +595,15 @@ const closeType = (type: Type): Type => {
     resolved.target = sequence;
     return sequence;
   }
-  if (resolved.kind === "Seq" || resolved.kind === "Set") closeType(resolved.element);
-  if (resolved.kind === "Tup") resolved.elements.forEach(closeType);
-  if (resolved.kind === "Map") [resolved.keys, resolved.values].forEach(closeType);
-  if (resolved.kind === "Fn") closeType(resolved.range);
-  if (resolved.kind === "Rec") resolved.fields.forEach((field) => closeType(field));
+  const index = path.indexOf(resolved);
+  if (index !== -1) {
+    return path.slice(index).some((inner) => inner.kind === "Rec" && inner.shapes.length > 1)
+      ? resolved
+      : unsupported();
+  }
+  path.push(resolved);
+  getInnerTypes(resolved).forEach((inner) => closeType(inner, path));
+  path.pop();
   return resolved;
 };
 
@@ -875,13 +912,17 @@ const createValueReader = (type: Type, plains: Plains): ((plain: Plain) => Value
     };
   }
   if (resolved.kind !== "Rec") return unsupported();
-  const shapes = getRecordShapes(resolved).map((shape) => ({
-    ...shape,
-    readers: shape.types.map((field) => createValueReader(field, plains)),
-  }));
-  const isTagged = shapes.length > 1;
+  // A record can hold one of its own type, so its readers are made as it's first read.
+  const getShapes = () =>
+    getRecordShapes(resolved).map((shape) => ({
+      ...shape,
+      readers: shape.types.map((field) => createValueReader(field, plains)),
+    }));
+  let shapes: ReturnType<typeof getShapes> | undefined;
+  const isTagged = resolved.shapes.length > 1;
   return (plain) => {
     const items = getItems(plain);
+    shapes ??= getShapes();
     const shape = shapes[isTagged ? Number(items[0]) : 0];
     const fields = isTagged ? items.slice(1) : items;
     if (shape.isNull) return plains.values[Number(fields[0])];
@@ -961,7 +1002,7 @@ const createStateFingerprinter = (types: Type[], order: Projection[], plains: Pl
       const index = `3 * i${name}`;
       return `{ const ${name} = ${plain}; const d${name} = D[${domain}]; ${code.function(`${name}.length`)} for (let i${name} = 0; i${name} < ${name}.length; i${name}++) { ${code.scalar(`d${name}[${index}]`, `d${name}[${index} + 1]`, `d${name}[${index} + 2]`)} ${getCode(resolved.range, `${name}[i${name}]`)} } }`;
     }
-    if (resolved.kind === "Rec") {
+    if (resolved.kind === "Rec" && !isRecursive(resolved)) {
       const offset = resolved.shapes.length > 1 ? 1 : 0;
       const cases = getRecordShapes(resolved).map((shape) => {
         if (shape.isNull)
@@ -1029,6 +1070,8 @@ interface Program {
   constantSets: Map<number, Plain[]>[];
   bitmaps: Uint8Array[];
   comparers: { names: Map<Type, string>; functions: string[] };
+  // The functions permuting records that hold themselves.
+  permuters: Map<Type, string>;
   indexes: Int32Array[];
   lookups: Map<number, { key: Plain; position: number }[]>[];
   variableTypes: Type[];
@@ -4880,7 +4923,9 @@ const MAXIMUM_SCALAR_BYTES = 6;
 const hasVariableSize = (type: Type): boolean => {
   const resolved = resolveType(type);
   if (resolved.kind === "Seq" || resolved.kind === "Set" || resolved.kind === "Map") return true;
-  if (resolved.kind === "Rec") return [...resolved.fields.values()].some(hasVariableSize);
+  if (resolved.kind === "Rec") {
+    return isRecursive(resolved) || [...resolved.fields.values()].some(hasVariableSize);
+  }
   if (resolved.kind === "Tup") return resolved.elements.some(hasVariableSize);
   return resolved.kind === "Fn" && hasVariableSize(resolved.range);
 };
@@ -4889,17 +4934,20 @@ const getFixedSize = (type: Type): number => {
   const resolved = resolveType(type);
   if (resolved.kind === "Seq" || resolved.kind === "Set") return 1;
   if (resolved.kind === "Mix" || resolved.kind === "Map") return 2;
-  if (resolved.kind === "Rec") {
-    const sizes = resolved.shapes.map((shape) =>
-      shape.reduce((sum, name) => sum + getFixedSize(getFieldType(resolved, name)), 0),
-    );
-    return Math.max(...sizes) + (sizes.length === 1 ? 0 : 1);
-  }
+  // A record that holds itself is written by a function that makes room for it first.
+  if (resolved.kind === "Rec") return isRecursive(resolved) ? 1 : getRecordSize(resolved);
   if (resolved.kind === "Fn") return resolved.domain.length * getFixedSize(resolved.range);
   if (resolved.kind === "Tup") {
     return resolved.elements.reduce((sum, element) => sum + getFixedSize(element), 0);
   }
   return 1;
+};
+
+const getRecordSize = (record: RecType) => {
+  const sizes = record.shapes.map((shape) =>
+    shape.reduce((sum, name) => sum + getFixedSize(getFieldType(record, name)), 0),
+  );
+  return Math.max(...sizes) + (sizes.length === 1 ? 0 : 1);
 };
 
 const getParts = (type: Type): Type[] => {
@@ -4920,8 +4968,21 @@ interface Codec {
   keyWriters: [Map<Type, string>, Map<Type, string>];
 }
 
-const getWriter = (codec: Codec, type: Type, code: string): string => {
+const RESERVE_CODE = `if (n + ${RESERVED_BYTES} > d.length) { W.size = n; H.addPage(W); d = W.data; n = W.size; }`;
+
+const getWriter = (codec: Codec, type: Type, code: string, isInline = false): string => {
   const resolved = resolveType(type);
+  if (resolved.kind === "Rec" && !isInline && isRecursive(resolved)) {
+    const known = codec.writers.get(resolved);
+    if (known) return `${known}(${code});`;
+    if (getRecordSize(resolved) * MAXIMUM_SCALAR_BYTES > RESERVED_BYTES) return unsupported();
+    const writer = `w${codec.names.count++}`;
+    codec.writers.set(resolved, writer);
+    codec.functions.push(
+      `const ${writer} = (x) => { ${RESERVE_CODE} ${getWriter(codec, resolved, "x", true)} };`,
+    );
+    return `${writer}(${code});`;
+  }
   if (getFixedSize(resolved) * MAXIMUM_SCALAR_BYTES > RESERVED_BYTES) return unsupported();
   if (resolved.kind === "Bool") return `d[n++] = ${code} ? 1 : 0;`;
   // An option is 0 for FALSE, 1 for TRUE, and its atom plus 2.
@@ -4964,7 +5025,7 @@ const getSequenceWriter = (codec: Codec, type: SeqType | SetType) => {
   codec.writers.set(type, name);
   const element = `${name}e`;
   codec.functions.push(
-    `const ${name} = (${name}s) => { t = ${name}s.length; if (t < 128) d[n++] = t; else n = H.varint(d, n, t); for (let ${name}i = 0; ${name}i < ${name}s.length; ${name}i++) { const ${element} = ${name}s[${name}i]; if (n + ${RESERVED_BYTES} > d.length) { W.size = n; H.addPage(W); d = W.data; n = W.size; } ${getWriter(codec, type.element, element)} } };`,
+    `const ${name} = (${name}s) => { t = ${name}s.length; if (t < 128) d[n++] = t; else n = H.varint(d, n, t); for (let ${name}i = 0; ${name}i < ${name}s.length; ${name}i++) { const ${element} = ${name}s[${name}i]; ${RESERVE_CODE} ${getWriter(codec, type.element, element)} } };`,
   );
   return name;
 };
@@ -5021,8 +5082,11 @@ const getMovedPositions = (images: Images[], domain: Value[]) => {
 };
 
 // Whether a permutation can change a value of the type.
-const isPermutable = (images: Images[], type: Type): boolean => {
+const isPermutable = (images: Images[], type: Type, visited = new Set<Type>()): boolean => {
   const resolved = resolveType(type);
+  if (visited.has(resolved)) return false;
+  visited.add(resolved);
+  const isInner = (inner: Type) => isPermutable(images, inner, visited);
   switch (resolved.kind) {
     case "Str":
     case "Mix":
@@ -5030,20 +5094,17 @@ const isPermutable = (images: Images[], type: Type): boolean => {
       return true;
     case "Seq":
     case "Set":
-      return isPermutable(images, resolved.element);
+      return isInner(resolved.element);
     case "Map":
-      return isPermutable(images, resolved.keys) || isPermutable(images, resolved.values);
+      return isInner(resolved.keys) || isInner(resolved.values);
     case "Fn":
-      return (
-        getMovedPositions(images, resolved.domain) !== undefined ||
-        isPermutable(images, resolved.range)
-      );
+      return getMovedPositions(images, resolved.domain) !== undefined || isInner(resolved.range);
     case "Rec":
       return resolved.shapes.some((shape) =>
-        shape.some((field) => isPermutable(images, getFieldType(resolved, field))),
+        shape.some((field) => isInner(getFieldType(resolved, field))),
       );
     case "Tup":
-      return resolved.elements.some((element) => isPermutable(images, element));
+      return resolved.elements.some(isInner);
     default:
       return false;
   }
@@ -5064,7 +5125,6 @@ const getKeyWriter = (
   if (!isPermutable(images, resolved)) return getWriter(codec, resolved, code);
   const getInner = (inner: Type, innerCode: string) =>
     getKeyWriter(program, codec, images, inner, innerCode, isPermuted);
-  const reserve = `if (n + ${RESERVED_BYTES} > d.length) { W.size = n; H.addPage(W); d = W.data; n = W.size; }`;
   const varint = `if (t >= 0 && t < 128) d[n++] = t; else n = H.varint(d, n, t);`;
   const getSum = (length: string, element: string) => {
     const [first, second, start, aligned] = ["h", "h", "h", "h"].map((prefix) =>
@@ -5072,9 +5132,23 @@ const getKeyWriter = (
     );
     const word = (sum: string) =>
       [0, 8, 16, 24].map((shift) => `d[n++] = (${sum} >>> ${shift}) & 255;`).join(" ");
-    return `let ${first} = 0, ${second} = 0; for (let j = 0; j < ${length}; j++) { ${reserve} const ${start} = n - W.start; while ((n & 3) !== 0) d[n++] = 0; const ${aligned} = n - W.start; ${element} while ((n & 3) !== 0) d[n++] = 0; H.hashWords(W.words, (W.start + ${aligned}) >> 2, n >> 2, U); ${first} = (${first} + U[0]) | 0; ${second} = (${second} + U[1]) | 0; n = W.start + ${start}; } t = ${length}; ${varint} ${word(first)} ${word(second)}`;
+    return `let ${first} = 0, ${second} = 0; for (let j = 0; j < ${length}; j++) { ${RESERVE_CODE} const ${start} = n - W.start; while ((n & 3) !== 0) d[n++] = 0; const ${aligned} = n - W.start; ${element} while ((n & 3) !== 0) d[n++] = 0; H.hashWords(W.words, (W.start + ${aligned}) >> 2, n >> 2, U); ${first} = (${first} + U[0]) | 0; ${second} = (${second} + U[1]) | 0; n = W.start + ${start}; } t = ${length}; ${varint} ${word(first)} ${word(second)}`;
   };
   const name = getName(program, "k");
+  const getRecordKeyWriter = (record: RecType, recordCode = code) => {
+    if (record.shapes.length === 1) {
+      return `{ const ${name} = ${recordCode}; ${getParts(record)
+        .map((part, index) => getInner(part, `${name}[${index}]`))
+        .join(" ")} }`;
+    }
+    const cases = record.shapes.map((shape, tag) => {
+      const fields = shape.map((field, index) =>
+        getInner(getFieldType(record, field), `${name}[${index + 1}]`),
+      );
+      return `case ${tag}: ${fields.join(" ")} break;`;
+    });
+    return `{ const ${name} = ${recordCode}; d[n++] = ${name}[0]; switch (${name}[0]) { ${cases.join(" ")} } }`;
+  };
   switch (resolved.kind) {
     case "Str":
       return `t = ${isPermuted ? `P[${code}]` : code}; ${varint}`;
@@ -5084,23 +5158,27 @@ const getKeyWriter = (
       return `{ let ${name} = ${code}; ${isPermuted ? `if (${name} >= ${ATOM_BASE}) ${name} = ${ATOM_BASE} + P[${name} - ${ATOM_BASE}];` : ""} ${getWriter(codec, resolved, name)} }`;
     case "Seq":
     case "Set":
-    case "Map": {
+    case "Map":
+    case "Rec": {
+      if (resolved.kind === "Rec" && !isRecursive(resolved)) return getRecordKeyWriter(resolved);
       const known = codec.keyWriters[Number(isPermuted)].get(resolved);
       const call = (writer: string) => `${writer}(${code}${isPermuted ? ", P, G" : ""});`;
       if (known) return call(known);
       const writer = `kw${codec.names.count++}`;
       codec.keyWriters[Number(isPermuted)].set(resolved, writer);
       const body =
-        resolved.kind === "Seq"
-          ? `t = x.length; ${varint} for (let j = 0; j < x.length; j++) { ${reserve} ${getInner(resolved.element, "x[j]")} }`
-          : resolved.kind === "Set"
-            ? getSum("x.length", getInner(resolved.element, "x[j]"))
-            : isPermutable(images, resolved.keys)
-              ? getSum(
-                  "x[0].length",
-                  `${getInner(resolved.keys.element, "x[0][j]")} ${getInner(resolved.values.element, "x[1][j]")}`,
-                )
-              : `${getWriter(codec, resolved.keys, "x[0]")} ${getInner(resolved.values, "x[1]")}`;
+        resolved.kind === "Rec"
+          ? `${RESERVE_CODE} ${getRecordKeyWriter(resolved, "x")}`
+          : resolved.kind === "Seq"
+            ? `t = x.length; ${varint} for (let j = 0; j < x.length; j++) { ${RESERVE_CODE} ${getInner(resolved.element, "x[j]")} }`
+            : resolved.kind === "Set"
+              ? getSum("x.length", getInner(resolved.element, "x[j]"))
+              : isPermutable(images, resolved.keys)
+                ? getSum(
+                    "x[0].length",
+                    `${getInner(resolved.keys.element, "x[0][j]")} ${getInner(resolved.values.element, "x[1][j]")}`,
+                  )
+                : `${getWriter(codec, resolved.keys, "x[0]")} ${getInner(resolved.values, "x[1]")}`;
       codec.functions.push(`const ${writer} = (x${isPermuted ? ", P, G" : ""}) => { ${body} };`);
       return call(writer);
     }
@@ -5122,19 +5200,6 @@ const getKeyWriter = (
       const sources = getName(program, "s");
       return `{ const ${name} = ${code}; const ${sources} = D[${base} + G]; ${resolved.domain.map((_, index) => getInner(resolved.range, `${name}[${sources}[${index}]]`)).join(" ")} }`;
     }
-    case "Rec":
-      if (resolved.shapes.length > 1) {
-        const cases = resolved.shapes.map((shape, tag) => {
-          const fields = shape.map((field, index) =>
-            getInner(getFieldType(resolved, field), `${name}[${index + 1}]`),
-          );
-          return `case ${tag}: ${fields.join(" ")} break;`;
-        });
-        return `{ const ${name} = ${code}; d[n++] = ${name}[0]; switch (${name}[0]) { ${cases.join(" ")} } }`;
-      }
-      return `{ const ${name} = ${code}; ${getParts(resolved)
-        .map((part, index) => getInner(part, `${name}[${index}]`))
-        .join(" ")} }`;
     case "Tup":
       return `{ const ${name} = ${code}; ${getParts(resolved)
         .map((part, index) => getInner(part, `${name}[${index}]`))
@@ -5187,6 +5252,30 @@ const getPermuteCode = (
           `H.sortImage((${code}).map((${name}) => ${inner}), ${getComparerCode(program, resolved.element)})`,
       );
     case "Rec": {
+      if (isRecursive(resolved)) {
+        if (!isPermuted(program, images, resolved)) return undefined;
+        const known = program.permuters.get(resolved);
+        if (known) return `${known}(${code}, P, G)`;
+        const permuter = getName(program, "q");
+        program.permuters.set(resolved, permuter);
+        const record = getName(program, "r");
+        const cases = resolved.shapes.map((shape, tag) => {
+          const fields = shape.map(
+            (name, index) =>
+              getPermuteCode(
+                program,
+                images,
+                getFieldType(resolved, name),
+                `${record}[${index + 1}]`,
+              ) ?? `${record}[${index + 1}]`,
+          );
+          return `case ${tag}: return [${tag}, ${fields.join(", ")}];`;
+        });
+        program.comparers.functions.push(
+          `const ${permuter} = (${record}, P, G) => { switch (${record}[0]) { ${cases.join(" ")} } };`,
+        );
+        return `${permuter}(${code}, P, G)`;
+      }
       const offset = resolved.shapes.length === 1 ? 0 : 1;
       const record = getName(program, "r");
       const shapes = resolved.shapes.map((shape) =>
@@ -5298,9 +5387,16 @@ const getImageCompareCode = (
 };
 
 // Whether an image can change a value of the type, as getPermuteCode finds.
-const isPermuted = (program: Program, images: Images[], type: Type): boolean => {
+const isPermuted = (
+  program: Program,
+  images: Images[],
+  type: Type,
+  visited = new Set<Type>(),
+): boolean => {
   const resolved = resolveType(type);
-  const isElementPermuted = (element: Type) => isPermuted(program, images, element);
+  if (visited.has(resolved)) return false;
+  visited.add(resolved);
+  const isElementPermuted = (element: Type) => isPermuted(program, images, element, visited);
   switch (resolved.kind) {
     case "Str":
     case "Mix":
@@ -5364,6 +5460,7 @@ const getSignatureCode = (
     case "Set":
       return isMask(resolved, program.plains) ? undefined : getLoop(resolved.element, code);
     case "Rec": {
+      if (isRecursive(resolved)) return unsupported();
       const record = getName(program, "r");
       const hash = getName(program, "h");
       const offset = resolved.shapes.length === 1 ? 0 : 1;
@@ -5522,7 +5619,7 @@ const compileSpec = (
     const unchanged = atom.subscript && compileUnchanged(program, atom.subscript, frame);
     return () => (unchanged ? `!(${unchanged.emit()}) && (${action.emit()})` : action.emit());
   });
-  program.variableTypes.forEach(closeType);
+  program.variableTypes.forEach((type) => closeType(type));
   const parameters = program.variableTypes.map((_, index) => `v${index}`).join(", ");
   const unpack = `const [${parameters}] = state;`;
   // A state predicate reads the state through the variables it unpacks, so it holds of a successor
@@ -5581,9 +5678,11 @@ const compileSpec = (
     ? getKeyWriters(false)
     : keyOrder.map((index) => writers[index]);
   const sites = { count: 0 };
-  const signatures = program.variableTypes.map((type, index) =>
-    getSignatureCode(program, sites, type, `v${index}`),
-  );
+  const signatures = isSymmetricKey
+    ? program.variableTypes.map((type, index) =>
+        getSignatureCode(program, sites, type, `v${index}`),
+      )
+    : [];
   const imageWriters = (isSymmetricKey ? getKeyWriters(true) : []).map(
     (writer) =>
       `{ const b = n - W.start - m; ${writer} if (c === 0) { c = H.compareBytes(d, W.start + m + b, n, d, W.start + b); if (c > 0) continue images; } }`,
@@ -5906,6 +6005,7 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
     constantSets: [],
     bitmaps: [],
     comparers: { names: new Map(), functions: [] },
+    permuters: new Map(),
     indexes: [],
     lookups: [],
     variableTypes: environment.variables.map(createVar),
