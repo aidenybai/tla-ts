@@ -223,9 +223,15 @@ export const translatePropertyKey = (node: ts.Expression, scope: Scope, context:
   const value = translateExpression(node, scope, context);
   if (getKind(node, context) === "string") return value;
   if (isNumberLike(node, context)) return translateNumberString(value, context);
-  const names = getTypeNames(context.checker.getTypeAtLocation(node), context.checker);
+  const type = context.checker.getTypeAtLocation(node);
+  const names = getTypeNames(type, context.checker);
   if (names?.length === 1 && names[0] === "symbol") return value;
-  if (names?.every((name) => ["string", "number", "symbol"].includes(name))) {
+  // A key that TypeScript can't type, such as what a yield gives, converts as a primitive, and
+  // stops as an object, whose conversion runs code.
+  if (
+    names?.every((name) => ["string", "number", "symbol"].includes(name)) ||
+    (type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0
+  ) {
     return useJavaScript("PropertyKey", [value], context);
   }
   throw new TlaTypeScriptError("Use a string, a number, or a symbol as a key", node);

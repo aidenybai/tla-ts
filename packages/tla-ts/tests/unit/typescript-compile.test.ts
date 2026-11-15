@@ -41787,4 +41787,31 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("a,c,d"))).failure?.message).toContain("log c,b,d");
     });
   });
+
+  describe("converts a key that TypeScript types as any to a property key", () => {
+    const getSource = (expected: string) => `
+      const keys: unknown[] = ["a", 1, Symbol.iterator];
+      const made: { [key: string | symbol]: unknown } = {};
+      const literal = { [keys[0] as any]: 1, [keys[1] as any]: 2 };
+      made[keys[2] as any] = 3;
+      const log = Object.keys(literal).join() + "," + (made[Symbol.iterator] === 3);
+      if (log !== "${expected}") throw new Error("log " + log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("1,a,true"))).failure).toBeUndefined();
+    });
+
+    it("rejects keys in the order that the literal gives them", async () => {
+      expect((await checkModel(getSource("a,1,true"))).failure?.message).toContain("log 1,a,true");
+    });
+
+    it("stops where the key is an object, whose conversion runs code", async () => {
+      const result = await checkModel(`
+        const key: unknown = {};
+        const literal = { [key as any]: 1 };
+      `);
+      expect(result.failure?.message).toContain("tla-ts can't convert objects to strings");
+    });
+  });
 });
