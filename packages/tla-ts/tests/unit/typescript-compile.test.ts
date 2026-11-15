@@ -44273,4 +44273,26 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("tests a key of a map whose type doesn't tell what it is with in", () => {
+    const getSource = (expected: string) => `
+      const has = (value: object, key: string) => key in value;
+      const log = [
+        has(new Map([[1, "a"]]), "length"),
+        has(new Map([[1, "a"]]), "size"),
+        has(new Map(), "0"),
+      ].join(",");
+      if (log !== "${expected}") throw new Error(log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("false,true,false"))).failure).toBeUndefined();
+    });
+
+    it("rejects a map's key as its property", async () => {
+      expect((await checkModel(getSource("false,true,true"))).failure?.message).toContain(
+        "false,true,false",
+      );
+    });
+  });
 });

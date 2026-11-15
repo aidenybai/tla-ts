@@ -4451,7 +4451,7 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
             member.getCallSignatures().length === 0),
       );
   // A read that tells as it runs what a value whose type doesn't tell is: of a property of a value
-  // of type any or unknown, as a pattern reads it too, or by Array.isArray, getPrototypeOf, or a
+  // of type any or unknown, as a pattern reads it too, or by in, Array.isArray, getPrototypeOf, or a
   // method of Object that lists its keys.
   const isReadByKind = (node: ts.Expression) => {
     const parent = node.parent;
@@ -4464,11 +4464,14 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
             parent.initializer === node &&
             ts.isObjectBindingPattern(parent.name)))) ||
       (isUntold(node) &&
-        isMethodCall(parent) &&
-        parent.arguments[0] === node &&
-        KIND_READS.has(
-          `${getBuiltIn(parent.expression.expression, context)}.${parent.expression.name.text}`,
-        ))
+        ((ts.isBinaryExpression(parent) &&
+          parent.operatorToken.kind === ts.SyntaxKind.InKeyword &&
+          parent.right === node) ||
+          (isMethodCall(parent) &&
+            parent.arguments[0] === node &&
+            KIND_READS.has(
+              `${getBuiltIn(parent.expression.expression, context)}.${parent.expression.name.text}`,
+            ))))
     );
   };
   const isReached = new Set(reached);
