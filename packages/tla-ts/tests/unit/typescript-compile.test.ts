@@ -26629,6 +26629,53 @@ describe("errors", () => {
     ).toThrow("Pass Promise.all an array written in place");
   });
 
+  it("calls the then that a script assigns to Array.prototype where a combinator resolves", async () => {
+    const source = (expected: string) => `
+      declare function setTimeout(callback: () => void): void;
+      let log = "";
+      const thrown = { reason: 1 };
+      const arrayPrototype = Array.prototype as unknown as { then?: unknown };
+      arrayPrototype.then = function (this: unknown[]) {
+        log += \`t\${this.length}\`;
+        throw thrown;
+      };
+      const settled = Promise.allSettled([]);
+      delete arrayPrototype.then;
+      settled.then(undefined, (reason) => {
+        log += reason === thrown ? "r" : "x";
+      });
+      log += "s";
+      setTimeout(() => {
+        if (log !== "${expected}") throw new Error(log);
+      });
+    `;
+    expect((await checkModel(source("st0r"))).failure).toBeUndefined();
+    expect((await checkModel(source("t0sr"))).failure).toBeDefined();
+  });
+
+  it("calls the then that a script assigns to an object that a reaction returns", async () => {
+    const source = (expected: string) => `
+      declare function setTimeout(callback: () => void): void;
+      let log = "";
+      const thenable = { then: undefined as unknown };
+      thenable.then = function (resolve: (value: number) => void) {
+        log += "o";
+        resolve(2);
+      };
+      Promise.resolve()
+        .then(() => thenable)
+        .then((value) => {
+          log += (value as unknown) === 2 ? "2" : "x";
+        });
+      log += "s";
+      setTimeout(() => {
+        if (log !== "${expected}") throw new Error(log);
+      });
+    `;
+    expect((await checkModel(source("so2"))).failure).toBeUndefined();
+    expect((await checkModel(source("s2o"))).failure).toBeDefined();
+  });
+
   it("fulfills Promise.any with the first value, or rejects it with an AggregateError", async () => {
     const result = await checkModel(`
       declare function setTimeout(callback: () => void): void;

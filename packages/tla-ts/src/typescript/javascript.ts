@@ -1570,9 +1570,9 @@ IsThenable(heap, value, arrayPrototype, objectPrototype) ==
        /\\ TypeOf(value) = "object"
        /\\ Has(heap, arrayPrototype, "then") \\/ Has(heap, objectPrototype, "then")
 
-\\* Whether a value is an object on the heap whose then a job can call.
+\\* Whether a value is an object on the heap, or an array off it, whose then a job can call.
 HasCallableThen(heap, value) ==
-  /\\ IsRef(value)
+  /\\ IsRef(value) \\/ IsSequenceValue(value)
   /\\ ~(IsHeap(value) /\\ heap.objects[value[Ref]].isOpaque)
   /\\ TypeOfIn(heap, Get(heap, value, "then")) = "function"
 

@@ -437,7 +437,12 @@ const resolve = (
     (count, promise) => count + promise.thenResolvers.length,
     0,
   );
-  const runsThen = valueNode !== undefined && hasCallable(valueNode, "then", context);
+  // A value without a node, such as the array that Promise.all fulfills with, may find a then
+  // that the script assigns.
+  const runsThen =
+    valueNode === undefined
+      ? candidates.some(isAssignedThen)
+      : hasCallable(valueNode, "then", context);
   const callThen = () =>
     pairs >= MAX_THEN_PAIRS
       ? leaf(apply("Assert", [boolean(false), string("tla-ts can't follow this many thenables")]))
@@ -486,7 +491,7 @@ const resolve = (
             cannotThen,
           )
         : cannotThen,
-      runsThen
+      runsThen && valueNode !== undefined
         ? leaf(
             apply("Assert", [
               boolean(false),
@@ -517,7 +522,17 @@ const MAX_THEN_PAIRS = 8;
 
 // A function that an object literal gives as its then, which a promise that the object resolves
 // calls with the promise's resolve and reject.
+// A function that a script assigns as an object's then, such as Array.prototype's.
+const isAssignedThen = (node: ts.Node) =>
+  (ts.isFunctionExpression(node) || ts.isArrowFunction(node)) &&
+  ts.isBinaryExpression(node.parent) &&
+  node.parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+  node.parent.right === node &&
+  ts.isPropertyAccessExpression(node.parent.left) &&
+  node.parent.left.name.text === "then";
+
 const isThenFunction = (node: ts.Node): node is FunctionNode =>
+  isAssignedThen(node) ||
   ((ts.isFunctionExpression(node) || ts.isArrowFunction(node)) &&
     ts.isPropertyAssignment(node.parent) &&
     node.parent.initializer === node &&
