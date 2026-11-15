@@ -113,6 +113,7 @@ const PORTED_INCLUDES = new Map([
     "nativeFunctionMatcher.js",
     readFileSync(join(CONFORMANCE_DIRECTORY, "test262-native-function-matcher.ts"), "utf8"),
   ],
+  ["deepEqual.js", readFileSync(join(CONFORMANCE_DIRECTORY, "test262-deep-equal.ts"), "utf8")],
 ]);
 
 // An async test's harness defines $DONE, as doneprintHandle.js does.
