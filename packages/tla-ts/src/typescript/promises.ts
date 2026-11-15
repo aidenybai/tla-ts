@@ -648,7 +648,7 @@ const invokeThen = (
   candidates: readonly FunctionNode[],
   values: readonly Expression[],
   context: Context,
-  onReturn: (path: Path) => Formula,
+  onReturn: (path: Path, value?: Expression) => Formula,
   onThrow: (path: Path, thrown: Expression) => Formula,
 ): Formula => {
   const startHeap = getHeap(start.scope, node, context);
@@ -745,7 +745,7 @@ const invokeThen = (
           context,
           {
             next: (after) => onReturn(leave(after)),
-            exit: (after) => onReturn(leave(after)),
+            exit: (after, value) => onReturn(leave(after), value),
             breakTo: undefined,
             continueTo: undefined,
             throwTo: (after, thrown) => onThrow(leave(after), thrown.value),
@@ -906,11 +906,12 @@ const getHandler = (
 // gives for what onFinally returns: one that fulfills with the value or rejects with the reason.
 const getFinallyHandlers = (
   node: ts.CallExpression,
+  onFinally: ts.Expression | undefined,
   path: Path,
   context: Context,
   frame: Frame,
 ) => {
-  const run = getRunner(node.arguments.at(0), path, context, frame);
+  const run = getRunner(onFinally, path, context, frame);
   const getFinally = (isRejected: boolean): Handler => ({
     run: (current, value, onReturn, onThrow) =>
       run === undefined
@@ -1865,13 +1866,42 @@ const translatePromiseCombinator = (
   });
 };
 
-// A call of a promise's then or catch.
+// A call of a promise's then, catch, or finally, or of Promise.prototype's through call, which
+// takes the this first, with the functions that it passes.
+interface PromiseMethod {
+  method: string;
+  receiver: ts.Expression;
+  functions: readonly ts.Expression[];
+  isCalled: boolean;
+}
+
 const getPromiseMethod = (node: ts.CallExpression, context: Context) => {
   const callee = node.expression;
-  return ts.isPropertyAccessExpression(callee) &&
-    ["then", "catch", "finally"].includes(callee.name.text) &&
-    isPromiseType(callee.expression, context)
-    ? { method: callee.name.text, receiver: getCast(callee.expression) }
+  const called =
+    ts.isPropertyAccessExpression(callee) && callee.name.text === "call"
+      ? callee.expression
+      : undefined;
+  const method = called ?? callee;
+  if (
+    !ts.isPropertyAccessExpression(method) ||
+    !["then", "catch", "finally"].includes(method.name.text)
+  ) {
+    return undefined;
+  }
+  const owner = getCast(method.expression);
+  const receiver = called === undefined ? owner : node.arguments.at(0);
+  const isPrototype =
+    called !== undefined &&
+    ts.isPropertyAccessExpression(owner) &&
+    owner.name.text === "prototype" &&
+    getBuiltIn(owner.expression, context) === "Promise";
+  return receiver !== undefined && (isPrototype || isPromiseType(owner, context))
+    ? {
+        method: method.name.text,
+        receiver: getCast(receiver),
+        functions: called === undefined ? node.arguments : node.arguments.slice(1),
+        isCalled: called !== undefined,
+      }
     : undefined;
 };
 
@@ -3266,15 +3296,16 @@ export const translatePromiseCall = (
     );
   }
   const received = translateExpression(receiver, path.scope, context);
+  const functions = promiseMethod.functions;
   const handlers =
     promiseMethod.method === "then"
       ? [
-          getHandler(argument, path, context, frame),
-          getHandler(node.arguments.at(1), path, context, frame),
+          getHandler(functions.at(0), path, context, frame),
+          getHandler(functions.at(1), path, context, frame),
         ]
       : promiseMethod.method === "catch"
-        ? [undefined, getHandler(argument, path, context, frame)]
-        : getFinallyHandlers(node, path, context, frame);
+        ? [undefined, getHandler(functions.at(0), path, context, frame)]
+        : getFinallyHandlers(node, functions.at(0), path, context, frame);
   const react = (current: Path, name: string) =>
     makePromise(current, node, context, (made, derived) =>
       continueWith(
@@ -3288,7 +3319,11 @@ export const translatePromiseCall = (
         getPromise(made, node, derived).ref,
       ),
     );
-  return guardBuiltIns(
+  const other = () =>
+    promiseMethod.isCalled
+      ? translateOtherReceiver(node, promiseMethod, received, path, context, frame, continueWith)
+      : leaf(apply("Assert", [boolean(false), string("tla-ts can't tell which promise this is")]));
+  const reacted = guardBuiltIns(
     node,
     "Promise.prototype",
     promiseMethod.method === "then"
@@ -3296,16 +3331,116 @@ export const translatePromiseCall = (
       : [promiseMethod.method, "then", "constructor"],
     path,
     context,
-    dispatchPromise(
-      path,
-      node,
-      received,
-      receiver,
-      context,
-      (held) => react(path, held),
-      () =>
-        leaf(apply("Assert", [boolean(false), string("tla-ts can't tell which promise this is")])),
+    promiseMethod.isCalled && !isPossiblePromise(receiver, received, context)
+      ? other()
+      : dispatchPromise(
+          path,
+          node,
+          received,
+          receiver,
+          context,
+          (held) => react(path, held),
+          other,
+        ),
+  );
+  return promiseMethod.isCalled
+    ? guardBuiltIns(node, "Function.prototype", ["call"], path, context, reacted)
+    : reacted;
+};
+
+// Promise.prototype's then, catch, or finally with a this that isn't a promise. then throws a
+// TypeError. catch calls Invoke(this, "then", «undefined, onRejected»), whose GetV throws a
+// TypeError for undefined or null. finally throws a TypeError for a this that isn't an object, and
+// otherwise takes SpeciesConstructor(this, %Promise%) before it calls the this's then.
+const translateOtherReceiver = (
+  node: ts.CallExpression,
+  promiseMethod: PromiseMethod,
+  received: Expression,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path, value?: Expression) => Formula,
+): Formula => {
+  const uncaught = apply("Assert", [boolean(false), string(node.getText())]);
+  const throwError = (after: Path, thrown: Expression) =>
+    frame.throwTo === undefined
+      ? leaf(uncaught)
+      : frame.throwTo(after, { value: thrown, uncaught });
+  const typeError = translateEngineError("TypeError", node, context);
+  if (promiseMethod.method === "then") return throwError(path, typeError);
+  const stop = (message: string) => leaf(apply("Assert", [boolean(false), string(message)]));
+  if (
+    !promiseMethod.functions.every((inner) => getRunner(inner, path, context, frame) === undefined)
+  ) {
+    return stop("tla-ts can't pass a function to the then of a value that isn't a promise");
+  }
+  const heap = getHeap(path.scope, node, context);
+  const isObject = useJavaScript("IsObjectIn", [heap, received], context);
+  const thenName = context.names.getFresh("then");
+  const then = identifier(thenName);
+  const invoke = bindOnce(
+    path,
+    thenName,
+    useJavaScript("Get", [heap, received, string("then")], context),
+    ifThenElse(
+      apply("=", [useJavaScript("TypeOfIn", [heap, then], context), string("function")]),
+      invokeThen(
+        path,
+        node,
+        received,
+        then,
+        getThenFunctions(node, promiseMethod.receiver, context),
+        [getUndefined(context), getUndefined(context)],
+        context,
+        (after, value) => continueWith(after, value ?? getUndefined(context)),
+        throwError,
+      ),
+      throwError(path, typeError),
     ),
+  );
+  if (promiseMethod.method === "catch") {
+    return ifThenElse(
+      isObject,
+      invoke,
+      ifThenElse(
+        apply("\\in", [received, set([getUndefined(context), identifier("Null")])]),
+        throwError(path, typeError),
+        stop("tla-ts can't read the then of a primitive"),
+      ),
+    );
+  }
+  context.builtIns.add("Object");
+  context.builtIns.add("Function.prototype");
+  const constructorName = context.names.getFresh("constructor");
+  const constructor = identifier(constructorName);
+  return ifThenElse(
+    isObject,
+    bindOnce(
+      path,
+      constructorName,
+      useJavaScript("Get", [heap, received, string("constructor")], context),
+      ifThenElse(
+        apply("=", [constructor, getUndefined(context)]),
+        invoke,
+        ifThenElse(
+          useJavaScript("IsObjectIn", [heap, constructor], context),
+          ifThenElse(
+            apply("\\in", [
+              useJavaScript(
+                "Get",
+                [heap, constructor, useJavaScript("WellKnownSymbol", [string("species")], context)],
+                context,
+              ),
+              set([getUndefined(context), identifier("Null")]),
+            ]),
+            invoke,
+            stop("tla-ts can't tell which constructor a species gives"),
+          ),
+          throwError(path, typeError),
+        ),
+      ),
+    ),
+    throwError(path, typeError),
   );
 };
 

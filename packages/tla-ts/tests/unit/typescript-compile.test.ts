@@ -27216,6 +27216,83 @@ describe("errors", () => {
     expect((await checkModel(source("f1t11"))).failure).toBeDefined();
   });
 
+  it("runs Promise.prototype.catch through call on another this, which calls its then", async () => {
+    const source = (expected: string) => `
+      let log = "";
+      const attempt = (run: () => unknown) => {
+        try {
+          run();
+          log += "n";
+        } catch (error) {
+          log += error instanceof TypeError ? "t" : error === thrown ? "e" : "x";
+        }
+      };
+      const thrown = { reason: 1 };
+      const thrower = {
+        then() {
+          throw thrown;
+        },
+      };
+      attempt(() => Promise.prototype.catch.call(undefined));
+      attempt(() => Promise.prototype.catch.call(thrower));
+      attempt(() => Promise.prototype.catch.call({ then: 1 }));
+      attempt(() => Promise.prototype.catch.call(Promise.resolve(2)));
+      if (log !== "${expected}") throw new Error(log);
+    `;
+    expect((await checkModel(source("tetn"))).failure).toBeUndefined();
+    expect((await checkModel(source("ttnn"))).failure).toBeDefined();
+  });
+
+  it("runs Promise.prototype's then and finally through call on another this", async () => {
+    const source = (expected: string) => `
+      let log = "";
+      const attempt = (run: () => unknown) => {
+        try {
+          run();
+          log += "n";
+        } catch (error) {
+          log += error instanceof TypeError ? "t" : "x";
+        }
+      };
+      const counted = {
+        then(this: unknown) {
+          log += this === counted ? "c" : "o";
+          return 5;
+        },
+      };
+      attempt(() => Promise.prototype.finally.call(null));
+      attempt(() => Promise.prototype.then.call(counted, () => {}));
+      const result = Promise.prototype.finally.call(counted);
+      log += (result as unknown) === 5 ? "5" : "x";
+      if (log !== "${expected}") throw new Error(log);
+    `;
+    expect((await checkModel(source("ttc5"))).failure).toBeUndefined();
+    expect((await checkModel(source("tnc5"))).failure).toBeDefined();
+  });
+
+  it("throws finally's TypeError where a this's constructor isn't an object, and calls its then", async () => {
+    const source = (expected: string) => `
+      let log = "";
+      const zero = { constructor: 0 };
+      try {
+        Promise.prototype.finally.call(zero);
+      } catch (error) {
+        log += error instanceof TypeError ? "t" : "x";
+      }
+      const thenResult = {};
+      function Thenable(this: object) {}
+      (Thenable.prototype as { then: unknown }).then = function () {
+        return thenResult;
+      };
+      const thenable = new (Thenable as unknown as new () => object)();
+      const made = Promise.prototype.finally.call(thenable);
+      log += (made as unknown) === thenResult ? "r" : "x";
+      if (log !== "${expected}") throw new Error(log);
+    `;
+    expect((await checkModel(source("tr"))).failure).toBeUndefined();
+    expect((await checkModel(source("xr"))).failure).toBeDefined();
+  });
+
   it("fulfills Promise.any with the first value, or rejects it with an AggregateError", async () => {
     const result = await checkModel(`
       declare function setTimeout(callback: () => void): void;
