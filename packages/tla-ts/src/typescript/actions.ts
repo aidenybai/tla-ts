@@ -417,6 +417,7 @@ import {
   TYPED_ARRAYS,
   isNullishArrayMethodCall,
   isSizelessSetLikeCall,
+  isSymbolIndexCall,
   getArrayMethodCall,
 } from "./types";
 
@@ -2171,7 +2172,11 @@ export const translateCallStatement = (
       ),
     );
   }
-  if (isNullishArrayMethodCall(expression, context) || isSizelessSetLikeCall(expression, context)) {
+  if (
+    isNullishArrayMethodCall(expression, context) ||
+    isSizelessSetLikeCall(expression, context) ||
+    isSymbolIndexCall(expression, context)
+  ) {
     return throwTypeError(path, expression, context, frame);
   }
   if (isRawCall(expression, context)) {
@@ -11630,6 +11635,7 @@ const isStatementResult = (node: ts.CallExpression, path: Path, context: Context
     getArrayIteratorCall(node, context) !== undefined ||
     isNullishArrayMethodCall(node, context) ||
     isSizelessSetLikeCall(node, context) ||
+    isSymbolIndexCall(node, context) ||
     isRawCall(node, context) ||
     getStringCall(node, context) !== undefined ||
     isBigIntStringify(node, context) ||

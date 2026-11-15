@@ -10,7 +10,7 @@ import ts from "@typescript/typescript6";
 import { TlaTypeScriptError } from "../src/errors";
 import { check } from "../src/parallel";
 import { STRING_METHODS } from "../src/typescript/collections";
-import { SET_LIKE_METHODS } from "../src/typescript/types";
+import { getIndexedKind, INDEX_PARAMETERS, SET_LIKE_METHODS } from "../src/typescript/types";
 import { compile } from "../src/typescript/compile";
 import { CONFORMANCE_DIRECTORY, CORPORA_DIRECTORY, listFiles } from "./corpora";
 
@@ -1410,63 +1410,6 @@ const REDUCING_METHODS = new Set(["reduce", "reduceRight"]);
 // converts from a primitive, or for undefined where a call passes no value, also on a typed array.
 // Each needs a unit test of such a call.
 const SEARCHING_METHODS = new Set(["includes", "indexOf", "lastIndexOf"]);
-// The positions of the index arguments that ToIntegerOrInfinity converts, of the methods of each
-// kind of receiver where tla-ts converts a primitive there as ToNumber does. Each needs a unit test
-// of such a call.
-const INDEX_PARAMETERS = new Map([
-  [
-    "Array",
-    new Map([
-      ["at", [0]],
-      ["copyWithin", [0, 1, 2]],
-      ["fill", [1, 2]],
-      ["slice", [0, 1]],
-      ["toSpliced", [0, 1]],
-      ["with", [0]],
-    ]),
-  ],
-  [
-    "TypedArray",
-    new Map([
-      ["at", [0]],
-      ["copyWithin", [0, 1, 2]],
-      ["fill", [1, 2]],
-      ["includes", [1]],
-      ["indexOf", [1]],
-      ["lastIndexOf", [1]],
-      ["slice", [0, 1]],
-      ["subarray", [0, 1]],
-    ]),
-  ],
-  // A DataView's methods convert the index with ToIndex.
-  [
-    "DataView",
-    new Map([
-      ["getInt8", [0]],
-      ["getUint8", [0]],
-      ["getInt16", [0]],
-      ["getUint16", [0]],
-      ["getInt32", [0]],
-      ["getUint32", [0]],
-      ["getFloat16", [0]],
-      ["getFloat32", [0]],
-      ["getFloat64", [0]],
-      ["getBigInt64", [0]],
-      ["getBigUint64", [0]],
-      ["setInt8", [0]],
-      ["setUint8", [0]],
-      ["setInt16", [0]],
-      ["setUint16", [0]],
-      ["setInt32", [0]],
-      ["setUint32", [0]],
-      ["setFloat16", [0]],
-      ["setFloat32", [0]],
-      ["setFloat64", [0]],
-      ["setBigInt64", [0]],
-      ["setBigUint64", [0]],
-    ]),
-  ],
-]);
 // RegExp.prototype's methods under well-known symbols that tla-ts runs as their steps where a test
 // calls them through call, on any receiver, or on a regexp with a string, a limit, or a replaceValue
 // of another type than their signatures take. Each needs a unit test of such a call.
@@ -2082,17 +2025,6 @@ const ignoreSoundErrors = () => {
         )
     );
   };
-  // The kind of receiver of a type that INDEX_PARAMETERS lists methods for.
-  const getIndexedKind = (type: ts.Type) =>
-    checker.isArrayType(type)
-      ? "Array"
-      : (type.isUnion() ? type.types : [type]).every((member) =>
-            /^(Big)?(Int|Uint|Float)\d+(Clamped)?Array$/.test(member.getSymbol()?.getName() ?? ""),
-          )
-        ? "TypedArray"
-        : type.getSymbol()?.getName() === "DataView"
-          ? "DataView"
-          : undefined;
   // A call of a method that SEARCHING_METHODS lists on an array or a typed array, without arguments,
   // which searches for undefined. TypeScript reports it at the method's name.
   const isShortSearchingCall = (node: ts.Node) => {
@@ -2105,12 +2037,13 @@ const ignoreSoundErrors = () => {
       callee.parent.expression === callee &&
       callee.parent.arguments.length === 0 &&
       ["Array", "TypedArray"].includes(
-        getIndexedKind(checker.getTypeAtLocation(callee.expression)) ?? "",
+        getIndexedKind(checker.getTypeAtLocation(callee.expression), checker) ?? "",
       )
     );
   };
-  // A call of a method that INDEX_PARAMETERS lists, with a primitive other than a symbol or a BigInt
-  // for an index that it converts, which the error is at.
+  // A call of a method that INDEX_PARAMETERS lists, with a primitive other than a BigInt for an index
+  // that it converts, which the error is at. tla-ts throws the TypeError of a symbol where nothing
+  // runs before, and stops otherwise.
   const isIndexCall = (diagnostic: ts.Diagnostic) => {
     const call = getErroredCall(diagnostic);
     if (
@@ -2122,7 +2055,7 @@ const ignoreSoundErrors = () => {
       return false;
     }
     const receiver = checker.getTypeAtLocation(call.expression.expression);
-    const kind = getIndexedKind(receiver);
+    const kind = getIndexedKind(receiver, checker);
     const positions = kind && INDEX_PARAMETERS.get(kind)?.get(call.expression.name.text);
     const position = call.arguments.findIndex(
       (value) =>
@@ -2139,17 +2072,18 @@ const ignoreSoundErrors = () => {
       kind === "DataView" &&
       positions !== undefined &&
       position === (call.expression.name.text.startsWith("get") ? 1 : 2);
+    const primitives =
+      ts.TypeFlags.NumberLike |
+      ts.TypeFlags.StringLike |
+      ts.TypeFlags.BooleanLike |
+      ts.TypeFlags.Null |
+      ts.TypeFlags.Undefined;
     return (
       isLittleEndian ||
-      ((isSearched || (positions !== undefined && positions.includes(position))) &&
-        isEveryType(
-          call.arguments[position],
-          ts.TypeFlags.NumberLike |
-            ts.TypeFlags.StringLike |
-            ts.TypeFlags.BooleanLike |
-            ts.TypeFlags.Null |
-            ts.TypeFlags.Undefined,
-        ))
+      (isSearched && isEveryType(call.arguments[position], primitives)) ||
+      (positions !== undefined &&
+        positions.includes(position) &&
+        isEveryType(call.arguments[position], primitives | ts.TypeFlags.ESSymbolLike))
     );
   };
   // A call of a Set's method that SET_LIKE_METHODS lists, of an array, which the error is at.

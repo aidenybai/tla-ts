@@ -844,6 +844,135 @@ export const isNullishArrayMethodCall = (node: ts.CallExpression, context: Conte
   );
 };
 
+// The positions of the index arguments that ToIntegerOrInfinity converts, of the methods of each
+// kind of receiver where tla-ts converts a primitive there as ToNumber does. test262's runner admits
+// such an argument, and each needs a unit test of such a call.
+export const INDEX_PARAMETERS = new Map([
+  [
+    "Array",
+    new Map([
+      ["at", [0]],
+      ["copyWithin", [0, 1, 2]],
+      ["fill", [1, 2]],
+      ["slice", [0, 1]],
+      ["toSpliced", [0, 1]],
+      ["with", [0]],
+    ]),
+  ],
+  [
+    "TypedArray",
+    new Map([
+      ["at", [0]],
+      ["copyWithin", [0, 1, 2]],
+      ["fill", [1, 2]],
+      ["includes", [1]],
+      ["indexOf", [1]],
+      ["lastIndexOf", [1]],
+      ["slice", [0, 1]],
+      ["subarray", [0, 1]],
+    ]),
+  ],
+  // A DataView's methods convert the index with ToIndex.
+  [
+    "DataView",
+    new Map([
+      ["getInt8", [0]],
+      ["getUint8", [0]],
+      ["getInt16", [0]],
+      ["getUint16", [0]],
+      ["getInt32", [0]],
+      ["getUint32", [0]],
+      ["getFloat16", [0]],
+      ["getFloat32", [0]],
+      ["getFloat64", [0]],
+      ["getBigInt64", [0]],
+      ["getBigUint64", [0]],
+      ["setInt8", [0]],
+      ["setUint8", [0]],
+      ["setInt16", [0]],
+      ["setUint16", [0]],
+      ["setInt32", [0]],
+      ["setUint32", [0]],
+      ["setFloat16", [0]],
+      ["setFloat32", [0]],
+      ["setFloat64", [0]],
+      ["setBigInt64", [0]],
+      ["setBigUint64", [0]],
+    ]),
+  ],
+]);
+
+// The kind of receiver of a type that INDEX_PARAMETERS lists methods for.
+export const getIndexedKind = (type: ts.Type, checker: ts.TypeChecker) =>
+  checker.isArrayType(type)
+    ? "Array"
+    : (type.isUnion() ? type.types : [type]).every((member) =>
+          /^(Big)?(Int|Uint|Float)\d+(Clamped)?Array$/.test(member.getSymbol()?.getName() ?? ""),
+        )
+      ? "TypedArray"
+      : type.getSymbol()?.getName() === "DataView"
+        ? "DataView"
+        : undefined;
+
+// A call of a method that INDEX_PARAMETERS lists, on an array, a typed array, or a DataView that a
+// literal or a new makes, with a symbol for an index, which throws the TypeError of ToNumber. Its
+// arguments are literals or variables, and a typed array's fill converts a number or a BigInt
+// value first, so nothing runs or throws another error before. A search of an empty typed array
+// returns before it converts its index.
+export const isSymbolIndexCall = (node: ts.CallExpression, context: Context) => {
+  const callee = node.expression;
+  if (!ts.isPropertyAccessExpression(callee)) return false;
+  const checker = context.checker;
+  const receiver = callee.expression;
+  const kind = getIndexedKind(checker.getTypeAtLocation(receiver), checker);
+  const positions =
+    kind === undefined ? undefined : INDEX_PARAMETERS.get(kind)?.get(callee.name.text);
+  const getType = (argument: ts.Expression) => checker.getTypeAtLocation(argument);
+  const thrown = node.arguments.findIndex(
+    (argument, position) =>
+      positions?.includes(position) === true &&
+      isEvery(getType(argument), ts.TypeFlags.ESSymbolLike),
+  );
+  if (thrown === -1 || ["includes", "indexOf", "lastIndexOf"].includes(callee.name.text)) {
+    return false;
+  }
+  const isFilled = kind === "TypedArray" && callee.name.text === "fill";
+  const symbol = ts.isIdentifier(receiver) ? getSymbol(receiver, checker) : undefined;
+  const declaration = symbol?.valueDeclaration;
+  return (
+    node.arguments.every(
+      (argument) =>
+        ts.isIdentifier(argument) ||
+        ts.isLiteralExpression(argument) ||
+        [ts.SyntaxKind.NullKeyword, ts.SyntaxKind.TrueKeyword, ts.SyntaxKind.FalseKeyword].includes(
+          argument.kind,
+        ),
+    ) &&
+    node.arguments
+      .slice(0, thrown)
+      .every((argument, position) =>
+        isFilled && position === 0
+          ? isEvery(getType(argument), ts.TypeFlags.NumberLike | ts.TypeFlags.BigIntLike)
+          : isEvery(
+              getType(argument),
+              ts.TypeFlags.NumberLike |
+                ts.TypeFlags.StringLike |
+                ts.TypeFlags.BooleanLike |
+                ts.TypeFlags.Null |
+                ts.TypeFlags.Undefined,
+            ),
+      ) &&
+    (ts.isArrayLiteralExpression(receiver) ||
+      (symbol !== undefined &&
+        declaration !== undefined &&
+        ts.isVariableDeclaration(declaration) &&
+        declaration.initializer !== undefined &&
+        (ts.isArrayLiteralExpression(declaration.initializer) ||
+          ts.isNewExpression(declaration.initializer)) &&
+        !isAssigned(symbol, node.getSourceFile(), context)))
+  );
+};
+
 // A call of a Set's method that reads a set-like object, of an array that a literal makes, in a
 // script that gives nothing a size, which throws the TypeError of GetSetRecord, as ToNumber makes
 // the size it reads NaN.

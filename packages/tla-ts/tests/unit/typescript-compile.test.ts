@@ -36377,4 +36377,46 @@ describe("BigInts", () => {
       expect((await checkModel(getSource(wrong))).failure?.message).toContain("anullb||");
     });
   });
+
+  describe("throws the TypeError of a symbol for an index that a method converts", () => {
+    const getSource = (expected: string) => `
+      const symbol = Symbol("1");
+      const list = [0, 1, 2];
+      const sample = new Int8Array([0, 1, 2]);
+      const view = new DataView(new ArrayBuffer(4));
+      let caught = "";
+      try {
+        // @ts-ignore
+        list.copyWithin(0, symbol);
+      } catch (error) {
+        caught += error instanceof TypeError ? "t" : "x";
+      }
+      try {
+        // @ts-ignore
+        sample.fill(1, 0, symbol);
+      } catch (error) {
+        caught += error instanceof TypeError ? "t" : "x";
+      }
+      try {
+        // @ts-ignore
+        view.getInt8(symbol);
+      } catch (error) {
+        caught += error instanceof TypeError ? "t" : "x";
+      }
+      // @ts-ignore
+      const little = view.getInt16(0, symbol);
+      const read = caught + "|" + little + "|" + list.join() + "|" + sample.join();
+      if (read !== "${expected}") throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("ttt|0|0,1,2|0,1,2"))).failure).toBeUndefined();
+    });
+
+    it("rejects a wrong expectation", async () => {
+      expect((await checkModel(getSource("ttt|0|0,1,2|1,1,2"))).failure?.message).toContain(
+        "ttt|0|0,1,2|0,1,2",
+      );
+    });
+  });
 });
