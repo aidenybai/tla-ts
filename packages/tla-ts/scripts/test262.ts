@@ -1514,6 +1514,22 @@ const typePushedArrays = () => {
 // test262 is JavaScript, so its functions and variables have no types. This annotates them as
 // TypeScript's "Infer type from usage" fix does, with unknown where it infers any, then loosens
 // the types of the objects it describes.
+// A union of array types that the fix infers for an empty array that the test pushes values of
+// several types to, as unknown[][] | IArguments[], whose push takes only what every member's does.
+// An array of the union of their elements takes each.
+const getArrayOfUnion = (inferred: string) => {
+  const sourceFile = ts.createSourceFile(
+    PROGRAM_PATH,
+    `type Inferred = ${inferred.replace(/^:/, "")};`,
+    ts.ScriptTarget.Latest,
+  );
+  const alias = sourceFile.statements[0];
+  const type = alias !== undefined && ts.isTypeAliasDeclaration(alias) ? alias.type : undefined;
+  return type !== undefined && ts.isUnionTypeNode(type) && type.types.every(ts.isArrayTypeNode)
+    ? `: (${type.types.map((member) => member.elementType.getText(sourceFile)).join(" | ")})[]`
+    : inferred;
+};
+
 const annotate = (text: string, path = PROGRAM_PATH) => {
   file.path = path;
   setText(text);
@@ -1550,13 +1566,15 @@ const annotate = (text: string, path = PROGRAM_PATH) => {
             .toSorted((left, right) => right.span.start - left.span.start)
             .reduce((current, change) => {
               const inferred = change.newText.replaceAll(/\bany\b/g, "unknown");
+              const isEmptyArray =
+                sourceFile !== undefined && isEmptyArrayName(sourceFile, change.span.start);
               return (
                 current.slice(0, change.span.start) +
-                (inferred === ": unknown" &&
-                sourceFile !== undefined &&
-                isEmptyArrayName(sourceFile, change.span.start)
+                (inferred === ": unknown" && isEmptyArray
                   ? ": unknown[]"
-                  : inferred) +
+                  : isEmptyArray
+                    ? getArrayOfUnion(inferred)
+                    : inferred) +
                 current.slice(change.span.start + change.span.length)
               );
             }, file.text);
@@ -1601,6 +1619,22 @@ const REDUCING_METHODS = new Set(["reduce", "reduceRight"]);
 const SEARCHING_METHODS = new Set(["includes", "indexOf", "lastIndexOf"]);
 // The promise combinators, which tla-ts runs on any value a test passes them, not only an iterable.
 const PROMISE_COMBINATORS = new Set(["all", "allSettled", "any", "race"]);
+
+// The typed arrays' methods that call a callback for each element, which tla-ts runs on what the
+// callback returns: ToBoolean of it for a test, the element type's conversion of it for map, and
+// nothing for forEach. Each needs a unit test of a callback that returns another type.
+const TYPED_ARRAY_CALLBACK_METHODS = new Set([
+  "every",
+  "filter",
+  "find",
+  "findIndex",
+  "findLast",
+  "findLastIndex",
+  "forEach",
+  "map",
+  "some",
+]);
+
 // RegExp.prototype's methods under well-known symbols that tla-ts runs as their steps where a test
 // calls them through call, on any receiver, or on a regexp with a string, a limit, or a replaceValue
 // of another type than their signatures take. Each needs a unit test of such a call.
@@ -2257,6 +2291,71 @@ const ignoreSoundErrors = () => {
       !ts.isSpreadElement(call.arguments[0])
     );
   };
+  // A call of a typed array's method that TYPED_ARRAY_CALLBACK_METHODS lists, directly or through
+  // call, whose callback is a function that the test writes and that takes each value the method
+  // passes it, an element, an index, and the array, but returns another type than the method's
+  // signature does, or declares a this.
+  const isTypedArrayCallback = (diagnostic: ts.Diagnostic) => {
+    const call = getErroredCall(diagnostic);
+    if (call === undefined || !ts.isCallExpression(call)) return false;
+    const callee = skipParentheses(call.expression);
+    const isCall = ts.isPropertyAccessExpression(callee) && callee.name.text === "call";
+    const method = isCall ? skipParentheses(callee.expression) : callee;
+    const callback = call.arguments[isCall ? 1 : 0];
+    if (callback === undefined || call.arguments.some(ts.isSpreadElement)) return false;
+    const declaration = ts.isIdentifier(callback)
+      ? checker.getSymbolAtLocation(callback)?.valueDeclaration
+      : callback;
+    const written =
+      declaration !== undefined &&
+      ts.isVariableDeclaration(declaration) &&
+      declaration.initializer !== undefined
+        ? skipParentheses(declaration.initializer)
+        : declaration;
+    if (
+      written === undefined ||
+      written.getSourceFile() !== sourceFile ||
+      !(
+        ts.isFunctionDeclaration(written) ||
+        ts.isFunctionExpression(written) ||
+        ts.isArrowFunction(written)
+      ) ||
+      written.parameters.some(
+        (parameter) => parameter.dotDotDotToken !== undefined || !ts.isIdentifier(parameter.name),
+      )
+    ) {
+      return false;
+    }
+    const parameters = written.parameters.filter(
+      (parameter) => !(ts.isIdentifier(parameter.name) && parameter.name.text === "this"),
+    );
+    return checker
+      .getSignaturesOfType(checker.getTypeAtLocation(method), ts.SignatureKind.Call)
+      .some((signature) => {
+        const declared = signature.getDeclaration();
+        const taken = signature.parameters[0];
+        return (
+          declared.getSourceFile().isDeclarationFile &&
+          ts.isMethodSignature(declared) &&
+          TYPED_ARRAY_CALLBACK_METHODS.has(declared.name.getText()) &&
+          ts.isInterfaceDeclaration(declared.parent) &&
+          /^(Big)?(Int|Uint|Float)\d+(Clamped)?Array$/.test(declared.parent.name.text) &&
+          taken !== undefined &&
+          checker
+            .getSignaturesOfType(checker.getTypeOfSymbol(taken), ts.SignatureKind.Call)
+            .every(
+              (passed) =>
+                parameters.length <= passed.parameters.length &&
+                parameters.every((parameter, position) =>
+                  checker.isTypeAssignableTo(
+                    checker.getTypeOfSymbol(passed.parameters[position]),
+                    checker.getTypeAtLocation(parameter),
+                  ),
+                ),
+            )
+        );
+      });
+  };
   // A call of an array's method that SEARCHING_METHODS lists, of any value to search for and an
   // index to search from that tla-ts converts: a primitive, an object that the test declares, or a
   // wrapper.
@@ -2622,8 +2721,9 @@ const ignoreSoundErrors = () => {
       isGlobalIterator(heritage.types[0].expression, checker)
     );
   };
-  // A call that spreads arguments into a function expression without parameters, directly or through
-  // apply. The function reads them only through its arguments object, which takes any values.
+  // A call that spreads arguments into a function expression or a superclass's constructor without
+  // parameters, directly or through apply. It reads them only through its arguments object, which
+  // takes any values.
   const isUntypedSpreadCall = (node: ts.Node) => {
     const call = ts.findAncestor(node, ts.isCallExpression);
     if (call === undefined || node.getStart() < call.arguments.pos) return false;
@@ -2639,9 +2739,15 @@ const ignoreSoundErrors = () => {
       : ts.isCallExpression(spread)
         ? spread.arguments
         : [];
+    // super calls the constructor of the class that the class extends.
+    const declaration =
+      called.kind === ts.SyntaxKind.SuperKeyword
+        ? checker.getResolvedSignature(call)?.declaration
+        : called;
     return (
-      ts.isFunctionExpression(called) &&
-      called.parameters.length === 0 &&
+      declaration !== undefined &&
+      (ts.isFunctionExpression(declaration) || ts.isConstructorDeclaration(declaration)) &&
+      declaration.parameters.length === 0 &&
       elements.some(ts.isSpreadElement)
     );
   };
@@ -2719,6 +2825,7 @@ const ignoreSoundErrors = () => {
           (diagnostic.code === 2769 && isCombinedCall(diagnostic)) ||
           isIndexCall(diagnostic) ||
           isSetLikeArrayCall(diagnostic) ||
+          isTypedArrayCallback(diagnostic) ||
           isTypedArrayNew(diagnostic))) ||
       (diagnostic.code === NO_OVERLOAD_ERROR && isIteratedEntriesCall(diagnostic)) ||
       ((CONVERTED_ARGUMENT_ERRORS.has(diagnostic.code) || diagnostic.code === 2322) &&

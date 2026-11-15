@@ -3858,6 +3858,7 @@ export const translateAsyncCall = (
   context: Context,
   frame: Frame,
   continueWith: (path: Path, value?: Expression) => Formula,
+  argumentNodes: readonly ts.Expression[] = ts.isCallExpression(node) ? node.arguments : [],
 ): Formula =>
   runAsyncBody(
     node,
@@ -3866,16 +3867,7 @@ export const translateAsyncCall = (
     context,
     frame,
     (made, rejectFrame, bindWith) =>
-      bindCall(
-        node,
-        callee,
-        ts.isCallExpression(node) ? node.arguments : [],
-        receiver,
-        made,
-        context,
-        rejectFrame,
-        bindWith,
-      ),
+      bindCall(node, callee, argumentNodes, receiver, made, context, rejectFrame, bindWith),
     continueWith,
   );
 

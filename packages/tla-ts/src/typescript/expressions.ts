@@ -522,6 +522,25 @@ export const translateIteratedSequence = (
   return Array.isArray(values) ? tuple(values) : values;
 };
 
+// What a read of a literal's hole gives: what Array.prototype holds at its index.
+export const translateHole = (
+  literal: ts.ArrayLiteralExpression,
+  position: number,
+  scope: Scope,
+  context: Context,
+) =>
+  context.heap === undefined
+    ? getUndefined(context)
+    : useJavaScript(
+        "Get",
+        [
+          getHeap(scope, literal, context),
+          translateBuiltInValue("Array.prototype", literal, context),
+          string(String(position)),
+        ],
+        context,
+      );
+
 // The elements that an array literal or a call's arguments list, where runs of plain elements become
 // tuples, and each spread array stays a sequence of its own. A hole of a literal that only an
 // iterator reads gives what Array.prototype holds at its index.
@@ -537,17 +556,7 @@ export const translateElements = (
         literal !== undefined && ts.isOmittedExpression(element) && isPrototypeHoled(literal);
       const value = !isHole
         ? translateExpression(element, scope, context)
-        : context.heap === undefined
-          ? getUndefined(context)
-          : useJavaScript(
-              "Get",
-              [
-                getHeap(scope, literal, context),
-                translateBuiltInValue("Array.prototype", literal, context),
-                string(String(position)),
-              ],
-              context,
-            );
+        : translateHole(literal, position, scope, context);
       const last = result.at(-1);
       return Array.isArray(last)
         ? [...result.slice(0, -1), [...last, value]]
