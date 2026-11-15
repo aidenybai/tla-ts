@@ -3488,7 +3488,12 @@ export const translateExpression = (
       context,
     );
   }
-  const translated = translateNode(node, scope, context, isDefined);
+  const translated = evaluateUnread(
+    node,
+    translateNode(node, scope, context, isDefined),
+    scope,
+    context,
+  );
   // The base of an optional chain that a check already read is the value that it read.
   return locate(
     isSetOrMapRead(node, context) &&
@@ -3497,6 +3502,40 @@ export const translateExpression = (
       : translated,
     getLocation(node),
   );
+};
+
+// A built-in call evaluates the arguments past the parameters that its declarations take, though
+// it reads none of them, before it runs.
+const evaluateUnread = (
+  node: ts.Expression,
+  translated: Expression,
+  scope: Scope,
+  context: Context,
+) => {
+  if (!ts.isCallExpression(node) && !ts.isNewExpression(node)) return translated;
+  const type = context.checker.getTypeAtLocation(node.expression);
+  const declarations = (
+    ts.isCallExpression(node) ? type.getCallSignatures() : type.getConstructSignatures()
+  ).map((signature) => signature.getDeclaration());
+  if (
+    declarations.length === 0 ||
+    declarations.some(
+      (declaration) =>
+        declaration === undefined ||
+        !declaration.getSourceFile().isDeclarationFile ||
+        declaration.parameters.some((parameter) => parameter.dotDotDotToken !== undefined),
+    )
+  ) {
+    return translated;
+  }
+  const taken = Math.max(...declarations.map((declaration) => declaration.parameters.length));
+  return (node.arguments ?? [])
+    .slice(taken)
+    .filter((argument) => !isInertValue(argument) && !scope.results.has(argument))
+    .reduceRight((value, argument) => {
+      const evaluated = translateExpression(argument, scope, context);
+      return ifExpression(apply("=", [evaluated, evaluated]), value, value);
+    }, translated);
 };
 
 // The methods of Set.prototype that take another set or map.

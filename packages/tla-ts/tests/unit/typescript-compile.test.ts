@@ -42259,4 +42259,30 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("a built-in call's arguments past those it reads", () => {
+    const getSource = (expected: string) => `
+      "use strict";
+      let count = 0;
+      const bump = () => ++count;
+      // @ts-ignore
+      const has = new WeakMap().has({}, count++);
+      // @ts-ignore
+      const found = new Map().has(1, bump());
+      // @ts-ignore
+      const index = [1].indexOf(1, 0, count++);
+      const seen = [has, found, index, count].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("false,false,0,3"))).failure).toBeUndefined();
+    });
+
+    it("rejects an argument left unevaluated", async () => {
+      expect((await checkModel(getSource("false,false,0,1"))).failure?.message).toContain(
+        "seen false,false,0,3",
+      );
+    });
+  });
 });

@@ -17671,6 +17671,12 @@ const findLeadingCall = (
         : undefined;
     // An array literal's method runs its elements first.
     const isListed = receiver !== undefined && ts.isArrayLiteralExpression(receiver);
+    // A collection that new makes without arguments runs no code.
+    const isMadeCollection =
+      receiver !== undefined &&
+      ts.isNewExpression(receiver) &&
+      (receiver.arguments ?? []).length === 0 &&
+      COLLECTIONS.some((collection) => collection === getBuiltIn(receiver.expression, context));
     const fromReceiver =
       receiver !== undefined &&
       (ts.isCallExpression(receiver) ||
@@ -17704,6 +17710,7 @@ const findLeadingCall = (
         isPlainCallee(getCast(node.expression.expression), context, path.scope.results));
     if (
       !isListed &&
+      !isMadeCollection &&
       !isRegExpMethod &&
       !isPlainCallee(node.expression, context, path.scope.results)
     ) {
