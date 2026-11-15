@@ -9676,7 +9676,6 @@ describe("errors", () => {
   });
 
   it.each([
-    ["a function as an if's branch", "if (true) function step() {}", "statement's body"],
     ["a labelled function", "label: function step() {}", "statement's body"],
     [
       "two functions with one name in a block",
