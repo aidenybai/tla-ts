@@ -1459,10 +1459,12 @@ const translateBuiltInCall = (
   }
   const isFromEntriesCall = isFromEntries(node, context);
   if (isCreation(node, context) || isFromEntriesCall) {
+    // Where nothing types the object, or a type any or unknown, a read of it goes through the heap.
     const contextual = context.checker.getContextualType(node);
     const isTyped =
-      contextual !== undefined &&
-      ((contextual.flags & ts.TypeFlags.Unknown) !== 0 || hasHeapType(contextual, context));
+      contextual === undefined ||
+      (contextual.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0 ||
+      hasHeapType(contextual, context);
     if (!isTyped) {
       throw new TlaTypeScriptError(
         `Give the object Object.${isFromEntriesCall ? "fromEntries" : "create"} makes an object type`,

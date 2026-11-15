@@ -43700,4 +43700,31 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("cycle|false"))).failure?.message).toContain("cycle|true");
     });
   });
+
+  describe("makes an object with Object.create whatever types its prototype and the object", () => {
+    const getSource = (expected: string) => `
+      const root: { [key: string]: unknown } = { x: 1 };
+      const proxy = new Proxy(Object.create(root), {});
+      const values: any[] = [proxy, 2];
+      const leaf: { [key: string]: unknown } = Object.create(values[0]);
+      let log = \`\${Object.create(root).x}|\${"x" in Object.create(proxy)}|\${leaf.x}\`;
+      try {
+        Object.create(values[1]);
+        log += "|made";
+      } catch (error) {
+        log += \`|\${error instanceof TypeError}\`;
+      }
+      if (log !== "${expected}") throw new Error(log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("1|true|1|true"))).failure).toBeUndefined();
+    });
+
+    it("rejects an object made from a number", async () => {
+      expect((await checkModel(getSource("1|true|1|made"))).failure?.message).toContain(
+        "1|true|1|true",
+      );
+    });
+  });
 });

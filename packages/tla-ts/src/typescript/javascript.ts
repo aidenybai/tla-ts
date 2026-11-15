@@ -7143,10 +7143,10 @@ ApplyAll(object, keys, descriptors) ==
        IN IF defined.isDone THEN ApplyAll(defined.object, Tail(keys), Tail(descriptors)) ELSE defined
 
 \\* Whether a value is an object, where a function throws a TypeError if it isn't. An object that
-\\* isn't in the heap, such as an array, stops the run.
+\\* isn't in the heap, such as an array or a function, stops the run.
 IsObjectArgument(value) ==
   CASE IsObject(value) -> TRUE
-    [] value # Null /\\ TypeOf(value) = "object" ->
+    [] value # Null /\\ TypeOf(value) \\in {"object", "function"} ->
          Assert(FALSE, "tla-ts can't use " \\o ToString(value) \\o " as an object here")
     [] OTHER -> FALSE
 

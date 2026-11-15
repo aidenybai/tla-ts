@@ -2222,7 +2222,8 @@ export const isDescriptionOfAll = (node: ts.Node, context: Context): boolean =>
     getDescribedPrimitive(node.arguments[0], context) !== undefined) &&
   !isProxyOperation(node, context);
 
-// Object.create, with a prototype that tla-ts can tell is an object or null.
+// Object.create, with a prototype that tla-ts can tell is an object or null, or where a script has
+// objects, any prototype, which Create tells as it runs.
 export const isCreation = (node: ts.Node, context: Context) => {
   if (
     !isMethodCall(node) ||
@@ -2239,7 +2240,8 @@ export const isCreation = (node: ts.Node, context: Context) => {
   return (
     (prototype.kind === ts.SyntaxKind.NullKeyword ||
       getKind(prototype, context) === "object" ||
-      isBuiltInObject(prototype, context)) &&
+      isBuiltInObject(prototype, context) ||
+      context.heap !== undefined) &&
     (properties === undefined || getKind(properties, context) === "object")
   );
 };
