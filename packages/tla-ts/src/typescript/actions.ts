@@ -14675,7 +14675,7 @@ const translateIterations = (
       incrementor === undefined
         ? repeat(current)
         : allocate(incrementor, current, context, (inner) =>
-            translateExpressionStatement(incrementor, inner, context, frame, repeat),
+            translateExpressionStatement(incrementor, inner, context, bodyFrame, repeat),
           );
     const bodyFrame: Frame = {
       ...frame,

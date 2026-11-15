@@ -36277,4 +36277,28 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("throws what a for loop's incrementor throws inside the loop", () => {
+    const getSource = (expected: string) => `
+      let reached = "";
+      let caught = "";
+      try {
+        for (; ; (function () { throw "update"; })()) {
+          reached += "b";
+        }
+      } catch (error) {
+        caught = error === "update" ? "u" : "x";
+      }
+      const result = \`\${reached}\${caught}\`;
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("bu"))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation", async () => {
+      expect((await checkModel(getSource("u"))).failure?.message).toContain("bu");
+    });
+  });
 });
