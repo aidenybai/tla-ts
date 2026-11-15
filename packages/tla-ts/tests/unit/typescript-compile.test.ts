@@ -17943,11 +17943,19 @@ describe("errors", () => {
       if (caught !== error || error === other) throw new Error("identity");
     `);
     expect(result.failure).toBeUndefined();
-    const stopped = await checkModel(`
+    // The heap holds the sets that a script compares, which keep their identity.
+    const getCompared = (operator: string) => `
       const box = { seen: 0 };
       const first = new Set<number>();
       const second = new Set<number>();
-      if (first === second) throw new Error("distinct");
+      if (first ${operator} second) throw new Error("distinct");
+    `;
+    expect((await checkModel(getCompared("==="))).failure).toBeUndefined();
+    expect((await checkModel(getCompared("!=="))).failure?.message).toContain("distinct");
+    const stopped = await checkModel(`
+      const box = { seen: 0 };
+      const sets = [new Set<number>(), new Set<number>()].map((set) => set);
+      if (sets[0] === sets[1]) throw new Error("distinct");
     `);
     expect(stopped.failure?.message).toContain(
       "tla-ts can't tell whether two equal objects are the same object",
