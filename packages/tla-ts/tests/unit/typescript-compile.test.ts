@@ -44752,4 +44752,142 @@ describe("BigInts", () => {
       ).toThrow("tla-ts can't use step as a value here");
     });
   });
+
+  describe("searches an array whose elements are of another kind than its type", () => {
+    const getSource = (expected: string) => `
+      const marker = { toString() { return true; } };
+      const mixed = new Array(false, true, marker as any, false, "true" as any, 0 as any, null);
+      const values: boolean[] = mixed;
+      const log = [
+        values.lastIndexOf(true),
+        values.lastIndexOf(false),
+        values.indexOf(true),
+        values.includes(false),
+        values.indexOf(null as any),
+      ].join(",");
+      if (log !== "${expected}") throw new Error(log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("1,3,1,true,6"))).failure).toBeUndefined();
+    });
+
+    it("rejects an object that equals the boolean its toString gives", async () => {
+      expect((await checkModel(getSource("2,3,1,true,6"))).failure?.message).toContain(
+        "1,3,1,true,6",
+      );
+    });
+  });
+
+  describe("converts an object of type any that Number or a unary operator takes", () => {
+    const getSource = (expected: string) => `
+      const effects: string[] = [];
+      const getValues = (): any[] => [
+        { valueOf() { effects.push("valueOf"); return 4; } },
+        { toString() { effects.push("toString"); return "7"; }, valueOf: false },
+        "9",
+      ];
+      const values = getValues();
+      const log = [
+        Number(values[0]),
+        +values[1],
+        -values[0],
+        ~values[1],
+        Number(values[2]),
+        effects.join("/"),
+      ].join(",");
+      if (log !== "${expected}") throw new Error(log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("4,7,-4,-8,9,valueOf/toString/valueOf/toString"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects a conversion that calls toString before valueOf", async () => {
+      expect(
+        (await checkModel(getSource("4,7,-4,-8,9,toString/valueOf/valueOf/toString"))).failure
+          ?.message,
+      ).toContain("4,7,-4,-8,9,valueOf/toString/valueOf/toString");
+    });
+  });
+
+  describe("converts the index and values that an Atomics function takes in turn", () => {
+    const getSource = (expected: string) => `
+      const effects: string[] = [];
+      const view = new Int32Array(new SharedArrayBuffer(16));
+      const index: any = { valueOf() { effects.push("index"); return 1; } };
+      const value: any = { toString() { effects.push("value"); return "5"; }, valueOf: false };
+      const old = Atomics.add(view, index, value);
+      let caught = "";
+      try {
+        // @ts-ignore
+        Atomics.store(view, { valueOf() { effects.push("far"); return 4; } }, { valueOf() { effects.push("never"); return 1; } });
+      } catch (error) {
+        caught = (error as Error).constructor.name;
+      }
+      const notified = Atomics.notify(view, index, value);
+      const log = [old, view[1], Atomics.load(view, index), notified, effects.join("/"), caught].join(",");
+      if (log !== "${expected}") throw new Error(log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("0,5,5,0,index/value/far/index/value/index,RangeError")))
+          .failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects a value that converts before the index's RangeError", async () => {
+      expect(
+        (await checkModel(getSource("0,5,5,0,index/value/far/never/index/value/index,RangeError")))
+          .failure?.message,
+      ).toContain("0,5,5,0,index/value/far/index/value/index,RangeError");
+    });
+  });
+
+  describe("converts the begin and end of subarray before it reads a detached buffer", () => {
+    const getSource = (expected: string) => `
+      const effects: string[] = [];
+      const begin = { valueOf() { effects.push("begin"); return 1; } };
+      const end = { valueOf() { effects.push("end"); return 3; } };
+      const sample = new Int8Array([1, 2, 3, 4]);
+      // @ts-ignore
+      const part = sample.subarray(begin, end);
+      const length = part.length;
+      const first = part[0];
+      sample.buffer.transfer();
+      let caught = "";
+      try {
+        // @ts-ignore
+        sample.subarray(begin, end);
+      } catch (error) {
+        caught = (error as Error).constructor.name;
+      }
+      const resizable = new ArrayBuffer(4, { maxByteLength: 8 });
+      const fixed = new Int8Array(resizable, 0, 4);
+      let shrunk = "";
+      try {
+        // @ts-ignore
+        fixed.subarray({ valueOf() { resizable.resize(2); return 0; } });
+      } catch (error) {
+        shrunk = (error as Error).constructor.name;
+      }
+      const log = [length, first, effects.join("/"), caught, shrunk].join(",");
+      if (log !== "${expected}") throw new Error(log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("2,2,begin/end/begin/end,TypeError,RangeError"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects a TypeError before the conversions", async () => {
+      expect(
+        (await checkModel(getSource("2,2,begin/end,TypeError,RangeError"))).failure?.message,
+      ).toContain("2,2,begin/end/begin/end,TypeError,RangeError");
+    });
+  });
 });

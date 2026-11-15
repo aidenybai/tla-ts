@@ -127,7 +127,7 @@ const hasFlags = (node: ts.Expression, flags: ts.TypeFlags, context: Context) =>
 // A primitive operand, which ToPrimitive gives back.
 // A value of type any, which the conversion tells apart as it runs: ToPrimitive converts an object
 // that the heap holds, and gives back a primitive. Any other value stops the check.
-const isAnyOperand = (node: ts.Expression, context: Context) =>
+export const isAnyOperand = (node: ts.Expression, context: Context) =>
   hasFlags(node, ts.TypeFlags.Any, context);
 
 const PRIMITIVE_FLAGS =
@@ -293,7 +293,7 @@ export const getConversion = (node: ts.Node, context: Context): Conversion | und
       declarations.every((declaration) => declaration.getSourceFile().isDeclarationFile);
     if (!isGlobal || argument === undefined || ts.isSpreadElement(argument)) return undefined;
     if (node.expression.text === "Number") {
-      return make([argument], "number", (primitives) => toNumber(primitives[0]));
+      return make([argument], "number", (primitives) => toNumber(primitives[0]), false, true);
     }
     if (node.expression.text === "String") {
       const conversion = make([argument], "string", (primitives) =>
@@ -305,18 +305,32 @@ export const getConversion = (node: ts.Node, context: Context): Conversion | und
   }
   if (ts.isPrefixUnaryExpression(node)) {
     if (node.operator === ts.SyntaxKind.PlusToken) {
-      return make([node.operand], "number", (primitives) => toNumber(primitives[0]));
+      return make([node.operand], "number", (primitives) => toNumber(primitives[0]), false, true);
     }
     if (node.operator === ts.SyntaxKind.MinusToken) {
-      return make([node.operand], "number", (primitives) =>
-        plain(
-          useJavaScript("Negate", [useJavaScript("ToNumber", [primitives[0]], context)], context),
-        ),
+      return make(
+        [node.operand],
+        "number",
+        (primitives) =>
+          plain(
+            useJavaScript("Negate", [useJavaScript("ToNumber", [primitives[0]], context)], context),
+          ),
+        false,
+        true,
       );
     }
     if (node.operator === ts.SyntaxKind.TildeToken) {
-      return make([node.operand], "number", (primitives) =>
-        useJavaScript("BitwiseNot", [useJavaScript("ToNumber", [primitives[0]], context)], context),
+      return make(
+        [node.operand],
+        "number",
+        (primitives) =>
+          useJavaScript(
+            "BitwiseNot",
+            [useJavaScript("ToNumber", [primitives[0]], context)],
+            context,
+          ),
+        false,
+        true,
       );
     }
     return undefined;
