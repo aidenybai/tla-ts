@@ -4416,6 +4416,44 @@ const HELPERS = {
       return subset;
     }),
   bits: getBits,
+  // When the images are every permutation of each orbit, those whose sums are smallest map the atoms
+  // of each orbit, sorted by sum, onto the orbit in order, in any order of the atoms that tie. Writes
+  // the indexes in A of those other than the identity to tied and returns how many there are.
+  findSmallestImages: (sums: Int32Array, orbits: Orbits, tied: Int32Array) => {
+    const order = orbits.order;
+    const starts = orbits.starts;
+    let isTied = true;
+    for (let orbit = 0; orbit + 1 < starts.length; orbit++) {
+      for (let index = starts[orbit]; index < starts[orbit + 1]; index++) {
+        const atom = orbits.atoms[index];
+        let position = index;
+        for (; position > starts[orbit]; position--) {
+          const previous = order[position - 1];
+          if (sums[previous] < sums[atom] || (sums[previous] === sums[atom] && previous < atom)) {
+            break;
+          }
+          order[position] = previous;
+        }
+        order[position] = atom;
+        if (sums[atom] !== sums[orbits.atoms[starts[orbit]]]) isTied = false;
+      }
+    }
+    // When each orbit's atoms all tie, every image does.
+    if (isTied) {
+      for (let image = 0; image + 1 < orbits.images.length; image++) tied[image] = image;
+      orbits.first = 0;
+      return orbits.images.length - 1;
+    }
+    let ties = 0;
+    orbits.first = -1;
+    do {
+      const image = orbits.images[getArrangementRank(order, starts)];
+      if (image === 0) orbits.first = 0;
+      else tied[ties++] = image - 1;
+    } while (permuteTies(sums, order, starts));
+    if (orbits.first === -1) orbits.first = tied[0] + 1;
+    return ties;
+  },
   compareSignatures: (sums: Int32Array, left: Int32Array, right: Int32Array) => {
     for (let index = 0; index < left.length; index++) {
       const difference = sums[left[index]] - sums[right[index]];
@@ -5456,10 +5494,15 @@ const compileSpec = (
       ${signatures.join(" ")}
       let F = 0;
       let ties = 0;
-      for (let G = 1; G < Q.length; G++) {
-        const c = H.compareSignatures(Z, Q[G], Q[F]);
-        if (c < 0) { F = G; ties = 0; }
-        if (c <= 0) T[ties++] = G - 1;
+      if (M) {
+        ties = H.findSmallestImages(Z, M, T);
+        F = M.first;
+      } else {
+        for (let G = 1; G < Q.length; G++) {
+          const c = H.compareSignatures(Z, Q[G], Q[F]);
+          if (c < 0) { F = G; ties = 0; }
+          if (c <= 0) T[ties++] = G - 1;
+        }
       }
       if (F === 0) { ${keyWriters.join(" ")} }
       let m = n - W.start;
@@ -5560,7 +5603,7 @@ const compileSpec = (
     moved,
     ...atoms.map((table) => moved.map((atom) => table.findIndex((image) => image === atom))),
   ];
-  return new Function("K", "S", "B", "R", "D", "L", "A", "Q", "Z", "H", source)(
+  return new Function("K", "S", "B", "R", "D", "L", "A", "Q", "Z", "M", "H", source)(
     program.constants,
     program.constantSets,
     program.bitmaps,
@@ -5570,8 +5613,114 @@ const compileSpec = (
     atoms,
     preimages,
     new Int32Array(program.plains.values.length),
+    getFullOrbits(preimages),
     HELPERS,
   );
+};
+
+interface Orbits {
+  // The moved atoms, each orbit's together in the order of the moved atoms.
+  atoms: Int32Array;
+  starts: Int32Array;
+  order: Int32Array;
+  // The index of the image with each rank.
+  images: Int32Array;
+  // After findSmallestImages, the index of an image whose sums are smallest, 0 when the identity's
+  // are.
+  first: number;
+}
+
+// Ranks an arrangement of each orbit's atoms by its Lehmer code, so that every permutation of the
+// orbits has its own rank below the product of their factorials.
+const getArrangementRank = (arrangement: Int32Array, starts: Int32Array) => {
+  let rank = 0;
+  for (let orbit = 0; orbit + 1 < starts.length; orbit++) {
+    const end = starts[orbit + 1];
+    for (let index = starts[orbit]; index < end; index++) {
+      let smaller = 0;
+      for (let later = index + 1; later < end; later++) {
+        if (arrangement[later] < arrangement[index]) smaller++;
+      }
+      rank = rank * (end - index) + smaller;
+    }
+  }
+  return rank;
+};
+
+const reverse = (values: Int32Array, start: number, end: number) => {
+  for (let left = start, right = end - 1; left < right; left++, right--) {
+    const value = values[left];
+    values[left] = values[right];
+    values[right] = value;
+  }
+};
+
+// Steps the atoms of order from start to end to their next arrangement in lexicographic order, or
+// back to the first after the last.
+const permute = (order: Int32Array, start: number, end: number) => {
+  let pivot = end - 2;
+  while (pivot >= start && order[pivot] > order[pivot + 1]) pivot--;
+  if (pivot < start) {
+    reverse(order, start, end);
+    return false;
+  }
+  let successor = end - 1;
+  while (order[successor] < order[pivot]) successor--;
+  const atom = order[pivot];
+  order[pivot] = order[successor];
+  order[successor] = atom;
+  reverse(order, pivot + 1, end);
+  return true;
+};
+
+// Steps each run of atoms that tie in sum, the last fastest, and returns false once all of their
+// arrangements were visited.
+const permuteTies = (sums: Int32Array, order: Int32Array, starts: Int32Array) => {
+  for (let orbit = starts.length - 2; orbit >= 0; orbit--) {
+    for (let end = starts[orbit + 1]; end > starts[orbit];) {
+      let start = end - 1;
+      while (start > starts[orbit] && sums[order[start - 1]] === sums[order[end - 1]]) start--;
+      if (end - start > 1 && permute(order, start, end)) return true;
+      end = start;
+    }
+  }
+  return false;
+};
+
+// Comparing the sums under each of fewer images costs less than sorting the orbits.
+const MINIMUM_SORTED_IMAGES = 24;
+
+// The orbits of the moved atoms, when the images are every permutation of each orbit.
+const getFullOrbits = (preimages: Int32Array[]): Orbits | undefined => {
+  if (preimages.length < MINIMUM_SORTED_IMAGES) return undefined;
+  const moved = preimages[0];
+  const roots = Int32Array.from({ length: Math.max(0, ...moved) + 1 }, (_, atom) => atom);
+  const findRoot = (atom: number): number =>
+    roots[atom] === atom ? atom : (roots[atom] = findRoot(roots[atom]));
+  preimages.forEach((preimage) =>
+    preimage.forEach((atom, position) => {
+      roots[findRoot(atom)] = findRoot(moved[position]);
+    }),
+  );
+  const orbits = [...Map.groupBy(moved.keys(), (position) => findRoot(moved[position])).values()];
+  const positions = orbits.flat();
+  const starts = new Int32Array(orbits.length + 1);
+  orbits.forEach((orbit, index) => {
+    starts[index + 1] = starts[index] + orbit.length;
+  });
+  const count = orbits.reduce(
+    (product, orbit) => orbit.reduce((factorial, _, index) => factorial * (index + 1), product),
+    1,
+  );
+  if (count !== preimages.length) return undefined;
+  const images = new Int32Array(count).fill(-1);
+  preimages.forEach((preimage, image) => {
+    const arrangement = Int32Array.from(positions, (position) => preimage[position]);
+    images[getArrangementRank(arrangement, starts)] = image;
+  });
+  if (images.includes(-1)) return undefined;
+  const atoms = Int32Array.from(positions, (position) => moved[position]);
+  return { atoms, starts, order: new Int32Array(atoms.length), images, first: 0 };
 };
 
 interface StateTable {
