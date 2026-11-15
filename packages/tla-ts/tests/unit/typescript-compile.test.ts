@@ -44227,4 +44227,27 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("stops at an array pattern of a value of type any that may be a map off the heap", () => {
+    const getSource = (expected: string) => `
+      const first = (value: any) => {
+        const [item] = value;
+        return typeof item;
+      };
+      const log = first(new Map([[1, "a"]]));
+      if (log !== "${expected}") throw new Error(log);
+    `;
+
+    it("stops rather than read the map as an array", async () => {
+      await expect(checkModel(getSource("object"))).rejects.toThrow(
+        "tla-ts can't destructure this value through its iterator",
+      );
+    });
+
+    it("rejects the map's value as its first entry", async () => {
+      await expect(checkModel(getSource("string"))).rejects.toThrow(
+        "tla-ts can't destructure this value through its iterator",
+      );
+    });
+  });
 });

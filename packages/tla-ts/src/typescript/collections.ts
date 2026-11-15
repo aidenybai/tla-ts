@@ -3089,11 +3089,14 @@ export const translateStringIteration = (
   node: ts.Node,
   context: Context,
   // A value of type any or unknown outside the heap may be a set or a map, whose elements a
-  // sequence's indices don't hold.
+  // sequence's indices don't hold, and a map may be the same TLA+ value as an array.
   getOther = (other: Expression) =>
     heap === undefined && (type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0
       ? ifExpression(
-          useJavaScript("IsSequenceValue", [other], context),
+          apply("/\\", [
+            useJavaScript("IsSequenceValue", [other], context),
+            boolean(context.isEveryMapHeld),
+          ]),
           other,
           apply("Assert", [
             boolean(false),
