@@ -5194,6 +5194,7 @@ const OBJECT_CHANGES = new Map([
   ["freeze", { operator: "Freeze", arity: 1, objects: [0] }],
   ["seal", { operator: "Seal", arity: 1, objects: [0] }],
   ["preventExtensions", { operator: "PreventExtensions", arity: 1, objects: [0] }],
+  ["deleteProperty", { operator: "DeleteProperty", arity: 2, objects: [0] }],
   ["setPrototypeOf", { operator: "SetPrototypeOf", arity: 2, objects: [0] }],
   ["assign", { operator: "Assign", arity: 1, objects: [0] }],
   ["create", { operator: "CreateChange", arity: 1, objects: [] }],
@@ -5211,11 +5212,13 @@ const FALLIBLE_CHANGES = new Set([
 const isConstruct = (node: MethodCall) =>
   node.expression.expression.getText() === "Reflect" && node.expression.name.text === "construct";
 
-// Reflect.defineProperty and Reflect.setPrototypeOf, which give whether they made the change rather
-// than throwing where they can't.
+// Reflect.defineProperty, deleteProperty, preventExtensions, and setPrototypeOf, which give whether
+// they made the change rather than throwing where they can't.
 export const isReflectChange = (node: MethodCall) =>
   node.expression.expression.getText() === "Reflect" &&
-  ["defineProperty", "setPrototypeOf"].includes(node.expression.name.text);
+  ["defineProperty", "deleteProperty", "preventExtensions", "setPrototypeOf"].includes(
+    node.expression.name.text,
+  );
 
 // Reflect.set, which gives whether it set the key rather than throwing where it can't.
 export const isReflectSet = (node: MethodCall) =>
@@ -5457,7 +5460,7 @@ export const translateObjectChange = (node: MethodCall, scope: Scope, context: C
     throw new TlaTypeScriptError(`Unsupported statement: ${node.getText()}`, node);
   }
   const values = used.map((argument, position) =>
-    method === "defineProperty" && position === 1
+    (method === "defineProperty" || method === "deleteProperty") && position === 1
       ? translatePropertyKey(argument, scope, context)
       : translateObjectValue(argument, scope, context),
   );
@@ -5471,7 +5474,7 @@ export const translateObjectChange = (node: MethodCall, scope: Scope, context: C
       ],
       context,
     ),
-    isFallible: FALLIBLE_CHANGES.has(method),
+    isFallible: FALLIBLE_CHANGES.has(method) || isReflectChange(node),
     values,
   };
 };

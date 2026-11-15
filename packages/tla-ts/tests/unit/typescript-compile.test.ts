@@ -11848,6 +11848,45 @@ describe("errors", () => {
     });
   });
 
+  describe("gives whether Reflect.deleteProperty and Reflect.preventExtensions made the change", () => {
+    const getSource = (expected: string) => `
+      const object: { [key: string]: unknown } = { kept: 1, frozen: 2 };
+      Object.defineProperty(object, "fixed", { value: 3 });
+      const tracking = new Uint8Array(new ArrayBuffer(4, { maxByteLength: 8 }));
+      const results = [
+        Reflect.deleteProperty(object, "kept"),
+        Reflect.deleteProperty(object, "fixed"),
+        Reflect.deleteProperty(object, "missing"),
+        Reflect.preventExtensions(object),
+        Reflect.preventExtensions(object),
+        Reflect.deleteProperty(Object.freeze(object), "frozen"),
+        Reflect.preventExtensions(tracking),
+        Reflect.deleteProperty(tracking, "0"),
+        "kept" in object,
+        Object.isExtensible(object),
+        Object.isExtensible(tracking),
+      ];
+      if (results.join() !== "${expected}") throw new Error("changed");
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (
+          await checkModel(
+            getSource("true,false,true,true,true,false,false,false,false,false,true"),
+          )
+        ).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects the expectation true,false,true,true,true,false,true,false,false,false,true", async () => {
+      expect(
+        (await checkModel(getSource("true,false,true,true,true,false,true,false,false,false,true")))
+          .failure?.message,
+      ).toContain("changed");
+    });
+  });
+
   describe("throws the TypeError of Reflect.setPrototypeOf with a primitive prototype", () => {
     const getSource = (expected: string) => `
       const thrown = (run: () => unknown) => {

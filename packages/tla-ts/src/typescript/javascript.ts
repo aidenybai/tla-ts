@@ -5362,6 +5362,15 @@ ReflectDefineProperty(heap, ref, key, descriptor) ==
   THEN ReflectDefineConverted(heap, ref, key, ToDescriptor(heap, descriptor))
   ELSE [heap |-> heap, isDone |-> FALSE, isRangeError |-> FALSE, value |-> FALSE]
 
+\\* Reflect.deleteProperty, which gives whether it deleted the key, and throws a TypeError where the
+\\* target isn't an object.
+ReflectDeleteProperty(heap, ref, key) ==
+  IF IsObjectArgument(ref)
+  THEN LET isDeleted == CanDelete(heap, ref, key)
+       IN [heap |-> IF isDeleted THEN Delete(heap, ref, key) ELSE heap, isDone |-> TRUE,
+           isRangeError |-> FALSE, value |-> isDeleted]
+  ELSE [heap |-> heap, isDone |-> FALSE, isRangeError |-> FALSE, value |-> FALSE]
+
 \\* The setter that Reflect.set calls, where a typed array's element calls none.
 ReflectSetter(heap, ref, key) ==
   IF IsTypedArray(heap, ref) /\\ TypedKey(key) # "property"
@@ -5608,6 +5617,17 @@ PreventExtensions(heap, ref) ==
   IF RestrictsTypedArray(heap, ref, FALSE)
   THEN Update(heap, ref, [OrdinaryOf(heap, ref) EXCEPT !.extensible = FALSE])
   ELSE heap
+
+\\* Reflect.preventExtensions, which gives FALSE for a typed array whose length may change, rather than
+\\* throwing, and throws a TypeError where the target isn't an object.
+ReflectPreventExtensions(heap, ref) ==
+  CASE ~IsObjectArgument(ref) ->
+         [heap |-> heap, isDone |-> FALSE, isRangeError |-> FALSE, value |-> FALSE]
+    [] IsTypedArray(heap, ref) /\\ ~IsFixedLength(heap, ref) ->
+         [heap |-> heap, isDone |-> TRUE, isRangeError |-> FALSE, value |-> FALSE]
+    [] OTHER ->
+         [heap |-> PreventExtensions(heap, ref), isDone |-> TRUE, isRangeError |-> FALSE,
+          value |-> TRUE]
 
 Seal(heap, ref) == Restrict(heap, ref, FALSE)
 

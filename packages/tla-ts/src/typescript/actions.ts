@@ -3448,8 +3448,8 @@ export const translateCallStatement = (
   if (isObjectChange(expression, context) && heapSymbol !== undefined) {
     const translated = translateObjectChange(expression, path.scope, context);
     const name = context.names.getFresh(translated.isFallible ? "change" : "heap");
-    // Each change gives the object it changes, but Reflect.construct, and Reflect.defineProperty and
-    // Reflect.setPrototypeOf, which give whether they made the change.
+    // Each change gives the object it changes, but Reflect.construct, and Reflect's changes, which give
+    // whether they made the change.
     const target = expression.arguments.at(0);
     const value =
       expression.expression.name.text === "construct" || target === undefined
