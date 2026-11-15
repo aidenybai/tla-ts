@@ -33720,6 +33720,100 @@ describe("regular expressions", () => {
     );
   });
 
+  it("runs Symbol.replace as its steps, with a template or a function, on what exec returns", async () => {
+    const getSource = (expected: string) => `
+      const r = /./;
+      // @ts-ignore
+      r.exec = function () {
+        return {
+          length: 3,
+          0: "bc",
+          1: "x",
+          2: undefined,
+          index: 1,
+          groups: { foo: { toString: () => "F" } },
+        };
+      };
+      const first = r[Symbol.replace]("abcd", "[$1|$2|$&|$\`|$'|$<foo>|$<no>|$0|$$]");
+      const g = /b(.)/g;
+      const found = g[Symbol.replace]("abcbd", function () {
+        return String(arguments.length) + arguments[1] + arguments[2];
+      });
+      const plain = /x/[Symbol.replace]("axbx", "$&$&");
+      const seen = first + "/" + found + "/" + plain;
+      if (seen !== "${expected}") throw new Error(seen);
+    `;
+    expect(
+      (await checkModel(getSource("a[x||bc|a|d|F||$0|$]d/a4c14d3/axxbx"))).failure,
+    ).toBeUndefined();
+    expect(
+      (await checkModel(getSource("a[x||bc|a|d|F||$0|$]d/a4c14d4/axxbx"))).failure?.message,
+    ).toContain("a4c14d3");
+  });
+
+  it("throws Symbol.replace's TypeErrors where exec's groups are null or its index is a symbol", async () => {
+    const getSource = (expected: string) => `
+      const seen: string[] = [];
+      const r = /./;
+      // @ts-ignore
+      r.exec = function () {
+        return { length: 1, 0: "a", index: 0, groups: null };
+      };
+      try {
+        r[Symbol.replace]("ab", "$<x>");
+      } catch (error) {
+        seen.push(error instanceof TypeError ? "groups" : "other");
+      }
+      const s = /./;
+      // @ts-ignore
+      s.exec = function () {
+        return { length: 1, 0: "a", index: Symbol() };
+      };
+      try {
+        s[Symbol.replace]("ab", "c");
+      } catch (error) {
+        seen.push(error instanceof TypeError ? "index" : "other");
+      }
+      const t = /./;
+      // @ts-ignore
+      t.exec = function () {
+        return { length: 1, 0: "a", index: 0, groups: undefined };
+      };
+      seen.push(t[Symbol.replace]("ab", "$<x>$1"));
+      if (seen.join(",") !== "${expected}") throw new Error(seen.join(","));
+    `;
+    expect((await checkModel(getSource("groups,index,$<x>$1b"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("groups,index,$<x>b"))).failure?.message).toContain(
+      "groups,index,$<x>$1b",
+    );
+  });
+
+  it("converts Symbol.replace's replaceValue of another type, and what its function returns, with ToString", async () => {
+    const getSource = (expected: string) => `
+      const seen: string[] = [];
+      const value = {
+        toString: function () {
+          return "T";
+        },
+      };
+      // @ts-ignore
+      seen.push(/b/[Symbol.replace]("abc", value));
+      // @ts-ignore
+      seen.push(/b/[Symbol.replace]("abc"));
+      // @ts-ignore
+      seen.push(/b/g[Symbol.replace]("abcb", function () {
+        return value;
+      }));
+      // @ts-ignore
+      seen.push(RegExp.prototype[Symbol.replace].call(/c/, "abc", 7));
+      if (seen.join("|") !== "${expected}") throw new Error(seen.join("|"));
+    `;
+    expect((await checkModel(getSource("aTc|aundefinedc|aTcT|ab7"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("aTc|aundefinedc|aTcT|ab8"))).failure?.message).toContain(
+      "aTc|aundefinedc|aTcT|ab7",
+    );
+  });
+
   it("runs Symbol.match on what an exec that a script writes returns, of another type than an exec array", async () => {
     const getSource = (expected: string) => `
       const r = /b/;

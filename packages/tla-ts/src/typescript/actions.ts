@@ -4906,10 +4906,11 @@ export const allocateArguments = (
 };
 
 // Runs a function's body with the values that a call passes it, for a call that JavaScript makes,
-// such as a promise's reaction or a proxy's trap.
+// such as a promise's reaction or a proxy's trap, or with a sequence of them, whose length the model
+// may only know as it runs.
 export const inlineValues = (
   callee: FunctionNode,
-  values: Expression[],
+  values: Expression[] | Expression,
   receiver: Receiver | undefined,
   path: Path,
   context: Context,
@@ -4919,11 +4920,22 @@ export const inlineValues = (
   if (frame.inlining.has(callee)) {
     throw new TlaTypeScriptError("Functions that change state can't call themselves", callee);
   }
+  const parameters = getParameters(callee);
   const bound = allocateArguments(
     callee,
-    tuple(values),
+    Array.isArray(values) ? tuple(values) : values,
     callee,
-    bindValues(getParameters(callee), values, path.scope, context),
+    Array.isArray(values)
+      ? bindValues(parameters, values, path.scope, context)
+      : bindValues(
+          parameters,
+          parameters.map((_, position) =>
+            useJavaScript("ArgumentAt", [values, number(position + 1)], context),
+          ),
+          path.scope,
+          context,
+          apply("SubSeq", [values, number(parameters.length), apply("Len", [values])]),
+        ),
     context,
   );
   const back = (after: Path, result?: Expression) =>
