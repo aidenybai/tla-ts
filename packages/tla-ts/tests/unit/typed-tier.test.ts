@@ -99,6 +99,7 @@ describe("typed tier matches TLC", () => {
     ["GuessedFunctions", 29],
     ["ValueOverride", 9],
     ["NestedFolds", 233],
+    ["DomainFunctions", 41],
   ])("counts each successor TLC generates in %s", async (name, generatedStates) => {
     const results = await Promise.all([checkFixture(name, false), checkFixture(name, true)]);
     expect(results.map((result) => result.generatedStates)).toEqual([

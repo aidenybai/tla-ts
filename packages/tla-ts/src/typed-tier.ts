@@ -1675,14 +1675,28 @@ const compileBound = (
         `for (const ${name} of H.${isMask(base.type, program.plains) ? "subsetMasks" : "subsets"}(${base.emit()}))`,
     };
   }
-  if (
+  const isInterval =
     setExpression.kind === "FunctionSet" &&
     setExpression.domain.kind === "Apply" &&
-    isBuiltin(program, frame, setExpression.domain.operator, "..")
+    isBuiltin(program, frame, setExpression.domain.operator, "..");
+  // A domain that isn't constant, such as DOMAIN s, has sequences for functions only where it's an
+  // interval 1..n.
+  if (
+    setExpression.kind === "FunctionSet" &&
+    (isInterval || !isConstantExpression(program, setExpression.domain, frame.scope))
   ) {
-    const [low, high] = setExpression.domain.args.map((arg) =>
-      expectInt(compileValue(program, arg, frame)),
-    );
+    const domain = setExpression.domain;
+    const getLimits = (): (() => string) => {
+      if (isInterval && domain.kind === "Apply") {
+        const [low, high] = domain.args.map((arg) => expectInt(compileValue(program, arg, frame)));
+        return () => `${low.emit()}, ${high.emit()}`;
+      }
+      const set = compileValue(program, domain, frame);
+      unify(getSetElement(set), createInt());
+      return () =>
+        `1, H.intervalEnd(${isMask(set.type, program.plains) ? `H.bits(${set.emit()})` : set.emit()})`;
+    };
+    const limits = getLimits();
     const range = compileValue(program, setExpression.range, frame);
     const element = getSetElement(range);
     const type: SeqType = { kind: "Seq", element };
@@ -1692,7 +1706,7 @@ const compileBound = (
         const elements = isMask(range.type, program.plains)
           ? `H.bits(${range.emit()})`
           : range.emit();
-        const sequences = `H.sequences(${elements}, ${low.emit()}, ${high.emit()})`;
+        const sequences = `H.sequences(${elements}, ${limits()})`;
         const items = getName(program, "s");
         return `for (const ${name} of ${getMap(type) ? `Array.from(${sequences}, (${items}) => ${writeSequence(program, type, items)})` : sequences})`;
       },
@@ -4351,6 +4365,8 @@ const HELPERS = {
   },
 
   // TLC enumerates [low..high -> S] varying the last argument fastest.
+  intervalEnd: (elements: Plain[]) =>
+    elements.every((element, index) => element === index + 1) ? elements.length : deopt(),
   sequences: (elements: Plain[], low: number, high: number) => {
     const length = Math.max(0, high - low + 1);
     if (length > 0 && low !== 1) deopt();
