@@ -36169,4 +36169,45 @@ describe("BigInts", () => {
       expect((await checkModel(getSource(wrong))).failure?.message).toContain("2|-1");
     });
   });
+
+  describe("converts a primitive index and littleEndian of a DataView's method", () => {
+    const getSource = (expected: string) => `
+      const view = new DataView(new ArrayBuffer(4));
+      // @ts-ignore
+      view.setInt16("0", 258, null);
+      // @ts-ignore
+      view.setUint8(true, 7);
+      const read: unknown[] = [
+        // @ts-ignore
+        view.getInt16(false, null),
+        // @ts-ignore
+        view.getInt16(null, "yes"),
+        // @ts-ignore
+        view.getUint8("1"),
+        // @ts-ignore
+        view.getUint8(undefined),
+        // @ts-ignore
+        view.getUint16("2", 0),
+      ];
+      let caught = "none";
+      try {
+        // @ts-ignore
+        view.getInt8("-1");
+      } catch (error) {
+        caught = (error as Error).constructor.name;
+      }
+      read.push(caught);
+      if (read.join("|") !== "${expected}") throw new Error(read.join("|"));
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("263|1793|7|1|0|RangeError"))).failure).toBeUndefined();
+    });
+
+    it("rejects a wrong expectation", async () => {
+      expect((await checkModel(getSource("263|1793|7|1|0|TypeError"))).failure?.message).toContain(
+        "RangeError",
+      );
+    });
+  });
 });

@@ -1408,8 +1408,8 @@ const REDUCING_METHODS = new Set(["reduce", "reduceRight"]);
 // The array methods that tla-ts searches by value for any value, from an index that ToNumber
 // converts from a primitive. Each needs a unit test of such a call.
 const SEARCHING_METHODS = new Set(["includes", "indexOf", "lastIndexOf"]);
-// The positions of the index arguments that ToIntegerOrInfinity converts, of the methods of arrays
-// and typed arrays where tla-ts converts a primitive there as ToNumber does. Each needs a unit test
+// The positions of the index arguments that ToIntegerOrInfinity converts, of the methods of each
+// kind of receiver where tla-ts converts a primitive there as ToNumber does. Each needs a unit test
 // of such a call.
 const INDEX_PARAMETERS = new Map([
   [
@@ -1434,6 +1434,34 @@ const INDEX_PARAMETERS = new Map([
       ["lastIndexOf", [1]],
       ["slice", [0, 1]],
       ["subarray", [0, 1]],
+    ]),
+  ],
+  // A DataView's methods convert the index with ToIndex.
+  [
+    "DataView",
+    new Map([
+      ["getInt8", [0]],
+      ["getUint8", [0]],
+      ["getInt16", [0]],
+      ["getUint16", [0]],
+      ["getInt32", [0]],
+      ["getUint32", [0]],
+      ["getFloat16", [0]],
+      ["getFloat32", [0]],
+      ["getFloat64", [0]],
+      ["getBigInt64", [0]],
+      ["getBigUint64", [0]],
+      ["setInt8", [0]],
+      ["setUint8", [0]],
+      ["setInt16", [0]],
+      ["setUint16", [0]],
+      ["setInt32", [0]],
+      ["setUint32", [0]],
+      ["setFloat16", [0]],
+      ["setFloat32", [0]],
+      ["setFloat64", [0]],
+      ["setBigInt64", [0]],
+      ["setBigUint64", [0]],
     ]),
   ],
 ]);
@@ -2071,24 +2099,33 @@ const ignoreSoundErrors = () => {
             /^(Big)?(Int|Uint|Float)\d+(Clamped)?Array$/.test(member.getSymbol()?.getName() ?? ""),
           )
         ? "TypedArray"
-        : undefined;
+        : receiver.getSymbol()?.getName() === "DataView"
+          ? "DataView"
+          : undefined;
     const positions = kind && INDEX_PARAMETERS.get(kind)?.get(call.expression.name.text);
     const position = call.arguments.findIndex(
       (value) =>
         value.getStart() === diagnostic.start &&
         value.getEnd() === (diagnostic.start ?? 0) + (diagnostic.length ?? 0),
     );
-    return (
+    // A DataView's method converts littleEndian, its last argument, with ToBoolean, which runs
+    // nothing, whatever its type.
+    const isLittleEndian =
+      kind === "DataView" &&
       positions !== undefined &&
-      positions.includes(position) &&
-      isEveryType(
-        call.arguments[position],
-        ts.TypeFlags.NumberLike |
-          ts.TypeFlags.StringLike |
-          ts.TypeFlags.BooleanLike |
-          ts.TypeFlags.Null |
-          ts.TypeFlags.Undefined,
-      )
+      position === (call.expression.name.text.startsWith("get") ? 1 : 2);
+    return (
+      isLittleEndian ||
+      (positions !== undefined &&
+        positions.includes(position) &&
+        isEveryType(
+          call.arguments[position],
+          ts.TypeFlags.NumberLike |
+            ts.TypeFlags.StringLike |
+            ts.TypeFlags.BooleanLike |
+            ts.TypeFlags.Null |
+            ts.TypeFlags.Undefined,
+        ))
     );
   };
   // A call of a method of RegExp.prototype that PROTOCOL_METHODS lists, on a regexp, as
