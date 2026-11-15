@@ -27638,6 +27638,85 @@ describe("errors", () => {
     });
   });
 
+  describe("make a promise and its functions with Promise.withResolvers", () => {
+    const getSource = (expected: string) => `
+      const instance = Promise.withResolvers<number>();
+      const descriptor = Object.getOwnPropertyDescriptor(instance, "resolve");
+      const results = [
+        instance.promise instanceof Promise,
+        typeof instance.resolve,
+        instance.resolve.name === "",
+        instance.reject.length,
+        Object.keys(instance).join("|"),
+        descriptor?.writable,
+        Object.getPrototypeOf(instance) === Object.prototype,
+        instance.resolve === instance.reject,
+      ];
+      if (results.join() !== "${expected}") throw new Error(results.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("true,function,true,1,promise|resolve|reject,true,true,false")))
+          .failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects the expectation true,function,true,1,promise|reject|resolve,true,true,false", async () => {
+      expect(
+        (await checkModel(getSource("true,function,true,1,promise|reject|resolve,true,true,false")))
+          .failure?.message,
+      ).toContain("promise|resolve|reject");
+    });
+  });
+
+  describe("settle a promise through the functions that Promise.withResolvers gives", () => {
+    const getSource = (expected: string) => `
+      let log = "";
+      const first = Promise.withResolvers<string>();
+      const { promise, resolve, reject } = Promise.withResolvers<string>();
+      const last = Promise.withResolvers<string>();
+      first.promise.then(last.resolve);
+      promise.then(
+        (value) => {
+          log += "fulfilled:" + value + ";";
+        },
+        (reason) => {
+          log += "rejected:" + reason + ";";
+        },
+      );
+      last.promise.then((value) => {
+        log += "last:" + value + ";";
+        if (log !== "${expected}") throw new Error(log);
+      });
+      first.resolve("a");
+      first.reject("ignored");
+      reject("b");
+      resolve("c");
+      log += "sync;";
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("sync;rejected:b;last:a;"))).failure).toBeUndefined();
+    });
+
+    it("rejects the expectation sync;last:a;rejected:b;", async () => {
+      expect((await checkModel(getSource("sync;last:a;rejected:b;"))).failure).toBeDefined();
+    });
+
+    it("stops where code replaced a function of the object", async () => {
+      const source = `
+        const first = Promise.withResolvers<string>();
+        const second = Promise.withResolvers<string>();
+        first.resolve = second.resolve;
+        first.resolve("a");
+      `;
+      expect((await checkModel(source)).failure?.message).toContain(
+        "can't tell which function this is",
+      );
+    });
+  });
+
   describe("resolve with a thenable whose then is a function expression of one parameter", () => {
     const getSource = (expected: string) => `
       declare function setTimeout(callback: () => void): void;

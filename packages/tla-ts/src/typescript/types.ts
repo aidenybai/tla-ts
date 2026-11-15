@@ -150,6 +150,7 @@ const LIBRARY_OBJECTS = new Set([
   "Promise",
   "PromiseFulfilledResult",
   "PromiseRejectedResult",
+  "PromiseWithResolvers",
   "PropertyDescriptor",
   "TypedPropertyDescriptor",
   "PropertyDescriptorMap",

@@ -149,6 +149,8 @@ interface TrackedPromise {
   iteration: { value: Expression; isDone: boolean } | undefined;
   // The values that the promise of Promise.all has so far, and how many it waits for.
   combined: { values: readonly Expression[]; remaining: number } | undefined;
+  // The Promise.withResolvers call that made it, whose object holds it and its functions.
+  made: ts.CallExpression | undefined;
 }
 
 interface ThenResolvers {
@@ -318,8 +320,56 @@ const dispatchPromise = (
 ): Formula => {
   const found = findPromise(path, node, value);
   if (found !== undefined) return onPromise(found);
+  const held = valueNode && getHeld(path, node, valueNode, context);
+  if (held !== undefined && held.key === "promise") {
+    return ifThenElse(
+      useJavaScript("SameValue", [value, held.promise.ref], context),
+      onPromise(held.name),
+      leaf(apply("Assert", [boolean(false), string("tla-ts can't tell which promise this is")])),
+    );
+  }
   if (valueNode === undefined || !isPossiblePromise(valueNode, value, context)) return otherwise();
   return dispatchFollowed(path, node, value, context, onPromise, otherwise());
+};
+
+// The promise, of those that the path follows, whose Promise.withResolvers object a property or a
+// pattern reads, with the key it reads, where the variable that holds the object is the one that
+// the call initialized, which the caller checks, as code may change the object.
+const getHeld = (path: Path, node: ts.Node, valueNode: ts.Expression, context: Context) => {
+  const cast = skipCasts(valueNode);
+  const root = ts.isPropertyAccessExpression(cast) ? skipCasts(cast.expression) : cast;
+  const declaration = ts.isIdentifier(root)
+    ? getSymbol(root, context.checker)?.valueDeclaration
+    : undefined;
+  const variable =
+    declaration !== undefined &&
+    ts.isBindingElement(declaration) &&
+    ts.isObjectBindingPattern(declaration.parent)
+      ? declaration.parent.parent
+      : declaration;
+  const initializer =
+    variable !== undefined && ts.isVariableDeclaration(variable) && variable.initializer
+      ? skipCasts(variable.initializer)
+      : undefined;
+  const key = ts.isPropertyAccessExpression(cast)
+    ? root === cast.expression && variable === declaration
+      ? cast.name.text
+      : undefined
+    : declaration !== undefined && ts.isBindingElement(declaration)
+      ? (declaration.propertyName ?? declaration.name).getText()
+      : undefined;
+  if (
+    key === undefined ||
+    initializer === undefined ||
+    !ts.isCallExpression(initializer) ||
+    getPromiseFunction(initializer, context) !== "withResolvers"
+  ) {
+    return undefined;
+  }
+  const entry = [...getTasks(path, node).promises].findLast(
+    (inner) => inner[1].made === initializer,
+  );
+  return entry && { name: entry[0], promise: entry[1], key };
 };
 
 // The promise among those that the path follows that a value is, or none.
@@ -514,21 +564,27 @@ const translateResolvingFunction = (node: ts.Node, context: Context) =>
     context,
   );
 
+// An object with a writable, enumerable, and configurable property more.
+const defineData = (object: Expression, key: string, value: Expression, context: Context) =>
+  useJavaScript(
+    "Define",
+    [object, string(key), value, boolean(true), boolean(true), boolean(true)],
+    context,
+  );
+
 // The object that Promise.allSettled gives for a promise that settles.
 const translateSettled = (
   field: "value" | "reason",
   status: string,
   value: Expression,
   context: Context,
-) => {
-  const define = (object: Expression, key: string, defined: Expression) =>
-    useJavaScript(
-      "Define",
-      [object, string(key), defined, boolean(true), boolean(true), boolean(true)],
-      context,
-    );
-  return define(define(identifier("EmptyObject"), "status", string(status)), field, value);
-};
+) =>
+  defineData(
+    defineData(identifier("EmptyObject"), "status", string(status), context),
+    field,
+    value,
+    context,
+  );
 
 // The job that calls a thenable's then with a new resolve and reject of the promise, which run
 // once between them, and reject the promise where the then throws first.
@@ -775,6 +831,7 @@ const makePromise = (
         isHandled: false,
         iteration: undefined,
         combined: undefined,
+        made: undefined,
       }),
       name,
     ),
@@ -1502,13 +1559,13 @@ const isFromAsync = (node: ts.CallExpression, context: Context) =>
   node.expression.name.text === "fromAsync" &&
   getBuiltIn(node.expression.expression, context) === "Array";
 
-// Promise.resolve(value), Promise.reject(value), Promise.try(callback), or a combinator such as
-// Promise.all(values).
+// Promise.resolve(value), Promise.reject(value), Promise.try(callback), Promise.withResolvers(), or
+// a combinator such as Promise.all(values).
 const getPromiseFunction = (node: ts.CallExpression, context: Context) => {
   const callee = node.expression;
   return ts.isPropertyAccessExpression(callee) &&
     getBuiltIn(callee.expression, context) === "Promise" &&
-    ["resolve", "reject", "try", ...COMBINATORS].includes(callee.name.text)
+    ["resolve", "reject", "try", "withResolvers", ...COMBINATORS].includes(callee.name.text)
     ? callee.name.text
     : undefined;
 };
@@ -1748,16 +1805,35 @@ const getResolverHolders = (sourceFile: ts.SourceFile, context: Context) => {
   return holders;
 };
 
+// Whether a type is the object that Promise.withResolvers gives.
+const isWithResolvers = (type: ts.Type) =>
+  type.getSymbol()?.name === "PromiseWithResolvers" &&
+  (type.getSymbol()?.declarations ?? []).every(
+    (declaration) => declaration.getSourceFile().isDeclarationFile,
+  );
+
 // Whether a function that a node names may be a promise's resolve or reject: a parameter of an
-// executor, or a variable that the script assigns one.
+// executor, a variable that the script assigns one, or the resolve or reject of what
+// Promise.withResolvers gives, which a property or a pattern reads.
 const isResolver = (node: ts.Expression, context: Context) => {
   const cast = skipCasts(node);
+  if (ts.isPropertyAccessExpression(cast)) {
+    return (
+      ["resolve", "reject"].includes(cast.name.text) &&
+      isWithResolvers(context.checker.getTypeAtLocation(cast.expression))
+    );
+  }
   const symbol = ts.isIdentifier(cast) ? getSymbol(cast, context.checker) : undefined;
   const declaration = symbol?.valueDeclaration;
   return (
     symbol !== undefined &&
     ((declaration !== undefined && isResolverParameter(declaration, context)) ||
-      getResolverHolders(cast.getSourceFile(), context).has(symbol))
+      getResolverHolders(cast.getSourceFile(), context).has(symbol) ||
+      (declaration !== undefined &&
+        ts.isBindingElement(declaration) &&
+        ts.isObjectBindingPattern(declaration.parent) &&
+        ["resolve", "reject"].includes((declaration.propertyName ?? declaration.name).getText()) &&
+        isWithResolvers(context.checker.getTypeAtLocation(declaration.parent))))
   );
 };
 
@@ -1818,6 +1894,22 @@ const callResolver = (
   ];
   const found = all.find((resolver) => isSameExpression(resolver.ref, callee));
   if (found !== undefined) return found.run();
+  const calleeNode = ts.isCallExpression(node) ? node.expression : node;
+  const held = ts.isExpression(calleeNode) ? getHeld(path, node, calleeNode, context) : undefined;
+  const heldRef =
+    held?.key === "resolve"
+      ? held.promise.resolvers?.resolve
+      : held?.key === "reject"
+        ? held.promise.resolvers?.reject
+        : undefined;
+  const expected = heldRef && all.find((resolver) => isSameExpression(resolver.ref, heldRef));
+  if (heldRef !== undefined && expected !== undefined) {
+    return ifThenElse(
+      useJavaScript("SameValue", [callee, heldRef], context),
+      expected.run(),
+      leaf(apply("Assert", [boolean(false), string("tla-ts can't tell which function this is")])),
+    );
+  }
   return all.reduceRight(
     (rest, resolver) =>
       ifThenElse(useJavaScript("SameValue", [callee, resolver.ref], context), resolver.run(), rest),
@@ -2934,6 +3026,46 @@ export const translatePromiseCall = (
           (after, thrown) => continueWith(settle(after, node, name, thrown, true, context), ref),
         );
       }),
+    );
+  }
+  // Promise.withResolvers makes a promise and its resolving functions, and an object that holds the
+  // three.
+  if (promiseFunction === "withResolvers") {
+    const resolvingFunction = translateResolvingFunction(node, context);
+    return guardBuiltIns(
+      node,
+      "Promise",
+      ["withResolvers"],
+      path,
+      context,
+      makePromise(path, node, context, (made, name) =>
+        allocateObject(made, node, context, resolvingFunction, (withResolve, resolveRef) =>
+          allocateObject(withResolve, node, context, resolvingFunction, (withReject, rejectRef) => {
+            const promise = getPromise(withReject, node, name);
+            return allocateObject(
+              setPromise(withReject, node, name, {
+                ...promise,
+                resolvers: { resolve: resolveRef, reject: rejectRef },
+                made: node,
+              }),
+              node,
+              context,
+              defineData(
+                defineData(
+                  defineData(identifier("EmptyObject"), "promise", promise.ref, context),
+                  "resolve",
+                  resolveRef,
+                  context,
+                ),
+                "reject",
+                rejectRef,
+                context,
+              ),
+              (after, ref) => continueWith(after, ref),
+            );
+          }),
+        ),
+      ),
     );
   }
   if (promiseFunction !== undefined) {
