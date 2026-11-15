@@ -467,6 +467,49 @@ describe("top-level statements", () => {
     expect((await checkModel(source(6))).failure?.message).toContain("reduce");
   });
 
+  describe("runs reduce and reduceRight on a typed array", () => {
+    const source = `
+      const seen: unknown[] = [];
+      function same(actual: unknown, expected: unknown, label: string) {
+        if (!Object.is(actual, expected)) throw new Error(label);
+      }
+      const sample = new Int16Array([1, 2, 3]);
+      const total = sample.reduce(function (sum: number, value: number, index: number, array: Int16Array) {
+        if (index === 1) sample[2] = 9;
+        seen.push(index, array === sample);
+        return sum + value;
+      });
+      same(total, 12, "total");
+      same(seen.join(), "1,true,2,true", "seen");
+      const right = sample.reduceRight(function (text: string, value: number, index: number) {
+        return text + value + ":" + index + ",";
+      }, ">");
+      same(right, ">9:2,2:1,1:0,", "right");
+      let isThrown = false;
+      try {
+        new Float32Array(0).reduce(function (sum: number, value: number) {
+          return sum + value;
+        });
+      } catch (error) {
+        isThrown = error instanceof TypeError;
+      }
+      same(isThrown, true, "empty");
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(source)).failure).toBeUndefined();
+    });
+
+    it.each([
+      ["total", "12,", "6,"],
+      ["right", '">9:2,2:1,1:0,"', '">3:2,2:1,1:0,"'],
+    ])("rejects a wrong %s", async (label, expected, wrong) => {
+      expect((await checkModel(source.replace(expected, wrong))).failure?.message).toContain(
+        `"${label}"`,
+      );
+    });
+  });
+
   describe("runs a reducer whose result the reduce's signature doesn't take on its values", () => {
     const source = `
       const seen: unknown[] = [];

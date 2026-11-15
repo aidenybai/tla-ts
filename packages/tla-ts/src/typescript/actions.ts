@@ -7684,6 +7684,8 @@ const TYPED_LOOP_METHODS = new Set([
   "findIndex",
   "findLast",
   "findLastIndex",
+  "reduce",
+  "reduceRight",
   "filter",
   "map",
 ]);
