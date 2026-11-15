@@ -34041,4 +34041,32 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("holds an array that a proxy targets on the heap", () => {
+    const getSource = (expected: string) => `
+      const box = { size: 0 };
+      const target: object = [7];
+      const proxy = new Proxy(target, {});
+      Object.defineProperty(proxy, "1", { value: 8, enumerable: true });
+      const keys = Reflect.ownKeys(proxy).join(" ");
+      const kept: object = [];
+      const nested = new Proxy(new Proxy(kept, {}), {});
+      const before = Object.isExtensible(nested);
+      Object.preventExtensions(kept);
+      const after = Object.isExtensible(nested);
+      box.size = 1;
+      const read = [keys, before, after].join();
+      if (read !== "${expected}") throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("0 1 length,true,false"))).failure).toBeUndefined();
+    });
+
+    it("rejects the proxy as staying extensible", async () => {
+      expect((await checkModel(getSource("0 1 length,true,true"))).failure?.message).toContain(
+        "0 1 length,true,false",
+      );
+    });
+  });
 });

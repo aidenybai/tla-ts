@@ -3364,6 +3364,13 @@ const isArrayObjectUse = (node: ts.Expression, context: Context): boolean => {
     return true;
   }
   if (ts.isSpreadElement(parent)) return true;
+  // A proxy reads its target as an object.
+  if (
+    (ts.isNewExpression(parent) || ts.isCallExpression(parent)) &&
+    (isNewProxy(parent, context) || isRevocable(parent, context))
+  ) {
+    return parent.arguments?.[0] === node;
+  }
   // Iterator.from runs the array's iterator too.
   if (getIteratedArray(parent, context) === node) return true;
   if (ts.isVariableDeclaration(parent)) return ts.isArrayBindingPattern(parent.name);
@@ -4932,6 +4939,21 @@ export const findHeapArrays = (
       )
     ) {
       arrays.add(literal);
+    }
+    // A proxy's target is an object that its internal methods read and change.
+    const target =
+      (ts.isNewExpression(node) || ts.isCallExpression(node)) &&
+      (isNewProxy(node, context) || isRevocable(node, context)) &&
+      node.arguments?.[0] !== undefined
+        ? getArrayLiteral(node.arguments[0], context)
+        : undefined;
+    if (
+      target !== undefined &&
+      target.elements.every(
+        (element) => !ts.isSpreadElement(element) && !ts.isOmittedExpression(element),
+      )
+    ) {
+      arrays.add(target);
     }
     if (isHoleyArray(node, context)) arrays.add(node);
     if (isPrototypeArray(node, context)) arrays.add(node);
