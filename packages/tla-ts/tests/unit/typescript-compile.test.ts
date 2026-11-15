@@ -42678,4 +42678,76 @@ describe("BigInts", () => {
       ).rejects.toThrow("tla-ts can't destructure this value through its iterator");
     });
   });
+
+  describe("compares the kind of a key of type any before a Set or a Map compares it", () => {
+    const getSource = (expected: string) => `
+      const entries = new Map([
+        ["a", 1],
+        ["b", 2],
+      ]);
+      const seen = new Set(["a"]);
+      const read = (key: any) => {
+        let log = "";
+        log += entries.get(key);
+        log += entries.has(key);
+        log += seen.has(key);
+        return log;
+      };
+      const log = read("a") + read(undefined);
+      if (log !== "${expected}") throw new Error(log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("1truetrueundefinedfalsefalse"))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong value of a key", async () => {
+      await expect(checkModel(getSource("2truetrueundefinedfalsefalse"))).rejects.toThrow(
+        "1truetrueundefinedfalsefalse",
+      );
+    });
+
+    it("stops at a key of another kind", async () => {
+      await expect(
+        checkModel(`
+          const entries = new Map([
+            ["a", 1],
+            ["b", 2],
+          ]);
+          const read = (key: any) => entries.get(key);
+          if (read(1) !== undefined) throw new Error("1");
+        `),
+      ).rejects.toThrow(
+        "tla-ts can't compare a key of another kind with the keys of a Set or a Map",
+      );
+    });
+
+    it("stops at an added key of another kind", async () => {
+      const result = await checkModel(`
+        const seen = new Set(["a"]);
+        const add = (key: any) => {
+          seen.add(key);
+        };
+        add(1);
+        if (seen.size !== 2) throw new Error("size");
+      `);
+      expect(result.failure?.message).toContain(
+        "tla-ts can't compare a key of another kind with the keys of a Set or a Map",
+      );
+    });
+
+    it("stops at a primitive key of a WeakMap", async () => {
+      const result = await checkModel(`
+        const sizes = new WeakMap<object, number>();
+        const key = {};
+        sizes.set(key, 1);
+        const read = (value: any) => sizes.get(value);
+        if (read(key) !== 1) throw new Error("key");
+        if (read("a") !== undefined) throw new Error("a");
+      `);
+      expect(result.failure?.message).toContain(
+        "tla-ts can't compare a key of another kind with the keys of a Set or a Map",
+      );
+    });
+  });
 });

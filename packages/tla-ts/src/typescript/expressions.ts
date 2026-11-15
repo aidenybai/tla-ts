@@ -14,6 +14,7 @@ import {
   translateSetArgument,
   translateSize,
   isArrayIteration,
+  getTakerKeyKinds,
 } from "./collections";
 import type { Expression } from "../ast";
 import {
@@ -1751,9 +1752,37 @@ export const translateSetKey = (node: ts.Expression, scope: Scope, context: Cont
     );
   }
   const value = translateExpression(node, scope, context);
-  return context.hasSpecialNumbers && mayBeNumber(node, context)
-    ? useJavaScript("KeyOf", [value], context)
-    : value;
+  const key =
+    context.hasSpecialNumbers && mayBeNumber(node, context)
+      ? useJavaScript("KeyOf", [value], context)
+      : value;
+  // A key of type any or unknown may be of another kind than the keys of the Set or the Map that
+  // takes it, which TLC can't compare with them.
+  const kinds =
+    (context.checker.getTypeAtLocation(node).flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !==
+    0
+      ? getTakerKeyKinds(node, context)
+      : undefined;
+  if (kinds === undefined || kinds.length === 0) return key;
+  return share(key, "key", context, (shared) =>
+    ifExpression(
+      useJavaScript(
+        "IsComparableKey",
+        [
+          shared,
+          set(
+            kinds.flatMap((kind) => (kind === "object" ? [kind, "function"] : [kind])).map(string),
+          ),
+        ],
+        context,
+      ),
+      shared,
+      apply("Assert", [
+        boolean(false),
+        string("tla-ts can't compare a key of another kind with the keys of a Set or a Map"),
+      ]),
+    ),
+  );
 };
 
 // A value as a string, as JavaScript converts it in a template or beside a string in +.

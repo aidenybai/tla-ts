@@ -1165,6 +1165,12 @@ KeyOf(value) ==
     [] IsBig(value) -> BeyondInteger
     [] OTHER -> value
 
+\\* Whether TLC can compare a key with the keys of a Set or a Map, of the kinds that typeof gives
+\\* them. Model values, such as undefined, null, and symbols, compare with any value.
+IsComparableKey(value, kinds) ==
+  \\/ value \\in {Undefined, Null}
+  \\/ TypeOf(value) \\in kinds \\cup {"symbol"}
+
 \\* The map that new Map makes from an array of entries, each a key and its value, where a later
 \\* entry of a key replaces an earlier one's value.
 MapOf(entries) ==
