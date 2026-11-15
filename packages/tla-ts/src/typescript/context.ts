@@ -2784,6 +2784,10 @@ export const isNestedFunction = (
       ts.isReturnStatement(node.parent) &&
       node.parent.expression === node &&
       findNodes(node, ts.isIdentifier).every((name) => name.text !== "arguments")) ||
+    (ts.isFunctionExpression(node) &&
+      isPropertyWrite(node) &&
+      !isHeapFunction(node, context) &&
+      getFunctionValue(node, context) === undefined) ||
     (isDisposeCallback(node, context) && !isOnce(node.parent))) &&
   node.asteriskToken === undefined &&
   // Of async functions, only methods, dispose callbacks, and what an asyncDispose getter returns,
@@ -2797,6 +2801,14 @@ export const isNestedFunction = (
     isDisposeCallback(node, context)) &&
   ts.findAncestor(node.parent, ts.isFunctionLike) !== undefined &&
   (getOuterLocals(node, context).length === 0 || getLiveMaker(node, context) !== undefined);
+
+// A function that a statement writes to an object's property, as this.f = function () {} does.
+const isPropertyWrite = (node: ts.Node) =>
+  ts.isBinaryExpression(node.parent) &&
+  node.parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+  node.parent.right === node &&
+  ts.isPropertyAccessExpression(node.parent.left) &&
+  ts.isExpressionStatement(node.parent.parent);
 
 // The locals that a function reads from the functions around it, with the function that binds each.
 const getOuterLocals = (node: ts.Node, context: Context) =>

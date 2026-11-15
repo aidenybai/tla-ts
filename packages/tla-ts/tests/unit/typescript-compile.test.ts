@@ -43178,4 +43178,39 @@ describe("BigInts", () => {
       expect(result.failure?.message).toContain("tla-ts can't run Function");
     });
   });
+
+  describe("writes a function expression that reads no local to a property inside a function", () => {
+    const getSource = (expected: string) => `
+      interface Box {
+        label: string;
+        describe: () => string;
+      }
+      function decorate(box: Box) {
+        box.describe = function (this: Box) {
+          return \`box \${this.label}\`;
+        };
+      }
+      const first: Box = { label: "a", describe: () => "" };
+      const second: Box = { label: "b", describe: () => "" };
+      decorate(first);
+      decorate(second);
+      const log = [
+        first.describe(),
+        second.describe(),
+        first.describe === second.describe,
+        typeof first.describe,
+      ].join("|");
+      if (log !== "${expected}") throw new Error(log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("box a|box b|false|function"))).failure).toBeUndefined();
+    });
+
+    it("rejects one function for both writes", async () => {
+      expect((await checkModel(getSource("box a|box b|true|function"))).failure?.message).toContain(
+        "box a|box b|false|function",
+      );
+    });
+  });
 });
