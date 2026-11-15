@@ -1206,6 +1206,13 @@ LOCAL ObjectPrototype == Ref :> "Object.prototype"
 \\* the standard globals', such as Node's process, so tla-ts reads only the keys of those.
 GlobalObject == Ref :> "globalThis"
 
+\\* The this of a function outside strict mode, which is the global object for undefined or null and
+\\* an object that wraps a primitive.
+SloppyThis(value) ==
+  CASE value \\in {Undefined, Null} -> GlobalObject
+    [] TypeOf(value) \\in {"object", "function"} -> value
+    [] OTHER -> Assert(FALSE, "tla-ts can't wrap a primitive this outside strict mode")
+
 LOCAL Writable == [writable |-> TRUE, enumerable |-> TRUE, configurable |-> TRUE, kind |-> "data"]
 
 EmptyObject ==
@@ -5140,6 +5147,54 @@ RegExpSplitCaptures(heap, result, pieces, count) ==
 AdvanceStringIndex(text, index, isUnicode) ==
   index + (IF isUnicode THEN CharacterWidth([unicode |-> TRUE], text, index) ELSE 1)
 
+RECURSIVE SubstitutionNames(_)
+\\* The group names of a replacement template's $<name> patterns, in order, where the groups are an
+\\* object.
+SubstitutionNames(template) ==
+  LET second == CharacterAt(template, 1)
+      close == StringIndexOf(template, ">", 0)
+  IN  CASE Len(template) < 2 -> <<>>
+        [] CharacterAt(template, 0) # "$" -> SubstitutionNames(Tail(template))
+        [] second \\in {"$", "&", "\`", "'"} -> SubstitutionNames(SubSeq(template, 3, Len(template)))
+        [] second = "<" /\\ close # -1 ->
+             <<SubSeq(template, 3, close)>> \\o SubstitutionNames(SubSeq(template, close + 2, Len(template)))
+        [] OTHER -> SubstitutionNames(Tail(template))
+
+RECURSIVE GetSubstitution(_, _, _, _, _, _)
+\\* GetSubstitution of a replacement template, from the text that matched at a position of a string,
+\\* the captures, which hold Undefined where a group didn't take part, and the text of each $<name>
+\\* pattern in order, which is Undefined where the groups are.
+GetSubstitution(template, matched, text, position, captures, named) ==
+  LET first == CharacterAt(template, 0)
+      second == CharacterAt(template, 1)
+      third == CharacterAt(template, 2)
+      after(count) ==
+        GetSubstitution(SubSeq(template, count + 1, Len(template)), matched, text, position, captures, named)
+      digits == CharactersOf("0123456789")
+      isTwoDigits == third \\in digits /\\ DigitValue(second) * 10 + DigitValue(third) <= Len(captures)
+      reference == IF isTwoDigits THEN DigitValue(second) * 10 + DigitValue(third) ELSE DigitValue(second)
+      width == IF isTwoDigits THEN 3 ELSE 2
+      tail == position + Len(matched)
+      close == StringIndexOf(template, ">", 0)
+  IN  CASE template = "" -> ""
+        [] first # "$" \\/ second = "" -> first \\o after(1)
+        [] second = "$" -> "$" \\o after(2)
+        [] second = "\`" -> SubSeq(text, 1, position) \\o after(2)
+        [] second = "&" -> matched \\o after(2)
+        [] second = "'" -> SubSeq(text, (IF tail < Len(text) THEN tail ELSE Len(text)) + 1, Len(text)) \\o after(2)
+        [] second \\in digits ->
+             (CASE reference < 1 \\/ reference > Len(captures) -> SubSeq(template, 1, width)
+                [] captures[reference] = Undefined -> ""
+                [] OTHER -> captures[reference]) \\o after(width)
+        [] second = "<" /\\ close # -1 /\\ named # Undefined ->
+             Head(named) \\o GetSubstitution(SubSeq(template, close + 2, Len(template)), matched, text,
+                                              position, captures, Tail(named))
+        [] OTHER -> first \\o after(1)
+
+\\* The position of a match that RegExp.prototype[@@replace] reads from an index that ToPrimitive gave,
+\\* ToIntegerOrInfinity of it clamped to the string.
+RegExpReplacePosition(index, length) == Clamp(IntegerOf(ToNumber(index)), length)
+
 \\* RegExp.prototype.test, as the heap after it and whether exec finds a match.
 RegExpTestIn(heap, ref, value) ==
   LET regexp == RegExpOwning(heap, ref, {"RegExp.prototype"}, RegExpFlagNames)
@@ -5645,7 +5700,8 @@ DataViewGet(heap, ref, type, request, littleEndian) ==
 LOCAL CanBeHeldWeakly(heap, value) ==
   IsObjectIn(heap, value) \\/ (TypeOfIn(heap, value) = "symbol" /\\ ~IsRegisteredSymbol(heap, value))
 
-LOCAL ArgumentAt(arguments, position) ==
+\\* The value that a call passes at a position, or Undefined where it passes fewer.
+ArgumentAt(arguments, position) ==
   IF Len(arguments) >= position THEN arguments[position] ELSE Undefined
 
 \\* The heap with a new WeakRef of its target, which tla-ts never collects, as the spec allows a

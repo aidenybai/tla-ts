@@ -523,6 +523,7 @@ const CASES: Record<string, (string | [string, string])[]> = {
         return this.flag === true && value > 0;
       }
       function isUndefined(this: unknown) {
+        "use strict";
         return this === undefined;
       }
       function bump(this: { [key: string]: unknown }, value: number) {

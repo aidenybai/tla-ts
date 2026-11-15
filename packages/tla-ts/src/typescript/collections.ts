@@ -55,7 +55,7 @@ import {
   translateSymbolProperty,
 } from "./intrinsics";
 import { getTypeNames, isComparableType, useJavaScript } from "./javascript";
-import { getWrittenFunctions } from "./protocols";
+import { getWrittenFunctions, isNullish } from "./protocols";
 import { bindNames, bindPatternInline, type Receiver, type Scope } from "./scope";
 import {
   apply,
@@ -107,6 +107,7 @@ import {
   isGeneratorType,
   TYPED_ARRAYS,
   REORDER_METHODS,
+  hasHeapType,
 } from "./types";
 
 interface Unordered {
@@ -508,6 +509,26 @@ const translateUnordered = (
       isEvery(context.checker.getTypeAtLocation(argument), ts.TypeFlags.ESSymbolLike)
     ) {
       return { set: set([]), isMapped: false };
+    }
+    // A value that any, unknown, {}, Object, or a union with an object types may be an object in
+    // the heap, whose reference has no fields that are its keys.
+    const type = context.checker.getNonNullableType(context.checker.getTypeAtLocation(argument));
+    if (
+      context.heap !== undefined &&
+      (hasHeapType(type, context) ||
+        (type.isUnion() ? type.types : [type]).some(
+          (member) =>
+            (member.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0 ||
+            member.getSymbol()?.name === "Object" ||
+            ((member.flags & ts.TypeFlags.Object) !== 0 &&
+              member.getProperties().length === 0 &&
+              member.getCallSignatures().length === 0),
+        ))
+    ) {
+      throw new TlaTypeScriptError(
+        "tla-ts can't list the keys of a value that may be an object or another value",
+        argument,
+      );
     }
     const record = translate(argument);
     const listed =
@@ -919,51 +940,58 @@ const translateSequenceOperation = (
     use: (isFound: (position: Expression) => Expression) => Expression,
   ) => {
     // A search compares by identity, which a sequence lacks: an array that a literal makes is no
-    // element, and SameValue stops where an element equals another array.
-    const isSequence = getKind(argument, context) === "sequence";
+    // element, and SameValue stops where an element equals another array. A search without a
+    // value searches for undefined.
+    const isSequence = argument !== undefined && getKind(argument, context) === "sequence";
     const isFresh = isSequence && ts.isArrayLiteralExpression(skipCasts(argument));
-    return share(translate(argument), "value", context, (value) => {
-      const checker = context.checker;
-      const elementType = call.elementType;
-      const isComparableElement =
-        !isSequence &&
-        elementType !== undefined &&
-        isComparableType(elementType, checker.getTypeAtLocation(argument), checker);
-      // includes compares by SameValueZero, and indexOf by ===, where NaN differs from itself.
-      const getEqual = (position: Expression) =>
-        isFresh
-          ? boolean(false)
-          : context.hasSpecialNumbers
-            ? useJavaScript(
-                method === "includes" ? "SameValueZero" : "StrictEquals",
-                [index(sequence, [position]), value],
-                context,
-              )
-            : isComparableElement
-              ? apply("=", [index(sequence, [position]), value])
-              : useJavaScript("SameValue", [index(sequence, [position]), value], context);
-      const from = call.arguments[1];
-      // An undefined fromIndex is 0, where indexOf starts anyway but lastIndexOf stops.
-      const isUndefined =
-        from !== undefined &&
-        (context.checker.getTypeAtLocation(from).flags & ts.TypeFlags.Undefined) !== 0;
-      if (from === undefined || (isUndefined && !isLast)) return use(getEqual);
-      if (!isUndefined && !isPrimitiveIndex(from, context)) {
-        throw new TlaTypeScriptError("Pass a primitive as the index to search from", from);
-      }
-      const start = isUndefined ? number(0) : getRelative(from, "RelativeIndex");
-      // A search back from index start reaches position start + 1, as positions count from 1.
-      return share(start, "start", context, (shared) =>
-        use((position) =>
-          junction("And", [
-            isLast
-              ? apply("<=", [position, apply("+", [shared, number(1)])])
-              : apply(">", [position, shared]),
-            getEqual(position),
-          ]),
-        ),
-      );
-    });
+    return share(
+      argument === undefined ? getUndefined(context) : translate(argument),
+      "value",
+      context,
+      (value) => {
+        const checker = context.checker;
+        const elementType = call.elementType;
+        const isComparableElement =
+          argument !== undefined &&
+          !isSequence &&
+          elementType !== undefined &&
+          isComparableType(elementType, checker.getTypeAtLocation(argument), checker);
+        // includes compares by SameValueZero, and indexOf by ===, where NaN differs from itself.
+        const getEqual = (position: Expression) =>
+          isFresh
+            ? boolean(false)
+            : context.hasSpecialNumbers
+              ? useJavaScript(
+                  method === "includes" ? "SameValueZero" : "StrictEquals",
+                  [index(sequence, [position]), value],
+                  context,
+                )
+              : isComparableElement
+                ? apply("=", [index(sequence, [position]), value])
+                : useJavaScript("SameValue", [index(sequence, [position]), value], context);
+        const from = call.arguments[1];
+        // An undefined fromIndex is 0, where indexOf starts anyway but lastIndexOf stops.
+        const isUndefined =
+          from !== undefined &&
+          (context.checker.getTypeAtLocation(from).flags & ts.TypeFlags.Undefined) !== 0;
+        if (from === undefined || (isUndefined && !isLast)) return use(getEqual);
+        if (!isUndefined && !isPrimitiveIndex(from, context)) {
+          throw new TlaTypeScriptError("Pass a primitive as the index to search from", from);
+        }
+        const start = isUndefined ? number(0) : getRelative(from, "RelativeIndex");
+        // A search back from index start reaches position start + 1, as positions count from 1.
+        return share(start, "start", context, (shared) =>
+          use((position) =>
+            junction("And", [
+              isLast
+                ? apply("<=", [position, apply("+", [shared, number(1)])])
+                : apply(">", [position, shared]),
+              getEqual(position),
+            ]),
+          ),
+        );
+      },
+    );
   };
   const getSearchIndex = (isLast: boolean) => () =>
     withSearch(isLast, (isFound) => {
@@ -3013,6 +3041,97 @@ export const translatePatternIteration = (
           translateArrayIteration(iterated, heap, pattern, context),
         ),
       );
+
+// Whether a value of this type may be a primitive other than null or undefined, which an array
+// pattern iterates through its prototype.
+export const isMaybePrimitive = (type: ts.Type) =>
+  (type.isUnion() ? type.types : [type]).some(
+    (constituent) =>
+      !(
+        constituent.flags &
+        (ts.TypeFlags.Object | ts.TypeFlags.Undefined | ts.TypeFlags.Null | ts.TypeFlags.Void)
+      ),
+  );
+
+// Whether GetIterator throws a TypeError for the value that an array pattern destructures: null or
+// undefined, a primitive other than a string whose prototype holds no iterator method, or an array
+// once a script deleted Array.prototype's. An object that isn't an array iterates elsewhere.
+export const isUniterable = (
+  value: Expression,
+  heap: Expression | undefined,
+  node: ts.Node,
+  isPrimitive: boolean,
+  context: Context,
+) => {
+  const lacksIterator = (
+    prototype:
+      | "Array.prototype"
+      | "Number.prototype"
+      | "Boolean.prototype"
+      | "Symbol.prototype"
+      | "BigInt.prototype"
+      | "Function.prototype",
+  ) =>
+    heap === undefined
+      ? boolean(prototype !== "Array.prototype")
+      : isNullish(
+          useJavaScript(
+            "Get",
+            [
+              heap,
+              translateBuiltInValue(prototype, node, context),
+              useJavaScript("WellKnownSymbol", [string("iterator")], context),
+            ],
+            context,
+          ),
+          context,
+        );
+  return share(value, "iterable", context, (iterable) => {
+    const type = useJavaScript("TypeOf", [iterable], context);
+    const ofPrimitive = (
+      [
+        ["number", "Number.prototype"],
+        ["boolean", "Boolean.prototype"],
+        ["symbol", "Symbol.prototype"],
+        ["bigint", "BigInt.prototype"],
+        ["function", "Function.prototype"],
+      ] as const
+    ).reduceRight<Expression>(
+      (otherwise, [name, prototype]) =>
+        ifExpression(
+          apply("=", [type, string(name)]),
+          ifExpression(
+            lacksIterator(prototype),
+            boolean(true),
+            apply("Assert", [
+              boolean(false),
+              string("tla-ts can't iterate a primitive whose prototype a script gave an iterator"),
+            ]),
+          ),
+          otherwise,
+        ),
+      ifExpression(
+        apply("=", [type, string("string")]),
+        boolean(false),
+        lacksIterator("Array.prototype"),
+      ),
+    );
+    return ifExpression(
+      useJavaScript("IsRef", [iterable], context),
+      heap === undefined
+        ? boolean(false)
+        : apply("/\\", [
+            useJavaScript("IsArray", [heap, iterable], context),
+            lacksIterator("Array.prototype"),
+          ]),
+      ifExpression(
+        isNullish(iterable, context),
+        boolean(true),
+        isPrimitive ? ofPrimitive : lacksIterator("Array.prototype"),
+      ),
+    );
+  });
+};
 
 // The heap after a pattern runs an array's iterator. A pattern whose type isn't an array's first
 // takes its elements, which stop where its value is an object, though nothing reads them.

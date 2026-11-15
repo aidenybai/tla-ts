@@ -43,6 +43,8 @@ export interface SharedCall {
   captured: ts.Symbol[];
   // The function that each parameter takes, which the operator calls where the body calls it.
   callbacks: ReadonlyMap<ts.Symbol, FunctionNode>;
+  // The function that each name it reads holds where its caller calls it, which no value carries.
+  held: ReadonlyMap<ts.Symbol, FunctionNode>;
   // The state and the names from outside that it changes, which it gives back in that order.
   changed: ts.Symbol[];
   // The heap and the variables that it and what it runs read or change, which it takes.
@@ -1084,6 +1086,21 @@ const getMethod = (node: ts.Expression, context: Context) => {
     ts.canHaveModifiers(named) &&
     ts.getModifiers(named)?.some((modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword);
   const receiver = node.expression;
+  // A static method of a class of errors that makes plain errors, which reads no this, runs as a
+  // function does.
+  const errorClass = isStatic
+    ? getErrorClass(getSymbol(receiver, context.checker), context.checker)
+    : undefined;
+  if (
+    errorClass?.[0].valueDeclaration === declaration.parent &&
+    findNodes(
+      declaration,
+      (inner): inner is ts.Node =>
+        inner.kind === ts.SyntaxKind.ThisKeyword || inner.kind === ts.SyntaxKind.SuperKeyword,
+    ).length === 0
+  ) {
+    return declaration;
+  }
   const owner = isStatic
     ? receiver
     : ts.isNewExpression(receiver) && (receiver.arguments ?? []).length === 0
@@ -1288,6 +1305,11 @@ export const isAmbient = (node: ts.Node) =>
 export const isStatic = (node: ts.Node) =>
   ts.canHaveModifiers(node) &&
   (ts.getModifiers(node) ?? []).some((modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword);
+
+// Whether a class declares a member that its objects or its prototype hold. A static method lives
+// on the class alone, so a class of errors with only static methods still makes plain errors.
+export const hasObjectMembers = (node: ts.ClassLikeDeclaration) =>
+  node.members.some((member) => !(ts.isMethodDeclaration(member) && isStatic(member)));
 
 // The names and properties that an assignment's target writes, alone or in a pattern.
 const getWrittenNames = (target: ts.Node): ts.Expression[] => {
@@ -1985,7 +2007,7 @@ export const getBuiltInBase = (
     name !== "AggregateError" &&
     name !== "SuppressedError" &&
     symbol !== undefined &&
-    (node.members.length > 0 || isPrototypeRead(symbol, context.checker))
+    (hasObjectMembers(node) || isPrototypeRead(symbol, context.checker))
   ) {
     return name;
   }

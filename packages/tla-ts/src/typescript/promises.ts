@@ -43,6 +43,7 @@ import {
   isAsyncFunction,
   isAsyncGenerator,
   isHeapFunction,
+  isStrictCode,
   isTimerCall,
   skipCasts,
   translateString,
@@ -722,7 +723,7 @@ const invokeThen = (
   candidates: readonly FunctionNode[],
   values: readonly Expression[],
   context: Context,
-  onReturn: (path: Path) => Formula,
+  onReturn: (path: Path, value?: Expression) => Formula,
   onThrow: (path: Path, thrown: Expression) => Formula,
 ): Formula => {
   const startHeap = getHeap(start.scope, node, context);
@@ -819,7 +820,7 @@ const invokeThen = (
           context,
           {
             next: (after) => onReturn(leave(after)),
-            exit: (after) => onReturn(leave(after)),
+            exit: (after, value) => onReturn(leave(after), value),
             breakTo: undefined,
             continueTo: undefined,
             throwTo: (after, thrown) => onThrow(leave(after), thrown.value),
@@ -928,13 +929,8 @@ const makePromise = (
   );
 };
 
-// A function that a then or a catch takes, which runs as a job with the promise's value.
-const getHandler = (
-  node: ts.Expression | undefined,
-  path: Path,
-  context: Context,
-  frame: Frame,
-): Handler | undefined => {
+// Calls a function that a then, a catch, or a finally takes, in a later job.
+const getRunner = (node: ts.Expression | undefined, path: Path, context: Context, frame: Frame) => {
   if (node === undefined) return undefined;
   const cast = getCast(node);
   if (
@@ -945,25 +941,106 @@ const getHandler = (
   }
   if (isResolver(cast, context)) {
     const callee = translateExpression(cast, path.scope, context);
-    return {
-      run: (current, value, onReturn, onThrow) =>
-        callResolving(node, callee, [value], undefined, current, context, onReturn, onThrow),
-    };
+    return (
+      current: Path,
+      values: Expression[],
+      onReturn: (path: Path, result: Expression) => Formula,
+      onThrow: (path: Path, thrown: Expression) => Formula,
+    ) => callResolving(node, callee, values, undefined, current, context, onReturn, onThrow);
   }
   const callee = getCallback(cast, path, context) ?? getAsyncCallee(cast, path, context);
   if (callee === undefined) {
     throw new TlaTypeScriptError("Pass then a function that tla-ts can follow", node);
   }
-  const runCallback = getCallbackRunner(
+  return getCallbackRunner(
     callee,
-    ts.isArrowFunction(callee) ? path.scope.receiver : undefined,
+    getCalledReceiver(callee, path.scope.receiver, context),
     path,
     context,
     frame,
   );
-  return {
-    run: (current, value, onReturn, onThrow) => runCallback(current, [value], onReturn, onThrow),
-  };
+};
+
+// The this of a function that JavaScript calls with undefined as its this, as a job calls a
+// reaction's handler and new Promise its executor: where an arrow function was written, and
+// undefined in strict code.
+const getCalledReceiver = (
+  callee: FunctionNode,
+  receiver: Receiver | undefined,
+  context: Context,
+): Receiver | undefined =>
+  ts.isArrowFunction(callee)
+    ? receiver
+    : isStrictCode(callee)
+      ? { value: getUndefined(context), method: callee }
+      : undefined;
+
+// A function that a then or a catch takes, which runs as a job with the promise's value.
+const getHandler = (
+  node: ts.Expression | undefined,
+  path: Path,
+  context: Context,
+  frame: Frame,
+): Handler | undefined => {
+  const run = getRunner(node, path, context, frame);
+  return (
+    run && {
+      run: (current, value, onReturn, onThrow) => run(current, [value], onReturn, onThrow),
+    }
+  );
+};
+
+// The thenFinally and catchFinally of Promise.prototype.finally, which call onFinally with no
+// arguments, and give the promise that p.then gives, where p is the promise that PromiseResolve
+// gives for what onFinally returns: one that fulfills with the value or rejects with the reason.
+const getFinallyHandlers = (
+  node: ts.CallExpression,
+  onFinally: ts.Expression | undefined,
+  path: Path,
+  context: Context,
+  frame: Frame,
+) => {
+  const run = getRunner(onFinally, path, context, frame);
+  const getFinally = (isRejected: boolean): Handler => ({
+    run: (current, value, onReturn, onThrow) =>
+      run === undefined
+        ? onReturn(current, value)
+        : run(
+            current,
+            [],
+            (after, result) =>
+              awaitValue(after, node, result, undefined, context, (resolved, followed) =>
+                guardBuiltIns(
+                  node,
+                  "Promise.prototype",
+                  ["then", "constructor"],
+                  resolved,
+                  context,
+                  makePromise(resolved, node, context, (made, derived) =>
+                    onReturn(
+                      addReaction(
+                        made,
+                        node,
+                        followed,
+                        {
+                          onFulfilled: {
+                            run: (job, _, give, raise) =>
+                              isRejected ? raise(job, value) : give(job, value),
+                          },
+                          onRejected: undefined,
+                          derived,
+                        },
+                        context,
+                      ),
+                      getPromise(made, node, derived).ref,
+                    ),
+                  ),
+                ),
+              ),
+            onThrow,
+          ),
+  });
+  return run === undefined ? [undefined, undefined] : [getFinally(false), getFinally(true)];
 };
 
 // Runs a callback in a later job, where the variables it captures hold what they held where the
@@ -1878,13 +1955,42 @@ const translatePromiseCombinator = (
   });
 };
 
-// A call of a promise's then or catch.
+// A call of a promise's then, catch, or finally, or of Promise.prototype's through call, which
+// takes the this first, with the functions that it passes.
+interface PromiseMethod {
+  method: string;
+  receiver: ts.Expression;
+  functions: readonly ts.Expression[];
+  isCalled: boolean;
+}
+
 const getPromiseMethod = (node: ts.CallExpression, context: Context) => {
   const callee = node.expression;
-  return ts.isPropertyAccessExpression(callee) &&
-    (callee.name.text === "then" || callee.name.text === "catch") &&
-    isPromiseType(callee.expression, context)
-    ? { method: callee.name.text, receiver: getCast(callee.expression) }
+  const called =
+    ts.isPropertyAccessExpression(callee) && callee.name.text === "call"
+      ? callee.expression
+      : undefined;
+  const method = called ?? callee;
+  if (
+    !ts.isPropertyAccessExpression(method) ||
+    !["then", "catch", "finally"].includes(method.name.text)
+  ) {
+    return undefined;
+  }
+  const owner = getCast(method.expression);
+  const receiver = called === undefined ? owner : node.arguments.at(0);
+  const isPrototype =
+    called !== undefined &&
+    ts.isPropertyAccessExpression(owner) &&
+    owner.name.text === "prototype" &&
+    getBuiltIn(owner.expression, context) === "Promise";
+  return receiver !== undefined && (isPrototype || isPromiseType(owner, context))
+    ? {
+        method: method.name.text,
+        receiver: getCast(receiver),
+        functions: called === undefined ? node.arguments : node.arguments.slice(1),
+        isCalled: called !== undefined,
+      }
     : undefined;
 };
 
@@ -1906,6 +2012,7 @@ const isResolverParameter = (node: ts.Node, context: Context) => {
   return (
     executor.parameters.indexOf(node) <= 1 &&
     (isThenFunction(executor) ||
+      isExecutorDeclaration(executor, context) ||
       ((ts.isArrowFunction(executor) || ts.isFunctionExpression(executor)) &&
         construction !== undefined &&
         ts.isNewExpression(construction) &&
@@ -2057,6 +2164,36 @@ const callResolver = (
   );
 };
 
+// A function declaration that the script names only as the executor that new Promise takes.
+const isExecutorDeclaration = (node: ts.Node, context: Context): node is ts.FunctionDeclaration => {
+  if (!ts.isFunctionDeclaration(node) || node.name === undefined || node.body === undefined) {
+    return false;
+  }
+  const symbol = getSymbol(node.name, context.checker);
+  return (
+    symbol !== undefined &&
+    findNodes(
+      node.getSourceFile(),
+      (inner): inner is ts.Identifier =>
+        ts.isIdentifier(inner) &&
+        inner !== node.name &&
+        getSymbol(inner, context.checker) === symbol,
+    ).every((use) => {
+      const construction = ts.findAncestor(
+        use.parent,
+        (ancestor) => !ts.isParenthesizedExpression(ancestor) && !ts.isAsExpression(ancestor),
+      );
+      return (
+        construction !== undefined &&
+        ts.isNewExpression(construction) &&
+        isPromiseConstruction(construction, context) &&
+        construction.arguments?.length === 1 &&
+        getCast(construction.arguments[0]) === use
+      );
+    })
+  );
+};
+
 // new Promise(executor), which runs the executor with the promise's resolve and reject, two
 // functions on the heap.
 export const translatePromiseConstruction = (
@@ -2067,13 +2204,19 @@ export const translatePromiseConstruction = (
   continueWith: (path: Path, value?: Expression) => Formula,
 ): Formula => {
   const argument = node.arguments?.length === 1 ? getCast(node.arguments[0]) : undefined;
-  if (
-    argument === undefined ||
-    !(ts.isArrowFunction(argument) || ts.isFunctionExpression(argument))
-  ) {
+  const declaration =
+    argument !== undefined && ts.isIdentifier(argument)
+      ? getSymbol(argument, context.checker)?.valueDeclaration
+      : undefined;
+  const executor =
+    argument !== undefined && (ts.isArrowFunction(argument) || ts.isFunctionExpression(argument))
+      ? argument
+      : declaration !== undefined && isExecutorDeclaration(declaration, context)
+        ? declaration
+        : undefined;
+  if (executor === undefined) {
     throw new TlaTypeScriptError("Pass new Promise a function written in place", node);
   }
-  const executor = argument;
   if (
     executor.parameters.length > 2 ||
     executor.parameters.some(
@@ -2122,7 +2265,7 @@ export const translatePromiseConstruction = (
               ...start.scope,
               bindings,
               isCatching: true,
-              receiver: ts.isArrowFunction(executor) ? start.scope.receiver : undefined,
+              receiver: getCalledReceiver(executor, start.scope.receiver, context),
             },
           },
           context,
@@ -3279,13 +3422,16 @@ export const translatePromiseCall = (
     );
   }
   const received = translateExpression(receiver, path.scope, context);
+  const functions = promiseMethod.functions;
   const handlers =
     promiseMethod.method === "then"
       ? [
-          getHandler(argument, path, context, frame),
-          getHandler(node.arguments.at(1), path, context, frame),
+          getHandler(functions.at(0), path, context, frame),
+          getHandler(functions.at(1), path, context, frame),
         ]
-      : [undefined, getHandler(argument, path, context, frame)];
+      : promiseMethod.method === "catch"
+        ? [undefined, getHandler(functions.at(0), path, context, frame)]
+        : getFinallyHandlers(node, functions.at(0), path, context, frame);
   const react = (current: Path, name: string) =>
     makePromise(current, node, context, (made, derived) =>
       continueWith(
@@ -3299,22 +3445,128 @@ export const translatePromiseCall = (
         getPromise(made, node, derived).ref,
       ),
     );
-  return guardBuiltIns(
+  const other = () =>
+    promiseMethod.isCalled
+      ? translateOtherReceiver(node, promiseMethod, received, path, context, frame, continueWith)
+      : leaf(apply("Assert", [boolean(false), string("tla-ts can't tell which promise this is")]));
+  const reacted = guardBuiltIns(
     node,
     "Promise.prototype",
-    promiseMethod.method === "then" ? ["then", "constructor"] : ["catch", "then", "constructor"],
+    promiseMethod.method === "then"
+      ? ["then", "constructor"]
+      : [promiseMethod.method, "then", "constructor"],
     path,
     context,
-    dispatchPromise(
-      path,
-      node,
-      received,
-      receiver,
-      context,
-      (held) => react(path, held),
-      () =>
-        leaf(apply("Assert", [boolean(false), string("tla-ts can't tell which promise this is")])),
+    promiseMethod.isCalled && !isPossiblePromise(receiver, received, context)
+      ? other()
+      : dispatchPromise(
+          path,
+          node,
+          received,
+          receiver,
+          context,
+          (held) => react(path, held),
+          other,
+        ),
+  );
+  return promiseMethod.isCalled
+    ? guardBuiltIns(node, "Function.prototype", ["call"], path, context, reacted)
+    : reacted;
+};
+
+// Promise.prototype's then, catch, or finally with a this that isn't a promise. then throws a
+// TypeError. catch calls Invoke(this, "then", «undefined, onRejected»), whose GetV throws a
+// TypeError for undefined or null. finally throws a TypeError for a this that isn't an object, and
+// otherwise takes SpeciesConstructor(this, %Promise%) before it calls the this's then.
+const translateOtherReceiver = (
+  node: ts.CallExpression,
+  promiseMethod: PromiseMethod,
+  received: Expression,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path, value?: Expression) => Formula,
+): Formula => {
+  const uncaught = apply("Assert", [boolean(false), string(node.getText())]);
+  const throwError = (after: Path, thrown: Expression) =>
+    frame.throwTo === undefined
+      ? leaf(uncaught)
+      : frame.throwTo(after, { value: thrown, uncaught });
+  const typeError = translateEngineError("TypeError", node, context);
+  if (promiseMethod.method === "then") return throwError(path, typeError);
+  const stop = (message: string) => leaf(apply("Assert", [boolean(false), string(message)]));
+  if (
+    !promiseMethod.functions.every((inner) => getRunner(inner, path, context, frame) === undefined)
+  ) {
+    return stop("tla-ts can't pass a function to the then of a value that isn't a promise");
+  }
+  const heap = getHeap(path.scope, node, context);
+  const isObject = useJavaScript("IsObjectIn", [heap, received], context);
+  const thenName = context.names.getFresh("then");
+  const then = identifier(thenName);
+  const invoke = bindOnce(
+    path,
+    thenName,
+    useJavaScript("Get", [heap, received, string("then")], context),
+    ifThenElse(
+      apply("=", [useJavaScript("TypeOfIn", [heap, then], context), string("function")]),
+      invokeThen(
+        path,
+        node,
+        received,
+        then,
+        getThenFunctions(node, promiseMethod.receiver, context),
+        [getUndefined(context), getUndefined(context)],
+        context,
+        (after, value) => continueWith(after, value ?? getUndefined(context)),
+        throwError,
+      ),
+      throwError(path, typeError),
     ),
+  );
+  if (promiseMethod.method === "catch") {
+    return ifThenElse(
+      isObject,
+      invoke,
+      ifThenElse(
+        apply("\\in", [received, set([getUndefined(context), identifier("Null")])]),
+        throwError(path, typeError),
+        stop("tla-ts can't read the then of a primitive"),
+      ),
+    );
+  }
+  context.builtIns.add("Object");
+  context.builtIns.add("Function.prototype");
+  const constructorName = context.names.getFresh("constructor");
+  const constructor = identifier(constructorName);
+  return ifThenElse(
+    isObject,
+    bindOnce(
+      path,
+      constructorName,
+      useJavaScript("Get", [heap, received, string("constructor")], context),
+      ifThenElse(
+        apply("=", [constructor, getUndefined(context)]),
+        invoke,
+        ifThenElse(
+          useJavaScript("IsObjectIn", [heap, constructor], context),
+          ifThenElse(
+            apply("\\in", [
+              useJavaScript(
+                "Get",
+                [heap, constructor, useJavaScript("WellKnownSymbol", [string("species")], context)],
+                context,
+              ),
+              set([getUndefined(context), identifier("Null")]),
+            ]),
+            invoke,
+            stop("tla-ts can't tell which constructor a species gives"),
+          ),
+          throwError(path, typeError),
+        ),
+      ),
+    ),
+    throwError(path, typeError),
   );
 };
 

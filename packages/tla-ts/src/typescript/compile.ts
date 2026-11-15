@@ -9,6 +9,7 @@ import {
   getFunction,
   getSymbol,
   getTopLevelDeclaration,
+  hasObjectMembers,
   isInertValue,
   isScript,
 } from "./context";
@@ -185,32 +186,61 @@ export const compile = (
       files.push(imported);
     });
   visitImports(sourceFile);
-  // A module's namespace object, which tla-ts doesn't make, so only a read of one of its exports
-  // through it compiles. Only a file that imports can name one.
-  const rejectNamespaceValues = (node: ts.Node): void => {
-    const symbol = ts.isIdentifier(node) ? program.checker.getSymbolAtLocation(node) : undefined;
-    const declaration =
-      symbol === undefined
-        ? undefined
-        : (symbol.flags & ts.SymbolFlags.Alias ? program.checker.getAliasedSymbol(symbol) : symbol)
-            .valueDeclaration;
+  // The files in the order they run, the model's last.
+  const order = [...files, sourceFile];
+  const getDeclaration = (node: ts.Node) => {
+    const symbol = program.checker.getSymbolAtLocation(node);
+    return symbol === undefined
+      ? undefined
+      : (symbol.flags & ts.SymbolFlags.Alias ? program.checker.getAliasedSymbol(symbol) : symbol)
+          .valueDeclaration;
+  };
+  // A file that imports reads a module's namespace object, which tla-ts doesn't make, only to read
+  // an export through it. It reads a default export of an expression or of a class with no name,
+  // whose binding tla-ts doesn't make uninitialized, only where the module that declares it ran
+  // first.
+  const rejectModuleReads = (node: ts.Node, file: ts.SourceFile): void => {
+    const declaration = ts.isIdentifier(node) ? getDeclaration(node) : undefined;
     if (
       declaration !== undefined &&
-      ts.isSourceFile(declaration) &&
       !ts.isNamespaceImport(node.parent) &&
       !ts.isNamespaceExport(node.parent) &&
       !ts.isImportSpecifier(node.parent) &&
+      !ts.isImportClause(node.parent) &&
       !ts.isExportSpecifier(node.parent) &&
-      !(ts.isPropertyAccessExpression(node.parent) && node.parent.expression === node) &&
       ts.findAncestor(node, ts.isTypeNode) === undefined
     ) {
-      throw new TlaTypeScriptError("tla-ts can't make a module's namespace object", node);
+      const parent = node.parent;
+      if (
+        ts.isSourceFile(declaration) &&
+        !(ts.isPropertyAccessExpression(parent) && parent.expression === node)
+      ) {
+        throw new TlaTypeScriptError("tla-ts can't make a module's namespace object", node);
+      }
+      const namespace =
+        ts.isPropertyAccessExpression(parent) && parent.name === node
+          ? getDeclaration(parent.expression)
+          : undefined;
+      const isImported =
+        ((program.checker.getSymbolAtLocation(node)?.flags ?? 0) & ts.SymbolFlags.Alias) !== 0 ||
+        (namespace !== undefined && ts.isSourceFile(namespace));
+      if (
+        isImported &&
+        (ts.isExportAssignment(declaration) ||
+          (ts.isClassDeclaration(declaration) && declaration.name === undefined)) &&
+        order.indexOf(declaration.getSourceFile()) >= order.indexOf(file)
+      ) {
+        throw new TlaTypeScriptError(
+          `tla-ts can't read the default export ${node.getText()} before its module runs`,
+          node,
+        );
+      }
     }
-    ts.forEachChild(node, rejectNamespaceValues);
+    ts.forEachChild(node, (child) => rejectModuleReads(child, file));
   };
-  [sourceFile, ...files]
+  order
     .filter((file) => file.statements.some(ts.isImportDeclaration))
-    .forEach(rejectNamespaceValues);
+    .forEach((file) => rejectModuleReads(file, file));
   // The code units outside ASCII that the script's text holds, or that the escapes of its literals
   // and names write, whose codes the module tells. A lone surrogate is half of a pair, as a
   // module's text holds only whole characters.
@@ -437,7 +467,7 @@ export const compile = (
       isScriptClass(getSymbol(node.expression, context.checker)?.valueDeclaration)) ||
     // A class with members that extends a native error, whose errors only objects can be.
     (ts.isClassLike(node) &&
-      node.members.length > 0 &&
+      hasObjectMembers(node) &&
       (node.heritageClauses ?? []).some((clause) =>
         clause.types.some(
           (type) => ts.isIdentifier(type.expression) && NATIVE_ERRORS.has(type.expression.text),

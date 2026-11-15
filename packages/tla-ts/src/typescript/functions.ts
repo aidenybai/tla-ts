@@ -378,7 +378,6 @@ const inlineCall = (
   if (
     reads.length > 0 &&
     (passedCallbacks.length > 0 ||
-      argumentNodes.some(ts.isSpreadElement) ||
       !reads.every((read) => isArgumentsRead(read, context)) ||
       context.heap === undefined)
   ) {
@@ -386,7 +385,7 @@ const inlineCall = (
   }
   const made = allocateArguments(
     callee,
-    values.shared,
+    passed.list ?? tuple(values.shared),
     callee,
     { definitions: [], scope },
     context,
@@ -605,12 +604,13 @@ export const translateHelperCall = (
   if (
     node !== undefined &&
     helper !== undefined &&
-    !helper.parameters.every(
-      (parameter) =>
-        ts.isIdentifier(parameter.name) &&
-        parameter.initializer === undefined &&
-        parameter.dotDotDotToken === undefined,
-    )
+    (node.arguments.some(ts.isSpreadElement) ||
+      !helper.parameters.every(
+        (parameter) =>
+          ts.isIdentifier(parameter.name) &&
+          parameter.initializer === undefined &&
+          parameter.dotDotDotToken === undefined,
+      ))
   ) {
     if (context.inProgress.has(helper)) {
       return translateStateCall(declaration, helper, node, scope, context);

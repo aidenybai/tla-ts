@@ -41,10 +41,6 @@ const CASES: [string, string][] = [
   ["a regular expression with the v flag", "count = /[a]/v.test(label) ? 1 : 0;"],
   ["calling an async function", "const run = async () => { count++; }; run();"],
   [
-    "a var that redeclares a catch parameter",
-    "try { throw 1; } catch (error) { for (var error of [1]) count = 1; }",
-  ],
-  [
     "reassigning a function inside a loop",
     "let run: () => void; run = () => { count++; }; for (const value of [1]) run = () => { count--; };",
   ],

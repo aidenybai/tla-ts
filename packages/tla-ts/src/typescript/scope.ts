@@ -23,6 +23,8 @@ import type { Expression, OperatorDefinition } from "../ast";
 import {
   getHeapElements,
   getPatternHeap,
+  isMaybePrimitive,
+  isUniterable,
   translateArrayIteration,
   translatePatternIteration,
 } from "./collections";
@@ -34,6 +36,7 @@ import {
   define,
   identifier,
   ifExpression,
+  index,
   number,
   set,
   string,
@@ -102,6 +105,9 @@ export interface Destructured {
   // The elements that an array pattern takes from a value whose type doesn't tell that it's an
   // array, which stop where it's an object.
   iterated?: Expression;
+  // Whether the value that an array pattern iterates has no iterator method, for which GetIterator
+  // throws a TypeError.
+  isUniterable?: Expression;
 }
 
 export interface Receiver {
@@ -208,6 +214,19 @@ export const declareParameters = (
   context: Context,
 ) => parameters.map((parameter) => declareParameter(parameter, context));
 
+// A let, a const, or a class that a script declares at its top level, which a state variable holds.
+export const isTopLevelLexical = (declaration: ts.Declaration) =>
+  ts.isSourceFile(
+    ts.isVariableDeclaration(declaration) ? declaration.parent.parent.parent : declaration.parent,
+  );
+
+// A class's name inside its own body names the class's inner binding, which the class initializes
+// before its static elements run, though its declaration's binding stays uninitialized until they
+// finish.
+export const isOwnClassName = (name: ts.Node, declaration: ts.Declaration) =>
+  ts.isClassDeclaration(declaration) &&
+  ts.findAncestor(name, (ancestor) => ancestor === declaration) !== undefined;
+
 export const rejectBeforeDeclaration = (node: ts.Identifier, scope: Scope, context: Context) => {
   const symbol = getSymbol(node, context.checker);
   const declaration = symbol?.valueDeclaration;
@@ -215,16 +234,20 @@ export const rejectBeforeDeclaration = (node: ts.Identifier, scope: Scope, conte
     !scope.isCatching ||
     symbol === undefined ||
     declaration === undefined ||
-    !ts.isVariableDeclaration(declaration) ||
-    !ts.isVariableDeclarationList(declaration.parent) ||
-    (declaration.parent.flags & ts.NodeFlags.BlockScoped) === 0
+    isOwnClassName(node, declaration) ||
+    !(
+      ts.isClassDeclaration(declaration) ||
+      (ts.isVariableDeclaration(declaration) &&
+        ts.isVariableDeclarationList(declaration.parent) &&
+        (declaration.parent.flags & ts.NodeFlags.BlockScoped) !== 0)
+    )
   ) {
     return;
   }
   // A function other than the one that declares the let may run after its declaration, wherever
   // its text is.
   const isUninitialized =
-    ts.isSourceFile(declaration.parent.parent.parent) ||
+    isTopLevelLexical(declaration) ||
     ts.findAncestor(node, ts.isFunctionLike) !== ts.findAncestor(declaration, ts.isFunctionLike)
       ? scope.uninitialized.has(symbol)
       : node.getStart() < declaration.getStart();
@@ -412,15 +435,37 @@ export const bindPatternInline = (
     isIterated && heap !== undefined
       ? translatePatternIteration(value, heap, pattern, type, context)
       : value;
+  // A parameter may take any value that a call passes, and a declaration's value may not have its
+  // pattern's type, so only the value's own type tells that it's no primitive.
+  const initializer = ts.isVariableDeclaration(pattern.parent)
+    ? pattern.parent.initializer
+    : undefined;
+  const uniterable = isIterated
+    ? isUniterable(
+        value,
+        heap,
+        pattern,
+        initializer === undefined ||
+          isMaybePrimitive(
+            context.checker.getNonNullableType(context.checker.getTypeAtLocation(initializer)),
+          ),
+        context,
+      )
+    : undefined;
   // A pattern whose type isn't an array's stops at once where its value is an object that tla-ts
   // can't iterate, though nothing reads what it binds.
   const destructuring: Scope = {
     ...scope,
     destructured: [
       ...(scope.destructured ?? []),
-      isIterated && heap !== undefined && !context.checker.isArrayLikeType(type)
-        ? { pattern, value, iterated }
-        : { pattern, value },
+      {
+        pattern,
+        value,
+        ...(isIterated && heap !== undefined && !context.checker.isArrayLikeType(type)
+          ? { iterated }
+          : {}),
+        ...(uniterable === undefined ? {} : { isUniterable: uniterable }),
+      },
     ],
   };
   const iterating =
@@ -659,7 +704,8 @@ export const bindPattern = (
 // Binds parameters to argument values with LET definitions, as when inlining a call.
 // The values of the arguments that a call passes, at the positions that pass values. Where the call
 // spreads arguments from a rest parameter's position on, the last value is the sequence that the
-// rest parameter takes.
+// rest parameter takes. A call that spreads before that takes each parameter's value from the list
+// of every argument, which is also what the arguments object holds.
 export const translateArgumentValues = (
   parameters: readonly ts.ParameterDeclaration[],
   argumentNodes: readonly ts.Expression[],
@@ -669,20 +715,40 @@ export const translateArgumentValues = (
 ) => {
   const rest = parameters.findIndex((parameter) => parameter.dotDotDotToken !== undefined);
   const spread = argumentNodes.findIndex(ts.isSpreadElement);
-  if (spread !== -1 && (rest === -1 || spread < rest)) {
-    throw new TlaTypeScriptError(
-      "tla-ts can't spread arguments into the parameters before a rest parameter",
-      argumentNodes[spread],
-    );
+  const list = spread === -1 ? undefined : translateElements(argumentNodes, scope, context);
+  if (list !== undefined && (rest === -1 || spread < rest)) {
+    if (!argumentNodes.every((_, position) => isPassed(position))) {
+      throw new TlaTypeScriptError(
+        "tla-ts can't spread arguments into the parameters before a rest parameter",
+        argumentNodes[spread],
+      );
+    }
+    const values = parameters
+      .slice(0, rest === -1 ? parameters.length : rest)
+      .map((_, position) =>
+        ifExpression(
+          apply("<=", [number(position + 1), apply("Len", [list])]),
+          index(list, [number(position + 1)]),
+          getUndefined(context),
+        ),
+      );
+    return rest === -1
+      ? { values, isSpread: false, list }
+      : {
+          values: [...values, apply("SubSeq", [list, number(rest + 1), apply("Len", [list])])],
+          isSpread: true,
+          list,
+        };
   }
   const passed = (spread === -1 ? argumentNodes : argumentNodes.slice(0, rest))
     .filter((_, position) => isPassed(position))
     .map((argument) => translateExpression(argument, scope, context));
   return spread === -1
-    ? { values: passed, isSpread: false }
+    ? { values: passed, isSpread: false, list }
     : {
         values: [...passed, translateElements(argumentNodes.slice(rest), scope, context)],
         isSpread: true,
+        list,
       };
 };
 

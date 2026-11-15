@@ -216,7 +216,8 @@ export const callValue = (
   candidates: readonly FunctionNode[],
   value: Expression,
   receiver: Expression,
-  values: Expression[],
+  // The values that the call passes, or a sequence of them.
+  values: Expression[] | Expression,
   path: Path,
   context: Context,
   frame: Frame,
@@ -234,7 +235,8 @@ export const callValue = (
       candidates.reduceRight((rest, candidate) => {
         const candidateValue = getCandidateValue(candidate, context);
         if (candidateValue === undefined || frame.inlining.has(candidate)) return rest;
-        if (isAsync(candidate) && values.length > 0) {
+        const isPassed = !Array.isArray(values) || values.length > 0;
+        if (isAsync(candidate) && isPassed) {
           throw new TlaTypeScriptError("tla-ts can't pass arguments to this async function", site);
         }
         const received = ts.isArrowFunction(candidate)
@@ -248,9 +250,9 @@ export const callValue = (
         ) =>
           isAsync(candidate)
             ? translateAsyncCall(site, candidate, received, inner, context, innerFrame, after)
-            : values.length === 0
-              ? inlineBody(site, candidate, [], received, inner, context, innerFrame, after)
-              : inlineValues(candidate, values, received, inner, context, innerFrame, after);
+            : isPassed
+              ? inlineValues(candidate, values, received, inner, context, innerFrame, after)
+              : inlineBody(site, candidate, [], received, inner, context, innerFrame, after);
         // A method that reads the live locals of the function around it runs only in the call of
         // that function whose environment it holds. A closure that outlives its call reads them from
         // its environment.

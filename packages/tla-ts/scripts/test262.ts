@@ -466,6 +466,45 @@ const loosen = () => {
         `: ${destructured.dotDotDotToken === undefined ? patternType : `${patternType}[]`}`,
       );
     }
+    // An array pattern's parameter, which TypeScript types as a tuple from the pattern alone, takes
+    // any iterable that a call passes, such as a generator object, through its iterator. It takes
+    // the argument's type, as tla-ts reads an iterator only where the type says it has one.
+    const isErroredArgument = (argument: ts.Expression) =>
+      argument.getStart() === diagnostic.start &&
+      argument.getEnd() === (diagnostic.start ?? 0) + (diagnostic.length ?? 0);
+    const iteratedCall =
+      diagnostic.code === 2345
+        ? ts.findAncestor(
+            node,
+            (ancestor): ancestor is ts.CallExpression | ts.NewExpression =>
+              (ts.isCallExpression(ancestor) || ts.isNewExpression(ancestor)) &&
+              (ancestor.arguments?.some(isErroredArgument) ?? false),
+          )
+        : undefined;
+    const iteratedArgument = iteratedCall?.arguments?.find(isErroredArgument);
+    const iteratedDeclaration =
+      iteratedCall && checker.getResolvedSignature(iteratedCall)?.getDeclaration();
+    const iteratedParameter =
+      iteratedArgument !== undefined &&
+      iteratedDeclaration !== undefined &&
+      ts.isFunctionLike(iteratedDeclaration)
+        ? iteratedDeclaration.parameters.at(
+            iteratedCall?.arguments?.indexOf(iteratedArgument) ?? -1,
+          )
+        : undefined;
+    const iteratedType = iteratedArgument && checker.getTypeAtLocation(iteratedArgument);
+    if (
+      iteratedParameter !== undefined &&
+      iteratedType !== undefined &&
+      iteratedParameter.getSourceFile() === sourceFile &&
+      iteratedParameter.type === undefined &&
+      iteratedParameter.dotDotDotToken === undefined &&
+      ts.isArrayBindingPattern(iteratedParameter.name) &&
+      !checker.isArrayLikeType(iteratedType) &&
+      iteratedType.getProperties().some((property) => property.getName().startsWith("__@iterator@"))
+    ) {
+      edits.set(iteratedParameter.name.getEnd(), `: ${checker.typeToString(iteratedType)}`);
+    }
     // A function that reads this may be a constructor, whose instance gets any property.
     const receiving =
       diagnostic.code === 2683
@@ -600,17 +639,6 @@ const loosen = () => {
       edits.set(parent.right.getStart(), "(");
       edits.set(parent.right.getEnd(), " as any)");
     }
-    // A class that extends Iterator, whose type takes the type of the values it gives, gives any
-    // value.
-    const heritage = ts.findAncestor(node, ts.isExpressionWithTypeArguments);
-    if (
-      diagnostic.code === BASE_TYPE_ARGUMENTS_ERROR &&
-      heritage !== undefined &&
-      heritage.typeArguments === undefined &&
-      isGlobalIterator(heritage.expression, checker)
-    ) {
-      edits.set(heritage.expression.getEnd(), "<unknown>");
-    }
     // A function that returns no value, whose return type TypeScript can't infer where its type
     // depends on itself, as a pattern's default that calls it does, returns undefined.
     const returning = RETURN_TYPE_ERRORS.has(diagnostic.code)
@@ -700,9 +728,6 @@ const loosen = () => {
   return edits.size > 0;
 };
 
-// TypeScript's error for a class that extends a generic constructor without its type arguments.
-const BASE_TYPE_ARGUMENTS_ERROR = 2508;
-
 const isGlobalIterator = (node: ts.Expression, checker: ts.TypeChecker) =>
   ts.isIdentifier(node) &&
   node.text === "Iterator" &&
@@ -710,9 +735,37 @@ const isGlobalIterator = (node: ts.Expression, checker: ts.TypeChecker) =>
     (declaration) => declaration.getSourceFile().isDeclarationFile,
   );
 
+// A class that extends Iterator, whose type takes the type of the values it gives, gives any value.
+// It's typed before the fixes that infer types from usage, which would otherwise type its
+// callbacks' parameters and results from a base that TypeScript can't type.
+const typeIteratorBases = () => {
+  const program = service.getProgram();
+  const sourceFile = program?.getSourceFile(PROGRAM_PATH);
+  if (program === undefined || sourceFile === undefined) return;
+  const checker = program.getTypeChecker();
+  const edits = new Map<number, string>();
+  const visit = (node: ts.Node) => {
+    if (
+      ts.isExpressionWithTypeArguments(node) &&
+      node.typeArguments === undefined &&
+      node.parent.token === ts.SyntaxKind.ExtendsKeyword &&
+      isGlobalIterator(node.expression, checker)
+    ) {
+      edits.set(node.expression.getEnd(), "<unknown>");
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  if (edits.size > 0) applyEdits(edits);
+};
+
 // TypeScript's errors for a class member that its base type's member doesn't match: one of another
 // type, or an accessor where the base has a method.
 const BASE_MEMBER_ERRORS = new Set([2416, 2423]);
+
+// TypeScript's errors for a class that doesn't write an abstract member of its base, in a
+// declaration or an expression.
+const ABSTRACT_MEMBER_ERRORS = new Set([2515, 2653]);
 
 // TypeScript's errors for a function whose return type depends on itself.
 const RETURN_TYPE_ERRORS = new Set([7023, 7024]);
@@ -969,6 +1022,18 @@ interface GeneratorTypes {
   yielded: string;
   returned: string;
   sent: string[];
+  // What a return call passes, which the generator then returns.
+  closed: string[];
+  // The yield* operands, by their order in the generator, that TypeScript can't iterate as typed.
+  casts: number[];
+}
+
+// The generators of a round's program, with what TypeScript reports of them.
+interface GeneratorState {
+  checker: ts.TypeChecker;
+  generators: (ts.FunctionDeclaration | ts.FunctionExpression | ts.MethodDeclaration)[];
+  diagnostics: readonly ts.Diagnostic[];
+  getNode: (position: number) => ts.Node;
 }
 
 // The type of each value that an expression may give, widened as TypeScript infers a generator's
@@ -990,11 +1055,33 @@ const getMemberTypes = (checker: ts.TypeChecker, type: ts.Type | undefined) => {
 const getUnion = (members: string[]) =>
   members.length === 0 ? ["never"] : [...new Set(members)].toSorted();
 
-// A generator that the test declares, whose yield gives a value, takes the types of what it
-// yields, returns, and is sent: each yield's operand, each return's, undefined where its end is
-// reachable, and each argument that a next call passes it, with undefined, which a next with none
-// and a loop send. Each round types the generators by the round before, and TypeScript, which then
-// rejects any other argument for next, shows what more they're sent, until the types settle.
+// The yields and returns of a generator's own body.
+const getYieldsAndReturns = (generator: ts.FunctionLikeDeclaration) => {
+  const yields: ts.YieldExpression[] = [];
+  const returns: ts.ReturnStatement[] = [];
+  const visit = (node: ts.Node) => {
+    if (ts.isYieldExpression(node)) yields.push(node);
+    if (ts.isReturnStatement(node)) returns.push(node);
+    if (!ts.isFunctionLike(node)) ts.forEachChild(node, visit);
+  };
+  if (generator.body !== undefined) ts.forEachChild(generator.body, visit);
+  return { yields, returns };
+};
+
+const getDelegated = (generator: ts.FunctionLikeDeclaration) =>
+  getYieldsAndReturns(generator).yields.flatMap((node) =>
+    node.asteriskToken !== undefined && node.expression !== undefined ? [node.expression] : [],
+  );
+
+// A generator that the test declares, whose yield gives a value or whose return a call passes a
+// value TypeScript rejects, takes the types of what it yields, returns, and is sent: each yield's
+// operand, each return's, undefined where its end is reachable, each argument that a return call
+// passes it, and each argument that a next call passes it, with undefined, which a next with none
+// and a loop send. A yield* yields unknown, as what another iterator yields may be anything, and
+// one whose operand TypeScript can't iterate, as a test of a broken iterator gives, reads it as an
+// iterable of unknown, which tla-ts sees through. Each round types the generators by the round
+// before, and TypeScript, which then rejects any other argument for next or return, shows what
+// more they're sent, until the types settle.
 const typeGenerators = () => {
   const original = file.text;
   const getGenerators = (sourceFile: ts.SourceFile) => {
@@ -1032,24 +1119,67 @@ const typeGenerators = () => {
       getNode,
     };
   };
+  // The method call whose one argument a diagnostic rejects.
+  const getRejectedCall = (state: GeneratorState, diagnostic: ts.Diagnostic) => {
+    const start = diagnostic.start ?? 0;
+    const call = ts.findAncestor(
+      state.getNode(start),
+      (ancestor): ancestor is ts.CallExpression =>
+        ts.isCallExpression(ancestor) &&
+        ancestor.arguments.length === 1 &&
+        ancestor.arguments[0].getStart() === start &&
+        ancestor.arguments[0].getEnd() === start + (diagnostic.length ?? 0),
+    );
+    return call !== undefined && ts.isPropertyAccessExpression(call.expression)
+      ? { call, receiver: call.expression.expression, method: call.expression.name.text }
+      : undefined;
+  };
+  // The generators whose objects a receiver may hold, by the types that TypeScript infers.
+  const getHeldGenerators = (state: GeneratorState, receiver: ts.Expression) => {
+    const type = state.checker.getTypeAtLocation(receiver);
+    const held = type.isUnion() ? type.types : [type];
+    return state.generators.flatMap((generator, position) => {
+      const signature = state.checker.getSignatureFromDeclaration(generator);
+      return signature !== undefined &&
+        held.includes(state.checker.getReturnTypeOfSignature(signature))
+        ? [position]
+        : [];
+    });
+  };
   const initial = getState();
   if (initial === undefined) return false;
   const targets = new Set(
-    initial.diagnostics
-      .filter((diagnostic) => GENERATOR_ERRORS.has(diagnostic.code))
-      .map((diagnostic) => {
-        const generator = ts.findAncestor(
-          initial.getNode(diagnostic.start ?? 0),
-          ts.isFunctionLike,
-        );
-        return initial.generators.findIndex((candidate) => candidate === generator);
-      })
-      .filter(
-        (position) =>
-          position !== -1 &&
-          initial.generators[position].type === undefined &&
-          initial.generators[position].body !== undefined,
-      ),
+    [
+      ...initial.diagnostics
+        .filter((diagnostic) => GENERATOR_ERRORS.has(diagnostic.code))
+        .map((diagnostic) => {
+          const node = initial.getNode(diagnostic.start ?? 0);
+          // TypeScript names a variable that holds an anonymous generator.
+          const holder = node.parent;
+          const generator =
+            ts.isVariableDeclaration(holder) &&
+            holder.name === node &&
+            holder.initializer !== undefined
+              ? holder.initializer
+              : ts.findAncestor(node, ts.isFunctionLike);
+          return initial.generators.findIndex((candidate) => candidate === generator);
+        }),
+      ...initial.diagnostics
+        .filter((diagnostic) => CONVERTED_ARGUMENT_ERRORS.has(diagnostic.code))
+        .flatMap((diagnostic) => {
+          const rejected = getRejectedCall(initial, diagnostic);
+          return rejected?.method === "return"
+            ? getHeldGenerators(initial, rejected.receiver).filter(
+                (position) => getDelegated(initial.generators[position]).length === 0,
+              )
+            : [];
+        }),
+    ].filter(
+      (position) =>
+        position !== -1 &&
+        initial.generators[position].type === undefined &&
+        initial.generators[position].body !== undefined,
+    ),
   );
   if (targets.size === 0) return false;
   const isAsync = (generator: ts.FunctionLikeDeclaration) =>
@@ -1060,14 +1190,25 @@ const typeGenerators = () => {
     if (before === undefined) return false;
     applyEdits(
       new Map(
-        [...types].map(([position, type]) => {
+        [...types].flatMap(([position, type]) => {
           const generator = before.generators[position];
           const closeParen = generator
             .getChildren()
             .find((child) => child.kind === ts.SyntaxKind.CloseParenToken);
+          const iterable = isAsync(generator) ? "AsyncIterable" : "Iterable";
+          const delegated = getDelegated(generator);
           return [
-            closeParen?.getEnd() ?? generator.parameters.end,
-            `: ${isAsync(generator) ? "AsyncGenerator" : "Generator"}<${type.yielded || "never"}, ${type.returned || "never"}, ${type.sent.join(" | ")}>`,
+            [
+              closeParen?.getEnd() ?? generator.parameters.end,
+              `: ${isAsync(generator) ? "AsyncGenerator" : "Generator"}<${type.yielded || "never"}, ${type.returned || "never"}, ${type.sent.join(" | ")}>`,
+            ] as const,
+            ...type.casts.flatMap((cast) => [
+              [delegated[cast].getStart(), "("] as const,
+              [
+                delegated[cast].getEnd(),
+                ` as unknown as ${iterable}<unknown, unknown, unknown>)`,
+              ] as const,
+            ]),
           ];
         }),
       ),
@@ -1076,50 +1217,42 @@ const typeGenerators = () => {
     if (state === undefined) return false;
     const checker = state.checker;
     const sent = new Map<number, string[]>();
+    const closed = new Map<number, string[]>();
     state.diagnostics
       .filter((diagnostic) => CONVERTED_ARGUMENT_ERRORS.has(diagnostic.code))
       .forEach((diagnostic) => {
-        const start = diagnostic.start ?? 0;
-        const call = ts.findAncestor(
-          state.getNode(start),
-          (ancestor): ancestor is ts.CallExpression =>
-            ts.isCallExpression(ancestor) &&
-            ancestor.arguments.length === 1 &&
-            ancestor.arguments[0].getStart() === start &&
-            ancestor.arguments[0].getEnd() === start + (diagnostic.length ?? 0),
-        );
-        if (
-          call === undefined ||
-          !ts.isPropertyAccessExpression(call.expression) ||
-          call.expression.name.text !== "next"
-        ) {
-          return;
-        }
-        const receiver = checker.getTypeAtLocation(call.expression.expression);
-        const members = getMemberTypes(checker, checker.getTypeAtLocation(call.arguments[0]));
+        const rejected = getRejectedCall(state, diagnostic);
+        if (rejected === undefined || !["next", "return"].includes(rejected.method)) return;
+        const receiver = checker.getTypeAtLocation(rejected.receiver);
+        const argument = checker.getTypeAtLocation(rejected.call.arguments[0]);
         [...types.keys()].forEach((position) => {
-          const annotation = state.generators[position].type;
+          const generator = state.generators[position];
+          const annotation = generator.type;
           if (
-            annotation !== undefined &&
-            (receiver.isUnion() ? receiver.types : [receiver]).includes(
+            annotation === undefined ||
+            !(receiver.isUnion() ? receiver.types : [receiver]).includes(
               checker.getTypeFromTypeNode(annotation),
             )
           ) {
-            sent.set(position, [...(sent.get(position) ?? []), ...(members ?? ["any"])]);
+            return;
           }
+          // An async generator's return awaits what the call passes.
+          const members = getMemberTypes(
+            checker,
+            rejected.method === "return" && isAsync(generator)
+              ? checker.getAwaitedType(argument)
+              : argument,
+          ) ?? ["any"];
+          const found = rejected.method === "next" ? sent : closed;
+          found.set(position, [...(found.get(position) ?? []), ...members]);
         });
       });
     const next = new Map<number, GeneratorTypes>();
     [...types].forEach(([position, type]) => {
       const generator = state.generators[position];
-      const yields: ts.YieldExpression[] = [];
-      const returns: ts.ReturnStatement[] = [];
-      const visit = (node: ts.Node) => {
-        if (ts.isYieldExpression(node)) yields.push(node);
-        if (ts.isReturnStatement(node)) returns.push(node);
-        if (!ts.isFunctionLike(node)) ts.forEachChild(node, visit);
-      };
-      if (generator.body !== undefined) ts.forEachChild(generator.body, visit);
+      const yieldsAndReturns = getYieldsAndReturns(generator);
+      const yields = yieldsAndReturns.yields;
+      const returns = yieldsAndReturns.returns;
       const getTypes = (operand: ts.Expression | undefined) => {
         if (operand === undefined) return ["undefined"];
         const value = checker.getTypeAtLocation(operand);
@@ -1130,21 +1263,39 @@ const typeGenerators = () => {
       const last = statements.at(-1);
       const isEndReachable =
         last === undefined || !(ts.isReturnStatement(last) || ts.isThrowStatement(last));
-      // A yield* yields what another iterator does, which this doesn't type.
-      if (yields.some((node) => node.asteriskToken !== undefined)) return;
-      const yielded = yields.map((node) => getTypes(node.expression));
+      const casts = getDelegated(generator).flatMap((operand, cast) =>
+        type.casts.includes(cast) ||
+        // The first round yields never, which no operand fits.
+        (type.yielded !== "" &&
+          state.diagnostics.some(
+            (diagnostic) =>
+              (diagnostic.start ?? 0) >= operand.getStart() &&
+              (diagnostic.start ?? 0) < operand.getEnd(),
+          ))
+          ? [cast]
+          : [],
+      );
+      const yielded = yields.map((node) =>
+        node.asteriskToken === undefined ? getTypes(node.expression) : ["unknown"],
+      );
+      const closedTypes = [...new Set([...type.closed, ...(closed.get(position) ?? [])])];
+      // TypeScript takes a generator that can end without a return only where its return type is
+      // undefined or has void.
       const returned = [
         ...returns.map((node) => getTypes(node.expression)),
-        ...(isEndReachable ? [["undefined"]] : []),
+        ...(isEndReachable ? [[closedTypes.length === 0 ? "undefined" : "void"]] : []),
+        closedTypes,
       ];
       const sentTypes = getUnion([...type.sent, ...(sent.get(position) ?? [])]);
-      if (sentTypes.includes("any")) return;
+      if (sentTypes.includes("any") || closedTypes.includes("any")) return;
       // A round may type a yield's operand as any, where a later one may not.
       const isTyped = [...yielded, ...returned].every((members) => members !== undefined);
       next.set(position, {
         yielded: isTyped ? getUnion(yielded.flatMap((members) => members ?? [])).join(" | ") : "",
         returned: isTyped ? getUnion(returned.flatMap((members) => members ?? [])).join(" | ") : "",
         sent: sentTypes,
+        closed: closedTypes,
+        casts,
       });
     });
     const isSettled =
@@ -1156,7 +1307,8 @@ const typeGenerators = () => {
           settled.yielded !== "" &&
           settled.yielded === type.yielded &&
           settled.returned === type.returned &&
-          settled.sent.join(" | ") === type.sent.join(" | ")
+          settled.sent.join(" | ") === type.sent.join(" | ") &&
+          settled.casts.join() === type.casts.join()
         );
       });
     if (isSettled) return true;
@@ -1170,7 +1322,7 @@ const typeGenerators = () => {
     new Map(
       [...targets].map((position) => [
         position,
-        { yielded: "", returned: "", sent: ["undefined"] },
+        { yielded: "", returned: "", sent: ["undefined"], closed: [], casts: [] },
       ]),
     ),
     0,
@@ -1182,6 +1334,7 @@ const typeGenerators = () => {
 // the types of the objects it describes.
 const annotate = (text: string) => {
   setText(text);
+  typeIteratorBases();
   typeGenerators();
   typeCallbacks();
   for (;;) {
@@ -1240,6 +1393,8 @@ const MISSING_PROPERTY_ERROR = 2339;
 const UNASSIGNABLE_ERRORS = new Set([2322, 2345]);
 const UNTYPED_READ_ERRORS = new Set([MISSING_PROPERTY_ERROR, 2551, 7017, 7053]);
 const UNUSED_OPERAND_ERROR = 2695;
+// A delete of a property that the object's type doesn't make optional.
+const OPTIONAL_DELETE_ERROR = 2790;
 const UNRESOLVED_NAME_ERROR = 2304;
 const NOT_ITERABLE_ERROR = 2488;
 
@@ -1254,13 +1409,24 @@ const REDUCING_METHODS = new Set(["reduce", "reduceRight"]);
 // converts from a primitive. Each needs a unit test of such a call.
 const SEARCHING_METHODS = new Set(["includes", "indexOf", "lastIndexOf"]);
 // RegExp.prototype's methods under well-known symbols that tla-ts runs as their steps where a test
-// calls them through call, on any receiver, or on a regexp with a string or a limit of another
-// type than their signatures take. Each needs a unit test of such a call.
-const PROTOCOL_METHODS = new Set(["match", "search", "split"]);
+// calls them through call, on any receiver, or on a regexp with a string, a limit, or a replaceValue
+// of another type than their signatures take. Each needs a unit test of such a call.
+const PROTOCOL_METHODS = new Set(["match", "search", "split", "replace"]);
 // TypeScript's errors for a call with fewer arguments than its signature takes.
 const SHORT_CALL_ERRORS = new Set([ARGUMENT_COUNT_ERROR, 2555]);
 // A call of a value of type unknown, which tla-ts runs where a key stores a String.prototype method.
 const UNKNOWN_CALLEE_ERROR = 2571;
+// A spread argument that TypeScript can't count against a function's parameters, an argument past
+// them, or apply's arguments where the function takes none.
+const SPREAD_CALL_ERRORS = new Set([ARGUMENT_COUNT_ERROR, 2345, 2556]);
+
+const skipParentheses = (node: ts.Expression): ts.Expression =>
+  ts.isParenthesizedExpression(node) ? skipParentheses(node.expression) : node;
+// A call of a method on a union of typed arrays, whose members' signatures TypeScript can't combine.
+const UNCALLABLE_ERROR = 2349;
+// The typed arrays' methods that tla-ts runs on the elements of any typed array, where a test calls
+// them on a union of typed arrays. Each needs a unit test of such a call.
+const TYPED_UNION_METHODS = new Set(["findLast", "reduce", "reduceRight"]);
 
 // An operator's operand of a type that the operator doesn't take, or that is null or undefined,
 // which tla-ts converts to a primitive where it's an object that the test declares, a wrapper, or a
@@ -1285,6 +1451,9 @@ const COMPOUND_ASSIGNMENTS = new Set([
 // A comparison of types that don't overlap, which only misleads where TypeScript narrows an operand
 // by it.
 const UNINTENDED_COMPARISON_ERROR = 2367;
+// A read of a variable that TypeScript can't tell is assigned. tla-ts reads a var's type as its
+// value's, so a read is sound only where the value is assigned whenever it runs.
+const UNASSIGNED_READ_ERROR = 2454;
 
 const EQUALITY_OPERATORS = new Set([
   ts.SyntaxKind.EqualsEqualsToken,
@@ -1526,6 +1695,36 @@ const ignoreSoundErrors = () => {
       )
     );
   };
+  // An empty object pattern whose value is null or undefined, or an array pattern whose value is
+  // one or a primitive other than a string, which has no iterator method. JavaScript throws the
+  // TypeError that tla-ts throws too. A call that an expression inlines reads an object pattern's
+  // names before the TypeError.
+  const isTypeErrorPattern = (node: ts.Node) => {
+    const type =
+      ts.isArrayLiteralExpression(node) || ts.isObjectLiteralExpression(node)
+        ? ts.isBinaryExpression(node.parent) && node.parent.left === node
+          ? checker.getTypeAtLocation(node.parent.right)
+          : checker.getTypeOfAssignmentPattern(node)
+        : ts.isArrayBindingPattern(node) || ts.isObjectBindingPattern(node)
+          ? checker.getTypeAtLocation(node)
+          : undefined;
+    const throwing =
+      ts.TypeFlags.Undefined |
+      ts.TypeFlags.Null |
+      ts.TypeFlags.Never |
+      (ts.isArrayLiteralExpression(node) || ts.isArrayBindingPattern(node)
+        ? ts.TypeFlags.NumberLike |
+          ts.TypeFlags.BooleanLike |
+          ts.TypeFlags.ESSymbolLike |
+          ts.TypeFlags.BigIntLike
+        : 0);
+    return (
+      type !== undefined &&
+      !(ts.isObjectBindingPattern(node) && node.elements.length > 0) &&
+      !(ts.isObjectLiteralExpression(node) && node.properties.length > 0) &&
+      (type.isUnion() ? type.types : [type]).every((member) => (member.flags & throwing) !== 0)
+    );
+  };
   // An array pattern that a catch binds, or one nested in it, whose value of type unknown tla-ts
   // destructures as an array where it is one and refuses to otherwise.
   const isCaughtArrayPattern = (node: ts.Node) => {
@@ -1542,6 +1741,65 @@ const ignoreSoundErrors = () => {
       declaration !== undefined &&
       ts.isVariableDeclaration(declaration) &&
       ts.isCatchClause(declaration.parent)
+    );
+  };
+  // A read in a catch's block of what the catch binds, which TypeScript can't tell is assigned where
+  // a rest element binds it, though the catch binds it before its block runs.
+  const isCaughtRead = (node: ts.Node) => {
+    const declaration = checker.getSymbolAtLocation(node)?.valueDeclaration;
+    const clause = declaration && ts.findAncestor(declaration, ts.isCatchClause);
+    return (
+      clause?.variableDeclaration !== undefined &&
+      ts.findAncestor(declaration, (ancestor) => ancestor === clause.variableDeclaration) !==
+        undefined &&
+      ts.findAncestor(node, (ancestor) => ancestor === clause.block) !== undefined
+    );
+  };
+  // A read in a generator function that the test calls at once, of a variable that a top-level var
+  // statement assigns, where the test reads the generator object only in top-level statements after
+  // that one. Only the generator object runs the body, so it runs once the variable is assigned.
+  const isLaterGeneratorRead = (node: ts.Node) => {
+    const declaration = checker.getSymbolAtLocation(node)?.valueDeclaration;
+    const generator = ts.findAncestor(node, ts.isFunctionLike);
+    if (
+      declaration === undefined ||
+      !ts.isVariableDeclaration(declaration) ||
+      declaration.initializer === undefined ||
+      declaration.parent.parent.parent !== sourceFile ||
+      generator === undefined ||
+      !ts.isFunctionExpression(generator) ||
+      generator.asteriskToken === undefined
+    ) {
+      return false;
+    }
+    const call = ts.walkUpParenthesizedExpressions(generator.parent);
+    const holder = call.parent;
+    if (
+      !ts.isCallExpression(call) ||
+      ts.skipParentheses(call.expression) !== generator ||
+      !ts.isVariableDeclaration(holder) ||
+      holder.initializer !== call ||
+      !ts.isIdentifier(holder.name)
+    ) {
+      return false;
+    }
+    const held = checker.getSymbolAtLocation(holder.name);
+    const references: ts.Identifier[] = [];
+    const visit = (inner: ts.Node) => {
+      if (
+        ts.isIdentifier(inner) &&
+        inner !== holder.name &&
+        checker.getSymbolAtLocation(inner) === held
+      ) {
+        references.push(inner);
+      }
+      ts.forEachChild(inner, visit);
+    };
+    visit(sourceFile);
+    return references.every(
+      (reference) =>
+        reference.getStart() >= declaration.parent.parent.getEnd() &&
+        ts.findAncestor(reference, ts.isFunctionLike) === undefined,
     );
   };
   // A call of a built-in that SHORT_CALLED_BUILT_INS lists, with fewer arguments than its type
@@ -1767,12 +2025,12 @@ const ignoreSoundErrors = () => {
   };
   // A call of a method of RegExp.prototype that PROTOCOL_METHODS lists, on a regexp, as
   // rx[Symbol.search](s), or through call, as RegExp.prototype[Symbol.search].call(rx, s).
-  const isProtocolCall = (node: ts.Node): node is ts.CallExpression => {
-    if (!ts.isCallExpression(node)) return false;
+  // The method of a protocol call, under the well-known symbol that names it.
+  const getProtocolMethod = (node: ts.CallExpression) => {
     const callee = node.expression;
     const isCall = ts.isPropertyAccessExpression(callee) && callee.name.text === "call";
     const method = isCall ? callee.expression : callee;
-    if (!ts.isElementAccessExpression(method)) return false;
+    if (!ts.isElementAccessExpression(method)) return undefined;
     const owner = method.expression;
     const key = method.argumentExpression;
     const isOwned = isCall
@@ -1782,19 +2040,21 @@ const ignoreSoundErrors = () => {
         isGlobal(owner.expression) &&
         owner.name.text === "prototype"
       : checker.getTypeAtLocation(owner).getSymbol()?.getName() === "RegExp";
-    return (
-      isOwned &&
+    return isOwned &&
       ts.isPropertyAccessExpression(key) &&
       ts.isIdentifier(key.expression) &&
       key.expression.text === "Symbol" &&
       isGlobal(key.expression) &&
       PROTOCOL_METHODS.has(key.name.text) &&
       !node.arguments.some(ts.isSpreadElement)
-    );
+      ? key.name.text
+      : undefined;
   };
-  // A protocol call that leaves out the receiver or the string, which are then undefined, as they
-  // are in JavaScript. TypeScript reports it at call's name, or at the method of a regexp, which
-  // tla-ts runs as its steps where it has no string.
+  const isProtocolCall = (node: ts.Node): node is ts.CallExpression =>
+    ts.isCallExpression(node) && getProtocolMethod(node) !== undefined;
+  // A protocol call that leaves out the receiver, the string, or replace's replaceValue, which are
+  // then undefined, as they are in JavaScript. TypeScript reports it at call's name, or at the
+  // method of a regexp, which tla-ts runs as its steps where it has no string or no replaceValue.
   const isShortProtocolCall = (node: ts.Node, diagnostic: ts.Diagnostic) => {
     const call = ts.findAncestor(node, ts.isCallExpression);
     const callee = call?.expression;
@@ -1806,14 +2066,16 @@ const ignoreSoundErrors = () => {
       reported !== undefined &&
       reported.getStart() === diagnostic.start &&
       reported.getEnd() === (diagnostic.start ?? 0) + (diagnostic.length ?? 0) &&
-      (isCall || call.arguments.length === 0) &&
-      isProtocolCall(call)
+      isProtocolCall(call) &&
+      (isCall ||
+        call.arguments.length === 0 ||
+        (call.arguments.length === 1 && getProtocolMethod(call) === "replace"))
     );
   };
   // A protocol call of a value of another type than the string or the limit: tla-ts converts the
-  // string with ToString, running a toString or a Symbol.toPrimitive that the test writes, and
-  // split's limit with ToUint32, throwing a TypeError on a symbol and stopping on another value
-  // that isn't a number.
+  // string with ToString, running a toString or a Symbol.toPrimitive that the test writes, split's
+  // limit with ToUint32, throwing a TypeError on a symbol and stopping on another value that isn't
+  // a number, and replace's replaceValue, or what its function returns, with ToString.
   const isConvertedProtocolCall = (diagnostic: ts.Diagnostic) => {
     const call = getErroredCall(diagnostic);
     return call !== undefined && isProtocolCall(call);
@@ -1962,6 +2224,17 @@ const ignoreSoundErrors = () => {
       access.parent.operatorToken.kind === ts.SyntaxKind.EqualsToken
     );
   };
+  // A delete of Array.prototype's iterator method, after which an array pattern's GetIterator
+  // throws a TypeError, as tla-ts throws where the method is undefined.
+  const isDeletedIterator = (node: ts.Node) => {
+    const access = ts.findAncestor(node, ts.isElementAccessExpression);
+    return (
+      access !== undefined &&
+      access.argumentExpression.getText() === "Symbol.iterator" &&
+      access.expression.getText() === "Array.prototype" &&
+      ts.isDeleteExpression(access.parent)
+    );
+  };
   // A member of a class that extends Iterator, which the member's own type types, whatever the
   // type of Iterator's member, as an iterator that the test writes to throw or misbehave does.
   const isIteratorMember = (node: ts.Node) => {
@@ -1977,6 +2250,62 @@ const ignoreSoundErrors = () => {
       isGlobalIterator(heritage.expression, checker)
     );
   };
+  // A class that extends Iterator without a next, which Iterator types as abstract but doesn't have.
+  const isIteratorClass = (node: ts.Node) => {
+    const declaration = ts.findAncestor(node, ts.isClassLike);
+    const heritage = declaration?.heritageClauses?.[0];
+    return (
+      heritage !== undefined &&
+      heritage.token === ts.SyntaxKind.ExtendsKeyword &&
+      node.getEnd() <= heritage.getStart() &&
+      isGlobalIterator(heritage.types[0].expression, checker)
+    );
+  };
+  // A call that spreads arguments into a function expression without parameters, directly or through
+  // apply. The function reads them only through its arguments object, which takes any values.
+  const isUntypedSpreadCall = (node: ts.Node) => {
+    const call = ts.findAncestor(node, ts.isCallExpression);
+    if (call === undefined || node.getStart() < call.arguments.pos) return false;
+    const callee = skipParentheses(call.expression);
+    const isApply =
+      ts.isPropertyAccessExpression(callee) &&
+      callee.name.text === "apply" &&
+      call.arguments.length === 2;
+    const called = isApply ? skipParentheses(callee.expression) : callee;
+    const spread = isApply ? call.arguments[1] : call;
+    const elements = ts.isArrayLiteralExpression(spread)
+      ? spread.elements
+      : ts.isCallExpression(spread)
+        ? spread.arguments
+        : [];
+    return (
+      ts.isFunctionExpression(called) &&
+      called.parameters.length === 0 &&
+      elements.some(ts.isSpreadElement)
+    );
+  };
+  // A call of a method that TYPED_UNION_METHODS lists on a union of typed arrays, which TypeScript
+  // reports at the method's name.
+  const isTypedUnionCall = (node: ts.Node, diagnostic: ts.Diagnostic) => {
+    const callee = node.parent;
+    const type = ts.isPropertyAccessExpression(callee)
+      ? checker.getTypeAtLocation(callee.expression)
+      : undefined;
+    return (
+      ts.isPropertyAccessExpression(callee) &&
+      type !== undefined &&
+      callee.name === node &&
+      node.getStart() === diagnostic.start &&
+      node.getEnd() === (diagnostic.start ?? 0) + (diagnostic.length ?? 0) &&
+      ts.isCallExpression(callee.parent) &&
+      callee.parent.expression === callee &&
+      TYPED_UNION_METHODS.has(callee.name.text) &&
+      type.isUnion() &&
+      type.types.every((member) =>
+        /^(Big)?(Int|Uint|Float)\d+(Clamped)?Array$/.test(member.getSymbol()?.getName() ?? ""),
+      )
+    );
+  };
   const isSound = (diagnostic: ts.Diagnostic) => {
     const node = getNode(diagnostic.start ?? 0);
     return (
@@ -1987,10 +2316,17 @@ const ignoreSoundErrors = () => {
       ((diagnostic.code === NOT_ITERABLE_ERROR || NULLABLE_ERRORS.has(diagnostic.code)) &&
         isNullableArrayPattern(node)) ||
       (diagnostic.code === NOT_ITERABLE_ERROR && isCaughtArrayPattern(node)) ||
+      (diagnostic.code === UNASSIGNED_READ_ERROR &&
+        (isCaughtRead(node) || isLaterGeneratorRead(node))) ||
+      ((diagnostic.code === NOT_ITERABLE_ERROR || NULLABLE_ERRORS.has(diagnostic.code)) &&
+        isTypeErrorPattern(node)) ||
       (UNASSIGNABLE_ERRORS.has(diagnostic.code) && isPatternArgument(node)) ||
       (diagnostic.code === 2322 && isIteratorWrite(node)) ||
+      (diagnostic.code === OPTIONAL_DELETE_ERROR && isDeletedIterator(node)) ||
       (diagnostic.code === 2322 && isWrittenExec(node, diagnostic)) ||
       (BASE_MEMBER_ERRORS.has(diagnostic.code) && isIteratorMember(node)) ||
+      (ABSTRACT_MEMBER_ERRORS.has(diagnostic.code) && isIteratorClass(node)) ||
+      (SPREAD_CALL_ERRORS.has(diagnostic.code) && isUntypedSpreadCall(node)) ||
       (CONVERTED_ARGUMENT_ERRORS.has(diagnostic.code) &&
         (isConvertedCall(diagnostic) ||
           isConvertedProtocolCall(diagnostic) ||
@@ -1998,6 +2334,7 @@ const ignoreSoundErrors = () => {
           isSearchingCall(diagnostic) ||
           isTypedArrayNew(diagnostic))) ||
       (diagnostic.code === UNKNOWN_CALLEE_ERROR && isStoredStringCall(node)) ||
+      (diagnostic.code === UNCALLABLE_ERROR && isTypedUnionCall(node, diagnostic)) ||
       diagnostic.code === UNUSED_OPERAND_ERROR ||
       (diagnostic.code === UNINTENDED_COMPARISON_ERROR && isUnnarrowed(node, diagnostic)) ||
       (UNTYPED_READ_ERRORS.has(diagnostic.code) && isObjectRead(node)) ||

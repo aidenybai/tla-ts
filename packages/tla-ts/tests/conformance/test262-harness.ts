@@ -1,12 +1,10 @@
 // test262's harness/sta.js and harness/assert.js, typed so that tla-ts can compile them.
 
 class Test262Error extends Error {
-  declare static thrower: (message?: string) => never;
+  static thrower(message?: string): never {
+    throw new Test262Error(message);
+  }
 }
-
-Test262Error.thrower = function (message?: string): never {
-  throw new Test262Error(message);
-};
 
 // TypeScript's lib types new Object() as Object, which primitives also have, and which has no
 // properties to write, and Object() as any. Both give an object back, and wrap a primitive.

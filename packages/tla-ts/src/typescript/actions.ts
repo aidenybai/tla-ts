@@ -23,6 +23,8 @@ import {
   translateHeapElements,
   translateArrayIteration,
   translatePatternIteration,
+  isMaybePrimitive,
+  isUniterable,
   getPatternHeap,
   holdsArrayIteration,
   ARRAY_ITERATOR_REPLACED,
@@ -349,6 +351,8 @@ import {
   getOptionalField,
   getThisOwner,
   initialize,
+  isOwnClassName,
+  isTopLevelLexical,
   rejectBeforeDeclaration,
   type Receiver,
   type Scope,
@@ -452,7 +456,8 @@ interface Suspension {
   // Whether it suspended inside a try or a yield*, which a return or a throw would have to run.
   isGuarded: boolean;
   // Runs the rest of the body from a yield as a return or a throw there would, through the finally
-  // blocks and catch clauses around it, where a sync generator's plain yield suspended it.
+  // blocks and catch clauses around it, where a plain yield suspended it. An async generator's
+  // return awaits its value there first.
   abort?: (path: Path, method: string, value: Expression | undefined) => Formula;
   isAsync: boolean;
   // The promises of the nexts that called an async generator while its body ran, which it settles
@@ -569,8 +574,7 @@ interface YieldMode {
   isGuarded: boolean;
   // A generator's yield* passes on the result object of the iterator it delegates to.
   isResult?: boolean;
-  // What a return or a throw does at a yield of a sync generator, from the path of the call that
-  // resumes it.
+  // What a return or a throw does at the yield, from the path of the call that resumes it.
   abortRest?: Suspension["abort"];
 }
 
@@ -1078,8 +1082,8 @@ interface TargetAssigner<Result> {
 }
 
 // What only statements can run as a pattern assigns: a default that assigns or yields, where the
-// value that its target takes is undefined, and the TypeError of a nested pattern that destructures
-// null or undefined.
+// value that its target takes is undefined, and the TypeError of a pattern that destructures null,
+// undefined, or a value that it can't iterate.
 interface PatternStatements<Result> {
   runDefault: (
     assignment: ts.BinaryExpression | Increment | ts.YieldExpression,
@@ -1087,7 +1091,7 @@ interface PatternStatements<Result> {
     path: Path,
     continueWith: (path: Path, value: Expression) => Result,
   ) => Result;
-  throwOnNullish: (value: Expression, path: Path, rest: () => Result) => Result;
+  throwTypeErrorIf: (condition: Expression, path: Path, rest: () => Result) => Result;
   readRest: (
     site: ts.Node,
     keys: readonly string[],
@@ -1145,7 +1149,9 @@ const assignPattern = <Result>(
     const assignWith = (after: Path, innerValue: Expression) =>
       statements !== undefined &&
       (ts.isArrayLiteralExpression(inner) || ts.isObjectLiteralExpression(inner))
-        ? statements.throwOnNullish(innerValue, after, () => assignInner(after, innerValue))
+        ? statements.throwTypeErrorIf(isNullish(innerValue, context), after, () =>
+            assignInner(after, innerValue),
+          )
         : assignInner(after, innerValue);
     return statements !== undefined &&
       assignment !== undefined &&
@@ -1336,9 +1342,31 @@ const assignPattern = <Result>(
               ]),
             },
           };
-    // A statement stops at once where a pattern whose type isn't an array's takes an object.
-    return statements !== undefined && type !== undefined && !context.checker.isArrayLikeType(type)
-      ? statements.throwOnNullish(iterated, path, () => assignFrom(0, start, boolean(false)))
+    // GetIterator throws a TypeError before the pattern assigns anything, and the elements of a
+    // pattern whose type isn't an array's stop at once where it takes an object.
+    return statements !== undefined && !isList && !isHeapSource && !isTaken(value)
+      ? statements.throwTypeErrorIf(
+          isUniterable(
+            value,
+            heap ?? (heapSymbol === undefined ? undefined : getHeap(path.scope, target, context)),
+            target,
+            isMaybePrimitive(
+              context.checker.getNonNullableType(
+                source === undefined
+                  ? (type ?? context.checker.getTypeOfAssignmentPattern(target))
+                  : context.checker.getTypeAtLocation(source),
+              ),
+            ),
+            context,
+          ),
+          path,
+          () =>
+            type !== undefined && !context.checker.isArrayLikeType(type)
+              ? statements.throwTypeErrorIf(isNullish(iterated, context), path, () =>
+                  assignFrom(0, start, boolean(false)),
+                )
+              : assignFrom(0, start, boolean(false)),
+        )
       : assignFrom(0, start, boolean(false));
   }
   if (ts.isObjectLiteralExpression(target)) {
@@ -1574,13 +1602,9 @@ const assignPatternWith = (
               next(current, part),
             ),
         ),
-      throwOnNullish: (innerValue, current, rest) => {
+      throwTypeErrorIf: (condition, current, rest) => {
         context.prelude.add("Null");
-        return ifThenElse(
-          isNullish(innerValue, context),
-          throwTypeError(current, target, context, frame),
-          rest(),
-        );
+        return ifThenElse(condition, throwTypeError(current, target, context, frame), rest());
       },
       readRest: (restSite, keys, innerValue, current, next) =>
         readRestGetters(restSite, keys, innerValue, current, context, frame, next),
@@ -2449,7 +2473,7 @@ const translateCallStatementBody = (
     );
   }
   const consumer = getGeneratorMethod(expression, context);
-  const stepped = isGeneratorStep(expression, context) ? expression : undefined;
+  const stepped = getGeneratorStep(expression, context);
   const consume =
     consumer &&
     ((current: Path) =>
@@ -2492,8 +2516,9 @@ const translateCallStatementBody = (
               )
             : consume(current)
       : stepped &&
-        ((current: Path) => translateGeneratorStep(stepped, current, context, frame, continueWith));
-  const generator = consumer?.receiver ?? stepped?.expression.expression;
+        ((current: Path) =>
+          translateGeneratorStep(expression, stepped, current, context, frame, continueWith));
+  const generator = consumer?.receiver ?? stepped?.expression;
   if (translateStep !== undefined && generator !== undefined) {
     const receiver = getCast(generator);
     if (
@@ -5132,17 +5157,13 @@ export const bindCall = (
   const plainValues = argumentValues.isSpread ? values.shared.slice(0, -1) : values.shared;
   const restValue = argumentValues.isSpread ? values.shared.at(-1) : undefined;
   const evaluateArguments = (rest: Formula) => values.evaluate(rest, leaf(boolean(false)));
-  if (
-    isArgumentsNamed(callee, context) &&
-    context.heap !== undefined &&
-    (callbacks.length > 0 || argumentNodes.some(ts.isSpreadElement))
-  ) {
+  if (isArgumentsNamed(callee, context) && context.heap !== undefined && callbacks.length > 0) {
     throw new TlaTypeScriptError("Unsupported arguments object", node);
   }
   // Parameters' defaults may read the arguments object, which the call makes before it binds them.
   const made = allocateArguments(
     callee,
-    values.shared,
+    argumentValues.list ?? tuple(values.shared),
     node,
     { definitions: [], scope: path.scope },
     context,
@@ -5394,7 +5415,7 @@ const rejectMappedArguments = (callee: FunctionNode, context: Context) => {
 
 export const allocateArguments = (
   callee: FunctionNode,
-  values: readonly Expression[],
+  list: Expression,
   node: ts.Node,
   bound: Bound,
   context: Context,
@@ -5408,7 +5429,7 @@ export const allocateArguments = (
   const heap = context.names.getFresh("heap");
   const made = useJavaScript(
     "ArgumentsObject",
-    [tuple([...values]), translateBuiltInValue("get Function.prototype.arguments", node, context)],
+    [list, translateBuiltInValue("get Function.prototype.arguments", node, context)],
     context,
   );
   return {
@@ -5432,10 +5453,11 @@ export const allocateArguments = (
 };
 
 // Runs a function's body with the values that a call passes it, for a call that JavaScript makes,
-// such as a promise's reaction or a proxy's trap.
+// such as a promise's reaction or a proxy's trap, or with a sequence of them, whose length the model
+// may only know as it runs.
 export const inlineValues = (
   callee: FunctionNode,
-  values: Expression[],
+  values: Expression[] | Expression,
   receiver: Receiver | undefined,
   path: Path,
   context: Context,
@@ -5445,7 +5467,24 @@ export const inlineValues = (
   if (frame.inlining.has(callee)) {
     throw new TlaTypeScriptError("Functions that change state can't call themselves", callee);
   }
-  const bound = bindValues(getParameters(callee), values, path.scope, context);
+  const parameters = getParameters(callee);
+  const bound = allocateArguments(
+    callee,
+    Array.isArray(values) ? tuple(values) : values,
+    callee,
+    Array.isArray(values)
+      ? bindValues(parameters, values, path.scope, context)
+      : bindValues(
+          parameters,
+          parameters.map((_, position) =>
+            useJavaScript("ArgumentAt", [values, number(position + 1)], context),
+          ),
+          path.scope,
+          context,
+          apply("SubSeq", [values, number(parameters.length), apply("Len", [values])]),
+        ),
+    context,
+  );
   const back = (after: Path, result?: Expression) =>
     continueWith({ ...after, scope: { ...after.scope, previous: path.scope.previous } }, result);
   return letIn(
@@ -6195,25 +6234,7 @@ export const makeGenerator = (
     };
     const bodyFrame: Frame = {
       next: finish,
-      // An async generator's return awaits its value.
-      exit: (current, value) => {
-        if (!isAsync || value === undefined) return finish(current, value);
-        if (bound.scope.isCatching) {
-          throw new TlaTypeScriptError(
-            "tla-ts can't return a value inside try in an async generator",
-            callee,
-          );
-        }
-        return suspend(current, value, undefined, (resumed, settled, isRejected) => {
-          if (!isRejected) return finish(resumed, settled);
-          const caller = getCaller(resumed);
-          const left = leave(resumed, undefined);
-          const uncaught = apply("Assert", [boolean(false), string("An async generator threw")]);
-          return caller.throwTo === undefined
-            ? leaf(uncaught)
-            : caller.throwTo(left, { value: settled, uncaught });
-        });
-      },
+      exit: finish,
       breakTo: undefined,
       continueTo: undefined,
       throwTo: (current, thrown) => {
@@ -6223,7 +6244,7 @@ export const makeGenerator = (
       },
       // An async generator's yield awaits its value.
       yieldTo: (current, value, rest, throwRest, mode) => {
-        const abortRest = isAsync ? undefined : mode?.abortRest;
+        const abortRest = mode?.abortRest;
         const step = (resumed: Path, settled: Expression | undefined) =>
           getCaller(resumed).step(
             leave(
@@ -6988,8 +7009,6 @@ const translateIteratorHelper = (
     if (caller === undefined) throw new TlaTypeScriptError("Unsupported iterator helper", node);
     return caller;
   };
-  // A helper's return closes the generator it wraps, which tla-ts doesn't follow, so a return
-  // stops.
   if (helper.invalid === "primitive") {
     return translateHoldsIteratorPrototype(
       method,
@@ -7017,12 +7036,26 @@ const translateIteratorHelper = (
   if (candidates.size !== 1 && helper.invalid === undefined) {
     throw new TlaTypeScriptError("tla-ts can't tell which generator this helper wraps", node);
   }
+  // A helper's return closes what it wraps, as its next closes it once take reaches its limit,
+  // where what the close throws leaves the helper done.
   const getSuspension = (resume: Suspension["resume"]): Suspension => ({
     ref,
     generator,
     resume,
     isStarted: true,
     isGuarded: true,
+    abort:
+      helper.invalid === "object"
+        ? undefined
+        : (closing, method) =>
+            method === "return"
+              ? close(closing, getCaller(closing))
+              : leaf(
+                  apply("Assert", [
+                    boolean(false),
+                    string(`tla-ts can't ${method} an iterator helper`),
+                  ]),
+                ),
     isAsync: false,
     queue: [],
   });
@@ -7030,6 +7063,23 @@ const translateIteratorHelper = (
     ...current,
     generators: new Map([...current.generators, [name, getSuspension(resume)]]),
   });
+  const close = (current: Path, caller: Caller) =>
+    resumeGenerator(
+      node,
+      underlying,
+      "return",
+      undefined,
+      current,
+      context,
+      {
+        ...frame,
+        throwTo: (after, thrown) =>
+          caller.throwTo === undefined
+            ? leaf(thrown.uncaught)
+            : caller.throwTo(leave(after, undefined), thrown),
+      },
+      (after) => caller.step(leave(after, undefined), undefined, true),
+    );
   const getFrame = (caller: Caller): Frame => ({
     ...frame,
     // A callback that throws closes the generator before the error leaves next, which wins over
@@ -7096,25 +7146,7 @@ const translateIteratorHelper = (
           throwTo: caller.throwTo,
         });
       }
-      // What the close throws leaves next, as the helper finishes.
-      if (method === "take" && counter >= (limit ?? 0)) {
-        return resumeGenerator(
-          node,
-          underlying,
-          "return",
-          undefined,
-          resumer,
-          context,
-          {
-            ...frame,
-            throwTo: (current, thrown) =>
-              caller.throwTo === undefined
-                ? leaf(thrown.uncaught)
-                : caller.throwTo(leave(current, undefined), thrown),
-          },
-          (after) => give(after, undefined, true),
-        );
-      }
+      if (method === "take" && counter >= (limit ?? 0)) return close(resumer, caller);
       return resumeGenerator(
         node,
         underlying,
@@ -7248,18 +7280,27 @@ const translateIteratorHelper = (
 // A call to a generator's next, return, or throw, which gives an object with what the generator
 // yields or returns.
 const translateGeneratorStep = (
-  node: MethodCall,
+  node: ts.CallExpression,
+  step: ts.PropertyAccessExpression,
   path: Path,
   context: Context,
   frame: Frame,
   continueWith: (path: Path, value?: Expression) => Formula,
 ): Formula => {
   const heapSymbol = context.heap;
+  const method = step.name.text;
+  const argument = node.arguments.at(0);
   return resumeGenerator(
     node,
-    translateExpression(node.expression.expression, path.scope, context),
-    node.expression.name.text,
-    node.arguments.at(0),
+    translateExpression(step.expression, path.scope, context),
+    method,
+    argument && {
+      value:
+        method === "throw"
+          ? translateThrown(argument, path.scope, context)
+          : translateExpression(argument, path.scope, context),
+      node: argument,
+    },
     path,
     context,
     frame,
@@ -7300,14 +7341,15 @@ const translateGeneratorStep = (
   );
 };
 
-// Resumes the generator whose object a receiver holds, for its next, return, or throw. A return or
-// a throw completes a generator that suspended outside try statements, and otherwise runs the body
-// from the yield as a return or a throw there would, through its finally blocks and catch clauses.
+// Resumes the generator whose object a receiver holds, for its next, return, or throw, with the
+// value that the call passes and the expression that gives it. A return or a throw completes a
+// generator that suspended outside try statements, and otherwise runs the body from the yield as a
+// return or a throw there would, through its finally blocks and catch clauses.
 export const resumeGenerator = (
   node: ts.Node,
   receiver: Expression,
   method: string,
-  argument: ts.Expression | undefined,
+  argument: { value: Expression; node?: ts.Expression } | undefined,
   path: Path,
   context: Context,
   frame: Frame,
@@ -7315,10 +7357,7 @@ export const resumeGenerator = (
   continueAsync?: (path: Path, request: Expression) => Formula,
 ): Formula => {
   // The value that a next sends, which a yield gives where the body resumes.
-  const sent =
-    method === "next" && argument !== undefined
-      ? translateExpression(argument, path.scope, context)
-      : undefined;
+  const sent = method === "next" ? argument?.value : undefined;
   // An async generator's next, return, or throw gives a promise of what the body does.
   const runAsync = (
     name: string,
@@ -7362,29 +7401,51 @@ export const resumeGenerator = (
           sent,
         );
       }
+      // A return or a throw resumes the body at its yield, which returns or throws there.
       if (resume !== undefined && suspension.isStarted && suspension.isGuarded) {
-        return leaf(
-          apply("Assert", [
-            boolean(false),
-            string("tla-ts can't close a generator that suspended in try or yield*"),
-          ]),
-        );
+        return suspension.abort !== undefined
+          ? suspension.abort(
+              {
+                ...made,
+                generators: new Map([
+                  ...made.generators,
+                  [
+                    name,
+                    {
+                      ...suspension,
+                      caller: getAsyncCaller(node, name, made, request, context, done),
+                    },
+                  ],
+                ]),
+              },
+              method,
+              argument?.value,
+            )
+          : leaf(
+              apply("Assert", [
+                boolean(false),
+                string("tla-ts can't close a generator that suspended in try or yield*"),
+              ]),
+            );
       }
       if (method === "throw") {
-        const thrown =
-          argument === undefined
-            ? getUndefined(context)
-            : translateThrown(argument, path.scope, context);
-        return settleRequest(completed, node, request, thrown, true, true, context, done);
+        return settleRequest(
+          completed,
+          node,
+          request,
+          argument?.value ?? getUndefined(context),
+          true,
+          true,
+          context,
+          done,
+        );
       }
       // A return awaits its value before the request settles.
       return awaitIn(
         completed,
         node,
-        argument === undefined
-          ? getUndefined(context)
-          : translateExpression(argument, path.scope, context),
-        argument,
+        argument?.value ?? getUndefined(context),
+        argument?.node,
         context,
         (resumer, settled, isRejected, onReturn) =>
           settleRequest(resumer, node, request, settled, true, isRejected, context, onReturn),
@@ -7476,24 +7537,13 @@ export const resumeGenerator = (
           ]),
         },
         method,
-        argument &&
-          (method === "throw"
-            ? translateThrown(argument, path.scope, context)
-            : translateExpression(argument, path.scope, context)),
+        argument?.value,
       );
     }
-    if (method === "return") {
-      return step(completed, argument && translateExpression(argument, path.scope, context), true);
-    }
+    if (method === "return") return step(completed, argument?.value, true);
     const uncaught = apply("Assert", [boolean(false), string(node.getText())]);
     if (frame.throwTo === undefined) return leaf(uncaught);
-    return frame.throwTo(completed, {
-      value:
-        argument === undefined
-          ? getUndefined(context)
-          : translateThrown(argument, path.scope, context),
-      uncaught,
-    });
+    return frame.throwTo(completed, { value: argument?.value ?? getUndefined(context), uncaught });
   };
   const generators = [...path.generators];
   const held = generators.find((entry) => isSameExpression(entry[1].ref, receiver));
@@ -8009,11 +8059,21 @@ export const isSameExpression = (left: Expression, right: Expression) => {
 const isSteppedValue = (node: ts.Expression, context: Context) =>
   isGeneratorType(node, context) || isBuiltInIteratorType(node, context);
 
-// A call to the next, return, or throw of a generator object.
-const isGeneratorStep = (node: ts.CallExpression, context: Context): node is MethodCall =>
-  isMethodCall(node) &&
-  ["next", "return", "throw"].includes(node.expression.name.text) &&
-  isGeneratorType(node.expression.expression, context);
+// The next, return, or throw of a generator object that a call calls. An iterator helper's type
+// may lack a return, which it has, so the call may assert that it's there.
+const getGeneratorStep = (node: ts.CallExpression, context: Context) => {
+  const callee =
+    ts.isNonNullExpression(node.expression) &&
+    ts.isPropertyAccessExpression(node.expression.expression) &&
+    node.expression.expression.name.text === "return"
+      ? node.expression.expression
+      : node.expression;
+  return ts.isPropertyAccessExpression(callee) &&
+    ["next", "return", "throw"].includes(callee.name.text) &&
+    isGeneratorType(callee.expression, context)
+    ? callee
+    : undefined;
+};
 
 // A call of a method of Iterator.prototype that consumes a generator object or wraps it in a
 // helper, or of the method's call with the generator object.
@@ -8149,6 +8209,8 @@ const TYPED_LOOP_METHODS = new Set([
   "findIndex",
   "findLast",
   "findLastIndex",
+  "reduce",
+  "reduceRight",
   "filter",
   "map",
 ]);
@@ -8940,7 +9002,7 @@ const translateShortLoopCall = (
     }
     const bound = allocateArguments(
       callback,
-      passed,
+      tuple(passed),
       receiver,
       bindValues(callbackParameters, passed, current.scope, context),
       context,
@@ -10268,8 +10330,9 @@ const stopSending = () =>
   leaf(apply("Assert", [boolean(false), string("tla-ts can't send a value through this yield*")]));
 
 // A generator's yield* over another generator, which resumes it with next and passes on what it
-// yields until it returns. A return or a throw while it delegates would call the generator's return
-// or throw, which tla-ts doesn't follow.
+// yields until it returns. A next, a return, or a throw while it delegates resumes the generator
+// with the same method and value. Where the generator completes, a return returns its value, and a
+// next or a throw continues after the yield*.
 const delegateToGenerator = (
   node: ts.YieldExpression,
   iterated: ts.Expression,
@@ -10283,7 +10346,13 @@ const delegateToGenerator = (
   const throwTo = frame.throwTo;
   const throwWith = (current: Path, value: Expression) =>
     throwTo === undefined ? leaf(uncaught) : throwTo(current, { value, uncaught });
-  const delegate = (current: Path, generator: Expression, count: number): Formula =>
+  const delegate = (
+    current: Path,
+    generator: Expression,
+    method: string,
+    value: Expression | undefined,
+    count: number,
+  ): Formula =>
     count > DELEGATION_LIMIT
       ? leaf(
           apply("Assert", [
@@ -10294,34 +10363,43 @@ const delegateToGenerator = (
       : resumeGenerator(
           node,
           generator,
-          "next",
-          undefined,
+          method,
+          value && { value },
           current,
           context,
           frame,
-          (stepped, value, isDone, isResult) =>
+          (stepped, result, isDone, isResult) =>
             isDone
-              ? continueWith(stepped)
+              ? method === "return"
+                ? frame.exit(stepped, result)
+                : continueWith(stepped)
               : yieldTo(
                   stepped,
-                  value,
-                  (resumed, sent) =>
-                    sent === undefined ? delegate(resumed, generator, count + 1) : stopSending(),
+                  result,
+                  (resumed, sent) => delegate(resumed, generator, "next", sent, count + 1),
                   throwWith,
-                  { isDelegated: true, isGuarded: true, isResult },
+                  {
+                    isDelegated: true,
+                    isGuarded: true,
+                    isResult,
+                    abortRest: (aborted, abrupt, abruptValue) =>
+                      delegate(aborted, generator, abrupt, abruptValue, count + 1),
+                  },
                 ),
         );
   return ts.isCallExpression(iterated)
     ? translateCallStatement(iterated, path, context, frame, (after, generator) =>
-        delegate(after, generator ?? getUndefined(context), 0),
+        delegate(after, generator ?? getUndefined(context), "next", undefined, 0),
       )
-    : delegate(path, translateExpression(iterated, path.scope, context), 0);
+    : delegate(path, translateExpression(iterated, path.scope, context), "next", undefined, 0);
 };
 
-// An async generator's yield* over a generator, which the async-from-sync iterator resumes with
-// next. It awaits each value that the generator yields, and the value it returns, a job before the
-// yield* awaits the iterator's result, as for an array. A value that rejects would close the
-// generator, which tla-ts doesn't follow.
+// An async generator's yield* over a generator, which the async-from-sync iterator resumes with the
+// method and the value that resumed the async generator. It awaits each value that the generator
+// yields, and the value it returns, a job before the yield* awaits the iterator's result, as for
+// an array, and what the generator throws rejects that result. A return that completes the
+// generator awaits its value again. A value that rejects would close the generator, which tla-ts
+// doesn't follow.
 const delegateToSyncGenerator = (
   node: ts.YieldExpression,
   iterated: ts.Expression,
@@ -10345,7 +10423,18 @@ const delegateToSyncGenerator = (
         string("tla-ts can't close a generator that yield* awaits a rejected value of"),
       ]),
     );
-  const delegate = (current: Path, generator: Expression, count: number): Formula =>
+  // The iterator's result rejects with what the generator throws, which the yield* awaits.
+  const stepFrame: Frame = {
+    ...frame,
+    throwTo: throwTo && ((current, thrown) => tick(current, (after) => throwTo(after, thrown))),
+  };
+  const delegate = (
+    current: Path,
+    generator: Expression,
+    method: string,
+    value: Expression | undefined,
+    count: number,
+  ): Formula =>
     count > DELEGATION_LIMIT
       ? leaf(
           apply("Assert", [
@@ -10356,12 +10445,12 @@ const delegateToSyncGenerator = (
       : resumeGenerator(
           node,
           generator,
-          "next",
-          undefined,
+          method,
+          value && { value },
           current,
           context,
-          frame,
-          (stepped, value, isDone, isResult) => {
+          stepFrame,
+          (stepped, result, isDone, isResult) => {
             if (isResult) {
               throw new TlaTypeScriptError(
                 "tla-ts can't await what a generator passes on through its own yield*",
@@ -10370,21 +10459,25 @@ const delegateToSyncGenerator = (
             }
             return awaitTo(
               stepped,
-              value ?? getUndefined(context),
+              result ?? getUndefined(context),
               undefined,
               (fulfilled, settled) =>
                 tick(fulfilled, (resumed) =>
                   isDone
-                    ? continueWith(resumed)
+                    ? method === "return"
+                      ? awaitTo(resumed, settled, undefined, frame.exit, throwWith)
+                      : continueWith(resumed)
                     : yieldTo(
                         resumed,
                         settled,
-                        (after, sent) =>
-                          sent === undefined
-                            ? delegate(after, generator, count + 1)
-                            : stopSending(),
+                        (after, sent) => delegate(after, generator, "next", sent, count + 1),
                         throwWith,
-                        { isDelegated: true, isGuarded: true },
+                        {
+                          isDelegated: true,
+                          isGuarded: true,
+                          abortRest: (aborted, abrupt, abruptValue) =>
+                            delegate(aborted, generator, abrupt, abruptValue, count + 1),
+                        },
                       ),
                 ),
               rejected,
@@ -10393,9 +10486,9 @@ const delegateToSyncGenerator = (
         );
   return ts.isCallExpression(iterated)
     ? translateCallStatement(iterated, path, context, frame, (after, generator) =>
-        delegate(after, generator ?? getUndefined(context), 0),
+        delegate(after, generator ?? getUndefined(context), "next", undefined, 0),
       )
-    : delegate(path, translateExpression(iterated, path.scope, context), 0);
+    : delegate(path, translateExpression(iterated, path.scope, context), "next", undefined, 0);
 };
 
 // An async generator's yield* over another async generator, which awaits the promise of each next
@@ -11237,14 +11330,22 @@ const translateExpressionStatement = (
       ),
     );
   }
-  // An array pattern destructures an object that a script declares through its iterator, and a
-  // pattern whose default yields runs it as a statement.
+  // An array pattern destructures an object that a script declares through its iterator, or throws
+  // where it can't iterate a value that may be a primitive, and a pattern whose default yields runs
+  // it as a statement.
+  const assignedType = ts.isBinaryExpression(expression)
+    ? context.checker.getTypeAtLocation(expression.right)
+    : undefined;
   if (
     ts.isBinaryExpression(expression) &&
     expression.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
     ((ts.isArrayLiteralExpression(expression.left) &&
       (isIteratedPattern(expression.left, context) ||
-        isIterablePattern(expression.left, context))) ||
+        isIterablePattern(expression.left, context) ||
+        (assignedType !== undefined &&
+          !(assignedType.flags & ts.TypeFlags.StringLike) &&
+          (isMaybeNullish(assignedType) ||
+            isMaybePrimitive(context.checker.getNonNullableType(assignedType)))))) ||
       ((ts.isArrayLiteralExpression(expression.left) ||
         ts.isObjectLiteralExpression(expression.left)) &&
         hasYield(expression.left)))
@@ -11579,10 +11680,19 @@ const translateYield = (
     yieldTo(current, value, continueWith, throwWith, {
       isDelegated: false,
       isGuarded: false,
+      // An async generator's yield awaits what a return gives, and throws where it rejects.
       abortRest: (aborted, method, abrupt) =>
         method === "throw"
           ? throwWith(aborted, abrupt ?? getUndefined(context))
-          : frame.exit(aborted, abrupt),
+          : frame.awaitTo === undefined
+            ? frame.exit(aborted, abrupt)
+            : frame.awaitTo(
+                aborted,
+                abrupt ?? getUndefined(context),
+                undefined,
+                frame.exit,
+                throwWith,
+              ),
     });
   // A yield of an increment yields what it gives.
   if (
@@ -11771,7 +11881,10 @@ export const throwOnDestructured = (
   return ifThenElse(
     junction(
       "Or",
-      destructured.map((entry) => isNullish(entry.value, context)),
+      destructured.flatMap((entry) => [
+        isNullish(entry.value, context),
+        ...(entry.isUniterable === undefined ? [] : [entry.isUniterable]),
+      ]),
     ),
     throwTypeError(path, destructured[0].pattern, context, frame),
     iterated.length === 0
@@ -12124,7 +12237,7 @@ const isStatementResult = (node: ts.CallExpression, path: Path, context: Context
         // A change of an object gives the object, though TypeScript types what it gives as any.
         (node.arguments.length > 0 &&
           isHeapType(context.checker.getTypeAtLocation(node.arguments[0]), context)))) ||
-    isGeneratorStep(node, context) ||
+    getGeneratorStep(node, context) !== undefined ||
     getGeneratorMethod(node, context) !== undefined ||
     getIterableFrom(node, context) !== undefined ||
     getIteratorFrom(node, context) !== undefined ||
@@ -13556,16 +13669,23 @@ export const translateJoined = (
         : !isVarInside(entry[0]),
     );
   // What follows holds the functions held before, which the operator can't take, so each exit holds
-  // the same ones, apart from those of names that the statement declares and that don't outlive it.
+  // the same ones for each name that code after the statement can read. That leaves out the names
+  // that the statement declares and that don't outlive it, and those of the functions it called.
+  const isReadAfter = (symbol: ts.Symbol) => {
+    const declaration = symbol.valueDeclaration;
+    if (declaration === undefined) return true;
+    if (ts.findAncestor(declaration, (ancestor) => ancestor === node) !== undefined) {
+      return isVarInside(symbol);
+    }
+    const owner = ts.findAncestor(declaration.parent, ts.isFunctionLike);
+    return (
+      owner === undefined || ts.findAncestor(node, (ancestor) => ancestor === owner) !== undefined
+    );
+  };
   const isHeldAsBefore = (functions: Map<ts.Symbol, FunctionNode>) =>
-    [...path.scope.functions].every((entry) => functions.get(entry[0]) === entry[1]) &&
-    [...functions].every(
-      (entry) =>
-        path.scope.functions.get(entry[0]) === entry[1] ||
-        (entry[0].valueDeclaration !== undefined &&
-          ts.findAncestor(entry[0].valueDeclaration, (ancestor) => ancestor === node) !==
-            undefined &&
-          !isVarInside(entry[0])),
+    [...new Set([...path.scope.functions.keys(), ...functions.keys()])].every(
+      (symbol) =>
+        !isReadAfter(symbol) || functions.get(symbol) === path.scope.functions.get(symbol),
     );
   const exits: { path: Path; value?: Expression }[] = [];
   const joined = translateWith((inner, value) => {
@@ -14572,14 +14692,19 @@ const translateYieldingForOf = (
 const UNROLL_LIMIT = 64;
 
 // The values that a generator's for loop gives its counter, where a literal starts it, a comparison
-// with a literal ends it, a step of a literal moves it, and nothing else writes it. tla-ts unrolls
-// such a loop, whose iterations then suspend at each yield as straight code does.
+// with a literal ends it, a step of a literal moves it, and nothing else writes it, with the value
+// that a var keeps once the loop ends. tla-ts unrolls such a loop, whose iterations then suspend at
+// each yield as straight code does.
 const getCounts = (loop: ts.ForStatement, context: Context) => {
   const initializer = loop.initializer;
+  const isVar =
+    initializer !== undefined &&
+    ts.isVariableDeclarationList(initializer) &&
+    (initializer.flags & ts.NodeFlags.BlockScoped) === 0;
   const declaration =
     initializer !== undefined &&
     ts.isVariableDeclarationList(initializer) &&
-    (initializer.flags & ts.NodeFlags.Let) !== 0 &&
+    (isVar || (initializer.flags & ts.NodeFlags.Let) !== 0) &&
     initializer.declarations.length === 1
       ? initializer.declarations[0]
       : undefined;
@@ -14638,7 +14763,16 @@ const getCounts = (loop: ts.ForStatement, context: Context) => {
     condition !== undefined && ts.isBinaryExpression(condition)
       ? comparisons.get(condition.operatorToken.kind)
       : undefined;
+  // A var outlives each iteration, so a function that reads it would read a later value.
+  const owner = ts.findAncestor(loop.parent, ts.isFunctionLike);
+  const isCaptured =
+    isVar &&
+    owner !== undefined &&
+    findNodes(owner, ts.isIdentifier).some(
+      (node) => isCounter(node) && ts.findAncestor(node.parent, ts.isFunctionLike) !== owner,
+    );
   if (
+    isCaptured ||
     start === undefined ||
     end === undefined ||
     delta === undefined ||
@@ -14654,7 +14788,9 @@ const getCounts = (loop: ts.ForStatement, context: Context) => {
     (_, position) => start + position * delta,
   );
   const length = values.findIndex((value) => !compare(value, end));
-  return length === -1 ? undefined : { symbol, counts: values.slice(0, length) };
+  return length === -1
+    ? undefined
+    : { symbol, counts: values.slice(0, length), after: isVar ? values[length] : undefined };
 };
 
 // Whether a node yields outside the functions it holds.
@@ -14689,7 +14825,22 @@ const translateUnrolled = (
       );
     }
     const count = unrolled?.counts.at(position);
-    if (unrolled !== undefined && count === undefined) return continueWith(current);
+    if (unrolled !== undefined && count === undefined) {
+      return continueWith(
+        unrolled.after === undefined
+          ? current
+          : {
+              ...current,
+              scope: {
+                ...current.scope,
+                bindings: new Map([
+                  ...current.scope.bindings,
+                  [unrolled.symbol, number(unrolled.after)],
+                ]),
+              },
+            },
+      );
+    }
     const next = (after: Path) => iterate(after, position + 1);
     // Each iteration evaluates the body's expressions again, such as a yield it hoists.
     const started = startIteration(loop, current);
@@ -16414,8 +16565,10 @@ const findLeadingCall = (
   }
   if (
     ts.isSpreadElement(node) &&
-    ts.isArrayLiteralExpression(node.parent) &&
-    (isSteppedValue(node.expression, context) || isIterableValue(node.expression, context)) &&
+    (ts.isArrayLiteralExpression(node.parent)
+      ? isSteppedValue(node.expression, context) || isIterableValue(node.expression, context)
+      : (ts.isCallExpression(node.parent) || ts.isNewExpression(node.parent)) &&
+        isIterableValue(node.expression, context)) &&
     !isArrayIteration(getCast(node.expression), context)
   ) {
     // The spread runs a call that makes what it steps as it steps it.
@@ -17118,6 +17271,15 @@ export const runLeadingCall = (
   );
 };
 
+// A class that a block or a script declares, whose name, as a let's, it binds only where its
+// declaration runs.
+const getClassSymbols = (statement: ts.Statement, context: Context) =>
+  ts.isClassDeclaration(statement) &&
+  statement.name !== undefined &&
+  isHeapClass(statement, context)
+    ? (getSymbol(statement.name, context.checker) ?? [])
+    : [];
+
 const getHoistedAssignment = (statement: ts.Statement, path: Path, context: Context) => {
   const results = path.scope.results;
   if (ts.isExpressionStatement(statement)) {
@@ -17224,42 +17386,65 @@ const getHoistedVars = (statements: readonly ts.Statement[], context: Context) =
         ts.isVariableDeclaration(declaration) && isInlined(declaration.initializer, context),
     ),
   );
-  // Such a var holds undefined until its declaration runs, which a read before it can't give.
-  // A function written before the declaration, or a function declaration that a call before it
-  // names, may run before it too.
-  const isRunEarly = (owner: ts.Node, declaration: ts.Declaration) =>
-    owner.getStart() < declaration.getStart() ||
-    (ts.isFunctionDeclaration(owner) &&
-      owner.name !== undefined &&
-      statements.some(
-        (statement) =>
-          findNodes(
-            statement,
-            (inner): inner is ts.Identifier =>
-              ts.isIdentifier(inner) &&
-              inner.getStart() < declaration.getStart() &&
-              owner.name !== undefined &&
-              getSymbol(inner, context.checker) === getSymbol(owner.name, context.checker),
-          ).length > 0,
-      ));
-  const getEarlyRead = (node: ts.Node, outer?: ts.Node): ts.Identifier | undefined => {
-    const owner = outer ?? (ts.isFunctionLike(node) ? node : undefined);
+  // Such a var holds undefined until its declaration runs, which a read before it can't give. A
+  // read runs before it where code before the declaration runs it: in no function, or in one that
+  // such code may call. Code may call a function where it reads a name of it, or of the object or
+  // class whose method it is, or where it makes one that nothing names.
+  const getNames = (node: ts.Node): ts.Identifier[] | undefined => {
+    if ((ts.isFunctionDeclaration(node) || ts.isClassDeclaration(node)) && node.name) {
+      return [node.name];
+    }
+    const held = ts.findAncestor(
+      node.parent,
+      (ancestor) => !ts.isParenthesizedExpression(ancestor) && !ts.isAsExpression(ancestor),
+    );
+    if (held !== undefined && ts.isVariableDeclaration(held) && ts.isIdentifier(held.name)) {
+      return [held.name];
+    }
+    return held !== undefined &&
+      (ts.isClassLike(held) || ts.isObjectLiteralExpression(held) || ts.isPropertyAssignment(held))
+      ? getNames(ts.isPropertyAssignment(held) ? held.parent : held)
+      : undefined;
+  };
+  const isRunEarly = (
+    node: ts.Node,
+    declaration: ts.Declaration,
+    seen: ReadonlySet<ts.Node>,
+  ): boolean => {
+    const owner = ts.findAncestor(
+      node.parent,
+      (ancestor) =>
+        ts.isFunctionLike(ancestor) &&
+        statements.some((statement) => ts.findAncestor(ancestor, (inner) => inner === statement)),
+    );
+    if (owner === undefined) return node.getStart() < declaration.getStart();
+    if (seen.has(owner)) return false;
+    const reached = new Set([...seen, owner]);
+    const names = getNames(owner);
+    if (names === undefined) return isRunEarly(owner, declaration, reached);
+    const symbols = names.flatMap((name) => getSymbol(name, context.checker) ?? []);
+    return statements.some((statement) =>
+      findNodes(
+        statement,
+        (inner): inner is ts.Identifier =>
+          ts.isIdentifier(inner) &&
+          !names.includes(inner) &&
+          symbols.some((symbol) => symbol === getSymbol(inner, context.checker)),
+      ).some((reference) => isRunEarly(reference, declaration, reached)),
+    );
+  };
+  const getEarlyRead = (node: ts.Node): ts.Identifier | undefined => {
     const symbol = ts.isIdentifier(node) ? getSymbol(node, context.checker) : undefined;
     const declaration = symbol?.valueDeclaration;
     return ts.isIdentifier(node) &&
       symbol !== undefined &&
       declaration !== undefined &&
       inlined.includes(symbol) &&
-      (owner === undefined
-        ? node.getStart() < declaration.getStart()
-        : isRunEarly(owner, declaration))
+      isRunEarly(node, declaration, new Set())
       ? node
-      : ts.forEachChild(node, (child) => getEarlyRead(child, owner));
+      : ts.forEachChild(node, getEarlyRead);
   };
-  const early =
-    inlined.length === 0
-      ? undefined
-      : statements.map((statement) => getEarlyRead(statement)).find(Boolean);
+  const early = inlined.length === 0 ? undefined : statements.map(getEarlyRead).find(Boolean);
   if (early !== undefined) {
     throw new TlaTypeScriptError(
       "tla-ts can't read a var that names a function before its declaration runs",
@@ -17342,9 +17527,14 @@ export const translateStatements = (
   const statement = statements[0];
   // What an assignment or an increment in the statement gave belongs to this run of it, so no path
   // that leaves it keeps that for a later run. A call's result stays, as the objects it made, such
-  // as an array whose iterator reads its elements later, still hold it.
+  // as an array whose iterator reads its elements later, still hold it. A statement that tla-ts
+  // makes around a function's expression body has no parent, so the body stands for it.
+  const root =
+    statement.parent === undefined
+      ? (ts.forEachChild(statement, (child) => child) ?? statement)
+      : statement;
   const isOwn = (node: ts.Node) =>
-    isAssignment(node) && ts.findAncestor(node, (ancestor) => ancestor === statement) !== undefined;
+    isAssignment(node) && ts.findAncestor(node, (ancestor) => ancestor === root) !== undefined;
   const leave = (inner: Path): Path =>
     [...inner.scope.results.keys()].some(isOwn)
       ? {
@@ -17411,7 +17601,7 @@ export const translateStatements = (
                   ? (getSymbol(declaration.name, context.checker) ?? [])
                   : [],
               )
-            : [],
+            : getClassSymbols(inner, context),
         )
       : [];
   if (lexical.some((symbol) => !path.scope.uninitialized.has(symbol))) {
@@ -17526,7 +17716,8 @@ export const translateStatements = (
       isUnresolved(name, context) ||
       (symbol !== undefined &&
         path.scope.uninitialized.has(symbol) &&
-        ((declaration !== undefined && ts.isSourceFile(declaration.parent.parent.parent)) ||
+        (declaration === undefined || !isOwnClassName(name, declaration)) &&
+        ((declaration !== undefined && isTopLevelLexical(declaration)) ||
           !path.scope.bindings.has(symbol)))
     );
   };
@@ -17939,7 +18130,16 @@ export const translateStatements = (
         },
         context,
         statementFrame,
-        continueWith,
+        (defined) =>
+          continueWith({
+            ...defined,
+            scope: {
+              ...defined.scope,
+              uninitialized: new Set(
+                [...defined.scope.uninitialized].filter((other) => other !== symbol),
+              ),
+            },
+          }),
       );
     });
   }
@@ -17982,6 +18182,31 @@ export const translateStatements = (
   if (ts.isReturnStatement(statement)) {
     const returned = statement.expression;
     if (returned === undefined) return statementFrame.exit(path);
+    // An async generator's return awaits its value where it returns, before the finally blocks
+    // around it run, and throws there where the value rejects.
+    const owner = ts.findAncestor(statement.parent, ts.isFunctionLike);
+    const awaitTo = statementFrame.awaitTo;
+    const exit =
+      owner !== undefined &&
+      (ts.isFunctionDeclaration(owner) ||
+        ts.isFunctionExpression(owner) ||
+        ts.isMethodDeclaration(owner)) &&
+      isAsyncGenerator(owner) &&
+      awaitTo !== undefined
+        ? (current: Path, value?: Expression) =>
+            awaitTo(
+              current,
+              value ?? getUndefined(context),
+              returned,
+              statementFrame.exit,
+              (rejected, reason) => {
+                const uncaught = apply("Assert", [boolean(false), string(statement.getText())]);
+                return statementFrame.throwTo === undefined
+                  ? leaf(uncaught)
+                  : statementFrame.throwTo(rejected, { value: reason, uncaught });
+              },
+            )
+        : statementFrame.exit;
     if (statementFrame.inlining.size === 0) {
       throw new TlaTypeScriptError("Actions can't return a value", statement);
     }
@@ -17991,24 +18216,11 @@ export const translateStatements = (
     return allocate(returned, path, context, (inner) => {
       const constructed = getCast(returned);
       if (isPromiseConstruction(constructed, context)) {
-        return translatePromiseConstruction(
-          constructed,
-          inner,
-          context,
-          statementFrame,
-          statementFrame.exit,
-        );
+        return translatePromiseConstruction(constructed, inner, context, statementFrame, exit);
       }
       const constructor = getConstructorRun(returned, context);
       if (constructor !== undefined && ts.isNewExpression(returned)) {
-        return translateConstruction(
-          returned,
-          constructor,
-          inner,
-          context,
-          statementFrame,
-          statementFrame.exit,
-        );
+        return translateConstruction(returned, constructor, inner, context, statementFrame, exit);
       }
       // A call that makes an object, such as Object(1), made it as the return allocated it.
       if (
@@ -18021,13 +18233,7 @@ export const translateStatements = (
           isStatementResult(returned, inner, context) ||
           isRemoving(returned, context))
       ) {
-        return translateCallStatement(
-          returned,
-          inner,
-          context,
-          statementFrame,
-          statementFrame.exit,
-        );
+        return translateCallStatement(returned, inner, context, statementFrame, exit);
       }
       return throwReadError(
         returned,
@@ -18039,7 +18245,7 @@ export const translateStatements = (
           inner,
           context,
           statementFrame,
-          statementFrame.exit(inner, translateExpression(returned, inner.scope, context)),
+          exit(inner, translateExpression(returned, inner.scope, context)),
         ),
       );
     });
@@ -18374,7 +18580,7 @@ export const translateScript = (
       ? statement.declarationList.declarations.flatMap(
           (declaration) => getSymbol(declaration.name, context.checker) ?? [],
         )
-      : [],
+      : getClassSymbols(statement, context),
   );
   const scope = createStateScope(context);
   if (context.heap !== undefined) context.prelude.add("JavaScript");

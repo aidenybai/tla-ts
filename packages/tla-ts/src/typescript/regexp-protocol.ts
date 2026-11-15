@@ -9,7 +9,14 @@ import { type Formula, ifThenElse, leaf } from "./formula";
 import { getHeap } from "./heap";
 import { getBuiltIn, getBuiltInKey, translateBuiltInValue } from "./intrinsics";
 import { useJavaScript } from "./javascript";
-import { bind, callValue, getMethods, loopStates, withHeap } from "./protocols";
+import {
+  bind,
+  callValue,
+  getFunctionCandidates,
+  getMethods,
+  loopStates,
+  withHeap,
+} from "./protocols";
 import {
   apply,
   boolean,
@@ -47,18 +54,27 @@ export interface RegExpProtocolCall {
   values: readonly ts.Expression[];
 }
 
-// Whether a call leaves out the string, or passes a string or a limit of another type than the
-// method's signature takes, which only the method's steps convert.
-const isConverted = (values: readonly ts.Expression[], context: Context) => {
+// Whether a call leaves out the string, or passes a string or another value of another type than
+// the method's signature takes, which only the method's steps convert: split's limit, or replace's
+// replaceValue, which ToString converts where it isn't a function, as it does what the function
+// returns.
+const isConverted = (method: string, values: readonly ts.Expression[], context: Context) => {
   const text = values.at(0);
-  const limit = values.at(1);
+  const other = values.at(1);
   const isTyped = (value: ts.Expression, flags: ts.TypeFlags) =>
     isEvery(context.checker.getTypeAtLocation(value), flags);
-  return (
-    text === undefined ||
-    !isTyped(text, ts.TypeFlags.StringLike) ||
-    (limit !== undefined && !isTyped(limit, ts.TypeFlags.NumberLike | ts.TypeFlags.Undefined))
-  );
+  const signatures =
+    other === undefined ? [] : context.checker.getTypeAtLocation(other).getCallSignatures();
+  const isOtherTaken =
+    method === "replace"
+      ? other !== undefined &&
+        (isTyped(other, ts.TypeFlags.StringLike) ||
+          (signatures.length > 0 &&
+            signatures.every((signature) =>
+              isEvery(signature.getReturnType(), ts.TypeFlags.StringLike),
+            )))
+      : other === undefined || isTyped(other, ts.TypeFlags.NumberLike | ts.TypeFlags.Undefined);
+  return text === undefined || !isTyped(text, ts.TypeFlags.StringLike) || !isOtherTaken;
 };
 
 // A call of a regexp's method under a well-known symbol, as rx[Symbol.search](s) where the script
@@ -84,7 +100,7 @@ export const getRegExpProtocolCall = (
     : context.checker.getTypeAtLocation(owner).getSymbol()?.name === "RegExp" &&
       (getExecMethods(node, context).length > 0 ||
         (method === "split" && getSpeciesMethods(node, context).length > 0) ||
-        isConverted(node.arguments, context));
+        isConverted(method, node.arguments, context));
   return isTaken && !node.arguments.some(ts.isSpreadElement)
     ? {
         method,
@@ -97,6 +113,13 @@ export const getRegExpProtocolCall = (
 };
 
 const stop = (message: string) => leaf(apply("Assert", [boolean(false), string(message)]));
+
+const concatenate = (...parts: Expression[]) =>
+  parts.reduce((left, right) => apply("\\o", [left, right]));
+
+// Get(O, P) on the heap of a path.
+const getKey = (site: ts.Node, object: Expression, key: Expression, path: Path, context: Context) =>
+  useJavaScript("Get", [getHeap(path.scope, site, context), object, key], context);
 
 // ToString of a value, which runs a script's toString or Symbol.toPrimitive on an object, and
 // throws a TypeError on a symbol.
@@ -257,6 +280,7 @@ const getProtocolChanged = (site: ts.Node, path: Path, context: Context) =>
       ...[
         ...getExecMethods(site, context),
         ...getSpeciesMethods(site, context),
+        ...getReplaceFunctions(site, context),
         ...getConversionFunctions(site, context),
       ].flatMap((called) => getChanged(called, path, context)),
       ...[...path.mutable].filter((symbol) => symbol === context.heap),
@@ -366,8 +390,80 @@ const getFlags = (
 const hasFlag = (flags: Expression, flag: string, context: Context) =>
   useJavaScript("HasFlag", [flags, string(flag)], context);
 
+// The results of RegExpExec from lastIndex 0 on until it gives null, each as what gather makes of it
+// and the text of its match, where an empty match steps lastIndex past it.
+const execAll = (
+  site: ts.Node,
+  receiver: Expression,
+  text: Expression,
+  flags: Expression,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  gather: (result: Expression, matchText: Expression) => Expression,
+  continueWith: (path: Path, gathered: Expression) => Formula,
+) => {
+  const isFullUnicode = apply("\\/", [hasFlag(flags, "u", context), hasFlag(flags, "v", context)]);
+  return setLastIndex(site, receiver, number(0), path, context, frame, (reset) =>
+    loopStates(
+      site,
+      tuple([]),
+      getProtocolChanged(site, reset, context),
+      reset,
+      context,
+      frame,
+      (current, gathered, inner, again, end) =>
+        regExpExec(site, receiver, text, current, context, inner, (ran, result) =>
+          ifThenElse(
+            apply("=", [result, identifier("Null")]),
+            end(ran, gathered),
+            bind(
+              ran,
+              "matched",
+              getKey(site, result, string("0"), ran, context),
+              context,
+              (got, matched) =>
+                toText(site, matched, got, context, inner, (converted, matchText) => {
+                  const added = apply("Append", [gathered, gather(result, matchText)]);
+                  return ifThenElse(
+                    apply("=", [matchText, string("")]),
+                    bind(
+                      converted,
+                      "lastIndex",
+                      useJavaScript(
+                        "ToLength",
+                        [getKey(site, receiver, string("lastIndex"), converted, context)],
+                        context,
+                      ),
+                      context,
+                      (indexed, lastIndex) =>
+                        setLastIndex(
+                          site,
+                          receiver,
+                          useJavaScript(
+                            "AdvanceStringIndex",
+                            [text, lastIndex, isFullUnicode],
+                            context,
+                          ),
+                          indexed,
+                          context,
+                          inner,
+                          (advanced) => again(advanced, added),
+                        ),
+                    ),
+                    again(converted, added),
+                  );
+                }),
+            ),
+          ),
+        ),
+      continueWith,
+    ),
+  );
+};
+
 // RegExp.prototype[@@match](string): RegExpExec's result where the flags have no g, and else the
-// array of the text of each match, from lastIndex 0, which steps past an empty match, or null.
+// array of the text of each match, or null.
 const match = (
   site: ts.Node,
   receiver: Expression,
@@ -384,78 +480,18 @@ const match = (
       read,
       context,
       (after, value) => continueWith(after, value ?? getUndefined(context)),
-      (next) => {
-        const isFullUnicode = apply("\\/", [
-          hasFlag(flags, "u", context),
-          hasFlag(flags, "v", context),
-        ]);
-        const global = setLastIndex(site, receiver, number(0), read, context, frame, (reset) =>
-          loopStates(
+      (next) =>
+        ifThenElse(
+          hasFlag(flags, "g", context),
+          execAll(
             site,
-            tuple([]),
-            getProtocolChanged(site, reset, context),
-            reset,
+            receiver,
+            text,
+            flags,
+            read,
             context,
             frame,
-            (current, matches, inner, again, end) =>
-              regExpExec(site, receiver, text, current, context, inner, (ran, result) =>
-                ifThenElse(
-                  apply("=", [result, identifier("Null")]),
-                  end(ran, matches),
-                  bind(
-                    ran,
-                    "matched",
-                    useJavaScript(
-                      "Get",
-                      [getHeap(ran.scope, site, context), result, string("0")],
-                      context,
-                    ),
-                    context,
-                    (got, matched) =>
-                      toText(site, matched, got, context, inner, (converted, matchText) => {
-                        const gathered = apply("Append", [matches, matchText]);
-                        return ifThenElse(
-                          apply("=", [matchText, string("")]),
-                          bind(
-                            converted,
-                            "lastIndex",
-                            useJavaScript(
-                              "ToLength",
-                              [
-                                useJavaScript(
-                                  "Get",
-                                  [
-                                    getHeap(converted.scope, site, context),
-                                    receiver,
-                                    string("lastIndex"),
-                                  ],
-                                  context,
-                                ),
-                              ],
-                              context,
-                            ),
-                            context,
-                            (indexed, lastIndex) =>
-                              setLastIndex(
-                                site,
-                                receiver,
-                                useJavaScript(
-                                  "AdvanceStringIndex",
-                                  [text, lastIndex, isFullUnicode],
-                                  context,
-                                ),
-                                indexed,
-                                context,
-                                inner,
-                                (advanced) => again(advanced, gathered),
-                              ),
-                          ),
-                          again(converted, gathered),
-                        );
-                      }),
-                  ),
-                ),
-              ),
+            (_result, matchText) => matchText,
             (after, matches) =>
               ifThenElse(
                 apply("=", [matches, tuple([])]),
@@ -484,13 +520,8 @@ const match = (
                 ),
               ),
           ),
-        );
-        return ifThenElse(
-          hasFlag(flags, "g", context),
-          global,
           regExpExec(site, receiver, text, read, context, frame, next),
-        );
-      },
+        ),
     ),
   );
 
@@ -874,10 +905,387 @@ const split = (
       ),
   );
 
+// The function that a call of @@replace passes as its replaceValue, which it may call.
+const getReplaceFunctions = (site: ts.Node, context: Context) => {
+  const call = getRegExpProtocolCall(site, context);
+  const replacer = call?.method === "replace" ? call.values.at(1) : undefined;
+  return replacer === undefined ? [] : getFunctionCandidates(replacer, context);
+};
+
+// ToPrimitive of a value with the number hint, which throws a TypeError on a symbol or a BigInt,
+// as ToNumber does.
+const toNumberPrimitive = (
+  site: ts.Node,
+  value: Expression,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path, primitive: Expression) => Formula,
+) =>
+  runToPrimitive(site, value, "number", path, context, frame, (after, primitive) =>
+    ifThenElse(
+      apply("\\/", [
+        useJavaScript("IsSymbol", [primitive], context),
+        useJavaScript("IsBigInt", [primitive], context),
+      ]),
+      throwTypeError(after, site, context, frame),
+      continueWith(after, primitive),
+    ),
+  );
+
+// A sequence of values in order, each from a step that may run a script, until it holds count.
+const gatherEach = (
+  site: ts.Node,
+  count: Expression,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  step: (
+    path: Path,
+    position: Expression,
+    frame: Frame,
+    continueWith: (path: Path, value: Expression) => Formula,
+  ) => Formula,
+  continueWith: (path: Path, gathered: Expression) => Formula,
+) =>
+  loopStates(
+    site,
+    tuple([]),
+    getProtocolChanged(site, path, context),
+    path,
+    context,
+    frame,
+    (current, gathered, inner, again, end) =>
+      ifThenElse(
+        apply(">=", [apply("Len", [gathered]), count]),
+        end(current, gathered),
+        step(current, apply("+", [apply("Len", [gathered]), number(1)]), inner, (after, value) =>
+          again(after, apply("Append", [gathered, value])),
+        ),
+      ),
+    continueWith,
+  );
+
+// What @@replace reads of one of exec's results: the text of its match, its position, which
+// ToIntegerOrInfinity of its index gives clamped to the string, and as many captures as its length
+// tells, which ToString converts where they aren't undefined.
+const readResult = (
+  site: ts.Node,
+  result: Expression,
+  text: Expression,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (
+    path: Path,
+    matched: Expression,
+    position: Expression,
+    captures: Expression,
+  ) => Formula,
+) =>
+  toNumberPrimitive(
+    site,
+    getKey(site, result, string("length"), path, context),
+    path,
+    context,
+    frame,
+    (measured, length) =>
+      bind(
+        measured,
+        "length",
+        useJavaScript("ToLength", [length], context),
+        context,
+        (counted, resultLength) =>
+          toText(
+            site,
+            getKey(site, result, string("0"), counted, context),
+            counted,
+            context,
+            frame,
+            (converted, matched) =>
+              toNumberPrimitive(
+                site,
+                getKey(site, result, string("index"), converted, context),
+                converted,
+                context,
+                frame,
+                (indexed, indexValue) =>
+                  bind(
+                    indexed,
+                    "position",
+                    useJavaScript(
+                      "RegExpReplacePosition",
+                      [indexValue, apply("Len", [text])],
+                      context,
+                    ),
+                    context,
+                    (placed, position) =>
+                      gatherEach(
+                        site,
+                        ifExpression(
+                          apply(">", [resultLength, number(1)]),
+                          apply("-", [resultLength, number(1)]),
+                          number(0),
+                        ),
+                        placed,
+                        context,
+                        frame,
+                        (current, at, inner, next) =>
+                          bind(
+                            current,
+                            "capture",
+                            getKey(
+                              site,
+                              result,
+                              useJavaScript("StringOf", [at], context),
+                              current,
+                              context,
+                            ),
+                            context,
+                            (read, capture) =>
+                              ifThenElse(
+                                apply("=", [capture, getUndefined(context)]),
+                                next(read, capture),
+                                toText(site, capture, read, context, inner, next),
+                              ),
+                          ),
+                        (captured, captures) => continueWith(captured, matched, position, captures),
+                      ),
+                  ),
+              ),
+          ),
+      ),
+  );
+
+// GetSubstitution of a template, where the groups aren't undefined: ToObject throws a TypeError on
+// null, and ToString converts what each $<name> reads of them, where it isn't undefined.
+const substitute = (
+  site: ts.Node,
+  template: Expression,
+  groups: Expression,
+  substituted: (named: Expression) => Expression,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path, replacement: Expression) => Formula,
+) => {
+  const names = useJavaScript("SubstitutionNames", [template], context);
+  return ifThenElse(
+    apply("=", [groups, getUndefined(context)]),
+    continueWith(path, substituted(getUndefined(context))),
+    ifThenElse(
+      apply("=", [groups, identifier("Null")]),
+      throwTypeError(path, site, context, frame),
+      gatherEach(
+        site,
+        apply("Len", [names]),
+        path,
+        context,
+        frame,
+        (current, at, inner, next) =>
+          bind(
+            current,
+            "group",
+            getKey(site, groups, index(names, [at]), current, context),
+            context,
+            (read, group) =>
+              ifThenElse(
+                apply("=", [group, getUndefined(context)]),
+                next(read, string("")),
+                toText(site, group, read, context, inner, next),
+              ),
+          ),
+        (after, named) => continueWith(after, substituted(named)),
+      ),
+    ),
+  );
+};
+
+// What @@replace puts in the place of one of exec's results: what the function returns, called with
+// the match, the captures, the position, the string, and the groups where they aren't undefined,
+// which ToString converts, or the template's substitution.
+const replaceResult = (
+  site: ts.Node,
+  result: Expression,
+  text: Expression,
+  replacer: Expression,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (
+    path: Path,
+    position: Expression,
+    matched: Expression,
+    replacement: Expression,
+  ) => Formula,
+) =>
+  readResult(site, result, text, path, context, frame, (read, matched, position, captures) =>
+    bind(
+      read,
+      "groups",
+      getKey(site, result, string("groups"), read, context),
+      context,
+      (grouped, groups) => {
+        const done = (after: Path, replacement: Expression) =>
+          continueWith(after, position, matched, replacement);
+        return ifThenElse(
+          apply("=", [
+            useJavaScript("TypeOfIn", [getHeap(grouped.scope, site, context), replacer], context),
+            string("function"),
+          ]),
+          callValue(
+            site,
+            getReplaceFunctions(site, context),
+            replacer,
+            getUndefined(context),
+            concatenate(
+              tuple([matched]),
+              captures,
+              tuple([position, text]),
+              ifExpression(apply("=", [groups, getUndefined(context)]), tuple([]), tuple([groups])),
+            ),
+            grouped,
+            context,
+            frame,
+            () => stop("tla-ts can't tell which function this call runs"),
+            (called, value) => toText(site, value, called, context, frame, done),
+          ),
+          substitute(
+            site,
+            replacer,
+            groups,
+            (named) =>
+              useJavaScript(
+                "GetSubstitution",
+                [replacer, matched, text, position, captures, named],
+                context,
+              ),
+            grouped,
+            context,
+            frame,
+            done,
+          ),
+        );
+      },
+    ),
+  );
+
+// RegExp.prototype[@@replace](string, replaceValue): ToString converts a replaceValue that isn't a
+// function, it finds the matches as @@match does, or the first, and in order puts what each gives
+// in the place of its match, where its position isn't before the end of the last one it replaced.
+const replace = (
+  site: ts.Node,
+  receiver: Expression,
+  text: Expression,
+  rest: readonly Expression[],
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path, value: Expression) => Formula,
+) => {
+  const replaceValue = rest.at(0) ?? getUndefined(context);
+  const replaceAll = (current: Path, results: Expression, replacer: Expression) =>
+    loopStates(
+      site,
+      tuple([number(1), string(""), number(0)]),
+      getProtocolChanged(site, current, context),
+      current,
+      context,
+      frame,
+      (inner, state, innerFrame, again, end) => {
+        const at = index(state, [number(1)]);
+        const accumulated = index(state, [number(2)]);
+        const nextPosition = index(state, [number(3)]);
+        return ifThenElse(
+          apply(">", [at, apply("Len", [results])]),
+          end(
+            inner,
+            apply("\\o", [
+              accumulated,
+              apply("SubSeq", [text, apply("+", [nextPosition, number(1)]), apply("Len", [text])]),
+            ]),
+          ),
+          replaceResult(
+            site,
+            index(results, [at]),
+            text,
+            replacer,
+            inner,
+            context,
+            innerFrame,
+            (after, position, matched, replacement) => {
+              const isPast = apply(">=", [position, nextPosition]);
+              return again(
+                after,
+                tuple([
+                  apply("+", [at, number(1)]),
+                  ifExpression(
+                    isPast,
+                    concatenate(
+                      accumulated,
+                      apply("SubSeq", [text, apply("+", [nextPosition, number(1)]), position]),
+                      replacement,
+                    ),
+                    accumulated,
+                  ),
+                  ifExpression(
+                    isPast,
+                    apply("+", [position, apply("Len", [matched])]),
+                    nextPosition,
+                  ),
+                ]),
+              );
+            },
+          ),
+        );
+      },
+      continueWith,
+    );
+  return joinProtocol(
+    site,
+    path,
+    context,
+    (converted, replacer) =>
+      getFlags(site, receiver, converted, context, frame, (read, flags) =>
+        joinProtocol(
+          site,
+          read,
+          context,
+          (found, results) => replaceAll(found, results ?? tuple([]), replacer ?? replaceValue),
+          (next) =>
+            ifThenElse(
+              hasFlag(flags, "g", context),
+              execAll(site, receiver, text, flags, read, context, frame, (result) => result, next),
+              regExpExec(site, receiver, text, read, context, frame, (ran, result) =>
+                next(
+                  ran,
+                  ifExpression(
+                    apply("=", [result, identifier("Null")]),
+                    tuple([]),
+                    tuple([result]),
+                  ),
+                ),
+              ),
+            ),
+        ),
+      ),
+    (next) =>
+      ifThenElse(
+        apply("=", [
+          useJavaScript("TypeOfIn", [getHeap(path.scope, site, context), replaceValue], context),
+          string("function"),
+        ]),
+        next(path, replaceValue),
+        toText(site, replaceValue, path, context, frame, next),
+      ),
+  );
+};
+
 const PROTOCOLS = new Map<string, Protocol>([
   ["search", search],
   ["match", match],
   ["split", split],
+  ["replace", replace],
 ]);
 
 // The values of a call's arguments, in order, the first undefined where the call passes none.

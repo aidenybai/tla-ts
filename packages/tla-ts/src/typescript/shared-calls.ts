@@ -306,8 +306,14 @@ export const classifySharedHelpers = (reached: readonly ts.Node[], context: Cont
     // The operator gives back the state and the names from outside that the helper changes.
     const changed = findChanged(callee, new Map(), context);
     const outsideNames = outside.map((entry) => entry[0]);
+    // A script's class that the helper runs is also a binding that its declaration initializes.
+    const classes = [...reach].flatMap((node) =>
+      ts.isClassDeclaration(node) && ts.isSourceFile(node.parent) && node.name !== undefined
+        ? (getSymbol(node.name, context.checker) ?? [])
+        : [],
+    );
     return {
-      read: outsideNames,
+      read: [...outsideNames, ...classes],
       state: sharedState,
       changed: [...new Set([...context.variables.keys(), ...outsideNames])].filter((symbol) =>
         changed.has(symbol),
@@ -379,21 +385,26 @@ const getSharedCall = (
   ) {
     return undefined;
   }
+  const named = new Set(runs.flatMap((run) => run.state));
+  const held = new Map(
+    [...path.scope.functions].filter((entry) => read.includes(entry[0]) || named.has(entry[0])),
+  );
   const defined = (context.sharedCalls.get(callee) ?? []).find(
     (shared) =>
       shared.captured.length === captured.length &&
       shared.captured.every((symbol) => captured.includes(symbol)) &&
-      [...callbacks].every((entry) => shared.callbacks.get(entry[0]) === entry[1]),
+      [...callbacks].every((entry) => shared.callbacks.get(entry[0]) === entry[1]) &&
+      shared.held.size === held.size &&
+      [...held].every((entry) => shared.held.get(entry[0]) === entry[1]),
   );
   if (defined !== undefined && context.inProgress.has(callee)) defined.isRecursive = true;
   if (defined !== undefined) return defined;
   // The operator takes the heap, which is a variable, and only the others that its code may read or
   // change.
-  const named = new Set(runs.flatMap((run) => run.state));
   const state = [...context.variables.keys()].filter(
     (symbol) => symbol === context.heap || named.has(symbol) || changed.includes(symbol),
   );
-  return defineShared(callee, { changed, captured, callbacks, state }, context);
+  return defineShared(callee, { changed, captured, callbacks, held, state }, context);
 };
 
 // The parameters that take values, not the functions that the operator calls.
@@ -453,7 +464,7 @@ export const defineThrown = (context: Context) =>
 // or what it threw, the message and the place of the throw, and the state that it changed.
 const defineShared = (
   callee: FunctionNode,
-  variant: Pick<SharedCall, "changed" | "captured" | "callbacks" | "state">,
+  variant: Pick<SharedCall, "changed" | "captured" | "callbacks" | "held" | "state">,
   context: Context,
 ) => {
   const parameters = getParameters(callee);
@@ -485,7 +496,7 @@ const defineShared = (
     ...base,
     // The body runs as inside a try, so that each caller catches or stops at what it throws.
     isCatching: true,
-    functions: new Map([...base.functions, ...variant.callbacks]),
+    functions: new Map([...base.functions, ...variant.held, ...variant.callbacks]),
     // A variable that the operator doesn't take has no binding, so its code can't read it stale.
     bindings: new Map(
       named.flatMap((item): [ts.Symbol, Expression][] =>

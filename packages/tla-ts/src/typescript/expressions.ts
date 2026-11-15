@@ -35,7 +35,9 @@ import {
   isHeldErrorName,
   getArgumentsOwner,
   isModuleFile,
+  isStrictCode,
   getSymbol,
+  isStatic,
   isAssigned,
   findNodes,
   skipCasts,
@@ -2301,6 +2303,14 @@ const isUnreachable = (statement: ts.Node) =>
 // A var that only declarations that never run initialize, and that nothing assigns, so that it
 // holds undefined wherever a script reads it.
 // globalThis, where a script makes objects on the heap.
+// The this that a function's code reads from the value its call gives, which outside strict mode
+// is an object.
+export const getThisValue = (owner: ts.Node, value: Expression, context: Context) => {
+  if (isStrictCode(owner)) return value;
+  context.builtIns.add("globalThis");
+  return useJavaScript("SloppyThis", [value], context);
+};
+
 export const isGlobalObject = (node: ts.Expression, context: Context) => {
   const symbol = getSymbol(node, context.checker);
   return (
@@ -2656,6 +2666,16 @@ const translatePropertyAccess = (
   if (intrinsic !== undefined) return intrinsic;
   const receiver = node.expression;
   const name = node.name.text;
+  // A class of errors that makes plain errors isn't an object that holds its static members.
+  const member = getSymbol(node.name, context.checker)?.valueDeclaration;
+  if (
+    member !== undefined &&
+    isStatic(member) &&
+    getErrorClass(getSymbol(receiver, context.checker), context.checker)?.[0].valueDeclaration ===
+      member.parent
+  ) {
+    throw new TlaTypeScriptError("tla-ts can't read a static member of a class of errors", node);
+  }
   const getterRead = translateGetterRead(node, scope, context);
   if (getterRead !== undefined) return getterRead;
   const receiverNames = getTypeNames(context.checker.getTypeAtLocation(receiver), context.checker);
@@ -3591,7 +3611,9 @@ export const translateNode = (
   const result = scope.results.get(node) ?? scope.initialReads?.get(node);
   if (result !== undefined) return result;
   const thisOwner = node.kind === ts.SyntaxKind.ThisKeyword ? getThisOwner(node) : undefined;
-  if (thisOwner !== undefined && thisOwner === scope.receiver?.method) return scope.receiver.value;
+  if (thisOwner !== undefined && thisOwner === scope.receiver?.method) {
+    return getThisValue(thisOwner, scope.receiver.value, context);
+  }
   // An arrow function that a call took names the this of where it was written.
   const arrow = ts.findAncestor(
     node,
@@ -3600,7 +3622,9 @@ export const translateNode = (
       (ts.isArrowFunction(ancestor) && scope.arrowReceivers?.get(ancestor)?.method === thisOwner),
   );
   const arrowReceiver = arrow === undefined ? undefined : scope.arrowReceivers?.get(arrow);
-  if (thisOwner !== undefined && arrowReceiver !== undefined) return arrowReceiver.value;
+  if (thisOwner !== undefined && arrowReceiver !== undefined) {
+    return getThisValue(thisOwner, arrowReceiver.value, context);
+  }
   // new.target, which a construction gives its constructor and a call gives as undefined. An arrow
   // function reads its owner's, so only one that runs where it's made can read it.
   if (ts.isMetaProperty(node) && node.keywordToken === ts.SyntaxKind.NewKeyword) {
