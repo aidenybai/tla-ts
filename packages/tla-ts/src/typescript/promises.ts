@@ -1048,6 +1048,18 @@ const translateFromAsync = (
     symbol !== undefined && (generatorType === "Generator" || generatorType === "AsyncGenerator")
       ? path.scope.bindings.get(symbol)
       : undefined;
+  // The generator function that the variable's initializer calls.
+  const declaration = held === undefined ? undefined : symbol?.valueDeclaration;
+  const call =
+    declaration !== undefined &&
+    ts.isVariableDeclaration(declaration) &&
+    declaration.initializer !== undefined
+      ? getCast(declaration.initializer)
+      : undefined;
+  const made =
+    call !== undefined && ts.isCallExpression(call)
+      ? getFunctionOfKind(call.expression, context, isAnyGenerator)
+      : undefined;
   const iteratorMethod =
     items !== undefined && ts.isObjectLiteralExpression(items)
       ? getIteratorMethod(items, context)
@@ -1055,6 +1067,10 @@ const translateFromAsync = (
   const isAsync =
     (held !== undefined && generatorType === "AsyncGenerator") || iteratorMethod?.isAsync === true;
   const isGenerator = held !== undefined || iteratorMethod !== undefined;
+  // Jobs resume the generator, where the locals around it that change may be stale.
+  for (const generator of [made, iteratorMethod?.generator]) {
+    if (generator !== undefined) getLocalCaptures(generator, context);
+  }
   if (
     items === undefined ||
     (elements === undefined && text === undefined && arrayLike === undefined && !isGenerator) ||

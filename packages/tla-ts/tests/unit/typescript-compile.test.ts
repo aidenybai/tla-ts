@@ -25530,6 +25530,38 @@ describe("errors", () => {
     expect((await checkModel(source("true:0"))).failure).toBeDefined();
   });
 
+  it("stops at Array.fromAsync of a generator that writes a local of the function around it", () => {
+    expect(() =>
+      compile(`
+        declare function setTimeout(callback: () => void): void;
+        let outcome = "pending";
+        const run = async () => {
+          let counter = 0;
+          function* createInput() {
+            try {
+              yield 1;
+            } finally {
+              counter++;
+            }
+          }
+          const input = createInput();
+          Array.fromAsync(input, () => {
+            throw "m";
+          }).catch(() => {});
+          await 0;
+          await 0;
+          await 0;
+          await 0;
+          outcome = \`\${counter}\`;
+        };
+        run();
+        setTimeout(() => {
+          if (outcome !== "1") throw new Error(outcome);
+        });
+      `),
+    ).toThrow("tla-ts can't follow a function that runs later and reads a local that changes");
+  });
+
   it("keeps the locals of each async call apart, where AsyncDisposableStacks run their functions in turns", async () => {
     const source = (expected: string) => `
       declare function setTimeout(callback: () => void): void;
