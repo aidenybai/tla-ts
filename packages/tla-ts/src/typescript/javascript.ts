@@ -1491,11 +1491,20 @@ KeyPosition(key) ==
     [] TypeOf(key) = "string" /\\ IsIndex(key) -> ToIndex(key) + 1
     [] OTHER -> Assert(FALSE, "tla-ts can't read this key of an array")
 
-\\* An object's own string keys, with the indices first in order.
+\\* Whether a key is an array index, below 2^32 - 1, which an object lists before its other keys.
+LOCAL IsListedIndex(key) ==
+  /\\ Len(key) > 0
+  /\\ \\A position \\in 1..Len(key) : SubSeq(key, position, position) \\in Digits \\ {"-"}
+  /\\ Len(key) = 1 \\/ SubSeq(key, 1, 1) # "0"
+  /\\ Len(key) < 10 \\/ (Len(key) = 10 /\\ DigitsBelow(key, "4294967295"))
+
+\\* An object's own string keys, with the indices first in order, which their digits give.
 OwnKeys(object) ==
   LET strings == SelectSeq(object.keys, LAMBDA key : ~IsSymbol(key))
-  IN SortSeq(SelectSeq(strings, IsIndex), LAMBDA left, right : ToIndex(left) < ToIndex(right))
-       \\o SelectSeq(strings, LAMBDA key : ~IsIndex(key))
+  IN SortSeq(SelectSeq(strings, IsListedIndex),
+             LAMBDA left, right :
+               Len(left) < Len(right) \\/ (Len(left) = Len(right) /\\ DigitsBelow(left, right)))
+       \\o SelectSeq(strings, LAMBDA key : ~IsListedIndex(key))
 
 LOCAL EnumerableKeys(object) ==
   SelectSeq(OwnKeys(object), LAMBDA key : object.attributes[key].enumerable)

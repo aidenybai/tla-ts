@@ -26274,4 +26274,35 @@ describe("BigInts", () => {
       expect((await checkModel(getSource(",true,,e"))).failure?.message).toContain(",false,,e");
     });
   });
+
+  describe("lists an object's indices of 10 digits in order", () => {
+    const getSource = (expected: string) => `
+      const box = { size: 0 };
+      const keyed: { [key: string]: boolean } = {
+        12345678900: true,
+        b: true,
+        1: true,
+        4294967294: true,
+        4294967295: true,
+        999999999: true,
+      };
+      const keys = Object.keys(keyed).join(" ");
+      box.size = 1;
+      const read = [keys].join();
+      if (read !== "${expected}") throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("1 999999999 4294967294 12345678900 b 4294967295"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects 4294967295 as an index", async () => {
+      expect(
+        (await checkModel(getSource("1 999999999 4294967294 4294967295 12345678900 b"))).failure
+          ?.message,
+      ).toContain("1 999999999 4294967294 12345678900 b 4294967295");
+    });
+  });
 });
