@@ -704,6 +704,12 @@ export const MATH_OPERATORS = new Map([
   ["acos", "Acos"],
   ["atan", "Atan"],
   ["atan2", "Atan2"],
+  ["sinh", "Sinh"],
+  ["cosh", "Cosh"],
+  ["tanh", "Tanh"],
+  ["asinh", "Asinh"],
+  ["acosh", "Acosh"],
+  ["atanh", "Atanh"],
 ]);
 
 const translateMath = (node: ts.CallExpression, method: string, scope: Scope, context: Context) => {

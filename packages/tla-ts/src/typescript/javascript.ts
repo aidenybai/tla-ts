@@ -1005,6 +1005,35 @@ Atan2(y, x, angles) ==
        [] IsZero(x) -> signed(angles[2])
        [] OTHER -> Approximated("atan2")
 
+Sinh(value) == IF value \\in SpecialNumbers \\/ IsZero(value) THEN value ELSE Approximated("sinh")
+
+Cosh(value) ==
+  CASE value = NaN -> NaN
+    [] value \\in Infinities -> Infinity
+    [] IsZero(value) -> 1
+    [] OTHER -> Approximated("cosh")
+
+Tanh(value) ==
+  CASE value = NaN \\/ IsZero(value) -> value
+    [] value = Infinity -> 1
+    [] value = NegativeInfinity -> -1
+    [] OTHER -> Approximated("tanh")
+
+Asinh(value) == IF value \\in SpecialNumbers \\/ IsZero(value) THEN value ELSE Approximated("asinh")
+
+Acosh(value) ==
+  CASE value \\in {NaN, Infinity} -> value
+    [] IsOne(value) -> 0
+    [] LessThan(value, 1) -> NaN
+    [] OTHER -> Approximated("acosh")
+
+Atanh(value) ==
+  CASE value = NaN \\/ IsZero(value) -> value
+    [] IsBeyondOne(value) -> NaN
+    [] IsOne(value) -> Infinity
+    [] IsOne(Negate(value)) -> NegativeInfinity
+    [] OTHER -> Approximated("atanh")
+
 \\* JavaScript's <<. The bit below the shifted bits becomes the sign bit.
 LeftShift(left, right) ==
   LET a == Int32(left)

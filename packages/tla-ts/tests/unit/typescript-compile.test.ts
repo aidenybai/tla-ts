@@ -41083,4 +41083,43 @@ describe("BigInts", () => {
       expect(result.failure?.message).toContain("tla-ts can't compute Math.atan2 of this number");
     });
   });
+
+  describe("computes the hyperbolic functions of Math where the specification fixes them", () => {
+    const getSource = (expected: string) => `
+      const results = [
+        Math.sinh(-0), Math.sinh(-Infinity), Math.cosh(-0), Math.cosh(-Infinity), Math.tanh(-0),
+        Math.tanh(-Infinity), Math.asinh(-Infinity), Math.acosh(1), Math.acosh(0.9999999999999999),
+        Math.acosh(Infinity), Math.atanh(-1), Math.atanh(1.0000000000000002), Math.atanh(-0),
+      ];
+      const expected = [${expected}];
+      results.forEach((value, index) => {
+        if (!Object.is(value, expected[index])) throw new Error("wrong at " + index);
+      });
+    `;
+
+    it("agrees with Node", async () => {
+      const result = await checkModel(
+        getSource(
+          "-0, -Infinity, 1, Infinity, -0, -1, -Infinity, 0, NaN, Infinity, -Infinity, NaN, -0",
+        ),
+      );
+      expect(result.failure).toBeUndefined();
+    });
+
+    it("rejects Infinity as Math.atanh(-1)", async () => {
+      const result = await checkModel(
+        getSource(
+          "-0, -Infinity, 1, Infinity, -0, -1, -Infinity, 0, NaN, Infinity, Infinity, NaN, -0",
+        ),
+      );
+      expect(result.failure?.message).toContain("wrong at 10");
+    });
+
+    it("stops where an engine approximates", async () => {
+      const result = await checkModel(`
+        if (Object.is(Math.acosh(2), 0)) throw new Error("wrong");
+      `);
+      expect(result.failure?.message).toContain("tla-ts can't compute Math.acosh of this number");
+    });
+  });
 });
