@@ -36112,4 +36112,47 @@ describe("BigInts", () => {
       expect((await checkModel(getSource(11))).failure?.message).toContain("12");
     });
   });
+
+  describe("throws the TypeError of a pattern that a call inside an expression destructures", () => {
+    const getSource = (expected: string) => `
+      const holder = { seen: 0 };
+      const read = ({ x }: any = undefined) => x;
+      const first = (value: any) => {
+        const { item } = value;
+        return item;
+      };
+      let caught = "";
+      try {
+        const text = \`\${read()}\`;
+        caught += text;
+      } catch (error) {
+        caught += error instanceof TypeError ? "t" : "x";
+      }
+      try {
+        const item = first(null);
+        caught += item;
+      } catch (error) {
+        caught += error instanceof TypeError ? "t" : "x";
+      }
+      caught += \`\${read({ x: "a" })}\${first({ item: "b" })}\`;
+      if (caught !== "${expected}") throw new Error(caught);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("ttab"))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation", async () => {
+      expect((await checkModel(getSource("tab"))).failure?.message).toContain("ttab");
+    });
+
+    it("stops where nothing catches the TypeError", async () => {
+      const result = await checkModel(`
+        const holder = { seen: 0 };
+        const read = ({ x }: any) => x;
+        const text = \`\${read(null)}\`;
+      `);
+      expect(result.failure?.message).toContain("tla-ts can't throw a pattern's TypeError");
+    });
+  });
 });

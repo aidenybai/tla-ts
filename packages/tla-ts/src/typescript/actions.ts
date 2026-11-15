@@ -342,6 +342,7 @@ import {
   bindValues,
   translateArgumentValues,
   createStateScope,
+  type Destructured,
   getArrowReceivers,
   getBoundNames,
   getDefaulted,
@@ -11220,7 +11221,7 @@ const translateWriteStatement = (
   );
 };
 
-const isMaybeNullish = (type: ts.Type): boolean =>
+export const isMaybeNullish = (type: ts.Type): boolean =>
   type.isUnion()
     ? type.types.some(isMaybeNullish)
     : (type.flags &
@@ -11241,7 +11242,24 @@ export const throwOnDestructured = (
   rest: Formula,
 ): Formula => {
   const destructured = scope.destructured ?? [];
-  if (destructured.length === 0) return rest;
+  return destructured.length === 0
+    ? rest
+    : checkDestructured(
+        destructured,
+        throwTypeError(path, destructured[0].pattern, context, frame),
+        rest,
+        context,
+      );
+};
+
+// Runs what is thrown where a pattern destructures null or undefined, or a value it can't iterate,
+// and the rest otherwise, once the elements that its patterns iterate are found.
+export const checkDestructured = (
+  destructured: readonly Destructured[],
+  thrown: Formula,
+  rest: Formula,
+  context: Context,
+): Formula => {
   context.prelude.add("Null");
   const iterated = destructured.flatMap((entry) => entry.iterated ?? []);
   return ifThenElse(
@@ -11252,7 +11270,7 @@ export const throwOnDestructured = (
         ...(entry.isUniterable === undefined ? [] : [entry.isUniterable]),
       ]),
     ),
-    throwTypeError(path, destructured[0].pattern, context, frame),
+    thrown,
     iterated.length === 0
       ? rest
       : ifThenElse(

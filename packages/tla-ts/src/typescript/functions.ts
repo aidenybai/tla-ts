@@ -26,11 +26,13 @@ import {
 } from "./context";
 import {
   allocateArguments,
+  checkDestructured,
   getArgumentsReads,
   getWritten,
   isArgumentsRead,
   getWrittenRoots,
   getImmutableWrite,
+  isMaybeNullish,
   throwOnUnentered,
   isValueReturn,
   translateLocalStatements,
@@ -116,13 +118,16 @@ export const mayThrow = (
   if (visited.has(node)) return false;
   visited.add(node);
   // A using declaration throws a TypeError for a value that isn't disposable, and it and a
-  // DisposableStack's methods run dispose methods. A write to a const throws a TypeError.
+  // DisposableStack's methods run dispose methods. A write to a const throws a TypeError, and so
+  // does a pattern that destructures null or undefined.
   if (
     ts.isThrowStatement(node) ||
     (ts.isVariableDeclarationList(node) && (node.flags & ts.NodeFlags.Using) !== 0) ||
     getStackCall(node, context) !== undefined ||
     getIteratorDisposeCall(node, context) !== undefined ||
-    getImmutableWrite(node, context)?.isIgnored === false
+    getImmutableWrite(node, context)?.isIgnored === false ||
+    ((ts.isObjectBindingPattern(node) || ts.isArrayBindingPattern(node)) &&
+      isMaybeNullish(context.checker.getTypeAtLocation(node)))
   ) {
     return true;
   }
@@ -414,7 +419,12 @@ const inlineCall = (
     values.evaluate(
       letIn(
         [...made.definitions, ...bound.definitions],
-        forceHeap(scope, bound.scope, leaf(value), leaf(getUndefined(context)), context),
+        stopOnDestructured(
+          made.scope,
+          bound.scope,
+          forceHeap(scope, bound.scope, leaf(value), leaf(getUndefined(context)), context),
+          context,
+        ),
       ),
       leaf(getUndefined(context)),
     ),
@@ -436,6 +446,25 @@ export const forceHeap = (
   return heap === undefined || heapSymbol === undefined || heap === before.bindings.get(heapSymbol)
     ? rest
     : ifThenElse(apply("=", [heap, heap]), rest, otherwise);
+};
+
+// Stops where a pattern that an expression binds destructures null or undefined, whose TypeError
+// only a statement throws, as one does that runs a call that may throw inside try.
+const stopOnDestructured = (before: Scope, after: Scope, rest: Formula, context: Context) => {
+  const added = (after.destructured ?? []).slice((before.destructured ?? []).length);
+  return added.length === 0
+    ? rest
+    : checkDestructured(
+        added,
+        leaf(
+          apply("Assert", [
+            boolean(false),
+            string("tla-ts can't throw a pattern's TypeError inside an expression"),
+          ]),
+        ),
+        rest,
+        context,
+      );
 };
 
 // A function argument to an operator parameter, as a LAMBDA or an operator's name.
@@ -1093,27 +1122,23 @@ const translatePure = (
     );
     // Each value runs though nothing reads it, so that a getter it reads stops the check.
     const forced = context.heap === undefined ? [] : bound.values;
+    const rest = stopOnDestructured(
+      scope,
+      bound.scope,
+      forceHeap(
+        scope,
+        bound.scope,
+        continueWith(bound.scope),
+        leaf(getUndefined(context)),
+        context,
+      ),
+      context,
+    );
     return letIn(
       bound.definitions,
       forced.length === 0
-        ? forceHeap(
-            scope,
-            bound.scope,
-            continueWith(bound.scope),
-            leaf(getUndefined(context)),
-            context,
-          )
-        : ifThenElse(
-            apply("=", [tuple(forced), tuple(forced)]),
-            forceHeap(
-              scope,
-              bound.scope,
-              continueWith(bound.scope),
-              leaf(getUndefined(context)),
-              context,
-            ),
-            leaf(getUndefined(context)),
-          ),
+        ? rest
+        : ifThenElse(apply("=", [tuple(forced), tuple(forced)]), rest, leaf(getUndefined(context))),
     );
   }
   if (ts.isIfStatement(statement)) {
