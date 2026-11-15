@@ -1428,6 +1428,8 @@ const REDUCING_METHODS = new Set(["reduce", "reduceRight"]);
 // The array methods that tla-ts searches by value for any value, from an index that ToNumber
 // converts from a primitive. Each needs a unit test of such a call.
 const SEARCHING_METHODS = new Set(["includes", "indexOf", "lastIndexOf"]);
+// The promise combinators, which tla-ts runs on any value a test passes them, not only an iterable.
+const PROMISE_COMBINATORS = new Set(["all", "allSettled", "any", "race"]);
 // RegExp.prototype's methods under well-known symbols that tla-ts runs as their steps where a test
 // calls them through call, on any receiver, or on a regexp with a string, a limit, or a replaceValue
 // of another type than their signatures take. Each needs a unit test of such a call.
@@ -2013,6 +2015,22 @@ const ignoreSoundErrors = () => {
       )
     );
   };
+  // A promise combinator's call of a value other than an iterable, which tla-ts iterates as the
+  // combinator does: it rejects the promise where the value isn't an object or its iterator throws.
+  const isCombinedCall = (diagnostic: ts.Diagnostic) => {
+    const call = getErroredCall(diagnostic);
+    return (
+      call !== undefined &&
+      ts.isCallExpression(call) &&
+      ts.isPropertyAccessExpression(call.expression) &&
+      ts.isIdentifier(call.expression.expression) &&
+      call.expression.expression.text === "Promise" &&
+      isGlobal(call.expression.expression) &&
+      PROMISE_COMBINATORS.has(call.expression.name.text) &&
+      call.arguments.length === 1 &&
+      !ts.isSpreadElement(call.arguments[0])
+    );
+  };
   // A call of an array's method that SEARCHING_METHODS lists, of any value to search for and an
   // index to search from that tla-ts converts: a primitive, an object that the test declares, or a
   // wrapper.
@@ -2356,6 +2374,7 @@ const ignoreSoundErrors = () => {
           isConvertedProtocolCall(diagnostic) ||
           isReducingCall(diagnostic) ||
           isSearchingCall(diagnostic) ||
+          (diagnostic.code === 2769 && isCombinedCall(diagnostic)) ||
           isTypedArrayNew(diagnostic))) ||
       (diagnostic.code === UNKNOWN_CALLEE_ERROR && isStoredStringCall(node)) ||
       (diagnostic.code === UNCALLABLE_ERROR && isTypedUnionCall(node, diagnostic)) ||
