@@ -185,9 +185,16 @@ const getHelper = (declaration: HelperDeclaration, context: Context) =>
   getFunction(declaration) ?? getFactoryCall(getInitializer(declaration), context)?.closure;
 
 // How many arguments a helper's parameter takes as an operator parameter, where 0 makes it a value.
-export const getArity = (parameter: ts.ParameterDeclaration, context: Context) =>
+const getArity = (parameter: ts.ParameterDeclaration, context: Context) =>
   context.checker.getTypeAtLocation(parameter.name).getCallSignatures().at(0)?.parameters.length ??
   0;
+
+// Whether a name is one that a helper's definition takes as an operator parameter, which only a
+// call applies or an operator argument passes. Any other name that holds a function holds a value.
+export const isOperatorParameter = (name: string, context: Context) =>
+  [...context.definitions.values()].some((definition) =>
+    definition.parameters.some((parameter) => parameter.arity > 0 && parameter.name === name),
+  );
 
 // Compiles a top-level helper function or constant into a TLA+ definition, after the definitions
 // it uses.
@@ -496,11 +503,22 @@ const translateOperatorArgument = (
   context: Context,
 ): Expression => {
   const symbol = getSymbol(node, context.checker);
+  // A top-level function passes as its operator, and a constant that holds one only as a value.
   const declaration = getTopLevelDeclaration(symbol);
-  if (declaration !== undefined) return identifier(getDefinition(declaration, context).name);
+  if (declaration !== undefined && getHelper(declaration, context) !== undefined) {
+    return identifier(getDefinition(declaration, context).name);
+  }
   const binding = symbol === undefined ? undefined : scope.bindings.get(symbol);
-  if (binding !== undefined) return binding;
-  const held = ts.isIdentifier(node) ? getCallback(node, scope, context) : undefined;
+  if (binding?.kind === "Identifier" && isOperatorParameter(binding.name, context)) return binding;
+  // A name that holds a function as a value passes the function it holds where tla-ts knows it.
+  const held =
+    binding !== undefined
+      ? symbol === undefined
+        ? undefined
+        : scope.functions.get(symbol)
+      : ts.isIdentifier(node)
+        ? getCallback(node, scope, context)
+        : undefined;
   const callee = ts.isArrowFunction(node) || ts.isFunctionExpression(node) ? node : held;
   if (callee?.body === undefined) throw new TlaTypeScriptError("Pass a function here", node);
   if (context.inProgress.has(callee)) {

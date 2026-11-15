@@ -44521,4 +44521,56 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("3,2,0,b"))).failure?.message).toContain("3,2,,b");
     });
   });
+
+  describe("calls a function that a parameter holds as a value", () => {
+    const getSource = (expected: number) => `
+      type Double = (value: number) => number;
+      let total = 0;
+      function double(value: number): number {
+        return value * 2;
+      }
+      const doubles: Double[] = [double];
+      function outer(callback: (inner: Double) => number): number {
+        return callback(doubles[0]);
+      }
+      function main() {
+        const held: Double[] = [double];
+        function apply(inner: Double, value: number): number {
+          return inner(value);
+        }
+        total = apply(held[0], 4);
+      }
+      main();
+      total += outer((inner) => inner(3));
+      if (total !== ${expected}) throw new Error(String(total));
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(14))).failure).toBeUndefined();
+    });
+
+    it("rejects a wrong total", async () => {
+      expect((await checkModel(getSource(15))).failure?.message).toContain("14");
+    });
+
+    it("stops where it can't tell which function the parameter holds", () => {
+      expect(() =>
+        compile(`
+          type Length = (view: { length: number }) => number;
+          function outer(callback: (inner: Length) => void) {
+            const lengths: Length[] = [
+              function (view) {
+                return view.length;
+              },
+            ];
+            callback(lengths[0]);
+          }
+          let total = 0;
+          outer(function (inner) {
+            total = inner({ length: 3 });
+          });
+        `),
+      ).toThrow("Unsupported call: inner");
+    });
+  });
 });

@@ -81,8 +81,8 @@ import {
   translateNewError,
 } from "./exceptions";
 import {
-  getArity,
   getDefinition,
+  isOperatorParameter,
   translateFoundGetter,
   translateGetterCall,
   translateHelperCall,
@@ -1024,19 +1024,16 @@ const translateBuiltInCall = (
   if (!isMethodCall(node)) {
     const operator = symbol === undefined ? undefined : scope.bindings.get(symbol);
     const declaration = symbol?.valueDeclaration;
+    const isOperator =
+      operator?.kind === "Identifier" && isOperatorParameter(operator.name, context);
     if (
       operator === undefined ||
       (symbol !== undefined && scope.functions.has(symbol)) ||
-      (declaration !== undefined &&
-        ts.isParameter(declaration) &&
-        getArity(declaration, context) === 0)
+      (declaration !== undefined && ts.isParameter(declaration) && !isOperator)
     ) {
       return translateLocalCall(node, scope, context);
     }
-    if (
-      operator.kind !== "Identifier" ||
-      (declaration !== undefined && ts.isVariableDeclaration(declaration))
-    ) {
+    if (operator.kind !== "Identifier" || !isOperator) {
       throw new TlaTypeScriptError(`Unsupported call: ${node.expression.getText()}`, node);
     }
     const values = node.arguments.map((argument) => translateExpression(argument, scope, context));
