@@ -36208,4 +36208,73 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("writes a property of a primitive as strict mode decides", () => {
+    const getSource = (expected: string) => `
+      "use strict";
+      const s: any = "s";
+      const n: any = 5;
+      let caught = "";
+      try {
+        s.x = 1;
+      } catch (error) {
+        caught += error instanceof TypeError ? "t" : "x";
+      }
+      try {
+        n["y"] = 2;
+      } catch (error) {
+        caught += error instanceof TypeError ? "t" : "x";
+      }
+      if (caught !== "${expected}") throw new Error(caught);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("tt"))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation", async () => {
+      expect((await checkModel(getSource("t"))).failure?.message).toContain("tt");
+    });
+
+    it("throws the TypeError of a write to a symbol's property", async () => {
+      const result = await checkModel(`
+        "use strict";
+        const holder = { seen: 0 };
+        const symbol = Symbol();
+        let caught = "none";
+        try {
+          // @ts-ignore
+          symbol.z = 3;
+        } catch (error) {
+          caught = error instanceof TypeError ? "t" : "x";
+        }
+        if (caught !== "t") throw new Error(caught);
+      `);
+      expect(result.failure).toBeUndefined();
+    });
+
+    it("ignores the write outside strict mode", async () => {
+      const result = await checkModel(`
+        const s: any = "s";
+        const n: any = 5;
+        let ran = "";
+        s.x = 1;
+        n["y"] = 2;
+        ran += "r";
+        if (ran !== "r") throw new Error(ran);
+      `);
+      expect(result.failure).toBeUndefined();
+    });
+
+    it("stops at a write outside strict mode of a value it does not follow", async () => {
+      const result = await checkModel(`
+        const s: any = "s";
+        const n = 1;
+        s.x = n + 1;
+      `);
+      expect(result.failure?.message).toContain(
+        "tla-ts can't follow a write to a primitive's property outside strict mode",
+      );
+    });
+  });
 });

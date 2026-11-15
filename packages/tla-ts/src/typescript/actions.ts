@@ -11134,9 +11134,84 @@ const translateWriteStatement = (
       rest,
     );
   };
+  // A write to a property of another primitive throws a TypeError in strict mode, and outside it
+  // does nothing, which tla-ts follows for a value that runs no code, unless a setter that its
+  // prototypes may hold runs.
+  const accessed =
+    written !== undefined &&
+    (ts.isPropertyAccessExpression(written) || ts.isElementAccessExpression(written)) &&
+    isMaybePrimitive(context.checker.getTypeAtLocation(skipCasts(written.expression)))
+      ? written
+      : undefined;
+  const skipPrimitive = (rest: Formula) => {
+    if (accessed === undefined) return rest;
+    const isIgnored =
+      ts.isBinaryExpression(expression) &&
+      expression.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      isInertValue(skipCasts(expression.right));
+    const stop = (message: string) => leaf(apply("Assert", [boolean(false), string(message)]));
+    const outcome = isStrictCode(expression)
+      ? throwTypeError(path, expression, context, frame)
+      : isIgnored
+        ? continueWith(path)
+        : stop("tla-ts can't follow a write to a primitive's property outside strict mode");
+    const type = useJavaScript(
+      "TypeOf",
+      [translateExpression(skipCasts(accessed.expression), path.scope, context)],
+      context,
+    );
+    const heap = context.heap === undefined ? undefined : getHeap(path.scope, accessed, context);
+    const key = ts.isPropertyAccessExpression(accessed)
+      ? string(accessed.name.text)
+      : translatePropertyKey(accessed.argumentExpression, path.scope, context);
+    const isHeld =
+      heap === undefined
+        ? undefined
+        : junction(
+            "Or",
+            (
+              [
+                ["string", "String.prototype"],
+                ["number", "Number.prototype"],
+                ["boolean", "Boolean.prototype"],
+                ["symbol", "Symbol.prototype"],
+                ["bigint", "BigInt.prototype"],
+              ] as const
+            ).map(([name, prototype]) =>
+              junction("And", [
+                apply("=", [type, string(name)]),
+                useJavaScript(
+                  "Has",
+                  [heap, translateBuiltInValue(prototype, accessed, context), key],
+                  context,
+                ),
+              ]),
+            ),
+          );
+    return ifThenElse(
+      apply("\\notin", [type, set([string("object"), string("function")])]),
+      isHeld === undefined
+        ? outcome
+        : ifThenElse(
+            isHeld,
+            stop("tla-ts can't write a property that a primitive's prototypes hold"),
+            outcome,
+          ),
+      rest,
+    );
+  };
+
   if (write === undefined) {
     return throwOnNullish(
-      forceHeap(path.scope, assigned.scope, continueWith(assigned), leaf(boolean(false)), context),
+      skipPrimitive(
+        forceHeap(
+          path.scope,
+          assigned.scope,
+          continueWith(assigned),
+          leaf(boolean(false)),
+          context,
+        ),
+      ),
     );
   }
   const translateWrite = (next: (path: Path) => Formula) =>
