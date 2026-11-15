@@ -18,7 +18,7 @@ import { useJavaScript } from "./javascript";
 import { bind, callMethod, getWrittenFunctions, isNullish, read } from "./protocols";
 import { apply, boolean, string, tuple } from "./tla";
 import { getCaughtElements } from "./scope";
-import { getCollectionType } from "./types";
+import { getCollectionType, isLibraryIterable } from "./types";
 
 // The values that patterns took from iterators, which they bind as they would an array's.
 const taken = new WeakSet<Expression>();
@@ -77,7 +77,15 @@ export const isIteratedValue = (node: ts.Expression, context: Context) =>
   isIteratedType(context.checker.getTypeAtLocation(node), context);
 
 // A collection's subclass iterates as the collection does.
-const isIteratedType = (type: ts.Type, context: Context) => {
+const isIteratedType = (type: ts.Type, context: Context): boolean => {
+  // An object that a script declares and types as a library Iterable too, as it gives the object a
+  // Symbol.iterator method.
+  if (type.isIntersection()) {
+    return (
+      type.types.some((member) => isIteratedType(member, context)) &&
+      type.types.every((member) => isIteratedType(member, context) || isLibraryIterable(member))
+    );
+  }
   const declarations = type.getSymbol()?.declarations ?? [];
   return (
     context.heap !== undefined &&
@@ -232,13 +240,12 @@ export const takeFromIterator = (
   frame: Frame,
   continueWith: (path: Path, values: Expression) => Formula,
 ): Formula | undefined => {
-  if (
-    taken.has(iterable) ||
-    !isIteratedPattern(pattern, context) ||
-    !isPlainPattern(pattern, context)
-  ) {
+  if (taken.has(iterable)) return undefined;
+  const isIterated = isIteratedPattern(pattern, context);
+  if ((!isIterated && !isIterablePattern(pattern, context)) || !isPlainPattern(pattern, context)) {
     return undefined;
   }
+  if (!isIterated) return takeFromIterable(pattern, iterable, path, context, frame, continueWith);
   // The protocol's TypeErrors and the values it takes each join, so that what follows the pattern,
   // and what catches it, translate once.
   return translateJoined(
@@ -273,11 +280,26 @@ export const isCaughtIteration = (
   isUntypedPattern(node, context) &&
   isPlainPattern(node, context);
 
-// Takes the values that a catch's array pattern binds from what the try threw: an object's through
-// its iterator, and an array's, or null's or undefined's for the pattern's TypeError, as the
-// pattern would.
-export const takeFromCaught = (
-  pattern: ts.ArrayBindingPattern,
+// An array pattern that a script types as a library Iterable, or as an object that is one too, whose
+// value may be an array or an object that a script gives a Symbol.iterator method.
+export const isIterablePattern = (
+  pattern: ts.ArrayBindingPattern | ts.ArrayLiteralExpression,
+  context: Context,
+) => {
+  if (context.heap === undefined) return false;
+  const type = context.checker.getNonNullableType(
+    ts.isArrayBindingPattern(pattern)
+      ? context.checker.getTypeAtLocation(pattern)
+      : context.checker.getTypeOfAssignmentPattern(pattern),
+  );
+  return (type.isIntersection() ? type.types : [type]).some(isLibraryIterable);
+};
+
+// Takes the values that an array pattern binds from a value that its type doesn't tell, as what a
+// try threw: an object's through its iterator, and an array's, or null's or undefined's for the
+// pattern's TypeError, as the pattern would.
+export const takeFromIterable = (
+  pattern: ts.ArrayBindingPattern | ts.ArrayLiteralExpression,
   value: Expression,
   path: Path,
   context: Context,
@@ -335,16 +357,26 @@ const openWith =
         ifThenElse(
           isNullish(method, context),
           missingWith(found, throwWith),
-          callMethod(site, key, method, held, found, context, frame, throwWith, (made, result) =>
-            bind(made, "iterator", result, context, (bound, iterator) =>
-              ifThenElse(
-                isObject(site, bound, iterator, context),
-                read(site, iterator, "next", bound, context, frame, (after, next) =>
-                  continueWith(after, iterator, next),
+          callMethod(
+            site,
+            key,
+            method,
+            held,
+            [],
+            found,
+            context,
+            frame,
+            throwWith,
+            (made, result) =>
+              bind(made, "iterator", result, context, (bound, iterator) =>
+                ifThenElse(
+                  isObject(site, bound, iterator, context),
+                  read(site, iterator, "next", bound, context, frame, (after, next) =>
+                    continueWith(after, iterator, next),
+                  ),
+                  throwWith(bound),
                 ),
-                throwWith(bound),
               ),
-            ),
           ),
         ),
       ),
@@ -352,6 +384,17 @@ const openWith =
 
 // Calls an object's Symbol.iterator method, and reads the next method of the iterator it makes.
 export const openIterator = openWith(ITERATOR_KEY, (found, throwWith) => throwWith(found));
+
+// Calls an object's Symbol.iterator method as Array.from does, which reads an object without one as
+// an array-like object, which tla-ts doesn't follow.
+export const openFromIterator = openWith(ITERATOR_KEY, () =>
+  leaf(
+    apply("Assert", [
+      boolean(false),
+      string("tla-ts can't call Array.from of an object without Symbol.iterator"),
+    ]),
+  ),
+);
 
 // Calls an object's Symbol.asyncIterator method, and reads the next method of the iterator it makes.
 // An object without one iterates through an async-from-sync iterator, which tla-ts doesn't follow.
@@ -364,11 +407,14 @@ export const openAsyncIterator = openWith(ASYNC_ITERATOR_KEY, () =>
   ),
 );
 
-// Calls an iterator's next, and goes on with the result where the iterator isn't done.
+// Calls an iterator's next, or the return or throw that a yield* passes on, and goes on with the
+// result where the iterator isn't done.
 export const stepIterator = (
   site: ts.Node,
   iterator: Expression,
-  next: Expression,
+  key: string,
+  method: Expression,
+  values: Expression[],
   path: Path,
   context: Context,
   frame: Frame,
@@ -376,20 +422,30 @@ export const stepIterator = (
   doneWith: (path: Path, result: Expression) => Formula,
   continueWith: (path: Path, result: Expression) => Formula,
 ) =>
-  callMethod(site, "next", next, iterator, path, context, frame, throwWith, (called, result) =>
-    bind(called, "result", result, context, (bound, held) =>
-      ifThenElse(
-        isObject(site, bound, held, context),
-        read(site, held, "done", bound, context, frame, (checked, done) =>
-          ifThenElse(
-            useJavaScript("ToBoolean", [done], context),
-            doneWith(checked, held),
-            continueWith(checked, held),
+  callMethod(
+    site,
+    key,
+    method,
+    iterator,
+    values,
+    path,
+    context,
+    frame,
+    throwWith,
+    (called, result) =>
+      bind(called, "result", result, context, (bound, held) =>
+        ifThenElse(
+          isObject(site, bound, held, context),
+          read(site, held, "done", bound, context, frame, (checked, done) =>
+            ifThenElse(
+              useJavaScript("ToBoolean", [done], context),
+              doneWith(checked, held),
+              continueWith(checked, held),
+            ),
           ),
+          throwWith(bound),
         ),
-        throwWith(bound),
       ),
-    ),
   );
 
 // Reads the value of an iterator's result.
@@ -421,6 +477,7 @@ export const closeIterator = (
         "return",
         method,
         iterator,
+        [],
         found,
         context,
         frame,
@@ -446,8 +503,17 @@ const closeQuietly = (
     ifThenElse(
       isNullish(method, context),
       continueWith(found),
-      callMethod(site, "return", method, iterator, found, context, quiet, continueWith, (after) =>
-        continueWith(after),
+      callMethod(
+        site,
+        "return",
+        method,
+        iterator,
+        [],
+        found,
+        context,
+        quiet,
+        continueWith,
+        (after) => continueWith(after),
       ),
     ),
   );
@@ -512,7 +578,9 @@ const takeAll = (
     return stepIterator(
       pattern,
       iterator,
+      "next",
       next,
+      [],
       current,
       context,
       frame,
@@ -558,6 +626,44 @@ export const getIteratedSpreads = (node: ts.Expression, context: Context) => {
     : undefined;
 };
 
+// Steps an iterator to its end, as a spread does, reading each value it gives.
+const stepAll = (
+  site: ts.Node,
+  iterator: Expression,
+  next: Expression,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  throwWith: (path: Path) => Formula,
+  continueWith: (path: Path, values: Expression[]) => Formula,
+) => {
+  const step = (current: Path, values: Expression[]): Formula =>
+    values.length > TAKE_LIMIT
+      ? leaf(
+          apply("Assert", [
+            boolean(false),
+            string(`tla-ts can't spread more than ${TAKE_LIMIT} values`),
+          ]),
+        )
+      : stepIterator(
+          site,
+          iterator,
+          "next",
+          next,
+          [],
+          current,
+          context,
+          frame,
+          throwWith,
+          (done) => continueWith(done, values),
+          (stepped, result) =>
+            readValue(site, result, stepped, context, frame, (taken, value) =>
+              step(taken, [...values, value]),
+            ),
+        );
+  return step(path, []);
+};
+
 // Runs spreads that iterate objects, which take and read each value of the objects' iterators, for
 // a statement that drops what they take.
 export const takeSpreads = (
@@ -590,33 +696,69 @@ export const takeSpreads = (
                   context,
                   frame,
                   throwWith,
-                  (opened, iterator, next) => {
-                    const step = (stepping: Path, count: number): Formula =>
-                      count >= TAKE_LIMIT
-                        ? leaf(
-                            apply("Assert", [
-                              boolean(false),
-                              string(`tla-ts can't spread more than ${TAKE_LIMIT} values`),
-                            ]),
-                          )
-                        : stepIterator(
-                            site,
-                            iterator,
-                            next,
-                            stepping,
-                            context,
-                            frame,
-                            throwWith,
-                            (done) => spread(done, rest.slice(1)),
-                            (stepped, result) =>
-                              readValue(site, result, stepped, context, frame, (taken) =>
-                                step(taken, count + 1),
-                              ),
-                          );
-                    return step(opened, 0);
-                  },
+                  (opened, iterator, next) =>
+                    stepAll(site, iterator, next, opened, context, frame, throwWith, (done) =>
+                      spread(done, rest.slice(1)),
+                    ),
                 );
           return spread(path, iterables);
         },
       ),
   );
+
+// A value that a spread or Array.from iterates, which is an object that a script declares, or one
+// whose type is a library Iterable and which may be an array or an object that a script gives a
+// Symbol.iterator method.
+export const isIterableValue = (node: ts.Expression, context: Context) => {
+  const type = context.checker.getTypeAtLocation(node);
+  return (
+    isIteratedType(type, context) ||
+    (context.heap !== undefined &&
+      (type.isIntersection() ? type.types : [type]).some(isLibraryIterable))
+  );
+};
+
+// Takes every value that a spread or Array.from takes from a value: an object's through its
+// iterator, an array's through the array's, and null's or undefined's TypeError.
+export const takeEvery = (
+  site: ts.Node,
+  value: Expression,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path, values: Expression) => Formula,
+  open = openIterator,
+) => {
+  const heap = getHeap(path.scope, site, context);
+  return translateJoined(
+    site,
+    path,
+    context,
+    (after) => throwTypeError(after, site, context, frame),
+    (throwWith) =>
+      translateJoined(
+        site,
+        path,
+        context,
+        (after, values) => continueWith(after, values ?? tuple([])),
+        (rejoin) =>
+          ifThenElse(
+            apply("/\\", [
+              useJavaScript("IsRef", [value], context),
+              apply("~", [useJavaScript("IsProxy", [heap, value], context)]),
+              apply("~", [useJavaScript("IsArray", [heap, value], context)]),
+            ]),
+            open(site, value, path, context, frame, throwWith, (opened, iterator, next) =>
+              stepAll(site, iterator, next, opened, context, frame, throwWith, (done, values) =>
+                rejoin(done, tuple(values)),
+              ),
+            ),
+            ifThenElse(
+              isNullish(value, context),
+              throwWith(path),
+              rejoin(path, getCaughtElements(value, heap, site, context)),
+            ),
+          ),
+      ),
+  );
+};

@@ -24,6 +24,7 @@ import {
   translateIteratedSequence,
   translateSetKey,
   translateToString,
+  translateTruthy,
 } from "./expressions";
 import {
   callLifted,
@@ -238,6 +239,24 @@ const translateCallback = (callback: ts.Expression, scope: Scope, context: Conte
   return ts.findAncestor(declaration.parent, ts.isFunctionLike) === undefined
     ? callStateOperator(declaration, callee, passed, scope, context)
     : callLifted(callee, callback, passed, scope, context);
+};
+
+// What a callback gives for each element of a sequence, as map gives it.
+export const translateMapped = (
+  callback: ts.Expression,
+  sequence: Expression,
+  scope: Scope,
+  context: Context,
+) => {
+  const position = context.names.getFresh("index");
+  return functionOf(
+    [bound(position, apply("DOMAIN", [sequence]))],
+    translateCallback(
+      callback,
+      bindIndexed(callback, sequence, identifier(position), scope, context),
+      context,
+    ),
+  );
 };
 
 const translateTest = (callback: ts.Expression, scope: Scope, context: Context) => {
@@ -865,6 +884,13 @@ const translateSequenceOperation = (
     if (isDefined) return value;
     return ifExpression(exists, value, getUndefined(context));
   };
+  // Boolean as a test converts each element as a condition does.
+  const isBooleanTest =
+    argument !== undefined &&
+    getBuiltIn(argument, context) === "Boolean" &&
+    call.elementType !== undefined;
+  const getTruthy = (element: Expression) =>
+    translateTruthy(argument, element, context, call.elementType);
   const translateEach =
     (
       format: (bounds: ReturnType<typeof bound>[], body: Expression) => Expression,
@@ -872,6 +898,12 @@ const translateSequenceOperation = (
     ) =>
     () => {
       const position = context.names.getFresh("index");
+      if (translateElement === translateTest && isBooleanTest) {
+        return format(
+          [bound(position, getDomain(sequence))],
+          getTruthy(index(sequence, [identifier(position)])),
+        );
+      }
       const inner = bindIndexed(argument, sequence, identifier(position), scope, context, {
         owner: call.owner,
         indices: call.indices,
@@ -885,30 +917,30 @@ const translateSequenceOperation = (
     isLast: boolean,
     use: (isFound: (position: Expression) => Expression) => Expression,
   ) => {
-    // A search compares by identity, which a sequence lacks.
-    if (getKind(argument, context) === "sequence") {
-      throw new TlaTypeScriptError(
-        "tla-ts can't tell whether two equal arrays are the same array",
-        argument,
-      );
-    }
+    // A search compares by identity, which a sequence lacks: an array that a literal makes is no
+    // element, and SameValue stops where an element equals another array.
+    const isSequence = getKind(argument, context) === "sequence";
+    const isFresh = isSequence && ts.isArrayLiteralExpression(skipCasts(argument));
     return share(translate(argument), "value", context, (value) => {
       const checker = context.checker;
       const elementType = call.elementType;
       const isComparableElement =
+        !isSequence &&
         elementType !== undefined &&
         isComparableType(elementType, checker.getTypeAtLocation(argument), checker);
       // includes compares by SameValueZero, and indexOf by ===, where NaN differs from itself.
       const getEqual = (position: Expression) =>
-        context.hasSpecialNumbers
-          ? useJavaScript(
-              method === "includes" ? "SameValueZero" : "StrictEquals",
-              [index(sequence, [position]), value],
-              context,
-            )
-          : isComparableElement
-            ? apply("=", [index(sequence, [position]), value])
-            : useJavaScript("SameValue", [index(sequence, [position]), value], context);
+        isFresh
+          ? boolean(false)
+          : context.hasSpecialNumbers
+            ? useJavaScript(
+                method === "includes" ? "SameValueZero" : "StrictEquals",
+                [index(sequence, [position]), value],
+                context,
+              )
+            : isComparableElement
+              ? apply("=", [index(sequence, [position]), value])
+              : useJavaScript("SameValue", [index(sequence, [position]), value], context);
       const from = call.arguments[1];
       // An undefined fromIndex is 0, where indexOf starts anyway but lastIndexOf stops.
       const isUndefined =
@@ -965,11 +997,15 @@ const translateSequenceOperation = (
       indices: call.indices,
     });
     const initial = call.arguments[1];
+    const reducer = lambda([accumulator, position], translateCallback(argument, inner, context));
+    if (scope.checkedReductions?.has(node) === true) {
+      return useJavaScript("CheckedReduce", [sequence, reducer, boolean(isRight)], context);
+    }
     return useJavaScript(
       "Reduce",
       [
         sequence,
-        lambda([accumulator, position], translateCallback(argument, inner, context)),
+        reducer,
         boolean(isRight),
         boolean(initial !== undefined),
         initial === undefined ? getUndefined(context) : translate(initial),
@@ -1162,6 +1198,10 @@ const translateSequenceOperation = (
     [
       "filter",
       () => {
+        if (isBooleanTest) {
+          const element = context.names.getFresh("element");
+          return apply("SelectSeq", [sequence, lambda([element], getTruthy(identifier(element)))]);
+        }
         if (getCallback(argument, scope, context).parameters.length < 2) {
           const element = bindElement(argument, scope, context);
           return apply("SelectSeq", [
@@ -1702,6 +1742,16 @@ export const translateSortArguments = (
 
 // The methods that reorder or overwrite an array in place, and give the array.
 export const REORDER_METHODS = new Set(["sort", "reverse", "fill", "copyWithin"]);
+
+// Whether a method gives the collection that it changes: sort, reverse, fill, or copyWithin of an
+// array, a set's add, or a map's set.
+export const isSelfReturning = (node: MethodCall, context: Context) => {
+  const method = node.expression.name.text;
+  const kind = getKind(node.expression.expression, context);
+  return kind === "sequence"
+    ? REORDER_METHODS.has(method)
+    : (kind === "set" && method === "add") || (kind === "map" && method === "set");
+};
 
 // The array methods that give a new array.
 const NEW_ARRAY_METHODS = new Set([
@@ -2964,6 +3014,21 @@ export const translatePatternIteration = (
           ),
           translateArrayIteration(iterated, heap, pattern, context),
         ),
+      );
+
+// The heap after a pattern runs an array's iterator. A pattern whose type isn't an array's first
+// takes its elements, which stop where its value is an object, though nothing reads them.
+export const getPatternHeap = (
+  heap: Expression,
+  iterated: Expression,
+  pattern: ts.Node,
+  type: ts.Type,
+  context: Context,
+) =>
+  context.checker.isArrayLikeType(type)
+    ? translateArrayIteration(heap, heap, pattern, context)
+    : share(translateArrayIteration(heap, heap, pattern, context), "iterating", context, (after) =>
+        ifExpression(apply("=", [iterated, iterated]), after, after),
       );
 
 export const ARRAY_ITERATOR_REPLACED =

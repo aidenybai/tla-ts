@@ -1,7 +1,7 @@
 import ts from "@typescript/typescript6";
 import { getWritten } from "./actions";
 import { getReplacers } from "./json";
-import { MUTATING_METHODS, REORDER_METHODS } from "./collections";
+import { isSelfReturning, MUTATING_METHODS, REORDER_METHODS } from "./collections";
 import {
   type Context,
   findNodes,
@@ -389,8 +389,7 @@ const getEscapes = (
       return getWritten(parent.parent) === parent ? [] : getFrom(parent, getPart(depths));
     }
     const method = parent.name.text;
-    // sort, reverse, fill, and copyWithin give the array that they change.
-    if (isUpdate(call, context)) return REORDER_METHODS.has(method) ? getFrom(call, depths) : [];
+    if (isUpdate(call, context)) return isSelfReturning(call, context) ? getFrom(call, depths) : [];
     const fromCallbacks = call.arguments.flatMap((argument) => {
       const callback = getCallee(argument, context);
       const parameter = callback?.parameters[0];

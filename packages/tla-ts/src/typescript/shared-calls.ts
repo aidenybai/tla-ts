@@ -31,6 +31,7 @@ import { forceHeap } from "./functions";
 import { type Formula, ifThenElse, leaf, letIn, render } from "./formula";
 import { link } from "./regions";
 import { type Bound, bindValues, createStateScope, type Receiver } from "./scope";
+import { getStackCall, isStackConstruction } from "./stacks";
 import {
   apply,
   boolean,
@@ -126,20 +127,19 @@ export const getThrownMessage = (thrown: Thrown, node: ts.Node) =>
     : string(node.getText()));
 
 // What one function or class tells of the helpers that run it: the functions and classes that it
-// names, the names of values that it reads, with their declarations, every name that it names,
-// whether it names a built-in that queues jobs, and whether its code runs as an operator's would.
+// names, the names of values that it reads, with their declarations, whether it names a built-in
+// that queues jobs or makes or calls a DisposableStack, which only the path that runs it follows,
+// and whether its code runs as an operator's would.
 interface Unit {
   runs: Set<ts.Node>;
   read: Map<ts.Symbol, ts.Node>;
-  names: Set<ts.Symbol>;
-  isTaskNamed: boolean;
+  isTasked: boolean;
   isOwn: boolean;
 }
 
 const getUnit = (unit: ts.Node, context: Context): Unit => {
   const runs = new Set<ts.Node>();
   const read = new Map<ts.Symbol, ts.Node>();
-  const names = new Set<ts.Symbol>();
   const isTaskNamed = { value: false };
   findNodes(unit, ts.isIdentifier).forEach((name) => {
     const named = getSymbol(name, context.checker);
@@ -149,7 +149,6 @@ const getUnit = (unit: ts.Node, context: Context): Unit => {
         : named;
     const declaration = symbol?.valueDeclaration;
     if (symbol === undefined || declaration === undefined) return;
-    names.add(symbol);
     if (declaration.getSourceFile().isDeclarationFile) {
       if (TASK_NAMES.has(symbol.name)) isTaskNamed.value = true;
       return;
@@ -173,8 +172,12 @@ const getUnit = (unit: ts.Node, context: Context): Unit => {
   return {
     runs,
     read,
-    names,
-    isTaskNamed: isTaskNamed.value,
+    isTasked:
+      isTaskNamed.value ||
+      findNodes(unit, ts.isNewExpression).some((node) => isStackConstruction(node, context)) ||
+      findNodes(unit, ts.isCallExpression).some(
+        (node) => getStackCall(node, context) !== undefined,
+      ),
     isOwn:
       (!ts.isFunctionLike(unit) || isPlain(unit as FunctionNode)) &&
       (ts.isClassLike(unit) ||
@@ -228,38 +231,32 @@ export const classifySharedHelpers = (reached: readonly ts.Node[], context: Cont
       ),
     ),
   ];
-  // The functions that run through a value, as a method, a getter or a function that an object
-  // holds, rather than by name: a heap's read inside any helper may run them.
-  const valued = new Set(
-    reached.flatMap((node) =>
-      findNodes(node, ts.isIdentifier).flatMap((name) => {
-        const declaration = getSymbol(name, context.checker)?.valueDeclaration;
-        const fixed = declaration === undefined ? undefined : getFixedFunction(declaration);
-        return fixed === undefined ||
-          (ts.isCallExpression(name.parent) && name.parent.expression === name) ||
-          ((ts.isVariableDeclaration(name.parent) || ts.isFunctionDeclaration(name.parent)) &&
-            name.parent.name === name)
+  // A call that tla-ts can't tell by name may run any function or class of the script, so every
+  // helper's operator takes each variable that one names.
+  const namedInside = new Set(
+    [...new Set(reached.map((node) => node.getSourceFile()))].flatMap((sourceFile) =>
+      findNodes(
+        sourceFile,
+        (inner): inner is ts.Identifier =>
+          ts.isIdentifier(inner) &&
+          ts.findAncestor(
+            inner.parent,
+            (ancestor) => ts.isFunctionLike(ancestor) || ts.isClassLike(ancestor),
+          ) !== undefined,
+      ).flatMap((name) => {
+        const symbol = getSymbol(name, context.checker);
+        return symbol === undefined
           ? []
-          : [fixed];
+          : (symbol.flags & ts.SymbolFlags.Alias) !== 0
+            ? [context.checker.getAliasedSymbol(symbol)]
+            : [symbol];
       }),
     ),
   );
-  const escaped = reached.flatMap((node) =>
-    findNodes(
-      node,
-      (inner): inner is FunctionNode =>
-        ts.isFunctionLike(inner) &&
-        "body" in inner &&
-        inner.body !== undefined &&
-        (valued.has(inner) ||
-          getFixedFunction(ts.isVariableDeclaration(inner.parent) ? inner.parent : inner) !==
-            inner),
-    ),
-  );
-  // The units that the candidates, the callbacks and the functions that run through a value run,
-  // each found once.
+  const sharedState = [...context.variables.keys()].filter((symbol) => namedInside.has(symbol));
+  // The units that the candidates and the callbacks run, each found once.
   const units = new Map<ts.Node, Unit>();
-  const pending: ts.Node[] = [...candidates, ...callbacks, ...escaped];
+  const pending: ts.Node[] = [...candidates, ...callbacks];
   while (pending.length > 0) {
     const node = pending.pop() ?? candidates[0];
     if (units.has(node)) continue;
@@ -267,34 +264,19 @@ export const classifySharedHelpers = (reached: readonly ts.Node[], context: Cont
     units.set(node, unit);
     pending.push(...unit.runs);
   }
-  // The functions and classes that some run, and those that they run in turn.
-  const getReach = (starts: readonly ts.Node[]) => {
-    const reach = new Set(starts);
-    const queued = [...starts];
+  // What a function and the functions it runs read from outside it and change, where all of their
+  // code runs as an operator's would.
+  const getHelper = (callee: ts.Node): SharedHelper | undefined => {
+    const reach = new Set<ts.Node>([callee]);
+    const queued: ts.Node[] = [callee];
+    const read = new Map<ts.Symbol, ts.Node>();
     while (queued.length > 0) {
-      units.get(queued.pop() ?? starts[0])?.runs.forEach((run) => {
+      units.get(queued.pop() ?? callee)?.runs.forEach((run) => {
         if (reach.has(run)) return;
         reach.add(run);
         queued.push(run);
       });
     }
-    return reach;
-  };
-  // The variables that some functions and what they run name.
-  const getNamed = (reach: Iterable<ts.Node>) => {
-    const reachedUnits = [...reach].flatMap((node) => units.get(node) ?? []);
-    return [...context.variables.keys()].filter((symbol) =>
-      reachedUnits.some((unit) => unit.names.has(symbol)),
-    );
-  };
-  // Every helper's operator takes the variables of the functions that run through a value, as its
-  // code may run them.
-  const escapedState = getNamed(getReach(escaped));
-  // What a function and the functions it runs read from outside it and change, where all of their
-  // code runs as an operator's would.
-  const getHelper = (callee: ts.Node): SharedHelper | undefined => {
-    const reach = getReach([callee]);
-    const read = new Map<ts.Symbol, ts.Node>();
     const reachedUnits = [...reach].flatMap((node) => units.get(node) ?? []);
     reachedUnits.forEach((unit) =>
       unit.read.forEach((declaration, symbol) => read.set(symbol, declaration)),
@@ -312,7 +294,7 @@ export const classifySharedHelpers = (reached: readonly ts.Node[], context: Cont
         ) === undefined,
     );
     if (
-      reachedUnits.some((unit) => unit.isTaskNamed || !unit.isOwn) ||
+      reachedUnits.some((unit) => unit.isTasked || !unit.isOwn) ||
       outside.some(
         (entry) =>
           context.checker.getTypeOfSymbolAtLocation(entry[0], entry[1]).getCallSignatures().length >
@@ -326,7 +308,7 @@ export const classifySharedHelpers = (reached: readonly ts.Node[], context: Cont
     const outsideNames = outside.map((entry) => entry[0]);
     return {
       read: outsideNames,
-      state: [...new Set([...getNamed(reach), ...escapedState])],
+      state: sharedState,
       changed: [...new Set([...context.variables.keys(), ...outsideNames])].filter((symbol) =>
         changed.has(symbol),
       ),
@@ -375,7 +357,6 @@ const getSharedCall = (
   const runs = [helper, ...passed.flatMap((callback) => callback ?? [])];
   const read = [...new Set(runs.flatMap((run) => run.read))];
   const changed = [...new Set(runs.flatMap((run) => run.changed))];
-  const isCatching = path.scope.isCatching;
   const captured = read.filter(
     (symbol) => !context.variables.has(symbol) && path.scope.bindings.has(symbol),
   );
@@ -400,7 +381,6 @@ const getSharedCall = (
   }
   const defined = (context.sharedCalls.get(callee) ?? []).find(
     (shared) =>
-      shared.isCatching === isCatching &&
       shared.captured.length === captured.length &&
       shared.captured.every((symbol) => captured.includes(symbol)) &&
       [...callbacks].every((entry) => shared.callbacks.get(entry[0]) === entry[1]),
@@ -413,7 +393,7 @@ const getSharedCall = (
   const state = [...context.variables.keys()].filter(
     (symbol) => symbol === context.heap || named.has(symbol) || changed.includes(symbol),
   );
-  return defineShared(callee, { changed, isCatching, captured, callbacks, state }, context);
+  return defineShared(callee, { changed, captured, callbacks, state }, context);
 };
 
 // The parameters that take values, not the functions that the operator calls.
@@ -473,7 +453,7 @@ export const defineThrown = (context: Context) =>
 // or what it threw, the message and the place of the throw, and the state that it changed.
 const defineShared = (
   callee: FunctionNode,
-  variant: Pick<SharedCall, "changed" | "isCatching" | "captured" | "callbacks" | "state">,
+  variant: Pick<SharedCall, "changed" | "captured" | "callbacks" | "state">,
   context: Context,
 ) => {
   const parameters = getParameters(callee);
@@ -503,7 +483,8 @@ const defineShared = (
   const base = createStateScope(context);
   const scope = {
     ...base,
-    isCatching: variant.isCatching,
+    // The body runs as inside a try, so that each caller catches or stops at what it throws.
+    isCatching: true,
     functions: new Map([...base.functions, ...variant.callbacks]),
     // A variable that the operator doesn't take has no binding, so its code can't read it stale.
     bindings: new Map(

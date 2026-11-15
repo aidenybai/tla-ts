@@ -10,7 +10,7 @@ import {
   translateExpression,
   translateToString,
 } from "./expressions";
-import type { Scope } from "./scope";
+import { rejectBeforeDeclaration, type Scope } from "./scope";
 import { getKind, isBigIntLike } from "./types";
 import { apply, boolean, identifier, ifExpression, number, set, string } from "./tla";
 
@@ -1157,11 +1157,15 @@ SortSequence(sequence, IsBefore(_, _), mayThrow) ==
        [] OTHER -> SortedPrefix(defined, Len(defined), IsBefore)
             \\o [position \\in 1..(Len(sequence) - Len(defined)) |-> Undefined]
 
+\\* An element that join() writes, where undefined and null write nothing, as a regexp's split gives
+\\* undefined for a capture that didn't take part where TypeScript types the array as strings.
+LOCAL JoinPart(value) == IF value \\in {Undefined, Null} THEN "" ELSE value
+
 RECURSIVE Join(_, _)
 Join(sequence, separator) ==
   CASE sequence = <<>> -> ""
-    [] Len(sequence) = 1 -> Head(sequence)
-    [] OTHER -> Head(sequence) \\o separator \\o Join(Tail(sequence), separator)
+    [] Len(sequence) = 1 -> JoinPart(Head(sequence))
+    [] OTHER -> JoinPart(Head(sequence)) \\o separator \\o Join(Tail(sequence), separator)
 
 RECURSIVE ReduceAt(_, _, _)
 ReduceAt(Op(_, _), accumulator, positions) ==
@@ -1175,6 +1179,11 @@ Reduce(sequence, Op(_, _), isRight, hasInitial, initial) ==
   IN CASE hasInitial -> ReduceAt(Op, initial, order)
        [] length = 0 -> Assert(FALSE, "tla-ts can't throw the TypeError of reducing an empty array")
        [] OTHER -> ReduceAt(Op, sequence[order[1]], Tail(order))
+
+\\* Reduce without an initial value, which gives whether it found no element to start from, where
+\\* reduce throws a TypeError, and otherwise what it gives.
+CheckedReduce(sequence, Op(_, _), isRight) ==
+  IF sequence = <<>> THEN <<TRUE>> ELSE <<FALSE, Reduce(sequence, Op, isRight, FALSE, FALSE)>>
 
 IsRef(value) ==
   LET text == ToString(value)
@@ -1439,6 +1448,9 @@ ArrowObject(functionPrototype, name, length) ==
 FunctionObject(functionPrototype, code) ==
   [code |-> code] @@ [ClassObject(functionPrototype) EXCEPT !.isOpaque = TRUE]
 
+\\* A function on the heap, which holds the model value of its code.
+WithCode(object, code) == [code |-> code] @@ object
+
 \\* A method that a function makes each time it runs, which can't construct.
 MethodObject(functionPrototype, code) ==
   [FunctionObject(functionPrototype, code) EXCEPT !.isConstructor = FALSE]
@@ -1680,8 +1692,13 @@ ViewLength(heap, view) ==
     [] OTHER -> view.viewLength
 
 \\* An object's own properties apart from a typed array's elements, which a typed array holds as an
-\\* ordinary object does.
-LOCAL OrdinaryOf(heap, ref) == IF IsTypedArray(heap, ref) THEN heap.objects[ref[Ref]] ELSE Lookup(heap, ref)
+\\* ordinary object does. A promise or a generator object has none, as tla-ts stops where a script
+\\* would give it one.
+LOCAL OrdinaryOf(heap, ref) ==
+  IF \\/ IsTypedArray(heap, ref)
+     \\/ IsHeap(ref) /\\ heap.objects[ref[Ref]].isOpaque /\\ "code" \\notin DOMAIN heap.objects[ref[Ref]]
+  THEN heap.objects[ref[Ref]]
+  ELSE Lookup(heap, ref)
 
 \\* A typed array's element keys, which come before its other own keys.
 LOCAL ElementKeys(heap, ref) ==
@@ -1999,6 +2016,11 @@ LOCAL RegExpGet(heap, path, receiver) ==
        [] IsRegExpPrototype(receiver) -> IF name = "source" THEN "(?:)" ELSE Undefined
        [] OTHER -> Assert(FALSE, "tla-ts can't throw the TypeError of a getter on another kind of object")
 
+\\* The @@species getters of the built-in constructors, which give the receiver.
+LOCAL SpeciesGetters ==
+  {"get " \\o owner \\o ".@@species" :
+     owner \\in {"Array", "RegExp", "Map", "Set", "Promise", "ArrayBuffer", "SharedArrayBuffer"}}
+
 \\* A read of a key from an object or its prototypes, where a getter that reads a buffer's or a view's
 \\* internal slots reads the receiver's. An array outside the heap, which a value typed only as
 \\* array-like may hold, holds its elements and its length, and reads the rest from its prototype.
@@ -2019,6 +2041,8 @@ GetFrom(heap, ref, key, receiver) ==
                    /\\ path \\in ViewGetters -> ViewGet(heap, path, receiver)
               [] key \\in DOMAIN object.values /\\ object.attributes[key].kind = "accessor"
                    /\\ path \\in RegExpGetters -> RegExpGet(heap, path, receiver)
+              [] key \\in DOMAIN object.values /\\ object.attributes[key].kind = "accessor"
+                   /\\ path \\in SpeciesGetters -> receiver
               [] key \\in DOMAIN object.values /\\ object.attributes[key].kind = "accessor"
                    /\\ IntlGetterKind(path) # "" -> IntlGet(heap, path, receiver)
               [] key \\in DOMAIN object.values /\\ object.attributes[key].kind = "accessor"
@@ -2090,9 +2114,9 @@ IsThenable(heap, value, arrayPrototype, objectPrototype) ==
        /\\ TypeOf(value) = "object"
        /\\ Has(heap, arrayPrototype, "then") \\/ Has(heap, objectPrototype, "then")
 
-\\* Whether a value is an object on the heap whose then a job can call.
+\\* Whether a value is an object on the heap, or an array off it, whose then a job can call.
 HasCallableThen(heap, value) ==
-  /\\ IsRef(value)
+  /\\ IsRef(value) \\/ IsSequenceValue(value)
   /\\ ~(IsHeap(value) /\\ heap.objects[value[Ref]].isOpaque)
   /\\ TypeOfIn(heap, Get(heap, value, "then")) = "function"
 
@@ -2430,6 +2454,12 @@ InheritsFrom(heap, owner, value) ==
   CASE IsRef(value) -> IsPrototypeOf(heap, owner, value)
     [] value = Null \\/ TypeOf(value) \\notin {"object", "function"} -> FALSE
     [] OTHER -> Assert(FALSE, "tla-ts can't tell what this value inherits from")
+
+\\* Whether a value has an [[ErrorData]] slot, as an error has, and not a proxy of one.
+HasErrorData(heap, value) ==
+  IF IsRef(value)
+  THEN IsHeap(value) /\\ "isError" \\in DOMAIN heap.objects[value[Ref]]
+  ELSE IsError(value)
 
 \\* Whether a value that may be any value is an error that one of the constructors made.
 IsErrorOf(value, constructors) == IsError(value) /\\ value.constructor \\in constructors
@@ -4050,13 +4080,17 @@ RegExpSplitFrom(regexp, text, p, q) ==
                   \\o [position \\in 1..regexp.captures |-> RegExpCapture(text, found, position)]
                   \\o RegExpSplitFrom(regexp, text, found.end, found.end)
 
-\\* The pieces that RegExp.prototype[@@split] gives, at most ToUint32 of a limit that is undefined or
-\\* a number, where -1 is no limit, as ToUint32 of a negative integer is past any length.
+\\* The most pieces that RegExp.prototype[@@split] gives, ToUint32 of a limit that is undefined or a
+\\* number, where -1 is no limit, as ToUint32 of a negative integer is past any length.
+RegExpSplitCount(limit) ==
+  CASE limit = Undefined -> -1
+    [] limit \\in {NaN, Infinity, NegativeInfinity, NegativeZero} -> 0
+    [] IntegerOf(limit) < 0 -> -1
+    [] OTHER -> IntegerOf(limit)
+
+\\* The pieces that RegExp.prototype[@@split] gives, at most the count that its limit gives.
 LOCAL RegExpPieces(regexp, text, limit) ==
-  LET count == CASE limit = Undefined -> -1
-                 [] limit \\in {NaN, Infinity, NegativeInfinity, NegativeZero} -> 0
-                 [] IntegerOf(limit) < 0 -> -1
-                 [] OTHER -> IntegerOf(limit)
+  LET count == RegExpSplitCount(limit)
       pieces == CASE count = 0 -> <<>>
                   [] text = "" -> IF RegExpAt(regexp, text, 0).end # -1 THEN <<>> ELSE <<text>>
                   [] OTHER -> RegExpSplitFrom(regexp, text, 0, 0)
@@ -4946,10 +4980,7 @@ GetterCall(heap, getter, receiver) ==
               [] IntlMayWalk(heap, IntlGetterKind(path), receiver) ->
                    Assert(FALSE, "tla-ts can't run a proxy's internal method here")
               [] OTHER -> typeError
-       [] path \\in {"get " \\o owner \\o ".@@species" :
-                     owner \\in {"%Int8Array.[[Prototype]]%", "Array", "RegExp", "Map", "Set", "Promise", "ArrayBuffer",
-                                "SharedArrayBuffer"}} ->
-            give(receiver)
+       [] path \\in SpeciesGetters \\cup {"get %Int8Array.[[Prototype]]%.@@species"} -> give(receiver)
        [] OTHER -> Assert(FALSE, "tla-ts can't tell which function this value holds")
 
 LOCAL LastIndexValue(heap, ref) == heap.objects[ref[Ref]].values["lastIndex"]
@@ -5039,14 +5070,76 @@ LOCAL RegExpResult(heap, prototype, regexp, text, match) ==
 \\* RegExp.prototype.exec, as the heap after it, the array of the match it finds, or null, and whether
 \\* it throws the TypeError of setting a lastIndex that isn't writable. The calls of a regexp's
 \\* methods below give the same.
-RegExpExecIn(heap, ref, value, prototype) ==
-  LET regexp == RegExpOwning(heap, ref, {"RegExp.prototype"}, RegExpFlagNames)
-      text == Text(value)
-      run == RegExpRun(heap, ref, regexp, text)
+LOCAL RegExpExecWith(heap, ref, regexp, text, prototype) ==
+  LET run == RegExpRun(heap, ref, regexp, text)
       made == RegExpResult(run.heap, prototype, regexp, text, run.match)
   IN  CASE run.isThrown -> [heap |-> run.heap, value |-> Null, isThrown |-> TRUE]
         [] run.match.end = -1 -> [heap |-> run.heap, value |-> Null, isThrown |-> FALSE]
         [] OTHER -> [heap |-> made, value |-> Allocated(made), isThrown |-> FALSE]
+
+RegExpExecIn(heap, ref, value, prototype) ==
+  RegExpExecWith(heap, ref, RegExpOwning(heap, ref, {"RegExp.prototype"}, RegExpFlagNames),
+                 Text(value), prototype)
+
+\\* RegExpBuiltinExec, which reads a regexp's lastIndex and the flags that it was made with, whatever
+\\* other properties a script gave it.
+RegExpBuiltinExecIn(heap, ref, value, prototype) ==
+  RegExpExecWith(heap, ref, heap.objects[ref[Ref]].regexp, value, prototype)
+
+IsRegExpIn(heap, value) == IsRegExp(heap, value)
+
+\\* What Get(R, "flags") gives, where the flags getter of RegExp.prototype reads each flag through Get.
+RegExpFlagsValue(heap, ref) ==
+  LET flags == << <<"d", "hasIndices">>, <<"g", "global">>, <<"i", "ignoreCase">>,
+                 <<"m", "multiline">>, <<"s", "dotAll">>, <<"u", "unicode">>,
+                 <<"v", "unicodeSets">>, <<"y", "sticky">> >>
+      RECURSIVE Join(_)
+      Join(rest) ==
+        CASE rest = <<>> -> ""
+          [] ToBoolean(Get(heap, ref, Head(rest)[2])) -> Head(rest)[1] \\o Join(Tail(rest))
+          [] OTHER -> Join(Tail(rest))
+  IN  IF GetterPath(GetterOf(heap, ref, "flags")) = "get RegExp.prototype.flags"
+      THEN Join(flags)
+      ELSE Get(heap, ref, "flags")
+
+HasFlag(flags, flag) == flag \\in CharactersOf(flags)
+
+\\* The heap once RegExp.prototype[@@split] constructs its splitter through RegExp, of a regexp and
+\\* flags, which tla-ts makes where the flags differ from the regexp's only in d, g, and y, which
+\\* leave its pattern as it compiled.
+RegExpSplitterIn(heap, ref, flags, prototype) ==
+  LET regexp == heap.objects[ref[Ref]].regexp
+      names == "dgimsuvy"
+      kept(text) == CharactersOf(text) \\ {"d", "g", "y"}
+      RECURSIVE Ordered(_)
+      Ordered(position) ==
+        CASE position > Len(names) -> ""
+          [] SubSeq(names, position, position) \\in CharactersOf(flags) ->
+               SubSeq(names, position, position) \\o Ordered(position + 1)
+          [] OTHER -> Ordered(position + 1)
+  IN  IF /\\ IsRegExp(heap, ref)
+         /\\ CharactersOf(flags) \\subseteq CharactersOf(names)
+         /\\ Len(flags) = Cardinality(CharactersOf(flags))
+         /\\ kept(flags) = kept(regexp.flags)
+      THEN Allocate(heap, RegExpObject(prototype, [regexp EXCEPT
+                                                    !.flags = Ordered(1),
+                                                    !.hasIndices = "d" \\in CharactersOf(flags),
+                                                    !.global = "g" \\in CharactersOf(flags),
+                                                    !.sticky = TRUE]))
+      ELSE Assert(FALSE, "tla-ts can't make a regexp of other flags than those of the regexp it copies")
+
+\\* The pieces once RegExp.prototype[@@split] adds the captures of a match after its own: each
+\\* element of exec's result past the first, as many as its length tells, up to the count.
+RegExpSplitCaptures(heap, result, pieces, count) ==
+  LET length == ToLength(Get(heap, result, "length"))
+      captures == IF length > 1 THEN length - 1 ELSE 0
+      room == count - Len(pieces)
+      taken == IF count # -1 /\\ room < captures THEN room ELSE captures
+  IN  pieces \\o [position \\in 1..taken |-> Get(heap, result, ToString(position))]
+
+\\* AdvanceStringIndex, which steps past a surrogate pair where the regexp reads code points.
+AdvanceStringIndex(text, index, isUnicode) ==
+  index + (IF isUnicode THEN CharacterWidth([unicode |-> TRUE], text, index) ELSE 1)
 
 \\* RegExp.prototype.test, as the heap after it and whether exec finds a match.
 RegExpTestIn(heap, ref, value) ==
@@ -5580,6 +5673,73 @@ DataViewSet(heap, ref, type, request, value, littleEndian) ==
        [] OTHER ->
             Returned(WithBytes(heap, view, view.byteOffset + index,
                                IF isLittle THEN bytes ELSE Reversed(bytes)), Undefined)
+
+\\* The little-endian sum of two elements' bytes, which wraps as the element does.
+RECURSIVE AddBytes(_, _, _)
+AddBytes(left, right, carry) ==
+  IF left = <<>>
+  THEN <<>>
+  ELSE LET sum == Head(left) + Head(right) + carry
+       IN <<sum % 256>> \\o AddBytes(Tail(left), Tail(right), sum \\div 256)
+
+\\* Atomics' functions, which give the heap after them, their value, and the error they throw, if
+\\* any. tla-ts runs one agent, so nothing waits on a buffer: notify wakes no one, and a wait that
+\\* reads the value it expects times out.
+AtomicsCall(heap, method, arguments, objectPrototype) ==
+  LET argument(position) == IF Len(arguments) >= position THEN arguments[position] ELSE Undefined
+      ref == argument(1)
+      view == heap.objects[ref[Ref]]
+      type == view.elementType
+      index == IndexOfArgument(argument(2))
+      start == view.byteOffset + index * ElementSize(type)
+      old == SubSeq(ViewedBytes(heap, view), start + 1, start + ElementSize(type))
+      converted(position) ==
+        IF IsBigIntType(type)
+        THEN ToElement(type, argument(position))
+        ELSE ToIntegerOrInfinity(ToNumber(argument(position)))
+      bytes(position) == NumberBytes(type, converted(position))
+      modified(new) == Returned(WithBytes(heap, view, start, new), NumberOfBytes(type, old))
+      bitwise(operation) ==
+        modified([position \\in DOMAIN old |-> Bits(operation, old[position], bytes(3)[position])])
+      timeout == ToNumber(argument(4))
+      isEqual == NumberBytes(type, ToElement(type, argument(3))) = old
+      result(value) ==
+        LET made == Allocate(heap, PutAll([EmptyObject EXCEPT !.prototype = objectPrototype],
+                                          [async |-> FALSE, value |-> value], <<"async", "value">>))
+        IN Returned(made, Allocated(made))
+  IN CASE method = "isLockFree" ->
+            Returned(heap, ToIntegerOrInfinity(ToNumber(argument(1))) \\in {1, 2, 4, 8})
+       [] method = "pause" ->
+            IF argument(1) = Undefined \\/ IsInteger(argument(1)) \\/ argument(1) = NegativeZero
+            THEN Returned(heap, Undefined)
+            ELSE Thrown(heap, "TypeError")
+       [] ~IsTypedArray(heap, ref) -> Thrown(heap, "TypeError")
+       [] IsOutOfBounds(heap, view) -> Thrown(heap, "TypeError")
+       [] method \\in {"notify", "wait", "waitAsync"} /\\ type \\notin {"Int32", "BigInt64"} ->
+            Thrown(heap, "TypeError")
+       [] type \\in {"Uint8Clamped", "Float16", "Float32", "Float64"} -> Thrown(heap, "TypeError")
+       [] method \\in {"wait", "waitAsync"} /\\ ~heap.objects[view.viewed[Ref]].isShared ->
+            Thrown(heap, "TypeError")
+       [] index = -1 \\/ index >= ViewLength(heap, view) -> Thrown(heap, "RangeError")
+       [] method = "load" -> Returned(heap, NumberOfBytes(type, old))
+       [] method = "store" -> Returned(WithBytes(heap, view, start, bytes(3)), converted(3))
+       [] method = "add" -> modified(AddBytes(old, bytes(3), 0))
+       [] method = "sub" ->
+            modified(AddBytes(old, [position \\in DOMAIN old |-> 255 - bytes(3)[position]], 1))
+       [] method \\in {"and", "or", "xor"} -> bitwise(method)
+       [] method = "exchange" -> modified(bytes(3))
+       [] method = "compareExchange" ->
+            LET expected == bytes(3)
+                replacement == bytes(4)
+            IN modified(IF expected = old THEN replacement ELSE old)
+       [] method = "notify" /\\ (argument(3) = Undefined \\/ IsNumber(ToNumber(argument(3)))) ->
+            Returned(heap, 0)
+       [] isEqual /\\ timeout \\in {NaN, Infinity} ->
+            Assert(FALSE, "tla-ts can't wait for a value that nothing changes")
+       [] method = "wait" -> Returned(heap, IF isEqual THEN "timed-out" ELSE "not-equal")
+       [] ~isEqual -> result("not-equal")
+       [] LessOrEqual(timeout, 0) -> result("timed-out")
+       [] OTHER -> Assert(FALSE, "tla-ts can't wait asynchronously for a value to change")
 
 \\* ArrayBuffer's resize and SharedArrayBuffer's grow.
 Resize(heap, ref, request, isShared) ==
@@ -6398,12 +6558,22 @@ SetToSequence(set) ==
   ELSE LET element == CHOOSE element \\in set : TRUE
        IN <<element>> \\o SetToSequence(set \\ {element})
 
+\\* Deletes the indices of an array that the heap holds from one below an end down to a start.
+RECURSIVE ArrayDeletesDown(_, _, _, _)
+ArrayDeletesDown(state, ref, from, to) ==
+  IF state.isThrown \\/ to <= from
+  THEN state
+  ELSE ArrayDeletesDown(AndThen(state, LAMBDA heap : ArrayDelete(heap, ref, ToString(to - 1))),
+                        ref, from, to - 1)
+
 \\* What a splice does to an array that the heap holds, and the elements that it removes, where it
 \\* makes the array of them through the array's constructor, which tla-ts follows only for Array.
+\\* An array with holes changes index by index as the spec runs it, where a hole that a move reads
+\\* deletes the index it moves to.
 ArraySplice(heap, ref, start, hasCount, count, items, array) ==
   LET object == Lookup(heap, ref)
-      elements == DenseElements(heap, ref)
-      length == Len(elements)
+      own == {ToIndex(key) : key \\in {key \\in DOMAIN object.values : IsIndex(key)}}
+      length == object.values["length"]
       relative == ToIntegerOrInfinity(ToNumber(start))
       deleting == IF hasCount THEN ToIntegerOrInfinity(ToNumber(count)) ELSE length
   IN CASE ~(relative \\in Int /\\ deleting \\in Int) ->
@@ -6418,12 +6588,34 @@ ArraySplice(heap, ref, start, hasCount, count, items, array) ==
                 deleted == CASE deleting < 0 -> 0
                              [] deleting > length - first -> length - first
                              [] OTHER -> deleting
+                elements == DenseElements(heap, ref)
                 changed == SubSeq(elements, 1, first) \\o items
                              \\o SubSeq(elements, first + deleted + 1, length)
-            IN Species(Get(heap, ref, "constructor"), array,
-                       [heap |-> WithElements(heap, ref, changed, Len(changed)),
-                        value |-> SubSeq(elements, first + 1, first + deleted),
-                        isThrown |-> FALSE])
+                indices == {ToIndex(key) : key \\in IndexKeys(heap, ref)}
+                offset == Len(items) - deleted
+                begun == [heap |-> heap, isThrown |-> FALSE]
+                moved == IF offset = 0
+                         THEN begun
+                         ELSE ArrayMoves(begun, ref,
+                                {index \\in indices \\cup {index - offset : index \\in own} :
+                                   index >= first + deleted /\\ index < length}, offset, offset < 0)
+                state == AndThen(
+                           ArraySets(ArrayDeletesDown(moved, ref, length + offset, length),
+                                     ref, first, items),
+                           LAMBDA after : ArraySet(after, ref, "length", length + offset))
+            IN CASE own = 0..(length - 1) ->
+                      Species(Get(heap, ref, "constructor"), array,
+                              [heap |-> WithElements(heap, ref, changed, Len(changed)),
+                               value |-> SubSeq(elements, first + 1, first + deleted),
+                               isThrown |-> FALSE])
+                 [] \\E index \\in first..(first + deleted - 1) : index \\notin indices ->
+                      Assert(FALSE, "tla-ts can't splice out a hole")
+                 [] OTHER ->
+                      Species(Get(heap, ref, "constructor"), array,
+                              [heap |-> state.heap,
+                               value |-> [position \\in 1..deleted |->
+                                           Get(heap, ref, ToString(first + position - 1))],
+                               isThrown |-> state.isThrown])
 
 RECURSIVE ApplyAll(_, _, _)
 ApplyAll(object, keys, descriptors) ==
@@ -6523,6 +6715,15 @@ ReflectDefineConverted(heap, ref, key, converted) ==
 ReflectDefineProperty(heap, ref, key, descriptor) ==
   IF IsObjectArgument(ref) /\\ IsObjectArgument(descriptor)
   THEN ReflectDefineConverted(heap, ref, key, ToDescriptor(heap, descriptor))
+  ELSE [heap |-> heap, isDone |-> FALSE, isRangeError |-> FALSE, value |-> FALSE]
+
+\\* Reflect.deleteProperty, which gives whether it deleted the key, and throws a TypeError where the
+\\* target isn't an object.
+ReflectDeleteProperty(heap, ref, key) ==
+  IF IsObjectArgument(ref)
+  THEN LET isDeleted == CanDelete(heap, ref, key)
+       IN [heap |-> IF isDeleted THEN Delete(heap, ref, key) ELSE heap, isDone |-> TRUE,
+           isRangeError |-> FALSE, value |-> isDeleted]
   ELSE [heap |-> heap, isDone |-> FALSE, isRangeError |-> FALSE, value |-> FALSE]
 
 \\* The setter that Reflect.set calls, where a typed array's element calls none.
@@ -6659,6 +6860,21 @@ PutEntries(heap, object, entries) ==
 \\* "1". A later entry's value replaces an earlier one's, where the key keeps its place.
 FromEntries(heap, entries) == Allocate(heap, PutEntries(heap, EmptyObject, entries))
 
+RECURSIVE GroupedObject(_, _, _)
+GroupedObject(object, elements, keys) ==
+  IF elements = <<>>
+  THEN object
+  ELSE LET key == PropertyKey(Head(keys))
+           grouped == IF key \\in DOMAIN object.values
+                      THEN [object EXCEPT !.values[key] = Append(@, Head(elements))]
+                      ELSE Put(object, key, <<Head(elements)>>)
+       IN GroupedObject(grouped, Tail(elements), Tail(keys))
+
+\\* Object.groupBy of an array's elements and the key that its callback gives each: an object without
+\\* a prototype, whose keys, in the order they first come, hold the arrays of their elements.
+GroupBy(heap, elements, keys) ==
+  Allocate(heap, GroupedObject([EmptyObject EXCEPT !.prototype = Null], elements, keys))
+
 \\* Object.create as a change, which fails where it throws a TypeError.
 CreateChange(heap, prototype, properties) ==
   LET created == Allocate(heap, [EmptyObject EXCEPT !.prototype = prototype])
@@ -6771,6 +6987,17 @@ PreventExtensions(heap, ref) ==
   IF RestrictsTypedArray(heap, ref, FALSE)
   THEN Update(heap, ref, [OrdinaryOf(heap, ref) EXCEPT !.extensible = FALSE])
   ELSE heap
+
+\\* Reflect.preventExtensions, which gives FALSE for a typed array whose length may change, rather than
+\\* throwing, and throws a TypeError where the target isn't an object.
+ReflectPreventExtensions(heap, ref) ==
+  CASE ~IsObjectArgument(ref) ->
+         [heap |-> heap, isDone |-> FALSE, isRangeError |-> FALSE, value |-> FALSE]
+    [] IsTypedArray(heap, ref) /\\ ~IsFixedLength(heap, ref) ->
+         [heap |-> heap, isDone |-> TRUE, isRangeError |-> FALSE, value |-> FALSE]
+    [] OTHER ->
+         [heap |-> PreventExtensions(heap, ref), isDone |-> TRUE, isRangeError |-> FALSE,
+          value |-> TRUE]
 
 Seal(heap, ref) == Restrict(heap, ref, FALSE)
 
@@ -6958,6 +7185,183 @@ LOCAL QuoteJSON(text) ==
                                  SubSeq("0123456789abcdef", digit(position, place), digit(position, place))], "")
           [] OTHER -> unit(position)
   IN "\\"" \\o Join([position \\in 1..Len(text) |-> escape(position)], "") \\o "\\""
+
+\\* The ECMAScript JSON grammar that JSON.parse reads, whose operators give the position after what
+\\* starts at a position, or 0 where the text there isn't one. A code is -1 past the text's end and
+\\* 128 for a character outside ASCII, which a string may hold.
+LOCAL JSONCode(text, at) ==
+  LET character == IF at \\in 1..Len(text) THEN SubSeq(text, at, at) ELSE ""
+  IN  CASE character = "" -> -1
+        [] character \\in DOMAIN AsciiCodes -> AsciiCodes[character]
+        [] OTHER -> 128
+
+RECURSIVE JSONWhitespace(_, _), JSONDigits(_, _), JSONStringEnd(_, _), JSONUnescaped(_),
+          JSONValue(_, _, _, _, _), JSONMembers(_, _, _, _, _, _), JSONElements(_, _, _, _, _, _)
+
+LOCAL JSONWhitespace(text, at) ==
+  IF JSONCode(text, at) \\in {9, 10, 13, 32} THEN JSONWhitespace(text, at + 1) ELSE at
+
+LOCAL JSONDigits(text, at) ==
+  IF JSONCode(text, at) \\in 48..57 THEN JSONDigits(text, at + 1) ELSE at
+
+LOCAL IsJSONHex(code) == code \\in 48..57 \\/ code \\in 65..70 \\/ code \\in 97..102
+
+\\* A string's characters and its closing quote, where no control character may stand unescaped.
+LOCAL JSONStringEnd(text, at) ==
+  LET code == JSONCode(text, at)
+      next == JSONCode(text, at + 1)
+  IN  CASE code = 34 -> at + 1
+        [] code = 92 /\\ next \\in {34, 47, 92, 98, 102, 110, 114, 116} -> JSONStringEnd(text, at + 2)
+        [] code = 92 /\\ next = 117 /\\ \\A offset \\in 2..5 : IsJSONHex(JSONCode(text, at + offset)) ->
+             JSONStringEnd(text, at + 6)
+        [] code = 92 \\/ code < 32 -> 0
+        [] OTHER -> JSONStringEnd(text, at + 1)
+
+\\* The string that a JSON string's characters between its quotes stand for, where an escape stands
+\\* for the code unit that it names.
+LOCAL JSONUnescaped(raw) ==
+  LET escapes == {at \\in 1..Len(raw) : SubSeq(raw, at, at) = "\\\\"}
+      at == CHOOSE first \\in escapes : \\A other \\in escapes : first <= other
+      kind == JSONCode(raw, at + 1)
+      hex(offset) ==
+        LET code == JSONCode(raw, at + offset)
+        IN  CASE code \\in 48..57 -> code - 48 [] code \\in 65..70 -> code - 55 [] OTHER -> code - 87
+      unit == CASE kind = 117 -> CodeUnit(((hex(2) * 16 + hex(3)) * 16 + hex(4)) * 16 + hex(5))
+                [] kind = 98 -> CodeUnit(8)
+                [] kind = 102 -> CodeUnit(12)
+                [] kind = 110 -> CodeUnit(10)
+                [] kind = 114 -> CodeUnit(13)
+                [] kind = 116 -> CodeUnit(9)
+                [] OTHER -> SubSeq(raw, at + 1, at + 1)
+      width == IF kind = 117 THEN 6 ELSE 2
+  IN  IF escapes = {}
+      THEN raw
+      ELSE SubSeq(raw, 1, at - 1) \\o unit \\o JSONUnescaped(SubSeq(raw, at + width, Len(raw)))
+
+LOCAL JSONNumberEnd(text, at) ==
+  LET signed == IF JSONCode(text, at) = 45 THEN at + 1 ELSE at
+      integer == CASE JSONCode(text, signed) = 48 -> signed + 1
+                   [] JSONCode(text, signed) \\in 49..57 -> JSONDigits(text, signed + 1)
+                   [] OTHER -> 0
+      fraction == CASE integer = 0 \\/ JSONCode(text, integer) # 46 -> integer
+                    [] JSONCode(text, integer + 1) \\in 48..57 -> JSONDigits(text, integer + 2)
+                    [] OTHER -> 0
+      sign == IF JSONCode(text, fraction + 1) \\in {43, 45} THEN fraction + 2 ELSE fraction + 1
+  IN  CASE fraction = 0 \\/ JSONCode(text, fraction) \\notin {69, 101} -> fraction
+        [] JSONCode(text, sign) \\in 48..57 -> JSONDigits(text, sign + 1)
+        [] OTHER -> 0
+
+LOCAL JSONWordEnd(text, at, word) ==
+  IF at + Len(word) - 1 <= Len(text) /\\ SubSeq(text, at, at + Len(word) - 1) = word
+  THEN at + Len(word)
+  ELSE 0
+
+\\* What JSON.parse makes of the value that starts at a position: the position after it, or 0 where
+\\* the text there isn't one, its value, and the objects that it and the values before it make,
+\\* innermost first, which the heap holds after its own.
+LOCAL JSONFailed == [end |-> 0, value |-> 0, objects |-> <<>>]
+
+LOCAL JSONMade(heap, end, object, objects) ==
+  [end |-> end, value |-> NextRef(heap, Len(objects) + 1), objects |-> Append(objects, object)]
+
+LOCAL JSONWord(end, value, objects) ==
+  IF end = 0 THEN JSONFailed ELSE [end |-> end, value |-> value, objects |-> objects]
+
+LOCAL JSONValue(heap, prototype, text, at, objects) ==
+  LET code == JSONCode(text, at)
+      inner == JSONWhitespace(text, at + 1)
+      members == JSONMembers(heap, prototype, text, inner, objects, <<>>)
+      elements == JSONElements(heap, prototype, text, inner, objects, <<>>)
+      stringEnd == JSONStringEnd(text, at + 1)
+      numberEnd == JSONNumberEnd(text, at)
+  IN  CASE code = 123 /\\ JSONCode(text, inner) = 125 ->
+             JSONMade(heap, inner + 1, PairsObject(<<>>), objects)
+        [] code = 123 ->
+             IF members.end = 0
+             THEN JSONFailed
+             ELSE JSONMade(heap, members.end, PairsObject(members.value), members.objects)
+        [] code = 91 /\\ JSONCode(text, inner) = 93 ->
+             JSONMade(heap, inner + 1, ArrayObject(prototype, <<>>), objects)
+        [] code = 91 ->
+             IF elements.end = 0
+             THEN JSONFailed
+             ELSE JSONMade(heap, elements.end, ArrayObject(prototype, elements.value), elements.objects)
+        [] code = 34 ->
+             IF stringEnd = 0
+             THEN JSONFailed
+             ELSE [end |-> stringEnd, value |-> JSONUnescaped(SubSeq(text, at + 1, stringEnd - 2)),
+                   objects |-> objects]
+        [] code = 45 \\/ code \\in 48..57 ->
+             IF numberEnd = 0
+             THEN JSONFailed
+             ELSE [end |-> numberEnd, value |-> ToNumber(SubSeq(text, at, numberEnd - 1)),
+                   objects |-> objects]
+        [] code = 116 -> JSONWord(JSONWordEnd(text, at, "true"), TRUE, objects)
+        [] code = 102 -> JSONWord(JSONWordEnd(text, at, "false"), FALSE, objects)
+        [] code = 110 -> JSONWord(JSONWordEnd(text, at, "null"), Null, objects)
+        [] OTHER -> JSONFailed
+
+\\* The keys and values of an object's members, from the first one's name to the closing brace.
+LOCAL JSONMembers(heap, prototype, text, at, objects, pairs) ==
+  LET name == IF JSONCode(text, at) = 34 THEN JSONStringEnd(text, at + 1) ELSE 0
+      colon == IF name = 0 THEN 0 ELSE JSONWhitespace(text, name)
+      member == IF colon = 0 \\/ JSONCode(text, colon) # 58
+                THEN JSONFailed
+                ELSE JSONValue(heap, prototype, text, JSONWhitespace(text, colon + 1), objects)
+      after == IF member.end = 0 THEN 0 ELSE JSONWhitespace(text, member.end)
+      added == Append(pairs, <<JSONUnescaped(SubSeq(text, at + 1, name - 2)), member.value>>)
+  IN  CASE after = 0 -> JSONFailed
+        [] JSONCode(text, after) = 44 ->
+             JSONMembers(heap, prototype, text, JSONWhitespace(text, after + 1), member.objects, added)
+        [] JSONCode(text, after) = 125 ->
+             [end |-> after + 1, value |-> added, objects |-> member.objects]
+        [] OTHER -> JSONFailed
+
+\\* The values of an array's elements, from the first one to the closing bracket.
+LOCAL JSONElements(heap, prototype, text, at, objects, values) ==
+  LET element == JSONValue(heap, prototype, text, at, objects)
+      after == IF element.end = 0 THEN 0 ELSE JSONWhitespace(text, element.end)
+      added == Append(values, element.value)
+  IN  CASE after = 0 -> JSONFailed
+        [] JSONCode(text, after) = 44 ->
+             JSONElements(heap, prototype, text, JSONWhitespace(text, after + 1), element.objects, added)
+        [] JSONCode(text, after) = 93 ->
+             [end |-> after + 1, value |-> added, objects |-> element.objects]
+        [] OTHER -> JSONFailed
+
+\\* What JSON.parse makes of a text, whose end is 0 where the text isn't JSON,
+\\* with arrays whose prototype is Array.prototype.
+JSONParse(heap, prototype, text) ==
+  LET parsed == JSONValue(heap, prototype, text, JSONWhitespace(text, 1), <<>>)
+  IN  IF parsed.end # 0 /\\ JSONWhitespace(text, parsed.end) = Len(text) + 1
+      THEN parsed
+      ELSE JSONFailed
+
+\\* Whether what JSON.parse makes holds an array.
+HasJSONArray(parsed) ==
+  \\E position \\in DOMAIN parsed.objects : IsArrayObject(parsed.objects[position])
+
+\\* The steps of InternalizeJSONProperty over a value that JSON.parse made, which a holder's key
+\\* holds: entering an object, which goes on to its keys' steps, leaving it, and visiting a primitive.
+\\* A step that calls the reviver goes on by its skip, past the keys of an object that changed.
+RECURSIVE JSONReviveSteps(_, _, _, _), JSONReviveKeySteps(_, _, _)
+JSONReviveSteps(heap, holder, key, value) ==
+  IF IsObjectIn(heap, value)
+  THEN LET keys == RevivedKeys(heap, value)
+           inner == JSONReviveKeySteps(heap, value, keys)
+       IN  <<[kind |-> "enter", holder |-> holder, key |-> key, ref |-> value, keys |-> keys,
+              skip |-> Len(inner) + 2]>>
+           \\o inner
+           \\o <<[kind |-> "exit", holder |-> holder, key |-> key, ref |-> value, keys |-> keys,
+                 skip |-> 1]>>
+  ELSE <<[kind |-> "visit", holder |-> holder, key |-> key, ref |-> value, keys |-> <<>>,
+          skip |-> 1]>>
+
+LOCAL JSONReviveKeySteps(heap, ref, keys) ==
+  IF keys = <<>>
+  THEN <<>>
+  ELSE JSONReviveSteps(heap, ref, Head(keys), Get(heap, ref, Head(keys)))
+       \\o JSONReviveKeySteps(heap, ref, Tail(keys))
 
 \\* Which of Boolean, Number, and String an object wraps the primitive of, or "" where it wraps none.
 LOCAL JSONWrapperKind(heap, ref) ==
@@ -7166,6 +7570,7 @@ LOCAL JSONDescends(heap, value, isSequence) ==
 \\* The frames once the replacer gave a value for the top frame's next key, where it read another: a
 \\* frame for an object whose keys the walk writes, or else the value among those the top frame
 \\* gathered. An array outside the heap that may be the one the walk read must stay what holds it holds.
+\\* One that equals an array that the walk writes may be that array, which is a cycle, or another.
 JSONReplace(heap, frames, read, value, isSequence) ==
   LET top == JSONTop(frames)
       advanced == [top EXCEPT !.position = @ + 1]
@@ -7180,6 +7585,11 @@ JSONReplace(heap, frames, read, value, isSequence) ==
        [] \\E position \\in 2..Len(frames) :
             IsRef(frames[position].holder) /\\ ToString(frames[position].holder) = ToString(value) ->
             Assert(FALSE, "tla-ts can't throw the TypeError of JSON.stringify of a cycle")
+       [] \\E position \\in 2..Len(frames) :
+            /\\ IsSequenceValue(frames[position].holder)
+            /\\ IsSequenceValue(value)
+            /\\ frames[position].holder = value ->
+            Assert(FALSE, "tla-ts can't tell a cycle of arrays outside the heap")
        [] OTHER ->
             below \\o <<advanced, [holder |-> value, keys |-> keys, position |-> 1, pairs |-> <<>>,
                                   key |-> JSONKey(frames), isArray |-> isArray,
@@ -7314,6 +7724,8 @@ export const translateTypeOf = (node: ts.TypeOfExpression, scope: Scope, context
   if (ts.isIdentifier(read) && getSymbol(read, context.checker) === undefined) {
     return string("undefined");
   }
+  // A binding that a name has throws before its declaration runs, though typeof only reads it.
+  if (ts.isIdentifier(read)) rejectBeforeDeclaration(read, scope, context);
   // An element of an array or a string may also lie past the end.
   const kind =
     ts.isPropertyAccessExpression(read) || ts.isElementAccessExpression(read)

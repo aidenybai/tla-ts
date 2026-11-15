@@ -71,10 +71,14 @@ const PORTED_INCLUDES = new Map([
 // An async test's harness defines $DONE, as doneprintHandle.js does.
 const DONE_HARNESS = readFileSync(join(CONFORMANCE_DIRECTORY, "test262-done.ts"), "utf8");
 
-const getHarness = (metadata: Metadata) =>
+// A test that reads $262 has the host's members that tla-ts can model.
+const HOST_HARNESS = readFileSync(join(CONFORMANCE_DIRECTORY, "test262-host.ts"), "utf8");
+
+const getHarness = (metadata: Metadata, source: string) =>
   [
     HARNESS,
     ...(metadata.flags.includes("async") ? [DONE_HARNESS] : []),
+    ...(/\$262\b/.test(source) ? [HOST_HARNESS] : []),
     ...metadata.includes.flatMap((include) => PORTED_INCLUDES.get(include) ?? []),
   ].join("\n");
 
@@ -267,7 +271,7 @@ const getPatternType = (name: ts.BindingName): string | undefined => {
     });
     if (elements.some((element) => element === undefined)) return undefined;
     return elements.every((element) => element === "unknown?" || element === "...unknown[]")
-      ? "unknown[]"
+      ? "Iterable<unknown>"
       : `[${elements.join(", ")}]`;
   }
   const properties = name.elements.map((element) => {
@@ -372,7 +376,21 @@ const loosen = () => {
         declaration.initializer !== undefined &&
         ts.isObjectLiteralExpression(declaration.initializer)
       ) {
-        edits.set(declaration.name.getEnd(), ": { [key: string | symbol]: unknown }");
+        // An object that the test gives an iterator method is iterable.
+        const symbol = checker.getSymbolAtLocation(accessed.expression);
+        const isIterable = (node: ts.Node): boolean =>
+          (ts.isElementAccessExpression(node) &&
+            node.argumentExpression.getText() === "Symbol.iterator" &&
+            checker.getSymbolAtLocation(node.expression) === symbol) ||
+          (ts.forEachChild(node, (child) => isIterable(child) || undefined) ?? false);
+        if (isIterable(sourceFile)) {
+          edits.set(
+            declaration.initializer.getEnd(),
+            " as unknown as { [key: string | symbol]: unknown } & Iterable<unknown>",
+          );
+        } else {
+          edits.set(declaration.name.getEnd(), ": { [key: string | symbol]: unknown }");
+        }
       }
     }
     // Any other object, such as a built-in prototype, may get properties that its type lacks. An
@@ -582,6 +600,65 @@ const loosen = () => {
       edits.set(parent.right.getStart(), "(");
       edits.set(parent.right.getEnd(), " as any)");
     }
+    // A class that extends Iterator, whose type takes the type of the values it gives, gives any
+    // value.
+    const heritage = ts.findAncestor(node, ts.isExpressionWithTypeArguments);
+    if (
+      diagnostic.code === BASE_TYPE_ARGUMENTS_ERROR &&
+      heritage !== undefined &&
+      heritage.typeArguments === undefined &&
+      isGlobalIterator(heritage.expression, checker)
+    ) {
+      edits.set(heritage.expression.getEnd(), "<unknown>");
+    }
+    // A function that returns no value, whose return type TypeScript can't infer where its type
+    // depends on itself, as a pattern's default that calls it does, returns undefined.
+    const returning = RETURN_TYPE_ERRORS.has(diagnostic.code)
+      ? ts.findAncestor(node, ts.isFunctionLike)
+      : undefined;
+    const closeParen = returning
+      ?.getChildren()
+      .find((child) => child.kind === ts.SyntaxKind.CloseParenToken);
+    if (
+      returning !== undefined &&
+      (ts.isFunctionExpression(returning) || ts.isFunctionDeclaration(returning)) &&
+      returning.asteriskToken === undefined &&
+      !returning.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) &&
+      returning.type === undefined &&
+      returning.body !== undefined &&
+      !returnsValue(returning.body) &&
+      closeParen !== undefined
+    ) {
+      edits.set(closeParen.getEnd(), ": undefined");
+    }
+    // A function that the test declares, which only throws, as a computed key that calls it in a
+    // pattern does, returns never, which TypeScript infers as void.
+    const key = ts.findAncestor(node, ts.isComputedPropertyName)?.expression;
+    const thrower =
+      diagnostic.code === COMPUTED_KEY_ERROR &&
+      key !== undefined &&
+      ts.isCallExpression(key) &&
+      ts.isIdentifier(key.expression)
+        ? checker.getSymbolAtLocation(key.expression)?.valueDeclaration
+        : undefined;
+    const throwerParen = thrower
+      ?.getChildren()
+      .find((child) => child.kind === ts.SyntaxKind.CloseParenToken);
+    if (
+      thrower !== undefined &&
+      ts.isFunctionDeclaration(thrower) &&
+      thrower.getSourceFile() === sourceFile &&
+      thrower.asteriskToken === undefined &&
+      !thrower.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) &&
+      thrower.type === undefined &&
+      thrower.body !== undefined &&
+      thrower.body.statements.length > 0 &&
+      ts.isThrowStatement(thrower.body.statements[thrower.body.statements.length - 1]) &&
+      !returns(thrower.body) &&
+      throwerParen !== undefined
+    ) {
+      edits.set(throwerParen.getEnd(), ": never");
+    }
   });
   const visit = (node: ts.Node) => {
     const initializer = ts.isVariableDeclaration(node) ? node.initializer : undefined;
@@ -622,6 +699,38 @@ const loosen = () => {
   if (edits.size > 0) applyEdits(edits);
   return edits.size > 0;
 };
+
+// TypeScript's error for a class that extends a generic constructor without its type arguments.
+const BASE_TYPE_ARGUMENTS_ERROR = 2508;
+
+const isGlobalIterator = (node: ts.Expression, checker: ts.TypeChecker) =>
+  ts.isIdentifier(node) &&
+  node.text === "Iterator" &&
+  (checker.getSymbolAtLocation(node)?.declarations ?? []).every(
+    (declaration) => declaration.getSourceFile().isDeclarationFile,
+  );
+
+// TypeScript's errors for a class member that its base type's member doesn't match: one of another
+// type, or an accessor where the base has a method.
+const BASE_MEMBER_ERRORS = new Set([2416, 2423]);
+
+// TypeScript's errors for a function whose return type depends on itself.
+const RETURN_TYPE_ERRORS = new Set([7023, 7024]);
+
+// TypeScript's error for a computed key of a type that isn't a key's.
+const COMPUTED_KEY_ERROR = 2464;
+
+// Whether a function's body returns, outside the functions it makes.
+const returns = (node: ts.Node): boolean =>
+  ts.isReturnStatement(node) ||
+  (!ts.isFunctionLike(node) &&
+    (ts.forEachChild(node, (child) => returns(child) || undefined) ?? false));
+
+// Whether a function's body returns a value, outside the functions it makes.
+const returnsValue = (node: ts.Node): boolean =>
+  (ts.isReturnStatement(node) && node.expression !== undefined) ||
+  (!ts.isFunctionLike(node) &&
+    (ts.forEachChild(node, (child) => returnsValue(child) || undefined) ?? false));
 
 // Whether a function's body reads this, outside the functions it makes that have their own.
 const readsThis = (node: ts.Node): boolean =>
@@ -705,21 +814,46 @@ const typeCallbacks = () => {
         ? undefined
         : declaration.parameters.at(method.startsWith("reduce") ? 3 : 2);
     const receiver = ts.isCallExpression(call) ? call.arguments[0] : undefined;
+    const getUses = (symbol: ts.Symbol | undefined) => {
+      const uses: ts.Identifier[] = [];
+      const findUses = (node: ts.Node): void => {
+        if (ts.isIdentifier(node) && checker.getSymbolAtLocation(node) === symbol) uses.push(node);
+        ts.forEachChild(node, findUses);
+      };
+      if (symbol !== undefined && declaration.body !== undefined) findUses(declaration.body);
+      return uses;
+    };
+    // A callback that only tests the array with instanceof takes it as an object, which the heap
+    // holds, where tla-ts keeps a value of the receiver's type, such as an error, outside it.
+    const arrayUses =
+      arrayParameter === undefined ? [] : getUses(checker.getSymbolAtLocation(arrayParameter.name));
+    const isTested =
+      arrayUses.length > 0 &&
+      arrayUses.every(
+        (use) =>
+          ts.isBinaryExpression(use.parent) &&
+          use.parent.operatorToken.kind === ts.SyntaxKind.InstanceOfKeyword &&
+          use.parent.left === use,
+      );
     const receiverType =
       receiver === undefined
         ? "any"
-        : ts.isIdentifier(receiver) &&
-            receiver.text !== "arguments" &&
-            declaration.parameters.every((parameter) => parameter.name.getText() !== receiver.text)
-          ? `typeof ${receiver.text}`
-          : checker
-              .typeToString(
-                checker.getTypeAtLocation(receiver),
-                undefined,
-                ts.TypeFormatFlags.NoTruncation,
+        : isTested
+          ? "object"
+          : ts.isIdentifier(receiver) &&
+              receiver.text !== "arguments" &&
+              declaration.parameters.every(
+                (parameter) => parameter.name.getText() !== receiver.text,
               )
-              // An empty object literal gets properties after it's made.
-              .replace(/^\{\}$/, "{ [key: string | symbol]: unknown }");
+            ? `typeof ${receiver.text}`
+            : checker
+                .typeToString(
+                  checker.getTypeAtLocation(receiver),
+                  undefined,
+                  ts.TypeFormatFlags.NoTruncation,
+                )
+                // An empty object literal gets properties after it's made.
+                .replace(/^\{\}$/, "{ [key: string | symbol]: unknown }");
     if (
       arrayParameter !== undefined &&
       arrayParameter.type === undefined &&
@@ -731,7 +865,8 @@ const typeCallbacks = () => {
       edits.set(passed.getEnd(), " as (...args: unknown[]) => unknown");
     }
     // An element may come from a getter or a prototype, whatever the array's own type, so a value
-    // parameter that the callback only compares takes any value.
+    // parameter that the callback only compares takes any value. So does reduce's accumulator,
+    // which takes the initial value, the elements, and what the callback returns.
     const calledMethod =
       method ??
       (ts.isCallExpression(call) &&
@@ -739,36 +874,29 @@ const typeCallbacks = () => {
       ts.isPropertyAccessExpression(callee)
         ? callee.name.text
         : undefined);
-    const valueParameter =
+    const valueParameters =
       calledMethod === undefined || !ARRAY_CALLBACK_METHODS.has(calledMethod)
-        ? undefined
-        : declaration.parameters.at(calledMethod.startsWith("reduce") ? 1 : 0);
-    const valueSymbol =
-      valueParameter === undefined ? undefined : checker.getSymbolAtLocation(valueParameter.name);
+        ? []
+        : declaration.parameters.slice(0, calledMethod.startsWith("reduce") ? 2 : 1);
     const isCompared = (use: ts.Node) =>
       ts.isTypeOfExpression(use.parent) ||
       (ts.isBinaryExpression(use.parent) && COMPARISONS.has(use.parent.operatorToken.kind));
-    const uses: ts.Identifier[] = [];
-    const findUses = (node: ts.Node): void => {
-      if (ts.isIdentifier(node) && checker.getSymbolAtLocation(node) === valueSymbol) {
-        uses.push(node);
-      }
-      ts.forEachChild(node, findUses);
-    };
-    if (valueSymbol !== undefined && declaration.body !== undefined) findUses(declaration.body);
-    const isUnknownValue =
-      valueParameter !== undefined &&
-      valueParameter.type === undefined &&
-      ts.isIdentifier(valueParameter.name) &&
-      uses.length > 0 &&
-      uses.every(isCompared);
-    if (isUnknownValue) edits.set(valueParameter.name.getEnd(), ": unknown");
+    const unknownValues = valueParameters.filter((parameter) => {
+      const uses = getUses(checker.getSymbolAtLocation(parameter.name));
+      return (
+        parameter.type === undefined &&
+        ts.isIdentifier(parameter.name) &&
+        uses.length > 0 &&
+        uses.every(isCompared)
+      );
+    });
+    unknownValues.forEach((parameter) => edits.set(parameter.name.getEnd(), ": unknown"));
     const signatures = checker.getContextualType(passed)?.getCallSignatures() ?? [];
     if (signatures.length !== 1) return;
     declaration.parameters.forEach((parameter, position) => {
       const given = signatures[0].parameters.at(position);
       if (
-        (isUnknownValue && parameter === valueParameter) ||
+        unknownValues.includes(parameter) ||
         given === undefined ||
         parameter.type !== undefined ||
         parameter.initializer !== undefined ||
@@ -832,11 +960,229 @@ const typeCallbacks = () => {
   if (edits.size > 0) applyEdits(edits);
 };
 
+// TypeScript's errors for a generator whose yield gives a value, whose type it can't infer.
+const GENERATOR_ERRORS = new Set([7023, 7024, 7055, 7057]);
+
+const GENERATOR_ROUNDS = 8;
+
+interface GeneratorTypes {
+  yielded: string;
+  returned: string;
+  sent: string[];
+}
+
+// The type of each value that an expression may give, widened as TypeScript infers a generator's
+// types, or undefined where one is any.
+const getMemberTypes = (checker: ts.TypeChecker, type: ts.Type | undefined) => {
+  if (type === undefined) return undefined;
+  const members = (type.isUnion() ? type.types : [type]).map((member) =>
+    checker.typeToString(
+      checker.getBaseTypeOfLiteralType(member),
+      undefined,
+      ts.TypeFormatFlags.NoTruncation,
+    ),
+  );
+  return members.some((member) => /\b(?:any|this)\b/.test(member))
+    ? undefined
+    : members.map((member) => (member.includes("=>") ? `(${member})` : member));
+};
+
+const getUnion = (members: string[]) =>
+  members.length === 0 ? ["never"] : [...new Set(members)].toSorted();
+
+// A generator that the test declares, whose yield gives a value, takes the types of what it
+// yields, returns, and is sent: each yield's operand, each return's, undefined where its end is
+// reachable, and each argument that a next call passes it, with undefined, which a next with none
+// and a loop send. Each round types the generators by the round before, and TypeScript, which then
+// rejects any other argument for next, shows what more they're sent, until the types settle.
+const typeGenerators = () => {
+  const original = file.text;
+  const getGenerators = (sourceFile: ts.SourceFile) => {
+    const generators: (ts.FunctionDeclaration | ts.FunctionExpression | ts.MethodDeclaration)[] =
+      [];
+    const visit = (node: ts.Node) => {
+      if (
+        (ts.isFunctionDeclaration(node) ||
+          ts.isFunctionExpression(node) ||
+          ts.isMethodDeclaration(node)) &&
+        node.asteriskToken !== undefined
+      ) {
+        generators.push(node);
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(sourceFile);
+    return generators;
+  };
+  const getState = () => {
+    const program = service.getProgram();
+    const sourceFile = program?.getSourceFile(PROGRAM_PATH);
+    if (program === undefined || sourceFile === undefined) return undefined;
+    const getNode = (position: number) => {
+      const visit = (node: ts.Node): ts.Node =>
+        ts.forEachChild(node, (child) =>
+          child.getStart() <= position && position < child.getEnd() ? visit(child) : undefined,
+        ) ?? node;
+      return visit(sourceFile);
+    };
+    return {
+      checker: program.getTypeChecker(),
+      generators: getGenerators(sourceFile),
+      diagnostics: service.getSemanticDiagnostics(PROGRAM_PATH),
+      getNode,
+    };
+  };
+  const initial = getState();
+  if (initial === undefined) return false;
+  const targets = new Set(
+    initial.diagnostics
+      .filter((diagnostic) => GENERATOR_ERRORS.has(diagnostic.code))
+      .map((diagnostic) => {
+        const generator = ts.findAncestor(
+          initial.getNode(diagnostic.start ?? 0),
+          ts.isFunctionLike,
+        );
+        return initial.generators.findIndex((candidate) => candidate === generator);
+      })
+      .filter(
+        (position) =>
+          position !== -1 &&
+          initial.generators[position].type === undefined &&
+          initial.generators[position].body !== undefined,
+      ),
+  );
+  if (targets.size === 0) return false;
+  const isAsync = (generator: ts.FunctionLikeDeclaration) =>
+    generator.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) === true;
+  const settle = (types: Map<number, GeneratorTypes>, round: number): boolean => {
+    setText(original);
+    const before = getState();
+    if (before === undefined) return false;
+    applyEdits(
+      new Map(
+        [...types].map(([position, type]) => {
+          const generator = before.generators[position];
+          const closeParen = generator
+            .getChildren()
+            .find((child) => child.kind === ts.SyntaxKind.CloseParenToken);
+          return [
+            closeParen?.getEnd() ?? generator.parameters.end,
+            `: ${isAsync(generator) ? "AsyncGenerator" : "Generator"}<${type.yielded || "never"}, ${type.returned || "never"}, ${type.sent.join(" | ")}>`,
+          ];
+        }),
+      ),
+    );
+    const state = getState();
+    if (state === undefined) return false;
+    const checker = state.checker;
+    const sent = new Map<number, string[]>();
+    state.diagnostics
+      .filter((diagnostic) => CONVERTED_ARGUMENT_ERRORS.has(diagnostic.code))
+      .forEach((diagnostic) => {
+        const start = diagnostic.start ?? 0;
+        const call = ts.findAncestor(
+          state.getNode(start),
+          (ancestor): ancestor is ts.CallExpression =>
+            ts.isCallExpression(ancestor) &&
+            ancestor.arguments.length === 1 &&
+            ancestor.arguments[0].getStart() === start &&
+            ancestor.arguments[0].getEnd() === start + (diagnostic.length ?? 0),
+        );
+        if (
+          call === undefined ||
+          !ts.isPropertyAccessExpression(call.expression) ||
+          call.expression.name.text !== "next"
+        ) {
+          return;
+        }
+        const receiver = checker.getTypeAtLocation(call.expression.expression);
+        const members = getMemberTypes(checker, checker.getTypeAtLocation(call.arguments[0]));
+        [...types.keys()].forEach((position) => {
+          const annotation = state.generators[position].type;
+          if (
+            annotation !== undefined &&
+            (receiver.isUnion() ? receiver.types : [receiver]).includes(
+              checker.getTypeFromTypeNode(annotation),
+            )
+          ) {
+            sent.set(position, [...(sent.get(position) ?? []), ...(members ?? ["any"])]);
+          }
+        });
+      });
+    const next = new Map<number, GeneratorTypes>();
+    [...types].forEach(([position, type]) => {
+      const generator = state.generators[position];
+      const yields: ts.YieldExpression[] = [];
+      const returns: ts.ReturnStatement[] = [];
+      const visit = (node: ts.Node) => {
+        if (ts.isYieldExpression(node)) yields.push(node);
+        if (ts.isReturnStatement(node)) returns.push(node);
+        if (!ts.isFunctionLike(node)) ts.forEachChild(node, visit);
+      };
+      if (generator.body !== undefined) ts.forEachChild(generator.body, visit);
+      const getTypes = (operand: ts.Expression | undefined) => {
+        if (operand === undefined) return ["undefined"];
+        const value = checker.getTypeAtLocation(operand);
+        return getMemberTypes(checker, isAsync(generator) ? checker.getAwaitedType(value) : value);
+      };
+      const statements =
+        generator.body !== undefined && ts.isBlock(generator.body) ? generator.body.statements : [];
+      const last = statements.at(-1);
+      const isEndReachable =
+        last === undefined || !(ts.isReturnStatement(last) || ts.isThrowStatement(last));
+      // A yield* yields what another iterator does, which this doesn't type.
+      if (yields.some((node) => node.asteriskToken !== undefined)) return;
+      const yielded = yields.map((node) => getTypes(node.expression));
+      const returned = [
+        ...returns.map((node) => getTypes(node.expression)),
+        ...(isEndReachable ? [["undefined"]] : []),
+      ];
+      const sentTypes = getUnion([...type.sent, ...(sent.get(position) ?? [])]);
+      if (sentTypes.includes("any")) return;
+      // A round may type a yield's operand as any, where a later one may not.
+      const isTyped = [...yielded, ...returned].every((members) => members !== undefined);
+      next.set(position, {
+        yielded: isTyped ? getUnion(yielded.flatMap((members) => members ?? [])).join(" | ") : "",
+        returned: isTyped ? getUnion(returned.flatMap((members) => members ?? [])).join(" | ") : "",
+        sent: sentTypes,
+      });
+    });
+    const isSettled =
+      next.size === types.size &&
+      [...types].every(([position, type]) => {
+        const settled = next.get(position);
+        return (
+          settled !== undefined &&
+          settled.yielded !== "" &&
+          settled.yielded === type.yielded &&
+          settled.returned === type.returned &&
+          settled.sent.join(" | ") === type.sent.join(" | ")
+        );
+      });
+    if (isSettled) return true;
+    if (round === GENERATOR_ROUNDS || next.size === 0) {
+      setText(original);
+      return false;
+    }
+    return settle(next, round + 1);
+  };
+  return settle(
+    new Map(
+      [...targets].map((position) => [
+        position,
+        { yielded: "", returned: "", sent: ["undefined"] },
+      ]),
+    ),
+    0,
+  );
+};
+
 // test262 is JavaScript, so its functions and variables have no types. This annotates them as
 // TypeScript's "Infer type from usage" fix does, with unknown where it infers any, then loosens
 // the types of the objects it describes.
 const annotate = (text: string) => {
   setText(text);
+  typeGenerators();
   typeCallbacks();
   for (;;) {
     const sourceFile = service.getProgram()?.getSourceFile(PROGRAM_PATH);
@@ -907,6 +1253,12 @@ const REDUCING_METHODS = new Set(["reduce", "reduceRight"]);
 // The array methods that tla-ts searches by value for any value, from an index that ToNumber
 // converts from a primitive. Each needs a unit test of such a call.
 const SEARCHING_METHODS = new Set(["includes", "indexOf", "lastIndexOf"]);
+// RegExp.prototype's methods under well-known symbols that tla-ts runs as their steps where a test
+// calls them through call, on any receiver, or on a regexp with a string or a limit of another
+// type than their signatures take. Each needs a unit test of such a call.
+const PROTOCOL_METHODS = new Set(["match", "search", "split"]);
+// TypeScript's errors for a call with fewer arguments than its signature takes.
+const SHORT_CALL_ERRORS = new Set([ARGUMENT_COUNT_ERROR, 2555]);
 // A call of a value of type unknown, which tla-ts runs where a key stores a String.prototype method.
 const UNKNOWN_CALLEE_ERROR = 2571;
 
@@ -1167,7 +1519,10 @@ const ignoreSoundErrors = () => {
     return (
       (type.flags & ts.TypeFlags.Never) !== 0 ||
       (type.isUnion() ? type.types : [type]).every(
-        (member) => checker.isArrayType(member) || checker.isTupleType(member),
+        (member) =>
+          checker.isArrayType(member) ||
+          checker.isTupleType(member) ||
+          member.getSymbol()?.name === "Iterable",
       )
     );
   };
@@ -1211,6 +1566,44 @@ const ignoreSoundErrors = () => {
             parameter.initializer === undefined &&
             parameter.dotDotDotToken === undefined,
         ).length
+    );
+  };
+  // A call of the call method of an array's method that REDUCING_METHODS lists, with a this value
+  // and a reducer that the method's signature with no initial value takes. TypeScript checks call
+  // against the method's last signature alone, which takes an initial value.
+  const isShortReducingCall = (node: ts.Node) => {
+    const call = ts.findAncestor(node, ts.isCallExpression);
+    const method =
+      call !== undefined &&
+      ts.isPropertyAccessExpression(call.expression) &&
+      call.expression.name.text === "call" &&
+      ts.isPropertyAccessExpression(call.expression.expression) &&
+      REDUCING_METHODS.has(call.expression.expression.name.text)
+        ? call.expression.expression
+        : undefined;
+    const reducer = call?.arguments[1];
+    return (
+      method !== undefined &&
+      reducer !== undefined &&
+      call?.arguments.length === 2 &&
+      !call.arguments.some(ts.isSpreadElement) &&
+      checker
+        .getSignaturesOfType(checker.getTypeAtLocation(method), ts.SignatureKind.Call)
+        .some((signature) => {
+          const declaration = signature.getDeclaration();
+          const parameter = signature.parameters[0];
+          return (
+            declaration.getSourceFile().isDeclarationFile &&
+            ts.isInterfaceDeclaration(declaration.parent) &&
+            declaration.parent.name.text === "Array" &&
+            signature.parameters.length === 1 &&
+            parameter !== undefined &&
+            checker.isTypeAssignableTo(
+              checker.getTypeAtLocation(reducer),
+              checker.getTypeOfSymbol(parameter),
+            )
+          );
+        })
     );
   };
   const isEveryType = (node: ts.Node, flags: ts.TypeFlags) => {
@@ -1309,10 +1702,10 @@ const ignoreSoundErrors = () => {
       inner !== undefined && inner.getStart() === start && inner.getEnd() === end;
     return ts.findAncestor(
       getNode(start),
-      (ancestor): ancestor is ts.CallExpression =>
-        ts.isCallExpression(ancestor) &&
+      (ancestor): ancestor is ts.CallExpression | ts.NewExpression =>
+        (ts.isCallExpression(ancestor) || ts.isNewExpression(ancestor)) &&
         ((ts.isPropertyAccessExpression(ancestor.expression) && isSpan(ancestor.expression.name)) ||
-          ancestor.arguments.some(
+          (ancestor.arguments ?? []).some(
             (value) =>
               isSpan(value) ||
               (ts.isFunctionExpression(value) &&
@@ -1325,12 +1718,31 @@ const ignoreSoundErrors = () => {
           )),
     );
   };
-  // A call of an array's method that SEARCHING_METHODS lists, of any value to search for and a
-  // primitive index to search from, which tla-ts converts with ToNumber.
+  // A new of a typed array's constructor, which tla-ts runs on its arguments' values: it converts
+  // a length, an offset, and an object's elements as the constructor does, reads a
+  // SharedArrayBuffer as an ArrayBuffer, and stops where it can't.
+  const isTypedArrayNew = (diagnostic: ts.Diagnostic) => {
+    const call = getErroredCall(diagnostic);
+    if (call === undefined || !ts.isNewExpression(call)) return false;
+    const type = checker.getTypeAtLocation(call.expression);
+    return (
+      (call.arguments ?? []).length <= 3 &&
+      !(call.arguments ?? []).some(ts.isSpreadElement) &&
+      (type.isUnion() ? type.types : [type]).every((member) =>
+        /^(Big)?(Int|Uint|Float)\d+(Clamped)?ArrayConstructor$/.test(
+          member.getSymbol()?.getName() ?? "",
+        ),
+      )
+    );
+  };
+  // A call of an array's method that SEARCHING_METHODS lists, of any value to search for and an
+  // index to search from that tla-ts converts: a primitive, an object that the test declares, or a
+  // wrapper.
   const isSearchingCall = (diagnostic: ts.Diagnostic) => {
     const call = getErroredCall(diagnostic);
     return (
       call !== undefined &&
+      ts.isCallExpression(call) &&
       ts.isPropertyAccessExpression(call.expression) &&
       SEARCHING_METHODS.has(call.expression.name.text) &&
       checker.isArrayType(checker.getTypeAtLocation(call.expression.expression)) &&
@@ -1338,16 +1750,93 @@ const ignoreSoundErrors = () => {
       !call.arguments.some(ts.isSpreadElement) &&
       call.arguments
         .slice(1)
-        .every((value) =>
-          isEveryType(
-            value,
-            ts.TypeFlags.NumberLike |
-              ts.TypeFlags.StringLike |
-              ts.TypeFlags.BooleanLike |
-              ts.TypeFlags.Null |
-              ts.TypeFlags.Undefined,
-          ),
+        .every(
+          (value) =>
+            isEveryType(
+              value,
+              ts.TypeFlags.NumberLike |
+                ts.TypeFlags.StringLike |
+                ts.TypeFlags.BooleanLike |
+                ts.TypeFlags.Null |
+                ts.TypeFlags.Undefined,
+            ) ||
+            isPlainObject(value) ||
+            isWrapper(value),
         )
+    );
+  };
+  // A call of a method of RegExp.prototype that PROTOCOL_METHODS lists, on a regexp, as
+  // rx[Symbol.search](s), or through call, as RegExp.prototype[Symbol.search].call(rx, s).
+  const isProtocolCall = (node: ts.Node): node is ts.CallExpression => {
+    if (!ts.isCallExpression(node)) return false;
+    const callee = node.expression;
+    const isCall = ts.isPropertyAccessExpression(callee) && callee.name.text === "call";
+    const method = isCall ? callee.expression : callee;
+    if (!ts.isElementAccessExpression(method)) return false;
+    const owner = method.expression;
+    const key = method.argumentExpression;
+    const isOwned = isCall
+      ? ts.isPropertyAccessExpression(owner) &&
+        ts.isIdentifier(owner.expression) &&
+        owner.expression.text === "RegExp" &&
+        isGlobal(owner.expression) &&
+        owner.name.text === "prototype"
+      : checker.getTypeAtLocation(owner).getSymbol()?.getName() === "RegExp";
+    return (
+      isOwned &&
+      ts.isPropertyAccessExpression(key) &&
+      ts.isIdentifier(key.expression) &&
+      key.expression.text === "Symbol" &&
+      isGlobal(key.expression) &&
+      PROTOCOL_METHODS.has(key.name.text) &&
+      !node.arguments.some(ts.isSpreadElement)
+    );
+  };
+  // A protocol call that leaves out the receiver or the string, which are then undefined, as they
+  // are in JavaScript. TypeScript reports it at call's name, or at the method of a regexp, which
+  // tla-ts runs as its steps where it has no string.
+  const isShortProtocolCall = (node: ts.Node, diagnostic: ts.Diagnostic) => {
+    const call = ts.findAncestor(node, ts.isCallExpression);
+    const callee = call?.expression;
+    const isCall =
+      callee !== undefined && ts.isPropertyAccessExpression(callee) && callee.name.text === "call";
+    const reported = isCall ? callee.name : callee;
+    return (
+      call !== undefined &&
+      reported !== undefined &&
+      reported.getStart() === diagnostic.start &&
+      reported.getEnd() === (diagnostic.start ?? 0) + (diagnostic.length ?? 0) &&
+      (isCall || call.arguments.length === 0) &&
+      isProtocolCall(call)
+    );
+  };
+  // A protocol call of a value of another type than the string or the limit: tla-ts converts the
+  // string with ToString, running a toString or a Symbol.toPrimitive that the test writes, and
+  // split's limit with ToUint32, throwing a TypeError on a symbol and stopping on another value
+  // that isn't a number.
+  const isConvertedProtocolCall = (diagnostic: ts.Diagnostic) => {
+    const call = getErroredCall(diagnostic);
+    return call !== undefined && isProtocolCall(call);
+  };
+  // A function that a test assigns to a regexp's exec, which returns a value of another type than
+  // RegExpExecArray or null. tla-ts calls it where a protocol method that PROTOCOL_METHODS lists
+  // runs RegExpExec, which throws a TypeError on a result that isn't an object or null and reads
+  // the rest through Get, and stops where a built-in method reads a regexp whose exec a script
+  // changed. TypeScript reports it at the assignment's target.
+  const isWrittenExec = (node: ts.Node, diagnostic: ts.Diagnostic) => {
+    const target = ts.findAncestor(node, ts.isPropertyAccessExpression);
+    const assignment = target?.parent;
+    return (
+      target !== undefined &&
+      assignment !== undefined &&
+      target.getStart() === diagnostic.start &&
+      target.getEnd() === (diagnostic.start ?? 0) + (diagnostic.length ?? 0) &&
+      target.name.text === "exec" &&
+      checker.getTypeAtLocation(target.expression).getSymbol()?.getName() === "RegExp" &&
+      ts.isBinaryExpression(assignment) &&
+      assignment.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      assignment.left === target &&
+      (ts.isFunctionExpression(assignment.right) || ts.isArrowFunction(assignment.right))
     );
   };
   // A call of an array's method that REDUCING_METHODS lists, whose reducer is a function that the
@@ -1358,6 +1847,7 @@ const ignoreSoundErrors = () => {
     const call = getErroredCall(diagnostic);
     if (
       call === undefined ||
+      !ts.isCallExpression(call) ||
       !ts.isPropertyAccessExpression(call.expression) ||
       !REDUCING_METHODS.has(call.expression.name.text) ||
       call.arguments.length < 1 ||
@@ -1460,19 +1950,53 @@ const ignoreSoundErrors = () => {
       call.arguments.every((value, position) => isPrimitiveArgument(value, parameters[position]))
     );
   };
+  // A write of an object's iterator method that returns what an iterator's type doesn't allow, as
+  // an iterator whose next gives no result. tla-ts calls the method as Node does.
+  const isIteratorWrite = (node: ts.Node) => {
+    const access = ts.findAncestor(node, ts.isElementAccessExpression);
+    return (
+      access !== undefined &&
+      access.argumentExpression.getText() === "Symbol.iterator" &&
+      ts.isBinaryExpression(access.parent) &&
+      access.parent.left === access &&
+      access.parent.operatorToken.kind === ts.SyntaxKind.EqualsToken
+    );
+  };
+  // A member of a class that extends Iterator, which the member's own type types, whatever the
+  // type of Iterator's member, as an iterator that the test writes to throw or misbehave does.
+  const isIteratorMember = (node: ts.Node) => {
+    const member = ts.findAncestor(node, ts.isClassElement);
+    const heritage = member?.parent.heritageClauses?.[0]?.types[0];
+    return (
+      member !== undefined &&
+      member.name !== undefined &&
+      member.name.getStart() <= node.getStart() &&
+      node.getEnd() <= member.name.getEnd() &&
+      member.parent.heritageClauses?.[0]?.token === ts.SyntaxKind.ExtendsKeyword &&
+      heritage !== undefined &&
+      isGlobalIterator(heritage.expression, checker)
+    );
+  };
   const isSound = (diagnostic: ts.Diagnostic) => {
     const node = getNode(diagnostic.start ?? 0);
     return (
-      (diagnostic.code === ARGUMENT_COUNT_ERROR && isShortBuiltInCall(node)) ||
+      (diagnostic.code === ARGUMENT_COUNT_ERROR &&
+        (isShortBuiltInCall(node) || isShortReducingCall(node))) ||
+      (SHORT_CALL_ERRORS.has(diagnostic.code) && isShortProtocolCall(node, diagnostic)) ||
       (diagnostic.code === MISSING_PROPERTY_ERROR && isPatternRead(node)) ||
       ((diagnostic.code === NOT_ITERABLE_ERROR || NULLABLE_ERRORS.has(diagnostic.code)) &&
         isNullableArrayPattern(node)) ||
       (diagnostic.code === NOT_ITERABLE_ERROR && isCaughtArrayPattern(node)) ||
       (UNASSIGNABLE_ERRORS.has(diagnostic.code) && isPatternArgument(node)) ||
+      (diagnostic.code === 2322 && isIteratorWrite(node)) ||
+      (diagnostic.code === 2322 && isWrittenExec(node, diagnostic)) ||
+      (BASE_MEMBER_ERRORS.has(diagnostic.code) && isIteratorMember(node)) ||
       (CONVERTED_ARGUMENT_ERRORS.has(diagnostic.code) &&
         (isConvertedCall(diagnostic) ||
+          isConvertedProtocolCall(diagnostic) ||
           isReducingCall(diagnostic) ||
-          isSearchingCall(diagnostic))) ||
+          isSearchingCall(diagnostic) ||
+          isTypedArrayNew(diagnostic))) ||
       (diagnostic.code === UNKNOWN_CALLEE_ERROR && isStoredStringCall(node)) ||
       diagnostic.code === UNUSED_OPERAND_ERROR ||
       (diagnostic.code === UNINTENDED_COMPARISON_ERROR && isUnnarrowed(node, diagnostic)) ||
@@ -1565,7 +2089,7 @@ const runSyntaxTest = (id: string, source: string, metadata: Metadata): TestRun 
   if (!isRejected) {
     return { id, outcome: "skipped", reason: "Node accepts it" };
   }
-  const program = `${getHarness(metadata)}\n${source}`;
+  const program = `${getHarness(metadata, source)}\n${source}`;
   try {
     compile(program, "test262.ts");
   } catch (error) {
@@ -1607,6 +2131,21 @@ const nameGlobalObject = (source: string) => {
   );
 };
 
+// A script's import(), import.source(), or import.defer() loads a module, which Node's vm can't do
+// without a linker, and whose fixture files tla-ts doesn't read.
+const isImportCallee = (node: ts.Node) =>
+  node.kind === ts.SyntaxKind.ImportKeyword ||
+  (ts.isMetaProperty(node) &&
+    node.keywordToken === ts.SyntaxKind.ImportKeyword &&
+    node.name.text !== "meta");
+
+const hasImportCall = (source: string) => {
+  const visit = (node: ts.Node): boolean =>
+    (ts.isCallExpression(node) && isImportCallee(node.expression)) ||
+    ts.forEachChild(node, visit) === true;
+  return visit(ts.createSourceFile(PROGRAM_PATH, source, ts.ScriptTarget.Latest));
+};
+
 const runTest = async (path: string): Promise<TestRun> => {
   const id = relative(TEST_DIRECTORY, path);
   const source = readFileSync(path, "utf8");
@@ -1617,11 +2156,14 @@ const runTest = async (path: string): Promise<TestRun> => {
   if (metadata.isModule && LINKED_MODULE.test(source.slice(source.indexOf("---*/")))) {
     return { id, outcome: "skipped", reason: "a module that imports or exports" };
   }
+  if (!metadata.isModule && hasImportCall(source)) {
+    return { id, outcome: "skipped", reason: "a script that imports a module" };
+  }
   // TypeScript itself fails on some syntax, such as import defer.
   const annotated = (() => {
     try {
       return annotate(
-        `${getHarness(metadata)}\n${metadata.isModule ? source : nameGlobalObject(source)}`,
+        `${getHarness(metadata, source)}\n${metadata.isModule ? source : nameGlobalObject(source)}`,
       );
     } catch (error) {
       if (error instanceof Error && error.message.startsWith("Debug Failure.")) return undefined;

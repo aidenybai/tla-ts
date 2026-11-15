@@ -18,6 +18,7 @@ import { getNumberValue, translateExpression } from "./expressions";
 import {
   allocateAll,
   type Frame,
+  getCallback,
   getChanged,
   inlineValues,
   type Path,
@@ -37,9 +38,19 @@ import {
   withHeap,
 } from "./protocols";
 import { getBuiltIn, isBuiltInObject, translateBuiltInValue } from "./intrinsics";
-import { useJavaScript } from "./javascript";
+import { getTypeNames, useJavaScript } from "./javascript";
 import type { Scope } from "./scope";
-import { apply, boolean, field, identifier, ifExpression, number, string, tuple } from "./tla";
+import {
+  apply,
+  boolean,
+  field,
+  identifier,
+  ifExpression,
+  index,
+  number,
+  string,
+  tuple,
+} from "./tla";
 import { getKind } from "./types";
 
 const COLLECTIONS = new Set(["Map", "Set", "WeakMap", "WeakSet"]);
@@ -114,6 +125,241 @@ const hasJsonArray = (value: unknown) => getJsonObjects(value).some(Array.isArra
 
 const isJsonObject = (value: unknown): value is object =>
   typeof value === "object" && value !== null;
+
+// The string that JSON.parse reads where a script builds it rather than writes a literal, whose
+// grammar tla-ts checks as the script runs.
+export const getBuiltJsonText = (node: ts.Node, context: Context) =>
+  isJsonParse(node, context) &&
+  (node.arguments.length === 1 || node.arguments.length === 2) &&
+  getLiteralText(node.arguments[0], context) === undefined &&
+  getTypeNames(context.checker.getTypeAtLocation(node.arguments[0]), context.checker)?.join() ===
+    "string"
+    ? node.arguments[0]
+    : undefined;
+
+// A reviver reads only the key and the value that JSON.parse passes it.
+const throwOnRevivedContext = (reviver: FunctionNode) => {
+  if (
+    getParameters(reviver).length > 2 ||
+    findNodes(reviver, ts.isIdentifier).some((name) => name.text === "arguments")
+  ) {
+    throw new TlaTypeScriptError(
+      "tla-ts can't pass a reviver the context of what it parses",
+      reviver,
+    );
+  }
+};
+
+const isChangedRevival = leaf(
+  apply("Assert", [
+    boolean(false),
+    string("tla-ts can't revive an object that the reviver changed"),
+  ]),
+);
+
+// JSON.parse of a text that a script builds, which throws a SyntaxError where the text isn't JSON,
+// and otherwise makes its objects. A type that a script gives what it makes, or what its reviver
+// takes, keeps its arrays outside the heap, which a text that the script builds can't tell.
+// A reviver runs as InternalizeJSONProperty calls it, in a loop over the steps that the objects
+// give, which stops where the reviver changes an object before the loop reaches it.
+export const translateBuiltJsonParse = (
+  node: ts.CallExpression,
+  text: ts.Expression,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path, value?: Expression) => Formula,
+): Formula => {
+  const reviverNode = node.arguments.at(1);
+  const reviver = reviverNode === undefined ? undefined : getCallback(reviverNode, path, context);
+  if (
+    reviverNode !== undefined &&
+    (reviver === undefined ||
+      !(
+        ts.isArrowFunction(reviver) ||
+        ts.isFunctionExpression(reviver) ||
+        ts.isFunctionDeclaration(reviver)
+      ))
+  ) {
+    throw new TlaTypeScriptError("tla-ts can't tell which function revives this", reviverNode);
+  }
+  if (reviver !== undefined) throwOnRevivedContext(reviver);
+  const revivedParameter = reviver === undefined ? undefined : getParameters(reviver).at(1);
+  const isKept =
+    isOpenType(getContextualType(node, context)) &&
+    (revivedParameter === undefined ||
+      isOpenType(context.checker.getTypeAtLocation(revivedParameter)));
+  const getters = getAccessorFunctions(node, "get", context).filter((getter) =>
+    isRunnableGetter(getter, context),
+  );
+  const revive = (made: Path, value: Expression) => {
+    if (reviver === undefined) return continueWith(made, value);
+    const madeHeap = getHeap(made.scope, node, context);
+    return bind(
+      made,
+      "heap",
+      useJavaScript(
+        "Allocate",
+        [madeHeap, useJavaScript("PairsObject", [tuple([tuple([string(""), value])])], context)],
+        context,
+      ),
+      context,
+      (wrapped, wrapperHeap) =>
+        bind(
+          wrapped,
+          "steps",
+          useJavaScript(
+            "JSONReviveSteps",
+            [wrapperHeap, useJavaScript("Allocated", [wrapperHeap], context), string(""), value],
+            context,
+          ),
+          context,
+          (stepped, steps) => {
+            // The loop writes what the reviver gives, which the heap holds.
+            const changed = [
+              ...new Set([
+                ...getChanged(node, stepped, context),
+                ...getChanged(reviver, stepped, context),
+                ...(context.heap === undefined ? [] : [context.heap]),
+              ]),
+            ];
+            return loopStates(
+              node,
+              number(1),
+              changed,
+              withHeap(stepped, wrapperHeap, context),
+              context,
+              frame,
+              (current, position, inner, again, stop) => {
+                const getStep = (name: string) => field(index(steps, [position]), name);
+                const holder = getStep("holder");
+                const key = getStep("key");
+                const next = apply("+", [position, getStep("skip")]);
+                return translateJoined(
+                  node,
+                  current,
+                  context,
+                  (called, revived) =>
+                    inlineValues(
+                      reviver,
+                      [key, revived ?? getUndefined(context)],
+                      ts.isArrowFunction(reviver) ? undefined : { value: holder, method: reviver },
+                      called,
+                      context,
+                      inner,
+                      (returned, result) =>
+                        ifThenElse(
+                          apply(">", [next, apply("Len", [steps])]),
+                          stop(returned, result ?? getUndefined(context)),
+                          bind(
+                            returned,
+                            "heap",
+                            useJavaScript(
+                              "Revived",
+                              [
+                                getHeap(returned.scope, node, context),
+                                holder,
+                                key,
+                                result ?? getUndefined(context),
+                              ],
+                              context,
+                            ),
+                            context,
+                            (stored, storedHeap) =>
+                              again(withHeap(stored, storedHeap, context), next),
+                          ),
+                        ),
+                    ),
+                  (joined) =>
+                    ifThenElse(
+                      apply("=", [getStep("kind"), string("exit")]),
+                      joined(current, getStep("ref")),
+                      readWith(
+                        node,
+                        holder,
+                        key,
+                        getters,
+                        current,
+                        context,
+                        inner,
+                        (found, read) => {
+                          const foundHeap = getHeap(found.scope, node, context);
+                          return ifThenElse(
+                            apply("/\\", [
+                              apply("=", [getStep("kind"), string("enter")]),
+                              useJavaScript("SameValue", [read, getStep("ref")], context),
+                              apply("=", [
+                                useJavaScript("RevivedKeys", [foundHeap, read], context),
+                                getStep("keys"),
+                              ]),
+                            ]),
+                            again(found, apply("+", [position, number(1)])),
+                            ifThenElse(
+                              useJavaScript("IsObjectIn", [foundHeap, read], context),
+                              isChangedRevival,
+                              joined(found, read),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                  changed,
+                );
+              },
+              continueWith,
+            );
+          },
+        ),
+    );
+  };
+  const heap = getHeap(path.scope, node, context);
+  const parse = useJavaScript(
+    "JSONParse",
+    [
+      heap,
+      translateBuiltInValue("Array.prototype", node, context),
+      translateExpression(text, path.scope, context),
+    ],
+    context,
+  );
+  return ifThenElse(
+    translateHoldsJson(node, "parse", path.scope, context),
+    bind(path, "parsed", parse, context, (after, parsed) => {
+      const made = revive(
+        withHeap(
+          after,
+          useJavaScript("AllocateEach", [heap, field(parsed, "objects")], context),
+          context,
+        ),
+        field(parsed, "value"),
+      );
+      return ifThenElse(
+        apply("=", [field(parsed, "end"), number(0)]),
+        throwError("SyntaxError", after, node, context, frame),
+        isKept
+          ? made
+          : ifThenElse(
+              useJavaScript("HasJSONArray", [parsed], context),
+              leaf(
+                apply("Assert", [
+                  boolean(false),
+                  string(
+                    "tla-ts can't keep the arrays of a JSON text that a script builds outside the heap",
+                  ),
+                ]),
+              ),
+              made,
+            ),
+      );
+    }),
+    leaf(
+      apply("Assert", [
+        boolean(false),
+        string("tla-ts can't call JSON.parse where a script replaced it"),
+      ]),
+    ),
+  );
+};
 
 // The objects that JSON.parse makes of a value, innermost first.
 const getJsonObjects = (value: unknown): object[] =>
@@ -644,17 +890,7 @@ export const reviveJson = (
   frame: Frame,
   continueWith: (path: Path, value?: Expression) => Formula,
 ): Formula => {
-  revival.candidates.forEach((candidate) => {
-    if (
-      getParameters(candidate).length > 2 ||
-      findNodes(candidate, ts.isIdentifier).some((name) => name.text === "arguments")
-    ) {
-      throw new TlaTypeScriptError(
-        "tla-ts can't pass a reviver the context of what it parses",
-        candidate,
-      );
-    }
-  });
+  revival.candidates.forEach(throwOnRevivedContext);
   const parsed = parseJson(revival.text);
   const replaced = leaf(
     apply("Assert", [
@@ -688,12 +924,6 @@ export const reviveJson = (
       const heap = getHeap(allocated.scope, node, context);
       const getRef = (object: object) =>
         useJavaScript("NextRef", [heap, number(objects.indexOf(object) + 1)], context);
-      const isChanged = leaf(
-        apply("Assert", [
-          boolean(false),
-          string("tla-ts can't revive an object that the reviver changed"),
-        ]),
-      );
       const changed = [
         ...new Set([
           ...getChanged(node, allocated, context),
@@ -768,7 +998,7 @@ export const reviveJson = (
                   [getHeap(found.scope, node, context), read],
                   context,
                 );
-                const otherwise = ifThenElse(isObject, isChanged, revive(found));
+                const otherwise = ifThenElse(isObject, isChangedRevival, revive(found));
                 if (!isJsonObject(inner)) return otherwise;
                 const ref = getRef(inner);
                 const entries = Object.entries(inner);

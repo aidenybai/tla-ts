@@ -4,6 +4,7 @@ import {
   findNodes,
   type FunctionNode,
   getFunction,
+  getOwnSymbol,
   getSymbol,
   type HelperDeclaration,
   isHeapClass,
@@ -253,7 +254,7 @@ export const readModel = (
   const variables = [...imported.flatMap(getDeclarations), ...declarations].flatMap((declared) => {
     const declaration = declared.declaration;
     if (!isLet(declared, changed, context) || !ts.isVariableDeclaration(declaration)) return [];
-    const symbol = getSymbol(declared.identifier, context.checker);
+    const symbol = getOwnSymbol(declared.identifier, context.checker);
     const isImported = declaration.getSourceFile() !== sourceFile;
     if ((isExported(declaration) && !isImported) || symbol === undefined) {
       throw new TlaTypeScriptError("State variables can't be exported", declaration);

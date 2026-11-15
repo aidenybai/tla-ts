@@ -88,6 +88,7 @@ import {
   isValueOfCall,
   getDescribedValue,
   isFromEntries,
+  isGroupBy,
   isFunctionValue,
   isSymbolCall,
   isNewObject,
@@ -1075,6 +1076,45 @@ const translateBuiltInCall = (
     }
     throw new TlaTypeScriptError("Array.isArray needs a value whose type tells", node);
   }
+  if (getBuiltIn(receiver, context) === "Error" && method === "isError") {
+    const argument = node.arguments.at(0);
+    const value =
+      argument === undefined ? undefined : translateExpression(argument, scope, context);
+    const names =
+      argument === undefined
+        ? undefined
+        : getTypeNames(context.checker.getTypeAtLocation(argument), context.checker);
+    const kind = argument === undefined ? undefined : getKind(argument, context);
+    const tested =
+      value === undefined ||
+      names?.every((name) => name !== "object" && name !== "function") ||
+      kind === "sequence" ||
+      kind === "set" ||
+      kind === "map"
+        ? boolean(false)
+        : context.heap === undefined
+          ? useJavaScript("IsError", [value], context)
+          : useJavaScript("HasErrorData", [getHeap(scope, node, context), value], context);
+    return context.heap === undefined
+      ? tested
+      : ifExpression(
+          useJavaScript(
+            "HoldsBuiltIn",
+            [
+              getHeap(scope, node, context),
+              translateBuiltInValue("Error", node, context),
+              string(method),
+              string("Error.isError"),
+            ],
+            context,
+          ),
+          tested,
+          apply("Assert", [
+            boolean(false),
+            string("tla-ts can't call Error.isError where a script replaced it"),
+          ]),
+        );
+  }
   // Reflect's functions on an object do what in and Object's functions do, and throw a TypeError
   // only where the value isn't one.
   const reflected = global === "Reflect" ? node.arguments.at(0) : undefined;
@@ -1086,6 +1126,17 @@ const translateBuiltInCall = (
   if (isReflectedObject && method === "has" && node.arguments.length === 2) {
     return useJavaScript(
       "Has",
+      [
+        getHeap(scope, node, context),
+        translateObjectValue(reflected, scope, context),
+        translatePropertyKey(node.arguments[1], scope, context),
+      ],
+      context,
+    );
+  }
+  if (isReflectedObject && method === "get" && node.arguments.length === 2) {
+    return useJavaScript(
+      "Get",
       [
         getHeap(scope, node, context),
         translateObjectValue(reflected, scope, context),
@@ -1307,6 +1358,13 @@ const translateBuiltInCall = (
       throw new TlaTypeScriptError("Make objects only where a statement always runs", node);
     }
     return revocable;
+  }
+  if (isGroupBy(node, context)) {
+    const grouped = scope.allocated.get(node);
+    if (grouped === undefined) {
+      throw new TlaTypeScriptError("Make objects only where a statement always runs", node);
+    }
+    return grouped;
   }
   const isFromEntriesCall = isFromEntries(node, context);
   if (isCreation(node, context) || isFromEntriesCall) {
@@ -3186,9 +3244,13 @@ const translateElementRead = (
 // tells: undefined and null are falsy, an object truthy, and a string, a number, or a boolean is
 // truthy unless it's "", 0, or false. Undefined and null compare first, as TLC compares them with
 // any value.
-const translateTruthy = (node: ts.Expression, value: Expression, context: Context) => {
+export const translateTruthy = (
+  node: ts.Expression,
+  value: Expression,
+  context: Context,
+  type = context.checker.getTypeAtLocation(node),
+) => {
   if (context.heap !== undefined) return useJavaScript("ToBoolean", [value], context);
-  const type = context.checker.getTypeAtLocation(node);
   const members = type.isUnion() ? type.types : [type];
   const getTruthKind = (member: ts.Type) =>
     (member.flags & (ts.TypeFlags.Undefined | ts.TypeFlags.Void)) !== 0

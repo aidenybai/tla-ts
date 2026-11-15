@@ -6,6 +6,8 @@ import { getErrorClass, isNativeErrorName, isPrototypeRead, NATIVE_ERRORS } from
 import { type Collection, getBuiltIn, isHeldBuiltInObject } from "./intrinsics";
 import {
   type BufferName,
+  getArrayMethodCall,
+  getKind,
   isBufferName,
   isCollectionName,
   isHeapArray,
@@ -14,6 +16,7 @@ import {
 import { TlaTypeScriptError } from "../errors";
 import { createNames, type Names } from "./names";
 import { getKeptReads } from "./narrowing";
+import { mayThrow } from "./functions";
 import type { Link } from "./regions";
 import { apply, define, identifier, ifExpression, index, letExpression, string } from "./tla";
 
@@ -35,8 +38,6 @@ export interface SelfCall {
 // body ended, its value or what it threw, the message and the place of a throw, and the state.
 export interface SharedCall {
   name: string;
-  // Whether a try catches what the call throws, which an expression's call inside may not throw.
-  isCatching: boolean;
   // Whether its body can end in a throw, which the operator gives its caller to catch or stop at.
   isThrowing: boolean;
   captured: ts.Symbol[];
@@ -58,7 +59,7 @@ export interface SharedCall {
 export interface SharedHelper {
   read: ts.Symbol[];
   changed: ts.Symbol[];
-  // The variables that it, what it runs, and every function that runs through a value name.
+  // The variables that a function or a class of the script names, which its operator takes.
   state: ts.Symbol[];
 }
 
@@ -673,10 +674,14 @@ export const getUnresolvedRead = (
       ? undefined
       : getUnresolvedRead(node.expression, context, isThrowing);
   }
-  // delete and typeof of a name don't read it, but of a property they read the object first.
+  // delete of a name doesn't read it, and typeof of one reads only a binding that declares it,
+  // which throws before its declaration runs, but of a property they read the object first.
   if (ts.isDeleteExpression(node) || ts.isTypeOfExpression(node)) {
-    return ts.isIdentifier(skipCasts(node.expression))
-      ? undefined
+    const operand = skipCasts(node.expression);
+    return ts.isIdentifier(operand)
+      ? ts.isTypeOfExpression(node) && !isUnresolved(operand, context) && isThrowing(operand)
+        ? operand
+        : undefined
       : getUnresolvedRead(node.expression, context, isThrowing);
   }
   if (ts.isConditionalExpression(node)) {
@@ -845,7 +850,43 @@ const getObjectPatternPart = (
 };
 
 // TypeScript gives new.target the symbol of the function it's in, which isn't its value.
+// The catch parameter that a var in its block declares again, which the var's initializer and a
+// for-in's or for-of's steps write, as Annex B.3.4 has it, while the var's own binding stays
+// undefined.
+export const getRedeclaredCatchParameter = (declaration: ts.VariableDeclaration) => {
+  if (
+    !ts.isIdentifier(declaration.name) ||
+    !ts.isVariableDeclarationList(declaration.parent) ||
+    (declaration.parent.flags & ts.NodeFlags.BlockScoped) !== 0
+  ) {
+    return undefined;
+  }
+  const name = declaration.name.text;
+  const clause = ts.findAncestor(declaration.parent, (ancestor) =>
+    ts.isFunctionLike(ancestor) || ts.isClassStaticBlockDeclaration(ancestor)
+      ? "quit"
+      : ts.isCatchClause(ancestor) &&
+        ancestor.variableDeclaration !== undefined &&
+        ts.isIdentifier(ancestor.variableDeclaration.name) &&
+        ancestor.variableDeclaration.name.text === name,
+  );
+  return clause !== undefined && ts.isCatchClause(clause)
+    ? clause.variableDeclaration?.name
+    : undefined;
+};
+
+// The symbol that a name binds or reads, where a var that declares a catch parameter again binds
+// the parameter.
 export const getSymbol = (node: ts.Node, checker: ts.TypeChecker) => {
+  const redeclared =
+    ts.isIdentifier(node) && ts.isVariableDeclaration(node.parent) && node.parent.name === node
+      ? getRedeclaredCatchParameter(node.parent)
+      : undefined;
+  return getOwnSymbol(redeclared ?? node, checker);
+};
+
+// The symbol of a name's own declaration, which a var that hoists its binding takes.
+export const getOwnSymbol = (node: ts.Node, checker: ts.TypeChecker) => {
   const parent = node.parent;
   // A parameter property's name names the property, where the constructor's body reads the
   // parameter.
@@ -1897,6 +1938,7 @@ export const getBuiltInBase = (
   context: Context,
 ):
   | "Object"
+  | "Iterator"
   | "Boolean"
   | "Number"
   | "String"
@@ -1910,7 +1952,13 @@ export const getBuiltInBase = (
     (clause) => clause.token === ts.SyntaxKind.ExtendsKeyword,
   )?.types[0]?.expression;
   const name = heritage === undefined ? undefined : getBuiltIn(heritage, context);
-  if (name === "Object" || name === "Boolean" || name === "Number" || name === "String") {
+  if (
+    name === "Object" ||
+    name === "Iterator" ||
+    name === "Boolean" ||
+    name === "Number" ||
+    name === "String"
+  ) {
     return hasConstructor ? undefined : name;
   }
   // A collection's subclass may add only static members, as the heap reads its instances as the
@@ -2179,8 +2227,11 @@ export const isHeapClass = (node: ts.ClassLikeDeclaration, context: Context): bo
         isDerivedSafe(node, base, context) &&
         (getBuiltInBase(base, context) === undefined ||
           getBuiltInBase(node, context) !== undefined)) &&
-    symbol !== undefined &&
-    (ts.isClassDeclaration(node) || ts.isVariableDeclaration(declared) || isField) &&
+    (symbol !== undefined || getInPlaceNew(node) !== undefined) &&
+    (ts.isClassDeclaration(node) ||
+      ts.isVariableDeclaration(declared) ||
+      isField ||
+      getInPlaceNew(node) !== undefined) &&
     isOnce(node) &&
     node.members.every(
       (member) =>
@@ -2196,7 +2247,7 @@ export const isHeapClass = (node: ts.ClassLikeDeclaration, context: Context): bo
             isLiteralKey(member.name) ||
             (ts.isComputedPropertyName(member.name) && isLiteralKey(member.name.expression)))),
     ) &&
-    !isAssigned(symbol, node.getSourceFile(), context);
+    (symbol === undefined || !isAssigned(symbol, node.getSourceFile(), context));
   heapClasses.set(node, isHeap);
   return isHeap;
 };
@@ -3181,7 +3232,7 @@ const isObjectArgument = (argument: ts.Expression, checker: ts.TypeChecker) => {
 const isPassedAsObject = (symbol: ts.Symbol, sourceFile: ts.SourceFile, context: Context) =>
   context.objectArguments.get(sourceFile)?.has(symbol) ?? false;
 
-// The new that constructs a function expression where the script writes it.
+// The new that constructs a function or a class expression where the script writes it.
 const getInPlaceNew = (node: ts.Node) => {
   const constructed = ts.findAncestor(
     node.parent,
@@ -3191,7 +3242,7 @@ const getInPlaceNew = (node: ts.Node) => {
       !ts.isTypeAssertionExpression(ancestor) &&
       !ts.isNonNullExpression(ancestor),
   );
-  return ts.isFunctionExpression(node) &&
+  return (ts.isFunctionExpression(node) || ts.isClassExpression(node)) &&
     constructed !== undefined &&
     ts.isNewExpression(constructed) &&
     skipCasts(constructed.expression) === node
@@ -3204,16 +3255,44 @@ export const isHeapFunction = (node: ts.Node, context: Context): node is HeapFun
   if (!ts.isFunctionDeclaration(node) && !ts.isFunctionExpression(node)) return false;
   const known = heapFunctions.get(node);
   if (known !== undefined) return known;
+  // A variable or an object literal's property may name a function expression, as obj.f names
+  // the function of { f: function () {} }.
   const nameNode = ts.isFunctionDeclaration(node)
     ? node.name
-    : ts.isVariableDeclaration(node.parent) && node.parent.initializer === node
+    : (ts.isVariableDeclaration(node.parent) || ts.isPropertyAssignment(node.parent)) &&
+        node.parent.initializer === node
       ? node.parent.name
       : undefined;
   const symbol =
     nameNode === undefined || !ts.isIdentifier(nameNode)
       ? undefined
       : getSymbol(nameNode, context.checker);
+  // A read names the function where it reads its variable, or its property of the object literal,
+  // whose symbol each read of the object makes anew.
+  const isNamedBy = (target: ts.Expression) => {
+    const found = getSymbol(skipCasts(target), context.checker);
+    return (
+      found !== undefined &&
+      (found === symbol ||
+        (ts.isPropertyAssignment(node.parent) && found.valueDeclaration === node.parent))
+    );
+  };
   const sourceFile = node.getSourceFile();
+  // A species constructor that a script writes, which a built-in method constructs.
+  const written = node.parent;
+  if (
+    ts.isBinaryExpression(written) &&
+    written.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+    written.right === node &&
+    ts.isElementAccessExpression(written.left) &&
+    ts.isPropertyAccessExpression(written.left.argumentExpression) &&
+    getBuiltIn(written.left.argumentExpression.expression, context) === "Symbol" &&
+    written.left.argumentExpression.name.text === "species"
+  ) {
+    const isHeap = isPlain(node) && node.body !== undefined && isOnce(written);
+    heapFunctions.set(node, isHeap);
+    return isHeap;
+  }
   // A function that a new constructs where the script writes it, which the new makes once. A body
   // that runs no code takes only arguments and defaults that can't throw or change anything.
   const constructed = getInPlaceNew(node);
@@ -3251,7 +3330,7 @@ export const isHeapFunction = (node: ts.Node, context: Context): node is HeapFun
               ? []
               : [construction.callee, construction.newTarget];
     return (
-      targets.some((target) => getSymbol(skipCasts(target), context.checker) === symbol) ||
+      targets.some(isNamedBy) ||
       (ts.forEachChild(child, (inner) => isNewTarget(inner) || undefined) ?? false)
     );
   };
@@ -3269,7 +3348,7 @@ export const isHeapFunction = (node: ts.Node, context: Context): node is HeapFun
           ts.isBinaryExpression(child) &&
           child.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
           (ts.isPropertyAccessExpression(child.left) || ts.isElementAccessExpression(child.left)) &&
-          getSymbol(skipCasts(child.left.expression), context.checker) === symbol,
+          isNamedBy(child.left.expression),
       ).length > 0 ||
       isPassedAsObject(symbol, sourceFile, context));
   heapFunctions.set(node, isHeap);
@@ -3280,7 +3359,10 @@ export const isHeapFunction = (node: ts.Node, context: Context): node is HeapFun
 export const getHeapClass = (node: ts.Expression, context: Context): HeapClass | undefined => {
   const inPlace = skipCasts(node);
   if (getInPlaceNew(inPlace) !== undefined) {
-    return isHeapFunction(inPlace, context) ? inPlace : undefined;
+    return isHeapFunction(inPlace, context) ||
+      (ts.isClassExpression(inPlace) && isHeapClass(inPlace, context))
+      ? inPlace
+      : undefined;
   }
   const declaration = getSymbol(inPlace, context.checker)?.valueDeclaration;
   const found =
@@ -3457,14 +3539,18 @@ export const isHeldError = (
   const name = getBuiltIn(node.expression, context);
   const holder = node.parent;
   const isSuppressed = name === "SuppressedError";
+  // An AggregateError takes the array of its errors before its message and its options.
+  const errors = name === "AggregateError" ? node.arguments?.at(0) : undefined;
   const message = node.arguments?.at(isSuppressed ? 2 : 0);
   if (
     name === undefined ||
     !NATIVE_ERRORS.has(name) ||
-    (node.arguments ?? []).length > (isSuppressed ? 3 : 1) ||
-    (message !== undefined &&
-      getTypeNames(context.checker.getTypeAtLocation(message), context.checker)?.join() !==
-        "string") ||
+    (name === "AggregateError"
+      ? errors === undefined || getKind(errors, context) !== "sequence"
+      : (node.arguments ?? []).length > (isSuppressed ? 3 : 1) ||
+        (message !== undefined &&
+          getTypeNames(context.checker.getTypeAtLocation(message), context.checker)?.join() !==
+            "string")) ||
     !ts.isVariableDeclaration(holder) ||
     holder.initializer !== node ||
     !ts.isIdentifier(holder.name)
@@ -3544,6 +3630,8 @@ export const isHeldError = (
       (ts.isPropertyAccessExpression(callee) &&
         callee.name.text === "call" &&
         callee.expression.getText().startsWith("Object.prototype.")) ||
+      // An array method that call runs on the error reads its length and its indices.
+      (getArrayMethodCall(parent, context) !== undefined && parent.arguments[0] === child) ||
       isObjectParameter(
         parent,
         parent.arguments.findIndex((argument) => argument === child),
@@ -3604,9 +3692,12 @@ export const getRunConstructor = (
       : (constructor.body?.statements.length ?? 0) > 0 || isNullBased(node)
         ? constructor
         : undefined;
-  if (base !== undefined && run !== undefined && ts.isClassLike(run)) {
+  if (
+    base !== undefined &&
+    ((run !== undefined && ts.isClassLike(run)) || getRunFields(base, context).length > 0)
+  ) {
     throw new TlaTypeScriptError(
-      "tla-ts can't extend a class whose fields run a constructor",
+      "tla-ts can't extend a class whose fields run as statements",
       node,
     );
   }
@@ -3621,9 +3712,19 @@ export const getRunFields = (node: HeapClass, context: Context) => {
     (member): member is ts.PropertyDeclaration =>
       ts.isPropertyDeclaration(member) && !isStatic(member) && !isAmbient(member),
   );
+  // A field whose call may throw defines itself as a statement too, so that what it throws leaves
+  // the new.
   const first = fields.findIndex((field) => {
     const created = field.initializer && getNewClass(field.initializer, context);
-    return created !== undefined && getRunConstructor(created, context) !== undefined;
+    const called = field.initializer && skipCasts(field.initializer);
+    const callee =
+      called !== undefined && ts.isCallExpression(called)
+        ? getCallee(called.expression, context)
+        : undefined;
+    return (
+      (created !== undefined && getRunConstructor(created, context) !== undefined) ||
+      (callee !== undefined && mayThrow(callee, context))
+    );
   });
   return first === -1 ? [] : fields.slice(first);
 };

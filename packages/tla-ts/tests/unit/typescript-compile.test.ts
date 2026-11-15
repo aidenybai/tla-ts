@@ -508,6 +508,48 @@ describe("top-level statements", () => {
     });
   });
 
+  describe("runs a reduce's call with no initial value on an array-like object", () => {
+    const source = `
+      const seen: number[] = [];
+      function same(actual: unknown, expected: unknown, label: string) {
+        if (!Object.is(actual, expected)) throw new Error(label);
+      }
+      const items = { 0: 1, 2: 3, length: 3 };
+      function add(previous: number, current: number, index: number) {
+        seen.push(index);
+        return previous + current;
+      }
+      // @ts-ignore
+      same(Array.prototype.reduce.call(items, add), 4, "reduce");
+      // @ts-ignore
+      same(Array.prototype.reduceRight.call(items, add), 4, "reduceRight");
+      let isThrown = false;
+      try {
+        // @ts-ignore
+        Array.prototype.reduce.call({ length: 0 }, add);
+      } catch (error) {
+        isThrown = error instanceof TypeError;
+      }
+      same(isThrown, true, "empty");
+      same(seen.join(), "2,0", "seen");
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(source)).failure).toBeUndefined();
+    });
+
+    it.each([
+      ["reduce", '4, "reduce"', '1, "reduce"'],
+      ["reduceRight", '4, "reduceRight"', '3, "reduceRight"'],
+      ["empty", 'true, "empty"', 'false, "empty"'],
+      ["seen", '"2,0"', '"0,2"'],
+    ])("rejects a wrong %s", async (label, expected, wrong) => {
+      expect((await checkModel(source.replace(expected, wrong))).failure?.message).toContain(
+        `"${label}"`,
+      );
+    });
+  });
+
   describe("searches an array for any value from a primitive index that ToNumber converts", () => {
     const source = `
       function same(actual: unknown, expected: unknown, label: string) {
@@ -575,6 +617,158 @@ describe("top-level statements", () => {
     });
   });
 
+  describe("searches an array from an object index that valueOf or toString converts", () => {
+    const source = `
+      const seen: unknown[] = [];
+      function same(actual: unknown, expected: unknown, label: string) {
+        if (!Object.is(actual, expected)) throw new Error(label);
+      }
+      const byString = {
+        toString: function () {
+          return "1";
+        },
+      };
+      const byValue = {
+        valueOf: function () {
+          seen.push("valueOf");
+          return 2;
+        },
+        toString: function () {
+          seen.push("toString");
+          return "0";
+        },
+      };
+      const neither = {
+        toString: function () {
+          seen.push("neither");
+          return {};
+        },
+        valueOf: function () {
+          seen.push("neither");
+          return {};
+        },
+      };
+      const found = [
+        // @ts-ignore
+        [0, true].indexOf(true, byString),
+        // @ts-ignore
+        [1, 1, 1, 1].lastIndexOf(1, byValue),
+        // @ts-ignore
+        [1, 1, 1].indexOf(1, new Number(2)),
+        // @ts-ignore
+        [].lastIndexOf(1, byValue),
+      ];
+      same(found.join(), "1,2,2,-1", "found");
+      try {
+        // @ts-ignore
+        [0, true].includes(true, neither);
+      } catch (thrown) {
+        seen.push(thrown instanceof TypeError);
+      }
+      same(seen.join(), "valueOf,neither,neither,true", "seen");
+      const list: unknown[] = [];
+      list.length = 30;
+      const target = function () {};
+      const added = {
+        valueOf: function () {
+          list[4] = target;
+          return 3;
+        },
+      };
+      // @ts-ignore
+      same(list.indexOf(target, added), 4, "added");
+      const held: unknown[] = [];
+      held[10] = "10";
+      held.length = 20;
+      const removed = {
+        valueOf: function () {
+          delete held[10];
+          return 3;
+        },
+      };
+      // @ts-ignore
+      same(held.indexOf("10", removed), -1, "removed");
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(source)).failure).toBeUndefined();
+    });
+
+    it.each([
+      ["found", '"1,2,2,-1", "found"', '"1,2,1,-1", "found"'],
+      ["seen", '"valueOf,neither,neither,true"', '"valueOf,neither,true"'],
+      ["added", 'added), 4, "added"', 'added), -1, "added"'],
+      ["removed", 'removed), -1, "removed"', 'removed), 10, "removed"'],
+    ])("rejects a wrong %s", async (label, expected, wrong) => {
+      expect((await checkModel(source.replace(expected, wrong))).failure?.message).toContain(
+        `"${label}"`,
+      );
+    });
+
+    it("stops where converting the index changes an array that the heap doesn't hold", async () => {
+      expect(() =>
+        compile(`
+          let list = [0, 1, 2];
+          const swap = {
+            valueOf: function () {
+              list = [5, 5, 5];
+              return 0;
+            },
+          };
+          // @ts-ignore
+          if (list.indexOf(5, swap) !== -1) throw new Error("swap");
+        `),
+      ).toThrow("tla-ts can't search an array that converting its fromIndex changes");
+    });
+  });
+
+  describe("makes a typed array from arguments that its constructor's signatures don't take", () => {
+    const source = `
+      const seen: unknown[] = [];
+      function same(actual: unknown, expected: unknown, label: string) {
+        if (!Object.is(actual, expected)) throw new Error(label);
+      }
+      const constructors = [Int8Array, Float64Array];
+      for (const TA of constructors) {
+        const shared = new SharedArrayBuffer(TA.BYTES_PER_ELEMENT * 4);
+        // @ts-ignore
+        const whole = new TA(shared);
+        // @ts-ignore
+        const part = new TA(shared, TA.BYTES_PER_ELEMENT, 2);
+        part[0] = 7;
+        // @ts-ignore
+        const shifted = new TA(new ArrayBuffer(TA.BYTES_PER_ELEMENT * 2), false);
+        // @ts-ignore
+        const empty = new TA(null);
+        // @ts-ignore
+        const filled = new TA({ length: 2, 0: null, 1: "3" });
+        try {
+          // @ts-ignore
+          new TA(new BigInt64Array(1));
+        } catch (thrown) {
+          seen.push(thrown instanceof TypeError);
+        }
+        seen.push(whole.length, whole[1], part.length, shifted.length, empty.length, filled.join("-"));
+      }
+      same(seen.join(), "true,4,7,2,2,0,0-3,true,4,7,2,2,0,0-3", "seen");
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(source)).failure).toBeUndefined();
+    });
+
+    it.each([
+      "true,4,7,2,2,0,0-3,true,4,0,2,2,0,0-3",
+      "true,4,7,2,2,0,-3,true,4,7,2,2,0,-3",
+      "false,4,7,2,2,0,0-3,false,4,7,2,2,0,0-3",
+    ])("rejects %s", async (wrong) => {
+      expect(
+        (await checkModel(source.replace("true,4,7,2,2,0,0-3,true,4,7,2,2,0,0-3", wrong))).failure
+          ?.message,
+      ).toContain('"seen"');
+    });
+  });
+
   it("throw a TypeError where a reduce without an initial value finds no element", async () => {
     const result = await checkModel(`
       const empty: number[] & { tag?: string } = [];
@@ -585,6 +779,41 @@ describe("top-level statements", () => {
       });
     `);
     expect(result.failure?.message).toContain("TypeError");
+  });
+
+  it("throw a TypeError that catch takes where a reduce without an initial value has no element", async () => {
+    const getSource = (expected: string) => `
+      let log = "";
+      const attempt = (name: string, callback: () => void) => {
+        try {
+          callback();
+          log = log + name + "ok,";
+        } catch (error) {
+          log = log + name + (error instanceof TypeError ? "T," : "E,");
+        }
+      };
+      const add = (total: number, value: number) => total + value;
+      const empty: number[] = [];
+      const values = [1, 2, 3];
+      const holes = new Array<number>(3);
+      const sparse = new Array<number>(3);
+      sparse[1] = 5;
+      let total = 0;
+      attempt("a", () => { empty.reduce(add); });
+      attempt("b", () => { total = values.reduce(add) * 2; });
+      attempt("c", () => { empty.reduceRight(add); });
+      attempt("d", () => { total += values.reduceRight((sum, value) => sum * 10 + value); });
+      attempt("e", () => { holes.reduce(add); });
+      attempt("f", () => { total += sparse.reduce(add); });
+      attempt("g", () => { total += empty.reduce(add, 7); });
+      const result = log + total;
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    const expected = "aT,bok,cT,dok,eT,fok,gok,345";
+    expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    expect(
+      (await checkModel(getSource("aok,bok,cT,dok,eT,fok,gok,345"))).failure?.message,
+    ).toContain(expected);
   });
 
   it("skip a hole in the array that map makes where nothing reads the array", async () => {
@@ -940,6 +1169,57 @@ describe("top-level statements", () => {
     `;
     expect((await checkModel(getSource("==="))).failure).toBeUndefined();
     expect((await checkModel(getSource("!=="))).failure?.message).toContain("same");
+  });
+
+  describe("catch an error that a built-in throws as an instance of its native class", () => {
+    const expected = "true,true,false,true,true,true,false,true,true,true,false,true";
+    const getSource = (seen: string) => `
+      const seen: boolean[] = [];
+      try {
+        new Float64Array(new ArrayBuffer(32), 1);
+      } catch (thrown) {
+        seen.push(
+          thrown instanceof RangeError,
+          thrown instanceof Error,
+          thrown instanceof TypeError,
+          (thrown as Error).constructor === RangeError,
+        );
+      }
+      const missing: unknown = undefined;
+      try {
+        (missing as () => void)();
+      } catch (thrown) {
+        seen.push(
+          thrown instanceof TypeError,
+          thrown instanceof Error,
+          thrown instanceof RangeError,
+          (thrown as Error).constructor === TypeError,
+        );
+      }
+      try {
+        JSON.parse("{");
+      } catch (thrown) {
+        seen.push(
+          thrown instanceof SyntaxError,
+          thrown instanceof Error,
+          thrown instanceof RangeError,
+          (thrown as Error).constructor === SyntaxError,
+        );
+      }
+      if (seen.join() !== "${seen}") throw new Error("seen " + seen.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it.each([
+      "false,true,false,true,true,true,false,true,true,true,false,true",
+      "true,false,false,true,true,true,false,true,true,true,false,true",
+      "true,true,false,true,true,true,false,true,true,true,true,true",
+    ])("rejects the expectation %s", async (wrong) => {
+      expect((await checkModel(getSource(wrong))).failure?.message).toContain(`seen ${expected}`);
+    });
   });
 
   it("destructure a thrown array in a catch's pattern", async () => {
@@ -2530,6 +2810,239 @@ describe("values", () => {
     });
   });
 
+  describe("gives an increment's value where an expression evaluates it", () => {
+    const getSource = (expected: string) => `
+      let x = 1;
+      const log: number[] = [];
+      const add = (first: number, second: number, third: number) => {
+        log.push(first, second, third);
+      };
+      add(x, x++, ++x);
+      const counts = { k: 1 };
+      const list = [10, 20];
+      const made = { first: counts.k++, second: ++list[1], third: [list[0]--, list[0]] };
+      let text: string | number = "5";
+      // @ts-ignore
+      const converted = text++;
+      const result = [
+        log.join(","),
+        x,
+        made.first,
+        made.second,
+        made.third.join(","),
+        counts.k,
+        converted,
+        typeof converted,
+        text,
+      ].join("|");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    const expected = "1,1,3|3|1|21|10,9|2|5|number|6";
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects a wrong expectation", async () => {
+      expect(
+        (await checkModel(getSource("1,2,3|3|1|21|10,9|2|5|number|6"))).failure?.message,
+      ).toContain(expected);
+    });
+  });
+
+  describe("runs an increment that a pattern's default, an await, or a yield evaluates", () => {
+    const getSource = (expected: string) => `
+      let count = 0;
+      const source: { a?: number; b?: number; c?: number } = { b: 5 };
+      const { a = ++count, b = count++, c = count++ } = source;
+      const items: { d?: number }[] = [{}, { d: 4 }, {}];
+      const seen: number[] = [];
+      for (const { d = ++count } of items) seen.push(d);
+      let order = 0;
+      function* make(): Generator<number, void, unknown> {
+        yield ++order;
+        yield order++;
+      }
+      const made = make();
+      const yielded = [made.next().value, made.next().value, order];
+      let awaited = 0;
+      const run = async () => {
+        awaited = await order++;
+      };
+      run();
+      const result = [a, b, c, seen.join(","), count, yielded.join(","), awaited, order].join("|");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    const expected = "1|5|1|3,4,4|4|1,1,2|0|3";
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects a wrong expectation", async () => {
+      expect((await checkModel(getSource("1|5|2|3,4,4|4|1,1,2|0|3"))).failure?.message).toContain(
+        expected,
+      );
+    });
+
+    it("stops at a default that increments a property or what an earlier default reads", () => {
+      expect(() =>
+        compile(`
+          const counts = { k: 0 };
+          const source: { a?: number } = {};
+          const { a = counts.k++ } = source;
+        `),
+      ).toThrow("tla-ts can't run a default that writes a property");
+      expect(() =>
+        compile(`
+          let count = 0;
+          const source: { a?: number; b?: number } = {};
+          const { a = count, b = ++count } = source;
+        `),
+      ).toThrow("tla-ts can't run this before what reads what it changes");
+    });
+  });
+
+  describe("runs the statements of a for-of's body again at each element of an iterator", () => {
+    it.each([
+      ["a generator, with i++", "values()", "i++;", "2,0", "1,0"],
+      ["a generator, with ++i", "values()", "++i;", "2,0", "1,0"],
+      ["a generator, with a continue", "values()", "i++;\n  continue;", "2,0", "1,0"],
+      ["an array iterator, with i++", "[1, 1].values()", "i++;", "2,0", "1,0"],
+      ["an array iterator, with ++i", "[1, 1].values()", "++i;", "2,0", "1,0"],
+      [
+        "a generator, with a call that changes the count",
+        "values()",
+        "last = add() + x;",
+        "2,3",
+        "1,2",
+      ],
+    ])("over %s", async (_name, iterated, body, expected, wrong) => {
+      const getSource = (text: string) => `
+function* values() {
+  yield 1;
+  yield 1;
+}
+let i = 0;
+let last = 0;
+const add = () => {
+  i += 1;
+  return i;
+};
+for (const x of ${iterated}) {
+  ${body}
+}
+const text = \`\${i},\${last}\`;
+if (!Object.is(text, "${text}")) throw new Error(text);
+`;
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+      expect((await checkModel(getSource(wrong))).failure?.message).toContain(expected);
+    });
+
+    it("runs a for await's body again at each element of an async generator", async () => {
+      const getSource = (expected: number) => `
+        async function* values() {
+          yield 1;
+          yield 1;
+        }
+        let i = 0;
+        const run = async () => {
+          for await (const x of values()) {
+            i++;
+          }
+          if (!Object.is(i, ${expected})) throw new Error(String(i));
+        };
+        run();
+      `;
+      expect((await checkModel(getSource(2))).failure).toBeUndefined();
+      // The run's promise rejects with the error, which nothing handles.
+      expect((await checkModel(getSource(1))).failure?.message).toContain(
+        "A promise rejected with no handler",
+      );
+    });
+  });
+
+  describe("runs the statements of a generator's loop again at each step", () => {
+    it.each([
+      ["an increment", "i++;", "0,1,2", "0,1,1"],
+      ["an increment in a test that breaks", "if (++i > 9) break;", "0,1,2", "0,1,1"],
+      [
+        "an increment in a test that throws",
+        'try {\n      if (i++ % 2 === 0) throw new Error("odd");\n    } catch {\n      i += 10;\n    }',
+        "0,11,12",
+        "0,11,11",
+      ],
+    ])("with %s", async (_name, body, expected, wrong) => {
+      const getSource = (text: string) => `
+function* steps(): Generator<number> {
+  let i = 0;
+  while (true) {
+    yield i;
+    ${body}
+  }
+}
+const iterator = steps();
+const text = [iterator.next().value, iterator.next().value, iterator.next().value].join();
+if (!Object.is(text, "${text}")) throw new Error(text);
+`;
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+      expect((await checkModel(getSource(wrong))).failure?.message).toContain(expected);
+    });
+  });
+
+  describe("resumes a generator that changes a local of its async call only where that call runs", () => {
+    const getSource = (resume: string) => `
+declare function setTimeout(callback: () => void): void;
+let seen = -1;
+const run = async () => {
+  let counter = 0;
+  function* values() {
+    try {
+      yield 1;
+      counter++;
+      yield 2;
+    } finally {
+      counter++;
+    }
+  }
+  const iterator = values();
+  iterator.next();
+  ${resume}
+  await 0;
+  await 0;
+  await 0;
+  await 0;
+  seen = counter;
+};
+run();
+setTimeout(() => {
+  if (!Object.is(seen, 2)) throw new Error(String(seen));
+});
+`;
+
+    it("keeps what the body changes where the async call resumes it", async () => {
+      expect(
+        (await checkModel(getSource("iterator.next();\n  iterator.return(undefined);"))).failure,
+      ).toBeUndefined();
+      expect((await checkModel(getSource("iterator.next();"))).failure?.message).toBeDefined();
+    });
+
+    it.each([
+      [
+        "a job",
+        "Promise.resolve().then(() => {\n    iterator.next();\n    iterator.return(undefined);\n  });",
+        "tla-ts can't resume a generator away from the call whose locals it shares",
+      ],
+      [
+        "Array.fromAsync",
+        'Array.fromAsync(iterator, () => {\n    throw "m";\n  }).catch(() => {});',
+        "tla-ts can't follow a function that runs later and reads a local that changes",
+      ],
+    ])("stops where %s resumes it", (_name, resume, message) => {
+      expect(() => compile(getSource(resume))).toThrow(message);
+    });
+  });
+
   it("runs an assignment in a unary operator's operand first", async () => {
     const getSource = (negated: number, voided: number) => `
       let x = 0;
@@ -3704,6 +4217,64 @@ describe("values", () => {
     );
   });
 
+  it("reads the prototypes of a symbol, a generator method, and a generator object that a call makes", async () => {
+    const getSource = (expected: string) => `
+      const generatorPrototype = Object.getPrototypeOf(Object.getPrototypeOf((function* () {})()));
+      const asyncPrototype = Object.getPrototypeOf(Object.getPrototypeOf(async function* () {}()));
+      const method = { *method() {} }.method;
+      const result = [
+        String(generatorPrototype[Symbol.toStringTag]),
+        String(asyncPrototype[Symbol.toStringTag]),
+        Object.getPrototypeOf(Symbol("tag")) === Symbol.prototype,
+        Object.getPrototypeOf(Symbol()) === Object.prototype,
+        Object.getPrototypeOf(method.prototype) === Object.getPrototypeOf(function* () {}).prototype,
+      ].join("|");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    const expected = "Generator|AsyncGenerator|true|false|true";
+    expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    expect(
+      (await checkModel(getSource("Generator|AsyncGenerator|true|true|true"))).failure?.message,
+    ).toContain(expected);
+    expect(() =>
+      compile(`
+        const make = function* (start: number) {
+          yield start;
+        };
+        const prototype = Object.getPrototypeOf(Object.getPrototypeOf(make(1)));
+      `),
+    ).toThrow("getPrototypeOf needs a value whose type tells");
+  });
+
+  it("reads the constructor of an async function from its prototype", async () => {
+    const getSource = (expected: string) => `
+      async function run() {}
+      const AsyncFunction = run.constructor;
+      const Inline = async function () {}.constructor;
+      const result = [
+        Object.getPrototypeOf(AsyncFunction) === Function,
+        Object.getPrototypeOf(Inline.prototype) === Function.prototype,
+        Inline === AsyncFunction,
+        run instanceof Function,
+      ].join("|");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    expect((await checkModel(getSource("true|true|true|true"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("true|true|false|true"))).failure?.message).toContain(
+      "true|true|true|true",
+    );
+    expect(
+      (
+        await checkModel(`
+          async function run() {}
+          const keep = (value: unknown) => value;
+          keep(run);
+          const prototype = Object.getPrototypeOf(run.constructor);
+        `)
+      ).failure?.message,
+    ).toContain("tla-ts can't read the properties");
+  });
+
   it("gives an error a message only where its message isn't undefined", async () => {
     const getSource = (expected: string) => `
       class Err extends Error {}
@@ -3716,6 +4287,153 @@ describe("values", () => {
     expect((await checkModel(getSource("custom,own,true"))).failure?.message).toContain(
       "custom,own,false",
     );
+  });
+
+  describe("writes the catch parameter that a var in the catch block declares again", () => {
+    const getSource = (expected: string) => `
+      let before: unknown;
+      let during: unknown;
+      let after: unknown;
+      let seen = "";
+      try {
+        throw "exception";
+      } catch (err) {
+        before = err;
+        for (var err = "loop initializer"; err !== "increment"; err = "increment") {
+          during = err;
+        }
+        after = err;
+      }
+      try {
+        throw "thrown";
+      } catch (key) {
+        for (var key in { propertyName: null }) seen += key;
+        seen += \`,\${key}\`;
+      }
+      try {
+        throw "thrown";
+      } catch (value) {
+        for (var value of [2]) seen += \`,\${value}\`;
+        seen += \`,\${value}\`;
+      }
+      function readKey() {
+        return key;
+      }
+      function readValue() {
+        return value;
+      }
+      const result = [before, during, after, seen, String(err), String(readKey()), String(readValue())];
+      if (result.join("|") !== "${expected}") throw new Error(result.join("|"));
+    `;
+    const expected =
+      "exception|loop initializer|increment|propertyName,propertyName,2,2|undefined|undefined|undefined";
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects the expectation that the var's own binding takes the initializer", async () => {
+      expect(
+        (await checkModel(getSource(expected.replace("2,2|undefined", "2,2|increment")))).failure
+          ?.message,
+      ).toContain(expected);
+    });
+  });
+
+  describe("gives the set or map that add and set change and undefined from clear", () => {
+    const getSource = (expected: string) => `
+      const set = new Set<number>([1]);
+      const other = new Set<number>([1]);
+      const map = new Map<number, string>();
+      const added = set.add(2);
+      const result = [
+        added === set,
+        set === other,
+        set.add(1).add(3).size,
+        map.set(1, "one") === map,
+        map.set(2, "two").get(2),
+        set.clear(),
+        set.size,
+        map.clear(),
+        map.size,
+      ];
+      if (result.join("|") !== "${expected}") throw new Error(result.join("|"));
+    `;
+    const expected = "true|false|3|true|two||0||0";
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects the expectation that a set with the same values is the same set", async () => {
+      expect(
+        (await checkModel(getSource(expected.replace("true|false", "true|true")))).failure?.message,
+      ).toContain(expected);
+    });
+  });
+
+  it("tells an error from another value with Error.isError", async () => {
+    const getSource = (expected: string) => `
+      class Err extends TypeError {}
+      const held = new RangeError("held");
+      const fake: { [key: string]: unknown } = { __proto__: Error.prototype, message: "" };
+      const thrown = (() => {
+        try {
+          Object.defineProperty(1, "key", {});
+        } catch (error) {
+          return error;
+        }
+      })();
+      const result = [
+        Error.isError(new Err()),
+        Error.isError(held),
+        Error.isError(thrown),
+        Error.isError(fake),
+        Error.isError(Error.prototype),
+        Error.isError([held]),
+        Error.isError(new Proxy(held, {})),
+        Error.isError(1n),
+      ];
+      if (result.join(",") !== "${expected}") throw new Error(result.join(","));
+    `;
+    expect(
+      (await checkModel(getSource("true,true,true,false,false,false,false,false"))).failure,
+    ).toBeUndefined();
+    expect(
+      (await checkModel(getSource("true,true,true,false,false,false,true,false"))).failure?.message,
+    ).toContain("true,true,true,false,false,false,false,false");
+  });
+
+  it("makes an AggregateError with its message, its cause, and the array of its errors", async () => {
+    const getSource = (expected: string) => `
+      const inner = new TypeError("inner");
+      const cause = { message: "cause" };
+      const error = new AggregateError([inner, 1], undefined, { cause });
+      const errors = Object.getOwnPropertyDescriptor(error, "errors");
+      const caused = Object.getOwnPropertyDescriptor(error, "cause");
+      const named = new AggregateError([], "named");
+      const result = [
+        Object.hasOwn(error, "message"),
+        caused?.enumerable,
+        error.cause === cause,
+        Object.getPrototypeOf(error) === AggregateError.prototype,
+        error instanceof Error,
+        errors?.enumerable,
+        errors?.writable,
+        error.errors.length,
+        error.errors[0] === inner,
+        named.message,
+        named.errors.length,
+      ];
+      if (result.join(",") !== "${expected}") throw new Error(result.join(","));
+    `;
+    expect(
+      (await checkModel(getSource("false,false,true,true,true,false,true,2,true,named,0"))).failure,
+    ).toBeUndefined();
+    expect(
+      (await checkModel(getSource("false,false,true,true,true,false,true,1,true,named,0"))).failure
+        ?.message,
+    ).toContain("false,false,true,true,true,false,true,2,true,named,0");
   });
 
   it("runs the constructors of a class that extends Error, which give its error a message and a cause", async () => {
@@ -5368,6 +6086,58 @@ describe("values", () => {
         "tla-ts can't name a function that a block declares outside the block outside strict mode",
       );
     });
+
+    it.each([
+      [
+        "a catch whose parameter has another name",
+        'throw new Error("thrown");',
+        "catch (error) {\n  var x = 2;\n  probeInside = function () { return x; };\n}",
+      ],
+      [
+        "a catch whose parameter is a pattern",
+        "throw { size: 2 };\n  // @ts-ignore",
+        "catch ({ size }) {\n  var x = size;\n  probeInside = function () { return x; };\n}",
+      ],
+      [
+        "a block inside a catch",
+        'throw new Error("thrown");',
+        "catch (error) {\n  {\n    var x = 2;\n    probeInside = function () { return x; };\n  }\n}",
+      ],
+      [
+        "a for inside a catch",
+        'throw new Error("thrown");',
+        "catch (error) {\n  for (var index = 0; index < 1; index++) {\n    var x = 2;\n  }\n  probeInside = function () { return x; };\n}",
+      ],
+    ])(
+      "binds a var that %s declares, and a function that it assigns, where the script reads them",
+      async (_name, thrown, caught) => {
+        const getSource = (expected: string) => `
+var x = 1;
+var probeBefore = function () { return x; };
+var probeInside: (() => number) | undefined;
+try {
+  ${thrown}
+} ${caught}
+const text = \`\${probeBefore()},\${probeInside!()},\${x}\`;
+if (!Object.is(text, "${expected}")) throw new Error(text);
+`;
+        expect((await checkModel(getSource("2,2,2"))).failure).toBeUndefined();
+        expect((await checkModel(getSource("1,2,2"))).failure?.message).toContain("2,2,2");
+      },
+    );
+
+    it("holds the function that a branch assigns where the script calls it after the branch", async () => {
+      const getSource = (expected: string) => `
+        var probeInside: (() => number) | undefined;
+        if (Math.max(1, 2) === 2) {
+          probeInside = function () { return 2; };
+        }
+        const value = probeInside!();
+        if (!Object.is(value, ${expected})) throw new Error(String(value));
+      `;
+      expect((await checkModel(getSource("2"))).failure).toBeUndefined();
+      expect((await checkModel(getSource("3"))).failure?.message).toContain("2");
+    });
   });
 
   describe("iterates the keys of an array that changes in place with a for-in", () => {
@@ -5386,21 +6156,44 @@ describe("values", () => {
       expect((await checkModel(getSource("0a"))).failure?.message).toContain("0a,1b");
     });
 
-    it("stops where the loop changes the array", () => {
-      expect(() =>
-        compile(`
-          const names: string[] = [];
-          names[0] = "a";
-          names[1] = "b";
-          const drop = () => {
-            names.pop();
-          };
-          for (const key in names) {
-            drop();
-          }
-        `),
-      ).toThrow("Don't change an array while a for-of iterates it");
+    it("skips the indices that the loop takes out of the array", async () => {
+      const getSource = (expected: string) => `
+        const names: string[] = [];
+        names[0] = "a";
+        names[1] = "b";
+        const drop = () => {
+          names.pop();
+        };
+        let seen = "";
+        for (const key in names) {
+          drop();
+          seen += key;
+        }
+        if (seen !== "${expected}") throw new Error(seen);
+      `;
+      expect((await checkModel(getSource("0"))).failure).toBeUndefined();
+      expect((await checkModel(getSource("01"))).failure?.message).toContain('"0"');
     });
+  });
+
+  it("skips the indices that a for-in's body takes out of a list or an array", async () => {
+    const getSource = (expected: string) => `
+      const holey = [0, 1, , 3];
+      const list = [0, 1, 2, 3];
+      let seen = "";
+      for (const key in holey) {
+        if (key === "0") holey.pop();
+        seen += key;
+      }
+      seen += ";";
+      for (const key in list) {
+        if (key === "1") list.splice(0, 2);
+        seen += key;
+      }
+      if (seen !== "${expected}") throw new Error(seen);
+    `;
+    expect((await checkModel(getSource("01;01"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("013;0123"))).failure?.message).toContain("01;01");
   });
 
   it("skips a key that a for-in's body deletes, and not one that it adds", async () => {
@@ -6368,7 +7161,34 @@ describe("calls", () => {
     },
   );
 
-  it("passes a helper's operator only the variables that it reads or changes, as the call sees them", async () => {
+  it("stops where a helper's operator throws from inside an expression that nothing catches", async () => {
+    const source = [
+      "const box = { count: 0 };",
+      "const fail = (wanted: string): number => {",
+      "  throw new Error(`Expected ${wanted}`);",
+      "};",
+      "const read = (text: string) => {",
+      "  box.count++;",
+      '  return text === "a" ? 1 : fail(text) + 1;',
+      "};",
+      "const run = () => {",
+      '  const first = read("a");',
+      '  const second = read("b");',
+      "  return first + second;",
+      "};",
+      "const total = run();",
+    ].join("\n");
+    expect(printModule(compile(source).source)).toMatch(/^read\(/m);
+    const failure = (await checkModel(source)).failure;
+    expect(failure?.message).toContain('"Expected b"');
+    expect(failure?.callStack?.at(-1)?.location).toMatchObject({
+      line: 3,
+      column: 3,
+      range: { end: { line: 3, column: 40 } },
+    });
+  });
+
+  it("passes a helper's operator the variables that the script's functions name, as the call sees them", async () => {
     const getSource = (expected: string) => `
       const box = { count: 0 };
       let seen = 0;
@@ -6388,11 +7208,14 @@ describe("calls", () => {
         return \`\${first},\${second},\${read()},\${other}\`;
       };
       const text = run();
+      let length = 0;
+      length = text.length;
       if (text !== "${expected}") throw new Error(text);
     `;
+    // Only the script's own statements name text and length, so no operator takes them.
     const printed = printModule(compile(getSource("5,7,8,7")).source);
-    expect(printed).toMatch(/^read\(\w+, box\w*, seen\w*\) ==/m);
-    expect(printed).toMatch(/^bump\(by\w*, \w+, box\w*, other\w*\) ==/m);
+    expect(printed).toMatch(/^read\(\w+, box\w*, seen\w*, other\w*\) ==/m);
+    expect(printed).toMatch(/^bump\(by\w*, \w+, box\w*, seen\w*, other\w*\) ==/m);
     expect((await checkModel(getSource("5,7,8,7"))).failure).toBeUndefined();
     expect((await checkModel(getSource("0,2,7,7"))).failure?.message).toContain("5,7,8,7");
   });
@@ -6418,6 +7241,47 @@ describe("calls", () => {
     expect((await checkModel(getSource("4,6,2"))).failure).toBeUndefined();
     expect((await checkModel(getSource("0,0,2"))).failure?.message).toContain("4,6,2");
   });
+
+  it.each([
+    [
+      "an object's property",
+      "const holder: { test: (value: unknown) => boolean } = { test: isOne };",
+      "holder.test(value)",
+    ],
+    [
+      "an array's callback",
+      "const tests: ((value: unknown) => boolean)[] = [isOne];",
+      "tests.some((test) => test(value))",
+    ],
+  ])(
+    "passes a helper's operator the variables of the functions that a call through %s may run",
+    async (_name, held, called) => {
+      const getSource = (expected: string) => `
+        let limit = 1;
+        const box = { count: 0 };
+        function isLimit(value: unknown) {
+          return value === limit;
+        }
+        function isOne(value: unknown) {
+          return value === 1;
+        }
+        ${held}
+        const run = (value: unknown) => {
+          box.count++;
+          const found = ${called};
+          return found;
+        };
+        limit = 2;
+        const text = \`\${run(1)},\${run(2)},\${box.count}\`;
+        if (!Object.is(text, "${expected}")) throw new Error(text);
+      `;
+      expect(printModule(compile(getSource("true,false,2")).source)).toMatch(/^run\(/m);
+      expect((await checkModel(getSource("true,false,2"))).failure).toBeUndefined();
+      expect((await checkModel(getSource("false,true,2"))).failure?.message).toContain(
+        "true,false,2",
+      );
+    },
+  );
 
   it("passes a helper's operator a class that its callback names", async () => {
     const getSource = (expected: string) => `
@@ -6498,6 +7362,110 @@ describe("calls", () => {
     `;
     expect((await checkModel(getSource("thrown,0"))).failure).toBeUndefined();
     expect((await checkModel(getSource("thrown,1"))).failure?.message).toContain("thrown,0");
+  });
+
+  it("runs a pattern's default that throws only after what the pattern evaluates before it", async () => {
+    const getSource = (expected: string) => `
+      let count = 0;
+      function thrower(): number {
+        throw new Error("thrown");
+      }
+      let caught = "none";
+      try {
+        const { a = 1, d: { b = thrower() }, c = ++count } = { d: {} } as {
+          a?: number;
+          d: { b?: number };
+          c?: number;
+        };
+        caught = \`\${a}\${b}\${c}\`;
+      } catch (error) {
+        caught = (error as Error).message;
+      }
+      const text = \`\${caught},\${count}\`;
+      if (text !== "${expected}") throw new Error(text);
+    `;
+    expect((await checkModel(getSource("thrown,0"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("thrown,1"))).failure?.message).toContain("thrown,0");
+    expect(() =>
+      compile(`
+        let count = 0;
+        function thrower(): number {
+          throw new Error("thrown");
+        }
+        try {
+          const { c = ++count, b = thrower() } = {} as { b?: number; c?: number };
+        } catch {}
+      `),
+    ).toThrow("tla-ts can't run this call before what its pattern evaluates first");
+    expect(() =>
+      compile(`
+        function thrower(): number {
+          throw new Error("thrown");
+        }
+        try {
+          const { a: { b }, c = thrower() } = { a: undefined } as unknown as {
+            a: { b?: number };
+            c?: number;
+          };
+        } catch {}
+      `),
+    ).toThrow("tla-ts can't run this call before what its pattern evaluates first");
+    expect(() =>
+      compile(`
+        function thrower(): number {
+          throw new Error("thrown");
+        }
+        const items = [{}] as unknown as { a: { x?: number }; b?: number }[];
+        try {
+          for (const { a: { x }, b = thrower() } of items) {}
+        } catch {}
+      `),
+    ).toThrow("tla-ts can't run this call before what its pattern evaluates first");
+  });
+
+  it("evaluates a pattern's computed key before it reads the property", async () => {
+    const getSource = (expected: string) => `
+      let count = 0;
+      function thrower(): never {
+        throw new Error("key");
+      }
+      const getKey = (): "x" => {
+        count++;
+        return "x";
+      };
+      const getName = (error: unknown) =>
+        error instanceof TypeError ? "type" : (error as Error).message;
+      const read = ({ [thrower()]: x }: { x?: number }) => \`\${x}\`;
+      let parameter = "none";
+      try {
+        parameter = read({});
+      } catch (error) {
+        parameter = getName(error);
+      }
+      const { [getKey()]: declared } = { x: 1 };
+      let iterated = "";
+      try {
+        for (const { [getKey()]: x } of [{ x: 2 }, null] as { x?: number }[]) iterated += x;
+      } catch (error) {
+        iterated += getName(error);
+      }
+      let caught = "none";
+      try {
+        try {
+          throw {};
+        } catch ({ [thrower()]: x }) {
+          caught = "body";
+        }
+      } catch (error) {
+        caught = getName(error);
+      }
+      const text = \`\${parameter},\${declared},\${iterated},\${caught},\${count}\`;
+      if (text !== "${expected}") throw new Error(text);
+    `;
+    expect((await checkModel(getSource("key,1,2type,key,2"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("key,1,2type,key,3"))).failure?.message).toContain(
+      "key,1,2type,key,2",
+    );
   });
 
   it("runs helpers that call one that throws as operators, where the caller catches it", async () => {
@@ -6692,6 +7660,30 @@ describe("calls", () => {
     ).toThrow("Inside try, call a function that throws as its own statement");
   });
 
+  it("catches what a function that a parameter holds throws where an assignment inside try calls it", async () => {
+    const getSource = (expected: string) => `
+      const run = (func: () => number) => {
+        let result = 0;
+        let seen = "";
+        try {
+          result = func();
+          seen = "ran" + result;
+        } catch (error) {
+          seen = "caught" + String(error);
+        }
+        return seen;
+      };
+      const fail = (): number => {
+        throw "boom";
+      };
+      let seen = "";
+      seen = run(fail) + run(() => 2);
+      if (seen !== "${expected}") throw new Error(seen);
+    `;
+    expect((await checkModel(getSource("caughtboomran2"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("ran2ran2"))).failure?.message).toContain("caughtboomran2");
+  });
+
   it("catches what a function throws where a declaration or an assignment inside try calls it, nested or not", async () => {
     const getSource = (expected: string) => `
       function fail(): number {
@@ -6723,6 +7715,50 @@ describe("calls", () => {
     expect((await checkModel(getSource("boomboomadded"))).failure?.message).toContain(
       "boomboomboom0",
     );
+  });
+
+  it("catches what a field's initializer throws, before the next field runs", async () => {
+    const getSource = (expected: string) => `
+      function fail(): number {
+        throw "boom";
+      }
+      let isRun = false;
+      class C {
+        a = fail();
+        b = (isRun = true);
+      }
+      let seen = "";
+      try {
+        const made = new C();
+        seen = "made";
+      } catch (error) {
+        seen = String(error);
+      }
+      if (seen + isRun !== "${expected}") throw new Error(seen + isRun);
+    `;
+    expect((await checkModel(getSource("boomfalse"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("madetrue"))).failure?.message).toContain("boomfalse");
+  });
+
+  it("stops where a class extends one whose field's initializer may throw", () => {
+    expect(() =>
+      compile(`
+        function fail(): number {
+          throw "boom";
+        }
+        class A {
+          a = fail();
+        }
+        class C extends A {
+          constructor() {
+            super();
+          }
+        }
+        try {
+          new C();
+        } catch {}
+      `),
+    ).toThrow("tla-ts can't extend a class whose fields run as statements");
   });
 
   it("runs a catch pattern's default that throws only where the thrown value lacks it", async () => {
@@ -6991,6 +8027,25 @@ describe("definitions", () => {
     expect([result.status, result.distinctStates]).toEqual(["deadlock", 4]);
     const violated = await check(compile(source.replace("<= 3", "<= 2"), path));
     expect(violated.status).toBe("invariant-violation");
+  });
+
+  it("reads an export of another file through its namespace", async () => {
+    const path = join(import.meta.dirname, "../fixtures/typescript/imports/namespace.ts");
+    const source = readFileSync(path, "utf8");
+    expect((await check(compile(source, path))).failure).toBeUndefined();
+    const wrong = await check(compile(source.replace("!== 1", "!== 2"), path));
+    expect(wrong.failure?.message).toContain("the namespace's getFirst");
+  });
+
+  it("stops at a namespace object that a script uses other than to read an export", () => {
+    const path = join(import.meta.dirname, "../fixtures/typescript/imports/namespace.ts");
+    const source = readFileSync(path, "utf8");
+    expect(() =>
+      compile(source.replace("first.getFirst() !== 1", "Object.isExtensible(first)"), path),
+    ).toThrow("tla-ts can't make a module's namespace object");
+    expect(() =>
+      compile(source.replace("first.getFirst() !== 1", "Object.keys(first).length !== 1"), path),
+    ).toThrow("tla-ts can't make a module's namespace object");
   });
 
   it("constructs a class that another file declares", async () => {
@@ -9365,6 +10420,112 @@ describe("errors", () => {
     });
   });
 
+  describe("runs Atomics' operations on an integer typed array's elements", () => {
+    const getSource = (expected: number) => `
+      const i32a = new Int32Array(new SharedArrayBuffer(16));
+      if (Atomics.add(i32a, 0, 2147483647) !== 0) throw new Error("add");
+      if (Atomics.add(i32a, 0, 5) !== 2147483647 || i32a[0] !== ${expected}) throw new Error("wrap");
+      const bytes = new Uint8Array(4);
+      bytes[0] = 200 as number;
+      if (Atomics.sub(bytes, 0, 201) !== 200 || (bytes[0] as number) !== 255) throw new Error("sub");
+      if (Atomics.xor(bytes, 0, -1) !== 255 || (bytes[0] as number) !== 0) throw new Error("xor");
+      if (Atomics.or(bytes, 1, 6) !== 0 || Atomics.and(bytes, 1, 3) !== 6 || bytes[1] !== 2) {
+        throw new Error("bits");
+      }
+      if (Atomics.compareExchange(bytes, 0, 311, 7) !== 0 || bytes[0] !== 0) throw new Error("kept");
+      if (Atomics.compareExchange(bytes, 1, 258, 9) !== 2 || (bytes[1] as number) !== 9) {
+        throw new Error("exchanged");
+      }
+      if (Atomics.exchange(bytes, 1, 4) !== 9 || Atomics.load(bytes, 1) !== 4) throw new Error("load");
+      if (!Object.is(Atomics.store(i32a, 1, -0), 0)) throw new Error("store");
+      const big = new BigInt64Array(2);
+      if (Atomics.add(big, 0, 5n) !== 0n || Atomics.sub(big, 0, 7n) !== 5n || Atomics.load(big, 0) !== -2n) {
+        throw new Error("bigint");
+      }
+    `;
+
+    it("agrees with Node on -2147483644", async () => {
+      expect((await checkModel(getSource(-2147483644))).failure).toBeUndefined();
+    });
+
+    it("rejects the expectation -2147483643", async () => {
+      expect((await checkModel(getSource(-2147483643))).failure?.message).toContain('"wrap"');
+    });
+  });
+
+  describe("waits on and validates the typed arrays that Atomics takes", () => {
+    const getSource = (expected: number) => `
+      const i32a = new Int32Array(new SharedArrayBuffer(16));
+      Atomics.store(i32a, 2, 7);
+      if (Atomics.isLockFree(4) !== true || Atomics.isLockFree(3) !== false) throw new Error("lock");
+      if (Atomics.notify(i32a, 0) !== 0 || Atomics.pause() !== undefined) throw new Error("notify");
+      if (Atomics.wait(i32a, 2, 7, -1) !== "timed-out" || Atomics.wait(i32a, 2, 6) !== "not-equal") {
+        throw new Error("wait");
+      }
+      const waited = Atomics.waitAsync(i32a, 2, 7, 0);
+      if (waited.async !== false || waited.value !== "timed-out") throw new Error("waitAsync");
+      let thrown = 0;
+      try {
+        Atomics.add(new Float32Array(4) as unknown as Int32Array, 0, 1);
+      } catch (error) {
+        if (error instanceof TypeError) thrown++;
+      }
+      try {
+        Atomics.load(i32a, 4);
+      } catch (error) {
+        if (error instanceof RangeError) thrown++;
+      }
+      try {
+        Atomics.wait(new Int32Array(4), 0, 0, 0);
+      } catch (error) {
+        if (error instanceof TypeError) thrown++;
+      }
+      try {
+        Atomics.pause(0.5);
+      } catch (error) {
+        if (error instanceof TypeError) thrown++;
+      }
+      const getThrown = (): number => thrown;
+      if (getThrown() !== ${expected}) throw new Error("thrown");
+    `;
+
+    it("agrees with Node on 4", async () => {
+      expect((await checkModel(getSource(4))).failure).toBeUndefined();
+    });
+
+    it("rejects the expectation 3", async () => {
+      expect((await checkModel(getSource(3))).failure?.message).toContain('"thrown"');
+    });
+  });
+
+  describe("throws the TypeError of a new of a built-in function that it passes the objects it makes", () => {
+    const getSource = (expected: number) => `
+      let thrown = 0;
+      try {
+        new (Atomics.add as unknown as new (...args: unknown[]) => object)(
+          new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT)),
+        );
+      } catch (error) {
+        if (error instanceof TypeError) thrown++;
+      }
+      try {
+        new (Symbol.keyFor as unknown as new (...args: unknown[]) => object)(Symbol());
+      } catch (error) {
+        if (error instanceof TypeError) thrown++;
+      }
+      const getThrown = (): number => thrown;
+      if (getThrown() !== ${expected}) throw new Error("thrown");
+    `;
+
+    it("agrees with Node on 2", async () => {
+      expect((await checkModel(getSource(2))).failure).toBeUndefined();
+    });
+
+    it("rejects the expectation 1", async () => {
+      expect((await checkModel(getSource(1))).failure?.message).toContain('"thrown"');
+    });
+  });
+
   it("gives the receiver of the @@species getter that a script takes from its descriptor", async () => {
     const getSource = (expected: number) => `
       const holder = {};
@@ -9462,6 +10623,73 @@ describe("errors", () => {
     `;
     expect((await checkModel(getSource(9))).failure).toBeUndefined();
     expect((await checkModel(getSource(8))).failure?.message).toContain("unexpected");
+  });
+
+  describe("passes no argument to the this parameter of a function that a script calls", () => {
+    const getSource = (expected: string) => `
+      const holder = { seen: "" };
+      const name = function (this: unknown, value: number) {
+        return value === 1 ? "one" : "other";
+      };
+      const tagged = function (this: unknown, value: number) {
+        return value + 1;
+      };
+      // @ts-ignore
+      tagged.tag = "t";
+      holder.seen = [name(1), tagged(1)].join(",");
+      if (holder.seen !== "${expected}") throw new Error("unexpected");
+    `;
+
+    it("agrees with Node on one,2", async () => {
+      expect((await checkModel(getSource("one,2"))).failure).toBeUndefined();
+    });
+
+    it("rejects the expectation other,2", async () => {
+      expect((await checkModel(getSource("other,2"))).failure?.message).toContain("unexpected");
+    });
+  });
+
+  describe("holds an object literal's function on the heap where a script writes its properties", () => {
+    const getSource = (expected: string) => `
+      const holder = { seen: "" };
+      const obj = { constructor: function () {} };
+      // @ts-ignore
+      obj.constructor[Symbol.species] = 5;
+      // @ts-ignore
+      obj.constructor.tag = "t";
+      holder.seen = [
+        // @ts-ignore
+        obj.constructor[Symbol.species],
+        // @ts-ignore
+        obj.constructor.tag,
+        typeof obj.constructor,
+        obj.constructor.name,
+        obj.constructor.length,
+      ].join(",");
+      if (holder.seen !== "${expected}") throw new Error("unexpected");
+    `;
+
+    it("agrees with Node on 5,t,function,constructor,0", async () => {
+      expect((await checkModel(getSource("5,t,function,constructor,0"))).failure).toBeUndefined();
+    });
+
+    it("rejects the expectation 5,t,function,constructor,1", async () => {
+      expect(
+        (await checkModel(getSource("5,t,function,constructor,1"))).failure?.message,
+      ).toContain("unexpected");
+    });
+
+    it("calls the function through the property, as its object holds its code", async () => {
+      const getCall = (expected: number) => `
+        const obj = { make: function (value: number) { return value + 1; } };
+        // @ts-ignore
+        obj.make.tag = "t";
+        const seen = obj.make(1);
+        if (seen !== ${expected}) throw new Error("unexpected");
+      `;
+      expect((await checkModel(getCall(2))).failure).toBeUndefined();
+      expect((await checkModel(getCall(3))).failure?.message).toContain("unexpected");
+    });
   });
 
   it("runs the getter that a rest pattern copies where the script defines getters under other keys", async () => {
@@ -10228,6 +11456,186 @@ describe("errors", () => {
     expect((await checkModel(wrong)).failure?.message).toContain('"reflect"');
   });
 
+  describe("throws the SyntaxError of JSON.parse of a text that a script builds", () => {
+    const getSource = (texts: string, expected: string) => `
+      const box = { n: 1 };
+      let log = "";
+      const attempt = (text: string) => {
+        try {
+          JSON.parse(text);
+          log += "ok,";
+        } catch (error) {
+          log += error instanceof SyntaxError ? "S," : "E,";
+        }
+      };
+      const control = String.fromCharCode(31);
+      const texts: string[] = [${texts}];
+      for (const text of texts) attempt(text);
+      const result = log + box.n;
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    const strings = `'{ "a' + control + '" : 1 }', '"\\\\x"', '"\\\\u12G4"', '{"a" 1}', '{ "a" : 1 '`;
+    const others = `"[1,]", "01", "1e", "", "+1", "1 2"`;
+
+    it("agrees with Node on strings and objects", async () => {
+      expect((await checkModel(getSource(strings, "S,S,S,S,S,1"))).failure).toBeUndefined();
+    });
+
+    it("agrees with Node on arrays, numbers, and what follows a value", async () => {
+      expect((await checkModel(getSource(others, "S,S,S,S,S,S,1"))).failure).toBeUndefined();
+    });
+
+    it("rejects wrong expectation 1", async () => {
+      expect((await checkModel(getSource(strings, "ok,S,S,S,S,1"))).failure?.message).toContain(
+        "S,S,S,S,S,1",
+      );
+    });
+  });
+
+  describe("makes the value of JSON.parse of a text that a script builds", () => {
+    const getSource = (texts: string, read: string, expected: string) => `
+      const box = { n: 1 };
+      const texts: string[] = [${texts}];
+      const first: unknown = JSON.parse(texts[0]);
+      const second: unknown = JSON.parse(texts[texts.length - 1]);
+      const result = [${read}, box.n].join("|");
+      if (result !== ${JSON.stringify(expected)}) throw new Error(result);
+    `;
+    const object = `' { "b" : [1, true, null, {}, "x\\\\n\\\\u00e9\\\\"\\\\\\\\\\\\/"], "a": {"c": "d"}, "b": 2, "1": 3 } '`;
+    const readObject =
+      "JSON.stringify(first), Object.keys(first as object).join(), (first as { b: number }).b";
+    const objectRead = '{"1":3,"b":2,"a":{"c":"d"}}|1,b,a|2|1';
+
+    it("agrees with Node on an object", async () => {
+      expect((await checkModel(getSource(object, readObject, objectRead))).failure).toBeUndefined();
+    });
+
+    it("agrees with Node on arrays and primitives", async () => {
+      const others = `' \\t\\n\\r [12, [["deep"]], "\\\\u0041\\\\t"] \\r\\n', '{"__proto__": 1}'`;
+      const read = `JSON.stringify([first, second]), Array.isArray(first as object),
+        Object.getPrototypeOf(second as object) === Object.prototype`;
+      const expected = '[[12,[["deep"]],"A\\t"],{"__proto__":1}]|true|true|1';
+      expect((await checkModel(getSource(others, read, expected))).failure).toBeUndefined();
+    });
+
+    it("rejects wrong expectation 1", async () => {
+      expect(
+        (await checkModel(getSource(object, readObject, objectRead.replace("1,b,a", "b,a,1"))))
+          .failure?.message,
+      ).toContain("1,b,a");
+    });
+
+    it("stops where a type keeps the arrays that it makes outside the heap", async () => {
+      const result = await checkModel(`
+        const box = { n: 1 };
+        const texts: string[] = ['{"a":[1]}'];
+        const typed: { a: number[] } = JSON.parse(texts[0]);
+        box.n = typed.a[0];
+      `);
+      expect(result.failure?.message).toContain(
+        "tla-ts can't keep the arrays of a JSON text that a script builds outside the heap",
+      );
+    });
+  });
+
+  describe("revives JSON.parse of a text that a script builds", () => {
+    const getSource = (text: string, reviver: string, expected: string) => `
+      const box = { n: 1 };
+      const texts: string[] = ['${text}'];
+      const seen: string[] = [];
+      ${reviver}
+      const parsed: unknown = JSON.parse(texts[0], revive);
+      const result = [seen.join(), JSON.stringify(parsed), box.n].join("|");
+      if (result !== ${JSON.stringify(expected)}) throw new Error(result);
+    `;
+    const arrow = `
+      const revive = (key: string, value: unknown) => {
+        seen.push(key + ":" + typeof value);
+        return typeof value === "number" ? value * 10 : value;
+      };
+    `;
+    const arrowText = '{"a":1,"b":[2,{"c":3}],"d":"x"}';
+    const arrowRead =
+      'a:number,0:number,c:number,1:object,b:object,d:string,:object|{"a":10,"b":[20,{"c":30}],"d":"x"}|1';
+
+    it("agrees with Node on an arrow", async () => {
+      expect((await checkModel(getSource(arrowText, arrow, arrowRead))).failure).toBeUndefined();
+    });
+
+    it("agrees with Node on a declared function that reads this", async () => {
+      const declared = `
+        function revive(this: Record<string, unknown>, key: string, value: unknown) {
+          seen.push(key + "=" + (typeof value === "object" ? "object" : String(value)));
+          if (key === "a") delete this.b;
+          return key === "" ? this : value;
+        }
+      `;
+      const read = 'a=1,b=undefined,=object|{"":{"a":1}}|1';
+      expect(
+        (await checkModel(getSource('{"a":1,"b":2}', declared, read))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects wrong expectation 1", async () => {
+      const wrong = arrowRead.replace("1:object,b:object", "b:object,1:object");
+      expect((await checkModel(getSource(arrowText, arrow, wrong))).failure?.message).toContain(
+        "1:object,b:object",
+      );
+    });
+
+    const thrown = `
+      const box = { n: 1 };
+      const texts: string[] = ["[1]"];
+      let caught = "none";
+      try {
+        JSON.parse(texts[0], (key, value) => {
+          if (key === "0") throw new TypeError("x");
+          return value;
+        });
+      } catch (error) {
+        caught = error instanceof TypeError ? "type" : "other";
+      }
+      if (caught !== "type") throw new Error(caught);
+      box.n = 2;
+    `;
+
+    it("throws what the reviver throws to the catch", async () => {
+      expect((await checkModel(thrown)).failure).toBeUndefined();
+    });
+
+    it("rejects wrong expectation 2", async () => {
+      expect(
+        (await checkModel(thrown.replace('caught !== "type"', 'caught !== "other"'))).failure
+          ?.message,
+      ).toContain("type");
+    });
+
+    it("stops at an object that the reviver changes before it visits it", async () => {
+      const result = await checkModel(`
+        const box = { n: 1 };
+        const texts: string[] = ['{"a":1,"b":2}'];
+        JSON.parse(texts[0], function (this: Record<string, unknown>, key, value) {
+          if (key === "a") this.b = { c: 3 };
+          return value;
+        });
+      `);
+      expect(result.failure?.message).toContain(
+        "tla-ts can't revive an object that the reviver changed",
+      );
+    });
+
+    it("rejects a reviver that it can't tell", () => {
+      expect(() =>
+        compile(`
+          const box = { n: 1 };
+          const texts: string[] = ["1"];
+          const revivers = [(key: string, value: unknown) => value];
+          JSON.parse(texts[0], revivers[0]);
+        `),
+      ).toThrow("tla-ts can't tell which function revives this");
+    });
+  });
+
   it("makes the objects that JSON.parse makes of a literal's text", async () => {
     const source = `
       const holder = { seen: 0 };
@@ -10513,6 +11921,14 @@ describe("errors", () => {
           JSON.stringify(cycle, (key: string, found: unknown) => found);
         `,
         "tla-ts can't throw the TypeError of JSON.stringify of a cycle",
+      ],
+      [
+        "an array outside the heap that a replacer gives inside itself",
+        `
+          const circular = [{}];
+          JSON.stringify(circular, (key: string, found: unknown) => circular);
+        `,
+        "tla-ts can't tell a cycle of arrays outside the heap",
       ],
     ])("stops at %s", async (_, source, message) => {
       expect((await checkModel(source)).failure?.message).toContain(message);
@@ -11531,6 +12947,46 @@ describe("errors", () => {
     );
   });
 
+  it("tests the elements that Boolean takes as a callback as a condition does", async () => {
+    const getAnalyzed = (expected: string) => `
+      interface Unit {
+        kinds: number[];
+        alternatives: Unit[];
+      }
+      interface Analysis {
+        first: Set<number>;
+        isNullable: boolean;
+      }
+      const leaf = (kinds: number[]): Unit => ({ kinds, alternatives: [] });
+      const analyze = (unit: Unit): Analysis => {
+        const analysis: Analysis = { first: new Set<number>(), isNullable: unit.kinds.length === 0 };
+        const add = (inner: Unit) => {
+          const innerAnalysis = analyze(inner);
+          for (const kind of innerAnalysis.first) analysis.first.add(kind);
+          return innerAnalysis.isNullable;
+        };
+        for (const kind of unit.kinds) analysis.first.add(kind);
+        if (unit.alternatives.length > 0) {
+          analysis.isNullable = unit.alternatives.map(add).some(Boolean);
+        }
+        return analysis;
+      };
+      const result = analyze({ kinds: [], alternatives: [leaf([1]), leaf([]), leaf([2])] });
+      const text = \`\${[...result.first].join(",")};\${result.isNullable}\`;
+      if (text !== "${expected}") throw new Error(text);
+    `;
+    expect((await checkModel(getAnalyzed("1,2;true"))).failure).toBeUndefined();
+    expect((await checkModel(getAnalyzed("1,2;false"))).failure?.message).toContain("1,2;true");
+    const getCounted = (expected: string) => `
+      const counts = [0, 2];
+      const names = ["", "a", "b"];
+      const text = \`\${counts.some(Boolean)};\${counts.every(Boolean)};\${names.filter(Boolean).length}\`;
+      if (text !== "${expected}") throw new Error(text);
+    `;
+    expect((await checkModel(getCounted("true;false;2"))).failure).toBeUndefined();
+    await expect(checkModel(getCounted("true;false;3"))).rejects.toThrow("true;false;2");
+  });
+
   const getUncallableSource = (expected: string) => `
       const holder = { seen: 0 };
       const GeneratorFunctionPrototype = Object.getPrototypeOf(function* () {});
@@ -11991,6 +13447,70 @@ describe("errors", () => {
       expect(
         (await checkModel(getSource("false,false,false,false,true"))).failure?.message,
       ).toContain("set");
+    });
+  });
+
+  describe("gives whether Reflect.deleteProperty and Reflect.preventExtensions made the change", () => {
+    const getSource = (expected: string) => `
+      const object: { [key: string]: unknown } = { kept: 1, frozen: 2 };
+      Object.defineProperty(object, "fixed", { value: 3 });
+      const tracking = new Uint8Array(new ArrayBuffer(4, { maxByteLength: 8 }));
+      const results = [
+        Reflect.deleteProperty(object, "kept"),
+        Reflect.deleteProperty(object, "fixed"),
+        Reflect.deleteProperty(object, "missing"),
+        Reflect.preventExtensions(object),
+        Reflect.preventExtensions(object),
+        Reflect.deleteProperty(Object.freeze(object), "frozen"),
+        Reflect.preventExtensions(tracking),
+        Reflect.deleteProperty(tracking, "0"),
+        "kept" in object,
+        Object.isExtensible(object),
+        Object.isExtensible(tracking),
+      ];
+      if (results.join() !== "${expected}") throw new Error("changed");
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (
+          await checkModel(
+            getSource("true,false,true,true,true,false,false,false,false,false,true"),
+          )
+        ).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects the expectation true,false,true,true,true,false,true,false,false,false,true", async () => {
+      expect(
+        (await checkModel(getSource("true,false,true,true,true,false,true,false,false,false,true")))
+          .failure?.message,
+      ).toContain("changed");
+    });
+  });
+
+  describe("reads a key through Reflect.get", () => {
+    const getSource = (expected: string) => `
+      const symbol = Symbol("symbol");
+      const base: { [key: string | symbol]: unknown } = { inherited: "i" };
+      const object: { [key: string | symbol]: unknown } = Object.create(base);
+      object[symbol] = 42;
+      object.own = "o";
+      const results = [
+        Reflect.get(object, symbol),
+        Reflect.get(object, "own"),
+        Reflect.get(object, "inherited"),
+        Reflect.get(object, "missing"),
+      ];
+      if (results.join() !== "${expected}") throw new Error("read");
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("42,o,i,"))).failure).toBeUndefined();
+    });
+
+    it("rejects the expectation 42,o,,", async () => {
+      expect((await checkModel(getSource("42,o,,"))).failure?.message).toContain("read");
     });
   });
 
@@ -13847,19 +15367,6 @@ describe("errors", () => {
           'const shared = [1];\nconst holder = new Map([["a", shared], ["b", shared]]);\nconst members = new Set(holder.values());\nif (members.size !== 1) throw new Error("size");',
       },
       {
-        name: "an element that indexOf looks for",
-        source: 'const list = [[1], [2]];\nif (list.indexOf([1]) !== -1) throw new Error("index");',
-      },
-      {
-        name: "an element that lastIndexOf looks for",
-        source:
-          'const list = [[1], [2]];\nif (list.lastIndexOf([1]) !== -1) throw new Error("index");',
-      },
-      {
-        name: "an element that includes looks for",
-        source: 'const list = [[1], [2]];\nif (list.includes([1])) throw new Error("includes");',
-      },
-      {
         name: "a case of a switch",
         source:
           'const first = [1];\nconst second = [1];\nswitch (first) {\n  case second:\n    throw new Error("case");\n}',
@@ -13871,6 +15378,35 @@ describe("errors", () => {
         );
       }),
     );
+  });
+
+  // An array that a literal makes is no element of another, and an array that equals no element is
+  // none of them, so a search finds neither, as Node does.
+  it("searches an array for an array that no element can be", async () => {
+    const getSource = (expected: string) => `
+      const sample: unknown[] = [42, 0, 1];
+      const inner = [7];
+      const nested = [inner, [8]];
+      const found = [
+        sample.includes([42]),
+        [[]].includes([]),
+        sample.indexOf(sample),
+        nested.indexOf([9]),
+        nested.lastIndexOf([7]),
+        nested.includes([7]),
+      ].join();
+      if (found !== "${expected}") throw new Error(found);
+    `;
+    const expected = "false,false,-1,-1,-1,false";
+    expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    await expect(checkModel(getSource("false,true,-1,-1,-1,false"))).rejects.toThrow(expected);
+    await expect(
+      checkModel(`
+        const inner = [7];
+        const nested = [inner, [8]];
+        if (nested.indexOf(inner) !== 0) throw new Error("index");
+      `),
+    ).rejects.toThrow("tla-ts can't compare objects by identity");
   });
 
   // Entries and keys come from unique keys, so a set holds each of them, as Node does.
@@ -14475,12 +16011,15 @@ describe("errors", () => {
       }
     `);
     expect(result.failure).toBeUndefined();
-    expect(() =>
-      checkModel(`
-        const box = { i: 0, slots: {} as Record<number, number> };
-        box.slots[box.i] = box.i++;
-      `),
-    ).toThrow("Unsupported expression: box.i++");
+    // An assignment evaluates its target's key before the increment in its value.
+    const getBoxed = (expected: string) => `
+      const box = { i: 0, slots: {} as Record<number, number> };
+      box.slots[box.i] = box.i++;
+      const boxed = [box.slots[0], box.slots[1], box.i].join(",");
+      if (boxed !== "${expected}") throw new Error(boxed);
+    `;
+    expect((await checkModel(getBoxed("0,,1"))).failure).toBeUndefined();
+    expect((await checkModel(getBoxed("1,,1"))).failure?.message).toContain("0,,1");
   });
 
   it("assigns a parameter as a local binding", async () => {
@@ -15478,6 +17017,31 @@ describe("errors", () => {
     ).toThrow("Unsupported array method: splice");
   });
 
+  it("splices an array with holes, which move with its elements", async () => {
+    const getSource = (expected: string) => `
+      const a = [0, 1, 2, 3, 4, 5, , 7];
+      a.splice(2, 3);
+      const b = [0, , 2, 3];
+      b.splice(2, 1, 8, 9);
+      const c = [, 1, 2, , 4];
+      c.splice(1, 2);
+      const d = [0, 1, , 3];
+      d.splice(0, 0, 7);
+      let seen = "";
+      seen += a.length + ":" + a[2] + (3 in a) + a[4] + ";";
+      seen += b.length + ":" + (1 in b) + b[2] + b[3] + b[4] + ";";
+      seen += c.length + ":" + (0 in c) + (1 in c) + c[2] + ";";
+      seen += d.length + ":" + d[0] + d[2] + (3 in d) + d[4];
+      if (seen !== "${expected}") throw new Error(seen);
+    `;
+    const expected = "5:5false7;5:false893;3:falsefalse4;5:71false3";
+    expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    expect(
+      (await checkModel(getSource("5:5true7;5:false893;3:falsefalse4;5:71false3"))).failure
+        ?.message,
+    ).toContain(expected);
+  });
+
   it("keeps a set's identity through an array, a pop, and its own name", async () => {
     const result = await checkModel(`
       const scopes: Set<string>[] = [];
@@ -16402,6 +17966,63 @@ describe("errors", () => {
     });
   });
 
+  describe("throws the ReferenceError of a typeof of a let or a const before its declaration", () => {
+    const getSource = (expected: string) => `
+      const seen: string[] = [];
+      const readCounter = () => {
+        try {
+          const kind = typeof counter;
+          seen.push(kind);
+        } catch (error) {
+          seen.push(error instanceof ReferenceError ? "reference" : "other");
+        }
+      };
+      const readLimit = () => {
+        try {
+          const kind = typeof limit;
+          seen.push(kind);
+        } catch (error) {
+          seen.push(error instanceof ReferenceError ? "reference" : "other");
+        }
+      };
+      readCounter();
+      readLimit();
+      let counter = 1;
+      const limit = "a";
+      readCounter();
+      readLimit();
+      if (seen.join() !== "${expected}") throw new Error(seen.join());
+    `;
+
+    it("throws it", async () => {
+      const result = await checkModel(getSource("reference,reference,number,string"));
+      expect(result.failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const result = await checkModel(getSource("number,string,number,string"));
+      expect(result.failure?.message).toContain("reference,reference,number,string");
+    });
+  });
+
+  it("stops at a typeof of a let inside try before its declaration, as at a read of it", () => {
+    expect(() =>
+      compile(`
+        const seen: string[] = [];
+        const note = (run: () => string) => {
+          try {
+            seen.push(run());
+          } catch (error) {
+            seen.push(error instanceof ReferenceError ? "reference" : "other");
+          }
+        };
+        note(() => typeof counter);
+        let counter = 1;
+        if (seen.join() !== "reference") throw new Error(seen.join());
+      `),
+    ).toThrow("Inside try, use counter after its declaration");
+  });
+
   describe("constructs a function expression that new calls where the script writes it", () => {
     const getSource = (expected: string) => `
       class Box {}
@@ -17323,6 +18944,34 @@ describe("errors", () => {
     });
   });
 
+  it("settles the promise of Promise.try with what its callback gives or throws", async () => {
+    const getSource = (expected: string) => `
+      declare function setTimeout(callback: () => void): void;
+      let log = "";
+      const thrown = Promise.try(() => {
+        log += "run;";
+        throw new RangeError("no");
+      });
+      log += "after;";
+      const given = Promise.try(function () {
+        return 7;
+      });
+      thrown.catch((error) => {
+        log += (error instanceof RangeError ? "range" : "other") + ";";
+      });
+      given.then((value) => {
+        log += value + ";";
+      });
+      setTimeout(() => {
+        if (log !== "${expected}") throw new Error(log);
+      });
+    `;
+    expect((await checkModel(getSource("run;after;range;7;"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("run;after;7;range;"))).failure?.message).toContain(
+      "A timer threw an exception",
+    );
+  });
+
   describe("delegate an async generator's yield* to an async generator", () => {
     const getSource = (expected: string) => `
       declare function setTimeout(callback: () => void): void;
@@ -17895,6 +19544,67 @@ describe("errors", () => {
       `);
       expect(result.failure).toBeUndefined();
     }
+  });
+
+  describe("steps an iterator that a class extending Iterator makes through its next and return", () => {
+    const getSource = (program: string) => `
+      const log: string[] = [];
+      function same(actual: unknown, expected: unknown, label: string) {
+        if (!Object.is(actual, expected)) throw new Error(label);
+      }
+      class Counter extends Iterator<number> {
+        count = 0;
+        isThrowing = false;
+        next(): IteratorResult<number, undefined> {
+          log.push("next");
+          this.count += 1;
+          return this.count > 3 ? { done: true, value: undefined } : { done: false, value: this.count };
+        }
+        return(): IteratorResult<number, undefined> {
+          log.push("return");
+          if (this.isThrowing) throw new RangeError();
+          return { done: true, value: undefined };
+        }
+      }
+      ${program}
+    `;
+    const gathered = `
+      const all = new Counter().toArray();
+      same(all.join(), "1,2,3", "toArray");
+      same(log.join(), "next,next,next,next", "log");
+    `;
+    const closed = `
+      const failing = new Counter();
+      failing.isThrowing = true;
+      const mapped = failing.map(() => {
+        throw new TypeError();
+      });
+      let caught: unknown;
+      try {
+        mapped.next();
+      } catch (error) {
+        caught = error;
+      }
+      same(caught instanceof TypeError, true, "thrown");
+      same(log.join(), "next,return", "log");
+    `;
+
+    it("gathers what next gives", async () => {
+      expect((await checkModel(getSource(gathered))).failure).toBeUndefined();
+    });
+
+    it("closes through return where map's callback throws", async () => {
+      expect((await checkModel(getSource(closed))).failure).toBeUndefined();
+    });
+
+    it.each([
+      ["toArray", gathered, '"1,2,3", "toArray"', '"1,2", "toArray"'],
+      ["thrown", closed, 'true, "thrown"', 'false, "thrown"'],
+    ])("rejects a wrong %s", async (label, program, expected, wrong) => {
+      expect(
+        (await checkModel(getSource(program.replace(expected, wrong)))).failure?.message,
+      ).toContain(`"${label}"`);
+    });
   });
 
   it("flattens the arrays that flatMap's mapper returns", async () => {
@@ -19747,6 +21457,56 @@ describe("errors", () => {
         )
       ).failure?.message,
     ).toContain("before+base+field+after field+twice+ReferenceError,field,plain");
+  });
+
+  it("constructs a class expression that a new writes in place", async () => {
+    const getSource = (expected: string) => `
+      class Base {
+        kind() {
+          return "base";
+        }
+      }
+      let early = "";
+      const made = new (class extends Base {
+        size: number;
+        constructor(size: number) {
+          const read = () => this;
+          try {
+            read();
+          } catch (error) {
+            early = error instanceof ReferenceError ? "ReferenceError" : "other";
+          }
+          super();
+          this.size = size;
+          early += String(read() === this);
+        }
+        describe() {
+          return this.kind() + this.size;
+        }
+      })(3);
+      const plain = new (class {
+        value = 7;
+      })();
+      const result = [made.describe(), made instanceof Base, early, plain.value].join("|");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    const expected = "base3|true|ReferenceErrortrue|7";
+    expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    expect(
+      (await checkModel(getSource("base3|true|ReferenceErrorfalse|7"))).failure?.message,
+    ).toContain(expected);
+    expect(() =>
+      compile(`
+        const log: string[] = [];
+        for (let i = 0; i < 2; i++) {
+          new (class {
+            constructor() {
+              log.push("made");
+            }
+          })();
+        }
+      `),
+    ).toThrow("Unsupported expression: class");
   });
 
   it("throws the ReferenceError of a derived constructor's this before super(...)", async () => {
@@ -21874,6 +23634,147 @@ describe("errors", () => {
     expect((await checkModel(getSource("!=="))).failure?.message).toContain("identity");
   });
 
+  describe("destructures an object through the iterator that a script gives it after making it", () => {
+    const getSource = (expected: string) => `
+      var iter = {} as unknown as { [key: string | symbol]: unknown } & Iterable<unknown>;
+      let count = 0;
+      let text = "";
+      iter[Symbol.iterator] = function () {
+        return { next: function () { count++; return { value: count * 10, done: count > 1 }; } };
+      };
+      var take = function ([x, y]: Iterable<unknown>) { text = [x, y, count].join(); };
+      take(iter);
+      if (text !== "${expected}") throw new Error(text);
+    `;
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("10,,2"))).failure).toBeUndefined();
+    });
+    it("rejects the expectation 10,20,2", async () => {
+      expect((await checkModel(getSource("10,20,2"))).failure?.message).toContain("10,,2");
+    });
+  });
+
+  it("iterates with for-of an object that a script types as iterable too, closing it where the loop breaks", async () => {
+    const getSource = (expected: string) => `
+      let closed = 0;
+      var iter = {} as unknown as { [key: string | symbol]: unknown } & Iterable<unknown>;
+      iter[Symbol.iterator] = function () {
+        return {
+          next: function () { return { value: 1, done: false }; },
+          return: function () { closed++; return { value: undefined, done: true }; },
+        };
+      };
+      let count = 0;
+      for (const value of iter) { count += value as number; break; }
+      if ([count, closed].join() !== "${expected}") throw new Error([count, closed].join());
+    `;
+    expect((await checkModel(getSource("1,1"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("1,0"))).failure?.message).toContain("1,1");
+  });
+
+  it("assigns through the iterator that a script gives an object after making it, closing it each time", async () => {
+    const getSource = (expected: string) => `
+      let closed = 0;
+      var iter = {} as unknown as { [key: string | symbol]: unknown } & Iterable<unknown>;
+      iter[Symbol.iterator] = function () {
+        let count = 0;
+        return {
+          next: function () { count++; return { value: count, done: false }; },
+          return: function () { closed++; return { value: undefined, done: true }; },
+        };
+      };
+      var x: unknown;
+      for (let index = 0; index < 2; index++) { [, x] = iter; }
+      if ([x, closed].join() !== "${expected}") throw new Error([x, closed].join());
+    `;
+    expect((await checkModel(getSource("2,2"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("2,1"))).failure?.message).toContain("2,2");
+  });
+
+  describe("spreads an object through the iterator that a script gives it after making it", () => {
+    const getSource = (statement: string, expected: string) => `
+      let log = "";
+      var iter = {} as unknown as { [key: string | symbol]: unknown } & Iterable<unknown>;
+      iter[Symbol.iterator] = function () {
+        log += "i";
+        let count = 0;
+        return { next: function () { count++; log += "n"; return { value: count, done: count > 2 }; } };
+      };
+      const mark = function () { log += "x"; return 0; };
+      ${statement};
+      if ([a.join(), log].join(";") !== "${expected}") throw new Error([a.join(), log].join(";"));
+    `;
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("const a = [mark(), ...iter, ...iter]", "0,1,2,1,2;xinnninnn")))
+          .failure,
+      ).toBeUndefined();
+    });
+    it("rejects the expectation that the spread reads the iterator before what comes before it", async () => {
+      expect(
+        (await checkModel(getSource("const a = [mark(), ...iter]", "0,1,2;innnx"))).failure
+          ?.message,
+      ).toContain("0,1,2;xinnn");
+    });
+    it("makes an array with Array.from", async () => {
+      expect(
+        (await checkModel(getSource("const a = Array.from(iter)", "1,2;innn"))).failure,
+      ).toBeUndefined();
+      expect(
+        (await checkModel(getSource("const a = Array.from(iter)", "1,2;inn"))).failure?.message,
+      ).toContain("1,2;innn");
+    });
+  });
+
+  it("throws a TypeError where the iterator that a spread runs gives what isn't an object", async () => {
+    const getSource = (expected: string) => `
+      var iter = {} as unknown as { [key: string | symbol]: unknown } & Iterable<unknown>;
+      // @ts-ignore: next gives what isn't an iterator's result.
+      iter[Symbol.iterator] = function () {
+        return { next: function () { return 1; } };
+      };
+      let caught = "";
+      try { const a = [...iter]; caught = String(a.length); } catch (error) { caught = error instanceof TypeError ? "type" : "other"; }
+      if (caught !== "${expected}") throw new Error(caught);
+    `;
+    expect((await checkModel(getSource("type"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("other"))).failure?.message).toContain("type");
+  });
+
+  it("throws what the iterator that a script gives an object throws, though nothing reads the pattern", async () => {
+    const getSource = (expected: string) => `
+      var iter = {} as unknown as { [key: string | symbol]: unknown } & Iterable<unknown>;
+      iter[Symbol.iterator] = function () {
+        throw new RangeError("get");
+      };
+      var take = function ([x]: Iterable<unknown>) {};
+      let caught = "";
+      try { take(iter); } catch (error) { caught = error instanceof RangeError ? "range" : "other"; }
+      if (caught !== "${expected}") throw new Error(caught);
+    `;
+    expect((await checkModel(getSource("range"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("other"))).failure?.message).toContain("range");
+  });
+
+  it("stops where a pattern whose type isn't an array's takes an object, though nothing reads it", async () => {
+    const getSource = (statement: string) => `
+      var made = {} as unknown as { [key: string | symbol]: unknown } & Iterable<unknown>;
+      made[Symbol.iterator] = function () {
+        throw new RangeError("get");
+      };
+      var iter: Iterable<unknown> = made;
+      var x: unknown;
+      var take = function ([x]: Iterable<unknown>) { return 1; };
+      try { ${statement}; } catch {}
+    `;
+    expect((await checkModel(getSource("[x] = iter"))).failure?.message).toContain(
+      "tla-ts can't destructure an object through its iterator",
+    );
+    expect((await checkModel(getSource("const r = take(iter)"))).failure?.message).toContain(
+      "tla-ts can't destructure an object through its iterator",
+    );
+  });
+
   it("destructures an object through the iterator that its Symbol.iterator method makes", async () => {
     const getSource = (closedAfterLoop: number) => `
       let closed = 0;
@@ -23784,9 +25685,102 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
     expect(() =>
       compile(
-        `const object = {};\nconst list = Object.freeze([1, 2]);\nif (list[0] !== 1) throw new Error("missed");`,
+        `const object = {};\nconst size = Object.freeze([1, 2]).length;\nif (size !== 2) throw new Error("missed");`,
       ),
     ).toThrow("Unsupported call: Object.freeze");
+  });
+
+  describe("groups an array's elements with Object.groupBy", () => {
+    const getSource = (expected: string) => `
+      const parity = Object.groupBy([1, 2, 3], function (value) {
+        return value % 2 === 0 ? "even" : "odd";
+      });
+      const lengths = Object.groupBy(["hello", "test", "world"], (word) => word.length);
+      const result = [
+        Object.keys(parity).join("|"),
+        parity.even?.join("|"),
+        parity.odd?.join("|"),
+        Object.getPrototypeOf(parity) === null,
+        Object.keys(lengths).join("|"),
+        lengths[5]?.join("|"),
+      ];
+      if (result.join(",") !== "${expected}") throw new Error(result.join(","));
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("odd|even,2,1|3,true,4|5,hello|world"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects the expectation that the keys come in the order of their elements", async () => {
+      expect(
+        (await checkModel(getSource("odd|even,2,1|3,true,5|4,hello|world"))).failure?.message,
+      ).toContain("odd|even,2,1|3,true,4|5,hello|world");
+    });
+
+    it("stops where the callback changes a variable", () => {
+      expect(() =>
+        compile(`
+          let count = 0;
+          const object = {};
+          const grouped = Object.groupBy([1, 2], (value) => {
+            count++;
+            return value;
+          });
+        `),
+      ).toThrow("Unsupported call: Object.groupBy");
+    });
+  });
+
+  describe("holds the array literal that a variable takes from freeze, seal, or preventExtensions", () => {
+    const getSource = (expected: string) => `
+      const frozen = Object.freeze([2, 0, 1]);
+      const sealed = Object.seal([1]);
+      const fixed = Object.preventExtensions([1, 2]);
+      const thrown = (run: () => unknown) => {
+        try {
+          run();
+          return "none";
+        } catch (error) {
+          return error instanceof TypeError ? "TypeError" : "other";
+        }
+      };
+      const result = [
+        Object.isFrozen(frozen),
+        Object.isSealed(sealed),
+        Object.isFrozen(sealed),
+        Object.isExtensible(fixed),
+        frozen.toSorted().join(""),
+        frozen.with(0, 9).join(""),
+        frozen.length,
+        thrown(() => sealed.pop()),
+        frozen.join(""),
+      ];
+      if (result.join(",") !== "${expected}") throw new Error(result.join(","));
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("true,true,false,false,012,901,3,TypeError,201"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects the expectation that pop of a sealed array throws nothing", async () => {
+      expect(
+        (await checkModel(getSource("true,true,false,false,012,901,3,none,201"))).failure?.message,
+      ).toContain("true,true,false,false,012,901,3,TypeError,201");
+    });
+
+    it("stops where the script reads the array as a list", () => {
+      expect(() =>
+        compile(`
+          const frozen = Object.freeze([2, 0, 1]);
+          const first = (list: readonly number[]) => list[0];
+          if (first(frozen) !== 2) throw new Error("first");
+        `),
+      ).toThrow("Use an array that tla-ts holds as an object only through its properties");
+    });
   });
 
   it("compares the arrays that rest elements make by identity", async () => {
@@ -24694,6 +26688,36 @@ describe("errors", () => {
     expect(wrong.failure).toBeDefined();
   });
 
+  it("follows the DisposableStack that a callback calls in a helper that takes callbacks", async () => {
+    const source = (expected: string) => `
+      const seen: string[] = [];
+      const record = (run: () => void) => {
+        try {
+          run();
+        } catch (error) {
+          seen.push(error instanceof ReferenceError ? "ReferenceError" : "other");
+          return;
+        }
+        seen.push("none");
+      };
+      const stack = new DisposableStack();
+      record(() => {
+        stack.move();
+      });
+      const moved = new AsyncDisposableStack();
+      moved.disposeAsync();
+      record(() => {
+        moved.move();
+      });
+      seen.push(String(stack.disposed));
+      if (seen.join() !== "${expected}") throw new Error(seen.join());
+    `;
+    const result = await checkModel(source("none,ReferenceError,true"));
+    expect(result.failure).toBeUndefined();
+    const wrong = await checkModel(source("none,ReferenceError,false"));
+    expect(wrong.failure?.message).toContain("none,ReferenceError,true");
+  });
+
   describe("awaits what an await using declaration disposes, as Node does", () => {
     const source = (expected: string) => `
       declare function setTimeout(callback: () => void): void;
@@ -24935,6 +26959,87 @@ describe("errors", () => {
     `;
     expect((await checkModel(source("true:1"))).failure).toBeUndefined();
     expect((await checkModel(source("true:0"))).failure).toBeDefined();
+  });
+
+  it("runs the then of a thenable that a generator yields to Array.fromAsync", async () => {
+    const source = (expected: string) => `
+      declare function setTimeout(callback: () => void): void;
+      let log = "";
+      let closed = 0;
+      let reason: unknown = undefined;
+      const fulfilling = {
+        then(resolve: (value: unknown) => void) {
+          log += "t";
+          resolve(5);
+        },
+      };
+      const rejecting = {
+        then(resolve: (value: unknown) => void, reject: (reason: unknown) => void) {
+          reject("r");
+        },
+      };
+      function* fulfilled() {
+        yield fulfilling;
+      }
+      function* rejected() {
+        try {
+          yield rejecting;
+        } finally {
+          closed++;
+        }
+      }
+      const first = fulfilled();
+      Array.fromAsync(first).then((values) => {
+        log += \`[\${values.join(",")}]\`;
+      });
+      const second = rejected();
+      Array.fromAsync(second).catch((error: unknown) => {
+        reason = error;
+      });
+      Promise.resolve()
+        .then(() => { log += "0"; })
+        .then(() => { log += "1"; })
+        .then(() => { log += "2"; })
+        .then(() => { log += "3"; })
+        .then(() => { log += "4"; });
+      setTimeout(() => {
+        if (\`\${log} \${closed} \${String(reason)}\` !== "${expected}") throw new Error(\`\${log} \${closed} \${String(reason)}\`);
+      });
+    `;
+    expect((await checkModel(source("t01234[5] 1 r"))).failure).toBeUndefined();
+    expect((await checkModel(source("t01234[5] 0 r"))).failure).toBeDefined();
+  });
+
+  it("stops at Array.fromAsync of a generator that writes a local of the function around it", () => {
+    expect(() =>
+      compile(`
+        declare function setTimeout(callback: () => void): void;
+        let outcome = "pending";
+        const run = async () => {
+          let counter = 0;
+          function* createInput() {
+            try {
+              yield 1;
+            } finally {
+              counter++;
+            }
+          }
+          const input = createInput();
+          Array.fromAsync(input, () => {
+            throw "m";
+          }).catch(() => {});
+          await 0;
+          await 0;
+          await 0;
+          await 0;
+          outcome = \`\${counter}\`;
+        };
+        run();
+        setTimeout(() => {
+          if (outcome !== "1") throw new Error(outcome);
+        });
+      `),
+    ).toThrow("tla-ts can't follow a function that runs later and reads a local that changes");
   });
 
   it("keeps the locals of each async call apart, where AsyncDisposableStacks run their functions in turns", async () => {
@@ -25339,8 +27444,8 @@ describe("errors", () => {
 
   it("stops where a script reads a built-in getter that a well-known symbol keys", async () => {
     const result = await checkModel(`
-      const holder = {};
-      const species = Array[Symbol.species];
+      const typed = Int8Array as unknown as { [Symbol.species]: unknown };
+      const species = typed[Symbol.species];
     `);
     expect(result.failure?.message).toContain("tla-ts can't call getters");
   });
@@ -25475,6 +27580,121 @@ describe("errors", () => {
         "A timer threw an exception",
       );
     });
+  });
+  it("runs the executor of a new Promise that an expression holds before what follows it", async () => {
+    const source = (expected: string) => `
+      declare function setTimeout(callback: () => void): void;
+      let log = "";
+      const append = (text: string) => {
+        log += text;
+        return text;
+      };
+      const pair = [new Promise(() => append("a")), append("b")];
+      setTimeout(() => {
+        if (\`\${pair[1]} \${log}\` !== "${expected}") throw new Error(\`\${pair[1]} \${log}\`);
+      });
+    `;
+    expect((await checkModel(source("b ab"))).failure).toBeUndefined();
+    expect((await checkModel(source("b ba"))).failure).toBeDefined();
+  });
+
+  it("runs Promise.any of an array that a variable holds and nothing changes", async () => {
+    const source = (expected: string) => `
+      declare function setTimeout(callback: () => void): void;
+      let joined = "";
+      let resolution: unknown = undefined;
+      const rejections = [Promise.reject("a"), new Promise((_, reject) => reject("b"))];
+      Promise.any(rejections).then(
+        () => {},
+        (error: AggregateError) => {
+          joined = \`\${error.errors.length === rejections.length} \${error.errors.join("")}\`;
+        },
+      );
+      let fulfillables = [Promise.reject("c"), Promise.resolve("d")];
+      Promise.any(fulfillables).then((value) => {
+        resolution = value;
+      });
+      setTimeout(() => {
+        if (\`\${joined} \${String(resolution)}\` !== "${expected}") throw new Error(\`\${joined} \${String(resolution)}\`);
+      });
+    `;
+    expect((await checkModel(source("true ab d"))).failure).toBeUndefined();
+    expect((await checkModel(source("true ba d"))).failure).toBeDefined();
+  });
+
+  it("stops at Promise.all of an array that a variable holds and the script changes", () => {
+    expect(() =>
+      compile(`
+        const promises = [Promise.resolve(1)];
+        promises.push(Promise.resolve(2));
+        Promise.all(promises);
+      `),
+    ).toThrow("Pass Promise.all an array written in place");
+  });
+
+  it("calls the then that a script assigns to Array.prototype where a combinator resolves", async () => {
+    const source = (expected: string) => `
+      declare function setTimeout(callback: () => void): void;
+      let log = "";
+      const thrown = { reason: 1 };
+      const arrayPrototype = Array.prototype as unknown as { then?: unknown };
+      arrayPrototype.then = function (this: unknown[]) {
+        log += \`t\${this.length}\`;
+        throw thrown;
+      };
+      const settled = Promise.allSettled([]);
+      delete arrayPrototype.then;
+      settled.then(undefined, (reason) => {
+        log += reason === thrown ? "r" : "x";
+      });
+      log += "s";
+      setTimeout(() => {
+        if (log !== "${expected}") throw new Error(log);
+      });
+    `;
+    expect((await checkModel(source("st0r"))).failure).toBeUndefined();
+    expect((await checkModel(source("t0sr"))).failure).toBeDefined();
+  });
+
+  it("calls the then that a script assigns to an object that a reaction returns", async () => {
+    const source = (expected: string) => `
+      declare function setTimeout(callback: () => void): void;
+      let log = "";
+      const thenable = { then: undefined as unknown };
+      thenable.then = function (resolve: (value: number) => void) {
+        log += "o";
+        resolve(2);
+      };
+      Promise.resolve()
+        .then(() => thenable)
+        .then((value) => {
+          log += (value as unknown) === 2 ? "2" : "x";
+        });
+      log += "s";
+      setTimeout(() => {
+        if (log !== "${expected}") throw new Error(log);
+      });
+    `;
+    expect((await checkModel(source("so2"))).failure).toBeUndefined();
+    expect((await checkModel(source("s2o"))).failure).toBeDefined();
+  });
+
+  it("seals and freezes a promise, which has no own properties", async () => {
+    const source = (expected: string) => `
+      const promise = new Promise(() => {});
+      const frozen = Promise.resolve(1);
+      const before = \`\${Object.isExtensible(promise)} \${Object.keys(promise).length} \${Object.isSealed(frozen)}\`;
+      const sealed = Object.seal(promise) === promise;
+      Object.freeze(frozen);
+      const after = \`\${Object.isExtensible(promise)} \${Object.isSealed(promise)} \${Object.isFrozen(promise)} \${Object.isFrozen(frozen)}\`;
+      if (\`\${before} \${sealed} \${after}\` !== "${expected}") throw new Error(\`\${before} \${sealed} \${after}\`);
+    `;
+    expect(
+      (await checkModel(source("true 0 false true false true true true"))).failure,
+    ).toBeUndefined();
+    expect(
+      (await checkModel(source("true 0 false true false true false true"))).failure,
+    ).toBeDefined();
   });
 
   it("fulfills Promise.any with the first value, or rejects it with an AggregateError", async () => {
@@ -25991,6 +28211,310 @@ describe("errors", () => {
       });
     `);
     expect(result.failure).toBeUndefined();
+  });
+
+  describe("throws a TypeError where a generator's body resumes the generator", () => {
+    const getSource = (expected: string) => `
+      let log = "";
+      let iter: Generator<number>;
+      function* reentered(): Generator<number> {
+        log += "a";
+        try {
+          iter.next();
+        } catch (error) {
+          log += error instanceof TypeError ? "T" : "x";
+        }
+        yield 1;
+        iter.throw(2);
+      }
+      iter = reentered();
+      const first = iter.next();
+      log += first.value;
+      try {
+        iter.next();
+      } catch (error) {
+        log += error instanceof TypeError ? "U" : "y";
+      }
+      const after = iter.next();
+      log += after.done;
+      if (log !== "${expected}") throw new Error(log);
+    `;
+    it("matches Node", async () => {
+      expect((await checkModel(getSource("aT1Utrue"))).failure).toBeUndefined();
+    });
+    it("fails a wrong log", async () => {
+      expect((await checkModel(getSource("aT1Ufalse"))).failure?.message).toContain("aT1Utrue");
+    });
+  });
+
+  // A yield inside a statement runs first, and gives the value of the next that resumes the body,
+  // where the first next's value goes nowhere.
+  describe("gives the value that a next sends where a yield inside a statement resumes", () => {
+    const getSource = (expected: string) => `
+      let log = "";
+      function* g(): Generator<number, string, string> {
+        const first = yield 1;
+        log += "<" + first + ">";
+        (yield 2) ? yield 3 : yield 4;
+        return (yield 5) + "!";
+      }
+      const iter = g();
+      const results = [
+        iter.next("a").value,
+        iter.next("b").value,
+        iter.next("").value,
+        iter.next("c").value,
+        iter.next("d").value,
+      ];
+      log += results.join();
+      if (log !== "${expected}") throw new Error(log);
+    `;
+    it("matches Node", async () => {
+      expect((await checkModel(getSource("<b>1,2,4,5,d!"))).failure).toBeUndefined();
+    });
+    it("fails a wrong log", async () => {
+      expect((await checkModel(getSource("<a>1,2,4,5,d!"))).failure?.message).toContain("<b>");
+    });
+  });
+
+  describe("gives the value that a next sends where a pattern's default yields", () => {
+    const getSource = (expected: string) => `
+      let log = "";
+      function* g(): Generator<number, void, string> {
+        let taken = "x";
+        const holder: { x: string[] } = { x: [] };
+        ({ x: [taken = yield 1] } = holder);
+        log += taken;
+      }
+      const iter = g();
+      iter.next("a");
+      iter.next("t");
+      if (log !== "${expected}") throw new Error(log);
+    `;
+    it("matches Node", async () => {
+      expect((await checkModel(getSource("t"))).failure).toBeUndefined();
+    });
+    it("fails a wrong log", async () => {
+      expect((await checkModel(getSource("x"))).failure?.message).toContain("t");
+    });
+  });
+
+  describe("passes the value that a next sends through a yield* to the iterator's next", () => {
+    const getSource = (expected: string) => `
+      let log = "";
+      const delegated = {
+        [Symbol.iterator]() {
+          return this;
+        },
+        next(...values: string[]) {
+          log += values.length + String(values[0]);
+          return { value: 1, done: false };
+        },
+      };
+      function* g(): Generator<number, void, string> {
+        yield* delegated;
+      }
+      const iter = g();
+      iter.next("a");
+      iter.next("b");
+      if (log !== "${expected}") throw new Error(log);
+    `;
+    it("matches Node", async () => {
+      expect((await checkModel(getSource("1undefined1b"))).failure).toBeUndefined();
+    });
+    it("fails a wrong log", async () => {
+      expect((await checkModel(getSource("0undefined1b"))).failure?.message).toContain(
+        "1undefined",
+      );
+    });
+  });
+
+  describe("gives each iteration of a generator's loop the value that its own next sends", () => {
+    const getSource = (expected: string) => `
+      let log = "";
+      function* g(): Generator<number, void, string> {
+        for (let i = 0; i < 3; i++) {
+          const sent = yield i;
+          log += sent;
+        }
+      }
+      const iter = g();
+      iter.next("a");
+      iter.next("b");
+      iter.next("c");
+      iter.next("d");
+      if (log !== "${expected}") throw new Error(log);
+    `;
+    it("matches Node", async () => {
+      expect((await checkModel(getSource("bcd"))).failure).toBeUndefined();
+    });
+    it("fails a wrong log", async () => {
+      expect((await checkModel(getSource("bbb"))).failure?.message).toContain("bcd");
+    });
+  });
+
+  // A compound assignment reads its name before the yield in its value suspends the body.
+  describe("runs a generator's for-of over an array written in place whose head or body yields", () => {
+    const getSource = (expected: string) => `
+      let log = "";
+      let x = "";
+      function* g(): Generator<number, void, string> {
+        for (const value of [1, 2, 3]) {
+          if (value === 2) continue;
+          log += yield value;
+        }
+        for ([x = yield 4] of [[]]) log += x;
+      }
+      const iter = g();
+      const first = iter.next().value;
+      const second = iter.next("a").value;
+      const third = iter.next("b").value;
+      iter.next("c");
+      log += first + "," + second + "," + third;
+      if (log !== "${expected}") throw new Error(log);
+    `;
+    it("matches Node", async () => {
+      expect((await checkModel(getSource("abc1,3,4"))).failure).toBeUndefined();
+    });
+    it("fails a wrong log", async () => {
+      expect((await checkModel(getSource("abc1,2,4"))).failure?.message).toContain("abc1,3");
+    });
+  });
+
+  describe("runs an assignment pattern whose default yields, alone or inside another assignment", () => {
+    const getSource = (expected: string) => `
+      let x = 0;
+      let y = 0;
+      let result: number[] = [1];
+      const vals: number[] = [];
+      const holder: { y?: number } = {};
+      function* g(): Generator<number, void, number> {
+        result = [x = yield 1] = vals;
+        ({ y = yield 2 } = holder);
+      }
+      const iter = g();
+      iter.next();
+      iter.next(3);
+      iter.next(4);
+      const log = x + "," + y + "," + result.length;
+      if (log !== "${expected}") throw new Error(log);
+    `;
+    it("matches Node", async () => {
+      expect((await checkModel(getSource("3,4,0"))).failure).toBeUndefined();
+    });
+    it("fails a wrong log", async () => {
+      expect((await checkModel(getSource("3,4,1"))).failure?.message).toContain("3,4,0");
+    });
+  });
+
+  describe("passes a return or a throw through a yield* to the iterator", () => {
+    const cases = [
+      {
+        name: "a throw that the iterator's throw completes",
+        getSource: (expected: string) => `
+        let log = 0;
+        const delegated = {
+          [Symbol.iterator]() {
+            return this;
+          },
+          next() {
+            return { value: 0, done: false };
+          },
+          throw(value: number) {
+            log = log * 10 + value;
+            return { value: 5, done: true };
+          },
+        };
+        function* g(): Generator<number, number> {
+          yield* delegated;
+          log = log * 10 + 9;
+          return 7;
+        }
+        const first = g();
+        first.next();
+        const settled = first.throw(2);
+        const text = log + " " + settled.value;
+        if (text !== "${expected}") throw new Error(text);
+      `,
+        expected: "29 7",
+        wrong: "9 7",
+      },
+      {
+        name: "a return that the iterator's return completes, through finally",
+        getSource: (expected: string) => `
+        let log = 0;
+        const delegated = {
+          [Symbol.iterator]() {
+            return this;
+          },
+          next() {
+            return { value: 0, done: false };
+          },
+          return(value: number) {
+            log = log * 10 + value;
+            return { value: 5, done: true };
+          },
+        };
+        function* g(): Generator<number, number> {
+          try {
+            yield* delegated;
+          } finally {
+            log = log * 10 + 9;
+          }
+          return 7;
+        }
+        const first = g();
+        first.next();
+        const closed = first.return(2);
+        const text = log + " " + closed.value;
+        if (text !== "${expected}") throw new Error(text);
+      `,
+        expected: "29 5",
+        wrong: "2 5",
+      },
+      {
+        name: "a throw to an iterator without throw, which closes it",
+        getSource: (expected: string) => `
+        let log = 0;
+        const delegated = {
+          [Symbol.iterator]() {
+            return this;
+          },
+          next() {
+            return { value: 0, done: false };
+          },
+          return() {
+            log = log * 10 + 1;
+            return { value: 5, done: true };
+          },
+        };
+        function* g(): Generator<number, number> {
+          try {
+            yield* delegated;
+          } catch (error) {
+            log = log * 10 + (error instanceof TypeError ? 2 : 3);
+          }
+          return 7;
+        }
+        const first = g();
+        first.next();
+        const settled = first.throw(4);
+        const text = log + " " + settled.value;
+        if (text !== "${expected}") throw new Error(text);
+      `,
+        expected: "12 7",
+        wrong: "13 7",
+      },
+    ];
+    for (const entry of cases) {
+      it(`matches Node on ${entry.name}`, async () => {
+        expect((await checkModel(entry.getSource(entry.expected))).failure).toBeUndefined();
+      });
+      it(`fails a wrong log on ${entry.name}`, async () => {
+        const result = await checkModel(entry.getSource(entry.wrong));
+        expect(result.failure?.message).toContain(entry.expected);
+      });
+    }
   });
 
   it("runs Array.fromAsync of the values() of an array written in place", async () => {
@@ -26559,6 +29083,151 @@ describe("errors", () => {
     });
   });
 
+  describe("throws the TypeError of a capability whose constructor is a built-in function", () => {
+    const getSource = (expected: string) => `
+      const thrown = (run: () => unknown) => {
+        try {
+          run();
+          return "none";
+        } catch (error) {
+          return error instanceof TypeError ? "type" : "other";
+        }
+      };
+      const results = [
+        thrown(() => Promise.reject.call(eval)),
+        thrown(() => Promise.withResolvers.call(parseInt)),
+        thrown(() => Promise.resolve.call(isNaN, 1)),
+      ];
+      if (results.join() !== "${expected}") throw new Error(results.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("type,type,type"))).failure).toBeUndefined();
+    });
+
+    it("rejects the expectation type,none,type", async () => {
+      expect((await checkModel(getSource("type,none,type"))).failure?.message).toContain(
+        "type,type,type",
+      );
+    });
+
+    it("stops at a built-in constructor", async () => {
+      const source = `
+        try {
+          Promise.reject.call(Array, 1);
+        } catch {}
+      `;
+      expect((await checkModel(source)).failure?.message).toContain(
+        "can't follow a promise that a built-in constructor makes",
+      );
+    });
+  });
+
+  describe("read a promise's properties from Promise.prototype", () => {
+    const getSource = (expected: string) => `
+      const made = new Promise<number>((resolve) => resolve(1));
+      const run = async () => 1;
+      const results = [
+        made.constructor === Promise,
+        run().constructor === Promise,
+        Promise.resolve(2).constructor === Promise,
+        made.toString(),
+      ];
+      if (results.join() !== "${expected}") throw new Error(results.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("true,true,true,[object Promise]"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects the expectation true,false,true,[object Promise]", async () => {
+      expect(
+        (await checkModel(getSource("true,false,true,[object Promise]"))).failure?.message,
+      ).toContain("true,true,true,[object Promise]");
+    });
+  });
+
+  describe("make a promise and its functions with Promise.withResolvers", () => {
+    const getSource = (expected: string) => `
+      const instance = Promise.withResolvers<number>();
+      const descriptor = Object.getOwnPropertyDescriptor(instance, "resolve");
+      const results = [
+        instance.promise instanceof Promise,
+        typeof instance.resolve,
+        instance.resolve.name === "",
+        instance.reject.length,
+        Object.keys(instance).join("|"),
+        descriptor?.writable,
+        Object.getPrototypeOf(instance) === Object.prototype,
+        instance.resolve === instance.reject,
+      ];
+      if (results.join() !== "${expected}") throw new Error(results.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("true,function,true,1,promise|resolve|reject,true,true,false")))
+          .failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects the expectation true,function,true,1,promise|reject|resolve,true,true,false", async () => {
+      expect(
+        (await checkModel(getSource("true,function,true,1,promise|reject|resolve,true,true,false")))
+          .failure?.message,
+      ).toContain("promise|resolve|reject");
+    });
+  });
+
+  describe("settle a promise through the functions that Promise.withResolvers gives", () => {
+    const getSource = (expected: string) => `
+      let log = "";
+      const first = Promise.withResolvers<string>();
+      const { promise, resolve, reject } = Promise.withResolvers<string>();
+      const last = Promise.withResolvers<string>();
+      first.promise.then(last.resolve);
+      promise.then(
+        (value) => {
+          log += "fulfilled:" + value + ";";
+        },
+        (reason) => {
+          log += "rejected:" + reason + ";";
+        },
+      );
+      last.promise.then((value) => {
+        log += "last:" + value + ";";
+        if (log !== "${expected}") throw new Error(log);
+      });
+      first.resolve("a");
+      first.reject("ignored");
+      reject("b");
+      resolve("c");
+      log += "sync;";
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("sync;rejected:b;last:a;"))).failure).toBeUndefined();
+    });
+
+    it("rejects the expectation sync;last:a;rejected:b;", async () => {
+      expect((await checkModel(getSource("sync;last:a;rejected:b;"))).failure).toBeDefined();
+    });
+
+    it("stops where code replaced a function of the object", async () => {
+      const source = `
+        const first = Promise.withResolvers<string>();
+        const second = Promise.withResolvers<string>();
+        first.resolve = second.resolve;
+        first.resolve("a");
+      `;
+      expect((await checkModel(source)).failure?.message).toContain(
+        "can't tell which function this is",
+      );
+    });
+  });
+
   describe("resolve with a thenable whose then is a function expression of one parameter", () => {
     const getSource = (expected: string) => `
       declare function setTimeout(callback: () => void): void;
@@ -26884,10 +29553,218 @@ ${call}
     expect(result.failure).toBeUndefined();
   });
 
-  it("rejects new AggregateError, whose first argument isn't a message", () => {
-    expect(() => compile(`const error = new AggregateError([1], "message");`)).toThrow(
-      "Unsupported constructor: new AggregateError",
-    );
+  describe("combine the elements of a script's capability through its functions", () => {
+    const getSource = (expected: string) => `
+      let log = "";
+      const describe = (reason: unknown) =>
+        reason instanceof TypeError
+          ? "TypeError"
+          : reason instanceof AggregateError
+            ? "Aggregate" + reason.errors.join(",")
+            : String(reason);
+      function Settled(executor: (resolve: (value: { status: string; value?: unknown; reason?: unknown }[]) => void, reject: (reason: unknown) => void) => void) {
+        executor(
+          function (values) {
+            log += "settled:" + values.map((each) => each.status + "=" + (each.status === "fulfilled" ? each.value : each.reason)).join(",") + ";";
+          },
+          function (reason) {
+            log += "reject:" + describe(reason) + ";";
+          },
+        );
+      }
+      Settled.resolve = function (value: unknown) {
+        return value;
+      };
+      function C(executor: (resolve: (value: unknown) => void, reject: (reason: unknown) => void) => void) {
+        executor(
+          function (value) {
+            log += "resolve:" + value + ";";
+          },
+          function (reason) {
+            log += "reject:" + describe(reason) + ";";
+          },
+        );
+      }
+      C.resolve = function (value: unknown) {
+        return value;
+      };
+      const fulfills = {
+        then(onFulfilled: (value: unknown) => void) {
+          onFulfilled(1);
+        },
+      };
+      const rejects = {
+        then(_: unknown, onRejected: (reason: unknown) => void) {
+          onRejected(2);
+          onRejected(3);
+        },
+      };
+      const throws = {
+        then() {
+          throw "thrown";
+        },
+      };
+      Promise.allSettled.call(Settled, [fulfills, rejects]);
+      Promise.any.call(C, [rejects, rejects]);
+      Promise.race.call(C, [rejects, fulfills]);
+      Promise.all.call(C, [throws]);
+      Promise.all.call(C, [null]);
+      log += "end;";
+      if (log !== "${expected}") throw new Error(log);
+    `;
+
+    it("gives Node's answer", async () => {
+      expect(
+        (
+          await checkModel(
+            getSource(
+              "settled:fulfilled=1,rejected=2;reject:Aggregate2,2;reject:2;reject:3;resolve:1;reject:thrown;reject:TypeError;end;",
+            ),
+          )
+        ).failure,
+      ).toBeUndefined();
+    });
+
+    it("doesn't settle another way", async () => {
+      expect(
+        (
+          await checkModel(
+            getSource(
+              "settled:fulfilled=1,rejected=2;reject:Aggregate2,2;reject:2;reject:3;resolve:1;reject:thrown;reject:TypeError;endX;",
+            ),
+          )
+        ).failure,
+      ).toBeDefined();
+    });
+  });
+
+  describe("call the functions that a combinator of a script's capability passes a then later", () => {
+    const getSource = (expected: string) => `
+      let log = "";
+      function C(executor: (resolve: (value: unknown[]) => void, reject: (reason: unknown) => void) => void) {
+        executor(
+          function (values) {
+            log += "resolve:" + values.join("|") + ";";
+            throw "fromResolve";
+          },
+          function (reason) {
+            log += "reject:" + reason + ";";
+          },
+        );
+      }
+      C.resolve = function (value: unknown) {
+        return value;
+      };
+      function Other(executor: (resolve: () => void, reject: () => void) => void) {
+        executor(function () {}, function () {});
+        return { made: true };
+      }
+      Other.resolve = function (value: unknown) {
+        return value;
+      };
+      let first;
+      let second;
+      const a = {
+        then(onFulfilled: unknown) {
+          first = onFulfilled;
+        },
+      };
+      const b = {
+        then(onFulfilled: unknown) {
+          second = onFulfilled;
+        },
+      };
+      const made = Promise.all.call(C, [a, b]);
+      log += (typeof made) + ";";
+      log += (first === second) + ";";
+      const x = first!("x");
+      log += x + ";";
+      const y = first!("y");
+      log += y + ";";
+      let caught = "";
+      try {
+        second!("z");
+      } catch (error) {
+        caught = "caught:" + error + ";";
+      }
+      log += caught;
+      const w = second!("w");
+      log += w + ";";
+      const other = Promise.race.call(Other, []) as unknown as { made: boolean };
+      log += other.made + ";";
+      if (log !== "${expected}") throw new Error(log);
+    `;
+
+    it("gives Node's answer", async () => {
+      expect(
+        (
+          await checkModel(
+            getSource(
+              "object;false;undefined;undefined;resolve:x|z;caught:fromResolve;undefined;true;",
+            ),
+          )
+        ).failure,
+      ).toBeUndefined();
+    });
+
+    it("doesn't give another", async () => {
+      expect(
+        (
+          await checkModel(
+            getSource(
+              "object;false;undefined;undefined;resolve:x|z;caught:fromResolve;undefined;trueX;",
+            ),
+          )
+        ).failure,
+      ).toBeDefined();
+    });
+  });
+
+  describe("call a capability's function that the constructor declares, which a race passes a then", () => {
+    const getSource = (expected: string) => `
+      let log = "";
+      let count = 0;
+      function Constructor(executor: (resolve: () => never, reject: (reason: unknown) => void) => void) {
+        function reject(reason: unknown) {
+          count += 1;
+          log += "reject:" + reason + ";";
+        }
+        executor(() => {
+          throw new Error();
+        }, reject);
+      }
+      Constructor.resolve = function (value: unknown) {
+        return value;
+      };
+      let rejecter;
+      const thenable = {
+        then(_: unknown, onRejected: unknown) {
+          rejecter = onRejected;
+        },
+      };
+      Promise.race.call(Constructor, [thenable]);
+      rejecter!(1);
+      rejecter!(2);
+      log += count + ";";
+      if (log !== "${expected}") throw new Error(log);
+    `;
+
+    it("gives Node's answer", async () => {
+      expect((await checkModel(getSource("reject:1;reject:2;2;"))).failure).toBeUndefined();
+    });
+
+    it("doesn't give another", async () => {
+      expect((await checkModel(getSource("reject:1;reject:2;2X;"))).failure).toBeDefined();
+    });
+  });
+
+  it("rejects new AggregateError of errors that an iterable other than an array gives", () => {
+    expect(() =>
+      compile(`
+        const errors: Iterable<number> = new Set([1]);
+        const error = new AggregateError(errors, "message");
+      `),
+    ).toThrow("Unsupported constructor: new AggregateError");
   });
 
   it("stops where a promise's callback reads a local that changes", () => {
@@ -27801,6 +30678,32 @@ ${call}
       if (count !== 10) throw new Error(String(count));
     `);
     expect(result.failure).toBeUndefined();
+  });
+
+  it("throws a TypeError where an arrow calls a held Set method with another receiver", async () => {
+    const getSource = (expected: string) => `
+      let log = "";
+      const attempt = (name: string, callback: () => unknown) => {
+        try {
+          callback();
+          log = log + name + "ok,";
+        } catch (error) {
+          log = log + name + (error instanceof TypeError ? "T," : "E,");
+        }
+      };
+      const union = Set.prototype.union;
+      const realSet = new Set<number>([1]);
+      attempt("a", () => union.call(undefined, realSet));
+      attempt("b", () => union.call(new Map(), realSet));
+      attempt("c", () => Set.prototype.isSubsetOf.call({}, realSet));
+      log = log + typeof union;
+      if (log !== "${expected}") throw new Error(log);
+    `;
+    const expected = "aT,bT,cT,function";
+    expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    expect((await checkModel(getSource("aok,bT,cT,function"))).failure?.message).toContain(
+      expected,
+    );
   });
 
   it("stops where a script replaced a collection's method that call runs", async () => {
@@ -30360,6 +33263,31 @@ describe("regular expressions", () => {
     expect(() => compile(source)).toThrow("tla-ts can't read a key that a built-in object lacks");
   });
 
+  it("runs an array method that call runs on an error whose keys a script writes", async () => {
+    const getSource = (expected: string) => `
+      type Keyed = { [key: string | symbol]: unknown };
+      const box = { n: 1 };
+      const tested = (value: unknown, position: unknown, object: object) => object instanceof Error;
+      const error = new Error("m");
+      (error as unknown as Keyed).length = 2;
+      (error as unknown as Keyed)[1] = 4;
+      const other = new SyntaxError();
+      (other as unknown as Keyed)[0] = true;
+      (other as unknown as Keyed).length = 1;
+      const result = [
+        Array.prototype.some.call(error, tested as (...args: unknown[]) => unknown),
+        Array.prototype.indexOf.call(error, 4),
+        Array.prototype.lastIndexOf.call(other, true),
+        error.message,
+        box.n,
+      ].join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    const expected = "true,1,0,m,1";
+    expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    expect((await checkModel(getSource("false,1,0,m,1"))).failure?.message).toContain(expected);
+  });
+
   it("stops at a key that a map lacks, which an element access writes", () => {
     const source = `
       const map = new Map<string, number>();
@@ -30500,6 +33428,400 @@ describe("regular expressions", () => {
       if (text.search("lo") !== 4) throw new Error("wrong");
     `);
     expect(wrong.failure?.message).toContain("wrong");
+  });
+
+  describe("runs Symbol.search as its steps, calling the exec that a script writes", () => {
+    const getSource = (expected: string) => `
+      let retVal: unknown = undefined;
+      const fakeRe = {
+        exec: function () {
+          return retVal;
+        },
+      };
+      const seen: string[] = [];
+      for (const value of [undefined, 86, "s", true]) {
+        retVal = value;
+        try {
+          RegExp.prototype[Symbol.search].call(fakeRe, "a");
+          seen.push("none");
+        } catch (error) {
+          seen.push(error instanceof TypeError ? "type" : "other");
+        }
+      }
+      const thrower = {
+        exec: function () {
+          throw new RangeError("x");
+        },
+        lastIndex: 3,
+      };
+      try {
+        RegExp.prototype[Symbol.search].call(thrower, "a");
+      } catch (error) {
+        seen.push(error instanceof RangeError ? "range" : "other");
+      }
+      seen.push(String(thrower.lastIndex));
+      try {
+        // @ts-ignore
+        RegExp.prototype[Symbol.search].call(5, "a");
+      } catch (error) {
+        seen.push(error instanceof TypeError ? "type" : "other");
+      }
+      const re = /b/g;
+      re.lastIndex = 2;
+      seen.push(String(RegExp.prototype[Symbol.search].call(re, "abc")), String(re.lastIndex));
+      if (seen.join(",") !== "${expected}") throw new Error(seen.join(","));
+    `;
+
+    it("agrees with Node on type,type,type,type,range,0,type,1,2", async () => {
+      expect(
+        (await checkModel(getSource("type,type,type,type,range,0,type,1,2"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects the expectation type,type,type,type,range,3,type,1,2", async () => {
+      expect(
+        (await checkModel(getSource("type,type,type,type,range,3,type,1,2"))).failure?.message,
+      ).toContain("type,type");
+    });
+  });
+
+  it("sets lastIndex to 0 for Symbol.search's exec only where it isn't already, by SameValue", async () => {
+    const getSource = (during: string) => `
+      const re = /(?:)/;
+      let execLastIndex: unknown = 7;
+      re.lastIndex = -0;
+      re.exec = function () {
+        execLastIndex = re.lastIndex;
+        return null;
+      };
+      const found = re[Symbol.search]("");
+      if (found !== -1 || !Object.is(execLastIndex, ${during}) || !Object.is(re.lastIndex, -0)) throw new Error("unexpected");
+    `;
+    expect((await checkModel(getSource("0"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("-0"))).failure?.message).toContain("unexpected");
+  });
+
+  describe("runs Symbol.match as its steps, calling the exec that a script writes", () => {
+    const getSource = (expected: string) => `
+      const seen: string[] = [];
+      const r = /./;
+      let calls = 0;
+      r.exec = function (this: unknown, text: string) {
+        calls += 1;
+        seen.push(String(this === r), text);
+        return null;
+      };
+      seen.push(String(r[Symbol.match]("xy")), String(calls));
+      let count = 0;
+      const fake = {
+        flags: "g",
+        lastIndex: 5,
+        exec: function () {
+          count += 1;
+          if (count > 3) return null;
+          return { 0: count === 2 ? "" : "m" + count };
+        },
+      };
+      const matched = RegExp.prototype[Symbol.match].call(fake, "abc");
+      seen.push(matched === null ? "null" : matched.join(","), String(fake.lastIndex), String(Array.isArray(matched)));
+      const plain = RegExp.prototype[Symbol.match].call(/a/g, "banana");
+      seen.push(plain === null ? "null" : plain.join(","));
+      if (seen.join("|") !== "${expected}") throw new Error(seen.join("|"));
+    `;
+
+    it("agrees with Node on true|xy|null|1|m1,,m3|1|true|a,a,a", async () => {
+      expect(
+        (await checkModel(getSource("true|xy|null|1|m1,,m3|1|true|a,a,a"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects the expectation true|xy|null|1|m1,,m3|5|true|a,a,a", async () => {
+      expect(
+        (await checkModel(getSource("true|xy|null|1|m1,,m3|5|true|a,a,a"))).failure?.message,
+      ).toContain("m1,,m3|1");
+    });
+  });
+
+  it("joins the undefined that a split gives for a capture that didn't take part as nothing", async () => {
+    const getSource = (expected: string) => `
+      const parts = /(a)|b/[Symbol.split]("xbxay");
+      const other = "xbxay".split(/(a)|b/);
+      if (parts.join(".") + other.join(".") !== "${expected}") throw new Error(parts.join("."));
+    `;
+    expect((await checkModel(getSource("x..x.a.yx..x.a.y"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("x.x.a.yx.x.a.y"))).failure?.message).toContain("x..x.a.y");
+  });
+
+  describe("runs Symbol.split as its steps, constructing the species that a script writes", () => {
+    const getSource = (expected: string) => `
+      const seen: string[] = [];
+      const obj = {
+        constructor: function () {},
+      };
+      const fakeRe = {
+        lastIndex: 0,
+        exec: function () {
+          fakeRe.lastIndex = 1;
+          return { length: 2, 0: "foo", 1: "bar", 2: "baz" };
+        },
+      };
+      let flagsArg: unknown = undefined;
+      let calls = 0;
+      // @ts-ignore
+      obj.constructor[Symbol.species] = function (_: unknown, flags: unknown) {
+        calls += 1;
+        flagsArg = flags;
+        return fakeRe;
+      };
+      const result = RegExp.prototype[Symbol.split].call(obj, "a");
+      seen.push(result.join("/"), String(result.length), String(flagsArg), String(calls));
+      const zero = RegExp.prototype[Symbol.split].call(obj, "", 0);
+      seen.push(String(zero.length), String(calls));
+      try {
+        // @ts-ignore
+        RegExp.prototype[Symbol.split].call(obj, "a", Symbol.split);
+      } catch (error) {
+        seen.push(error instanceof TypeError ? "type" : "other");
+      }
+      if (seen.join("|") !== "${expected}") throw new Error(seen.join("|"));
+    `;
+
+    it("agrees with Node on /bar/|3|undefinedy|1|0|2|type", async () => {
+      expect(
+        (await checkModel(getSource("/bar/|3|undefinedy|1|0|2|type"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects the expectation /bar/|3|undefinedy|1|0|1|type", async () => {
+      expect(
+        (await checkModel(getSource("/bar/|3|undefinedy|1|0|1|type"))).failure?.message,
+      ).toContain("|0|2|");
+    });
+  });
+
+  describe("splits through Symbol.split's species, RegExp, and the captures that a match adds", () => {
+    const getSource = (expected: string) => `
+      const seen: string[] = [];
+      const re = /x/iy;
+      let args: unknown[] = [];
+      const reConstructor = function () {};
+      // @ts-ignore
+      re.constructor = reConstructor;
+      // @ts-ignore
+      reConstructor[Symbol.species] = function (pattern: unknown, flags: unknown) {
+        args = [pattern === re, flags];
+        return /[db]/y;
+      };
+      const result = re[Symbol.split]("abcde");
+      seen.push(result.join(","), String(args[0]), String(args[1]));
+      const plain = /(-)/;
+      // @ts-ignore
+      plain.constructor = undefined;
+      seen.push(plain[Symbol.split]("a-b-c", 3).join(","), plain[Symbol.split]("a-b-c").join(","));
+      const thrower = /x/;
+      const throwerConstructor = function () {};
+      // @ts-ignore
+      thrower.constructor = throwerConstructor;
+      // @ts-ignore
+      throwerConstructor[Symbol.species] = function () {
+        throw new RangeError("x");
+      };
+      try {
+        thrower[Symbol.split]("a");
+      } catch (error) {
+        seen.push(error instanceof RangeError ? "range" : "other");
+      }
+      const empty = /a*?/;
+      // @ts-ignore
+      empty.constructor = undefined;
+      seen.push(empty[Symbol.split]("ab").join(","), empty[Symbol.split]("").length + "");
+      if (seen.join("|") !== "${expected}") throw new Error(seen.join("|"));
+    `;
+
+    it("agrees with Node on a,c,e|true|iy|a,-,b|a,-,b,-,c|range|a,b|0", async () => {
+      expect(
+        (await checkModel(getSource("a,c,e|true|iy|a,-,b|a,-,b,-,c|range|a,b|0"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects the expectation a,c,e|true|iy|a,b|a,-,b,-,c|range|a,b|0", async () => {
+      expect(
+        (await checkModel(getSource("a,c,e|true|iy|a,b|a,-,b,-,c|range|a,b|0"))).failure?.message,
+      ).toContain("iy|a,-,b|");
+    });
+  });
+
+  it("passes undefined for the receiver and the string that a call of a regexp's protocol method leaves out", async () => {
+    const getSource = (expected: string) => `
+      const seen: string[] = [];
+      let text: unknown = 0;
+      const fakeRe = {
+        exec: function (value: unknown) {
+          text = value;
+          return null;
+        },
+      };
+      // @ts-ignore
+      seen.push(String(RegExp.prototype[Symbol.search].call(fakeRe)), String(text));
+      try {
+        // @ts-ignore
+        RegExp.prototype[Symbol.match].call();
+        seen.push("none");
+      } catch (error) {
+        seen.push(error instanceof TypeError ? "type" : "other");
+      }
+      try {
+        // @ts-ignore
+        RegExp.prototype[Symbol.split].call();
+        seen.push("none");
+      } catch (error) {
+        seen.push(error instanceof TypeError ? "type" : "other");
+      }
+      if (seen.join("|") !== "${expected}") throw new Error(seen.join("|"));
+    `;
+    expect((await checkModel(getSource("-1|undefined|type|type"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("-1|undefined|type|none"))).failure?.message).toContain(
+      "-1|undefined|type|type",
+    );
+  });
+
+  it("calls the exec of an object that a species returns, telling it from the built-in by identity", async () => {
+    const getSource = (expected: string) => `
+      const obj = { constructor: function () {} };
+      // @ts-ignore
+      obj.constructor[Symbol.species] = function () {
+        return {
+          exec: function () {
+            throw new RangeError("x");
+          },
+        };
+      };
+      let caught = "none";
+      try {
+        RegExp.prototype[Symbol.split].call(obj, "a");
+      } catch (error) {
+        caught = error instanceof RangeError ? "range" : "other";
+      }
+      if (caught !== "${expected}") throw new Error(caught);
+    `;
+    expect((await checkModel(getSource("range"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("none"))).failure?.message).toContain("range");
+  });
+
+  it("reads RegExp's species through its getter, which gives RegExp", async () => {
+    const getSource = (expected: string) => `
+      const parts = RegExp.prototype[Symbol.split].call(/b/, "abcb", 2);
+      if (parts.join(",") !== "${expected}") throw new Error(parts.join(","));
+    `;
+    expect((await checkModel(getSource("a,c"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("a,c,"))).failure?.message).toContain("a,c");
+  });
+
+  it("converts the string and the limit of a regexp's protocol method of other types", async () => {
+    const getSource = (expected: string) => `
+      const seen: string[] = [];
+      const fakeRe = {
+        lastIndex: 0,
+        exec: function (value: string) {
+          seen.push(value);
+          return null;
+        },
+      };
+      const text = {
+        toString: function () {
+          return "ab";
+        },
+      };
+      // @ts-ignore
+      seen.push(String(RegExp.prototype[Symbol.search].call(fakeRe, text)));
+      // @ts-ignore
+      seen.push(RegExp.prototype[Symbol.split].call(/b/, text, 1).join(","));
+      try {
+        // @ts-ignore
+        RegExp.prototype[Symbol.split].call(/b/, "ab", Symbol.split);
+      } catch (error) {
+        seen.push(error instanceof TypeError ? "type" : "other");
+      }
+      if (seen.join("|") !== "${expected}") throw new Error(seen.join("|"));
+    `;
+    expect((await checkModel(getSource("ab|-1|a|type"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("ab|-1|a,|type"))).failure?.message).toContain(
+      "ab|-1|a|type",
+    );
+  });
+
+  it("runs Symbol.match on what an exec that a script writes returns, of another type than an exec array", async () => {
+    const getSource = (expected: string) => `
+      const r = /b/;
+      // @ts-ignore
+      r.exec = function () {
+        return { 0: "a", index: 3 };
+      };
+      const matched = r[Symbol.match]("abc");
+      const g = /b/g;
+      let count = 0;
+      // @ts-ignore
+      g.exec = function () {
+        count += 1;
+        return count > 2 ? null : { 0: count };
+      };
+      const all = g[Symbol.match]("abc");
+      const found = matched === null ? "null" : String(matched[0]) + String(matched.index);
+      if (found + "|" + (all === null ? "null" : all.join(",")) !== "${expected}") throw new Error("unexpected");
+    `;
+    expect((await checkModel(getSource("a3|1,2"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("a3|1"))).failure?.message).toContain("unexpected");
+  });
+
+  it("runs a regexp's protocol method as its steps where the call converts its string or its limit", async () => {
+    const getSource = (expected: string) => `
+      const seen: string[] = [];
+      const text = {
+        toString: function () {
+          return "a string";
+        },
+      };
+      // @ts-ignore
+      seen.push(String(/ring/[Symbol.search](text)));
+      // @ts-ignore
+      const matched = /n./[Symbol.match](text);
+      seen.push(matched === null ? "null" : matched[0]);
+      // @ts-ignore
+      seen.push(/d/[Symbol.split]().join(","));
+      try {
+        // @ts-ignore
+        /./[Symbol.split]("", Symbol.split);
+        seen.push("none");
+      } catch (error) {
+        seen.push(error instanceof TypeError ? "type" : "other");
+      }
+      if (seen.join("|") !== "${expected}") throw new Error(seen.join("|"));
+    `;
+    expect((await checkModel(getSource("4|ng|un,efine,|type"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("4|ng|undefined|type"))).failure?.message).toContain(
+      "un,efine,",
+    );
+  });
+
+  it("throws a TypeError where Symbol.split's species isn't a constructor or its constructor isn't an object", async () => {
+    const getSource = (expected: string) => `
+      const seen: string[] = [];
+      const arrowed = { constructor: function () {} };
+      // @ts-ignore
+      arrowed.constructor[Symbol.species] = () => /x/y;
+      const numbered = { constructor: 1 };
+      for (const receiver of [arrowed, numbered]) {
+        try {
+          RegExp.prototype[Symbol.split].call(receiver, "abc");
+          seen.push("none");
+        } catch (error) {
+          seen.push(error instanceof TypeError ? "type" : "other");
+        }
+      }
+      if (seen.join("|") !== "${expected}") throw new Error(seen.join("|"));
+    `;
+    expect((await checkModel(getSource("type|type"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("type|none"))).failure?.message).toContain("type|type");
   });
 });
 

@@ -1,6 +1,12 @@
 // test262's harness/sta.js and harness/assert.js, typed so that tla-ts can compile them.
 
-class Test262Error extends Error {}
+class Test262Error extends Error {
+  declare static thrower: (message?: string) => never;
+}
+
+Test262Error.thrower = function (message?: string): never {
+  throw new Test262Error(message);
+};
 
 // TypeScript's lib types new Object() as Object, which primitives also have, and which has no
 // properties to write, and Object() as any. Both give an object back, and wrap a primitive.
@@ -92,7 +98,9 @@ namespace assert {
     if (expectedElements.length !== actualElements.length) {
       throw new Test262Error(getMessage(message, "Expected the arrays to have the same length"));
     }
-    for (let index = 0; index < actualElements.length; index++) {
+    // The length of an object that isn't array-like is undefined, which < converts to NaN.
+    const length: unknown = actualElements.length;
+    for (let index = 0; length !== undefined && index < Number(length as unknown); index++) {
       if (!Object.is(expectedElements[index], actualElements[index])) {
         throw new Test262Error(
           getMessage(message, "Expected the arrays to have the same contents"),

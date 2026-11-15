@@ -319,16 +319,18 @@ const inlineCall = (
   receiver = getReceiver(scope, context, called),
 ) => {
   if (callee.body === undefined) throw new TlaTypeScriptError("Give this a body", callee);
-  // TypeScript's this parameter types the receiver, which no argument passes.
-  const parameters = getParameters(callee);
-  const passedCallbacks = parameters.flatMap((parameter, position): [ts.Symbol, FunctionNode][] => {
-    const argument = argumentNodes.at(position);
-    const symbol = getSymbol(parameter.name, context.checker);
-    const callback = argument === undefined ? undefined : getCallback(argument, scope, context);
-    return callback === undefined || symbol === undefined || parameter.dotDotDotToken !== undefined
-      ? []
-      : [[symbol, callback]];
-  });
+  const passedCallbacks = getParameters(callee).flatMap(
+    (parameter, position): [ts.Symbol, FunctionNode][] => {
+      const argument = argumentNodes.at(position);
+      const symbol = getSymbol(parameter.name, context.checker);
+      const callback = argument === undefined ? undefined : getCallback(argument, scope, context);
+      return callback === undefined ||
+        symbol === undefined ||
+        parameter.dotDotDotToken !== undefined
+        ? []
+        : [[symbol, callback]];
+    },
+  );
   // A parameter that the call doesn't pass, whose default is an arrow function that the body only
   // calls, calls that function as it would one that the call passes, as an expression can't make
   // the function object that the heap would hold.
@@ -336,32 +338,36 @@ const inlineCall = (
   const defaultCallbacks =
     context.heap === undefined || argumentNodes.some(ts.isSpreadElement)
       ? []
-      : parameters.slice(argumentNodes.length).flatMap((parameter): [ts.Symbol, FunctionNode][] => {
-          const initializer = parameter.initializer;
-          const symbol = getSymbol(parameter.name, context.checker);
-          const isOnlyCalled = findNodes(body, ts.isIdentifier).every(
-            (name) =>
-              getSymbol(name, context.checker) !== symbol ||
-              (ts.isCallExpression(name.parent) && name.parent.expression === name),
-          );
-          return initializer !== undefined &&
-            ts.isArrowFunction(initializer) &&
-            symbol !== undefined &&
-            isOnlyCalled &&
-            findNodes(
-              initializer,
-              (inner): inner is ts.ThisExpression => inner.kind === ts.SyntaxKind.ThisKeyword,
-            ).length === 0
-            ? [[symbol, initializer]]
-            : [];
-        });
+      : getParameters(callee)
+          .slice(argumentNodes.length)
+          .flatMap((parameter): [ts.Symbol, FunctionNode][] => {
+            const initializer = parameter.initializer;
+            const symbol = getSymbol(parameter.name, context.checker);
+            const isOnlyCalled = findNodes(body, ts.isIdentifier).every(
+              (name) =>
+                getSymbol(name, context.checker) !== symbol ||
+                (ts.isCallExpression(name.parent) && name.parent.expression === name),
+            );
+            return initializer !== undefined &&
+              ts.isArrowFunction(initializer) &&
+              symbol !== undefined &&
+              isOnlyCalled &&
+              findNodes(
+                initializer,
+                (inner): inner is ts.ThisExpression => inner.kind === ts.SyntaxKind.ThisKeyword,
+              ).length === 0
+              ? [[symbol, initializer]]
+              : [];
+          });
   const callbacks = [...passedCallbacks, ...defaultCallbacks];
   const isValue = (position: number) =>
-    !callbacks.some((entry) => entry[0] === getSymbol(parameters[position].name, context.checker));
+    !callbacks.some(
+      (entry) => entry[0] === getSymbol(getParameters(callee)[position].name, context.checker),
+    );
   const passed = translateArgumentValues(
-    parameters,
+    getParameters(callee),
     argumentNodes,
-    (position) => position >= parameters.length || isValue(position),
+    (position) => position >= getParameters(callee).length || isValue(position),
     scope,
     context,
   );
@@ -386,7 +392,7 @@ const inlineCall = (
     context,
   );
   const bound = bindValues(
-    parameters.filter((_, position) => isValue(position)),
+    getParameters(callee).filter((_, position) => isValue(position)),
     passed.isSpread ? values.shared.slice(0, -1) : values.shared,
     made.scope,
     context,
@@ -803,7 +809,7 @@ export const callLifted = (
     return binding;
   });
   return call(definition.name, [
-    ...callee.parameters.map((_, position) => values[position] ?? getUndefined(context)),
+    ...getParameters(callee).map((_, position) => values[position] ?? getUndefined(context)),
     ...capturedValues,
     ...variables.map((entry) => scope.bindings.get(entry[0]) ?? entry[1]),
   ]);

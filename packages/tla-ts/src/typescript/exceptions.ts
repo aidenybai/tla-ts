@@ -16,9 +16,10 @@ import {
 } from "./context";
 import { TlaTypeScriptError } from "../errors";
 import { translateExpression } from "./expressions";
-import { getEngineErrors, getHeap, translateObjectValue } from "./heap";
+import { getHeap, translateObjectValue } from "./heap";
 import { getGeneratorPrototypeRef, translateBuiltInInstanceOf } from "./intrinsics";
 import { getTypeNames, useJavaScript } from "./javascript";
+import { ARRAY_ITERATOR_REPLACED, holdsArrayIteration } from "./collections";
 import type { Scope } from "./scope";
 import { getKind, isGeneratorType, isHeapArray } from "./types";
 import { apply, boolean, field, identifier, ifExpression, record, set, string } from "./tla";
@@ -223,10 +224,13 @@ export const getConstructor = (
   return identifier(name);
 };
 
-const getNative = (name: string, node: ts.Node, context: Context) => {
-  const symbol = context.checker
+const findNative = (name: string, node: ts.Node, context: Context) =>
+  context.checker
     .getSymbolsInScope(node.getSourceFile(), ts.SymbolFlags.Value)
     .find((candidate) => candidate.name === name && isNative(candidate));
+
+const getNative = (name: string, node: ts.Node, context: Context) => {
+  const symbol = findNative(name, node, context);
   if (symbol === undefined) throw new TlaTypeScriptError(`Unknown built-in: ${name}`, node);
   return symbol;
 };
@@ -290,10 +294,20 @@ export const translateNewError = (
 ) => {
   const native = classes.find(isNative);
   if (native === undefined) throw new TlaTypeScriptError("Unknown error class", node);
-  // A SuppressedError takes the error and the suppressed error before its message.
-  const held = native.name === "SuppressedError" ? ["error", "suppressed"] : [];
+  // A SuppressedError takes the error and the suppressed error before its message, and an
+  // AggregateError the array of its errors.
+  const held =
+    native.name === "SuppressedError"
+      ? ["error", "suppressed"]
+      : native.name === "AggregateError"
+        ? ["errors"]
+        : [];
   const argumentNodes = node.arguments ?? [];
-  if (classes.some((symbol) => isNative(symbol) && symbol.name === "AggregateError")) {
+  const errors = native.name === "AggregateError" ? argumentNodes.at(0) : undefined;
+  if (
+    native.name === "AggregateError" &&
+    (errors === undefined || getKind(errors, context) !== "sequence")
+  ) {
     throw new TlaTypeScriptError("Unsupported constructor: new AggregateError", node);
   }
   if (argumentNodes.length > held.length + 1) {
@@ -312,7 +326,7 @@ export const translateNewError = (
         : translateExpression(message, scope, context);
   if (native === classes[0]) includeError(native.name, context);
   const identity = scope.allocated.get(node);
-  return record("Record", [
+  const error = record("Record", [
     { name: "constructor", value: getConstructor(classes[0], context) },
     ...(identity === undefined ? [] : [{ name: "identity", value: identity }]),
     { name: "message", value },
@@ -328,6 +342,13 @@ export const translateNewError = (
       };
     }),
   ]);
+  return errors === undefined || context.heap === undefined
+    ? error
+    : ifExpression(
+        holdsArrayIteration(getHeap(scope, node, context), node, context),
+        error,
+        apply("Assert", [boolean(false), string(ARRAY_ITERATOR_REPLACED)]),
+      );
 };
 
 // A caught value, or what a SuppressedError holds, which may be any value.
@@ -380,14 +401,14 @@ export const isNativeErrorValue = (node: ts.Expression, context: Context) => {
 
 const getSubclasses = (node: ts.Node, symbol: ts.Symbol, context: Context) => {
   const found = new Map<ts.Symbol, Expression>();
+  const add = (created: ts.Symbol | undefined) => {
+    const classes = getErrorClass(created, context.checker);
+    if (classes?.includes(symbol)) found.set(classes[0], getConstructor(classes[0], context));
+  };
+  // JavaScript itself may throw any native error, where the script makes none.
+  NATIVE_ERRORS.forEach((name) => add(findNative(name, node, context)));
   const visit = (child: ts.Node) => {
-    [
-      ts.isNewExpression(child) ? getSymbol(child.expression, context.checker) : undefined,
-      ...getEngineErrors(child, context).map((thrown) => getNative(thrown, child, context)),
-    ].forEach((created) => {
-      const classes = getErrorClass(created, context.checker);
-      if (classes?.includes(symbol)) found.set(classes[0], getConstructor(classes[0], context));
-    });
+    if (ts.isNewExpression(child)) add(getSymbol(child.expression, context.checker));
     ts.forEachChild(child, visit);
   };
   visit(node.getSourceFile());

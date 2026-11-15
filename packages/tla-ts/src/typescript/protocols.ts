@@ -221,6 +221,8 @@ export const callValue = (
   frame: Frame,
   otherwise: (next: (inner: Path, value?: Expression) => Formula) => Formula,
   continueWith: (path: Path, result: Expression) => Formula,
+  // The newTarget of a construction, which new.target reads.
+  newTarget?: Expression,
 ): Formula =>
   translateJoined(
     site,
@@ -236,7 +238,7 @@ export const callValue = (
         }
         const received = ts.isArrowFunction(candidate)
           ? undefined
-          : { value: receiver, method: candidate };
+          : { value: receiver, method: candidate, newTarget };
         const heap = getHeap(path.scope, site, context);
         const call = (
           inner: Path,
@@ -302,6 +304,7 @@ export const callMethod = (
   key: string,
   value: Expression,
   receiver: Expression,
+  values: Expression[],
   path: Path,
   context: Context,
   frame: Frame,
@@ -313,7 +316,7 @@ export const callMethod = (
     getMethods(site, key, context),
     value,
     receiver,
-    [],
+    values,
     path,
     context,
     frame,

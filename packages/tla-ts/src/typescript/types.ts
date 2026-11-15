@@ -8,6 +8,7 @@ import {
   getSymbol,
   getUndefined,
   isHeapClass,
+  getBuiltInBase,
   isFunctionObject,
   isHeapFunction,
   translateString,
@@ -150,6 +151,7 @@ const LIBRARY_OBJECTS = new Set([
   "Promise",
   "PromiseFulfilledResult",
   "PromiseRejectedResult",
+  "PromiseWithResolvers",
   "PropertyDescriptor",
   "TypedPropertyDescriptor",
   "PropertyDescriptorMap",
@@ -187,13 +189,25 @@ const LIBRARY_OBJECTS = new Set([
   "BigInt",
 ]);
 
+export const isLibraryIterable = (type: ts.Type) =>
+  type.getSymbol()?.name === "Iterable" &&
+  (type.getSymbol()?.declarations ?? []).every(
+    (declaration) => declaration.getSourceFile().isDeclarationFile,
+  );
+
 // An object type, or the object type, which any object may have.
 const isPlainObject = (type: ts.Type, context: Context): boolean => {
   const checker = context.checker;
   const symbol = type.getSymbol();
   const readonly = type.aliasSymbol?.name === "Readonly" ? type.aliasTypeArguments?.[0] : undefined;
   if (readonly !== undefined) return isPlainObject(readonly, context);
-  if (type.isIntersection()) return type.types.every((member) => isPlainObject(member, context));
+  // An object that a script types as iterable too, as it gives it a Symbol.iterator method.
+  if (type.isIntersection()) {
+    return (
+      type.types.some((member) => isPlainObject(member, context)) &&
+      type.types.every((member) => isPlainObject(member, context) || isLibraryIterable(member))
+    );
+  }
   if ((type.flags & ts.TypeFlags.NonPrimitive) !== 0) return true;
   // The global object, which typeof globalThis types, and whose properties a script reads from
   // the heap.
@@ -251,16 +265,20 @@ const isPlainObject = (type: ts.Type, context: Context): boolean => {
         (LIBRARY_OBJECTS.has(symbol.name) ||
           // A mapped type, such as Record or Partial, whose declaration the library writes.
           ((type as ts.ObjectType).objectFlags & ts.ObjectFlags.Mapped) !== 0 ||
-          // The objects that Proxy.revocable and Object.getOwnPropertyDescriptors give, whose
-          // types their declarations write in place.
+          // The objects that Proxy.revocable, Object.getOwnPropertyDescriptors, and
+          // Atomics.waitAsync give, whose types their declarations write in place.
           (symbol.declarations ?? []).some((declaration) => {
-            const signature = ts.isIntersectionTypeNode(declaration.parent)
-              ? declaration.parent.parent
-              : declaration.parent;
+            const signature =
+              ts.isIntersectionTypeNode(declaration.parent) ||
+              ts.isUnionTypeNode(declaration.parent)
+                ? declaration.parent.parent
+                : declaration.parent;
             return (
               ts.isTypeLiteralNode(declaration) &&
               ts.isMethodSignature(signature) &&
-              ["revocable", "getOwnPropertyDescriptors"].includes(signature.name.getText())
+              ["revocable", "getOwnPropertyDescriptors", "waitAsync"].includes(
+                signature.name.getText(),
+              )
             );
           }) ||
           (symbol.declarations ?? []).every(
@@ -942,6 +960,20 @@ export const isBuiltInIteratorType = (node: ts.Node, context: Context) =>
   getMembers(node, context).every((type) =>
     ["ArrayIterator", "StringIterator"].includes(type.getSymbol()?.name ?? ""),
   );
+
+// An object of a class that the script writes, which extends Iterator, whose next the code that
+// steps generators calls.
+export const isScriptIteratorType = (node: ts.Node, context: Context) =>
+  context.heap !== undefined &&
+  getMembers(node, context).every((type) => {
+    const declaration = type.getSymbol()?.valueDeclaration;
+    return (
+      declaration !== undefined &&
+      ts.isClassLike(declaration) &&
+      isHeapClass(declaration, context) &&
+      getBuiltInBase(declaration, context) === "Iterator"
+    );
+  });
 
 export const isGeneratorType = (node: ts.Node, context: Context) =>
   getMembers(node, context).every(isGeneratorMember);

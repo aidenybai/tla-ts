@@ -20,7 +20,12 @@ import {
   isUntypedPattern,
 } from "./iterators";
 import type { Expression, OperatorDefinition } from "../ast";
-import { getHeapElements, translateArrayIteration, translatePatternIteration } from "./collections";
+import {
+  getHeapElements,
+  getPatternHeap,
+  translateArrayIteration,
+  translatePatternIteration,
+} from "./collections";
 import { isNullish } from "./protocols";
 import { translateElements, translateExpression } from "./expressions";
 import {
@@ -34,7 +39,7 @@ import {
   string,
   tuple,
 } from "./tla";
-import { getHeap } from "./heap";
+import { getHeap, translatePropertyKey } from "./heap";
 import { translateBuiltInValue } from "./intrinsics";
 import { useJavaScript } from "./javascript";
 import { getField, getPathStep, getPropertyKey, isHeapPattern, isSequenceType } from "./types";
@@ -55,6 +60,9 @@ export interface Scope {
   checked?: ReadonlySet<ts.Expression>;
   // The calls of built-in functions that tla-ts found the script didn't replace.
   heldCalls?: ReadonlySet<ts.CallExpression>;
+  // The reduce calls without an initial value that a statement runs, which give whether they found
+  // no element to start from, where they throw a TypeError, beside what they give.
+  checkedReductions?: ReadonlySet<ts.CallExpression>;
   // The object that this names in the method that a call through it inlines.
   receiver?: Receiver;
   // The object that this names in each arrow function that a call takes, from where it was written.
@@ -91,6 +99,9 @@ export const getBoundNames = (name: ts.BindingName): ts.Identifier[] =>
 export interface Destructured {
   pattern: ts.BindingPattern;
   value: Expression;
+  // The elements that an array pattern takes from a value whose type doesn't tell that it's an
+  // array, which stop where it's an object.
+  iterated?: Expression;
 }
 
 export interface Receiver {
@@ -316,7 +327,7 @@ const isCaughtPattern = (pattern: ts.BindingPattern): boolean => {
 export const getCaughtElements = (
   value: Expression,
   heap: Expression,
-  pattern: ts.ArrayBindingPattern,
+  pattern: ts.Node,
   context: Context,
 ) =>
   getTakenValue(
@@ -378,10 +389,6 @@ export const bindPatternInline = (
       pattern,
     );
   }
-  const destructuring: Scope = {
-    ...scope,
-    destructured: [...(scope.destructured ?? []), { pattern, value }],
-  };
   const heapSymbol = context.heap;
   if (ts.isArrayBindingPattern(pattern) && isUntypedPattern(pattern, context) && !isTaken(value)) {
     if (heapSymbol === undefined || !isCaughtPattern(pattern)) {
@@ -400,18 +407,29 @@ export const bindPatternInline = (
     ts.isArrayBindingPattern(pattern) &&
     !isTaken(value) &&
     !(context.checker.getTypeAtLocation(pattern).flags & ts.TypeFlags.StringLike);
-  const heap = heapSymbol === undefined ? undefined : getHeap(destructuring, pattern, context);
+  const heap = heapSymbol === undefined ? undefined : getHeap(scope, pattern, context);
   const iterated =
     isIterated && heap !== undefined
       ? translatePatternIteration(value, heap, pattern, type, context)
       : value;
+  // A pattern whose type isn't an array's stops at once where its value is an object that tla-ts
+  // can't iterate, though nothing reads what it binds.
+  const destructuring: Scope = {
+    ...scope,
+    destructured: [
+      ...(scope.destructured ?? []),
+      isIterated && heap !== undefined && !context.checker.isArrayLikeType(type)
+        ? { pattern, value, iterated }
+        : { pattern, value },
+    ],
+  };
   const iterating =
     isIterated && heapSymbol !== undefined && heap !== undefined
       ? {
           ...destructuring,
           bindings: new Map([
             ...destructuring.bindings,
-            [heapSymbol, translateArrayIteration(heap, heap, pattern, context)],
+            [heapSymbol, getPatternHeap(heap, iterated, pattern, type, context)],
           ]),
         }
       : destructuring;
@@ -507,6 +525,34 @@ export const bindPatternInline = (
       );
     }
     const name = element.propertyName ?? element.name;
+    // A computed key evaluates before the pattern reads it, and a value that the heap doesn't hold
+    // stops.
+    if (
+      ts.isComputedPropertyName(name) &&
+      heapSymbol !== undefined &&
+      current.read?.has(element) !== true
+    ) {
+      const got = useJavaScript(
+        "Get",
+        [
+          getHeap(current, element, context),
+          value,
+          translatePropertyKey(name.expression, current, context),
+        ],
+        context,
+      );
+      const part = isHeapPattern(type, pattern, context)
+        ? got
+        : ifExpression(
+            useJavaScript("IsRef", [value], context),
+            got,
+            apply("Assert", [
+              boolean(false),
+              string("tla-ts can't read a computed key of this value"),
+            ]),
+          );
+      return bindPatternInline(element.name, withDefault(part), current, context);
+    }
     const key =
       ts.isObjectBindingPattern(name) || ts.isArrayBindingPattern(name)
         ? undefined
@@ -565,17 +611,30 @@ export const bindPatternInline = (
   // A nested pattern may destructure an element that an array lacks, which throws a TypeError
   // that TLC would find only where something reads what the pattern binds.
   if (!isHeapObject && !ts.isBindingElement(pattern.parent)) return bound;
-  const keys = (isHeapObject ? pattern.elements : []).flatMap((element) => {
-    if (element.dotDotDotToken !== undefined || scope.read?.has(element)) return [];
+  const elements = (isHeapObject ? pattern.elements : []).filter(
+    (element) => element.dotDotDotToken === undefined && !scope.read?.has(element),
+  );
+  const keys = elements.flatMap((element) => {
     const name = element.propertyName ?? element.name;
     const key =
       ts.isIdentifier(name) || ts.isStringLiteral(name) ? getPropertyKey(name) : undefined;
     return key === undefined ? [] : [string(key)];
   });
-  const read = useJavaScript(
-    "ReadKeys",
-    [getHeap(bound, pattern, context), value, set(keys)],
-    context,
+  // A computed key may be a symbol, which TLC can't keep in a set with strings.
+  const read = elements.reduce(
+    (heap, element) =>
+      element.propertyName !== undefined && ts.isComputedPropertyName(element.propertyName)
+        ? useJavaScript(
+            "ReadKeys",
+            [
+              heap,
+              value,
+              set([translatePropertyKey(element.propertyName.expression, bound, context)]),
+            ],
+            context,
+          )
+        : heap,
+    useJavaScript("ReadKeys", [getHeap(bound, pattern, context), value, set(keys)], context),
   );
   return { ...bound, bindings: new Map([...bound.bindings, [heapSymbol, read]]) };
 };
