@@ -100,6 +100,10 @@ const PORTED_INCLUDES = new Map([
     "proxyTrapsHelper.js",
     readFileSync(join(CONFORMANCE_DIRECTORY, "test262-proxy-traps-helper.ts"), "utf8"),
   ],
+  [
+    "fnGlobalObject.js",
+    readFileSync(join(CONFORMANCE_DIRECTORY, "test262-fn-global-object.ts"), "utf8"),
+  ],
 ]);
 
 // An async test's harness defines $DONE, as doneprintHandle.js does.
