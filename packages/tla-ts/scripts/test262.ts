@@ -267,7 +267,7 @@ const getPatternType = (name: ts.BindingName): string | undefined => {
     });
     if (elements.some((element) => element === undefined)) return undefined;
     return elements.every((element) => element === "unknown?" || element === "...unknown[]")
-      ? "unknown[]"
+      ? "Iterable<unknown>"
       : `[${elements.join(", ")}]`;
   }
   const properties = name.elements.map((element) => {
@@ -372,7 +372,21 @@ const loosen = () => {
         declaration.initializer !== undefined &&
         ts.isObjectLiteralExpression(declaration.initializer)
       ) {
-        edits.set(declaration.name.getEnd(), ": { [key: string | symbol]: unknown }");
+        // An object that the test gives an iterator method is iterable.
+        const symbol = checker.getSymbolAtLocation(accessed.expression);
+        const isIterable = (node: ts.Node): boolean =>
+          (ts.isElementAccessExpression(node) &&
+            node.argumentExpression.getText() === "Symbol.iterator" &&
+            checker.getSymbolAtLocation(node.expression) === symbol) ||
+          (ts.forEachChild(node, (child) => isIterable(child) || undefined) ?? false);
+        if (isIterable(sourceFile)) {
+          edits.set(
+            declaration.initializer.getEnd(),
+            " as unknown as { [key: string | symbol]: unknown } & Iterable<unknown>",
+          );
+        } else {
+          edits.set(declaration.name.getEnd(), ": { [key: string | symbol]: unknown }");
+        }
       }
     }
     // Any other object, such as a built-in prototype, may get properties that its type lacks. An
@@ -1167,7 +1181,10 @@ const ignoreSoundErrors = () => {
     return (
       (type.flags & ts.TypeFlags.Never) !== 0 ||
       (type.isUnion() ? type.types : [type]).every(
-        (member) => checker.isArrayType(member) || checker.isTupleType(member),
+        (member) =>
+          checker.isArrayType(member) ||
+          checker.isTupleType(member) ||
+          member.getSymbol()?.name === "Iterable",
       )
     );
   };
@@ -1483,6 +1500,18 @@ const ignoreSoundErrors = () => {
       call.arguments.every((value, position) => isPrimitiveArgument(value, parameters[position]))
     );
   };
+  // A write of an object's iterator method that returns what an iterator's type doesn't allow, as
+  // an iterator whose next gives no result. tla-ts calls the method as Node does.
+  const isIteratorWrite = (node: ts.Node) => {
+    const access = ts.findAncestor(node, ts.isElementAccessExpression);
+    return (
+      access !== undefined &&
+      access.argumentExpression.getText() === "Symbol.iterator" &&
+      ts.isBinaryExpression(access.parent) &&
+      access.parent.left === access &&
+      access.parent.operatorToken.kind === ts.SyntaxKind.EqualsToken
+    );
+  };
   const isSound = (diagnostic: ts.Diagnostic) => {
     const node = getNode(diagnostic.start ?? 0);
     return (
@@ -1492,6 +1521,7 @@ const ignoreSoundErrors = () => {
         isNullableArrayPattern(node)) ||
       (diagnostic.code === NOT_ITERABLE_ERROR && isCaughtArrayPattern(node)) ||
       (UNASSIGNABLE_ERRORS.has(diagnostic.code) && isPatternArgument(node)) ||
+      (diagnostic.code === 2322 && isIteratorWrite(node)) ||
       (CONVERTED_ARGUMENT_ERRORS.has(diagnostic.code) &&
         (isConvertedCall(diagnostic) ||
           isReducingCall(diagnostic) ||
