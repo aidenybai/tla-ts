@@ -26157,6 +26157,40 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  describe("throws a TypeError where a generator's body resumes the generator", () => {
+    const getSource = (expected: string) => `
+      let log = "";
+      let iter: Generator<number>;
+      function* reentered(): Generator<number> {
+        log += "a";
+        try {
+          iter.next();
+        } catch (error) {
+          log += error instanceof TypeError ? "T" : "x";
+        }
+        yield 1;
+        iter.throw(2);
+      }
+      iter = reentered();
+      const first = iter.next();
+      log += first.value;
+      try {
+        iter.next();
+      } catch (error) {
+        log += error instanceof TypeError ? "U" : "y";
+      }
+      const after = iter.next();
+      log += after.done;
+      if (log !== "${expected}") throw new Error(log);
+    `;
+    it("matches Node", async () => {
+      expect((await checkModel(getSource("aT1Utrue"))).failure).toBeUndefined();
+    });
+    it("fails a wrong log", async () => {
+      expect((await checkModel(getSource("aT1Ufalse"))).failure?.message).toContain("aT1Utrue");
+    });
+  });
+
   it("runs Array.fromAsync of the values() of an array written in place", async () => {
     // V8 rejects a job later than the spec, whose order a for await gives.
     const result = await checkModel(`

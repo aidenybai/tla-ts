@@ -6641,8 +6641,12 @@ export const resumeGenerator = (
         ),
       );
     }
-    // A receiver that tla-ts can't match to one generator branches over each, so a generator
-    // that it can't resume fails only where the receiver holds it.
+    // GeneratorValidate throws a TypeError where the body runs. A receiver that tla-ts can't match
+    // to one generator branches over each, so an async generator that it can't resume fails only
+    // where the receiver holds it.
+    if (suspension.caller !== undefined && !suspension.isAsync) {
+      return throwTypeError(path, node, context, frame);
+    }
     if (suspension.caller !== undefined) {
       return leaf(
         apply("Assert", [
