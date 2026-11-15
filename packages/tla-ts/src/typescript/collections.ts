@@ -3089,7 +3089,19 @@ export const translateStringIteration = (
   heap: Expression | undefined,
   node: ts.Node,
   context: Context,
-  getOther = (other: Expression) => other,
+  // A value of type any or unknown outside the heap may be a set or a map, whose elements a
+  // sequence's indices don't hold.
+  getOther = (other: Expression) =>
+    heap === undefined && (type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0
+      ? ifExpression(
+          useJavaScript("IsSequenceValue", [other], context),
+          other,
+          apply("Assert", [
+            boolean(false),
+            string("tla-ts can't destructure this value through its iterator"),
+          ]),
+        )
+      : other,
 ) => {
   const getCharacters = (text: Expression) => {
     const characters = useJavaScript("StringCharacters", [text], context);
@@ -3700,6 +3712,26 @@ const getKeyKinds = (node: ts.NewExpression, context: Context) => {
     });
     return isKeyCall && ts.isCallExpression(call) ? [call.arguments.at(0), ...nested] : nested;
   };
+  // An array whose keys are of type any or unknown may give keys of several kinds, which TLC
+  // compares as the Set or the Map takes them.
+  const arrays =
+    given === undefined
+      ? []
+      : ts.isArrayLiteralExpression(given)
+        ? given.elements.filter(ts.isSpreadElement).map((spread) => spread.expression)
+        : [given];
+  const isUntyped = arrays.some((array) => {
+    const element = checker.getIndexTypeOfType(
+      checker.getTypeAtLocation(array),
+      ts.IndexKind.Number,
+    );
+    const key =
+      isEntries && element !== undefined && isTypeReference(element)
+        ? checker.getTypeArguments(element).at(0)
+        : element;
+    return key !== undefined && (key.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;
+  });
+  if (isUntyped) return undefined;
   // A Set or Map that no variable holds has only the keys it starts with.
   const keys = [...initial, ...(symbol === undefined ? [] : getUses(node.getSourceFile()))];
   const kinds = keys.map((key) =>
@@ -3715,6 +3747,35 @@ const getKeyKinds = (node: ts.NewExpression, context: Context) => {
 
 // The methods of a Set or a Map that take a key.
 const KEY_METHODS = new Set(["add", "has", "delete", "set", "get"]);
+
+// The kinds of the keys of the Set or the Map that a key method or a new Set or Map gives a key to,
+// where its type tells them. A weak one holds only objects and symbols.
+export const getTakerKeyKinds = (key: ts.Expression, context: Context) => {
+  const parent = key.parent;
+  const getCreated = (elements: ts.Node) =>
+    ts.isArrayLiteralExpression(elements) &&
+    ts.isNewExpression(elements.parent) &&
+    elements.parent.arguments?.[0] === elements
+      ? elements.parent
+      : undefined;
+  const taker =
+    ts.isCallExpression(parent) &&
+    parent.arguments[0] === key &&
+    ts.isPropertyAccessExpression(parent.expression) &&
+    KEY_METHODS.has(parent.expression.name.text)
+      ? parent.expression.expression
+      : ts.isArrayLiteralExpression(parent)
+        ? (getCreated(parent) ??
+          (parent.elements[0] === key ? getCreated(parent.parent) : undefined))
+        : undefined;
+  if (taker === undefined) return undefined;
+  const collection = getCollection(taker, context);
+  return collection === undefined
+    ? undefined
+    : collection.startsWith("Weak")
+      ? ["object"]
+      : getDeclaredKeyKinds(taker, context.checker);
+};
 
 // new Array(length) or Array(length) makes an array of holes, which a sequence can't hold, and
 // either with any other arguments makes an array of them.

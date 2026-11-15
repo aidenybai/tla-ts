@@ -589,6 +589,11 @@ export const compile = (
       (context.checker.getTypeAtLocation(node.expression).flags &
         (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !==
         0) ||
+    // A pattern that reads the properties of a value of type any or unknown, as a read does.
+    (ts.isObjectBindingPattern(node) &&
+      (context.checker.getTypeAtLocation(node).flags &
+        (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !==
+        0) ||
     // An array whose element a script deletes, which leaves a hole that only an object can hold.
     (ts.isDeleteExpression(node) &&
       ts.isElementAccessExpression(node.expression) &&

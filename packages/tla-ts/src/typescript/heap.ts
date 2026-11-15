@@ -170,6 +170,19 @@ export const getHeap = (scope: Scope, node: ts.Node, context: Context) => {
   return heap;
 };
 
+// A read of a property of a value of type any or unknown, which may be an array or a string, which
+// read their other properties from their prototypes.
+export const getAnyProperty = (
+  heap: Expression,
+  value: Expression,
+  key: Expression,
+  context: Context,
+) => {
+  context.builtIns.add("Array.prototype");
+  context.builtIns.add("String.prototype");
+  return useJavaScript("GetAny", [heap, value, key], context);
+};
+
 // A value that TypeScript types as a function, or undefined, such as a descriptor's get, which is
 // an object where the heap or the built-in objects hold it, as they hold %ThrowTypeError%. A
 // function that a script makes is another, which tla-ts reads where it knows the function.

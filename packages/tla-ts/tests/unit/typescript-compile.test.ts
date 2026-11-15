@@ -43013,4 +43013,201 @@ describe("BigInts", () => {
       ).rejects.toThrow("tla-ts can't tell the code of a character outside ASCII");
     });
   });
+  describe("destructures a value of type any", () => {
+    const getSource = (expected: string) => `
+      let log = "";
+      const read = (value: any) => {
+        const { length, 0: first } = value;
+        log += length;
+        log += first;
+      };
+      const assign = (value: any) => {
+        let size: any;
+        let last: any;
+        ({ length: size, 1: last } = value);
+        log += size;
+        log += last;
+      };
+      read("ab");
+      read([5, 6]);
+      assign("xyz");
+      assign([7, 8]);
+      if (log !== "${expected}") throw new Error(log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("2a253y28"))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong length of a string", async () => {
+      expect((await checkModel(getSource("3a253y28"))).failure?.message).toContain("2a253y28");
+    });
+
+    it("stops at a property of a number", async () => {
+      const result = await checkModel(`
+        const read = (value: any) => {
+          const { size } = value;
+          return size;
+        };
+        if (read(5) !== undefined) throw new Error("size");
+      `);
+      expect(result.failure?.message).toContain("tla-ts can't read a property of this value");
+    });
+
+    it("stops at a getter that the pattern runs", async () => {
+      const result = await checkModel(`
+        let count = 0;
+        const counter = {
+          get size() {
+            count += 1;
+            return count;
+          },
+        };
+        const read = (value: any) => {
+          const { size } = value;
+        };
+        read(counter);
+        if (count !== 1) throw new Error(String(count));
+      `);
+      expect(result.failure?.message).toContain("tla-ts can't call getters");
+    });
+  });
+
+  describe("destructures an array pattern of a value of type any outside the heap", () => {
+    const getSource = (expected: string) => `
+      const pair = (value: any) => {
+        const [first, second] = value;
+        return \`\${first}\${second}\`;
+      };
+      const log = pair("ab") + pair([5, 6]);
+      if (log !== "${expected}") throw new Error(log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("ab56"))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong elements", async () => {
+      await expect(checkModel(getSource("ab65"))).rejects.toThrow("ab56");
+    });
+
+    it("stops at a set", async () => {
+      await expect(
+        checkModel(`
+          const pair = (value: any) => {
+            const [first, second] = value;
+            return \`\${first}\${second}\`;
+          };
+          if (pair(new Set([5, 6])) !== "56") throw new Error("pair");
+        `),
+      ).rejects.toThrow("tla-ts can't destructure this value through its iterator");
+    });
+  });
+
+  describe("compares the kind of a key of type any before a Set or a Map compares it", () => {
+    const getSource = (expected: string) => `
+      const entries = new Map([
+        ["a", 1],
+        ["b", 2],
+      ]);
+      const seen = new Set(["a"]);
+      const read = (key: any) => {
+        let log = "";
+        log += entries.get(key);
+        log += entries.has(key);
+        log += seen.has(key);
+        return log;
+      };
+      const log = read("a") + read(undefined);
+      if (log !== "${expected}") throw new Error(log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("1truetrueundefinedfalsefalse"))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong value of a key", async () => {
+      await expect(checkModel(getSource("2truetrueundefinedfalsefalse"))).rejects.toThrow(
+        "1truetrueundefinedfalsefalse",
+      );
+    });
+
+    it("stops at a key of another kind", async () => {
+      await expect(
+        checkModel(`
+          const entries = new Map([
+            ["a", 1],
+            ["b", 2],
+          ]);
+          const read = (key: any) => entries.get(key);
+          if (read(1) !== undefined) throw new Error("1");
+        `),
+      ).rejects.toThrow(
+        "tla-ts can't compare a key of another kind with the keys of a Set or a Map",
+      );
+    });
+
+    it("stops at an added key of another kind", async () => {
+      const result = await checkModel(`
+        const seen = new Set(["a"]);
+        const add = (key: any) => {
+          seen.add(key);
+        };
+        add(1);
+        if (seen.size !== 2) throw new Error("size");
+      `);
+      expect(result.failure?.message).toContain(
+        "tla-ts can't compare a key of another kind with the keys of a Set or a Map",
+      );
+    });
+
+    it("stops at a primitive key of a WeakMap", async () => {
+      const result = await checkModel(`
+        const sizes = new WeakMap<object, number>();
+        const key = {};
+        sizes.set(key, 1);
+        const read = (value: any) => sizes.get(value);
+        if (read(key) !== 1) throw new Error("key");
+        if (read("a") !== undefined) throw new Error("a");
+      `);
+      expect(result.failure?.message).toContain(
+        "tla-ts can't compare a key of another kind with the keys of a Set or a Map",
+      );
+    });
+  });
+
+  describe("makes a Set of an array of keys of type any", () => {
+    const getSource = (expected: string) => `
+      const keys: string[] = ["a", "b"];
+      const seen = new Set<string>(keys);
+      const log = String(seen.has("b")) + seen.size;
+      if (log !== "${expected}") throw new Error(log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("true2"))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong size", async () => {
+      await expect(checkModel(getSource("true3"))).rejects.toThrow("true2");
+    });
+
+    it("stops at keys of type any", () => {
+      expect(() =>
+        compile(`
+          const make = (keys: any[]) => new Set<string>(keys).size;
+          if (make(["a", 1]) !== 2) throw new Error("size");
+        `),
+      ).toThrow("Give a Set keys of one kind, as TLC can't compare a number with a string");
+    });
+
+    it("stops at spread keys of type any", () => {
+      expect(() =>
+        compile(`
+          const make = (keys: any[]) => new Set<string>(["a", ...keys]).size;
+          if (make(["a", 1]) !== 2) throw new Error("size");
+        `),
+      ).toThrow("Give a Set keys of one kind, as TLC can't compare a number with a string");
+    });
+  });
 });

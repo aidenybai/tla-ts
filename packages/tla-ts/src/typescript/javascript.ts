@@ -1165,6 +1165,12 @@ KeyOf(value) ==
     [] IsBig(value) -> BeyondInteger
     [] OTHER -> value
 
+\\* Whether TLC can compare a key with the keys of a Set or a Map, of the kinds that typeof gives
+\\* them. Model values, such as undefined, null, and symbols, compare with any value.
+IsComparableKey(value, kinds) ==
+  \\/ value \\in {Undefined, Null}
+  \\/ TypeOf(value) \\in kinds \\cup {"symbol"}
+
 \\* The map that new Map makes from an array of entries, each a key and its value, where a later
 \\* entry of a key replaces an earlier one's value.
 MapOf(entries) ==
@@ -2325,12 +2331,12 @@ HasCallableThen(heap, value) ==
   /\\ ~(IsHeap(value) /\\ heap.objects[value[Ref]].isOpaque)
   /\\ TypeOfIn(heap, Get(heap, value, "then")) = "function"
 
-\\* The heap after a pattern reads keys of an object, which TLC would read only where something
+\\* The heap after a pattern reads keys of a value, which TLC would read only where something
 \\* reads what the pattern binds, so that a getter that tla-ts can't call stops the check.
 ReadKeys(heap, ref, keys) ==
   CASE ref \\in {Undefined, Null} ->
          Assert(FALSE, "tla-ts can't throw the TypeError of destructuring " \\o ToString(ref))
-    [] \\A key \\in keys : Get(heap, ref, key) = Get(heap, ref, key) -> heap
+    [] \\A key \\in keys : GetAny(heap, ref, key) = GetAny(heap, ref, key) -> heap
     [] OTHER -> heap
 
 \\* TLC builds a function's values only where something reads them. This reads each one, so a getter
