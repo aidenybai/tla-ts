@@ -1146,7 +1146,7 @@ const translateBuiltInCall = (
         context,
       );
     }
-    translateExpression(argument, scope, context);
+    const value = translateExpression(argument, scope, context);
     const names = getTypeNames(context.checker.getTypeAtLocation(argument), context.checker);
     if (getKind(argument, context) === "sequence" && names?.every((name) => name === "object")) {
       return boolean(true);
@@ -1157,7 +1157,16 @@ const translateBuiltInCall = (
     ) {
       return boolean(false);
     }
-    throw new TlaTypeScriptError("Array.isArray needs a value whose type tells", node);
+    if (context.heap === undefined) {
+      throw new TlaTypeScriptError("Array.isArray needs a value whose type tells", node);
+    }
+    // A map off the heap may be the same TLA+ value as an array, so only a script that names no map
+    // holds a sequence that is surely one.
+    return useJavaScript(
+      "IsArrayAny",
+      [getHeap(scope, node, context), value, boolean(!/Map\b/.test(node.getSourceFile().text))],
+      context,
+    );
   }
   if (getBuiltIn(receiver, context) === "Error" && method === "isError") {
     const argument = node.arguments.at(0);

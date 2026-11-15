@@ -4625,6 +4625,14 @@ IsArray(heap, value) ==
                  \\/ IsArray(heap, target)
     [] OTHER -> IsRef(value) /\\ IsArrayObject(Lookup(heap, value))
 
+\\* IsArray of a value whose type doesn't tell what it is. An array off the heap is a sequence, which
+\\* may also be a map that tla-ts holds off the heap where a script names one.
+IsArrayAny(heap, value, isMapless) ==
+  CASE IsRef(value) -> IsArray(heap, value)
+    [] ~IsSequenceValue(value) -> FALSE
+    [] isMapless -> TRUE
+    [] OTHER -> Assert(FALSE, "tla-ts can't tell an array off the heap from a map")
+
 \\* The values that concat appends for an argument: the elements of an object whose
 \\* @@isConcatSpreadable property is truthy, or of an array where that property is undefined, and
 \\* otherwise the value itself.

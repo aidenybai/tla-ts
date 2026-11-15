@@ -43573,4 +43573,55 @@ describe("BigInts", () => {
       ).toContain("21falsetrue|true|1|0,1|truefalsetrue");
     });
   });
+
+  describe("tells whether a value of type unknown is an array as it runs", () => {
+    const getSource = (expected: string) => `
+      const source: unknown[] = [3, 4];
+      const filtered: unknown = source.filter(() => true);
+      const empty: unknown = [1].filter(() => false);
+      const target: object = [1];
+      const proxy: unknown = new Proxy(target, {});
+      const object: unknown = {};
+      const fn: unknown = function () {};
+      const error: unknown = new TypeError("x");
+      const text: unknown = "ab";
+      const nothing: unknown = null;
+      const log = [
+        Array.isArray(filtered),
+        Array.isArray(empty),
+        Array.isArray(proxy),
+        Array.isArray(object),
+        Array.isArray(JSON as unknown),
+        Array.isArray(fn),
+        Array.isArray(error),
+        Array.isArray(text),
+        Array.isArray(nothing),
+      ].join(",");
+      if (log !== "${expected}") throw new Error(log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("true,true,true,false,false,false,false,false,false"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects a proxy of an array that isn't one", async () => {
+      expect(
+        (await checkModel(getSource("true,true,false,false,false,false,false,false,false"))).failure
+          ?.message,
+      ).toContain("true,true,true,false,false,false,false,false,false");
+    });
+
+    it("stops at a value off the heap where the script names a map", async () => {
+      const result = await checkModel(`
+        const map: unknown = new Map<number, number>();
+        const object: unknown = {};
+        if (Array.isArray(map) || Array.isArray(object)) throw new Error("array");
+      `);
+      expect(result.failure?.message).toContain(
+        "tla-ts can't tell an array off the heap from a map",
+      );
+    });
+  });
 });
