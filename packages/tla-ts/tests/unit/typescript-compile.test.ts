@@ -16807,6 +16807,63 @@ describe("errors", () => {
     });
   });
 
+  describe("throws the ReferenceError of a typeof of a let or a const before its declaration", () => {
+    const getSource = (expected: string) => `
+      const seen: string[] = [];
+      const readCounter = () => {
+        try {
+          const kind = typeof counter;
+          seen.push(kind);
+        } catch (error) {
+          seen.push(error instanceof ReferenceError ? "reference" : "other");
+        }
+      };
+      const readLimit = () => {
+        try {
+          const kind = typeof limit;
+          seen.push(kind);
+        } catch (error) {
+          seen.push(error instanceof ReferenceError ? "reference" : "other");
+        }
+      };
+      readCounter();
+      readLimit();
+      let counter = 1;
+      const limit = "a";
+      readCounter();
+      readLimit();
+      if (seen.join() !== "${expected}") throw new Error(seen.join());
+    `;
+
+    it("throws it", async () => {
+      const result = await checkModel(getSource("reference,reference,number,string"));
+      expect(result.failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const result = await checkModel(getSource("number,string,number,string"));
+      expect(result.failure?.message).toContain("reference,reference,number,string");
+    });
+  });
+
+  it("stops at a typeof of a let inside try before its declaration, as at a read of it", () => {
+    expect(() =>
+      compile(`
+        const seen: string[] = [];
+        const note = (run: () => string) => {
+          try {
+            seen.push(run());
+          } catch (error) {
+            seen.push(error instanceof ReferenceError ? "reference" : "other");
+          }
+        };
+        note(() => typeof counter);
+        let counter = 1;
+        if (seen.join() !== "reference") throw new Error(seen.join());
+      `),
+    ).toThrow("Inside try, use counter after its declaration");
+  });
+
   describe("constructs a function expression that new calls where the script writes it", () => {
     const getSource = (expected: string) => `
       class Box {}

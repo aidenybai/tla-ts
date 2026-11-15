@@ -666,10 +666,14 @@ export const getUnresolvedRead = (
       ? undefined
       : getUnresolvedRead(node.expression, context, isThrowing);
   }
-  // delete and typeof of a name don't read it, but of a property they read the object first.
+  // delete of a name doesn't read it, and typeof of one reads only a binding that declares it,
+  // which throws before its declaration runs, but of a property they read the object first.
   if (ts.isDeleteExpression(node) || ts.isTypeOfExpression(node)) {
-    return ts.isIdentifier(skipCasts(node.expression))
-      ? undefined
+    const operand = skipCasts(node.expression);
+    return ts.isIdentifier(operand)
+      ? ts.isTypeOfExpression(node) && !isUnresolved(operand, context) && isThrowing(operand)
+        ? operand
+        : undefined
       : getUnresolvedRead(node.expression, context, isThrowing);
   }
   if (ts.isConditionalExpression(node)) {

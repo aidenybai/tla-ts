@@ -10,7 +10,7 @@ import {
   translateExpression,
   translateToString,
 } from "./expressions";
-import type { Scope } from "./scope";
+import { rejectBeforeDeclaration, type Scope } from "./scope";
 import { getKind, isBigIntLike } from "./types";
 import { apply, boolean, identifier, ifExpression, number, set, string } from "./tla";
 
@@ -6486,6 +6486,8 @@ export const translateTypeOf = (node: ts.TypeOfExpression, scope: Scope, context
   if (ts.isIdentifier(read) && getSymbol(read, context.checker) === undefined) {
     return string("undefined");
   }
+  // A binding that a name has throws before its declaration runs, though typeof only reads it.
+  if (ts.isIdentifier(read)) rejectBeforeDeclaration(read, scope, context);
   // An element of an array or a string may also lie past the end.
   const kind =
     ts.isPropertyAccessExpression(read) || ts.isElementAccessExpression(read)
