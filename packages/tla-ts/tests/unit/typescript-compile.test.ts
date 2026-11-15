@@ -36128,4 +36128,45 @@ describe("BigInts", () => {
       expect((await checkModel(getSource(wrong))).failure?.message).toContain("0,1,7,3");
     });
   });
+
+  describe("converts a primitive index of a typed array's method as ToNumber does", () => {
+    const getSource = (expected: string) => `
+      const sample = new Int8Array([40, 41, 42, 43]);
+      const copied = new Int8Array([0, 1, 2, 3]);
+      // @ts-ignore
+      copied.copyWithin("x", true, undefined);
+      const filled = new Int8Array([0, 1, 2, 3]);
+      // @ts-ignore
+      filled.fill(9, "1", null);
+      // @ts-ignore
+      filled.fill(8, false, "2");
+      const read = [
+        // @ts-ignore
+        sample.at("1"),
+        // @ts-ignore
+        sample.slice(true, "3").join(),
+        // @ts-ignore
+        sample.subarray(null, " -1 ").join(),
+        copied.join(),
+        filled.join(),
+        // @ts-ignore
+        sample.includes(40, true),
+        // @ts-ignore
+        sample.indexOf(42, "2"),
+        // @ts-ignore
+        sample.lastIndexOf(43, null),
+      ];
+      if (read.join("|") !== "${expected}") throw new Error(read.join("|"));
+    `;
+
+    it("agrees with Node", async () => {
+      const expected = "41|41,42|40,41,42|1,2,3,3|8,8,2,3|false|2|-1";
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects a wrong expectation", async () => {
+      const wrong = "41|41,42|40,41,42|1,2,3,3|8,8,2,3|false|2|3";
+      expect((await checkModel(getSource(wrong))).failure?.message).toContain("2|-1");
+    });
+  });
 });

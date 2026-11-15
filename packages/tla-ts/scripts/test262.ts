@@ -1408,8 +1408,8 @@ const REDUCING_METHODS = new Set(["reduce", "reduceRight"]);
 // The array methods that tla-ts searches by value for any value, from an index that ToNumber
 // converts from a primitive. Each needs a unit test of such a call.
 const SEARCHING_METHODS = new Set(["includes", "indexOf", "lastIndexOf"]);
-// The positions of the index arguments that ToIntegerOrInfinity converts, of the methods of each
-// kind of receiver where tla-ts converts a primitive there as ToNumber does. Each needs a unit test
+// The positions of the index arguments that ToIntegerOrInfinity converts, of the methods of arrays
+// and typed arrays where tla-ts converts a primitive there as ToNumber does. Each needs a unit test
 // of such a call.
 const INDEX_PARAMETERS = new Map([
   [
@@ -1421,6 +1421,19 @@ const INDEX_PARAMETERS = new Map([
       ["slice", [0, 1]],
       ["toSpliced", [0, 1]],
       ["with", [0]],
+    ]),
+  ],
+  [
+    "TypedArray",
+    new Map([
+      ["at", [0]],
+      ["copyWithin", [0, 1, 2]],
+      ["fill", [1, 2]],
+      ["includes", [1]],
+      ["indexOf", [1]],
+      ["lastIndexOf", [1]],
+      ["slice", [0, 1]],
+      ["subarray", [0, 1]],
     ]),
   ],
 ]);
@@ -2052,7 +2065,13 @@ const ignoreSoundErrors = () => {
       return false;
     }
     const receiver = checker.getTypeAtLocation(call.expression.expression);
-    const kind = checker.isArrayType(receiver) ? "Array" : undefined;
+    const kind = checker.isArrayType(receiver)
+      ? "Array"
+      : (receiver.isUnion() ? receiver.types : [receiver]).every((member) =>
+            /^(Big)?(Int|Uint|Float)\d+(Clamped)?Array$/.test(member.getSymbol()?.getName() ?? ""),
+          )
+        ? "TypedArray"
+        : undefined;
     const positions = kind && INDEX_PARAMETERS.get(kind)?.get(call.expression.name.text);
     const position = call.arguments.findIndex(
       (value) =>
