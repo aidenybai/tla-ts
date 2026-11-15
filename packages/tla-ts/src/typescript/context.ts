@@ -1495,6 +1495,14 @@ export const getPrivateKey = (member: ts.ClassElement, context: Context) => {
 const isLiteralKey = (node: ts.Node) =>
   ts.isStringLiteral(node) || ts.isNumericLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node);
 
+// A field whose computed key a class evaluates once, in order with its other keys, as the script
+// defines it. Its object holds the key under a private name, for each new to define the field by.
+export const isComputedField = (member: ts.PropertyDeclaration) =>
+  ts.isComputedPropertyName(member.name) && !isLiteralKey(member.name.expression);
+
+export const getFieldKey = (member: ts.PropertyDeclaration, context: Context) =>
+  `${getBrand(member.parent, context)} key ${member.parent.members.indexOf(member)}`;
+
 // An accessor with a body and a key that a property can have, which a computed name gives as it
 // evaluates.
 export const isPlainAccessor = (
@@ -2543,11 +2551,35 @@ export const isHeapClass = (node: ts.ClassLikeDeclaration, context: Context): bo
           (ts.isIdentifier(member.name) ||
             ts.isPrivateIdentifier(member.name) ||
             isLiteralKey(member.name) ||
-            (ts.isComputedPropertyName(member.name) && isLiteralKey(member.name.expression)))),
+            // A new reads a computed key from the class's object, which its binding names.
+            (ts.isComputedPropertyName(member.name) &&
+              (isLiteralKey(member.name.expression) || (symbol !== undefined && !isField))))),
     ) &&
     (symbol === undefined || !isAssigned(symbol, node.getSourceFile(), context));
   heapClasses.set(node, isHeap);
   return isHeap;
+};
+
+// Why a class that no other translation takes isn't a heap class, where the reason is its place
+// rather than its members or what it extends.
+export const getClassStop = (node: ts.ClassLikeDeclaration, context: Context) => {
+  if (context.heap === undefined) return undefined;
+  if (!isOnce(node)) return "tla-ts can't make a class in code that may run more than once";
+  const declared = ts.isClassExpression(node) ? node.parent : node;
+  if (
+    ts.isClassExpression(node) &&
+    !ts.isVariableDeclaration(declared) &&
+    !ts.isPropertyDeclaration(declared) &&
+    getInPlaceNew(node) === undefined
+  ) {
+    return "tla-ts can't make a class that no declaration holds";
+  }
+  const name = ts.isVariableDeclaration(declared) ? declared.name : node.name;
+  const symbol =
+    name !== undefined && ts.isIdentifier(name) ? getSymbol(name, context.checker) : undefined;
+  return symbol !== undefined && isAssigned(symbol, node.getSourceFile(), context)
+    ? "tla-ts can't make a class whose name the script assigns"
+    : undefined;
 };
 
 // The parameters that a call passes values to, without the this parameter that only types this.
@@ -4017,7 +4049,7 @@ export const getRunFields = (node: HeapClass, context: Context) => {
       ts.isPropertyDeclaration(member) && !isStatic(member) && !isAmbient(member),
   );
   // A field whose call may throw defines itself as a statement too, so that what it throws leaves
-  // the new.
+  // the new, and so does one that assigns, which only a statement can run.
   const first = fields.findIndex((field) => {
     const created = field.initializer && getNewClass(field.initializer, context);
     const called = field.initializer && skipCasts(field.initializer);
@@ -4027,7 +4059,8 @@ export const getRunFields = (node: HeapClass, context: Context) => {
         : undefined;
     return (
       (created !== undefined && getRunConstructor(created, context) !== undefined) ||
-      (callee !== undefined && mayThrow(callee, context))
+      (callee !== undefined && mayThrow(callee, context)) ||
+      (called !== undefined && getAssignedTarget(called) !== undefined)
     );
   });
   return first === -1 ? [] : fields.slice(first);

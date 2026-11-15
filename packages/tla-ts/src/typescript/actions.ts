@@ -92,6 +92,7 @@ import {
   translateString,
   isPrivateMember,
   isStatic,
+  isComputedField,
   getPrivateMember,
   getPrivateKey,
   getParameters,
@@ -138,6 +139,7 @@ import {
   isNullBased,
   rejectDeclaredCall,
   getAssignedTarget,
+  getClassStop,
 } from "./context";
 import { TlaTypeScriptError } from "../errors";
 import { UNSETTLED_AWAIT_WARNING } from "../exit-codes";
@@ -264,6 +266,8 @@ import {
   translateHasPrivate,
   translateHoldsMethod,
   translateMemberKey,
+  translateClassRef,
+  translateComputedKey,
   translateObjectChange,
   translateObjectValue,
   getSuperLookup,
@@ -10428,7 +10432,16 @@ const translateElements = (
                   [
                     heap,
                     ref,
-                    translateMemberKey(element.name, inner.scope, context),
+                    isComputedField(element)
+                      ? translateComputedKey(
+                          element,
+                          isStatic(element)
+                            ? ref
+                            : translateClassRef(element.parent, inner.scope, context),
+                          heap,
+                          context,
+                        )
+                      : translateMemberKey(element.name, inner.scope, context),
                     identifier(value),
                   ],
                   context,
@@ -19344,7 +19357,8 @@ export const translateStatements = (
   if (ts.isFunctionDeclaration(statement)) {
     return translateVarFunction(statement, path, context, continueWith);
   }
-  throw new TlaTypeScriptError(`Unsupported statement: ${statement.getText()}`, statement);
+  const stop = ts.isClassDeclaration(statement) ? getClassStop(statement, context) : undefined;
+  throw new TlaTypeScriptError(stop ?? `Unsupported statement: ${statement.getText()}`, statement);
 };
 
 // An action's body as a TLA+ action: each path that assigns a state variable becomes a step, and

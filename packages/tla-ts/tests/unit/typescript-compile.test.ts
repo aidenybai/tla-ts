@@ -22269,7 +22269,7 @@ describe("errors", () => {
           })();
         }
       `),
-    ).toThrow("Unsupported expression: class");
+    ).toThrow("tla-ts can't make a class in code that may run more than once");
   });
 
   it("throws the ReferenceError of a derived constructor's this before super(...)", async () => {
@@ -41587,6 +41587,139 @@ describe("BigInts", () => {
       expect(result.failure?.message).toContain(
         "tla-ts can't read first, which its arguments object gave a value of another type",
       );
+    });
+  });
+
+  describe("a class's computed field keys, which it evaluates once as the script defines it", () => {
+    const getSource = (expected: string) => `
+      let i = 0;
+      let key = "a";
+      class Base {
+        // @ts-ignore
+        [i++] = "first";
+        // @ts-ignore
+        static [i++] = "static";
+        // @ts-ignore
+        [i++] = "last";
+        // @ts-ignore
+        [key] = 1;
+      }
+      key = "b";
+      const Derived = class extends Base {
+        // @ts-ignore
+        [key] = 2;
+      };
+      key = "c";
+      const made = new Derived() as unknown as Record<string, unknown>;
+      const again = new Derived() as unknown as Record<string, unknown>;
+      const seen = [
+        i,
+        ...Object.keys(made),
+        made.a,
+        made.b,
+        made[0],
+        made[2],
+        again[2],
+        (Base as unknown as Record<string, unknown>)[1],
+      ];
+      if (seen.join() !== "${expected}") throw new Error("seen " + seen.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("3,0,2,a,b,1,2,first,last,last,static"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects keys that each new evaluates again", async () => {
+      expect(
+        (await checkModel(getSource("3,0,2,a,c,1,,first,last,last,static"))).failure?.message,
+      ).toContain("seen 3,0,2,a,b,1,2,first,last,last,static");
+    });
+  });
+
+  describe("an instance field whose value assigns, which a new runs as a statement", () => {
+    const getSource = (expected: string) => `
+      let i = 0;
+      class Counter {
+        // @ts-ignore
+        [i++] = i++;
+        // @ts-ignore
+        static [i++] = i++;
+        // @ts-ignore
+        [i++] = i++;
+        total = (i += 10);
+        constructor() {
+          i *= 2;
+        }
+      }
+      const first = new Counter();
+      const second = new Counter();
+      const read = (made: object, key: number) => (made as Record<number, number>)[key];
+      const seen = [
+        i,
+        read(first, 0),
+        read(first, 2),
+        first.total,
+        read(second, 0),
+        read(second, 2),
+        second.total,
+        read(Counter, 1),
+      ];
+      if (seen.join() !== "${expected}") throw new Error("seen " + seen.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("88,4,5,16,32,33,44,3"))).failure).toBeUndefined();
+    });
+
+    it("rejects instance fields that run before the static ones", async () => {
+      expect((await checkModel(getSource("88,3,4,16,32,33,44,5"))).failure?.message).toContain(
+        "seen 88,4,5,16,32,33,44,3",
+      );
+    });
+  });
+
+  describe("a class that tla-ts can't make for its place", () => {
+    it("stops where code that may run more than once makes it", () => {
+      expect(() =>
+        compile(`
+          const make = () => {
+            return class {
+              static value = 1;
+            };
+          };
+          const first = make();
+          const second = make();
+          if (first === second) throw new Error("same");
+        `),
+      ).toThrow("tla-ts can't make a class in code that may run more than once");
+    });
+
+    it("stops where an assignment holds it", () => {
+      expect(() =>
+        compile(`
+          let Made: { value: number };
+          Made = class {
+            static value = 1;
+          };
+          if (Made.value !== 1) throw new Error("value");
+        `),
+      ).toThrow("tla-ts can't make a class that no declaration holds");
+    });
+
+    it("stops where the script assigns its name", () => {
+      expect(() =>
+        compile(`
+          let Made = class {
+            static value = 1;
+          };
+          Made = class {
+            static value = 2;
+          };
+          if (Made.value !== 2) throw new Error("value");
+        `),
+      ).toThrow("tla-ts can't make a class whose name the script assigns");
     });
   });
 });

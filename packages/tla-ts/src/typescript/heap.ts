@@ -23,7 +23,9 @@ import {
   getSymbol,
   getUndefined,
   getClassKey,
+  getFieldKey,
   getPrivateKey,
+  isComputedField,
   isOnceField,
   isPlain,
   isPlainAccessor,
@@ -789,6 +791,15 @@ export const translateClassRef = (
   return translateExpression(name, scope, context);
 };
 
+// The key of a field that its class computed as the script defined it, which the class's object
+// holds.
+export const translateComputedKey = (
+  member: ts.PropertyDeclaration,
+  owner: Expression,
+  heap: Expression,
+  context: Context,
+) => useJavaScript("PrivateGet", [heap, owner, string(getFieldKey(member, context))], context);
+
 // The heap after a node from getAllocated adds the object it makes.
 // The constructor object and the prototype that a class makes, prototype first, so the
 // constructor object is the last on the heap.
@@ -894,12 +905,29 @@ const translateClass = (
     ),
     true,
   );
+  const keyed = members
+    .flatMap((member) =>
+      ts.isPropertyDeclaration(member) && isComputedField(member) ? [member] : [],
+    )
+    .reduce(
+      (current, member) =>
+        useJavaScript(
+          "PrivateAdd",
+          [
+            current,
+            string(getFieldKey(member, context)),
+            translateMemberKey(member.name, scope, context),
+          ],
+          context,
+        ),
+      methods,
+    );
   const branded =
     staticBranded === undefined
-      ? methods
+      ? keyed
       : useJavaScript(
           "PrivateAdd",
-          [methods, string(getPrivateKey(staticBranded, context)), boolean(true)],
+          [keyed, string(getPrivateKey(staticBranded, context)), boolean(true)],
           context,
         );
   // A function holds the model value of its code, so that a call of a value can tell which it is.
@@ -1239,7 +1267,18 @@ const translateInstance = (
           )
         : useJavaScript(
             "Put",
-            [object, translateMemberKey(member.name, scope, context), value],
+            [
+              object,
+              isComputedField(member)
+                ? translateComputedKey(
+                    member,
+                    translateClassRef(member.parent, scope, context),
+                    heap,
+                    context,
+                  )
+                : translateMemberKey(member.name, scope, context),
+              value,
+            ],
             context,
           );
     },
