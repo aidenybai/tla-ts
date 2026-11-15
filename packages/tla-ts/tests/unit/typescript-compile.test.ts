@@ -43107,4 +43107,37 @@ describe("BigInts", () => {
       ).toContain("bound sum|1|13|false|bound |0|function");
     });
   });
+
+  describe("passes a function expression as the receiver of call", () => {
+    const getSource = (expected: string) => `
+      function self(this: unknown) {
+        return this;
+      }
+      const made: unknown[] = [];
+      for (let step = 0; step < 2; step++) {
+        made.push(self.call(function () {}));
+      }
+      const run = (inner: () => void) => inner();
+      let log = "";
+      run(() => {
+        try {
+          Array.prototype.shift.call(function () {});
+        } catch (error) {
+          log += error instanceof TypeError;
+        }
+      });
+      log += \`|\${Object.hasOwn({}, "x")}|\${made[0] === made[1]}|\${typeof made[0]}\`;
+      if (log !== "${expected}") throw new Error(log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("true|false|false|function"))).failure).toBeUndefined();
+    });
+
+    it("rejects one object for each time the script makes the function", async () => {
+      expect((await checkModel(getSource("true|false|true|function"))).failure?.message).toContain(
+        "true|false|false|function",
+      );
+    });
+  });
 });

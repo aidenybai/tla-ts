@@ -2679,10 +2679,12 @@ const isPropertyRead = (node: ts.Node): boolean => {
 
 // A function that a call passes as an object, or an arrow or a generator that a name holds which a
 // call passes, that the script makes once. A plain function that a name holds is a heap function.
+// One that call or apply passes as the receiver and that reads no local of the functions around it
+// is an object of its own each time the script makes it.
 const isPassedFunction = (node: ts.Node, context: Context) => {
-  if ((!ts.isArrowFunction(node) && !ts.isFunctionExpression(node)) || !isOnce(node.parent)) {
-    return false;
-  }
+  if (!ts.isArrowFunction(node) && !ts.isFunctionExpression(node)) return false;
+  if (isCallReceiver(node) && getOuterLocals(node, context).length === 0) return true;
+  if (!isOnce(node.parent)) return false;
   if (isObjectArgument(node, context.checker)) return true;
   const declaration = node.parent;
   if (
@@ -3605,6 +3607,13 @@ const isObjectArgument = (argument: ts.Expression, checker: ts.TypeChecker) => {
     type.getConstructSignatures().length === 0
   );
 };
+
+// The receiver that call or apply passes, as in f.call(function () {}).
+const isCallReceiver = (node: ts.Node) =>
+  ts.isCallExpression(node.parent) &&
+  node.parent.arguments[0] === node &&
+  ts.isPropertyAccessExpression(node.parent.expression) &&
+  ["call", "apply"].includes(node.parent.expression.name.text);
 
 // Whether a call passes what a name holds as an object.
 const isPassedAsObject = (symbol: ts.Symbol, sourceFile: ts.SourceFile, context: Context) =>
