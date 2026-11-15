@@ -41589,4 +41589,134 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("reads and writes the names that a with statement's object binds outside strict mode", () => {
+    const getSource = (expected: string) => `
+      const seen: unknown[] = [];
+      var outer = "outer";
+      var shadowed = "var";
+      var env: { [key: string | symbol]: unknown } = { inner: 1, shadowed: "env", count: 0 };
+      with (env) {
+        seen.push(inner, shadowed, outer, typeof missing);
+        inner = 2;
+        shadowed += "!";
+        count++;
+        outer = "changed";
+      }
+      env[Symbol.unscopables] = { shadowed: true };
+      with (env) seen.push(shadowed);
+      seen.push(env.inner, env.shadowed, env.count, shadowed, outer);
+      if (seen.join() !== "${expected}") throw new Error("seen " + seen.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("1,env,outer,undefined,var,2,env!,1,var,changed"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects a binding that the object's unscopables block", async () => {
+      expect(
+        (await checkModel(getSource("1,env,outer,undefined,env!,2,env!,1,var,changed"))).failure
+          ?.message,
+      ).toContain("seen 1,env,outer,undefined,var,2,env!,1,var,changed");
+    });
+  });
+
+  describe("calls and declares through a with statement's object outside strict mode", () => {
+    const getSource = (expected: string) => `
+      const seen: unknown[] = [];
+      var env = { name: "env", read() { return this === env ? this.name : "other"; } };
+      function read() { return "outer"; }
+      var empty = {};
+      with (env) seen.push(read());
+      with (empty) seen.push(read());
+      const readVars = () => [declared, other].join();
+      var holder = { declared: 0 };
+      with (holder) {
+        var declared = 1;
+        var other = 2;
+      }
+      seen.push(holder.declared, readVars());
+      if (seen.join() !== "${expected}") throw new Error("seen " + seen.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("env,outer,1,,2"))).failure).toBeUndefined();
+    });
+
+    it("rejects a var that its initializer assigns where the object binds the name", async () => {
+      expect((await checkModel(getSource("env,outer,0,1,2"))).failure?.message).toContain(
+        "seen env,outer,1,,2",
+      );
+    });
+  });
+
+  describe("throws from a with statement's object outside strict mode", () => {
+    const getSource = (expected: string) => `
+      const seen: unknown[] = [];
+      try {
+        with (null as any) seen.push("ran");
+      } catch (error) {
+        seen.push(error instanceof TypeError);
+      }
+      var scope: { [key: string]: unknown } = { x: 1 };
+      const remove = () => {
+        delete scope.x;
+        return 2;
+      };
+      var caught: unknown;
+      with (scope) {
+        (function () {
+          "use strict";
+          try {
+            x = remove();
+          } catch (error) {
+            caught = error;
+          }
+        })();
+      }
+      seen.push(caught instanceof ReferenceError, "x" in scope);
+      if (seen.join() !== "${expected}") throw new Error("seen " + seen.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("true,true,false"))).failure).toBeUndefined();
+    });
+
+    it("rejects a write in strict mode to a binding that the object deleted", async () => {
+      expect((await checkModel(getSource("true,false"))).failure?.message).toContain(
+        "seen true,true,false",
+      );
+    });
+  });
+
+  it("stops where tla-ts can't follow what a with statement's object binds", async () => {
+    const stops = [
+      ["with (globalThis) {}", "tla-ts can't run a with statement on the global object"],
+      ['var text = "text";\nwith (text) {}', "tla-ts can't run a with statement on a primitive"],
+      [
+        `var dynamic: { [key: string]: unknown } = {};
+        dynamic.read = () => "dynamic";
+        function read() { return "outer"; }
+        with (dynamic) read();`,
+        "tla-ts can't call a function that a with statement's object holds",
+      ],
+    ];
+    for (const [source, message] of stops) {
+      expect((await checkModel(source)).failure?.message).toContain(message);
+    }
+  });
+
+  it("rejects a declaration as a with statement's body", () => {
+    expect(() => compile("with ({}) let x = 1;")).toThrow(
+      "SyntaxError: A declaration can't be the body of a statement",
+    );
+    expect(() => compile("with ({}) let\n[x] = [1];")).toThrow(
+      "SyntaxError: A declaration can't be the body of a statement",
+    );
+    expect(() => compile("with ({}) let\nx = 1;")).toThrow(
+      "tla-ts can't read a let that a line break follows as a name",
+    );
+  });
 });

@@ -136,6 +136,7 @@ import {
   getDeferredSuperCalls,
   getSuperCall,
   isNullBased,
+  getWithStop,
   rejectDeclaredCall,
   getAssignedTarget,
 } from "./context";
@@ -2130,6 +2131,8 @@ export const translateCallStatement = (
   if (expression.expression.kind === ts.SyntaxKind.SuperKeyword) {
     return translateSuperCall(expression, path, context, frame, continueWith);
   }
+  const withStop = getWithStop(expression, context);
+  if (withStop !== undefined) return leaf(apply("Assert", [boolean(false), string(withStop)]));
   const formatCall = getFormatCall(expression, context);
   if (formatCall !== undefined) {
     return ifThenElse(
