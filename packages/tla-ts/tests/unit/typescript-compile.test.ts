@@ -36118,4 +36118,37 @@ describe("BigInts", () => {
       expect(getSize(8)).toBeLessThan(getSize(4) * 2);
     });
   });
+
+  describe("joins after a branch whose callback reads a const that the branch declares", () => {
+    const getSource = (count: number, expected: string) => `
+      const matches = (value: number, excluded: number[]) => excluded.includes(value);
+      const box = { size: 0 };
+      let kept = [1, 2, 3, 4];
+      ${Array.from(
+        { length: count },
+        (
+          _,
+          index,
+        ) => `const exclude${index}: number[] | null = kept.length > ${index + 1} ? [${index + 1}] : null;
+      if (exclude${index}) {
+        const excluded = exclude${index};
+        kept = kept.filter((value) => !matches(value, excluded));
+      }`,
+      ).join("\n")}
+      if (kept.join() !== "${expected}") throw new Error(kept.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(3, "3,4"))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation", async () => {
+      expect((await checkModel(getSource(3, "4"))).failure?.message).toContain('"3,4"');
+    });
+
+    it("translates what follows each branch once", () => {
+      const getSize = (count: number) => printModule(compile(getSource(count, "")).source).length;
+      expect(getSize(8)).toBeLessThan(getSize(4) * 2);
+    });
+  });
 });

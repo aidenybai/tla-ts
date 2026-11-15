@@ -12933,45 +12933,71 @@ export const translateJoined = (
   changed = getChanged(node, path, context),
 ): Formula => {
   if (context.heap === undefined) return translateWith(continueWith);
-  const name = context.names.getFresh("Join");
-  const parameters = changed.map((symbol) => {
-    const binding = path.scope.bindings.get(symbol);
-    return context.names.getFresh(binding?.kind === "Identifier" ? binding.name : "value");
-  });
-  const result = context.names.getFresh("result");
+  const isVar = (declaration: ts.VariableDeclaration) =>
+    ts.isVariableDeclarationList(declaration.parent) &&
+    (declaration.parent.flags & ts.NodeFlags.BlockScoped) === 0;
+  // The functions in the statement that read a binding that it declares from outside them.
+  const getClosures = (symbol: ts.Symbol, declaration: ts.VariableDeclaration) =>
+    findNodes(
+      node,
+      (inner): inner is ts.Identifier =>
+        ts.isIdentifier(inner) && getSymbol(inner, context.checker) === symbol,
+    ).flatMap(
+      (inner) =>
+        ts.findAncestor(inner, (ancestor) =>
+          ancestor === node
+            ? "quit"
+            : ts.isFunctionLike(ancestor) &&
+              ts.findAncestor(declaration, (outer) => outer === ancestor) === undefined,
+        ) ?? [],
+    );
   // A var that the statement declares outlives it, as does any binding it declares that a function
   // in it captures, such as a catch's error.
   const isVarInside = (symbol: ts.Symbol) => {
     const declaration = symbol.valueDeclaration;
-    if (
-      declaration === undefined ||
-      !ts.isVariableDeclaration(declaration) ||
-      ts.findAncestor(declaration, (ancestor) => ancestor === node) === undefined
-    ) {
-      return false;
-    }
-    const parent = declaration.parent;
     return (
-      (ts.isVariableDeclarationList(parent) && (parent.flags & ts.NodeFlags.BlockScoped) === 0) ||
-      findNodes(
-        node,
-        (inner): inner is ts.Identifier =>
-          ts.isIdentifier(inner) &&
-          getSymbol(inner, context.checker) === symbol &&
-          ts.findAncestor(inner, (ancestor) =>
-            ancestor === node
-              ? "quit"
-              : ts.isFunctionLike(ancestor) &&
-                ts.findAncestor(declaration, (outer) => outer === ancestor) === undefined,
-          ) !== undefined,
-      ).length > 0
+      declaration !== undefined &&
+      ts.isVariableDeclaration(declaration) &&
+      ts.findAncestor(declaration, (ancestor) => ancestor === node) !== undefined &&
+      (isVar(declaration) || getClosures(symbol, declaration).length > 0)
     );
   };
+  // A binding that the statement itself declares, which a function made after the declaration
+  // captures, goes on as a parameter of the operator. A path that doesn't declare it passes
+  // undefined, as it made none of the functions that read it.
+  const captured = findNodes(node, ts.isVariableDeclaration).flatMap((declaration) => {
+    const symbol = ts.isIdentifier(declaration.name)
+      ? getSymbol(declaration.name, context.checker)
+      : undefined;
+    if (
+      symbol === undefined ||
+      isVar(declaration) ||
+      ts.findAncestor(declaration, (ancestor) =>
+        ancestor === node ? "quit" : ts.isFunctionLike(ancestor),
+      ) !== undefined
+    ) {
+      return [];
+    }
+    const closures = getClosures(symbol, declaration);
+    return closures.length > 0 &&
+      closures.every(
+        (closure) => !ts.isFunctionDeclaration(closure) && closure.pos >= declaration.end,
+      )
+      ? [symbol]
+      : [];
+  });
+  const passed = [...changed, ...captured];
+  const name = context.names.getFresh("Join");
+  const parameters = passed.map((symbol) => {
+    const binding = path.scope.bindings.get(symbol);
+    return context.names.getFresh(binding?.kind === "Identifier" ? binding.name : "value");
+  });
+  const result = context.names.getFresh("result");
   const isKept = (bindings: Map<ts.Symbol, Expression>) =>
     [...bindings].every((entry) =>
       path.scope.bindings.has(entry[0])
         ? path.scope.bindings.get(entry[0]) === entry[1] || changed.includes(entry[0])
-        : !isVarInside(entry[0]),
+        : !isVarInside(entry[0]) || captured.includes(entry[0]),
     );
   // What follows holds the functions held before, which the operator can't take, so each exit holds
   // the same ones for each name that code after the statement can read. That leaves out the names
@@ -12998,6 +13024,7 @@ export const translateJoined = (
     return leaf(
       call(name, [
         ...changed.flatMap((symbol) => inner.scope.bindings.get(symbol) ?? []),
+        ...captured.map((symbol) => inner.scope.bindings.get(symbol) ?? getUndefined(context)),
         value ?? getUndefined(context),
       ]),
     );
@@ -13030,7 +13057,7 @@ export const translateJoined = (
         ...path.scope,
         bindings: new Map([
           ...path.scope.bindings,
-          ...changed.map((symbol, position): [ts.Symbol, Expression] => [
+          ...passed.map((symbol, position): [ts.Symbol, Expression] => [
             symbol,
             identifier(parameters[position]),
           ]),
