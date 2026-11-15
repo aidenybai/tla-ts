@@ -18,7 +18,7 @@ import {
   isVarFunction,
 } from "./context";
 import { type CompiledSpec, createSections, emit, type Sections } from "./emit";
-import { getBinary, getNumberValue, MATH_OPERATORS } from "./expressions";
+import { getBinary, getNumberValue, isRawTemplate, MATH_OPERATORS } from "./expressions";
 import { render } from "./formula";
 import { translateBody } from "./functions";
 import {
@@ -505,6 +505,8 @@ export const compile = (
     node !== undefined && ts.isClassLike(node) && !node.getSourceFile().isDeclarationFile;
   const usesObjects = (node: ts.Node): boolean =>
     ts.isObjectLiteralExpression(node) ||
+    // A tagged template's template object.
+    (ts.isTaggedTemplateExpression(node) && !isRawTemplate(node, context)) ||
     (ts.isClassLike(node) &&
       (node.heritageClauses ?? []).every((clause) =>
         clause.types.every(
@@ -757,6 +759,13 @@ export const compile = (
     context.collectionProxies = findCollectionProxies(roots, context);
     context.checkedGlobals = findCheckedGlobals(sourceFile, context);
     context.generatorPrototypes = findGeneratorPrototypes(sourceFile, context);
+    context.templateSites = roots.flatMap((root) =>
+      findNodes(
+        root,
+        (node): node is ts.TaggedTemplateExpression =>
+          ts.isTaggedTemplateExpression(node) && !isRawTemplate(node, context),
+      ),
+    );
     const prototypes = new Set(["Array.prototype", "Object.prototype"]);
     const changesPrototype = (node: ts.Node): boolean =>
       (ts.isCallExpression(node) &&

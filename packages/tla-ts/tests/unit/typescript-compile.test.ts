@@ -43719,4 +43719,57 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("calls a tagged template's tag with its site's template object", () => {
+    const getSource = (expected: string) => `
+      let previous: any = null;
+      const log: string[] = [];
+      function tag(strings: any, first?: unknown, second?: unknown) {
+        previous = strings;
+        log.push(
+          \`\${strings.length}:\${strings[0]}|\${strings[1]}:\${strings.raw[0]}|\${strings.raw[strings.length - 1]}:\${String(first)},\${String(second)}\`,
+        );
+      }
+      let a = 1;
+      function run() {
+        tag\`head\${a}tail\`;
+      }
+      run();
+      const site = previous;
+      run();
+      const isSame = previous === site;
+      tag\`head\${a}tail\`;
+      const isOther = previous !== site;
+      let i = 0;
+      tag\`a\${i++}b\${i++}c\\n\`;
+      log.push(
+        String(isSame),
+        String(isOther),
+        String(Object.isFrozen(site)),
+        String(Object.isFrozen(site.raw)),
+      );
+      const holder = {
+        name: "o",
+        fn(this: { name: string }, strings: any) {
+          log.push(this.name + strings[0]);
+        },
+      };
+      holder.fn\`x\`;
+      if (log.join() !== "${expected}") throw new Error(log.join());
+    `;
+    const expected =
+      "2:head|tail:head|tail:1,undefined,2:head|tail:head|tail:1,undefined," +
+      "2:head|tail:head|tail:1,undefined,3:a|b:a|c\\\\n:0,1,true,true,true,true,ox";
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects a new template object for each run of a site", async () => {
+      expect(
+        (await checkModel(getSource(expected.replace("1,true,true", "1,false,true")))).failure
+          ?.message,
+      ).toContain("0,1,true,true");
+    });
+  });
 });

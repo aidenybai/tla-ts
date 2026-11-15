@@ -1874,6 +1874,12 @@ export const getRawString = (literal: ts.TemplateLiteralLikeNode) =>
 
 const getRawText = (literal: ts.TemplateLiteralLikeNode) => string(getRawString(literal));
 
+// Whether a tagged template calls String.raw.
+export const isRawTemplate = (node: ts.TaggedTemplateExpression, context: Context) =>
+  ts.isPropertyAccessExpression(node.tag) &&
+  node.tag.name.text === "raw" &&
+  getBuiltIn(node.tag.expression, context) === "String";
+
 // String.raw of a template, which joins the raw text of its literals with its substitutions.
 const translateRawTemplate = (
   node: ts.TaggedTemplateExpression,
@@ -3956,12 +3962,7 @@ export const translateNode = (
     return translateString(node.text, context);
   }
   if (ts.isTemplateExpression(node)) return translateTemplate(node, scope, context);
-  if (
-    ts.isTaggedTemplateExpression(node) &&
-    ts.isPropertyAccessExpression(node.tag) &&
-    node.tag.name.text === "raw" &&
-    getBuiltIn(node.tag.expression, context) === "String"
-  ) {
+  if (ts.isTaggedTemplateExpression(node) && isRawTemplate(node, context)) {
     return translateRawTemplate(node, scope, context);
   }
   if (node.kind === ts.SyntaxKind.TrueKeyword) return boolean(true);

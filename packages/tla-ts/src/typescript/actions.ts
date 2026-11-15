@@ -204,6 +204,8 @@ import {
   translateToString,
   getHoleChecks,
   isInertBefore,
+  isRawTemplate,
+  getRawString,
   ARITHMETIC_OPERATORS,
   BIGINT_OPERATORS,
   BITWISE_OPERATORS,
@@ -11467,6 +11469,89 @@ const isRead = (node: ts.Node, results: ReadonlyMap<ts.Expression, Expression>):
   );
 };
 
+const getSubstitutions = (node: ts.TaggedTemplateExpression) =>
+  ts.isTemplateExpression(node.template)
+    ? node.template.templateSpans.map((span) => span.expression)
+    : [];
+
+// A tagged template's call of its tag, once the statement ran its substitutions' calls and
+// increments, with the site's template object and the substitutions' values, as the tag's this the
+// object of a method that a property names.
+const translateTaggedTemplate = (
+  node: ts.TaggedTemplateExpression,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path) => Formula,
+): Formula => {
+  const tag = skipCasts(node.tag);
+  const called = getCalledMethod(tag, context);
+  const callee = called?.method ?? getCallback(tag, path, context);
+  const substitutions = getSubstitutions(node);
+  if (
+    !context.templateSites.includes(node) ||
+    callee?.body === undefined ||
+    isAnyGenerator(callee) ||
+    isAsyncFunction(callee) ||
+    isClosure(callee, context) ||
+    path.scope.results.has(node.tag) ||
+    !substitutions.every(
+      (substitution) =>
+        isSettled(substitution, path.scope.results) ||
+        isReadName(substitution, context) ||
+        substitution.kind === ts.SyntaxKind.ThisKeyword,
+    )
+  ) {
+    throw new TlaTypeScriptError("tla-ts can't run this tagged template's call", node);
+  }
+  const receiver =
+    called !== undefined
+      ? getReceiver(path.scope, context, called)
+      : ts.isArrowFunction(callee)
+        ? path.scope.receiver
+        : { value: getUndefined(context), method: callee };
+  const call = translateJoined(node, path, context, continueWith, (next) =>
+    inlineValues(
+      callee,
+      [
+        getTemplateRef(node, context),
+        ...substitutions.map((substitution) =>
+          translateExpression(substitution, path.scope, context),
+        ),
+      ],
+      receiver,
+      path,
+      context,
+      frame,
+      // What the call evaluated or made of the tag's own code belongs to this call, not a later one.
+      (after) => {
+        const isOutside = (entry: [ts.Node, Expression]) =>
+          ts.findAncestor(entry[0], (ancestor) => ancestor === callee) === undefined;
+        return next({
+          ...after,
+          scope: {
+            ...after.scope,
+            results: new Map([...after.scope.results].filter(isOutside)),
+            allocated: new Map([...after.scope.allocated].filter(isOutside)),
+          },
+        });
+      },
+    ),
+  );
+  return called === undefined
+    ? call
+    : ifThenElse(
+        translateHoldsMethod(called, path.scope, context),
+        call,
+        leaf(
+          apply("Assert", [
+            boolean(false),
+            string("tla-ts can't tell which method this call runs"),
+          ]),
+        ),
+      );
+};
+
 const translateExpressionStatement = (
   expression: ts.Expression,
   path: Path,
@@ -11485,6 +11570,9 @@ const translateExpressionStatement = (
     return translateExpressionStatement(expression.left, path, context, frame, (after) =>
       translateExpressionStatement(expression.right, after, context, frame, continueWith),
     );
+  }
+  if (ts.isTaggedTemplateExpression(expression) && !isRawTemplate(expression, context)) {
+    return translateTaggedTemplate(expression, path, context, frame, continueWith);
   }
   // A name that no declaration binds throws a ReferenceError where a statement reads it.
   if (isUnresolved(expression, context)) {
@@ -14135,7 +14223,11 @@ const getEffects = (
     isIteratorDispose ||
     isStackConstruction(node, context) ||
     isUsing;
-  const callees = ts.isCallExpression(node) ? [node.expression, ...node.arguments] : [];
+  const callees = ts.isCallExpression(node)
+    ? [node.expression, ...node.arguments]
+    : ts.isTaggedTemplateExpression(node)
+      ? [node.tag, ...getSubstitutions(node)]
+      : [];
   return {
     changed: [
       ...assigned,
@@ -17841,6 +17933,13 @@ const findLeadingCall = (
       ? { call: node, isBlocked: false }
       : evaluate(node);
   }
+  // A tagged template evaluates its tag, then its substitutions, and runs its call as a statement.
+  if (ts.isTaggedTemplateExpression(node) && !isRawTemplate(node, context)) {
+    if (!isPlainCallee(node.tag, context, path.scope.results)) return blocked;
+    before.push(node.tag);
+    const found = inOrder(getSubstitutions(node));
+    return found.call !== undefined || found.isBlocked ? found : blocked;
+  }
   return ts.isIdentifier(node) ||
     ts.isLiteralExpression(node) ||
     ts.isNoSubstitutionTemplateLiteral(node) ||
@@ -19805,6 +19904,59 @@ const fillNamespaces = (
   );
 };
 
+// The ref of a tagged template's template object, which the heap holds from the start, after the
+// namespace objects, with the array of its raw strings after it.
+const getTemplateRef = (site: ts.TaggedTemplateExpression, context: Context, offset = 0) =>
+  useJavaScript(
+    ":>",
+    [
+      identifier("Ref"),
+      number(
+        context.generatorPrototypes.size +
+          context.namespaces.size +
+          2 * context.templateSites.indexOf(site) +
+          offset +
+          1,
+      ),
+    ],
+    context,
+  );
+
+// A template's strings, where one with an escape that a template can't cook, which TypeScript
+// gives its raw text, is undefined.
+const getTemplateObjects = (site: ts.TaggedTemplateExpression, context: Context) => {
+  const template = site.template;
+  const literals = ts.isNoSubstitutionTemplateLiteral(template)
+    ? [template]
+    : [template.head, ...template.templateSpans.map((span) => span.literal)];
+  const prototype = translateBuiltInValue("Array.prototype", site, context);
+  return [
+    useJavaScript(
+      "TemplateObject",
+      [
+        prototype,
+        tuple(
+          literals.map((literal) =>
+            literal.rawText?.includes("\\") === true && literal.text === literal.rawText
+              ? getUndefined(context)
+              : translateString(literal.text, context),
+          ),
+        ),
+        getTemplateRef(site, context, 1),
+      ],
+      context,
+    ),
+    useJavaScript(
+      "TemplateRawObject",
+      [
+        prototype,
+        tuple(literals.map((literal) => translateString(getRawString(literal), context))),
+      ],
+      context,
+    ),
+  ];
+};
+
 export const translateScript = (
   statements: readonly ts.Statement[],
   sourceFile: ts.SourceFile,
@@ -19883,14 +20035,19 @@ export const translateScript = (
               [
                 context.heap,
                 // The namespace objects that the script reads, which take their exports once their
-                // modules run.
-                context.namespaces.size === 0
+                // modules run, and the template objects of its tagged templates.
+                context.namespaces.size === 0 && context.templateSites.length === 0
                   ? prototypes
                   : useJavaScript(
                       "AllocateEach",
                       [
                         prototypes,
-                        tuple([...context.namespaces.keys()].map(() => identifier("EmptyObject"))),
+                        tuple([
+                          ...[...context.namespaces.keys()].map(() => identifier("EmptyObject")),
+                          ...context.templateSites.flatMap((site) =>
+                            getTemplateObjects(site, context),
+                          ),
+                        ]),
                       ],
                       context,
                     ),

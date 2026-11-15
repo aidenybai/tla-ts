@@ -4930,6 +4930,19 @@ ArrayObjectWithHoles(prototype, elements, holes) ==
 
 ArrayObject(prototype, elements) == ArrayObjectWithHoles(prototype, elements, {})
 
+LOCAL FrozenObject(object) ==
+  [object EXCEPT !.extensible = FALSE,
+                 !.attributes = [key \\in DOMAIN object.attributes |->
+                                  [object.attributes[key] EXCEPT !.writable = FALSE,
+                                                                 !.configurable = FALSE]]]
+
+\\* The template object that GetTemplateObject makes once for a tagged template's site: a frozen array
+\\* of its strings, which holds the frozen array of their raw text under raw.
+TemplateObject(prototype, strings, raw) ==
+  FrozenObject(Define(ArrayObject(prototype, strings), "raw", raw, FALSE, FALSE, FALSE))
+
+TemplateRawObject(prototype, raws) == FrozenObject(ArrayObject(prototype, raws))
+
 ArrayObjectOfParts(prototype, parts) ==
   ArrayObjectWithHoles(prototype, [position \\in DOMAIN parts |-> parts[position].value],
                        {position \\in DOMAIN parts : ~parts[position].isPresent})

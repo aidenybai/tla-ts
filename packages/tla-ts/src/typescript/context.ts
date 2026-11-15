@@ -163,6 +163,9 @@ export interface Context {
   // The modules whose namespace objects a script reads, which the heap holds from the start, after
   // the generator prototypes, and which take the modules' exports once the modules have run.
   namespaces: ReadonlyMap<ts.SourceFile, Namespace>;
+  // The sites of the tagged templates other than String.raw's, each of whose template object and
+  // its raw strings' array the heap holds from the start, after the namespace objects.
+  templateSites: readonly ts.TaggedTemplateExpression[];
   // Whether a script gives Array.prototype or Object.prototype properties, which an array reads
   // past its end.
   hasInheritedElements: boolean;
@@ -528,6 +531,7 @@ export const createContext = (
     implicitGlobals,
     generatorPrototypes: new Map(),
     namespaces: new Map(),
+    templateSites: [],
     hasInheritedElements: false,
     characters: new Set(),
     longLiterals: new Set(),
