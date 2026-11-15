@@ -82,6 +82,7 @@ import {
   translateBuiltInObject,
   translateBuiltInValue,
   getMadeRegExp,
+  isInvalidBigIntText,
   isInvalidRegExp,
   isUndefinedValue,
   translateRegExpValue,
@@ -4707,7 +4708,7 @@ export const getEngineErrors = (node: ts.Node, context: Context) => {
   if (getViewCall(node, context) !== undefined) return ["TypeError", "RangeError"];
   if (getURICall(node, context)?.isDecode === true) return ["URIError"];
   if (getGetterCall(node, context) !== undefined) return ["TypeError"];
-  if (isInvalidRegExp(node, context)) return ["SyntaxError"];
+  if (isInvalidRegExp(node, context) || isInvalidBigIntText(node, context)) return ["SyntaxError"];
   const created = getNewClass(node, context);
   if (created !== undefined && ts.isClassLike(created) && isNullBased(created)) {
     return ["ReferenceError"];

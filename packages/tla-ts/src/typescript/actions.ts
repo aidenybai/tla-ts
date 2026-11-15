@@ -233,6 +233,7 @@ import {
   getBuiltIn,
   isBuiltInObject,
   getMadeRegExp,
+  isInvalidBigIntText,
   isInvalidRegExp,
   translateBuiltInValue,
   getGeneratorPrototypeRef,
@@ -13640,10 +13641,11 @@ const findLeadingCall = (
     : blocked;
 };
 
-// The new RegExp of literals that make no valid regexp in an expression, which throws a SyntaxError
-// where only names, literals, and the operands of arithmetic evaluate before it.
+// The new RegExp of literals that make no valid regexp in an expression, or a BigInt of a string
+// literal that makes no integer, which throws a SyntaxError where only names, literals, and the
+// operands of arithmetic evaluate before it.
 const getInvalidRegExp = (node: ts.Node, context: Context): ts.Node | undefined => {
-  if (isInvalidRegExp(node, context)) return node;
+  if (isInvalidRegExp(node, context) || isInvalidBigIntText(node, context)) return node;
   const operands = ts.isParenthesizedExpression(node)
     ? [node.expression]
     : ts.isBinaryExpression(node) && ARITHMETIC_OPERATORS.has(node.operatorToken.kind)

@@ -25815,4 +25815,40 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("none,7"))).failure?.message).toContain("type,7");
     });
   });
+
+  describe("throws the SyntaxError of BigInt of a string that isn't an integer", () => {
+    const getSource = (expected: string) => `
+      const box = { size: 0 };
+      const read: string[] = [];
+      const record = (run: () => void) => {
+        try {
+          run();
+          read.push("none");
+        } catch (error) {
+          read.push(error instanceof SyntaxError ? "syntax" : "other");
+        }
+      };
+      record(() => {
+        BigInt("10n");
+      });
+      record(() => {
+        BigInt("-0x1");
+      });
+      record(() => {
+        BigInt("0b");
+      });
+      box.size = read.length;
+      if (read.join() !== "${expected}") throw new Error(read.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("syntax,syntax,syntax"))).failure).toBeUndefined();
+    });
+
+    it("rejects a signed hex string as an integer", async () => {
+      expect((await checkModel(getSource("syntax,none,syntax"))).failure?.message).toContain(
+        "syntax,syntax,syntax",
+      );
+    });
+  });
 });
