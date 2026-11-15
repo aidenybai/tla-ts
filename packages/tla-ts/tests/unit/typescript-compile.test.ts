@@ -27315,6 +27315,38 @@ describe("errors", () => {
     expect((await checkModel(source("ex"))).failure).toBeDefined();
   });
 
+  it("runs a function declaration that the script passes only to new Promise as its executor", async () => {
+    const source = (expected: string) => `
+      declare function setTimeout(callback: () => void): void;
+      let log = "";
+      const thenable = {
+        then(resolve: (value?: unknown) => void) {
+          log += "t";
+          resolve(3);
+        },
+      };
+      function executor(resolve: (value: unknown) => void, reject: (reason: unknown) => void) {
+        resolve(thenable);
+        log += "e";
+        reject(1);
+        throw new Error("ignored");
+      }
+      new Promise(executor).then(
+        (value) => {
+          log += \`f\${value}\`;
+        },
+        () => {
+          log += "r";
+        },
+      );
+      setTimeout(() => {
+        if (log !== "${expected}") throw new Error(log);
+      });
+    `;
+    expect((await checkModel(source("etf3"))).failure).toBeUndefined();
+    expect((await checkModel(source("etr"))).failure).toBeDefined();
+  });
+
   it("fulfills Promise.any with the first value, or rejects it with an AggregateError", async () => {
     const result = await checkModel(`
       declare function setTimeout(callback: () => void): void;

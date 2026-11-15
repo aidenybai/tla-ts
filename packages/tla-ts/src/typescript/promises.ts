@@ -1938,6 +1938,7 @@ const isResolverParameter = (node: ts.Node, context: Context) => {
   return (
     executor.parameters.indexOf(node) <= 1 &&
     (isThenFunction(executor) ||
+      isExecutorDeclaration(executor, context) ||
       ((ts.isArrowFunction(executor) || ts.isFunctionExpression(executor)) &&
         construction !== undefined &&
         ts.isNewExpression(construction) &&
@@ -2089,6 +2090,36 @@ const callResolver = (
   );
 };
 
+// A function declaration that the script names only as the executor that new Promise takes.
+const isExecutorDeclaration = (node: ts.Node, context: Context): node is ts.FunctionDeclaration => {
+  if (!ts.isFunctionDeclaration(node) || node.name === undefined || node.body === undefined) {
+    return false;
+  }
+  const symbol = getSymbol(node.name, context.checker);
+  return (
+    symbol !== undefined &&
+    findNodes(
+      node.getSourceFile(),
+      (inner): inner is ts.Identifier =>
+        ts.isIdentifier(inner) &&
+        inner !== node.name &&
+        getSymbol(inner, context.checker) === symbol,
+    ).every((use) => {
+      const construction = ts.findAncestor(
+        use.parent,
+        (ancestor) => !ts.isParenthesizedExpression(ancestor) && !ts.isAsExpression(ancestor),
+      );
+      return (
+        construction !== undefined &&
+        ts.isNewExpression(construction) &&
+        isPromiseConstruction(construction, context) &&
+        construction.arguments?.length === 1 &&
+        getCast(construction.arguments[0]) === use
+      );
+    })
+  );
+};
+
 // new Promise(executor), which runs the executor with the promise's resolve and reject, two
 // functions on the heap.
 export const translatePromiseConstruction = (
@@ -2099,13 +2130,19 @@ export const translatePromiseConstruction = (
   continueWith: (path: Path, value?: Expression) => Formula,
 ): Formula => {
   const argument = node.arguments?.length === 1 ? getCast(node.arguments[0]) : undefined;
-  if (
-    argument === undefined ||
-    !(ts.isArrowFunction(argument) || ts.isFunctionExpression(argument))
-  ) {
+  const declaration =
+    argument !== undefined && ts.isIdentifier(argument)
+      ? getSymbol(argument, context.checker)?.valueDeclaration
+      : undefined;
+  const executor =
+    argument !== undefined && (ts.isArrowFunction(argument) || ts.isFunctionExpression(argument))
+      ? argument
+      : declaration !== undefined && isExecutorDeclaration(declaration, context)
+        ? declaration
+        : undefined;
+  if (executor === undefined) {
     throw new TlaTypeScriptError("Pass new Promise a function written in place", node);
   }
-  const executor = argument;
   if (
     executor.parameters.length > 2 ||
     executor.parameters.some(
