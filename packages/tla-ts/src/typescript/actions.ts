@@ -10739,7 +10739,8 @@ const translateExpressionStatement = (
       continueWith,
     );
   }
-  // Deleting a property that can't change throws a TypeError, as scripts run in strict mode.
+  // Deleting a property that can't change throws a TypeError in strict mode, and outside it
+  // changes nothing.
   if (ts.isDeleteExpression(expression)) {
     const deleted = getHeapWrite(expression.expression, path, context);
     if (deleted === undefined) {
@@ -10759,7 +10760,9 @@ const translateExpressionStatement = (
         context,
         continueWith,
       ),
-      throwTypeError(path, expression, context, frame),
+      isStrictCode(expression)
+        ? throwTypeError(path, expression, context, frame)
+        : continueWith(path),
     );
   }
   // A regexp that a statement makes of literals and drops, or an object whose members evaluate
@@ -11103,7 +11106,7 @@ const translateWriteStatement = (
   if (assigned === undefined) {
     throw new TlaTypeScriptError(`Unsupported statement: ${expression.getText()}`, expression);
   }
-  // A write to a property that can't change throws a TypeError, as scripts run in strict mode.
+  // A write to a property that can't change throws a TypeError in strict mode.
   const write = written === undefined ? undefined : getHeapWrite(written, path, context);
   // A write to a property of null or undefined throws a TypeError.
   const receiver =
@@ -11129,12 +11132,32 @@ const translateWriteStatement = (
       forceHeap(path.scope, assigned.scope, continueWith(assigned), leaf(boolean(false)), context),
     );
   }
+  // Outside strict mode, a write that fails changes nothing, which tla-ts follows where what it
+  // writes changes nothing else either.
+  const isWritingRight =
+    ts.isBinaryExpression(expression) &&
+    findNodes(expression.right, (node): node is ts.Expression => isAssignment(node)).length > 0;
+  const failWrite = (next: (path: Path) => Formula) =>
+    isStrictCode(expression)
+      ? throwTypeError(path, expression, context, frame)
+      : isWritingRight
+        ? leaf(
+            apply("Assert", [
+              boolean(false),
+              string("tla-ts can't ignore a failed write outside strict mode"),
+            ]),
+          )
+        : ifThenElse(
+            useJavaScript("IsThrowingSet", [write.heap, write.ref, write.key], context),
+            throwTypeError(path, expression, context, frame),
+            next(path),
+          );
   const translateWrite = (next: (path: Path) => Formula) =>
     throwOnNullish(
       ifThenElse(
         useJavaScript("CanPut", [write.heap, write.ref, write.key], context),
         shareHeap(assigned, context, next),
-        throwTypeError(path, expression, context, frame),
+        failWrite(next),
       ),
     );
   // A write of __proto__ runs Object.prototype's setter where the object inherits it.
