@@ -36301,4 +36301,32 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("u"))).failure?.message).toContain("bu");
     });
   });
+
+  describe("reads typeof a var before a statement assigns it as undefined", () => {
+    const getSource = (expected: string) => `
+      // @ts-ignore
+      const before = typeof later;
+      var later: number[] = [];
+      function read() {
+        // @ts-ignore
+        const inner = typeof local;
+        var local = "x";
+        return inner + typeof local;
+      }
+      const result = before + typeof later + read();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("undefinedobjectundefinedstring"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation", async () => {
+      expect((await checkModel(getSource("objectobjectstringstring"))).failure?.message).toContain(
+        "undefinedobjectundefinedstring",
+      );
+    });
+  });
 });

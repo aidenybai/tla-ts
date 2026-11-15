@@ -6585,6 +6585,22 @@ export const translateTypeOf = (node: ts.TypeOfExpression, scope: Scope, context
     ts.isNewExpression(inner) ||
     ts.isTaggedTemplateExpression(inner) ||
     (!ts.isFunctionLike(inner) && ts.forEachChild(inner, hasCall) === true);
+  // A var holds undefined until it's assigned, which its type doesn't tell.
+  const isVar =
+    ts.isIdentifier(read) &&
+    (getSymbol(read, context.checker)?.declarations ?? []).some(
+      (declaration) =>
+        ts.isVariableDeclaration(declaration) &&
+        ts.isVariableDeclarationList(declaration.parent) &&
+        (declaration.parent.flags & ts.NodeFlags.BlockScoped) === 0,
+    );
+  if (known?.length === 1 && known[0] !== "undefined" && isVar) {
+    return ifExpression(
+      apply("=", [translateExpression(read, scope, context), getUndefined(context)]),
+      string("undefined"),
+      string(known[0]),
+    );
+  }
   if (known?.length === 1 && !isProperty && !hasCall(read)) return string(known[0]);
   if (known?.length === 1 && !isProperty) {
     const operand = translateExpression(node.expression, scope, context);
