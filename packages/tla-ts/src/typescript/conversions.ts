@@ -42,6 +42,8 @@ interface Conversion {
   // to a string or a number, as + and the comparisons do, rather than each operand in turn.
   isPrimitiveFirst?: boolean;
   combine: (primitives: readonly Expression[]) => Expression;
+  // What runs once the first operand converts to a primitive, before the next converts.
+  afterFirst?: (path: Path, primitive: Expression, next: (path: Path) => Formula) => Formula;
 }
 
 // A read of an object operand's method under a well-known symbol: a string's split, replace, and
@@ -104,7 +106,7 @@ export const isCompoundAssignment = (
 
 // An object that a script declares, or a Boolean, Number, or String, which ToPrimitive converts
 // through its methods. ToPrimitive gives back a primitive that a wrapper's type also takes.
-const isObjectOperand = (node: ts.Expression, context: Context) => {
+export const isObjectOperand = (node: ts.Expression, context: Context) => {
   const type = context.checker.getTypeAtLocation(skipCasts(node));
   const symbol = type.getSymbol();
   const isWrapper =
@@ -714,7 +716,11 @@ export const runConversion = (
       context,
       frame,
       (after, primitive) => {
-        const next = convert(after, values, [...converted, primitive]);
+        const resume = (current: Path) => convert(current, values, [...converted, primitive]);
+        const next =
+          converted.length === 0 && conversion.afterFirst !== undefined
+            ? conversion.afterFirst(after, primitive, resume)
+            : resume(after);
         return conversion.isPrimitiveFirst === true
           ? next
           : throwSymbols(after, [primitive], [values[position]], next);
