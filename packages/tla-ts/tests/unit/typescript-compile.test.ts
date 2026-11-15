@@ -25375,4 +25375,26 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("passes an array that a variable holds to a proxy as its target", () => {
+    const getSource = (expected: string) => `
+      const box = { size: 0 };
+      const array: number[] = [];
+      const proxy = new Proxy(new Proxy(array, {}), { isExtensible: undefined });
+      const before = Object.isExtensible(proxy);
+      Object.preventExtensions(array);
+      const after = Object.isExtensible(proxy);
+      box.size = 1;
+      const read = [before, after].join();
+      if (read !== "${expected}") throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("true,false"))).failure).toBeUndefined();
+    });
+
+    it("rejects the proxy as staying extensible", async () => {
+      expect((await checkModel(getSource("true,true"))).failure?.message).toContain("true,false");
+    });
+  });
 });

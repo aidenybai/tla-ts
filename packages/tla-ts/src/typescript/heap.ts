@@ -2934,6 +2934,10 @@ const isArrayObjectUse = (node: ts.Expression, context: Context): boolean => {
     return true;
   }
   if (ts.isSpreadElement(parent)) return true;
+  // A proxy reads its target as an object.
+  if (ts.isNewExpression(parent) && parent.arguments?.[0] === node) {
+    return ts.isIdentifier(parent.expression) && parent.expression.text === "Proxy";
+  }
   // Iterator.from runs the array's iterator too.
   if (getIteratedArray(parent, context) === node) return true;
   if (ts.isVariableDeclaration(parent)) return ts.isArrayBindingPattern(parent.name);
