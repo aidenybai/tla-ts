@@ -5851,6 +5851,93 @@ LOCAL QuoteJSON(text) ==
           [] OTHER -> unit(position)
   IN "\\"" \\o Join([position \\in 1..Len(text) |-> escape(position)], "") \\o "\\""
 
+\\* The ECMAScript JSON grammar that JSON.parse reads. Each operator gives the position after what
+\\* starts at a position, or 0 where the text there isn't one, and reads a code that's -1 past the
+\\* text's end and 128 for a character outside ASCII, which a string may hold.
+LOCAL JSONCode(text, at) ==
+  LET character == IF at \\in 1..Len(text) THEN SubSeq(text, at, at) ELSE ""
+  IN  CASE character = "" -> -1
+        [] character \\in DOMAIN AsciiCodes -> AsciiCodes[character]
+        [] OTHER -> 128
+
+RECURSIVE JSONWhitespace(_, _), JSONDigits(_, _), JSONStringEnd(_, _), JSONValueEnd(_, _),
+          JSONMembersEnd(_, _), JSONElementsEnd(_, _)
+
+LOCAL JSONWhitespace(text, at) ==
+  IF JSONCode(text, at) \\in {9, 10, 13, 32} THEN JSONWhitespace(text, at + 1) ELSE at
+
+LOCAL JSONDigits(text, at) ==
+  IF JSONCode(text, at) \\in 48..57 THEN JSONDigits(text, at + 1) ELSE at
+
+LOCAL IsJSONHex(code) == code \\in 48..57 \\/ code \\in 65..70 \\/ code \\in 97..102
+
+\\* A string's characters and its closing quote, where no control character may stand unescaped.
+LOCAL JSONStringEnd(text, at) ==
+  LET code == JSONCode(text, at)
+      next == JSONCode(text, at + 1)
+  IN  CASE code = 34 -> at + 1
+        [] code = 92 /\\ next \\in {34, 47, 92, 98, 102, 110, 114, 116} -> JSONStringEnd(text, at + 2)
+        [] code = 92 /\\ next = 117 /\\ \\A offset \\in 2..5 : IsJSONHex(JSONCode(text, at + offset)) ->
+             JSONStringEnd(text, at + 6)
+        [] code = 92 \\/ code < 32 -> 0
+        [] OTHER -> JSONStringEnd(text, at + 1)
+
+LOCAL JSONNumberEnd(text, at) ==
+  LET signed == IF JSONCode(text, at) = 45 THEN at + 1 ELSE at
+      integer == CASE JSONCode(text, signed) = 48 -> signed + 1
+                   [] JSONCode(text, signed) \\in 49..57 -> JSONDigits(text, signed + 1)
+                   [] OTHER -> 0
+      fraction == CASE integer = 0 \\/ JSONCode(text, integer) # 46 -> integer
+                    [] JSONCode(text, integer + 1) \\in 48..57 -> JSONDigits(text, integer + 2)
+                    [] OTHER -> 0
+      sign == IF JSONCode(text, fraction + 1) \\in {43, 45} THEN fraction + 2 ELSE fraction + 1
+  IN  CASE fraction = 0 \\/ JSONCode(text, fraction) \\notin {69, 101} -> fraction
+        [] JSONCode(text, sign) \\in 48..57 -> JSONDigits(text, sign + 1)
+        [] OTHER -> 0
+
+LOCAL JSONWordEnd(text, at, word) ==
+  IF at + Len(word) - 1 <= Len(text) /\\ SubSeq(text, at, at + Len(word) - 1) = word
+  THEN at + Len(word)
+  ELSE 0
+
+LOCAL JSONValueEnd(text, at) ==
+  LET code == JSONCode(text, at)
+      inner == JSONWhitespace(text, at + 1)
+  IN  CASE code = 123 -> IF JSONCode(text, inner) = 125 THEN inner + 1 ELSE JSONMembersEnd(text, inner)
+        [] code = 91 -> IF JSONCode(text, inner) = 93 THEN inner + 1 ELSE JSONElementsEnd(text, inner)
+        [] code = 34 -> JSONStringEnd(text, at + 1)
+        [] code = 45 \\/ code \\in 48..57 -> JSONNumberEnd(text, at)
+        [] code = 116 -> JSONWordEnd(text, at, "true")
+        [] code = 102 -> JSONWordEnd(text, at, "false")
+        [] code = 110 -> JSONWordEnd(text, at, "null")
+        [] OTHER -> 0
+
+\\* The members of an object from the first one's name to the closing brace.
+LOCAL JSONMembersEnd(text, at) ==
+  LET name == IF JSONCode(text, at) = 34 THEN JSONStringEnd(text, at + 1) ELSE 0
+      colon == IF name = 0 THEN 0 ELSE JSONWhitespace(text, name)
+      value == IF colon = 0 \\/ JSONCode(text, colon) # 58 THEN 0
+               ELSE JSONValueEnd(text, JSONWhitespace(text, colon + 1))
+      after == IF value = 0 THEN 0 ELSE JSONWhitespace(text, value)
+  IN  CASE after = 0 -> 0
+        [] JSONCode(text, after) = 44 -> JSONMembersEnd(text, JSONWhitespace(text, after + 1))
+        [] JSONCode(text, after) = 125 -> after + 1
+        [] OTHER -> 0
+
+\\* The elements of an array from the first one to the closing bracket.
+LOCAL JSONElementsEnd(text, at) ==
+  LET value == JSONValueEnd(text, at)
+      after == IF value = 0 THEN 0 ELSE JSONWhitespace(text, value)
+  IN  CASE after = 0 -> 0
+        [] JSONCode(text, after) = 44 -> JSONElementsEnd(text, JSONWhitespace(text, after + 1))
+        [] JSONCode(text, after) = 93 -> after + 1
+        [] OTHER -> 0
+
+\\* Whether JSON.parse reads a text as one JSON value between whitespace.
+IsJSONText(text) ==
+  LET end == JSONValueEnd(text, JSONWhitespace(text, 1))
+  IN  end # 0 /\\ JSONWhitespace(text, end) = Len(text) + 1
+
 \\* Which of Boolean, Number, and String an object wraps the primitive of, or "" where it wraps none.
 LOCAL JSONWrapperKind(heap, ref) ==
   CASE ~IsHeap(ref) /\\ ref[Ref] \\in {"Boolean.prototype", "Number.prototype", "String.prototype"} ->

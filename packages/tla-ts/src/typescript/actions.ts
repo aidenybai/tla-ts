@@ -137,11 +137,13 @@ import {
   runToPrimitive,
 } from "./conversions";
 import {
+  getBuiltJsonText,
   getJsonText,
   getReplacers,
   getRevival,
   isBigIntStringify,
   parseJson,
+  translateBuiltJsonParse,
   replaceJson,
   reviveJson,
   translateHoldsJson,
@@ -3320,6 +3322,10 @@ export const translateCallStatement = (
   const revival = getRevival(expression, context);
   if (revival !== undefined) {
     return reviveJson(expression, revival, path, context, frame, continueWith);
+  }
+  const builtText = getBuiltJsonText(expression, context);
+  if (builtText !== undefined) {
+    return translateBuiltJsonParse(expression, builtText, path, context, frame);
   }
   const replacers = getReplacers(expression, context);
   if (replacers !== undefined) {
@@ -11016,6 +11022,7 @@ const isStatementResult = (node: ts.CallExpression, path: Path, context: Context
     getStringCall(node, context) !== undefined ||
     isBigIntStringify(node, context) ||
     getRevival(node, context) !== undefined ||
+    getBuiltJsonText(node, context) !== undefined ||
     getReplacers(node, context) !== undefined ||
     isDescriptorsRead(node, context) ||
     isOwnValuesRead(node, context) ||

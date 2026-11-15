@@ -10232,6 +10232,57 @@ describe("errors", () => {
     expect((await checkModel(wrong)).failure?.message).toContain('"reflect"');
   });
 
+  describe("throws the SyntaxError of JSON.parse of a text that a script builds", () => {
+    const getSource = (texts: string, expected: string) => `
+      const box = { n: 1 };
+      let log = "";
+      const attempt = (text: string) => {
+        try {
+          JSON.parse(text);
+          log += "ok,";
+        } catch (error) {
+          log += error instanceof SyntaxError ? "S," : "E,";
+        }
+      };
+      const control = String.fromCharCode(31);
+      const texts: string[] = [${texts}];
+      for (const text of texts) attempt(text);
+      const result = log + box.n;
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    const strings = `'{ "a' + control + '" : 1 }', '"\\\\x"', '"\\\\u12G4"', '{"a" 1}', '{ "a" : 1 '`;
+    const others = `"[1,]", "01", "1e", "", "+1", "1 2"`;
+
+    it("agrees with Node on strings and objects", async () => {
+      expect((await checkModel(getSource(strings, "S,S,S,S,S,1"))).failure).toBeUndefined();
+    });
+
+    it("agrees with Node on arrays, numbers, and what follows a value", async () => {
+      expect((await checkModel(getSource(others, "S,S,S,S,S,S,1"))).failure).toBeUndefined();
+    });
+
+    it("rejects wrong expectation 1", async () => {
+      expect((await checkModel(getSource(strings, "ok,S,S,S,S,1"))).failure?.message).toContain(
+        "S,S,S,S,S,1",
+      );
+    });
+
+    it("stops at a text that is JSON", async () => {
+      const valid = await checkModel(`
+      const box = { n: 1 };
+      const texts: string[] = [' { "a" : [1, -0.5e+3, true, null, {}, "\\\\u00e9\\\\n"] } '];
+      try {
+        JSON.parse(texts[0]);
+      } catch (error) {
+        box.n = 2;
+      }
+    `);
+      expect(valid.failure?.message).toContain(
+        "tla-ts can't parse a JSON text that a script builds",
+      );
+    });
+  });
+
   it("makes the objects that JSON.parse makes of a literal's text", async () => {
     const source = `
       const holder = { seen: 0 };

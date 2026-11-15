@@ -37,7 +37,7 @@ import {
   withHeap,
 } from "./protocols";
 import { getBuiltIn, isBuiltInObject, translateBuiltInValue } from "./intrinsics";
-import { useJavaScript } from "./javascript";
+import { getTypeNames, useJavaScript } from "./javascript";
 import type { Scope } from "./scope";
 import { apply, boolean, field, identifier, ifExpression, number, string, tuple } from "./tla";
 import { getKind } from "./types";
@@ -114,6 +114,45 @@ const hasJsonArray = (value: unknown) => getJsonObjects(value).some(Array.isArra
 
 const isJsonObject = (value: unknown): value is object =>
   typeof value === "object" && value !== null;
+
+// The string that JSON.parse without a reviver reads where a script builds it rather than writes a
+// literal, whose grammar tla-ts checks as the script runs.
+export const getBuiltJsonText = (node: ts.Node, context: Context) =>
+  isJsonParse(node, context) &&
+  node.arguments.length === 1 &&
+  getJsonText(node, context) === undefined &&
+  getTypeNames(context.checker.getTypeAtLocation(node.arguments[0]), context.checker)?.join() ===
+    "string"
+    ? node.arguments[0]
+    : undefined;
+
+// JSON.parse of a text that a script builds, which throws a SyntaxError where the text isn't JSON.
+export const translateBuiltJsonParse = (
+  node: ts.CallExpression,
+  text: ts.Expression,
+  path: Path,
+  context: Context,
+  frame: Frame,
+): Formula =>
+  ifThenElse(
+    translateHoldsJson(node, "parse", path.scope, context),
+    ifThenElse(
+      useJavaScript("IsJSONText", [translateExpression(text, path.scope, context)], context),
+      leaf(
+        apply("Assert", [
+          boolean(false),
+          string("tla-ts can't parse a JSON text that a script builds"),
+        ]),
+      ),
+      throwError("SyntaxError", path, node, context, frame),
+    ),
+    leaf(
+      apply("Assert", [
+        boolean(false),
+        string("tla-ts can't call JSON.parse where a script replaced it"),
+      ]),
+    ),
+  );
 
 // The objects that JSON.parse makes of a value, innermost first.
 const getJsonObjects = (value: unknown): object[] =>
