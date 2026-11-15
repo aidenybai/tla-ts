@@ -72,6 +72,14 @@ export interface Passed {
   value: Expression;
 }
 
+// A regexp that a script makes, as translateRegExp compiles it.
+export interface MadeRegExp {
+  pattern: string;
+  flags: string;
+  source: string;
+  node: ts.Node;
+}
+
 export interface Context {
   checker: ts.TypeChecker;
   names: Names;
@@ -161,6 +169,10 @@ export interface Context {
   // The code units outside ASCII that a script's strings may hold: those its text writes, and those
   // of each case of the code points they make.
   characters: Set<number>;
+  // The texts of the literals too long for the module to tell the codes of their code units.
+  longLiterals: Set<string>;
+  // The regexps that the script makes, whose searches on those texts tla-ts decides as it compiles.
+  regExps: MadeRegExp[];
   // The argument that an inlined call passed, by the name that binds the parameter that took it.
   passed: Map<string, Passed>;
   // The names that each file's code assigns, and that its calls pass as objects, which tla-ts
@@ -518,6 +530,8 @@ export const createContext = (
     namespaces: new Map(),
     hasInheritedElements: false,
     characters: new Set(),
+    longLiterals: new Set(),
+    regExps: [],
     passed: new Map(),
     changeSummaries: new Map(),
     assignedNames: new Map(

@@ -42382,4 +42382,46 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("a regexp's search of a long literal", () => {
+    // A lone low surrogate, then each code point from U+0370 to U+07FF and from U+1F600 to U+1F64F,
+    // too many code units for the module to tell the codes of.
+    const points = [
+      0xdc00,
+      ...Array.from({ length: 0x490 }, (_, offset) => 0x370 + offset),
+      ...Array.from({ length: 0x50 }, (_, offset) => 0x1f600 + offset),
+    ];
+    const literal = `"${points.map((point) => `\\u{${point.toString(16)}}`).join("")}"`;
+    const getSource = (expected: string) => `
+      const text = ${literal};
+      const results = [
+        String(/^\\P{ASCII}+$/u.test(text)),
+        String(/\\p{Script=Greek}/u.exec(text)?.index),
+        String(/^\\p{L}+$/u.test(text)),
+        String(/\\d/.test(text)),
+        String(/^\\D{3,}$/v.test(text)),
+        String(/\\p{Emoji_Presentation}/u.exec(text)?.index),
+        String(/^[^\\d]{1,1000}$/u.test(text)),
+        String(text.length),
+      ];
+      if (results.join("|") !== "${expected}") throw new Error(results.join("|"));
+    `;
+
+    it("agrees with Node", async () => {
+      const result = await checkModel(getSource("true|1|false|false|true|1169|false|1329"));
+      expect(result.failure).toBeUndefined();
+    });
+
+    it("rejects a class that holds each code point of the text", async () => {
+      await expect(checkModel(getSource("true|1|true|false|true|1169|false|1329"))).rejects.toThrow(
+        "true|1|false|false|true|1169|false|1329",
+      );
+    });
+
+    it("stops at a pattern that it doesn't decide as it compiles", async () => {
+      await expect(
+        checkModel(`if (!/(\\p{L})/u.test(${literal})) throw new Error("wrong");`),
+      ).rejects.toThrow("tla-ts can't tell the code of a character outside ASCII");
+    });
+  });
 });

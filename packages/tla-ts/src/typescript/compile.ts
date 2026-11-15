@@ -37,6 +37,7 @@ import {
   getBuiltIn,
   getCodePoint,
   translateBuiltIns,
+  translateSearches,
 } from "./intrinsics";
 import { WELL_KNOWN_SYMBOLS } from "./javascript";
 import { type Exported, isDeclaration, type Model, readModel, type Variable } from "./model";
@@ -79,6 +80,10 @@ import {
 } from "./types";
 
 const NORMAL_FORMS = ["NFC", "NFD", "NFKC", "NFKD"];
+
+// The most code units of a literal whose escapes tla-ts tells the codes of. A longer one, such as a
+// string of every code point in a range, may hold more than the module can list.
+const LONG_LITERAL = 1024;
 
 // The fewest digits that give a number back, without its sign, and the power of 10 of the first,
 // as Number::toString finds them, which toExponential writes where a call gives no digits.
@@ -278,10 +283,14 @@ export const compile = (
     namespace.exports.flatMap((entry) => (ts.isSourceFile(entry.value) ? [] : [entry.value])),
   );
   // The code units outside ASCII that the script's text holds, or that the escapes of its literals
-  // and names write, whose codes the module tells. A lone surrogate is half of a pair, as a
-  // module's text holds only whole characters.
+  // other than long ones and of its names write, whose codes the module tells. A lone surrogate is
+  // half of a pair, as a module's text holds only whole characters.
   const texts = [sourceFile, ...files].map((file) => file.text);
   const visit = (node: ts.Node) => {
+    if (ts.isStringLiteralLike(node) && node.text.length > LONG_LITERAL) {
+      context.longLiterals.add(node.text);
+      return;
+    }
     if (
       ts.isLiteralExpression(node) ||
       ts.isTemplateLiteralToken(node) ||
@@ -345,7 +354,11 @@ export const compile = (
     (ts.isPropertyAccessExpression(node) && node.name.text === "normalize") ||
     (ts.forEachChild(node, isNormalized) ?? false);
   const getLiterals = (node: ts.Node): string[] => [
-    ...(ts.isStringLiteralLike(node) && /[^\0-\x7f]/.test(node.text) ? [node.text] : []),
+    ...(ts.isStringLiteralLike(node) &&
+    node.text.length <= LONG_LITERAL &&
+    /[^\0-\x7f]/.test(node.text)
+      ? [node.text]
+      : []),
     ...node.getChildren().flatMap(getLiterals),
   ];
   const getForms = (text: string) =>
@@ -911,6 +924,7 @@ export const compile = (
           ),
         ),
       ),
+      define("UsedSearches", [], translateSearches(context)),
       define(
         "UsedCharacters",
         [],
