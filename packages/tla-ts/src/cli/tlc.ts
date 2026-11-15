@@ -951,15 +951,17 @@ export const checkSpecs = async (args: string[], java: JavaProperties) => {
     );
     exitCodes.push(
       await reportErrors(async () => {
-        const compiled = path.endsWith(".ts") ? await compileTypeScriptFile(path) : undefined;
-        // TLC checks one spec, so tla-ts names each of several it checks.
+        const isTypeScript = path.endsWith(".ts");
+        // TLC checks one spec, so tla-ts names each of several it checks, before a TypeScript file
+        // compiles, so a stop names the file it comes from.
         if (paths.length > 1) {
           console.log(
-            compiled
+            isTypeScript
               ? `Checking ${basename(path)}`
               : `Checking ${basename(path)} with ${basename(path, ".tla")}.cfg`,
           );
         }
+        const compiled = isTypeScript ? await compileTypeScriptFile(path) : undefined;
         return checkSpec(compiled?.specPath ?? path, parsed, java, printer, compiled);
       }, printer),
     );

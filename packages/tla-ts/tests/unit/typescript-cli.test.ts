@@ -201,6 +201,28 @@ describe("the CLI with TypeScript files", () => {
     );
   });
 
+  it("type checks a file with the globals that the rest of its project declares", () => {
+    const directory = copyFixtures("project");
+    writeFileSync(join(directory, "environment.d.ts"), "declare const hostLimit: number;\n");
+    writeFileSync(
+      join(directory, "host.ts"),
+      "let count = 0;\n\nexport const tick = () => {\n  count = hostLimit;\n};\n",
+    );
+    const result = runCli(directory, ["host.ts"]);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain(
+      "host.ts:4:11 tla-ts can't run hostLimit, which only a declaration gives",
+    );
+  });
+
+  it("checks a file of a project where a file it doesn't import has type errors", () => {
+    const directory = copyFixtures("project");
+    writeFileSync(join(directory, "broken.ts"), 'export const limit: number = "three";\n');
+    const result = runCli(directory, ["counter.ts"]);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("4 distinct states found");
+  });
+
   it("prints a counterexample as TLC does and exits with TLC's code", () => {
     const result = runCli(copyFixtures("failing"), ["overdraft.ts"]);
     expect(result.status).toBe(12);
@@ -219,6 +241,7 @@ describe("the CLI with TypeScript files", () => {
 
   it("reports a file that doesn't compile and checks the rest", () => {
     const result = runCli(copyFixtures("failing"), ["division.ts", "overdraft.ts"]);
+    expect(result.stdout).toContain("Checking division.ts\n");
     expect(result.stderr).toContain(
       "TlaTypeScriptError: division.ts:4:11 Write division as Math.floor(a / b) or Math.trunc(a / b)",
     );

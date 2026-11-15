@@ -39527,4 +39527,37 @@ describe("BigInts", () => {
       expect(getSize(2)).toBeLessThan(getSize(1) * 2);
     });
   });
+  it("erases a declare global block, as Node runs the module without it", async () => {
+    const getSource = (limit: number) => `
+      declare global {
+        var hostLimit: number;
+      }
+      let count = 0;
+      export const step = () => {
+        if (count >= 2) return;
+        count++;
+      };
+      export const isBelow = () => count < ${limit};
+    `;
+    expect((await checkModel(getSource(3))).status).toBe("deadlock");
+    expect((await checkModel(getSource(2))).status).toBe("invariant-violation");
+  });
+
+  it("stops where a model would share an object that only a declaration gives", () => {
+    const getSource = (declaration: string) => `
+      ${declaration}
+      let seen = new Set<number>();
+      export const take = () => {
+        if (seen.size > 0) return;
+        seen = pending;
+        pending.add(1);
+      };
+    `;
+    expect(() => compile(getSource("declare const pending: Set<number>;"))).toThrow(
+      "tla-ts can't run pending, which only a declaration gives",
+    );
+    expect(() => compile(getSource("let pending = new Set<number>();"))).toThrow(
+      "pending would share an object that changes in place, so copy it",
+    );
+  });
 });

@@ -59,6 +59,7 @@ import {
   isNestedFunction,
   isClosure,
   rejectDeclaredCall,
+  isDeclarationOnly,
 } from "./context";
 import { TlaTypeScriptError } from "../errors";
 import { translateJsonCall } from "./json";
@@ -2406,17 +2407,7 @@ const translateIdentifier = (node: ts.Identifier, scope: Scope, context: Context
   if (errorClass !== undefined) return getConstructor(errorClass, context);
   const intrinsic = translateIntrinsic(node, scope, context);
   if (intrinsic !== undefined) return intrinsic;
-  // A name that only declarations type, as Node's typings type process, has no code to run.
-  const declarations = symbol?.declarations ?? [];
-  if (
-    declarations.length > 0 &&
-    declarations.every(
-      (declaration) =>
-        (declaration.getSourceFile().isDeclarationFile ||
-          (ts.getCombinedModifierFlags(declaration) & ts.ModifierFlags.Ambient) !== 0) &&
-        !declaration.getSourceFile().hasNoDefaultLib,
-    )
-  ) {
+  if (symbol !== undefined && isDeclarationOnly(symbol)) {
     throw new TlaTypeScriptError(
       `tla-ts can't run ${node.text}, which only a declaration gives`,
       node,

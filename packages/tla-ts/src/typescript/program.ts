@@ -106,8 +106,9 @@ const getProjectOptions = (options: ts.CompilerOptions): ts.CompilerOptions => (
   isolatedDeclarations: false,
 });
 
-// Type checks a model, with the files it imports, and throws its type errors. A file of a project
-// on disk type checks with the project's options.
+// Type checks a model, with the files it imports, and throws their type errors. A file of a project
+// on disk type checks with the project's options, and where it needs them, as in an editor, the
+// globals that the project's other files declare, such as those of a types package one references.
 export const createProgram = (
   source: string,
   path: string,
@@ -118,53 +119,71 @@ export const createProgram = (
   const host =
     libraries === undefined ? ts.createCompilerHost(options) : createLibraryHost(libraries);
   const libraryDirectory = host.getDefaultLibLocation?.() ?? "";
-  const program = ts.createProgram({
-    rootNames: [path],
-    options,
-    projectReferences: project?.projectReferences,
-    host: {
-      ...host,
-      // The program's options parse the model as a module, where await can start a statement.
-      getSourceFile: (fileName, languageVersion) => {
-        if (fileName === path) {
+  const createTypeScriptProgram = (rootNames: string[]) =>
+    ts.createProgram({
+      rootNames,
+      options,
+      projectReferences: project?.projectReferences,
+      host: {
+        ...host,
+        // The program's options parse the model as a module, where await can start a statement.
+        getSourceFile: (fileName, languageVersion) => {
+          if (fileName === path) {
+            return ts.createSourceFile(
+              path,
+              assignParameterProperties(path, source),
+              languageVersion,
+              true,
+            );
+          }
+          const cached = libraryFiles.get(fileName);
+          if (cached !== undefined) return cached;
+          const file = host.getSourceFile(fileName, languageVersion);
+          if (file === undefined || file.isDeclarationFile) {
+            if (file !== undefined && fileName.startsWith(libraryDirectory)) {
+              libraryFiles.set(fileName, file);
+            }
+            return file;
+          }
           return ts.createSourceFile(
-            path,
-            assignParameterProperties(path, source),
+            fileName,
+            assignParameterProperties(fileName, file.text),
             languageVersion,
             true,
           );
-        }
-        const cached = libraryFiles.get(fileName);
-        if (cached !== undefined) return cached;
-        const file = host.getSourceFile(fileName, languageVersion);
-        if (file === undefined || file.isDeclarationFile) {
-          if (file !== undefined && fileName.startsWith(libraryDirectory)) {
-            libraryFiles.set(fileName, file);
-          }
-          return file;
-        }
-        return ts.createSourceFile(
-          fileName,
-          assignParameterProperties(fileName, file.text),
-          languageVersion,
-          true,
-        );
+        },
+        fileExists: (fileName) => fileName === path || host.fileExists(fileName),
+        readFile: (fileName) => (fileName === path ? source : host.readFile(fileName)),
       },
-      fileExists: (fileName) => fileName === path || host.fileExists(fileName),
-      readFile: (fileName) => (fileName === path ? source : host.readFile(fileName)),
-    },
-  });
-  const sourceFile = program.getSourceFile(path);
-  if (sourceFile === undefined) throw new TlaTypeScriptError(`Can't read ${path}`);
-  const syntaxErrors = program.getSyntacticDiagnostics(sourceFile);
+    });
+  const getModelSourceFile = (program: ts.Program) => {
+    const file = program.getSourceFile(path);
+    if (file === undefined) throw new TlaTypeScriptError(`Can't read ${path}`);
+    return file;
+  };
+  const modelProgram = createTypeScriptProgram([path]);
+  const modelSourceFile = getModelSourceFile(modelProgram);
+  const syntaxErrors = modelProgram.getSyntacticDiagnostics(modelSourceFile);
   if (syntaxErrors.length > 0)
     throw new TlaTypeScriptError(ts.formatDiagnostics(syntaxErrors, host));
-  rejectEarlyErrors(sourceFile);
-  const diagnostics = ts.getPreEmitDiagnostics(program);
+  rejectEarlyErrors(modelSourceFile);
+  const getModelFiles = (program: ts.Program) =>
+    modelProgram.getSourceFiles().flatMap((file) => program.getSourceFile(file.fileName) ?? []);
+  const getDiagnostics = (program: ts.Program) =>
+    ts.sortAndDeduplicateDiagnostics(
+      getModelFiles(program).flatMap((file) => ts.getPreEmitDiagnostics(program, file)),
+    );
+  const modelDiagnostics = getDiagnostics(modelProgram);
+  // A model that type checks by itself keeps the program of its own files, which loads faster.
+  const program =
+    project === undefined || modelDiagnostics.length === 0
+      ? modelProgram
+      : createTypeScriptProgram([path, ...project.fileNames]);
+  const diagnostics = program === modelProgram ? modelDiagnostics : getDiagnostics(program);
   if (diagnostics.length > 0) throw new TlaTypeScriptError(ts.formatDiagnostics(diagnostics, host));
   return {
-    sourceFile,
+    sourceFile: getModelSourceFile(program),
     checker: program.getTypeChecker(),
-    files: program.getSourceFiles().filter((file) => !file.isDeclarationFile),
+    files: getModelFiles(program).filter((file) => !file.isDeclarationFile),
   };
 };
