@@ -3593,8 +3593,9 @@ const compileValue = (program: Program, expression: Expression, frame: Frame): C
   }
 };
 
-const getEnabledCode = (step: () => string) =>
-  `(() => { let isFound = false; const emit = () => { isFound = true; }; ${step()} return isFound; })()`;
+// The step breaks out of the block at the first successor emit accepts.
+const getEnabledCode = (step: () => string, emit = "() => true") =>
+  `(() => { const emit = ${emit}; enabled: { ${step()} return false; } return true; })()`;
 
 const createLambda = (): LambdaType => ({
   kind: "Lambda",
@@ -3993,10 +3994,13 @@ const compileStep = (
   primed: (string | undefined)[],
   isEnabled: boolean,
 ): (() => string) => {
+  // TLC stops looking for a step that ENABLED needs at the first one it finds.
+  const getEmitCode = (successor: string) =>
+    isEnabled ? `if (emit(${successor})) break enabled;` : `emit(${successor});`;
   if (pending.length === 0) {
     // TLC fails on a step that leaves a variable unassigned only where it reaches the step.
     if (!isEnabled && primed.some((code) => code === undefined)) return () => "H.deopt();";
-    return () => `emit([${primed.map((code) => code ?? "undefined").join(", ")}]);`;
+    return () => getEmitCode(`[${primed.map((code) => code ?? "undefined").join(", ")}]`);
   }
   // With warnings on, TLC evaluates what is left once every variable is assigned, without branching.
   if (program.environment.runtime.isWarningEnabled && primed.every((code) => code !== undefined)) {
@@ -4019,7 +4023,7 @@ const compileStep = (
       };
     });
     return () =>
-      `if (${guards.map((guard) => `(${guard.emit()})`).join(" && ")}) { emit([${primed.join(", ")}]); }`;
+      `if (${guards.map((guard) => `(${guard.emit()})`).join(" && ")}) { ${getEmitCode(`[${primed.join(", ")}]`)} }`;
   }
   const [first, ...rest] = pending;
   const expression = first.expression;
@@ -5612,7 +5616,7 @@ const compileSpec = (
         angle && compileUnchanged(program, angle.subscript, { ...frame, primed: assigned });
       return () =>
         unchanged
-          ? `(() => { let isFound = false; const emit = ([${successor.join(", ")}]) => { if (!(${unchanged.emit()})) isFound = true; }; ${step()} return isFound; })()`
+          ? getEnabledCode(step, `([${successor.join(", ")}]) => !(${unchanged.emit()})`)
           : getEnabledCode(step);
     }
     const action = expectBool(compileValue(program, atom.expression, frame));
