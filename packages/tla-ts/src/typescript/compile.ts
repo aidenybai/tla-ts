@@ -165,9 +165,9 @@ export const compile = (
           .valueDeclaration;
   };
   // A file that imports reads a module's namespace object, which tla-ts doesn't make, only to read
-  // an export through it. It reads a default export of an expression or of a class with no name,
-  // whose binding tla-ts doesn't make uninitialized, only where the module that declares it ran
-  // first.
+  // an export through it other than a var's or a let's, whose binding tla-ts keeps as state. It
+  // reads a default export of an expression or of a class with no name, whose binding tla-ts
+  // doesn't make uninitialized, only where the module that declares it ran first.
   const rejectModuleReads = (node: ts.Node, file: ts.SourceFile): void => {
     const declaration = ts.isIdentifier(node) ? getDeclaration(node) : undefined;
     if (
@@ -185,6 +185,20 @@ export const compile = (
         !(ts.isPropertyAccessExpression(parent) && parent.expression === node)
       ) {
         throw new TlaTypeScriptError("tla-ts can't make a module's namespace object", node);
+      }
+      const member =
+        ts.isSourceFile(declaration) && ts.isPropertyAccessExpression(parent)
+          ? getDeclaration(parent.name)
+          : undefined;
+      if (
+        member !== undefined &&
+        ts.isVariableDeclaration(member) &&
+        (ts.getCombinedNodeFlags(member) & ts.NodeFlags.Const) === 0
+      ) {
+        throw new TlaTypeScriptError(
+          `tla-ts can't read the variable ${parent.getText()} through a module's namespace object`,
+          parent,
+        );
       }
       const namespace =
         ts.isPropertyAccessExpression(parent) && parent.name === node

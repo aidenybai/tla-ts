@@ -36179,4 +36179,14 @@ describe("BigInts", () => {
       );
     });
   });
+
+  it("stops at a variable that a script reads through a module's namespace object", () => {
+    const path = join(import.meta.dirname, "../fixtures/typescript/imports/namespace.ts");
+    expect(() =>
+      compile(
+        'import * as logged from "./log";\nif (logged.log.length !== 0) throw new Error();',
+        path,
+      ),
+    ).toThrow("tla-ts can't read the variable logged.log through a module's namespace object");
+  });
 });
