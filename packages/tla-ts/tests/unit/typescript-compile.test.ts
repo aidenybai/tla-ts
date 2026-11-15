@@ -42397,4 +42397,30 @@ describe("BigInts", () => {
       expect((await checkModel(getSource(7))).failure?.message).toContain("final 8");
     });
   });
+
+  describe("a chain of a string's replace with a regexp, where a script makes objects", () => {
+    const getSource = (expected: string) => `
+      "use strict";
+      const kept = {};
+      const pattern = /(x)/;
+      const seen: string[] = [];
+      ${Array.from(
+        { length: 12 },
+        (_, index) => `seen.push("foo-x-bar".replace(pattern, "|$1${index + 1}|"));`,
+      ).join("\n")}
+      if (seen.join() !== "${expected}") throw new Error("seen " + seen.join());
+    `;
+    const getReplaced = (marker: string) =>
+      Array.from({ length: 12 }, (_, index) => `foo-|${marker}${index + 1}|-bar`).join();
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(getReplaced("x")))).failure).toBeUndefined();
+    });
+
+    it("rejects the capture left unreplaced", async () => {
+      expect((await checkModel(getSource(getReplaced("$1")))).failure?.message).toContain(
+        "seen foo-|x1|-bar",
+      );
+    });
+  });
 });
