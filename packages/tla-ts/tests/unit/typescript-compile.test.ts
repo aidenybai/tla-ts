@@ -39390,4 +39390,141 @@ describe("BigInts", () => {
       );
     });
   });
+  describe("joins after a branch that leaves the heap as a loop left it", () => {
+    const getSource = (count: number, expected: string) => `
+      const box = { size: 0 };
+      const labels: string[] = [];
+      ${Array.from(
+        { length: count },
+        (_, index) => `for (let i = 0; i < 2; i++) box.size += 1;
+      if (box.size > ${index * 3}) labels.push("${index}");`,
+      ).join("\n")}
+      if (labels.join() !== "${expected}") throw new Error(labels.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(3, "0,1"))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation", async () => {
+      expect((await checkModel(getSource(3, "0,1,2"))).failure?.message).toContain('"0,1"');
+    });
+
+    it("translates what follows each branch once", () => {
+      const getSize = (count: number) => printModule(compile(getSource(count, "")).source).length;
+      expect(getSize(8)).toBeLessThan(getSize(4) * 2);
+    });
+  });
+
+  describe("joins after a branch whose callback reads a const that the branch declares", () => {
+    const getSource = (count: number, expected: string) => `
+      const matches = (value: number, excluded: number[]) => excluded.includes(value);
+      const box = { size: 0 };
+      let kept = [1, 2, 3, 4];
+      ${Array.from(
+        { length: count },
+        (
+          _,
+          index,
+        ) => `const exclude${index}: number[] | null = kept.length > ${index + 1} ? [${index + 1}] : null;
+      if (exclude${index}) {
+        const excluded = exclude${index};
+        kept = kept.filter((value) => !matches(value, excluded));
+      }`,
+      ).join("\n")}
+      if (kept.join() !== "${expected}") throw new Error(kept.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(3, "3,4"))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation", async () => {
+      expect((await checkModel(getSource(3, "4"))).failure?.message).toContain('"3,4"');
+    });
+
+    it("translates what follows each branch once", () => {
+      const getSize = (count: number) => printModule(compile(getSource(count, "")).source).length;
+      expect(getSize(8)).toBeLessThan(getSize(4) * 2);
+    });
+  });
+
+  describe("joins after a branch that assigns a function to a let", () => {
+    const getAssignment = (
+      index: number,
+    ) => `let add${index}: ((value: number) => number) | undefined;
+      if (box.size > ${index}) {
+        add${index} = function (value: number) {
+          return value + ${index + 1};
+        };
+      }`;
+    const getSource = (count: number, expected: string) => `
+      const box = { size: 2 };
+      ${Array.from({ length: count }, (_, index) => getAssignment(index)).join("\n")}
+      const added = [${Array.from({ length: count }, (_, index) => `add${index}`).join(", ")}];
+      let total = 0;
+      for (const add of added) total = add ? add(total) : total;
+      if (total !== ${expected}) throw new Error("total " + total);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(3, "3"))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation", async () => {
+      expect((await checkModel(getSource(3, "6"))).failure?.message).toContain("total 3");
+    });
+
+    it("translates what follows each branch once", () => {
+      const getSize = (count: number) => printModule(compile(getSource(count, "0")).source).length;
+      expect(getSize(8)).toBeLessThan(getSize(4) * 2);
+    });
+  });
+
+  describe("joins after new of a typed array of a script's iterable", () => {
+    const getSource = (count: number, expected: string) => `
+      interface ArrayValues {
+        src: number[];
+        index: number;
+        next: (this: ArrayValues) => IteratorResult<number>;
+      }
+      interface ArrayIterable {
+        src: number[];
+        [Symbol.iterator]: (this: ArrayIterable) => ArrayValues;
+      }
+      function stepArrayValues(this: ArrayValues): IteratorResult<number> {
+        if (this.index < this.src.length) {
+          const value = this.src[this.index];
+          this.index += 1;
+          return { value, done: false };
+        }
+        return { value: undefined, done: true };
+      }
+      function openArrayValues(this: ArrayIterable): ArrayValues {
+        return { src: this.src, index: 0, next: stepArrayValues };
+      }
+      const iterable: ArrayIterable = { src: [1, 2], [Symbol.iterator]: openArrayValues };
+      const source: unknown = iterable;
+      let total = 0;
+      ${Array.from(
+        { length: count },
+        (_, index) => `const made${index} = new Int8Array(source as never);
+      total += made${index}.length * made${index}[1];`,
+      ).join("\n")}
+      if (total !== ${expected}) throw new Error("total " + total);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(2, "8"))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation", async () => {
+      expect((await checkModel(getSource(2, "6"))).failure?.message).toContain("total 8");
+    });
+
+    it("translates what follows each step once", () => {
+      const getSize = (count: number) => printModule(compile(getSource(count, "0")).source).length;
+      expect(getSize(2)).toBeLessThan(getSize(1) * 2);
+    });
+  });
 });

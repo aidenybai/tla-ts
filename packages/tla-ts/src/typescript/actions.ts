@@ -53,6 +53,7 @@ import {
 import {
   findNodes,
   getFunctionCandidates,
+  getFunctionValue,
   getObjectGetter,
   type HeapClass,
   type ChangeSummary,
@@ -260,6 +261,7 @@ import {
   translatePropertyKey,
   translateErrorFields,
   getFormatCall,
+  translateFunctionValue,
 } from "./heap";
 import {
   COLLECTIONS,
@@ -11386,6 +11388,7 @@ const translateExpressionStatement = (
     const deletion = ifThenElse(
       useJavaScript("CanDelete", [deleted.heap, deleted.ref, deleted.key], context),
       shareHeap(
+        path,
         {
           ...path,
           scope: {
@@ -11852,7 +11855,7 @@ const translateWriteStatement = (
     throwOnNullish(
       ifThenElse(
         useJavaScript("CanPut", [write.heap, write.ref, write.key], context),
-        shareHeap(assigned, context, next),
+        shareHeap(path, assigned, context, next),
         throwTypeError(path, expression, context, frame),
       ),
     );
@@ -11880,6 +11883,7 @@ const translateWriteStatement = (
         ifThenElse(
           apply("=", [field(change, "error"), string("")]),
           shareHeap(
+            path,
             {
               ...path,
               scope: {
@@ -12458,7 +12462,11 @@ const translateNewBufferStatement = (
       const values = construction.arguments.map((value) =>
         translateExpression(value, allocated.scope, context),
       );
-      const make = (current: Path, madeArguments: Expression[]) => {
+      const make = (
+        current: Path,
+        madeArguments: Expression[],
+        finish: (path: Path, value: Expression) => Formula,
+      ) => {
         const heapSymbol = context.heap;
         const heap = getHeap(current.scope, node, context);
         const errorName = context.names.getFresh("error");
@@ -12500,7 +12508,7 @@ const translateNewBufferStatement = (
                 current.scope,
                 context,
               ),
-              continueWith(after, useJavaScript("Allocated", [made], context)),
+              finish(after, useJavaScript("Allocated", [made], context)),
             ),
             ifThenElse(
               apply("=", [error, string("RangeError")]),
@@ -12516,6 +12524,7 @@ const translateNewBufferStatement = (
         iterator: Expression,
         next: Expression,
         taken: Expression[],
+        finish: (path: Path, value: Expression) => Formula,
       ): Formula =>
         taken.length > TYPED_ARRAY_TAKE_LIMIT
           ? leaf(
@@ -12536,10 +12545,10 @@ const translateNewBufferStatement = (
               context,
               frame,
               throwWith,
-              (done) => make(done, [tuple(taken), ...values.slice(1)]),
+              (done) => make(done, [tuple(taken), ...values.slice(1)], finish),
               (stepped, result) =>
                 readValue(node, result, stepped, context, frame, (read, value) =>
-                  step(read, iterator, next, [...taken, value]),
+                  step(read, iterator, next, [...taken, value], finish),
                 ),
             );
       // new of a typed array of numbers reads an array-like object's elements in order, so the
@@ -12551,7 +12560,7 @@ const translateNewBufferStatement = (
         context,
       );
       const callee = translateExpression(construction.callee, allocated.scope, context);
-      const madeFrom =
+      const madeFrom = (finish: (path: Path, value: Expression) => Formula) =>
         values.length > 0 &&
         construction.newTarget === construction.callee &&
         buffers.length > 0 &&
@@ -12579,28 +12588,37 @@ const translateNewBufferStatement = (
               allocated,
               context,
               frame,
-              make(allocated, values),
+              make(allocated, values, finish),
             )
-          : make(allocated, values);
+          : make(allocated, values, finish);
+
+      // Each step of the iterator may make the typed array, and what follows goes on from a join.
       return isIteratedTypedArray(node, context)
-        ? ifThenElse(
-            useJavaScript(
-              "IteratesScriptMethod",
-              [getHeap(allocated.scope, node, context), values[0]],
-              context,
-            ),
-            openIterator(
-              node,
-              values[0],
-              allocated,
-              context,
-              frame,
-              throwWith,
-              (opened, iterator, next) => step(opened, iterator, next, []),
-            ),
-            madeFrom,
+        ? translateJoined(
+            node,
+            allocated,
+            context,
+            (after, value) => continueWith(after, value ?? getUndefined(context)),
+            (finish) =>
+              ifThenElse(
+                useJavaScript(
+                  "IteratesScriptMethod",
+                  [getHeap(allocated.scope, node, context), values[0]],
+                  context,
+                ),
+                openIterator(
+                  node,
+                  values[0],
+                  allocated,
+                  context,
+                  frame,
+                  throwWith,
+                  (opened, iterator, next) => step(opened, iterator, next, [], finish),
+                ),
+                madeFrom(finish),
+              ),
           )
-        : madeFrom;
+        : madeFrom(continueWith);
     },
   );
 
@@ -12789,9 +12807,18 @@ const shareBinding = (
   );
 };
 
-// Names the heap after a statement changes it, so that later statements share it.
-const shareHeap = (path: Path, context: Context, continueWith: (path: Path) => Formula) =>
-  shareBinding(path, context.heap, "heap", context, continueWith);
+// Names the heap after a statement changes it, so that later statements share it. A statement that
+// leaves it as it was keeps its binding, so that a join after the statement finds it unchanged.
+const shareHeap = (
+  before: Path,
+  path: Path,
+  context: Context,
+  continueWith: (path: Path) => Formula,
+) =>
+  context.heap !== undefined &&
+  path.scope.bindings.get(context.heap) === before.scope.bindings.get(context.heap)
+    ? continueWith(path)
+    : shareBinding(path, context.heap, "heap", context, continueWith);
 
 // A new of a value that isn't a class that the script declares, such as a built-in method, which
 // throws a TypeError if the value isn't a constructor. tla-ts can't call one that is.
@@ -13730,49 +13757,75 @@ export const translateJoined = (
   changed = getChanged(node, path, context),
 ): Formula => {
   if (context.heap === undefined) return translateWith(continueWith);
-  const name = context.names.getFresh("Join");
-  const parameters = changed.map((symbol) => {
-    const binding = path.scope.bindings.get(symbol);
-    return context.names.getFresh(binding?.kind === "Identifier" ? binding.name : "value");
-  });
-  const result = context.names.getFresh("result");
+  const isVar = (declaration: ts.VariableDeclaration) =>
+    ts.isVariableDeclarationList(declaration.parent) &&
+    (declaration.parent.flags & ts.NodeFlags.BlockScoped) === 0;
+  // The functions in the statement that read a binding that it declares from outside them.
+  const getClosures = (symbol: ts.Symbol, declaration: ts.VariableDeclaration) =>
+    findNodes(
+      node,
+      (inner): inner is ts.Identifier =>
+        ts.isIdentifier(inner) && getSymbol(inner, context.checker) === symbol,
+    ).flatMap(
+      (inner) =>
+        ts.findAncestor(inner, (ancestor) =>
+          ancestor === node
+            ? "quit"
+            : ts.isFunctionLike(ancestor) &&
+              ts.findAncestor(declaration, (outer) => outer === ancestor) === undefined,
+        ) ?? [],
+    );
   // A var that the statement declares outlives it, as does any binding it declares that a function
   // in it captures, such as a catch's error.
   const isVarInside = (symbol: ts.Symbol) => {
     const declaration = symbol.valueDeclaration;
-    if (
-      declaration === undefined ||
-      !ts.isVariableDeclaration(declaration) ||
-      ts.findAncestor(declaration, (ancestor) => ancestor === node) === undefined
-    ) {
-      return false;
-    }
-    const parent = declaration.parent;
     return (
-      (ts.isVariableDeclarationList(parent) && (parent.flags & ts.NodeFlags.BlockScoped) === 0) ||
-      findNodes(
-        node,
-        (inner): inner is ts.Identifier =>
-          ts.isIdentifier(inner) &&
-          getSymbol(inner, context.checker) === symbol &&
-          ts.findAncestor(inner, (ancestor) =>
-            ancestor === node
-              ? "quit"
-              : ts.isFunctionLike(ancestor) &&
-                ts.findAncestor(declaration, (outer) => outer === ancestor) === undefined,
-          ) !== undefined,
-      ).length > 0
+      declaration !== undefined &&
+      ts.isVariableDeclaration(declaration) &&
+      ts.findAncestor(declaration, (ancestor) => ancestor === node) !== undefined &&
+      (isVar(declaration) || getClosures(symbol, declaration).length > 0)
     );
   };
+  // A binding that the statement itself declares, which a function made after the declaration
+  // captures, goes on as a parameter of the operator. A path that doesn't declare it passes
+  // undefined, as it made none of the functions that read it.
+  const captured = findNodes(node, ts.isVariableDeclaration).flatMap((declaration) => {
+    const symbol = ts.isIdentifier(declaration.name)
+      ? getSymbol(declaration.name, context.checker)
+      : undefined;
+    if (
+      symbol === undefined ||
+      isVar(declaration) ||
+      ts.findAncestor(declaration, (ancestor) =>
+        ancestor === node ? "quit" : ts.isFunctionLike(ancestor),
+      ) !== undefined
+    ) {
+      return [];
+    }
+    const closures = getClosures(symbol, declaration);
+    return closures.length > 0 &&
+      closures.every(
+        (closure) => !ts.isFunctionDeclaration(closure) && closure.pos >= declaration.end,
+      )
+      ? [symbol]
+      : [];
+  });
+  const passed = [...changed, ...captured];
+  const name = context.names.getFresh("Join");
+  const parameters = passed.map((symbol) => {
+    const binding = path.scope.bindings.get(symbol);
+    return context.names.getFresh(binding?.kind === "Identifier" ? binding.name : "value");
+  });
+  const result = context.names.getFresh("result");
   const isKept = (bindings: Map<ts.Symbol, Expression>) =>
     [...bindings].every((entry) =>
       path.scope.bindings.has(entry[0])
         ? path.scope.bindings.get(entry[0]) === entry[1] || changed.includes(entry[0])
-        : !isVarInside(entry[0]),
+        : !isVarInside(entry[0]) || captured.includes(entry[0]),
     );
-  // What follows holds the functions held before, which the operator can't take, so each exit holds
-  // the same ones for each name that code after the statement can read. That leaves out the names
-  // that the statement declares and that don't outlive it, and those of the functions it called.
+  // What follows holds the functions held before, so each exit holds the same ones for each name
+  // that code after the statement can read. That leaves out the names that the statement declares
+  // and that don't outlive it, and those of the functions it called.
   const isReadAfter = (symbol: ts.Symbol) => {
     const declaration = symbol.valueDeclaration;
     if (declaration === undefined) return true;
@@ -13784,17 +13837,33 @@ export const translateJoined = (
       owner === undefined || ts.findAncestor(node, (ancestor) => ancestor === owner) !== undefined
     );
   };
+  // A name that the operator takes may hold other functions on its exits than before, where each
+  // that it holds has a value, which it passes. Code after the statement calls the function as it
+  // calls any that a value holds.
+  const getHeldValue = (functions: Map<ts.Symbol, FunctionNode>, symbol: ts.Symbol) => {
+    const held = functions.get(symbol);
+    return held && getFunctionValue(held, context);
+  };
   const isHeldAsBefore = (functions: Map<ts.Symbol, FunctionNode>) =>
     [...new Set([...path.scope.functions.keys(), ...functions.keys()])].every(
       (symbol) =>
-        !isReadAfter(symbol) || functions.get(symbol) === path.scope.functions.get(symbol),
+        !isReadAfter(symbol) ||
+        functions.get(symbol) === path.scope.functions.get(symbol) ||
+        passed.includes(symbol),
     );
+  const getPassed = (inner: Path, symbol: ts.Symbol) => {
+    const value = getHeldValue(inner.scope.functions, symbol);
+    return value === undefined
+      ? inner.scope.bindings.get(symbol)
+      : translateFunctionValue(value, context);
+  };
   const exits: { path: Path; value?: Expression }[] = [];
   const joined = translateWith((inner, value) => {
     exits.push({ path: inner, value });
     return leaf(
       call(name, [
-        ...changed.flatMap((symbol) => inner.scope.bindings.get(symbol) ?? []),
+        ...changed.flatMap((symbol) => getPassed(inner, symbol) ?? []),
+        ...captured.map((symbol) => getPassed(inner, symbol) ?? getUndefined(context)),
         value ?? getUndefined(context),
       ]),
     );
@@ -13815,7 +13884,23 @@ export const translateJoined = (
       isKept(exit.path.scope.bindings) &&
       isHeldAsBefore(exit.path.scope.functions),
   );
-  if (!isJoinable) return translateWith(continueWith);
+  const unheld = passed.filter((symbol) =>
+    exits.some(
+      (exit) => exit.path.scope.functions.get(symbol) !== path.scope.functions.get(symbol),
+    ),
+  );
+  if (
+    !isJoinable ||
+    !unheld.every((symbol) =>
+      exits.every(
+        (exit) =>
+          !exit.path.scope.functions.has(symbol) ||
+          getHeldValue(exit.path.scope.functions, symbol) !== undefined,
+      ),
+    )
+  ) {
+    return translateWith(continueWith);
+  }
   if (exits.length === 0) return joined;
   const isValued = exits.some((exit) => exit.value !== undefined);
   const rest = continueWith(
@@ -13825,9 +13910,10 @@ export const translateJoined = (
       unboundThis: exits[0].path.unboundThis,
       scope: {
         ...path.scope,
+        functions: new Map([...path.scope.functions].filter((entry) => !unheld.includes(entry[0]))),
         bindings: new Map([
           ...path.scope.bindings,
-          ...changed.map((symbol, position): [ts.Symbol, Expression] => [
+          ...passed.map((symbol, position): [ts.Symbol, Expression] => [
             symbol,
             identifier(parameters[position]),
           ]),
@@ -18473,6 +18559,7 @@ export const translateStatements = (
       statementFrame,
       (after, value) =>
         shareHeap(
+          path,
           assign(assignment.left, after, context, () => value),
           context,
           continueWith,
@@ -18491,7 +18578,7 @@ export const translateStatements = (
       path,
       context,
       statementFrame,
-      (after) => shareHeap(after, context, continueWith),
+      (after) => shareHeap(path, after, context, continueWith),
     );
   }
   // A read of super throws a TypeError where the object that holds the method has no prototype.
@@ -18505,10 +18592,14 @@ export const translateStatements = (
   if (ts.isExpressionStatement(statement) && superLookup?.prototype !== undefined) {
     return ifThenElse(
       apply("=", [superLookup.prototype, identifier("Null")]),
-      throwTypeError(path, statement.expression, context, frame),
+      throwTypeError(path, statement.expression, context, statementFrame),
       allocate(statement.expression, path, context, (inner) =>
-        translateExpressionStatement(statement.expression, inner, context, frame, (after) =>
-          shareHeap(after, context, continueWith),
+        translateExpressionStatement(
+          statement.expression,
+          inner,
+          context,
+          statementFrame,
+          (after) => shareHeap(path, after, context, continueWith),
         ),
       ),
     );
@@ -18516,7 +18607,7 @@ export const translateStatements = (
   if (ts.isExpressionStatement(statement)) {
     return allocate(statement.expression, path, context, (inner) =>
       translateExpressionStatement(statement.expression, inner, context, statementFrame, (after) =>
-        shareHeap(after, context, continueWith),
+        shareHeap(path, after, context, continueWith),
       ),
     );
   }
