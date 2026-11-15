@@ -122,6 +122,42 @@ describe("actions", () => {
     expect([result.status, result.distinctStates]).toEqual(["deadlock", 3]);
   });
 
+  it("keeps a file that exports a function a spec, whose exported const is a value", async () => {
+    const result = await checkModel(`
+      export const limit = 2;
+      let count = 0;
+      export const step = () => {
+        if (count < limit) count += 1;
+      };
+    `);
+    expect([result.status, result.distinctStates]).toEqual(["deadlock", 3]);
+  });
+
+  describe("runs a file that exports only values as a script", () => {
+    const getSource = (expected: string) => `
+      export const label = "box";
+      let count = 0;
+      count += 1;
+      {
+        var nested = count + 1;
+      }
+      const made = { label, count, nested };
+      if (JSON.stringify(made) !== '${expected}') throw new Error(JSON.stringify(made));
+    `;
+
+    it("agrees with Node", async () => {
+      const result = await checkModel(getSource('{"label":"box","count":1,"nested":2}'));
+      expect(result.failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const result = await checkModel(getSource('{"label":"box","count":1,"nested":3}'));
+      expect(result.failure?.message).toContain(
+        '{\\"label\\":\\"box\\",\\"count\\":1,\\"nested\\":2}',
+      );
+    });
+  });
+
   it("inlines a helper that changes state", async () => {
     const result = await checkModel(`
       /** @noDeadlock */
