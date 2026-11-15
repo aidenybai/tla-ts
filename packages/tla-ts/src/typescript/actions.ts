@@ -13947,14 +13947,19 @@ const translateYieldingForOf = (
 const UNROLL_LIMIT = 64;
 
 // The values that a generator's for loop gives its counter, where a literal starts it, a comparison
-// with a literal ends it, a step of a literal moves it, and nothing else writes it. tla-ts unrolls
-// such a loop, whose iterations then suspend at each yield as straight code does.
+// with a literal ends it, a step of a literal moves it, and nothing else writes it, with the value
+// that a var keeps once the loop ends. tla-ts unrolls such a loop, whose iterations then suspend at
+// each yield as straight code does.
 const getCounts = (loop: ts.ForStatement, context: Context) => {
   const initializer = loop.initializer;
+  const isVar =
+    initializer !== undefined &&
+    ts.isVariableDeclarationList(initializer) &&
+    (initializer.flags & ts.NodeFlags.BlockScoped) === 0;
   const declaration =
     initializer !== undefined &&
     ts.isVariableDeclarationList(initializer) &&
-    (initializer.flags & ts.NodeFlags.Let) !== 0 &&
+    (isVar || (initializer.flags & ts.NodeFlags.Let) !== 0) &&
     initializer.declarations.length === 1
       ? initializer.declarations[0]
       : undefined;
@@ -14013,7 +14018,16 @@ const getCounts = (loop: ts.ForStatement, context: Context) => {
     condition !== undefined && ts.isBinaryExpression(condition)
       ? comparisons.get(condition.operatorToken.kind)
       : undefined;
+  // A var outlives each iteration, so a function that reads it would read a later value.
+  const owner = ts.findAncestor(loop.parent, ts.isFunctionLike);
+  const isCaptured =
+    isVar &&
+    owner !== undefined &&
+    findNodes(owner, ts.isIdentifier).some(
+      (node) => isCounter(node) && ts.findAncestor(node.parent, ts.isFunctionLike) !== owner,
+    );
   if (
+    isCaptured ||
     start === undefined ||
     end === undefined ||
     delta === undefined ||
@@ -14029,7 +14043,9 @@ const getCounts = (loop: ts.ForStatement, context: Context) => {
     (_, position) => start + position * delta,
   );
   const length = values.findIndex((value) => !compare(value, end));
-  return length === -1 ? undefined : { symbol, counts: values.slice(0, length) };
+  return length === -1
+    ? undefined
+    : { symbol, counts: values.slice(0, length), after: isVar ? values[length] : undefined };
 };
 
 // Whether a node yields outside the functions it holds.
@@ -14064,7 +14080,22 @@ const translateUnrolled = (
       );
     }
     const count = unrolled?.counts.at(position);
-    if (unrolled !== undefined && count === undefined) return continueWith(current);
+    if (unrolled !== undefined && count === undefined) {
+      return continueWith(
+        unrolled.after === undefined
+          ? current
+          : {
+              ...current,
+              scope: {
+                ...current.scope,
+                bindings: new Map([
+                  ...current.scope.bindings,
+                  [unrolled.symbol, number(unrolled.after)],
+                ]),
+              },
+            },
+      );
+    }
     const next = (after: Path) => iterate(after, position + 1);
     // Each iteration evaluates the body's expressions again, such as a yield it hoists.
     const started = startIteration(loop, current);

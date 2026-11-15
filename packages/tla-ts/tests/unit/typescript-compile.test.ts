@@ -28532,6 +28532,59 @@ describe("errors", () => {
     }
   });
 
+  describe("runs a generator's counted loop over a var, which keeps its last value", () => {
+    const cases = [
+      {
+        name: "a loop that ends",
+        getSource: (expected: string) => `
+        function* g(): Generator<number, number, undefined> {
+          for (var index = 0; index < 3; index++) {
+            yield index;
+          }
+          return index;
+        }
+        const iterator = g();
+        const first = iterator.next();
+        const second = iterator.next();
+        const third = iterator.next();
+        const last = iterator.next();
+        const text = first.value + "," + second.value + "," + third.value + "," + last.value;
+        if (text !== "${expected}") throw new Error(text);
+      `,
+        expected: "0,1,2,3",
+        wrong: "0,1,2,2",
+      },
+      {
+        name: "a loop that breaks",
+        getSource: (expected: string) => `
+        function* g(): Generator<number, number, undefined> {
+          for (var index = 0; index < 5; index++) {
+            if (index === 2) break;
+            yield index;
+          }
+          return index;
+        }
+        const iterator = g();
+        const first = iterator.next();
+        const second = iterator.next();
+        const last = iterator.next();
+        const text = first.value + "," + second.value + "," + last.value + last.done;
+        if (text !== "${expected}") throw new Error(text);
+      `,
+        expected: "0,1,2true",
+        wrong: "0,1,5true",
+      },
+    ];
+    for (const entry of cases) {
+      it(`matches Node on ${entry.name}`, async () => {
+        expect((await checkModel(entry.getSource(entry.expected))).failure).toBeUndefined();
+      });
+      it(`fails a wrong log on ${entry.name}`, async () => {
+        await expect(checkModel(entry.getSource(entry.wrong))).rejects.toThrow(entry.expected);
+      });
+    }
+  });
+
   it("runs Array.fromAsync of the values() of an array written in place", async () => {
     // V8 rejects a job later than the spec, whose order a for await gives.
     const result = await checkModel(`
