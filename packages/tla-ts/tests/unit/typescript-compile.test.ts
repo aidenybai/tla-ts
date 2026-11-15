@@ -36303,4 +36303,78 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("tt"))).failure?.message).toContain("ttt");
     });
   });
+
+  describe("runs String.raw on a template object that a call passes", () => {
+    const getSource = (expected: string) => `
+      const symbol = Symbol("s");
+      const results: string[] = [];
+      try {
+        // @ts-ignore
+        const text = String.raw({ raw: { length: 4, 0: "e", 1: null, 2: undefined, 3: 12, 4: "x" } });
+        results.push(text);
+      } catch (error) {
+        results.push(error instanceof TypeError ? "TypeError" : "other");
+      }
+      try {
+        // @ts-ignore
+        const text = String.raw({ raw: ["a", "b", "c"] }, 1, true);
+        results.push(text);
+      } catch (error) {
+        results.push(error instanceof TypeError ? "TypeError" : "other");
+      }
+      try {
+        // @ts-ignore
+        const text = String.raw({ raw: { length: "2", 0: "a", 1: "b" } }, null);
+        results.push(text);
+      } catch (error) {
+        results.push(error instanceof TypeError ? "TypeError" : "other");
+      }
+      try {
+        // @ts-ignore
+        const text = String.raw({ raw: { length: null } });
+        results.push(text);
+      } catch (error) {
+        results.push(error instanceof TypeError ? "TypeError" : "other");
+      }
+      try {
+        // @ts-ignore
+        const text = String.raw(null);
+        results.push(text);
+      } catch (error) {
+        results.push(error instanceof TypeError ? "TypeError" : "other");
+      }
+      try {
+        // @ts-ignore
+        const text = String.raw({ raw: undefined });
+        results.push(text);
+      } catch (error) {
+        results.push(error instanceof TypeError ? "TypeError" : "other");
+      }
+      try {
+        // @ts-ignore
+        const text = String.raw({ raw: { length: symbol } });
+        results.push(text);
+      } catch (error) {
+        results.push(error instanceof TypeError ? "TypeError" : "other");
+      }
+      try {
+        // @ts-ignore
+        const text = String.raw({ raw: { length: 1, 0: symbol } });
+        results.push(text);
+      } catch (error) {
+        results.push(error instanceof TypeError ? "TypeError" : "other");
+      }
+      if (results.join("|") !== "${expected}") throw new Error(results.join("|"));
+    `;
+
+    it("agrees with Node", async () => {
+      const expected = "enullundefined12|a1btruec|anullb||TypeError|TypeError|TypeError|TypeError";
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects a wrong expectation", async () => {
+      const wrong = "enullundefined12|a1btruec|anullb|null|TypeError|TypeError|TypeError|TypeError";
+      expect((await checkModel(getSource(wrong))).failure?.message).toContain("anullb||");
+    });
+  });
 });

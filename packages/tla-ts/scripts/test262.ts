@@ -2169,6 +2169,25 @@ const ignoreSoundErrors = () => {
       checker.isArrayType(checker.getTypeAtLocation(value))
     );
   };
+  // An error in the template object of a call of String.raw, which tla-ts reads as it is, as
+  // String.raw reads any object, throwing the TypeErrors of its steps and stopping where it would
+  // run a getter or convert an object.
+  const isRawTemplate = (diagnostic: ts.Diagnostic) => {
+    const start = diagnostic.start ?? 0;
+    const call = ts.findAncestor(getNode(start), ts.isCallExpression);
+    const template = call?.arguments[0];
+    return (
+      call !== undefined &&
+      template !== undefined &&
+      ts.isPropertyAccessExpression(call.expression) &&
+      call.expression.name.text === "raw" &&
+      ts.isIdentifier(call.expression.expression) &&
+      call.expression.expression.text === "String" &&
+      isGlobal(call.expression.expression) &&
+      template.getStart() <= start &&
+      start + (diagnostic.length ?? 0) <= template.getEnd()
+    );
+  };
   // A call of a method of RegExp.prototype that PROTOCOL_METHODS lists, on a regexp, as
   // rx[Symbol.search](s), or through call, as RegExp.prototype[Symbol.search].call(rx, s).
   // The method of a protocol call, under the well-known symbol that names it.
@@ -2481,6 +2500,8 @@ const ignoreSoundErrors = () => {
           isIndexCall(diagnostic) ||
           isSetLikeArrayCall(diagnostic) ||
           isTypedArrayNew(diagnostic))) ||
+      ((CONVERTED_ARGUMENT_ERRORS.has(diagnostic.code) || diagnostic.code === 2322) &&
+        isRawTemplate(diagnostic)) ||
       (diagnostic.code === UNKNOWN_CALLEE_ERROR && isStoredStringCall(node)) ||
       (diagnostic.code === UNCALLABLE_ERROR && isTypedUnionCall(node, diagnostic)) ||
       diagnostic.code === UNUSED_OPERAND_ERROR ||

@@ -1955,6 +1955,34 @@ StringOf(value) ==
     [] IsBigInt(value) -> ToString(value[Big])
     [] OTHER -> Assert(FALSE, "tla-ts can't convert objects to strings")
 
+\\* What String.raw gives for a template object and substitutions: whether it throws a TypeError, and
+\\* the text that it joins otherwise. tla-ts stops where String.raw would call a getter, a proxy's
+\\* trap, or an object's conversion method.
+RECURSIVE RawSegments(_, _, _, _, _, _)
+LOCAL RawSegments(heap, raw, length, substitutions, index, text) ==
+  LET segment == Get(heap, raw, ToString(index))
+      substitution == substitutions[index + 1]
+  IN CASE index >= length -> [isThrown |-> FALSE, text |-> text]
+       [] IsSymbol(segment) -> [isThrown |-> TRUE, text |-> ""]
+       [] index + 1 = length -> [isThrown |-> FALSE, text |-> text \\o StringOf(segment)]
+       [] index >= Len(substitutions) ->
+            RawSegments(heap, raw, length, substitutions, index + 1, text \\o StringOf(segment))
+       [] IsSymbol(substitution) -> [isThrown |-> TRUE, text |-> ""]
+       [] OTHER ->
+            RawSegments(heap, raw, length, substitutions, index + 1,
+                        text \\o StringOf(segment) \\o StringOf(substitution))
+
+StringRaw(heap, template, substitutions) ==
+  LET Readable(value) == (IsHeap(value) /\\ ~IsProxy(heap, value)) \\/ IsSequenceValue(value)
+      raw == Get(heap, template, "raw")
+      length == Get(heap, raw, "length")
+  IN CASE template \\in {Undefined, Null} -> [isThrown |-> TRUE, text |-> ""]
+       [] ~Readable(template) -> Assert(FALSE, "tla-ts can't run String.raw on this template")
+       [] raw \\in {Undefined, Null} -> [isThrown |-> TRUE, text |-> ""]
+       [] ~Readable(raw) -> Assert(FALSE, "tla-ts can't run String.raw on this template")
+       [] IsSymbol(length) -> [isThrown |-> TRUE, text |-> ""]
+       [] OTHER -> RawSegments(heap, raw, ToLength(length), substitutions, 0, "")
+
 \\* What Node prints for a promise that rejects with a primitive and that nothing handles, but for
 \\* the stack frames.
 UnhandledRejection(reason) ==
