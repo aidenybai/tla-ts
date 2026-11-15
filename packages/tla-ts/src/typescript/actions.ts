@@ -4610,17 +4610,13 @@ export const bindCall = (
   const plainValues = argumentValues.isSpread ? values.shared.slice(0, -1) : values.shared;
   const restValue = argumentValues.isSpread ? values.shared.at(-1) : undefined;
   const evaluateArguments = (rest: Formula) => values.evaluate(rest, leaf(boolean(false)));
-  if (
-    isArgumentsNamed(callee, context) &&
-    context.heap !== undefined &&
-    (callbacks.length > 0 || argumentNodes.some(ts.isSpreadElement))
-  ) {
+  if (isArgumentsNamed(callee, context) && context.heap !== undefined && callbacks.length > 0) {
     throw new TlaTypeScriptError("Unsupported arguments object", node);
   }
   // Parameters' defaults may read the arguments object, which the call makes before it binds them.
   const made = allocateArguments(
     callee,
-    values.shared,
+    argumentValues.list ?? tuple(values.shared),
     node,
     { definitions: [], scope: path.scope },
     context,
@@ -4872,7 +4868,7 @@ const rejectMappedArguments = (callee: FunctionNode, context: Context) => {
 
 export const allocateArguments = (
   callee: FunctionNode,
-  values: readonly Expression[],
+  list: Expression,
   node: ts.Node,
   bound: Bound,
   context: Context,
@@ -4886,7 +4882,7 @@ export const allocateArguments = (
   const heap = context.names.getFresh("heap");
   const made = useJavaScript(
     "ArgumentsObject",
-    [tuple([...values]), translateBuiltInValue("get Function.prototype.arguments", node, context)],
+    [list, translateBuiltInValue("get Function.prototype.arguments", node, context)],
     context,
   );
   return {
@@ -8420,7 +8416,7 @@ const translateLoopCall = (
     }
     const bound = allocateArguments(
       callback,
-      passed,
+      tuple(passed),
       receiver,
       bindValues(callbackParameters, passed, current.scope, context),
       context,
@@ -15656,8 +15652,10 @@ const findLeadingCall = (
   }
   if (
     ts.isSpreadElement(node) &&
-    ts.isArrayLiteralExpression(node.parent) &&
-    (isSteppedValue(node.expression, context) || isIterableValue(node.expression, context)) &&
+    (ts.isArrayLiteralExpression(node.parent)
+      ? isSteppedValue(node.expression, context) || isIterableValue(node.expression, context)
+      : (ts.isCallExpression(node.parent) || ts.isNewExpression(node.parent)) &&
+        isIterableValue(node.expression, context)) &&
     !isArrayIteration(getCast(node.expression), context)
   ) {
     // The spread runs a call that makes what it steps as it steps it.

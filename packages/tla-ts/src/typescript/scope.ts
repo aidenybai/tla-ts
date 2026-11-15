@@ -34,6 +34,7 @@ import {
   define,
   identifier,
   ifExpression,
+  index,
   number,
   set,
   string,
@@ -707,7 +708,8 @@ export const bindPattern = (
 // Binds parameters to argument values with LET definitions, as when inlining a call.
 // The values of the arguments that a call passes, at the positions that pass values. Where the call
 // spreads arguments from a rest parameter's position on, the last value is the sequence that the
-// rest parameter takes.
+// rest parameter takes. A call that spreads before that takes each parameter's value from the list
+// of every argument, which is also what the arguments object holds.
 export const translateArgumentValues = (
   parameters: readonly ts.ParameterDeclaration[],
   argumentNodes: readonly ts.Expression[],
@@ -717,20 +719,40 @@ export const translateArgumentValues = (
 ) => {
   const rest = parameters.findIndex((parameter) => parameter.dotDotDotToken !== undefined);
   const spread = argumentNodes.findIndex(ts.isSpreadElement);
-  if (spread !== -1 && (rest === -1 || spread < rest)) {
-    throw new TlaTypeScriptError(
-      "tla-ts can't spread arguments into the parameters before a rest parameter",
-      argumentNodes[spread],
-    );
+  const list = spread === -1 ? undefined : translateElements(argumentNodes, scope, context);
+  if (list !== undefined && (rest === -1 || spread < rest)) {
+    if (!argumentNodes.every((_, position) => isPassed(position))) {
+      throw new TlaTypeScriptError(
+        "tla-ts can't spread arguments into the parameters before a rest parameter",
+        argumentNodes[spread],
+      );
+    }
+    const values = parameters
+      .slice(0, rest === -1 ? parameters.length : rest)
+      .map((_, position) =>
+        ifExpression(
+          apply("<=", [number(position + 1), apply("Len", [list])]),
+          index(list, [number(position + 1)]),
+          getUndefined(context),
+        ),
+      );
+    return rest === -1
+      ? { values, isSpread: false, list }
+      : {
+          values: [...values, apply("SubSeq", [list, number(rest + 1), apply("Len", [list])])],
+          isSpread: true,
+          list,
+        };
   }
   const passed = (spread === -1 ? argumentNodes : argumentNodes.slice(0, rest))
     .filter((_, position) => isPassed(position))
     .map((argument) => translateExpression(argument, scope, context));
   return spread === -1
-    ? { values: passed, isSpread: false }
+    ? { values: passed, isSpread: false, list }
     : {
         values: [...passed, translateElements(argumentNodes.slice(rest), scope, context)],
         isSpread: true,
+        list,
       };
 };
 

@@ -4977,13 +4977,50 @@ ${body}
     `;
     expect((await checkModel(getSource("a:4:x+b+c+d"))).failure).toBeUndefined();
     await expect(checkModel(getSource("a:3:x+b+c"))).rejects.toThrow("a:4:x+b+c+d");
-    expect(() =>
-      compile(`
-        const join = (first: string, ...rest: string[]) => first + rest.length;
-        const more = ["b", "c"];
-        const result = join(...(more as [string, ...string[]]));
-      `),
-    ).toThrow("tla-ts can't spread arguments into the parameters before a rest parameter");
+  });
+
+  it("spreads an array into the parameters before a rest parameter", async () => {
+    const getSource = (expected: string) => `
+      const join = (first: string, ...rest: string[]) => first + rest.length;
+      const more = ["b", "c"];
+      const result = join(...(more as [string, ...string[]]));
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    expect((await checkModel(getSource("b1"))).failure).toBeUndefined();
+    await expect(checkModel(getSource("b2"))).rejects.toThrow("b1");
+  });
+
+  it("spreads arguments into a function's parameters and its arguments object, which take undefined past them", async () => {
+    const getSource = (expected: string) => `
+      const show = function (a: unknown, b: unknown, c: unknown) {
+        return [a, b, c, arguments.length].join("|");
+      };
+      const values: unknown[] = [1, 2];
+      // @ts-ignore: TypeScript can't count what a spread passes.
+      const result = [show(0, ...values), show(...values, ...values)].join(";");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    expect((await checkModel(getSource("0|1|2|3;1|2|1|4"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("0|1|2|3;1|2|1|3"))).failure?.message).toContain(
+      "0|1|2|3;1|2|1|4",
+    );
+  });
+
+  it("spreads into a call's arguments the values of the iterator that a script gives an object", async () => {
+    const getSource = (expected: string) => `
+      let log = "";
+      var iter = {} as unknown as { [key: string | symbol]: unknown } & Iterable<unknown>;
+      iter[Symbol.iterator] = function () {
+        let count = 0;
+        return { next: function () { count++; log += "n"; return { value: count, done: count > 2 }; } };
+      };
+      const mark = function () { log += "x"; return 0; };
+      const join = function (...values: unknown[]) { log += "j"; return values.join(); };
+      const result = join(mark(), ...iter);
+      if ([result, log].join(";") !== "${expected}") throw new Error([result, log].join(";"));
+    `;
+    expect((await checkModel(getSource("0,1,2;xnnnj"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("0,1,2;nnnxj"))).failure?.message).toContain("0,1,2;xnnnj");
   });
 
   it("forwards a rest parameter that a function spreads into another's call", async () => {
