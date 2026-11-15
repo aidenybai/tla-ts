@@ -6526,6 +6526,45 @@ describe("calls", () => {
     },
   );
 
+  describe("runs a helper's operator with the function that a name it reads holds", () => {
+    const expected = "function,false,12,a,function,true,11,b";
+    const getSource = (seen: string) => `
+      type Factory = (value: number) => number;
+      const first: Factory = (value) => value + 1;
+      let held: Factory | undefined;
+      if (typeof Symbol !== "undefined") {
+        held = function made(value: number) {
+          return value + 2;
+        };
+      }
+      const seen: unknown[] = [];
+      function runAll(callback: () => void) {
+        seen.push(typeof held, held === first, held === undefined ? 0 : held(10));
+        callback();
+      }
+      runAll(() => {
+        seen.push("a");
+      });
+      held = first;
+      runAll(() => {
+        seen.push("b");
+      });
+      if (seen.join() !== "${seen}") throw new Error("seen " + seen.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it.each([
+      "undefined,false,0,a,function,true,11,b",
+      "function,false,12,a,function,false,11,b",
+      "function,false,12,a,function,true,12,b",
+    ])("rejects the expectation %s", async (wrong) => {
+      expect((await checkModel(getSource(wrong))).failure?.message).toContain(`seen ${expected}`);
+    });
+  });
+
   it("passes a helper's operator a class that its callback names", async () => {
     const getSource = (expected: string) => `
       const thrower = () => {
