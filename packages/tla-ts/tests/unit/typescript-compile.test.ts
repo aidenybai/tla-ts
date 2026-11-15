@@ -29026,19 +29026,36 @@ describe("proxies", () => {
   });
 
   it.each([
-    ["an array", "const proxy = new Proxy([1], {});\nconst first = proxy[0];"],
     [
-      "an array that it passes as an object",
-      "const keysOf = (value: object) => Object.keys(value).join();\nkeysOf(new Proxy([1], {}));",
+      "calls its method",
+      "const proxy = new Proxy([1], {});\nconst mapped = proxy.map((value) => value);",
     ],
-    ["an array that Proxy.revocable takes", "const handle = Proxy.revocable<unknown[]>([], {});"],
-    ["a proxy of an array", "const array = new Proxy(new Proxy([], {}), {});"],
-    ["a tuple", 'const pair: [number, string] = [1, "a"];\nconst proxy = new Proxy(pair, {});'],
     [
-      "a value that may be an array",
+      "iterates it",
+      "const proxy = new Proxy([1], {});\nfor (const value of proxy) proxy[0] = value;",
+    ],
+    [
+      "passes it where an array may be",
+      "const first = (value: number[]) => value[0];\nfirst(new Proxy([1], {}));",
+    ],
+    [
+      "casts it to an array",
+      "const first = (value: unknown) => (value as number[])[0];\nfirst(new Proxy([1], {}));",
+    ],
+    [
+      "returns it",
       "const make = (target: number[] | { first: number }) => new Proxy(target, {});\nconst made = make({ first: 1 });",
     ],
-  ])("stops where a script makes a proxy of %s", (_name, source) => {
+    ["puts it in an array", "const pair = [new Proxy([1], {})];"],
+    [
+      "passes the handle that Proxy.revocable gives",
+      "const handle = Proxy.revocable<unknown[]>([], {});\nconst handles = [handle];",
+    ],
+    [
+      "takes a handler that isn't an object literal",
+      "const handler = {};\nconst proxy = new Proxy([1], handler);",
+    ],
+  ])("stops where a script makes a proxy of an array and %s", (_name, source) => {
     expect(() => compile(source)).toThrow("tla-ts can't make a proxy of an array");
   });
 
@@ -34067,6 +34084,45 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("0 1 length,true,true"))).failure?.message).toContain(
         "0 1 length,true,false",
       );
+    });
+  });
+
+  describe("reads a proxy of an array through its internal methods", () => {
+    const getSource = (expected: string) => `
+      const box = { size: 0 };
+      const log: string[] = [];
+      const proxy = new Proxy([1, 2], {
+        get(target, key) {
+          log.push(String(key));
+          return key === "length" ? target.length + 1 : target[0];
+        },
+      });
+      const first = proxy[1];
+      const length = proxy.length;
+      const isArray = Array.isArray(proxy);
+      const kind = Object.prototype.toString.call(new Proxy(new Proxy([4], {}), {}));
+      const handle = Proxy.revocable([3], {});
+      const json = JSON.stringify(handle.proxy);
+      handle.revoke();
+      let isRevoked = false;
+      try {
+        Array.isArray(handle.proxy);
+      } catch (error) {
+        isRevoked = error instanceof TypeError;
+      }
+      box.size = 1;
+      const read = [first, length, isArray, kind, json, isRevoked, log.join("/")].join();
+      if (read !== "${expected}") throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      const result = await checkModel(getSource("1,3,true,[object Array],[3],true,1/length"));
+      expect(result.failure).toBeUndefined();
+    });
+
+    it("rejects the length as the target's", async () => {
+      const result = await checkModel(getSource("1,2,true,[object Array],[3],true,1/length"));
+      expect(result.failure?.message).toContain("1,3,true,[object Array],[3],true,1/length");
     });
   });
 });
