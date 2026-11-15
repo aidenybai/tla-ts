@@ -3597,6 +3597,29 @@ ${body}
     ).toThrow("tla-ts can't write a global outside strict mode");
   });
 
+  it.each([
+    ["a pattern", "({ missing } = { missing: 42 });"],
+    ["a for-of head", "for (missing of [1]) count += 1;"],
+    ["a pattern's default", "[missing = 1] = [];"],
+    ["a pattern that names NaN", "[NaN] = [1];"],
+  ])("stops where %s outside strict mode writes a global", (_, statement) => {
+    expect(() => compile(`let count = 0;\n// @ts-ignore\n${statement}\ncount = 1;`)).toThrow(
+      "tla-ts can't write a global outside strict mode",
+    );
+  });
+
+  it("writes a var that a pattern and a for-of head outside strict mode name", async () => {
+    const getSource = (expected: string) => `
+      var x: number;
+      let y = 0;
+      [x, y = 2] = [1];
+      for (x of [3]) y += x;
+      if ([x, y].join() !== "${expected}") throw new Error("written " + [x, y].join());
+    `;
+    expect((await checkModel(getSource("3,5"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("1,2"))).failure?.message).toContain("written 3,5");
+  });
+
   it("gives undefined as the type of a name that no binding has", async () => {
     const getSource = (expected: string) => `
       let type: string = "none";
