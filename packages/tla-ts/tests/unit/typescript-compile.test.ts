@@ -36430,4 +36430,13 @@ describe("BigInts", () => {
     expect((await checkModel(getSource("1,0"))).failure).toBeUndefined();
     expect((await checkModel(getSource("0,0"))).failure?.message).toContain("seen 1,0");
   });
+
+  it("rejects a labelled function as a with statement's body outside strict mode", () => {
+    expect(() => compile("with ({}) label: function step() {}")).toThrow(
+      "SyntaxError: A declaration can't be the body of a statement",
+    );
+    expect(() => compile("{\n  label: function step() {}\n}")).toThrow(
+      "tla-ts can't run a function declaration that is a statement's body outside strict mode",
+    );
+  });
 });

@@ -124,7 +124,7 @@ const isBodyOf = (node: ts.Statement) => {
 };
 
 // Outside strict mode, a plain function declaration can be an if statement's branch, or a labelled
-// statement's item where the labels aren't a loop's or an if statement's body.
+// statement's item where the labels aren't a loop's, an if statement's, or a with statement's body.
 const isSloppyFunctionBody = (node: ts.Statement) => {
   if (!isPlainFunction(node) || isStrictCode(node)) return false;
   if (ts.isIfStatement(node.parent)) return true;
@@ -132,7 +132,12 @@ const isSloppyFunctionBody = (node: ts.Statement) => {
     node.parent,
     (ancestor) => !ts.isLabeledStatement(ancestor.parent),
   );
-  return labelled !== undefined && ts.isLabeledStatement(labelled) && !isBodyOf(labelled);
+  return (
+    labelled !== undefined &&
+    ts.isLabeledStatement(labelled) &&
+    !isBodyOf(labelled) &&
+    !ts.isWithStatement(labelled.parent)
+  );
 };
 
 // Rejects programs that JavaScript rejects as it parses, where TypeScript accepts them, and stops at
