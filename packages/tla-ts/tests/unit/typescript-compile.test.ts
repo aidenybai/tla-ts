@@ -40944,4 +40944,31 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("calls a function that a parameter holds where an unknown callee may run its owner", () => {
+    const getSource = (expected: string) => `
+      function getLabel(label: unknown, func: () => unknown) {
+        try {
+          func();
+        } catch {
+          return label;
+        }
+        throw new Error("no throw");
+      }
+      const holder: any = [1, 2];
+      holder.getClass = Object.prototype.toString;
+      const tag = holder.getClass();
+      if (tag !== "${expected}") throw new Error("tag " + tag);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("[object Array]"))).failure).toBeUndefined();
+    });
+
+    it("rejects the tag of an object", async () => {
+      expect((await checkModel(getSource("[object Object]"))).failure?.message).toContain(
+        "tag [object Array]",
+      );
+    });
+  });
 });

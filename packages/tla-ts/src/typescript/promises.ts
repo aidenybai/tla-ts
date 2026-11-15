@@ -2281,15 +2281,20 @@ const isExecutorDeclaration = (node: ts.Node, context: Context): node is ts.Func
     return false;
   }
   const symbol = getSymbol(node.name, context.checker);
+  const uses =
+    symbol === undefined
+      ? []
+      : findNodes(
+          node.getSourceFile(),
+          (inner): inner is ts.Identifier =>
+            ts.isIdentifier(inner) &&
+            inner !== node.name &&
+            getSymbol(inner, context.checker) === symbol,
+        );
+  // A function that no code names is no executor, though an unknown callee may still call it.
   return (
-    symbol !== undefined &&
-    findNodes(
-      node.getSourceFile(),
-      (inner): inner is ts.Identifier =>
-        ts.isIdentifier(inner) &&
-        inner !== node.name &&
-        getSymbol(inner, context.checker) === symbol,
-    ).every((use) => {
+    uses.length > 0 &&
+    uses.every((use) => {
       const construction = ts.findAncestor(
         use.parent,
         (ancestor) => !ts.isParenthesizedExpression(ancestor) && !ts.isAsExpression(ancestor),
