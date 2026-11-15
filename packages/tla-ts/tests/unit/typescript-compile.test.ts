@@ -41013,4 +41013,32 @@ describe("BigInts", () => {
       expect(result.failure?.message).toContain("wrong at 0");
     });
   });
+
+  describe("computes Math.cbrt where the specification fixes it", () => {
+    const getSource = (expected: string) => `
+      const inputs = [NaN, -Infinity, Infinity, -0, 0];
+      const expected = [${expected}];
+      inputs.forEach((value, index) => {
+        if (!Object.is(Math.cbrt(value), expected[index])) throw new Error("wrong at " + index);
+      });
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("NaN, -Infinity, Infinity, -0, 0"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects 0 as the root of -0", async () => {
+      const result = await checkModel(getSource("NaN, -Infinity, Infinity, 0, 0"));
+      expect(result.failure?.message).toContain("wrong at 3");
+    });
+
+    it("stops at a perfect cube", async () => {
+      const result = await checkModel(`
+        if (Object.is(Math.cbrt(8), 3)) throw new Error("wrong");
+      `);
+      expect(result.failure?.message).toContain("tla-ts can't compute Math.cbrt of this number");
+    });
+  });
 });

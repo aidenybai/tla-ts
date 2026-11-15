@@ -948,6 +948,12 @@ Fround(value) ==
                  IF binary[1] THEN NegativeInfinity ELSE Infinity
             [] OTHER -> rounded
 
+\\* The specification fixes the results of most Math functions only at a few numbers, and leaves the
+\\* rest to how an engine approximates them, so tla-ts stops there.
+LOCAL Approximated(name) == Assert(FALSE, "tla-ts can't compute Math." \\o name \\o " of this number")
+
+Cbrt(value) == IF value \\in SpecialNumbers \\/ IsZero(value) THEN value ELSE Approximated("cbrt")
+
 \\* JavaScript's <<. The bit below the shifted bits becomes the sign bit.
 LeftShift(left, right) ==
   LET a == Int32(left)

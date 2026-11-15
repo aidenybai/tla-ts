@@ -696,6 +696,7 @@ const translateInt32Literal = (node: ts.Expression) => {
 export const MATH_OPERATORS = new Map([
   ["sqrt", "Sqrt"],
   ["fround", "Fround"],
+  ["cbrt", "Cbrt"],
 ]);
 
 const translateMath = (node: ts.CallExpression, method: string, scope: Scope, context: Context) => {
