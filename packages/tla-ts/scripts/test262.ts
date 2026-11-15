@@ -616,6 +616,34 @@ const loosen = () => {
     ) {
       edits.set(closeParen.getEnd(), ": undefined");
     }
+    // A function that the test declares, which only throws, as a computed key that calls it in a
+    // pattern does, returns never, which TypeScript infers as void.
+    const key = ts.findAncestor(node, ts.isComputedPropertyName)?.expression;
+    const thrower =
+      diagnostic.code === COMPUTED_KEY_ERROR &&
+      key !== undefined &&
+      ts.isCallExpression(key) &&
+      ts.isIdentifier(key.expression)
+        ? checker.getSymbolAtLocation(key.expression)?.valueDeclaration
+        : undefined;
+    const throwerParen = thrower
+      ?.getChildren()
+      .find((child) => child.kind === ts.SyntaxKind.CloseParenToken);
+    if (
+      thrower !== undefined &&
+      ts.isFunctionDeclaration(thrower) &&
+      thrower.getSourceFile() === sourceFile &&
+      thrower.asteriskToken === undefined &&
+      !thrower.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) &&
+      thrower.type === undefined &&
+      thrower.body !== undefined &&
+      thrower.body.statements.length > 0 &&
+      ts.isThrowStatement(thrower.body.statements[thrower.body.statements.length - 1]) &&
+      !returns(thrower.body) &&
+      throwerParen !== undefined
+    ) {
+      edits.set(throwerParen.getEnd(), ": never");
+    }
   });
   const visit = (node: ts.Node) => {
     const initializer = ts.isVariableDeclaration(node) ? node.initializer : undefined;
@@ -659,6 +687,15 @@ const loosen = () => {
 
 // TypeScript's errors for a function whose return type depends on itself.
 const RETURN_TYPE_ERRORS = new Set([7023, 7024]);
+
+// TypeScript's error for a computed key of a type that isn't a key's.
+const COMPUTED_KEY_ERROR = 2464;
+
+// Whether a function's body returns, outside the functions it makes.
+const returns = (node: ts.Node): boolean =>
+  ts.isReturnStatement(node) ||
+  (!ts.isFunctionLike(node) &&
+    (ts.forEachChild(node, (child) => returns(child) || undefined) ?? false));
 
 // Whether a function's body returns a value, outside the functions it makes.
 const returnsValue = (node: ts.Node): boolean =>
