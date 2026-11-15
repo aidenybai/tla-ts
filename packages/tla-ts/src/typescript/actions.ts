@@ -477,9 +477,9 @@ interface Suspension {
   // return awaits its value there first.
   abort?: (path: Path, method: string, value: Expression | undefined) => Formula;
   isAsync: boolean;
-  // The promises of the nexts that called an async generator while its body ran, which it settles
-  // in order once it yields or completes.
-  queue: readonly string[];
+  // The promises of the nexts that called an async generator while its body ran, with the values
+  // they send, which it settles in order once it yields or completes.
+  queue: readonly { request: string; sent: Expression | undefined }[];
   // The call that resumed the body, while it runs, which takes what it yields or returns.
   caller?: Caller;
   // Whether a step may make the suspension again once it's gone, as an array's or a string's
@@ -519,26 +519,36 @@ const getAsyncCaller = (
       ? settleRequest(
           { ...current, generators: new Map([...current.generators, [name, waiting]]) },
           node,
-          queued,
+          queued.request,
           getUndefined(context),
           true,
           false,
           context,
           drain,
         )
-      : resume({
-          ...current,
-          generators: new Map([
-            ...current.generators,
-            [
-              name,
-              {
-                ...waiting,
-                caller: getAsyncCaller(node, name, current, queued, context, continueWith),
-              },
-            ],
-          ]),
-        });
+      : resume(
+          {
+            ...current,
+            generators: new Map([
+              ...current.generators,
+              [
+                name,
+                {
+                  ...waiting,
+                  caller: getAsyncCaller(
+                    node,
+                    name,
+                    current,
+                    queued.request,
+                    context,
+                    continueWith,
+                  ),
+                },
+              ],
+            ]),
+          },
+          queued.sent,
+        );
   };
   return {
     path,
@@ -7810,7 +7820,6 @@ export const resumeGenerator = (
       suspension.caller !== undefined &&
       suspension.isAsync &&
       method === "next" &&
-      argument === undefined &&
       continueAsync !== undefined
     ) {
       return makeRequest(path, node, context, (made, request, ref) =>
@@ -7819,7 +7828,7 @@ export const resumeGenerator = (
             ...made,
             generators: new Map([
               ...made.generators,
-              [name, { ...suspension, queue: [...suspension.queue, request] }],
+              [name, { ...suspension, queue: [...suspension.queue, { request, sent }] }],
             ]),
           },
           ref,

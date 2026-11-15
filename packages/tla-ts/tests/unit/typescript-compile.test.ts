@@ -41848,4 +41848,31 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("sends the value of a next that waits while an async generator's body runs", () => {
+    const getSource = (expected: string) => `
+      async function* gen(): AsyncGenerator<string, string, string> {
+        const x = yield "a";
+        const y = yield x;
+        return y + "!";
+      }
+      const iter = gen();
+      const a = iter.next("ignored");
+      const b = iter.next("b");
+      const c = iter.next("c");
+      const results = [await a, await b, await c];
+      const log = results.map((result) => result.value + result.done).join();
+      if (log !== "${expected}") throw new Error("log " + log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("afalse,bfalse,c!true"))).failure).toBeUndefined();
+    });
+
+    it("rejects a waiting next that sends undefined", async () => {
+      expect(
+        (await checkModel(getSource("afalse,undefinedfalse,undefined!true"))).failure?.message,
+      ).toContain("log afalse,bfalse,c!true");
+    });
+  });
 });
