@@ -172,6 +172,7 @@ import {
   takeFromIterable,
   takeFromIterator,
   openFromIterator,
+  takeEntries,
   takeEvery,
   takeSpreads,
 } from "./iterators";
@@ -2260,6 +2261,17 @@ export const translateCallStatement = (
         continueWith,
         openFromIterator,
       ),
+    );
+  }
+  const entries = getIterableFrom(expression, context, "fromEntries");
+  if (entries !== undefined) {
+    return takeEntries(
+      expression,
+      translateExpression(entries, path.scope, context),
+      path,
+      context,
+      frame,
+      continueWith,
     );
   }
   const consumer = getGeneratorMethod(expression, context);
@@ -7589,15 +7601,16 @@ const getGeneratorMethod = (node: ts.CallExpression, context: Context) => {
     : undefined;
 };
 
-// The value that Array.from(value) iterates through the iterator of an object whose type has one,
-// which only statements can run. Evaluating the value can't throw or change anything.
-const getIterableFrom = (node: ts.Node, context: Context) => {
+// The value that Array.from(value), or Object.fromEntries(value) where the method is "fromEntries",
+// iterates through the iterator of an object whose type has one, which only statements can run.
+// Evaluating the value can't throw or change anything.
+const getIterableFrom = (node: ts.Node, context: Context, method = "from") => {
   if (!ts.isCallExpression(node) || !isMethodCall(node) || node.arguments.length !== 1) {
     return undefined;
   }
   const argument = node.arguments[0];
-  return node.expression.name.text === "from" &&
-    getBuiltIn(node.expression.expression, context) === "Array" &&
+  return node.expression.name.text === method &&
+    getBuiltIn(node.expression.expression, context) === (method === "from" ? "Array" : "Object") &&
     !ts.isSpreadElement(argument) &&
     isInertValue(argument) &&
     getKind(argument, context) !== "sequence" &&
@@ -11597,6 +11610,7 @@ const isStatementResult = (node: ts.CallExpression, path: Path, context: Context
     getGeneratorStep(node, context) !== undefined ||
     getGeneratorMethod(node, context) !== undefined ||
     getIterableFrom(node, context) !== undefined ||
+    getIterableFrom(node, context, "fromEntries") !== undefined ||
     getIteratorFrom(node, context) !== undefined ||
     isPromiseCall(node, context) ||
     getCreatedGenerator(node, path, context) !== undefined ||
@@ -12648,7 +12662,8 @@ const getEffects = (
     (ts.isForOfStatement(node) &&
       getKind(node.expression, context) !== "sequence" &&
       isIterableValue(node.expression, context)) ||
-    getIterableFrom(node, context) !== undefined;
+    getIterableFrom(node, context) !== undefined ||
+    getIterableFrom(node, context, "fromEntries") !== undefined;
   // A method call on a generator object, a call it's passed to, or a pattern, a for-of, a spread,
   // or a yield* that iterates one resumes the body of a generator that may have made it.
   const isResumed =
@@ -12712,6 +12727,14 @@ const getEffects = (
       ...(conversions ?? []),
       ...getters,
       ...(isIterated ? getIteratorFunctions(node, context) : []),
+      // Object.fromEntries reads each entry's key and value, and converts the key.
+      ...(getIterableFrom(node, context, "fromEntries") === undefined
+        ? []
+        : [
+            ...getWrittenFunctions(node, "0", context),
+            ...getWrittenFunctions(node, "1", context),
+            ...getConversionFunctions(node, context),
+          ]),
       // A yield* passes a throw that resumes its generator to the iterator's throw.
       ...(isIterated && ts.isYieldExpression(node)
         ? getWrittenFunctions(node, "throw", context)

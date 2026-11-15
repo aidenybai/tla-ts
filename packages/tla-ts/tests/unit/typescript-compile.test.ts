@@ -36131,4 +36131,87 @@ describe("BigInts", () => {
       expect((await checkModel(getSource(8888))).failure?.message).toContain("received");
     });
   });
+
+  describe("Object.fromEntries of a script's iterator", () => {
+    const getOrderSource = (expected: string) => `
+      const log: { text: string } = { text: "" };
+      let count = 0;
+      const iterable = {
+        [Symbol.iterator]: function () {
+          return {
+            next: function () {
+              count += 1;
+              log.text += \`n\${count}\`;
+              if (count === 1) return { done: false, value: { 0: "a", 1: log.text } };
+              if (count === 2) {
+                return {
+                  done: false,
+                  value: {
+                    0: {
+                      toString: function () {
+                        log.text += "s";
+                        return "b";
+                      },
+                    },
+                    1: 2,
+                  },
+                };
+              }
+              return { done: true, value: undefined };
+            },
+            return: function () {
+              log.text += "r";
+              return {};
+            },
+          };
+        },
+      };
+      // @ts-ignore
+      const result: { [key: string]: unknown } = Object.fromEntries(iterable);
+      const first: string = log.text;
+      if (first !== "${expected}") throw new Error(first);
+      if (result.a !== "n1" || result.b !== 2) throw new Error("result");
+    `;
+
+    it("reads and converts each entry before the next step, as Node does", async () => {
+      expect((await checkModel(getOrderSource("n1n2sn3"))).failure).toBeUndefined();
+    });
+
+    it("rejects an order that converts the keys after the steps", async () => {
+      expect((await checkModel(getOrderSource("n1n2n3s"))).failure?.message).toContain("n1n2sn3");
+    });
+
+    const getCloseSource = (expected: string) => `
+      const log: { text: string } = { text: "" };
+      const closing = {
+        [Symbol.iterator]: function () {
+          return {
+            next: function () {
+              return { done: false, value: null };
+            },
+            return: function () {
+              log.text += "c";
+              return {};
+            },
+          };
+        },
+      };
+      let caught = "";
+      try {
+        // @ts-ignore
+        Object.fromEntries(closing);
+      } catch (error) {
+        caught = error instanceof TypeError ? "TypeError" : "other";
+      }
+      if (caught !== "TypeError" || log.text !== "${expected}") throw new Error(\`\${caught} \${log.text}\`);
+    `;
+
+    it("closes the iterator where an entry isn't an object, as Node does", async () => {
+      expect((await checkModel(getCloseSource("c"))).failure).toBeUndefined();
+    });
+
+    it("rejects an iterator left open", async () => {
+      expect((await checkModel(getCloseSource(""))).failure?.message).toContain("TypeError c");
+    });
+  });
 });
