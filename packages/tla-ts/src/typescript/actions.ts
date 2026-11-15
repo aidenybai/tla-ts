@@ -12712,6 +12712,10 @@ const getEffects = (
       ...(conversions ?? []),
       ...getters,
       ...(isIterated ? getIteratorFunctions(node, context) : []),
+      // A yield* passes a throw that resumes its generator to the iterator's throw.
+      ...(isIterated && ts.isYieldExpression(node)
+        ? getWrittenFunctions(node, "throw", context)
+        : []),
       ...(isResumed
         ? findNodes(
             node.getSourceFile(),

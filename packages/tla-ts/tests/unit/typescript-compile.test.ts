@@ -36092,4 +36092,43 @@ describe("BigInts", () => {
     `);
     expect(division.failure?.message).toContain("tla-ts can't throw the RangeError");
   });
+
+  describe("a throw that a yield* passes to a script's iterator", () => {
+    const getSource = (expected: number) => `
+      let callCount = 0;
+      let received: unknown = undefined;
+      const spyIterator = {
+        next: function () {
+          return { done: false, value: 1 };
+        },
+        throw: function (value: unknown) {
+          callCount += 1;
+          received = value;
+          return { done: true, value: 2 };
+        },
+      };
+      const spyIterable = {
+        [Symbol.iterator]: function () {
+          return spyIterator;
+        },
+      };
+      function* g() {
+        yield* spyIterable;
+      }
+      const iter = g();
+      iter.next(8888);
+      const result = iter.throw(7777);
+      if (callCount !== 1) throw new Error("callCount");
+      if (received !== ${expected}) throw new Error("received");
+      if (result.done !== true || result.value !== undefined) throw new Error("result");
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(7777))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong argument", async () => {
+      expect((await checkModel(getSource(8888))).failure?.message).toContain("received");
+    });
+  });
 });
