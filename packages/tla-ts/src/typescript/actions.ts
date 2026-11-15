@@ -3343,7 +3343,7 @@ export const translateCallStatement = (
   }
   const builtText = getBuiltJsonText(expression, context);
   if (builtText !== undefined) {
-    return translateBuiltJsonParse(expression, builtText, path, context, frame);
+    return translateBuiltJsonParse(expression, builtText, path, context, frame, continueWith);
   }
   const replacers = getReplacers(expression, context);
   if (replacers !== undefined) {

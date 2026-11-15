@@ -5966,17 +5966,17 @@ LOCAL QuoteJSON(text) ==
           [] OTHER -> unit(position)
   IN "\\"" \\o Join([position \\in 1..Len(text) |-> escape(position)], "") \\o "\\""
 
-\\* The ECMAScript JSON grammar that JSON.parse reads. Each operator gives the position after what
-\\* starts at a position, or 0 where the text there isn't one, and reads a code that's -1 past the
-\\* text's end and 128 for a character outside ASCII, which a string may hold.
+\\* The ECMAScript JSON grammar that JSON.parse reads, whose operators give the position after what
+\\* starts at a position, or 0 where the text there isn't one. A code is -1 past the text's end and
+\\* 128 for a character outside ASCII, which a string may hold.
 LOCAL JSONCode(text, at) ==
   LET character == IF at \\in 1..Len(text) THEN SubSeq(text, at, at) ELSE ""
   IN  CASE character = "" -> -1
         [] character \\in DOMAIN AsciiCodes -> AsciiCodes[character]
         [] OTHER -> 128
 
-RECURSIVE JSONWhitespace(_, _), JSONDigits(_, _), JSONStringEnd(_, _), JSONValueEnd(_, _),
-          JSONMembersEnd(_, _), JSONElementsEnd(_, _)
+RECURSIVE JSONWhitespace(_, _), JSONDigits(_, _), JSONStringEnd(_, _), JSONUnescaped(_),
+          JSONValue(_, _, _, _, _), JSONMembers(_, _, _, _, _, _), JSONElements(_, _, _, _, _, _)
 
 LOCAL JSONWhitespace(text, at) ==
   IF JSONCode(text, at) \\in {9, 10, 13, 32} THEN JSONWhitespace(text, at + 1) ELSE at
@@ -5997,6 +5997,27 @@ LOCAL JSONStringEnd(text, at) ==
         [] code = 92 \\/ code < 32 -> 0
         [] OTHER -> JSONStringEnd(text, at + 1)
 
+\\* The string that a JSON string's characters between its quotes stand for, where an escape stands
+\\* for the code unit that it names.
+LOCAL JSONUnescaped(raw) ==
+  LET escapes == {at \\in 1..Len(raw) : SubSeq(raw, at, at) = "\\\\"}
+      at == CHOOSE first \\in escapes : \\A other \\in escapes : first <= other
+      kind == JSONCode(raw, at + 1)
+      hex(offset) ==
+        LET code == JSONCode(raw, at + offset)
+        IN  CASE code \\in 48..57 -> code - 48 [] code \\in 65..70 -> code - 55 [] OTHER -> code - 87
+      unit == CASE kind = 117 -> CodeUnit(((hex(2) * 16 + hex(3)) * 16 + hex(4)) * 16 + hex(5))
+                [] kind = 98 -> CodeUnit(8)
+                [] kind = 102 -> CodeUnit(12)
+                [] kind = 110 -> CodeUnit(10)
+                [] kind = 114 -> CodeUnit(13)
+                [] kind = 116 -> CodeUnit(9)
+                [] OTHER -> SubSeq(raw, at + 1, at + 1)
+      width == IF kind = 117 THEN 6 ELSE 2
+  IN  IF escapes = {}
+      THEN raw
+      ELSE SubSeq(raw, 1, at - 1) \\o unit \\o JSONUnescaped(SubSeq(raw, at + width, Len(raw)))
+
 LOCAL JSONNumberEnd(text, at) ==
   LET signed == IF JSONCode(text, at) = 45 THEN at + 1 ELSE at
       integer == CASE JSONCode(text, signed) = 48 -> signed + 1
@@ -6015,43 +6036,90 @@ LOCAL JSONWordEnd(text, at, word) ==
   THEN at + Len(word)
   ELSE 0
 
-LOCAL JSONValueEnd(text, at) ==
+\\* What JSON.parse makes of the value that starts at a position: the position after it, or 0 where
+\\* the text there isn't one, its value, and the objects that it and the values before it make,
+\\* innermost first, which the heap holds after its own.
+LOCAL JSONFailed == [end |-> 0, value |-> 0, objects |-> <<>>]
+
+LOCAL JSONMade(heap, end, object, objects) ==
+  [end |-> end, value |-> NextRef(heap, Len(objects) + 1), objects |-> Append(objects, object)]
+
+LOCAL JSONWord(end, value, objects) ==
+  IF end = 0 THEN JSONFailed ELSE [end |-> end, value |-> value, objects |-> objects]
+
+LOCAL JSONValue(heap, prototype, text, at, objects) ==
   LET code == JSONCode(text, at)
       inner == JSONWhitespace(text, at + 1)
-  IN  CASE code = 123 -> IF JSONCode(text, inner) = 125 THEN inner + 1 ELSE JSONMembersEnd(text, inner)
-        [] code = 91 -> IF JSONCode(text, inner) = 93 THEN inner + 1 ELSE JSONElementsEnd(text, inner)
-        [] code = 34 -> JSONStringEnd(text, at + 1)
-        [] code = 45 \\/ code \\in 48..57 -> JSONNumberEnd(text, at)
-        [] code = 116 -> JSONWordEnd(text, at, "true")
-        [] code = 102 -> JSONWordEnd(text, at, "false")
-        [] code = 110 -> JSONWordEnd(text, at, "null")
-        [] OTHER -> 0
+      members == JSONMembers(heap, prototype, text, inner, objects, <<>>)
+      elements == JSONElements(heap, prototype, text, inner, objects, <<>>)
+      stringEnd == JSONStringEnd(text, at + 1)
+      numberEnd == JSONNumberEnd(text, at)
+  IN  CASE code = 123 /\\ JSONCode(text, inner) = 125 ->
+             JSONMade(heap, inner + 1, PairsObject(<<>>), objects)
+        [] code = 123 ->
+             IF members.end = 0
+             THEN JSONFailed
+             ELSE JSONMade(heap, members.end, PairsObject(members.value), members.objects)
+        [] code = 91 /\\ JSONCode(text, inner) = 93 ->
+             JSONMade(heap, inner + 1, ArrayObject(prototype, <<>>), objects)
+        [] code = 91 ->
+             IF elements.end = 0
+             THEN JSONFailed
+             ELSE JSONMade(heap, elements.end, ArrayObject(prototype, elements.value), elements.objects)
+        [] code = 34 ->
+             IF stringEnd = 0
+             THEN JSONFailed
+             ELSE [end |-> stringEnd, value |-> JSONUnescaped(SubSeq(text, at + 1, stringEnd - 2)),
+                   objects |-> objects]
+        [] code = 45 \\/ code \\in 48..57 ->
+             IF numberEnd = 0
+             THEN JSONFailed
+             ELSE [end |-> numberEnd, value |-> ToNumber(SubSeq(text, at, numberEnd - 1)),
+                   objects |-> objects]
+        [] code = 116 -> JSONWord(JSONWordEnd(text, at, "true"), TRUE, objects)
+        [] code = 102 -> JSONWord(JSONWordEnd(text, at, "false"), FALSE, objects)
+        [] code = 110 -> JSONWord(JSONWordEnd(text, at, "null"), Null, objects)
+        [] OTHER -> JSONFailed
 
-\\* The members of an object from the first one's name to the closing brace.
-LOCAL JSONMembersEnd(text, at) ==
+\\* The keys and values of an object's members, from the first one's name to the closing brace.
+LOCAL JSONMembers(heap, prototype, text, at, objects, pairs) ==
   LET name == IF JSONCode(text, at) = 34 THEN JSONStringEnd(text, at + 1) ELSE 0
       colon == IF name = 0 THEN 0 ELSE JSONWhitespace(text, name)
-      value == IF colon = 0 \\/ JSONCode(text, colon) # 58 THEN 0
-               ELSE JSONValueEnd(text, JSONWhitespace(text, colon + 1))
-      after == IF value = 0 THEN 0 ELSE JSONWhitespace(text, value)
-  IN  CASE after = 0 -> 0
-        [] JSONCode(text, after) = 44 -> JSONMembersEnd(text, JSONWhitespace(text, after + 1))
-        [] JSONCode(text, after) = 125 -> after + 1
-        [] OTHER -> 0
+      member == IF colon = 0 \\/ JSONCode(text, colon) # 58
+                THEN JSONFailed
+                ELSE JSONValue(heap, prototype, text, JSONWhitespace(text, colon + 1), objects)
+      after == IF member.end = 0 THEN 0 ELSE JSONWhitespace(text, member.end)
+      added == Append(pairs, <<JSONUnescaped(SubSeq(text, at + 1, name - 2)), member.value>>)
+  IN  CASE after = 0 -> JSONFailed
+        [] JSONCode(text, after) = 44 ->
+             JSONMembers(heap, prototype, text, JSONWhitespace(text, after + 1), member.objects, added)
+        [] JSONCode(text, after) = 125 ->
+             [end |-> after + 1, value |-> added, objects |-> member.objects]
+        [] OTHER -> JSONFailed
 
-\\* The elements of an array from the first one to the closing bracket.
-LOCAL JSONElementsEnd(text, at) ==
-  LET value == JSONValueEnd(text, at)
-      after == IF value = 0 THEN 0 ELSE JSONWhitespace(text, value)
-  IN  CASE after = 0 -> 0
-        [] JSONCode(text, after) = 44 -> JSONElementsEnd(text, JSONWhitespace(text, after + 1))
-        [] JSONCode(text, after) = 93 -> after + 1
-        [] OTHER -> 0
+\\* The values of an array's elements, from the first one to the closing bracket.
+LOCAL JSONElements(heap, prototype, text, at, objects, values) ==
+  LET element == JSONValue(heap, prototype, text, at, objects)
+      after == IF element.end = 0 THEN 0 ELSE JSONWhitespace(text, element.end)
+      added == Append(values, element.value)
+  IN  CASE after = 0 -> JSONFailed
+        [] JSONCode(text, after) = 44 ->
+             JSONElements(heap, prototype, text, JSONWhitespace(text, after + 1), element.objects, added)
+        [] JSONCode(text, after) = 93 ->
+             [end |-> after + 1, value |-> added, objects |-> element.objects]
+        [] OTHER -> JSONFailed
 
-\\* Whether JSON.parse reads a text as one JSON value between whitespace.
-IsJSONText(text) ==
-  LET end == JSONValueEnd(text, JSONWhitespace(text, 1))
-  IN  end # 0 /\\ JSONWhitespace(text, end) = Len(text) + 1
+\\* What JSON.parse without a reviver makes of a text, whose end is 0 where the text isn't JSON,
+\\* with arrays whose prototype is Array.prototype.
+JSONParse(heap, prototype, text) ==
+  LET parsed == JSONValue(heap, prototype, text, JSONWhitespace(text, 1), <<>>)
+  IN  IF parsed.end # 0 /\\ JSONWhitespace(text, parsed.end) = Len(text) + 1
+      THEN parsed
+      ELSE JSONFailed
+
+\\* Whether what JSON.parse makes holds an array.
+HasJSONArray(parsed) ==
+  \\E position \\in DOMAIN parsed.objects : IsArrayObject(parsed.objects[position])
 
 \\* Which of Boolean, Number, and String an object wraps the primitive of, or "" where it wraps none.
 LOCAL JSONWrapperKind(heap, ref) ==

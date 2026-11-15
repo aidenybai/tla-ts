@@ -10405,19 +10405,50 @@ describe("errors", () => {
         "S,S,S,S,S,1",
       );
     });
+  });
 
-    it("stops at a text that is JSON", async () => {
-      const valid = await checkModel(`
+  describe("makes the value of JSON.parse of a text that a script builds", () => {
+    const getSource = (texts: string, read: string, expected: string) => `
       const box = { n: 1 };
-      const texts: string[] = [' { "a" : [1, -0.5e+3, true, null, {}, "\\\\u00e9\\\\n"] } '];
-      try {
-        JSON.parse(texts[0]);
-      } catch (error) {
-        box.n = 2;
-      }
-    `);
-      expect(valid.failure?.message).toContain(
-        "tla-ts can't parse a JSON text that a script builds",
+      const texts: string[] = [${texts}];
+      const first: unknown = JSON.parse(texts[0]);
+      const second: unknown = JSON.parse(texts[texts.length - 1]);
+      const result = [${read}, box.n].join("|");
+      if (result !== ${JSON.stringify(expected)}) throw new Error(result);
+    `;
+    const object = `' { "b" : [1, true, null, {}, "x\\\\n\\\\u00e9\\\\"\\\\\\\\\\\\/"], "a": {"c": "d"}, "b": 2, "1": 3 } '`;
+    const readObject =
+      "JSON.stringify(first), Object.keys(first as object).join(), (first as { b: number }).b";
+    const objectRead = '{"1":3,"b":2,"a":{"c":"d"}}|1,b,a|2|1';
+
+    it("agrees with Node on an object", async () => {
+      expect((await checkModel(getSource(object, readObject, objectRead))).failure).toBeUndefined();
+    });
+
+    it("agrees with Node on arrays and primitives", async () => {
+      const others = `' \\t\\n\\r [12, [["deep"]], "\\\\u0041\\\\t"] \\r\\n', '{"__proto__": 1}'`;
+      const read = `JSON.stringify([first, second]), Array.isArray(first as object),
+        Object.getPrototypeOf(second as object) === Object.prototype`;
+      const expected = '[[12,[["deep"]],"A\\t"],{"__proto__":1}]|true|true|1';
+      expect((await checkModel(getSource(others, read, expected))).failure).toBeUndefined();
+    });
+
+    it("rejects wrong expectation 1", async () => {
+      expect(
+        (await checkModel(getSource(object, readObject, objectRead.replace("1,b,a", "b,a,1"))))
+          .failure?.message,
+      ).toContain("1,b,a");
+    });
+
+    it("stops where a type keeps the arrays that it makes outside the heap", async () => {
+      const result = await checkModel(`
+        const box = { n: 1 };
+        const texts: string[] = ['{"a":[1]}'];
+        const typed: { a: number[] } = JSON.parse(texts[0]);
+        box.n = typed.a[0];
+      `);
+      expect(result.failure?.message).toContain(
+        "tla-ts can't keep the arrays of a JSON text that a script builds outside the heap",
       );
     });
   });

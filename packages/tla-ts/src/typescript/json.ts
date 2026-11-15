@@ -126,26 +126,57 @@ export const getBuiltJsonText = (node: ts.Node, context: Context) =>
     ? node.arguments[0]
     : undefined;
 
-// JSON.parse of a text that a script builds, which throws a SyntaxError where the text isn't JSON.
+// JSON.parse of a text that a script builds, which throws a SyntaxError where the text isn't JSON,
+// and otherwise makes its objects. A type that a script gives what it makes keeps its arrays outside
+// the heap, which a text that the script builds can't tell.
 export const translateBuiltJsonParse = (
   node: ts.CallExpression,
   text: ts.Expression,
   path: Path,
   context: Context,
   frame: Frame,
-): Formula =>
-  ifThenElse(
+  continueWith: (path: Path, value?: Expression) => Formula,
+): Formula => {
+  const heap = getHeap(path.scope, node, context);
+  const parse = useJavaScript(
+    "JSONParse",
+    [
+      heap,
+      translateBuiltInValue("Array.prototype", node, context),
+      translateExpression(text, path.scope, context),
+    ],
+    context,
+  );
+  return ifThenElse(
     translateHoldsJson(node, "parse", path.scope, context),
-    ifThenElse(
-      useJavaScript("IsJSONText", [translateExpression(text, path.scope, context)], context),
-      leaf(
-        apply("Assert", [
-          boolean(false),
-          string("tla-ts can't parse a JSON text that a script builds"),
-        ]),
-      ),
-      throwError("SyntaxError", path, node, context, frame),
-    ),
+    bind(path, "parsed", parse, context, (after, parsed) => {
+      const made = continueWith(
+        withHeap(
+          after,
+          useJavaScript("AllocateEach", [heap, field(parsed, "objects")], context),
+          context,
+        ),
+        field(parsed, "value"),
+      );
+      return ifThenElse(
+        apply("=", [field(parsed, "end"), number(0)]),
+        throwError("SyntaxError", after, node, context, frame),
+        isOpenType(getContextualType(node, context))
+          ? made
+          : ifThenElse(
+              useJavaScript("HasJSONArray", [parsed], context),
+              leaf(
+                apply("Assert", [
+                  boolean(false),
+                  string(
+                    "tla-ts can't keep the arrays of a JSON text that a script builds outside the heap",
+                  ),
+                ]),
+              ),
+              made,
+            ),
+      );
+    }),
     leaf(
       apply("Assert", [
         boolean(false),
@@ -153,6 +184,7 @@ export const translateBuiltJsonParse = (
       ]),
     ),
   );
+};
 
 // The objects that JSON.parse makes of a value, innermost first.
 const getJsonObjects = (value: unknown): object[] =>
