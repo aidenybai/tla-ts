@@ -108,6 +108,26 @@ const translateExported = (
 // Without a file system, as in a browser, libraries holds TypeScript's declaration files by name.
 // Where the CLI runs a script in Node's place, isNodeScript has the script report a throw or a
 // rejection that nothing handles with the text Node prints.
+// The operators that convert their operands to numbers, which may give NaN.
+const NAN_OPERATORS = new Set([
+  ts.SyntaxKind.MinusToken,
+  ts.SyntaxKind.AsteriskToken,
+  ts.SyntaxKind.PercentToken,
+  ts.SyntaxKind.LessThanLessThanToken,
+  ts.SyntaxKind.GreaterThanGreaterThanToken,
+  ts.SyntaxKind.AmpersandToken,
+  ts.SyntaxKind.BarToken,
+  ts.SyntaxKind.CaretToken,
+  ts.SyntaxKind.MinusEqualsToken,
+  ts.SyntaxKind.AsteriskEqualsToken,
+  ts.SyntaxKind.PercentEqualsToken,
+  ts.SyntaxKind.LessThanLessThanEqualsToken,
+  ts.SyntaxKind.GreaterThanGreaterThanEqualsToken,
+  ts.SyntaxKind.AmpersandEqualsToken,
+  ts.SyntaxKind.BarEqualsToken,
+  ts.SyntaxKind.CaretEqualsToken,
+]);
+
 export const compile = (
   source: string,
   fileName = "spec.ts",
@@ -414,6 +434,12 @@ export const compile = (
     context.heap = heap;
     context.variables.set(heap, identifier(context.names.getFresh("heap")));
     // A name, or a string that keys a property by it, as in Object.getOwnPropertyDescriptor.
+    const isTyped = (node: ts.Expression, flags: ts.TypeFlags) => {
+      const type = context.checker.getTypeAtLocation(node);
+      return (type.isUnion() ? type.types : [type]).every((member) => (member.flags & flags) !== 0);
+    };
+    const isNumeric = (node: ts.Expression) =>
+      isTyped(node, ts.TypeFlags.NumberLike | ts.TypeFlags.BigIntLike);
     const usesSpecialNumbers = (node: ts.Node): boolean =>
       ((ts.isIdentifier(node) || ts.isStringLiteral(node)) &&
         [
@@ -458,6 +484,31 @@ export const compile = (
           ts.SyntaxKind.GreaterThanGreaterThanGreaterThanToken,
           ts.SyntaxKind.GreaterThanGreaterThanGreaterThanEqualsToken,
         ].includes(node.operatorToken.kind)) ||
+      // Converting a value that isn't a number, as arithmetic or a call does, may give NaN.
+      (ts.isBinaryExpression(node) &&
+        (NAN_OPERATORS.has(node.operatorToken.kind) ||
+          ((node.operatorToken.kind === ts.SyntaxKind.PlusToken ||
+            node.operatorToken.kind === ts.SyntaxKind.PlusEqualsToken) &&
+            !isTyped(node.left, ts.TypeFlags.StringLike) &&
+            !isTyped(node.right, ts.TypeFlags.StringLike))) &&
+        !(isNumeric(node.left) && isNumeric(node.right))) ||
+      ((ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
+        node.operator !== ts.SyntaxKind.ExclamationToken &&
+        !isNumeric(node.operand)) ||
+      ((ts.isCallExpression(node) || ts.isNewExpression(node)) &&
+        (node.arguments ?? []).some((argument) => {
+          // A parameter that takes a number, or leaves it out.
+          const expected = context.checker.getContextualType(argument);
+          const members =
+            expected === undefined ? [] : expected.isUnion() ? expected.types : [expected];
+          return (
+            members.some((member) => (member.flags & ts.TypeFlags.Number) !== 0) &&
+            members.every(
+              (member) => (member.flags & (ts.TypeFlags.Number | ts.TypeFlags.Undefined)) !== 0,
+            ) &&
+            !isNumeric(argument)
+          );
+        })) ||
       // A literal may give a fraction or an integer beyond 32 bits.
       (ts.isNumericLiteral(node) &&
         (!Number.isInteger(Number(node.text)) || Number(node.text) > 2 ** 31 - 1)) ||

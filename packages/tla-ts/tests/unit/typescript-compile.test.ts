@@ -26139,4 +26139,29 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("gives NaN where arithmetic converts a value that isn't a number", () => {
+    const getSource = (expected: string) => `
+      const box = { size: 0 };
+      const empty = {};
+      let missing;
+      // @ts-expect-error multiplication converts an object to a number
+      const product = 1 * empty;
+      // @ts-expect-error an increment converts undefined to a number
+      missing++;
+      // @ts-expect-error slice converts a string to an integer
+      const sliced = "undefined".slice("e", 3);
+      box.size = 1;
+      const read = [product, missing, sliced].join();
+      if (read !== "${expected}") throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("NaN,NaN,und"))).failure).toBeUndefined();
+    });
+
+    it("rejects the product as 0", async () => {
+      expect((await checkModel(getSource("0,NaN,und"))).failure?.message).toContain("NaN,NaN,und");
+    });
+  });
 });
