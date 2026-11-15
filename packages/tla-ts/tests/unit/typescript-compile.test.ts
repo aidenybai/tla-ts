@@ -36183,4 +36183,51 @@ describe("BigInts", () => {
       expect(getSize(8)).toBeLessThan(getSize(4) * 2);
     });
   });
+
+  describe("joins after new of a typed array of a script's iterable", () => {
+    const getSource = (count: number, expected: string) => `
+      interface ArrayValues {
+        src: number[];
+        index: number;
+        next: (this: ArrayValues) => IteratorResult<number>;
+      }
+      interface ArrayIterable {
+        src: number[];
+        [Symbol.iterator]: (this: ArrayIterable) => ArrayValues;
+      }
+      function stepArrayValues(this: ArrayValues): IteratorResult<number> {
+        if (this.index < this.src.length) {
+          const value = this.src[this.index];
+          this.index += 1;
+          return { value, done: false };
+        }
+        return { value: undefined, done: true };
+      }
+      function openArrayValues(this: ArrayIterable): ArrayValues {
+        return { src: this.src, index: 0, next: stepArrayValues };
+      }
+      const iterable: ArrayIterable = { src: [1, 2], [Symbol.iterator]: openArrayValues };
+      const source: unknown = iterable;
+      let total = 0;
+      ${Array.from(
+        { length: count },
+        (_, index) => `const made${index} = new Int8Array(source as never);
+      total += made${index}.length * made${index}[1];`,
+      ).join("\n")}
+      if (total !== ${expected}) throw new Error("total " + total);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(2, "8"))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation", async () => {
+      expect((await checkModel(getSource(2, "6"))).failure?.message).toContain("total 8");
+    });
+
+    it("translates what follows each step once", () => {
+      const getSize = (count: number) => printModule(compile(getSource(count, "0")).source).length;
+      expect(getSize(2)).toBeLessThan(getSize(1) * 2);
+    });
+  });
 });

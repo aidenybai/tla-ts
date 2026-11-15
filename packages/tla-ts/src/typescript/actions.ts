@@ -11717,7 +11717,11 @@ const translateNewBufferStatement = (
       const values = construction.arguments.map((value) =>
         translateExpression(value, allocated.scope, context),
       );
-      const make = (current: Path, madeArguments: Expression[]) => {
+      const make = (
+        current: Path,
+        madeArguments: Expression[],
+        finish: (path: Path, value: Expression) => Formula,
+      ) => {
         const heapSymbol = context.heap;
         const heap = getHeap(current.scope, node, context);
         const errorName = context.names.getFresh("error");
@@ -11759,7 +11763,7 @@ const translateNewBufferStatement = (
                 current.scope,
                 context,
               ),
-              continueWith(after, useJavaScript("Allocated", [made], context)),
+              finish(after, useJavaScript("Allocated", [made], context)),
             ),
             ifThenElse(
               apply("=", [error, string("RangeError")]),
@@ -11775,6 +11779,7 @@ const translateNewBufferStatement = (
         iterator: Expression,
         next: Expression,
         taken: Expression[],
+        finish: (path: Path, value: Expression) => Formula,
       ): Formula =>
         taken.length > TYPED_ARRAY_TAKE_LIMIT
           ? leaf(
@@ -11795,31 +11800,39 @@ const translateNewBufferStatement = (
               context,
               frame,
               throwWith,
-              (done) => make(done, [tuple(taken), ...values.slice(1)]),
+              (done) => make(done, [tuple(taken), ...values.slice(1)], finish),
               (stepped, result) =>
                 readValue(node, result, stepped, context, frame, (read, value) =>
-                  step(read, iterator, next, [...taken, value]),
+                  step(read, iterator, next, [...taken, value], finish),
                 ),
             );
+      // Each step of the iterator may make the typed array, and what follows goes on from a join.
       return isIteratedTypedArray(node, context)
-        ? ifThenElse(
-            useJavaScript(
-              "IteratesScriptMethod",
-              [getHeap(allocated.scope, node, context), values[0]],
-              context,
-            ),
-            openIterator(
-              node,
-              values[0],
-              allocated,
-              context,
-              frame,
-              throwWith,
-              (opened, iterator, next) => step(opened, iterator, next, []),
-            ),
-            make(allocated, values),
+        ? translateJoined(
+            node,
+            allocated,
+            context,
+            (after, value) => continueWith(after, value ?? getUndefined(context)),
+            (finish) =>
+              ifThenElse(
+                useJavaScript(
+                  "IteratesScriptMethod",
+                  [getHeap(allocated.scope, node, context), values[0]],
+                  context,
+                ),
+                openIterator(
+                  node,
+                  values[0],
+                  allocated,
+                  context,
+                  frame,
+                  throwWith,
+                  (opened, iterator, next) => step(opened, iterator, next, [], finish),
+                ),
+                make(allocated, values, finish),
+              ),
           )
-        : make(allocated, values);
+        : make(allocated, values, continueWith);
     },
   );
 
