@@ -41614,4 +41614,52 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("xb,yc"))).failure?.message).toContain("log b,c");
     });
   });
+
+  describe("gives a yield* the value that its iterator or generator returns", () => {
+    const getSource = (expected: string) => `
+      let log = "";
+      let count = 0;
+      const iterable = {
+        [Symbol.iterator]() {
+          return this;
+        },
+        next(sent: unknown) {
+          count++;
+          log += sent + ",";
+          return { done: count > 1, value: count * 10 };
+        },
+        throw(sent: unknown) {
+          log += "throw " + sent + ",";
+          return { done: true, value: 30 };
+        },
+      };
+      function* inner() {
+        yield 1;
+        return "inner";
+      }
+      function* g() {
+        log += (yield* iterable) + 1 + ",";
+        const value = yield* inner();
+        log += value + ",";
+        count = 0;
+        log += \`got \${yield* iterable}\`;
+      }
+      const iter = g();
+      iter.next("a");
+      iter.next("b");
+      iter.next("c");
+      iter.throw("d");
+      if (log !== "${expected}") throw new Error("log " + log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("21,inner,got 30"))).failure).toBeUndefined();
+    });
+
+    it("rejects a yield* that gives undefined", async () => {
+      expect(
+        (await checkModel(getSource("NaN,undefined,got undefined"))).failure?.message,
+      ).toContain("log 21,inner,got 30");
+    });
+  });
 });

@@ -10501,7 +10501,7 @@ const translateDelegatedYield = (
   path: Path,
   context: Context,
   frame: Frame,
-  continueWith: (path: Path) => Formula,
+  continueWith: (path: Path, value?: Expression) => Formula,
 ): Formula => {
   const yieldTo = frame.yieldTo;
   const throwTo = frame.throwTo;
@@ -10701,7 +10701,7 @@ const delegateToGenerator = (
   path: Path,
   context: Context,
   frame: Frame,
-  continueWith: (path: Path) => Formula,
+  continueWith: (path: Path, value?: Expression) => Formula,
 ): Formula => {
   const uncaught = apply("Assert", [boolean(false), string(node.getText())]);
   const throwTo = frame.throwTo;
@@ -10733,7 +10733,7 @@ const delegateToGenerator = (
             isDone
               ? method === "return"
                 ? frame.exit(stepped, result)
-                : continueWith(stepped)
+                : continueWith(stepped, result)
               : yieldTo(
                   stepped,
                   result,
@@ -10769,7 +10769,7 @@ const delegateToSyncGenerator = (
   path: Path,
   context: Context,
   frame: Frame,
-  continueWith: (path: Path) => Formula,
+  continueWith: (path: Path, value?: Expression) => Formula,
 ): Formula => {
   const uncaught = apply("Assert", [boolean(false), string(node.getText())]);
   const throwTo = frame.throwTo;
@@ -10827,7 +10827,7 @@ const delegateToSyncGenerator = (
                   isDone
                     ? method === "return"
                       ? awaitTo(resumed, settled, undefined, frame.exit, throwWith)
-                      : continueWith(resumed)
+                      : continueWith(resumed, settled)
                     : yieldTo(
                         resumed,
                         settled,
@@ -10863,7 +10863,7 @@ const delegateToAsyncGenerator = (
   path: Path,
   context: Context,
   frame: Frame,
-  continueWith: (path: Path) => Formula,
+  continueWith: (path: Path, value?: Expression) => Formula,
 ): Formula => {
   const uncaught = apply("Assert", [boolean(false), string(node.getText())]);
   const throwTo = frame.throwTo;
@@ -10896,7 +10896,7 @@ const delegateToAsyncGenerator = (
               (fulfilled) => {
                 const iteration = getIteration(fulfilled, node, promise);
                 return iteration.isDone
-                  ? continueWith(fulfilled)
+                  ? continueWith(fulfilled, iteration.value)
                   : yieldTo(
                       fulfilled,
                       iteration.value,
@@ -10926,7 +10926,7 @@ const delegateToIterator = (
   path: Path,
   context: Context,
   frame: Frame,
-  continueWith: (path: Path) => Formula,
+  continueWith: (path: Path, value?: Expression) => Formula,
 ): Formula => {
   const uncaught = apply("Assert", [boolean(false), string(node.getText())]);
   const throwTo = frame.throwTo;
@@ -10966,7 +10966,7 @@ const delegateToIterator = (
                   ? frame.exit(read, value)
                   : ifThenElse(
                       apply("=", [value, value]),
-                      continueWith(read),
+                      continueWith(read, value),
                       leaf(boolean(false)),
                     ),
               ),
@@ -11030,7 +11030,7 @@ const delegateToAsyncIterator = (
   path: Path,
   context: Context,
   frame: Frame,
-  continueWith: (path: Path) => Formula,
+  continueWith: (path: Path, value?: Expression) => Formula,
 ): Formula => {
   const uncaught = apply("Assert", [boolean(false), string(node.getText())]);
   const throwTo = frame.throwTo;
@@ -11079,7 +11079,7 @@ const delegateToAsyncIterator = (
                           useJavaScript("ToBoolean", [done], context),
                           ifThenElse(
                             apply("=", [value, value]),
-                            continueWith(taken),
+                            continueWith(taken, value),
                             leaf(boolean(false)),
                           ),
                           yieldTo(
@@ -11134,7 +11134,9 @@ const delegateToAsyncIterator = (
             throwWith,
             (stepped, result, isDone) => {
               if (isDone) {
-                return key === "return" ? frame.exit(stepped, result) : continueWith(stepped);
+                return key === "return"
+                  ? frame.exit(stepped, result)
+                  : continueWith(stepped, result);
               }
               return yieldTo(
                 stepped,
@@ -17137,8 +17139,7 @@ const getFirstLeading = (
   );
 };
 
-// The await or the yield that a node evaluates before anything else. A yield* gives what the
-// iterator returns, which tla-ts doesn't follow.
+// The await or the yield that a node evaluates before anything else.
 const getLeadingAwaitOrYield = (
   node: ts.Expression,
   results: Scope["results"],
@@ -17151,7 +17152,7 @@ const getLeadingAwaitOrYield = (
   // A yield evaluates its operand before it yields.
   if (ts.isYieldExpression(node)) {
     const operand = node.expression && getLeadingAwaitOrYield(node.expression, results, context);
-    return operand ?? (node.asteriskToken === undefined ? node : undefined);
+    return operand ?? node;
   }
   if (
     ts.isParenthesizedExpression(node) ||
@@ -18766,11 +18767,17 @@ export const translateStatements = (
       withResult(after, paused, value),
     );
   }
-  // A yield inside a statement gives the value that the next that resumes the body sends.
+  // A yield inside a statement gives the value that the next that resumes the body sends, and a
+  // yield* the value that the iterator returns.
   if (
     paused !== undefined &&
     !(ts.isExpressionStatement(statement) && skipCasts(statement.expression) === paused)
   ) {
+    if (paused.asteriskToken !== undefined) {
+      return translateDelegatedYield(paused, path, context, statementFrame, (after, value) =>
+        withResult(after, paused, value ?? getUndefined(context)),
+      );
+    }
     return translateYield(paused, path, context, statementFrame, (after, sent) =>
       withResult(after, paused, sent ?? getUndefined(context)),
     );
