@@ -776,6 +776,10 @@ const BASE_MEMBER_ERRORS = new Set([2416, 2423]);
 // declaration or an expression.
 const ABSTRACT_MEMBER_ERRORS = new Set([2515, 2653]);
 
+// TypeScript's errors for a computed key of a class field or a type literal's member whose type
+// isn't a literal's, which TypeScript leaves out of the type, so a read of it types as any.
+const COMPUTED_MEMBER_ERRORS = new Set([1166, 1170]);
+
 // TypeScript's errors for a function whose return type depends on itself.
 const RETURN_TYPE_ERRORS = new Set([7023, 7024]);
 
@@ -2335,6 +2339,8 @@ const ignoreSoundErrors = () => {
       (diagnostic.code === 2322 && isWrittenExec(node, diagnostic)) ||
       (BASE_MEMBER_ERRORS.has(diagnostic.code) && isIteratorMember(node)) ||
       (ABSTRACT_MEMBER_ERRORS.has(diagnostic.code) && isIteratorClass(node)) ||
+      (COMPUTED_MEMBER_ERRORS.has(diagnostic.code) &&
+        ts.findAncestor(node, ts.isComputedPropertyName) !== undefined) ||
       (SPREAD_CALL_ERRORS.has(diagnostic.code) && isUntypedSpreadCall(node)) ||
       (CONVERTED_ARGUMENT_ERRORS.has(diagnostic.code) &&
         (isConvertedCall(diagnostic) ||
