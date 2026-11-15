@@ -168,9 +168,11 @@ import {
   isIteratedValue,
   isTaken,
   isUntypedPattern,
+  mayGivePromises,
   openAsyncIterator,
   openIterator,
   readValue,
+  stepFromSync,
   stepIterator,
   takeFromIterable,
   takeFromIterator,
@@ -10752,6 +10754,64 @@ const delegateToAsyncIterator = (
               throwWith,
             ),
         );
+  // An object without Symbol.asyncIterator iterates through an async-from-sync iterator, whose
+  // next, return, or throw a yield* calls with the value that resumes it. A return awaits that
+  // value first, and calls the throw where it rejects.
+  const delegateFromSync =
+    (iterator: Expression, next: Expression) =>
+    (
+      current: Path,
+      key: "next" | "return" | "throw",
+      value: Expression,
+      count: number,
+    ): Formula => {
+      const step = delegateFromSync(iterator, next);
+      return count > DELEGATION_LIMIT
+        ? leaf(
+            apply("Assert", [
+              boolean(false),
+              string(`tla-ts can't follow more than ${DELEGATION_LIMIT} values of a yield*`),
+            ]),
+          )
+        : stepFromSync(
+            node,
+            iterator,
+            next,
+            key,
+            value,
+            mayGivePromises(iterated, context),
+            current,
+            context,
+            frame,
+            awaitTo,
+            throwWith,
+            (stepped, result, isDone) => {
+              if (isDone) {
+                return key === "return" ? frame.exit(stepped, result) : continueWith(stepped);
+              }
+              return yieldTo(
+                stepped,
+                result,
+                (resumed, sent) => step(resumed, "next", sent ?? getUndefined(context), count + 1),
+                throwWith,
+                {
+                  isDelegated: true,
+                  isGuarded: true,
+                  abortRest: (aborted, abrupt, abruptValue) =>
+                    abrupt === "return"
+                      ? awaitTo(
+                          aborted,
+                          abruptValue ?? getUndefined(context),
+                          undefined,
+                          (fulfilled, settled) => step(fulfilled, "return", settled, count + 1),
+                          (rejected, reason) => step(rejected, "throw", reason, count + 1),
+                        )
+                      : step(aborted, "throw", abruptValue ?? getUndefined(context), count + 1),
+                },
+              );
+            },
+          );
+    };
   return allocate(iterated, path, context, (inner) =>
     openAsyncIterator(
       node,
@@ -10760,7 +10820,10 @@ const delegateToAsyncIterator = (
       context,
       frame,
       failWith,
-      (opened, iterator, next) => delegate(opened, iterator, next, 0),
+      (opened, iterator, next, isSync) =>
+        isSync
+          ? delegateFromSync(iterator, next)(opened, "next", getUndefined(context), 0)
+          : delegate(opened, iterator, next, 0),
     ),
   );
 };
@@ -13475,11 +13538,15 @@ const getEffects = (
     (written !== undefined &&
       ts.isArrayLiteralExpression(written) &&
       (isIteratedPattern(written, context) || isIterablePattern(written, context))) ||
-    ((ts.isSpreadElement(node) ||
-      (ts.isYieldExpression(node) && node.asteriskToken !== undefined)) &&
-      node.expression !== undefined &&
+    (ts.isSpreadElement(node) &&
       getKind(node.expression, context) !== "sequence" &&
       isIterableValue(node.expression, context)) ||
+    // A yield* iterates what it casts as the value itself.
+    (ts.isYieldExpression(node) &&
+      node.asteriskToken !== undefined &&
+      node.expression !== undefined &&
+      getKind(getCast(node.expression), context) !== "sequence" &&
+      isIterableValue(getCast(node.expression), context)) ||
     (ts.isForOfStatement(node) &&
       getKind(node.expression, context) !== "sequence" &&
       isIterableValue(node.expression, context)) ||

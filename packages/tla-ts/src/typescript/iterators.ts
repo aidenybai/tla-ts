@@ -14,7 +14,9 @@ import {
 } from "./context";
 import { type Formula, ifThenElse, leaf } from "./formula";
 import { getHeap } from "./heap";
+import { translateBuiltInValue } from "./intrinsics";
 import { useJavaScript } from "./javascript";
+import { dispatchFollowed } from "./promises";
 import { bind, callMethod, getWrittenFunctions, isNullish, read } from "./protocols";
 import { apply, boolean, string, tuple } from "./tla";
 import { getCaughtElements } from "./scope";
@@ -339,10 +341,7 @@ export const takeFromIterable = (
 const isObject = (site: ts.Node, path: Path, value: Expression, context: Context) =>
   useJavaScript("IsObjectIn", [getHeap(path.scope, site, context), value], context);
 
-// Calls an object's method under a key, and reads the next method of the iterator it makes, where
-// missingWith goes on without the method.
-const openWith =
-  (key: string, missingWith: (path: Path, throwWith: (path: Path) => Formula) => Formula) =>
+interface Opener {
   (
     site: ts.Node,
     iterable: Expression,
@@ -350,13 +349,21 @@ const openWith =
     context: Context,
     frame: Frame,
     throwWith: (path: Path) => Formula,
-    continueWith: (path: Path, iterator: Expression, next: Expression) => Formula,
-  ) =>
+    // isSync holds where the async iterator is an async-from-sync iterator over this iterator.
+    continueWith: (path: Path, iterator: Expression, next: Expression, isSync?: boolean) => Formula,
+  ): Formula;
+}
+
+// Calls an object's method under a key, and reads the next method of the iterator it makes, where
+// openMissing opens the object without the method.
+const openWith =
+  (key: string, openMissing: Opener): Opener =>
+  (site, iterable, path, context, frame, throwWith, continueWith) =>
     bind(path, "iterable", iterable, context, (current, held) =>
       read(site, held, key, current, context, frame, (found, method) =>
         ifThenElse(
           isNullish(method, context),
-          missingWith(found, throwWith),
+          openMissing(site, held, found, context, frame, throwWith, continueWith),
           callMethod(
             site,
             key,
@@ -383,7 +390,10 @@ const openWith =
     );
 
 // Calls an object's Symbol.iterator method, and reads the next method of the iterator it makes.
-export const openIterator = openWith(ITERATOR_KEY, (found, throwWith) => throwWith(found));
+export const openIterator = openWith(
+  ITERATOR_KEY,
+  (_site, _iterable, found, _context, _frame, throwWith) => throwWith(found),
+);
 
 // Calls an object's Symbol.iterator method as Array.from does, which reads an object without one as
 // an array-like object, which tla-ts doesn't follow.
@@ -397,14 +407,13 @@ export const openFromIterator = openWith(ITERATOR_KEY, () =>
 );
 
 // Calls an object's Symbol.asyncIterator method, and reads the next method of the iterator it makes.
-// An object without one iterates through an async-from-sync iterator, which tla-ts doesn't follow.
-export const openAsyncIterator = openWith(ASYNC_ITERATOR_KEY, () =>
-  leaf(
-    apply("Assert", [
-      boolean(false),
-      string("tla-ts can't iterate an object without Symbol.asyncIterator asynchronously"),
-    ]),
-  ),
+// An object without one iterates through an async-from-sync iterator over its Symbol.iterator's.
+export const openAsyncIterator = openWith(
+  ASYNC_ITERATOR_KEY,
+  (site, iterable, path, context, frame, throwWith, continueWith) =>
+    openIterator(site, iterable, path, context, frame, throwWith, (opened, iterator, next) =>
+      continueWith(opened, iterator, next, true),
+    ),
 );
 
 // Calls an iterator's next, or the return or throw that a yield* passes on, and goes on with the
@@ -515,6 +524,158 @@ const closeQuietly = (
         continueWith,
         (after) => continueWith(after),
       ),
+    ),
+  );
+};
+
+// Whether the value of a result that an object's sync iterator gives may be a promise, as its type
+// tells: one that TypeScript types as any, unknown, or with a then, or one it can't find.
+export const mayGivePromises = (iterable: ts.Expression, context: Context) => {
+  const checker = context.checker;
+  const getMembers = (type: ts.Type) => (type.isUnion() ? type.types : [type]);
+  const getReturned = (types: readonly ts.Type[], isKey: (name: string) => boolean) =>
+    types
+      .flatMap(getMembers)
+      .flatMap((type) => type.getProperties().filter((property) => isKey(property.name)))
+      .flatMap((property) =>
+        checker
+          .getTypeOfSymbolAtLocation(property, iterable)
+          .getCallSignatures()
+          .flatMap((signature) => getMembers(signature.getReturnType())),
+      );
+  const results = getReturned(
+    getReturned([checker.getTypeAtLocation(iterable)], (name) => name.startsWith("__@iterator")),
+    (name) => name === "next",
+  );
+  return (
+    results.length === 0 ||
+    results.some((result) => {
+      const value = result.getProperty("value");
+      return (
+        (result.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0 ||
+        (value !== undefined &&
+          getMembers(checker.getTypeOfSymbolAtLocation(value, iterable)).some(
+            (member) =>
+              (member.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0 ||
+              member.getProperty("then") !== undefined,
+          ))
+      );
+    })
+  );
+};
+
+// Calls an async-from-sync iterator's next, return, or throw, which runs the sync iterator's, and
+// awaits the promise it gives: with the result's value and done, once the promise of the value
+// fulfills, or with what rejects it. The promise settles a job after that of the value, and at once
+// where the sync iterator throws, gives a value that isn't an object, or lacks the return or the
+// throw. A rejected value closes the sync iterator where a next or a throw gave a result that isn't
+// done.
+export const stepFromSync = (
+  site: ts.Node,
+  iterator: Expression,
+  next: Expression,
+  key: "next" | "return" | "throw",
+  sent: Expression,
+  mayBePromise: boolean,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  awaitTo: NonNullable<Frame["awaitTo"]>,
+  rejectWith: (path: Path, reason: Expression) => Formula,
+  fulfillWith: (path: Path, value: Expression, isDone: boolean) => Formula,
+) => {
+  const tick = (current: Path, continueWith: (path: Path) => Formula) =>
+    awaitTo(current, getUndefined(context), undefined, continueWith, continueWith);
+  const rejectFrame: Frame = {
+    ...frame,
+    throwTo: (current, thrown) => tick(current, (after) => rejectWith(after, thrown.value)),
+  };
+  const failWith = (failed: Path) => throwTypeError(failed, site, context, rejectFrame);
+  const call = (current: Path, method: Expression) =>
+    callMethod(
+      site,
+      key,
+      method,
+      iterator,
+      [sent],
+      current,
+      context,
+      rejectFrame,
+      failWith,
+      (called, result) =>
+        bind(called, "result", result, context, (bound, held) =>
+          ifThenElse(
+            isObject(site, bound, held, context),
+            read(site, held, "done", bound, context, rejectFrame, (checked, done) =>
+              readValue(site, held, checked, context, rejectFrame, (taken, value) => {
+                const awaitValue = (isDone: boolean, awaited: Expression) =>
+                  awaitTo(
+                    taken,
+                    awaited,
+                    undefined,
+                    (fulfilled, settled) =>
+                      tick(fulfilled, (after) => fulfillWith(after, settled, isDone)),
+                    (rejected, reason) =>
+                      isDone || key === "return"
+                        ? tick(rejected, (after) => rejectWith(after, reason))
+                        : closeQuietly(site, iterator, rejected, context, frame, (closed) =>
+                            tick(closed, (after) => rejectWith(after, reason)),
+                          ),
+                  );
+                // A value that may be a promise may be any that the path follows. Another value
+                // fulfills the promise of the value at once, unless it has a then.
+                const dispatch = (isDone: boolean) =>
+                  mayBePromise
+                    ? dispatchFollowed(
+                        taken,
+                        site,
+                        value,
+                        context,
+                        (_name, ref) => awaitValue(isDone, ref),
+                        awaitValue(isDone, value),
+                      )
+                    : ifThenElse(
+                        useJavaScript(
+                          "IsThenable",
+                          [
+                            getHeap(taken.scope, site, context),
+                            value,
+                            translateBuiltInValue("Array.prototype", site, context),
+                            translateBuiltInValue("Object.prototype", site, context),
+                          ],
+                          context,
+                        ),
+                        leaf(
+                          apply("Assert", [
+                            boolean(false),
+                            string("tla-ts can't resolve a promise with an object that has a then"),
+                          ]),
+                        ),
+                        tick(taken, (fulfilled) =>
+                          tick(fulfilled, (after) => fulfillWith(after, value, isDone)),
+                        ),
+                      );
+                return ifThenElse(
+                  useJavaScript("ToBoolean", [done], context),
+                  dispatch(true),
+                  dispatch(false),
+                );
+              }),
+            ),
+            failWith(bound),
+          ),
+        ),
+    );
+  if (key === "next") return call(path, next);
+  // A sync iterator without a return gives the value as done, and one without a throw closes
+  // before the TypeError.
+  return read(site, iterator, key, path, context, rejectFrame, (found, method) =>
+    ifThenElse(
+      isNullish(method, context),
+      key === "return"
+        ? tick(found, (after) => fulfillWith(after, sent, true))
+        : closeIterator(site, iterator, found, context, rejectFrame, failWith, failWith),
+      call(found, method),
     ),
   );
 };

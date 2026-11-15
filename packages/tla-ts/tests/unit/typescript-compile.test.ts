@@ -39560,4 +39560,193 @@ describe("BigInts", () => {
       "pending would share an object that changes in place, so copy it",
     );
   });
+  describe("keeps what a cast yield*'s iterator method changes", () => {
+    const getSource = (expected: number) => `
+      let calls = 0;
+      const iterable = {
+        [Symbol.asyncIterator]() {
+          calls = calls + 1;
+          return {
+            next() {
+              return Promise.resolve({ value: calls, done: true });
+            },
+          };
+        },
+      };
+      async function* gen(): AsyncGenerator<unknown, void, undefined> {
+        yield* (iterable as unknown as AsyncIterable<unknown, unknown, unknown>);
+      }
+      gen()
+        .next()
+        .then(() => {
+          if (calls !== ${expected}) throw new Error(String(calls));
+        });
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(1))).failure).toBeUndefined();
+    });
+
+    it("rejects a method whose change is lost", async () => {
+      expect((await checkModel(getSource(0))).failure?.message).toContain(
+        "A promise rejected with no handler",
+      );
+    });
+  });
+
+  describe("steps a sync iterable through an async generator's yield*", () => {
+    const getSource = (expected: string) => `
+      let log = "";
+      let count = 0;
+      const iterable = {
+        [Symbol.iterator]() {
+          return {
+            next(value?: string) {
+              count = count + 1;
+              log = log + "n" + value;
+              return { value: count, done: count > 1 };
+            },
+          };
+        },
+      };
+      async function* gen() {
+        yield* iterable;
+        log = log + "e";
+      }
+      const iterator = gen();
+      iterator.next("a").then((first) => {
+        log = log + "g" + first.value;
+        iterator.next("b").then((second) => {
+          log = log + "d" + second.done;
+        });
+      });
+      Promise.resolve()
+        .then(() => { log = log + "1"; })
+        .then(() => { log = log + "2"; })
+        .then(() => { log = log + "3"; })
+        .then(() => { log = log + "4"; })
+        .then(() => { log = log + "5"; })
+        .then(() => {
+          if (log !== "${expected}") throw new Error(log);
+        });
+    `;
+
+    it("agrees with Node", async () => {
+      const expected = "nundefined12g1nb34e5dtrue";
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects a value that settles a job early", async () => {
+      const expected = "nundefined1g1nb23e4dtrue5";
+      expect((await checkModel(getSource(expected))).failure?.message).toContain(
+        "A promise rejected with no handler",
+      );
+    });
+  });
+
+  describe("throws the TypeError of a yield* over an object whose Symbol.iterator gives a primitive", () => {
+    const getSource = (expected: string) => `
+      let log = "";
+      const iterable = {
+        [Symbol.asyncIterator]: null,
+        [Symbol.iterator]() {
+          log = log + "c";
+          return 1;
+        },
+      };
+      async function* gen() {
+        log = log + "s";
+        yield* iterable as unknown as Iterable<number>;
+      }
+      gen()
+        .next()
+        .then(
+          () => {
+            log = log + "f";
+          },
+          (error: unknown) => {
+            log = log + (error instanceof TypeError ? "t" : "o");
+          },
+        );
+      log = log + "a";
+      Promise.resolve()
+        .then(() => { log = log + "1"; })
+        .then(() => {
+          if (log !== "${expected}") throw new Error(log);
+        });
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("scat1"))).failure).toBeUndefined();
+    });
+
+    it("rejects a yield* that fulfills", async () => {
+      expect((await checkModel(getSource("scaf1"))).failure?.message).toContain(
+        "A promise rejected with no handler",
+      );
+    });
+  });
+
+  describe("passes a return or a throw through the async-from-sync iterator of a yield*", () => {
+    const getSource = (method: string, call: string, expected: string) => `
+      let log = "";
+      const iterable = {
+        [Symbol.iterator]() {
+          return {
+            next() {
+              log = log + "n";
+              return { value: "v", done: false };
+            },
+            ${method}
+          };
+        },
+      };
+      async function* gen(): AsyncGenerator<string, void, unknown> {
+        yield* iterable;
+        log = log + "e";
+      }
+      const iterator = gen();
+      iterator.next().then((first) => {
+        log = log + "g" + first.value;
+        ${call}.then(
+          (second) => {
+            log = log + "f" + second.value + second.done;
+          },
+          (error: unknown) => {
+            log = log + (error instanceof TypeError ? "t" : "o");
+          },
+        );
+      });
+      Promise.resolve()
+        .then(() => { log = log + "1"; })
+        .then(() => { log = log + "2"; })
+        .then(() => { log = log + "3"; })
+        .then(() => { log = log + "4"; })
+        .then(() => { log = log + "5"; })
+        .then(() => {
+          if (log !== "${expected}") throw new Error(log);
+        });
+    `;
+    const close = `return() {
+      log = log + "c";
+      return {} as IteratorResult<string>;
+    },`;
+
+    it("agrees with Node where the sync iterator lacks the return", async () => {
+      const source = getSource("", 'iterator.return("r" as never)', "n12gv345frtrue");
+      expect((await checkModel(source)).failure).toBeUndefined();
+    });
+
+    it("agrees with Node where the sync iterator lacks the throw", async () => {
+      const source = getSource(close, 'iterator.throw("x")', "n12gvc34t5");
+      expect((await checkModel(source)).failure).toBeUndefined();
+    });
+
+    it("rejects a throw that doesn't close the sync iterator", async () => {
+      const source = getSource(close, 'iterator.throw("x")', "n12gv34t5");
+      expect((await checkModel(source)).failure?.message).toContain(
+        "A promise rejected with no handler",
+      );
+    });
+  });
 });
