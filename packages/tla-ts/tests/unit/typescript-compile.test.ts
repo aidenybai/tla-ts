@@ -6494,6 +6494,65 @@ describe("calls", () => {
     expect((await checkModel(getSource("thrown,1"))).failure?.message).toContain("thrown,0");
   });
 
+  it("runs a pattern's default that throws only after what the pattern evaluates before it", async () => {
+    const getSource = (expected: string) => `
+      let count = 0;
+      function thrower(): number {
+        throw new Error("thrown");
+      }
+      let caught = "none";
+      try {
+        const { a = 1, d: { b = thrower() }, c = ++count } = { d: {} } as {
+          a?: number;
+          d: { b?: number };
+          c?: number;
+        };
+        caught = \`\${a}\${b}\${c}\`;
+      } catch (error) {
+        caught = (error as Error).message;
+      }
+      const text = \`\${caught},\${count}\`;
+      if (text !== "${expected}") throw new Error(text);
+    `;
+    expect((await checkModel(getSource("thrown,0"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("thrown,1"))).failure?.message).toContain("thrown,0");
+    expect(() =>
+      compile(`
+        let count = 0;
+        function thrower(): number {
+          throw new Error("thrown");
+        }
+        try {
+          const { c = ++count, b = thrower() } = {} as { b?: number; c?: number };
+        } catch {}
+      `),
+    ).toThrow("tla-ts can't run this call before what its pattern evaluates first");
+    expect(() =>
+      compile(`
+        function thrower(): number {
+          throw new Error("thrown");
+        }
+        try {
+          const { a: { b }, c = thrower() } = { a: undefined } as unknown as {
+            a: { b?: number };
+            c?: number;
+          };
+        } catch {}
+      `),
+    ).toThrow("tla-ts can't run this call before what its pattern evaluates first");
+    expect(() =>
+      compile(`
+        function thrower(): number {
+          throw new Error("thrown");
+        }
+        const items = [{}] as unknown as { a: { x?: number }; b?: number }[];
+        try {
+          for (const { a: { x }, b = thrower() } of items) {}
+        } catch {}
+      `),
+    ).toThrow("tla-ts can't run this call before what its pattern evaluates first");
+  });
+
   it("evaluates a pattern's computed key before it reads the property", async () => {
     const getSource = (expected: string) => `
       let count = 0;

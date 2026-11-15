@@ -7015,10 +7015,10 @@ const getPatternSteps = (name: ts.BindingName): ts.Node[] =>
             ],
       );
 
-// Whether a call is no computed key, or one that binding the names evaluates before anything
-// that may throw or run code: what evaluates before it ran already, or is a value such as a
-// literal, or is a pattern around it, whose value is a literal object.
-const isFirstKey = (
+// Whether binding the names evaluates nothing before a default's or a computed key's call that
+// may throw or run code: what evaluates before it ran already, or is a value such as a literal, or
+// is a pattern around the call whose getters ran.
+const isFirstRun = (
   names: readonly ts.BindingName[],
   call: ts.Expression,
   path: Path,
@@ -7033,7 +7033,6 @@ const isFirstKey = (
   const at = steps.findIndex((step) => ts.isExpression(step) && getCast(step) === call);
   return (
     at === -1 ||
-    !ts.isComputedPropertyName(steps[at].parent) ||
     steps
       .slice(0, at)
       .every((step) =>
@@ -7136,9 +7135,9 @@ const runCertainDefault = (
     return throwError("ReferenceError", path, run[unresolved], context, frame);
   }
   if (first === undefined) return undefined;
-  if (!isFirstKey(names, first, path, context)) {
+  if (!isFirstRun(names, first, path, context)) {
     throw new TlaTypeScriptError(
-      "tla-ts can't run a computed key's call after what its pattern evaluates before it",
+      "tla-ts can't run this call before what its pattern evaluates first",
       first,
     );
   }
@@ -12961,6 +12960,12 @@ const bindElement = (
     : [];
   const first = pending.at(0);
   if (first !== undefined) {
+    if (!isFirstRun([name], first.call, path, context)) {
+      throw new TlaTypeScriptError(
+        "tla-ts can't run this call before what its pattern evaluates first",
+        first.call,
+      );
+    }
     const bound = new Set(
       findNodes(name, ts.isBindingElement).flatMap((inner) => getSymbols(inner.name, context)),
     );
