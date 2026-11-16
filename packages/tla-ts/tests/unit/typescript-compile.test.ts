@@ -44973,7 +44973,8 @@ describe("BigInts", () => {
 
     it("agrees with Node", async () => {
       expect(
-        (await checkModel(getSource("hour/minute/second/nan,11045000,true,TypeError"))).failure,
+        (await checkModel(getSource("hour/minute/second/nan,1467342245000,true,TypeError")))
+          .failure,
       ).toBeUndefined();
     });
 
@@ -44981,7 +44982,7 @@ describe("BigInts", () => {
       expect(
         (await checkModel(getSource("hour/minute/second/nan,97445000,true,TypeError"))).failure
           ?.message,
-      ).toContain("hour/minute/second/nan,11045000,true,TypeError");
+      ).toContain("hour/minute/second/nan,1467342245000,true,TypeError");
     });
   });
 
@@ -46164,6 +46165,39 @@ describe("BigInts", () => {
         'const read = Object.getOwnPropertyDescriptor(Date.prototype, "toTemporalInstant");\nif (read?.value === undefined) throw new Error("undefined");',
       );
       expect(result.failure?.message).toContain("tla-ts can't represent this value");
+    });
+  });
+
+  describe("reads a Date's time value before a setter converts its arguments, but setFullYear's after", () => {
+    const getSource = (expected: string) => `
+      const seen: number[] = [];
+      const invalid = new Date(NaN);
+      const toValid = { valueOf() { invalid.setTime(259200000); return 1; } };
+      // @ts-expect-error
+      seen.push(invalid.setHours(toValid, 2), invalid.getTime());
+      const valid = new Date(0);
+      const toInvalid = { valueOf() { valid.setTime(NaN); return 1; } };
+      // @ts-expect-error
+      seen.push(valid.setUTCMinutes(toInvalid), valid.getTime());
+      const year = new Date(NaN);
+      const yearToValid = { valueOf() { year.setTime(259200000); return 1; } };
+      // @ts-expect-error
+      seen.push(year.setFullYear(yearToValid, 2), year.getTime());
+      if (seen.join() !== "${expected}") throw new Error("seen " + seen.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("NaN,259200000,60000,60000,-62130240000000,-62130240000000")))
+          .failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects the time value that the conversions leave, as Node 24 reads it", async () => {
+      expect(
+        (await checkModel(getSource("262920000,262920000,NaN,NaN,-62130240000000,-62130240000000")))
+          .failure?.message,
+      ).toContain("seen NaN,259200000,60000,60000,-62130240000000,-62130240000000");
     });
   });
 });

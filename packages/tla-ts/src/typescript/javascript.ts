@@ -5498,7 +5498,8 @@ DateTime(heap, ref, method) ==
   ELSE Assert(FALSE, "tla-ts can't call this method on " \\o ToString(ref))
 
 \\* The heap after a Date setter, which takes the Date's time value, the method's name, and where it
-\\* starts setting fields, or 0 for setTime and setYear, and the time value it sets.
+\\* starts setting fields, or 0 for setTime and setYear, and the time value it sets. A setter of a
+\\* field after the year leaves an invalid date as its arguments' conversions left it.
 DateChange(heap, ref, time, method, position, values) ==
   LET year == values[1]
       next == CASE method = "setTime" -> TimeFromNumber(values[1])
@@ -5508,7 +5509,9 @@ DateChange(heap, ref, time, method, position, values) ==
                                         THEN 1900 + ToIntegerOrInfinity(year)
                                         ELSE year>>)
                 [] OTHER -> DateSet(time, position, values)
-  IN [heap |-> Update(heap, ref, [Lookup(heap, ref) EXCEPT !.time = next]), time |-> next]
+  IN IF time = NaN /\\ position > 1
+     THEN [heap |-> heap, time |-> NaN]
+     ELSE [heap |-> Update(heap, ref, [Lookup(heap, ref) EXCEPT !.time = next]), time |-> next]
 
 \\* The object that a regular expression literal makes, which holds the record of its pattern, and
 \\* whose lastIndex is a property of its own.

@@ -2823,25 +2823,28 @@ const translateCallStatementBody = (
           )
         : dateCall.values.some((argument) => isObjectOperand(argument, context))
           ? // The setter converts its arguments in turn, which runs their valueOf and toString,
-            // and changes the heap that they leave. Node reads the time value once the first
-            // converts, where the spec reads it before.
+            // and changes the heap that they leave. It reads the time value before them, as the
+            // spec does, but Node reads setFullYear's and setYear's once the first converts.
             runConversion(
               expression,
               {
                 operands: dateCall.values,
                 hints: dateCall.values.map(() => "number" as const),
                 combine: (primitives) => tuple(primitives.map(toNumber)),
-                afterFirst: (after, _, next) =>
-                  bindOnce(
-                    after,
-                    convertedTimeName,
-                    useJavaScript(
-                      "TimeOfDate",
-                      [getHeap(after.scope, expression, context), identifier(receiver)],
-                      context,
-                    ),
-                    next(after),
-                  ),
+                afterFirst:
+                  setter.position > 1
+                    ? undefined
+                    : (after, _, next) =>
+                        bindOnce(
+                          after,
+                          convertedTimeName,
+                          useJavaScript(
+                            "TimeOfDate",
+                            [getHeap(after.scope, expression, context), identifier(receiver)],
+                            context,
+                          ),
+                          next(after),
+                        ),
               },
               path,
               context,
@@ -2849,7 +2852,7 @@ const translateCallStatementBody = (
               (after, numbers) =>
                 changeDate(
                   after,
-                  identifier(convertedTimeName),
+                  setter.position > 1 ? time : identifier(convertedTimeName),
                   setter.position,
                   dateCall.values.map((_, position) => index(numbers, [number(position + 1)])),
                 ),
