@@ -46132,4 +46132,38 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("reads the built-ins' members as Node 26 has them, and stops at one tla-ts doesn't model", () => {
+    const getSource = (expected: string) => `
+      const seen = [
+        "toTemporalInstant" in Date.prototype,
+        Object.getOwnPropertyNames(Iterator).join(" "),
+        Object.prototype.hasOwnProperty.call(globalThis, "Temporal"),
+        "calendars" in Intl.Locale.prototype,
+        Object.getOwnPropertyNames(Math).indexOf("f16round"),
+      ].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("true,length name prototype from concat,true,false,16")))
+          .failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects the members that Node 24 has", async () => {
+      expect(
+        (await checkModel(getSource("false,length name prototype from,false,true,36"))).failure
+          ?.message,
+      ).toContain("seen true,length name prototype from concat,true,false,16");
+    });
+
+    it("stops at the value of a member that tla-ts doesn't model", async () => {
+      const result = await checkModel(
+        'const read = Object.getOwnPropertyDescriptor(Date.prototype, "toTemporalInstant");\nif (read?.value === undefined) throw new Error("undefined");',
+      );
+      expect(result.failure?.message).toContain("tla-ts can't represent this value");
+    });
+  });
 });
