@@ -47741,4 +47741,19 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("x,n,4,1"))).failure?.message).toContain("seen x,n,3,1");
     });
   });
+
+  describe("imports a built-in module's types without loading the module", () => {
+    const path = join(import.meta.dirname, "../fixtures/typescript/common-js/typing.ts");
+    const source = readFileSync(path, "utf8");
+
+    it("agrees with Node", async () => {
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      await expect(check(compile(source.replace('"1,two"', '"1,three"'), path))).rejects.toThrow(
+        "seen 1,two",
+      );
+    });
+  });
 });

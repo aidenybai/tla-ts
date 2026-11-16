@@ -75,6 +75,9 @@ const CODE_EXTENSIONS = new Set<string>([
   ts.Extension.Json,
 ]);
 
+// A declaration file's name, as types.d.ts, index.d.mts, or styles.d.css.ts.
+const DECLARATION_FILE = /\.d\.(?:[^.]+\.)?[cm]?ts$/;
+
 // TypeScript's error for an if whose branch is the empty statement, which JavaScript runs.
 const EMPTY_IF_BRANCH_ERROR = 1313;
 
@@ -254,7 +257,18 @@ export const createProgram = (
         undefined,
         redirectedReference,
       );
-      if (CODE_EXTENSIONS.has(resolved.resolvedModule?.extension ?? "")) return resolved;
+      // A type's import, as import("fs") in a type or any import of a declaration file, loads
+      // nothing when the code runs.
+      const parent = literal.parent;
+      if (
+        CODE_EXTENSIONS.has(resolved.resolvedModule?.extension ?? "") ||
+        DECLARATION_FILE.test(containingFile) ||
+        (ts.isLiteralTypeNode(parent) && ts.isImportTypeNode(parent.parent)) ||
+        (ts.isImportDeclaration(parent) && parent.importClause?.isTypeOnly === true) ||
+        (ts.isExportDeclaration(parent) && parent.isTypeOnly)
+      ) {
+        return resolved;
+      }
       const imported = resolveImport(literal, containingFile);
       return imported === undefined ? resolved : getResolved(imported);
     });
