@@ -538,6 +538,27 @@ export const getElementTypeNode = (declaration: ts.Declaration) =>
     ? declaration.type.elementType
     : undefined;
 
+// The type that a declaration writes for the values of the maps it holds, as Map<K, V> or a new
+// Map<K, V>() that it starts with gives V.
+export const getValueTypeNode = (declaration: ts.Declaration, checker: ts.TypeChecker) => {
+  if (!ts.isPropertySignature(declaration) && !ts.isVariableDeclaration(declaration)) {
+    return undefined;
+  }
+  const initializer = ts.isVariableDeclaration(declaration) ? declaration.initializer : undefined;
+  const typeArguments =
+    declaration.type !== undefined
+      ? ts.isTypeReferenceNode(declaration.type)
+        ? declaration.type.typeArguments
+        : undefined
+      : initializer !== undefined && ts.isNewExpression(initializer)
+        ? initializer.typeArguments
+        : undefined;
+  const type = checker.getTypeAtLocation(declaration.name);
+  return isMapType(type) && getCollectionType(type) === type && typeArguments?.length === 2
+    ? typeArguments[1]
+    : undefined;
+};
+
 // The variables and fields that an expression names, which hold what it gives.
 export const getHolders = (node: ts.Expression, checker: ts.TypeChecker) => {
   const symbol = ts.isIdentifier(node) ? getSymbol(node, checker) : undefined;
@@ -632,6 +653,26 @@ const isHeld = (node: ts.Expression, context: Context): boolean => {
       )
     );
   };
+  // A value of the maps that a holder holds, where the heap holds those values.
+  const isValueHeld = (outer: ts.Expression) => {
+    const holders = getHolders(outer, context.checker);
+    return (
+      holders.length > 0 &&
+      holders.every((holder) =>
+        (holder.declarations ?? []).every((declaration) => {
+          const value = getValueTypeNode(declaration, context.checker);
+          return value !== undefined && context.heapCollections.has(value);
+        }),
+      )
+    );
+  };
+  if (
+    ts.isBinaryExpression(node) &&
+    (node.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken ||
+      node.operatorToken.kind === ts.SyntaxKind.BarBarToken)
+  ) {
+    return isHeld(node.left, context) && isHeld(node.right, context);
+  }
   if (ts.isCallExpression(node)) {
     const called = getCalledFunction(node, context.checker);
     // A set's add, a map's set, and an array's sort, reverse, fill, and copyWithin give the
@@ -640,6 +681,9 @@ const isHeld = (node: ts.Expression, context: Context): boolean => {
       ? context.heapCollections.has(called)
       : ts.isPropertyAccessExpression(node.expression) &&
           ((node.expression.name.text === "at" && isElementHeld(node.expression.expression)) ||
+            (node.expression.name.text === "get" &&
+              isSetOrMapType(node.expression.expression, context) &&
+              isValueHeld(node.expression.expression)) ||
             (["add", "set"].includes(node.expression.name.text) &&
               isSetOrMapType(node.expression.expression, context) &&
               isHeld(node.expression.expression, context)) ||

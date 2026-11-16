@@ -45531,4 +45531,30 @@ describe("BigInts", () => {
       ).toContain("seen false,false,false,true,false,false,false,true,true,false");
     });
   });
+
+  describe("holds on the heap the sets that a map's values give where a caller changes them", () => {
+    const getSource = (expected: string) => `
+      const roots = new Map<number, Set<string>>();
+      const getRoots = (id: number): Set<string> => {
+        const found = roots.get(id) ?? new Set<string>();
+        roots.set(id, found);
+        return found;
+      };
+      getRoots(1).add("a");
+      const again = getRoots(1);
+      again.add("b");
+      getRoots(2).add("c");
+      again.delete("a");
+      const seen = [[...getRoots(1)].join(""), getRoots(2).size, getRoots(3).size, roots.size].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("b,1,0,3"))).failure).toBeUndefined();
+    });
+
+    it("rejects a value that a delete keeps", async () => {
+      expect((await checkModel(getSource("ab,1,0,3"))).failure?.message).toContain("seen b,1,0,3");
+    });
+  });
 });

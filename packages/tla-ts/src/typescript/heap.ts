@@ -126,6 +126,7 @@ import {
   getCalledFunction,
   getElementTypeNode,
   getHolders,
+  getValueTypeNode,
   getKind,
   getRegExpIndicesPart,
   isEvery,
@@ -4545,6 +4546,13 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
       isSetOrMap(use)
     );
   };
+  // A call of get on a map, which gives one of its values.
+  const isMapRead = (
+    node: ts.Expression,
+  ): node is ts.CallExpression & { expression: ts.PropertyAccessExpression } =>
+    isMethodCall(node) &&
+    node.expression.name.text === "get" &&
+    getKind(node.expression.expression, context) === "map";
   // Whether nothing reads what a call gives: a statement makes it, or an arrow function's body that
   // only statements and forEach call.
   const isDiscarded = (call: ts.Expression) => {
@@ -4722,6 +4730,16 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
       if (ts.isConditionalExpression(node)) {
         return addSource(node.whenTrue) && addSource(node.whenFalse);
       }
+      // ?? and || give one side or the other.
+      if (
+        ts.isBinaryExpression(node) &&
+        (node.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken ||
+          node.operatorToken.kind === ts.SyntaxKind.BarBarToken)
+      ) {
+        return addSource(node.left) && addSource(node.right);
+      }
+      // A value that a map holds, whose holder then holds only the group's.
+      if (isMapRead(node)) return addOuter(node.expression.expression);
       if (ts.isCallExpression(node) && isFreshArrayCall(node, context)) {
         nodes.push(node);
         return true;
@@ -4835,6 +4853,13 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
         return (
           addSource(parent.whenTrue === use ? parent.whenFalse : parent.whenTrue) && isUse(parent)
         );
+      }
+      if (
+        ts.isBinaryExpression(parent) &&
+        (parent.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken ||
+          parent.operatorToken.kind === ts.SyntaxKind.BarBarToken)
+      ) {
+        return addSource(parent.left === use ? parent.right : parent.left) && isUse(parent);
       }
       if (ts.isVariableDeclaration(parent) && ts.isIdentifier(parent.name)) {
         return addHolder(parent.name);
@@ -4969,6 +4994,15 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
         );
       }
       if (!ts.isCallExpression(parent) || parent.arguments.some(ts.isSpreadElement)) return false;
+      // A value that a map's set takes, whose holder then holds only the group's.
+      if (
+        isMethodCall(parent) &&
+        parent.expression.name.text === "set" &&
+        parent.arguments[1] === use &&
+        getKind(parent.expression.expression, context) === "map"
+      ) {
+        return ts.isExpressionStatement(parent.parent) && addOuter(parent.expression.expression);
+      }
       if (isComparedByIdentity(use)) return true;
       if (
         parent.arguments[0] === use &&
@@ -5150,15 +5184,47 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
     };
     // A holder whose arrays' elements are the group's arrays: each array that it holds starts as a
     // literal, and each use reads, adds, or drops an element, or reads the length.
+    // A holder of maps whose values are the group's sets or maps works the same way: each map that
+    // it holds starts empty, and each use reads, sets, or drops a value, or reads the size.
     const isOuter = (outer: ts.Symbol) => {
       const declarations = outer.declarations ?? [];
-      const elements = declarations.map(getElementTypeNode);
+      const values = declarations.map((declaration) => getValueTypeNode(declaration, checker));
+      const isMap = values.length > 0 && values.every((value) => value !== undefined);
+      const elements = isMap ? values : declarations.map(getElementTypeNode);
       nodes.push(...elements.filter((element) => element !== undefined));
       const isElementSource = (value: ts.Expression | undefined) =>
         value !== undefined &&
-        ts.isArrayLiteralExpression(value) &&
-        value.elements.every((element) => !ts.isSpreadElement(element) && addSource(element));
+        (isMap
+          ? ts.isNewExpression(value) &&
+            (value.arguments ?? []).length === 0 &&
+            isFreshCollection(value, context)
+          : ts.isArrayLiteralExpression(value) &&
+            value.elements.every((element) => !ts.isSpreadElement(element) && addSource(element)));
+      const isValueUse = (use: ts.Expression) => {
+        const parent = use.parent;
+        if (!ts.isPropertyAccessExpression(parent) || parent.expression !== use) return false;
+        const call = parent.parent;
+        const method = parent.name.text;
+        if (method === "size") return true;
+        if (
+          !ts.isCallExpression(call) ||
+          call.expression !== parent ||
+          call.arguments.some(ts.isSpreadElement)
+        ) {
+          return false;
+        }
+        if (method === "get") return isUse(call);
+        if (method === "set") {
+          return (
+            call.arguments[1] !== undefined &&
+            addSource(call.arguments[1]) &&
+            ts.isExpressionStatement(call.parent)
+          );
+        }
+        return ["has", "delete", "clear"].includes(method);
+      };
       const isElementUse = (use: ts.Expression) => {
+        if (isMap) return isValueUse(use);
         const parent = use.parent;
         if (ts.isPropertyAccessExpression(parent) && parent.expression === use) {
           const call = parent.parent;
