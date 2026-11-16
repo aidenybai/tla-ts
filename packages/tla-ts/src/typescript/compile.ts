@@ -1,15 +1,21 @@
 import ts from "@typescript/typescript6";
-import { getWritten, getWrittenRoots, translateScript, writesState } from "./actions";
+import { findEffects, getWritten, getWrittenRoots, translateScript, writesState } from "./actions";
 import { getReached, isMakingObjects, rejectSharing } from "./aliasing";
 import {
+  type Closure,
   type Context,
   createContext,
   findNodes,
+  findFunctionCandidates,
+  findGuardedStatements,
+  findOnceFunctions,
+  findOnceLocals,
   getCallee,
   getFunction,
   getSymbol,
   getTopLevelDeclaration,
   hasObjectMembers,
+  isClosure,
   isInertValue,
   isImportCall,
   isScript,
@@ -37,6 +43,7 @@ import {
   findGeneratorPrototypes,
   getBuiltIn,
   getCodePoint,
+  getStoredBuiltIn,
   translateBuiltIns,
   translateSearches,
 } from "./intrinsics";
@@ -199,6 +206,12 @@ export const compile = (
   const path = fileName.replaceAll("\\", "/");
   const program = createProgram(source, path, libraries);
   const context = createContext(program.checker, program.files, program.implicitGlobals);
+  findGuardedStatements(program.files);
+  if (isScript(program.sourceFile)) {
+    const onceFunctions = findOnceFunctions(program.files);
+    context.onceFunctions = new Set(onceFunctions);
+    context.onceLocals = findOnceLocals(onceFunctions, program.checker);
+  }
   program.files.forEach((file) => {
     rejectSloppyGlobalWrites(file, context);
     rejectArgumentsVarReads(file, context);
@@ -675,6 +688,25 @@ export const compile = (
   ) {
     context.heap = heap;
     context.variables.set(heap, identifier(context.names.getFresh("heap")));
+    context.storedBuiltIns = new Map(
+      program.files.map((file) => [
+        file,
+        new Set(
+          findNodes(file, ts.isPropertyAccessExpression).flatMap(
+            (inner) => getStoredBuiltIn(inner, context) ?? [],
+          ),
+        ),
+      ]),
+    );
+    context.closures = new Map(
+      program.files.map((file) => [
+        file,
+        findNodes(file, (inner): inner is Closure => isClosure(inner, context)),
+      ]),
+    );
+    context.functionCandidates = new Map(
+      program.files.map((file) => [file, findFunctionCandidates(file, context)]),
+    );
     // A name, or a string that keys a property by it, as in Object.getOwnPropertyDescriptor.
     const isTyped = (node: ts.Expression, flags: ts.TypeFlags) => {
       const type = context.checker.getTypeAtLocation(node);
@@ -852,6 +884,7 @@ export const compile = (
       : undefined;
   rejectSharing(roots, context);
   rejectRegExpIndicesUses(roots, context);
+  if (context.heap !== undefined) context.effects = findEffects(reached, context);
   classifySharedHelpers(reached, context);
   // A using declaration disposes nothing where it holds only null or undefined.
   const isNothing = (node: ts.Expression | undefined) =>

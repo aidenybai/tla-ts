@@ -60,6 +60,7 @@ import {
   getObjectGetter,
   type HeapClass,
   type ChangeSummary,
+  type Effects,
   type Context,
   type FunctionNode,
   getAccessKey,
@@ -159,6 +160,7 @@ import {
   isObjectOperand,
   runConversion,
   runToPrimitive,
+  getPrimitiveUpdate,
 } from "./conversions";
 import {
   getBuiltJsonText,
@@ -313,6 +315,7 @@ import {
   bindFactory,
   forceHeap,
   getReceiver,
+  isAssigning,
   mayThrow,
   shareArguments,
   isLiftable,
@@ -1833,6 +1836,14 @@ const translateReflectSet = (
 
 const REMOVING_METHODS = new Set(["push", "unshift", "splice", "shift", "pop"]);
 
+// The methods of console that write what they take to stdout or stderr.
+const CONSOLE_WRITERS = new Set(["log", "error", "warn", "info", "debug"]);
+
+const isConsoleWrite = (node: ts.CallExpression) =>
+  isMethodCall(node) &&
+  node.expression.expression.getText() === "console" &&
+  CONSOLE_WRITERS.has(node.expression.name.text);
+
 // Whether a call changes an array, a set, or a map, and gives what it removed, how long the array
 // became, or the collection.
 const isRemoving = (node: ts.Expression, context: Context): boolean => {
@@ -2103,6 +2114,17 @@ const getUpdate = (expression: ts.BinaryExpression, path: Path, context: Context
   const bitwise = bitwiseKind === undefined ? undefined : BITWISE_OPERATORS.get(bitwiseKind);
   const operator = isConcatenated ? "\\o" : (bitwise ?? COMPOUND_OPERATORS.get(kind));
   if (operator === undefined) return undefined;
+  // A value that any types holds a primitive, which the operator converts, or an object.
+  const primitiveUpdate = getPrimitiveUpdate(kind, context);
+  if (
+    !isConcatenated &&
+    primitiveUpdate !== undefined &&
+    context.heap !== undefined &&
+    (isAnyOperand(expression.left, context) || isAnyOperand(expression.right, context))
+  ) {
+    const value = translateExpression(expression.right, path.scope, context);
+    return (current: Expression) => primitiveUpdate(current, value);
+  }
   if (
     !isConcatenated &&
     (!isNumberLike(expression.left, context) || !isNumberLike(expression.right, context))
@@ -4491,7 +4513,9 @@ const translateCallStatementBody = (
     const receiver = expression.expression.expression;
     const method = expression.expression.name.text;
     const isConsole = receiver.getText() === "console";
-    if (isConsole && method === "log") {
+    // console's methods that write what they take, which nothing in the model reads, print it as
+    // log does.
+    if (isConsole && CONSOLE_WRITERS.has(method)) {
       const values = translateArguments(expression.arguments);
       const value = values.length === 1 ? values[0] : tuple(values);
       return and([leaf(apply("PrintT", [value])), continueWith(path)]);
@@ -12313,6 +12337,38 @@ const translateExpressionStatement = (
   }
   // A guard of a global that nothing declares does nothing, and skips what it guards.
   if (getStaticTruth(expression, context) !== undefined) return continueWith(path);
+  // A short circuit or a conditional whose operand that runs only sometimes assigns runs that
+  // operand as a statement where its condition holds.
+  const branches = ts.isConditionalExpression(expression)
+    ? [expression.whenTrue, expression.whenFalse]
+    : ts.isBinaryExpression(expression) && SHORT_CIRCUITS.has(expression.operatorToken.kind)
+      ? [expression.right]
+      : [];
+  if (branches.some(isAssigning)) {
+    const runBranchStatement = (branch: ts.Expression) =>
+      translateExpressionStatement(branch, path, context, frame, continueWith);
+    if (ts.isConditionalExpression(expression)) {
+      return ifThenElse(
+        translateCondition(expression.condition, path.scope, context),
+        runBranchStatement(expression.whenTrue),
+        runBranchStatement(expression.whenFalse),
+      );
+    }
+    if (ts.isBinaryExpression(expression)) {
+      const kind = expression.operatorToken.kind;
+      context.prelude.add("Null");
+      const isRight =
+        kind === ts.SyntaxKind.QuestionQuestionToken
+          ? apply("\\in", [
+              translateExpression(expression.left, path.scope, context),
+              set([identifier("Null"), getUndefined(context)]),
+            ])
+          : kind === ts.SyntaxKind.AmpersandAmpersandToken
+            ? translateCondition(expression.left, path.scope, context)
+            : not(translateCondition(expression.left, path.scope, context));
+      return ifThenElse(isRight, runBranchStatement(expression.right), continueWith(path));
+    }
+  }
   // A comma runs its operands in order, as a for loop's incrementor may.
   if (
     ts.isBinaryExpression(expression) &&
@@ -13459,6 +13515,24 @@ const getMadeFunctions = (callee: ts.Expression, context: Context) => {
   return made.length > 0 && made.length === returned.length ? made : undefined;
 };
 
+// A method that a key reads from a value whose type any or unknown doesn't tell, where the script
+// writes functions under the key, so that it may be any of the script's functions.
+const isAnyMember = (node: ts.Expression, context: Context) => {
+  const key = ts.isPropertyAccessExpression(node)
+    ? node.name.text
+    : ts.isElementAccessExpression(node) && ts.isStringLiteralLike(node.argumentExpression)
+      ? node.argumentExpression.text
+      : undefined;
+  return (
+    key !== undefined &&
+    (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) &&
+    (context.checker.getTypeAtLocation(node.expression).flags &
+      (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !==
+      0 &&
+    getWrittenFunctions(node, key, context).length > 0
+  );
+};
+
 // The functions that a call through a value may run, where tla-ts can't tell which one it names:
 // those that no other function encloses, whose type TypeScript lets the callee hold. The call
 // branches on its callee's value between them.
@@ -13480,7 +13554,8 @@ const getCandidates = (
     (declarations.length === 0 &&
       !ts.isCallExpression(callee) &&
       !isSuperAccess(callee) &&
-      !(ts.isElementAccessExpression(callee) && ts.isStringLiteral(callee.argumentExpression))) ||
+      !(ts.isElementAccessExpression(callee) && ts.isStringLiteral(callee.argumentExpression)) &&
+      !isAnyMember(callee, context)) ||
     declarations.some((declaration) => declaration.getSourceFile().isDeclarationFile) ||
     (assigned === undefined ? getCallee(callee, context) !== undefined : isPlain(assigned)) ||
     getCalledMethod(callee, context) !== undefined ||
@@ -13670,7 +13745,8 @@ const isPromiseMaking = (node: ts.CallExpression, path: Path, context: Context) 
 // A call whose value only statements can compute, which an assignment or a declaration takes.
 const isStatementResult = (node: ts.CallExpression, path: Path, context: Context) =>
   getCalledError(node, context) === undefined &&
-  (getFormatCall(node, context) !== undefined ||
+  (isConsoleWrite(node) ||
+    getFormatCall(node, context) !== undefined ||
     isPromiseMaking(node, path, context) ||
     getBound(node.expression, context) !== undefined ||
     getDateCall(node, context) !== undefined ||
@@ -15071,18 +15147,6 @@ const bindDeclaration = (
 // which changes no object that exists before it, so isIdentityIgnored leaves it out.
 const NO_FUNCTIONS = new Map<ts.Symbol, FunctionNode>();
 
-// What running a node changes, apart from what the functions that it runs change.
-interface Effects {
-  // The names that it assigns, and the heap where it changes the heap other than by making an error.
-  changed: ts.Symbol[];
-  // Whether it makes an error, which changes the heap unless the caller ignores its identity.
-  isErrorMade: boolean;
-  // The functions that it runs.
-  called: ts.Node[];
-  // The parameters that it calls or passes, which a path may bind to functions.
-  parameters: ts.Symbol[];
-}
-
 const getEffects = (
   node: ts.Node,
   functions: ReadonlyMap<ts.Symbol, FunctionNode>,
@@ -15326,6 +15390,48 @@ const getEffects = (
   };
 };
 
+// Whether a node runs a function that a parameter may hold, which the functions that a path binds
+// to its parameters tell.
+const isCallingParameter = (
+  node: ts.Node,
+  functions: ReadonlyMap<ts.Symbol, FunctionNode>,
+  context: Context,
+) => {
+  const callees = ts.isCallExpression(node)
+    ? [node.expression, ...node.arguments]
+    : ts.isTaggedTemplateExpression(node)
+      ? [node.tag, ...getSubstitutions(node)]
+      : [];
+  return callees.some((callee) =>
+    [callee, skipCasts(callee)].some((inner) => {
+      const symbol = getSymbol(inner, context.checker);
+      return symbol !== undefined && functions.has(symbol);
+    }),
+  );
+};
+
+// What a node changes, from what the model's code changes where no parameter holds a function.
+const getNodeEffects = (
+  node: ts.Node,
+  functions: ReadonlyMap<ts.Symbol, FunctionNode>,
+  context: Context,
+) =>
+  (functions.size === 0 || !isCallingParameter(node, functions, context)
+    ? context.effects.get(node)
+    : undefined) ?? getEffects(node, functions, context);
+
+// What each node of the model's code changes where no parameter holds a function.
+export const findEffects = (reached: readonly ts.Node[], context: Context) => {
+  const effects = new Map<ts.Node, Effects>();
+  const visit = (node: ts.Node) => {
+    if (effects.has(node)) return;
+    effects.set(node, getEffects(node, NO_FUNCTIONS, context));
+    ts.forEachChild(node, visit);
+  };
+  reached.forEach(visit);
+  return effects;
+};
+
 // A node's place in its file, which tells it apart from every other node.
 const getNodeKey = (node: ts.Node) =>
   `${node.getSourceFile().fileName}:${node.pos}:${node.end}:${node.kind}`;
@@ -15361,7 +15467,7 @@ const summarize = (
     onStack.add(node);
     const found: Effects[] = [];
     const visit = (inner: ts.Node) => {
-      found.push(getEffects(inner, bindings, context));
+      found.push(getNodeEffects(inner, bindings, context));
       ts.forEachChild(inner, visit);
     };
     visit(node);
@@ -15441,7 +15547,7 @@ export const findChanged = (
     }
   };
   const visit = (node: ts.Node) => {
-    const effects = getEffects(node, functions, context);
+    const effects = getNodeEffects(node, functions, context);
     add(effects);
     effects.called.forEach((called) => {
       if (visited.has(called)) return;
@@ -21231,15 +21337,17 @@ export const translateScript = (
   );
   const scope = createStateScope(context);
   if (context.heap !== undefined) context.prelude.add("JavaScript");
-  // A script's vars hold undefined until their declarations run.
+  // A script's vars hold undefined until their declarations run, as do the parameters of a
+  // function that runs once until it runs.
   const hoisted = [...context.variables.keys()].filter((symbol) => {
     const declaration = symbol.valueDeclaration;
     return (
       isLast &&
       declaration !== undefined &&
-      ts.isVariableDeclaration(declaration) &&
-      ts.isVariableDeclarationList(declaration.parent) &&
-      (declaration.parent.flags & ts.NodeFlags.BlockScoped) === 0
+      ((ts.isVariableDeclaration(declaration) &&
+        ts.isVariableDeclarationList(declaration.parent) &&
+        (declaration.parent.flags & ts.NodeFlags.BlockScoped) === 0) ||
+        (ts.isParameter(declaration) && context.onceLocals.has(symbol)))
     );
   });
   // So do the vars that its blocks and loops declare, which aren't state variables.

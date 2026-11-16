@@ -1163,7 +1163,7 @@ const isPureStatement = (statement: ts.Statement): boolean => {
 
 // Whether a node assigns or increments, outside the functions it defines, which only statements
 // that run in order can do before the rest of their expression.
-const isAssigning = (node: ts.Node): boolean =>
+export const isAssigning = (node: ts.Node): boolean =>
   (ts.isBinaryExpression(node) &&
     node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
     node.operatorToken.kind <= ts.SyntaxKind.LastAssignment) ||

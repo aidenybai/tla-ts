@@ -47515,4 +47515,230 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("holds on the heap the arrays and errors that a variable, a return, or a parameter of type any keeps", () => {
+    const getSource = (expected: string) => `
+      const list: any = [1];
+      const alias: any = list;
+      alias.push(2);
+      const typed = [1];
+      const shared: any = typed;
+      shared.push(2, 3);
+      const failure: any = Error("boom");
+      failure.code = 7;
+      let caught: any;
+      try {
+        throw failure;
+      } catch (error) {
+        caught = error;
+      }
+      const seen = [
+        list.length,
+        typed.length,
+        list === alias,
+        caught === failure,
+        caught.code,
+        caught.message,
+        caught instanceof Error,
+        Array.isArray(alias),
+      ].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("2,3,true,true,7,boom,true,true"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects an alias that copies the array", async () => {
+      expect(
+        (await checkModel(getSource("1,1,true,true,7,boom,true,true"))).failure?.message,
+      ).toContain("seen 2,3,true,true,7,boom,true,true");
+    });
+  });
+
+  describe("converts the message of an error that lands where any types the place", () => {
+    const getSource = (expected: string) => `
+      const none: any = undefined;
+      const five: any = 5;
+      const first: any = Error(none);
+      const second: any = new TypeError(five);
+      second.stack = "s";
+      const seen = [
+        first.message,
+        Object.hasOwn(first, "message"),
+        second.message,
+        second.stack,
+        second instanceof TypeError,
+      ].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(",false,5,s,true"))).failure).toBeUndefined();
+    });
+
+    it("rejects an undefined message that the error keeps", async () => {
+      expect((await checkModel(getSource("undefined,true,5,s,true"))).failure?.message).toContain(
+        "seen ,false,5,s,true",
+      );
+    });
+  });
+
+  describe("runs the script's functions that a method of a value of type any may hold", () => {
+    const getSource = (expected: string) => `
+      const counter: any = { count: 1 };
+      counter.add = function (this: any, step: number) {
+        this.count = this.count + step;
+        return this.count;
+      };
+      counter.read = (offset: number) => counter.count + offset;
+      counter.add(2);
+      const total = counter.add(3);
+      const seen = [total, counter.read(10), counter.count].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("6,16,6"))).failure).toBeUndefined();
+    });
+
+    it("rejects a method that runs without its receiver", async () => {
+      expect((await checkModel(getSource("3,13,3"))).failure?.message).toContain("seen 6,16,6");
+    });
+  });
+
+  describe("converts what a compound assignment reads from a property of type any", () => {
+    const getSource = (expected: string) => `
+      const box: any = { n: 1, text: "a" };
+      const one: any = "1";
+      box.n += 2;
+      box.n *= 3;
+      box.text += 1;
+      box.n -= one;
+      box.n **= 2;
+      const seen = [box.n, box.text].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("64,a1"))).failure).toBeUndefined();
+    });
+
+    it("rejects a sum that joins the number as a string", async () => {
+      expect((await checkModel(getSource("64,a"))).failure?.message).toContain("seen 64,a1");
+    });
+  });
+
+  describe("prints what console's error, warn, info, and debug take", () => {
+    const getSource = (expected: number) => `
+      declare const console: {
+        error(...data: unknown[]): void;
+        warn(...data: unknown[]): void;
+        info(...data: unknown[]): void;
+        debug(...data: unknown[]): void;
+      };
+      const box = { size: 2 };
+      console.error("size", box.size);
+      console.warn("warned");
+      console.info("informed", 1);
+      box.size += 1;
+      box.size > 2 && console.debug("debugged", box.size);
+      if (box.size !== ${expected}) throw new Error("seen " + box.size);
+    `;
+
+    it("agrees with Node", async () => {
+      const printed: string[] = [];
+      const result = await check({
+        ...compile(getSource(3)),
+        onPrint: (text) => printed.push(text),
+      });
+      expect(result.failure).toBeUndefined();
+      expect(printed).toEqual([
+        '<<"size", 2>>',
+        '"warned"',
+        '<<"informed", 1>>',
+        '<<"debugged", 3>>',
+      ]);
+    });
+
+    it("rejects a size that the writes skip", async () => {
+      expect((await checkModel(getSource(2))).failure?.message).toContain("seen 3");
+    });
+  });
+
+  describe("holds in the state the locals of a function that runs once", () => {
+    const getSource = (expected: string) => `
+      var loaded: any;
+      function load(): any {
+        if (loaded !== undefined) return loaded.exports;
+        loaded = { exports: {} };
+        (function (this: any, exports: any, module: any) {
+          var hits = 0;
+          function hit() {
+            hits += 1;
+            return hits;
+          }
+          exports.hit = function () {
+            return hit();
+          };
+          module.exports.count = function () {
+            return hits;
+          };
+        }).call(loaded.exports, loaded.exports, loaded);
+        return loaded.exports;
+      }
+      const api: any = {};
+      (function () {
+        var total = 10;
+        api.add = function (step: number) {
+          total = total + step;
+        };
+        api.read = function () {
+          return total;
+        };
+      })();
+      const first = load();
+      const second = load();
+      first.hit();
+      second.hit();
+      api.add(5);
+      const seen = [first === second, first.count(), api.read()].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("true,2,15"))).failure).toBeUndefined();
+    });
+
+    it("rejects a module that runs again for each load", async () => {
+      expect((await checkModel(getSource("false,1,15"))).failure?.message).toContain(
+        "seen true,2,15",
+      );
+    });
+  });
+
+  describe("runs as a statement the operand of a short circuit or a conditional that assigns", () => {
+    const getSource = (expected: string) => `
+      const box: any = { size: 2 };
+      const type: any = {};
+      type.name ||
+        type.displayName ||
+        (Object.defineProperty(type, "label", { value: "x" }), (type.displayName = "n"));
+      box.size === 2 ? (box.size = 3) : (box.size = 4);
+      box.missing ?? (box.missing = 1);
+      box.size === 5 && (box.size = 0);
+      const seen = [type.label, type.displayName, box.size, box.missing].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("x,n,3,1"))).failure).toBeUndefined();
+    });
+
+    it("rejects a conditional that runs both branches", async () => {
+      expect((await checkModel(getSource("x,n,4,1"))).failure?.message).toContain("seen x,n,3,1");
+    });
+  });
 });

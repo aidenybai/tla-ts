@@ -4435,7 +4435,7 @@ export const translateNode = (
     return made;
   }
   const calledErrors = getCalledError(node, context);
-  if (ts.isCallExpression(node) && calledErrors !== undefined) {
+  if (ts.isCallExpression(node) && calledErrors !== undefined && !isHeldError(node, context)) {
     return translateNewError(node, calledErrors, scope, context);
   }
   if (
@@ -4443,7 +4443,8 @@ export const translateNode = (
     !isObjectConversion(node, context) &&
     !(isValueOfCall(node, context) && getNewWrapper(node, context) !== undefined) &&
     getNewClass(node, context) === undefined &&
-    getNewIntl(node, context) === undefined
+    getNewIntl(node, context) === undefined &&
+    !isHeldError(node, context)
   ) {
     return translateCall(node, scope, context, isDefined);
   }

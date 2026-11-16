@@ -394,6 +394,48 @@ export const isReadAsAny = (node: ts.Expression, context: Context) => {
   );
 };
 
+// Whether a script with objects keeps a value in a place that any types: a variable, a return, or a
+// parameter of the script's own function, where code may keep it, change it in place, or compare it
+// by identity without its type telling, so the heap holds every object that lands there. A cast, a
+// branch of a conditional, and the operand that a short circuit or a comma gives only pass the
+// value on to the place around them.
+export const isAnyPlace = (node: ts.Expression, context: Context) => {
+  if (context.heap === undefined) return false;
+  const isPassed = (inner: ts.Node) => {
+    const parent = inner.parent;
+    return (
+      ts.isParenthesizedExpression(parent) ||
+      ts.isAsExpression(parent) ||
+      ts.isTypeAssertionExpression(parent) ||
+      ts.isSatisfiesExpression(parent) ||
+      ts.isNonNullExpression(parent) ||
+      (ts.isConditionalExpression(parent) && parent.condition !== inner) ||
+      (ts.isBinaryExpression(parent) &&
+        (parent.operatorToken.kind === ts.SyntaxKind.BarBarToken ||
+          parent.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken ||
+          parent.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken ||
+          (parent.operatorToken.kind === ts.SyntaxKind.CommaToken && parent.right === inner)))
+    );
+  };
+  const outer = ts.findAncestor(node, (ancestor) => !isPassed(ancestor));
+  const parent = outer?.parent;
+  if (outer === undefined || parent === undefined || !ts.isExpression(outer)) return false;
+  const declaration =
+    ts.isCallExpression(parent) && parent.arguments.some((argument) => argument === outer)
+      ? context.checker.getResolvedSignature(parent)?.getDeclaration()
+      : undefined;
+  const isKept =
+    (ts.isVariableDeclaration(parent) && parent.initializer === outer) ||
+    (ts.isBinaryExpression(parent) &&
+      parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      parent.right === outer) ||
+    ts.isReturnStatement(parent) ||
+    (ts.isArrowFunction(parent) && parent.body === outer) ||
+    (declaration !== undefined && !declaration.getSourceFile().isDeclarationFile);
+  const type = context.checker.getContextualType(outer);
+  return isKept && type !== undefined && (type.flags & ts.TypeFlags.Any) !== 0;
+};
+
 // Whether a value that any, unknown, {}, Object, or a union with an object types may be an object
 // in the heap or another value.
 export const mayBeHeapObject = (node: ts.Expression, context: Context) => {

@@ -1,7 +1,6 @@
 import ts from "@typescript/typescript6";
 import {
   type Context,
-  findNodes,
   type FunctionNode,
   getArgumentsOwner,
   getBuiltInBase,
@@ -48,7 +47,6 @@ import {
   COLLECTIONS,
   getBuiltIn,
   getBuiltInKey,
-  getStoredBuiltIn,
   isBuiltInObject,
   translateBuiltInValue,
   getStringRegExp,
@@ -2627,9 +2625,7 @@ const getStoredStringMethod = (callee: ts.PropertyAccessExpression, context: Con
     (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !==
     0 &&
     getWrittenFunctions(callee, name, context).length === 0 &&
-    findNodes(callee.getSourceFile(), ts.isPropertyAccessExpression).some(
-      (inner) => getStoredBuiltIn(inner, context) === `String.prototype.${name}`,
-    )
+    context.storedBuiltIns.get(callee.getSourceFile())?.has(`String.prototype.${name}`) === true
     ? name
     : undefined;
 };
@@ -3586,18 +3582,7 @@ export const getStoredCall = (node: ts.Node, context: Context): StoredCall | und
   // An object whose prototype is an array that the script makes inherits the array's methods.
   const inherited = hasPrototypeArray(context) ? [`Array.prototype.${callee.name.text}`] : [];
   const builtIns = new Set(
-    [
-      // A built-in's key is its method's name, so only those names are worth resolving.
-      ...findNodes(node.getSourceFile(), ts.isPropertyAccessExpression)
-        .filter(
-          (inner) =>
-            inner.name.text === "toString" ||
-            STORED_ARRAY_CHANGES.has(inner.name.text) ||
-            STORED_ARRAY_READS.has(inner.name.text),
-        )
-        .map((inner) => getStoredBuiltIn(inner, context)),
-      ...inherited,
-    ].filter(isRunnable),
+    [...(context.storedBuiltIns.get(node.getSourceFile()) ?? []), ...inherited].filter(isRunnable),
   );
   return builtIns.size === 0
     ? undefined

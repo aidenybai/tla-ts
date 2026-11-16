@@ -26,7 +26,11 @@ import { getKind } from "./types";
 export interface Variable {
   name: string;
   symbol: ts.Symbol;
-  declaration: ts.VariableDeclaration | ts.ClassDeclaration | ts.FunctionDeclaration;
+  declaration:
+    | ts.VariableDeclaration
+    | ts.ParameterDeclaration
+    | ts.ClassDeclaration
+    | ts.FunctionDeclaration;
 }
 
 // An exported function, which becomes an action, an invariant, or a property its tag names.
@@ -269,6 +273,21 @@ export const readModel = (
     context.variables.set(symbol, identifier(name, getLocation(declared.identifier)));
     return [{ name, symbol, declaration }];
   });
+  // A var or a parameter of a function that runs once holds one value, which the state holds.
+  const onceVariables = [...context.onceLocals].flatMap((symbol) => {
+    const declaration = symbol.valueDeclaration;
+    if (
+      declaration === undefined ||
+      !(ts.isVariableDeclaration(declaration) || ts.isParameter(declaration)) ||
+      !ts.isIdentifier(declaration.name) ||
+      context.variables.has(symbol)
+    ) {
+      return [];
+    }
+    const name = context.names.getFresh(declaration.name.text);
+    context.variables.set(symbol, identifier(name, getLocation(declaration.name)));
+    return [{ name, symbol, declaration }];
+  });
   const isHeapDeclaration = (
     statement: ts.Statement,
   ): statement is ts.ClassDeclaration | ts.FunctionDeclaration =>
@@ -293,7 +312,7 @@ export const readModel = (
     return [{ ...declared, node, body: node.body, tags: tags.get(statement) ?? new Map() }];
   });
   return {
-    variables: [...variables, ...classes],
+    variables: [...variables, ...onceVariables, ...classes],
     // A script makes its functions before it runs, so they come first.
     script: [
       ...imported.filter(
