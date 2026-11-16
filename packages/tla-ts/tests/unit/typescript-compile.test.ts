@@ -47840,4 +47840,25 @@ describe("BigInts", () => {
       ).toThrow("m would share an object that changes in place, so copy it");
     });
   });
+
+  describe("calls a function of another module that a value holds", () => {
+    const path = join(import.meta.dirname, "../fixtures/typescript/imports/namespace.ts");
+    const getSource = (expected: string) => `
+      import { one, two } from "./pickers";
+      const box = { size: 0 };
+      const held = box.size === 0 ? { run: one } : { run: two };
+      const seen = [held.run(), (box.size === 1 ? one : two)()].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await check(compile(getSource("one,two"), path))).failure).toBeUndefined();
+    });
+
+    it("rejects a call of the other function", async () => {
+      expect((await check(compile(getSource("two,one"), path))).failure?.message).toContain(
+        "seen one,two",
+      );
+    });
+  });
 });
