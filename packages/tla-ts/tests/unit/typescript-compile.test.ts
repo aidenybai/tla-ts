@@ -47741,4 +47741,31 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("x,n,4,1"))).failure?.message).toContain("seen x,n,3,1");
     });
   });
+
+  describe("leaves alone the documentation tags that tla-ts doesn't know", () => {
+    const getSource = (expected: string, tag: string) => `
+      /**
+       * Doubles a number.
+       *
+       * @${tag} stable
+       * @category math
+       * @since 1.0.0
+       */
+      export const double = (value: number) => value * 2;
+      const seen = String(double(3));
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("6", "stability"))).failure).toBeUndefined();
+    });
+
+    it("rejects a wrong double", async () => {
+      await expect(checkModel(getSource("5", "stability"))).rejects.toThrow("seen 6");
+    });
+
+    it("rejects a typo of a tag that tla-ts knows", () => {
+      expect(() => compile(getSource("6", "alwasy"))).toThrow("Unknown tag: @alwasy");
+    });
+  });
 });

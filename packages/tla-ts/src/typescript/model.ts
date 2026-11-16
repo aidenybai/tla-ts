@@ -77,13 +77,35 @@ const KNOWN_TAGS = new Set([
   "description",
 ]);
 
+// Whether one typo, as an insertion, a deletion, a substitution, or a swap of two adjacent
+// characters, turns one name into the other.
+const isOneTypoApart = (name: string, other: string) => {
+  const [shorter, longer] = name.length <= other.length ? [name, other] : [other, name];
+  const start = [...shorter].findIndex((character, index) => character !== longer[index]);
+  if (start === -1) return longer.length - shorter.length === 1;
+  if (longer.length - shorter.length === 1) return shorter.slice(start) === longer.slice(start + 1);
+  return (
+    longer.length === shorter.length &&
+    (shorter.slice(start + 1) === longer.slice(start + 1) ||
+      (shorter[start] === longer[start + 1] &&
+        shorter[start + 1] === longer[start] &&
+        shorter.slice(start + 2) === longer.slice(start + 2)))
+  );
+};
+
+// A tag that tla-ts doesn't know is documentation, such as @since, unless it's a typo of one that
+// it knows.
 const getTags = (node: ts.Node) =>
   new Map(
-    ts.getJSDocTags(node).map((tag) => {
-      if (!KNOWN_TAGS.has(tag.tagName.text)) {
-        throw new TlaTypeScriptError(`Unknown tag: @${tag.tagName.text}`, tag);
+    ts.getJSDocTags(node).flatMap((tag): [string, string][] => {
+      const name = tag.tagName.text;
+      if (!KNOWN_TAGS.has(name)) {
+        if ([...KNOWN_TAGS].some((known) => isOneTypoApart(name, known))) {
+          throw new TlaTypeScriptError(`Unknown tag: @${name}`, tag);
+        }
+        return [];
       }
-      return [tag.tagName.text, ts.getTextOfJSDocComment(tag.comment)?.trim() ?? ""];
+      return [[name, ts.getTextOfJSDocComment(tag.comment)?.trim() ?? ""]];
     }),
   );
 
