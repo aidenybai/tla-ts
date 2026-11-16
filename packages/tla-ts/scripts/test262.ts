@@ -1840,7 +1840,16 @@ const MISSING_PROPERTY_ERROR = 2339;
 const UNASSIGNABLE_ERRORS = new Set([2322, 2345]);
 // A value of a type that lacks many of the members of an assignment's target or a call's parameter.
 const MISSING_MEMBERS_ERROR = 2740;
-const UNTYPED_READ_ERRORS = new Set([MISSING_PROPERTY_ERROR, 2551, 7017, 7053]);
+// An element of an array-like object, such as an array or a typed array, of a key that isn't a
+// number.
+const NON_NUMBER_INDEX_ERROR = 7015;
+const UNTYPED_READ_ERRORS = new Set([
+  MISSING_PROPERTY_ERROR,
+  2551,
+  NON_NUMBER_INDEX_ERROR,
+  7017,
+  7053,
+]);
 const UNUSED_OPERAND_ERROR = 2695;
 // A delete of a property that the object's type doesn't make optional.
 const OPTIONAL_DELETE_ERROR = 2790;
@@ -2030,7 +2039,9 @@ const ignoreSoundErrors = () => {
       ) ?? node;
     return visit(sourceFile);
   };
-  const isObjectRead = (node: ts.Node) => {
+  // A typed array's element of a key that isn't a number reads as any where the typed array is one
+  // of several kinds too, as a test's callback for each kind takes it.
+  const isObjectRead = (node: ts.Node, diagnostic: ts.Diagnostic) => {
     const read = ts.findAncestor(
       node,
       (ancestor): ancestor is ts.PropertyAccessExpression | ts.ElementAccessExpression =>
@@ -2039,8 +2050,10 @@ const ignoreSoundErrors = () => {
     const type = read && checker.getTypeAtLocation(read.expression);
     return (
       type !== undefined &&
-      !type.isUnion() &&
-      (type.flags & ts.TypeFlags.Object) !== 0 &&
+      (type.isUnion()
+        ? diagnostic.code === NON_NUMBER_INDEX_ERROR &&
+          type.types.every((member) => TYPED_ARRAY_NAME.test(member.getSymbol()?.getName() ?? ""))
+        : (type.flags & ts.TypeFlags.Object) !== 0) &&
       ts.findAncestor(node, ts.isBindingElement) === undefined
     );
   };
@@ -3528,7 +3541,7 @@ const ignoreSoundErrors = () => {
         (isUnknownArithmetic(node) || isConvertedUnknown(node, diagnostic))) ||
       ((diagnostic.code === UNKNOWN_VALUE_ERROR || diagnostic.code === UNKNOWN_CALLEE_ERROR) &&
         isUnknownAccess(node, diagnostic)) ||
-      (UNTYPED_READ_ERRORS.has(diagnostic.code) && isObjectRead(node)) ||
+      (UNTYPED_READ_ERRORS.has(diagnostic.code) && isObjectRead(node, diagnostic)) ||
       (diagnostic.code === NOT_ITERABLE_ERROR && isPlainObject(node)) ||
       (OPERAND_TYPE_ERRORS.has(diagnostic.code) && isConverted(node, diagnostic)) ||
       // Node may define a global that TypeScript doesn't know, such as print.
