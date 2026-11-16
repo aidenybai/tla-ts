@@ -45532,4 +45532,46 @@ describe("BigInts", () => {
       expect(result.failure?.message).toContain("tla-ts can't follow Node's process object");
     });
   });
+
+  describe("loads the CommonJS modules that a script imports", () => {
+    const getFixture = (name: string) => {
+      const path = join(import.meta.dirname, `../fixtures/typescript/common-js/${name}.ts`);
+      return { path, source: readFileSync(path, "utf8") };
+    };
+
+    it.each(["exports", "cycle"])("agrees with Node on %s", async (name) => {
+      const fixture = getFixture(name);
+      expect((await check(compile(fixture.source, fixture.path))).failure).toBeUndefined();
+    });
+
+    it.each([
+      ["exports", "square,4,true,true", "square,4,true,false"],
+      ["cycle", "true,false,true", "true,true,true"],
+    ])("rejects another outcome of %s", async (name, expected, wrong) => {
+      const fixture = getFixture(name);
+      const result = await check(compile(fixture.source.replace(expected, wrong), fixture.path));
+      expect(result.failure?.message).toContain(`seen ${expected}`);
+    });
+  });
+
+  describe("reads the environment that tla-ts runs in through process.env", () => {
+    const path = join(import.meta.dirname, "../fixtures/typescript/common-js/environment.ts");
+    const source = readFileSync(path, "utf8");
+
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    it("agrees with Node", async () => {
+      vi.stubEnv("NODE_ENV", "development");
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("loads the module of another NODE_ENV", async () => {
+      vi.stubEnv("NODE_ENV", "production");
+      expect((await check(compile(source, path))).failure?.message).toContain(
+        "seen production,object",
+      );
+    });
+  });
 });

@@ -14,6 +14,7 @@ import {
   isHeapSetOrMap,
 } from "./types";
 import { TlaTypeScriptError } from "../errors";
+import { isCommonJsFile } from "./common-js";
 import { createNames, type Names } from "./names";
 import { getBindingNames, getLexicalNames } from "./early-errors";
 import { getKeptReads } from "./narrowing";
@@ -618,9 +619,11 @@ const hasTopLevelAwait = (node: ts.Node): boolean =>
   (!ts.isFunctionLike(node) && (ts.forEachChild(node, hasTopLevelAwait) ?? false));
 
 // A file that imports, exports, or awaits outside a function, which Node runs only as a module.
-// Node runs another file as a script where it strips its types.
+// Node runs another file as a script where it strips its types, and a CommonJS module's code in a
+// function.
 export const isModuleFile = (file: ts.SourceFile) =>
-  file.statements.some(isModuleSyntax) || hasTopLevelAwait(file);
+  !isCommonJsFile(file.fileName) &&
+  (file.statements.some(isModuleSyntax) || hasTopLevelAwait(file));
 
 // A "use strict" directive is in the string literals that start the statements, and later it is
 // only an expression.
