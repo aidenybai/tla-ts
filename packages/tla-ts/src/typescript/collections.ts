@@ -1571,25 +1571,21 @@ export const getArrayIteratorCall = (node: ts.Node, context: Context) => {
   }
   // A typed array's keys(), values(), entries(), or [Symbol.iterator](), whose iterator reads the
   // elements as it steps.
-  const isTyped = TYPED_ARRAYS.has(
-    context.checker.getTypeAtLocation(receiver).getSymbol()?.name ?? "",
+  const receiverType = context.checker.getTypeAtLocation(receiver);
+  const isTyped = (receiverType.isUnion() ? receiverType.types : [receiverType]).every((member) =>
+    TYPED_ARRAYS.has(member.getSymbol()?.name ?? ""),
   );
-  const typedKind = ts.isPropertyAccessExpression(callee)
+  const iteratorKind = ts.isPropertyAccessExpression(callee)
     ? ITERATOR_METHODS.find((method) => method === callee.name.text)
     : callee.argumentExpression.getText() === "Symbol.iterator"
       ? "values"
       : undefined;
-  if (
-    isTyped &&
-    typedKind !== undefined &&
-    !(ts.isForOfStatement(node.parent) && node.parent.expression === node) &&
-    !ts.isSpreadElement(node.parent)
-  ) {
+  if (isTyped && iteratorKind !== undefined && !ts.isSpreadElement(node.parent)) {
     return {
-      kind: typedKind,
+      kind: iteratorKind,
       receiver,
-      key: ts.isElementAccessExpression(callee) ? "@@iterator" : typedKind,
-      path: `%Int8Array.prototype.[[Prototype]]%.${typedKind}`,
+      key: ts.isElementAccessExpression(callee) ? "@@iterator" : iteratorKind,
+      path: `%Int8Array.prototype.[[Prototype]]%.${iteratorKind}`,
     };
   }
   // An arguments object's own @@iterator, which is Array.prototype.values.
@@ -1600,7 +1596,14 @@ export const getArrayIteratorCall = (node: ts.Node, context: Context) => {
   ) {
     return { kind: "values", receiver, key: "@@iterator", path: "Array.prototype.values" };
   }
-  const kind = getKeptIterator(node, context);
+  // A for-of steps the iterator of an array that the heap holds as next reads it.
+  const kind =
+    getKeptIterator(node, context) ??
+    (ts.isForOfStatement(node.parent) &&
+    node.parent.expression === node &&
+    isHeapArray(receiver, context)
+      ? iteratorKind
+      : undefined);
   return kind !== undefined &&
     (isHeapArray(receiver, context) ||
       (ts.isArrayLiteralExpression(receiver) && getKind(receiver, context) === "sequence"))

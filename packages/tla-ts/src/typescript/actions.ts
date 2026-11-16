@@ -15704,7 +15704,8 @@ const translateForOfGenerator = (
   continueWith: (path: Path) => Formula,
 ): Formula => {
   const iterated = getCast(loop.expression);
-  if (writesGeneratorKey(loop.getSourceFile())) {
+  // An array's or a string's iterator checks that it still holds the built-in next as it steps.
+  if (!isBuiltInIteratorType(iterated, context) && writesGeneratorKey(loop.getSourceFile())) {
     throw new TlaTypeScriptError(
       "tla-ts can't iterate a generator where a script may change how it iterates",
       iterated,
@@ -20332,9 +20333,22 @@ export const translateStatements = (
     context.heap !== undefined &&
     (isGeneratorType(statement.expression, context) ||
       (isBuiltInIteratorType(statement.expression, context) &&
-        !ts.isCallExpression(getCast(statement.expression))))
+        !isArrayIteration(statement.expression, context)))
   ) {
-    return translateForOfGenerator(statement, path, context, statementFrame, continueWith);
+    // Each way that the loop ends goes on with what follows, which translates once. Each step
+    // changes the heap, where the iterator holds its place.
+    const changed = getChanged(statement, path, context);
+    const heap = context.heap;
+    return translateJoined(
+      statement,
+      path,
+      context,
+      continueWith,
+      (next) => translateForOfGenerator(statement, path, context, statementFrame, next),
+      heap !== undefined && path.mutable.has(heap) && !changed.includes(heap)
+        ? [...changed, heap]
+        : changed,
+    );
   }
   if (ts.isIterationStatement(statement, false)) {
     return translateLoop(statement, path, context, statementFrame, continueWith);

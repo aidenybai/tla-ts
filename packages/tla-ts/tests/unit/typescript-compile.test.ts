@@ -45597,4 +45597,26 @@ describe("BigInts", () => {
       ).toContain("seen TypeError,TypeError,TypeError,TypeError,1");
     });
   });
+
+  describe("steps the iterator that a for-of makes of a held array or a typed array", () => {
+    const getSource = (expected: string) => `
+      const holed = [1, , 3];
+      const typed = new Int8Array([4, 5]);
+      const seen: string[] = [];
+      for (const key of holed.keys()) seen.push(String(key));
+      for (const value of holed[Symbol.iterator]()) seen.push(String(value));
+      for (const entry of typed.entries()) seen.push(entry.join(":"));
+      if (seen.join() !== "${expected}") throw new Error("seen " + seen.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("0,1,2,1,undefined,3,0:4,1:5"))).failure).toBeUndefined();
+    });
+
+    it("rejects an element that the iterator didn't give", async () => {
+      expect(
+        (await checkModel(getSource("0,1,2,1,undefined,3,0:4,1:6"))).failure?.message,
+      ).toContain("seen 0,1,2,1,undefined,3,0:4,1:5");
+    });
+  });
 });
