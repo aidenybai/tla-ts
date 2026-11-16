@@ -47755,4 +47755,30 @@ describe("BigInts", () => {
       expect((await check(compile(wrong, path))).failure?.message).toContain("seen 5,5,true");
     });
   });
+
+  describe("reads the bindings of a module that an import cycle runs later", () => {
+    const path = join(import.meta.dirname, "../fixtures/typescript/imports/cycling.ts");
+    const source = readFileSync(path, "utf8");
+
+    it("agrees with Node", async () => {
+      await expect(check(compile(source, path))).rejects.toThrow(
+        "tla-ts can't throw the ReferenceError of reading late before its declaration",
+      );
+    });
+
+    // The cycle's other module runs first where the model imports it first.
+    const swapped = source.replace(
+      'import "./cycle-values.ts";\nimport { early } from "./cycle-reader.ts";',
+      'import { early } from "./cycle-reader.ts";\nimport "./cycle-values.ts";',
+    );
+
+    it("reads them where their module runs first", async () => {
+      expect((await check(compile(swapped, path))).failure).toBeUndefined();
+    });
+
+    it("rejects a wrong value where their module runs first", async () => {
+      const wrong = swapped.replace('"3,4"', '"3,5"');
+      await expect(check(compile(wrong, path))).rejects.toThrow("seen 3,4");
+    });
+  });
 });

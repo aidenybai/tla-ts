@@ -518,13 +518,16 @@ export const compile = (
         node.parent !== sourceFile &&
         files.includes(node.parent),
     );
-    const next = effects.filter(
-      (statement) =>
-        run.includes(statement) ||
-        [...getWrittenSymbols(getReached([statement], context))].some((symbol) =>
-          declared.some((state) => state.isChanged && state.symbol === symbol),
-        ),
-    );
+    const next = [
+      ...run,
+      ...effects.filter(
+        (statement) =>
+          !run.includes(statement) &&
+          [...getWrittenSymbols(getReached([statement], context))].some((symbol) =>
+            declared.some((state) => state.isChanged && state.symbol === symbol),
+          ),
+      ),
+    ];
     return next.length > run.length
       ? getImported(next)
       : [...new Set([...run, ...states.map((state) => state.statement), ...classes])].toSorted(
@@ -533,7 +536,39 @@ export const compile = (
             left.pos - right.pos,
         );
   };
-  const imported = getImported(effects.filter((statement) => !ts.isVariableStatement(statement)));
+  // A let, a const, or a class at a file's top level, whose binding is uninitialized until its
+  // declaration runs.
+  const isLexical = (node: ts.Node) =>
+    (ts.isClassDeclaration(node) && ts.isSourceFile(node.parent)) ||
+    (ts.isVariableDeclaration(node) &&
+      ts.isVariableDeclarationList(node.parent) &&
+      (node.parent.flags & ts.NodeFlags.BlockScoped) !== 0 &&
+      ts.isSourceFile(node.parent.parent.parent));
+  // An imported file's statement that reads, itself or through a function that it names, a binding
+  // that a module later in an import cycle declares, or a later statement of its own file, which
+  // throws a ReferenceError as the binding is uninitialized, runs where its file runs.
+  const early = files.flatMap((file) =>
+    file.statements.filter((statement) =>
+      (ts.isVariableStatement(statement)
+        ? statement.declarationList.declarations.flatMap((declaration) =>
+            declaration.initializer === undefined || ts.isFunctionLike(declaration.initializer)
+              ? []
+              : [declaration.initializer],
+          )
+        : isDeclaration(statement) || ts.isExportDeclaration(statement)
+          ? []
+          : [statement]
+      ).some((root) =>
+        getReached([root], context).some((reached) => {
+          const later = order.indexOf(reached.getSourceFile()) - order.indexOf(file);
+          return isLexical(reached) && (later > 0 || (later === 0 && reached.pos >= statement.end));
+        }),
+      ),
+    ),
+  );
+  const imported = getImported([
+    ...new Set([...effects.filter((statement) => !ts.isVariableStatement(statement)), ...early]),
+  ]);
   const roots = [sourceFile, ...imported];
   // A script, with no exported functions, gives the objects and classes it makes, or reads through
   // Object or hasOwnProperty, identity with a heap. The heap binds to the symbol of lib's PropertyKey type,
