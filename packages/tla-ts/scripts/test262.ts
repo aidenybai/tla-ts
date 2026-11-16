@@ -367,6 +367,25 @@ const SHORT_CALLED_BUILT_INS = new Set([
 // declared function shows.
 const LONG_CALLED_BUILT_INS = new Set(["CallableFunction.bind", "Promise.then", "WeakMap.has"]);
 
+// The built-ins, named as SHORT_CALLED_BUILT_INS names them, that tla-ts runs on a null or an
+// undefined that a call passes for an argument of another type, converting or checking it as
+// JavaScript does.
+const NULLISH_TAKING_BUILT_INS = new Set([
+  "Function.bind",
+  "Function.call",
+  "ObjectConstructor.create",
+  "ObjectConstructor.defineProperty",
+  "String.charAt",
+  "String.charCodeAt",
+  "String.concat",
+  "String.indexOf",
+  "String.lastIndexOf",
+  "String.substring",
+  "SymbolConstructor",
+  "TypedArray.set",
+  "isNaN",
+]);
+
 const TYPED_ARRAY_NAME = /^(Big)?(Int|Uint|Float)\d+(Clamped)?Array$/;
 
 const PROGRAM_PATH = "/test262.ts";
@@ -2553,6 +2572,42 @@ const ignoreSoundErrors = () => {
     node.kind === ts.SyntaxKind.FalseKeyword ||
     node.kind === ts.SyntaxKind.NullKeyword ||
     ts.isNumericLiteral(node);
+  // The built-in that a call or a new runs, directly or through call: the interface that declares
+  // it and its method's name, with a typed array's interface as TypedArray and ReadonlyArray as
+  // Array, a constructor as its interface alone, and a global function as its name.
+  const getBuiltInName = (call: ts.CallExpression | ts.NewExpression) => {
+    const callee = skipParentheses(call.expression);
+    const declaration =
+      ts.isCallExpression(call) &&
+      ts.isPropertyAccessExpression(callee) &&
+      callee.name.text === "call"
+        ? checker.getTypeAtLocation(callee.expression).getCallSignatures()[0]?.getDeclaration()
+        : checker.getResolvedSignature(call)?.getDeclaration();
+    if (
+      declaration !== undefined &&
+      ts.isFunctionDeclaration(declaration) &&
+      declaration.getSourceFile().isDeclarationFile
+    ) {
+      return declaration.name?.text;
+    }
+    const owner = declaration?.parent;
+    if (
+      declaration === undefined ||
+      owner === undefined ||
+      !ts.isInterfaceDeclaration(owner) ||
+      !declaration.getSourceFile().isDeclarationFile
+    ) {
+      return undefined;
+    }
+    return [
+      TYPED_ARRAY_NAME.test(owner.name.text)
+        ? "TypedArray"
+        : owner.name.text === "ReadonlyArray"
+          ? "Array"
+          : owner.name.text,
+      ...(declaration.name === undefined ? [] : [declaration.name.getText()]),
+    ].join(".");
+  };
   // A call or a new of a built-in, directly or through call, with fewer arguments than its type
   // takes, which passes undefined for the others as JavaScript does, where SHORT_CALLED_BUILT_INS
   // lists it, or with more, each a literal or a declared function's name, where
@@ -2570,30 +2625,8 @@ const ignoreSoundErrors = () => {
         (ancestor.arguments?.length ?? 0) === given,
     );
     if (call === undefined || (call.arguments ?? []).some(ts.isSpreadElement)) return false;
-    const callee = skipParentheses(call.expression);
-    const declaration =
-      ts.isCallExpression(call) &&
-      ts.isPropertyAccessExpression(callee) &&
-      callee.name.text === "call"
-        ? checker.getTypeAtLocation(callee.expression).getCallSignatures()[0]?.getDeclaration()
-        : checker.getResolvedSignature(call)?.getDeclaration();
-    const owner = declaration?.parent;
-    if (
-      declaration === undefined ||
-      owner === undefined ||
-      !ts.isInterfaceDeclaration(owner) ||
-      !declaration.getSourceFile().isDeclarationFile
-    ) {
-      return false;
-    }
-    const built = [
-      TYPED_ARRAY_NAME.test(owner.name.text)
-        ? "TypedArray"
-        : owner.name.text === "ReadonlyArray"
-          ? "Array"
-          : owner.name.text,
-      ...(declaration.name === undefined ? [] : [declaration.name.getText()]),
-    ].join(".");
+    const built = getBuiltInName(call);
+    if (built === undefined) return false;
     const extra = (call.arguments ?? []).slice(Number(counts[3] ?? counts[2]));
     return given < Number(counts[2])
       ? SHORT_CALLED_BUILT_INS.has(built)
@@ -2684,6 +2717,23 @@ const ignoreSoundErrors = () => {
                       .find((child) => child.kind === ts.SyntaxKind.FunctionKeyword),
                 )),
           )),
+    );
+  };
+  // A null or an undefined that a call passes to a built-in that NULLISH_TAKING_BUILT_INS lists,
+  // which the error is at.
+  const isNullishBuiltInCall = (diagnostic: ts.Diagnostic) => {
+    const call = getErroredCall(diagnostic);
+    const value = call?.arguments?.find(
+      (argument) =>
+        argument.getStart() === diagnostic.start &&
+        argument.getEnd() === (diagnostic.start ?? 0) + (diagnostic.length ?? 0),
+    );
+    return (
+      call !== undefined &&
+      value !== undefined &&
+      !(call.arguments ?? []).some(ts.isSpreadElement) &&
+      isEveryType(value, ts.TypeFlags.Null | ts.TypeFlags.Undefined) &&
+      NULLISH_TAKING_BUILT_INS.has(getBuiltInName(call) ?? "")
     );
   };
   // A new of a typed array's constructor, which tla-ts runs on its arguments' values: it converts
@@ -3529,7 +3579,8 @@ const ignoreSoundErrors = () => {
           isSubarrayCall(diagnostic) ||
           isSetLikeArrayCall(diagnostic) ||
           isTypedArrayCallback(diagnostic) ||
-          isTypedArrayNew(diagnostic))) ||
+          isTypedArrayNew(diagnostic) ||
+          isNullishBuiltInCall(diagnostic))) ||
       (diagnostic.code === NO_OVERLOAD_ERROR && isIteratedEntriesCall(diagnostic)) ||
       ((CONVERTED_ARGUMENT_ERRORS.has(diagnostic.code) || diagnostic.code === 2322) &&
         isRawTemplate(diagnostic)) ||
