@@ -2268,7 +2268,8 @@ const ignoreSoundErrors = () => {
     );
   };
   // An operation on objects that the test declares, wrappers, and primitives, which tla-ts
-  // converts.
+  // converts, and on operands of type never, such as a call of a function that only throws, which
+  // give no value to convert.
   const isConverted = (node: ts.Node, diagnostic: ts.Diagnostic) => {
     const start = diagnostic.start ?? 0;
     const end = start + (diagnostic.length ?? 0);
@@ -2291,7 +2292,11 @@ const ignoreSoundErrors = () => {
       (isCompound ||
         !(kind >= ts.SyntaxKind.FirstAssignment && kind <= ts.SyntaxKind.LastAssignment)) &&
       operands.every(
-        (operand) => isPlainObject(operand) || isWrapper(operand) || isPrimitive(operand),
+        (operand) =>
+          isPlainObject(operand) ||
+          isWrapper(operand) ||
+          isPrimitive(operand) ||
+          (checker.getTypeAtLocation(operand).flags & ts.TypeFlags.Never) !== 0,
       )
     );
   };
