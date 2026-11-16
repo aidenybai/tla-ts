@@ -75,6 +75,24 @@ const CODE_EXTENSIONS = new Set<string>([
   ts.Extension.Json,
 ]);
 
+// A specifier that only types read, which a package's declarations give where it has them.
+const isTypeImport = (literal: ts.StringLiteralLike) => {
+  const parent = literal.parent;
+  const clause = ts.isImportDeclaration(parent) ? parent.importClause : undefined;
+  const bindings = clause?.namedBindings;
+  return (
+    (ts.isLiteralTypeNode(parent) && ts.isImportTypeNode(parent.parent)) ||
+    (ts.isExportDeclaration(parent) && parent.isTypeOnly) ||
+    (clause !== undefined &&
+      (clause.isTypeOnly ||
+        (clause.name === undefined &&
+          bindings !== undefined &&
+          ts.isNamedImports(bindings) &&
+          bindings.elements.length > 0 &&
+          bindings.elements.every((element) => element.isTypeOnly))))
+  );
+};
+
 // The declaration of JSON's modules, which TypeScript reads where it finds no other: a JSON file's
 // value, which tla-ts reads as any, as JSON.parse gives it.
 const JSON_DECLARATIONS = {
@@ -297,7 +315,10 @@ export const createProgram = (
       if (resolved?.resolvedModule?.extension === ts.Extension.Json) {
         return { resolvedModule: undefined };
       }
-      if (resolved !== undefined && CODE_EXTENSIONS.has(resolved.resolvedModule?.extension ?? "")) {
+      if (
+        resolved !== undefined &&
+        (CODE_EXTENSIONS.has(resolved.resolvedModule?.extension ?? "") || isTypeImport(literal))
+      ) {
         return resolved;
       }
       const found = resolveModule(literal, containingFile);
