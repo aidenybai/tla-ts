@@ -2,7 +2,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import ts from "@typescript/typescript6";
 import { check, type CheckResult, formatValue } from "../../src";
-import { describe, expect, it } from "vite-plus/test";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { printModule } from "../../src/printer";
 import { compile } from "../../src/typescript/compile";
 import { printRegions } from "../../src/typescript/regions";
@@ -45493,6 +45493,43 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("none,2,3,null|false"))).failure?.message).toContain(
         "seen 1,2,3,null|false",
       );
+    });
+  });
+
+  describe("reads process.env and Node's globals as Node gives them", () => {
+    const getSource = (expected: string) => `
+      // @ts-ignore
+      const mode = process.env.TLA_TS_MODE;
+      // @ts-ignore
+      const kinds = [typeof process, typeof setImmediate, typeof window].join();
+      const seen = [mode, kinds].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    it("agrees with Node", async () => {
+      vi.stubEnv("TLA_TS_MODE", "checked");
+      expect(
+        (await checkModel(getSource("checked,object,function,undefined"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects a variable that the environment doesn't hold", async () => {
+      vi.stubEnv("TLA_TS_MODE", "checked");
+      expect(
+        (await checkModel(getSource(",object,function,undefined"))).failure?.message,
+      ).toContain("seen checked,object,function,undefined");
+    });
+
+    it("stops where a script reads Node's process object otherwise", async () => {
+      const result = await checkModel(`
+        // @ts-ignore
+        const version = process.version;
+      `);
+      expect(result.failure?.message).toContain("tla-ts can't follow Node's process object");
     });
   });
 });

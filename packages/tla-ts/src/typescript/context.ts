@@ -1,7 +1,7 @@
 import ts from "@typescript/typescript6";
 import type { Expression, OperatorDefinition, OperatorParam, SourceLocation } from "../ast";
 import { getTypeNames, JAVASCRIPT_OPERATORS } from "./javascript";
-import { BUILT_INS, HOST_GLOBAL_KEYS } from "./built-ins";
+import { BUILT_INS, HOST_GLOBAL_KEYS, NODE_GLOBALS } from "./built-ins";
 import { getErrorClass, isNativeErrorName, isPrototypeRead, NATIVE_ERRORS } from "./exceptions";
 import { type Collection, getBuiltIn, isHeldBuiltInObject } from "./intrinsics";
 import {
@@ -803,9 +803,12 @@ export const getArgumentsOwner = (node: ts.Node, checker: ts.TypeChecker) => {
   return symbol === undefined || symbol.declarations !== undefined ? undefined : owner;
 };
 
-// A name that no declaration binds, whose reading throws a ReferenceError.
+// A name that no declaration binds, whose reading throws a ReferenceError, but for a global that
+// Node gives.
 export const isUnresolved = (node: ts.Node, context: Context): node is ts.Identifier =>
-  ts.isIdentifier(node) && context.checker.getSymbolAtLocation(node) === undefined;
+  ts.isIdentifier(node) &&
+  context.checker.getSymbolAtLocation(node) === undefined &&
+  !NODE_GLOBALS.has(node.text);
 
 // The names that an assignment target writes, through the elements of its patterns.
 const getAssignedNames = (target: ts.Expression): ts.Expression[] => {

@@ -68,6 +68,7 @@ import {
   isDeclarationOnly,
   getClassStop,
 } from "./context";
+import { NODE_GLOBALS } from "./built-ins";
 import { TlaTypeScriptError } from "../errors";
 import { translateJsonCall } from "./json";
 import {
@@ -2658,8 +2659,45 @@ export const readGlobal = (name: ts.Identifier, value: Expression, context: Cont
     value,
   );
 
+// Node's process object, which the host gives, where no code of the script's declares process.
+const isProcess = (node: ts.Expression, context: Context) =>
+  ts.isIdentifier(node) &&
+  node.text === "process" &&
+  (getSymbol(node, context.checker)?.declarations ?? []).every(
+    (declaration) => declaration.getSourceFile().isDeclarationFile,
+  );
+
+// The name of the environment variable that a read of process.env names. tla-ts reads the
+// environment that it runs in, where Node would run the script, and gives the read its value.
+const getEnvironmentVariable = (node: ts.Expression, context: Context) => {
+  if (!ts.isPropertyAccessExpression(node) && !ts.isElementAccessExpression(node)) return undefined;
+  const environment = node.expression;
+  if (
+    !ts.isPropertyAccessExpression(environment) ||
+    environment.name.text !== "env" ||
+    !isProcess(environment.expression, context)
+  ) {
+    return undefined;
+  }
+  return ts.isPropertyAccessExpression(node)
+    ? node.name.text
+    : ts.isStringLiteralLike(node.argumentExpression)
+      ? node.argumentExpression.text
+      : undefined;
+};
+
 const translateIdentifier = (node: ts.Identifier, scope: Scope, context: Context) => {
   if (node.text === "undefined") return getUndefined(context);
+  if (NODE_GLOBALS.has(node.text) && getSymbol(node, context.checker) === undefined) {
+    return apply("Assert", [
+      boolean(false),
+      string(
+        node.text === "process"
+          ? "tla-ts can't follow Node's process object but where it reads process.env"
+          : `tla-ts can't read Node's global ${node.text}`,
+      ),
+    ]);
+  }
   if (isDeletedGlobal(node, context)) return getUnresolvable(context);
   const namespace = getNamespaceName(node, context);
   if (namespace !== undefined) return getNamespaceRef(namespace, context);
@@ -4278,6 +4316,11 @@ export const translateNode = (
     return translateElements(node.elements, scope, context, node);
   }
   if (ts.isObjectLiteralExpression(node)) return translateObjectLiteral(node, scope, context);
+  const variable = getEnvironmentVariable(node, context);
+  if (variable !== undefined) {
+    const value = typeof process === "undefined" ? undefined : process.env[variable];
+    return value === undefined ? getUndefined(context) : string(value);
+  }
   if (ts.isPropertyAccessExpression(node)) {
     const read = translatePropertyAccess(node, scope, context);
     // A property that the type doesn't declare comes from an index signature, which may lack it.
