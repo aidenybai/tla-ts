@@ -246,15 +246,6 @@ export const compile = (
       ? imported
       : undefined;
   };
-  // tla-ts runs JavaScript only as CommonJS.
-  const rejectEsModule = (file: ts.SourceFile, node: ts.Node) => {
-    if (isJavaScriptFile(file.fileName) && !isCommonJsFile(file)) {
-      throw new TlaTypeScriptError(
-        `tla-ts can't load ${file.fileName}, which isn't a CommonJS module`,
-        node,
-      );
-    }
-  };
   const load = (file: ts.SourceFile) => {
     if (visited.has(file)) return;
     const started = new Set(visited);
@@ -263,7 +254,12 @@ export const compile = (
       rejectWrapperUses(file, program.checker);
       getRequires(file, program.checker).forEach((entry) => {
         entry.requires.forEach((required) => {
-          rejectEsModule(required.file, required.call);
+          if (!isCommonJsFile(required.file)) {
+            throw new TlaTypeScriptError(
+              "tla-ts can't require an ES module, which Node gives as an object of its exports",
+              required.call,
+            );
+          }
           if (required.isCertain) {
             load(required.file);
             return;
@@ -297,7 +293,6 @@ export const compile = (
           );
         }
         const imported = getImportedFile(statement);
-        if (imported !== undefined) rejectEsModule(imported, statement);
         if (imported !== undefined && isCommonJsFile(imported)) {
           rejectCommonJsImport(statement, imported);
         }

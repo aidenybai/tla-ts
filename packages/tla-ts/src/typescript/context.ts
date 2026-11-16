@@ -15,7 +15,7 @@ import {
   isHeapSetOrMap,
 } from "./types";
 import { TlaTypeScriptError } from "../errors";
-import { getImportedCommonJs, getWrapperName, isCommonJsFile } from "./common-js";
+import { getImportedCommonJs, getWrapperName, isCommonJsFile, isJavaScriptFile } from "./common-js";
 import { createNames, type Names } from "./names";
 import { getBindingNames, getLexicalNames } from "./early-errors";
 import { getKeptReads } from "./narrowing";
@@ -667,9 +667,11 @@ const hasTopLevelAwait = (node: ts.Node): boolean =>
 
 // A file that imports, exports, or awaits outside a function, which Node runs only as a module.
 // Node runs another file as a script where it strips its types, and a CommonJS module's code in a
-// function.
+// function. A JavaScript file is a module where Node loads it as one.
 export const isModuleFile = (file: ts.SourceFile) =>
-  !isCommonJsFile(file) && (file.statements.some(isModuleSyntax) || hasTopLevelAwait(file));
+  isJavaScriptFile(file.fileName)
+    ? !isCommonJsFile(file)
+    : file.statements.some(isModuleSyntax) || hasTopLevelAwait(file);
 
 // A "use strict" directive is in the string literals that start the statements, and later it is
 // only an expression.

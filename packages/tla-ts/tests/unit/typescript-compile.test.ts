@@ -47742,27 +47742,53 @@ describe("BigInts", () => {
     });
   });
 
+  describe("loads JavaScript's ES modules, as TypeScript's", () => {
+    const getFixture = (name: string) => {
+      const path = join(import.meta.dirname, `../fixtures/typescript/es-modules/${name}.ts`);
+      return { path, source: readFileSync(path, "utf8") };
+    };
+
+    it.each(["packages", "cycle"])("agrees with Node on %s", async (name) => {
+      const fixture = getFixture(name);
+      expect((await check(compile(fixture.source, fixture.path))).failure).toBeUndefined();
+    });
+
+    it.each([
+      [
+        "packages",
+        "import,2,true,undefined,counter+index",
+        "import,1,true,undefined,counter+index",
+      ],
+      ["cycle", "true,false,true,undefined,2", "true,false,true,object,2"],
+    ])("rejects another outcome of %s", async (name, expected, wrong) => {
+      const fixture = getFixture(name);
+      const result = await check(compile(fixture.source.replace(expected, wrong), fixture.path));
+      expect(result.failure?.message).toContain(`seen ${expected}`);
+    });
+  });
+
   describe("runs CommonJS modules as Node wraps them, from their own JavaScript", () => {
     const getFixture = (name: string) => {
       const path = join(import.meta.dirname, `../fixtures/typescript/common-js/${name}`);
       return { path, source: readFileSync(path, "utf8") };
     };
 
-    it.each(["wrapped.ts"])("agrees with Node on %s", async (name) => {
+    it.each(["wrapped.ts", "mixed.ts"])("agrees with Node on %s", async (name) => {
       const fixture = getFixture(name);
       expect((await check(compile(fixture.source, fixture.path))).failure).toBeUndefined();
     });
 
-    it.each([["wrapped.ts", "wrapped:2,inner,true,2", "wrapped:1,inner,true,2"]])(
-      "rejects another outcome of %s",
-      async (name, expected, wrong) => {
-        const fixture = getFixture(name);
-        const result = await check(compile(fixture.source.replace(expected, wrong), fixture.path));
-        expect(result.failure?.message).toContain(`seen ${expected}`);
-      },
-    );
+    it.each([
+      ["wrapped.ts", "wrapped:2,inner,true,2", "wrapped:1,inner,true,2"],
+      ["mixed.ts", "legacy,require,import", "legacy,import,import"],
+    ])("rejects another outcome of %s", async (name, expected, wrong) => {
+      const fixture = getFixture(name);
+      const result = await check(compile(fixture.source.replace(expected, wrong), fixture.path));
+      expect(result.failure?.message).toContain(`seen ${expected}`);
+    });
 
     it.each([
+      ["requires-esm.ts", "tla-ts can't require an ES module"],
       ["late.ts", "tla-ts can't tell when this require loads its module"],
       ["names.ts", "tla-ts can't import other than the default export of a CommonJS module"],
     ])("stops where %s loads a module as tla-ts doesn't follow", (name, message) => {
