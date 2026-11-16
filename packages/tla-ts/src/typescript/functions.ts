@@ -1281,11 +1281,14 @@ export const translateBody = (body: ts.ConciseBody, scope: Scope, context: Conte
   const owner = body.parent;
   throwOnUnentered(owner, scope, context);
   if (!ts.isBlock(body)) return translateExpression(body, scope, context);
-  const literal = body.statements
+  // The objects that the body makes, as a literal or a description does, apart from functions.
+  const made = body.statements
     .flatMap((statement) => getAllocated(statement, context))
-    .find((node) => ts.isObjectLiteralExpression(node) && !scope.allocated.has(node));
-  const isMaking =
-    literal !== undefined && ts.isFunctionLike(owner) && isValueReturn(owner, context);
+    .filter(
+      (node) => !ts.isFunctionLike(node) && !ts.isClassLike(node) && !scope.allocated.has(node),
+    );
+  const literal = made.find(ts.isObjectLiteralExpression);
+  const isMaking = made.length > 0 && ts.isFunctionLike(owner) && isValueReturn(owner, context);
   // An operator that converts an operand, which may run its valueOf or toString, runs as a
   // statement does.
   const isConverting =

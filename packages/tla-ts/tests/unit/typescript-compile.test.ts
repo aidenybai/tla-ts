@@ -49102,4 +49102,42 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("B2,B2"))).failure?.message).toContain("names A1,B2");
     });
   });
+
+  describe("describes properties in a module, as a function that an expression calls may", () => {
+    const getSource = (expected: string) => `
+      export const isWritable = (): boolean => {
+        const described = Object.getOwnPropertyDescriptor(Error, "stackTraceLimit");
+        if (described === undefined) return Object.isExtensible(Error);
+        return Object.hasOwn(described, "writable")
+          ? described.writable === true
+          : described.set !== undefined;
+      };
+      const isLimitWritable = isWritable();
+      const length = Object.getOwnPropertyDescriptor(Error, "length")!;
+      const all = Object.getOwnPropertyDescriptors({ a: 1, get b() { return 2; } });
+      const seen = [
+        isLimitWritable,
+        length.value,
+        length.writable,
+        length.enumerable,
+        length.configurable,
+        all.a.value,
+        typeof all.b.get,
+        "value" in all.b,
+      ].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("true,1,false,false,true,1,function,false"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects another description", async () => {
+      expect(
+        (await checkModel(getSource("true,1,true,false,true,1,function,false"))).failure?.message,
+      ).toContain("seen true,1,false,false,true,1,function,false");
+    });
+  });
 });
