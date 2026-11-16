@@ -47913,4 +47913,173 @@ describe("BigInts", () => {
       expect(result.distinctStates).toBe(4);
     });
   });
+
+  describe("imports a built-in module's types without loading the module", () => {
+    const path = join(import.meta.dirname, "../fixtures/typescript/common-js/typing.ts");
+    const source = readFileSync(path, "utf8");
+
+    it("agrees with Node", async () => {
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      await expect(check(compile(source.replace('"1,two"', '"1,three"'), path))).rejects.toThrow(
+        "seen 1,two",
+      );
+    });
+  });
+
+  describe("reads an export through a cast of a module's namespace object", () => {
+    const path = join(import.meta.dirname, "../fixtures/typescript/imports/casting.ts");
+    const source = readFileSync(path, "utf8");
+
+    it("agrees with Node", async () => {
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects another export", async () => {
+      const wrong = source.replace('"3,TC39,3"', '"3,TC39,TC39"');
+      expect((await check(compile(wrong, path))).failure?.message).toContain("seen 3,TC39,3");
+    });
+  });
+
+  describe("runs a script whose declarations carry documentation tags", () => {
+    const getSource = (expected: string) => `
+      /**
+       * The most that the script adds.
+       *
+       * @internal
+       * @since 1.0
+       */
+      const limit = 3;
+      /** @typeParam T - what the list holds */
+      interface Holder<T> {
+        items: T[];
+      }
+      const holder: Holder<number> = { items: [] };
+      for (let index = 0; index < limit; index++) holder.items.push(index);
+      const seen = holder.items.join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("0,1,2"))).failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      expect((await checkModel(getSource("0,1"))).failure?.message).toContain("seen 0,1,2");
+    });
+  });
+
+  describe("shares the arrays that fields hold where functions change them in place", () => {
+    const getSource = (expected: string) => `
+      interface Box {
+        items: number[];
+      }
+      interface Shelf {
+        box: Box;
+        label: string;
+      }
+      const fill = (box: Box) => {
+        box.items.push(box.items.length);
+      };
+      const makeShelf = (label: string): Shelf => ({ box: { items: [] }, label });
+      const shelf = makeShelf("top");
+      const other: Box = { items: [5] };
+      fill(shelf.box);
+      const alias = shelf.box.items;
+      fill(shelf.box);
+      fill(other);
+      const copy = { ...other };
+      fill(copy);
+      const seen = [alias.join(), shelf.box.items.join(), other.items.join(), copy.items === other.items].join(";");
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("0,1;0,1;5,1,2;true"))).failure).toBeUndefined();
+    });
+
+    it("rejects an alias that misses a later change", async () => {
+      expect((await checkModel(getSource("0;0,1;5,1,2;true"))).failure?.message).toContain(
+        "seen 0,1;0,1;5,1,2;true",
+      );
+    });
+  });
+
+  describe("compiles the code of the projects that a project references", () => {
+    const path = join(import.meta.dirname, "../fixtures/typescript/projects/app/main.ts");
+    const source = readFileSync(path, "utf8");
+
+    it("agrees with Node", async () => {
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      const wrong = source.replace('"12"', '"7"');
+      await expect(check(compile(wrong, path))).rejects.toThrow("seen 12");
+    });
+  });
+
+  describe("reads an enum as the object that TypeScript makes of it", () => {
+    const path = join(import.meta.dirname, "../fixtures/typescript/imports/enumerating.ts");
+    const source = readFileSync(path, "utf8");
+
+    it("agrees with Node", async () => {
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects an object without the names that its values give", async () => {
+      const wrong = source.replace("0,5,6,Red,Green,Blue;", "Red,Green,Blue;");
+      expect((await check(compile(wrong, path))).failure?.message).toContain(
+        "seen 0,5,6,Red,Green,Blue;",
+      );
+    });
+  });
+
+  describe("gives typeof of the globals that Node gives where Node's types declare them", () => {
+    const path = join(import.meta.dirname, "../fixtures/typescript/common-js/typing.ts");
+    const getSource = (expected: string) => `/// <reference types="node" />
+      const seen = [typeof process, typeof Buffer, typeof URL].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await check(compile(getSource("object,function,function"), path))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects another type", async () => {
+      await expect(check(compile(getSource("object,object,function"), path))).rejects.toThrow(
+        "seen object,function,function",
+      );
+    });
+  });
+
+  describe("has none of the variables of CommonJS's code in an ES module", () => {
+    const path = join(import.meta.dirname, "../fixtures/typescript/common-js/absent.ts");
+    const source = readFileSync(path, "utf8");
+
+    it("agrees with Node", async () => {
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects a require that an ES module has", async () => {
+      const wrong = source.replace(
+        "undefined,undefined,undefined false",
+        "function,undefined,undefined true",
+      );
+      await expect(check(compile(wrong, path))).rejects.toThrow(
+        "seen object,function,undefined,undefined,undefined false",
+      );
+    });
+
+    it("stops where an ES module reads require", async () => {
+      const read = `${source}\nif (require === undefined) throw new Error("none");`;
+      await expect(check(compile(read, path))).rejects.toThrow(
+        "tla-ts can't throw the ReferenceError of reading require, which an ES module doesn't have",
+      );
+    });
+  });
 });

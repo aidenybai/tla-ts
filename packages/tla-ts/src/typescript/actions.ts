@@ -126,6 +126,7 @@ import {
   isPlainWrite,
   isUnresolvable,
   isHeapClass,
+  isHeapEnum,
   isHeapFunction,
   isMethodCall,
   isSuperAccess,
@@ -20680,6 +20681,20 @@ export const translateStatements = (
     );
   }
 
+  // An enum that code reads as an object binds its name to the object that the heap holds.
+  if (isHeapEnum(statement, context)) {
+    const symbol = getSymbol(statement.name, context.checker);
+    return allocate(statement, path, context, (inner) => {
+      const ref = inner.scope.allocated.get(statement);
+      if (symbol === undefined || ref === undefined) {
+        throw new TlaTypeScriptError("tla-ts can't make this enum's object", statement);
+      }
+      return continueWith({
+        ...inner,
+        scope: { ...inner.scope, bindings: new Map([...inner.scope.bindings, [symbol, ref]]) },
+      });
+    });
+  }
   if (
     (ts.isClassDeclaration(statement) && isHeapClass(statement, context)) ||
     (ts.isFunctionDeclaration(statement) && isHeapFunction(statement, context))

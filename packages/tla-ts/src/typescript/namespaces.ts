@@ -9,6 +9,7 @@ import {
   isInertValue,
   isScript,
   isWrittenBy,
+  skipCasts,
 } from "./context";
 import { NATIVE_ERRORS } from "./exceptions";
 import { getBuiltIn } from "./intrinsics";
@@ -128,7 +129,13 @@ const getModule = (symbol: ts.Symbol | undefined, checker: ts.TypeChecker) => {
 // other than to read an export through it.
 export const getNamespaceRead = (node: ts.Identifier, checker: ts.TypeChecker) => {
   const parent = node.parent;
+  const getCast = (inner: ts.Node): ts.Node =>
+    skipCasts(inner.parent as ts.Expression) === inner.parent ? inner : getCast(inner.parent);
+  const cast = getCast(node);
   return ts.isNamespaceImport(parent) ||
+    (ts.isPropertyAccessExpression(cast.parent) &&
+      cast.parent.expression === cast &&
+      ts.isIdentifier(cast.parent.name)) ||
     ts.isNamespaceExport(parent) ||
     ts.isImportSpecifier(parent) ||
     ts.isImportClause(parent) ||

@@ -4,6 +4,8 @@ import {
   type Context,
   getSymbol,
   getUndefined,
+  isAbsentModuleVariable,
+  isNodeGlobal,
   isAssignedElsewhere,
   isImplicitGlobal,
   isUnresolvable,
@@ -8657,6 +8659,7 @@ export const translateTypeOf = (
   context: Context,
 ): Expression => {
   const read = skipCasts(node.expression);
+  if (ts.isIdentifier(read) && isAbsentModuleVariable(read, context)) return string("undefined");
   // A write through an arguments object may give a parameter that it maps a value of another type.
   const mapped = ts.isIdentifier(read) ? getMappedParameter(read, scope, context) : undefined;
   if (mapped !== undefined) return useJavaScript("TypeOfIn", [mapped.heap, mapped.raw], context);
@@ -8702,7 +8705,10 @@ const translateTypeOfValue = (node: ts.TypeOfExpression, scope: Scope, context: 
     : node.expression;
   // A name that no binding has is undefined to typeof, which reads it without throwing, but for
   // one of the globals that Node gives.
-  if (ts.isIdentifier(read) && getSymbol(read, context.checker) === undefined) {
+  if (
+    ts.isIdentifier(read) &&
+    (getSymbol(read, context.checker) === undefined || isNodeGlobal(read, context))
+  ) {
     return string(NODE_GLOBALS.get(read.text) ?? "undefined");
   }
   // A binding that a name has throws before its declaration runs, though typeof only reads it.

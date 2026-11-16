@@ -38,6 +38,8 @@ import {
   isHeldErrorName,
   getArgumentsOwner,
   isModuleFile,
+  isAbsentModuleVariable,
+  isNodeGlobal,
   isStrictCode,
   getSharedDeclaration,
   getStaticTruth,
@@ -72,7 +74,6 @@ import {
   isDeclarationOnly,
   getClassStop,
 } from "./context";
-import { NODE_GLOBALS } from "./built-ins";
 import { TlaTypeScriptError } from "../errors";
 import { translateJsonCall } from "./json";
 import {
@@ -2730,7 +2731,7 @@ const getEnvironmentVariable = (node: ts.Expression, context: Context) => {
 
 const translateIdentifier = (node: ts.Identifier, scope: Scope, context: Context) => {
   if (node.text === "undefined") return getUndefined(context);
-  if (NODE_GLOBALS.has(node.text) && getSymbol(node, context.checker) === undefined) {
+  if (isNodeGlobal(node, context)) {
     return apply("Assert", [
       boolean(false),
       string(
@@ -2857,6 +2858,14 @@ const translateIdentifier = (node: ts.Identifier, scope: Scope, context: Context
       useJavaScript("Get", [heap, identifier("GlobalObject"), string(node.text)], context),
       missing,
     );
+  }
+  if (isAbsentModuleVariable(node, context)) {
+    return apply("Assert", [
+      boolean(false),
+      string(
+        `tla-ts can't throw the ReferenceError of reading ${node.text}, which an ES module doesn't have`,
+      ),
+    ]);
   }
   if (symbol !== undefined && isDeclarationOnly(symbol)) {
     throw new TlaTypeScriptError(

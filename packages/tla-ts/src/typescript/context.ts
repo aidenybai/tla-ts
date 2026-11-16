@@ -191,6 +191,8 @@ export interface Context {
   // The modules whose namespace objects a script reads, which the heap holds from the start, after
   // the generator prototypes, and which take the modules' exports once the modules have run.
   namespaces: ReadonlyMap<ts.SourceFile, Namespace>;
+  // The enums of the files' top levels that code reads as objects, other than to read a member.
+  valueEnums: ReadonlySet<ts.EnumDeclaration>;
   // The sites of the tagged templates other than String.raw's, each of whose template object and
   // its raw strings' array the heap holds from the start, after the namespace objects.
   templateSites: readonly ts.TaggedTemplateExpression[];
@@ -582,6 +584,7 @@ export const createContext = (
     implicitGlobals,
     generatorPrototypes: new Map(),
     namespaces: new Map(),
+    valueEnums: new Set(),
     templateSites: [],
     hasInheritedElements: false,
     characters: new Set(),
@@ -668,6 +671,27 @@ const hasTopLevelAwait = (node: ts.Node): boolean =>
 export const isModuleFile = (file: ts.SourceFile) =>
   !isCommonJsFile(file.fileName) &&
   (file.statements.some(isModuleSyntax) || hasTopLevelAwait(file));
+
+// The variables that Node gives a CommonJS module's code, which an ES module doesn't have, though
+// Node's types declare them.
+const COMMON_JS_VARIABLES = new Set(["require", "module", "exports", "__filename", "__dirname"]);
+
+// A read of a global that Node gives, which nothing but declarations, such as Node's types, declares.
+export const isNodeGlobal = (node: ts.Identifier, context: Context) => {
+  const symbol = getSymbol(node, context.checker);
+  return NODE_GLOBALS.has(node.text) && (symbol === undefined || isDeclarationOnly(symbol));
+};
+
+// A read in an ES module of a variable that only Node's types declare for a CommonJS module.
+export const isAbsentModuleVariable = (node: ts.Identifier, context: Context) => {
+  const declarations = getSymbol(node, context.checker)?.declarations ?? [];
+  return (
+    COMMON_JS_VARIABLES.has(node.text) &&
+    declarations.length > 0 &&
+    declarations.every((declaration) => declaration.getSourceFile().isDeclarationFile) &&
+    isModuleFile(node.getSourceFile())
+  );
+};
 
 // A "use strict" directive is in the string literals that start the statements, and later it is
 // only an expression.
@@ -1323,7 +1347,7 @@ export const getSymbol = (node: ts.Node, checker: ts.TypeChecker) => {
 };
 
 // The symbol of a name's own declaration, which a var that hoists its binding takes.
-export const getOwnSymbol = (node: ts.Node, checker: ts.TypeChecker) => {
+export const getOwnSymbol = (node: ts.Node, checker: ts.TypeChecker): ts.Symbol | undefined => {
   const parent = node.parent;
   // A parameter property's name names the property, where the constructor's body reads the
   // parameter.
@@ -1336,10 +1360,27 @@ export const getOwnSymbol = (node: ts.Node, checker: ts.TypeChecker) => {
           parent.name === node &&
           ts.isParameterPropertyDeclaration(parent, parent.parent)
         ? checker.getSymbolsOfParameterPropertyDeclaration(parent, node.text)[0]
-        : checker.getSymbolAtLocation(node);
+        : (checker.getSymbolAtLocation(node) ?? getCastNamespaceMember(node, checker));
   return symbol !== undefined && symbol.flags & ts.SymbolFlags.Alias
     ? checker.getAliasedSymbol(symbol)
     : symbol;
+};
+
+// The export that a read of a module's namespace object through a cast names, as
+// (ts as any).SyntaxKind names ts.SyntaxKind, where TypeScript types the read as any.
+const getCastNamespaceMember = (node: ts.Node, checker: ts.TypeChecker) => {
+  const parent = node.parent;
+  const access = ts.isPropertyAccessExpression(node)
+    ? node
+    : parent !== undefined && ts.isPropertyAccessExpression(parent) && parent.name === node
+      ? parent
+      : undefined;
+  if (access === undefined || !ts.isIdentifier(access.name)) return undefined;
+  const receiver = skipCasts(access.expression);
+  const module = receiver === access.expression ? undefined : getOwnSymbol(receiver, checker);
+  return module?.valueDeclaration !== undefined && ts.isSourceFile(module.valueDeclaration)
+    ? checker.getExportsOfModule(module).find((exported) => exported.name === access.name.text)
+    : undefined;
 };
 
 // A name that only declarations type, as Node's typings type process, which has no code to run.
@@ -2955,6 +2996,61 @@ export const isOnceField = (node: ts.ClassLikeDeclaration, context: Context) => 
   );
 };
 
+// An enum that code reads as an object, which the heap holds as the object that TypeScript makes,
+// with a property of each member's name and, for a number, one of its value that gives the name.
+export const isHeapEnum = (node: ts.Node, context: Context): node is ts.EnumDeclaration =>
+  ts.isEnumDeclaration(node) && context.heap !== undefined && context.valueEnums.has(node);
+
+// The enums of the files' top levels that a file reads as an object: other than to read a
+// member, which gives the member's constant, or in a type.
+export const findValueEnums = (files: readonly ts.SourceFile[], checker: ts.TypeChecker) => {
+  const enums = new Set(files.flatMap((file) => file.statements.filter(ts.isEnumDeclaration)));
+  const names = new Set([...enums].map((declaration) => declaration.name.text));
+  const getEnum = (node: ts.Node) => {
+    const declarations = getSymbol(node, checker)?.declarations ?? [];
+    return declarations.length === 1 && ts.isEnumDeclaration(declarations[0])
+      ? declarations[0]
+      : undefined;
+  };
+  const isValueRead = (node: ts.Expression) => {
+    const parent = node.parent;
+    const member =
+      (ts.isPropertyAccessExpression(parent) || ts.isElementAccessExpression(parent)) &&
+      parent.expression === node
+        ? getSymbol(parent, checker)
+        : undefined;
+    return (
+      member === undefined ||
+      (member.flags & ts.SymbolFlags.EnumMember) === 0 ||
+      (ts.isElementAccessExpression(parent) && !ts.isStringLiteralLike(parent.argumentExpression))
+    );
+  };
+  return new Set(
+    files.flatMap((file) =>
+      findNodes(
+        file,
+        (node): node is ts.Identifier | ts.PropertyAccessExpression =>
+          (ts.isIdentifier(node) &&
+            names.has(node.text) &&
+            !(ts.isPropertyAccessExpression(node.parent) && node.parent.name === node)) ||
+          (ts.isPropertyAccessExpression(node) && names.has(node.name.text)),
+      ).flatMap((node) => {
+        const declaration = getEnum(node);
+        return declaration !== undefined &&
+          enums.has(declaration) &&
+          declaration.name !== node &&
+          !ts.isImportSpecifier(node.parent) &&
+          !ts.isImportClause(node.parent) &&
+          !ts.isExportSpecifier(node.parent) &&
+          ts.findAncestor(node, ts.isTypeNode) === undefined &&
+          isValueRead(node)
+          ? [declaration]
+          : [];
+      }),
+    ),
+  );
+};
+
 export const isHeapClass = (node: ts.ClassLikeDeclaration, context: Context): boolean => {
   if (context.heap === undefined) return false;
   const known = heapClasses.get(node);
@@ -3684,6 +3780,7 @@ export const skipCasts = (node: ts.Expression): ts.Expression =>
   ts.isParenthesizedExpression(node) ||
   ts.isNonNullExpression(node) ||
   ts.isAsExpression(node) ||
+  ts.isSatisfiesExpression(node) ||
   ts.isTypeAssertionExpression(node)
     ? skipCasts(node.expression)
     : node;

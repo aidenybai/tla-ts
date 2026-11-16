@@ -9,6 +9,7 @@ import {
   isAmbient,
   type HelperDeclaration,
   isHeapClass,
+  isHeapEnum,
   isHeapFunction,
   isInlined,
   isScript,
@@ -30,7 +31,8 @@ export interface Variable {
     | ts.VariableDeclaration
     | ts.ParameterDeclaration
     | ts.ClassDeclaration
-    | ts.FunctionDeclaration;
+    | ts.FunctionDeclaration
+    | ts.EnumDeclaration;
 }
 
 // An exported function, which becomes an action, an invariant, or a property its tag names.
@@ -59,22 +61,63 @@ export interface Model {
   isDeadlockChecked: boolean;
 }
 
+// The tags of TSDoc's standard and those of JSDoc that TypeScript reads, which only document code.
+const DOCUMENTATION_TAGS = [
+  "alpha",
+  "augments",
+  "author",
+  "beta",
+  "callback",
+  "decorator",
+  "default",
+  "defaultValue",
+  "deprecated",
+  "description",
+  "eventProperty",
+  "example",
+  "experimental",
+  "extends",
+  "implements",
+  "import",
+  "inheritDoc",
+  "internal",
+  "label",
+  "link",
+  "linkcode",
+  "linkplain",
+  "overload",
+  "override",
+  "packageDocumentation",
+  "param",
+  "privateRemarks",
+  "private",
+  "property",
+  "protected",
+  "public",
+  "readonly",
+  "remarks",
+  "return",
+  "returns",
+  "satisfies",
+  "sealed",
+  "see",
+  "since",
+  "template",
+  "this",
+  "throws",
+  "type",
+  "typedef",
+  "typeParam",
+  "virtual",
+];
+
 const KNOWN_TAGS = new Set([
   ...VALUE_TAGS,
+  ...DOCUMENTATION_TAGS,
   "fair",
   "strongFair",
   "symmetric",
   "noDeadlock",
-  "param",
-  "returns",
-  "return",
-  "example",
-  "see",
-  "deprecated",
-  "remarks",
-  "throws",
-  "link",
-  "description",
 ]);
 
 const getTags = (node: ts.Node) =>
@@ -292,9 +335,10 @@ export const readModel = (
   });
   const isHeapDeclaration = (
     statement: ts.Statement,
-  ): statement is ts.ClassDeclaration | ts.FunctionDeclaration =>
+  ): statement is ts.ClassDeclaration | ts.FunctionDeclaration | ts.EnumDeclaration =>
     (ts.isClassDeclaration(statement) && isHeapClass(statement, context)) ||
-    (ts.isFunctionDeclaration(statement) && isHeapFunction(statement, context));
+    (ts.isFunctionDeclaration(statement) && isHeapFunction(statement, context)) ||
+    isHeapEnum(statement, context);
   const classes = [...imported, ...statements].flatMap((statement) => {
     if (!isHeapDeclaration(statement)) return [];
     const symbol = statement.name && getSymbol(statement.name, context.checker);
@@ -318,7 +362,9 @@ export const readModel = (
     // A script makes its functions before it runs, so they come first.
     script: [
       ...imported.filter(
-        (statement) => !ts.isClassDeclaration(statement) || isHeapDeclaration(statement),
+        (statement) =>
+          !(ts.isClassDeclaration(statement) || ts.isEnumDeclaration(statement)) ||
+          isHeapDeclaration(statement),
       ),
       ...statements.filter(
         (statement) => ts.isFunctionDeclaration(statement) && isHeapDeclaration(statement),
@@ -326,7 +372,8 @@ export const readModel = (
       ...statements.filter(
         (statement) =>
           !isDeclaration(statement) ||
-          (ts.isClassDeclaration(statement) && isHeapDeclaration(statement)),
+          ((ts.isClassDeclaration(statement) || ts.isEnumDeclaration(statement)) &&
+            isHeapDeclaration(statement)),
       ),
     ],
     exported: exported.map((definition) => ({
