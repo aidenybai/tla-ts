@@ -156,7 +156,7 @@ import {
   translateTypeOf,
   useJavaScript,
 } from "./javascript";
-import { getNamespaceName, getNamespaceRef } from "./namespaces";
+import { getNamespaceModule, getNamespaceName, getNamespaceRef } from "./namespaces";
 import { getThisOwner, isBeforeDeclaration, rejectBeforeDeclaration, type Scope } from "./scope";
 import { getMappedParameter } from "./actions";
 import {
@@ -2728,6 +2728,12 @@ const getEnvironmentVariable = (node: ts.Expression, context: Context) => {
       : undefined;
 };
 
+const getUninitializedRead = (name: ts.Identifier) =>
+  apply("Assert", [
+    boolean(false),
+    string(`tla-ts can't throw the ReferenceError of reading ${name.text} before its declaration`),
+  ]);
+
 const translateIdentifier = (node: ts.Identifier, scope: Scope, context: Context) => {
   if (node.text === "undefined") return getUndefined(context);
   if (NODE_GLOBALS.has(node.text) && getSymbol(node, context.checker) === undefined) {
@@ -2759,12 +2765,7 @@ const translateIdentifier = (node: ts.Identifier, scope: Scope, context: Context
   if (mapped !== undefined) return mapped.value;
   const symbol = getSymbol(node, context.checker);
   if (symbol !== undefined && isBeforeDeclaration(node, symbol, scope)) {
-    return apply("Assert", [
-      boolean(false),
-      string(
-        `tla-ts can't throw the ReferenceError of reading ${node.text} before its declaration`,
-      ),
-    ]);
+    return getUninitializedRead(node);
   }
   const held = symbol === undefined ? undefined : scope.functions.get(symbol);
   if (held !== undefined) {
@@ -3121,7 +3122,16 @@ const translatePropertyAccess = (
     );
   }
   const property = getSymbol(node, context.checker);
-  // A module's namespace object holds what the module's bindings hold.
+  // A module's namespace object holds what the module's bindings hold, which a read before the
+  // module declares them finds uninitialized.
+  if (
+    property !== undefined &&
+    ts.isIdentifier(node.expression) &&
+    getNamespaceModule(node.expression, context.checker) !== undefined
+  ) {
+    rejectBeforeDeclaration(node.name, scope, context);
+    if (isBeforeDeclaration(node.name, property, scope)) return getUninitializedRead(node.name);
+  }
   const binding = property === undefined ? undefined : scope.bindings.get(property);
   if (binding !== undefined) return binding;
   const declared = translateDeclared(node, property, scope, context);

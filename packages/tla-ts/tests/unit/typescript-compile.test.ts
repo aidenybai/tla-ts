@@ -47768,4 +47768,28 @@ describe("BigInts", () => {
       expect(() => compile(getSource("6", "alwasy"))).toThrow("Unknown tag: @alwasy");
     });
   });
+
+  describe("reads a let that a module's function changes through the module's namespace object", () => {
+    const path = join(import.meta.dirname, "../fixtures/typescript/imports/namespace.ts");
+    const getSource = (expected: string) => `
+      import * as tally from "./tally";
+      import { describeTally } from "./tallying";
+      const box = { size: 0 };
+      const before = describeTally();
+      tally.bump();
+      box.size = tally.count;
+      const seen = [before, describeTally(), tally.count, tally.total, box.size].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await check(compile(getSource("0:10,1:12,1,12,1"), path))).failure).toBeUndefined();
+    });
+
+    it("rejects a binding that the namespace object doesn't follow", async () => {
+      expect(
+        (await check(compile(getSource("0:10,0:10,0,10,0"), path))).failure?.message,
+      ).toContain("seen 0:10,1:12,1,12,1");
+    });
+  });
 });

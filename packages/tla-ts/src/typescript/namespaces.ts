@@ -124,6 +124,10 @@ const getModule = (symbol: ts.Symbol | undefined, checker: ts.TypeChecker) => {
     : undefined;
 };
 
+// The module whose namespace object a name gives, as a namespace import does.
+export const getNamespaceModule = (node: ts.Identifier, checker: ts.TypeChecker) =>
+  getModule(checker.getSymbolAtLocation(node), checker)?.file;
+
 // The module whose namespace object a namespace import gives where a script reads it as a value,
 // other than to read an export through it.
 export const getNamespaceRead = (node: ts.Identifier, checker: ts.TypeChecker) => {
@@ -186,9 +190,9 @@ const getBound = (symbol: ts.Symbol, node: ts.Node) => {
 };
 
 // The modules whose namespace objects a script reads: those that an import() of a string names,
-// those that a namespace import gives as a value, and those that a namespace import reads a var, a
-// let, or another namespace object from, whose binding tla-ts doesn't keep in the module's, with
-// the modules that their exports give as namespace objects in turn.
+// those that a namespace import gives as a value, and those that a namespace import reads another
+// namespace object from, with the modules that their exports give as namespace objects in turn. A
+// read of a var or a let through a namespace import reads its binding.
 export const findNamespaces = (
   sourceFile: ts.SourceFile,
   files: readonly ts.SourceFile[],
@@ -217,11 +221,7 @@ export const findNamespaces = (
           ? checker.getAliasedSymbol(member)
           : member
       )?.valueDeclaration;
-      return module !== undefined &&
-        declaration !== undefined &&
-        (ts.isSourceFile(declaration) ||
-          (ts.isVariableDeclaration(declaration) &&
-            (ts.getCombinedNodeFlags(declaration) & ts.NodeFlags.Const) === 0))
+      return module !== undefined && declaration !== undefined && ts.isSourceFile(declaration)
         ? [module]
         : [];
     }),
