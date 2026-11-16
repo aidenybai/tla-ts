@@ -24,7 +24,7 @@ import {
   skipCasts,
   PRIMITIVE_FLAGS,
 } from "./context";
-import { getTemporalKind } from "./temporal";
+import { getTemporalConstructorKind, getTemporalKind } from "./temporal";
 import {
   type Collection,
   getBuiltIn,
@@ -244,8 +244,11 @@ const isPlainObject = (type: ts.Type, context: Context): boolean => {
   ) {
     return true;
   }
-  // An object that a Temporal constructor makes.
-  if (getTemporalKind(type) !== undefined) return true;
+  // An object that a Temporal constructor makes, or the constructor, which a variable may hold
+  // where a script destructures Temporal, and whose properties a script reads from the heap.
+  if (getTemporalKind(type) !== undefined || getTemporalConstructorKind(type) !== undefined) {
+    return true;
+  }
   // An object that an Intl constructor makes.
   if (
     symbol !== undefined &&

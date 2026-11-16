@@ -303,6 +303,25 @@ const getArguments = (values: readonly ts.Expression[], context: Context) => {
   return expanded.every((value) => value !== undefined) ? expanded.flat() : undefined;
 };
 
+// The kind of Temporal class whose constructor a type is, such as Duration for
+// Temporal.DurationConstructor.
+export const getTemporalConstructorKind = (type: ts.Type) => {
+  const symbol = type.getSymbol();
+  const kind = symbol?.name.replace(/Constructor$/, "");
+  const declarations = symbol?.declarations ?? [];
+  return kind !== undefined &&
+    symbol?.name.endsWith("Constructor") === true &&
+    TEMPORAL_KINDS.has(kind) &&
+    declarations.length > 0 &&
+    declarations.every(
+      (declaration) =>
+        declaration.getSourceFile().isDeclarationFile &&
+        ts.findAncestor(declaration, ts.isModuleDeclaration)?.name.getText() === "Temporal",
+    )
+    ? kind
+    : undefined;
+};
+
 // new of a Temporal class, a call of one of its functions, or a call of its prototype's method on
 // a value of its type, which tla-ts runs as a statement, as it may throw.
 export const getTemporalCall = (node: ts.Node, context: Context): TemporalCall | undefined => {

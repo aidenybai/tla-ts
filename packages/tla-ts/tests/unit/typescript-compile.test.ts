@@ -45932,4 +45932,22 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("reads a Temporal constructor that a script destructures from the heap", () => {
+    it("agrees with Node on a constructor that Temporal holds", async () => {
+      const result = await checkModel(`
+        const prototype = Temporal.Instant.prototype;
+        if (Object.getPrototypeOf(prototype) !== Object.prototype) throw new Error("prototype");
+      `);
+      expect(result.failure).toBeUndefined();
+    });
+
+    it("stops at a destructured constructor rather than read it as a record", async () => {
+      const result = await checkModel(`
+        const { Instant } = Temporal;
+        if (Object.getPrototypeOf(Instant.prototype) !== Object.prototype) throw new Error("prototype");
+      `);
+      expect(result.failure?.message).toContain("tla-ts can't read the properties of");
+    });
+  });
 });
