@@ -260,6 +260,17 @@ export const rejectEarlyErrors = (sourceFile: ts.SourceFile) => {
       }
       reject(`Unexpected ${node.text} in strict mode`, node);
     }
+    // TypeScript reports an import call that an operator such as -= or ++ assigns only as an operand
+    // of another type than a number.
+    if (
+      ts.isCallExpression(node) &&
+      node.expression.kind === ts.SyntaxKind.ImportKeyword &&
+      isAssigned(
+        ts.findAncestor(node, (ancestor) => !ts.isParenthesizedExpression(ancestor.parent)) ?? node,
+      )
+    ) {
+      reject("Invalid left-hand side in assignment", node);
+    }
     ts.forEachChild(node, visit);
   };
   visit(sourceFile);

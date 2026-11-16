@@ -45450,4 +45450,17 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("rejects an import call that an operator assigns as a SyntaxError", () => {
+    it.each(["import('') -= 1;", "(import('')) **= 1;", "import('')++;", "--import('');"])(
+      "agrees with Node on %s",
+      (source) => {
+        expect(() => compile(source)).toThrow("SyntaxError: Invalid left-hand side in assignment");
+      },
+    );
+
+    it("rejects a property of an import call as the target", () => {
+      expect(() => compile("import('').then = undefined;")).not.toThrow("SyntaxError");
+    });
+  });
 });
