@@ -45877,4 +45877,38 @@ describe("BigInts", () => {
       expect(result.failure?.message).toContain("tla-ts can't use the time zone Europe/Paris");
     });
   });
+
+  describe("runs a Temporal prototype's method or getter through call", () => {
+    const getSource = (expected: string) => `
+      const thrown = (run: () => unknown) => {
+        try {
+          run();
+          return "none";
+        } catch (error) {
+          return (error as Error).name;
+        }
+      };
+      const toJSON = Temporal.PlainDate.prototype.toJSON;
+      const monthCode = Object.getOwnPropertyDescriptor(Temporal.PlainDate.prototype, "monthCode")!.get!;
+      const date = new Temporal.PlainDate(2020, 1, 2);
+      const text = toJSON.call(date);
+      const code = monthCode.call(date);
+      const plain = thrown(() => toJSON.call({}));
+      const prototype = thrown(() => monthCode.call(Temporal.PlainDate.prototype));
+      const seen = [text, code, plain, prototype].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("2020-01-02,M01,TypeError,TypeError"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects a getter that reads a prototype", async () => {
+      expect(
+        (await checkModel(getSource("2020-01-02,M01,TypeError,M01"))).failure?.message,
+      ).toContain("seen 2020-01-02,M01,TypeError,TypeError");
+    });
+  });
 });

@@ -11,7 +11,7 @@ import {
 import { type Context, skipCasts } from "./context";
 import { translateExpression } from "./expressions";
 import { type Formula, ifThenElse, leaf } from "./formula";
-import { getAllocated, getHeap } from "./heap";
+import { getAllocated, getHeap, getOrigin } from "./heap";
 import { getBuiltIn, translateBuiltInValue } from "./intrinsics";
 import { useJavaScript } from "./javascript";
 import { apply, boolean, field, identifier, string, tuple } from "./tla";
@@ -237,6 +237,8 @@ export interface TemporalCall {
   callee: ts.Expression;
   receiver?: ts.Expression;
   values: readonly ts.Expression[];
+  // Whether Function.prototype.call runs the method, on any receiver.
+  isCalled?: boolean;
 }
 
 // The Temporal class that an expression names, such as Duration for Temporal.Duration.
@@ -293,6 +295,37 @@ export const getTemporalCall = (node: ts.Node, context: Context): TemporalCall |
   const made = owner === undefined ? undefined : TEMPORAL_FUNCTIONS.get(owner)?.statics.get(method);
   if (owner !== undefined && made !== undefined) {
     return { kind: owner, method, isStatic: true, made, callee, values: node.arguments };
+  }
+  // A prototype's method that call runs on any receiver, as a name that holds it may.
+  const target = method === "call" ? getOrigin(callee.expression, context) : undefined;
+  const targetKind =
+    target !== undefined &&
+    ts.isPropertyAccessExpression(target) &&
+    ts.isPropertyAccessExpression(target.expression) &&
+    target.expression.name.text === "prototype"
+      ? getTemporalClass(target.expression.expression, context)
+      : undefined;
+  const targetMade =
+    target !== undefined && ts.isPropertyAccessExpression(target) && targetKind !== undefined
+      ? TEMPORAL_FUNCTIONS.get(targetKind)?.methods.get(target.name.text)
+      : undefined;
+  if (
+    target !== undefined &&
+    ts.isPropertyAccessExpression(target) &&
+    targetKind !== undefined &&
+    targetMade !== undefined &&
+    node.arguments.length > 0
+  ) {
+    return {
+      kind: targetKind,
+      method: target.name.text,
+      isStatic: false,
+      made: targetMade,
+      callee: callee.expression,
+      receiver: node.arguments[0],
+      values: node.arguments.slice(1),
+      isCalled: true,
+    };
   }
   const kind = getTemporalKind(context.checker.getTypeAtLocation(callee.expression));
   const madeByMethod =
@@ -387,12 +420,26 @@ export const translateTemporalCall = (
   );
   const builtIn = useJavaScript(":>", [identifier("Ref"), string(functionPath)], context);
   const isHeld =
-    call.receiver === undefined
-      ? useJavaScript(
-          "SameValue",
-          [translateExpression(call.callee, path.scope, context), builtIn],
-          context,
-        )
+    call.receiver === undefined || call.isCalled === true
+      ? apply("/\\", [
+          useJavaScript(
+            "SameValue",
+            [translateExpression(call.callee, path.scope, context), builtIn],
+            context,
+          ),
+          call.isCalled === true
+            ? useJavaScript(
+                "HoldsBuiltIn",
+                [
+                  heap,
+                  translateBuiltInValue("Function.prototype", node, context),
+                  string("call"),
+                  string("Function.prototype.call"),
+                ],
+                context,
+              )
+            : boolean(true),
+        ])
       : useJavaScript(
           "SameValue",
           [useJavaScript("Get", [heap, receiver, string(call.method)], context), builtIn],
