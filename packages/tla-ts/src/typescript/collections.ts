@@ -1616,6 +1616,21 @@ export const getArrayIteratorCall = (node: ts.Node, context: Context) => {
     : undefined;
 };
 
+// The iterator that a for-of opens of an arguments object, through its own @@iterator, which is
+// Array.prototype.values.
+export const getOpenedIterator = (loop: ts.ForOfStatement, context: Context) =>
+  context.heap !== undefined &&
+  loop.awaitModifier === undefined &&
+  getArgumentsOwner(loop.expression, context.checker) !== undefined
+    ? {
+        kind: "values",
+        receiver: loop.expression,
+        key: "@@iterator",
+        path: "Array.prototype.values",
+        isFrom: false,
+      }
+    : undefined;
+
 // %ArrayIteratorPrototype%, with its next, whose own properties a script may read.
 export const translateArrayIteratorPrototype = (node: ts.Node, context: Context) => {
   context.builtIns.add("%ArrayIteratorPrototype%.next");

@@ -45619,4 +45619,26 @@ describe("BigInts", () => {
       ).toContain("seen 0,1,2,1,undefined,3,0:4,1:5");
     });
   });
+
+  describe("iterates an arguments object in a for-of through its iterator", () => {
+    const getSource = (expected: string) => `
+      const seen: string[] = [];
+      function collect(first: number, second: number) {
+        for (const value of arguments) {
+          seen.push(String(value));
+          arguments[1] = first + second;
+        }
+      }
+      collect(1, 2);
+      if (seen.join() !== "${expected}") throw new Error("seen " + seen.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("1,3"))).failure).toBeUndefined();
+    });
+
+    it("rejects an argument before the loop wrote it", async () => {
+      expect((await checkModel(getSource("1,2"))).failure?.message).toContain("seen 1,3");
+    });
+  });
 });
