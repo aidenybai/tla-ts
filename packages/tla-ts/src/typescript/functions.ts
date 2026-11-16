@@ -1,5 +1,6 @@
 import ts from "@typescript/typescript6";
 import { type Expression, getChildren } from "../ast";
+import { mapChildren } from "../instances";
 import {
   type CalledMethod,
   type Context,
@@ -73,6 +74,7 @@ import {
   ifExpression,
   junction,
   lambda,
+  letExpression,
   locate,
   string,
   tuple,
@@ -251,11 +253,90 @@ export const getDefinition = (declaration: HelperDeclaration, context: Context):
     ts.forEachChild(node, rejectValues);
   };
   if (operators.size > 0) rejectValues(body);
-  const value = translateBody(
+  // SANY rejects a RECURSIVE operator that takes an operator, so a helper that calls itself with
+  // the functions that it takes recurses through an operator inside its definition, which holds
+  // them and takes the other parameters under names of its own.
+  const ownSymbol = getSymbol(declaration.name, context.checker);
+  const isRecursing =
+    operators.size > 0 &&
+    operators.size < parameters.length &&
+    findNodes(body, ts.isIdentifier).some((name) => getSymbol(name, context.checker) === ownSymbol);
+  const inner = isRecursing
+    ? parameters.map((parameter, index) =>
+        declared[index].arity > 0
+          ? parameter
+          : { ...parameter, name: context.names.getFresh(parameter.name) },
+      )
+    : parameters;
+  const recursion: Definition = {
+    ...definition,
+    name: isRecursing ? context.names.getFresh(`${definition.name}Of`) : definition.name,
+  };
+  const outputCount = context.output.length;
+  if (isRecursing) context.definitions.set(declaration, recursion);
+  const translated = translateBody(
     body,
-    bindNames(bindFactory(declaration, createStateScope(context), context), parameters),
+    bindNames(bindFactory(declaration, createStateScope(context), context), inner),
     context,
   );
+  context.definitions.set(declaration, definition);
+  const isRecursion = (expression: Expression): boolean =>
+    (expression.kind === "Apply" && expression.operator === recursion.name) ||
+    getChildren(expression).some(isRecursion);
+  if (
+    (operators.size > 0 && !isRecursing && context.recursive.has(declaration)) ||
+    (isRecursing && context.output.slice(outputCount).some((output) => isRecursion(output.body)))
+  ) {
+    throw new TlaTypeScriptError(
+      "tla-ts can't recurse through another function with the functions that this one takes",
+      declaration,
+    );
+  }
+  // Each call inside passes the functions that the definition holds, in their places.
+  const callRecursion = (expression: Expression): Expression => {
+    if (expression.kind !== "Apply" || expression.operator !== recursion.name) {
+      return mapChildren(expression, callRecursion);
+    }
+    const isHeld = declared.every(
+      (parameter, index) =>
+        parameter.arity === 0 ||
+        (expression.args[index]?.kind === "Identifier" &&
+          expression.args[index].name === parameter.name),
+    );
+    if (!isHeld) {
+      throw new TlaTypeScriptError(
+        "tla-ts can't recurse with other functions than those that this function takes",
+        declaration,
+      );
+    }
+    return call(
+      recursion.name,
+      expression.args.filter((_, index) => declared[index].arity === 0).map(callRecursion),
+    );
+  };
+  const value = isRecursing
+    ? letExpression(
+        [
+          {
+            ...define(
+              recursion.name,
+              inner.flatMap((parameter, index) =>
+                declared[index].arity > 0 ? [] : [{ name: parameter.name, arity: 0 }],
+              ),
+              callRecursion(translated),
+            ),
+            isRecursive: true,
+          },
+        ],
+        call(
+          recursion.name,
+          declared.flatMap((parameter) =>
+            parameter.arity > 0 ? [] : [identifier(parameter.name)],
+          ),
+        ),
+      )
+    : translated;
+  if (isRecursing) context.recursive.delete(declaration);
   // What the body translates to may read the state where its code names none of it, such as the
   // heap that an array's iterator or a typeof reads.
   const stateNames = new Set([

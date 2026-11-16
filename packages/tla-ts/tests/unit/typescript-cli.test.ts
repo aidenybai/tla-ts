@@ -300,4 +300,18 @@ describe("the CLI with TypeScript files", () => {
       "---- MODULE Counter ----\n====\n",
     );
   });
+
+  it("checks a helper that calls itself with the function that it takes", () => {
+    const directory = copyFixtures("passing");
+    const getSource = (expected: number) =>
+      `function sumBy(xs: number[], f: (x: number) => number, i: number): number {\n  return i < xs.length ? f(xs[i]) + sumBy(xs, f, i + 1) : 0;\n}\nconst seen = sumBy([1, 2, 3], (x) => x * x, 0);\nif (seen !== ${expected}) throw new Error("seen " + seen);\n`;
+    writeFileSync(join(directory, "sum.ts"), getSource(14));
+    const result = runCli(directory, ["sum.ts"]);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("Model checking completed. No error has been found.");
+    writeFileSync(join(directory, "wrong.ts"), getSource(15));
+    const wrong = runCli(directory, ["wrong.ts"]);
+    expect(wrong.status).toBe(1);
+    expect(wrong.stderr).toContain("Error: seen 14");
+  });
 });

@@ -48601,4 +48601,62 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("3"))).failure?.message).toContain("seen 2");
     });
   });
+
+  describe("defines a helper that calls itself with the functions that it takes", () => {
+    const getSource = (expected: number) => `
+      let total = 0;
+      function fold(f: (a: number, b: number) => number, xs: number[], i: number, acc: number): number {
+        return i < xs.length ? fold(f, xs, i + 1, f(acc, xs[i])) : acc;
+      }
+      export const step = () => {
+        if (total > 0) return;
+        total = fold((a, b) => a * 10 + b, [1, 2, 3], 0, 0);
+      };
+      export const isUnseen = () => total !== ${expected};
+    `;
+
+    it("agrees with Node", async () => {
+      expect(getTrace(await checkModel(getSource(123)))).toEqual([
+        { total: "0" },
+        { total: "123" },
+      ]);
+    });
+
+    it("rejects a wrong value", async () => {
+      expect((await checkModel(getSource(124))).status).toBe("deadlock");
+    });
+
+    it("stops where it calls itself with other functions", () => {
+      const source = `
+        let total = 0;
+        function swap(xs: number[], f: (x: number) => number, g: (x: number) => number, i: number): number {
+          return i < xs.length ? f(xs[i]) + swap(xs, g, f, i + 1) : 0;
+        }
+        export const step = () => {
+          total = swap([1, 2, 3], (x) => x, (x) => x * 10, 0);
+        };
+      `;
+      expect(() => compile(source)).toThrow(
+        "tla-ts can't recurse with other functions than those that this function takes",
+      );
+    });
+
+    it("stops where it calls itself through another helper", () => {
+      const source = `
+        let total = 0;
+        function even(n: number, f: (x: number) => number): number {
+          return n === 0 ? f(0) : odd(n - 1, f);
+        }
+        function odd(n: number, f: (x: number) => number): number {
+          return n === 0 ? f(1) : even(n - 1, f);
+        }
+        export const step = () => {
+          total = even(5, (x) => x + 7);
+        };
+      `;
+      expect(() => compile(source)).toThrow(
+        "tla-ts can't recurse through another function with the functions that this one takes",
+      );
+    });
+  });
 });
