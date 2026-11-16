@@ -22,7 +22,7 @@ import {
   translateToString,
   translateTruthy,
 } from "./expressions";
-import { rejectBeforeDeclaration, type Scope } from "./scope";
+import { isBeforeDeclaration, rejectBeforeDeclaration, type Scope } from "./scope";
 import { getMappedParameter } from "./actions";
 import { getHeap } from "./heap";
 import { getKind, isBigIntLike, isEvery } from "./types";
@@ -8677,6 +8677,17 @@ export const translateTypeOf = (
       ),
       string("undefined"),
     );
+  }
+  // typeof reads a let, a const, or a class whose binding is uninitialized, which throws, by its
+  // name or through a module's namespace object.
+  const name = ts.isPropertyAccessExpression(read) ? read.name : read;
+  const declared = ts.isIdentifier(name) ? getSymbol(name, context.checker) : undefined;
+  if (
+    ts.isIdentifier(name) &&
+    declared !== undefined &&
+    isBeforeDeclaration(name, declared, scope)
+  ) {
+    return translateExpression(read, scope, context);
   }
   const symbol = isImplicitGlobal(read, context) ? getSymbol(read, context.checker) : undefined;
   const global = symbol === undefined ? undefined : scope.bindings.get(symbol);
