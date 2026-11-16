@@ -2204,7 +2204,8 @@ const ignoreSoundErrors = () => {
     return visit(sourceFile);
   };
   // A typed array's element of a key that isn't a number reads as any where the typed array is one
-  // of several kinds too, as a test's callback for each kind takes it.
+  // of several kinds too, as a test's callback for each kind takes it, and so does a property of a
+  // value of type object, as a proxy of a target and a handler that the test types loosely is.
   const isObjectRead = (node: ts.Node, diagnostic: ts.Diagnostic) => {
     const read = ts.findAncestor(
       node,
@@ -2217,7 +2218,7 @@ const ignoreSoundErrors = () => {
       (type.isUnion()
         ? diagnostic.code === NON_NUMBER_INDEX_ERROR &&
           type.types.every((member) => TYPED_ARRAY_NAME.test(member.getSymbol()?.getName() ?? ""))
-        : (type.flags & ts.TypeFlags.Object) !== 0) &&
+        : (type.flags & (ts.TypeFlags.Object | ts.TypeFlags.NonPrimitive)) !== 0) &&
       ts.findAncestor(node, ts.isBindingElement) === undefined
     );
   };
