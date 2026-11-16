@@ -21,7 +21,7 @@ import {
 } from "./expressions";
 import { rejectBeforeDeclaration, type Scope } from "./scope";
 import { getMappedParameter } from "./actions";
-import { getKind, isBigIntLike } from "./types";
+import { getKind, isBigIntLike, isEvery } from "./types";
 import { apply, boolean, identifier, ifExpression, number, set, string } from "./tla";
 
 // The names of the well-known symbols, such as iterator for Symbol.iterator.
@@ -8736,12 +8736,24 @@ const getConverted = (value: number, node: ts.Node, context: Context) => {
   return converted;
 };
 
-// The number that +argument or Number(argument) converts a value to.
+// What Number gives for a primitive: ToNumber's number, or a BigInt's, where ToNumber throws.
+export const translateNumberOf = (value: Expression, context: Context) =>
+  share(value, "value", context, (shared) =>
+    ifExpression(
+      useJavaScript("IsBigInt", [shared], context),
+      useJavaScript("NumberOfBigInt", [shared], context),
+      useJavaScript("ToNumber", [shared], context),
+    ),
+  );
+
+// The number that +argument or Number(argument) converts a value to. Number converts a BigInt,
+// where ToNumber throws a TypeError.
 export const translateToNumber = (
   argument: ts.Expression,
   node: ts.Expression,
   scope: Scope,
   context: Context,
+  isBigIntConverted = false,
 ) => {
   if (ts.isStringLiteral(argument)) return getConverted(Number(argument.text), node, context);
   const names = getTypeNames(context.checker.getTypeAtLocation(argument), context.checker);
@@ -8756,12 +8768,24 @@ export const translateToNumber = (
     (names !== undefined &&
       names.length > 0 &&
       names.every((name) => ["number", "boolean", "null", "undefined"].includes(name))) ||
+    (isBigIntConverted &&
+      isEvery(
+        context.checker.getTypeAtLocation(argument),
+        ts.TypeFlags.NumberLike |
+          ts.TypeFlags.BigIntLike |
+          ts.TypeFlags.BooleanLike |
+          ts.TypeFlags.StringLike |
+          ts.TypeFlags.Null |
+          ts.TypeFlags.Undefined,
+      )) ||
     (context.heap !== undefined &&
       (context.checker.getTypeAtLocation(argument).flags &
         (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !==
         0)
   ) {
-    const converted = useJavaScript("ToNumber", [value], context);
+    const converted = isBigIntConverted
+      ? translateNumberOf(value, context)
+      : useJavaScript("ToNumber", [value], context);
     return context.hasSpecialNumbers
       ? converted
       : useJavaScript("PlainNumber", [converted], context);
@@ -8880,7 +8904,7 @@ export const translateConversion = (node: ts.CallExpression, scope: Scope, conte
       ? converted
       : useJavaScript("PlainNumber", [converted], context);
   }
-  if (name === "Number") return translateToNumber(argument, node, scope, context);
+  if (name === "Number") return translateToNumber(argument, node, scope, context, true);
   if (name === "isNaN") {
     context.prelude.add("JavaScript");
     return apply("=", [translateToNumber(argument, node, scope, context), identifier("NaN")]);

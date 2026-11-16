@@ -45641,4 +45641,22 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("1,2"))).failure?.message).toContain("seen 1,3");
     });
   });
+
+  describe("converts a BigInt that Number takes where its type may be another", () => {
+    const getSource = (expected: number) => `
+      const values: (number | bigint)[] = [1, 2n];
+      const box: { value: unknown } = { value: 3n };
+      const held: any = 4n;
+      const total = Number(values[0]) + Number(values[1]) + Number(box.value) + Number(held);
+      if (total !== ${expected}) throw new Error("total " + total);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(10))).failure).toBeUndefined();
+    });
+
+    it("rejects a total that skips a BigInt", async () => {
+      expect((await checkModel(getSource(11))).failure?.message).toContain("total 10");
+    });
+  });
 });
