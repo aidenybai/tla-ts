@@ -297,6 +297,7 @@ import {
   translateBuiltInValue,
   translateHoldsCallee,
   getGeneratorPrototypeRef,
+  isUndefinedValue,
   stopUnknownCall,
 } from "./intrinsics";
 import { getTypeNames, getURICall, translateToNumber, useJavaScript } from "./javascript";
@@ -8933,6 +8934,9 @@ interface LoopCall {
   isTyped: boolean;
   // Whether the receiver is a set or a map that keeps its order, whose forEach visits its entries.
   isOrdered: boolean;
+  // Whether the callback is missing, undefined, or null, which throws a TypeError once the method
+  // has read the length.
+  isUncallable?: boolean;
 }
 
 // An array method that calls back for each element, on an array or an array-like object.
@@ -9264,6 +9268,26 @@ const getLoopCall = (node: ts.Expression, path: Path, context: Context): LoopCal
         }
       : undefined;
   }
+  if (
+    LOOP_METHODS.has(target.method) &&
+    (argument === undefined ||
+      isUndefinedValue(argument, context) ||
+      skipCasts(argument).kind === ts.SyntaxKind.NullKeyword)
+  ) {
+    return {
+      method: target.method,
+      receiver: target.receiver,
+      callback: undefined,
+      argument,
+      initial: undefined,
+      isArrayLike: target.isArrayLike,
+      isUnordered: target.isUnordered,
+      isInherited: target.isInherited,
+      isTyped: target.isTyped,
+      isOrdered: target.isOrdered,
+      isUncallable: true,
+    };
+  }
   const callback = argument && getCallback(argument, path, context);
   // A flatMap whose array the heap holds runs as an expression.
   return argument !== undefined &&
@@ -9387,6 +9411,7 @@ const translateShortLoopCall = (
     : loop.isArrayLike
       ? (getElementGetters(receiver, context) ??
         (lengthGetters.length + speciesGetters.length > 0 ||
+        loop.isUncallable === true ||
         isLengthConverted ||
         isObjectFrom ||
         isHeapMap ||
@@ -9395,6 +9420,10 @@ const translateShortLoopCall = (
           ? []
           : undefined))
       : undefined;
+  // An array's length is its own, which no getter answers.
+  if (loop.isUncallable === true && getters === undefined) {
+    return throwTypeError(path, expression, context, frame);
+  }
   // A let or a const whose declaration hasn't run yet has no value to pass to the loop: only a
   // getter that the loop stops at instead of calling can change it.
   const changed = (
@@ -10172,6 +10201,7 @@ const translateShortLoopCall = (
       ],
       readLength((found, held) => {
         const visitWith = (after: Path, value: Expression) => {
+          if (loop.isUncallable === true) return throwTypeError(after, expression, context, frame);
           // with throws a RangeError where the index it replaces isn't below the length.
           const seeded = (current: Path) =>
             letIn(

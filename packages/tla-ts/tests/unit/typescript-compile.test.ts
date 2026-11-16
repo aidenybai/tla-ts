@@ -42028,16 +42028,6 @@ describe("BigInts", () => {
     });
   });
 
-  it("stops where a call leaves out an array method's callback", () => {
-    expect(() =>
-      compile(`
-        const values = [1, 2];
-        // @ts-ignore
-        values.every();
-      `),
-    ).toThrow("Pass a function here");
-  });
-
   describe("a built-in that a call gives fewer arguments than it declares", () => {
     const getStringsSource = (expected: string) => `
       const text = "abc";
@@ -45548,6 +45538,63 @@ describe("BigInts", () => {
 
     it("rejects a total past the converted length", async () => {
       expect((await checkModel(getSource(36))).failure?.message).toContain("total 23 after 1");
+    });
+  });
+
+  describe("throws a TypeError where an array method's callback is missing, undefined, or null", () => {
+    const getSource = (expected: string) => `
+      const values = [1, 2];
+      const object = { 0: 1, 1: 2 };
+      const typed = new Int8Array(2);
+      let lengthReads = 0;
+      Object.defineProperty(object, "length", {
+        get() {
+          lengthReads += 1;
+          return 2;
+        },
+      });
+      const seen: string[] = [];
+      const record = (error: unknown) => {
+        seen.push(error instanceof TypeError ? "TypeError" : "other");
+      };
+      try {
+        // @ts-expect-error every takes a callback
+        values.every();
+      } catch (error) {
+        record(error);
+      }
+      try {
+        // @ts-expect-error map takes a callback
+        Array.prototype.map.call(object, undefined);
+      } catch (error) {
+        record(error);
+      }
+      try {
+        // @ts-expect-error reduce takes a callback
+        values.reduce(null, 0);
+      } catch (error) {
+        record(error);
+      }
+      try {
+        // @ts-expect-error find takes a callback
+        typed.find();
+      } catch (error) {
+        record(error);
+      }
+      seen.push(String(lengthReads));
+      if (seen.join() !== "${expected}") throw new Error("seen " + seen.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("TypeError,TypeError,TypeError,TypeError,1"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects a method that doesn't read the length first", async () => {
+      expect(
+        (await checkModel(getSource("TypeError,TypeError,TypeError,TypeError,0"))).failure?.message,
+      ).toContain("seen TypeError,TypeError,TypeError,TypeError,1");
     });
   });
 });
