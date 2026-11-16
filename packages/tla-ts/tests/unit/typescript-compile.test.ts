@@ -45539,7 +45539,7 @@ describe("BigInts", () => {
       return { path, source: readFileSync(path, "utf8") };
     };
 
-    it.each(["exports", "cycle"])("agrees with Node on %s", async (name) => {
+    it.each(["exports", "cycle", "packages"])("agrees with Node on %s", async (name) => {
       const fixture = getFixture(name);
       expect((await check(compile(fixture.source, fixture.path))).failure).toBeUndefined();
     });
@@ -45547,6 +45547,11 @@ describe("BigInts", () => {
     it.each([
       ["exports", "square,4,true,true", "square,4,true,false"],
       ["cycle", "true,false,true", "true,true,true"],
+      [
+        "packages",
+        "import,require,feature,text,legacy,dep",
+        "default,require,feature,text,legacy,dep",
+      ],
     ])("rejects another outcome of %s", async (name, expected, wrong) => {
       const fixture = getFixture(name);
       const result = await check(compile(fixture.source.replace(expected, wrong), fixture.path));

@@ -1,4 +1,5 @@
 node_modules
+!packages/tla-ts/tests/fixtures/**/node_modules
 .DS_Store
 .env
 dist

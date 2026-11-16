@@ -73,6 +73,10 @@ const NODE_MODULES = new Set([
   "zlib",
 ]);
 
+// The conditions that Node matches in a package's exports, for an import and for a require.
+const IMPORT_CONDITIONS = new Set(["node", "import", "module-sync", "default"]);
+const REQUIRE_CONDITIONS = new Set(["node", "require", "module-sync", "default"]);
+
 // The suffix of the TypeScript file that tla-ts makes for an import of a CommonJS module, which
 // runs the module as the importer's import of it does.
 const IMPORT_SUFFIX = ".import.ts";
@@ -113,6 +117,128 @@ const getRealPath = (path: string) => ts.sys.realpath?.(path) ?? path;
 
 const isFile = (path: string) => ts.sys.fileExists(path);
 
+// PACKAGE_TARGET_RESOLVE of Node's resolver: a target of a package's exports, with what a pattern
+// matched in place of each star.
+const resolveTarget = (
+  directory: string,
+  target: unknown,
+  match: string | undefined,
+  conditions: ReadonlySet<string>,
+): string | undefined => {
+  if (typeof target === "string") {
+    if (!target.startsWith("./")) return undefined;
+    return joinPath(directory, match === undefined ? target : target.replaceAll("*", match));
+  }
+  if (Array.isArray(target)) {
+    return target.reduce<string | undefined>(
+      (found, inner) => found ?? resolveTarget(directory, inner, match, conditions),
+      undefined,
+    );
+  }
+  if (!isObject(target)) return undefined;
+  return Object.entries(target).reduce<string | undefined>(
+    (found, [condition, inner]) =>
+      found ??
+      (conditions.has(condition) ? resolveTarget(directory, inner, match, conditions) : undefined),
+    undefined,
+  );
+};
+
+// PATTERN_KEY_COMPARE of Node's resolver, which puts the most specific pattern first.
+const comparePatterns = (left: string, right: string) => {
+  const leftBase = left.indexOf("*") + 1 || left.length;
+  const rightBase = right.indexOf("*") + 1 || right.length;
+  return rightBase - leftBase || right.length - left.length;
+};
+
+// PACKAGE_EXPORTS_RESOLVE of Node's resolver, for a subpath that starts with a dot.
+const resolveExports = (
+  directory: string,
+  subpath: string,
+  exports: unknown,
+  conditions: ReadonlySet<string>,
+) => {
+  const isSugar =
+    typeof exports === "string" ||
+    Array.isArray(exports) ||
+    (isObject(exports) && Object.keys(exports).every((key) => !key.startsWith(".")));
+  const map = isSugar ? { ".": exports } : exports;
+  if (!isObject(map)) return undefined;
+  if (Object.hasOwn(map, subpath) && !subpath.includes("*")) {
+    return resolveTarget(directory, map[subpath], undefined, conditions);
+  }
+  const pattern = Object.keys(map)
+    .filter((key) => {
+      const star = key.indexOf("*");
+      return (
+        star !== -1 &&
+        key.indexOf("*", star + 1) === -1 &&
+        subpath.startsWith(key.slice(0, star)) &&
+        subpath !== key.slice(0, star) &&
+        subpath.length >= key.length &&
+        subpath.endsWith(key.slice(star + 1))
+      );
+    })
+    .toSorted(comparePatterns)
+    .at(0);
+  if (pattern === undefined) return undefined;
+  const star = pattern.indexOf("*");
+  return resolveTarget(
+    directory,
+    map[pattern],
+    subpath.slice(star, subpath.length - (pattern.length - star - 1)),
+    conditions,
+  );
+};
+
+const getPackageName = (specifier: string) => {
+  const segments = specifier.split("/");
+  return specifier.startsWith("@") ? segments.slice(0, 2).join("/") : segments[0];
+};
+
+const getNodeModuleDirectories = (directory: string): string[] =>
+  directory === "/"
+    ? ["/node_modules"]
+    : [
+        ...(directory.endsWith("/node_modules") ? [] : [`${directory}/node_modules`]),
+        ...getNodeModuleDirectories(getDirectory(directory)),
+      ];
+
+// Where a package of a node_modules directory exports a subpath, or undefined for a package with no
+// exports, which loads the subpath as a path.
+const resolvePackage = (
+  specifier: string,
+  directory: string,
+  conditions: ReadonlySet<string>,
+  load: (path: string) => string | undefined,
+  node: ts.Node,
+) => {
+  const name = getPackageName(specifier);
+  const found = getNodeModuleDirectories(directory).reduce<string | undefined>(
+    (resolved, modules) => {
+      if (resolved !== undefined) return resolved;
+      const packageDirectory = `${modules}/${name}`;
+      const exports = readPackage(packageDirectory)?.exports;
+      if (exports === undefined) return load(`${modules}/${specifier}`);
+      const target = resolveExports(
+        packageDirectory,
+        `.${specifier.slice(name.length)}`,
+        exports,
+        conditions,
+      );
+      if (target === undefined || !isFile(target)) {
+        throw new TlaTypeScriptError(
+          `tla-ts can't load ${specifier}, which its package doesn't export`,
+          node,
+        );
+      }
+      return target;
+    },
+    undefined,
+  );
+  return found;
+};
+
 // LOAD_AS_FILE and LOAD_AS_DIRECTORY of Node's require.
 const loadAsFile = (path: string) =>
   [path, `${path}.js`, `${path}.json`, `${path}.node`].find(isFile);
@@ -148,8 +274,13 @@ const rejectNodeModule = (specifier: string, node: ts.Node) => {
 // The file that a require of a specifier loads, as Node's require resolves it from a module.
 const resolveRequire = (specifier: string, fileName: string, node: ts.Node) => {
   rejectNodeModule(specifier, node);
+  if (specifier.startsWith("#")) {
+    throw new TlaTypeScriptError(`tla-ts can't load a package's import ${specifier}`, node);
+  }
   const directory = getDirectory(fileName);
-  const found = isRelative(specifier) ? loadRequired(joinPath(directory, specifier)) : undefined;
+  const found = isRelative(specifier)
+    ? loadRequired(joinPath(directory, specifier))
+    : resolvePackage(specifier, directory, REQUIRE_CONDITIONS, loadRequired, node);
   if (found === undefined) throw new TlaTypeScriptError(`tla-ts can't find ${specifier}`, node);
   return getRealPath(found);
 };
@@ -183,12 +314,18 @@ const rejectFormat = (path: string, specifier: string, node: ts.Node) => {
 export const resolveImport = (specifier: ts.StringLiteralLike, fileName: string) => {
   const text = specifier.text;
   rejectNodeModule(text, specifier);
-  const path = joinPath(getDirectory(fileName), text);
-  const found = isRelative(text) && isFile(path) ? path : undefined;
+  if (text.startsWith("#")) return undefined;
+  const directory = getDirectory(fileName);
+  const loadExact = (path: string) => (isFile(path) ? path : undefined);
+  const loadMain = (path: string) =>
+    text === getPackageName(text) ? loadAsDirectory(path) : loadExact(path);
+  const found = isRelative(text)
+    ? loadExact(joinPath(directory, text))
+    : resolvePackage(text, directory, IMPORT_CONDITIONS, loadMain, specifier);
   if (found === undefined) return undefined;
-  const realPath = getRealPath(found);
-  rejectFormat(realPath, text, specifier);
-  return `${realPath}${IMPORT_SUFFIX}`;
+  const path = getRealPath(found);
+  rejectFormat(path, text, specifier);
+  return `${path}${IMPORT_SUFFIX}`;
 };
 
 // An import of a CommonJS module, which gives its exports as its default export once it runs.
