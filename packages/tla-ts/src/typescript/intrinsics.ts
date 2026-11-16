@@ -411,7 +411,10 @@ const isUntouchedFunction = (owner: ts.Expression, context: Context) => {
     (symbol !== undefined &&
       findNodes(owner.getSourceFile(), ts.isIdentifier).every((reference) => {
         const parent = reference.parent;
+        // Only a name of the function's text can name it, and comparing the text first spares
+        // resolving every other name of the file.
         return (
+          reference.text !== symbol.name ||
           getSymbol(reference, checker) !== symbol ||
           ((ts.isFunctionDeclaration(parent) || ts.isVariableDeclaration(parent)) &&
             parent.name === reference) ||
