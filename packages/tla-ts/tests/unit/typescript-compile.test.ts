@@ -48438,4 +48438,95 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("reads an object that a type of a declaration file types from the heap", () => {
+    const path = join(import.meta.dirname, "../fixtures/typescript/declarations/shaping.ts");
+    const source = readFileSync(path, "utf8");
+
+    it("agrees with Node", async () => {
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects an object that a write doesn't change", async () => {
+      const wrong = source.replace('"5,5,true"', '"4,5,true"');
+      expect((await check(compile(wrong, path))).failure?.message).toContain("seen 5,5,true");
+    });
+  });
+
+  describe("reads the bindings of a module that an import cycle runs later", () => {
+    const path = join(import.meta.dirname, "../fixtures/typescript/imports/cycling.ts");
+    const source = readFileSync(path, "utf8");
+
+    it("agrees with Node", async () => {
+      await expect(check(compile(source, path))).rejects.toThrow(
+        "tla-ts can't throw the ReferenceError of reading late before its declaration",
+      );
+    });
+
+    // The cycle's other module runs first where the model imports it first.
+    const swapped = source.replace(
+      'import "./cycle-values.ts";\nimport { early } from "./cycle-reader.ts";',
+      'import { early } from "./cycle-reader.ts";\nimport "./cycle-values.ts";',
+    );
+
+    it("reads them where their module runs first", async () => {
+      expect((await check(compile(swapped, path))).failure).toBeUndefined();
+    });
+
+    it("rejects a wrong value where their module runs first", async () => {
+      const wrong = swapped.replace('"3,4"', '"3,5"');
+      await expect(check(compile(wrong, path))).rejects.toThrow("seen 3,4");
+    });
+  });
+
+  describe("reads with typeof a binding before its declaration", () => {
+    const getSource = (keyword: string, expected: number) => `
+      function getKind() {
+        return typeof late === "undefined" ? 1 : 0;
+      }
+      const early = 3 + getKind();
+      ${keyword} late = 3;
+      if (early !== ${expected}) throw new Error("seen " + early);
+      export {};
+    `;
+
+    it("agrees with Node", async () => {
+      await expect(checkModel(getSource("const", 4))).rejects.toThrow(
+        "tla-ts can't throw the ReferenceError of reading late before its declaration",
+      );
+    });
+
+    it("reads a var, which holds undefined before its declaration", async () => {
+      expect((await checkModel(getSource("var", 4))).failure).toBeUndefined();
+    });
+
+    it("rejects a wrong value of a var", async () => {
+      expect((await checkModel(getSource("var", 3))).failure?.message).toContain("seen 4");
+    });
+  });
+
+  describe("reads with typeof a binding of a module that an import cycle runs later", () => {
+    const path = join(import.meta.dirname, "../fixtures/typescript/imports/typing-cycle.ts");
+    const source = readFileSync(path, "utf8");
+    // The cycle's other module runs first where the model imports it first.
+    const swapped = source.replace(
+      'import "./typing-values.ts";\nimport { kind } from "./typing-reader.ts";',
+      'import { kind } from "./typing-reader.ts";\nimport "./typing-values.ts";',
+    );
+
+    it("agrees with Node", async () => {
+      await expect(check(compile(source, path))).rejects.toThrow(
+        "tla-ts can't call a function that reads a let or a const before it's declared",
+      );
+    });
+
+    it("reads it where its module runs first", async () => {
+      expect((await check(compile(swapped, path))).failure).toBeUndefined();
+    });
+
+    it("rejects a wrong type where its module runs first", async () => {
+      const wrong = swapped.replace('kind !== "number"', 'kind !== "string"');
+      await expect(check(compile(wrong, path))).rejects.toThrow("seen number");
+    });
+  });
 });

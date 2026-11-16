@@ -185,6 +185,8 @@ export interface Context {
   checkedGlobals: ReadonlySet<ts.Identifier>;
   // The vars that stand for the globals that writes outside strict mode make.
   implicitGlobals: ReadonlySet<ts.Symbol>;
+  // TypeScript's library files, which declare the built-ins.
+  defaultLibraries: ReadonlySet<ts.SourceFile>;
   // The generator functions that a script declares at its top, or that a variable there holds,
   // whose prototype objects the heap holds from the start, by the place on the heap of each.
   generatorPrototypes: Map<ts.FunctionDeclaration | ts.FunctionExpression, number>;
@@ -540,6 +542,7 @@ export const createContext = (
   checker: ts.TypeChecker,
   files: readonly ts.SourceFile[],
   implicitGlobals: ReadonlySet<ts.Symbol>,
+  defaultLibraries: ReadonlySet<ts.SourceFile>,
 ): Context => {
   const reads = getDeclaredReads(checker, files);
   return {
@@ -587,6 +590,7 @@ export const createContext = (
     collectionProxies: new Set(),
     checkedGlobals: new Set(),
     implicitGlobals,
+    defaultLibraries,
     generatorPrototypes: new Map(),
     namespaces: new Map(),
     valueEnums: new Map(),
