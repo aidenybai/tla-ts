@@ -1,3 +1,9 @@
+export interface StateVariable {
+  name: string;
+  value: string;
+  isChanged: boolean;
+}
+
 export interface SearchState {
   id: string;
   parentId: string | undefined;
@@ -5,18 +11,17 @@ export interface SearchState {
   line: number | undefined;
   text: string;
   change: string;
+  variables: StateVariable[];
   isFailing: boolean;
 }
 
 export interface Search {
   states: SearchState[];
-  chartStates: SearchState[];
-  stateCount: number;
+  listedStates: SearchState[];
 }
 
-const SHOWN_STATES = 8;
+const SHOWN_STATES = 4;
 const WHOLE_STATE_LENGTH = 24;
-const CHART_STATES = 24;
 const EDGE = /^(-?\d+) -> (-?\d+) \[label="((?:[^"\\]|\\.)*)"/;
 const NODE = /^(-?\d+) \[label="((?:[^"\\]|\\.)*)"/;
 
@@ -56,21 +61,32 @@ export const getSearch = (
         text.length <= WHOLE_STATE_LENGTH
           ? text
           : (changed.length > 0 ? changed : variables).join(", "),
+      variables: variables.map((variable) => ({
+        name: variable.slice(0, variable.indexOf(" = ")),
+        value: variable.slice(variable.indexOf(" = ") + 3),
+        isChanged: changed.includes(variable),
+      })),
       isFailing: text === failingState,
     });
   }
   const failing = [...states.values()].find((state) => state.isFailing);
   const failingIds = getPath([...states.values()], failing?.id).map((state) => state.id);
-  const getShown = (count: number) => {
-    const shown = new Set([...[...states.keys()].slice(0, count), ...failingIds]);
-    return [...states.values()].filter((state) => shown.has(state.id));
-  };
+  // A failing run shows only the steps to the failing state.
+  const shown = new Set(
+    failingIds.length > 0 ? failingIds : [...states.keys()].slice(0, SHOWN_STATES),
+  );
+  const shownStates = [...states.values()].filter((state) => shown.has(state.id));
   return {
-    states: getShown(SHOWN_STATES),
-    chartStates: getShown(CHART_STATES),
-    stateCount: states.size,
+    states: shownStates,
+    listedStates: failingIds.length > 0 ? shownStates : [...states.values()],
   };
 };
+
+// The names of the code a state came from: its step, or its variables when it is a first state.
+export const getStateNames = (state: SearchState) =>
+  state.call === undefined
+    ? state.variables.map((variable) => variable.name)
+    : [state.call.replace(/\(.*/, "")];
 
 export const getPath = (states: SearchState[], stateId: string | undefined): SearchState[] => {
   const state = states.find((innerState) => innerState.id === stateId);

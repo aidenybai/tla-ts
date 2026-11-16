@@ -25,7 +25,7 @@
   --ring: #bcbbb5;
   --radius: 0.5rem;
   --prose: #42413e;
-  --faint: #82827c;
+  --faint: #74746e;
   --raised: #fff;
   --success: #22863a;
   --syntax-number: #005cc5;
@@ -55,7 +55,7 @@
   --input: #3b3a37;
   --ring: #62605b;
   --prose: #cdccc8;
-  --faint: #7c7b74;
+  --faint: #8a8982;
   --raised: #3b3a37;
   --success: #85e89d;
   --syntax-number: #79b8ff;
@@ -100,6 +100,14 @@
   --shadow-raised:
     0 0 0 1px var(--shadow-edge), 0 1px 2px -1px var(--shadow-edge), 0 2px 4px 0 var(--shadow-soft);
   --animate-line-fade: line-fade 1s linear infinite;
+  --animate-chip-in: chip-in 200ms ease-out backwards;
+
+  @keyframes chip-in {
+    from {
+      opacity: 0;
+      scale: 0.95;
+    }
+  }
 
   @keyframes line-fade {
     from {
@@ -128,7 +136,8 @@
   ::selection {
     @apply bg-foreground/15;
   }
-  button {
+  button,
+  a {
     touch-action: manipulation;
   }
   code {

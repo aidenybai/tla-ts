@@ -1,12 +1,15 @@
+import { ArrowUpRight } from "@phosphor-icons/react";
 import { Fragment, useState, type ReactNode } from "react";
 import { cn } from "cn";
 import { createPartsContext } from "@/lib/utils";
 import { EXAMPLES } from "../example";
 import type { RunResult } from "../run-worker";
 import { useRun } from "../use-run";
-import { CodeActions, CodeContent, CodeCopy, CodeFooter, CodeRoot, CodeRun } from "./code";
+import { CodeActions, CodeContent, CodeFooter, CodeRoot, CodeRun } from "./code";
 import { Button } from "./ui/button";
+import { buttonVariants } from "./ui/button-variants";
 import { ToggleGroup, ToggleGroupItem } from "./ui/toggle-group";
+import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 import { Verdict } from "./verdict";
 
 interface ExampleState {
@@ -147,7 +150,20 @@ export const ExampleSource = () => {
     >
       <CodeContent />
       <CodeActions>
-        <CodeCopy />
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <a
+                href={`/playground#${new URLSearchParams({ file: state.example.fileName, code: state.example.typescript.code })}`}
+                aria-label="View in playground"
+                className={cn(buttonVariants({ size: "icon" }))}
+              />
+            }
+          >
+            <ArrowUpRight />
+          </TooltipTrigger>
+          <TooltipContent>View in playground</TooltipContent>
+        </Tooltip>
       </CodeActions>
       <CodeFooter>
         <output className="flex min-w-0 flex-1 items-center gap-1.5">

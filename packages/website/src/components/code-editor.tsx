@@ -1,6 +1,6 @@
-import { useRef } from "react";
+import { useMemo, useRef } from "react";
 import { getHighlightedLines } from "../highlighter";
-import { getLineOffsets } from "../line-offsets";
+import { getLineMarks } from "../line-marks";
 import type { Mark } from "../site-data";
 import { CodeLine, LineNumber } from "./code-line";
 
@@ -10,6 +10,8 @@ interface CodeEditorProps {
   onChange: (value: string) => void;
   marks: Mark[];
   hoveredName: string | undefined;
+  isHighlighted: boolean;
+  focusedNames: string[];
   colors: Record<string, string>;
   onHover: (name: string | undefined) => void;
 }
@@ -17,9 +19,13 @@ interface CodeEditorProps {
 export const CodeEditor = (props: CodeEditorProps) => {
   const characterRef = useRef<HTMLSpanElement>(null);
   const lines = props.value.split("\n");
-  const offsets = getLineOffsets(lines);
+  const lineMarks = useMemo(
+    () => getLineMarks(props.value.split("\n"), props.marks),
+    [props.value, props.marks],
+  );
+  const highlighted = useMemo(() => getHighlightedLines(props.value, "typescript"), [props.value]);
   return (
-    <div className="flex w-max min-w-full gap-4 font-mono text-[13px]/[1.7] text-foreground">
+    <div className="flex min-h-full w-max min-w-full gap-4 font-mono text-[13px]/[1.7] text-foreground pointer-coarse:text-[16px]/[1.7]">
       <span ref={characterRef} aria-hidden className="invisible absolute">
         0
       </span>
@@ -32,16 +38,20 @@ export const CodeEditor = (props: CodeEditorProps) => {
       </div>
       <div className="grid flex-1">
         <code aria-hidden className="pointer-events-none [grid-area:1/1]">
-          {getHighlightedLines(props.value, "typescript")
+          {highlighted
             .map((tokens, index) => ({ tokens, index }))
             .map((line) => (
               <CodeLine
                 key={line.index}
                 tokens={line.tokens}
                 isWrapped={false}
-                offset={offsets[line.index]}
-                marks={props.marks}
+                marks={lineMarks[line.index]}
                 hoveredName={props.hoveredName}
+                isHighlighted={props.isHighlighted}
+                isDimmed={
+                  props.focusedNames.length > 0 &&
+                  !lineMarks[line.index].some((mark) => props.focusedNames.includes(mark.name))
+                }
                 colors={props.colors}
                 className="w-max"
               />
@@ -69,12 +79,11 @@ export const CodeEditor = (props: CodeEditorProps) => {
             const size = character.getBoundingClientRect();
             const lineIndex = Math.floor((event.clientY - box.top) / size.height);
             const column = Math.floor((event.clientX - box.left) / size.width);
-            const offset =
-              column < (lines[lineIndex]?.length ?? 0) ? offsets[lineIndex] + column : undefined;
             props.onHover(
-              props.marks.find(
-                (mark) => offset !== undefined && mark.start <= offset && offset < mark.end,
-              )?.name,
+              column < (lines[lineIndex]?.length ?? 0)
+                ? lineMarks[lineIndex].find((mark) => mark.start <= column && column < mark.end)
+                    ?.name
+                : undefined,
             );
           }}
           onPointerLeave={() => props.onHover(undefined)}

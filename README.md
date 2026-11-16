@@ -9,7 +9,7 @@
 [![version](https://img.shields.io/npm/v/tla-ts?style=flat&colorA=000000&colorB=000000)](https://npmjs.com/package/tla-ts)
 [![downloads](https://img.shields.io/npm/dt/tla-ts.svg?style=flat&colorA=000000&colorB=000000)](https://npmjs.com/package/tla-ts)
 
-Formal verification for your existing TypeScript code via [TLA+](https://lamport.azurewebsites.net/tla/tla.html).
+Formally verify TypeScript code with [TLA+](https://lamport.azurewebsites.net/tla/tla.html).
 
 Under the hood, TLA-ts is a transpiler that turns TypeScript/JavaScript into TLA+. It uses a 1:1 reimplementation of [TLC](https://github.com/tlaplus/tlaplus)/[TLAPM](https://proofs.tlapl.us) in TypeScript that runs 2× faster.
 
@@ -77,6 +77,21 @@ For a TLA+ spec, TLA-ts reads `Counter.cfg` from the same folder and takes TLC's
 
 ## API
 
+### `compile`
+
+```ts
+const spec = await compile({ source, fileName: "counter.ts" });
+const result = await check(spec);
+```
+
+| Option      | Description                                                                   |
+| ----------- | ----------------------------------------------------------------------------- |
+| `source`    | The text of the TypeScript file                                               |
+| `fileName`  | The path of the file. Imports resolve from it, and the module takes its name  |
+| `libraries` | TypeScript's built-in `lib.*.d.ts` files by name. Pass them only in a browser |
+
+TypeScript's built-in files declare types such as `Array` and `Map`. In Node, `compile` reads them from disk. A browser has no disk, so pass them as a `Map` from file name to text.
+
 ### `check`
 
 ```ts
@@ -98,7 +113,7 @@ A check with several workers starts over on one worker when it orders two string
 
 ```ts
 const result = await prove({ source });
-result.obligations; // each with a status: "proved", "trivial", "failed", or "unsupported"
+result.obligations[0].status; // "proved", "trivial", "failed", or "unsupported"
 ```
 
 | Option         | Description                                      |

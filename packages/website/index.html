@@ -6,16 +6,17 @@
     <title>TLA-ts</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="alternate" type="text/markdown" href="/index.md" />
-    <meta
-      name="description"
-      content="Formal verification for your existing TypeScript code via TLA+."
-    />
+    <meta name="description" content="Formally verify TypeScript code with TLA+." />
+    <meta name="theme-color" content="#fdfdfc" />
     <script>
-      document.documentElement.classList.toggle(
-        "dark",
-        (localStorage.getItem("tla-ts-theme") ??
-          (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")) === "dark",
-      );
+      if (
+        document.documentElement.classList.toggle(
+          "dark",
+          (localStorage.getItem("tla-ts-theme") ??
+            (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")) === "dark",
+        )
+      )
+        document.querySelector('meta[name="theme-color"]').content = "#111110";
     </script>
   </head>
   <body>
