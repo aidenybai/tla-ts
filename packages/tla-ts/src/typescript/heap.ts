@@ -6053,6 +6053,26 @@ export const isArrayLengthening = (node: ts.Node, context: Context) =>
 export const isConcatParts = (node: ts.Node, context: Context) =>
   isMethodCall(node) && node.expression.name.text === "concat" && context.heapCollections.has(node);
 
+// The arrays, sets, and maps that a script makes, which the heap holds where it holds every one.
+export const findMadeCollections = (roots: readonly ts.Node[], context: Context) =>
+  roots.flatMap((root) =>
+    findNodes(
+      root,
+      (node): node is ts.Expression | ts.BindingElement =>
+        (ts.isArrayLiteralExpression(node) &&
+          !isAssignmentTarget(node) &&
+          !(ts.isArrayLiteralExpression(node.parent) && isAssignmentTarget(node.parent))) ||
+        isNewArrayOfElements(node, context) ||
+        (ts.isNewExpression(node) && isFreshCollection(node, context)) ||
+        (ts.isCallExpression(node) && isFreshArrayCall(node, context)) ||
+        getOrderedSetMethod(node, context) !== undefined ||
+        // A rest element's array is a new one.
+        (ts.isBindingElement(node) &&
+          node.dotDotDotToken !== undefined &&
+          ts.isArrayBindingPattern(node.parent)),
+    ),
+  );
+
 export const findHeapArrays = (
   roots: readonly ts.Node[],
   changed: readonly ts.Node[],

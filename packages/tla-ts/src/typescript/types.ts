@@ -615,6 +615,13 @@ export const getHolders = (node: ts.Expression, checker: ts.TypeChecker) => {
   return getAccessedFields(node, checker) ?? (symbol === undefined ? [] : [symbol]);
 };
 
+// Whether every value of a type is an array, a set, or a map where the heap holds every one.
+export const isHeldCollectionType = (type: ts.Type, context: Context) =>
+  context.isEveryCollectionHeld &&
+  (type.isUnion() ? type.types : [type]).every(
+    (member) => isSequenceType(member, context.checker) || isSetType(member) || isMapType(member),
+  );
+
 // Whether an expression gives a set or a map that the heap holds, which keeps its identity as a
 // script changes it in place.
 export const isHeapSetOrMap = (node: ts.Expression, context: Context) => {
@@ -678,6 +685,14 @@ export const getReorderedArray = (node: ts.Expression, context: Context) => {
 // Whether an expression gives a collection that the heap holds: a literal or a new set or map that
 // it holds, or what a holder of them gives.
 const isHeld = (node: ts.Expression, context: Context): boolean => {
+  if (
+    isHeldCollectionType(
+      context.checker.getNonNullableType(context.checker.getTypeAtLocation(node)),
+      context,
+    )
+  ) {
+    return true;
+  }
   // A cast gives the same collection whatever type it gives it.
   if (
     ts.isParenthesizedExpression(node) ||

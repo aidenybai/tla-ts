@@ -143,6 +143,9 @@ export interface Context {
   // Whether the heap holds every map that a script makes, as a map off the heap may be the same TLA+
   // value as an array.
   isEveryMapHeld: boolean;
+  // Whether the heap holds every array, set, and map, as where tla-ts can't tell that a copy
+  // behaves as the shared object would.
+  isEveryCollectionHeld: boolean;
   // The file of a script without exported actions that reports what it doesn't catch as Node does,
   // and whether Node runs it as an ES module.
   script: { sourceFile: ts.SourceFile; isEsModule: boolean } | undefined;
@@ -575,6 +578,7 @@ export const createContext = (
     hasSpecialNumbers: false,
     hasOrderedCollections: false,
     isEveryMapHeld: true,
+    isEveryCollectionHeld: false,
     script: undefined,
     reached: undefined,
     symbols: [],

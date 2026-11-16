@@ -837,6 +837,40 @@ export const bindValues = (
         initializer === undefined
           ? getUndefined(context)
           : translateExpression(initializer, current.scope, context);
+      // A rest parameter's array is a new one, which the heap holds where it holds every array.
+      const heapSymbol = context.heap;
+      const heap = heapSymbol === undefined ? undefined : current.scope.bindings.get(heapSymbol);
+      if (
+        parameter.dotDotDotToken !== undefined &&
+        context.isEveryCollectionHeld &&
+        heapSymbol !== undefined &&
+        heap !== undefined &&
+        value !== undefined &&
+        ts.isIdentifier(parameter.name)
+      ) {
+        const allocated = useJavaScript(
+          "Allocate",
+          [
+            heap,
+            useJavaScript(
+              "ArrayObject",
+              [translateBuiltInValue("Array.prototype", parameter, context), value],
+              context,
+            ),
+          ],
+          context,
+        );
+        const bound = bindPattern(
+          parameter.name,
+          useJavaScript("Allocated", [allocated], context),
+          {
+            ...current.scope,
+            bindings: new Map([...current.scope.bindings, [heapSymbol, allocated]]),
+          },
+          context,
+        );
+        return { definitions: [...current.definitions, ...bound.definitions], scope: bound.scope };
+      }
       const bound = bindPattern(
         parameter.name,
         value === undefined
