@@ -47940,4 +47940,44 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("assigns to the object that Object.create makes, which TypeScript types as any", () => {
+    const getSource = (expected: string) => `
+      class Reason {
+        label = "a";
+        count = 1;
+        relabel(label: string): this {
+          const self = Object.assign(Object.create(Object.getPrototypeOf(this)), this);
+          self.label = label;
+          return self;
+        }
+      }
+      const first = new Reason();
+      const second = first.relabel("b");
+      const made = Object.create(null);
+      const bare = Object.assign(made, { x: 1 });
+      const seen = [
+        first.label,
+        second.label,
+        second.count,
+        second instanceof Reason,
+        Object.keys(second).join("|"),
+        Object.getPrototypeOf(bare) === null,
+        bare.x,
+      ].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("a,b,1,true,label|count,true,1"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects an object that loses its prototype", async () => {
+      expect(
+        (await checkModel(getSource("a,b,1,false,label|count,true,1"))).failure?.message,
+      ).toContain("seen a,b,1,true,label|count,true,1");
+    });
+  });
 });

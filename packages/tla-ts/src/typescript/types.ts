@@ -1309,6 +1309,29 @@ const isCalledArrayParameter = (parameter: ts.ParameterDeclaration, context: Con
   );
 };
 
+// A call of Object.create, which makes an object that TypeScript types as any, or a const that
+// holds what one makes.
+export const isCreatedObject = (node: ts.Expression, context: Context) => {
+  const value = skipCasts(node);
+  const declaration = ts.isIdentifier(value)
+    ? getSymbol(value, context.checker)?.valueDeclaration
+    : undefined;
+  const made = skipCasts(
+    declaration !== undefined &&
+      ts.isVariableDeclaration(declaration) &&
+      declaration.initializer !== undefined &&
+      (ts.getCombinedNodeFlags(declaration) & ts.NodeFlags.Const) !== 0
+      ? declaration.initializer
+      : value,
+  );
+  return (
+    context.heap !== undefined &&
+    isMethodCall(made) &&
+    getBuiltIn(made.expression.expression, context) === "Object" &&
+    made.expression.name.text === "create"
+  );
+};
+
 export const getKind = (node: ts.Expression, context: Context): Kind => {
   if (context.heap !== undefined && getWrappedThis(node, context) !== undefined) return "object";
   if (isHeapArray(node, context) || getBound(node, context) !== undefined) return "object";
@@ -1364,7 +1387,7 @@ export const getKind = (node: ts.Expression, context: Context): Kind => {
   ) {
     return "object";
   }
-  if (isHeldBuiltInObject(node, context)) return "object";
+  if (isHeldBuiltInObject(node, context) || isCreatedObject(node, context)) return "object";
   const type = checker.getNonNullableType(checker.getTypeAtLocation(node));
   // A value of a built-in object's type, other than the global that names it, holds that object.
   if (

@@ -446,6 +446,7 @@ import {
   getOrderedIteration,
   getPathStep,
   isHeapPattern,
+  isCreatedObject,
   isHeapType,
   isAddedToBuiltIn,
   isBigIntLike,
@@ -13792,7 +13793,8 @@ const isStatementResult = (node: ts.CallExpression, path: Path, context: Context
         context.heapCollections.has(node.parent) ||
         // A change of an object gives the object, though TypeScript types what it gives as any.
         (node.arguments.length > 0 &&
-          isHeapType(context.checker.getTypeAtLocation(node.arguments[0]), context)))) ||
+          (isHeapType(context.checker.getTypeAtLocation(node.arguments[0]), context) ||
+            isCreatedObject(node.arguments[0], context))))) ||
     getGeneratorStep(node, context) !== undefined ||
     getGeneratorMethod(node, context) !== undefined ||
     getIterableFrom(node, context) !== undefined ||
