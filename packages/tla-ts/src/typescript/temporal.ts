@@ -80,6 +80,28 @@ const TEMPORAL_FUNCTIONS = new Map<string, TemporalFunctions>([
       ]),
     },
   ],
+  [
+    "PlainDate",
+    {
+      made: "PlainDate",
+      statics: new Map([
+        ["from", "PlainDate"],
+        ["compare", ""],
+      ]),
+      methods: new Map([
+        ["add", "PlainDate"],
+        ["subtract", "PlainDate"],
+        ["with", "PlainDate"],
+        ["withCalendar", "PlainDate"],
+        ["until", "Duration"],
+        ["since", "Duration"],
+        ["equals", ""],
+        ["toString", ""],
+        ["toJSON", ""],
+        ["valueOf", ""],
+      ]),
+    },
+  ],
 ]);
 
 export interface TemporalCall {

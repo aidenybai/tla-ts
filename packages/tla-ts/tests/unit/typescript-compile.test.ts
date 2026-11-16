@@ -45614,4 +45614,38 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("runs Temporal.PlainDate", () => {
+    const getSource = (expected: string) => `
+      const thrown = (run: () => unknown) => {
+        try {
+          run();
+          return "none";
+        } catch (error) {
+          return (error as Error).name;
+        }
+      };
+      const date = new Temporal.PlainDate(2020, 2, 29);
+      const added = date.add({ years: 1 }).toString();
+      const until = date.until("2021-03-01", { largestUnit: "months" }).toString();
+      const constrained = Temporal.PlainDate.from({ year: 2021, monthCode: "M02", day: 31 }).toString();
+      const rejected = thrown(() => Temporal.PlainDate.from({ year: 2021, month: 2, day: 31 }, { overflow: "reject" }));
+      const since = date.since("2019-01-01", { smallestUnit: "months", roundingMode: "halfExpand" }).toString();
+      const weeks = date.until("2020-12-25", { largestUnit: "weeks" }).toString();
+      const seen = [date.dayOfWeek, date.dayOfYear, date.weekOfYear, date.inLeapYear, added, until, constrained, rejected, since, weeks].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      const expected = "6,60,9,true,2021-02-28,P12M1D,2021-02-28,RangeError,P14M,P42W6D";
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects a difference that rounds the half month down", async () => {
+      const expected = "6,60,9,true,2021-02-28,P12M1D,2021-02-28,RangeError,P13M,P42W6D";
+      expect((await checkModel(getSource(expected))).failure?.message).toContain(
+        "seen 6,60,9,true,2021-02-28,P12M1D,2021-02-28,RangeError,P14M,P42W6D",
+      );
+    });
+  });
 });
