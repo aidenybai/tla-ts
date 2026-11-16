@@ -472,7 +472,7 @@ export const getAnonymousName = (node: ts.ArrowFunction | HeapClass, context: Co
 // stands for one function object whose properties the heap holds. A function in sloppy code also
 // has its own arguments and caller, which the heap doesn't hold.
 export const getHeldName = (node: FunctionNode, context: Context) => {
-  if (context.heap === undefined || node.body === undefined || !isOnce(node.parent)) {
+  if (context.heap === undefined || node.body === undefined || !isOnce(node.parent, context)) {
     return undefined;
   }
   if (ts.isMethodDeclaration(node)) {
@@ -620,7 +620,7 @@ export const translateObject = (
         context,
       );
     }
-    if (isPlainAccessor(property) && isOnce(node)) {
+    if (isPlainAccessor(property) && isOnce(node, context)) {
       return useJavaScript(
         "DefineAccessor",
         [
@@ -705,7 +705,7 @@ export const translateObject = (
         context,
       );
     }
-    throw new TlaTypeScriptError(getMemberStop(property, node), property);
+    throw new TlaTypeScriptError(getMemberStop(property, node, context), property);
   }, identifier("EmptyObject"));
 };
 
@@ -715,11 +715,12 @@ export const translateObject = (
 const getMemberStop = (
   property: ts.ObjectLiteralElementLike,
   literal: ts.ObjectLiteralExpression,
+  context: Context,
 ) => {
   if (
     !(ts.isMethodDeclaration(property) || ts.isAccessor(property)) ||
     property.body === undefined ||
-    isOnce(literal)
+    isOnce(literal, context)
   ) {
     return "Unsupported object member";
   }
@@ -982,7 +983,7 @@ const translateClass = (
         );
   // A function holds the model value of its code, so that a call of a value can tell which it is.
   const object = ts.isClassLike(node)
-    ? isOnceField(node)
+    ? isOnceField(node, context)
       ? useJavaScript(
           "PrivateAdd",
           [branded, string(getClassKey(node, context)), boolean(true)],
@@ -1345,7 +1346,7 @@ const translateInstance = (
       context,
     ),
   );
-  return ts.isClassLike(created) && isOnceField(created)
+  return ts.isClassLike(created) && isOnceField(created, context)
     ? ifExpression(
         useJavaScript(
           "HasPrivate",
@@ -1383,7 +1384,7 @@ export const translateHasPrivate = (
 // A script's error outside the heap, which takes an empty object on the heap as its identity.
 export const isNewError = (node: ts.Node, context: Context) =>
   (ts.isNewExpression(node) &&
-    getErrorClass(getSymbol(node.expression, context.checker), context.checker) !== undefined) ||
+    getErrorClass(getSymbol(node.expression, context.checker), context) !== undefined) ||
   getCalledError(node, context) !== undefined;
 
 export const translateAllocated = (node: ts.Node, scope: Scope, context: Context) => {

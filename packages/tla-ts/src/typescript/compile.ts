@@ -7,7 +7,6 @@ import {
   createContext,
   findNodes,
   findFunctionCandidates,
-  findGuardedStatements,
   findOnceFunctions,
   findOnceLocals,
   getCallee,
@@ -206,9 +205,8 @@ export const compile = (
   const path = fileName.replaceAll("\\", "/");
   const program = createProgram(source, path, libraries);
   const context = createContext(program.checker, program.files, program.implicitGlobals);
-  findGuardedStatements(program.files);
   if (isScript(program.sourceFile)) {
-    const onceFunctions = findOnceFunctions(program.files);
+    const onceFunctions = findOnceFunctions(program.files, context);
     context.onceFunctions = new Set(onceFunctions);
     context.onceLocals = findOnceLocals(onceFunctions, program.checker);
   }

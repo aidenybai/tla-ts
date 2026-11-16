@@ -2838,7 +2838,7 @@ const translateIdentifier = (node: ts.Identifier, scope: Scope, context: Context
   const builtIn =
     context.heap === undefined ? undefined : translateBuiltInObject(node, scope, context);
   if (builtIn !== undefined) return builtIn;
-  const errorClass = getErrorClass(symbol, context.checker)?.[0];
+  const errorClass = getErrorClass(symbol, context)?.[0];
   if (errorClass !== undefined) return getConstructor(errorClass, context);
   const intrinsic = translateIntrinsic(node, scope, context);
   if (intrinsic !== undefined) return intrinsic;
@@ -3135,7 +3135,7 @@ const translatePropertyAccess = (
   if (
     member !== undefined &&
     isStatic(member) &&
-    getErrorClass(getSymbol(receiver, context.checker), context.checker)?.[0].valueDeclaration ===
+    getErrorClass(getSymbol(receiver, context.checker), context)?.[0].valueDeclaration ===
       member.parent
   ) {
     throw new TlaTypeScriptError("tla-ts can't read a static member of a class of errors", node);
@@ -4463,7 +4463,7 @@ export const translateNode = (
   if (functionValue !== undefined) return translateFunctionValue(functionValue, context);
   const errorClass =
     ts.isClassExpression(node) && ts.isVariableDeclaration(node.parent)
-      ? getErrorClass(getSymbol(node.parent.name, context.checker), context.checker)?.[0]
+      ? getErrorClass(getSymbol(node.parent.name, context.checker), context)?.[0]
       : undefined;
   if (errorClass !== undefined) return getConstructor(errorClass, context);
   const isHeapObject =
@@ -4561,7 +4561,7 @@ export const translateNode = (
     );
   }
   if (ts.isNewExpression(node)) {
-    const classes = getErrorClass(getSymbol(node.expression, context.checker), context.checker);
+    const classes = getErrorClass(getSymbol(node.expression, context.checker), context);
     return classes === undefined
       ? translateNew(node, scope, context)
       : translateNewError(node, classes, scope, context);

@@ -57,12 +57,12 @@ const getBase = (symbol: ts.Symbol, checker: ts.TypeChecker) => {
 };
 
 // A class expression that a const holds, which the script evaluates once, so the const names it.
-const isConstClass = (node: ts.Node): node is ts.ClassExpression =>
+const isConstClass = (node: ts.Node, context: Context): node is ts.ClassExpression =>
   ts.isClassExpression(node) &&
   ts.isVariableDeclaration(node.parent) &&
   node.parent.initializer === node &&
   (ts.getCombinedNodeFlags(node.parent) & ts.NodeFlags.Const) !== 0 &&
-  isOnce(node.parent);
+  isOnce(node.parent, context);
 
 // Whether a script reads a class's prototype, which an error that's a record can't inherit from, so
 // the class makes objects on the heap.
@@ -82,10 +82,10 @@ export const isPrototypeRead = (symbol: ts.Symbol, checker: ts.TypeChecker) => {
 
 export const getErrorClass = (
   symbol: ts.Symbol | undefined,
-  checker: ts.TypeChecker,
+  context: Context,
 ): ts.Symbol[] | undefined => {
   if (symbol === undefined) return undefined;
-  const base = getBase(symbol, checker);
+  const base = getBase(symbol, context.checker);
   if (isNative(symbol)) return [symbol, ...(base === undefined ? [] : [base])];
   const declaration = symbol.valueDeclaration;
   const held =
@@ -93,17 +93,17 @@ export const getErrorClass = (
       ? declaration.initializer
       : undefined;
   if (held !== undefined && ts.isClassExpression(held)) {
-    return getErrorClass(checker.getTypeAtLocation(held).getSymbol(), checker);
+    return getErrorClass(context.checker.getTypeAtLocation(held).getSymbol(), context);
   }
   if (
     declaration === undefined ||
-    !(ts.isClassDeclaration(declaration) || isConstClass(declaration)) ||
+    !(ts.isClassDeclaration(declaration) || isConstClass(declaration, context)) ||
     hasObjectMembers(declaration) ||
-    isPrototypeRead(symbol, checker)
+    isPrototypeRead(symbol, context.checker)
   ) {
     return undefined;
   }
-  const inherited = getErrorClass(base, checker);
+  const inherited = getErrorClass(base, context);
   return inherited === undefined ? undefined : [symbol, ...inherited];
 };
 
@@ -163,7 +163,7 @@ export const getUncaughtText = (statement: ts.ThrowStatement, scope: Scope, cont
   }
   const isModule = script.isEsModule;
   if (ts.isNewExpression(thrown)) {
-    const classes = getErrorClass(getSymbol(thrown.expression, context.checker), context.checker);
+    const classes = getErrorClass(getSymbol(thrown.expression, context.checker), context);
     const header = classes === undefined ? undefined : getErrorHeader(classes);
     const argumentNodes = thrown.arguments ?? [];
     const message = argumentNodes.at(0);
@@ -282,7 +282,7 @@ export const translateSuppressedError = (
 // The native error class that a call constructs an error of, as new does.
 export const getCalledError = (node: ts.Node, context: Context) => {
   const classes = ts.isCallExpression(node)
-    ? getErrorClass(getSymbol(node.expression, context.checker), context.checker)
+    ? getErrorClass(getSymbol(node.expression, context.checker), context)
     : undefined;
   return classes !== undefined && isNative(classes[0]) ? classes : undefined;
 };
@@ -358,10 +358,8 @@ const isCaught = (node: ts.Expression, context: Context): boolean => {
   if (
     ts.isPropertyAccessExpression(node) &&
     ["error", "suppressed"].includes(node.name.text) &&
-    getErrorClass(
-      context.checker.getTypeAtLocation(node.expression).getSymbol(),
-      context.checker,
-    )?.at(-2)?.name === "SuppressedError"
+    getErrorClass(context.checker.getTypeAtLocation(node.expression).getSymbol(), context)?.at(-2)
+      ?.name === "SuppressedError"
   ) {
     return true;
   }
@@ -403,7 +401,7 @@ export const isNativeErrorValue = (node: ts.Expression, context: Context) => {
 const getSubclasses = (node: ts.Node, symbol: ts.Symbol, context: Context) => {
   const found = new Map<ts.Symbol, Expression>();
   const add = (created: ts.Symbol | undefined) => {
-    const classes = getErrorClass(created, context.checker);
+    const classes = getErrorClass(created, context);
     if (classes?.includes(symbol)) found.set(classes[0], getConstructor(classes[0], context));
   };
   // JavaScript itself may throw any native error, where the script makes none.
@@ -473,7 +471,7 @@ export const translateHasInstanceCall = (
 };
 
 export const translateInstanceOf = (node: ts.BinaryExpression, scope: Scope, context: Context) => {
-  const rightClasses = getErrorClass(getSymbol(node.right, context.checker), context.checker);
+  const rightClasses = getErrorClass(getSymbol(node.right, context.checker), context);
   const isHeapClass = getHeapClass(node.right, context) !== undefined;
   const isObject = getKind(node.left, context) === "object";
   // An object on the heap, such as an error that it holds, is an instance where the constructor's
@@ -530,7 +528,7 @@ export const translateInstanceOf = (node: ts.BinaryExpression, scope: Scope, con
     );
   }
   const symbol = getSymbol(node.right, context.checker);
-  const classes = getErrorClass(symbol, context.checker);
+  const classes = getErrorClass(symbol, context);
   const builtIn =
     classes === undefined ? translateBuiltInInstanceOf(node, scope, context) : undefined;
   if (builtIn !== undefined) return builtIn;
@@ -539,7 +537,7 @@ export const translateInstanceOf = (node: ts.BinaryExpression, scope: Scope, con
   }
   const value = translateExpression(node.left, scope, context);
   const subclasses = set(getSubclasses(node, classes[0], context));
-  if (getErrorClass(context.checker.getTypeAtLocation(node.left).getSymbol(), context.checker)) {
+  if (getErrorClass(context.checker.getTypeAtLocation(node.left).getSymbol(), context)) {
     return apply("\\in", [field(value, "constructor"), subclasses]);
   }
   // A value of type unknown or any, such as a parameter's, may be any value, as a caught one may.
@@ -613,7 +611,7 @@ export const translateThrown = (node: ts.Expression, scope: Scope, context: Cont
     !isHeapObject &&
     !isAnyValue &&
     !isHeapArray(node, context) &&
-    getErrorClass(type.getSymbol(), context.checker) === undefined &&
+    getErrorClass(type.getSymbol(), context) === undefined &&
     !isCaught(node, context)
   ) {
     throw new TlaTypeScriptError("Throw an error or a primitive", node);

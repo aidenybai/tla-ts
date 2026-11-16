@@ -171,6 +171,9 @@ export interface Context {
   onceLocals: ReadonlySet<ts.Symbol>;
   // The functions of a script that run once, whose locals the state holds.
   onceFunctions: ReadonlySet<ts.Node>;
+  // The statements that run at most once, however often their functions run, as findGuardedStatements
+  // finds them.
+  guardedStatements: ReadonlySet<ts.Node>;
   // The functions of each file that a value may hold where tla-ts can't tell which, once the
   // script's heap is known.
   functionCandidates: ReadonlyMap<ts.SourceFile, readonly FunctionNode[]>;
@@ -572,6 +575,7 @@ export const createContext = (
     closures: new Map(),
     onceLocals: new Set(),
     onceFunctions: new Set(),
+    guardedStatements: findGuardedStatements(files),
     functionCandidates: new Map(),
     collectionProxies: new Set(),
     checkedGlobals: new Set(),
@@ -1576,7 +1580,7 @@ const getMethod = (node: ts.Expression, context: Context) => {
   // A static method of a class of errors that makes plain errors, which reads no this, runs as a
   // function does.
   const errorClass = isStatic
-    ? getErrorClass(getSymbol(receiver, context.checker), context.checker)
+    ? getErrorClass(getSymbol(receiver, context.checker), context)
     : undefined;
   if (
     errorClass?.[0].valueDeclaration === declaration.parent &&
@@ -1600,23 +1604,23 @@ const getMethod = (node: ts.Expression, context: Context) => {
 // function that a call runs where it's written, that its file calls at one place, or that a call
 // passes to a function that calls it once. A for loop runs its initializer, and a for-of or a
 // for-in the expression it iterates, once.
-export const isOnce = (node: ts.Node): boolean =>
+export const isOnce = (node: ts.Node, context: Context): boolean =>
   ts.isSourceFile(node) ||
   (ts.isFunctionLike(node)
     ? isCalledInPlace(node) || isCalledThroughCall(node)
-      ? isOnce(node.parent)
-      : isCalledOnce(node) || isPassedOnce(node)
+      ? isOnce(node.parent, context)
+      : isCalledOnce(node, context) || isPassedOnce(node, context)
     : !ts.isIterationStatement(node, false) &&
-      (guardedStatements.has(node) ||
+      (context.guardedStatements.has(node) ||
         ((ts.isForStatement(node.parent) && node.parent.initializer === node) ||
         ((ts.isForOfStatement(node.parent) || ts.isForInStatement(node.parent)) &&
           node.parent.expression === node)
-          ? isOnce(node.parent.parent)
-          : isOnce(node.parent))));
+          ? isOnce(node.parent.parent, context)
+          : isOnce(node.parent, context))));
 
 // The vars, parameters, and declared functions of each function in files that a call runs where
 // it's written and whose body runs at most once, as an immediately invoked function's do.
-export const findOnceFunctions = (files: readonly ts.SourceFile[]) =>
+export const findOnceFunctions = (files: readonly ts.SourceFile[], context: Context) =>
   files.flatMap((file) =>
     findNodes(
       file,
@@ -1624,7 +1628,7 @@ export const findOnceFunctions = (files: readonly ts.SourceFile[]) =>
         (ts.isFunctionExpression(node) || ts.isArrowFunction(node)) &&
         isPlain(node) &&
         (isCalledInPlace(node) || isCalledThroughCall(node)) &&
-        isOnce(node),
+        isOnce(node, context),
     ),
   );
 
@@ -1657,81 +1661,77 @@ export const findOnceLocals = (
 // holds a value, and a statement that gives the variable an object, which nothing else writes: each
 // runs at most once, however often its function runs, as a CommonJS module's loader runs the
 // module. tla-ts finds them once before it compiles the code.
-const guardedStatements = new WeakSet<ts.Node>();
-
-export const findGuardedStatements = (files: readonly ts.SourceFile[]) =>
-  files.forEach((file) => {
-    const writes = findNodes(
-      file,
-      (inner): inner is ts.BinaryExpression & { left: ts.Identifier } =>
-        ts.isBinaryExpression(inner) &&
-        inner.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
-        inner.operatorToken.kind <= ts.SyntaxKind.LastAssignment &&
-        ts.isIdentifier(inner.left),
-    );
-    const getGuarded = (guard: ts.Statement) => {
-      const condition = ts.isIfStatement(guard) ? guard.expression : undefined;
-      const isReturning =
-        ts.isIfStatement(guard) &&
-        guard.elseStatement === undefined &&
-        (ts.isReturnStatement(guard.thenStatement) ||
-          (ts.isBlock(guard.thenStatement) &&
-            guard.thenStatement.statements.length === 1 &&
-            ts.isReturnStatement(guard.thenStatement.statements[0])));
-      return isReturning &&
-        condition !== undefined &&
-        ts.isBinaryExpression(condition) &&
-        condition.operatorToken.kind === ts.SyntaxKind.ExclamationEqualsEqualsToken &&
-        ts.isIdentifier(condition.left) &&
-        ts.isIdentifier(condition.right) &&
-        condition.right.text === "undefined"
-        ? condition.left.text
-        : undefined;
-    };
-    const isFileVar = (name: string) => {
-      const declarations = file.statements.flatMap((statement) =>
-        ts.isVariableStatement(statement)
-          ? statement.declarationList.declarations.filter(
-              (declaration) => ts.isIdentifier(declaration.name) && declaration.name.text === name,
-            )
-          : [],
+const findGuardedStatements = (files: readonly ts.SourceFile[]): ReadonlySet<ts.Node> =>
+  new Set(
+    files.flatMap((file) => {
+      const writes = findNodes(
+        file,
+        (inner): inner is ts.BinaryExpression & { left: ts.Identifier } =>
+          ts.isBinaryExpression(inner) &&
+          inner.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+          inner.operatorToken.kind <= ts.SyntaxKind.LastAssignment &&
+          ts.isIdentifier(inner.left),
       );
-      return declarations.length === 1 && declarations[0].initializer === undefined;
-    };
-    findNodes(
-      file,
-      (node): node is ts.Block => ts.isBlock(node) && ts.isFunctionLike(node.parent),
-    ).forEach((body) =>
-      body.statements.forEach((guard, guardPosition) => {
-        const name = getGuarded(guard);
-        if (name === undefined || !isFileVar(name)) return;
-        const named = writes.filter((write) => write.left.text === name);
-        const write = named.length === 1 ? named[0] : undefined;
-        const statement = write?.parent;
-        const position =
-          statement !== undefined && ts.isExpressionStatement(statement)
-            ? body.statements.indexOf(statement)
-            : -1;
-        if (
-          write === undefined ||
-          write.operatorToken.kind !== ts.SyntaxKind.EqualsToken ||
-          !ts.isObjectLiteralExpression(write.right) ||
-          position <= guardPosition
-        ) {
-          return;
-        }
-        body.statements
-          .slice(position + 1)
-          .forEach((statement) => guardedStatements.add(statement));
-      }),
-    );
-  });
+      const getGuarded = (guard: ts.Statement) => {
+        const condition = ts.isIfStatement(guard) ? guard.expression : undefined;
+        const isReturning =
+          ts.isIfStatement(guard) &&
+          guard.elseStatement === undefined &&
+          (ts.isReturnStatement(guard.thenStatement) ||
+            (ts.isBlock(guard.thenStatement) &&
+              guard.thenStatement.statements.length === 1 &&
+              ts.isReturnStatement(guard.thenStatement.statements[0])));
+        return isReturning &&
+          condition !== undefined &&
+          ts.isBinaryExpression(condition) &&
+          condition.operatorToken.kind === ts.SyntaxKind.ExclamationEqualsEqualsToken &&
+          ts.isIdentifier(condition.left) &&
+          ts.isIdentifier(condition.right) &&
+          condition.right.text === "undefined"
+          ? condition.left.text
+          : undefined;
+      };
+      const isFileVar = (name: string) => {
+        const declarations = file.statements.flatMap((statement) =>
+          ts.isVariableStatement(statement)
+            ? statement.declarationList.declarations.filter(
+                (declaration) =>
+                  ts.isIdentifier(declaration.name) && declaration.name.text === name,
+              )
+            : [],
+        );
+        return declarations.length === 1 && declarations[0].initializer === undefined;
+      };
+      return findNodes(
+        file,
+        (node): node is ts.Block => ts.isBlock(node) && ts.isFunctionLike(node.parent),
+      ).flatMap((body) =>
+        body.statements.flatMap((guard, guardPosition) => {
+          const name = getGuarded(guard);
+          if (name === undefined || !isFileVar(name)) return [];
+          const named = writes.filter((write) => write.left.text === name);
+          const write = named.length === 1 ? named[0] : undefined;
+          const statement = write?.parent;
+          const position =
+            statement !== undefined && ts.isExpressionStatement(statement)
+              ? body.statements.indexOf(statement)
+              : -1;
+          return write === undefined ||
+            write.operatorToken.kind !== ts.SyntaxKind.EqualsToken ||
+            !ts.isObjectLiteralExpression(write.right) ||
+            position <= guardPosition
+            ? []
+            : body.statements.slice(position + 1);
+        }),
+      );
+    }),
+  );
 
 const calledOnce = new WeakMap<ts.Node, boolean>();
 
 // A named function or method that its file calls at one place, which runs once, and names nowhere
 // else, so that its body runs at most once.
-const isCalledOnce = (node: ts.SignatureDeclaration): boolean => {
+const isCalledOnce = (node: ts.SignatureDeclaration, context: Context): boolean => {
   const known = calledOnce.get(node);
   if (known !== undefined) return known;
   // Functions that call each other answer no.
@@ -1764,8 +1764,8 @@ const isCalledOnce = (node: ts.SignatureDeclaration): boolean => {
     ts.isCallExpression(call) &&
     call.expression === callee &&
     ts.findAncestor(call, (ancestor) => ancestor === node) === undefined &&
-    isOnce(node.parent) &&
-    isOnce(call);
+    isOnce(node.parent, context) &&
+    isOnce(call, context);
   calledOnce.set(node, isOnceCalled);
   return isOnceCalled;
 };
@@ -1824,7 +1824,7 @@ const getPassedTo = (callee: ts.Expression) => {
 // functions of its own, and names it nowhere else, so that it runs at most once where the call
 // runs once. An async one isn't, as the methods it makes read its locals from the environment of
 // its call, which only a function that may run more than once makes.
-const isPassedOnce = (node: ts.SignatureDeclaration) => {
+const isPassedOnce = (node: ts.SignatureDeclaration, context: Context) => {
   const call = node.parent;
   if (
     !(ts.isFunctionExpression(node) || ts.isArrowFunction(node)) ||
@@ -1832,7 +1832,7 @@ const isPassedOnce = (node: ts.SignatureDeclaration) => {
     !ts.isCallExpression(call) ||
     !call.arguments.includes(node) ||
     call.arguments.slice(0, call.arguments.indexOf(node)).some(ts.isSpreadElement) ||
-    !isOnce(call)
+    !isOnce(call, context)
   ) {
     return false;
   }
@@ -1969,7 +1969,7 @@ export const getAccessKey = (node: ts.Expression) => {
 const isInlinedAccessor = (accessor: ts.Declaration, context: Context) =>
   isPlainAccessor(accessor) &&
   (ts.isObjectLiteralExpression(accessor.parent)
-    ? isOnce(accessor.parent)
+    ? isOnce(accessor.parent, context)
     : ts.isClassLike(accessor.parent) && isHeapClass(accessor.parent, context));
 
 // The accessor of a heap class, or of an object literal that a script makes once, that a property
@@ -2080,7 +2080,7 @@ export const getLiteralName = (node: ts.ObjectLiteralExpression, context: Contex
   return ts.isVariableDeclaration(declaration) &&
     ts.isIdentifier(declaration.name) &&
     symbol !== undefined &&
-    isOnce(node) &&
+    isOnce(node, context) &&
     !isAssigned(symbol, node.getSourceFile(), context)
     ? declaration.name
     : undefined;
@@ -2371,7 +2371,7 @@ export const getFunctionValue = (
     (ts.isFunctionExpression(found) ||
       ts.isArrowFunction(found) ||
       (ts.isFunctionDeclaration(found) && found.body !== undefined)) &&
-    isOnce(found.parent) &&
+    isOnce(found.parent, context) &&
     !isHeapFunction(found, context) &&
     !isFunctionObject(found, context) &&
     !isClosure(found, context)
@@ -2773,7 +2773,7 @@ export const getBaseClass = (node: ts.ClassLikeDeclaration, context: Context) =>
           ts.isPropertyDeclaration(declaration) &&
           declaration.initializer !== undefined &&
           ts.isClassExpression(declaration.initializer) &&
-          isOnceField(declaration.initializer)
+          isOnceField(declaration.initializer, context)
         ? declaration.initializer
         : declaration;
   return found !== undefined && ts.isClassLike(found) && found.end < node.getStart()
@@ -2901,7 +2901,7 @@ const heapClasses = new WeakMap<ts.ClassLikeDeclaration, boolean>();
 // A class without static fields or blocks that an instance field of a class makes, where the
 // script constructs that class at one place that runs once, and names the field only to construct
 // what it holds, so that the class runs once.
-export const isOnceField = (node: ts.ClassLikeDeclaration) => {
+export const isOnceField = (node: ts.ClassLikeDeclaration, context: Context) => {
   const field = node.parent;
   if (
     !ts.isClassExpression(node) ||
@@ -2944,7 +2944,7 @@ export const isOnceField = (node: ts.ClassLikeDeclaration) => {
     ts.isNewExpression(construction) &&
     construction.expression === ownerUses[0] &&
     ts.findAncestor(construction, (ancestor) => ancestor === owner) === undefined &&
-    isOnce(construction) &&
+    isOnce(construction, context) &&
     getUses(field.name).every(
       (use) =>
         ts.isPropertyAccessExpression(use.parent) &&
@@ -2960,7 +2960,7 @@ export const isHeapClass = (node: ts.ClassLikeDeclaration, context: Context): bo
   const known = heapClasses.get(node);
   if (known !== undefined) return known;
   const declared = ts.isClassExpression(node) ? node.parent : node;
-  const isField = isOnceField(node);
+  const isField = isOnceField(node, context);
   const nameNode =
     ts.isVariableDeclaration(declared) || (isField && ts.isPropertyDeclaration(declared))
       ? declared.name
@@ -2985,7 +2985,7 @@ export const isHeapClass = (node: ts.ClassLikeDeclaration, context: Context): bo
       ts.isVariableDeclaration(declared) ||
       isField ||
       getInPlaceNew(node) !== undefined) &&
-    isOnce(node) &&
+    isOnce(node, context) &&
     node.members.every(
       (member) =>
         ts.isSemicolonClassElement(member) ||
@@ -3011,7 +3011,8 @@ export const isHeapClass = (node: ts.ClassLikeDeclaration, context: Context): bo
 // rather than its members or what it extends.
 export const getClassStop = (node: ts.ClassLikeDeclaration, context: Context) => {
   if (context.heap === undefined) return undefined;
-  if (!isOnce(node)) return "tla-ts can't make a class in code that may run more than once";
+  if (!isOnce(node, context))
+    return "tla-ts can't make a class in code that may run more than once";
   const declared = ts.isClassExpression(node) ? node.parent : node;
   if (
     ts.isClassExpression(node) &&
@@ -3060,7 +3061,7 @@ export const isFunctionObject = (
   (ts.getCombinedModifierFlags(node) & ts.ModifierFlags.Async) === 0 &&
   (isDefault(node) ||
     (ts.isClassExpression(node) && isReadClass(node)) ||
-    (ts.isFunctionExpression(node) && isOnce(node.parent) && isPropertyRead(node)) ||
+    (ts.isFunctionExpression(node) && isOnce(node.parent, context) && isPropertyRead(node)) ||
     isPassedFunction(node, context));
 
 // Whether a function is the object of a property's read, such as function* () {}.prototype, rather
@@ -3082,7 +3083,7 @@ const isPropertyRead = (node: ts.Node): boolean => {
 const isPassedFunction = (node: ts.Node, context: Context) => {
   if (!ts.isArrowFunction(node) && !ts.isFunctionExpression(node)) return false;
   if (isCallReceiver(node) && getOuterLocals(node, context).length === 0) return true;
-  if (!isOnce(node.parent)) return false;
+  if (!isOnce(node.parent, context)) return false;
   if (isObjectArgument(node, context.checker)) return true;
   const declaration = node.parent;
   if (
@@ -3169,7 +3170,7 @@ export const isNestedFunction = (
   context.heap !== undefined &&
   (((isPlainAccessor(node) || (ts.isMethodDeclaration(node) && node.body !== undefined)) &&
     ts.isObjectLiteralExpression(node.parent) &&
-    !isOnce(node.parent)) ||
+    !isOnce(node.parent, context)) ||
     ((ts.isFunctionExpression(node) ||
       (ts.isArrowFunction(node) &&
         findNodes(node, isLexical).length === 0 &&
@@ -3186,7 +3187,7 @@ export const isNestedFunction = (
       isPropertyWrite(node) &&
       !isHeapFunction(node, context) &&
       getFunctionValue(node, context) === undefined) ||
-    (isDisposeCallback(node, context) && !isOnce(node.parent))) &&
+    (isDisposeCallback(node, context) && !isOnce(node.parent, context))) &&
   node.asteriskToken === undefined &&
   // Of async functions, only methods, dispose callbacks, and what an asyncDispose getter returns,
   // which await using calls.
@@ -3276,7 +3277,7 @@ export const isClosure = (node: ts.Node, context: Context): node is Closure => {
   const isMember =
     ((ts.isMethodDeclaration(node) && node.body !== undefined) || isPlainAccessor(node)) &&
     ts.isObjectLiteralExpression(node.parent) &&
-    !isOnce(node.parent);
+    !isOnce(node.parent, context);
   if (
     context.heap === undefined ||
     !(ts.isFunctionExpression(node) || ts.isArrowFunction(node) || isMember) ||
@@ -3602,7 +3603,7 @@ const getAsyncOwner = (node: ts.Node, context: Context) => {
 export const getLiveMaker = (node: ts.Node, context: Context) =>
   ((ts.isMethodDeclaration(node) && ts.isObjectLiteralExpression(node.parent)) ||
     isDisposeCallback(node, context)) &&
-  !isOnce(node.parent) &&
+  !isOnce(node.parent, context) &&
   node.asteriskToken === undefined
     ? getAsyncOwner(node, context)
     : undefined;
@@ -3617,7 +3618,7 @@ export const getKeptMaker = (node: ts.Node, context: Context) => {
   return (
     getLiveMaker(node, context) ??
     (owner !== undefined &&
-    (isOnce(owner) ||
+    (isOnce(owner, context) ||
       (symbol !== undefined &&
         findNodes(owner, ts.isIdentifier)
           .filter((name) => name !== declared && getSymbol(name, context.checker) === symbol)
@@ -4194,7 +4195,7 @@ export const isHeapFunction = (node: ts.Node, context: Context): node is HeapFun
     getBuiltIn(written.left.argumentExpression.expression, context) === "Symbol" &&
     written.left.argumentExpression.name.text === "species"
   ) {
-    const isHeap = isPlain(node) && node.body !== undefined && isOnce(written);
+    const isHeap = isPlain(node) && node.body !== undefined && isOnce(written, context);
     heapFunctions.set(node, isHeap);
     return isHeap;
   }
@@ -4204,7 +4205,7 @@ export const isHeapFunction = (node: ts.Node, context: Context): node is HeapFun
   if (constructed !== undefined) {
     const isHeap =
       isPlain(node) &&
-      isOnce(constructed) &&
+      isOnce(constructed, context) &&
       ((node.body?.statements.length ?? 0) > 0 ||
         [
           ...(constructed.arguments ?? []),
@@ -4243,7 +4244,7 @@ export const isHeapFunction = (node: ts.Node, context: Context): node is HeapFun
     symbol !== undefined &&
     node.body !== undefined &&
     isPlain(node) &&
-    isOnce(node.parent) &&
+    isOnce(node.parent, context) &&
     !isAssigned(symbol, sourceFile, context) &&
     (isNewTarget(sourceFile) ||
       // An assignment writes one of its properties, or a call passes it as an object.
@@ -4277,7 +4278,7 @@ export const getHeapClass = (node: ts.Expression, context: Context): HeapClass |
           ts.isPropertyDeclaration(declaration) &&
           declaration.initializer !== undefined &&
           ts.isClassExpression(declaration.initializer) &&
-          isOnceField(declaration.initializer)
+          isOnceField(declaration.initializer, context)
         ? declaration.initializer
         : declaration;
   return found !== undefined &&
@@ -4494,8 +4495,7 @@ export const isHeldError = (
     return (
       type !== undefined &&
       type.getCallSignatures().length === 0 &&
-      getErrorClass(context.checker.getNonNullableType(type).getSymbol(), context.checker) ===
-        undefined
+      getErrorClass(context.checker.getNonNullableType(type).getSymbol(), context) === undefined
     );
   };
   const isObjectUse = (name: ts.Identifier) => {
@@ -4539,7 +4539,7 @@ export const isHeldError = (
             context.checker
               .getNonNullableType(context.checker.getTypeAtLocation(other))
               .getSymbol(),
-            context.checker,
+            context,
           ) === undefined ||
             isHeldErrorName(other, context, new Set([...assumed, node])))) ||
         (kind === ts.SyntaxKind.InstanceOfKeyword && parent.left === child)
@@ -4770,7 +4770,8 @@ export const getObjectMethod = (node: ts.Node | undefined, context: Context) => 
   if (node === undefined || !ts.isMethodDeclaration(node) || node.body === undefined) {
     return undefined;
   }
-  if (ts.isObjectLiteralExpression(node.parent)) return isOnce(node.parent) ? node : undefined;
+  if (ts.isObjectLiteralExpression(node.parent))
+    return isOnce(node.parent, context) ? node : undefined;
   return (isPlainMethod(node) || isPrivateMethod(node)) &&
     ts.isClassLike(node.parent) &&
     isHeapClass(node.parent, context)

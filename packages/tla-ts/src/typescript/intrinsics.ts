@@ -524,7 +524,7 @@ const getPrototype = (node: ts.Expression, context: Context): string | undefined
   if (kind === "sequence") return "Array.prototype";
   const collection = getCollection(node, context);
   if (collection !== undefined) return `${collection}.prototype`;
-  const classes = getErrorClass(type.getSymbol(), checker);
+  const classes = getErrorClass(type.getSymbol(), context);
   if (classes !== undefined) {
     return NATIVE_ERRORS.has(classes[0].name) && isLibrary(classes[0])
       ? `${classes[0].name}.prototype`

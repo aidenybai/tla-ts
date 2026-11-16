@@ -14575,7 +14575,7 @@ const isForeignConstruction = (node: ts.Node, context: Context): node is ts.NewE
   ts.isNewExpression(node) &&
   context.heap !== undefined &&
   getNewClass(node, context) === undefined &&
-  getErrorClass(getSymbol(node.expression, context.checker), context.checker) === undefined &&
+  getErrorClass(getSymbol(node.expression, context.checker), context) === undefined &&
   !["Set", "Map"].includes(node.expression.getText()) &&
   !isProxyOperation(node, context);
 
@@ -19760,7 +19760,7 @@ const translateVarFunction = (
       statement,
     );
   }
-  if (!isOnce(statement.parent)) {
+  if (!isOnce(statement.parent, context)) {
     return leaf(
       apply("Assert", [
         boolean(false),
