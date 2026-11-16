@@ -4210,8 +4210,12 @@ const isAssignmentTarget = (node: ts.Node) =>
 
 // A use of an array that changes it in place: a method that changes it, or a write to its length
 // or an element.
-const isArrayChange = (use: ts.Expression) => {
+const isArrayChange = (use: ts.Expression): boolean => {
   const parent = use.parent;
+  // A non-null assertion or parentheses give the same array.
+  if (ts.isNonNullExpression(parent) || ts.isParenthesizedExpression(parent)) {
+    return isArrayChange(parent);
+  }
   return (
     (ts.isPropertyAccessExpression(parent) &&
       (IN_PLACE_METHODS.has(parent.name.text) || parent.name.text === "splice") &&
@@ -4632,8 +4636,11 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
   const isInPlace = (use: ts.Expression) => isArrayChange(use) || isSetOrMapChange(use);
   const isSetOrMap = (node: ts.Expression) => ["set", "map"].includes(getKind(node, context));
   // A call that changes a set or a map in place, whose receiver is the use.
-  const isSetOrMapChange = (use: ts.Expression) => {
+  const isSetOrMapChange = (use: ts.Expression): boolean => {
     const parent = use.parent;
+    if (ts.isNonNullExpression(parent) || ts.isParenthesizedExpression(parent)) {
+      return isSetOrMapChange(parent);
+    }
     return (
       ts.isPropertyAccessExpression(parent) &&
       parent.expression === use &&
@@ -4931,6 +4938,12 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
       if (ts.isIdentifier(node) && node.text === "undefined") {
         return (checker.getTypeAtLocation(node).flags & ts.TypeFlags.Undefined) !== 0;
       }
+      if (node.kind === ts.SyntaxKind.NullKeyword) return true;
+      if (ts.isNonNullExpression(node)) return addSource(node.expression);
+      // An assignment gives what it assigns, whose target its own use adds.
+      if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+        return addSource(node.right);
+      }
       if (ts.isConditionalExpression(node)) {
         return addSource(node.whenTrue) && addSource(node.whenFalse);
       }
@@ -5048,8 +5061,8 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
       }
       // A read by kind reads an object that the heap holds as it runs.
       if (isReadByKind(use)) return true;
-      // A statement drops what it gives.
-      if (ts.isExpressionStatement(parent)) return true;
+      // A statement drops what it gives, as a delete drops the field that holds it.
+      if (ts.isExpressionStatement(parent) || ts.isDeleteExpression(parent)) return true;
       // A function that returns one of the group's arrays makes its result a holder.
       if (ts.isReturnStatement(parent) || (ts.isArrowFunction(parent) && parent.body === use)) {
         const owner = ts.isReturnStatement(parent)
@@ -5069,6 +5082,14 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
           parent.operatorToken.kind === ts.SyntaxKind.BarBarToken)
       ) {
         return addSource(parent.left === use ? parent.right : parent.left) && isUse(parent);
+      }
+      // && gives its right side where its left is truthy.
+      if (
+        ts.isBinaryExpression(parent) &&
+        parent.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken &&
+        parent.right === use
+      ) {
+        return isUse(parent);
       }
       if (ts.isVariableDeclaration(parent) && ts.isIdentifier(parent.name)) {
         return addHolder(parent.name);
@@ -5166,6 +5187,7 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
       // A check of whether a holder holds an array reads only the reference.
       if (
         (ts.isIfStatement(parent) && parent.expression === use) ||
+        (ts.isConditionalExpression(parent) && parent.condition === use) ||
         (ts.isPrefixUnaryExpression(parent) &&
           parent.operator === ts.SyntaxKind.ExclamationToken) ||
         (ts.isBinaryExpression(parent) &&
@@ -5308,14 +5330,22 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
         nodes.push(declaration);
         return (
           ((declaration.parent.flags & ts.NodeFlags.Const) !== 0 ||
+            (declaration.parent.flags & ts.NodeFlags.Let) !== 0 ||
             holeHolders.has(symbol) ||
             (ts.isIdentifier(declaration.name) && isSetOrMapType(declaration.name, context))) &&
           ts.isIdentifier(declaration.name) &&
-          initializer !== undefined &&
-          addSource(initializer)
+          // A let without an initializer holds undefined until a write gives it an array.
+          (initializer === undefined
+            ? (declaration.parent.flags & ts.NodeFlags.Let) !== 0 &&
+              (checker.getTypeAtLocation(declaration.name).flags & ts.TypeFlags.Union) !== 0 &&
+              (checker.getTypeAtLocation(declaration.name) as ts.UnionType).types.some(
+                (member) => (member.flags & ts.TypeFlags.Undefined) !== 0,
+              )
+            : addSource(initializer))
         );
       }
-      // A field, which object literals and its class's initializer give its arrays.
+      // A field, which object literals and its class's initializer give its arrays. An object
+      // that lacks an optional field holds undefined in it.
       const fieldDeclarations = symbol.declarations ?? [];
       nodes.push(...fieldDeclarations);
       names.add(symbol.name);
@@ -5323,8 +5353,7 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
         fieldDeclarations.length > 0 &&
         fieldDeclarations.every(
           (fieldDeclaration) =>
-            (ts.isPropertySignature(fieldDeclaration) &&
-              fieldDeclaration.questionToken === undefined) ||
+            ts.isPropertySignature(fieldDeclaration) ||
             ts.isPropertyAssignment(fieldDeclaration) ||
             ts.isShorthandPropertyAssignment(fieldDeclaration) ||
             (ts.isPropertyDeclaration(fieldDeclaration) &&
@@ -5564,6 +5593,15 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
       const parent = node.parent;
       const type = checker.getTypeAtLocation(node);
       if (ts.isTypeOfExpression(parent)) return true;
+      if (ts.isConditionalExpression(parent) && parent.condition === node) return true;
+      // A comma drops its left side.
+      if (
+        ts.isBinaryExpression(parent) &&
+        parent.operatorToken.kind === ts.SyntaxKind.CommaToken &&
+        parent.left === node
+      ) {
+        return true;
+      }
       if (ts.isPropertyAccessExpression(parent) || ts.isElementAccessExpression(parent)) {
         return parent.expression !== node || getAccessedFields(parent, checker) !== undefined;
       }

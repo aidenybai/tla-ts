@@ -47741,4 +47741,65 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("x,n,4,1"))).failure?.message).toContain("seen x,n,3,1");
     });
   });
+
+  describe("holds on the heap the arrays that a let or a field holds after null, an assignment, or nothing", () => {
+    const getSource = (expected: string) => `
+      interface Computation {
+        sources: Signal[] | null;
+        slots: number[] | null;
+        pending?: Computation[];
+      }
+      interface Signal {
+        observers: Computation[] | null;
+      }
+      let queue: Computation[] | null = null;
+      let last: Computation[] | undefined;
+      const read = (signal: Signal, computation: Computation) => {
+        const slot = signal.observers ? signal.observers.length : 0;
+        if (!computation.sources) computation.sources = [signal];
+        else computation.sources.push(signal);
+        computation.slots || (computation.slots = []);
+        computation.slots!.push(slot);
+        if (!signal.observers) signal.observers = [computation];
+        else signal.observers.push(computation);
+        return slot;
+      };
+      const first: Computation = { sources: null, slots: null };
+      const second: Computation = { sources: null, slots: null };
+      const signal: Signal = { observers: null };
+      read(signal, first);
+      const slot = read(signal, second);
+      queue = [];
+      (queue.push(first), queue.push(second));
+      const flushed = queue;
+      queue = null;
+      last = flushed;
+      if (first.sources && flushed) second.pending = flushed;
+      second.pending!.push(first);
+      const pending = second.pending!;
+      delete second.pending;
+      const seen = [
+        slot,
+        signal.observers!.length,
+        first.slots!.join("+"),
+        second.slots!.join("+"),
+        flushed.length,
+        last.length,
+        pending.length,
+        "pending" in second,
+        signal.observers![1] === second,
+      ].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("1,2,0,1,3,3,3,false,true"))).failure).toBeUndefined();
+    });
+
+    it("rejects an array that a field copies rather than shares", async () => {
+      expect((await checkModel(getSource("1,2,0,1,2,2,3,false,true"))).failure?.message).toContain(
+        "seen 1,2,0,1,3,3,3,false,true",
+      );
+    });
+  });
 });
