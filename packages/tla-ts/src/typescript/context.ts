@@ -1323,7 +1323,7 @@ export const getSymbol = (node: ts.Node, checker: ts.TypeChecker) => {
 };
 
 // The symbol of a name's own declaration, which a var that hoists its binding takes.
-export const getOwnSymbol = (node: ts.Node, checker: ts.TypeChecker) => {
+export const getOwnSymbol = (node: ts.Node, checker: ts.TypeChecker): ts.Symbol | undefined => {
   const parent = node.parent;
   // A parameter property's name names the property, where the constructor's body reads the
   // parameter.
@@ -1336,10 +1336,27 @@ export const getOwnSymbol = (node: ts.Node, checker: ts.TypeChecker) => {
           parent.name === node &&
           ts.isParameterPropertyDeclaration(parent, parent.parent)
         ? checker.getSymbolsOfParameterPropertyDeclaration(parent, node.text)[0]
-        : checker.getSymbolAtLocation(node);
+        : (checker.getSymbolAtLocation(node) ?? getCastNamespaceMember(node, checker));
   return symbol !== undefined && symbol.flags & ts.SymbolFlags.Alias
     ? checker.getAliasedSymbol(symbol)
     : symbol;
+};
+
+// The export that a read of a module's namespace object through a cast names, as
+// (ts as any).SyntaxKind names ts.SyntaxKind, where TypeScript types the read as any.
+const getCastNamespaceMember = (node: ts.Node, checker: ts.TypeChecker) => {
+  const parent = node.parent;
+  const access = ts.isPropertyAccessExpression(node)
+    ? node
+    : parent !== undefined && ts.isPropertyAccessExpression(parent) && parent.name === node
+      ? parent
+      : undefined;
+  if (access === undefined || !ts.isIdentifier(access.name)) return undefined;
+  const receiver = skipCasts(access.expression);
+  const module = receiver === access.expression ? undefined : getOwnSymbol(receiver, checker);
+  return module?.valueDeclaration !== undefined && ts.isSourceFile(module.valueDeclaration)
+    ? checker.getExportsOfModule(module).find((exported) => exported.name === access.name.text)
+    : undefined;
 };
 
 // A name that only declarations type, as Node's typings type process, which has no code to run.
@@ -3684,6 +3701,7 @@ export const skipCasts = (node: ts.Expression): ts.Expression =>
   ts.isParenthesizedExpression(node) ||
   ts.isNonNullExpression(node) ||
   ts.isAsExpression(node) ||
+  ts.isSatisfiesExpression(node) ||
   ts.isTypeAssertionExpression(node)
     ? skipCasts(node.expression)
     : node;

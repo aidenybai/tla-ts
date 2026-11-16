@@ -47756,4 +47756,18 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("reads an export through a cast of a module's namespace object", () => {
+    const path = join(import.meta.dirname, "../fixtures/typescript/imports/casting.ts");
+    const source = readFileSync(path, "utf8");
+
+    it("agrees with Node", async () => {
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects another export", async () => {
+      const wrong = source.replace('"3,TC39,3"', '"3,TC39,TC39"');
+      expect((await check(compile(wrong, path))).failure?.message).toContain("seen 3,TC39,3");
+    });
+  });
 });
