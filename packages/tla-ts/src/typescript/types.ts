@@ -294,8 +294,10 @@ const isPlainObject = (type: ts.Type, context: Context): boolean => {
               )
             );
           }) ||
+          // A type that the script's code or its own declaration files write, rather than
+          // TypeScript's library.
           (symbol.declarations ?? []).every(
-            (declaration) => !declaration.getSourceFile().isDeclarationFile,
+            (declaration) => !context.defaultLibraries.has(declaration.getSourceFile()),
           )))
   );
 };

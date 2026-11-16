@@ -47741,4 +47741,18 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("x,n,4,1"))).failure?.message).toContain("seen x,n,3,1");
     });
   });
+
+  describe("reads an object that a type of a declaration file types from the heap", () => {
+    const path = join(import.meta.dirname, "../fixtures/typescript/declarations/shaping.ts");
+    const source = readFileSync(path, "utf8");
+
+    it("agrees with Node", async () => {
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects an object that a write doesn't change", async () => {
+      const wrong = source.replace('"5,5,true"', '"4,5,true"');
+      expect((await check(compile(wrong, path))).failure?.message).toContain("seen 5,5,true");
+    });
+  });
 });

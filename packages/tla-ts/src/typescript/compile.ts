@@ -204,7 +204,12 @@ export const compile = (
 ): CompiledSpec => {
   const path = fileName.replaceAll("\\", "/");
   const program = createProgram(source, path, libraries);
-  const context = createContext(program.checker, program.files, program.implicitGlobals);
+  const context = createContext(
+    program.checker,
+    program.files,
+    program.implicitGlobals,
+    program.defaultLibraries,
+  );
   if (isScript(program.sourceFile)) {
     const onceFunctions = findOnceFunctions(program.files, context);
     context.onceFunctions = new Set(onceFunctions);

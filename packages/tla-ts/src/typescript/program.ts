@@ -382,6 +382,9 @@ export const createProgram = (
     sourceFile,
     checker,
     files: getModelFiles(program).filter((file) => !file.isDeclarationFile),
+    defaultLibraries: new Set(
+      program.getSourceFiles().filter((file) => program.isSourceFileDefaultLibrary(file)),
+    ),
     implicitGlobals: new Set(
       checker
         .getSymbolsInScope(sourceFile, ts.SymbolFlags.Variable)
