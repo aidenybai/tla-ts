@@ -45463,4 +45463,36 @@ describe("BigInts", () => {
       expect(() => compile("import('').then = undefined;")).not.toThrow("SyntaxError");
     });
   });
+
+  describe("converts a key of null, undefined, or a boolean to its text", () => {
+    const getSource = (expected: string) => `
+      const object = { null: 1, undefined: 2, true: 3, false: 5 };
+      // @ts-ignore
+      const fromNull = Object.getOwnPropertyDescriptor(object, null);
+      // @ts-ignore
+      const fromUndefined = Object.getOwnPropertyDescriptor(object, undefined);
+      // @ts-ignore
+      const fromTrue = Reflect.getOwnPropertyDescriptor(object, true);
+      const target = {};
+      // @ts-ignore
+      Object.defineProperty(target, null, { value: 4, enumerable: true });
+      // @ts-ignore
+      Object.defineProperty(target, false, { value: 6, enumerable: true });
+      const values = [fromNull, fromUndefined, fromTrue].map((descriptor) =>
+        descriptor === undefined ? "none" : descriptor.value,
+      );
+      const seen = [values.join(), Object.keys(target).join("|")].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("1,2,3,null|false"))).failure).toBeUndefined();
+    });
+
+    it("rejects a key that stays null", async () => {
+      expect((await checkModel(getSource("none,2,3,null|false"))).failure?.message).toContain(
+        "seen 1,2,3,null|false",
+      );
+    });
+  });
 });

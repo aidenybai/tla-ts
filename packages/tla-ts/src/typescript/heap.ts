@@ -244,9 +244,12 @@ export const translatePropertyKey = (node: ts.Expression, scope: Scope, context:
   const names = getTypeNames(type, context.checker);
   if (names?.length === 1 && names[0] === "symbol") return value;
   // A key that TypeScript can't type, such as what a yield gives, converts as a primitive, and
-  // stops as an object, whose conversion runs code.
+  // stops as an object, whose conversion runs code. ToPropertyKey converts a boolean, null, or
+  // undefined to its text.
   if (
-    names?.every((name) => ["string", "number", "symbol"].includes(name)) ||
+    names?.every((name) =>
+      ["string", "number", "symbol", "boolean", "null", "undefined"].includes(name),
+    ) ||
     (type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0
   ) {
     return useJavaScript("PropertyKey", [value], context);
