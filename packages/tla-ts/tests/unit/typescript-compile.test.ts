@@ -49130,4 +49130,45 @@ describe("BigInts", () => {
       expect(getSize(8)).toBeLessThan(getSize(4) * 3);
     });
   });
+
+  describe("runs a helper that a statement's call through a value may run as the helper's operator", () => {
+    const getSource = (helpers: number, expected: number) => `
+      const log: { n: number } = { n: 0 };
+      ${Array.from(
+        { length: helpers },
+        (_, position) => `function guard${position + 1}(run: () => unknown): number {
+          try {
+            run();
+            return 0;
+          } catch (error) {
+            log.n += ${position + 1};
+            return 1;
+          }
+        }`,
+      ).join("\n")}
+      function twice(f: any): any {
+        return function (x: any): any {
+          return f(f(x));
+        };
+      }
+      const increment = (x: number): number => x + 1;
+      const twiceIncrement: any = twice(increment);
+      const result: number = twiceIncrement(0);
+      const guarded: number = ${Array.from({ length: helpers }, (_, position) => `guard${position + 1}(() => 0)`).join(" + ")};
+      if (result !== ${expected} || guarded !== 0 || log.n !== 0) throw new Error("result " + result);
+    `;
+    const getSize = (helpers: number) => printModule(compile(getSource(helpers, 0)).source).length;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(2, 2))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkModel(getSource(2, 3))).failure?.message).toContain("result 2");
+    });
+
+    it("grows with the helpers rather than with a copy of each for each call", () => {
+      expect(getSize(4)).toBeLessThan(getSize(2) * 2.2);
+    });
+  });
 });
