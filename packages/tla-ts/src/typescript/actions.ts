@@ -6,6 +6,7 @@ import {
   getCallbackReceiver,
   getArrayIteratorCall,
   getOpenedIterator,
+  isIterableOpened,
   getHeapArrayChange,
   getStoredCall,
   getArrayLikeChange,
@@ -15706,7 +15707,9 @@ const translateForOfGenerator = (
 ): Formula => {
   const iterated = getCast(loop.expression);
   const opened = getOpenedIterator(loop, context);
-  const isBuiltIn = opened !== undefined || isBuiltInIteratorType(iterated, context);
+  const isOpenedIterable = isIterableOpened(loop, context);
+  const isBuiltIn =
+    opened !== undefined || isOpenedIterable || isBuiltInIteratorType(iterated, context);
   // An array's or a string's iterator checks that it still holds the built-in next as it steps.
   if (!isBuiltIn && writesGeneratorKey(loop.getSourceFile())) {
     throw new TlaTypeScriptError(
@@ -15770,6 +15773,31 @@ const translateForOfGenerator = (
   if (opened !== undefined) {
     return translateIteratorCall(loop.expression, opened, path, context, frame, (after, ref) =>
       iterate(after, ref ?? getUndefined(context)),
+    );
+  }
+  if (isOpenedIterable) {
+    const openedName = context.names.getFresh("opened");
+    const openedIterator = identifier(openedName);
+    return bindOnce(
+      path,
+      openedName,
+      useJavaScript(
+        "OpenBuiltInIterator",
+        [
+          getHeap(path.scope, loop.expression, context),
+          translateExpression(iterated, path.scope, context),
+          translateArrayIteratorPrototype(loop.expression, context),
+        ],
+        context,
+      ),
+      ifThenElse(
+        field(openedIterator, "isThrown"),
+        throwTypeError(path, loop.expression, context, frame),
+        iterate(
+          withHeap(path, field(openedIterator, "heap"), context),
+          field(openedIterator, "value"),
+        ),
+      ),
     );
   }
   const created = ts.isCallExpression(iterated)
@@ -20337,6 +20365,7 @@ export const translateStatements = (
     context.heap !== undefined &&
     (isGeneratorType(statement.expression, context) ||
       getOpenedIterator(statement, context) !== undefined ||
+      isIterableOpened(statement, context) ||
       (isBuiltInIteratorType(statement.expression, context) &&
         !isArrayIteration(statement.expression, context)))
   ) {

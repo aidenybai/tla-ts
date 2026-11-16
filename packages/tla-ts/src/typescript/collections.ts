@@ -110,6 +110,7 @@ import {
   REORDER_METHODS,
   mayBeHeapObject,
   OWN_KEYS_ANY,
+  isLibraryIterable,
 } from "./types";
 
 interface Unordered {
@@ -1630,6 +1631,14 @@ export const getOpenedIterator = (loop: ts.ForOfStatement, context: Context) =>
         isFrom: false,
       }
     : undefined;
+
+// A for-of over a value that only types as a library Iterable, which may be a typed array or an
+// array's iterator, and which opens its iterator as it runs.
+export const isIterableOpened = (loop: ts.ForOfStatement, context: Context) =>
+  context.heap !== undefined &&
+  loop.awaitModifier === undefined &&
+  getKind(loop.expression, context) === "other" &&
+  isLibraryIterable(context.checker.getTypeAtLocation(loop.expression));
 
 // %ArrayIteratorPrototype%, with its next, whose own properties a script may read.
 export const translateArrayIteratorPrototype = (node: ts.Node, context: Context) => {

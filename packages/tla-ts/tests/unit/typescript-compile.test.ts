@@ -45686,4 +45686,40 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("opens the iterator of a value that only types as an Iterable as the loop runs", () => {
+    const getSource = (expected: string) => `
+      const seen: unknown[] = [];
+      function collect(iterable: Iterable<unknown>) {
+        for (const value of iterable) seen.push(value);
+      }
+      const typed = new Int8Array([4, 5]);
+      collect(typed);
+      collect(typed.keys());
+      collect(Array.prototype.values.call(typed));
+      if (seen.join() !== "${expected}") throw new Error("seen " + seen.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("4,5,0,1,4,5"))).failure).toBeUndefined();
+    });
+
+    it("rejects a value that no iterator gave", async () => {
+      expect((await checkModel(getSource("4,5,0,1,4,6"))).failure?.message).toContain(
+        "seen 4,5,0,1,4,5",
+      );
+    });
+
+    it("stops at an iterable that a script declares", async () => {
+      const result = await checkModel(`
+        function collect(iterable: Iterable<unknown>) {
+          for (const value of iterable) return value;
+        }
+        collect({ [Symbol.iterator]: () => [1][Symbol.iterator]() });
+      `);
+      expect(result.failure?.message).toContain(
+        "tla-ts can't tell which iterator this value gives",
+      );
+    });
+  });
 });

@@ -3213,6 +3213,19 @@ TypedArrayIterator(heap, ref, kind, prototype) ==
   THEN ArrayIterator(heap, ref, kind, prototype)
   ELSE [heap |-> heap, value |-> Undefined, isThrown |-> TRUE]
 
+\\* GetIterator of a value whose @@iterator is still a built-in one: a typed array's values, which
+\\* makes its iterator, or an array's or a string's iterator's own, which gives the iterator.
+OpenBuiltInIterator(heap, value, prototype) ==
+  CASE IsTypedArray(heap, value)
+         /\\ HoldsBuiltIn(heap, value, WellKnownSymbol("iterator"),
+                         "%Int8Array.prototype.[[Prototype]]%.values") ->
+         TypedArrayIterator(heap, value, "values", prototype)
+    [] IsHeap(value)
+         /\\ "iterated" \\in DOMAIN heap.objects[value[Ref]]
+         /\\ HoldsBuiltIn(heap, value, WellKnownSymbol("iterator"), "Iterator.prototype.@@iterator") ->
+         [heap |-> heap, value |-> value, isThrown |-> FALSE]
+    [] OTHER -> Assert(FALSE, "tla-ts can't tell which iterator this value gives")
+
 \\* The values of an array-like object at each index below its length, which Get reads, so that a
 \\* hole gives what a prototype holds there, or undefined.
 ArrayLikeValues(heap, ref) ==
