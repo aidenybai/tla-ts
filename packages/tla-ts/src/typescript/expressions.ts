@@ -57,6 +57,7 @@ import {
   isUnresolvable,
   getUnresolvable,
   isHeapClass,
+  isHeapEnum,
   isFunctionObject,
   getObjectMethod,
   isPrivateMember,
@@ -2508,8 +2509,12 @@ const translateDeclared = (
   scope: Scope,
   context: Context,
 ) => {
+  // A member of an enum whose object code may write reads the object.
   if (symbol !== undefined && symbol.flags & ts.SymbolFlags.EnumMember) {
-    return translateEnumMember(node, symbol, context);
+    const owner = symbol.valueDeclaration?.parent;
+    return owner !== undefined && isHeapEnum(owner, context) && context.valueEnums.get(owner)
+      ? undefined
+      : translateEnumMember(node, symbol, context);
   }
   const declaration = getTopLevelDeclaration(symbol);
   if (declaration === undefined) return undefined;

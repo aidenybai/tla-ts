@@ -191,8 +191,9 @@ export interface Context {
   // The modules whose namespace objects a script reads, which the heap holds from the start, after
   // the generator prototypes, and which take the modules' exports once the modules have run.
   namespaces: ReadonlyMap<ts.SourceFile, Namespace>;
-  // The enums of the files' top levels that code reads as objects, other than to read a member.
-  valueEnums: ReadonlySet<ts.EnumDeclaration>;
+  // The enums of the files' top levels that code reads as objects, other than to read a member,
+  // each with whether code may write to its object, whose members' reads then read the object.
+  valueEnums: ReadonlyMap<ts.EnumDeclaration, boolean>;
   // The sites of the tagged templates other than String.raw's, each of whose template object and
   // its raw strings' array the heap holds from the start, after the namespace objects.
   templateSites: readonly ts.TaggedTemplateExpression[];
@@ -588,7 +589,7 @@ export const createContext = (
     implicitGlobals,
     generatorPrototypes: new Map(),
     namespaces: new Map(),
-    valueEnums: new Set(),
+    valueEnums: new Map(),
     templateSites: [],
     commonJsModules: [],
     jsonModules: new Map(),
@@ -3039,8 +3040,16 @@ export const isOnceField = (node: ts.ClassLikeDeclaration, context: Context) => 
 export const isHeapEnum = (node: ts.Node, context: Context): node is ts.EnumDeclaration =>
   ts.isEnumDeclaration(node) && context.heap !== undefined && context.valueEnums.has(node);
 
+// Built-in functions that read an object's own keys or values but never write to it.
+const READING_FUNCTIONS = new Map([
+  ["Object", new Set(["keys", "values", "entries", "getOwnPropertyNames"])],
+  ["JSON", new Set(["stringify"])],
+]);
+
 // The enums of the files' top levels that a file reads as an object: other than to read a
-// member, which gives the member's constant, or in a type.
+// member, which gives the member's constant, or in a type. Each maps to whether code may write to
+// the object, as anything but a read of its keys or values may, so that a member's read reads the
+// object rather than folding to the member's constant.
 export const findValueEnums = (files: readonly ts.SourceFile[], checker: ts.TypeChecker) => {
   const enums = new Set(files.flatMap((file) => file.statements.filter(ts.isEnumDeclaration)));
   const names = new Set([...enums].map((declaration) => declaration.name.text));
@@ -3063,30 +3072,77 @@ export const findValueEnums = (files: readonly ts.SourceFile[], checker: ts.Type
       (ts.isElementAccessExpression(parent) && !ts.isStringLiteralLike(parent.argumentExpression))
     );
   };
-  return new Set(
-    files.flatMap((file) =>
-      findNodes(
-        file,
-        (node): node is ts.Identifier | ts.PropertyAccessExpression =>
-          (ts.isIdentifier(node) &&
-            names.has(node.text) &&
-            !(ts.isPropertyAccessExpression(node.parent) && node.parent.name === node)) ||
-          (ts.isPropertyAccessExpression(node) && names.has(node.name.text)),
-      ).flatMap((node) => {
-        const declaration = getEnum(node);
-        return declaration !== undefined &&
-          enums.has(declaration) &&
-          declaration.name !== node &&
-          !ts.isImportSpecifier(node.parent) &&
-          !ts.isImportClause(node.parent) &&
-          !ts.isExportSpecifier(node.parent) &&
-          ts.findAncestor(node, ts.isTypeNode) === undefined &&
-          isValueRead(node)
-          ? [declaration]
-          : [];
-      }),
-    ),
+  // Whether code writes to what an expression names: an assignment, a delete, ++ or --, or a
+  // destructuring that the expression is part of.
+  const isWriteTarget = (node: ts.Node): boolean => {
+    const parent = node.parent;
+    return (
+      (ts.isBinaryExpression(parent) &&
+        parent.left === node &&
+        parent.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+        parent.operatorToken.kind <= ts.SyntaxKind.LastAssignment) ||
+      ts.isDeleteExpression(parent) ||
+      (ts.isPrefixUnaryExpression(parent) &&
+        [ts.SyntaxKind.PlusPlusToken, ts.SyntaxKind.MinusMinusToken].includes(parent.operator)) ||
+      ts.isPostfixUnaryExpression(parent) ||
+      ((ts.isForInStatement(parent) || ts.isForOfStatement(parent)) &&
+        parent.initializer === node) ||
+      ((ts.isArrayLiteralExpression(parent) ||
+        ts.isObjectLiteralExpression(parent) ||
+        ts.isPropertyAssignment(parent) ||
+        ts.isSpreadElement(parent) ||
+        ts.isSpreadAssignment(parent) ||
+        ts.isParenthesizedExpression(parent)) &&
+        isWriteTarget(parent))
+    );
+  };
+  // A read of the object's keys or values: an element that nothing writes, a for-in, in, typeof,
+  // or a built-in function that reads them.
+  const isKeysRead = (node: ts.Expression) => {
+    const parent = node.parent;
+    if (ts.isElementAccessExpression(parent) && parent.expression === node) {
+      return !isWriteTarget(parent);
+    }
+    const callee = ts.isCallExpression(parent) ? parent.expression : undefined;
+    return (
+      ts.isTypeOfExpression(parent) ||
+      (ts.isForInStatement(parent) && parent.expression === node) ||
+      (ts.isBinaryExpression(parent) &&
+        parent.operatorToken.kind === ts.SyntaxKind.InKeyword &&
+        parent.right === node) ||
+      (callee !== undefined &&
+        ts.isPropertyAccessExpression(callee) &&
+        ts.isIdentifier(callee.expression) &&
+        READING_FUNCTIONS.get(callee.expression.text)?.has(callee.name.text) === true &&
+        (getSymbol(callee.expression, checker)?.declarations ?? []).every(
+          (declaration) => declaration.getSourceFile().isDeclarationFile,
+        ))
+    );
+  };
+  const reads = files.flatMap((file) =>
+    findNodes(
+      file,
+      (node): node is ts.Identifier | ts.PropertyAccessExpression =>
+        (ts.isIdentifier(node) &&
+          names.has(node.text) &&
+          !(ts.isPropertyAccessExpression(node.parent) && node.parent.name === node)) ||
+        (ts.isPropertyAccessExpression(node) && names.has(node.name.text)),
+    ).flatMap((node) => {
+      const declaration = getEnum(node);
+      return declaration !== undefined &&
+        enums.has(declaration) &&
+        declaration.name !== node &&
+        !ts.isImportSpecifier(node.parent) &&
+        !ts.isImportClause(node.parent) &&
+        !ts.isExportSpecifier(node.parent) &&
+        ts.findAncestor(node, ts.isTypeNode) === undefined &&
+        isValueRead(node)
+        ? [{ declaration, isWrite: !isKeysRead(node) }]
+        : [];
+    }),
   );
+  const written = new Set(reads.filter((read) => read.isWrite).map((read) => read.declaration));
+  return new Map(reads.map((read) => [read.declaration, written.has(read.declaration)]));
 };
 
 export const isHeapClass = (node: ts.ClassLikeDeclaration, context: Context): boolean => {

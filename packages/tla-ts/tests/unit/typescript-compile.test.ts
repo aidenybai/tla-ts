@@ -48408,4 +48408,34 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("reads an enum's members from its object where code may write to the object", () => {
+    const getSource = (expected: string) => `
+      enum Flag { On, Off = "off" }
+      enum Level { Low = 1, High }
+      enum Mode { Fast, Slow }
+      const readOn = () => Flag.On;
+      const before = readOn();
+      (Flag as any).On = 5;
+      Object.defineProperty(Level, "High", { value: 7 });
+      delete (Level as any).Low;
+      const set = (target: Record<string, unknown>) => {
+        target.Slow = "slow";
+      };
+      Object.assign(Mode, { Fast: 3 });
+      set(Mode);
+      const seen = [before, readOn(), Flag.Off, Flag[0], Level.Low, Level.High, Level[2], Mode.Fast, Mode.Slow].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("0,5,off,On,,7,High,3,slow"))).failure).toBeUndefined();
+    });
+
+    it("rejects the members' constants", async () => {
+      expect((await checkModel(getSource("0,0,off,On,1,2,High,0,1"))).failure?.message).toContain(
+        "seen 0,5,off,On,,7,High,3,slow",
+      );
+    });
+  });
 });
