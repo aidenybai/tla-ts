@@ -45577,4 +45577,41 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("runs Temporal.PlainTime", () => {
+    const getSource = (expected: string) => `
+      const thrown = (run: () => unknown) => {
+        try {
+          run();
+          return "none";
+        } catch (error) {
+          return (error as Error).name;
+        }
+      };
+      const time = new Temporal.PlainTime(12, 34, 56, 987, 654, 321);
+      const added = time.add({ hours: 13 }).toString();
+      const rounded = time.round({ smallestUnit: "minute", roundingIncrement: 15 }).toString();
+      const until = time.until("18:00", { largestUnit: "minutes" }).toString();
+      const parsed = Temporal.PlainTime.from("T0123").toString({ smallestUnit: "seconds" });
+      const constrained = time.with({ hour: 25 }).hour;
+      const rejected = thrown(() => time.with({ hour: 25 }, { overflow: "reject" }));
+      const order = Temporal.PlainTime.compare("12:00", time);
+      const seen = [time instanceof Temporal.PlainTime, time.nanosecond, added, rounded, until, parsed, constrained, rejected, order].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      const expected =
+        "true,321,01:34:56.987654321,12:30:00,PT325M3.012345679S,01:23:00,23,RangeError,-1";
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects a time that rounding leaves at the quarter after", async () => {
+      const expected =
+        "true,321,01:34:56.987654321,12:45:00,PT325M3.012345679S,01:23:00,23,RangeError,-1";
+      expect((await checkModel(getSource(expected))).failure?.message).toContain(
+        "seen true,321,01:34:56.987654321,12:30:00,PT325M3.012345679S,01:23:00,23,RangeError,-1",
+      );
+    });
+  });
 });
