@@ -47770,4 +47770,32 @@ describe("BigInts", () => {
       expect((await check(compile(wrong, path))).failure?.message).toContain("seen 3,TC39,3");
     });
   });
+
+  describe("runs a script whose declarations carry documentation tags", () => {
+    const getSource = (expected: string) => `
+      /**
+       * The most that the script adds.
+       *
+       * @internal
+       * @since 1.0
+       */
+      const limit = 3;
+      /** @typeParam T - what the list holds */
+      interface Holder<T> {
+        items: T[];
+      }
+      const holder: Holder<number> = { items: [] };
+      for (let index = 0; index < limit; index++) holder.items.push(index);
+      const seen = holder.items.join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("0,1,2"))).failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      expect((await checkModel(getSource("0,1"))).failure?.message).toContain("seen 0,1,2");
+    });
+  });
 });
