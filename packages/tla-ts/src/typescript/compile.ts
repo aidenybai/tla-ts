@@ -6,6 +6,10 @@ import {
   type Context,
   createContext,
   findNodes,
+  findFunctionCandidates,
+  findGuardedStatements,
+  findOnceFunctions,
+  findOnceLocals,
   getCallee,
   getFunction,
   getSymbol,
@@ -201,6 +205,12 @@ export const compile = (
   const path = fileName.replaceAll("\\", "/");
   const program = createProgram(source, path, libraries);
   const context = createContext(program.checker, program.files, program.implicitGlobals);
+  findGuardedStatements(program.files);
+  if (isScript(program.sourceFile)) {
+    const onceFunctions = findOnceFunctions(program.files);
+    context.onceFunctions = new Set(onceFunctions);
+    context.onceLocals = findOnceLocals(onceFunctions, program.checker);
+  }
   program.files.forEach((file) => {
     rejectSloppyGlobalWrites(file, context);
     rejectArgumentsVarReads(file, context);
@@ -691,6 +701,9 @@ export const compile = (
         file,
         findNodes(file, (inner): inner is Closure => isClosure(inner, context)),
       ]),
+    );
+    context.functionCandidates = new Map(
+      program.files.map((file) => [file, findFunctionCandidates(file, context)]),
     );
     // A name, or a string that keys a property by it, as in Object.getOwnPropertyDescriptor.
     const isTyped = (node: ts.Expression, flags: ts.TypeFlags) => {

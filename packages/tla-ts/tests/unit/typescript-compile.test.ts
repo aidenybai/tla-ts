@@ -46245,4 +46245,55 @@ describe("BigInts", () => {
       expect((await checkModel(getSource(2))).failure?.message).toContain("seen 3");
     });
   });
+
+  describe("holds in the state the locals of a function that runs once", () => {
+    const getSource = (expected: string) => `
+      var loaded: any;
+      function load(): any {
+        if (loaded !== undefined) return loaded.exports;
+        loaded = { exports: {} };
+        (function (this: any, exports: any, module: any) {
+          var hits = 0;
+          function hit() {
+            hits += 1;
+            return hits;
+          }
+          exports.hit = function () {
+            return hit();
+          };
+          module.exports.count = function () {
+            return hits;
+          };
+        }).call(loaded.exports, loaded.exports, loaded);
+        return loaded.exports;
+      }
+      const api: any = {};
+      (function () {
+        var total = 10;
+        api.add = function (step: number) {
+          total = total + step;
+        };
+        api.read = function () {
+          return total;
+        };
+      })();
+      const first = load();
+      const second = load();
+      first.hit();
+      second.hit();
+      api.add(5);
+      const seen = [first === second, first.count(), api.read()].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("true,2,15"))).failure).toBeUndefined();
+    });
+
+    it("rejects a module that runs again for each load", async () => {
+      expect((await checkModel(getSource("false,1,15"))).failure?.message).toContain(
+        "seen true,2,15",
+      );
+    });
+  });
 });

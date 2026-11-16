@@ -20822,9 +20822,10 @@ export const translateScript = (
     return (
       isLast &&
       declaration !== undefined &&
-      ts.isVariableDeclaration(declaration) &&
-      ts.isVariableDeclarationList(declaration.parent) &&
-      (declaration.parent.flags & ts.NodeFlags.BlockScoped) === 0
+      ((ts.isVariableDeclaration(declaration) &&
+        ts.isVariableDeclarationList(declaration.parent) &&
+        (declaration.parent.flags & ts.NodeFlags.BlockScoped) === 0) ||
+        (ts.isParameter(declaration) && context.onceLocals.has(symbol)))
     );
   });
   // So do the vars that its blocks and loops declare, which aren't state variables.

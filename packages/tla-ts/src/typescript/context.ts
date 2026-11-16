@@ -162,6 +162,15 @@ export interface Context {
   storedBuiltIns: ReadonlyMap<ts.SourceFile, ReadonlySet<string>>;
   // The closures of each file, which a call through a value whose type has calls may run.
   closures: ReadonlyMap<ts.SourceFile, readonly Closure[]>;
+  // The vars, parameters, and declared functions of the functions of a script that run once, which
+  // hold one value each, as the script's own do, so that the functions they make read them from
+  // the state rather than from an environment.
+  onceLocals: ReadonlySet<ts.Symbol>;
+  // The functions of a script that run once, whose locals the state holds.
+  onceFunctions: ReadonlySet<ts.Node>;
+  // The functions of each file that a value may hold where tla-ts can't tell which, once the
+  // script's heap is known.
+  functionCandidates: ReadonlyMap<ts.SourceFile, readonly FunctionNode[]>;
   // The proxies of arrays, sets, and maps that a script makes, and the variables, parameters, calls,
   // and reads of Proxy.revocable's proxy that hold them, which tla-ts reads as objects.
   collectionProxies: Set<ts.Node>;
@@ -557,6 +566,9 @@ export const createContext = (
     heapCollections: new Set(),
     storedBuiltIns: new Map(),
     closures: new Map(),
+    onceLocals: new Set(),
+    onceFunctions: new Set(),
+    functionCandidates: new Map(),
     collectionProxies: new Set(),
     checkedGlobals: new Set(),
     implicitGlobals,
@@ -1563,15 +1575,129 @@ const getMethod = (node: ts.Expression, context: Context) => {
 export const isOnce = (node: ts.Node): boolean =>
   ts.isSourceFile(node) ||
   (ts.isFunctionLike(node)
-    ? isCalledInPlace(node)
+    ? isCalledInPlace(node) || isCalledThroughCall(node)
       ? isOnce(node.parent)
       : isCalledOnce(node) || isPassedOnce(node)
     : !ts.isIterationStatement(node, false) &&
-      ((ts.isForStatement(node.parent) && node.parent.initializer === node) ||
-      ((ts.isForOfStatement(node.parent) || ts.isForInStatement(node.parent)) &&
-        node.parent.expression === node)
-        ? isOnce(node.parent.parent)
-        : isOnce(node.parent)));
+      (guardedStatements.has(node) ||
+        ((ts.isForStatement(node.parent) && node.parent.initializer === node) ||
+        ((ts.isForOfStatement(node.parent) || ts.isForInStatement(node.parent)) &&
+          node.parent.expression === node)
+          ? isOnce(node.parent.parent)
+          : isOnce(node.parent))));
+
+// The vars, parameters, and declared functions of each function in files that a call runs where
+// it's written and whose body runs at most once, as an immediately invoked function's do.
+export const findOnceFunctions = (files: readonly ts.SourceFile[]) =>
+  files.flatMap((file) =>
+    findNodes(
+      file,
+      (node): node is ts.FunctionExpression | ts.ArrowFunction =>
+        (ts.isFunctionExpression(node) || ts.isArrowFunction(node)) &&
+        isPlain(node) &&
+        (isCalledInPlace(node) || isCalledThroughCall(node)) &&
+        isOnce(node),
+    ),
+  );
+
+export const findOnceLocals = (
+  owners: readonly (ts.FunctionExpression | ts.ArrowFunction)[],
+  checker: ts.TypeChecker,
+) =>
+  new Set(
+    owners
+      .flatMap((owner) => [
+        ...owner.parameters.flatMap((parameter) =>
+          ts.isIdentifier(parameter.name) ? [parameter.name] : [],
+        ),
+        ...findNodes(
+          owner.body,
+          (node): node is ts.Identifier =>
+            ts.isIdentifier(node) &&
+            ts.findAncestor(node.parent.parent, ts.isFunctionLike) === owner &&
+            ((ts.isFunctionDeclaration(node.parent) && node.parent.name === node) ||
+              (ts.isVariableDeclaration(node.parent) &&
+                node.parent.name === node &&
+                ts.isVariableDeclarationList(node.parent.parent) &&
+                (node.parent.parent.flags & ts.NodeFlags.BlockScoped) === 0)),
+        ),
+      ])
+      .flatMap((name) => getSymbol(name, checker) ?? []),
+  );
+
+// The statements of functions' bodies that follow a guard that returns where a variable of the file
+// holds a value, and a statement that gives the variable an object, which nothing else writes: each
+// runs at most once, however often its function runs, as a CommonJS module's loader runs the
+// module. tla-ts finds them once before it compiles the code.
+const guardedStatements = new WeakSet<ts.Node>();
+
+export const findGuardedStatements = (files: readonly ts.SourceFile[]) =>
+  files.forEach((file) => {
+    const writes = findNodes(
+      file,
+      (inner): inner is ts.BinaryExpression & { left: ts.Identifier } =>
+        ts.isBinaryExpression(inner) &&
+        inner.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+        inner.operatorToken.kind <= ts.SyntaxKind.LastAssignment &&
+        ts.isIdentifier(inner.left),
+    );
+    const getGuarded = (guard: ts.Statement) => {
+      const condition = ts.isIfStatement(guard) ? guard.expression : undefined;
+      const isReturning =
+        ts.isIfStatement(guard) &&
+        guard.elseStatement === undefined &&
+        (ts.isReturnStatement(guard.thenStatement) ||
+          (ts.isBlock(guard.thenStatement) &&
+            guard.thenStatement.statements.length === 1 &&
+            ts.isReturnStatement(guard.thenStatement.statements[0])));
+      return isReturning &&
+        condition !== undefined &&
+        ts.isBinaryExpression(condition) &&
+        condition.operatorToken.kind === ts.SyntaxKind.ExclamationEqualsEqualsToken &&
+        ts.isIdentifier(condition.left) &&
+        ts.isIdentifier(condition.right) &&
+        condition.right.text === "undefined"
+        ? condition.left.text
+        : undefined;
+    };
+    const isFileVar = (name: string) => {
+      const declarations = file.statements.flatMap((statement) =>
+        ts.isVariableStatement(statement)
+          ? statement.declarationList.declarations.filter(
+              (declaration) => ts.isIdentifier(declaration.name) && declaration.name.text === name,
+            )
+          : [],
+      );
+      return declarations.length === 1 && declarations[0].initializer === undefined;
+    };
+    findNodes(
+      file,
+      (node): node is ts.Block => ts.isBlock(node) && ts.isFunctionLike(node.parent),
+    ).forEach((body) =>
+      body.statements.forEach((guard, guardPosition) => {
+        const name = getGuarded(guard);
+        if (name === undefined || !isFileVar(name)) return;
+        const named = writes.filter((write) => write.left.text === name);
+        const write = named.length === 1 ? named[0] : undefined;
+        const statement = write?.parent;
+        const position =
+          statement !== undefined && ts.isExpressionStatement(statement)
+            ? body.statements.indexOf(statement)
+            : -1;
+        if (
+          write === undefined ||
+          write.operatorToken.kind !== ts.SyntaxKind.EqualsToken ||
+          !ts.isObjectLiteralExpression(write.right) ||
+          position <= guardPosition
+        ) {
+          return;
+        }
+        body.statements
+          .slice(position + 1)
+          .forEach((statement) => guardedStatements.add(statement));
+      }),
+    );
+  });
 
 const calledOnce = new WeakMap<ts.Node, boolean>();
 
@@ -1723,6 +1849,20 @@ const isCalledInPlace = (node: ts.Node) => {
   );
 };
 
+// A function expression that its call method runs where it's written, as a CommonJS module's
+// wrapper runs with its exports as this.
+const isCalledThroughCall = (node: ts.Node) => {
+  const getOuter = (inner: ts.Node): ts.Node =>
+    ts.isParenthesizedExpression(inner.parent) ? getOuter(inner.parent) : inner;
+  const access = getOuter(node).parent;
+  return (
+    ts.isFunctionExpression(node) &&
+    ts.isPropertyAccessExpression(access) &&
+    access.name.text === "call" &&
+    ts.isCallExpression(access.parent) &&
+    access.parent.expression === access
+  );
+};
 const isMethodShape = (node: ts.Node): node is ts.MethodDeclaration =>
   ts.isMethodDeclaration(node) && node.body !== undefined;
 
@@ -3044,7 +3184,8 @@ const isPropertyWrite = (node: ts.Node) =>
 const getOuterLocals = (node: ts.Node, context: Context) =>
   findNodes(node, ts.isIdentifier).flatMap((name) => {
     const symbol = getSymbol(name, context.checker);
-    const declaration = symbol?.valueDeclaration;
+    const declaration =
+      symbol === undefined || context.onceLocals.has(symbol) ? undefined : symbol.valueDeclaration;
     const owner =
       declaration === undefined
         ? undefined
@@ -3132,7 +3273,11 @@ export const isClosure = (node: ts.Node, context: Context): node is Closure => {
   // The locals of the functions around it, which bind them as the function that makes it runs.
   const isReadingLocals = () =>
     findNodes(node, ts.isIdentifier).some((name) => {
-      const declaration = getSymbol(name, context.checker)?.valueDeclaration;
+      const symbol = getSymbol(name, context.checker);
+      const declaration =
+        symbol === undefined || context.onceLocals.has(symbol)
+          ? undefined
+          : symbol.valueDeclaration;
       return (
         declaration !== undefined &&
         ts.findAncestor(declaration, (ancestor) => ancestor === node) === undefined &&
@@ -3273,6 +3418,7 @@ export const getCaptures = (node: Closure, context: Context) => {
       const declaration = symbol?.valueDeclaration;
       return symbol !== undefined &&
         declaration !== undefined &&
+        !context.onceLocals.has(symbol) &&
         !isRun(declaration) &&
         !(
           ts.isVariableDeclaration(declaration) && runs.has(declaration.initializer ?? declaration)
@@ -4914,32 +5060,45 @@ export const findNodes = <T extends ts.Node>(root: ts.Node, test: (node: ts.Node
   return found;
 };
 
-const candidates = new WeakMap<ts.SourceFile, FunctionNode[]>();
+// The function around a node whose locals it reads from an environment, past the functions that run
+// once, whose locals the state holds.
+export const getEnclosingFunction = (node: ts.Node, context: Context) =>
+  ts.findAncestor(
+    node.parent,
+    (ancestor) => ts.isFunctionLike(ancestor) && !context.onceFunctions.has(ancestor),
+  );
 
-// The functions that a value whose type has calls may hold, where tla-ts can't tell which: those
-// that no other function encloses, or that a function makes each time it runs or as its var holds
-// them outside strict mode and that read none of its locals, whose type TypeScript lets the value
-// hold.
+// The functions of a file that a value may hold where tla-ts can't tell which: those that no other
+// function encloses, or that a function makes each time it runs or as its var holds them outside
+// strict mode and that read none of its locals.
+export const findFunctionCandidates = (sourceFile: ts.SourceFile, context: Context) =>
+  findNodes(sourceFile, (inner): inner is FunctionNode => {
+    const candidate =
+      ts.isFunctionDeclaration(inner) || ts.isFunctionExpression(inner) || ts.isArrowFunction(inner)
+        ? inner
+        : getObjectMethod(inner, context);
+    // A function that a function that runs once makes, once, holds one value, as a function that
+    // no other function encloses does.
+    const isOnceMade = () =>
+      candidate !== undefined &&
+      ts.findAncestor(candidate.parent, (ancestor) => context.onceFunctions.has(ancestor)) !==
+        undefined &&
+      getFunctionValue(candidate, context) === candidate;
+    return (
+      candidate?.body !== undefined &&
+      (getEnclosingFunction(candidate, context) === undefined ||
+        ((isNestedFunction(candidate, context) || isVarFunction(candidate) || isOnceMade()) &&
+          getOuterLocals(candidate, context).length === 0))
+    );
+  });
+
+// The functions that a value whose type has calls may hold, where tla-ts can't tell which, whose
+// type TypeScript lets the value hold.
 export const getFunctionCandidates = (callee: ts.Expression, context: Context) => {
   if (isHeldBuiltInObject(callee, context)) return [];
   const sourceFile = callee.getSourceFile();
   const found =
-    candidates.get(sourceFile) ??
-    findNodes(sourceFile, (inner): inner is FunctionNode => {
-      const candidate =
-        ts.isFunctionDeclaration(inner) ||
-        ts.isFunctionExpression(inner) ||
-        ts.isArrowFunction(inner)
-          ? inner
-          : getObjectMethod(inner, context);
-      return (
-        candidate?.body !== undefined &&
-        (ts.findAncestor(candidate.parent, ts.isFunctionLike) === undefined ||
-          ((isNestedFunction(candidate, context) || isVarFunction(candidate)) &&
-            getOuterLocals(candidate, context).length === 0))
-      );
-    });
-  candidates.set(sourceFile, found);
+    context.functionCandidates.get(sourceFile) ?? findFunctionCandidates(sourceFile, context);
   const checker = context.checker;
   const type = checker.getTypeAtLocation(callee);
   const call = callee.parent;
