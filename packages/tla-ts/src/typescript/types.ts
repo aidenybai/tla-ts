@@ -615,6 +615,13 @@ export const getHolders = (node: ts.Expression, checker: ts.TypeChecker) => {
   return getAccessedFields(node, checker) ?? (symbol === undefined ? [] : [symbol]);
 };
 
+// Whether every value of a type is an array, a set, or a map where the heap holds every one.
+export const isHeldCollectionType = (type: ts.Type, context: Context) =>
+  context.isEveryCollectionHeld &&
+  (type.isUnion() ? type.types : [type]).every(
+    (member) => isSequenceType(member, context.checker) || isSetType(member) || isMapType(member),
+  );
+
 // Whether an expression gives a set or a map that the heap holds, which keeps its identity as a
 // script changes it in place.
 export const isHeapSetOrMap = (node: ts.Expression, context: Context) => {
@@ -643,16 +650,17 @@ const isCollectionProxy = (node: ts.Expression, context: Context): boolean => {
 };
 
 export const isHeapArray = (node: ts.Expression, context: Context) => {
+  if (context.heap === undefined) return false;
   const type = context.checker.getNonNullableType(context.checker.getTypeAtLocation(node));
   // The heap holds the arrays that a match gives, with their indices.
-  if (
-    context.heap !== undefined &&
-    (isRegExpArray(type) || getRegExpIndicesPart(node, context) === "pair")
-  ) {
-    return true;
-  }
-  if (context.heapCollections.size === 0) return false;
-  return !isSetType(type) && !isMapType(type) && isHeld(node, context);
+  return (
+    isRegExpArray(type) ||
+    (context.heapCollections.size > 0 &&
+      !isSetType(type) &&
+      !isMapType(type) &&
+      isHeld(node, context)) ||
+    getRegExpIndicesPart(node, context) === "pair"
+  );
 };
 
 // The methods that reorder or overwrite an array in place, and give the array.
@@ -678,6 +686,14 @@ export const getReorderedArray = (node: ts.Expression, context: Context) => {
 // Whether an expression gives a collection that the heap holds: a literal or a new set or map that
 // it holds, or what a holder of them gives.
 const isHeld = (node: ts.Expression, context: Context): boolean => {
+  if (
+    isHeldCollectionType(
+      context.checker.getNonNullableType(context.checker.getTypeAtLocation(node)),
+      context,
+    )
+  ) {
+    return true;
+  }
   // A cast gives the same collection whatever type it gives it.
   if (
     ts.isParenthesizedExpression(node) ||
@@ -1796,6 +1812,14 @@ export const findDomain = (type: ts.Type, context: Context): Expression | Infini
   if (literal !== undefined) return set([literal]);
   if (type.flags & ts.TypeFlags.Number) return getIntegers();
   if (type.flags & ts.TypeFlags.String) return getStrings();
+  // A value can't stand for an object that the heap holds.
+  if (isHeldCollectionType(type, context)) {
+    return getInfinite(
+      type,
+      "tla-ts can't list the arrays, sets, and maps that the heap holds",
+      context,
+    );
+  }
   // A subclass's instances are objects, which no domain lists.
   if (
     ((isSetType(type) || isMapType(type)) && getCollectionType(type) === type) ||
@@ -1854,6 +1878,9 @@ export const findDomain = (type: ts.Type, context: Context): Expression | Infini
       "use a union of literals, or records, tuples, and sets of them",
       context,
     );
+  }
+  if (context.heap !== undefined) {
+    return getInfinite(type, "tla-ts can't list the objects that the heap holds", context);
   }
   const optional = properties.find((property) => property.flags & ts.SymbolFlags.Optional);
   if (optional !== undefined) {

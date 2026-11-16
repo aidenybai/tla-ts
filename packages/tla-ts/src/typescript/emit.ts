@@ -315,7 +315,12 @@ export const emit = (
     ...formatConfigSection("VIEW", sections.views),
     ...formatConfigSection("POSTCONDITIONS", sections.postconditions),
     ...(symmetrySets.length > 0 ? ["SYMMETRY Perms"] : []),
-    ...(model.isDeadlockChecked ? [] : ["CHECK_DEADLOCK FALSE"]),
+    // A module whose objects the heap holds, which has no actions, only checks its initial state,
+    // whose objects the state holds though nothing changes them.
+    ...(model.isDeadlockChecked &&
+    !(heap !== undefined && model.exported.length > 0 && sections.next.length === 0)
+      ? []
+      : ["CHECK_DEADLOCK FALSE"]),
   ].join("\n");
   return {
     name: moduleName,

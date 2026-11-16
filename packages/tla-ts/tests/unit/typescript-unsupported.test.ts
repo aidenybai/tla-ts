@@ -1,4 +1,5 @@
-import { expect, it } from "vite-plus/test";
+import { describe, expect, it } from "vite-plus/test";
+import { check } from "../../src";
 import { TlaTypeScriptError } from "../../src/errors";
 import { compile } from "../../src/typescript/compile";
 
@@ -65,18 +66,6 @@ const CASES: [string, string][] = [
   ["returning a value from an action", "count++; return count;"],
   ["assigning a constant", "LIMIT = 3;"],
   ["calling an action from an action", "step();"],
-  [
-    "sharing an object that then changes",
-    "let other = record; other.a = 2; count = record.a ?? 0;",
-  ],
-  [
-    "sharing an element that then changes",
-    "let rows = [[1]]; const row = rows[0]; rows[0].push(2); count = row.length;",
-  ],
-  [
-    "storing an object that then changes",
-    "let rows = [values]; rows[0].push(4); count = values.length;",
-  ],
   ["a method that reads this", "class Box { size() { return this; } } new Box().size();"],
   [
     "a method of a class with fields",
@@ -115,4 +104,37 @@ it.each(CASES)("rejects %s", (_, statements) => {
   `;
   expect(() => compile(model)).toThrow(TlaTypeScriptError);
   expect(() => compile(model)).toThrow(/spec\.ts[:(]8[:,]/);
+});
+
+describe.each([
+  ["an object that then changes", "let other = record; other.a = 2; count = record.a ?? 0;", 2],
+  [
+    "an element that then changes",
+    "let rows = [[1]]; const row = rows[0]; rows[0].push(2); count = row.length;",
+    2,
+  ],
+  [
+    "an object that an array stores and then changes",
+    "let rows = [values]; rows[0].push(4); count = values.length;",
+    4,
+  ],
+])("shares %s on the heap, as Node does", (_, statements, expected) => {
+  const getModel = (bound: number) => `
+    let count = 0;
+    let values = [3, 1, 2];
+    let record: { a?: number } = { a: 1 };
+    export const step = () => {
+      if (count !== 0) return;
+      ${statements}
+    };
+    export const isShared = () => count === 0 || count === ${bound};
+  `;
+
+  it("agrees with Node", async () => {
+    expect((await check(compile(getModel(expected)))).failure).toBeUndefined();
+  });
+
+  it("rejects a copy", async () => {
+    expect((await check(compile(getModel(expected - 1)))).status).toBe("invariant-violation");
+  });
 });

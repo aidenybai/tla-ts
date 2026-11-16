@@ -20,6 +20,7 @@ import {
   isHeapArray,
   isHeapSetOrMap,
   isHeapType,
+  isHeldCollectionType,
   isSetOrMapType,
   REORDER_METHODS,
 } from "./types";
@@ -116,6 +117,11 @@ interface Escape {
   field?: string;
 }
 
+interface Sharing {
+  node: ts.Node;
+  symbol: ts.Symbol | undefined;
+}
+
 interface Depths {
   source: number;
   landing: number;
@@ -133,15 +139,27 @@ const isUpdate = (node: ts.Node, context: Context) =>
   MUTATING_METHODS.has(node.expression.name.text) &&
   getKind(node.expression.expression, context) !== "other";
 
+// Whether a type is lib's Function, which every function is.
+const isFunctionInterface = (type: ts.Type, context: Context) =>
+  type.getSymbol()?.name === "Function" &&
+  (type.getSymbol()?.declarations ?? []).some((declaration) =>
+    context.defaultLibraries.has(declaration.getSourceFile()),
+  );
+
 // A script's heap objects are references, which share as JavaScript objects do, so only the other
-// objects that a value holds can be copied by mistake.
+// objects that a value holds can be copied by mistake. Where the heap holds every array, set, and
+// map, {} tells no more than unknown does, as NonNullable gives it to a type parameter. A function
+// is no such object, though lib's Function type declares no calls.
 const holdsObject = (type: ts.Type, context: Context): boolean =>
   type.isUnion() || type.isIntersection()
     ? type.types.some((member) => holdsObject(member, context))
     : (type.flags & ts.TypeFlags.Object) !== 0 &&
       type.getCallSignatures().length === 0 &&
       type.getConstructSignatures().length === 0 &&
-      !isHeapType(type, context);
+      !isFunctionInterface(type, context) &&
+      !isHeapType(type, context) &&
+      !isHeldCollectionType(type, context) &&
+      !(context.isEveryCollectionHeld && type.getProperties().length === 0);
 
 const holdsObjectAt = (type: ts.Type, depth: number, context: Context): boolean => {
   const checker = context.checker;
@@ -149,7 +167,7 @@ const holdsObjectAt = (type: ts.Type, depth: number, context: Context): boolean 
   if (type.isUnion() || type.isIntersection()) {
     return type.types.some((member) => holdsObjectAt(member, depth, context));
   }
-  if (isHeapType(type, context)) return false;
+  if (isHeapType(type, context) || isHeldCollectionType(type, context)) return false;
   const typeArguments =
     (type.flags & ts.TypeFlags.Object) !== 0 &&
     ((type as ts.ObjectType).objectFlags & ts.ObjectFlags.Reference) !== 0
@@ -580,7 +598,9 @@ const isFreshCall = (node: ts.Node, context: Context) => {
   );
 };
 
-export const rejectSharing = (roots: readonly ts.Node[], context: Context) => {
+// The first read that would share an object that changes in place, which a TLA+ value would copy,
+// with the variable that it reads, where it reads one, in the code that getReached finds.
+export const findSharing = (reached: readonly ts.Node[], context: Context) => {
   // The references to each symbol in a file, which one walk of the file finds.
   const fileReferences = new Map<ts.SourceFile, Map<ts.Symbol, ts.Identifier[]>>();
   const getReferences = (sourceFile: ts.SourceFile) => {
@@ -664,7 +684,6 @@ export const rejectSharing = (roots: readonly ts.Node[], context: Context) => {
     );
   };
 
-  const reached = getReached(roots, context);
   const changed = new Map<ts.Symbol, number>();
   const changeCounts = new Map<ts.Symbol, number>();
   // The heap objects' fields that change in place, by name, as one object may have many types.
@@ -716,9 +735,9 @@ export const rejectSharing = (roots: readonly ts.Node[], context: Context) => {
     ts.forEachChild(node, collect);
   };
   reached.forEach(collect);
-  if (changed.size === 0 && changedFields.size === 0) return;
-  const visit = (node: ts.Node) => {
-    if (ts.isTypeNode(node)) return;
+  if (changed.size === 0 && changedFields.size === 0) return undefined;
+  const visit = (node: ts.Node): Sharing | undefined => {
+    if (ts.isTypeNode(node)) return undefined;
     // A shorthand property's name also reads the variable that it names.
     const isName =
       ts.getNameOfDeclaration(node.parent as ts.Declaration) === node &&
@@ -787,26 +806,31 @@ export const rejectSharing = (roots: readonly ts.Node[], context: Context) => {
           (targetDepth !== undefined && targetDepth >= escape.landing + freshDepth)
         );
       });
-      // A copy of what only a declaration gives would still have no code to run.
-      if (
-        isShared &&
-        ts.isIdentifier(node) &&
-        symbol !== undefined &&
-        isDeclarationOnly(symbol, context)
-      ) {
-        throw new TlaTypeScriptError(
-          `tla-ts can't run ${node.getText()}, which only a declaration gives`,
-          node,
-        );
-      }
-      if (isShared) {
-        throw new TlaTypeScriptError(
-          `${node.getText()} would share an object that changes in place, so copy it`,
-          node,
-        );
-      }
+      if (isShared) return { node, symbol };
     }
-    ts.forEachChild(node, visit);
+    return ts.forEachChild(node, visit);
   };
-  reached.forEach(visit);
+  return reached.reduce<Sharing | undefined>((found, node) => found ?? visit(node), undefined);
+};
+
+// Rejects what still shares an object that changes in place where the heap would hold it.
+export const rejectSharing = (reached: readonly ts.Node[], context: Context) => {
+  const sharing = findSharing(reached, context);
+  if (sharing === undefined) return;
+  const text = sharing.node.getText();
+  // A copy of what only a declaration gives would still have no code to run.
+  if (
+    ts.isIdentifier(sharing.node) &&
+    sharing.symbol !== undefined &&
+    isDeclarationOnly(sharing.symbol, context)
+  ) {
+    throw new TlaTypeScriptError(
+      `tla-ts can't run ${text}, which only a declaration gives`,
+      sharing.node,
+    );
+  }
+  throw new TlaTypeScriptError(
+    `tla-ts can't hold ${text} on the heap, which would share an object that changes in place`,
+    sharing.node,
+  );
 };

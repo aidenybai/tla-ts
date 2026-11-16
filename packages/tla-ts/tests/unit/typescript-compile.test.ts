@@ -7449,22 +7449,28 @@ describe("calls", () => {
     );
   });
 
-  it("stops where an object holds a rest parameter that changes in place", () => {
-    expect(() =>
-      compile(`
-        interface Holder {
-          items: string[];
-        }
-        const holder: Holder = { items: [] };
-        const keep = (...parts: string[]) => {
-          holder.items = parts;
-          parts.push("!");
-          return parts.length;
-        };
-        const count = keep("a", "b");
-        if (count !== 3) throw new Error(String(count));
-      `),
-    ).toThrow("parts would share an object that changes in place, so copy it");
+  describe("shares a rest parameter that an object holds and that changes in place", () => {
+    const getSource = (expected: number) => `
+      interface Holder {
+        items: string[];
+      }
+      const holder: Holder = { items: [] };
+      const keep = (...parts: string[]) => {
+        holder.items = parts;
+        parts.push("!");
+        return parts.length;
+      };
+      const count = keep("a", "b");
+      if (count !== ${expected} || holder.items.join() !== "a,b,!") throw new Error(String(count));
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(3))).failure).toBeUndefined();
+    });
+
+    it("rejects a copy of the rest parameter", async () => {
+      expect((await checkModel(getSource(2))).failure?.message).toContain("3");
+    });
   });
 
   it("runs a helper that passes its callback's call back into itself as a recursive operator", async () => {
@@ -8569,11 +8575,12 @@ describe("definitions", () => {
     expect(result.failure?.message).toContain("count is one");
   });
 
-  it("rejects a function of another file that shares an object it changes", () => {
+  it("runs a function of another file that shares an object it changes", async () => {
     const path = join(import.meta.dirname, "../fixtures/typescript/imports/aliasing.ts");
-    expect(() => compile(readFileSync(path, "utf8"), path)).toThrow(
-      "first would share an object that changes in place, so copy it",
-    );
+    const source = readFileSync(path, "utf8");
+    expect((await check(compile(source, path))).failure).toBeUndefined();
+    const wrong = await check(compile(source.replace("count !== 1", "count !== 2"), path));
+    expect(wrong.status).toBe("invariant-violation");
   });
 
   it("runs the files a script imports first, in the order they import each other", async () => {
@@ -9851,48 +9858,64 @@ describe("errors", () => {
     ).not.toThrow(/SyntaxError/);
   });
 
-  it.each([
-    [
-      "a local that a function returns while a closure keeps it",
-      "let saved = () => 0;\nconst make = () => {\n  const items: number[] = [];\n  saved = () => items.push(1);\n  return items;\n};\nlet size = make().length;",
-    ],
+  it("stops at a closure that a function's local keeps and that assigns the script's variable", () => {
+    expect(() =>
+      compile(
+        'let saved = () => 0;\nconst make = () => {\n  const items: number[] = [];\n  saved = () => items.push(1);\n  return items;\n};\nconst made = make();\nsaved();\nif (made.length !== 1) throw new Error("closure");',
+      ),
+    ).toThrow("Only state variables and local lets can change: saved");
+  });
+
+  describe.each([
     [
       "a local that a function returns and then changes in a finally block",
-      "const make = () => {\n  const items: number[] = [];\n  try {\n    return items;\n  } finally {\n    items.push(1);\n  }\n};\nlet size = make().length;",
+      (expected: number) =>
+        `const make = () => {\n  const items: number[] = [];\n  try {\n    return items;\n  } finally {\n    items.push(1);\n  }\n};\nlet size = make().length;\nif (size !== ${expected}) throw new Error("size " + size);`,
+      1,
     ],
     [
       "a parameter that a function changes and returns to JSON",
-      "const fill = (items: number[]) => {\n  items.push(1);\n  return items;\n};\nconst list: number[] = [];\nlet size = JSON.stringify(fill(list)).length + list.length;",
+      (expected: number) =>
+        `const fill = (items: number[]) => {\n  items.push(1);\n  return items;\n};\nconst list: number[] = [];\nlet size = JSON.stringify(fill(list)).length + list.length;\nif (size !== ${expected}) throw new Error("size " + size);`,
+      4,
     ],
     [
       "a local of an outer function that an inner function returns",
-      "const make = () => {\n  const items: number[] = [];\n  const get = () => {\n    return items;\n  };\n  const other = get();\n  items.push(1);\n  return other.length;\n};\nlet size = make();",
+      (expected: number) =>
+        `const make = () => {\n  const items: number[] = [];\n  const get = () => {\n    return items;\n  };\n  const other = get();\n  items.push(1);\n  return other.length;\n};\nlet size = make();\nif (size !== ${expected}) throw new Error("size " + size);`,
+      1,
     ],
     [
       "an array whose sort a function returns",
-      "let items = [2, 1];\nconst getSorted = () => items.sort();\nconst sorted = getSorted();\nitems.push(3);\nlet size = sorted.length;",
+      (expected: number) =>
+        `let items = [2, 1];\nconst getSorted = () => items.sort();\nconst sorted = getSorted();\nitems.push(3);\nlet size = sorted.length;\nif (size !== ${expected}) throw new Error("size " + size);`,
+      3,
     ],
-  ])("rejects %s, as the caller would share it", (_, source) => {
-    expect(() => compile(source)).toThrow("items would share an object that changes in place");
-  });
-
-  it.each([
     [
       "an array that a heap object holds, changes through it, and goes to JSON",
-      "const run = () => {\n  const items: number[] = [];\n  const wrapped = { inner: items };\n  const text = JSON.stringify(wrapped);\n  wrapped.inner.push(1);\n  return items.length + text.length;\n};\nlet size = run();",
-      "items",
+      (expected: number) =>
+        `const run = () => {\n  const items: number[] = [];\n  const wrapped = { inner: items };\n  const text = JSON.stringify(wrapped);\n  wrapped.inner.push(1);\n  return items.length + text.length;\n};\nlet size = run();\nif (size !== ${expected}) throw new Error("size " + size);`,
+      13,
     ],
     [
       "an array that a function puts in a heap object that goes to JSON",
-      "const wrap = (inner: number[]) => ({ inner });\nconst run = () => {\n  const items: number[] = [];\n  const wrapped = wrap(items);\n  const text = JSON.stringify(wrapped);\n  wrapped.inner.push(1);\n  return items.length + text.length;\n};\nlet size = run();",
-      "inner",
+      (expected: number) =>
+        `const wrap = (inner: number[]) => ({ inner });\nconst run = () => {\n  const items: number[] = [];\n  const wrapped = wrap(items);\n  const text = JSON.stringify(wrapped);\n  wrapped.inner.push(1);\n  return items.length + text.length;\n};\nlet size = run();\nif (size !== ${expected}) throw new Error("size " + size);`,
+      13,
     ],
-  ])("rejects %s, as changing it would show through the other name", (_, source, name) => {
-    expect(() => compile(source)).toThrow(`${name} would share an object that changes in place`);
+  ])("shares %s, as the caller does", (_, getSource, expected) => {
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects a copy", async () => {
+      expect((await checkModel(getSource(expected - 1))).failure?.message).toContain(
+        `size ${expected}`,
+      );
+    });
   });
 
-  it("rejects an array that a shorthand property shares and that changes through the field", async () => {
-    const shared = "source would share an object that changes in place";
+  it("shares an array that a shorthand property holds and that changes through the field", async () => {
     const source = (used: string) => `
       class Box {
         items: number[];
@@ -9905,12 +9928,16 @@ describe("errors", () => {
       holder.source.push(3);
       ${used}
     `;
-    expect(() =>
-      compile(source('if (JSON.stringify(source) !== "[1,2,3]") throw new Error("json");')),
-    ).toThrow(shared);
-    expect(() =>
-      compile(source('if (new Box(source).items.length !== 3) throw new Error("box");')),
-    ).toThrow(shared);
+    const getJson = (expected: string) =>
+      source(`if (JSON.stringify(source) !== "${expected}") throw new Error("json");`);
+    expect((await checkModel(getJson("[1,2,3]"))).failure).toBeUndefined();
+    expect((await checkModel(getJson("[1,2]"))).failure?.message).toContain("json");
+    const getBox = (operator: string) =>
+      source(
+        `const made = new Box(source);\nif (made.items.length !== 3 || made.items ${operator} source) throw new Error("box");`,
+      );
+    expect((await checkModel(getBox("!=="))).failure).toBeUndefined();
+    expect((await checkModel(getBox("==="))).failure?.message).toContain("box");
     const result = await checkModel(
       source('if (source.length !== 3 || holder.source !== source) throw new Error("same");'),
     );
@@ -9925,16 +9952,10 @@ describe("errors", () => {
       if (!box.seen.has(2) || pair.names.join() !== "1,2") throw new Error("fields");
     `);
     expect(result.failure).toBeUndefined();
-    expect(() =>
-      compile(
-        "const box = { seen: [[1]] };\nconst copy = box.seen;\nbox.seen[0].push(2);\nlet size = copy[0].length;",
-      ),
-    ).toThrow("box.seen would share an object that changes in place");
-    expect(() =>
-      compile(
-        "const box = { kept: [[1]] };\nconst wrap = { inner: box.kept };\nwrap.inner[0].push(3);\nlet size = box.kept[0].length;",
-      ),
-    ).toThrow("box.kept would share an object that changes in place");
+    const getNested = (expected: number) =>
+      `const box = { seen: [[1]] };\nconst copy = box.seen;\nbox.seen[0].push(2);\nconst other = { kept: [[1]] };\nconst wrap = { inner: other.kept };\nwrap.inner[0].push(3);\nconst sizes = copy[0].length + other.kept[0].length;\nif (sizes !== ${expected}) throw new Error("sizes " + sizes);`;
+    expect((await checkModel(getNested(4))).failure).toBeUndefined();
+    expect((await checkModel(getNested(2))).failure?.message).toContain("sizes 4");
   });
 
   it("changes an object that a call makes, and returns a local in an object literal", async () => {
@@ -9962,8 +9983,8 @@ describe("errors", () => {
     expect(result.status).toBe("success");
   });
 
-  it("rejects a local that a returned object literal holds while an array keeps it", () => {
-    const source = `
+  describe("shares a local that a returned object literal holds while an array keeps it", () => {
+    const getSource = (expected: number) => `
       const make = () => {
         const items: number[] = [];
         const kept = [items];
@@ -9976,8 +9997,17 @@ describe("errors", () => {
       export const tick = () => {
         count = make().size;
       };
+
+      export const isCounted = () => count === 0 || count === ${expected};
     `;
-    expect(() => compile(source)).toThrow("items would share an object that changes in place");
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(1))).failure).toBeUndefined();
+    });
+
+    it("rejects a copy of the local", async () => {
+      expect((await checkModel(getSource(0))).status).toBe("invariant-violation");
+    });
   });
 
   it("returns a local that closures the function only calls change", async () => {
@@ -10006,17 +10036,25 @@ describe("errors", () => {
     expect(result.status).toBe("success");
   });
 
-  it.each([
+  describe.each([
     [
       "a local that a closure changes where the function passes the closure on",
-      "const make = () => {\n  const items: number[] = [];\n  const add = (value: number) => {\n    items.push(value);\n  };\n  [1].forEach(add);\n  return items;\n};\nlet size = make().length;",
+      (expected: number) =>
+        `const make = () => {\n  const items: number[] = [];\n  const add = (value: number) => {\n    items.push(value);\n  };\n  [1].forEach(add);\n  return items;\n};\nlet size = make().length;\nif (size !== ${expected}) throw new Error("size " + size);`,
     ],
     [
       "a local that an async closure changes",
-      "const make = () => {\n  const items: number[] = [];\n  const add = async () => {\n    items.push(1);\n  };\n  add();\n  return items;\n};\nlet size = make().length;",
+      (expected: number) =>
+        `const make = () => {\n  const items: number[] = [];\n  const add = async () => {\n    items.push(1);\n  };\n  add();\n  return items;\n};\nlet size = make().length;\nif (size !== ${expected}) throw new Error("size " + size);`,
     ],
-  ])("rejects %s, as the closure may run after the return", (_, source) => {
-    expect(() => compile(source)).toThrow("items would share an object that changes in place");
+  ])("shares %s with the caller, as the closure may run after the return", (_, getSource) => {
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(1))).failure).toBeUndefined();
+    });
+
+    it("rejects a copy", async () => {
+      expect((await checkModel(getSource(0))).failure?.message).toContain("size 1");
+    });
   });
 
   it("returns a local that a function changes, as the caller holds its only name", async () => {
@@ -10039,12 +10077,14 @@ describe("errors", () => {
     expect(result.status).toBe("success");
   });
 
+  it("shares an array that a heap object holds through a function that another name holds", async () => {
+    const getSource = (expected: number) =>
+      `const box = { list: [1] };\nconst keep = (value: number[]) => value;\nconst run = keep;\nlet list = run(box.list);\nlist.push(2);\nlet size = box.list.length;\nif (size !== ${expected}) throw new Error("size " + size);`;
+    expect((await checkModel(getSource(2))).failure).toBeUndefined();
+    expect((await checkModel(getSource(1))).failure?.message).toContain("size 2");
+  });
+
   it.each([
-    [
-      "an array that a heap object shares through a function that another name holds and that then changes",
-      "const box = { list: [1] };\nconst keep = (value: number[]) => value;\nconst run = keep;\nlet list = run(box.list);\nlist.push(2);\nlet size = box.list.length;",
-      "would share an object that changes in place",
-    ],
     [
       "a callback that changes state and types its array as an object",
       "let calls = 0;\nconst list = [1, 2];\nconst isTwo = (value: number, index: number, array: { length: number }) => {\n  calls++;\n  return array.length === 2;\n};\nlet isAll = list.every(isTwo);",
@@ -12595,19 +12635,21 @@ describe("errors", () => {
         `JSON.stringify({ a: 1 }, (key: string, found: number) => found);`,
         "tla-ts can't pass a replacer values that its parameter's type doesn't hold",
       ],
-      [
-        "a value that it changes in place",
-        `
-          const other = { list: [1, 2] };
-          JSON.stringify(other.list, (key: string, found: unknown) => {
-            if (key === "0") other.list[1] = 9;
-            return found;
-          });
-        `,
-        "other.list would share an object that changes in place",
-      ],
     ])("rejects a replacer that takes %s", (_, source, message) => {
       expect(() => compile(source)).toThrow(message);
+    });
+
+    it("runs a replacer that changes in place the value that it takes", async () => {
+      const getSource = (expected: string) => `
+        const other = { list: [1, 2] };
+        const text = JSON.stringify(other.list, (key: string, found: unknown) => {
+          if (key === "0") other.list[1] = 9;
+          return found;
+        });
+        if (text !== "${expected}") throw new Error("text " + text);
+      `;
+      expect((await checkModel(getSource("[1,9]"))).failure).toBeUndefined();
+      expect((await checkModel(getSource("[1,2]"))).failure?.message).toContain("text [1,9]");
     });
   });
 
@@ -15891,12 +15933,11 @@ describe("errors", () => {
     expect(result.status).toBe("success");
   });
 
-  it("rejects a function that an expression calls where it shares an object it changes", () => {
-    expect(() =>
-      compile(
-        "const getShared = () => {\n  const first = { value: 1 };\n  const second = first;\n  second.value = 2;\n  return first.value;\n};\nlet count = 0;\nexport const tick = () => {\n  count = 1 - count;\n};\nexport const isCorrect = () => getShared() === 2;",
-      ),
-    ).toThrow("spec.ts:3:18 first would share an object that changes in place, so copy it");
+  it("calls in an invariant a function that shares an object it changes", async () => {
+    const getSource = (expected: number) =>
+      `const getShared = () => {\n  const first = { value: 1 };\n  const second = first;\n  second.value = 2;\n  return first.value;\n};\nlet count = 0;\nexport const tick = () => {\n  count = 1 - count;\n};\nexport const isCorrect = () => getShared() === ${expected};`;
+    expect((await checkModel(getSource(2))).failure).toBeUndefined();
+    expect((await checkModel(getSource(1))).status).toBe("invariant-violation");
   });
 
   describe("compares the arrays of a script by identity", () => {
@@ -17499,15 +17540,16 @@ describe("errors", () => {
       }
     `);
     expect(result.failure).toBeUndefined();
-    expect(() =>
-      checkModel(`
-        const trace: { sets: number[] | undefined } = { sets: undefined };
-        const list: number[] = [];
-        trace.sets = list;
-        const snapshot = JSON.stringify(trace);
-        trace.sets.push(1);
-      `),
-    ).toThrow("list would share an object that changes in place, so copy it");
+    const getTraced = (expected: number) => `
+      const trace: { sets: number[] | undefined } = { sets: undefined };
+      const list: number[] = [];
+      trace.sets = list;
+      const snapshot = JSON.stringify(trace);
+      trace.sets.push(1);
+      if (list.length !== ${expected} || snapshot !== '{"sets":[]}') throw new Error("traced");
+    `;
+    expect((await checkModel(getTraced(1))).failure).toBeUndefined();
+    expect((await checkModel(getTraced(0))).failure?.message).toContain("traced");
   });
 
   it("shares the arrays of a tree's nodes as the parser builds them", async () => {
@@ -17552,14 +17594,15 @@ describe("errors", () => {
       if (make() !== 1 || box.list[0] !== 1) throw new Error("last");
     `);
     expect(result.failure).toBeUndefined();
-    expect(() =>
-      checkModel(`
-        const box = { list: [0] };
-        const items: number[] = [];
-        box.list = items;
-        items.push(1);
-      `),
-    ).toThrow("items would share an object that changes in place, so copy it");
+    const getAfter = (expected: number) => `
+      const box = { list: [0] };
+      const items: number[] = [];
+      box.list = items;
+      items.push(1);
+      if (box.list[0] !== ${expected}) throw new Error("after " + box.list[0]);
+    `;
+    expect((await checkModel(getAfter(1))).failure).toBeUndefined();
+    expect((await checkModel(getAfter(0))).failure?.message).toContain("after 1");
   });
 
   it("shares an array that a return gives where only a recursive call changes its own", async () => {
@@ -17593,16 +17636,16 @@ describe("errors", () => {
     `;
     expect((await checkModel(getSource(1))).failure).toBeUndefined();
     expect((await checkModel(getSource(2))).failure?.message).toContain("returned");
-    expect(() =>
-      checkModel(`
-        const make = () => {
-          const items: number[] = [];
-          const add = () => items.push(1);
-          return { items, count: add() };
-        };
-        if (make().items.length !== 1) throw new Error("closure");
-      `),
-    ).toThrow("items would share an object that changes in place, so copy it");
+    const getClosure = (expected: number) => `
+      const make = () => {
+        const items: number[] = [];
+        const add = () => items.push(1);
+        return { items, count: add() };
+      };
+      if (make().items.length !== ${expected}) throw new Error("closure");
+    `;
+    expect((await checkModel(getClosure(1))).failure).toBeUndefined();
+    expect((await checkModel(getClosure(0))).failure?.message).toContain("closure");
   });
 
   it("shares the arrays inside an array that a field holds", async () => {
@@ -17726,14 +17769,15 @@ describe("errors", () => {
       }
     `);
     expect(result.failure).toBeUndefined();
-    expect(() =>
-      checkModel(`
-        const scopes: Set<string>[] = [new Set()];
-        const first = scopes[0];
-        scopes[0].add("a");
-        const json = JSON.stringify(scopes);
-      `),
-    ).toThrow("scopes would share an object that changes in place");
+    const getScopes = (check: string) => `
+      const scopes: Set<string>[] = [new Set()];
+      const first = scopes[0];
+      scopes[0].add("a");
+      const json = JSON.stringify(scopes);
+      if (json !== "[{}]" || ${check}) throw new Error("scopes " + json);
+    `;
+    expect((await checkModel(getScopes('!first.has("a")'))).failure).toBeUndefined();
+    expect((await checkModel(getScopes('first.has("a")'))).failure?.message).toContain("scopes");
     // add gives the set that the array holds, which later adds change.
     const getAdded = (check: string) => `
       const scopes: Set<string>[] = [new Set()];
@@ -17817,11 +17861,10 @@ describe("errors", () => {
       if (items.size !== 1 || !box.kept.has(3) || copy.size !== 1) throw new Error("kept");
     `);
     expect(shared.failure).toBeUndefined();
-    expect(() =>
-      compile(
-        "const items = new Set<number>();\nconst box = { kept: items };\nconst text = JSON.stringify(box);\nbox.kept.add(3);\nlet size = items.size;",
-      ),
-    ).toThrow("items would share an object that changes in place");
+    const getKept = (expected: number) =>
+      `const items = new Set<number>();\nconst box = { kept: items };\nconst text = JSON.stringify(box);\nbox.kept.add(3);\nlet size = items.size;\nif (size !== ${expected} || text !== '{"kept":{}}') throw new Error("kept " + size);`;
+    expect((await checkModel(getKept(1))).failure).toBeUndefined();
+    expect((await checkModel(getKept(0))).failure?.message).toContain("kept 1");
     const result = await checkModel(`
       interface Unit { kinds: Set<number> }
       interface Analysis { first: Set<number>; isNullable: boolean }
@@ -39952,7 +39995,7 @@ describe("BigInts", () => {
     expect((await checkModel(getSource(2))).status).toBe("invariant-violation");
   });
 
-  it("stops where a model would share an object that only a declaration gives", () => {
+  it("stops where a model would share a set that only a declaration gives", async () => {
     const getSource = (declaration: string) => `
       ${declaration}
       let seen = new Set<number>();
@@ -39963,10 +40006,13 @@ describe("BigInts", () => {
       };
     `;
     expect(() => compile(getSource("declare const pending: Set<number>;"))).toThrow(
-      "tla-ts can't run pending, which only a declaration gives",
+      "spec.ts:2:21 Give this a value",
     );
-    expect(() => compile(getSource("let pending = new Set<number>();"))).toThrow(
-      "pending would share an object that changes in place, so copy it",
+    const shared = `${getSource("let pending = new Set<number>();")}
+      export const isShared = () => seen.size === 0 || seen.has(1);`;
+    expect((await checkModel(shared)).status).toBe("deadlock");
+    expect((await checkModel(shared.replace("seen.has(1)", "!seen.has(1)"))).status).toBe(
+      "invariant-violation",
     );
   });
   describe("keeps what a cast yield*'s iterator method changes", () => {
@@ -48173,12 +48219,11 @@ describe("BigInts", () => {
       );
     });
 
-    it("stops where the callback runs again after it shares the map", () => {
-      expect(() =>
-        compile(
-          'const m = new Map<string, number>();\nconst held: Map<string, number>[] = [];\n[1, 2].forEach((x) => {\n  m.set("k", x);\n  held.push(m);\n});\nif (held.length !== 2) throw new Error();',
-        ),
-      ).toThrow("m would share an object that changes in place, so copy it");
+    it("shares the map where the callback runs again after it shares it", async () => {
+      const getSource = (operator: string) =>
+        `const m = new Map<string, number>();\nconst held: Map<string, number>[] = [];\n[1, 2].forEach((x) => {\n  m.set("k", x);\n  held.push(m);\n});\nif (held.length !== 2 || held[0] ${operator} held[1] || held[0].get("k") !== 2) throw new Error("held");`;
+      expect((await checkModel(getSource("!=="))).failure).toBeUndefined();
+      expect((await checkModel(getSource("==="))).failure?.message).toContain("held");
     });
   });
 
@@ -48706,7 +48751,212 @@ describe("BigInts", () => {
       };
     `;
     expect(() => compile(source)).toThrow(
-      "Math would share an object that changes in place, so copy it",
+      "tla-ts can't hold Math on the heap, which would share an object that changes in place",
     );
+  });
+
+  describe("holds a module's objects on the heap where it would share one that changes in place", () => {
+    const getSource = (bound: number) => `
+      interface Box {
+        items: number[];
+      }
+      let state: Box = { items: [] };
+      export const add = (value: 0 | 1) => {
+        const list = state.items;
+        if (list.length < 2) list.push(value);
+      };
+      export const isSmall = () => state.items.length <= ${bound};
+    `;
+
+    it("agrees with Node, as an action changes the array through another name", async () => {
+      const result = await checkModel(getSource(2));
+      expect([result.status, result.failure, result.distinctStates]).toEqual([
+        "success",
+        undefined,
+        7,
+      ]);
+    });
+
+    it("rejects a copy of the array", async () => {
+      expect((await checkModel(getSource(1))).status).toBe("invariant-violation");
+    });
+
+    it("drops the objects that nothing reaches any more, so the states stay finite", async () => {
+      const source = `${getSource(2)}
+        export const reset = () => {
+          state = { items: [] };
+        };
+      `;
+      const result = await checkModel(source);
+      expect([result.status, result.failure, result.distinctStates]).toEqual([
+        "success",
+        undefined,
+        7,
+      ]);
+    });
+
+    it("checks fairness and a liveness property over the heap", async () => {
+      const getLive = (tag: string) => `
+        interface Box {
+          items: number[];
+        }
+        let state: Box = { items: [] };
+        /** @fair */
+        export const add = (value: 0 | 1) => {
+          const list = state.items;
+          if (list.length < 2) list.push(value);
+        };
+        /** ${tag} */
+        export const reset = () => {
+          if (state.items.length < 2) return;
+          state = { items: [] };
+        };
+        /** @alwaysEventually */
+        export const isEmpty = () => state.items.length === 0;
+      `;
+      expect((await checkModel(getLive("@fair"))).failure).toBeUndefined();
+      expect((await checkModel(getLive("@since 1"))).status).toBe("liveness-violation");
+    });
+
+    it("checks an assumption in the initial state only", async () => {
+      const getAssumed = (expected: number) => `${getSource(2)}
+        /** @assume */
+        export const isFresh = () => state.items.length === ${expected};
+      `;
+      expect((await checkModel(getAssumed(0))).failure).toBeUndefined();
+      const wrong = await checkModel(getAssumed(1));
+      expect([wrong.status, wrong.distinctStates]).toEqual(["invariant-violation", 1]);
+    });
+  });
+
+  describe("calls a module's function that makes objects and changes them, with every argument", () => {
+    const getSource = (check: string) => `
+      interface Box {
+        items: number[];
+      }
+      const make = (size: number): Box => {
+        const box: Box = { items: [] };
+        const view = box.items;
+        for (let index = 0; index < size; index++) view.push(index);
+        return box;
+      };
+      export const count = (size: 0 | 1 | 2) => {
+        const made = make(size);
+        if (${check}) throw new Error("count " + size);
+        return made.items.length;
+      };
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("made.items.length !== size"))).failure).toBeUndefined();
+    });
+
+    it("rejects a copy of the array", async () => {
+      expect((await checkModel(getSource("made.items.length === 2"))).failure?.message).toContain(
+        "count 2",
+      );
+    });
+
+    it("stops at a parameter whose objects the heap would hold", () => {
+      expect(() =>
+        compile(`${getSource("made.items.length !== size")}
+          export const read = (box: Box) => box.items.length;
+        `),
+      ).toThrow("Box isn't finite: tla-ts can't list the objects that the heap holds");
+    });
+  });
+
+  describe("concats the arrays of a script whose heap holds every array", () => {
+    const getSource = (expected: string) => `
+      const box = { list: [1] };
+      const alias = box.list;
+      alias.push(2);
+      const joined: (number | number[])[] = box.list.concat([3, 5], 6);
+      const nested = joined.concat([[7]]);
+      const seen = [joined.length, nested.length, joined[3], alias.length].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("5,6,5,2"))).failure).toBeUndefined();
+    });
+
+    it("rejects an array that concat doesn't spread", async () => {
+      expect((await checkModel(getSource("4,6,5,2"))).failure?.message).toContain("seen 5,6,5,2");
+    });
+  });
+
+  describe("gives a module's function on the heap the arguments object of the call that TLC makes", () => {
+    const getSource = (operator: string) => `
+      const seen = new Set<number>();
+      const view = seen;
+      view.add(1);
+      export function pick(first: 0 | 1, second: 0 | 1): number {
+        if (arguments.length !== 2 || arguments[1] ${operator} second) throw new Error("arguments");
+        return first + second + seen.size;
+      }
+    `;
+
+    it("agrees with Node, checking only the initial state, as no action changes the heap", async () => {
+      const result = await checkModel(getSource("!=="));
+      expect([result.status, result.failure]).toEqual(["success", undefined]);
+    });
+
+    it("rejects an argument that the object lacks", async () => {
+      expect((await checkModel(getSource("==="))).failure?.message).toContain("arguments");
+    });
+  });
+
+  describe("shares a value of a type parameter's NonNullable where the heap holds every array", () => {
+    const getSource = (expected: number) => `
+      const holder: { items: unknown[] } = { items: [] };
+      const put = <T,>(value: NonNullable<T>) => {
+        holder.items[0] = value;
+      };
+      const box = { list: [1] };
+      const keep = (value: number[]) => value;
+      const run = keep;
+      const list = run(box.list);
+      list.push(2);
+      const other: { field: Error } = { field: new Error("e") };
+      other.field.message = "m";
+      const item = { count: 1 };
+      put(item);
+      (holder.items[0] as { count: number }).count = 5;
+      if (item.count !== ${expected} || box.list.length !== 2) throw new Error("count " + item.count);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(5))).failure).toBeUndefined();
+    });
+
+    it("rejects a copy of the object", async () => {
+      expect((await checkModel(getSource(1))).failure?.message).toContain("count 5");
+    });
+  });
+
+  describe("shares a function that lib's Function types where the heap holds every array", () => {
+    const getSource = (operator: string) => `
+      const steps: Function[] = [];
+      const box = { list: [1] };
+      const keep = (value: number[]) => value;
+      const run = keep;
+      const list = run(box.list);
+      list.push(2);
+      const other: { field: Error } = { field: new Error("e") };
+      other.field.message = "m";
+      const add = (value: number) => value + 1;
+      steps.push(add);
+      const first = steps[0];
+      if (first ${operator} add || box.list.length !== 2) throw new Error("first");
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("!=="))).failure).toBeUndefined();
+    });
+
+    it("rejects another function", async () => {
+      expect((await checkModel(getSource("==="))).failure?.message).toContain("first");
+    });
   });
 });

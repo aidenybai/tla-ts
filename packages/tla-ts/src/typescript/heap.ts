@@ -6053,6 +6053,35 @@ export const isArrayLengthening = (node: ts.Node, context: Context) =>
 export const isConcatParts = (node: ts.Node, context: Context) =>
   isMethodCall(node) && node.expression.name.text === "concat" && context.heapCollections.has(node);
 
+// How many objects the heap holds from the start at places that the code names: the generator
+// prototypes, the namespace objects, the template objects with their raw strings, and the
+// CommonJS and JSON modules' exports and module objects.
+export const getFixedObjectCount = (context: Context) =>
+  context.generatorPrototypes.size +
+  context.namespaces.size +
+  2 * context.templateSites.length +
+  2 * (context.commonJsModules.length + context.jsonModules.size);
+
+// The arrays, sets, and maps that a script makes, which the heap holds where it holds every one.
+export const findMadeCollections = (roots: readonly ts.Node[], context: Context) =>
+  roots.flatMap((root) =>
+    findNodes(
+      root,
+      (node): node is ts.Expression | ts.BindingElement =>
+        (ts.isArrayLiteralExpression(node) &&
+          !isAssignmentTarget(node) &&
+          !(ts.isArrayLiteralExpression(node.parent) && isAssignmentTarget(node.parent))) ||
+        isNewArrayOfElements(node, context) ||
+        (ts.isNewExpression(node) && isFreshCollection(node, context)) ||
+        (ts.isCallExpression(node) && isFreshArrayCall(node, context)) ||
+        getOrderedSetMethod(node, context) !== undefined ||
+        // A rest element's array is a new one.
+        (ts.isBindingElement(node) &&
+          node.dotDotDotToken !== undefined &&
+          ts.isArrayBindingPattern(node.parent)),
+    ),
+  );
+
 export const findHeapArrays = (
   roots: readonly ts.Node[],
   changed: readonly ts.Node[],

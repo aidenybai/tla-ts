@@ -2928,11 +2928,14 @@ export const getArrayLikeCall = (node: ts.CallExpression, context: Context) => {
   const method = called ?? callee.name.text;
   const object = isCall ? node.arguments.at(0) : isHeapArray(target, context) ? target : undefined;
   const methodArguments = isCall ? node.arguments.slice(1) : node.arguments;
-  // concat spreads only the arrays that it adds, so tla-ts adds no object that may be one.
+  // concat spreads only the arrays that it adds, so tla-ts adds no object that may be one, but
+  // where the heap holds every array, which ConcatSpread tells apart as concat runs.
   const isConcat =
     method === "concat" &&
     methodArguments.every(
-      (argument) => !ts.isSpreadElement(argument) && getKind(argument, context) !== "object",
+      (argument) =>
+        !ts.isSpreadElement(argument) &&
+        (getKind(argument, context) !== "object" || context.isEveryCollectionHeld),
     );
   const kind = object === undefined ? undefined : getKind(object, context);
   return object !== undefined &&

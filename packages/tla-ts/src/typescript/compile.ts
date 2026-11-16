@@ -1,12 +1,13 @@
 import ts from "@typescript/typescript6";
 import { findEffects, getWritten, getWrittenRoots, translateScript, writesState } from "./actions";
-import { getReached, isMakingObjects, rejectSharing } from "./aliasing";
+import { findSharing, getReached, isMakingObjects, rejectSharing } from "./aliasing";
 import {
   type Closure,
   type Context,
   createContext,
   findNodes,
   findFunctionCandidates,
+  findSharedFunctionCandidates,
   findOnceFunctions,
   findValueEnums,
   findOnceLocals,
@@ -29,6 +30,7 @@ import { render } from "./formula";
 import { translateBody } from "./functions";
 import {
   findChangedArrays,
+  findMadeCollections,
   findCollectionProxies,
   findHeapArrays,
   isArrayLengthening,
@@ -786,17 +788,22 @@ export const compile = (
       (isIterated && isSetOrMapType(node, context)) || (ts.forEachChild(node, usesOrder) ?? false)
     );
   };
-  context.hasOrderedCollections = isScript(sourceFile) && reached.some(usesOrder);
-  const changedArrays = isScript(sourceFile) ? findChangedArrays(reached, context) : [];
-  if (
+  const isUsingHeap =
+    reached.some(usesObjects) ||
+    context.namespaces.size > 0 ||
+    context.commonJsModules.length > 0 ||
+    context.jsonModules.size > 0;
+  const shareable = getReached(roots, context);
+  // Where a TLA+ value would copy an object that JavaScript shares and that changes in place, the
+  // heap holds the file's objects, as JavaScript does.
+  const isSharing =
     heap !== undefined &&
-    isScript(sourceFile) &&
-    (changedArrays.length > 0 ||
-      reached.some(usesObjects) ||
-      context.namespaces.size > 0 ||
-      context.commonJsModules.length > 0 ||
-      context.jsonModules.size > 0)
-  ) {
+    !(isScript(sourceFile) && isUsingHeap) &&
+    findSharing(shareable, context) !== undefined;
+  const isHeapFile = isScript(sourceFile) || isSharing;
+  context.hasOrderedCollections = isHeapFile && reached.some(usesOrder);
+  const changedArrays = isHeapFile ? findChangedArrays(reached, context) : [];
+  if (heap !== undefined && isHeapFile && (isSharing || changedArrays.length > 0 || isUsingHeap)) {
     context.heap = heap;
     context.variables.set(heap, identifier(context.names.getFresh("heap")));
     context.storedBuiltIns = new Map(
@@ -817,6 +824,10 @@ export const compile = (
     );
     context.functionCandidates = new Map(
       program.files.map((file) => [file, findFunctionCandidates(file, context)]),
+    );
+    context.sharedFunctionCandidates = findSharedFunctionCandidates(
+      context.functionCandidates,
+      context,
     );
     // A name, or a string that keys a property by it, as in Object.getOwnPropertyDescriptor.
     const isTyped = (node: ts.Expression, flags: ts.TypeFlags) => {
@@ -980,6 +991,13 @@ export const compile = (
     ].map((name) =>
       context.names.getFresh(`Symbol${name.charAt(0).toUpperCase()}${name.slice(1)}`),
     );
+    // Where the heap's arrays, sets, and maps would still share one that a value holds, the heap
+    // holds every one.
+    if (findSharing(shareable, context) !== undefined) {
+      findMadeCollections(roots, context).forEach((node) => context.heapCollections.add(node));
+      context.isEveryCollectionHeld = true;
+      context.collectionProxies = findCollectionProxies(roots, context);
+    }
   }
   // A map that the heap doesn't hold is a TLA+ function, which may be the same value as an array.
   const makesMapValue = (node: ts.Node): boolean =>
@@ -993,7 +1011,9 @@ export const compile = (
     isNodeScript && model.exported.length === 0
       ? { sourceFile, isEsModule: isEsModule(sourceFile) }
       : undefined;
-  rejectSharing(roots, context);
+  // Only where the heap holds every array, set, and map may an object that a value holds still be
+  // shared, as the heap decided above found none otherwise.
+  if (context.isEveryCollectionHeld) rejectSharing(shareable, context);
   rejectRegExpIndicesUses(roots, context);
   if (context.heap !== undefined) context.effects = findEffects(reached, context);
   classifySharedHelpers(reached, context);
