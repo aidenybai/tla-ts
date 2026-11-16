@@ -1,5 +1,5 @@
 import { readdirSync, readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, relative } from "node:path";
 import ts from "@typescript/typescript6";
 import { check, type CheckResult, formatValue } from "../../src";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
@@ -48998,6 +48998,40 @@ describe("BigInts", () => {
       expect(() => compile(source)).toThrow(
         "spec.ts:2:109 A function that an expression calls can change only its locals",
       );
+    });
+  });
+
+  describe("loads JSON from a path relative to the working directory", () => {
+    const path = relative(
+      process.cwd(),
+      join(import.meta.dirname, "../fixtures/typescript/json/json.ts"),
+    );
+    const source = readFileSync(path, "utf8");
+    const expected = "data,3,,true,-0.5,name+list+nested+extra,true,true,added,3";
+
+    it("agrees with Node", async () => {
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      const wrong = source.replace(expected, expected.replace("data,3", "data,2"));
+      expect((await check(compile(wrong, path))).failure?.message).toContain(`seen ${expected}`);
+    });
+  });
+
+  describe("resolves a package for a file name relative to the working directory", () => {
+    const getSource = (expected: number) => `
+      import type { Program } from "@typescript/typescript6";
+      const made: Program | number = 1;
+      if (made !== ${expected}) throw new Error("made " + made);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(1))).failure).toBeUndefined();
+    });
+
+    it("rejects another value", async () => {
+      await expect(checkModel(getSource(2))).rejects.toThrow("made 1");
     });
   });
 });

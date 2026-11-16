@@ -82,7 +82,12 @@ const NODE_MODULES = new Set([
 const IMPORT_CONDITIONS = new Set(["node", "import", "module-sync", "default"]);
 const REQUIRE_CONDITIONS = new Set(["node", "require", "module-sync", "default"]);
 
-const getDirectory = (path: string) => path.slice(0, Math.max(path.lastIndexOf("/"), 1));
+// The directory that holds a path, which Node finds from the absolute path, as it resolves a relative
+// one from the working directory.
+const getDirectory = (path: string) => {
+  const absolute = ts.sys.resolvePath(path).replaceAll("\\", "/");
+  return absolute.slice(0, Math.max(absolute.lastIndexOf("/"), 1));
+};
 
 const joinPath = (directory: string, relative: string) =>
   `${relative.startsWith("/") ? "" : directory}/${relative}`
