@@ -49165,4 +49165,30 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("runs a closure that a const holds in the environment that the const's value holds", () => {
+    const getSource = (expected: number) => `
+      function make(start: number) {
+        let count = start;
+        const read = function () {
+          return count;
+        };
+        const early = read();
+        count += 4;
+        return { read, early };
+      }
+      const first = make(1);
+      const second = make(10);
+      const seen = first.read() * 1000 + first.early * 100 + second.read();
+      if (seen !== ${expected}) throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(5114))).failure).toBeUndefined();
+    });
+
+    it("rejects the value of another call", async () => {
+      expect((await checkModel(getSource(5514))).failure?.message).toContain("seen 5114");
+    });
+  });
 });

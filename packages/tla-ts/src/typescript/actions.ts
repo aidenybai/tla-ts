@@ -5377,16 +5377,31 @@ const translateCallStatementBody = (
   if (callee?.body === undefined) {
     throw new TlaTypeScriptError(`Unsupported statement: ${expression.getText()}`, expression);
   }
-  const call = inlineBody(
-    expression,
-    callee,
-    expression.arguments,
-    getReceiver(path.scope, context, called, { node: expression, callee }),
-    path,
-    context,
-    frame,
-    continueWith,
-  );
+  const run = (inner: Path, innerFrame: Frame, next: typeof continueWith) =>
+    inlineBody(
+      expression,
+      callee,
+      expression.arguments,
+      getReceiver(inner.scope, context, called, { node: expression, callee }),
+      inner,
+      context,
+      innerFrame,
+      next,
+    );
+  // A closure that a name holds runs in the environment that the name's value holds.
+  const name = skipCasts(expression.expression);
+  const call =
+    isClosure(callee, context) && path.scope.entered !== callee && ts.isIdentifier(name)
+      ? enterClosure(
+          callee,
+          translateExpression(name, path.scope, context),
+          path,
+          context,
+          frame,
+          (inner, innerFrame, leave) =>
+            run(inner, innerFrame, (after, result) => continueWith(leave(after), result)),
+        )
+      : run(path, frame, continueWith);
   return called === undefined
     ? call
     : ifThenElse(
