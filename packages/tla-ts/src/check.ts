@@ -1110,8 +1110,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     options.dump === undefined &&
     // A set of small integers on the tier is a 31-bit mask, which a lower bound could overflow.
     options.maxSetSize === undefined &&
-    !hasPostconditions &&
-    !(liveness && options.livenessCheck === "off")
+    !hasPostconditions
       ? search.getTypedChecks(liveness?.solutions)
       : undefined;
   const typed =
@@ -1120,6 +1119,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       ...typedChecks,
       isDeadlockChecked: config.checkDeadlock,
       isFingerprinted: !options.isFingerprintDistanceSkipped,
+      livenessCheck: options.livenessCheck ?? "default",
     });
   if (typed && !typed.deadlock && !typed.violation) {
     for (let count = 2; count < typed.initialStates.generated; count *= 2) {
@@ -1134,7 +1134,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       depth: typed.generatedStates === 0 ? 0 : Math.max(typed.depth, 1),
       initialStates: typed.initialStates,
     };
-    if (liveness) {
+    if (liveness && options.livenessCheck !== "off") {
       options.onProgress?.({
         kind: "liveness-started",
         branches: liveness.branches,

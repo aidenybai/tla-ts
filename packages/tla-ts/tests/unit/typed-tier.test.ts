@@ -206,6 +206,42 @@ describe("typed tier matches TLC", () => {
     expect(typed).toEqual(interpreted);
   });
 
+  it.each(["default", "final", "off"] as const)(
+    "reports a deadlock past a stuttering violation with the %s liveness check, as the interpreter does",
+    async (livenessCheck) => {
+      const [typed, interpreted] = await Promise.all(
+        [undefined, INTERPRETED_SET_SIZE].map((maxSetSize) =>
+          check({
+            source: readFileSync(join(FIXTURES, "LateDeadlock.tla"), "utf8"),
+            config: readFileSync(join(FIXTURES, "LateDeadlock.cfg"), "utf8"),
+            maxSetSize,
+            livenessCheck,
+          }),
+        ),
+      );
+      expect([typed.status, typed.distinctStates]).toEqual(["deadlock", 2001]);
+      expect(typed).toEqual(interpreted);
+    },
+  );
+
+  it.each(["default", "final", "off"] as const)(
+    "reports the progress of the %s liveness check, as the interpreter does",
+    async (livenessCheck) => {
+      const getKinds = async (maxSetSize: number | undefined) => {
+        const kinds: string[] = [];
+        await check({
+          source: readFileSync(join(FIXTURES, "FairProcesses.tla"), "utf8"),
+          config: readFileSync(join(FIXTURES, "FairProcesses.cfg"), "utf8"),
+          maxSetSize,
+          livenessCheck,
+          onProgress: (progress) => kinds.push(progress.kind),
+        });
+        return kinds;
+      };
+      expect(await getKinds(undefined)).toEqual(await getKinds(INTERPRETED_SET_SIZE));
+    },
+  );
+
   it("reports TLC's error where a set outgrows maxSetSize, as the interpreter does", async () => {
     const [typed, interpreted] = await Promise.all([
       checkFixture("GrowingSet", false, true, 20),

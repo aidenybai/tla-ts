@@ -228,6 +228,9 @@ export interface TypedCheck {
   variableOrder: number[];
   // The solutions of the temporal properties the search checks, without symmetry or a view.
   liveness: Solution[] | undefined;
+  // When the interpreter looks for a violation of a temporal property: as it searches too, only at
+  // the end, or never.
+  livenessCheck: "default" | "final" | "off";
 }
 
 export interface TypedResult {
@@ -6452,11 +6455,12 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
     // Like TLC, the interpreter finds a violation of a temporal property early in the part of the
     // graph it checks periodically, and a violation in a part stays one as the graph grows. At a
     // deadlock it reports only a violation found as it adds the deadlocked state.
-    if (isDeadlocked && live?.findViolation()) deopt();
+    const isPeriodic = check.livenessCheck === "default";
+    if (isDeadlocked && isPeriodic && live?.findViolation()) deopt();
     if (live?.addState(index, state, liveSuccessors)) deopt();
     const isChecked = index + 1 === liveChecks.at;
     if (isChecked) liveChecks.at *= 2;
-    if (isChecked && !isDeadlocked && live?.findViolation()) deopt();
+    if (isChecked && isPeriodic && !isDeadlocked && live?.findViolation()) deopt();
     if (isDeadlocked) {
       return getResult(statistics.distinct - index - 1, {
         deadlock: getTypedPath(getPath(index)),
@@ -6466,6 +6470,6 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
     outDegrees[Math.min(expansion.newStates, OUT_DEGREE_BUCKETS - 1)]++;
     if (isPathKept) pushFinds(finds, expansion.newStates);
   }
-  if (live?.findViolation()) deopt();
+  if (check.livenessCheck !== "off" && live?.findViolation()) deopt();
   return getResult(0, { deadlock: undefined, violation: undefined });
 };
