@@ -187,6 +187,31 @@ describe("the CLI with TypeScript files", () => {
     expect(result.stdout).toContain("4 distinct states found");
   });
 
+  it("type checks a project whose declaration files import Node's built-in modules", () => {
+    const directory = copyFixtures("project");
+    writeFileSync(
+      join(directory, "tsconfig.json"),
+      JSON.stringify({
+        compilerOptions: {
+          lib: ["esnext"],
+          types: ["node"],
+          typeRoots: [join(import.meta.dirname, "../../node_modules/@types")],
+          paths: { "@limits/*": ["./limits/*"] },
+        },
+        include: ["**/*.ts"],
+      }),
+    );
+    writeFileSync(
+      join(directory, "emitter.ts"),
+      'import { EventEmitter } from "node:events";\n\nexport const isQuiet = () => new EventEmitter().listenerCount("tick") === 0;\n',
+    );
+    const result = runCli(directory, ["counter.ts", "emitter.ts"]);
+    expect(result.stdout).toContain("4 distinct states found");
+    expect(result.stderr).toContain(
+      "emitter.ts:1:30 tla-ts can't load Node's built-in module node:events",
+    );
+  });
+
   it("stops where a model reads a name that only a declaration file gives", () => {
     const directory = copyFixtures("project");
     writeFileSync(join(directory, "host.d.ts"), "declare const hostLimit: number;\n");

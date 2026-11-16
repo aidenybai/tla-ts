@@ -234,13 +234,15 @@ export const createProgram = (
       isExternalLibraryImport: false,
     },
   });
-  // A module that TypeScript finds no code of, as a package or JavaScript, loads as Node loads it.
-  // The modules that tla-ts makes for CommonJS name the files they load by path.
+  // A module that TypeScript finds no code of, as a package or JavaScript, loads as Node loads it,
+  // though a declaration file's imports only give types. The modules that tla-ts makes for CommonJS
+  // name the files they load by path.
   const resolveModuleNameLiterals = (
     literals: readonly ts.StringLiteralLike[],
     containingFile: string,
     redirectedReference: ts.ResolvedProjectReference | undefined,
     resolutionOptions: ts.CompilerOptions,
+    containingSourceFile: ts.SourceFile,
   ) =>
     literals.map((literal) => {
       if (isCommonJsFile(containingFile) || isCommonJsImport(containingFile)) {
@@ -254,7 +256,12 @@ export const createProgram = (
         undefined,
         redirectedReference,
       );
-      if (CODE_EXTENSIONS.has(resolved.resolvedModule?.extension ?? "")) return resolved;
+      if (
+        containingSourceFile.isDeclarationFile ||
+        CODE_EXTENSIONS.has(resolved.resolvedModule?.extension ?? "")
+      ) {
+        return resolved;
+      }
       const imported = resolveImport(literal, containingFile);
       return imported === undefined ? resolved : getResolved(imported);
     });
