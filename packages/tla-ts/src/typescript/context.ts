@@ -3753,7 +3753,6 @@ export const getSharedDeclaration = (symbol: ts.Symbol, context: Context) => {
     !ts.isIdentifier(declaration.name) ||
     statement === undefined ||
     !ts.isVariableStatement(statement) ||
-    statement.declarationList.declarations.length !== 1 ||
     symbol.declarations?.length !== 1 ||
     owner === undefined ||
     (ts.getCombinedModifierFlags(owner) & ts.ModifierFlags.Async) !== 0 ||
@@ -3794,16 +3793,18 @@ export const getSharedDeclaration = (symbol: ts.Symbol, context: Context) => {
   return isShared ? declaration : undefined;
 };
 
-// The local that closures share that a statement declares, which makes its environment.
-export const getSharedWrite = (statement: ts.Statement, context: Context) => {
-  const declarations = ts.isVariableStatement(statement)
-    ? statement.declarationList.declarations
-    : undefined;
-  const name = declarations?.length === 1 ? declarations[0].name : undefined;
-  const symbol = name && ts.isIdentifier(name) ? getSymbol(name, context.checker) : undefined;
-  const declaration = symbol && getSharedDeclaration(symbol, context);
-  return symbol === undefined || declaration === undefined ? undefined : { symbol, declaration };
-};
+// The locals that closures share that a statement declares, which make their environment.
+export const getSharedWrites = (statement: ts.Statement, context: Context) =>
+  (ts.isVariableStatement(statement) ? statement.declarationList.declarations : []).flatMap(
+    (declaration) => {
+      const symbol = ts.isIdentifier(declaration.name)
+        ? getSymbol(declaration.name, context.checker)
+        : undefined;
+      return symbol !== undefined && getSharedDeclaration(symbol, context) === declaration
+        ? [{ symbol, declaration }]
+        : [];
+    },
+  );
 
 // The async function around a function that binds each local the function reads from outside it.
 const getAsyncOwner = (node: ts.Node, context: Context) => {

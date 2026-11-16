@@ -116,7 +116,7 @@ import {
   getOwnSymbol,
   getAppliedList,
   getSharedDeclaration,
-  getSharedWrite,
+  getSharedWrites,
   getStaticTruth,
   getSymbol,
   isAssigned,
@@ -19867,20 +19867,54 @@ const hoistVars = (statements: readonly ts.Statement[], path: Path, context: Con
       };
 };
 
-// A declaration of a local that closures share, which makes the environment that holds it before
-// its initializer runs, as the closures that the initializer makes share it too.
+// A declaration of locals that closures share, which makes the environment that holds them before
+// the first initializer runs, as the closures that the initializers make share it too. Each holds
+// its value there once its own declaration runs.
 const translateSharedDeclaration = (
   statement: ts.VariableStatement,
-  shared: { symbol: ts.Symbol; declaration: ts.VariableDeclaration },
+  shared: readonly { symbol: ts.Symbol; declaration: ts.VariableDeclaration }[],
   path: Path,
   context: Context,
   frame: Frame,
   continueWith: (path: Path) => Formula,
 ): Formula => {
-  const symbol = shared.symbol;
   const name = context.names.getFresh("environment");
   const environment = useJavaScript("Allocated", [identifier(name)], context);
   const made = withHeap(path, identifier(name), context);
+  const declare = (declarations: readonly ts.VariableDeclaration[], current: Path): Formula => {
+    if (declarations.length === 0) return continueWith(current);
+    const declaration = declarations[0];
+    const symbol = shared.find((entry) => entry.declaration === declaration)?.symbol;
+    return translateDeclarations([declaration], current, context, frame, (after) => {
+      if (symbol === undefined) return declare(declarations.slice(1), after);
+      const value = after.scope.bindings.get(symbol);
+      if (value === undefined) throw new TlaTypeScriptError("Unsupported write", statement);
+      const stored: Path = {
+        ...after,
+        mutable: new Set([...after.mutable].filter((other) => other !== symbol)),
+        scope: {
+          ...after.scope,
+          bindings: new Map([...after.scope.bindings].filter((entry) => entry[0] !== symbol)),
+        },
+      };
+      return declare(
+        declarations.slice(1),
+        withHeap(
+          stored,
+          useJavaScript(
+            "SetEnvironment",
+            [
+              getHeap(after.scope, statement, context),
+              environment,
+              functionFrom([[string(symbol.name), value]]),
+            ],
+            context,
+          ),
+          context,
+        ),
+      );
+    });
+  };
   return bindOnce(
     path,
     name,
@@ -19892,48 +19926,16 @@ const translateSharedDeclaration = (
       ],
       context,
     ),
-    translateDeclarations(
-      statement.declarationList.declarations,
-      {
-        ...made,
-        scope: {
-          ...made.scope,
-          activations: new Map([
-            ...(made.scope.activations ?? []),
-            [shared.declaration, environment],
-          ]),
-        },
+    declare(statement.declarationList.declarations, {
+      ...made,
+      scope: {
+        ...made.scope,
+        activations: new Map([
+          ...(made.scope.activations ?? []),
+          ...shared.map((entry): [ts.Node, Expression] => [entry.declaration, environment]),
+        ]),
       },
-      context,
-      frame,
-      (after) => {
-        const value = after.scope.bindings.get(symbol);
-        if (value === undefined) throw new TlaTypeScriptError("Unsupported write", statement);
-        const stored: Path = {
-          ...after,
-          mutable: new Set([...after.mutable].filter((other) => other !== symbol)),
-          scope: {
-            ...after.scope,
-            bindings: new Map([...after.scope.bindings].filter((entry) => entry[0] !== symbol)),
-          },
-        };
-        return continueWith(
-          withHeap(
-            stored,
-            useJavaScript(
-              "SetEnvironment",
-              [
-                getHeap(after.scope, statement, context),
-                environment,
-                functionFrom([[string(symbol.name), value]]),
-              ],
-              context,
-            ),
-            context,
-          ),
-        );
-      },
-    ),
+    }),
   );
 };
 
@@ -20224,8 +20226,8 @@ export const translateStatements = (
   ) {
     return continueWith(path);
   }
-  const shared = getSharedWrite(statement, context);
-  if (shared !== undefined && ts.isVariableStatement(statement)) {
+  const shared = getSharedWrites(statement, context);
+  if (shared.length > 0 && ts.isVariableStatement(statement)) {
     return translateSharedDeclaration(
       statement,
       shared,

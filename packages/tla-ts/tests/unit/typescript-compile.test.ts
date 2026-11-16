@@ -49191,4 +49191,39 @@ describe("BigInts", () => {
       expect((await checkModel(getSource(5514))).failure?.message).toContain("seen 5114");
     });
   });
+
+  describe("shares the locals that one declaration of several declares with closures", () => {
+    const getSource = (expected: string) => `
+      function forwardRef(render: { name: string }) {
+        var elementType = { render: render },
+          ownName: string | undefined;
+        Object.defineProperty(elementType, "displayName", {
+          enumerable: false,
+          configurable: true,
+          get: function () {
+            return ownName;
+          },
+          set: function (name: string) {
+            ownName = name + render.name;
+          },
+        });
+        return elementType as { render: { name: string }; displayName?: string };
+      }
+      const first = forwardRef({ name: "a" });
+      const second = forwardRef({ name: "b" });
+      first.displayName = "A";
+      const seen = first.displayName + "," + second.displayName;
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("Aa,undefined"))).failure).toBeUndefined();
+    });
+
+    it("rejects the name of another call", async () => {
+      expect((await checkModel(getSource("Aa,Aa"))).failure?.message).toContain(
+        "seen Aa,undefined",
+      );
+    });
+  });
 });
