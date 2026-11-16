@@ -45831,4 +45831,50 @@ describe("BigInts", () => {
       expect(result.failure?.message).toContain("tla-ts can't use the calendar gregory");
     });
   });
+
+  describe("runs Temporal.ZonedDateTime in UTC and fixed-offset time zones", () => {
+    const getSource = (expected: string) => `
+      const thrown = (run: () => unknown) => {
+        try {
+          run();
+          return "none";
+        } catch (error) {
+          return (error as Error).name;
+        }
+      };
+      const zoned = new Temporal.ZonedDateTime(1_000_000_000_123_456_789n, "+01:00");
+      const text = zoned.toString();
+      const added = zoned.add({ days: 1, hours: 2 }).toString({ smallestUnit: "minute" });
+      const start = Temporal.ZonedDateTime.from("2020-03-08T01:00-08:00[-08:00]");
+      const until = start.until("2020-04-09T03:30-08:00[-08:00]", { largestUnit: "months" }).toString();
+      const day = start.round({ smallestUnit: "day" }).toString();
+      const utc = Temporal.PlainDate.from("2020-01-01").toZonedDateTime("UTC").epochMilliseconds;
+      const relative = new Temporal.Duration(0, 0, 0, 0, 25).round({ largestUnit: "days", relativeTo: start }).toString();
+      const mismatch = thrown(() => Temporal.ZonedDateTime.from("2020-03-08T01:00-07:00[-08:00]"));
+      const seen = [zoned.hour, zoned.offset, text, added, until, day, utc, relative, mismatch].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      const expected =
+        "2,+01:00,2001-09-09T02:46:40.123456789+01:00[+01:00],2001-09-10T04:46+01:00[+01:00],P1M1DT2H30M,2020-03-08T00:00:00-08:00[-08:00],1577836800000,P1DT1H,RangeError";
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects a difference an hour too long", async () => {
+      const expected =
+        "2,+01:00,2001-09-09T02:46:40.123456789+01:00[+01:00],2001-09-10T04:46+01:00[+01:00],P1M1DT3H30M,2020-03-08T00:00:00-08:00[-08:00],1577836800000,P1DT1H,RangeError";
+      expect((await checkModel(getSource(expected))).failure?.message).toContain(
+        "seen 2,+01:00,2001-09-09T02:46:40.123456789+01:00[+01:00],2001-09-10T04:46+01:00[+01:00],P1M1DT2H30M,2020-03-08T00:00:00-08:00[-08:00],1577836800000,P1DT1H,RangeError",
+      );
+    });
+
+    it("stops at a named time zone", async () => {
+      const result = await checkModel(`
+        const zoned = new Temporal.ZonedDateTime(0n, "Europe/Paris");
+        if (zoned.hour !== 1) throw new Error("hour " + zoned.hour);
+      `);
+      expect(result.failure?.message).toContain("tla-ts can't use the time zone Europe/Paris");
+    });
+  });
 });

@@ -19,7 +19,13 @@ LOCAL TemporalGetterName(path) ==
 \* Whether a Temporal prototype's getter reads a receiver, which throws a TypeError otherwise.
 TemporalGets(heap, path, receiver) == TSlots(heap, receiver).kind = TemporalGetterOwner(path)
 
-TemporalGetterValue(heap, path, receiver) == TSlots(heap, receiver).getters[TemporalGetterName(path)]
+\* What a Temporal prototype's getter gives for a receiver that it reads, which stops where it would
+\* throw, as hoursInDay does at the limits.
+TemporalGetterValue(heap, path, receiver) ==
+  LET slots == TSlots(heap, receiver)
+  IN IF "throwing" \in DOMAIN slots /\ TemporalGetterName(path) \in slots.throwing
+     THEN Assert(FALSE, "tla-ts can't throw the RangeError of " \o SubSeq(path, 5, Len(path)) \o " here")
+     ELSE slots.getters[TemporalGetterName(path)]
 `;
 
 // The part of the JavaScript module that runs Temporal, over the ISO 8601 calendar, as the Temporal
@@ -730,6 +736,32 @@ LOCAL TRoundTime(time, increment, unit, mode) ==
 \* The epoch nanoseconds of a date and a time in UTC.
 LOCAL TEpochNs(date, time) == BigIntAdd(BigIntMultiply(TBig(TEpochDays(date)), TNsPerDay), TTimeNs(time))
 
+LOCAL TMaxInstant == BigIntMultiply(TBig(100000000), TNsPerDay)
+
+LOCAL TIsValidEpochNs(ns) == ~TLess(TMaxInstant, TAbs(ns))
+
+\* No time zone, where epoch nanoseconds are UTC's.
+LOCAL TNoZone == [id |-> "", offset |-> Big :> 0]
+
+\* GetEpochNanosecondsFor of a date and a time in a fixed-offset time zone, which throws a RangeError
+\* past the limits, or GetUTCEpochNanoseconds without a time zone.
+LOCAL TZonedNs(zone, date, time) ==
+  LET ns == BigIntSubtract(TEpochNs(date, time), zone.offset)
+  IN CASE zone.id = "" -> TOk(TEpochNs(date, time))
+       [] TIsValidEpochNs(ns) -> TOk(ns)
+       [] OTHER -> TFail("RangeError")
+
+\* The date and time in UTC of epoch nanoseconds.
+LOCAL TDateTimeOfNs(ns) ==
+  LET balanced == TBalanceTime(TMidnight, ns)
+  IN [date |-> TDateOfDays(TSmall(balanced.days)), time |-> balanced.time]
+
+\* A quotient of two integers whose divisor isn't 0, rounded to the nearest Number.
+LOCAL TSignedQuotientNumber(dividend, divisor) ==
+  IF TIsNegative(divisor)
+  THEN TQuotientNumber(BigIntNegate(dividend), BigIntNegate(divisor))
+  ELSE TQuotientNumber(dividend, divisor)
+
 \* PadISOYear.
 LOCAL TYearText(year) ==
   IF year >= 0 /\ year <= 9999
@@ -737,6 +769,12 @@ LOCAL TYearText(year) ==
   ELSE (IF year > 0 THEN "+" ELSE "-") \o TPadded(ToString(IF year < 0 THEN -year ELSE year), 6)
 
 LOCAL TTwoDigits(value) == TPadded(ToString(value), 2)
+
+\* FormatDateTimeUTCOffsetRounded.
+LOCAL TOffsetText(offset) ==
+  LET minutes == TSmall(BigIntDivide(TRoundToIncrement(offset, TNsPerMinute, "halfExpand"), TNsPerMinute))
+      magnitude == IF minutes < 0 THEN -minutes ELSE minutes
+  IN (IF minutes < 0 THEN "-" ELSE "+") \o TTwoDigits(magnitude \div 60) \o ":" \o TTwoDigits(magnitude % 60)
 
 LOCAL TDateText(date) == TYearText(date[1]) \o "-" \o TTwoDigits(date[2]) \o "-" \o TTwoDigits(date[3])
 
@@ -1436,12 +1474,12 @@ LOCAL TDateDurationValid(date) ==
   TIsValidDuration(<<date[1], date[2], date[3], date[4], Big :> 0, Big :> 0, Big :> 0, Big :> 0, Big :> 0, Big :> 0>>)
 
 \* The epoch nanoseconds that a date duration added to a date and time gives, constrained.
-LOCAL TEndNs(dateTime, duration) ==
+LOCAL TEndNs(dateTime, duration, zone) ==
   LET added == TDateAdd(dateTime.date, duration, "constrain")
-  IN IF added.error # "" THEN added ELSE TOk(TEpochNs(added.value, dateTime.time))
+  IN IF added.error # "" THEN added ELSE TZonedNs(zone, added.value, dateTime.time)
 
-\* ComputeNudgeWindow without a time zone.
-LOCAL TNudgeWindow(sign, date, originNs, dateTime, increment, unit, isShifted) ==
+\* ComputeNudgeWindow.
+LOCAL TNudgeWindow(sign, date, originNs, dateTime, zone, increment, unit, isShifted) ==
   LET truncated(value) == TRoundToIncrement(value, increment, "trunc")
       step == BigIntMultiply(increment, TBig(sign))
       weeksStart == TDateAdd(dateTime.date, <<date[1], date[2], Big :> 0, Big :> 0>>, "constrain")
@@ -1456,8 +1494,8 @@ LOCAL TNudgeWindow(sign, date, originNs, dateTime, increment, unit, isShifted) =
                          [] unit = "month" -> <<date[1], r, Big :> 0, Big :> 0>>
                          [] unit = "week" -> <<date[1], date[2], r, Big :> 0>>
                          [] OTHER -> <<date[1], date[2], date[3], r>>
-      start == IF TIsZero(r1) THEN TOk(originNs) ELSE TEndNs(dateTime, durationOf(r1))
-      end == TEndNs(dateTime, durationOf(r2))
+      start == IF TIsZero(r1) THEN TOk(originNs) ELSE TEndNs(dateTime, durationOf(r1), zone)
+      end == TEndNs(dateTime, durationOf(r2), zone)
   IN CASE unit = "week" /\ weeksStart.error # "" -> weeksStart
        [] ~TDateDurationValid(durationOf(r1)) \/ ~TDateDurationValid(durationOf(r2)) -> TFail("RangeError")
        [] start.error # "" -> start
@@ -1465,15 +1503,15 @@ LOCAL TNudgeWindow(sign, date, originNs, dateTime, increment, unit, isShifted) =
        [] OTHER -> TOk([r1 |-> r1, r2 |-> r2, start |-> start.value, end |-> end.value,
                         startDuration |-> durationOf(r1), endDuration |-> durationOf(r2)])
 
-\* NudgeToCalendarUnit without a time zone, as the nudged duration's date fields, its epoch
-\* nanoseconds, whether it expanded, and the total as a numerator and a denominator.
-LOCAL TNudgeToCalendarUnit(sign, date, originNs, destNs, dateTime, increment, unit, mode) ==
-  LET first == TNudgeWindow(sign, date, originNs, dateTime, increment, unit, FALSE)
+\* NudgeToCalendarUnit, as the nudged duration's date fields, its epoch nanoseconds, whether it
+\* expanded, and the total as a numerator and a denominator.
+LOCAL TNudgeToCalendarUnit(sign, date, originNs, destNs, dateTime, zone, increment, unit, mode) ==
+  LET first == TNudgeWindow(sign, date, originNs, dateTime, zone, increment, unit, FALSE)
       isInside(window) ==
         IF sign = 1
         THEN ~TLess(destNs, window.start) /\ ~TLess(window.end, destNs)
         ELSE ~TLess(destNs, window.end) /\ ~TLess(window.start, destNs)
-      second == TNudgeWindow(sign, date, originNs, dateTime, increment, unit, TRUE)
+      second == TNudgeWindow(sign, date, originNs, dateTime, zone, increment, unit, TRUE)
       window == IF isInside(first.value) THEN first ELSE second
       numerator == BigIntSubtract(destNs, window.value.start)
       denominator == BigIntSubtract(window.value.end, window.value.start)
@@ -1506,36 +1544,60 @@ LOCAL TNudgeToDayOrTime(date, time, destNs, largestUnit, increment, smallestUnit
                nudged |-> BigIntAdd(destNs, BigIntSubtract(rounded, total)),
                isExpanded |-> TSign(BigIntSubtract(roundedDays, wholeDays)) = TSign(total)])
 
-\* BubbleRelativeDuration without a time zone, of a duration's date fields and time, from the unit
-\* at index up to largestUnit.
-RECURSIVE TemporalBubble(_, _, _, _, _, _)
-TemporalBubble(sign, duration, nudgedNs, dateTime, largestUnit, index) ==
+\* BubbleRelativeDuration, of a duration's date fields and time, from the unit at index up to
+\* largestUnit.
+RECURSIVE TemporalBubble(_, _, _, _, _, _, _)
+TemporalBubble(sign, duration, nudgedNs, dateTime, zone, largestUnit, index) ==
   LET unit == TUnits[index]
       date == duration.date
       step == TBig(sign)
       end == CASE unit = "year" -> <<BigIntAdd(date[1], step), Big :> 0, Big :> 0, Big :> 0>>
                [] unit = "month" -> <<date[1], BigIntAdd(date[2], step), Big :> 0, Big :> 0>>
                [] OTHER -> <<date[1], date[2], BigIntAdd(date[3], step), Big :> 0>>
-      endNs == TEndNs(dateTime, end)
+      endNs == TEndNs(dateTime, end, zone)
   IN CASE index < TUnitIndex(largestUnit) -> TOk(duration)
-       [] unit = "week" /\ largestUnit # "week" -> TemporalBubble(sign, duration, nudgedNs, dateTime, largestUnit, index - 1)
+       [] unit = "week" /\ largestUnit # "week" ->
+            TemporalBubble(sign, duration, nudgedNs, dateTime, zone, largestUnit, index - 1)
        [] ~TDateDurationValid(end) -> TFail("RangeError")
        [] endNs.error # "" -> endNs
        [] TSign(BigIntSubtract(nudgedNs, endNs.value)) # -sign ->
-            TemporalBubble(sign, [date |-> end, time |-> Big :> 0], nudgedNs, dateTime, largestUnit, index - 1)
+            TemporalBubble(sign, [date |-> end, time |-> Big :> 0], nudgedNs, dateTime, zone, largestUnit, index - 1)
        [] OTHER -> TOk(duration)
 
-\* RoundRelativeDuration without a time zone, as the duration's date fields and time.
-LOCAL TRoundRelative(date, time, originNs, destNs, dateTime, largestUnit, increment, smallestUnit, mode) ==
+\* NudgeToZonedTime of a fixed-offset time zone.
+LOCAL TNudgeToZonedTime(sign, date, time, dateTime, zone, increment, unit, mode) ==
+  LET start == TDateAdd(dateTime.date, date, "constrain")
+      startNs == TZonedNs(zone, start.value, dateTime.time)
+      endNs == TZonedNs(zone, TAddDays(start.value, sign), dateTime.time)
+      length == BigIntMultiply(increment, TUnitLength(unit))
+      rounded == TRoundToIncrement(time, length, mode)
+      beyond == BigIntSubtract(rounded, BigIntSubtract(endNs.value, startNs.value))
+      isBeyond == TSign(beyond) # -sign
+      roundedBeyond == TRoundToIncrement(beyond, length, mode)
+  IN CASE start.error # "" -> start
+       [] startNs.error # "" -> startNs
+       [] endNs.error # "" -> endNs
+       [] TLess(TMaxTimeDuration, TAbs(rounded)) -> TFail("RangeError")
+       [] isBeyond /\ TLess(TMaxTimeDuration, TAbs(roundedBeyond)) -> TFail("RangeError")
+       [] OTHER ->
+            TOk([duration |-> <<date[1], date[2], date[3], IF isBeyond THEN BigIntAdd(date[4], TBig(sign)) ELSE date[4]>>,
+                 time |-> IF isBeyond THEN roundedBeyond ELSE rounded,
+                 nudged |-> IF isBeyond THEN BigIntAdd(endNs.value, roundedBeyond) ELSE BigIntAdd(startNs.value, rounded),
+                 isExpanded |-> isBeyond])
+
+\* RoundRelativeDuration, as the duration's date fields and time, of a fixed-offset time zone or
+\* TNoZone.
+LOCAL TRoundRelative(date, time, originNs, destNs, dateTime, zone, largestUnit, increment, smallestUnit, mode) ==
   LET sign == IF TDurationSign(<<date[1], date[2], date[3], date[4], time>>) < 0 THEN -1 ELSE 1
-      nudge == IF TIsCalendarUnit(smallestUnit)
-               THEN TNudgeToCalendarUnit(sign, date, originNs, destNs, dateTime, increment, smallestUnit, mode)
-               ELSE TNudgeToDayOrTime(date, time, destNs, largestUnit, increment, smallestUnit, mode)
+      nudge == CASE TIsCalendarUnit(smallestUnit) \/ (zone.id # "" /\ smallestUnit = "day") ->
+                      TNudgeToCalendarUnit(sign, date, originNs, destNs, dateTime, zone, increment, smallestUnit, mode)
+                 [] zone.id # "" -> TNudgeToZonedTime(sign, date, time, dateTime, zone, increment, smallestUnit, mode)
+                 [] OTHER -> TNudgeToDayOrTime(date, time, destNs, largestUnit, increment, smallestUnit, mode)
       startUnit == TLargerUnit(smallestUnit, "day")
       nudged == [date |-> nudge.value.duration, time |-> nudge.value.time]
   IN CASE nudge.error # "" -> nudge
        [] nudge.value.isExpanded /\ smallestUnit # "week" /\ startUnit # largestUnit ->
-            TemporalBubble(sign, nudged, nudge.value.nudged, dateTime, largestUnit, TUnitIndex(startUnit) - 1)
+            TemporalBubble(sign, nudged, nudge.value.nudged, dateTime, zone, largestUnit, TUnitIndex(startUnit) - 1)
        [] OTHER -> TOk(nudged)
 
 \* DifferenceISODateTime, as a duration's date fields and time.
@@ -1564,7 +1626,7 @@ LOCAL TDifferenceRounded(date1, time1, date2, time2, settings) ==
        [] settings.smallest = "nanosecond" /\ settings.increment = Big :> 1 -> TOk(difference)
        [] OTHER ->
             TRoundRelative(difference.date, difference.time, TEpochNs(date1, time1), TEpochNs(date2, time2),
-                           [date |-> date1, time |-> time1], settings.largest, settings.increment,
+                           [date |-> date1, time |-> time1], TNoZone, settings.largest, settings.increment,
                            settings.smallest, settings.mode)
 
 \* The duration that a difference gives, negated for since.
@@ -1576,12 +1638,251 @@ LOCAL TDifferenceDuration(difference, largestUnit, isSince) ==
        [] OTHER -> made
 
 \* ---------------------------------------------------------------------------------------------
+\* Zoned date-times, in UTC or a fixed-offset time zone, as their epoch nanoseconds, the time zone,
+\* and the calendar.
+
+\* The date and the time of epoch nanoseconds in a time zone.
+LOCAL TLocal(zone, ns) == TDateTimeOfNs(BigIntAdd(ns, zone.offset))
+
+LOCAL TDisambiguationOption(heap, options) ==
+  TStringOf(TOption(heap, options, "disambiguation"), {"compatible", "earlier", "later", "reject"}, "compatible")
+
+LOCAL TOffsetOption(heap, options, fallback) ==
+  TStringOf(TOption(heap, options, "offset"), {"prefer", "use", "ignore", "reject"}, fallback)
+
+\* ParseTimeZoneIdentifier, as an available time zone identifier.
+LOCAL TTimeZoneIdentifier(text) == IF TIsZoneIdentifier(text) THEN TZoneOfName(text) ELSE TFail("RangeError")
+
+\* InterpretISODateTimeOffset of a fixed-offset time zone, where its single offset is the only
+\* candidate, of a behaviour: "wall", "exact", or "option".
+LOCAL TInterpretOffset(date, time, hasTime, behaviour, offset, zone, offsetOption, isMatchMinutes) ==
+  LET exact == BigIntSubtract(TEpochNs(date, time), offset)
+      candidate == TZonedNs(zone, date, time)
+      isMatched ==
+        \/ zone.offset = offset
+        \/ isMatchMinutes /\ TRoundToIncrement(zone.offset, TNsPerMinute, "halfExpand") = offset
+  IN CASE ~hasTime -> TZonedNs(zone, date, TMidnight)
+       [] behaviour = "wall" \/ (behaviour = "option" /\ offsetOption = "ignore") -> candidate
+       [] behaviour = "exact" \/ (behaviour = "option" /\ offsetOption = "use") ->
+            IF TIsValidEpochNs(exact) THEN TOk(exact) ELSE TFail("RangeError")
+       [] TEpochDays(date) < -100000000 \/ TEpochDays(date) > 100000000 -> TFail("RangeError")
+       [] candidate.error # "" -> candidate
+       [] isMatched -> candidate
+       [] offsetOption = "reject" -> TFail("RangeError")
+       [] OTHER -> candidate
+
+\* ToTemporalZonedDateTime, as the epoch nanoseconds, the time zone, and the calendar.
+LOCAL TToZoned(heap, item, options) ==
+  LET slots == TSlots(heap, item)
+      resolved == TOptions(heap, options)
+      disambiguation == TDisambiguationOption(heap, resolved.value)
+      offsetOption == TOffsetOption(heap, resolved.value, "reject")
+      overflow == TOverflowOption(heap, resolved.value)
+      optionsError == TFirstError(<<resolved, disambiguation, offsetOption, overflow>>)
+      calendar == TCalendarOfBag(heap, item)
+      fields == TPrepareFields(heap, item, TDateTimeKeys \cup {"offset", "timeZone"}, {"timeZone"}, FALSE)
+      date == TDateFromFields(fields.value, overflow.value)
+      time == TRegulateTime(TTimeOfFields(fields.value), overflow.value)
+      bagNs == TInterpretOffset(date.value, time.value, TRUE,
+                                IF fields.value["offset"] = Undefined THEN "wall" ELSE "option",
+                                IF fields.value["offset"] = Undefined THEN Big :> 0 ELSE fields.value["offset"],
+                                fields.value["timeZone"], offsetOption.value, FALSE)
+      parsed == TParseISO(item, "ZonedDateTime")
+      zone == TZoneOfName(parsed.value.zone)
+      parsedCalendar == IF parsed.value.calendar = "" THEN TOk("iso8601") ELSE TCalendar(parsed.value.calendar)
+      offsetParse == TOffsetAt(parsed.value.offset, 1, TRUE)
+      parsedNs == TInterpretOffset(parsed.value.date, parsed.value.time, parsed.value.hasTime,
+                                   CASE parsed.value.z -> "exact" [] parsed.value.offset = "" -> "wall" [] OTHER -> "option",
+                                   IF parsed.value.offset = "" THEN Big :> 0 ELSE offsetParse.ns,
+                                   zone.value, offsetOption.value, ~offsetParse.hasSecond)
+      made(ns, timeZone, cal) == TOk([ns |-> ns, zone |-> timeZone, calendar |-> cal])
+  IN CASE slots.kind = "ZonedDateTime" ->
+            IF optionsError # "" THEN TFail(optionsError) ELSE made(slots.ns, slots.zone, slots.calendar)
+       [] TIsObject(heap, item) ->
+            CASE calendar.error # "" -> calendar
+              [] fields.error # "" -> fields
+              [] optionsError # "" -> TFail(optionsError)
+              [] date.error # "" -> date
+              [] time.error # "" -> time
+              [] bagNs.error # "" -> bagNs
+              [] OTHER -> made(bagNs.value, fields.value["timeZone"], calendar.value)
+       [] TypeOf(item) # "string" -> TFail("TypeError")
+       [] parsed.error # "" -> parsed
+       [] zone.error # "" -> zone
+       [] parsedCalendar.error # "" -> parsedCalendar
+       [] resolved.error # "" -> resolved
+       [] disambiguation.error # "" -> disambiguation
+       [] offsetOption.error # "" -> offsetOption
+       [] overflow.error # "" -> overflow
+       [] parsedNs.error # "" -> parsedNs
+       [] OTHER -> made(parsedNs.value, zone.value, parsedCalendar.value)
+
+\* AddZonedDateTime, of a duration's date fields and time.
+LOCAL TZonedAdd(ns, zone, date, time, overflow) ==
+  LET local == TLocal(zone, ns)
+      added == TDateAdd(local.date, date, overflow)
+      intermediate == TZonedNs(zone, added.value, local.time)
+      result == BigIntAdd(intermediate.value, time)
+      instant == BigIntAdd(ns, time)
+  IN CASE TIsZero(date[1]) /\ TIsZero(date[2]) /\ TIsZero(date[3]) /\ TIsZero(date[4]) ->
+            IF TIsValidEpochNs(instant) THEN TOk(instant) ELSE TFail("RangeError")
+       [] added.error # "" -> added
+       [] ~TDateTimeWithinLimits(added.value, local.time) -> TFail("RangeError")
+       [] intermediate.error # "" -> intermediate
+       [] ~TIsValidEpochNs(result) -> TFail("RangeError")
+       [] OTHER -> TOk(result)
+
+\* DifferenceZonedDateTime, as a duration's date fields and time.
+LOCAL TZonedDifference(ns1, ns2, zone, largestUnit) ==
+  LET start == TLocal(zone, ns1)
+      end == TLocal(zone, ns2)
+      sign == IF TIsNegative(BigIntSubtract(ns2, ns1)) THEN 1 ELSE -1
+      maxCorrection == IF sign = -1 THEN 2 ELSE 1
+      first == IF TSign(BigIntSubtract(TTimeNs(end.time), TTimeNs(start.time))) = sign THEN 1 ELSE 0
+      RECURSIVE Correct(_)
+      Correct(correction) ==
+        LET intermediateDate == TAddDays(end.date, correction * sign)
+            intermediateNs == TZonedNs(zone, intermediateDate, start.time)
+            time == BigIntSubtract(ns2, intermediateNs.value)
+        IN CASE intermediateNs.error # "" -> intermediateNs
+             [] TSign(time) # sign \/ correction >= maxCorrection -> TOk([date |-> intermediateDate, time |-> time])
+             [] OTHER -> Correct(correction + 1)
+      corrected == Correct(first)
+  IN CASE ns1 = ns2 -> TOk([date |-> <<Big :> 0, Big :> 0, Big :> 0, Big :> 0>>, time |-> Big :> 0])
+       [] TCompareSequences(start.date, end.date) = 0 ->
+            TOk([date |-> <<Big :> 0, Big :> 0, Big :> 0, Big :> 0>>, time |-> BigIntSubtract(ns2, ns1)])
+       [] corrected.error # "" -> corrected
+       [] OTHER -> TOk([date |-> TDateUntil(start.date, corrected.value.date, TLargerUnit(largestUnit, "day")),
+                        time |-> corrected.value.time])
+
+\* DifferenceZonedDateTimeWithRounding.
+LOCAL TZonedDifferenceRounded(ns1, ns2, zone, settings) ==
+  LET difference == TZonedDifference(ns1, ns2, zone, settings.largest)
+      rounded == TRoundToIncrement(BigIntSubtract(ns2, ns1),
+                                   BigIntMultiply(settings.increment, TUnitLength(settings.smallest)), settings.mode)
+  IN CASE ~TIsDateUnit(settings.largest) -> TOk([date |-> <<Big :> 0, Big :> 0, Big :> 0, Big :> 0>>, time |-> rounded])
+       [] difference.error # "" -> difference
+       [] settings.smallest = "nanosecond" /\ settings.increment = Big :> 1 -> difference
+       [] OTHER -> TRoundRelative(difference.value.date, difference.value.time, ns1, ns2, TLocal(zone, ns1), zone,
+                                  settings.largest, settings.increment, settings.smallest, settings.mode)
+
+\* DifferenceZonedDateTimeWithTotal, as a Number.
+LOCAL TZonedDifferenceTotal(ns1, ns2, zone, unit) ==
+  LET difference == TZonedDifference(ns1, ns2, zone, unit)
+      sign == IF TDurationSign(<<difference.value.date[1], difference.value.date[2], difference.value.date[3],
+                                 difference.value.date[4], difference.value.time>>) < 0 THEN -1 ELSE 1
+      nudge == TNudgeToCalendarUnit(sign, difference.value.date, ns1, ns2, TLocal(zone, ns1), zone, Big :> 1, unit, "trunc")
+      time == BigIntAdd(difference.value.time, BigIntMultiply(difference.value.date[4], TNsPerDay))
+  IN CASE ~TIsDateUnit(unit) -> TOk(TQuotientNumber(BigIntSubtract(ns2, ns1), TUnitLength(unit)))
+       [] difference.error # "" -> difference
+       [] nudge.error # "" -> nudge
+       [] OTHER -> TOk(TSignedQuotientNumber(nudge.value.totalNumerator, nudge.value.totalDenominator))
+
+\* Temporal.ZonedDateTime.prototype.until and since.
+LOCAL TZonedDifferenceDuration(heap, slots, other, options, isSince) ==
+  LET converted == TToZoned(heap, other, Undefined)
+      resolved == TOptions(heap, options)
+      settings == TDifferenceSettings(heap, isSince, resolved.value, "datetime", {}, "nanosecond", "hour")
+      isTime == ~TIsDateUnit(settings.value.largest)
+      difference == TZonedDifferenceRounded(slots.ns, converted.value.ns, slots.zone, settings.value)
+  IN CASE converted.error # "" -> converted
+       [] converted.value.calendar # slots.calendar -> TFail("RangeError")
+       [] resolved.error # "" -> resolved
+       [] settings.error # "" -> settings
+       [] isTime -> TDifferenceDuration(difference, settings.value.largest, isSince)
+       [] converted.value.zone.id # slots.zone.id -> TFail("RangeError")
+       [] slots.ns = converted.value.ns -> TOk(TZeroDuration)
+       [] OTHER -> TDifferenceDuration(difference, "hour", isSince)
+
+\* Temporal.ZonedDateTime.prototype.round, as the epoch nanoseconds.
+LOCAL TZonedRound(heap, slots, roundTo) ==
+  LET options == IF TypeOf(roundTo) = "string" THEN TOk(Undefined) ELSE TOptions(heap, roundTo)
+      increment == TRoundingIncrementOption(heap, options.value)
+      mode == TRoundingModeOption(heap, options.value, "halfExpand")
+      smallest == IF TypeOf(roundTo) = "string" THEN TUnitOf(roundTo) ELSE TUnitOption(heap, options.value, "smallestUnit")
+      isValidIncrement ==
+        IF smallest.value = "day"
+        THEN TIncrementValid(increment.value, 1, TRUE)
+        ELSE TIncrementValid(increment.value, TMaximumIncrement(smallest.value), FALSE)
+      local == TLocal(slots.zone, slots.ns)
+      startNs == TZonedNs(slots.zone, local.date, TMidnight)
+      endNs == TZonedNs(slots.zone, TAddDays(local.date, 1), TMidnight)
+      dayNs == BigIntAdd(startNs.value, TRoundToIncrement(BigIntSubtract(slots.ns, startNs.value),
+                                                          BigIntSubtract(endNs.value, startNs.value), mode.value))
+      rounded == TRoundTime(local.time, increment.value, smallest.value, mode.value)
+      roundedNs == TInterpretOffset(TAddDays(local.date, TSmall(rounded.days)), rounded.time, TRUE, "option",
+                                    slots.zone.offset, slots.zone, "prefer", FALSE)
+  IN CASE roundTo = Undefined -> TFail("TypeError")
+       [] options.error # "" -> options
+       [] increment.error # "" -> increment
+       [] mode.error # "" -> mode
+       [] smallest.error # "" -> smallest
+       [] smallest.value = "unset" -> TFail("RangeError")
+       [] ~TUnitValid(smallest.value, "time", {"day"}) -> TFail("RangeError")
+       [] ~isValidIncrement -> TFail("RangeError")
+       [] smallest.value = "nanosecond" /\ increment.value = Big :> 1 -> TOk(slots.ns)
+       [] smallest.value = "day" ->
+            CASE startNs.error # "" -> startNs [] endNs.error # "" -> endNs [] OTHER -> TOk(dayNs)
+       [] OTHER -> roundedNs
+
+\* TemporalZonedDateTimeToString.
+LOCAL TZonedText(slots, precision, show, showZone, showOffset, mode) ==
+  LET ns == TRoundToIncrementAsIfPositive(slots.ns, BigIntMultiply(TBig(precision.increment), TUnitLength(precision.unit)),
+                                          mode)
+      local == TLocal(slots.zone, ns)
+  IN TDateText(local.date) \o "T" \o TTimeText(local.time, precision.precision)
+       \o (IF showOffset = "never" THEN "" ELSE TOffsetText(slots.zone.offset))
+       \o (IF showZone = "never" THEN "" ELSE "[" \o (IF showZone = "critical" THEN "!" ELSE "") \o slots.zone.id \o "]")
+       \o TCalendarText(slots.calendar, show)
+
+\* Temporal.ZonedDateTime.prototype.toString.
+LOCAL TZonedToString(heap, slots, value) ==
+  LET options == TOptions(heap, value)
+      show == TCalendarNameOption(heap, options.value)
+      digits == TDigitsOption(heap, options.value)
+      showOffset == TStringOf(TOption(heap, options.value, "offset"), {"auto", "never"}, "auto")
+      mode == TRoundingModeOption(heap, options.value, "trunc")
+      smallest == TUnitOption(heap, options.value, "smallestUnit")
+      showZone == TStringOf(TOption(heap, options.value, "timeZoneName"), {"auto", "never", "critical"}, "auto")
+      precision == TPrecision(smallest.value, digits.value)
+  IN CASE options.error # "" -> options
+       [] show.error # "" -> show
+       [] digits.error # "" -> digits
+       [] showOffset.error # "" -> showOffset
+       [] mode.error # "" -> mode
+       [] smallest.error # "" -> smallest
+       [] showZone.error # "" -> showZone
+       [] ~TUnitValid(smallest.value, "time", {}) \/ smallest.value = "hour" -> TFail("RangeError")
+       [] OTHER -> TOk(TZonedText(slots, precision, show.value, showZone.value, showOffset.value, mode.value))
+
+\* Temporal.ZonedDateTime.prototype.with, as the epoch nanoseconds.
+LOCAL TZonedWith(heap, slots, like, options) ==
+  LET local == TLocal(slots.zone, slots.ns)
+      partial == TPrepareFields(heap, like, TDateTimeKeys \cup {"offset"}, {}, TRUE)
+      fields == [TDateFields(local.date, local.time, TRUE) EXCEPT !["offset"] = slots.zone.offset]
+      merged == TMergeFields(fields, partial.value)
+      resolved == TOptions(heap, options)
+      disambiguation == TDisambiguationOption(heap, resolved.value)
+      offsetOption == TOffsetOption(heap, resolved.value, "prefer")
+      overflow == TOverflowOption(heap, resolved.value)
+      date == TDateFromFields(merged, overflow.value)
+      time == TRegulateTime(TTimeOfFields(merged), overflow.value)
+  IN CASE ~TIsPartial(heap, like) -> TFail("TypeError")
+       [] partial.error # "" -> partial
+       [] resolved.error # "" -> resolved
+       [] disambiguation.error # "" -> disambiguation
+       [] offsetOption.error # "" -> offsetOption
+       [] overflow.error # "" -> overflow
+       [] date.error # "" -> date
+       [] time.error # "" -> time
+       [] OTHER -> TInterpretOffset(date.value, time.value, TRUE, "option", merged["offset"], slots.zone,
+                                    offsetOption.value, FALSE)
+
+\* ---------------------------------------------------------------------------------------------
 \* Rounding, totaling, and comparing durations, relative to a plain date where relativeTo is one.
 
-LOCAL TZonedStop == Assert(FALSE, "tla-ts can't compute a duration relative to a zoned date-time")
-
-\* GetTemporalRelativeToOption, as a record whose kind is "none", or "plain" with its date. tla-ts
-\* stops at a zoned date-time.
+\* GetTemporalRelativeToOption, as a record whose kind is "none", "plain" with its date, or "zoned"
+\* with its epoch nanoseconds and time zone.
 LOCAL TRelativeTo(heap, options) ==
   LET value == TOption(heap, options, "relativeTo")
       slots == TSlots(heap, value)
@@ -1589,25 +1890,39 @@ LOCAL TRelativeTo(heap, options) ==
       fields == TPrepareFields(heap, value, TDateTimeKeys \cup {"offset", "timeZone"}, {}, FALSE)
       date == TDateFromFields(fields.value, "constrain")
       time == TRegulateTime(TTimeOfFields(fields.value), "constrain")
+      bagNs == TInterpretOffset(date.value, time.value, TRUE,
+                                IF fields.value["offset"] = Undefined THEN "wall" ELSE "option",
+                                IF fields.value["offset"] = Undefined THEN Big :> 0 ELSE fields.value["offset"],
+                                fields.value["timeZone"], "reject", FALSE)
       zoned == TParseISO(value, "ZonedDateTime")
       parsed == IF zoned.error = "" THEN zoned ELSE TParseISO(value, "DateTime")
+      zone == TZoneOfName(parsed.value.zone)
       parsedCalendar == IF parsed.value.calendar = "" THEN TOk("iso8601") ELSE TCalendar(parsed.value.calendar)
+      offsetParse == TOffsetAt(parsed.value.offset, 1, TRUE)
+      parsedNs == TInterpretOffset(parsed.value.date, parsed.value.time, parsed.value.hasTime,
+                                   CASE parsed.value.z -> "exact" [] parsed.value.offset = "" -> "wall" [] OTHER -> "option",
+                                   IF parsed.value.offset = "" THEN Big :> 0 ELSE offsetParse.ns,
+                                   zone.value, "reject", ~offsetParse.hasSecond)
   IN CASE value = Undefined -> TOk([kind |-> "none"])
-       [] slots.kind = "ZonedDateTime" -> TZonedStop
+       [] slots.kind = "ZonedDateTime" -> TOk([kind |-> "zoned", ns |-> slots.ns, zone |-> slots.zone])
        [] slots.kind \in {"PlainDate", "PlainDateTime"} -> TOk([kind |-> "plain", date |-> slots.date])
        [] TIsObject(heap, value) ->
             CASE calendar.error # "" -> calendar
               [] fields.error # "" -> fields
               [] date.error # "" -> date
               [] time.error # "" -> time
-              [] fields.value["timeZone"] # Undefined -> TZonedStop
-              [] OTHER -> TOk([kind |-> "plain", date |-> date.value])
+              [] fields.value["timeZone"] = Undefined -> TOk([kind |-> "plain", date |-> date.value])
+              [] bagNs.error # "" -> bagNs
+              [] OTHER -> TOk([kind |-> "zoned", ns |-> bagNs.value, zone |-> fields.value["timeZone"]])
        [] TypeOf(value) # "string" -> TFail("TypeError")
        [] parsed.error # "" -> parsed
-       [] parsed.value.zone # "" -> TZonedStop
+       [] parsed.value.zone # "" /\ zone.error # "" -> zone
        [] parsedCalendar.error # "" -> parsedCalendar
-       [] ~TDateWithinLimits(parsed.value.date) -> TFail("RangeError")
-       [] OTHER -> TOk([kind |-> "plain", date |-> parsed.value.date])
+       [] parsed.value.zone = "" ->
+            IF TDateWithinLimits(parsed.value.date) THEN TOk([kind |-> "plain", date |-> parsed.value.date])
+            ELSE TFail("RangeError")
+       [] parsedNs.error # "" -> parsedNs
+       [] OTHER -> TOk([kind |-> "zoned", ns |-> parsedNs.value, zone |-> zone.value])
 
 \* The date and time that adding a duration with 24-hour days to midnight of a date gives.
 LOCAL TRelativeTarget(fields, date) ==
@@ -1635,9 +1950,11 @@ LOCAL TDurationRound(heap, fields, roundTo) ==
       time == BigIntAdd(TTimeOf(fields), BigIntMultiply(fields[4], TNsPerDay))
       rounded == TRoundToIncrement(time, BigIntMultiply(increment.value, TUnitLength(smallestUnit)), mode.value)
       target == TRelativeTarget(fields, relative.value.date)
-      difference == TDifferenceRounded(relative.value.date, TMidnight, target.value.date, target.value.time,
-                                       [largest |-> largestUnit, increment |-> increment.value,
-                                        smallest |-> smallestUnit, mode |-> mode.value])
+      settings == [largest |-> largestUnit, increment |-> increment.value, smallest |-> smallestUnit, mode |-> mode.value]
+      difference == TDifferenceRounded(relative.value.date, TMidnight, target.value.date, target.value.time, settings)
+      zonedTarget == TZonedAdd(relative.value.ns, relative.value.zone, <<fields[1], fields[2], fields[3], fields[4]>>,
+                               TTimeOf(fields), "constrain")
+      zonedDifference == TZonedDifferenceRounded(relative.value.ns, zonedTarget.value, relative.value.zone, settings)
   IN CASE roundTo = Undefined -> TFail("TypeError")
        [] options.error # "" -> options
        [] largest.error # "" -> largest
@@ -1651,6 +1968,11 @@ LOCAL TDurationRound(heap, fields, roundTo) ==
        [] maximum # 0 /\ ~TIncrementValid(increment.value, maximum, FALSE) -> TFail("RangeError")
        [] TLess(Big :> 1, increment.value) /\ largestUnit # smallestUnit /\ TIsDateUnit(smallestUnit) ->
             TFail("RangeError")
+       [] relative.value.kind = "zoned" ->
+            CASE zonedTarget.error # "" -> zonedTarget
+              [] zonedDifference.error # "" -> zonedDifference
+              [] OTHER -> TDurationFromInternal(zonedDifference.value.date, zonedDifference.value.time,
+                                                IF TIsDateUnit(largestUnit) THEN "hour" ELSE largestUnit)
        [] relative.value.kind = "plain" ->
             CASE target.error # "" -> target
               [] difference.error # "" -> difference
@@ -1662,19 +1984,13 @@ LOCAL TDurationRound(heap, fields, roundTo) ==
                                   largestUnit)
        [] OTHER -> TDurationFromInternal(<<Big :> 0, Big :> 0, Big :> 0, Big :> 0>>, rounded, largestUnit)
 
-\* A quotient of two integers whose divisor isn't 0, rounded to the nearest Number.
-LOCAL TSignedQuotientNumber(dividend, divisor) ==
-  IF TIsNegative(divisor)
-  THEN TQuotientNumber(BigIntNegate(dividend), BigIntNegate(divisor))
-  ELSE TQuotientNumber(dividend, divisor)
-
 \* DifferencePlainDateTimeWithTotal, as a Number.
 LOCAL TDifferenceTotal(date1, date2, time2, unit) ==
   LET difference == TDifferenceDateTime(date1, TMidnight, date2, time2, unit)
       sign == IF TDurationSign(<<difference.date[1], difference.date[2], difference.date[3], difference.date[4],
                                  difference.time>>) < 0 THEN -1 ELSE 1
       nudge == TNudgeToCalendarUnit(sign, difference.date, TEpochNs(date1, TMidnight), TEpochNs(date2, time2),
-                                    [date |-> date1, time |-> TMidnight], Big :> 1, unit, "trunc")
+                                    [date |-> date1, time |-> TMidnight], TNoZone, Big :> 1, unit, "trunc")
       time == BigIntAdd(difference.time, BigIntMultiply(difference.date[4], TNsPerDay))
   IN CASE TCompareSequences(date1 \o TMidnight, date2 \o time2) = 0 -> TOk(0)
        [] ~TDateTimeWithinLimits(date1, TMidnight) \/ ~TDateTimeWithinLimits(date2, time2) -> TFail("RangeError")
@@ -1693,12 +2009,17 @@ LOCAL TDurationTotal(heap, fields, totalOf) ==
               ELSE TUnitOption(heap, options.value, "unit")
       time == BigIntAdd(TTimeOf(fields), BigIntMultiply(fields[4], TNsPerDay))
       target == TRelativeTarget(fields, relative.value.date)
+      zonedTarget == TZonedAdd(relative.value.ns, relative.value.zone, <<fields[1], fields[2], fields[3], fields[4]>>,
+                               TTimeOf(fields), "constrain")
   IN CASE totalOf = Undefined -> TFail("TypeError")
        [] options.error # "" -> options
        [] relative.error # "" -> relative
        [] unit.error # "" -> unit
        [] unit.value = "unset" -> TFail("RangeError")
        [] ~TUnitValid(unit.value, "datetime", {}) -> TFail("RangeError")
+       [] relative.value.kind = "zoned" ->
+            IF zonedTarget.error # "" THEN zonedTarget
+            ELSE TZonedDifferenceTotal(relative.value.ns, zonedTarget.value, relative.value.zone, unit.value)
        [] relative.value.kind = "plain" ->
             IF target.error # "" THEN target
             ELSE TDifferenceTotal(relative.value.date, target.value.date, target.value.time, unit.value)
@@ -1723,11 +2044,17 @@ LOCAL TDurationCompare(heap, one, two, value) ==
       days2 == IF isCalendar THEN TDurationDays(second.value, relative.value.date) ELSE TOk(second.value[4])
       total1 == BigIntAdd(TTimeOf(first.value), BigIntMultiply(days1.value, TNsPerDay))
       total2 == BigIntAdd(TTimeOf(second.value), BigIntMultiply(days2.value, TNsPerDay))
+      after(fields) == TZonedAdd(relative.value.ns, relative.value.zone, <<fields[1], fields[2], fields[3], fields[4]>>,
+                                 TTimeOf(fields), "constrain")
+      after1 == after(first.value)
+      after2 == after(second.value)
   IN CASE first.error # "" -> first
        [] second.error # "" -> second
        [] options.error # "" -> options
        [] relative.error # "" -> relative
        [] first.value = second.value -> TOk(0)
+       [] relative.value.kind = "zoned" /\ (TIsDateUnit(TDefaultLargestUnit(first.value)) \/ TIsDateUnit(TDefaultLargestUnit(second.value))) ->
+            CASE after1.error # "" -> after1 [] after2.error # "" -> after2 [] OTHER -> TOk(TCompare(after1.value, after2.value))
        [] isCalendar /\ relative.value.kind = "none" -> TFail("RangeError")
        [] days1.error # "" -> days1
        [] days2.error # "" -> days2
@@ -1844,7 +2171,7 @@ LOCAL TDateDifference(heap, date, calendar, other, options, isSince) ==
       dates == TDateUntil(date, converted.value.date, settings.value.largest)
       isRounded == settings.value.smallest # "day" \/ settings.value.increment # Big :> 1
       rounded == TRoundRelative(dates, Big :> 0, TEpochNs(date, TMidnight), TEpochNs(converted.value.date, TMidnight),
-                                [date |-> date, time |-> TMidnight], settings.value.largest,
+                                [date |-> date, time |-> TMidnight], TNoZone, settings.value.largest,
                                 settings.value.increment, settings.value.smallest, settings.value.mode)
   IN CASE converted.error # "" -> converted
        [] converted.value.calendar # calendar -> TFail("RangeError")
@@ -1935,15 +2262,6 @@ LOCAL TCalendarArgument(value) ==
 \* ---------------------------------------------------------------------------------------------
 \* Instants, year-months, and month-days.
 
-LOCAL TMaxInstant == BigIntMultiply(TBig(100000000), TNsPerDay)
-
-LOCAL TIsValidEpochNs(ns) == ~TLess(TMaxInstant, TAbs(ns))
-
-\* The date and time in UTC of epoch nanoseconds.
-LOCAL TDateTimeOfNs(ns) ==
-  LET balanced == TBalanceTime(TMidnight, ns)
-  IN [date |-> TDateOfDays(TSmall(balanced.days)), time |-> balanced.time]
-
 \* ToBigInt of a value that a Temporal function reads.
 LOCAL TToBigInt(value) ==
   CASE IsBigInt(value) -> TOk(value)
@@ -2011,12 +2329,6 @@ LOCAL TInstantRound(heap, ns, roundTo) ==
        [] ~TUnitValid(smallest.value, "time", {}) -> TFail("RangeError")
        [] ~TIncrementDivides(increment.value, BigIntDivide(TNsPerDay, length)) -> TFail("RangeError")
        [] OTHER -> TOk(TRoundToIncrementAsIfPositive(ns, BigIntMultiply(increment.value, length), mode.value))
-
-\* FormatDateTimeUTCOffsetRounded.
-LOCAL TOffsetText(offset) ==
-  LET minutes == TSmall(BigIntDivide(TRoundToIncrement(offset, TNsPerMinute, "halfExpand"), TNsPerMinute))
-      magnitude == IF minutes < 0 THEN -minutes ELSE minutes
-  IN (IF minutes < 0 THEN "-" ELSE "+") \o TTwoDigits(magnitude \div 60) \o ":" \o TTwoDigits(magnitude % 60)
 
 \* Temporal.Instant.prototype.toString.
 LOCAL TInstantToString(heap, ns, value) ==
@@ -2151,7 +2463,7 @@ LOCAL TYearMonthDifference(heap, date, calendar, other, options, isSince) ==
       yearsMonths == <<dates[1], dates[2], Big :> 0, Big :> 0>>
       isRounded == settings.value.smallest # "month" \/ settings.value.increment # Big :> 1
       rounded == TRoundRelative(yearsMonths, Big :> 0, TEpochNs(this.value, TMidnight), TEpochNs(that.value, TMidnight),
-                                [date |-> this.value, time |-> TMidnight], settings.value.largest,
+                                [date |-> this.value, time |-> TMidnight], TNoZone, settings.value.largest,
                                 settings.value.increment, settings.value.smallest, settings.value.mode)
   IN CASE converted.error # "" -> converted
        [] converted.value.calendar # calendar -> TFail("RangeError")
@@ -2213,6 +2525,19 @@ LOCAL TSlotsOf(kind, value) ==
                        daysInYear |-> TDaysInYear(value.date[1]),
                        daysInMonth |-> TDaysInMonth(value.date[1], value.date[2]), monthsInYear |-> 12,
                        inLeapYear |-> TIsLeapYear(value.date[1])]]
+    [] kind = "ZonedDateTime" ->
+         LET local == TLocal(value.zone, value.ns)
+             today == TZonedNs(value.zone, local.date, TMidnight)
+             tomorrow == TZonedNs(value.zone, TAddDays(local.date, 1), TMidnight)
+         IN [kind |-> kind, ns |-> value.ns, zone |-> value.zone, calendar |-> value.calendar, date |-> local.date,
+             time |-> local.time,
+             getters |-> TDateGetters(local.date, value.calendar) @@ TTimeGetters(local.time)
+                           @@ [timeZoneId |-> value.zone.id,
+                               epochMilliseconds |-> NumberOfBigInt(TFloorDivide(value.ns, Big :> 1000000)),
+                               epochNanoseconds |-> value.ns, hoursInDay |-> 24,
+                               offsetNanoseconds |-> NumberOfBigInt(value.zone.offset),
+                               offset |-> TOffsetText(value.zone.offset)],
+             throwing |-> IF today.error = "" /\ tomorrow.error = "" THEN {} ELSE {"hoursInDay"}]
     [] kind = "PlainMonthDay" ->
          [kind |-> kind, date |-> value.date, calendar |-> value.calendar,
           getters |-> [calendarId |-> value.calendar, monthCode |-> TMonthCode(value.date[2]), day |-> value.date[3]]]
@@ -2268,6 +2593,18 @@ TemporalNew(heap, kind, arguments, prototype) ==
          LET ns == TToBigInt(TArgument(arguments, 1))
          IN TMakes(heap, prototype, kind,
                    CASE ns.error # "" -> ns [] ~TIsValidEpochNs(ns.value) -> TFail("RangeError") [] OTHER -> ns)
+    [] kind = "ZonedDateTime" ->
+         LET ns == TToBigInt(TArgument(arguments, 1))
+             zoneArgument == TArgument(arguments, 2)
+             zone == TTimeZoneIdentifier(zoneArgument)
+             calendar == TCalendarArgument(TArgument(arguments, 3))
+         IN TMakes(heap, prototype, kind,
+                   CASE ns.error # "" -> ns
+                     [] ~TIsValidEpochNs(ns.value) -> TFail("RangeError")
+                     [] TypeOf(zoneArgument) # "string" \/ IsRef(zoneArgument) -> TFail("TypeError")
+                     [] zone.error # "" -> zone
+                     [] calendar.error # "" -> calendar
+                     [] OTHER -> TOk([ns |-> ns.value, zone |-> zone.value, calendar |-> calendar.value]))
     [] kind \in {"PlainYearMonth", "PlainMonthDay"} ->
          LET isYearMonth == kind = "PlainYearMonth"
              converted == [position \in 1..2 |-> TTruncated(TArgument(arguments, position))]
@@ -2350,6 +2687,12 @@ TemporalStatic(heap, kind, method, arguments, prototype) ==
             IN TGives(heap, CASE one.error # "" -> one [] two.error # "" -> two
                               [] OTHER -> TOk(TCompareSequences(one.value.date, two.value.date)))
        [] kind = "PlainMonthDay" /\ method = "from" -> TMakes(heap, prototype, kind, TToMonthDay(heap, first, second))
+       [] kind = "ZonedDateTime" /\ method = "from" -> TMakes(heap, prototype, kind, TToZoned(heap, first, second))
+       [] kind = "ZonedDateTime" /\ method = "compare" ->
+            LET one == TToZoned(heap, first, Undefined)
+                two == TToZoned(heap, second, Undefined)
+            IN TGives(heap, CASE one.error # "" -> one [] two.error # "" -> two
+                              [] OTHER -> TOk(TCompare(one.value.ns, two.value.ns)))
        [] OTHER -> Assert(FALSE, "tla-ts can't call Temporal." \o kind \o "." \o method)
 
 \* A call of Temporal.Instant.prototype's method.
@@ -2366,6 +2709,10 @@ LOCAL TInstantMethod(heap, slots, method, arguments, prototype) ==
        [] method = "equals" -> TGives(heap, IF other.error # "" THEN other ELSE TOk(ns = other.value))
        [] method = "toString" -> TGives(heap, TInstantToString(heap, ns, first))
        [] method = "toJSON" -> TGives(heap, TInstantToString(heap, ns, Undefined))
+       [] method = "toZonedDateTimeISO" ->
+            LET zone == TTimeZone(heap, first)
+            IN TMakes(heap, prototype, "ZonedDateTime",
+                      IF zone.error # "" THEN zone ELSE TOk([ns |-> ns, zone |-> zone.value, calendar |-> "iso8601"]))
 
 \* The fields of a year-month or a month-day, without the day or the year.
 LOCAL TPartFields(date, isYearMonth) ==
@@ -2420,6 +2767,67 @@ LOCAL TYearMonthOrMonthDayMethod(heap, slots, method, arguments, prototype) ==
                    CASE ~TIsObject(heap, first) -> TFail("TypeError")
                      [] input.error # "" -> input
                      [] OTHER -> TDateOf(dated, calendar))
+
+\* A call of Temporal.ZonedDateTime.prototype's method.
+LOCAL TZonedMethod(heap, slots, method, arguments, prototype) ==
+  LET first == TArgument(arguments, 1)
+      second == TArgument(arguments, 2)
+      made(step) == IF step.error # "" THEN step ELSE TOk([ns |-> step.value, zone |-> slots.zone, calendar |-> slots.calendar])
+      other == TToZoned(heap, first, Undefined)
+      converted == TToDuration(heap, first)
+      fields == IF method = "subtract" THEN TNegatedDuration(converted.value) ELSE converted.value
+      resolved == TOptions(heap, second)
+      overflow == TOverflowOption(heap, resolved.value)
+      added == TZonedAdd(slots.ns, slots.zone, <<fields[1], fields[2], fields[3], fields[4]>>, TTimeOf(fields),
+                         overflow.value)
+      newTime == TToTime(heap, first, Undefined)
+      withZone == TTimeZone(heap, first)
+      withCalendar == TCalendarIdentifier(heap, first)
+      direction == IF TypeOf(first) = "string" THEN TOk(Undefined) ELSE TOptions(heap, first)
+      directionValue == IF TypeOf(first) = "string" THEN first ELSE TOption(heap, direction.value, "direction")
+      directionText == TStringOf(directionValue, {"next", "previous"}, "unset")
+  IN CASE method \in {"add", "subtract"} ->
+            TMakes(heap, prototype, "ZonedDateTime",
+                   CASE converted.error # "" -> converted
+                     [] resolved.error # "" -> resolved
+                     [] overflow.error # "" -> overflow
+                     [] OTHER -> made(added))
+       [] method = "with" -> TMakes(heap, prototype, "ZonedDateTime", made(TZonedWith(heap, slots, first, second)))
+       [] method = "withPlainTime" ->
+            TMakes(heap, prototype, "ZonedDateTime",
+                   CASE first = Undefined -> made(TZonedNs(slots.zone, slots.date, TMidnight))
+                     [] newTime.error # "" -> newTime
+                     [] OTHER -> made(TZonedNs(slots.zone, slots.date, newTime.value)))
+       [] method = "withTimeZone" ->
+            TMakes(heap, prototype, "ZonedDateTime",
+                   IF withZone.error # "" THEN withZone
+                   ELSE TOk([ns |-> slots.ns, zone |-> withZone.value, calendar |-> slots.calendar]))
+       [] method = "withCalendar" ->
+            TMakes(heap, prototype, "ZonedDateTime",
+                   IF withCalendar.error # "" THEN withCalendar
+                   ELSE TOk([ns |-> slots.ns, zone |-> slots.zone, calendar |-> withCalendar.value]))
+       [] method \in {"until", "since"} ->
+            TMakes(heap, prototype, "Duration", TZonedDifferenceDuration(heap, slots, first, second, method = "since"))
+       [] method = "round" -> TMakes(heap, prototype, "ZonedDateTime", made(TZonedRound(heap, slots, first)))
+       [] method = "equals" ->
+            TGives(heap, IF other.error # "" THEN other
+                         ELSE TOk(slots.ns = other.value.ns /\ slots.zone.id = other.value.zone.id
+                                  /\ slots.calendar = other.value.calendar))
+       [] method = "toString" -> TGives(heap, TZonedToString(heap, slots, first))
+       [] method = "toJSON" -> TGives(heap, TOk(TZonedText(slots, TPrecision("unset", -1), "auto", "auto", "auto", "trunc")))
+       [] method = "startOfDay" -> TMakes(heap, prototype, "ZonedDateTime", made(TZonedNs(slots.zone, slots.date, TMidnight)))
+       [] method = "getTimeZoneTransition" ->
+            TGives(heap, CASE first = Undefined -> TFail("TypeError")
+                           [] direction.error # "" -> direction
+                           [] directionText.error # "" -> directionText
+                           [] directionText.value = "unset" -> TFail("RangeError")
+                           [] OTHER -> TOk(Null))
+       [] method = "toInstant" -> TMakes(heap, prototype, "Instant", TOk(slots.ns))
+       [] method = "toPlainDate" -> TMakes(heap, prototype, "PlainDate", TOk([date |-> slots.date, calendar |-> slots.calendar]))
+       [] method = "toPlainTime" -> TMakes(heap, prototype, "PlainTime", TOk(slots.time))
+       [] method = "toPlainDateTime" ->
+            TMakes(heap, prototype, "PlainDateTime",
+                   TOk([date |-> slots.date, time |-> slots.time, calendar |-> slots.calendar]))
 
 \* A call of Temporal.Duration.prototype's method.
 LOCAL TDurationMethod(heap, slots, method, arguments, prototype) ==
@@ -2500,6 +2908,21 @@ LOCAL TDateMethod(heap, slots, method, arguments, prototype) ==
                            [] show.error # "" -> show
                            [] OTHER -> TOk(TDateText(date) \o TCalendarText(calendar, show.value)))
        [] method = "toJSON" -> TGives(heap, TOk(TDateText(date) \o TCalendarText(calendar, "auto")))
+       [] method = "toZonedDateTime" ->
+            LET zoneLike == IF TIsObject(heap, first) THEN TGet(heap, first, "timeZone") ELSE Undefined
+                zone == IF TIsObject(heap, first) /\ zoneLike # Undefined THEN TTimeZone(heap, zoneLike) ELSE TTimeZone(heap, first)
+                plainTime == IF TIsObject(heap, first) /\ zoneLike # Undefined THEN TGet(heap, first, "plainTime") ELSE Undefined
+                converted == TToTime(heap, plainTime, Undefined)
+                ns == IF plainTime = Undefined
+                      THEN TZonedNs(zone.value, date, TMidnight)
+                      ELSE IF TDateTimeWithinLimits(date, converted.value)
+                           THEN TZonedNs(zone.value, date, converted.value)
+                           ELSE TFail("RangeError")
+            IN TMakes(heap, prototype, "ZonedDateTime",
+                      CASE zone.error # "" -> zone
+                        [] plainTime # Undefined /\ converted.error # "" -> converted
+                        [] ns.error # "" -> ns
+                        [] OTHER -> TOk([ns |-> ns.value, zone |-> zone.value, calendar |-> calendar]))
        [] method = "toPlainYearMonth" ->
             TMakes(heap, prototype, "PlainYearMonth",
                    TDateOf(TYearMonthFromFields(TDateFields(date, TMidnight, FALSE), "constrain"), calendar))
@@ -2558,6 +2981,17 @@ LOCAL TDateTimeMethod(heap, slots, method, arguments, prototype) ==
        [] method = "toJSON" -> TGives(heap, TOk(text(date, time, -1, "auto")))
        [] method = "toPlainDate" -> TMakes(heap, prototype, "PlainDate", TOk([date |-> date, calendar |-> calendar]))
        [] method = "toPlainTime" -> TMakes(heap, prototype, "PlainTime", TOk(time))
+       [] method = "toZonedDateTime" ->
+            LET zone == TTimeZone(heap, first)
+                resolved == TOptions(heap, second)
+                disambiguation == TDisambiguationOption(heap, resolved.value)
+                ns == TZonedNs(zone.value, date, time)
+            IN TMakes(heap, prototype, "ZonedDateTime",
+                      CASE zone.error # "" -> zone
+                        [] resolved.error # "" -> resolved
+                        [] disambiguation.error # "" -> disambiguation
+                        [] ns.error # "" -> ns
+                        [] OTHER -> TOk([ns |-> ns.value, zone |-> zone.value, calendar |-> calendar]))
 
 \* A call of a Temporal prototype's method on a receiver.
 TemporalMethod(heap, kind, method, receiver, arguments, prototype) ==
@@ -2571,4 +3005,5 @@ TemporalMethod(heap, kind, method, receiver, arguments, prototype) ==
        [] kind = "Instant" -> TInstantMethod(heap, slots, method, arguments, prototype)
        [] kind \in {"PlainYearMonth", "PlainMonthDay"} ->
             TYearMonthOrMonthDayMethod(heap, slots, method, arguments, prototype)
+       [] kind = "ZonedDateTime" -> TZonedMethod(heap, slots, method, arguments, prototype)
 `;
