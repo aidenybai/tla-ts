@@ -3837,7 +3837,9 @@ export const findCollectionProxies = (roots: readonly ts.Node[], context: Contex
   const collect = (node: ts.Node) => {
     const symbol = ts.isIdentifier(node) ? getSymbol(node, checker) : undefined;
     if (ts.isIdentifier(node) && symbol !== undefined) {
-      references.set(symbol, [...(references.get(symbol) ?? []), node]);
+      const found = references.get(symbol);
+      if (found === undefined) references.set(symbol, [node]);
+      else found.push(node);
     }
     ts.forEachChild(node, collect);
   };
@@ -4604,7 +4606,9 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
   const visit = (node: ts.Node) => {
     const symbol = ts.isIdentifier(node) ? getSymbol(node, checker) : undefined;
     if (ts.isIdentifier(node) && symbol !== undefined) {
-      references.set(symbol, [...(references.get(symbol) ?? []), node]);
+      const found = references.get(symbol);
+      if (found === undefined) references.set(symbol, [node]);
+      else found.push(node);
     }
     if (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) {
       accesses.push(node);
@@ -4628,6 +4632,98 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
   const getFields = (type: ts.Type, name: string) =>
     (type.isUnion() || type.isIntersection() ? type.types : [type]).flatMap(
       (member) => checker.getPropertyOfType(member, name) ?? [],
+    );
+  const getPropertyFields = (property: ts.ObjectLiteralElementLike) => {
+    const own =
+      property.name === undefined ? undefined : checker.getSymbolAtLocation(property.name);
+    const contextual = ts.isObjectLiteralExpression(property.parent)
+      ? checker.getContextualType(property.parent)
+      : undefined;
+    return own === undefined
+      ? []
+      : [own, ...(contextual === undefined ? [] : getFields(contextual, own.name))];
+  };
+  // Tables that a group looks the uses of its fields and its names up in, made once, as a program
+  // may have many groups and many uses: the items of each declaration, in the order the files hold
+  // them.
+  const getTable = <Item>(items: readonly Item[], getDeclarations: (item: Item) => ts.Node[]) => {
+    const order = new Map(items.map((item, position) => [item, position]));
+    const table = new Map<ts.Node, Item[]>();
+    items.forEach((item) =>
+      new Set(getDeclarations(item)).forEach((declaration) => {
+        const found = table.get(declaration);
+        if (found === undefined) table.set(declaration, [item]);
+        else found.push(item);
+      }),
+    );
+    // The items of any of a symbol's declarations.
+    return (symbol: ts.Symbol) =>
+      [
+        ...new Set(
+          (symbol.declarations ?? []).flatMap((declaration) => table.get(declaration) ?? []),
+        ),
+      ].toSorted((left, right) => (order.get(left) ?? 0) - (order.get(right) ?? 0));
+  };
+  const getDeclarationsOf = (symbols: readonly ts.Symbol[]) =>
+    symbols.flatMap((symbol): ts.Node[] => symbol.declarations ?? []);
+  // The accesses that read or write a field.
+  const getFieldAccesses = getTable(accesses, (access) =>
+    getDeclarationsOf(getAccessedFields(access, checker) ?? []),
+  );
+  const propertyFields = new Map(
+    objects.flatMap((object) =>
+      object.properties.map((property) => [property, getPropertyFields(property)] as const),
+    ),
+  );
+  // The properties of object literals that give a field.
+  const getFieldProperties = getTable([...propertyFields.keys()], (property) =>
+    getDeclarationsOf(propertyFields.get(property) ?? []),
+  );
+  // The references to what a declaration declares. TypeScript may give a reference through an
+  // instance another symbol for the same declaration.
+  const declarationReferences = new Map<ts.Node, ts.Identifier[]>();
+  references.forEach((names, symbol) =>
+    (symbol.declarations ?? []).forEach((declaration) => {
+      const found = declarationReferences.get(declaration);
+      declarationReferences.set(
+        declaration,
+        found === undefined ? [...names] : found.concat(names),
+      );
+    }),
+  );
+  const getReferences = (declaration: ts.Node) => declarationReferences.get(declaration) ?? [];
+  // The expressions of each type, and the types that have a property of a name, on the type or on a
+  // member of its union or intersection, which a group whose fields have that name follows.
+  const typedExpressions = new Map<ts.Type, ts.Expression[]>();
+  expressions.forEach((node) => {
+    const type = checker.getTypeAtLocation(node);
+    const found = typedExpressions.get(type);
+    if (found === undefined) typedExpressions.set(type, [node]);
+    else found.push(node);
+  });
+  const namedTypes = new Map<string, ts.Type[]>();
+  typedExpressions.forEach((_, type) =>
+    new Set(
+      (type.isUnion() || type.isIntersection() ? type.types : [type]).flatMap((member) =>
+        checker.getPropertiesOfType(member).map((property) => property.name),
+      ),
+    ).forEach((name) => {
+      const found = namedTypes.get(name);
+      if (found === undefined) namedTypes.set(name, [type]);
+      else found.push(type);
+    }),
+  );
+  const expressionOrder = new Map(expressions.map((node, position) => [node, position]));
+  // The expressions whose types have a property of one of the names.
+  const getNamedExpressions = (names: ReadonlySet<string>) =>
+    [
+      ...new Set(
+        [...names].flatMap((name) =>
+          (namedTypes.get(name) ?? []).flatMap((type) => typedExpressions.get(type) ?? []),
+        ),
+      ),
+    ].toSorted(
+      (left, right) => (expressionOrder.get(left) ?? 0) - (expressionOrder.get(right) ?? 0),
     );
   const isInPlace = (use: ts.Expression) => isArrayChange(use) || isSetOrMapChange(use);
   const isSetOrMap = (node: ts.Expression) => ["set", "map"].includes(getKind(node, context));
@@ -4711,8 +4807,6 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
     const elementParameters = new Set<ts.Node>();
     const isInGroup = (symbol: ts.Symbol) =>
       (symbol.declarations ?? []).some((declaration) => group.has(declaration));
-    const isSame = (symbol: ts.Symbol, other: ts.Symbol) =>
-      (symbol.declarations ?? []).some((declaration) => other.declarations?.includes(declaration));
     // Adds what an expression that holds one of the group's arrays names, where it names any.
     const addHolder = (node: ts.Expression): boolean => {
       if (ts.isParenthesizedExpression(node)) return addHolder(node.expression);
@@ -4745,12 +4839,6 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
     };
     // Adds where a value that goes into one of the group's holders comes from: an array literal,
     // which the heap holds, or another holder.
-    // The references to what a declaration declares. TypeScript may give a reference through an
-    // instance another symbol for the same declaration.
-    const getReferences = (declaration: ts.Node) =>
-      [...references.entries()].flatMap((entry) =>
-        (entry[0].declarations ?? []).includes(declaration as ts.Declaration) ? entry[1] : [],
-      );
     // A class's method that a class that extends its class may override.
     const isExtended = (owner: ts.SignatureDeclaration) => {
       return (
@@ -4894,21 +4982,13 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
             ts.isPropertyAssignment(declaration) ||
             ts.isShorthandPropertyAssignment(declaration),
         ) &&
-        objects.every((object) =>
-          object.properties.every((property) => {
-            const fields = getPropertyFields(property);
-            if (!fields.some((inner) => isSame(inner, field))) return true;
-            resultFields.push(...fields);
-            return ts.isShorthandPropertyAssignment(property)
-              ? addResultFunction(property.name)
-              : ts.isPropertyAssignment(property) && addResultFunction(property.initializer);
-          }),
-        ) &&
-        accesses
-          .filter((access) =>
-            getAccessedFields(access, checker)?.some((inner) => isSame(inner, field)),
-          )
-          .every(isFieldUse)
+        getFieldProperties(field).every((property) => {
+          resultFields.push(...(propertyFields.get(property) ?? []));
+          return ts.isShorthandPropertyAssignment(property)
+            ? addResultFunction(property.name)
+            : ts.isPropertyAssignment(property) && addResultFunction(property.initializer);
+        }) &&
+        getFieldAccesses(field).every(isFieldUse)
       );
     };
     const addSource = (node: ts.Expression): boolean => {
@@ -4971,16 +5051,6 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
       return addHolder(node);
     };
     // The fields that an object literal's property may be, by its own name and by its type.
-    const getPropertyFields = (property: ts.ObjectLiteralElementLike) => {
-      const own =
-        property.name === undefined ? undefined : checker.getSymbolAtLocation(property.name);
-      const contextual = ts.isObjectLiteralExpression(property.parent)
-        ? checker.getContextualType(property.parent)
-        : undefined;
-      return own === undefined
-        ? []
-        : [own, ...(contextual === undefined ? [] : getFields(contextual, own.name))];
-    };
     // The array parameter of a callback that a method of one of the group's arrays calls, which
     // takes that array. A function that a declaration names must go only to that array's methods.
     const addCallbackArray = (call: ts.CallExpression, method: string, receiver: ts.Expression) => {
@@ -5333,19 +5403,15 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
               fieldDeclaration.initializer !== undefined &&
               addSource(fieldDeclaration.initializer)),
         ) &&
-        objects.every((object) =>
-          object.properties.every((property) => {
-            const fields = getPropertyFields(property);
-            if (!fields.some((field) => isSame(field, symbol))) return true;
-            pending.push(...fields);
-            if (ts.isShorthandPropertyAssignment(property)) {
-              const value = checker.getShorthandAssignmentValueSymbol(property);
-              if (value !== undefined) pending.push(value);
-              return value !== undefined;
-            }
-            return ts.isPropertyAssignment(property) && addSource(property.initializer);
-          }),
-        )
+        getFieldProperties(symbol).every((property) => {
+          pending.push(...(propertyFields.get(property) ?? []));
+          if (ts.isShorthandPropertyAssignment(property)) {
+            const value = checker.getShorthandAssignmentValueSymbol(property);
+            if (value !== undefined) pending.push(value);
+            return value !== undefined;
+          }
+          return ts.isPropertyAssignment(property) && addSource(property.initializer);
+        })
       );
     };
     const getUses = (symbol: ts.Symbol): ts.Expression[] => {
@@ -5353,9 +5419,7 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
       return declaration !== undefined &&
         (ts.isParameter(declaration) || ts.isVariableDeclaration(declaration))
         ? (references.get(symbol) ?? []).filter((reference) => reference !== declaration.name)
-        : accesses.filter((access) =>
-            getAccessedFields(access, checker)?.some((field) => isSame(field, symbol)),
-          );
+        : getFieldAccesses(symbol);
     };
     // A function's result, where each return gives one of the group's arrays, and each reference
     // calls it.
@@ -5494,14 +5558,9 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
                 ts.isPropertySignature(fieldDeclaration) &&
                 fieldDeclaration.questionToken === undefined,
             ) &&
-            objects.every((object) =>
-              object.properties.every((property) => {
-                const fields = getPropertyFields(property);
-                return (
-                  !fields.some((field) => isSame(field, outer)) ||
-                  (ts.isPropertyAssignment(property) && isElementSource(property.initializer))
-                );
-              }),
+            getFieldProperties(outer).every(
+              (property) =>
+                ts.isPropertyAssignment(property) && isElementSource(property.initializer),
             )) &&
         getUses(outer).every(isElementUse)
       );
@@ -5680,7 +5739,9 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
     };
     const isSettled = (): boolean =>
       isGrown() &&
-      expressions.every((node) => !holdsField(checker.getTypeAtLocation(node)) || isKept(node)) &&
+      getNamedExpressions(names).every(
+        (node) => !holdsField(checker.getTypeAtLocation(node)) || isKept(node),
+      ) &&
       (pending.length === 0 || isSettled());
     return seeds.every((seed) => addSource(seed) && isUse(seed)) && isSettled()
       ? [...nodes, ...group]
@@ -5910,7 +5971,9 @@ export const findHeapArrays = (
     }
     const symbol = ts.isIdentifier(node) ? getSymbol(node, context.checker) : undefined;
     if (ts.isIdentifier(node) && symbol !== undefined) {
-      references.set(symbol, [...(references.get(symbol) ?? []), node]);
+      const found = references.get(symbol);
+      if (found === undefined) references.set(symbol, [node]);
+      else found.push(node);
     }
     ts.forEachChild(node, collect);
   };

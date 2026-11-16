@@ -47798,4 +47798,40 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("0,1"))).failure?.message).toContain("seen 0,1,2");
     });
   });
+
+  describe("shares the arrays that fields hold where functions change them in place", () => {
+    const getSource = (expected: string) => `
+      interface Box {
+        items: number[];
+      }
+      interface Shelf {
+        box: Box;
+        label: string;
+      }
+      const fill = (box: Box) => {
+        box.items.push(box.items.length);
+      };
+      const makeShelf = (label: string): Shelf => ({ box: { items: [] }, label });
+      const shelf = makeShelf("top");
+      const other: Box = { items: [5] };
+      fill(shelf.box);
+      const alias = shelf.box.items;
+      fill(shelf.box);
+      fill(other);
+      const copy = { ...other };
+      fill(copy);
+      const seen = [alias.join(), shelf.box.items.join(), other.items.join(), copy.items === other.items].join(";");
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("0,1;0,1;5,1,2;true"))).failure).toBeUndefined();
+    });
+
+    it("rejects an alias that misses a later change", async () => {
+      expect((await checkModel(getSource("0;0,1;5,1,2;true"))).failure?.message).toContain(
+        "seen 0,1;0,1;5,1,2;true",
+      );
+    });
+  });
 });
