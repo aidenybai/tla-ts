@@ -13,6 +13,7 @@ import {
   skipCasts,
 } from "./context";
 import { NODE_GLOBALS } from "./built-ins";
+import { getWrapperName } from "./common-js";
 import { TlaTypeScriptError } from "../errors";
 import { formatString } from "../printer";
 import {
@@ -8703,6 +8704,18 @@ const translateTypeOfValue = (node: ts.TypeOfExpression, scope: Scope, context: 
   const read = ts.isParenthesizedExpression(node.expression)
     ? node.expression.expression
     : node.expression;
+  // A parameter of the function that Node runs a CommonJS module's code in, which the module
+  // can't assign.
+  const wrapperName = ts.isIdentifier(read) ? getWrapperName(read, context.checker) : undefined;
+  if (wrapperName !== undefined) {
+    return string(
+      wrapperName === "require"
+        ? "function"
+        : wrapperName === "module" || wrapperName === "exports"
+          ? "object"
+          : "string",
+    );
+  }
   // A name that no binding has is undefined to typeof, which reads it without throwing, but for
   // one of the globals that Node gives.
   if (

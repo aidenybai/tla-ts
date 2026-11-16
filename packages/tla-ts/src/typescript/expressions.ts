@@ -75,6 +75,15 @@ import {
   isDeclarationOnly,
   getClassStop,
 } from "./context";
+import {
+  getImportedCommonJs,
+  getModuleRefs,
+  getRequiredFile,
+  getWrapperName,
+  isCommonJsFile,
+  isModuleRequire,
+  isNodeModule,
+} from "./common-js";
 import { TlaTypeScriptError } from "../errors";
 import { translateJsonCall } from "./json";
 import {
@@ -2741,8 +2750,72 @@ const getUninitializedRead = (name: ts.Identifier) =>
     string(`tla-ts can't throw the ReferenceError of reading ${name.text} before its declaration`),
   ]);
 
+// What a CommonJS module's exports are, which its module object holds.
+const readModuleExports = (
+  module: ts.SourceFile | string,
+  node: ts.Node,
+  scope: Scope,
+  context: Context,
+) =>
+  useJavaScript(
+    "Get",
+    [getHeap(scope, node, context), getModuleRefs(module, context).module, string("exports")],
+    context,
+  );
+
+// A require of a string gives the exports of the module it names, which ran before it, or which
+// is running, as it requires the module that requires it.
+const translateRequire = (node: ts.CallExpression, scope: Scope, context: Context) => {
+  const file = getRequiredFile(node, context.checker);
+  const specifier = node.arguments[0];
+  if (file !== undefined) return readModuleExports(file, node, scope, context);
+  return apply("Assert", [
+    boolean(false),
+    string(
+      ts.isStringLiteralLike(specifier) && isNodeModule(specifier.text)
+        ? `tla-ts can't load Node's built-in module ${specifier.text}`
+        : `tla-ts can't load ${specifier.getText()}`,
+    ),
+  ]);
+};
+
+// A parameter of the function that Node runs a CommonJS module's code in.
+const translateWrapperName = (node: ts.Identifier, context: Context) => {
+  const file = node.getSourceFile();
+  if (node.text === "__filename") return string(file.fileName);
+  if (node.text === "__dirname")
+    return string(file.fileName.slice(0, file.fileName.lastIndexOf("/")) || "/");
+  // Node's module object has more than exports, and require more than its calls, which a run of
+  // the code that reads them stops at.
+  const parent = node.parent;
+  if (node.text === "require") {
+    return apply("Assert", [
+      boolean(false),
+      string("tla-ts can't use require other than to call it with a string"),
+    ]);
+  }
+  if (
+    node.text === "module" &&
+    !(ts.isPropertyAccessExpression(parent) && parent.name.text === "exports")
+  ) {
+    return apply("Assert", [
+      boolean(false),
+      string(
+        "tla-ts can't use a CommonJS module's module object other than through module.exports",
+      ),
+    ]);
+  }
+  const refs = getModuleRefs(file, context);
+  return node.text === "module" ? refs.module : refs.exports;
+};
+
 const translateIdentifier = (node: ts.Identifier, scope: Scope, context: Context) => {
   if (node.text === "undefined") return getUndefined(context);
+  if (getWrapperName(node, context.checker) !== undefined) {
+    return translateWrapperName(node, context);
+  }
+  const imported = getImportedCommonJs(node, context.checker);
+  if (imported !== undefined) return readModuleExports(imported, node, scope, context);
   if (isNodeGlobal(node, context)) {
     return apply("Assert", [
       boolean(false),
@@ -4241,6 +4314,10 @@ export const translateNode = (
           ts.isClassLike(ancestor),
       ) ?? node,
     );
+  // A CommonJS module's this is its exports object.
+  if (isTopLevelThis && isCommonJsFile(node.getSourceFile())) {
+    return getModuleRefs(node.getSourceFile(), context).exports;
+  }
   if (isTopLevelThis && isModuleFile(node.getSourceFile())) return getUndefined(context);
   if (isTopLevelThis && !isStrictCode(node)) {
     context.prelude.add("JavaScript");
@@ -4461,6 +4538,7 @@ export const translateNode = (
     }
     return made;
   }
+  if (isModuleRequire(node, context.checker)) return translateRequire(node, scope, context);
   const calledErrors = getCalledError(node, context);
   if (ts.isCallExpression(node) && calledErrors !== undefined && !isHeldError(node, context)) {
     return translateNewError(node, calledErrors, scope, context);

@@ -11,6 +11,7 @@ import {
   isWrittenBy,
   skipCasts,
 } from "./context";
+import { getWrapperName } from "./common-js";
 import { NATIVE_ERRORS } from "./exceptions";
 import { getBuiltIn } from "./intrinsics";
 import { useJavaScript } from "./javascript";
@@ -117,6 +118,14 @@ export const rejectRunningModules = (files: readonly ts.SourceFile[]) => {
 
 // The module that a symbol names, through an alias.
 const getModule = (symbol: ts.Symbol | undefined, checker: ts.TypeChecker) => {
+  // A variable that a require initializes in JavaScript holds what the require gives at run time.
+  const aliasDeclaration = symbol?.declarations?.at(0);
+  if (
+    aliasDeclaration !== undefined &&
+    (ts.isVariableDeclaration(aliasDeclaration) || ts.isBindingElement(aliasDeclaration))
+  ) {
+    return undefined;
+  }
   const target =
     symbol !== undefined && symbol.flags & ts.SymbolFlags.Alias
       ? checker.getAliasedSymbol(symbol)
@@ -127,9 +136,16 @@ const getModule = (symbol: ts.Symbol | undefined, checker: ts.TypeChecker) => {
     : undefined;
 };
 
+// The module that a name gives, but where it names a parameter of the function that Node runs a
+// CommonJS module's code in, as TypeScript gives exports the module's symbol.
+const getNameModule = (node: ts.Identifier, checker: ts.TypeChecker) =>
+  getWrapperName(node, checker) === undefined
+    ? getModule(checker.getSymbolAtLocation(node), checker)
+    : undefined;
+
 // The module whose namespace object a name gives, as a namespace import does.
 export const getNamespaceModule = (node: ts.Identifier, checker: ts.TypeChecker) =>
-  getModule(checker.getSymbolAtLocation(node), checker)?.file;
+  getNameModule(node, checker)?.file;
 
 // Whether a read through a module's namespace object reads an export's binding, which the module
 // declares by name, rather than a namespace object or a default export of an expression.
@@ -169,12 +185,12 @@ export const getNamespaceRead = (node: ts.Identifier, checker: ts.TypeChecker) =
     (ts.isPropertyAccessExpression(parent) && parent.name === node) ||
     ts.findAncestor(node, ts.isTypeNode) !== undefined
     ? undefined
-    : getModule(checker.getSymbolAtLocation(node), checker);
+    : getNameModule(node, checker);
 };
 
 // The module whose namespace object a script reads where a namespace import names it.
 export const getNamespaceName = (node: ts.Identifier, context: Context) => {
-  const module = getModule(context.checker.getSymbolAtLocation(node), context.checker);
+  const module = getNameModule(node, context.checker);
   return module !== undefined && context.namespaces.has(module.file) ? module.file : undefined;
 };
 
@@ -254,7 +270,7 @@ export const findNamespaces = (
       .flatMap((file) => findNodes(file, ts.isPropertyAccessExpression))
       .flatMap((node) => {
         const module = ts.isIdentifier(node.expression)
-          ? getModule(checker.getSymbolAtLocation(node.expression), checker)
+          ? getNameModule(node.expression, checker)
           : undefined;
         const member = module && checker.getSymbolAtLocation(node.name);
         const declaration = (
@@ -294,7 +310,7 @@ export const findNamespaces = (
           (ts.isPropertyAccessExpression(node.parent) &&
           node.parent.expression === node &&
           !isBindingRead(node.parent, checker)
-            ? getModule(checker.getSymbolAtLocation(node), checker)
+            ? getNameModule(node, checker)
             : undefined))
         : undefined;
     return module?.file;

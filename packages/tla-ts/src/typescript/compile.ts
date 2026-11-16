@@ -55,7 +55,17 @@ import {
   isLiteralValue,
   rejectRunningModules,
 } from "./namespaces";
-import { createProgram } from "./program";
+import { createProgram, isTypeImport } from "./program";
+import {
+  getJsonPath,
+  getRequires,
+  hasSpecialJsonNumbers,
+  isCommonJsFile,
+  isNodeModule,
+  rejectCommonJsImport,
+  rejectJsonImport,
+  rejectWrapperUses,
+} from "./common-js";
 import { link } from "./regions";
 import { translateCall, translateInvariant, translateProperty, VALUE_TAGS } from "./properties";
 import { createStateScope } from "./scope";
@@ -216,41 +226,113 @@ export const compile = (
     rejectArgumentsVarReads(file, context);
   });
   const sourceFile = program.sourceFile;
-  // The files that the model imports, each after the files it imports, as they run.
-  const visited = new Set([sourceFile]);
+  // The files that the model loads, each once it has run, and the statements of them all, with the
+  // model's own, in the order they run: an ES module's after those of the modules it imports, and a
+  // CommonJS module's each after those of the modules that its requires load as it starts. A
+  // require that may run later only reads the exports of a module that has started: one that
+  // started before the require, or, in a function that its module declares, before the module.
+  const visited = new Set<ts.SourceFile>();
+  const jsonModules = new Map<string, ts.Node>();
   const files: ts.SourceFile[] = [];
-  const visitImports = (file: ts.SourceFile) =>
-    file.statements.forEach((statement) => {
-      // TypeScript erases a declaration that imports or exports only types.
-      const specifier =
-        (ts.isImportDeclaration(statement) && statement.importClause?.isTypeOnly !== true) ||
-        (ts.isExportDeclaration(statement) && !statement.isTypeOnly)
-          ? statement.moduleSpecifier
-          : undefined;
-      const imported =
-        specifier && program.checker.getSymbolAtLocation(specifier)?.valueDeclaration;
-      if (
-        imported === undefined ||
-        !ts.isSourceFile(imported) ||
-        imported.isDeclarationFile ||
-        visited.has(imported)
-      ) {
-        return;
-      }
-      visited.add(imported);
-      visitImports(imported);
-      files.push(imported);
-    });
-  visitImports(sourceFile);
+  const statements: ts.Statement[] = [];
+  const getImportedFile = (statement: ts.Statement) => {
+    // TypeScript erases a declaration that imports or exports only types.
+    const specifier =
+      (ts.isImportDeclaration(statement) && statement.importClause?.isTypeOnly !== true) ||
+      (ts.isExportDeclaration(statement) && !statement.isTypeOnly)
+        ? statement.moduleSpecifier
+        : undefined;
+    const imported = specifier && program.checker.getSymbolAtLocation(specifier)?.valueDeclaration;
+    return imported !== undefined && ts.isSourceFile(imported) && !imported.isDeclarationFile
+      ? imported
+      : undefined;
+  };
+  const load = (file: ts.SourceFile) => {
+    if (visited.has(file)) return;
+    const started = new Set(visited);
+    visited.add(file);
+    if (isCommonJsFile(file)) {
+      rejectWrapperUses(file, program.checker);
+      getRequires(file, program.checker).forEach((entry) => {
+        entry.requires.forEach((required) => {
+          // JSON runs no code, so it loads the same wherever it does.
+          if (typeof required.file === "string") {
+            jsonModules.set(required.file, required.call);
+            return;
+          }
+          if (!isCommonJsFile(required.file)) {
+            throw new TlaTypeScriptError(
+              "tla-ts can't require an ES module, which Node gives as an object of its exports",
+              required.call,
+            );
+          }
+          if (required.isCertain) {
+            load(required.file);
+            return;
+          }
+          const isStarted = required.isHoisted
+            ? started.has(required.file) || required.file === file
+            : visited.has(required.file);
+          if (!isStarted) {
+            throw new TlaTypeScriptError(
+              "tla-ts can't tell when this require loads its module, which nothing loaded before",
+              required.call,
+            );
+          }
+        });
+        statements.push(entry.statement);
+      });
+    } else {
+      file.statements.forEach((statement) => {
+        const specifier =
+          ts.isImportDeclaration(statement) || ts.isExportDeclaration(statement)
+            ? statement.moduleSpecifier
+            : undefined;
+        if (
+          specifier !== undefined &&
+          ts.isStringLiteral(specifier) &&
+          isNodeModule(specifier.text) &&
+          !isTypeImport(specifier)
+        ) {
+          throw new TlaTypeScriptError(
+            `tla-ts can't load Node's built-in module ${specifier.text}`,
+            specifier,
+          );
+        }
+        const imported = getImportedFile(statement);
+        const json =
+          imported === undefined && specifier !== undefined ? getJsonPath(specifier) : undefined;
+        if (json !== undefined) {
+          rejectJsonImport(statement);
+          jsonModules.set(json, statement);
+        }
+        if (imported !== undefined && isCommonJsFile(imported)) {
+          rejectCommonJsImport(statement, imported);
+        }
+        if (imported !== undefined) load(imported);
+      });
+      statements.push(...file.statements);
+    }
+    if (file !== sourceFile) files.push(file);
+  };
+  load(sourceFile);
   // The modules that only an import() of a string loads, which run after those the model imports.
   const loaded = files.length;
-  getDynamicImports(sourceFile, program.checker).forEach((file) => {
-    if (visited.has(file)) return;
-    visited.add(file);
-    visitImports(file);
-    files.push(file);
-  });
+  getDynamicImports(sourceFile, program.checker).forEach(load);
   rejectRunningModules(files.slice(loaded));
+  context.commonJsModules = [...visited].filter(isCommonJsFile);
+  context.jsonModules = jsonModules;
+  // A CommonJS model's statements run where its requires run the modules, and an ES module's after
+  // the statements of all the modules it loads.
+  const positions = new Map(
+    (isCommonJsFile(sourceFile)
+      ? statements
+      : [
+          ...statements.filter((statement) => statement.getSourceFile() !== sourceFile),
+          ...sourceFile.statements,
+        ]
+    ).map((statement, position) => [statement, position]),
+  );
   // The files in the order they run, the model's last.
   const order = [...files, sourceFile];
   const getDeclaration = (node: ts.Node) => {
@@ -511,9 +593,7 @@ export const compile = (
     return next.length > run.length
       ? getImported(next)
       : [...new Set([...run, ...states.map((state) => state.statement), ...classes])].toSorted(
-          (left, right) =>
-            files.indexOf(left.getSourceFile()) - files.indexOf(right.getSourceFile()) ||
-            left.pos - right.pos,
+          (left, right) => (positions.get(left) ?? 0) - (positions.get(right) ?? 0),
         );
   };
   const imported = getImported(effects.filter((statement) => !ts.isVariableStatement(statement)));
@@ -671,7 +751,11 @@ export const compile = (
   if (
     heap !== undefined &&
     isScript(sourceFile) &&
-    (changedArrays.length > 0 || reached.some(usesObjects) || context.namespaces.size > 0)
+    (changedArrays.length > 0 ||
+      reached.some(usesObjects) ||
+      context.namespaces.size > 0 ||
+      context.commonJsModules.length > 0 ||
+      context.jsonModules.size > 0)
   ) {
     context.heap = heap;
     context.variables.set(heap, identifier(context.names.getFresh("heap")));
@@ -782,7 +866,7 @@ export const compile = (
         (!Number.isInteger(Number(node.text)) || Number(node.text) > 2 ** 31 - 1)) ||
       (ts.isStringLiteral(node) && isFractionKey(node.text)) ||
       (ts.forEachChild(node, usesSpecialNumbers) ?? false);
-    context.hasSpecialNumbers = roots.some(usesSpecialNumbers);
+    context.hasSpecialNumbers = roots.some(usesSpecialNumbers) || hasSpecialJsonNumbers(context);
     // TypedKey finds a number that a string gives in Fractions by its text.
     const addFractionKeys = (node: ts.Node) => {
       if (ts.isStringLiteral(node) && isFractionKey(node.text)) {
@@ -864,7 +948,7 @@ export const compile = (
       !isHeapSetOrMap(node, context)) ||
     (ts.forEachChild(node, makesMapValue) ?? false);
   context.isEveryMapHeld = !roots.some(makesMapValue);
-  const model = readModel(sourceFile, imported, context);
+  const model = readModel(sourceFile, imported, positions, context);
   context.script =
     isNodeScript && model.exported.length === 0
       ? { sourceFile, isEsModule: isEsModule(sourceFile) }

@@ -81,7 +81,8 @@ const isOneTypoApart = (name: string, other: string) => {
 };
 
 // A tag that tla-ts doesn't know is documentation, such as @since or TSDoc's @typeParam, unless
-// it's a typo of one that it knows.
+// it's a typo of one that it knows. A JavaScript file's JSDoc gives TypeScript its types, with
+// tags that aren't tla-ts's.
 const getTags = (node: ts.Node) =>
   new Map(
     ts.getJSDocTags(node).flatMap((tag): [string, string][] => {
@@ -209,10 +210,12 @@ const getDeclarations = (statement: ts.Statement): Declared[] => {
 };
 
 // Reads a model's state variables, exported functions, and tags, and names them in TLA+.
-// Imported holds the statements of the files that the model imports, which run first.
+// Imported holds the statements of the files that the model imports, which run first, but where
+// the model's own statements require them, at the positions of the order that they run in.
 export const readModel = (
   sourceFile: ts.SourceFile,
   imported: readonly ts.Statement[],
+  positions: ReadonlyMap<ts.Statement, number>,
   context: Context,
 ): Model => {
   const statements = sourceFile.statements;
@@ -323,24 +326,30 @@ export const readModel = (
       : declaration;
     return [{ ...declared, node, body: node.body, tags: tags.get(statement) ?? new Map() }];
   });
+  const run = [
+    ...imported.filter(
+      (statement) =>
+        !(ts.isClassDeclaration(statement) || ts.isEnumDeclaration(statement)) ||
+        isHeapDeclaration(statement),
+    ),
+    ...statements.filter(
+      (statement) =>
+        !isDeclaration(statement) ||
+        ((ts.isClassDeclaration(statement) || ts.isEnumDeclaration(statement)) &&
+          isHeapDeclaration(statement)),
+    ),
+  ].toSorted((left, right) => (positions.get(left) ?? 0) - (positions.get(right) ?? 0));
+  const own = run.findIndex((statement) => statement.getSourceFile() === sourceFile);
+  const firstOwn = own === -1 ? run.length : own;
   return {
     variables: [...variables, ...onceVariables, ...classes],
     // A script makes its functions before it runs, so they come first.
     script: [
-      ...imported.filter(
-        (statement) =>
-          !(ts.isClassDeclaration(statement) || ts.isEnumDeclaration(statement)) ||
-          isHeapDeclaration(statement),
-      ),
+      ...run.slice(0, firstOwn),
       ...statements.filter(
         (statement) => ts.isFunctionDeclaration(statement) && isHeapDeclaration(statement),
       ),
-      ...statements.filter(
-        (statement) =>
-          !isDeclaration(statement) ||
-          ((ts.isClassDeclaration(statement) || ts.isEnumDeclaration(statement)) &&
-            isHeapDeclaration(statement)),
-      ),
+      ...run.slice(firstOwn),
     ],
     exported: exported.map((definition) => ({
       ...definition,

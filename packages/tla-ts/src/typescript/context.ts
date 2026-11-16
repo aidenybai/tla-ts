@@ -15,7 +15,7 @@ import {
   isHeapSetOrMap,
 } from "./types";
 import { TlaTypeScriptError } from "../errors";
-import { isCommonJsFile } from "./common-js";
+import { getImportedCommonJs, getWrapperName, isCommonJsFile, isJavaScriptFile } from "./common-js";
 import { createNames, type Names } from "./names";
 import { getBindingNames, getLexicalNames } from "./early-errors";
 import { getKeptReads } from "./narrowing";
@@ -196,6 +196,10 @@ export interface Context {
   // The sites of the tagged templates other than String.raw's, each of whose template object and
   // its raw strings' array the heap holds from the start, after the namespace objects.
   templateSites: readonly ts.TaggedTemplateExpression[];
+  // The CommonJS modules that the script runs, and the JSON files that it loads, by path, with a
+  // specifier of each, whose objects the heap holds from the start.
+  commonJsModules: readonly ts.SourceFile[];
+  jsonModules: ReadonlyMap<string, ts.Node>;
   // Whether a script gives Array.prototype or Object.prototype properties, which an array reads
   // past its end.
   hasInheritedElements: boolean;
@@ -586,6 +590,8 @@ export const createContext = (
     namespaces: new Map(),
     valueEnums: new Set(),
     templateSites: [],
+    commonJsModules: [],
+    jsonModules: new Map(),
     hasInheritedElements: false,
     characters: new Set(),
     longLiterals: new Set(),
@@ -667,10 +673,11 @@ const hasTopLevelAwait = (node: ts.Node): boolean =>
 
 // A file that imports, exports, or awaits outside a function, which Node runs only as a module.
 // Node runs another file as a script where it strips its types, and a CommonJS module's code in a
-// function.
+// function. A JavaScript file is a module where Node loads it as one.
 export const isModuleFile = (file: ts.SourceFile) =>
-  !isCommonJsFile(file.fileName) &&
-  (file.statements.some(isModuleSyntax) || hasTopLevelAwait(file));
+  isJavaScriptFile(file.fileName)
+    ? !isCommonJsFile(file)
+    : file.statements.some(isModuleSyntax) || hasTopLevelAwait(file);
 
 // The variables that Node gives a CommonJS module's code, which an ES module doesn't have, though
 // Node's types declare them.
@@ -879,7 +886,8 @@ export const getArgumentsOwner = (node: ts.Node, checker: ts.TypeChecker) => {
 export const isUnresolved = (node: ts.Node, context: Context): node is ts.Identifier =>
   ts.isIdentifier(node) &&
   context.checker.getSymbolAtLocation(node) === undefined &&
-  !NODE_GLOBALS.has(node.text);
+  !NODE_GLOBALS.has(node.text) &&
+  getWrapperName(node, context.checker) === undefined;
 
 // The names that an assignment target writes, through the elements of its patterns.
 const getAssignedNames = (target: ts.Expression): ts.Expression[] => {
@@ -1348,6 +1356,9 @@ export const getSymbol = (node: ts.Node, checker: ts.TypeChecker) => {
 
 // The symbol of a name's own declaration, which a var that hoists its binding takes.
 export const getOwnSymbol = (node: ts.Node, checker: ts.TypeChecker): ts.Symbol | undefined => {
+  // A parameter of the function that Node runs a CommonJS module's code in, which TypeScript gives
+  // a symbol of what the module exports.
+  if (ts.isIdentifier(node) && getWrapperName(node, checker) !== undefined) return undefined;
   const parent = node.parent;
   // A parameter property's name names the property, where the constructor's body reads the
   // parameter.
@@ -1361,7 +1372,17 @@ export const getOwnSymbol = (node: ts.Node, checker: ts.TypeChecker): ts.Symbol 
           ts.isParameterPropertyDeclaration(parent, parent.parent)
         ? checker.getSymbolsOfParameterPropertyDeclaration(parent, node.text)[0]
         : (checker.getSymbolAtLocation(node) ?? getCastNamespaceMember(node, checker));
-  return symbol !== undefined && symbol.flags & ts.SymbolFlags.Alias
+  // A variable that a require initializes in JavaScript holds what the require gives at run time,
+  // which TypeScript makes an alias of what the module exports, as it does an import of a CommonJS
+  // module's default export, which gives the module's exports.
+  const declaration = symbol?.declarations?.at(0);
+  return symbol !== undefined &&
+    symbol.flags & ts.SymbolFlags.Alias &&
+    !(
+      declaration !== undefined &&
+      (ts.isVariableDeclaration(declaration) || ts.isBindingElement(declaration))
+    ) &&
+    !(ts.isIdentifier(node) && getImportedCommonJs(node, checker) !== undefined)
     ? checker.getAliasedSymbol(symbol)
     : symbol;
 };
@@ -3326,8 +3347,13 @@ const isPropertyWrite = (node: ts.Node) =>
 const getOuterLocals = (node: ts.Node, context: Context) =>
   findNodes(node, ts.isIdentifier).flatMap((name) => {
     const symbol = getSymbol(name, context.checker);
+    // A variable that a require initializes in JavaScript has an alias's symbol, which TypeScript
+    // gives no value declaration.
     const declaration =
-      symbol === undefined || context.onceLocals.has(symbol) ? undefined : symbol.valueDeclaration;
+      symbol === undefined || context.onceLocals.has(symbol)
+        ? undefined
+        : (symbol.valueDeclaration ??
+          (symbol.flags & ts.SymbolFlags.Alias ? symbol.declarations?.at(0) : undefined));
     const owner =
       declaration === undefined
         ? undefined
@@ -5199,12 +5225,18 @@ export const findFunctionCandidates = (sourceFile: ts.SourceFile, context: Conte
   });
 
 // The functions that a value whose type has calls may hold, where tla-ts can't tell which, whose
-// type TypeScript lets the value hold: those of the callee's module, and of the modules it imports.
+// type TypeScript lets the value hold: those of the callee's module, and of the modules it imports
+// but for one that reads the locals of a function that runs once around it, which only that
+// function's run binds.
 export const getFunctionCandidates = (callee: ts.Expression, context: Context) => {
   if (isHeldBuiltInObject(callee, context)) return [];
   const sourceFile = callee.getSourceFile();
   const found = context.functionCandidates.has(sourceFile)
-    ? [...context.functionCandidates.values()].flat()
+    ? [...context.functionCandidates.entries()].flatMap((entry) =>
+        entry[0] === sourceFile
+          ? entry[1]
+          : entry[1].filter((candidate) => getOuterLocals(candidate, context).length === 0),
+      )
     : findFunctionCandidates(sourceFile, context);
   const checker = context.checker;
   const type = checker.getTypeAtLocation(callee);
