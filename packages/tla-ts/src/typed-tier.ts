@@ -5723,8 +5723,18 @@ const compileSpec = (
           ? getEnabledCode(step, `([${successor.join(", ")}]) => !(${unchanged.emit()})`)
           : getEnabledCode(step);
     }
-    const action = expectBool(compileValue(program, atom.expression, frame));
     const unchanged = atom.subscript && compileUnchanged(program, atom.subscript, frame);
+    // The next-state action takes each step of the graph, so <<Next>>_v holds of a step that changes
+    // v, unless evaluating Next again shows.
+    const isNext =
+      atom.scope === check.scope &&
+      atom.expression.kind === "Identifier" &&
+      check.next.kind === "Identifier" &&
+      atom.expression.name === check.next.name &&
+      !isExpressionImpure([check.next], program.environment, "any") &&
+      !isExpressionImpure([check.next], program.environment, "replayed");
+    if (unchanged && isNext) return () => `!(${unchanged.emit()})`;
+    const action = expectBool(compileValue(program, atom.expression, frame));
     return () => (unchanged ? `!(${unchanged.emit()}) && (${action.emit()})` : action.emit());
   });
   program.variableTypes.forEach((type) => closeType(type));
