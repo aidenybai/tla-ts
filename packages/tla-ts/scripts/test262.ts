@@ -2356,6 +2356,25 @@ const ignoreSoundErrors = () => {
       !(isCondition(comparison) && (isReference(comparison.left) || isReference(comparison.right)))
     );
   };
+  // A comparison of numbers that TypeScript takes to give one result, where it narrows a reference
+  // that an earlier assignment or comparison narrowed, though a call that it doesn't follow changed
+  // it since. It narrows the reference to never where the result differs, which tla-ts reads as a
+  // number, as the value is.
+  const isNumberComparison = (node: ts.Node, diagnostic: ts.Diagnostic) => {
+    const comparison = ts.findAncestor(
+      node,
+      (ancestor): ancestor is ts.BinaryExpression =>
+        ts.isBinaryExpression(ancestor) &&
+        EQUALITY_OPERATORS.has(ancestor.operatorToken.kind) &&
+        ancestor.getStart() === diagnostic.start &&
+        ancestor.getEnd() === (diagnostic.start ?? 0) + (diagnostic.length ?? 0),
+    );
+    return (
+      comparison !== undefined &&
+      isEveryType(comparison.left, ts.TypeFlags.NumberLike) &&
+      isEveryType(comparison.right, ts.TypeFlags.NumberLike)
+    );
+  };
   // A property that a pattern destructures, which JavaScript reads whatever the value's type, and
   // whose value, where it's null or undefined, throws the TypeError that tla-ts throws too.
   const isPatternRead = (node: ts.Node) => {
@@ -3735,6 +3754,7 @@ const ignoreSoundErrors = () => {
       ((diagnostic.code === UNINTENDED_COMPARISON_ERROR ||
         CONSTANT_COMPARISON_ERRORS.has(diagnostic.code)) &&
         isUnnarrowed(node, diagnostic)) ||
+      (diagnostic.code === UNINTENDED_COMPARISON_ERROR && isNumberComparison(node, diagnostic)) ||
       (diagnostic.code === UNKNOWN_VALUE_ERROR &&
         (isUnknownArithmetic(node) || isConvertedUnknown(node, diagnostic))) ||
       ((diagnostic.code === UNKNOWN_VALUE_ERROR || diagnostic.code === UNKNOWN_CALLEE_ERROR) &&
