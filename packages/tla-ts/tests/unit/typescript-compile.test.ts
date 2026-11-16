@@ -42075,16 +42075,6 @@ describe("BigInts", () => {
     });
   });
 
-  it("stops where a call leaves out an array method's callback", () => {
-    expect(() =>
-      compile(`
-        const values = [1, 2];
-        // @ts-ignore
-        values.every();
-      `),
-    ).toThrow("Pass a function here");
-  });
-
   describe("a built-in that a call gives fewer arguments than it declares", () => {
     const getStringsSource = (expected: string) => `
       const text = "abc";
@@ -46828,6 +46818,288 @@ describe("BigInts", () => {
         "-271821-04-19,RangeError,none,-271821-04-19T00:00:00.000000001,RangeError,-271821-04-20";
       expect((await checkModel(getSource(expected))).failure?.message).toContain(
         "seen -271821-04-19,RangeError,RangeError,",
+      );
+    });
+  });
+
+  describe("takes a super call's spread through the iterator", () => {
+    const getSource = (expected: string) => `
+      let count = 0;
+      const iterable = {
+        [Symbol.iterator]() {
+          return {
+            next() {
+              count += 1;
+              return { done: count === 3, value: count };
+            },
+          };
+        },
+      };
+      let seen = "";
+      class Base {
+        constructor(...values: number[]) {
+          seen = values.join();
+        }
+      }
+      class Derived extends Base {
+        constructor() {
+          super(0, ...iterable);
+        }
+      }
+      new Derived();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("0,1,2"))).failure).toBeUndefined();
+    });
+
+    it("rejects arguments that the iterator didn't give", async () => {
+      expect((await checkModel(getSource("0,1,2,3"))).failure?.message).toContain("seen 0,1,2");
+    });
+  });
+
+  describe("throws the ReferenceError of a name that a spread or a method's argument reads", () => {
+    const getSource = (expected: number) => `
+      const values = [1, 2];
+      let caught = 0;
+      const record = (error: unknown) => {
+        if (error instanceof ReferenceError) caught += 1;
+      };
+      try {
+        // @ts-expect-error the name is never declared
+        values.map(missing);
+      } catch (error) {
+        record(error);
+      }
+      try {
+        // @ts-expect-error the name is never declared
+        Math.max(0, ...missing);
+      } catch (error) {
+        record(error);
+      }
+      if (caught !== ${expected}) throw new Error("caught " + caught);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(2))).failure).toBeUndefined();
+    });
+
+    it("rejects a ReferenceError that neither threw", async () => {
+      expect((await checkModel(getSource(1))).failure?.message).toContain("caught 2");
+    });
+  });
+
+  describe("converts an array-like object's length that a getter returns as an object", () => {
+    const getSource = (expected: number) => `
+      const object = { 0: 11, 1: 12, 2: 13 };
+      let conversions = 0;
+      Object.defineProperty(object, "length", {
+        get() {
+          return {
+            valueOf() {
+              conversions += 1;
+              return 2;
+            },
+          };
+        },
+      });
+      let total = 0;
+      Array.prototype.forEach.call(object, (value: number) => {
+        total += value;
+      });
+      if (total !== ${expected} || conversions !== 1) {
+        throw new Error("total " + total + " after " + conversions);
+      }
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(23))).failure).toBeUndefined();
+    });
+
+    it("rejects a total past the converted length", async () => {
+      expect((await checkModel(getSource(36))).failure?.message).toContain("total 23 after 1");
+    });
+  });
+
+  describe("throws a TypeError where an array method's callback is missing, undefined, or null", () => {
+    const getSource = (expected: string) => `
+      const values = [1, 2];
+      const object = { 0: 1, 1: 2 };
+      const typed = new Int8Array(2);
+      let lengthReads = 0;
+      Object.defineProperty(object, "length", {
+        get() {
+          lengthReads += 1;
+          return 2;
+        },
+      });
+      const seen: string[] = [];
+      const record = (error: unknown) => {
+        seen.push(error instanceof TypeError ? "TypeError" : "other");
+      };
+      try {
+        // @ts-expect-error every takes a callback
+        values.every();
+      } catch (error) {
+        record(error);
+      }
+      try {
+        // @ts-expect-error map takes a callback
+        Array.prototype.map.call(object, undefined);
+      } catch (error) {
+        record(error);
+      }
+      try {
+        // @ts-expect-error reduce takes a callback
+        values.reduce(null, 0);
+      } catch (error) {
+        record(error);
+      }
+      try {
+        // @ts-expect-error find takes a callback
+        typed.find();
+      } catch (error) {
+        record(error);
+      }
+      seen.push(String(lengthReads));
+      if (seen.join() !== "${expected}") throw new Error("seen " + seen.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("TypeError,TypeError,TypeError,TypeError,1"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects a method that doesn't read the length first", async () => {
+      expect(
+        (await checkModel(getSource("TypeError,TypeError,TypeError,TypeError,0"))).failure?.message,
+      ).toContain("seen TypeError,TypeError,TypeError,TypeError,1");
+    });
+  });
+
+  describe("steps the iterator that a for-of makes of a held array or a typed array", () => {
+    const getSource = (expected: string) => `
+      const holed = [1, , 3];
+      const typed = new Int8Array([4, 5]);
+      const seen: string[] = [];
+      for (const key of holed.keys()) seen.push(String(key));
+      for (const value of holed[Symbol.iterator]()) seen.push(String(value));
+      for (const entry of typed.entries()) seen.push(entry.join(":"));
+      if (seen.join() !== "${expected}") throw new Error("seen " + seen.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("0,1,2,1,undefined,3,0:4,1:5"))).failure).toBeUndefined();
+    });
+
+    it("rejects an element that the iterator didn't give", async () => {
+      expect(
+        (await checkModel(getSource("0,1,2,1,undefined,3,0:4,1:6"))).failure?.message,
+      ).toContain("seen 0,1,2,1,undefined,3,0:4,1:5");
+    });
+  });
+
+  describe("iterates an arguments object in a for-of through its iterator", () => {
+    const getSource = (expected: string) => `
+      const seen: string[] = [];
+      function collect(first: number, second: number) {
+        for (const value of arguments) {
+          seen.push(String(value));
+          arguments[1] = first + second;
+        }
+      }
+      collect(1, 2);
+      if (seen.join() !== "${expected}") throw new Error("seen " + seen.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("1,3"))).failure).toBeUndefined();
+    });
+
+    it("rejects an argument before the loop wrote it", async () => {
+      expect((await checkModel(getSource("1,2"))).failure?.message).toContain("seen 1,3");
+    });
+  });
+
+  describe("converts a BigInt that Number takes where its type may be another", () => {
+    const getSource = (expected: number) => `
+      const values: (number | bigint)[] = [1, 2n];
+      const box: { value: unknown } = { value: 3n };
+      const held: any = 4n;
+      const total = Number(values[0]) + Number(values[1]) + Number(box.value) + Number(held);
+      if (total !== ${expected}) throw new Error("total " + total);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(10))).failure).toBeUndefined();
+    });
+
+    it("rejects a total that skips a BigInt", async () => {
+      expect((await checkModel(getSource(11))).failure?.message).toContain("total 10");
+    });
+  });
+
+  describe("passes the object that Array.prototype's method calls back for as the array", () => {
+    const getSource = (expected: string) => `
+      const object = { 0: 1, 1: 2, length: 2 };
+      const arrays: unknown[] = [];
+      let lengths = 0;
+      Array.prototype.forEach.call(object, function (value, index, array) {
+        arrays.push(array);
+      });
+      Array.prototype.every.call(object, function (value, index, array) {
+        lengths += array.length;
+        return true;
+      });
+      const seen = [arrays.length, arrays[0] === object, arrays[1] === object, lengths].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("2,true,true,4"))).failure).toBeUndefined();
+    });
+
+    it("rejects a length that the object doesn't have", async () => {
+      expect((await checkModel(getSource("2,true,true,2"))).failure?.message).toContain(
+        "seen 2,true,true,4",
+      );
+    });
+  });
+
+  describe("opens the iterator of a value that only types as an Iterable as the loop runs", () => {
+    const getSource = (expected: string) => `
+      const seen: unknown[] = [];
+      function collect(iterable: Iterable<unknown>) {
+        for (const value of iterable) seen.push(value);
+      }
+      const typed = new Int8Array([4, 5]);
+      collect(typed);
+      collect(typed.keys());
+      collect(Array.prototype.values.call(typed));
+      if (seen.join() !== "${expected}") throw new Error("seen " + seen.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("4,5,0,1,4,5"))).failure).toBeUndefined();
+    });
+
+    it("rejects a value that no iterator gave", async () => {
+      expect((await checkModel(getSource("4,5,0,1,4,6"))).failure?.message).toContain(
+        "seen 4,5,0,1,4,5",
+      );
+    });
+
+    it("stops at an iterable that a script declares", async () => {
+      const result = await checkModel(`
+        function collect(iterable: Iterable<unknown>) {
+          for (const value of iterable) return value;
+        }
+        collect({ [Symbol.iterator]: () => [1][Symbol.iterator]() });
+      `);
+      expect(result.failure?.message).toContain(
+        "tla-ts can't tell which iterator this value gives",
       );
     });
   });

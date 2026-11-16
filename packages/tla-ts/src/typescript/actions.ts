@@ -5,6 +5,8 @@ import {
   checkElement,
   getCallbackReceiver,
   getArrayIteratorCall,
+  getOpenedIterator,
+  isIterableOpened,
   getHeapArrayChange,
   getStoredCall,
   getArrayLikeChange,
@@ -300,6 +302,7 @@ import {
   translateBuiltInValue,
   translateHoldsCallee,
   getGeneratorPrototypeRef,
+  isUndefinedValue,
   stopUnknownCall,
 } from "./intrinsics";
 import { getTypeNames, getURICall, translateToNumber, useJavaScript } from "./javascript";
@@ -461,6 +464,7 @@ import {
   isSymbolIndexCall,
   getArrayMethodCall,
   REORDER_METHODS,
+  LOOP_METHODS,
 } from "./types";
 
 export interface Path {
@@ -2178,6 +2182,113 @@ const getArrayCreateThrows = (expression: ts.Expression, path: Path, context: Co
     : isCreateThrowing;
 };
 
+// Makes the iterator that an array's, a typed array's, a string's, or an arguments object's method
+// gives, or steps an array's or a string's iterator through next.
+const translateIteratorCall = (
+  expression: ts.Expression,
+  iteratorCall: NonNullable<ReturnType<typeof getArrayIteratorCall>>,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path, value?: Expression) => Formula,
+): Formula => {
+  const heap = getHeap(path.scope, expression, context);
+  const receiverName = context.names.getFresh("receiver");
+  const receiver = identifier(receiverName);
+  const changeName = context.names.getFresh("change");
+  const change = identifier(changeName);
+  const operation =
+    iteratorCall.kind === undefined
+      ? useJavaScript(
+          "BuiltInIteratorNext",
+          [heap, receiver, boolean(iteratorCall.path.startsWith("%StringIterator"))],
+          context,
+        )
+      : iteratorCall.kind === "string"
+        ? useJavaScript(
+            "StringIterator",
+            [
+              heap,
+              useJavaScript("IteratedString", [heap, receiver], context),
+              translateStringIteratorPrototype(expression, context),
+            ],
+            context,
+          )
+        : useJavaScript(
+            iteratorCall.path.startsWith("%Int8Array") ? "TypedArrayIterator" : "ArrayIterator",
+            [
+              heap,
+              receiver,
+              string(iteratorCall.kind),
+              translateArrayIteratorPrototype(expression, context),
+            ],
+            context,
+          );
+  return bindOnce(
+    path,
+    receiverName,
+    translateExpression(iteratorCall.receiver, path.scope, context),
+    ifThenElse(
+      translateHoldsIteratorMethod(iteratorCall, heap, receiver, context),
+      bindOnce(
+        path,
+        changeName,
+        operation,
+        iteratorCall.isFrom === true
+          ? translateHoldsIteratorFrom(
+              expression,
+              path,
+              context,
+              // Iterator.from wraps an iterator that doesn't inherit from Iterator.prototype.
+              ifThenElse(
+                useJavaScript(
+                  "InheritsFrom",
+                  [
+                    field(change, "heap"),
+                    translateBuiltInValue("Iterator.prototype", expression, context),
+                    field(change, "value"),
+                  ],
+                  context,
+                ),
+                continueWith(
+                  withBuiltInIterator(
+                    expression,
+                    withHeap(path, field(change, "heap"), context),
+                    field(change, "value"),
+                    context,
+                  ),
+                  field(change, "value"),
+                ),
+                leaf(
+                  apply("Assert", [
+                    boolean(false),
+                    string(
+                      "tla-ts can't wrap an iterator that doesn't inherit from Iterator.prototype",
+                    ),
+                  ]),
+                ),
+              ),
+            )
+          : ifThenElse(
+              field(change, "isThrown"),
+              throwTypeError(path, expression, context, frame),
+              continueWith(withHeap(path, field(change, "heap"), context), field(change, "value")),
+            ),
+      ),
+      leaf(
+        apply("Assert", [
+          boolean(false),
+          string(
+            iteratorCall.kind === "string"
+              ? "tla-ts can't make an iterator where a script replaced String.prototype's method"
+              : `tla-ts can't call ${iteratorCall.path} where a script replaced it`,
+          ),
+        ]),
+      ),
+    ),
+  );
+};
+
 export const translateCallStatement = (
   expression: ts.CallExpression,
   path: Path,
@@ -3513,101 +3624,7 @@ const translateCallStatementBody = (
     );
   }
   if (iteratorCall !== undefined) {
-    const heap = getHeap(path.scope, expression, context);
-    const receiverName = context.names.getFresh("receiver");
-    const receiver = identifier(receiverName);
-    const changeName = context.names.getFresh("change");
-    const change = identifier(changeName);
-    const operation =
-      iteratorCall.kind === undefined
-        ? useJavaScript(
-            "BuiltInIteratorNext",
-            [heap, receiver, boolean(iteratorCall.path.startsWith("%StringIterator"))],
-            context,
-          )
-        : iteratorCall.kind === "string"
-          ? useJavaScript(
-              "StringIterator",
-              [
-                heap,
-                useJavaScript("IteratedString", [heap, receiver], context),
-                translateStringIteratorPrototype(expression, context),
-              ],
-              context,
-            )
-          : useJavaScript(
-              iteratorCall.path.startsWith("%Int8Array") ? "TypedArrayIterator" : "ArrayIterator",
-              [
-                heap,
-                receiver,
-                string(iteratorCall.kind),
-                translateArrayIteratorPrototype(expression, context),
-              ],
-              context,
-            );
-    return bindOnce(
-      path,
-      receiverName,
-      translateExpression(iteratorCall.receiver, path.scope, context),
-      ifThenElse(
-        translateHoldsIteratorMethod(iteratorCall, heap, receiver, context),
-        bindOnce(
-          path,
-          changeName,
-          operation,
-          iteratorCall.isFrom === true
-            ? translateHoldsIteratorFrom(
-                expression,
-                path,
-                context,
-                // Iterator.from wraps an iterator that doesn't inherit from Iterator.prototype.
-                ifThenElse(
-                  useJavaScript(
-                    "InheritsFrom",
-                    [
-                      field(change, "heap"),
-                      translateBuiltInValue("Iterator.prototype", expression, context),
-                      field(change, "value"),
-                    ],
-                    context,
-                  ),
-                  continueWith(
-                    withBuiltInIterator(
-                      expression,
-                      withHeap(field(change, "heap")),
-                      field(change, "value"),
-                      context,
-                    ),
-                    field(change, "value"),
-                  ),
-                  leaf(
-                    apply("Assert", [
-                      boolean(false),
-                      string(
-                        "tla-ts can't wrap an iterator that doesn't inherit from Iterator.prototype",
-                      ),
-                    ]),
-                  ),
-                ),
-              )
-            : ifThenElse(
-                field(change, "isThrown"),
-                throwTypeError(path, expression, context, frame),
-                continueWith(withHeap(field(change, "heap")), field(change, "value")),
-              ),
-        ),
-        leaf(
-          apply("Assert", [
-            boolean(false),
-            string(
-              iteratorCall.kind === "string"
-                ? "tla-ts can't make an iterator where a script replaced String.prototype's method"
-                : `tla-ts can't call ${iteratorCall.path} where a script replaced it`,
-            ),
-          ]),
-        ),
-      ),
-    );
+    return translateIteratorCall(expression, iteratorCall, path, context, frame, continueWith);
   }
   const temporalCall = getTemporalCall(expression, context);
   if (temporalCall !== undefined) {
@@ -9006,20 +9023,6 @@ const getCreatedGenerator = (node: ts.CallExpression, path: Path, context: Conte
   return generator === undefined ? undefined : { generator, called };
 };
 
-const LOOP_METHODS = new Set([
-  "forEach",
-  "every",
-  "some",
-  "find",
-  "findIndex",
-  "findLast",
-  "findLastIndex",
-  "filter",
-  "map",
-  "reduce",
-  "reduceRight",
-]);
-
 // The array methods that sort an array value with a comparator, which V8 calls on the pairs that it
 // compares, in its order.
 const SORT_METHODS = new Set(["sort", "toSorted"]);
@@ -9078,6 +9081,9 @@ interface LoopCall {
   isTyped: boolean;
   // Whether the receiver is a set or a map that keeps its order, whose forEach visits its entries.
   isOrdered: boolean;
+  // Whether the callback is missing, undefined, or null, which throws a TypeError once the method
+  // has read the length.
+  isUncallable?: boolean;
 }
 
 // An array method that calls back for each element, on an array or an array-like object.
@@ -9314,21 +9320,27 @@ const isObjectIndex = (method: string, from: ts.Expression | undefined, context:
 const isObjectLength = (receiver: ts.Node, context: Context) => {
   const receiverType = context.checker.getTypeAtLocation(receiver);
   const length = receiverType.getProperty("length");
-  const type =
+  // A getter that Object.defineProperty defines gives what it returns, which the type can't show.
+  const types = [
     length === undefined
       ? receiverType.getStringIndexType()
-      : context.checker.getTypeOfSymbol(length);
-  return (
-    type !== undefined &&
-    (type.isUnion() ? type.types : [type]).some(
-      (member) =>
-        (member.flags &
-          (ts.TypeFlags.Object |
-            ts.TypeFlags.NonPrimitive |
-            ts.TypeFlags.Unknown |
-            ts.TypeFlags.Any)) !==
-        0,
-    )
+      : context.checker.getTypeOfSymbol(length),
+    ...getDefinedGetters(receiver, "length", context).map((getter) =>
+      context.checker.getSignatureFromDeclaration(getter)?.getReturnType(),
+    ),
+  ];
+  return types.some(
+    (type) =>
+      type !== undefined &&
+      (type.isUnion() ? type.types : [type]).some(
+        (member) =>
+          (member.flags &
+            (ts.TypeFlags.Object |
+              ts.TypeFlags.NonPrimitive |
+              ts.TypeFlags.Unknown |
+              ts.TypeFlags.Any)) !==
+          0,
+      ),
   );
 };
 
@@ -9402,6 +9414,26 @@ const getLoopCall = (node: ts.Expression, path: Path, context: Context): LoopCal
           isOrdered: target.isOrdered,
         }
       : undefined;
+  }
+  if (
+    LOOP_METHODS.has(target.method) &&
+    (argument === undefined ||
+      isUndefinedValue(argument, context) ||
+      skipCasts(argument).kind === ts.SyntaxKind.NullKeyword)
+  ) {
+    return {
+      method: target.method,
+      receiver: target.receiver,
+      callback: undefined,
+      argument,
+      initial: undefined,
+      isArrayLike: target.isArrayLike,
+      isUnordered: target.isUnordered,
+      isInherited: target.isInherited,
+      isTyped: target.isTyped,
+      isOrdered: target.isOrdered,
+      isUncallable: true,
+    };
   }
   const callback = argument && getCallback(argument, path, context);
   // A flatMap whose array the heap holds runs as an expression.
@@ -9526,6 +9558,7 @@ const translateShortLoopCall = (
     : loop.isArrayLike
       ? (getElementGetters(receiver, context) ??
         (lengthGetters.length + speciesGetters.length > 0 ||
+        loop.isUncallable === true ||
         isLengthConverted ||
         isObjectFrom ||
         isHeapMap ||
@@ -9534,6 +9567,10 @@ const translateShortLoopCall = (
           ? []
           : undefined))
       : undefined;
+  // An array's length is its own, which no getter answers.
+  if (loop.isUncallable === true && getters === undefined) {
+    return throwTypeError(path, expression, context, frame);
+  }
   // A let or a const whose declaration hasn't run yet has no value to pass to the loop: only a
   // getter that the loop stops at instead of calling can change it.
   const changed = (
@@ -10311,6 +10348,7 @@ const translateShortLoopCall = (
       ],
       readLength((found, held) => {
         const visitWith = (after: Path, value: Expression) => {
+          if (loop.isUncallable === true) return throwTypeError(after, expression, context, frame);
           // with throws a RangeError where the index it replaces isn't below the length.
           const seeded = (current: Path) =>
             letIn(
@@ -15846,7 +15884,12 @@ const translateForOfGenerator = (
   continueWith: (path: Path) => Formula,
 ): Formula => {
   const iterated = getCast(loop.expression);
-  if (writesGeneratorKey(loop.getSourceFile())) {
+  const opened = getOpenedIterator(loop, context);
+  const isOpenedIterable = isIterableOpened(loop, context);
+  const isBuiltIn =
+    opened !== undefined || isOpenedIterable || isBuiltInIteratorType(iterated, context);
+  // An array's or a string's iterator checks that it still holds the built-in next as it steps.
+  if (!isBuiltIn && writesGeneratorKey(loop.getSourceFile())) {
     throw new TlaTypeScriptError(
       "tla-ts can't iterate a generator where a script may change how it iterates",
       iterated,
@@ -15903,12 +15946,38 @@ const translateForOfGenerator = (
           ? readValue(loop.expression, value, after, context, frame, runBody)
           : runBody(after, value ?? getUndefined(context));
       });
-    return next(
-      isBuiltInIteratorType(iterated, context)
-        ? withBuiltInIterator(loop.expression, start, receiver, context)
-        : start,
-    );
+    return next(isBuiltIn ? withBuiltInIterator(loop.expression, start, receiver, context) : start);
   };
+  if (opened !== undefined) {
+    return translateIteratorCall(loop.expression, opened, path, context, frame, (after, ref) =>
+      iterate(after, ref ?? getUndefined(context)),
+    );
+  }
+  if (isOpenedIterable) {
+    const openedName = context.names.getFresh("opened");
+    const openedIterator = identifier(openedName);
+    return bindOnce(
+      path,
+      openedName,
+      useJavaScript(
+        "OpenBuiltInIterator",
+        [
+          getHeap(path.scope, loop.expression, context),
+          translateExpression(iterated, path.scope, context),
+          translateArrayIteratorPrototype(loop.expression, context),
+        ],
+        context,
+      ),
+      ifThenElse(
+        field(openedIterator, "isThrown"),
+        throwTypeError(path, loop.expression, context, frame),
+        iterate(
+          withHeap(path, field(openedIterator, "heap"), context),
+          field(openedIterator, "value"),
+        ),
+      ),
+    );
+  }
   const created = ts.isCallExpression(iterated)
     ? getCreatedGenerator(iterated, path, context)
     : undefined;
@@ -18690,10 +18759,12 @@ const findLeadingCall = (
       (ts.isElementAccessExpression(node.expression) &&
         getHeapRegExpCall(node, context) !== undefined &&
         isPlainCallee(getCast(node.expression.expression), context, path.scope.results));
+    // super evaluates nothing before its arguments.
     if (
       !isListed &&
       !isMadeCollection &&
       !isRegExpMethod &&
+      node.expression.kind !== ts.SyntaxKind.SuperKeyword &&
       !isPlainCallee(node.expression, context, path.scope.results)
     ) {
       return blocked;
@@ -20657,10 +20728,25 @@ export const translateStatements = (
     ts.isForOfStatement(statement) &&
     context.heap !== undefined &&
     (isGeneratorType(statement.expression, context) ||
+      getOpenedIterator(statement, context) !== undefined ||
+      isIterableOpened(statement, context) ||
       (isBuiltInIteratorType(statement.expression, context) &&
-        !ts.isCallExpression(getCast(statement.expression))))
+        !isArrayIteration(statement.expression, context)))
   ) {
-    return translateForOfGenerator(statement, path, context, statementFrame, continueWith);
+    // Each way that the loop ends goes on with what follows, which translates once. Each step
+    // changes the heap, where the iterator holds its place.
+    const changed = getChanged(statement, path, context);
+    const heap = context.heap;
+    return translateJoined(
+      statement,
+      path,
+      context,
+      continueWith,
+      (next) => translateForOfGenerator(statement, path, context, statementFrame, next),
+      heap !== undefined && path.mutable.has(heap) && !changed.includes(heap)
+        ? [...changed, heap]
+        : changed,
+    );
   }
   if (ts.isIterationStatement(statement, false)) {
     return translateLoop(statement, path, context, statementFrame, continueWith);

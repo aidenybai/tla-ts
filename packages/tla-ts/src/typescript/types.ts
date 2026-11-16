@@ -1229,6 +1229,44 @@ export const getWrappedThis = (node: ts.Node, context: Context) => {
         : undefined;
 };
 
+// The array methods that call back for each element.
+export const LOOP_METHODS = new Set([
+  "forEach",
+  "every",
+  "some",
+  "find",
+  "findIndex",
+  "findLast",
+  "findLastIndex",
+  "filter",
+  "map",
+  "reduce",
+  "reduceRight",
+]);
+
+// The array parameter of a callback without a type, where Array.prototype's method calls it on an
+// object, as Array.prototype.every.call(object, callback) does, which holds that object.
+const isCalledArrayParameter = (parameter: ts.ParameterDeclaration, context: Context) => {
+  const callback = parameter.parent;
+  const call = callback.parent;
+  if (
+    parameter.type !== undefined ||
+    !(ts.isFunctionExpression(callback) || ts.isArrowFunction(callback)) ||
+    !ts.isCallExpression(call) ||
+    call.arguments[1] !== callback
+  ) {
+    return false;
+  }
+  const method = getArrayMethodCall(call, context);
+  const receiver = call.arguments[0];
+  return (
+    method !== undefined &&
+    LOOP_METHODS.has(method) &&
+    callback.parameters.indexOf(parameter) === (method.startsWith("reduce") ? 3 : 2) &&
+    getKind(receiver, context) === "object"
+  );
+};
+
 export const getKind = (node: ts.Expression, context: Context): Kind => {
   if (context.heap !== undefined && getWrappedThis(node, context) !== undefined) return "object";
   if (isHeapArray(node, context) || getBound(node, context) !== undefined) return "object";
@@ -1241,6 +1279,13 @@ export const getKind = (node: ts.Expression, context: Context): Kind => {
   const parameter = symbol?.valueDeclaration;
   if (parameter !== undefined && ts.isParameter(parameter) && isSetSource(parameter, context)) {
     return "set";
+  }
+  if (
+    parameter !== undefined &&
+    ts.isParameter(parameter) &&
+    isCalledArrayParameter(parameter, context)
+  ) {
+    return "object";
   }
   const declared =
     symbol === undefined || context.heap === undefined

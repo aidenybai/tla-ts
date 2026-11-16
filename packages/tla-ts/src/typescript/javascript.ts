@@ -23,7 +23,7 @@ import {
 } from "./expressions";
 import { rejectBeforeDeclaration, type Scope } from "./scope";
 import { getMappedParameter } from "./actions";
-import { getKind, isBigIntLike } from "./types";
+import { getKind, isBigIntLike, isEvery } from "./types";
 import { TEMPORAL_DEFINITIONS, TEMPORAL_GETTERS } from "./temporal-module";
 import { apply, boolean, identifier, ifExpression, number, set, string } from "./tla";
 
@@ -3231,6 +3231,19 @@ TypedArrayIterator(heap, ref, kind, prototype) ==
   IF IsTypedArray(heap, ref) /\\ ~IsOutOfBounds(heap, heap.objects[ref[Ref]])
   THEN ArrayIterator(heap, ref, kind, prototype)
   ELSE [heap |-> heap, value |-> Undefined, isThrown |-> TRUE]
+
+\\* GetIterator of a value whose @@iterator is still a built-in one: a typed array's values, which
+\\* makes its iterator, or an array's or a string's iterator's own, which gives the iterator.
+OpenBuiltInIterator(heap, value, prototype) ==
+  CASE IsTypedArray(heap, value)
+         /\\ HoldsBuiltIn(heap, value, WellKnownSymbol("iterator"),
+                         "%Int8Array.prototype.[[Prototype]]%.values") ->
+         TypedArrayIterator(heap, value, "values", prototype)
+    [] IsHeap(value)
+         /\\ "iterated" \\in DOMAIN heap.objects[value[Ref]]
+         /\\ HoldsBuiltIn(heap, value, WellKnownSymbol("iterator"), "Iterator.prototype.@@iterator") ->
+         [heap |-> heap, value |-> value, isThrown |-> FALSE]
+    [] OTHER -> Assert(FALSE, "tla-ts can't tell which iterator this value gives")
 
 \\* The values of an array-like object at each index below its length, which Get reads, so that a
 \\* hole gives what a prototype holds there, or undefined.
@@ -8761,12 +8774,24 @@ const getConverted = (value: number, node: ts.Node, context: Context) => {
   return converted;
 };
 
-// The number that +argument or Number(argument) converts a value to.
+// What Number gives for a primitive: ToNumber's number, or a BigInt's, where ToNumber throws.
+export const translateNumberOf = (value: Expression, context: Context) =>
+  share(value, "value", context, (shared) =>
+    ifExpression(
+      useJavaScript("IsBigInt", [shared], context),
+      useJavaScript("NumberOfBigInt", [shared], context),
+      useJavaScript("ToNumber", [shared], context),
+    ),
+  );
+
+// The number that +argument or Number(argument) converts a value to. Number converts a BigInt,
+// where ToNumber throws a TypeError.
 export const translateToNumber = (
   argument: ts.Expression,
   node: ts.Expression,
   scope: Scope,
   context: Context,
+  isBigIntConverted = false,
 ) => {
   if (ts.isStringLiteral(argument)) return getConverted(Number(argument.text), node, context);
   const names = getTypeNames(context.checker.getTypeAtLocation(argument), context.checker);
@@ -8781,12 +8806,24 @@ export const translateToNumber = (
     (names !== undefined &&
       names.length > 0 &&
       names.every((name) => ["number", "boolean", "null", "undefined"].includes(name))) ||
+    (isBigIntConverted &&
+      isEvery(
+        context.checker.getTypeAtLocation(argument),
+        ts.TypeFlags.NumberLike |
+          ts.TypeFlags.BigIntLike |
+          ts.TypeFlags.BooleanLike |
+          ts.TypeFlags.StringLike |
+          ts.TypeFlags.Null |
+          ts.TypeFlags.Undefined,
+      )) ||
     (context.heap !== undefined &&
       (context.checker.getTypeAtLocation(argument).flags &
         (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !==
         0)
   ) {
-    const converted = useJavaScript("ToNumber", [value], context);
+    const converted = isBigIntConverted
+      ? translateNumberOf(value, context)
+      : useJavaScript("ToNumber", [value], context);
     return context.hasSpecialNumbers
       ? converted
       : useJavaScript("PlainNumber", [converted], context);
@@ -8905,7 +8942,7 @@ export const translateConversion = (node: ts.CallExpression, scope: Scope, conte
       ? converted
       : useJavaScript("PlainNumber", [converted], context);
   }
-  if (name === "Number") return translateToNumber(argument, node, scope, context);
+  if (name === "Number") return translateToNumber(argument, node, scope, context, true);
   if (name === "isNaN") {
     context.prelude.add("JavaScript");
     return apply("=", [translateToNumber(argument, node, scope, context), identifier("NaN")]);

@@ -16,7 +16,7 @@ import { BITWISE_OPERATORS, concatenate, translateExpression } from "./expressio
 import { type Formula, ifThenElse, leaf } from "./formula";
 import { getHeap } from "./heap";
 import { getBuiltIn } from "./intrinsics";
-import { useJavaScript } from "./javascript";
+import { translateNumberOf, useJavaScript } from "./javascript";
 import { bind, callValue, getMethods, getWrittenFunctions, isNullish, read } from "./protocols";
 import { apply, boolean, junction, not, string, tuple } from "./tla";
 import { getKind, hasHeapType, isEvery, isHeapType, mayBeSequenceType } from "./types";
@@ -293,7 +293,13 @@ export const getConversion = (node: ts.Node, context: Context): Conversion | und
       declarations.every((declaration) => declaration.getSourceFile().isDeclarationFile);
     if (!isGlobal || argument === undefined || ts.isSpreadElement(argument)) return undefined;
     if (node.expression.text === "Number") {
-      return make([argument], "number", (primitives) => toNumber(primitives[0]), false, true);
+      return make(
+        [argument],
+        "number",
+        (primitives) => plain(translateNumberOf(primitives[0], context)),
+        false,
+        true,
+      );
     }
     if (node.expression.text === "String") {
       const conversion = make([argument], "string", (primitives) =>
