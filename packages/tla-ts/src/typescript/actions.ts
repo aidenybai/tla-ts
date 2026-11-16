@@ -13101,6 +13101,24 @@ const getMadeFunctions = (callee: ts.Expression, context: Context) => {
   return made.length > 0 && made.length === returned.length ? made : undefined;
 };
 
+// A method that a key reads from a value whose type any or unknown doesn't tell, where the script
+// writes functions under the key, so that it may be any of the script's functions.
+const isAnyMember = (node: ts.Expression, context: Context) => {
+  const key = ts.isPropertyAccessExpression(node)
+    ? node.name.text
+    : ts.isElementAccessExpression(node) && ts.isStringLiteralLike(node.argumentExpression)
+      ? node.argumentExpression.text
+      : undefined;
+  return (
+    key !== undefined &&
+    (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) &&
+    (context.checker.getTypeAtLocation(node.expression).flags &
+      (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !==
+      0 &&
+    getWrittenFunctions(node, key, context).length > 0
+  );
+};
+
 // The functions that a call through a value may run, where tla-ts can't tell which one it names:
 // those that no other function encloses, whose type TypeScript lets the callee hold. The call
 // branches on its callee's value between them.
@@ -13120,7 +13138,8 @@ const getDispatched = (
     (declarations.length === 0 &&
       !ts.isCallExpression(callee) &&
       !isSuperAccess(callee) &&
-      !(ts.isElementAccessExpression(callee) && ts.isStringLiteral(callee.argumentExpression))) ||
+      !(ts.isElementAccessExpression(callee) && ts.isStringLiteral(callee.argumentExpression)) &&
+      !isAnyMember(callee, context)) ||
     declarations.some((declaration) => declaration.getSourceFile().isDeclarationFile) ||
     (assigned === undefined ? getCallee(callee, context) !== undefined : isPlain(assigned)) ||
     getCalledMethod(callee, context) !== undefined ||

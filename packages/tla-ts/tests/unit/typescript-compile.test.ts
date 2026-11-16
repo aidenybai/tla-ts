@@ -46163,4 +46163,27 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("runs the script's functions that a method of a value of type any may hold", () => {
+    const getSource = (expected: string) => `
+      const counter: any = { count: 1 };
+      counter.add = function (this: any, step: number) {
+        this.count = this.count + step;
+        return this.count;
+      };
+      counter.read = (offset: number) => counter.count + offset;
+      counter.add(2);
+      const total = counter.add(3);
+      const seen = [total, counter.read(10), counter.count].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("6,16,6"))).failure).toBeUndefined();
+    });
+
+    it("rejects a method that runs without its receiver", async () => {
+      expect((await checkModel(getSource("3,13,3"))).failure?.message).toContain("seen 6,16,6");
+    });
+  });
 });
