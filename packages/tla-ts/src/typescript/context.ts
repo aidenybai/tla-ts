@@ -1,7 +1,7 @@
 import ts from "@typescript/typescript6";
 import type { Expression, OperatorDefinition, OperatorParam, SourceLocation } from "../ast";
 import { getTypeNames, JAVASCRIPT_OPERATORS } from "./javascript";
-import { BUILT_INS, HOST_GLOBAL_KEYS } from "./built-ins";
+import { BUILT_INS, HOST_GLOBAL_KEYS, NODE_GLOBALS } from "./built-ins";
 import { getErrorClass, isNativeErrorName, isPrototypeRead, NATIVE_ERRORS } from "./exceptions";
 import { type Collection, getBuiltIn, isHeldBuiltInObject } from "./intrinsics";
 import {
@@ -14,6 +14,7 @@ import {
   isHeapSetOrMap,
 } from "./types";
 import { TlaTypeScriptError } from "../errors";
+import { isCommonJsFile } from "./common-js";
 import { createNames, type Names } from "./names";
 import { getBindingNames, getLexicalNames } from "./early-errors";
 import { getKeptReads } from "./narrowing";
@@ -618,9 +619,11 @@ const hasTopLevelAwait = (node: ts.Node): boolean =>
   (!ts.isFunctionLike(node) && (ts.forEachChild(node, hasTopLevelAwait) ?? false));
 
 // A file that imports, exports, or awaits outside a function, which Node runs only as a module.
-// Node runs another file as a script where it strips its types.
+// Node runs another file as a script where it strips its types, and a CommonJS module's code in a
+// function.
 export const isModuleFile = (file: ts.SourceFile) =>
-  file.statements.some(isModuleSyntax) || hasTopLevelAwait(file);
+  !isCommonJsFile(file.fileName) &&
+  (file.statements.some(isModuleSyntax) || hasTopLevelAwait(file));
 
 // A "use strict" directive is in the string literals that start the statements, and later it is
 // only an expression.
@@ -803,9 +806,12 @@ export const getArgumentsOwner = (node: ts.Node, checker: ts.TypeChecker) => {
   return symbol === undefined || symbol.declarations !== undefined ? undefined : owner;
 };
 
-// A name that no declaration binds, whose reading throws a ReferenceError.
+// A name that no declaration binds, whose reading throws a ReferenceError, but for a global that
+// Node gives.
 export const isUnresolved = (node: ts.Node, context: Context): node is ts.Identifier =>
-  ts.isIdentifier(node) && context.checker.getSymbolAtLocation(node) === undefined;
+  ts.isIdentifier(node) &&
+  context.checker.getSymbolAtLocation(node) === undefined &&
+  !NODE_GLOBALS.has(node.text);
 
 // The names that an assignment target writes, through the elements of its patterns.
 const getAssignedNames = (target: ts.Expression): ts.Expression[] => {
@@ -978,6 +984,40 @@ const getLiteralTruth = (node: ts.Expression) => {
   if (ts.isStringLiteral(node)) return node.text !== "";
   const value = ts.isNumericLiteral(node) ? Number(node.text) : Number.NaN;
   return Number.isNaN(value) ? undefined : value !== 0;
+};
+
+// Whether a condition is truthy where it only reads literals and the typeof of names that nothing
+// declares, which is "undefined", as a guard of a global that a host may give does.
+export const getStaticTruth = (node: ts.Expression, context: Context): boolean | undefined => {
+  const inner = skipCasts(node);
+  if (inner.kind === ts.SyntaxKind.TrueKeyword) return true;
+  if (inner.kind === ts.SyntaxKind.FalseKeyword) return false;
+  if (ts.isPrefixUnaryExpression(inner) && inner.operator === ts.SyntaxKind.ExclamationToken) {
+    const operand = getStaticTruth(inner.operand, context);
+    return operand === undefined ? undefined : !operand;
+  }
+  if (!ts.isBinaryExpression(inner)) return undefined;
+  const kind = inner.operatorToken.kind;
+  if (kind === ts.SyntaxKind.AmpersandAmpersandToken || kind === ts.SyntaxKind.BarBarToken) {
+    const left = getStaticTruth(inner.left, context);
+    return left === undefined || left === (kind === ts.SyntaxKind.BarBarToken)
+      ? left
+      : getStaticTruth(inner.right, context);
+  }
+  const isUndeclaredTypeOf = (side: ts.Expression) => {
+    const operand = skipCasts(side);
+    return ts.isTypeOfExpression(operand) && isUnresolved(skipCasts(operand.expression), context);
+  };
+  const text = [inner.left, inner.right]
+    .map(skipCasts)
+    .find((side): side is ts.StringLiteral => ts.isStringLiteral(side))?.text;
+  if (text === undefined || ![inner.left, inner.right].some(isUndeclaredTypeOf)) return undefined;
+  return kind === ts.SyntaxKind.EqualsEqualsEqualsToken || kind === ts.SyntaxKind.EqualsEqualsToken
+    ? text === "undefined"
+    : kind === ts.SyntaxKind.ExclamationEqualsEqualsToken ||
+        kind === ts.SyntaxKind.ExclamationEqualsToken
+      ? text !== "undefined"
+      : undefined;
 };
 
 // The name that an expression reads before it evaluates anything that could change state or throw,

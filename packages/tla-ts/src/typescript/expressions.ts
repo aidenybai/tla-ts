@@ -38,6 +38,7 @@ import {
   isModuleFile,
   isStrictCode,
   getSharedDeclaration,
+  getStaticTruth,
   getSymbol,
   isStatic,
   isAssigned,
@@ -69,6 +70,7 @@ import {
   isDeclarationOnly,
   getClassStop,
 } from "./context";
+import { NODE_GLOBALS } from "./built-ins";
 import { TlaTypeScriptError } from "../errors";
 import { translateJsonCall } from "./json";
 import {
@@ -2573,28 +2575,28 @@ const translateFraction = (value: number, node: ts.Node, context: Context) => {
 };
 
 // An expression that a literal condition keeps from running, as x in false && x or true ? 1 : x.
-const isSkipped = (node: ts.Node): boolean => {
+const isSkipped = (node: ts.Node, context: Context): boolean => {
   const parent = node.parent;
   if (ts.isBinaryExpression(parent) && parent.right === node) {
-    const left = skipCasts(parent.left).kind;
+    const left = getStaticTruth(parent.left, context);
     const operator = parent.operatorToken.kind;
     if (
-      (operator === ts.SyntaxKind.AmpersandAmpersandToken && left === ts.SyntaxKind.FalseKeyword) ||
-      (operator === ts.SyntaxKind.BarBarToken && left === ts.SyntaxKind.TrueKeyword)
+      (operator === ts.SyntaxKind.AmpersandAmpersandToken && left === false) ||
+      (operator === ts.SyntaxKind.BarBarToken && left === true)
     ) {
       return true;
     }
   }
   if (ts.isConditionalExpression(parent)) {
-    const condition = skipCasts(parent.condition).kind;
+    const condition = getStaticTruth(parent.condition, context);
     if (
-      (parent.whenTrue === node && condition === ts.SyntaxKind.FalseKeyword) ||
-      (parent.whenFalse === node && condition === ts.SyntaxKind.TrueKeyword)
+      (parent.whenTrue === node && condition === false) ||
+      (parent.whenFalse === node && condition === true)
     ) {
       return true;
     }
   }
-  return ts.isExpression(parent) && isSkipped(parent);
+  return ts.isExpression(parent) && isSkipped(parent, context);
 };
 
 // A statement that a return or a throw before it in the same list keeps from running.
@@ -2659,8 +2661,48 @@ export const readGlobal = (name: ts.Identifier, value: Expression, context: Cont
     value,
   );
 
+// Node's process object, which the host gives, where only a declaration file or a declare, if
+// anything, declares process.
+const isProcess = (node: ts.Expression, context: Context) =>
+  ts.isIdentifier(node) &&
+  node.text === "process" &&
+  (getSymbol(node, context.checker)?.declarations ?? []).every(
+    (declaration) =>
+      declaration.getSourceFile().isDeclarationFile ||
+      (ts.getCombinedModifierFlags(declaration) & ts.ModifierFlags.Ambient) !== 0,
+  );
+
+// The name of the environment variable that a read of process.env names. tla-ts reads the
+// environment that it runs in, where Node would run the script, and gives the read its value.
+const getEnvironmentVariable = (node: ts.Expression, context: Context) => {
+  if (!ts.isPropertyAccessExpression(node) && !ts.isElementAccessExpression(node)) return undefined;
+  const environment = node.expression;
+  if (
+    !ts.isPropertyAccessExpression(environment) ||
+    environment.name.text !== "env" ||
+    !isProcess(environment.expression, context)
+  ) {
+    return undefined;
+  }
+  return ts.isPropertyAccessExpression(node)
+    ? node.name.text
+    : ts.isStringLiteralLike(node.argumentExpression)
+      ? node.argumentExpression.text
+      : undefined;
+};
+
 const translateIdentifier = (node: ts.Identifier, scope: Scope, context: Context) => {
   if (node.text === "undefined") return getUndefined(context);
+  if (NODE_GLOBALS.has(node.text) && getSymbol(node, context.checker) === undefined) {
+    return apply("Assert", [
+      boolean(false),
+      string(
+        node.text === "process"
+          ? "tla-ts can't follow Node's process object but where it reads process.env"
+          : `tla-ts can't read Node's global ${node.text}`,
+      ),
+    ]);
+  }
   if (isDeletedGlobal(node, context)) return getUnresolvable(context);
   const namespace = getNamespaceName(node, context);
   if (namespace !== undefined) return getNamespaceRef(namespace, context);
@@ -2770,7 +2812,7 @@ const translateIdentifier = (node: ts.Identifier, scope: Scope, context: Context
   if (symbol !== undefined && isUnset(symbol, context)) return getUndefined(context);
   // A name that nothing declares throws a ReferenceError where a read runs, which a literal
   // condition may keep from running.
-  if (symbol === undefined && isSkipped(node)) {
+  if (symbol === undefined && isSkipped(node, context)) {
     return apply("Assert", [
       boolean(false),
       string(
@@ -4296,6 +4338,11 @@ export const translateNode = (
     return translateElements(node.elements, scope, context, node);
   }
   if (ts.isObjectLiteralExpression(node)) return translateObjectLiteral(node, scope, context);
+  const variable = getEnvironmentVariable(node, context);
+  if (variable !== undefined) {
+    const value = typeof process === "undefined" ? undefined : process.env[variable];
+    return value === undefined ? getUndefined(context) : string(value);
+  }
   if (ts.isPropertyAccessExpression(node)) {
     const read = translatePropertyAccess(node, scope, context);
     // A property that the type doesn't declare comes from an index signature, which may lack it.

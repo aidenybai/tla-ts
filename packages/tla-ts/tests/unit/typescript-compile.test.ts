@@ -2,7 +2,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import ts from "@typescript/typescript6";
 import { check, type CheckResult, formatValue } from "../../src";
-import { describe, expect, it } from "vite-plus/test";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { printModule } from "../../src/printer";
 import { compile } from "../../src/typescript/compile";
 import { printRegions } from "../../src/typescript/regions";
@@ -45924,6 +45924,172 @@ describe("BigInts", () => {
     it("rejects a map that the set left empty", async () => {
       expect((await checkModel(getSource("0,object,true"))).failure?.message).toContain(
         "seen 1,object,true",
+      );
+    });
+  });
+  describe("reads process.env and Node's globals as Node gives them", () => {
+    const getSource = (expected: string) => `
+      // @ts-ignore
+      const mode = process.env.TLA_TS_MODE;
+      // @ts-ignore
+      const kinds = [typeof process, typeof setImmediate, typeof window].join();
+      const seen = [mode, kinds].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    it("agrees with Node", async () => {
+      vi.stubEnv("TLA_TS_MODE", "checked");
+      expect(
+        (await checkModel(getSource("checked,object,function,undefined"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects a variable that the environment doesn't hold", async () => {
+      vi.stubEnv("TLA_TS_MODE", "checked");
+      expect(
+        (await checkModel(getSource(",object,function,undefined"))).failure?.message,
+      ).toContain("seen checked,object,function,undefined");
+    });
+
+    it("stops where a script reads Node's process object otherwise", async () => {
+      const result = await checkModel(`
+        // @ts-ignore
+        const version = process.version;
+      `);
+      expect(result.failure?.message).toContain("tla-ts can't follow Node's process object");
+    });
+  });
+
+  describe("loads the CommonJS modules that a script imports", () => {
+    const getFixture = (name: string) => {
+      const path = join(import.meta.dirname, `../fixtures/typescript/common-js/${name}.ts`);
+      return { path, source: readFileSync(path, "utf8") };
+    };
+
+    it.each(["exports", "cycle", "packages"])("agrees with Node on %s", async (name) => {
+      const fixture = getFixture(name);
+      expect((await check(compile(fixture.source, fixture.path))).failure).toBeUndefined();
+    });
+
+    it.each([
+      ["exports", "square,4,true,true", "square,4,true,false"],
+      ["cycle", "true,false,true", "true,true,true"],
+      [
+        "packages",
+        "import,require,feature,text,legacy,dep",
+        "default,require,feature,text,legacy,dep",
+      ],
+    ])("rejects another outcome of %s", async (name, expected, wrong) => {
+      const fixture = getFixture(name);
+      const result = await check(compile(fixture.source.replace(expected, wrong), fixture.path));
+      expect(result.failure?.message).toContain(`seen ${expected}`);
+    });
+  });
+
+  describe("reads the environment that tla-ts runs in through process.env", () => {
+    const path = join(import.meta.dirname, "../fixtures/typescript/common-js/environment.ts");
+    const source = readFileSync(path, "utf8");
+
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    it("agrees with Node", async () => {
+      vi.stubEnv("NODE_ENV", "development");
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("loads the module of another NODE_ENV", async () => {
+      vi.stubEnv("NODE_ENV", "production");
+      expect((await check(compile(source, path))).failure?.message).toContain(
+        "seen production,object",
+      );
+    });
+  });
+
+  describe("converts the operands of an operator in a function that a value holds", () => {
+    const getSource = (expected: string) => `
+      const functions: any = {};
+      functions.join = function (left: any, right: any): any {
+        return left + right;
+      };
+      functions.scale = function (value: any): any {
+        const doubled = value * 2;
+        return doubled - 1;
+      };
+      const join = functions.join as (left: any, right: any) => any;
+      const scale = functions.scale as (value: any) => any;
+      const seen = [join("x", 1), join(1, 2), join(true, null), scale("3")].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("x1,3,1,5"))).failure).toBeUndefined();
+    });
+
+    it("rejects a sum that doesn't convert a string", async () => {
+      expect((await checkModel(getSource("x1,3,1,32"))).failure?.message).toContain(
+        "seen x1,3,1,5",
+      );
+    });
+  });
+
+  describe("skips what a typeof guard of a global that nothing declares keeps from running", () => {
+    const getSource = (expected: string) => `
+      const seen: string[] = [];
+      // @ts-ignore
+      "undefined" !== typeof __TLA_HOOK__ && "function" === typeof __TLA_HOOK__.start && __TLA_HOOK__.start(seen);
+      // @ts-ignore
+      if (typeof __TLA_HOOK__ === "undefined") seen.push("absent");
+      // @ts-ignore
+      else __TLA_HOOK__.stop();
+      // @ts-ignore
+      const kind = typeof __TLA_HOOK__ !== "undefined" ? __TLA_HOOK__.kind : "none";
+      seen.push(kind);
+      if (seen.join() !== "${expected}") throw new Error("seen " + seen.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("absent,none"))).failure).toBeUndefined();
+    });
+
+    it("rejects a guard that runs the branch it skips", async () => {
+      expect((await checkModel(getSource("none"))).failure?.message).toContain("seen absent,none");
+    });
+  });
+
+  describe("reads process.env where a declare declares process", () => {
+    const getSource = (expected: string) => `
+      declare const process: { env: Record<string, string | undefined> };
+      const box = { size: 0 };
+      const seen = [
+        process.env.TLA_TS_MODE,
+        process.env["TLA_TS_UNSET"] === undefined,
+        typeof process.env.TLA_TS_UNSET,
+        box.size,
+      ].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    it("agrees with Node", async () => {
+      vi.stubEnv("TLA_TS_MODE", "checked");
+      vi.stubEnv("TLA_TS_UNSET", undefined);
+      expect((await checkModel(getSource("checked,true,undefined,0"))).failure).toBeUndefined();
+    });
+
+    it("rejects a variable that the environment doesn't set as set", async () => {
+      vi.stubEnv("TLA_TS_MODE", "checked");
+      vi.stubEnv("TLA_TS_UNSET", undefined);
+      expect((await checkModel(getSource("checked,false,string,0"))).failure?.message).toContain(
+        "seen checked,true,undefined,0",
       );
     });
   });

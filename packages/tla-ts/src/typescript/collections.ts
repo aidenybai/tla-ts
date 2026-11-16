@@ -3542,9 +3542,15 @@ export const getStoredCall = (node: ts.Node, context: Context): StoredCall | und
   const inherited = hasPrototypeArray(context) ? [`Array.prototype.${callee.name.text}`] : [];
   const builtIns = new Set(
     [
-      ...findNodes(node.getSourceFile(), ts.isPropertyAccessExpression).map((inner) =>
-        getStoredBuiltIn(inner, context),
-      ),
+      // A built-in's key is its method's name, so only those names are worth resolving.
+      ...findNodes(node.getSourceFile(), ts.isPropertyAccessExpression)
+        .filter(
+          (inner) =>
+            inner.name.text === "toString" ||
+            STORED_ARRAY_CHANGES.has(inner.name.text) ||
+            STORED_ARRAY_READS.has(inner.name.text),
+        )
+        .map((inner) => getStoredBuiltIn(inner, context)),
       ...inherited,
     ].filter(isRunnable),
   );

@@ -10,6 +10,7 @@ import {
   share,
   skipCasts,
 } from "./context";
+import { NODE_GLOBALS } from "./built-ins";
 import { TlaTypeScriptError } from "../errors";
 import { formatString } from "../printer";
 import {
@@ -8614,9 +8615,10 @@ const translateTypeOfValue = (node: ts.TypeOfExpression, scope: Scope, context: 
   const read = ts.isParenthesizedExpression(node.expression)
     ? node.expression.expression
     : node.expression;
-  // A name that no binding has is undefined to typeof, which reads it without throwing.
+  // A name that no binding has is undefined to typeof, which reads it without throwing, but for
+  // one of the globals that Node gives.
   if (ts.isIdentifier(read) && getSymbol(read, context.checker) === undefined) {
-    return string("undefined");
+    return string(NODE_GLOBALS.get(read.text) ?? "undefined");
   }
   // A binding that a name has throws before its declaration runs, though typeof only reads it.
   if (ts.isIdentifier(read)) rejectBeforeDeclaration(read, scope, context);
