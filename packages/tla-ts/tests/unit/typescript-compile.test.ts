@@ -49034,4 +49034,34 @@ describe("BigInts", () => {
       await expect(checkModel(getSource(2))).rejects.toThrow("made 1");
     });
   });
+
+  describe("stops where an action counts on forever and the model checks nothing", () => {
+    const source = `
+      export let backEdges = 0;
+      export const addBackEdge = (): void => {
+        backEdges++;
+      };
+    `;
+
+    it("stops at the count", () => {
+      expect(() => compile(source)).toThrow(
+        "spec.ts:4:9 tla-ts can't check a model whose states never end: an action counts backEdges on at each step",
+      );
+    });
+
+    it("agrees with Node where an invariant bounds the count", async () => {
+      const result = await checkModel(`${source}
+        export const isSmall = () => backEdges < 3;
+      `);
+      expect([result.status, result.distinctStates]).toEqual(["invariant-violation", 4]);
+    });
+
+    it("agrees with Node where a guard stops the count below the bound", async () => {
+      const result =
+        await checkModel(`${source.replace("backEdges++", "if (backEdges < 2) backEdges++")}
+        export const isSmall = () => backEdges < 3;
+      `);
+      expect([result.status, result.distinctStates]).toEqual(["deadlock", 3]);
+    });
+  });
 });

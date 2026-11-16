@@ -163,6 +163,86 @@ const translateExported = (
     : translateCall(definition, sections, context);
 };
 
+// The state variable that a statement counts up or down by one, from a whole number that its
+// declaration gives, which never fails and gives a new value at each step until TLC's integers
+// overflow.
+const getCounted = (statement: ts.Statement, context: Context) => {
+  const expression = ts.isExpressionStatement(statement) ? statement.expression : undefined;
+  const target =
+    expression !== undefined &&
+    (ts.isPrefixUnaryExpression(expression) || ts.isPostfixUnaryExpression(expression)) &&
+    (expression.operator === ts.SyntaxKind.PlusPlusToken ||
+      expression.operator === ts.SyntaxKind.MinusMinusToken)
+      ? expression.operand
+      : expression !== undefined &&
+          ts.isBinaryExpression(expression) &&
+          (expression.operatorToken.kind === ts.SyntaxKind.PlusEqualsToken ||
+            expression.operatorToken.kind === ts.SyntaxKind.MinusEqualsToken) &&
+          ts.isNumericLiteral(expression.right) &&
+          Number(expression.right.text) === 1
+        ? expression.left
+        : undefined;
+  const symbol =
+    target !== undefined && ts.isIdentifier(target)
+      ? getSymbol(target, context.checker)
+      : undefined;
+  const declaration = symbol?.valueDeclaration;
+  const initializer =
+    declaration !== undefined && ts.isVariableDeclaration(declaration)
+      ? declaration.initializer
+      : undefined;
+  const start =
+    initializer !== undefined &&
+    ts.isPrefixUnaryExpression(initializer) &&
+    initializer.operator === ts.SyntaxKind.MinusToken
+      ? initializer.operand
+      : initializer;
+  return symbol !== undefined &&
+    context.variables.has(symbol) &&
+    start !== undefined &&
+    ts.isNumericLiteral(start) &&
+    Number.isSafeInteger(Number(start.text))
+    ? target
+    : undefined;
+};
+
+// Where every action only counts state variables, and the model checks nothing, nothing can fail,
+// and an action that counts reaches a new state at each step, so the check would visit states until
+// memory runs out, or as TLC does, until its integers overflow.
+const rejectEndlessCount = (model: Model, sections: Sections, context: Context) => {
+  const checks = [
+    sections.invariants,
+    sections.properties,
+    sections.constraints,
+    sections.actionConstraints,
+    sections.views,
+    sections.postconditions,
+    sections.assumptions,
+  ];
+  const isInertStatement = (statement: ts.Statement) =>
+    (ts.isExpressionStatement(statement) && ts.isStringLiteral(statement.expression)) ||
+    (ts.isVariableStatement(statement) &&
+      statement.declarationList.declarations.every(
+        (declaration) =>
+          declaration.initializer === undefined || isInertValue(declaration.initializer),
+      ));
+  if (checks.some((check) => check.length > 0) || !model.script.every(isInertStatement)) return;
+  // An action with parameters may have none to take, which leaves it disabled.
+  const counts = model.exported.map((definition) =>
+    definition.node.parameters.length > 0
+      ? [undefined]
+      : ts.isBlock(definition.body)
+        ? definition.body.statements.map((statement) => getCounted(statement, context))
+        : [getCounted(ts.factory.createExpressionStatement(definition.body), context)],
+  );
+  const counted = counts.flat().at(0);
+  if (counted === undefined || counts.some((count) => count.includes(undefined))) return;
+  throw new TlaTypeScriptError(
+    `tla-ts can't check a model whose states never end: an action counts ${counted.getText()} on at each step, and the model checks nothing that could stop it`,
+    counted,
+  );
+};
+
 // Compiles a TypeScript file into a TLA+ spec and the config that checks it. Imports resolve
 // relative to fileName, and the module takes its name, so die-hard.ts is the module DieHard.
 // Without a file system, as in a browser, libraries holds TypeScript's declaration files by name.
@@ -1171,5 +1251,6 @@ export const compile = (
       ),
     );
   }
+  rejectEndlessCount(model, sections, context);
   return emit(getModuleName(path), program.sourceFile, model, sections, context);
 };
