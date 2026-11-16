@@ -45548,4 +45548,63 @@ describe("BigInts", () => {
       ).toThrow("tla-ts can't follow a function that outlives its call and reads this name");
     });
   });
+
+  describe("runs once a function that a call passes to a function that calls it once", () => {
+    const getSource = (expected: string) => `
+      const log: string[] = [];
+      function fail(): number {
+        throw new Error("failed");
+      }
+      function attempt(run: () => void) {
+        try {
+          run();
+        } catch (error) {
+          log.push((error as Error).message);
+          return;
+        }
+        log.push("ran");
+      }
+      attempt(function () {
+        class Fails {
+          static value = fail();
+        }
+        log.push("unreachable " + Fails.value);
+      });
+      attempt(() => {
+        class Box {
+          size = 3;
+        }
+        const box = new Box();
+        log.push(String(box.size));
+      });
+      if (log.join() !== "${expected}") throw new Error(log.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("failed,3,ran"))).failure).toBeUndefined();
+    });
+
+    it("rejects a class whose static field didn't throw", async () => {
+      expect((await checkModel(getSource("failed,3,3"))).failure?.message).toContain(
+        "failed,3,ran",
+      );
+    });
+
+    it("stops where the function calls it in a loop", () => {
+      expect(() =>
+        compile(`
+          const log: string[] = [];
+          function twice(run: () => void) {
+            for (let step = 0; step < 2; step++) run();
+          }
+          twice(() => {
+            class Box {
+              size = 3;
+            }
+            log.push(String(new Box().size));
+          });
+        `),
+      ).toThrow("tla-ts can't make a class in code that may run more than once");
+    });
+  });
 });

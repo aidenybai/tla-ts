@@ -1493,14 +1493,15 @@ const getMethod = (node: ts.Expression, context: Context) => {
 };
 
 // Whether code under a node runs at most once: outside functions and loops, or in the body of a
-// function that a call runs where it's written. A for loop runs its initializer, and a for-of or a
+// function that a call runs where it's written, that its file calls at one place, or that a call
+// passes to a function that calls it once. A for loop runs its initializer, and a for-of or a
 // for-in the expression it iterates, once.
 export const isOnce = (node: ts.Node): boolean =>
   ts.isSourceFile(node) ||
   (ts.isFunctionLike(node)
     ? isCalledInPlace(node)
       ? isOnce(node.parent)
-      : isCalledOnce(node)
+      : isCalledOnce(node) || isPassedOnce(node)
     : !ts.isIterationStatement(node, false) &&
       ((ts.isForStatement(node.parent) && node.parent.initializer === node) ||
       ((ts.isForOfStatement(node.parent) || ts.isForInStatement(node.parent)) &&
@@ -1549,6 +1550,100 @@ const isCalledOnce = (node: ts.SignatureDeclaration): boolean => {
     isOnce(call);
   calledOnce.set(node, isOnceCalled);
   return isOnceCalled;
+};
+
+// The one function that a name or a namespace's member names in its file, where nothing else
+// declares that name.
+const getPassedTo = (callee: ts.Expression) => {
+  const getDeclarations = (root: ts.Node, name: string) =>
+    findNodes(
+      root,
+      (inner): inner is ts.Identifier => ts.isIdentifier(inner) && inner.text === name,
+    ).flatMap((inner) => {
+      const parent = inner.parent;
+      return (ts.isVariableDeclaration(parent) ||
+        ts.isFunctionDeclaration(parent) ||
+        ts.isClassDeclaration(parent) ||
+        ts.isParameter(parent) ||
+        ts.isBindingElement(parent) ||
+        ts.isModuleDeclaration(parent) ||
+        ts.isEnumDeclaration(parent) ||
+        ts.isImportSpecifier(parent) ||
+        ts.isImportClause(parent) ||
+        ts.isNamespaceImport(parent)) &&
+        parent.name === inner
+        ? [parent]
+        : [];
+    });
+  const getOnly = (declarations: ts.Node[]) => {
+    const only = declarations.length === 1 ? declarations[0] : undefined;
+    return only !== undefined && ts.isFunctionDeclaration(only) && only.body !== undefined
+      ? only
+      : undefined;
+  };
+  const sourceFile = callee.getSourceFile();
+  if (ts.isIdentifier(callee)) return getOnly(getDeclarations(sourceFile, callee.text));
+  if (!ts.isPropertyAccessExpression(callee) || !ts.isIdentifier(callee.expression)) {
+    return undefined;
+  }
+  const name = callee.name.text;
+  // A namespace may merge with a function of its name.
+  const declarations = getDeclarations(sourceFile, callee.expression.text);
+  return declarations.every(
+    (declaration) => ts.isModuleDeclaration(declaration) || ts.isFunctionDeclaration(declaration),
+  )
+    ? getOnly(
+        declarations.flatMap((declaration) =>
+          ts.isModuleDeclaration(declaration) && declaration.body !== undefined
+            ? getDeclarations(declaration.body, name)
+            : [],
+        ),
+      )
+    : undefined;
+};
+
+// A function that a call passes to a function that calls it at one place, outside loops and
+// functions of its own, and names it nowhere else, so that it runs at most once where the call
+// runs once.
+const isPassedOnce = (node: ts.SignatureDeclaration) => {
+  const call = node.parent;
+  if (
+    !(ts.isFunctionExpression(node) || ts.isArrowFunction(node)) ||
+    !ts.isCallExpression(call) ||
+    !call.arguments.includes(node) ||
+    call.arguments.slice(0, call.arguments.indexOf(node)).some(ts.isSpreadElement) ||
+    !isOnce(call)
+  ) {
+    return false;
+  }
+  const callee = getPassedTo(call.expression);
+  const parameter = callee?.parameters.at(call.arguments.indexOf(node));
+  if (
+    callee === undefined ||
+    parameter === undefined ||
+    parameter.dotDotDotToken !== undefined ||
+    !ts.isIdentifier(parameter.name)
+  ) {
+    return false;
+  }
+  const name = parameter.name.text;
+  // The arguments object would alias the parameter.
+  const uses = findNodes(
+    callee,
+    (inner): inner is ts.Identifier =>
+      ts.isIdentifier(inner) && (inner.text === name || inner.text === "arguments"),
+  ).filter((use) => use !== parameter.name);
+  const use = uses.length === 1 ? uses[0] : undefined;
+  return (
+    use !== undefined &&
+    ts.isCallExpression(use.parent) &&
+    use.parent.expression === use &&
+    ts.findAncestor(use.parent, (ancestor) =>
+      ancestor === callee
+        ? "quit"
+        : ts.isFunctionLike(ancestor) || ts.isIterationStatement(ancestor, false),
+    ) === undefined
+  );
 };
 
 const isCalledInPlace = (node: ts.Node) => {
