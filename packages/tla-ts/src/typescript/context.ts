@@ -688,10 +688,11 @@ export const isModuleFile = (file: ts.SourceFile) =>
 // Node's types declare them.
 const COMMON_JS_VARIABLES = new Set(["require", "module", "exports", "__filename", "__dirname"]);
 
-// A read of a global that Node gives, which nothing but declarations, such as Node's types, declares.
+// A read of a global that Node gives, which nothing but declarations, such as Node's types or
+// TypeScript's DOM library, declares.
 export const isNodeGlobal = (node: ts.Identifier, context: Context) => {
   const symbol = getSymbol(node, context.checker);
-  return NODE_GLOBALS.has(node.text) && (symbol === undefined || isDeclarationOnly(symbol));
+  return NODE_GLOBALS.has(node.text) && (symbol === undefined || isOnlyDeclared(symbol));
 };
 
 // A read in an ES module of a variable that only Node's types declare for a CommonJS module.
@@ -1409,19 +1410,26 @@ const getCastNamespaceMember = (node: ts.Node, checker: ts.TypeChecker) => {
     : undefined;
 };
 
-// A name that only declarations type, as Node's typings type process, which has no code to run.
-export const isDeclarationOnly = (symbol: ts.Symbol) => {
+// Whether only declarations, such as a declaration file's, declare a name.
+const isOnlyDeclared = (symbol: ts.Symbol) => {
   const declarations = symbol.declarations ?? [];
   return (
     declarations.length > 0 &&
     declarations.every(
       (declaration) =>
-        (declaration.getSourceFile().isDeclarationFile ||
-          (ts.getCombinedModifierFlags(declaration) & ts.ModifierFlags.Ambient) !== 0) &&
-        !declaration.getSourceFile().hasNoDefaultLib,
+        declaration.getSourceFile().isDeclarationFile ||
+        (ts.getCombinedModifierFlags(declaration) & ts.ModifierFlags.Ambient) !== 0,
     )
   );
 };
+
+// A name that only declarations type, as Node's typings type process, which has no code to run,
+// unlike a built-in that TypeScript's library declares.
+export const isDeclarationOnly = (symbol: ts.Symbol, context: Context) =>
+  isOnlyDeclared(symbol) &&
+  (symbol.declarations ?? []).every(
+    (declaration) => !context.defaultLibraries.has(declaration.getSourceFile()),
+  );
 
 // A declaration that a script's declare, or a function's signature without a body, gives, of a
 // value that the host defines.

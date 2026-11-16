@@ -788,7 +788,12 @@ export const rejectSharing = (roots: readonly ts.Node[], context: Context) => {
         );
       });
       // A copy of what only a declaration gives would still have no code to run.
-      if (isShared && ts.isIdentifier(node) && symbol !== undefined && isDeclarationOnly(symbol)) {
+      if (
+        isShared &&
+        ts.isIdentifier(node) &&
+        symbol !== undefined &&
+        isDeclarationOnly(symbol, context)
+      ) {
         throw new TlaTypeScriptError(
           `tla-ts can't run ${node.getText()}, which only a declaration gives`,
           node,

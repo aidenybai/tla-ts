@@ -48693,4 +48693,20 @@ describe("BigInts", () => {
       expect((await checkModel(getSource(7))).status).toBe("deadlock");
     });
   });
+
+  // TypeScript's library declares Math, which Node gives, so it has code to run.
+  it("stops where a model would share a built-in object that changes in place", () => {
+    const source = `
+      let count = 0;
+      export const step = () => {
+        if (count > 0) return;
+        const held: any = Math;
+        held.extra = 1;
+        count = held.extra;
+      };
+    `;
+    expect(() => compile(source)).toThrow(
+      "Math would share an object that changes in place, so copy it",
+    );
+  });
 });

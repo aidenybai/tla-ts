@@ -2952,7 +2952,7 @@ const translateIdentifier = (node: ts.Identifier, scope: Scope, context: Context
       ),
     ]);
   }
-  if (symbol !== undefined && isDeclarationOnly(symbol)) {
+  if (symbol !== undefined && isDeclarationOnly(symbol, context)) {
     throw new TlaTypeScriptError(
       `tla-ts can't run ${node.text}, which only a declaration gives`,
       node,
