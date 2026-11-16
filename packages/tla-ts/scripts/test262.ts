@@ -2126,6 +2126,9 @@ const COMPOUND_ASSIGNMENTS = new Set([
 // A comparison of types that don't overlap, which only misleads where TypeScript narrows an operand
 // by it.
 const UNINTENDED_COMPARISON_ERROR = 2367;
+// A comparison that TypeScript takes to give one result: of an object literal, which JavaScript
+// compares by reference or converts to a primitive, or of NaN, which equals nothing.
+const CONSTANT_COMPARISON_ERRORS = new Set([2839, 2845]);
 // A read of a variable that TypeScript can't tell is assigned. tla-ts reads a let's or a const's
 // type as its value's, so a read of one is sound only where the value is assigned whenever it runs.
 const UNASSIGNED_READ_ERROR = 2454;
@@ -3729,7 +3732,9 @@ const ignoreSoundErrors = () => {
       (diagnostic.code === UNKNOWN_CALLEE_ERROR && isStoredStringCall(node)) ||
       (diagnostic.code === UNCALLABLE_ERROR && isTypedUnionCall(node, diagnostic)) ||
       diagnostic.code === UNUSED_OPERAND_ERROR ||
-      (diagnostic.code === UNINTENDED_COMPARISON_ERROR && isUnnarrowed(node, diagnostic)) ||
+      ((diagnostic.code === UNINTENDED_COMPARISON_ERROR ||
+        CONSTANT_COMPARISON_ERRORS.has(diagnostic.code)) &&
+        isUnnarrowed(node, diagnostic)) ||
       (diagnostic.code === UNKNOWN_VALUE_ERROR &&
         (isUnknownArithmetic(node) || isConvertedUnknown(node, diagnostic))) ||
       ((diagnostic.code === UNKNOWN_VALUE_ERROR || diagnostic.code === UNKNOWN_CALLEE_ERROR) &&
