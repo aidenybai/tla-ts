@@ -47802,4 +47802,69 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("keeps on the heap the arrays of an object that goes where its type lacks their fields", () => {
+    const getSource = (expected: string) => `
+      interface Owner {
+        owned: Owner[] | null;
+        owner: Owner | null;
+      }
+      interface Computation extends Owner {
+        sources: Signal[] | null;
+      }
+      interface Signal {
+        observers: Computation[] | null;
+      }
+      interface Other extends Owner {
+        sources: Signal[];
+      }
+      let current: Owner | null = null;
+      const tracked = new Set<Computation>();
+      const create = (): Computation => {
+        const computation: Computation = { owned: null, owner: current, sources: null };
+        if (current) {
+          if (!current.owned) current.owned = [computation];
+          else current.owned.push(computation);
+        }
+        return computation;
+      };
+      const read = (signal: Signal, computation: Computation) => {
+        if (!computation.sources) computation.sources = [signal];
+        else computation.sources.push(signal);
+        if (!signal.observers) signal.observers = [computation];
+        else signal.observers.push(computation);
+        tracked.add(computation);
+      };
+      const root: Owner = { owned: null, owner: null };
+      current = root;
+      const first = create();
+      current = first;
+      const second = create();
+      const signal: Signal = { observers: null };
+      read(signal, first);
+      read(signal, second);
+      const sources = first.sources!;
+      (current as Other).sources.push(signal);
+      const seen = [
+        root.owned!.length,
+        first.owned!.length,
+        signal.observers!.length,
+        sources.length,
+        second.sources!.length,
+        tracked.has(second),
+        (root.owned![0] as Computation).sources === sources,
+      ].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("1,1,2,2,1,true,true"))).failure).toBeUndefined();
+    });
+
+    it("rejects a field that another type's cast changes apart", async () => {
+      expect((await checkModel(getSource("1,1,2,1,1,true,true"))).failure?.message).toContain(
+        "seen 1,1,2,2,1,true,true",
+      );
+    });
+  });
 });

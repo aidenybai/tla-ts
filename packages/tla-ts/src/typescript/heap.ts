@@ -4615,6 +4615,7 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
     }
     if (ts.isObjectLiteralExpression(node)) objects.push(node);
     if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) return;
+    if (ts.isHeritageClause(node) && ts.isInterfaceDeclaration(node.parent)) return;
     if (
       ts.isExpression(node) &&
       !(
@@ -5576,17 +5577,55 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
       }
       return true;
     };
+    // The names of the group's fields that the objects of a script's object type may hold though
+    // the type doesn't declare them, as an object goes where a type that lacks them takes it.
+    const carried = new Map<ts.Symbol, Set<string>>();
+    const getObjectMembers = (type: ts.Type) =>
+      (type.isUnion() ? type.types : [type]).filter(
+        (member) => (member.flags & (ts.TypeFlags.Null | ts.TypeFlags.Undefined)) === 0,
+      );
+    const isCarried = (type: ts.Type, name: string) =>
+      getObjectMembers(type).some((member) => {
+        const symbol = member.getSymbol();
+        return symbol !== undefined && carried.get(symbol)?.has(name) === true;
+      });
+    // Whether a type is an object type that a script declares, whose objects the heap holds, so
+    // that they keep whatever fields they have.
+    const isCarrier = (type: ts.Type) =>
+      getObjectMembers(type).every((member) => {
+        // A symbol may also name a value, as a variable may share an interface's name.
+        const declarations = (member.getSymbol()?.declarations ?? []).filter(
+          (declaration) => !ts.isVariableDeclaration(declaration),
+        );
+        return (
+          declarations.length > 0 &&
+          declarations.every(
+            (declaration) =>
+              (ts.isInterfaceDeclaration(declaration) || ts.isTypeLiteralNode(declaration)) &&
+              !declaration.getSourceFile().isDeclarationFile,
+          )
+        );
+      });
     const holdsField = (type: ts.Type) =>
-      [...names].some((name) => getFields(type, name).some(isInGroup));
+      [...names].some((name) => getFields(type, name).some(isInGroup) || isCarried(type, name));
     // Whether an object of one type keeps the group's fields where it goes as another type, whose
-    // fields of the same names then join the group.
+    // fields of the same names then join the group. A type that lacks a field carries it.
     const keepsFields = (from: ts.Type, to: ts.Type) =>
       [...names].every((name) => {
         const fields = getFields(to, name);
-        const isHeld = getFields(from, name).some(isInGroup);
+        const isHeld = getFields(from, name).some(isInGroup) || isCarried(from, name);
         if (isHeld) pending.push(...fields.filter((field) => !isInGroup(field)));
-        return !isHeld || fields.length > 0;
+        if (!isHeld || fields.length > 0) return true;
+        if (!isCarrier(to)) return false;
+        getObjectMembers(to).forEach((member) => {
+          const symbol = member.getSymbol();
+          if (symbol === undefined || carried.get(symbol)?.has(name) === true) return;
+          carried.set(symbol, new Set([...(carried.get(symbol) ?? []), name]));
+          isCarriedChanged = true;
+        });
+        return true;
       });
+    let isCarriedChanged = false;
     // An object that holds one of the group's fields goes only where its fields keep their names,
     // as an operation that reads every field, such as a spread, would read an array as a value.
     const isKept = (node: ts.Expression): boolean => {
@@ -5599,6 +5638,18 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
         ts.isBinaryExpression(parent) &&
         parent.operatorToken.kind === ts.SyntaxKind.CommaToken &&
         parent.left === node
+      ) {
+        return true;
+      }
+      // A key of a set or a map, or an element that a search looks for, which a method compares by
+      // identity and reads none of its fields.
+      if (
+        isMethodCall(parent) &&
+        parent.arguments[0] === node &&
+        ((KEY_METHODS.has(parent.expression.name.text) &&
+          ["set", "map"].includes(getKind(parent.expression.expression, context))) ||
+          (ELEMENT_SEARCH_METHODS.has(parent.expression.name.text) &&
+            getKind(parent.expression.expression, context) === "sequence"))
       ) {
         return true;
       }
@@ -5716,10 +5767,16 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
       }
       return ts.isExpressionStatement(parent);
     };
-    const isSettled = (): boolean =>
-      isGrown() &&
-      expressions.every((node) => !holdsField(checker.getTypeAtLocation(node)) || isKept(node)) &&
-      (pending.length === 0 || isSettled());
+    const isSettled = (): boolean => {
+      if (!isGrown()) return false;
+      const isKeptEverywhere = expressions.every(
+        (node) => !holdsField(checker.getTypeAtLocation(node)) || isKept(node),
+      );
+      // A type that took to carry a field reads its objects again.
+      const isChanged = isCarriedChanged;
+      isCarriedChanged = false;
+      return isKeptEverywhere && ((pending.length === 0 && !isChanged) || isSettled());
+    };
     return seeds.every((seed) => addSource(seed) && isUse(seed)) && isSettled()
       ? [...nodes, ...group]
       : [];
