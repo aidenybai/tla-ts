@@ -4606,6 +4606,9 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
     // The functions whose results, and the holders whose arrays' elements, are the group's.
     const returns: ts.SignatureDeclaration[] = [];
     const outers = [...startOuters];
+    // The fields that hold functions whose results are the group's.
+    const resultFields: ts.Symbol[] = [];
+    const resultFieldKeys = new Set<ts.Node>();
     const outerKeys = new Set<ts.Node>();
     // The parameters of callbacks that take each element of an outer holder.
     const elementParameters = new Set<ts.Node>();
@@ -4695,16 +4698,120 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
       };
       if (body !== undefined && ts.isBlock(body)) ts.forEachChild(body, findReturned);
       return (
-        called !== undefined &&
+        (called !== undefined || addInlineFields(owner)) &&
         body !== undefined &&
         !isExtended(owner) &&
         (ts.isBlock(body) ? returned : [body]).every(addSource) &&
         (name === undefined ? [] : getReferences(name.parent))
           .filter((reference) => reference !== name)
-          .every((reference) => {
-            const call = getCall(reference);
-            return call !== undefined && isUse(call);
-          })
+          .every(isResultReference)
+      );
+    };
+    // A function written in place as the value of an object literal's property or of an
+    // assignment, which only the fields that take it name, and which then hold only such functions.
+    const addInlineFields = (owner: ts.SignatureDeclaration) => {
+      const holder = ts.findAncestor(
+        owner.parent,
+        (ancestor) =>
+          !ts.isParenthesizedExpression(ancestor) &&
+          !ts.isAsExpression(ancestor) &&
+          !ts.isSatisfiesExpression(ancestor),
+      );
+      const fields =
+        (ts.isArrowFunction(owner) || ts.isFunctionExpression(owner)) && holder !== undefined
+          ? ts.isPropertyAssignment(holder)
+            ? getPropertyFields(holder)
+            : ts.isBinaryExpression(holder) &&
+                holder.operatorToken.kind === ts.SyntaxKind.EqualsToken
+              ? (getAccessedFields(holder.left, checker) ?? [])
+              : []
+          : [];
+      resultFields.push(...fields);
+      return fields.length > 0;
+    };
+    // A reference to a function whose result is the group's: a call, or the value of an object
+    // literal's property, whose fields then hold only such functions.
+    const isResultReference = (reference: ts.Identifier) => {
+      const call = getCall(reference);
+      if (call !== undefined) return isUse(call);
+      const property = reference.parent;
+      if (
+        !(ts.isShorthandPropertyAssignment(property) && property.name === reference) &&
+        !(ts.isPropertyAssignment(property) && property.initializer === reference)
+      ) {
+        return false;
+      }
+      resultFields.push(...getPropertyFields(property));
+      return true;
+    };
+    // A function that an object literal's property or an assignment gives a field whose functions'
+    // results are the group's: one that a name holds, or one written in place.
+    const addResultFunction = (node: ts.Expression): boolean => {
+      const value = skipCasts(node);
+      if (ts.isArrowFunction(value) || ts.isFunctionExpression(value)) {
+        return getCalledName(value) === undefined && addResult(value);
+      }
+      const declaration = ts.isIdentifier(value)
+        ? getSymbol(value, checker)?.valueDeclaration
+        : undefined;
+      const owner =
+        declaration !== undefined && ts.isVariableDeclaration(declaration)
+          ? declaration.initializer
+          : declaration;
+      return (
+        owner !== undefined &&
+        ts.isFunctionLike(owner) &&
+        getCalledName(owner) !== undefined &&
+        addResult(owner)
+      );
+    };
+    // A field whose functions' results are the group's: each value that an object literal or an
+    // assignment gives it is such a function, and each use calls it or checks that it's there.
+    const isResultField = (field: ts.Symbol) => {
+      const declarations = field.declarations ?? [];
+      // The name of each declaration marks the field, as its call gives what the heap holds.
+      nodes.push(
+        ...declarations.flatMap((declaration) => ts.getNameOfDeclaration(declaration) ?? []),
+      );
+      const isFieldUse = (use: ts.Expression): boolean => {
+        const parent = use.parent;
+        if (ts.isCallExpression(parent) && parent.expression === use) return isUse(parent);
+        if (ts.isBinaryExpression(parent)) {
+          const kind = parent.operatorToken.kind;
+          return kind === ts.SyntaxKind.EqualsToken
+            ? parent.left === use && addResultFunction(parent.right)
+            : IDENTITY_OPERATORS.has(kind) ||
+                (kind === ts.SyntaxKind.AmpersandAmpersandToken && parent.left === use);
+        }
+        return (
+          ts.isTypeOfExpression(parent) ||
+          (ts.isIfStatement(parent) && parent.expression === use) ||
+          (ts.isPrefixUnaryExpression(parent) && parent.operator === ts.SyntaxKind.ExclamationToken)
+        );
+      };
+      return (
+        declarations.length > 0 &&
+        declarations.every(
+          (declaration) =>
+            ts.isPropertySignature(declaration) ||
+            ts.isPropertyAssignment(declaration) ||
+            ts.isShorthandPropertyAssignment(declaration),
+        ) &&
+        objects.every((object) =>
+          object.properties.every((property) => {
+            const fields = getPropertyFields(property);
+            if (!fields.some((inner) => isSame(inner, field))) return true;
+            resultFields.push(...fields);
+            return ts.isShorthandPropertyAssignment(property)
+              ? addResultFunction(property.name)
+              : ts.isPropertyAssignment(property) && addResultFunction(property.initializer);
+          }),
+        ) &&
+        accesses
+          .filter((access) =>
+            getAccessedFields(access, checker)?.some((inner) => isSame(inner, field)),
+          )
+          .every(isFieldUse)
       );
     };
     const addSource = (node: ts.Expression): boolean => {
@@ -4757,7 +4864,12 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
         const callee = getSymbol(node.expression, checker)?.valueDeclaration;
         const owner =
           callee !== undefined && ts.isVariableDeclaration(callee) ? callee.initializer : callee;
-        return owner !== undefined && ts.isFunctionLike(owner) && addResult(owner);
+        if (owner !== undefined && ts.isFunctionLike(owner)) return addResult(owner);
+        // A call through a field, whose functions then give only the group's.
+        const fields = getAccessedFields(node.expression, checker);
+        if (fields === undefined || fields.length === 0) return false;
+        resultFields.push(...fields);
+        return true;
       }
       return addHolder(node);
     };
@@ -5163,7 +5275,7 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
             ];
       nodes.push(owner);
       return (
-        called !== undefined &&
+        (called !== undefined || addInlineFields(owner)) &&
         body !== undefined &&
         (ts.isBlock(body)
           ? body.statements
@@ -5172,14 +5284,9 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
                 (returned) => returned.expression !== undefined && addSource(returned.expression),
               )
           : addSource(body)) &&
-        (references.get(called) ?? [])
+        (called === undefined ? [] : (references.get(called) ?? []))
           .filter((reference) => reference !== name)
-          .every(
-            (reference) =>
-              ts.isCallExpression(reference.parent) &&
-              reference.parent.expression === reference &&
-              isUse(reference.parent),
-          )
+          .every(isResultReference)
       );
     };
     // A holder whose arrays' elements are the group's arrays: each array that it holds starts as a
@@ -5303,7 +5410,20 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
       );
     };
     const isGrown = () => {
-      while (pending.length > 0 || returns.length > 0 || outers.length > 0) {
+      while (
+        pending.length > 0 ||
+        returns.length > 0 ||
+        outers.length > 0 ||
+        resultFields.length > 0
+      ) {
+        const resultField = resultFields.pop();
+        if (resultField !== undefined) {
+          const key = resultField.declarations?.[0];
+          if (key === undefined || resultFieldKeys.has(key)) continue;
+          resultFieldKeys.add(key);
+          if (!isResultField(resultField)) return false;
+          continue;
+        }
         const owner = returns.pop();
         if (owner !== undefined) {
           if (group.has(owner)) continue;

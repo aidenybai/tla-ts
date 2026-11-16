@@ -45557,4 +45557,48 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("ab,1,0,3"))).failure?.message).toContain("seen b,1,0,3");
     });
   });
+
+  describe("holds on the heap the sets that a field's functions give where a caller changes them", () => {
+    const getSource = (expected: string) => `
+      interface Hook {
+        getRoots?: (id: number) => Set<string>;
+        commit: (id: number, root: string, isUnmounted: boolean) => void;
+      }
+      const roots = new Map<number, Set<string>>();
+      const getRoots = (id: number): Set<string> => {
+        const found = roots.get(id) ?? new Set<string>();
+        roots.set(id, found);
+        return found;
+      };
+      const hook: Hook = {
+        getRoots,
+        commit: (id, root, isUnmounted) => {
+          const found = getRoots(id);
+          if (isUnmounted) found.delete(root);
+          else found.add(root);
+        },
+      };
+      hook.commit(1, "a", false);
+      hook.commit(1, "b", false);
+      hook.commit(2, "c", false);
+      hook.commit(1, "a", true);
+      const list = (id: number) => {
+        if (!hook.getRoots) return "none";
+        return [...hook.getRoots(id)].join("") || "empty";
+      };
+      const has = hook.getRoots !== undefined && hook.getRoots(2).has("c");
+      const seen = [list(1), list(2), list(3), has].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("b,c,empty,true"))).failure).toBeUndefined();
+    });
+
+    it("rejects a root that the commit dropped", async () => {
+      expect((await checkModel(getSource("ab,c,empty,true"))).failure?.message).toContain(
+        "seen b,c,empty,true",
+      );
+    });
+  });
 });

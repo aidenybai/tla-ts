@@ -675,6 +675,21 @@ const isHeld = (node: ts.Expression, context: Context): boolean => {
   }
   if (ts.isCallExpression(node)) {
     const called = getCalledFunction(node, context.checker);
+    // A call through a field whose functions give what the heap holds, which the names of the
+    // field's declarations mark.
+    const fields = getAccessedFields(node.expression, context.checker);
+    if (
+      fields !== undefined &&
+      fields.length > 0 &&
+      fields.every((field) =>
+        (field.declarations ?? []).every((declaration) => {
+          const name = ts.getNameOfDeclaration(declaration);
+          return name !== undefined && context.heapCollections.has(name);
+        }),
+      )
+    ) {
+      return true;
+    }
     // A set's add, a map's set, and an array's sort, reverse, fill, and copyWithin give the
     // collection that they change.
     return called !== undefined
