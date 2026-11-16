@@ -3,6 +3,7 @@ import {
   type HeapFunction,
   type Context,
   type FunctionNode,
+  getAppliedList,
   getElement,
   getSymbol,
   findNodes,
@@ -46,7 +47,14 @@ import {
 import { getAnyProperty, getHeap, translatePropertyKey } from "./heap";
 import { translateBuiltInValue } from "./intrinsics";
 import { useJavaScript } from "./javascript";
-import { getField, getPathStep, getPropertyKey, isHeapPattern, isSequenceType } from "./types";
+import {
+  getField,
+  getPathStep,
+  getPropertyKey,
+  isHeapArray,
+  isHeapPattern,
+  isSequenceType,
+} from "./types";
 
 export interface Scope {
   // The TLA+ expression for each variable, parameter, and local in scope.
@@ -752,9 +760,21 @@ export const translateArgumentValues = (
   context: Context,
 ) => {
   const rest = parameters.findIndex((parameter) => parameter.dotDotDotToken !== undefined);
-  const spread = argumentNodes.findIndex(ts.isSpreadElement);
-  const list = spread === -1 ? undefined : translateElements(argumentNodes, scope, context);
-  if (list !== undefined && (rest === -1 || spread < rest)) {
+  const applied = getAppliedList(argumentNodes);
+  const spread = applied === undefined ? argumentNodes.findIndex(ts.isSpreadElement) : 0;
+  const list =
+    applied !== undefined
+      ? isHeapArray(applied, context)
+        ? useJavaScript(
+            "ArrayLikeValues",
+            [getHeap(scope, applied, context), translateExpression(applied, scope, context)],
+            context,
+          )
+        : translateExpression(applied, scope, context)
+      : spread === -1
+        ? undefined
+        : translateElements(argumentNodes, scope, context);
+  if (list !== undefined && (rest === -1 || spread < rest || applied !== undefined)) {
     if (!argumentNodes.every((_, position) => isPassed(position))) {
       throw new TlaTypeScriptError(
         "tla-ts can't spread arguments into the parameters before a rest parameter",

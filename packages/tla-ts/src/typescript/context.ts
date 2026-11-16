@@ -1337,6 +1337,21 @@ export const rejectDeclaredCall = (node: ts.CallExpression, context: Context) =>
 export const isMethodCall = (node: ts.Node): node is MethodCall =>
   ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression);
 
+// The array that a call of a function through apply passes, where the call binds the function's
+// parameters to its elements, as CreateListFromArrayLike takes them, rather than to arguments that it
+// writes.
+export const getAppliedList = (argumentNodes: readonly ts.Expression[]) => {
+  const list = argumentNodes.length === 1 ? argumentNodes[0] : undefined;
+  const call = list?.parent;
+  return call !== undefined &&
+    isMethodCall(call) &&
+    call.expression.name.text === "apply" &&
+    call.arguments.length === 2 &&
+    call.arguments[1] === list
+    ? list
+    : undefined;
+};
+
 export const isSuperAccess = (
   node: ts.Node,
 ): node is (ts.PropertyAccessExpression | ts.ElementAccessExpression) & {

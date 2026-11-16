@@ -109,6 +109,7 @@ import {
   isVarFunction,
   getVarFunctionTarget,
   getOwnSymbol,
+  getAppliedList,
   getSharedDeclaration,
   getSharedWrite,
   getSymbol,
@@ -4693,6 +4694,91 @@ const translateCallStatementBody = (
           ),
         );
   }
+  const through = getDispatchedThrough(expression, path, context);
+  if (through !== undefined) {
+    const method = through.isApply ? "apply" : "call";
+    // Each function that the value may be continues to one copy of what follows the call.
+    return translateJoined(expression, path, context, continueWith, (continueCall) => {
+      const heap = getHeap(path.scope, expression, context);
+      const value = translateExpression(through.target, path.scope, context);
+      const thisValue =
+        through.thisArgument === undefined
+          ? getUndefined(context)
+          : translateExpression(through.thisArgument, path.scope, context);
+      return through.candidates.reduceRight(
+        (otherwise, candidate) => {
+          const candidateValue = getCandidateValue(candidate, context);
+          if (
+            candidateValue === undefined ||
+            frame.inlining.has(candidate) ||
+            isAnyGenerator(candidate) ||
+            isAsyncFunction(candidate)
+          ) {
+            return otherwise;
+          }
+          const receiver = ts.isArrowFunction(candidate)
+            ? undefined
+            : { value: thisValue, method: candidate };
+          const run = isClosure(candidate, context)
+            ? enterClosure(candidate, value, path, context, frame, (inner, innerFrame, leave) =>
+                inlineBody(
+                  expression,
+                  candidate,
+                  through.argumentNodes,
+                  receiver,
+                  inner,
+                  context,
+                  innerFrame,
+                  (after, result) => continueCall(leave(after), result),
+                ),
+              )
+            : inlineBody(
+                expression,
+                candidate,
+                through.argumentNodes,
+                receiver,
+                path,
+                context,
+                frame,
+                continueCall,
+              );
+          return ifThenElse(
+            apply("=", [
+              isClosure(candidate, context) ||
+              isNestedFunction(candidate, context) ||
+              isHeapFunction(candidate, context)
+                ? useJavaScript("CodeOf", [heap, value], context)
+                : value,
+              candidateValue,
+            ]),
+            ifThenElse(
+              useJavaScript(
+                "HoldsBuiltIn",
+                [
+                  heap,
+                  isHeapFunction(candidate, context)
+                    ? value
+                    : translateBuiltInValue("Function.prototype", expression, context),
+                  string(method),
+                  string(`Function.prototype.${method}`),
+                ],
+                context,
+              ),
+              run,
+              leaf(
+                apply("Assert", [
+                  boolean(false),
+                  string("tla-ts can't tell which function this call runs"),
+                ]),
+              ),
+            ),
+            otherwise,
+          );
+        },
+        leaf(stopUnknownCall(value, context)),
+      );
+    });
+  }
   const callee = called?.method ?? getCallback(expression.expression, path, context);
   const bound = callee === undefined ? getBound(expression.expression, context) : undefined;
   if (bound !== undefined && !bound.isSteady) {
@@ -5267,19 +5353,23 @@ const getCalledThrough = (node: ts.CallExpression, context: Context) => {
     : undefined;
 };
 
-// A call of a script's function or async function through Function.prototype.call or apply,
-// with the this and the arguments that it passes. apply's CreateListFromArrayLike takes no
-// arguments from undefined or null, and an array literal's elements, with undefined at its holes.
-const getAppliedCall = (node: ts.CallExpression, path: Path, context: Context) => {
-  if (!isMethodCall(node) || !["call", "apply"].includes(node.expression.name.text)) {
-    return undefined;
-  }
+// A name of a rest parameter, which holds an array that the call made, as its type may not tell.
+const isRestParameter = (node: ts.Expression, context: Context) => {
+  const declaration = ts.isIdentifier(node)
+    ? getSymbol(node, context.checker)?.valueDeclaration
+    : undefined;
+  return (
+    declaration !== undefined &&
+    ts.isParameter(declaration) &&
+    declaration.dotDotDotToken !== undefined
+  );
+};
+
+// The arguments that a call through Function.prototype.call or apply passes: call's after its this,
+// and apply's CreateListFromArrayLike, which takes none from undefined or null, an array literal's
+// elements, with undefined at its holes, and another array's, which the call then binds as a spread.
+const getAppliedArguments = (node: MethodCall, context: Context) => {
   const isApply = node.expression.name.text === "apply";
-  const target = getCast(node.expression.expression);
-  const callee =
-    ts.isIdentifier(target) || ts.isFunctionExpression(target) || ts.isArrowFunction(target)
-      ? (getCallback(target, path, context) ?? getAsyncCallee(target, path, context))
-      : undefined;
   const listed = isApply ? node.arguments.at(1) : undefined;
   const list = listed === undefined ? undefined : getCast(listed);
   const argumentNodes = !isApply
@@ -5290,16 +5380,81 @@ const getAppliedCall = (node: ts.CallExpression, path: Path, context: Context) =
       ? []
       : ts.isArrayLiteralExpression(list)
         ? list.elements
-        : undefined;
+        : listed !== undefined &&
+            (isHeapArray(list, context) ||
+              getKind(list, context) === "sequence" ||
+              (getKind(list, context) !== "object" && isRestParameter(list, context)))
+          ? [listed]
+          : undefined;
+  return argumentNodes !== undefined &&
+    (!isApply || node.arguments.length <= 2) &&
+    !node.arguments.slice(0, isApply ? 2 : 1).some(ts.isSpreadElement)
+    ? { argumentNodes, thisArgument: node.arguments.at(0), isApply }
+    : undefined;
+};
+
+const isThroughCall = (node: ts.CallExpression): node is MethodCall =>
+  isMethodCall(node) && ["call", "apply"].includes(node.expression.name.text);
+
+// A call through Function.prototype.call or apply itself, which a function's type declares, rather
+// than through an object's own method of either name.
+const isFunctionThroughCall = (node: ts.CallExpression, context: Context): node is MethodCall =>
+  isThroughCall(node) &&
+  (getSymbol(node.expression, context.checker)?.declarations ?? []).some(
+    (declaration) =>
+      declaration.getSourceFile().isDeclarationFile &&
+      ts.isInterfaceDeclaration(declaration.parent) &&
+      ["Function", "CallableFunction", "NewableFunction"].includes(declaration.parent.name.text),
+  );
+
+// A name that a call through call or apply reads its function from, where it may hold any of
+// several: a parameter, or what a for-of takes.
+const isDispatchedName = (node: ts.Expression, context: Context) => {
+  const declaration = ts.isIdentifier(node)
+    ? getSymbol(node, context.checker)?.valueDeclaration
+    : undefined;
+  return (
+    declaration !== undefined &&
+    (ts.isParameter(declaration) ||
+      (ts.isVariableDeclaration(declaration) &&
+        ts.isVariableDeclarationList(declaration.parent) &&
+        ts.isForOfStatement(declaration.parent.parent)))
+  );
+};
+
+// A call of a script's function or async function through Function.prototype.call or apply, with
+// the this and the arguments that it passes, other than an async function's from an array.
+const getAppliedCall = (node: ts.CallExpression, path: Path, context: Context) => {
+  if (!isThroughCall(node)) return undefined;
+  const target = getCast(node.expression.expression);
+  const callee =
+    ts.isIdentifier(target) || ts.isFunctionExpression(target) || ts.isArrowFunction(target)
+      ? (getCallback(target, path, context) ?? getAsyncCallee(target, path, context))
+      : undefined;
+  const applied = getAppliedArguments(node, context);
   return callee?.body !== undefined &&
     (ts.isFunctionDeclaration(callee) ||
       ts.isFunctionExpression(callee) ||
       ts.isArrowFunction(callee)) &&
-    argumentNodes !== undefined &&
-    (!isApply || node.arguments.length <= 2) &&
-    !node.arguments.slice(0, isApply ? 2 : 1).some(ts.isSpreadElement)
-    ? { callee, target, argumentNodes, thisArgument: node.arguments.at(0), isApply }
+    applied !== undefined &&
+    !(isAsyncFunction(callee) && getAppliedList(applied.argumentNodes) !== undefined)
+    ? { ...applied, callee, target }
     : undefined;
+};
+
+// A call through Function.prototype.call or apply of a function that a name holds where tla-ts
+// can't tell which, with the functions that it may be.
+const getDispatchedThrough = (node: ts.CallExpression, path: Path, context: Context) => {
+  if (!isFunctionThroughCall(node, context)) return undefined;
+  const target = getCast(node.expression.expression);
+  const applied = getAppliedArguments(node, context);
+  // Where none fits, the call stops only as it runs.
+  const candidates = isDispatchedName(target, context)
+    ? getCandidates(node, path.scope.functions, context, target)
+    : undefined;
+  return applied === undefined || candidates === undefined
+    ? undefined
+    : { ...applied, target, candidates };
 };
 
 export const getCallback = (node: ts.Expression, path: Path, context: Context) => {
@@ -5429,7 +5584,7 @@ export const getPassedCallbacks = (
     // A parameter that the call passes nothing takes the function that its default writes.
     const callback =
       argument === undefined
-        ? argumentNodes.some(ts.isSpreadElement)
+        ? argumentNodes.some(ts.isSpreadElement) || getAppliedList(argumentNodes) !== undefined
           ? undefined
           : getAnyFunction(parameter.initializer)
         : isObject
@@ -5674,6 +5829,7 @@ export const bindCall = (
     first !== undefined &&
     source !== undefined &&
     !ts.isSpreadElement(source) &&
+    getAppliedList(argumentNodes) === undefined &&
     isGetterPattern(first.name, path, context)
   ) {
     const name = context.names.getFresh("argument");
@@ -5810,7 +5966,10 @@ export const bindCall = (
     const position = parameters.findIndex((parameter) => parameter === assigning.binding);
     const argument = argumentNodes.at(position);
     const passedValue = argument === undefined ? undefined : skipCasts(argument);
-    const isKnown = position >= 0 && !argumentNodes.slice(0, position + 1).some(ts.isSpreadElement);
+    const isKnown =
+      position >= 0 &&
+      !argumentNodes.slice(0, position + 1).some(ts.isSpreadElement) &&
+      getAppliedList(argumentNodes) === undefined;
     const isRun =
       isKnown && (passedValue === undefined || isUndefinedLiteral(passedValue, context));
     const isSkipped =
@@ -5860,7 +6019,7 @@ export const bindCall = (
     restValue,
     deferred,
   );
-  if (!passed.some(ts.isSpreadElement)) {
+  if (!passed.some(ts.isSpreadElement) && getAppliedList(argumentNodes) === undefined) {
     valueParameters.forEach((parameter, position) => {
       const argument = passed.at(position);
       const symbol = ts.isIdentifier(parameter.name)
@@ -6280,6 +6439,7 @@ const isSelfCallable = (
     isAsyncFunction(callee) ||
     argumentNodes.length > parameters.length ||
     argumentNodes.some(ts.isSpreadElement) ||
+    getAppliedList(argumentNodes) !== undefined ||
     findNodes(
       callee,
       (inner): inner is ts.Identifier => getArgumentsOwner(inner, context.checker) === callee,
@@ -13135,12 +13295,14 @@ const getMadeFunctions = (callee: ts.Expression, context: Context) => {
 // The functions that a call through a value may run, where tla-ts can't tell which one it names:
 // those that no other function encloses, whose type TypeScript lets the callee hold. The call
 // branches on its callee's value between them.
-const getDispatched = (
+// The functions that a call through a value may run, which may be none that the script writes.
+const getCandidates = (
   node: ts.CallExpression,
   functions: ReadonlyMap<ts.Symbol, FunctionNode>,
   context: Context,
+  called: ts.Expression,
 ) => {
-  const callee = skipCasts(node.expression);
+  const callee = skipCasts(called);
   const symbol = getSymbol(callee, context.checker);
   const declarations = symbol?.declarations ?? [];
   const assigned = symbol && functions.get(symbol);
@@ -13163,11 +13325,23 @@ const getDispatched = (
   ) {
     return undefined;
   }
-  const dispatched = getMadeFunctions(callee, context) ?? [
-    ...getFunctionCandidates(callee, context),
-    ...getClosures(callee, context),
-  ];
-  return dispatched.length > 0 ? dispatched : undefined;
+  return (
+    getMadeFunctions(callee, context) ?? [
+      ...getFunctionCandidates(callee, context),
+      ...getClosures(callee, context),
+    ]
+  );
+};
+
+const getDispatched = (
+  node: ts.CallExpression,
+  functions: ReadonlyMap<ts.Symbol, FunctionNode>,
+  context: Context,
+  // The function that the call runs, which a call through call or apply names before them.
+  called: ts.Expression = node.expression,
+) => {
+  const dispatched = getCandidates(node, functions, context, called);
+  return dispatched !== undefined && dispatched.length > 0 ? dispatched : undefined;
 };
 
 // RegExp.prototype.exec and test, where a script stores them as values, which throw a TypeError
@@ -13342,6 +13516,7 @@ const isStatementResult = (node: ts.CallExpression, path: Path, context: Context
     getThisSymbolCall(node, context) !== undefined ||
     getCalledThrough(node, context) !== undefined ||
     getAppliedCall(node, path, context) !== undefined ||
+    getDispatchedThrough(node, path, context) !== undefined ||
     getMisreceivedCall(node, context) !== undefined ||
     getStackCall(node, context) !== undefined ||
     getIteratorDisposeCall(node, context) !== undefined ||
@@ -14881,7 +15056,12 @@ const getEffects = (
     isStackConstruction(node, context) ||
     isUsing;
   const callees = ts.isCallExpression(node)
-    ? [node.expression, ...node.arguments]
+    ? [
+        node.expression,
+        // A call through call or apply runs the function that it reads them from.
+        ...(isFunctionThroughCall(node, context) ? [node.expression.expression] : []),
+        ...node.arguments,
+      ]
     : ts.isTaggedTemplateExpression(node)
       ? [node.tag, ...getSubstitutions(node)]
       : [];
@@ -14924,7 +15104,11 @@ const getEffects = (
       ...(isIteratorDispose ? getMethods(node, "return", context, true) : []),
       ...callees.flatMap((callee) => getFunctionNode(callee) ?? []),
       ...(ts.isCallExpression(node) && getFunctionNode(node.expression) === undefined
-        ? (getDispatched(node, functions, context) ?? [])
+        ? (getDispatched(node, functions, context) ??
+          (isFunctionThroughCall(node, context)
+            ? getDispatched(node, functions, context, getCast(node.expression.expression))
+            : undefined) ??
+          [])
         : []),
       ...(written === undefined
         ? []

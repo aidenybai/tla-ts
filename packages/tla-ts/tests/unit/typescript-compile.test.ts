@@ -46142,4 +46142,95 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("applies a function to the elements of an array that apply takes, as a rest parameter holds", () => {
+    const getSource = (expected: string) => `
+      "use strict";
+      type Listener = (...values: unknown[]) => unknown;
+      const seen: string[] = [];
+      const callListener = <Arguments extends unknown[]>(
+        listener: (...listenerArguments: Arguments) => unknown,
+        receiver: unknown,
+        ...listenerArguments: Arguments
+      ): void => {
+        try {
+          listener.apply(receiver, listenerArguments);
+        } catch (error) {
+          seen.push("caught " + (error as Error).message);
+        }
+      };
+      const describe = (label: string, count = 2, ...more: number[]) => {
+        seen.push([label, count, more.length, more.join("+")].join(":"));
+      };
+      function withThis(this: { tag: string } | undefined, suffix?: string) {
+        seen.push((this === undefined ? "none" : this.tag) + "/" + suffix);
+      }
+      callListener(describe, undefined, "a");
+      callListener(describe, undefined, "b", 5, 6, 7);
+      callListener(withThis, { tag: "t" }, "s");
+      callListener(withThis, undefined);
+      callListener(() => {
+        throw new Error("boom");
+      }, undefined);
+      const words = ["x", "y"];
+      describe.apply(undefined, words.length > 1 ? ["long"] : ["short"]);
+      const listeners = new Set<Listener>();
+      listeners.add((...values) => seen.push("first " + values.join("+")));
+      listeners.add(function (this: { tag: string }, value) {
+        seen.push(this.tag + " " + String(value));
+      });
+      const notify = (...values: unknown[]) => {
+        for (const listener of [...listeners]) listener.apply({ tag: "r" }, values);
+      };
+      notify("c", 1);
+      notify();
+      const result = seen.join();
+      if (result !== "${expected}") throw new Error("seen " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (
+          await checkModel(
+            getSource(
+              "a:2:0:,b:5:2:6+7,t/s,none/undefined,caught boom,long:2:0:,first c+1,r c,first ,r undefined",
+            ),
+          )
+        ).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects a rest parameter that takes the array whole", async () => {
+      expect(
+        (
+          await checkModel(
+            getSource(
+              "a:2:0:,b:5:1:6+7,t/s,none/undefined,caught boom,long:2:0:,first c+1,r c,first ,r undefined",
+            ),
+          )
+        ).failure?.message,
+      ).toContain(
+        "seen a:2:0:,b:5:2:6+7,t/s,none/undefined,caught boom,long:2:0:,first c+1,r c,first ,r undefined",
+      );
+    });
+
+    it("runs a call through call where no function fits only as far as the call", async () => {
+      const getUnfit = (expected: string) => `
+        "use strict";
+        const seen: string[] = [];
+        const invoke = (listener: (value: symbol) => bigint, value: symbol): void => {
+          listener.call(undefined, value);
+        };
+        const holder: { listener?: (value: symbol) => bigint } = {};
+        const notify = (isCalled: boolean) => {
+          if (isCalled && holder.listener !== undefined) invoke(holder.listener, Symbol());
+          seen.push(String(isCalled));
+        };
+        notify(false);
+        if (seen.join() !== "${expected}") throw new Error(seen.join());
+      `;
+      expect((await checkModel(getUnfit("false"))).failure).toBeUndefined();
+      expect((await checkModel(getUnfit("true"))).failure?.message).toContain('"false"');
+    });
+  });
 });
