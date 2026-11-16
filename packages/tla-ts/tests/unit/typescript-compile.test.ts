@@ -10041,8 +10041,8 @@ describe("errors", () => {
 
   it.each([
     [
-      "an array that a heap object shares and that then changes",
-      "const box = { list: [1] };\nlet list = box.list;\nlist.push(2);\nlet size = box.list.length;",
+      "an array that a heap object shares through a function that another name holds and that then changes",
+      "const box = { list: [1] };\nconst keep = (value: number[]) => value;\nconst run = keep;\nlet list = run(box.list);\nlist.push(2);\nlet size = box.list.length;",
       "would share an object that changes in place",
     ],
     [
@@ -47739,6 +47739,178 @@ describe("BigInts", () => {
 
     it("rejects a conditional that runs both branches", async () => {
       expect((await checkModel(getSource("x,n,4,1"))).failure?.message).toContain("seen x,n,3,1");
+    });
+  });
+
+  describe("holds on the heap the arrays that a let or a field holds after null, an assignment, or nothing", () => {
+    const getSource = (expected: string) => `
+      interface Computation {
+        sources: Signal[] | null;
+        slots: number[] | null;
+        pending?: Computation[];
+      }
+      interface Signal {
+        observers: Computation[] | null;
+      }
+      let queue: Computation[] | null = null;
+      let last: Computation[] | undefined;
+      const read = (signal: Signal, computation: Computation) => {
+        const slot = signal.observers ? signal.observers.length : 0;
+        if (!computation.sources) computation.sources = [signal];
+        else computation.sources.push(signal);
+        computation.slots || (computation.slots = []);
+        computation.slots!.push(slot);
+        if (!signal.observers) signal.observers = [computation];
+        else signal.observers.push(computation);
+        return slot;
+      };
+      const first: Computation = { sources: null, slots: null };
+      const second: Computation = { sources: null, slots: null };
+      const signal: Signal = { observers: null };
+      read(signal, first);
+      const slot = read(signal, second);
+      queue = [];
+      (queue.push(first), queue.push(second));
+      const flushed = queue;
+      queue = null;
+      last = flushed;
+      if (first.sources && flushed) second.pending = flushed;
+      second.pending!.push(first);
+      const pending = second.pending!;
+      delete second.pending;
+      const seen = [
+        slot,
+        signal.observers!.length,
+        first.slots!.join("+"),
+        second.slots!.join("+"),
+        flushed.length,
+        last.length,
+        pending.length,
+        "pending" in second,
+        signal.observers![1] === second,
+      ].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("1,2,0,1,3,3,3,false,true"))).failure).toBeUndefined();
+    });
+
+    it("rejects an array that a field copies rather than shares", async () => {
+      expect((await checkModel(getSource("1,2,0,1,2,2,3,false,true"))).failure?.message).toContain(
+        "seen 1,2,0,1,3,3,3,false,true",
+      );
+    });
+  });
+
+  describe("shares the array that a heap object holds with a let that changes it", () => {
+    const getSource = (expected: number) => `
+      const box = { list: [1] };
+      let list = box.list;
+      list.push(2);
+      const size = box.list.length;
+      if (size !== ${expected}) throw new Error("seen " + size);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(2))).failure).toBeUndefined();
+    });
+
+    it("rejects a let that changes a copy", async () => {
+      expect((await checkModel(getSource(1))).failure?.message).toContain("seen 2");
+    });
+  });
+
+  describe("keeps on the heap the arrays of an object that goes where its type lacks their fields", () => {
+    const getSource = (expected: string) => `
+      interface Owner {
+        owned: Owner[] | null;
+        owner: Owner | null;
+      }
+      interface Computation extends Owner {
+        sources: Signal[] | null;
+      }
+      interface Signal {
+        observers: Computation[] | null;
+      }
+      interface Other extends Owner {
+        sources: Signal[];
+      }
+      let current: Owner | null = null;
+      const tracked = new Set<Computation>();
+      const create = (): Computation => {
+        const computation: Computation = { owned: null, owner: current, sources: null };
+        if (current) {
+          if (!current.owned) current.owned = [computation];
+          else current.owned.push(computation);
+        }
+        return computation;
+      };
+      const read = (signal: Signal, computation: Computation) => {
+        if (!computation.sources) computation.sources = [signal];
+        else computation.sources.push(signal);
+        if (!signal.observers) signal.observers = [computation];
+        else signal.observers.push(computation);
+        tracked.add(computation);
+      };
+      const root: Owner = { owned: null, owner: null };
+      current = root;
+      const first = create();
+      current = first;
+      const second = create();
+      const signal: Signal = { observers: null };
+      read(signal, first);
+      read(signal, second);
+      const sources = first.sources!;
+      (current as Other).sources.push(signal);
+      const seen = [
+        root.owned!.length,
+        first.owned!.length,
+        signal.observers!.length,
+        sources.length,
+        second.sources!.length,
+        tracked.has(second),
+        (root.owned![0] as Computation).sources === sources,
+      ].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("1,1,2,2,1,true,true"))).failure).toBeUndefined();
+    });
+
+    it("rejects a field that another type's cast changes apart", async () => {
+      expect((await checkModel(getSource("1,1,2,1,1,true,true"))).failure?.message).toContain(
+        "seen 1,1,2,2,1,true,true",
+      );
+    });
+  });
+
+  describe("keeps as state a variable that the model exports", () => {
+    const getSource = (limit: number) => `
+      export let count = 0;
+      export var total: number = 0;
+      export const step = () => {
+        if (count >= 3) return;
+        count++;
+        total += 2;
+      };
+      export const isSmall = () => count < ${limit} && total === count * 2;
+    `;
+
+    it("steps the exported variables as an action changes them", async () => {
+      const result = await checkModel(getSource(2));
+      expect(getTrace(result)).toEqual([
+        { count: "0", total: "0" },
+        { count: "1", total: "2" },
+        { count: "2", total: "4" },
+      ]);
+    });
+
+    it("holds where the bound is past every step", async () => {
+      const result = await checkModel(getSource(4));
+      expect(result.status).toBe("deadlock");
+      expect(result.distinctStates).toBe(4);
     });
   });
 });
