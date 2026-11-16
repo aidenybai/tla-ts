@@ -78,12 +78,12 @@ Change the README only in the root Development section, and keep it short. Do no
 - Group code by feature, such as `src/sany` or `src/prover/smt`, not by layer.
 - Prefer fewer folders. Split a large file into files next to it. Create a folder only for a feature with many files, such as SANY or a prover backend.
 - Split a file that mixes concerns along those concerns, as #514 did for `check.ts`, the SANY `generator.ts` and `cli/tlc.ts`.
-- Give shared logic one owner. Keep a decision such as backend order in one table, so a change touches one place.
-- Do not add forwarding-only files, barrels or pass-through wrappers. Collapse a layer that repeats the methods and arguments of the layer below it.
-- Do not keep module-level mutable state such as counters. Pass state explicitly. Derive a value instead of keeping two copies in sync.
+- Keep shared logic in one module. Keep a decision such as backend order in one table, so a change touches one place.
+- Do not add files that only forward, barrels, or wrappers that only pass a call through. Inline a layer that repeats the methods and arguments of the layer below it.
+- Do not keep mutable state at module level, such as counters. Pass state explicitly. Derive a value instead of keeping two copies in sync.
 - Validate input where it enters: CLI arguments, config files, specs and SMT-LIB scripts. Trust the types inside, and delete guards that can't fire.
 - Fix the root cause. Do not hide a bad state with a guard, clamp, retry or swallowed error where it surfaced. Find what produced it, and fix every place with the same fault.
-- Key a table of user-controlled names with a `Map`. A plain object finds `constructor`, `toString` and `__proto__` on `Object.prototype`.
+- Use a `Map` for a table keyed by names from user input. A plain object finds `constructor`, `toString` and `__proto__` on `Object.prototype`.
 - Do not recurse on user input without a bound. 20,000 nested `let` terms overflowed the stack until the SMT-LIB reader used an explicit frame stack.
 - Remove `export` from a name used only in its own file, unless an exported signature mentions it. The build emits declarations and fails with TS4023.
 - Keep code the playground runs safe for the browser. `src/errors.ts` has no `node:` imports. The CLI imports the TypeScript compiler lazily, and `src/index.ts` doesn't export it.
@@ -97,48 +97,49 @@ Change the README only in the root Development section, and keep it short. Do no
 
 ## Refactors
 
-A refactor changes no output. Keep these exactly as they are:
+A refactor changes no output. It keeps these exactly as they are:
 
-- String literals, messages, regexes, numbers and hash inputs.
-- Template string contents, such as TLA+ specs, expected output and SMT-LIB text. A `\*` inside a string is not a TypeScript comment.
-- Evaluation order, iteration order and the error class thrown.
-- The order in which objects, ids and fresh names are created.
-- Calls made only for a side effect, such as an id allocation or a call that throws on bad input.
+- String literals, messages, regexes, numbers and hash inputs
+- Template string contents, such as TLA+ specs, expected output and SMT-LIB text
+- Evaluation order, iteration order and the error class thrown
+- The order in which objects, ids and fresh names are created
+- Calls made only for a side effect, such as an id allocation or a call that throws on bad input
 
 ## Comments
 
 Aim for zero comments. Delete a comment unless it is one of these:
 
-- The one-line license or port header.
-- A tool directive, such as `eslint-disable` or a shebang.
-- `// HACK: reason` on a hack, such as a `setTimeout`.
-- One-line JSDoc on what `src/index.ts` exports. Skip fields whose name already says it.
-- One line on a quirk of TLC, SANY, tlapm, Z3, Zenon, Isabelle, V8, Node or Bun that the code copies and a reader would otherwise "fix".
-- `// Deviation from <tool>: …` on a deliberate deviation.
-- An issue or spec link for a constraint the code can't express.
+- The one-line license or port header
+- A tool directive, such as `eslint-disable` or a shebang
+- `// HACK: reason` on a hack, such as a `setTimeout`
+- One-line JSDoc on what `src/index.ts` exports, except on fields whose name already says it
+- One line on a quirk of TLC, SANY, tlapm, Z3, Zenon, Isabelle, V8, Node or Bun that the code copies and a reader would otherwise "fix"
+- `// Deviation from <tool>: …` on a deliberate deviation
+- An issue or spec link for a constraint the code can't express
 
 Delete everything else, including:
 
-- What a function, field, constant or branch is or returns.
-- Upstream names used as labels, such as `// decl_info::hash.` Put the name in the identifier if it matters.
-- Ordinary parity, such as "TLC prints X before Y". Parity is the whole project.
-- Banners, step narration, commented-out code, and TODOs without an issue link.
-- A paragraph that justifies a workaround. Fix the code instead.
+- What a function, field, constant or branch is or returns
+- Upstream names used as labels, such as `// decl_info::hash`, which belong in the identifier if they matter
+- Notes that restate ordinary parity, such as "TLC prints X before Y"
+- Banners, step narration, commented-out code, and TODOs without an issue link
+- Paragraphs that justify a workaround
 
-If a comment explains a vague name, rename the symbol. Do not shorten a comment that should go into a smaller one. Before you commit, check each added `//` line in the diff against this list.
+If a workaround needs a paragraph to justify it, fix the code. If a comment explains a vague name, rename the symbol. Do not shorten a comment that should go into a smaller one. A `\*` or `(* *)` inside a string is TLA+, not a TypeScript comment. Before you commit, check each added `//` line in the diff against this list.
 
 ## Performance
 
-- Redesign the data instead of adding a cache: flat arrays indexed by integer id, packed bits, and ids end to end. A getter that maps an id back to an object costs more than it saves.
+- Redesign the data instead of adding a cache: flat arrays indexed by integer id, packed bits, and ids end to end. A getter that maps an id back to an object costs more than it saves. In the SMT solver, one such shim for e-graph nodes cost 17% more instructions.
 - Do not add caches. Before you remove one, grep for `Set`, `Map` and `===` uses of the cached objects, since code may rely on their identity. Keep a cache in a port when removing it changes the search, such as Z3's rewriter caches.
-- Measure before you move to a structure of arrays. V8 reads a cached object field faster than a typed-array column, and moving e-graph nodes to columns cost 5.5% more instructions.
+- Measure before you move to a structure of arrays. V8 reads an object field in cache faster than a column in a typed array, and moving e-graph nodes to columns cost 5.5% more instructions.
 - Treat the checker, evaluator, SMT and SAT solvers, e-graph, rewriters, Zenon and Isabelle as hot. On a path that runs per state, term, clause or literal:
   - Add no allocation, closure, spread, `slice`, iterator or wrapper object.
   - Keep `for` loops. Do not turn them into `.map`, `.filter`, `.reduce` or `for...of`.
   - Keep a class's field order and the fields its constructor sets. Initialize a new field in the constructor.
-  - Keep monomorphic calls monomorphic. Keep deliberately duplicated or hand-inlined functions, such as in `rewriter-tpl.ts`.
+  - Keep monomorphic calls monomorphic. Keep functions that are duplicated or inlined by hand on purpose, such as in `rewriter-tpl.ts`.
 - Allocate an array at its final size when you know it. `push` and `[...a, b]` leave up to 17 slots of slack in stored values.
-- Judge a perf change by instruction counts across many specs, never a few. Build both sides the same way, since `pnpm build` minifies and the test setup doesn't. Run an A/A comparison first to know the noise.
+- Judge a perf change by instruction counts across the corpus, not a few specs. A V8 flag that saved 3.7% on 6 specs saved 0.7% on all 643 models.
+- Build both sides the same way, since `pnpm build` minifies and the test setup doesn't. Run the baseline against itself first to learn the noise.
 
 ## Testing
 
@@ -148,7 +149,7 @@ If a comment explains a vague name, rename the symbol. Do not shorten a comment 
 - Prefer specs ported from `tlaplus/Examples` and TLC's own tests over synthetic fixtures.
 - Take expected values from the reference tool's output. A bug fix comes with a test that fails without it.
 - Never weaken a test to make it pass. Fix the cause. A refactor never changes an assertion, expected value, title or input.
-- Keep each `it` under about 1.5 s on an idle machine, because CI uses vitest's 5 s default. Split slow cases into separate `it`s instead of adding timeouts.
+- Keep each `it` under about 1.5 s on an idle machine, because CI uses vitest's 5 s default. Split slow cases into separate `it`s instead of adding timeouts.
 - Remove the temporary directories a test creates. Do not commit the `*_TTrace_*` files that test runs leave.
 
 ## Website
