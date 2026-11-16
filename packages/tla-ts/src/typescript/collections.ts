@@ -1933,6 +1933,15 @@ const UPDATES = new Map<Kind, Map<string, Update>>([
     new Map<string, Update>([
       ["set", (current, values) => apply("@@", [apply(":>", [values[0], values[1]]), current])],
       [
+        "getOrInsert",
+        (current, values) =>
+          ifExpression(
+            apply("\\in", [values[0], getDomain(current)]),
+            current,
+            apply("@@", [apply(":>", [values[0], values[1]]), current]),
+          ),
+      ],
+      [
         "delete",
         (current, values, context) => {
           const key = context.names.getFresh("key");
@@ -3769,7 +3778,15 @@ const getKeyKinds = (node: ts.NewExpression, context: Context) => {
 };
 
 // The methods of a Set or a Map that take a key.
-const KEY_METHODS = new Set(["add", "has", "delete", "set", "get"]);
+const KEY_METHODS = new Set([
+  "add",
+  "has",
+  "delete",
+  "set",
+  "get",
+  "getOrInsert",
+  "getOrInsertComputed",
+]);
 
 // The kinds of the keys of the Set or the Map that a key method or a new Set or Map gives a key to,
 // where its type tells them. A weak one holds only objects and symbols.

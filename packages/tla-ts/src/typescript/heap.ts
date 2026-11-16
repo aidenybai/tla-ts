@@ -4313,7 +4313,15 @@ const SET_OR_MAP_CHANGES = new Set(["add", "set", "delete", "clear"]);
 const SET_OR_MAP_READS = new Set(["has", "get", "forEach", "keys", "values", "entries"]);
 
 // The methods of a set or a map that find what it holds by a key.
-const KEY_METHODS = new Set(["add", "has", "delete", "set", "get"]);
+const KEY_METHODS = new Set([
+  "add",
+  "has",
+  "delete",
+  "set",
+  "get",
+  "getOrInsert",
+  "getOrInsertComputed",
+]);
 
 // The array methods that look for an element by identity.
 const ELEMENT_SEARCH_METHODS = new Set(["includes", "indexOf", "lastIndexOf"]);

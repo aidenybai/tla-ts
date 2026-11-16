@@ -46232,4 +46232,49 @@ describe("BigInts", () => {
       ).toThrow("Unsupported call");
     });
   });
+
+  describe("runs a map's and a weak map's getOrInsert, which keeps the value a key holds", () => {
+    const getSource = (expected: string) => `
+      const map = new Map<number, string>();
+      map.set(1, "a");
+      const kept = map.getOrInsert(1, "b");
+      const added = map.getOrInsert(-0, "z");
+      map.getOrInsert(2, "c");
+      const weak = new WeakMap<object | symbol, number>();
+      const key = {};
+      weak.getOrInsert(key, 1);
+      weak.getOrInsert(key, 2);
+      let thrown = "";
+      try {
+        weak.getOrInsert(Symbol.for("registered"), 3);
+      } catch (error) {
+        thrown = (error as Error).constructor.name;
+      }
+      const seen = [
+        kept,
+        added,
+        map.get(0),
+        map.get(2),
+        map.size,
+        weak.get(key),
+        thrown,
+        Map.prototype.getOrInsert.length,
+        WeakMap.prototype.getOrInsertComputed.name,
+      ].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("a,z,z,c,3,1,TypeError,2,getOrInsertComputed"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects a getOrInsert that replaces the value", async () => {
+      expect(
+        (await checkModel(getSource("b,z,z,c,3,2,TypeError,2,getOrInsertComputed"))).failure
+          ?.message,
+      ).toContain("seen a,z,z,c,3,1,TypeError,2,getOrInsertComputed");
+    });
+  });
 });

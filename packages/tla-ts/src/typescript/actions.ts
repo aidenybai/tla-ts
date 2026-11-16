@@ -1808,7 +1808,7 @@ const isRemoving = (node: ts.Expression, context: Context): boolean => {
       !isHeapSetOrMap(node.expression.expression, context) &&
       ((method === "delete" && node.arguments.length === 1) ||
         (method === "clear" && node.arguments.length === 0) ||
-        (method === adder &&
+        ((method === adder || (kind === "map" && method === "getOrInsert")) &&
           getCollection(node.expression.expression, context)?.startsWith("Weak") === false &&
           node.arguments.length === (kind === "set" ? 1 : 2)))) ||
     (kind === "sequence" &&
@@ -1875,8 +1875,8 @@ const getRemoved = (
   path: Path,
   context: Context,
 ): Removed => {
-  // A set's or a map's delete gives whether it held the key, clear gives undefined, and add or set
-  // gives the collection.
+  // A set's or a map's delete gives whether it held the key, clear gives undefined, add or set
+  // gives the collection, and getOrInsert the value that the map holds at the key once it ran.
   if (kind === "set" || kind === "map") {
     const collection = translateExpression(receiver, path.scope, context);
     const value =
@@ -1887,7 +1887,11 @@ const getRemoved = (
           ])
         : method === "clear"
           ? getUndefined(context)
-          : getUpdatedValue(collection, kind, node, path.scope, context);
+          : method === "getOrInsert"
+            ? index(getUpdatedValue(collection, kind, node, path.scope, context) ?? collection, [
+                translateSetKey(node.arguments[0], path.scope, context),
+              ])
+            : getUpdatedValue(collection, kind, node, path.scope, context);
     return {
       value: value ?? collection,
       path: assign(
@@ -4439,10 +4443,12 @@ const translateCallStatementBody = (
       return and([leaf(apply("Assert", [values[0], message])), continueWith(path)]);
     }
     const kind = getKind(receiver, context);
+    // A set or a map that the heap holds changes through getHeapSetOrMapChange, or not at all.
     if (
       MUTATING_METHODS.has(method) &&
       kind !== "other" &&
-      (kind === "sequence" || !SEQUENCE_UPDATES.has(method))
+      (kind === "sequence" || !SEQUENCE_UPDATES.has(method)) &&
+      !isHeapSetOrMap(receiver, context)
     ) {
       if (isFreshReorder(expression, context)) {
         return continueWith(path, translateExpression(expression, path.scope, context));
@@ -4466,7 +4472,7 @@ const translateCallStatementBody = (
       // A weak collection throws a TypeError on a symbol that Symbol.for registered.
       if (
         getCollection(receiver, context)?.startsWith("Weak") !== true ||
-        (method !== "set" && method !== "add") ||
+        (method !== "set" && method !== "add" && method !== "getOrInsert") ||
         key === undefined ||
         context.heap === undefined
       ) {
