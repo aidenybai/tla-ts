@@ -375,6 +375,8 @@ const NULLISH_TAKING_BUILT_INS = new Set([
   "Function.call",
   "ObjectConstructor.create",
   "ObjectConstructor.defineProperty",
+  "ObjectConstructor.getOwnPropertyDescriptor",
+  "Reflect.getOwnPropertyDescriptor",
   "String.charAt",
   "String.charCodeAt",
   "String.concat",
@@ -2739,7 +2741,8 @@ const ignoreSoundErrors = () => {
     ts.isNumericLiteral(node);
   // The built-in that a call or a new runs, directly or through call: the interface that declares
   // it and its method's name, with a typed array's interface as TypedArray and ReadonlyArray as
-  // Array, a constructor as its interface alone, and a global function as its name.
+  // Array, a constructor as its interface alone, and a global function as its name, after its
+  // namespace's, as Reflect's are.
   const getBuiltInName = (call: ts.CallExpression | ts.NewExpression) => {
     const callee = skipParentheses(call.expression);
     const declaration =
@@ -2753,7 +2756,10 @@ const ignoreSoundErrors = () => {
       ts.isFunctionDeclaration(declaration) &&
       declaration.getSourceFile().isDeclarationFile
     ) {
-      return declaration.name?.text;
+      return [
+        ...(ts.isModuleBlock(declaration.parent) ? [declaration.parent.parent.name.text] : []),
+        ...(declaration.name === undefined ? [] : [declaration.name.text]),
+      ].join(".");
     }
     const owner = declaration?.parent;
     if (
