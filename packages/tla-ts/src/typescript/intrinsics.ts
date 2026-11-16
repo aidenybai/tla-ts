@@ -23,6 +23,7 @@ import { getConstructor, getErrorClass, NATIVE_ERRORS } from "./exceptions";
 import { getNumberValue, getRawString, isGlobalObject, translateExpression } from "./expressions";
 import { getHeap, isFunctionValue, translateFunctionObject } from "./heap";
 import { useJavaScript, WELL_KNOWN_SYMBOLS } from "./javascript";
+import { getTemporalClass } from "./temporal";
 import { getThisOwner, type Scope } from "./scope";
 import type { Expression } from "../ast";
 import { BUILT_INS, HOST_GLOBAL_KEYS } from "./built-ins";
@@ -540,7 +541,10 @@ export const translateBuiltInInstanceOf = (
   scope: Scope,
   context: Context,
 ) => {
-  const name = getBuiltIn(node.right, context);
+  const temporalClass = getTemporalClass(node.right, context);
+  const name =
+    getBuiltIn(node.right, context) ??
+    (temporalClass === undefined ? undefined : `Temporal.${temporalClass}`);
   if (name === undefined || context.heap === undefined || BUILT_INS[name]?.[4] !== true) {
     return undefined;
   }
@@ -563,7 +567,10 @@ export const translateBuiltInInstanceOf = (
     return undefined;
   }
   const heap = getHeap(scope, node, context);
-  const constructor = translateBuiltIn(name, node.right, scope, context);
+  const constructor =
+    temporalClass === undefined
+      ? translateBuiltIn(name, node.right, scope, context)
+      : translateExpression(node.right, scope, context);
   const prototype = useJavaScript("Get", [heap, constructor, string("prototype")], context);
   const found = (value: Expression) => {
     if (isPrimitive) return boolean(false);
@@ -823,6 +830,7 @@ export const translateBuiltInValue = (
     | "JSON"
     | "Intl"
     | `Intl.${string}`
+    | `Temporal.${string}`
     | `${Collection}.prototype${string}`,
   node: ts.Node,
   context: Context,

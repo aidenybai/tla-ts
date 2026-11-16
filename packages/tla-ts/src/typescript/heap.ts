@@ -95,6 +95,7 @@ import {
   isUndefinedValue,
   translateRegExpValue,
 } from "./intrinsics";
+import { getTemporalCall } from "./temporal";
 import {
   getTypeNames,
   translateNumberString,
@@ -1921,6 +1922,20 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
     );
     return translateNewBufferOf(node, buffered, heap, values, scope, context);
   }
+  const temporal = getTemporalCall(node, context);
+  if (ts.isNewExpression(node) && temporal !== undefined) {
+    return useJavaScript(
+      "TemporalAllocate",
+      [
+        heap,
+        string(temporal.kind),
+        translateExpression(node.expression, scope, context),
+        tuple(temporal.values.map((value) => translateExpression(value, scope, context))),
+        translateBuiltInValue(`Temporal.${temporal.made}.prototype`, node, context),
+      ],
+      context,
+    );
+  }
   if (isNewDate(node, context)) {
     const values = node.arguments ?? [];
     const time = isClockDate(node, context)
@@ -2419,6 +2434,7 @@ export const isAllocation = (node: ts.Node, context: Context) =>
   isGroupBy(node, context) ||
   isNewObject(node, context) ||
   isNewDate(node, context) ||
+  (ts.isNewExpression(node) && getTemporalCall(node, context) !== undefined) ||
   getNewIntl(node, context) !== undefined ||
   isNewProxy(node, context) ||
   getNewBuffer(node, context) !== undefined ||

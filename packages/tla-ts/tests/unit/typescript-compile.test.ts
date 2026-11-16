@@ -45524,4 +45524,57 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("runs Temporal.Duration", () => {
+    const getSource = (expected: string) => `
+      const thrown = (run: () => unknown) => {
+        try {
+          run();
+          return "none";
+        } catch (error) {
+          return (error as Error).name;
+        }
+      };
+      const duration = new Temporal.Duration(1, 2, 3, 4, 5, 6, 7, 8, 9, 10);
+      const negated = duration.negated().toString();
+      const minutes = Temporal.Duration.from("PT1.5H").minutes;
+      const hours = new Temporal.Duration(0, 0, 0, 0, 1, 30).total("hours") === 1.5;
+      const order = Temporal.Duration.compare({ hours: 25 }, { days: 1 });
+      const rounded = new Temporal.Duration(0, 0, 0, 1, 2).round({ largestUnit: "hours" }).hours;
+      const text = Temporal.Duration.from({ minutes: 90 })
+        .add({ seconds: 30 })
+        .toString({ fractionalSecondDigits: 2 });
+      const mixed = thrown(() => new Temporal.Duration(1, -1));
+      const empty = thrown(() => Temporal.Duration.from({}));
+      const seen = [
+        duration instanceof Temporal.Duration,
+        duration.years,
+        duration.nanoseconds,
+        duration.sign,
+        negated,
+        minutes,
+        hours,
+        order,
+        rounded,
+        text,
+        mixed,
+        empty,
+      ].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      const expected =
+        "true,1,10,1,-P1Y2M3W4DT5H6M7.00800901S,30,true,1,26,PT90M30.00S,RangeError,TypeError";
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects a sum that drops the fraction's digits", async () => {
+      const expected =
+        "true,1,10,1,-P1Y2M3W4DT5H6M7.00800901S,30,true,1,26,PT90M30S,RangeError,TypeError";
+      expect((await checkModel(getSource(expected))).failure?.message).toContain(
+        "seen true,1,10,1,-P1Y2M3W4DT5H6M7.00800901S,30,true,1,26,PT90M30.00S,",
+      );
+    });
+  });
 });

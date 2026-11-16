@@ -24,6 +24,7 @@ import {
   skipCasts,
   PRIMITIVE_FLAGS,
 } from "./context";
+import { getTemporalKind } from "./temporal";
 import {
   type Collection,
   getBuiltIn,
@@ -243,6 +244,8 @@ const isPlainObject = (type: ts.Type, context: Context): boolean => {
   ) {
     return true;
   }
+  // An object that a Temporal constructor makes.
+  if (getTemporalKind(type) !== undefined) return true;
   // An object that an Intl constructor makes.
   if (
     symbol !== undefined &&

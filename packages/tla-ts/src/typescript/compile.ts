@@ -572,6 +572,7 @@ export const compile = (
         "DataView",
         "DisposableStack",
         "AsyncDisposableStack",
+        "Temporal",
         ...TYPED_ARRAYS.keys(),
       ].includes(node.text)) ||
     (ts.isVariableDeclarationList(node) && (node.flags & ts.NodeFlags.Using) !== 0) ||
@@ -707,9 +708,11 @@ export const compile = (
           "Float16Array",
           "Float32Array",
           "Float64Array",
-          // A time value may be NaN or an integer beyond 32 bits, as may a power.
+          // A time value may be NaN or an integer beyond 32 bits, as may a power, and a Temporal
+          // object's field an integer beyond 32 bits or a fraction.
           "Date",
           "pow",
+          "Temporal",
         ].includes(node.text)) ||
       (ts.isPrefixUnaryExpression(node) &&
         node.operator === ts.SyntaxKind.MinusToken &&

@@ -419,6 +419,7 @@ import {
   tuple,
   unchanged,
 } from "./tla";
+import { getTemporalCall, type TemporalCall, translateTemporalCall } from "./temporal";
 import {
   getCollection,
   isBooleanLike,
@@ -3596,6 +3597,10 @@ const translateCallStatementBody = (
         ),
       ),
     );
+  }
+  const temporalCall = getTemporalCall(expression, context);
+  if (temporalCall !== undefined) {
+    return translateTemporalCall(expression, temporalCall, path, context, frame, continueWith);
   }
   const viewCall = getViewCall(expression, context);
   if (viewCall !== undefined) {
@@ -13274,6 +13279,7 @@ const isStatementResult = (node: ts.CallExpression, path: Path, context: Context
     getRegExpProtocolCall(node, context) !== undefined ||
     getURICall(node, context)?.isDecode === true ||
     getViewCall(node, context) !== undefined ||
+    getTemporalCall(node, context) !== undefined ||
     getGetterCall(node, context) !== undefined ||
     getIntlMethodCall(node, context) !== undefined ||
     getThisSymbolCall(node, context) !== undefined ||
@@ -13490,6 +13496,28 @@ const getConvertedSubarrayValues = (node: ts.Node, context: Context) => {
     ? call.values
     : undefined;
 };
+
+// new of a Temporal class, which a statement runs, as it may throw.
+const getNewTemporal = (node: ts.Expression, context: Context) =>
+  ts.isNewExpression(node) ? getTemporalCall(node, context) : undefined;
+
+// Runs new of a Temporal class once the objects that its arguments make are made.
+const translateNewTemporalStatement = (
+  node: ts.Expression,
+  call: TemporalCall,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path, value: Expression) => Formula,
+): Formula =>
+  allocateAll(
+    getAllocated(node, context).filter(
+      (inner) => inner !== node && !path.scope.allocated.has(inner),
+    ),
+    path,
+    context,
+    (allocated) => translateTemporalCall(node, call, allocated, context, frame, continueWith),
+  );
 
 // Runs new of a buffer, a DataView, or a typed array, which throws the error its constructor does,
 // and makes a typed array of an object's iterator's values where a script's @@iterator method
@@ -14339,6 +14367,12 @@ const translateCheckedDeclarations = (
   if (made !== undefined && getIntlError(made, context) !== undefined) {
     return translateIntlError(made, path, context, frame);
   }
+  const madeTemporal = made && getNewTemporal(made, context);
+  if (made !== undefined && madeTemporal !== undefined) {
+    return translateNewTemporalStatement(made, madeTemporal, path, context, frame, (after, value) =>
+      bindDeclaration(declarations, value, after, context, frame, continueWith),
+    );
+  }
   const madeBuffer = made && getBufferConstruction(made, context);
   if (made !== undefined && madeBuffer !== undefined) {
     return translateNewBufferStatement(made, madeBuffer, path, context, frame, (after, value) =>
@@ -14799,6 +14833,7 @@ const getEffects = (
     getHeapRegExpCall(node, context) !== undefined ||
     getRegExpProtocolCall(node, context) !== undefined ||
     getViewCall(node, context) !== undefined ||
+    getTemporalCall(node, context) !== undefined ||
     getHeapArrayChange(node, context) !== undefined ||
     isStoredChange(node, context) ||
     getArrayIteratorCall(node, context) !== undefined ||
@@ -18430,7 +18465,8 @@ const findLeadingCall = (
     ts.isNewExpression(node) &&
     (getNewWrapper(node, context) !== undefined ||
       isNewProxy(node, context) ||
-      getNewBuffer(node, context) !== undefined)
+      getNewBuffer(node, context) !== undefined ||
+      getTemporalCall(node, context) !== undefined)
   ) {
     const found = inOrder(node.arguments ?? []);
     return found.call !== undefined || found.isBlocked
@@ -18475,8 +18511,11 @@ const findLeadingCall = (
     const isMadeCollection =
       receiver !== undefined &&
       ts.isNewExpression(receiver) &&
-      (receiver.arguments ?? []).length === 0 &&
-      COLLECTIONS.some((collection) => collection === getBuiltIn(receiver.expression, context));
+      (((receiver.arguments ?? []).length === 0 &&
+        COLLECTIONS.some(
+          (collection) => collection === getBuiltIn(receiver.expression, context),
+        )) ||
+        getTemporalCall(receiver, context) !== undefined);
     const fromReceiver =
       receiver !== undefined &&
       (ts.isCallExpression(receiver) ||
@@ -20073,6 +20112,17 @@ export const translateStatements = (
     if (getIntlError(skipCasts(returned), context) !== undefined) {
       return translateIntlError(skipCasts(returned), path, context, statementFrame);
     }
+    const returnedTemporal = getNewTemporal(skipCasts(returned), context);
+    if (returnedTemporal !== undefined) {
+      return translateNewTemporalStatement(
+        skipCasts(returned),
+        returnedTemporal,
+        path,
+        context,
+        statementFrame,
+        exit,
+      );
+    }
     return allocate(returned, path, context, (inner) => {
       const constructed = getCast(returned);
       if (isPromiseConstruction(constructed, context)) {
@@ -20221,6 +20271,23 @@ export const translateStatements = (
   if (assigned !== undefined && getIntlError(assigned, context) !== undefined) {
     return translateIntlError(assigned, path, context, statementFrame);
   }
+  const assignedTemporal = assigned && getNewTemporal(assigned, context);
+  if (assignment !== undefined && assigned !== undefined && assignedTemporal !== undefined) {
+    return translateNewTemporalStatement(
+      assigned,
+      assignedTemporal,
+      path,
+      context,
+      statementFrame,
+      (after, value) =>
+        shareHeap(
+          path,
+          assign(assignment.left, after, context, () => value),
+          context,
+          continueWith,
+        ),
+    );
+  }
   const assignedBuffer = assigned && getBufferConstruction(assigned, context);
   if (assignment !== undefined && assigned !== undefined && assignedBuffer !== undefined) {
     return translateNewBufferStatement(
@@ -20241,6 +20308,17 @@ export const translateStatements = (
   const dropped = ts.isExpressionStatement(statement) ? skipCasts(statement.expression) : undefined;
   if (dropped !== undefined && getIntlError(dropped, context) !== undefined) {
     return translateIntlError(dropped, path, context, statementFrame);
+  }
+  const droppedTemporal = dropped && getNewTemporal(dropped, context);
+  if (dropped !== undefined && droppedTemporal !== undefined) {
+    return translateNewTemporalStatement(
+      dropped,
+      droppedTemporal,
+      path,
+      context,
+      statementFrame,
+      (after) => shareHeap(path, after, context, continueWith),
+    );
   }
   const droppedBuffer = dropped && getBufferConstruction(dropped, context);
   if (dropped !== undefined && droppedBuffer !== undefined) {
