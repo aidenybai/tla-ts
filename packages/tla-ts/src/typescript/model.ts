@@ -258,15 +258,17 @@ export const readModel = (
           })
       : [],
   );
-  // An imported file's variable that changes is state as the model's own is, which its file may
+  // A variable that changes is state, the model's own or an imported file's, which its file may
   // export, as an importer reads the same binding.
   const variables = [...imported.flatMap(getDeclarations), ...declarations].flatMap((declared) => {
     const declaration = declared.declaration;
     if (!isLet(declared, changed, context) || !ts.isVariableDeclaration(declaration)) return [];
     const symbol = getOwnSymbol(declared.identifier, context.checker);
-    const isImported = declaration.getSourceFile() !== sourceFile;
-    if ((isExported(declaration) && !isImported && !isScript(sourceFile)) || symbol === undefined) {
-      throw new TlaTypeScriptError("State variables can't be exported", declaration);
+    if (symbol === undefined) {
+      throw new TlaTypeScriptError(
+        `tla-ts can't name the state variable ${declared.name}`,
+        declaration,
+      );
     }
     if (context.variables.has(symbol)) return [];
     const name = context.names.getFresh(declared.name);

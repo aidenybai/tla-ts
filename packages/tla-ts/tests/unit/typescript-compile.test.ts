@@ -47867,4 +47867,32 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("keeps as state a variable that the model exports", () => {
+    const getSource = (limit: number) => `
+      export let count = 0;
+      export var total: number = 0;
+      export const step = () => {
+        if (count >= 3) return;
+        count++;
+        total += 2;
+      };
+      export const isSmall = () => count < ${limit} && total === count * 2;
+    `;
+
+    it("steps the exported variables as an action changes them", async () => {
+      const result = await checkModel(getSource(2));
+      expect(getTrace(result)).toEqual([
+        { count: "0", total: "0" },
+        { count: "1", total: "2" },
+        { count: "2", total: "4" },
+      ]);
+    });
+
+    it("holds where the bound is past every step", async () => {
+      const result = await checkModel(getSource(4));
+      expect(result.status).toBe("deadlock");
+      expect(result.distinctStates).toBe(4);
+    });
+  });
 });
