@@ -310,6 +310,7 @@ import {
   bindFactory,
   forceHeap,
   getReceiver,
+  isAssigning,
   mayThrow,
   shareArguments,
   isLiftable,
@@ -11977,6 +11978,38 @@ const translateExpressionStatement = (
   }
   // A guard of a global that nothing declares does nothing, and skips what it guards.
   if (getStaticTruth(expression, context) !== undefined) return continueWith(path);
+  // A short circuit or a conditional whose operand that runs only sometimes assigns runs that
+  // operand as a statement where its condition holds.
+  const branches = ts.isConditionalExpression(expression)
+    ? [expression.whenTrue, expression.whenFalse]
+    : ts.isBinaryExpression(expression) && SHORT_CIRCUITS.has(expression.operatorToken.kind)
+      ? [expression.right]
+      : [];
+  if (branches.some(isAssigning)) {
+    const runBranchStatement = (branch: ts.Expression) =>
+      translateExpressionStatement(branch, path, context, frame, continueWith);
+    if (ts.isConditionalExpression(expression)) {
+      return ifThenElse(
+        translateCondition(expression.condition, path.scope, context),
+        runBranchStatement(expression.whenTrue),
+        runBranchStatement(expression.whenFalse),
+      );
+    }
+    if (ts.isBinaryExpression(expression)) {
+      const kind = expression.operatorToken.kind;
+      context.prelude.add("Null");
+      const isRight =
+        kind === ts.SyntaxKind.QuestionQuestionToken
+          ? apply("\\in", [
+              translateExpression(expression.left, path.scope, context),
+              set([identifier("Null"), getUndefined(context)]),
+            ])
+          : kind === ts.SyntaxKind.AmpersandAmpersandToken
+            ? translateCondition(expression.left, path.scope, context)
+            : not(translateCondition(expression.left, path.scope, context));
+      return ifThenElse(isRight, runBranchStatement(expression.right), continueWith(path));
+    }
+  }
   // A comma runs its operands in order, as a for loop's incrementor may.
   if (
     ts.isBinaryExpression(expression) &&
@@ -20816,7 +20849,8 @@ export const translateScript = (
   );
   const scope = createStateScope(context);
   if (context.heap !== undefined) context.prelude.add("JavaScript");
-  // A script's vars hold undefined until their declarations run.
+  // A script's vars hold undefined until their declarations run, as do the parameters of a
+  // function that runs once until it runs.
   const hoisted = [...context.variables.keys()].filter((symbol) => {
     const declaration = symbol.valueDeclaration;
     return (

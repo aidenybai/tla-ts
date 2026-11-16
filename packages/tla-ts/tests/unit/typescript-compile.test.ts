@@ -46296,4 +46296,27 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("runs as a statement the operand of a short circuit or a conditional that assigns", () => {
+    const getSource = (expected: string) => `
+      const box: any = { size: 2 };
+      const type: any = {};
+      type.name ||
+        type.displayName ||
+        (Object.defineProperty(type, "label", { value: "x" }), (type.displayName = "n"));
+      box.size === 2 ? (box.size = 3) : (box.size = 4);
+      box.missing ?? (box.missing = 1);
+      box.size === 5 && (box.size = 0);
+      const seen = [type.label, type.displayName, box.size, box.missing].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("x,n,3,1"))).failure).toBeUndefined();
+    });
+
+    it("rejects a conditional that runs both branches", async () => {
+      expect((await checkModel(getSource("x,n,4,1"))).failure?.message).toContain("seen x,n,3,1");
+    });
+  });
 });
