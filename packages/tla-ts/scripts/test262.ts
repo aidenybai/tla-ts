@@ -367,6 +367,27 @@ const SHORT_CALLED_BUILT_INS = new Set([
 // declared function shows.
 const LONG_CALLED_BUILT_INS = new Set(["CallableFunction.bind", "Promise.then", "WeakMap.has"]);
 
+// The built-ins, named as SHORT_CALLED_BUILT_INS names them, that tla-ts runs on a null or an
+// undefined that a call passes for an argument of another type, converting or checking it as
+// JavaScript does.
+const NULLISH_TAKING_BUILT_INS = new Set([
+  "Function.bind",
+  "Function.call",
+  "ObjectConstructor.create",
+  "ObjectConstructor.defineProperty",
+  "ObjectConstructor.getOwnPropertyDescriptor",
+  "Reflect.getOwnPropertyDescriptor",
+  "String.charAt",
+  "String.charCodeAt",
+  "String.concat",
+  "String.indexOf",
+  "String.lastIndexOf",
+  "String.substring",
+  "SymbolConstructor",
+  "TypedArray.set",
+  "isNaN",
+]);
+
 const TYPED_ARRAY_NAME = /^(Big)?(Int|Uint|Float)\d+(Clamped)?Array$/;
 
 const PROGRAM_PATH = "/test262.ts";
@@ -1729,6 +1750,153 @@ const typePushedArrays = () => {
   );
 };
 
+const REDECLARED_TYPE_ERROR = 2403;
+
+// A var that one declaration declares without a type or a value, which TypeScript types as any, or
+// with an empty array of any, as Array() gives, and another declares with a value, as var x; then
+// for (var x of [1]), which TypeScript rejects as declarations of two types. The first takes the
+// other's type, an array's for an array of any, where each other declaration has the same type.
+const typeRedeclaredVars = () => {
+  const program = service.getProgram();
+  const sourceFile = program?.getSourceFile(file.path);
+  if (program === undefined || sourceFile === undefined) return;
+  const checker = program.getTypeChecker();
+  const getDeclaration = (position: number): ts.VariableDeclaration | undefined => {
+    const visit = (node: ts.Node): ts.Node | undefined =>
+      ts.forEachChild(node, (child) =>
+        child.getStart() <= position && position < child.getEnd()
+          ? (visit(child) ?? child)
+          : undefined,
+      );
+    const found = visit(sourceFile);
+    return found === undefined ? undefined : ts.findAncestor(found, ts.isVariableDeclaration);
+  };
+  const isEmptyArray = (value: ts.Expression) =>
+    ts.isArrayLiteralExpression(value)
+      ? value.elements.length === 0
+      : (ts.isCallExpression(value) || ts.isNewExpression(value)) &&
+        value.expression.getText() === "Array" &&
+        (value.arguments ?? []).length === 0;
+  const isLoose = (declaration: ts.Declaration, type: string, other: string) =>
+    ts.isVariableDeclaration(declaration) &&
+    declaration.type === undefined &&
+    !ts.isForInOrOfStatement(declaration.parent.parent) &&
+    (declaration.initializer === undefined
+      ? type === "any"
+      : type === "any[]" && other.endsWith("[]") && isEmptyArray(declaration.initializer));
+  const types = Map.groupBy(
+    service.getSemanticDiagnostics(file.path).flatMap((diagnostic) => {
+      const match =
+        diagnostic.code === REDECLARED_TYPE_ERROR
+          ? /must be of type '([^']*)', but here has type '([^']*)'\.$/.exec(
+              ts.flattenDiagnosticMessageText(diagnostic.messageText, " "),
+            )
+          : null;
+      const declaration = getDeclaration(diagnostic.start ?? 0);
+      const declarations =
+        declaration === undefined
+          ? []
+          : (checker.getSymbolAtLocation(declaration.name)?.declarations ?? []);
+      const first = declarations[0];
+      if (match === null || declaration === undefined || first === undefined) return [];
+      return first !== declaration && isLoose(first, match[1], match[2])
+        ? [{ declaration: first, type: match[2] }]
+        : isLoose(declaration, match[2], match[1])
+          ? [{ declaration, type: match[1] }]
+          : [];
+    }),
+    (entry) => entry.declaration,
+  );
+  const edits = new Map(
+    [...types].flatMap(([declaration, entries]) => {
+      const typeTexts = new Set(entries.map((entry) => entry.type));
+      const type = entries[0]?.type;
+      return typeTexts.size === 1 &&
+        type !== undefined &&
+        !type.includes("...") &&
+        ts.isVariableDeclaration(declaration)
+        ? [[declaration.name.getEnd(), `: ${type}`] as const]
+        : [];
+    }),
+  );
+  if (edits.size > 0) applyEdits(edits);
+};
+
+// A generator's parameter that the generator only delegates to with yield*, which the fix types as
+// unknown where the test calls the generator through a getter, as C.$([1]) calls the private
+// method that C's getter returns. It takes the array type of the array literals that each call
+// TypeScript resolves to the generator passes it.
+const typeDelegatedParameters = () => {
+  const program = service.getProgram();
+  const sourceFile = program?.getSourceFile(file.path);
+  if (program === undefined || sourceFile === undefined) return;
+  const checker = program.getTypeChecker();
+  const calls: ts.CallExpression[] = [];
+  const names: ts.Identifier[] = [];
+  const visit = (node: ts.Node) => {
+    if (ts.isCallExpression(node)) calls.push(node);
+    if (ts.isIdentifier(node)) names.push(node);
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  const getCalled = (call: ts.CallExpression) =>
+    checker.getResolvedSignature(call)?.getDeclaration();
+  const generators = new Set(
+    calls
+      .map(getCalled)
+      .filter(
+        (declaration) =>
+          declaration !== undefined &&
+          (ts.isMethodDeclaration(declaration) || ts.isFunctionExpression(declaration)) &&
+          declaration.asteriskToken !== undefined &&
+          declaration.getSourceFile() === sourceFile,
+      ),
+  );
+  const replacements = [...generators].flatMap((generator) =>
+    (generator?.parameters ?? []).flatMap((parameter, position) => {
+      const symbol = checker.getSymbolAtLocation(parameter.name);
+      const uses = names.filter(
+        (name) => name !== parameter.name && checker.getSymbolAtLocation(name) === symbol,
+      );
+      const types = new Set(
+        calls
+          .filter((call) => getCalled(call) === generator)
+          .map((call) => {
+            const value = call.arguments[position];
+            return value !== undefined &&
+              ts.isArrayLiteralExpression(value) &&
+              !value.elements.some(ts.isSpreadElement)
+              ? checker.typeToString(checker.getTypeAtLocation(value))
+              : undefined;
+          }),
+      );
+      const type = [...types][0];
+      return parameter.type?.kind === ts.SyntaxKind.UnknownKeyword &&
+        parameter.dotDotDotToken === undefined &&
+        uses.length > 0 &&
+        uses.every(
+          (use) =>
+            ts.isYieldExpression(use.parent) &&
+            use.parent.asteriskToken !== undefined &&
+            use.parent.expression === use,
+        ) &&
+        types.size === 1 &&
+        type !== undefined
+        ? [{ start: parameter.type.getStart(), end: parameter.type.getEnd(), text: type }]
+        : [];
+    }),
+  );
+  setText(
+    replacements
+      .toSorted((left, right) => right.start - left.start)
+      .reduce(
+        (current, replacement) =>
+          current.slice(0, replacement.start) + replacement.text + current.slice(replacement.end),
+        file.text,
+      ),
+  );
+};
+
 // test262 is JavaScript, so its functions and variables have no types. This annotates them as
 // TypeScript's "Infer type from usage" fix does, with unknown where it infers any, then loosens
 // the types of the objects it describes.
@@ -1796,14 +1964,13 @@ const annotate = (text: string, path = PROGRAM_PATH) => {
                 held.every(
                   (value) => ts.isArrayLiteralExpression(value) && value.elements.length === 0,
                 );
-              // A variable that only numbers are assigned to, which the fix infers as unknown where
-              // a function reads it, holds a number.
-              const isNumberHeld =
+              // A variable that only numbers, or only strings, are assigned to, which the fix infers
+              // as unknown where a function reads it, holds a number or a string.
+              const isHeld = (flags: ts.TypeFlags) =>
                 held.length > 0 &&
                 held.every(
                   (value) =>
-                    checker !== undefined &&
-                    (checker.getTypeAtLocation(value).flags & ts.TypeFlags.NumberLike) !== 0,
+                    checker !== undefined && (checker.getTypeAtLocation(value).flags & flags) !== 0,
                 );
               return (
                 current.slice(0, change.span.start) +
@@ -1816,9 +1983,11 @@ const annotate = (text: string, path = PROGRAM_PATH) => {
                     ? ": unknown[]"
                     : isEmptyArrayHeld
                       ? getArrayOfUnion(inferred)
-                      : inferred === ": unknown" && isNumberHeld
+                      : inferred === ": unknown" && isHeld(ts.TypeFlags.NumberLike)
                         ? ": number"
-                        : inferred) +
+                        : inferred === ": unknown" && isHeld(ts.TypeFlags.StringLike)
+                          ? ": string"
+                          : inferred) +
                 current.slice(change.span.start + change.span.length)
               );
             }, file.text);
@@ -1826,6 +1995,8 @@ const annotate = (text: string, path = PROGRAM_PATH) => {
     setText(annotated);
   }
   typePushedArrays();
+  typeDelegatedParameters();
+  typeRedeclaredVars();
   // A type that one loosening gives can show where another is needed.
   while (loosen());
   ignoreSoundErrors();
@@ -1840,7 +2011,16 @@ const MISSING_PROPERTY_ERROR = 2339;
 const UNASSIGNABLE_ERRORS = new Set([2322, 2345]);
 // A value of a type that lacks many of the members of an assignment's target or a call's parameter.
 const MISSING_MEMBERS_ERROR = 2740;
-const UNTYPED_READ_ERRORS = new Set([MISSING_PROPERTY_ERROR, 2551, 7017, 7053]);
+// An element of an array-like object, such as an array or a typed array, of a key that isn't a
+// number.
+const NON_NUMBER_INDEX_ERROR = 7015;
+const UNTYPED_READ_ERRORS = new Set([
+  MISSING_PROPERTY_ERROR,
+  2551,
+  NON_NUMBER_INDEX_ERROR,
+  7017,
+  7053,
+]);
 const UNUSED_OPERAND_ERROR = 2695;
 // A delete of a property that the object's type doesn't make optional.
 const OPTIONAL_DELETE_ERROR = 2790;
@@ -1956,6 +2136,9 @@ const COMPOUND_ASSIGNMENTS = new Set([
 // A comparison of types that don't overlap, which only misleads where TypeScript narrows an operand
 // by it.
 const UNINTENDED_COMPARISON_ERROR = 2367;
+// A comparison that TypeScript takes to give one result: of an object literal, which JavaScript
+// compares by reference or converts to a primitive, or of NaN, which equals nothing.
+const CONSTANT_COMPARISON_ERRORS = new Set([2839, 2845]);
 // A read of a variable that TypeScript can't tell is assigned. tla-ts reads a let's or a const's
 // type as its value's, so a read of one is sound only where the value is assigned whenever it runs.
 const UNASSIGNED_READ_ERROR = 2454;
@@ -2030,7 +2213,10 @@ const ignoreSoundErrors = () => {
       ) ?? node;
     return visit(sourceFile);
   };
-  const isObjectRead = (node: ts.Node) => {
+  // A typed array's element of a key that isn't a number reads as any where the typed array is one
+  // of several kinds too, as a test's callback for each kind takes it, and so does a property of a
+  // value of type object, as a proxy of a target and a handler that the test types loosely is.
+  const isObjectRead = (node: ts.Node, diagnostic: ts.Diagnostic) => {
     const read = ts.findAncestor(
       node,
       (ancestor): ancestor is ts.PropertyAccessExpression | ts.ElementAccessExpression =>
@@ -2039,8 +2225,10 @@ const ignoreSoundErrors = () => {
     const type = read && checker.getTypeAtLocation(read.expression);
     return (
       type !== undefined &&
-      !type.isUnion() &&
-      (type.flags & ts.TypeFlags.Object) !== 0 &&
+      (type.isUnion()
+        ? diagnostic.code === NON_NUMBER_INDEX_ERROR &&
+          type.types.every((member) => TYPED_ARRAY_NAME.test(member.getSymbol()?.getName() ?? ""))
+        : (type.flags & (ts.TypeFlags.Object | ts.TypeFlags.NonPrimitive)) !== 0) &&
       ts.findAncestor(node, ts.isBindingElement) === undefined
     );
   };
@@ -2080,7 +2268,8 @@ const ignoreSoundErrors = () => {
     );
   };
   // An operation on objects that the test declares, wrappers, and primitives, which tla-ts
-  // converts.
+  // converts, and on operands of type never, such as a call of a function that only throws, which
+  // give no value to convert.
   const isConverted = (node: ts.Node, diagnostic: ts.Diagnostic) => {
     const start = diagnostic.start ?? 0;
     const end = start + (diagnostic.length ?? 0);
@@ -2103,7 +2292,11 @@ const ignoreSoundErrors = () => {
       (isCompound ||
         !(kind >= ts.SyntaxKind.FirstAssignment && kind <= ts.SyntaxKind.LastAssignment)) &&
       operands.every(
-        (operand) => isPlainObject(operand) || isWrapper(operand) || isPrimitive(operand),
+        (operand) =>
+          isPlainObject(operand) ||
+          isWrapper(operand) ||
+          isPrimitive(operand) ||
+          (checker.getTypeAtLocation(operand).flags & ts.TypeFlags.Never) !== 0,
       )
     );
   };
@@ -2177,6 +2370,25 @@ const ignoreSoundErrors = () => {
     return (
       comparison !== undefined &&
       !(isCondition(comparison) && (isReference(comparison.left) || isReference(comparison.right)))
+    );
+  };
+  // A comparison of numbers that TypeScript takes to give one result, where it narrows a reference
+  // that an earlier assignment or comparison narrowed, though a call that it doesn't follow changed
+  // it since. It narrows the reference to never where the result differs, which tla-ts reads as a
+  // number, as the value is.
+  const isNumberComparison = (node: ts.Node, diagnostic: ts.Diagnostic) => {
+    const comparison = ts.findAncestor(
+      node,
+      (ancestor): ancestor is ts.BinaryExpression =>
+        ts.isBinaryExpression(ancestor) &&
+        EQUALITY_OPERATORS.has(ancestor.operatorToken.kind) &&
+        ancestor.getStart() === diagnostic.start &&
+        ancestor.getEnd() === (diagnostic.start ?? 0) + (diagnostic.length ?? 0),
+    );
+    return (
+      comparison !== undefined &&
+      isEveryType(comparison.left, ts.TypeFlags.NumberLike) &&
+      isEveryType(comparison.right, ts.TypeFlags.NumberLike)
     );
   };
   // A property that a pattern destructures, which JavaScript reads whatever the value's type, and
@@ -2540,6 +2752,46 @@ const ignoreSoundErrors = () => {
     node.kind === ts.SyntaxKind.FalseKeyword ||
     node.kind === ts.SyntaxKind.NullKeyword ||
     ts.isNumericLiteral(node);
+  // The built-in that a call or a new runs, directly or through call: the interface that declares
+  // it and its method's name, with a typed array's interface as TypedArray and ReadonlyArray as
+  // Array, a constructor as its interface alone, and a global function as its name, after its
+  // namespace's, as Reflect's are.
+  const getBuiltInName = (call: ts.CallExpression | ts.NewExpression) => {
+    const callee = skipParentheses(call.expression);
+    const declaration =
+      ts.isCallExpression(call) &&
+      ts.isPropertyAccessExpression(callee) &&
+      callee.name.text === "call"
+        ? checker.getTypeAtLocation(callee.expression).getCallSignatures()[0]?.getDeclaration()
+        : checker.getResolvedSignature(call)?.getDeclaration();
+    if (
+      declaration !== undefined &&
+      ts.isFunctionDeclaration(declaration) &&
+      declaration.getSourceFile().isDeclarationFile
+    ) {
+      return [
+        ...(ts.isModuleBlock(declaration.parent) ? [declaration.parent.parent.name.text] : []),
+        ...(declaration.name === undefined ? [] : [declaration.name.text]),
+      ].join(".");
+    }
+    const owner = declaration?.parent;
+    if (
+      declaration === undefined ||
+      owner === undefined ||
+      !ts.isInterfaceDeclaration(owner) ||
+      !declaration.getSourceFile().isDeclarationFile
+    ) {
+      return undefined;
+    }
+    return [
+      TYPED_ARRAY_NAME.test(owner.name.text)
+        ? "TypedArray"
+        : owner.name.text === "ReadonlyArray"
+          ? "Array"
+          : owner.name.text,
+      ...(declaration.name === undefined ? [] : [declaration.name.getText()]),
+    ].join(".");
+  };
   // A call or a new of a built-in, directly or through call, with fewer arguments than its type
   // takes, which passes undefined for the others as JavaScript does, where SHORT_CALLED_BUILT_INS
   // lists it, or with more, each a literal or a declared function's name, where
@@ -2557,30 +2809,8 @@ const ignoreSoundErrors = () => {
         (ancestor.arguments?.length ?? 0) === given,
     );
     if (call === undefined || (call.arguments ?? []).some(ts.isSpreadElement)) return false;
-    const callee = skipParentheses(call.expression);
-    const declaration =
-      ts.isCallExpression(call) &&
-      ts.isPropertyAccessExpression(callee) &&
-      callee.name.text === "call"
-        ? checker.getTypeAtLocation(callee.expression).getCallSignatures()[0]?.getDeclaration()
-        : checker.getResolvedSignature(call)?.getDeclaration();
-    const owner = declaration?.parent;
-    if (
-      declaration === undefined ||
-      owner === undefined ||
-      !ts.isInterfaceDeclaration(owner) ||
-      !declaration.getSourceFile().isDeclarationFile
-    ) {
-      return false;
-    }
-    const built = [
-      TYPED_ARRAY_NAME.test(owner.name.text)
-        ? "TypedArray"
-        : owner.name.text === "ReadonlyArray"
-          ? "Array"
-          : owner.name.text,
-      ...(declaration.name === undefined ? [] : [declaration.name.getText()]),
-    ].join(".");
+    const built = getBuiltInName(call);
+    if (built === undefined) return false;
     const extra = (call.arguments ?? []).slice(Number(counts[3] ?? counts[2]));
     return given < Number(counts[2])
       ? SHORT_CALLED_BUILT_INS.has(built)
@@ -2671,6 +2901,23 @@ const ignoreSoundErrors = () => {
                       .find((child) => child.kind === ts.SyntaxKind.FunctionKeyword),
                 )),
           )),
+    );
+  };
+  // A null or an undefined that a call passes to a built-in that NULLISH_TAKING_BUILT_INS lists,
+  // which the error is at.
+  const isNullishBuiltInCall = (diagnostic: ts.Diagnostic) => {
+    const call = getErroredCall(diagnostic);
+    const value = call?.arguments?.find(
+      (argument) =>
+        argument.getStart() === diagnostic.start &&
+        argument.getEnd() === (diagnostic.start ?? 0) + (diagnostic.length ?? 0),
+    );
+    return (
+      call !== undefined &&
+      value !== undefined &&
+      !(call.arguments ?? []).some(ts.isSpreadElement) &&
+      isEveryType(value, ts.TypeFlags.Null | ts.TypeFlags.Undefined) &&
+      NULLISH_TAKING_BUILT_INS.has(getBuiltInName(call) ?? "")
     );
   };
   // A new of a typed array's constructor, which tla-ts runs on its arguments' values: it converts
@@ -3516,19 +3763,23 @@ const ignoreSoundErrors = () => {
           isSubarrayCall(diagnostic) ||
           isSetLikeArrayCall(diagnostic) ||
           isTypedArrayCallback(diagnostic) ||
-          isTypedArrayNew(diagnostic))) ||
+          isTypedArrayNew(diagnostic) ||
+          isNullishBuiltInCall(diagnostic))) ||
       (diagnostic.code === NO_OVERLOAD_ERROR && isIteratedEntriesCall(diagnostic)) ||
       ((CONVERTED_ARGUMENT_ERRORS.has(diagnostic.code) || diagnostic.code === 2322) &&
         isRawTemplate(diagnostic)) ||
       (diagnostic.code === UNKNOWN_CALLEE_ERROR && isStoredStringCall(node)) ||
       (diagnostic.code === UNCALLABLE_ERROR && isTypedUnionCall(node, diagnostic)) ||
       diagnostic.code === UNUSED_OPERAND_ERROR ||
-      (diagnostic.code === UNINTENDED_COMPARISON_ERROR && isUnnarrowed(node, diagnostic)) ||
+      ((diagnostic.code === UNINTENDED_COMPARISON_ERROR ||
+        CONSTANT_COMPARISON_ERRORS.has(diagnostic.code)) &&
+        isUnnarrowed(node, diagnostic)) ||
+      (diagnostic.code === UNINTENDED_COMPARISON_ERROR && isNumberComparison(node, diagnostic)) ||
       (diagnostic.code === UNKNOWN_VALUE_ERROR &&
         (isUnknownArithmetic(node) || isConvertedUnknown(node, diagnostic))) ||
       ((diagnostic.code === UNKNOWN_VALUE_ERROR || diagnostic.code === UNKNOWN_CALLEE_ERROR) &&
         isUnknownAccess(node, diagnostic)) ||
-      (UNTYPED_READ_ERRORS.has(diagnostic.code) && isObjectRead(node)) ||
+      (UNTYPED_READ_ERRORS.has(diagnostic.code) && isObjectRead(node, diagnostic)) ||
       (diagnostic.code === NOT_ITERABLE_ERROR && isPlainObject(node)) ||
       (OPERAND_TYPE_ERRORS.has(diagnostic.code) && isConverted(node, diagnostic)) ||
       // Node may define a global that TypeScript doesn't know, such as print.
