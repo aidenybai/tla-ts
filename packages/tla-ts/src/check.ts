@@ -998,6 +998,22 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     addState(state, fingerprintState, -1, undefined);
     return undefined;
   };
+  // Looks a successor up, where the constraints keep it in the model, as the search does before it
+  // checks the successor.
+  const lookUpSuccessor = (state: Value[], successor: Successor) => {
+    const fingerprintState = getFingerprintState(successor.state);
+    const hash = getStateHash(fingerprintState);
+    const foundIndex = findStateIndex(seenStates, hash, fingerprintState);
+    const isStateInModel = search.satisfiesConstraints(successor.state, state);
+    if (isStateInModel) search.trackStatePossible(successor.state);
+    const isInModel = isStateInModel && search.satisfiesActionConstraints(state, successor.state);
+    if (isInModel) {
+      search.trackActionPossible(state, successor.state);
+      fingerprintModelState(fingerprintState);
+      successor.state.forEach(markFingerprinted);
+    }
+    return { fingerprintState, hash, isInModel, existing: isInModel ? foundIndex : -1 };
+  };
   const visitSuccessor = (
     index: number,
     successor: Successor,
@@ -1010,27 +1026,16 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     current.candidate = successor.state;
     current.candidateLevel = depths[index] + 1;
     if (isCanonicalizedFirst) canonicalizeState(successor.state);
-    const fingerprintState = getFingerprintState(successor.state);
-    const hash = getStateHash(fingerprintState);
-    const foundIndex = findStateIndex(seenStates, hash, fingerprintState);
-    const isStateInModel = search.satisfiesConstraints(successor.state, state);
-    if (isStateInModel) search.trackStatePossible(successor.state);
-    const isInModel = isStateInModel && search.satisfiesActionConstraints(state, successor.state);
-    if (isInModel) {
-      search.trackActionPossible(state, successor.state);
-      fingerprintModelState(fingerprintState);
-      successor.state.forEach(markFingerprinted);
-    }
-    const existing = isInModel ? foundIndex : -1;
-    if (source && isInModel) {
+    const found = lookUpSuccessor(state, successor);
+    if (source && found.isInModel) {
       stateWriter?.writeSuccessor(
         source,
         getGraphState(successor.state, depths[index] + 1),
-        existing !== -1,
+        found.existing !== -1,
         action && getGraphAction(action),
       );
     }
-    if (source && !isInModel && options.dump?.constrained) {
+    if (source && !found.isInModel && options.dump?.constrained) {
       const excluded = getGraphState(successor.state, depths[index] + 1);
       search
         .getExcludingConstraints(state, successor.state)
@@ -1043,20 +1048,20 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
           ),
         );
     }
-    if (existing !== -1 && liveness) {
-      const stored = states[existing];
+    if (found.existing !== -1 && liveness) {
+      const stored = states[found.existing];
       const isStored = stored.every((value, position) => value === successor.state[position]);
-      liveSuccessors.push({ index: existing, state: isStored ? stored : successor.state });
+      liveSuccessors.push({ index: found.existing, state: isStored ? stored : successor.state });
     }
-    const isNew = isInModel && existing === -1;
+    const isNew = found.isInModel && found.existing === -1;
     if (isNew && liveness) liveSuccessors.push({ index: states.length, state: successor.state });
-    unstoredFingerprint = isNew ? fingerprintState : undefined;
+    unstoredFingerprint = isNew ? found.fingerprintState : undefined;
     if (isNew) {
       countDistinctState(depths[index] + 1);
       newStateCount++;
       if (coverage) coverage.secondary[coveredNode]++;
     }
-    if (existing === -1) {
+    if (found.existing === -1) {
       try {
         const violated = search.findViolatedInvariant(successor.state, state);
         const violation = violated && { name: violated.name, ...traces.getTrace(index, successor) };
@@ -1086,8 +1091,8 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     if (!isNew) return undefined;
     if (coverage) countCoverageVariables(coverage, successor.state);
     if (!isCanonicalizedFirst) canonicalizeState(successor.state);
-    markSeenState(seenStates, hash, states.length);
-    addState(successor.state, fingerprintState, index, successor.action);
+    markSeenState(seenStates, found.hash, states.length);
+    addState(successor.state, found.fingerprintState, index, successor.action);
     runtime.queueSize++;
     return undefined;
   };
@@ -1544,8 +1549,9 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     periodic.time += performance.now() - now;
     return lasso;
   };
-  // The tier found a state without successors, or a successor that violates an invariant. The
-  // interpreter rebuilds the tier's path to it and reports it, as it would after its own search.
+  // The tier found a state without successors, or a successor that violates an invariant or an
+  // action property. The interpreter rebuilds the tier's path to it and reports it, as it would after
+  // its own search.
   const path = typed?.deadlock ?? typed?.violation;
   const initialIndex = path ? states.findIndex((state) => path.isPathState(0, state)) : -1;
   if (typed && path && initialIndex !== -1) {
@@ -1563,8 +1569,13 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     const isRebuilt = steps.length === path.length - 1;
     const violating = typed.violation && isRebuilt ? steps.pop() : undefined;
     if (violating && isCanonicalizedFirst) canonicalizeState(violating.successor.state);
-    const violated =
+    const violatedInvariant =
       violating && search.findViolatedInvariant(violating.successor.state, getLastState());
+    const violatedProperty =
+      violating &&
+      !violatedInvariant &&
+      search.findViolatedActionProperty(getLastState(), violating.successor.state);
+    const violated = violatedInvariant ?? violatedProperty;
     const isDeadlocked =
       typed.deadlock !== undefined &&
       isRebuilt &&
@@ -1584,10 +1595,11 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       newStateCount = 0;
       Object.assign(current, { index: parent.index, candidate: undefined, isExpanding: true });
       if (violating && violated) {
+        lookUpSuccessor(states[parent.index], violating.successor);
         current.candidate = violating.successor.state;
         current.candidateLevel = depths[parent.index] + 1;
         return withOutDegrees(
-          reportViolation("invariant-violation", {
+          reportViolation(violatedInvariant ? "invariant-violation" : "liveness-violation", {
             name: violated.name,
             ...traces.getTrace(parent.index, violating.successor),
           }),

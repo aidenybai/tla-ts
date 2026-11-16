@@ -238,7 +238,8 @@ export interface TypedResult {
   initialStates: { generated: number; distinct: number };
   outDegrees: number[];
   deadlock: TypedPath | undefined;
-  // The path to the first successor that violates an invariant, which is its last state.
+  // The path to the first successor that violates an invariant or an action property, which is its
+  // last state.
   violation: TypedPath | undefined;
   // TLC's fingerprints of the states, in runs each below the next.
   forEachFingerprintRun: (visit: (run: BigInt64Array) => void) => void;
@@ -6151,7 +6152,8 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
   // For each state expanded, a 1 bit for each new state it found and then a 0 bit, to rebuild the
   // path to a deadlock or a violation. States are expanded in the order they are found, so the 0 bits
   // before a state's 1 bit count the state it was found from.
-  const isPathKept = check.isDeadlockChecked || check.invariants.length > 0;
+  const isPathKept =
+    check.isDeadlockChecked || check.invariants.length > 0 || check.actionProperties.length > 0;
   const finds = { data: new Int32Array(isPathKept ? 1 << 11 : 0), size: 0 };
   // TLC's fingerprints of the states, as low and high words in small pages, one list of pages for
   // each top byte in signed order. Each list sorts alone, and none grows by copying.
@@ -6170,16 +6172,17 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
   const outDegrees = Array.from({ length: OUT_DEGREE_BUCKETS }, () => 0);
   const isInModel = (state: Plain[], parent?: Plain[]) =>
     compiled.constraints.every((constraint) => constraint(state, parent));
-  // The successor that violates an invariant, which ends the search, with the states then queued.
-  const violations: { state: Plain[]; queued: number }[] = [];
-  const checkInvariants = (state: Plain[], parent: Plain[] | undefined, stored: number) => {
-    for (const invariant of compiled.invariants) {
-      if (invariant(state, parent)) continue;
-      if (parent === undefined) deopt();
-      violations.push({ state, queued: stored - expanding.index - 1 });
-      return;
-    }
+  const holdsInvariants = (state: Plain[], parent?: Plain[]) => {
+    for (const invariant of compiled.invariants) if (!invariant(state, parent)) return false;
+    return true;
   };
+  const holdsActionProperties = (state: Plain[], next: Plain[]) => {
+    for (const property of compiled.actionProperties) if (!property(state, next)) return false;
+    return true;
+  };
+  // The successor that violates an invariant or an action property, which ends the search, with the
+  // states then queued.
+  const violations: { state: Plain[]; queued: number }[] = [];
   const grow = () => {
     const old = table.slots;
     table.slots = new Int32Array(old.length * 2);
@@ -6253,10 +6256,7 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
     statistics.generated++;
     // A step that changes no value leads back to the state it starts from, which is stored already.
     if (isUnchanged) return expanding.index;
-    if (!isInModel(state, parent)) {
-      checkInvariants(state, parent, statistics.distinct);
-      return -1;
-    }
+    if (!isInModel(state, parent)) return -1;
     writeKey(state);
     const found = findState(true);
     if (found !== -1) return found;
@@ -6264,7 +6264,6 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
       keys.size = keys.start;
       compiled.encode(state, keys);
     }
-    checkInvariants(state, parent, statistics.distinct - 1);
     return statistics.distinct - 1;
   };
   const readState = () => {
@@ -6357,7 +6356,9 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
     const state = program.variableTypes.map((type) => readPlain(cursor, type, program.plains));
     const distinct = statistics.distinct;
     const stateIndex = visit(state);
-    if (statistics.distinct === distinct) continue;
+    const isNew = statistics.distinct > distinct;
+    if ((isNew || stateIndex === -1) && !holdsInvariants(state)) deopt();
+    if (!isNew) continue;
     statistics.depth = 1;
     live?.addInitialState(stateIndex, state);
   }
@@ -6373,17 +6374,21 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
   const liveChecks = { at: 1024 };
   const onSuccessor = (successor: Plain[], isUnchanged: boolean) => {
     if (violations.length > 0) return;
-    for (const property of compiled.actionProperties) {
-      if (!property(expanding.state, successor)) deopt();
-    }
     expansion.successors++;
     const distinct = statistics.distinct;
     const index = visit(successor, expanding.state, isUnchanged);
-    if (live && index !== -1) liveSuccessors.push({ index, state: successor });
-    if (statistics.distinct > distinct) {
+    const isNew = statistics.distinct > distinct;
+    if (isNew) {
       expansion.newStates++;
       statistics.depth = Math.max(statistics.depth, level.depth + 1);
     }
+    // Like the interpreter, the search checks the invariants of a state it hasn't seen, and then the
+    // action properties of the step.
+    const isViolated =
+      ((isNew || index === -1) && !holdsInvariants(successor, expanding.state)) ||
+      !holdsActionProperties(expanding.state, successor);
+    if (isViolated) violations.push({ state: successor, queued: distinct - expanding.index - 1 });
+    if (live && index !== -1) liveSuccessors.push({ index, state: successor });
   };
   const getTypedPath = (path: Plain[][]): TypedPath => ({
     length: path.length,

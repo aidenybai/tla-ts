@@ -154,13 +154,14 @@ describe("typed tier matches TLC", () => {
   });
 
   it.each([
-    ["ViolatedCounters", "Bounded", [36, 16, 2, 6, 6]],
-    ["ConstrainedViolation", "Low", [13, 9, 3, 4, 4]],
-    ["LiveViolation", "Short", [21, 12, 1, 6, 6]],
-    ["SymmetricViolation", "Few", [20, 9, 1, 6, 6]],
+    ["ViolatedCounters", "invariant-violation", "Bounded", [36, 16, 2, 6, 6]],
+    ["ConstrainedViolation", "invariant-violation", "Low", [13, 9, 3, 4, 4]],
+    ["LiveViolation", "invariant-violation", "Short", [21, 12, 1, 6, 6]],
+    ["SymmetricViolation", "invariant-violation", "Few", [20, 9, 1, 6, 6]],
+    ["ViolatedStep", "liveness-violation", "Monotone", [37, 23, 3, 8, 8]],
   ])(
-    "reports the invariant %s violates where TLC does, as the interpreter does",
-    async (name, invariant, counts) => {
+    "reports where %s breaks a property as TLC does, as the interpreter does",
+    async (name, status, property, counts) => {
       const [typed, interpreted] = await Promise.all([
         checkFixture(name, true),
         checkFixture(name, true, false),
@@ -175,7 +176,7 @@ describe("typed tier matches TLC", () => {
           typed.depth,
           typed.violation?.trace.length,
         ],
-      ]).toEqual(["invariant-violation", invariant, counts]);
+      ]).toEqual([status, property, counts]);
       expect(typed).toEqual(interpreted);
     },
   );
