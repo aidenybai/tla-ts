@@ -11,12 +11,10 @@ import {
   isVarFunction,
 } from "./context";
 import {
-  getImportText,
-  getModuleText,
-  isCommonJsFile,
-  isCommonJsImport,
-  resolveImport,
-  typeAsAny,
+  createJavaScriptFile,
+  isJavaScriptFile,
+  resolveModule,
+  typeExportsAsAny,
 } from "./common-js";
 import { rejectEarlyErrors } from "./early-errors";
 import { rewriteNameDeletes } from "./name-deletes";
@@ -55,6 +53,8 @@ const isGeneratorYield = (node: ts.Node) => {
 const COMPILER_OPTIONS: ts.CompilerOptions = {
   strict: true,
   noEmit: true,
+  allowJs: true,
+  checkJs: false,
   target: ts.ScriptTarget.ESNext,
   module: ts.ModuleKind.ESNext,
   moduleResolution: ts.ModuleResolutionKind.Bundler,
@@ -74,6 +74,18 @@ const CODE_EXTENSIONS = new Set<string>([
   ts.Extension.Cts,
   ts.Extension.Json,
 ]);
+
+// The extension of a file that Node loads.
+const getExtension = (path: string) =>
+  [
+    ts.Extension.Js,
+    ts.Extension.Mjs,
+    ts.Extension.Cjs,
+    ts.Extension.Json,
+    ts.Extension.Ts,
+    ts.Extension.Mts,
+    ts.Extension.Cts,
+  ].find((extension) => path.endsWith(extension));
 
 // TypeScript's error for an if whose branch is the empty statement, which JavaScript runs.
 const EMPTY_IF_BRANCH_ERROR = 1313;
@@ -135,18 +147,15 @@ const assignParameterProperties = (fileName: string, text: string) => {
   );
 };
 
+// A var of type any, which JavaScript writes with JSDoc.
+const getAnyVar = (name: string, fileName: string) =>
+  isJavaScriptFile(fileName) ? `/** @type {any} */ var ${name};` : `var ${name}: any;`;
+
 // HACK: TypeScript binds every file as strict code, where a function that a block declares binds its
 // name only in the block. Outside strict mode, the text gains what Annex B.3.2 and B.3.3 add: a block
 // around a function that an if's branch declares, and the var that a function that a block declares
 // assigns, where its function or its script declares none. The text stays on the same lines.
-const declareVarFunctions = (fileName: string, text: string) => {
-  const file = ts.createSourceFile(
-    fileName,
-    text,
-    ts.ScriptTarget.ESNext,
-    true,
-    isCommonJsFile(fileName) ? ts.ScriptKind.TS : undefined,
-  );
+const declareVarFunctions = (file: ts.SourceFile) => {
   const insertions = findNodes(file, ts.isFunctionDeclaration).flatMap((node) => {
     const blocks =
       ts.isIfStatement(node.parent) && isPlain(node) && !isStrictCode(node)
@@ -158,13 +167,15 @@ const declareVarFunctions = (fileName: string, text: string) => {
     const name =
       isVarFunction(node) && getVarFunctionTarget(node) === undefined ? node.name.text : undefined;
     const scope = name === undefined ? undefined : getVarScope(node);
-    return scope === undefined || (name === "arguments" && !ts.isSourceFile(scope))
+    return name === undefined ||
+      scope === undefined ||
+      (name === "arguments" && !ts.isSourceFile(scope))
       ? blocks
       : [
           ...blocks,
           {
             position: ts.isSourceFile(scope) ? 0 : scope.getStart(file) + 1,
-            text: `var ${name}: any;`,
+            text: getAnyVar(name, file.fileName),
           },
         ];
   });
@@ -177,8 +188,34 @@ const declareVarFunctions = (fileName: string, text: string) => {
     .reduce(
       (current, insertion) =>
         current.slice(0, insertion.position) + insertion.text + current.slice(insertion.position),
-      text,
+      file.text,
     );
+};
+
+// A file of the program, which TypeScript parses as JavaScript where its extension is one, with the
+// format that Node loads it in.
+const createFile = (
+  fileName: string,
+  text: string,
+  languageVersion: ts.ScriptTarget | ts.CreateSourceFileOptions,
+) =>
+  isJavaScriptFile(fileName)
+    ? createJavaScriptFile(fileName, text, languageVersion)
+    : ts.createSourceFile(fileName, text, languageVersion, true);
+
+// A file's text where it declares the vars of the functions that its blocks declare.
+const declareFileVarFunctions = (fileName: string, text: string) =>
+  declareVarFunctions(createFile(fileName, text, ts.ScriptTarget.ESNext));
+
+// A file whose text declares the vars of the functions that its blocks declare.
+const createVarFunctionsFile = (
+  fileName: string,
+  text: string,
+  languageVersion: ts.ScriptTarget | ts.CreateSourceFileOptions,
+) => {
+  const file = createFile(fileName, text, languageVersion);
+  const declared = declareVarFunctions(file);
+  return declared === text ? file : createFile(fileName, declared, languageVersion);
 };
 
 // The project of the nearest tsconfig.json, where it holds the file, as an editor finds it.
@@ -204,6 +241,8 @@ const getProjectOptions = (options: ts.CompilerOptions): ts.CompilerOptions => (
   strict: true,
   strictNullChecks: true,
   noImplicitAny: true,
+  allowJs: true,
+  checkJs: false,
   moduleDetection: ts.ModuleDetectionKind.Force,
   noEmit: true,
   composite: false,
@@ -227,36 +266,36 @@ export const createProgram = (
   const host =
     libraries === undefined ? ts.createCompilerHost(options) : createLibraryHost(libraries);
   const libraryDirectory = host.getDefaultLibLocation?.() ?? "";
-  const getResolved = (resolvedFileName: string): ts.ResolvedModuleWithFailedLookupLocations => ({
-    resolvedModule: {
-      resolvedFileName,
-      extension: ts.Extension.Ts,
-      isExternalLibraryImport: false,
-    },
-  });
-  // A module that TypeScript finds no code of, as a package or JavaScript, loads as Node loads it.
-  // The modules that tla-ts makes for CommonJS name the files they load by path.
+  // A module that TypeScript finds no code of, as a package or JavaScript, and any module that
+  // JavaScript names, loads as Node loads it, though a package may give its types, and TypeScript
+  // reads it as code.
   const resolveModuleNameLiterals = (
     literals: readonly ts.StringLiteralLike[],
     containingFile: string,
     redirectedReference: ts.ResolvedProjectReference | undefined,
     resolutionOptions: ts.CompilerOptions,
   ) =>
-    literals.map((literal) => {
-      if (isCommonJsFile(containingFile) || isCommonJsImport(containingFile)) {
-        return getResolved(literal.text);
+    literals.map((literal): ts.ResolvedModuleWithFailedLookupLocations => {
+      const resolved = isJavaScriptFile(containingFile)
+        ? undefined
+        : ts.resolveModuleName(
+            literal.text,
+            containingFile,
+            resolutionOptions,
+            host,
+            undefined,
+            redirectedReference,
+          );
+      if (resolved !== undefined && CODE_EXTENSIONS.has(resolved.resolvedModule?.extension ?? "")) {
+        return resolved;
       }
-      const resolved = ts.resolveModuleName(
-        literal.text,
-        containingFile,
-        resolutionOptions,
-        host,
-        undefined,
-        redirectedReference,
-      );
-      if (CODE_EXTENSIONS.has(resolved.resolvedModule?.extension ?? "")) return resolved;
-      const imported = resolveImport(literal, containingFile);
-      return imported === undefined ? resolved : getResolved(imported);
+      const found = resolveModule(literal, containingFile);
+      const extension = found === undefined ? undefined : getExtension(found);
+      return found === undefined || extension === undefined
+        ? (resolved ?? { resolvedModule: undefined })
+        : {
+            resolvedModule: { resolvedFileName: found, extension, isExternalLibraryImport: false },
+          };
     });
   // HACK: a write outside strict mode to a name that no binding has makes a global, which the text
   // gains a var for, at its start, so that the name binds wherever it's written or read. The
@@ -275,32 +314,10 @@ export const createProgram = (
         // The program's options parse the model as a module, where await can start a statement.
         getSourceFile: (fileName, languageVersion) => {
           if (fileName === path) {
-            return ts.createSourceFile(
+            return createFile(
               path,
-              [...globals].map((name) => `var ${name}: any;`).join("") + text,
+              [...globals].map((name) => getAnyVar(name, path)).join("") + text,
               languageVersion,
-              true,
-            );
-          }
-          if (isCommonJsImport(fileName)) {
-            return ts.createSourceFile(
-              fileName,
-              getImportText(fileName),
-              languageVersion,
-              true,
-              ts.ScriptKind.TS,
-            );
-          }
-          const moduleText = isCommonJsFile(fileName) ? ts.sys.readFile(fileName) : undefined;
-          if (moduleText !== undefined) {
-            return typeAsAny(
-              ts.createSourceFile(
-                fileName,
-                declareVarFunctions(fileName, getModuleText(fileName, moduleText)),
-                languageVersion,
-                true,
-                ts.ScriptKind.TS,
-              ),
             );
           }
           const cached = libraryFiles.get(fileName);
@@ -312,11 +329,10 @@ export const createProgram = (
             }
             return file;
           }
-          return ts.createSourceFile(
+          return createVarFunctionsFile(
             fileName,
-            declareVarFunctions(fileName, assignParameterProperties(fileName, file.text)),
+            assignParameterProperties(fileName, file.text),
             languageVersion,
-            true,
           );
         },
         fileExists: (fileName) => fileName === path || host.fileExists(fileName),
@@ -329,7 +345,7 @@ export const createProgram = (
     if (file === undefined) throw new TlaTypeScriptError(`Can't read ${path}`);
     return file;
   };
-  const firstText = declareVarFunctions(path, assignParameterProperties(path, source));
+  const firstText = declareFileVarFunctions(path, assignParameterProperties(path, source));
   const firstProgram = createTypeScriptProgram([path], firstText, new Set());
   const firstSourceFile = getModelSourceFile(firstProgram);
   const syntaxErrors = firstProgram.getSyntacticDiagnostics(firstSourceFile);
@@ -362,7 +378,7 @@ export const createProgram = (
     ts
       .sortAndDeduplicateDiagnostics(
         getModelFiles(program).flatMap((file) =>
-          isCommonJsFile(file.fileName)
+          isJavaScriptFile(file.fileName)
             ? program.getSyntacticDiagnostics(file)
             : ts.getPreEmitDiagnostics(program, file),
         ),
@@ -377,7 +393,7 @@ export const createProgram = (
   const diagnostics = program === modelProgram ? modelDiagnostics : getDiagnostics(program);
   if (diagnostics.length > 0) throw new TlaTypeScriptError(ts.formatDiagnostics(diagnostics, host));
   const sourceFile = getModelSourceFile(program);
-  const checker = program.getTypeChecker();
+  const checker = typeExportsAsAny(program.getTypeChecker());
   return {
     sourceFile,
     checker,

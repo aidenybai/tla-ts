@@ -55,6 +55,14 @@ import {
   rejectRunningModules,
 } from "./namespaces";
 import { createProgram } from "./program";
+import {
+  getRequires,
+  isCommonJsFile,
+  isJavaScriptFile,
+  isNodeModule,
+  rejectCommonJsImport,
+  rejectWrapperUses,
+} from "./common-js";
 import { link } from "./regions";
 import { translateCall, translateInvariant, translateProperty, VALUE_TAGS } from "./properties";
 import { createStateScope } from "./scope";
@@ -215,41 +223,97 @@ export const compile = (
     rejectArgumentsVarReads(file, context);
   });
   const sourceFile = program.sourceFile;
-  // The files that the model imports, each after the files it imports, as they run.
-  const visited = new Set([sourceFile]);
+  if (isJavaScriptFile(sourceFile.fileName)) {
+    throw new TlaTypeScriptError("tla-ts can't run JavaScript as the model", sourceFile);
+  }
+  // The files that the model loads, each once it has run, and the statements of them all, with the
+  // model's own, in the order they run: an ES module's after those of the modules it imports, and a
+  // CommonJS module's each after those of the modules that its requires load as it starts. A
+  // require that may run later only reads the exports of a module that has started: one that
+  // started before the require, or, in a function that its module declares, before the module.
+  const visited = new Set<ts.SourceFile>();
   const files: ts.SourceFile[] = [];
-  const visitImports = (file: ts.SourceFile) =>
-    file.statements.forEach((statement) => {
-      // TypeScript erases a declaration that imports or exports only types.
-      const specifier =
-        (ts.isImportDeclaration(statement) && statement.importClause?.isTypeOnly !== true) ||
-        (ts.isExportDeclaration(statement) && !statement.isTypeOnly)
-          ? statement.moduleSpecifier
-          : undefined;
-      const imported =
-        specifier && program.checker.getSymbolAtLocation(specifier)?.valueDeclaration;
-      if (
-        imported === undefined ||
-        !ts.isSourceFile(imported) ||
-        imported.isDeclarationFile ||
-        visited.has(imported)
-      ) {
-        return;
-      }
-      visited.add(imported);
-      visitImports(imported);
-      files.push(imported);
-    });
-  visitImports(sourceFile);
+  const statements: ts.Statement[] = [];
+  const getImportedFile = (statement: ts.Statement) => {
+    // TypeScript erases a declaration that imports or exports only types.
+    const specifier =
+      (ts.isImportDeclaration(statement) && statement.importClause?.isTypeOnly !== true) ||
+      (ts.isExportDeclaration(statement) && !statement.isTypeOnly)
+        ? statement.moduleSpecifier
+        : undefined;
+    const imported = specifier && program.checker.getSymbolAtLocation(specifier)?.valueDeclaration;
+    return imported !== undefined && ts.isSourceFile(imported) && !imported.isDeclarationFile
+      ? imported
+      : undefined;
+  };
+  // tla-ts runs JavaScript only as CommonJS.
+  const rejectEsModule = (file: ts.SourceFile, node: ts.Node) => {
+    if (isJavaScriptFile(file.fileName) && !isCommonJsFile(file)) {
+      throw new TlaTypeScriptError(
+        `tla-ts can't load ${file.fileName}, which isn't a CommonJS module`,
+        node,
+      );
+    }
+  };
+  const load = (file: ts.SourceFile) => {
+    if (visited.has(file)) return;
+    const started = new Set(visited);
+    visited.add(file);
+    if (isCommonJsFile(file)) {
+      rejectWrapperUses(file, program.checker);
+      getRequires(file, program.checker).forEach((entry) => {
+        entry.requires.forEach((required) => {
+          rejectEsModule(required.file, required.call);
+          if (required.isCertain) {
+            load(required.file);
+            return;
+          }
+          const isStarted = required.isHoisted
+            ? started.has(required.file) || required.file === file
+            : visited.has(required.file);
+          if (!isStarted) {
+            throw new TlaTypeScriptError(
+              "tla-ts can't tell when this require loads its module, which nothing loaded before",
+              required.call,
+            );
+          }
+        });
+        statements.push(entry.statement);
+      });
+    } else {
+      file.statements.forEach((statement) => {
+        const specifier =
+          ts.isImportDeclaration(statement) || ts.isExportDeclaration(statement)
+            ? statement.moduleSpecifier
+            : undefined;
+        if (
+          specifier !== undefined &&
+          ts.isStringLiteral(specifier) &&
+          isNodeModule(specifier.text)
+        ) {
+          throw new TlaTypeScriptError(
+            `tla-ts can't load Node's built-in module ${specifier.text}`,
+            specifier,
+          );
+        }
+        const imported = getImportedFile(statement);
+        if (imported !== undefined) rejectEsModule(imported, statement);
+        if (imported !== undefined && isCommonJsFile(imported)) {
+          rejectCommonJsImport(statement, imported);
+        }
+        if (imported !== undefined) load(imported);
+      });
+      statements.push(...file.statements);
+    }
+    if (file !== sourceFile) files.push(file);
+  };
+  load(sourceFile);
   // The modules that only an import() of a string loads, which run after those the model imports.
   const loaded = files.length;
-  getDynamicImports(sourceFile, program.checker).forEach((file) => {
-    if (visited.has(file)) return;
-    visited.add(file);
-    visitImports(file);
-    files.push(file);
-  });
+  getDynamicImports(sourceFile, program.checker).forEach(load);
   rejectRunningModules(files.slice(loaded));
+  context.commonJsModules = [...visited].filter(isCommonJsFile);
+  const positions = new Map(statements.map((statement, position) => [statement, position]));
   // The files in the order they run, the model's last.
   const order = [...files, sourceFile];
   const getDeclaration = (node: ts.Node) => {
@@ -523,9 +587,7 @@ export const compile = (
     return next.length > run.length
       ? getImported(next)
       : [...new Set([...run, ...states.map((state) => state.statement), ...classes])].toSorted(
-          (left, right) =>
-            files.indexOf(left.getSourceFile()) - files.indexOf(right.getSourceFile()) ||
-            left.pos - right.pos,
+          (left, right) => (positions.get(left) ?? 0) - (positions.get(right) ?? 0),
         );
   };
   const imported = getImported(effects.filter((statement) => !ts.isVariableStatement(statement)));
@@ -682,7 +744,10 @@ export const compile = (
   if (
     heap !== undefined &&
     isScript(sourceFile) &&
-    (changedArrays.length > 0 || reached.some(usesObjects) || context.namespaces.size > 0)
+    (changedArrays.length > 0 ||
+      reached.some(usesObjects) ||
+      context.namespaces.size > 0 ||
+      context.commonJsModules.length > 0)
   ) {
     context.heap = heap;
     context.variables.set(heap, identifier(context.names.getFresh("heap")));

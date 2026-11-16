@@ -1,5 +1,8 @@
 import ts from "@typescript/typescript6";
 import { TlaTypeScriptError } from "../errors";
+import type { Context } from "./context";
+import { useJavaScript } from "./javascript";
+import { identifier, number, string } from "./tla";
 
 // The modules that Node builds in, which a specifier names before any package does.
 const NODE_MODULES = new Set([
@@ -76,17 +79,6 @@ const NODE_MODULES = new Set([
 // The conditions that Node matches in a package's exports, for an import and for a require.
 const IMPORT_CONDITIONS = new Set(["node", "import", "module-sync", "default"]);
 const REQUIRE_CONDITIONS = new Set(["node", "require", "module-sync", "default"]);
-
-// The suffix of the TypeScript file that tla-ts makes for an import of a CommonJS module, which
-// runs the module as the importer's import of it does.
-const IMPORT_SUFFIX = ".import.ts";
-
-// A CommonJS module's own file, which tla-ts compiles from the module's JavaScript, as allowJs is
-// off and only it brings JavaScript into a program.
-export const isCommonJsFile = (fileName: string) => /\.c?js$/.test(fileName);
-
-export const isCommonJsImport = (fileName: string) =>
-  fileName.endsWith(IMPORT_SUFFIX) && isCommonJsFile(fileName.slice(0, -IMPORT_SUFFIX.length));
 
 const getDirectory = (path: string) => path.slice(0, Math.max(path.lastIndexOf("/"), 1));
 
@@ -204,39 +196,33 @@ const getNodeModuleDirectories = (directory: string): string[] =>
         ...getNodeModuleDirectories(getDirectory(directory)),
       ];
 
-// Where a package of a node_modules directory exports a subpath, or undefined for a package with no
-// exports, which loads the subpath as a path.
+// The file of the first package of the node_modules directories that a subpath names: the one
+// that it exports, or, for a package with no exports, the one that the subpath names as a path,
+// where Node looks on in the next directory if there's none. Node finds no file where a package
+// doesn't export the subpath.
 const resolvePackage = (
   specifier: string,
-  directory: string,
+  directories: readonly string[],
   conditions: ReadonlySet<string>,
   load: (path: string) => string | undefined,
-  node: ts.Node,
-) => {
+): string | undefined => {
+  const modules = directories.at(0);
+  if (modules === undefined) return undefined;
   const name = getPackageName(specifier);
-  const found = getNodeModuleDirectories(directory).reduce<string | undefined>(
-    (resolved, modules) => {
-      if (resolved !== undefined) return resolved;
-      const packageDirectory = `${modules}/${name}`;
-      const exports = readPackage(packageDirectory)?.exports;
-      if (exports === undefined) return load(`${modules}/${specifier}`);
-      const target = resolveExports(
-        packageDirectory,
-        `.${specifier.slice(name.length)}`,
-        exports,
-        conditions,
-      );
-      if (target === undefined || !isFile(target)) {
-        throw new TlaTypeScriptError(
-          `tla-ts can't load ${specifier}, which its package doesn't export`,
-          node,
-        );
-      }
-      return target;
-    },
-    undefined,
+  const exports = readPackage(`${modules}/${name}`)?.exports;
+  if (exports === undefined) {
+    return (
+      load(`${modules}/${specifier}`) ??
+      resolvePackage(specifier, directories.slice(1), conditions, load)
+    );
+  }
+  const target = resolveExports(
+    `${modules}/${name}`,
+    `.${specifier.slice(name.length)}`,
+    exports,
+    conditions,
   );
-  return found;
+  return target !== undefined && isFile(target) ? target : undefined;
 };
 
 // LOAD_AS_FILE and LOAD_AS_DIRECTORY of Node's require.
@@ -265,76 +251,24 @@ const isRelative = (specifier: string) =>
   specifier === "." ||
   specifier === "..";
 
-const rejectNodeModule = (specifier: string, node: ts.Node) => {
-  if (specifier.startsWith("node:") || NODE_MODULES.has(specifier)) {
-    throw new TlaTypeScriptError(`tla-ts can't load Node's built-in module ${specifier}`, node);
-  }
-};
+// A specifier of a module that Node builds in.
+export const isNodeModule = (specifier: string) =>
+  specifier.startsWith("node:") || NODE_MODULES.has(specifier);
 
-// The file that a require of a specifier loads, as Node's require resolves it from a module.
-const resolveRequire = (specifier: string, fileName: string, node: ts.Node) => {
-  rejectNodeModule(specifier, node);
-  if (specifier.startsWith("#")) {
-    throw new TlaTypeScriptError(`tla-ts can't load a package's import ${specifier}`, node);
-  }
+// The file that a require of a specifier loads, as Node's require resolves it from a module, or
+// undefined where it loads none, or a module that Node builds in or a package's import.
+const resolveRequire = (specifier: string, fileName: string) => {
+  if (isNodeModule(specifier) || specifier.startsWith("#")) return undefined;
   const directory = getDirectory(fileName);
   const found = isRelative(specifier)
     ? loadRequired(joinPath(directory, specifier))
-    : resolvePackage(specifier, directory, REQUIRE_CONDITIONS, loadRequired, node);
-  if (found === undefined) throw new TlaTypeScriptError(`tla-ts can't find ${specifier}`, node);
-  return getRealPath(found);
-};
-
-// The format that Node loads a file in: CommonJS for a .cjs file, and for a .js file whose
-// package.json doesn't make it an ES module.
-const isCommonJs = (path: string): boolean => {
-  if (path.endsWith(".cjs")) return true;
-  if (!path.endsWith(".js")) return false;
-  const getType = (directory: string): unknown => {
-    const found = readPackage(directory);
-    return found !== undefined || directory === "/"
-      ? found?.type
-      : getType(getDirectory(directory));
-  };
-  return getType(getDirectory(path)) !== "module";
-};
-
-const rejectFormat = (path: string, specifier: string, node: ts.Node) => {
-  if (!isCommonJs(path)) {
-    throw new TlaTypeScriptError(
-      `tla-ts can't load ${specifier}, which isn't a CommonJS module`,
-      node,
-    );
-  }
-};
-
-// The file that tla-ts compiles for an import of a module of a package or of JavaScript, which
-// TypeScript doesn't resolve to its own code: a CommonJS module's import, or undefined where
-// Node's resolver finds no file.
-export const resolveImport = (specifier: ts.StringLiteralLike, fileName: string) => {
-  const text = specifier.text;
-  rejectNodeModule(text, specifier);
-  if (text.startsWith("#")) return undefined;
-  const directory = getDirectory(fileName);
-  const loadExact = (path: string) => (isFile(path) ? path : undefined);
-  const loadMain = (path: string) =>
-    text === getPackageName(text) ? loadAsDirectory(path) : loadExact(path);
-  const found = isRelative(text)
-    ? loadExact(joinPath(directory, text))
-    : resolvePackage(text, directory, IMPORT_CONDITIONS, loadMain, specifier);
-  if (found === undefined) return undefined;
-  const path = getRealPath(found);
-  rejectFormat(path, text, specifier);
-  return `${path}${IMPORT_SUFFIX}`;
-};
-
-// An import of a CommonJS module, which gives its exports as its default export once it runs.
-export const getImportText = (fileName: string) => {
-  const path = fileName.slice(0, -IMPORT_SUFFIX.length);
-  return `import { $tlaLoad } from ${JSON.stringify(path)};
-const $tlaExports: any = $tlaLoad();
-export { $tlaExports as default };
-`;
+    : resolvePackage(
+        specifier,
+        getNodeModuleDirectories(directory),
+        REQUIRE_CONDITIONS,
+        loadRequired,
+      );
+  return found === undefined ? undefined : getRealPath(found);
 };
 
 // A name that a node declares, rather than one that it reads or a property's name.
@@ -349,16 +283,6 @@ const isBindingName = (node: ts.Identifier) => {
       (ts.isBindingElement(parent) && parent.propertyName !== node)) &&
     parent.name === node
   );
-};
-
-const findBindings = (file: ts.SourceFile) => {
-  const names = new Set<string>();
-  const visit = (node: ts.Node) => {
-    if (ts.isIdentifier(node) && isBindingName(node)) names.add(node.text);
-    ts.forEachChild(node, visit);
-  };
-  visit(file);
-  return names;
 };
 
 // A name that isn't a variable's, such as a property's or a label.
@@ -377,8 +301,13 @@ const isPropertyName = (node: ts.Identifier) => {
   );
 };
 
-// Text of the same lines as a piece of text, so that what follows it stays where it was.
-const blank = (text: string) => text.replaceAll(/[^\n]/g, " ");
+// Whether a file declares process, which process.env then doesn't read Node's.
+const isProcessDeclared = (file: ts.SourceFile) => {
+  const visit = (node: ts.Node): boolean =>
+    (ts.isIdentifier(node) && node.text === "process" && isBindingName(node)) ||
+    (ts.forEachChild(node, visit) ?? false);
+  return visit(file);
+};
 
 // The value of an expression that only compares literals and the environment variables that
 // process.env names, as Node gives the environment that tla-ts runs in, or undefined for another.
@@ -444,133 +373,521 @@ const isDeadCode = (node: ts.Node, isProcessDeclared: boolean): boolean => {
   return isSkipped || isDeadCode(parent, isProcessDeclared);
 };
 
-// A CommonJS module's code, which tla-ts compiles as TypeScript: a function that runs the module
-// the first time a require or an import loads it, in the function that Node wraps a module's code
-// in, which the module's exports object is this of. A require of a string loads the module it
-// names through that module's own function. The code keeps its lines, the first after what tla-ts
-// adds before it.
-export const getModuleText = (fileName: string, text: string) => {
-  const file = ts.createSourceFile(fileName, text, ts.ScriptTarget.ESNext, true, ts.ScriptKind.JS);
-  const required: string[] = [];
-  const isProcessDeclared = findBindings(file).has("process");
-  const edits: { start: number; end: number; text: string }[] = [];
-  const visit = (node: ts.Node) => {
-    if (ts.isIdentifier(node) && node.text === "require" && !isPropertyName(node)) {
-      if (isBindingName(node)) {
-        throw new TlaTypeScriptError(
-          "tla-ts can't load the modules of a CommonJS module that declares require",
-          node,
-        );
-      }
-      const call = node.parent;
-      const argument = ts.isCallExpression(call) ? call.arguments[0] : undefined;
-      if (
-        !ts.isCallExpression(call) ||
-        call.expression !== node ||
-        call.arguments.length !== 1 ||
-        argument === undefined ||
-        !ts.isStringLiteralLike(argument)
-      ) {
-        throw new TlaTypeScriptError(
-          "tla-ts can't use require other than to call it with a string",
-          node,
-        );
-      }
-      if (isDeadCode(call, isProcessDeclared)) {
-        edits.push({
-          start: call.getStart(file),
-          end: call.end,
-          text: `undefined${blank(call.getText(file).slice(9))}`,
-        });
-        return;
-      }
-      const path = resolveRequire(argument.text, fileName, argument);
-      rejectFormat(path, argument.text, argument);
-      const position = required.includes(path) ? required.indexOf(path) : required.push(path) - 1;
-      const name = `$tlaRequire${position}`;
-      const original = call.getText(file);
-      edits.push({
-        start: call.getStart(file),
-        end: call.end,
-        text:
-          original.length > name.length + 2
-            ? `${name}(${blank(original.slice(name.length + 1, -1))})`
-            : `${name}()`,
-      });
+// The file that an import of a specifier loads, as Node's import resolves it, or undefined where
+// it loads none, or a module that Node builds in or a package's import.
+const resolveImport = (specifier: string, fileName: string) => {
+  if (isNodeModule(specifier) || specifier.startsWith("#")) return undefined;
+  const directory = getDirectory(fileName);
+  const loadExact = (path: string) => (isFile(path) ? path : undefined);
+  const loadMain = (path: string) =>
+    specifier === getPackageName(specifier) ? loadAsDirectory(path) : loadExact(path);
+  const found = isRelative(specifier)
+    ? loadExact(joinPath(directory, specifier))
+    : resolvePackage(specifier, getNodeModuleDirectories(directory), IMPORT_CONDITIONS, loadMain);
+  return found === undefined ? undefined : getRealPath(found);
+};
+
+export const isJavaScriptFile = (fileName: string) => /\.[cm]?js$/.test(fileName);
+
+// A call of the require that Node passes a CommonJS module, with a string.
+const isRequireCall = (node: ts.Node): node is ts.CallExpression =>
+  ts.isCallExpression(node) &&
+  ts.isIdentifier(node.expression) &&
+  node.expression.text === "require" &&
+  node.arguments.length === 1 &&
+  ts.isStringLiteralLike(node.arguments[0]);
+
+// The file that Node loads for a module's specifier, which a require or an import names, or
+// undefined for a require that never runs, where a condition that only compares constants skips
+// it, such as the one of a package's index for the other NODE_ENV.
+export const resolveModule = (specifier: ts.StringLiteralLike, fileName: string) => {
+  const call = specifier.parent;
+  if (isRequireCall(call)) {
+    return isDeadCode(call, isProcessDeclared(specifier.getSourceFile()))
+      ? undefined
+      : resolveRequire(specifier.text, fileName);
+  }
+  return resolveImport(specifier.text, fileName);
+};
+
+// The type that the package.json nearest a directory gives its JavaScript files.
+const getPackageType = (directory: string): unknown => {
+  const found = readPackage(directory);
+  return found !== undefined || directory === "/"
+    ? found?.type
+    : getPackageType(getDirectory(directory));
+};
+
+// Syntax that only an ES module has, which makes Node load a .js file of a package with no type as
+// one.
+const hasModuleSyntax = (node: ts.Node): boolean =>
+  ts.isImportDeclaration(node) ||
+  ts.isExportDeclaration(node) ||
+  ts.isExportAssignment(node) ||
+  (ts.canHaveModifiers(node) &&
+    (ts.getModifiers(node) ?? []).some(
+      (modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword,
+    )) ||
+  (ts.isMetaProperty(node) && node.keywordToken === ts.SyntaxKind.ImportKeyword) ||
+  ts.isAwaitExpression(node) ||
+  (ts.isForOfStatement(node) && node.awaitModifier !== undefined) ||
+  (!ts.isFunctionLike(node) && (ts.forEachChild(node, hasModuleSyntax) ?? false));
+
+// A JavaScript file, which Node loads as an ES module where its extension or its package's type
+// makes it one, or, for a .js file of a package with no type, its syntax, and else as CommonJS.
+export const createJavaScriptFile = (
+  fileName: string,
+  text: string,
+  languageVersion: ts.ScriptTarget | ts.CreateSourceFileOptions,
+) => {
+  const options = typeof languageVersion === "object" ? languageVersion : { languageVersion };
+  const create = (impliedNodeFormat: ts.ResolutionMode) =>
+    ts.createSourceFile(fileName, text, { ...options, impliedNodeFormat }, true);
+  if (fileName.endsWith(".mjs")) return create(ts.ModuleKind.ESNext);
+  if (fileName.endsWith(".cjs")) return create(ts.ModuleKind.CommonJS);
+  const type = getPackageType(getDirectory(fileName));
+  if (type === "module") return create(ts.ModuleKind.ESNext);
+  const file = create(ts.ModuleKind.CommonJS);
+  return type === undefined && hasModuleSyntax(file) ? create(ts.ModuleKind.ESNext) : file;
+};
+
+// A file that Node runs as CommonJS, in the function that it wraps a module's code in.
+export const isCommonJsFile = (file: ts.SourceFile) =>
+  isJavaScriptFile(file.fileName) && file.impliedNodeFormat === ts.ModuleKind.CommonJS;
+
+// The parameters of the function that Node runs a CommonJS module's code in.
+const WRAPPER_NAMES = new Set(["exports", "require", "module", "__filename", "__dirname"]);
+
+// A name that a CommonJS module's code reads where no declaration of its own binds it, which
+// names a parameter of the function that Node runs the code in. TypeScript gives such a name a
+// symbol of what the module exports, if any.
+export const getWrapperName = (node: ts.Identifier, checker: ts.TypeChecker) => {
+  if (
+    !WRAPPER_NAMES.has(node.text) ||
+    isPropertyName(node) ||
+    isBindingName(node) ||
+    !isCommonJsFile(node.getSourceFile())
+  ) {
+    return undefined;
+  }
+  const isDeclared = (checker.getSymbolAtLocation(node)?.declarations ?? []).some(
+    (declaration) =>
+      (ts.isVariableDeclaration(declaration) ||
+        ts.isParameter(declaration) ||
+        ts.isFunctionLike(declaration) ||
+        ts.isClassLike(declaration) ||
+        ts.isBindingElement(declaration)) &&
+      declaration.name !== undefined &&
+      ts.isIdentifier(declaration.name) &&
+      declaration.name.text === node.text,
+  );
+  return isDeclared ? undefined : node.text;
+};
+
+// The module that a require of a string loads, which TypeScript resolves as Node does, or
+// undefined where it never runs.
+export const getRequiredFile = (call: ts.CallExpression, checker: ts.TypeChecker) => {
+  const declaration = checker.getSymbolAtLocation(call.arguments[0])?.valueDeclaration;
+  return declaration !== undefined && ts.isSourceFile(declaration) ? declaration : undefined;
+};
+
+// A require of a string, which a CommonJS module calls where no declaration of its own binds
+// require.
+export const isModuleRequire = (
+  node: ts.Node,
+  checker: ts.TypeChecker,
+): node is ts.CallExpression =>
+  isRequireCall(node) &&
+  ts.isIdentifier(node.expression) &&
+  getWrapperName(node.expression, checker) === "require";
+
+// Whether an expression runs no code that another module could see or change what it gives:
+// a literal, a name, a function, the this of a module, a require, or a property of what a
+// require gives or of module or exports.
+const isQuiet = (node: ts.Expression): boolean =>
+  ts.isLiteralExpression(node) ||
+  ts.isIdentifier(node) ||
+  ts.isFunctionExpression(node) ||
+  ts.isArrowFunction(node) ||
+  [
+    ts.SyntaxKind.NullKeyword,
+    ts.SyntaxKind.TrueKeyword,
+    ts.SyntaxKind.FalseKeyword,
+    ts.SyntaxKind.ThisKeyword,
+  ].includes(node.kind) ||
+  isRequireCall(node) ||
+  (ts.isParenthesizedExpression(node) && isQuiet(node.expression)) ||
+  (ts.isPropertyAccessExpression(node) &&
+    (isRequireCall(node.expression) ||
+      (ts.isIdentifier(node.expression) && ["module", "exports"].includes(node.expression.text))));
+
+// Whether a statement runs no code, as one that only declares functions or names quiet values.
+const isQuietStatement = (statement: ts.Statement) =>
+  (ts.isFunctionDeclaration(statement) && statement.body !== undefined) ||
+  ts.isEmptyStatement(statement) ||
+  (ts.isExpressionStatement(statement) && ts.isStringLiteral(statement.expression)) ||
+  (ts.isVariableStatement(statement) &&
+    statement.declarationList.declarations.every(
+      (declaration) => declaration.initializer === undefined || isQuiet(declaration.initializer),
+    ));
+
+// A function that the code around it calls in place, as (function () { ... })() or
+// (function () { ... }).call(this) does, with arguments that run no code.
+const isCalledInPlace = (node: ts.FunctionExpression | ts.ArrowFunction) => {
+  const wrapped = ts.findAncestor(
+    node,
+    (ancestor) => !ts.isParenthesizedExpression(ancestor.parent),
+  );
+  const parent = wrapped?.parent;
+  const isCallMethod =
+    parent !== undefined &&
+    ts.isPropertyAccessExpression(parent) &&
+    parent.expression === wrapped &&
+    parent.name.text === "call";
+  const call = isCallMethod ? parent.parent : parent;
+  return (
+    call !== undefined &&
+    ts.isCallExpression(call) &&
+    call.expression === (isCallMethod ? parent : wrapped) &&
+    call.arguments.every(isQuiet)
+  );
+};
+
+// Whether a condition only compares constants, and gives a value of a truth.
+const isTruth = (node: ts.Expression, truth: boolean, isProcessDeclared: boolean) => {
+  const constant = getConstant(node, isProcessDeclared);
+  return constant !== undefined && Boolean(constant.value) === truth;
+};
+
+// Whether code runs whenever the code around it runs, before anything else in it that another
+// module could see.
+const isRunFirst = (node: ts.Node, parent: ts.Node, isProcessDeclared: boolean): boolean => {
+  const isAfterQuiet = (nodes: readonly ts.Node[]) =>
+    nodes.slice(0, nodes.indexOf(node)).every((inner) => ts.isExpression(inner) && isQuiet(inner));
+  if (
+    ts.isParenthesizedExpression(parent) ||
+    ts.isExpressionStatement(parent) ||
+    ts.isVariableStatement(parent) ||
+    ts.isReturnStatement(parent) ||
+    ts.isPrefixUnaryExpression(parent) ||
+    ts.isVoidExpression(parent) ||
+    (ts.isVariableDeclaration(parent) && parent.initializer === node) ||
+    ((ts.isPropertyAccessExpression(parent) || ts.isElementAccessExpression(parent)) &&
+      parent.expression === node) ||
+    ((ts.isCallExpression(parent) || ts.isNewExpression(parent)) && parent.expression === node) ||
+    (ts.isIfStatement(parent) && parent.expression === node) ||
+    (ts.isConditionalExpression(parent) && parent.condition === node)
+  ) {
+    return true;
+  }
+  if (ts.isCallExpression(parent) || ts.isNewExpression(parent)) {
+    return isQuiet(parent.expression) && isAfterQuiet(parent.arguments ?? []);
+  }
+  if (ts.isArrayLiteralExpression(parent)) return isAfterQuiet(parent.elements);
+  if (ts.isPropertyAssignment(parent)) {
+    const literal = parent.parent;
+    const properties = literal.properties.slice(0, literal.properties.indexOf(parent));
+    return properties.every(
+      (property) =>
+        ts.isShorthandPropertyAssignment(property) ||
+        (ts.isPropertyAssignment(property) &&
+          !ts.isComputedPropertyName(property.name) &&
+          isQuiet(property.initializer)),
+    );
+  }
+  if (ts.isObjectLiteralExpression(parent)) return true;
+  if (ts.isVariableDeclarationList(parent)) {
+    return parent.declarations
+      .slice(
+        0,
+        parent.declarations.findIndex((declaration) => declaration === node),
+      )
+      .every(
+        (declaration) => declaration.initializer === undefined || isQuiet(declaration.initializer),
+      );
+  }
+  if (ts.isBinaryExpression(parent)) {
+    const kind = parent.operatorToken.kind;
+    if (node === parent.left) return true;
+    if (kind === ts.SyntaxKind.EqualsToken) {
+      return (
+        ts.isIdentifier(parent.left) ||
+        (ts.isPropertyAccessExpression(parent.left) && isQuiet(parent.left.expression))
+      );
     }
-    if (
-      ts.isIdentifier(node) &&
-      node.text === "arguments" &&
-      !isPropertyName(node) &&
+    return kind === ts.SyntaxKind.AmpersandAmpersandToken
+      ? isTruth(parent.left, true, isProcessDeclared)
+      : kind === ts.SyntaxKind.BarBarToken
+        ? isTruth(parent.left, false, isProcessDeclared)
+        : kind === ts.SyntaxKind.CommaToken && isQuiet(parent.left);
+  }
+  if (ts.isConditionalExpression(parent)) {
+    return isTruth(parent.condition, node === parent.whenTrue, isProcessDeclared);
+  }
+  if (ts.isIfStatement(parent)) {
+    return isTruth(parent.expression, node === parent.thenStatement, isProcessDeclared);
+  }
+  if (ts.isBlock(parent)) {
+    return parent.statements
+      .slice(
+        0,
+        parent.statements.findIndex((statement) => statement === node),
+      )
+      .every(isQuietStatement);
+  }
+  return (
+    (ts.isFunctionExpression(parent) || ts.isArrowFunction(parent)) &&
+    parent.body === node &&
+    isCalledInPlace(parent)
+  );
+};
+
+// Whether a node runs whenever a statement of a module's code runs, before anything else in it
+// that another module could see.
+const isCertain = (node: ts.Node, statement: ts.Statement, isProcessDeclared: boolean): boolean =>
+  node === statement ||
+  (isRunFirst(node, node.parent, isProcessDeclared) &&
+    isCertain(node.parent, statement, isProcessDeclared));
+
+// The modules that each statement of a CommonJS module's code requires, in order: whether Node loads each as the statement starts, as nothing else of the statement
+// that another module could see runs first, and whether a function that the module declares
+// requires it, which may run before the statement does.
+export const getRequires = (file: ts.SourceFile, checker: ts.TypeChecker) => {
+  const isDeclared = isProcessDeclared(file);
+  return file.statements.map((statement) => {
+    const requires: {
+      call: ts.CallExpression;
+      file: ts.SourceFile;
+      isCertain: boolean;
+      isHoisted: boolean;
+    }[] = [];
+    const visit = (node: ts.Node) => {
+      const required =
+        isModuleRequire(node, checker) && !isDeadCode(node, isDeclared)
+          ? getRequiredFile(node, checker)
+          : undefined;
+      if (isModuleRequire(node, checker) && required !== undefined) {
+        requires.push({
+          call: node,
+          file: required,
+          isCertain: isCertain(node, statement, isDeclared),
+          isHoisted: ts.isFunctionDeclaration(statement),
+        });
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(statement);
+    return { statement, requires };
+  });
+};
+
+// The ref that the heap gives an object from the start, after the template objects.
+const getModuleRef = (position: number, context: Context) =>
+  useJavaScript(
+    ":>",
+    [
+      identifier("Ref"),
+      number(
+        context.generatorPrototypes.size +
+          context.namespaces.size +
+          2 * context.templateSites.length +
+          position +
+          1,
+      ),
+    ],
+    context,
+  );
+
+// The refs of a CommonJS module's exports object and its module object, which the heap holds from
+// the start.
+export const getModuleRefs = (file: ts.SourceFile, context: Context) => {
+  const position = context.commonJsModules.indexOf(file);
+  if (position === -1) {
+    throw new TlaTypeScriptError("tla-ts can't load this module here", context.script?.sourceFile);
+  }
+  return {
+    exports: getModuleRef(2 * position, context),
+    module: getModuleRef(2 * position + 1, context),
+  };
+};
+
+// The objects of the CommonJS modules, which the heap holds from the start: each one's exports
+// object, and its module object, whose exports property holds that object until the module's code
+// assigns another.
+export const getModuleObjects = (context: Context) =>
+  context.commonJsModules.flatMap((file) => [
+    identifier("EmptyObject"),
+    useJavaScript(
+      "Put",
+      [identifier("EmptyObject"), string("exports"), getModuleRefs(file, context).exports],
+      context,
+    ),
+  ]);
+
+// The CommonJS module whose exports a name that an import binds gives, through the exports of
+// other modules: its default export, which Node gives as the module's exports once its code has
+// run.
+export const getImportedCommonJs = (node: ts.Identifier, checker: ts.TypeChecker) => {
+  const find = (symbol: ts.Symbol | undefined): ts.SourceFile | undefined => {
+    if (symbol === undefined || (symbol.flags & ts.SymbolFlags.Alias) === 0) return undefined;
+    const declaration = symbol.declarations?.at(0);
+    const isDefault =
+      declaration !== undefined &&
+      ((ts.isImportClause(declaration) && declaration.name !== undefined) ||
+        (ts.isImportSpecifier(declaration) &&
+          (declaration.propertyName ?? declaration.name).text === "default"));
+    const statement = isDefault ? ts.findAncestor(declaration, ts.isImportDeclaration) : undefined;
+    const module =
+      statement === undefined
+        ? undefined
+        : checker.getSymbolAtLocation(statement.moduleSpecifier)?.valueDeclaration;
+    return module !== undefined && ts.isSourceFile(module) && isCommonJsFile(module)
+      ? module
+      : find(checker.getImmediateAliasedSymbol(symbol));
+  };
+  return find(checker.getSymbolAtLocation(node));
+};
+
+// Stops where a CommonJS module's code uses the function that Node runs it in in a way that tla-ts
+// doesn't follow: it declares or assigns a parameter of the function, reads its arguments, or
+// returns from it.
+export const rejectWrapperUses = (file: ts.SourceFile, checker: ts.TypeChecker) => {
+  const visit = (node: ts.Node) => {
+    const isTopLevel =
       ts.findAncestor(
-        node,
+        node.parent,
         (ancestor) => ts.isFunctionLike(ancestor) && !ts.isArrowFunction(ancestor),
-      ) === undefined
+      ) === undefined;
+    if (ts.isIdentifier(node) && WRAPPER_NAMES.has(node.text) && isBindingName(node)) {
+      const owner = ts.findAncestor(node.parent, ts.isFunctionLike);
+      if (owner === undefined || owner.name === node) {
+        throw new TlaTypeScriptError(
+          `tla-ts can't run a CommonJS module that declares ${node.text}`,
+          node,
+        );
+      }
+    }
+    const name = ts.isIdentifier(node) ? getWrapperName(node, checker) : undefined;
+    const parent = node.parent;
+    if (
+      name !== undefined &&
+      ts.isBinaryExpression(parent) &&
+      parent.left === node &&
+      parent.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+      parent.operatorToken.kind <= ts.SyntaxKind.LastAssignment
     ) {
+      throw new TlaTypeScriptError(`tla-ts can't assign ${name} in a CommonJS module`, node);
+    }
+    if (ts.isIdentifier(node) && node.text === "arguments" && isTopLevel && !isPropertyName(node)) {
       throw new TlaTypeScriptError(
         "tla-ts can't read the arguments of the function that Node runs a module in",
         node,
       );
     }
+    if (ts.isReturnStatement(node) && ts.findAncestor(node, ts.isFunctionLike) === undefined) {
+      throw new TlaTypeScriptError("tla-ts can't return from a CommonJS module's code", node);
+    }
     ts.forEachChild(node, visit);
   };
   visit(file);
-  const body = edits
-    .toSorted((left, right) => right.start - left.start)
-    .reduce(
-      (current, edit) => current.slice(0, edit.start) + edit.text + current.slice(edit.end),
-      text.startsWith("#!") ? `//${text.slice(2)}` : text,
-    );
-  const imports = required
-    .map(
-      (path, position) =>
-        `import { $tlaLoad as $tlaRequire${position} } from ${JSON.stringify(path)};`,
-    )
-    .join("");
-  const directory = getDirectory(fileName);
-  return `${imports}var $tlaModule: any; export function $tlaLoad(): any { if ($tlaModule !== undefined) return $tlaModule.exports; $tlaModule = { exports: {} }; (function (exports, require, module, __filename, __dirname) {${body}
-}).call($tlaModule.exports, $tlaModule.exports, undefined, $tlaModule, ${JSON.stringify(fileName)}, ${JSON.stringify(directory)}); return $tlaModule.exports; }
-`;
 };
 
-// HACK: TypeScript types JavaScript by what it infers, where Node's values may be of any kind, so
-// each variable, parameter, and return of a CommonJS module's code takes type any, as a type that
-// it doesn't write and that keeps its text where it was.
-export const typeAsAny = (file: ts.SourceFile) => {
-  const setAny = (node: ts.Node, position: number) => {
-    const type = ts.setTextRange(ts.factory.createKeywordTypeNode(ts.SyntaxKind.AnyKeyword), {
-      pos: position,
-      end: position,
-    });
-    Object.assign(type, { parent: node });
-    Object.assign(node, { type });
-  };
-  const visit = (node: ts.Node) => {
-    if (
-      (ts.isVariableDeclaration(node) &&
-        node.type === undefined &&
-        !(
-          ts.isVariableDeclarationList(node.parent) &&
-          (ts.isForInStatement(node.parent.parent) || ts.isForOfStatement(node.parent.parent))
-        )) ||
-      ((ts.isParameter(node) || ts.isPropertyDeclaration(node)) && node.type === undefined)
-    ) {
-      setAny(node, node.name.end);
+// Stops where an ES module imports what Node doesn't give as a CommonJS module's default export,
+// its exports: a name other than default, which Node finds in the module's code, or the module's
+// namespace object, or where the module marks itself as an ES module, whose default TypeScript
+// reads elsewhere.
+export const rejectCommonJsImport = (statement: ts.Statement, file: ts.SourceFile) => {
+  const clause = ts.isImportDeclaration(statement) ? statement.importClause : undefined;
+  const bindings = clause?.namedBindings;
+  const isDefaultOnly =
+    clause !== undefined &&
+    (bindings === undefined ||
+      (ts.isNamedImports(bindings) &&
+        bindings.elements.every(
+          (element) => (element.propertyName ?? element.name).text === "default",
+        )));
+  if (!isDefaultOnly) {
+    throw new TlaTypeScriptError(
+      "tla-ts can't import other than the default export of a CommonJS module",
+      statement,
+    );
+  }
+  if (file.text.includes("__esModule")) {
+    throw new TlaTypeScriptError(
+      "tla-ts can't import the default export of a CommonJS module that marks itself as an ES module",
+      statement,
+    );
+  }
+};
+
+// A symbol that TypeScript makes of a CommonJS module's exports: the module's, its module.exports,
+// or a variable that a require initializes.
+const isExportsSymbol = (symbol: ts.Symbol) =>
+  (symbol.flags & ts.SymbolFlags.ModuleExports) !== 0 ||
+  (symbol.declarations ?? []).some(
+    (declaration) =>
+      ((symbol.flags & ts.SymbolFlags.Alias) !== 0 &&
+        (ts.isVariableDeclaration(declaration) || ts.isBindingElement(declaration))) ||
+      (isCommonJsFile(declaration.getSourceFile()) &&
+        (ts.isSourceFile(declaration) || ts.isBinaryExpression(declaration))),
+  );
+
+// HACK: TypeScript types a CommonJS module's module, exports, and what a require gives by what the
+// module's code assigns, which nothing checks, as checkJs is off, and which other code may change
+// as it runs. tla-ts reads them as any, which the run-time kind checks guard.
+export const typeExportsAsAny = (checker: ts.TypeChecker): ts.TypeChecker => {
+  const any = checker.getAnyType();
+  const isExports = (symbol: ts.Symbol) =>
+    isExportsSymbol(symbol) ||
+    ((symbol.flags & ts.SymbolFlags.Alias) !== 0 &&
+      isExportsSymbol(checker.getAliasedSymbol(symbol)));
+  const isExportsNode = (node: ts.Node): boolean => {
+    const file = node.getSourceFile();
+    if (node.kind === ts.SyntaxKind.ThisKeyword) {
+      return (
+        isCommonJsFile(file) &&
+        ts.findAncestor(
+          node.parent,
+          (ancestor) =>
+            (ts.isFunctionLike(ancestor) && !ts.isArrowFunction(ancestor)) ||
+            ts.isClassLike(ancestor),
+        ) === undefined
+      );
     }
-    if (
-      (ts.isFunctionDeclaration(node) ||
-        ts.isFunctionExpression(node) ||
-        ts.isArrowFunction(node) ||
-        ts.isMethodDeclaration(node) ||
-        ts.isGetAccessorDeclaration(node)) &&
-      node.type === undefined &&
-      (ts.isArrowFunction(node) || node.asteriskToken === undefined) &&
-      (ts.getCombinedModifierFlags(node) & ts.ModifierFlags.Async) === 0
-    ) {
-      setAny(node, node.parameters.end);
+    if (ts.isIdentifier(node)) {
+      const symbol = checker.getSymbolAtLocation(node);
+      return (
+        ["module", "exports", "require"].includes(getWrapperName(node, checker) ?? "") ||
+        (symbol !== undefined &&
+          (isExports(symbol) ||
+            ((symbol.flags & ts.SymbolFlags.Alias) !== 0 &&
+              getImportedCommonJs(node, checker) !== undefined)))
+      );
     }
-    ts.forEachChild(node, visit);
+    return (
+      isModuleRequire(node, checker) ||
+      (ts.isPropertyAccessExpression(node) &&
+        node.name.text === "exports" &&
+        ts.isIdentifier(node.expression) &&
+        getWrapperName(node.expression, checker) === "module")
+    );
   };
-  visit(file);
-  return file;
+  return {
+    ...checker,
+    getTypeAtLocation: (node) => (isExportsNode(node) ? any : checker.getTypeAtLocation(node)),
+    getTypeOfSymbol: (symbol) => (isExports(symbol) ? any : checker.getTypeOfSymbol(symbol)),
+    getTypeOfSymbolAtLocation: (symbol, node) =>
+      isExports(symbol) || isExportsNode(node)
+        ? any
+        : checker.getTypeOfSymbolAtLocation(symbol, node),
+    getContextualType: (node) => {
+      const parent = node.parent;
+      return ts.isBinaryExpression(parent) &&
+        parent.right === node &&
+        parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+        isExportsNode(parent.left)
+        ? any
+        : checker.getContextualType(node);
+    },
+  };
 };

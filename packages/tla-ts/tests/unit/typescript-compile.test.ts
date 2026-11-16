@@ -47741,4 +47741,33 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("x,n,4,1"))).failure?.message).toContain("seen x,n,3,1");
     });
   });
+
+  describe("runs CommonJS modules as Node wraps them, from their own JavaScript", () => {
+    const getFixture = (name: string) => {
+      const path = join(import.meta.dirname, `../fixtures/typescript/common-js/${name}`);
+      return { path, source: readFileSync(path, "utf8") };
+    };
+
+    it.each(["wrapped.ts"])("agrees with Node on %s", async (name) => {
+      const fixture = getFixture(name);
+      expect((await check(compile(fixture.source, fixture.path))).failure).toBeUndefined();
+    });
+
+    it.each([["wrapped.ts", "wrapped:2,inner,true,2", "wrapped:1,inner,true,2"]])(
+      "rejects another outcome of %s",
+      async (name, expected, wrong) => {
+        const fixture = getFixture(name);
+        const result = await check(compile(fixture.source.replace(expected, wrong), fixture.path));
+        expect(result.failure?.message).toContain(`seen ${expected}`);
+      },
+    );
+
+    it.each([
+      ["late.ts", "tla-ts can't tell when this require loads its module"],
+      ["names.ts", "tla-ts can't import other than the default export of a CommonJS module"],
+    ])("stops where %s loads a module as tla-ts doesn't follow", (name, message) => {
+      const fixture = getFixture(name);
+      expect(() => compile(fixture.source, fixture.path)).toThrow(message);
+    });
+  });
 });

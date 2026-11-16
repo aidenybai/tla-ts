@@ -15,7 +15,7 @@ import {
   isHeapSetOrMap,
 } from "./types";
 import { TlaTypeScriptError } from "../errors";
-import { isCommonJsFile } from "./common-js";
+import { getImportedCommonJs, getWrapperName, isCommonJsFile } from "./common-js";
 import { createNames, type Names } from "./names";
 import { getBindingNames, getLexicalNames } from "./early-errors";
 import { getKeptReads } from "./narrowing";
@@ -194,6 +194,8 @@ export interface Context {
   // The sites of the tagged templates other than String.raw's, each of whose template object and
   // its raw strings' array the heap holds from the start, after the namespace objects.
   templateSites: readonly ts.TaggedTemplateExpression[];
+  // The CommonJS modules that the script runs, whose objects the heap holds from the start.
+  commonJsModules: readonly ts.SourceFile[];
   // Whether a script gives Array.prototype or Object.prototype properties, which an array reads
   // past its end.
   hasInheritedElements: boolean;
@@ -583,6 +585,7 @@ export const createContext = (
     generatorPrototypes: new Map(),
     namespaces: new Map(),
     templateSites: [],
+    commonJsModules: [],
     hasInheritedElements: false,
     characters: new Set(),
     longLiterals: new Set(),
@@ -666,8 +669,7 @@ const hasTopLevelAwait = (node: ts.Node): boolean =>
 // Node runs another file as a script where it strips its types, and a CommonJS module's code in a
 // function.
 export const isModuleFile = (file: ts.SourceFile) =>
-  !isCommonJsFile(file.fileName) &&
-  (file.statements.some(isModuleSyntax) || hasTopLevelAwait(file));
+  !isCommonJsFile(file) && (file.statements.some(isModuleSyntax) || hasTopLevelAwait(file));
 
 // A "use strict" directive is in the string literals that start the statements, and later it is
 // only an expression.
@@ -855,7 +857,8 @@ export const getArgumentsOwner = (node: ts.Node, checker: ts.TypeChecker) => {
 export const isUnresolved = (node: ts.Node, context: Context): node is ts.Identifier =>
   ts.isIdentifier(node) &&
   context.checker.getSymbolAtLocation(node) === undefined &&
-  !NODE_GLOBALS.has(node.text);
+  !NODE_GLOBALS.has(node.text) &&
+  getWrapperName(node, context.checker) === undefined;
 
 // The names that an assignment target writes, through the elements of its patterns.
 const getAssignedNames = (target: ts.Expression): ts.Expression[] => {
@@ -1324,6 +1327,9 @@ export const getSymbol = (node: ts.Node, checker: ts.TypeChecker) => {
 
 // The symbol of a name's own declaration, which a var that hoists its binding takes.
 export const getOwnSymbol = (node: ts.Node, checker: ts.TypeChecker) => {
+  // A parameter of the function that Node runs a CommonJS module's code in, which TypeScript gives
+  // a symbol of what the module exports.
+  if (ts.isIdentifier(node) && getWrapperName(node, checker) !== undefined) return undefined;
   const parent = node.parent;
   // A parameter property's name names the property, where the constructor's body reads the
   // parameter.
@@ -1337,7 +1343,17 @@ export const getOwnSymbol = (node: ts.Node, checker: ts.TypeChecker) => {
           ts.isParameterPropertyDeclaration(parent, parent.parent)
         ? checker.getSymbolsOfParameterPropertyDeclaration(parent, node.text)[0]
         : checker.getSymbolAtLocation(node);
-  return symbol !== undefined && symbol.flags & ts.SymbolFlags.Alias
+  // A variable that a require initializes in JavaScript holds what the require gives at run time,
+  // which TypeScript makes an alias of what the module exports, as it does an import of a CommonJS
+  // module's default export, which gives the module's exports.
+  const declaration = symbol?.declarations?.at(0);
+  return symbol !== undefined &&
+    symbol.flags & ts.SymbolFlags.Alias &&
+    !(
+      declaration !== undefined &&
+      (ts.isVariableDeclaration(declaration) || ts.isBindingElement(declaration))
+    ) &&
+    !(ts.isIdentifier(node) && getImportedCommonJs(node, checker) !== undefined)
     ? checker.getAliasedSymbol(symbol)
     : symbol;
 };

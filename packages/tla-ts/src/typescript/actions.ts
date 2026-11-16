@@ -1,4 +1,5 @@
 import ts from "@typescript/typescript6";
+import { getModuleObjects } from "./common-js";
 import { isAmbientCode } from "./early-errors";
 import { BUILT_INS } from "./built-ins";
 import type { ExceptPathStep, Expression, OperatorDefinition } from "../ast";
@@ -21395,8 +21396,11 @@ export const translateScript = (
               [
                 context.heap,
                 // The namespace objects that the script reads, which take their exports once their
-                // modules run, and the template objects of its tagged templates.
-                context.namespaces.size === 0 && context.templateSites.length === 0
+                // modules run, the template objects of its tagged templates, and the objects of its
+                // CommonJS modules.
+                context.namespaces.size === 0 &&
+                context.templateSites.length === 0 &&
+                context.commonJsModules.length === 0
                   ? prototypes
                   : useJavaScript(
                       "AllocateEach",
@@ -21407,6 +21411,7 @@ export const translateScript = (
                           ...context.templateSites.flatMap((site) =>
                             getTemplateObjects(site, context),
                           ),
+                          ...getModuleObjects(context),
                         ]),
                       ],
                       context,
