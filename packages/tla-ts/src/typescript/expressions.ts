@@ -43,6 +43,7 @@ import {
   isStrictCode,
   getSharedDeclaration,
   getStaticTruth,
+  getNamedSymbol,
   getSymbol,
   isStatic,
   isAssigned,
@@ -157,7 +158,7 @@ import {
   translateTypeOf,
   useJavaScript,
 } from "./javascript";
-import { getNamespaceName, getNamespaceRef } from "./namespaces";
+import { getNamespaceModule, getNamespaceName, getNamespaceRef, isBindingRead } from "./namespaces";
 import { getThisOwner, isBeforeDeclaration, rejectBeforeDeclaration, type Scope } from "./scope";
 import { getMappedParameter } from "./actions";
 import {
@@ -990,7 +991,7 @@ const translateBuiltInCall = (
       ]),
     );
   }
-  const symbol = getSymbol(node.expression, context.checker);
+  const symbol = getNamedSymbol(node.expression, context.checker);
   const helper = getTopLevelDeclaration(symbol);
   if (helper?.getSourceFile().isDeclarationFile) {
     return translateUnknown(node, `Unsupported call: ${node.expression.getText()}`, context);
@@ -1017,14 +1018,19 @@ const translateBuiltInCall = (
   if ((callee !== undefined && ts.isMethodDeclaration(callee)) || isSuperAccess(node.expression)) {
     return translateLocalCall(node, scope, context);
   }
-  // A call of a function that a field holds.
+  // A call of a function that a field holds, or that an object other than a module's namespace
+  // object holds under the name of the module's export.
   const field = symbol?.valueDeclaration;
   if (
     isMethodCall(node) &&
     context.heap !== undefined &&
-    field !== undefined &&
-    !field.getSourceFile().isDeclarationFile &&
-    (ts.isPropertyDeclaration(field) || ts.isParameter(field) || ts.isPropertySignature(field))
+    ((field !== undefined &&
+      !field.getSourceFile().isDeclarationFile &&
+      (ts.isPropertyDeclaration(field) ||
+        ts.isParameter(field) ||
+        ts.isPropertySignature(field))) ||
+      (symbol === undefined &&
+        getTopLevelDeclaration(getSymbol(node.expression, context.checker)) !== undefined))
   ) {
     return translateLocalCall(node, scope, context);
   }
@@ -2729,6 +2735,12 @@ const getEnvironmentVariable = (node: ts.Expression, context: Context) => {
       : undefined;
 };
 
+const getUninitializedRead = (name: ts.Identifier) =>
+  apply("Assert", [
+    boolean(false),
+    string(`tla-ts can't throw the ReferenceError of reading ${name.text} before its declaration`),
+  ]);
+
 const translateIdentifier = (node: ts.Identifier, scope: Scope, context: Context) => {
   if (node.text === "undefined") return getUndefined(context);
   if (isNodeGlobal(node, context)) {
@@ -2760,12 +2772,7 @@ const translateIdentifier = (node: ts.Identifier, scope: Scope, context: Context
   if (mapped !== undefined) return mapped.value;
   const symbol = getSymbol(node, context.checker);
   if (symbol !== undefined && isBeforeDeclaration(node, symbol, scope)) {
-    return apply("Assert", [
-      boolean(false),
-      string(
-        `tla-ts can't throw the ReferenceError of reading ${node.text} before its declaration`,
-      ),
-    ]);
+    return getUninitializedRead(node);
   }
   const held = symbol === undefined ? undefined : scope.functions.get(symbol);
   if (held !== undefined) {
@@ -3118,10 +3125,12 @@ const translatePropertyAccess = (
   if (node.expression.kind === ts.SyntaxKind.SuperKeyword) {
     return translateSuperRead(node, string(node.name.text), scope, context);
   }
-  // A read through a namespace object that tla-ts makes reads the object.
-  const namespace = ts.isIdentifier(node.expression)
-    ? getNamespaceName(node.expression, context)
-    : undefined;
+  // A read through a namespace object that tla-ts makes reads the object, but for an export's
+  // binding, which the object holds as it is.
+  const namespace =
+    ts.isIdentifier(node.expression) && !isBindingRead(node, context.checker)
+      ? getNamespaceName(node.expression, context)
+      : undefined;
   if (namespace !== undefined) {
     return useJavaScript(
       "Get",
@@ -3129,8 +3138,17 @@ const translatePropertyAccess = (
       context,
     );
   }
-  const property = getSymbol(node, context.checker);
-  // A module's namespace object holds what the module's bindings hold.
+  const property = getNamedSymbol(node, context.checker);
+  // A module's namespace object holds what the module's bindings hold, which a read before the
+  // module declares them finds uninitialized.
+  if (
+    property !== undefined &&
+    ts.isIdentifier(node.expression) &&
+    getNamespaceModule(node.expression, context.checker) !== undefined
+  ) {
+    rejectBeforeDeclaration(node.name, scope, context);
+    if (isBeforeDeclaration(node.name, property, scope)) return getUninitializedRead(node.name);
+  }
   const binding = property === undefined ? undefined : scope.bindings.get(property);
   if (binding !== undefined) return binding;
   const declared = translateDeclared(node, property, scope, context);

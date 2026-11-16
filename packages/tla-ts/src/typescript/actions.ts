@@ -311,7 +311,7 @@ import {
   stopUnknownCall,
 } from "./intrinsics";
 import { getTypeNames, getURICall, translateToNumber, useJavaScript } from "./javascript";
-import { getNamespaceRef, isLiteralValue } from "./namespaces";
+import { getNamespaceRef, isLiteralValue, type Namespace } from "./namespaces";
 import {
   bindFactory,
   forceHeap,
@@ -447,6 +447,7 @@ import {
   getOrderedIteration,
   getPathStep,
   isHeapPattern,
+  isCreatedObject,
   isHeapType,
   isAddedToBuiltIn,
   isBigIntLike,
@@ -13793,7 +13794,8 @@ const isStatementResult = (node: ts.CallExpression, path: Path, context: Context
         context.heapCollections.has(node.parent) ||
         // A change of an object gives the object, though TypeScript types what it gives as any.
         (node.arguments.length > 0 &&
-          isHeapType(context.checker.getTypeAtLocation(node.arguments[0]), context)))) ||
+          (isHeapType(context.checker.getTypeAtLocation(node.arguments[0]), context) ||
+            isCreatedObject(node.arguments[0], context))))) ||
     getGeneratorStep(node, context) !== undefined ||
     getGeneratorMethod(node, context) !== undefined ||
     getIterableFrom(node, context) !== undefined ||
@@ -21482,9 +21484,10 @@ export const translateScript = (
       ),
     inlining: new Set(),
   };
-  // The modules that the script imports run first, and then the namespace objects that the script
-  // reads take what their modules' exports hold. The script's own namespace object takes them again
-  // before a statement that follows a statement that declared or wrote one, and as the script ends.
+  // The modules that the script imports run first, and the namespace object of each takes what its
+  // exports hold once it has run, before the modules after it. The script's own namespace object
+  // takes them as the script starts, and again before a statement that follows a statement that
+  // declared or wrote one, and as the script ends.
   const changes = context.namespaces.get(sourceFile)?.changes ?? [];
   const getChange = (before: number, refreshed: ts.Statement | undefined) =>
     changes
@@ -21510,20 +21513,42 @@ export const translateScript = (
         });
   };
   const boundary = statements.findIndex((statement) => statement.getSourceFile() === sourceFile);
+  const imported = boundary === -1 ? statements : statements.slice(0, boundary);
+  const namespaced = [...context.namespaces];
+  // Where in the imported statements a namespace object takes its exports.
+  const getFillAt = (namespace: Namespace) => {
+    const at = imported.findIndex((statement) =>
+      namespace.following.includes(statement.getSourceFile()),
+    );
+    return at === -1 ? imported.length : at;
+  };
+  const fillAts = [
+    ...new Set([...namespaced.map((entry) => getFillAt(entry[1])), imported.length]),
+  ].toSorted((left, right) => left - right);
+  const runImported = (position: number, current: Path): Formula =>
+    translateStatements(
+      imported.slice(position === 0 ? 0 : fillAts[position - 1], fillAts[position]),
+      current,
+      context,
+      {
+        ...frame,
+        next: (ran) => {
+          const due = namespaced.flatMap((entry) =>
+            getFillAt(entry[1]) === fillAts[position] ? [entry[0]] : [],
+          );
+          const runRest = (filled: Path) =>
+            position + 1 < fillAts.length
+              ? runImported(position + 1, filled)
+              : translateOwn(boundary === -1 ? [] : statements.slice(boundary), undefined, filled);
+          return due.length === 0
+            ? runRest(ran)
+            : fillNamespaces(due, undefined, ran, context, runRest);
+        },
+      },
+    );
   return context.namespaces.size === 0
     ? translateStatements(statements, path, context, frame)
-    : translateStatements(
-        boundary === -1 ? statements : statements.slice(0, boundary),
-        path,
-        context,
-        {
-          ...frame,
-          next: (imported) =>
-            fillNamespaces([...context.namespaces.keys()], undefined, imported, context, (filled) =>
-              translateOwn(boundary === -1 ? [] : statements.slice(boundary), undefined, filled),
-            ),
-        },
-      );
+    : runImported(0, path);
 };
 
 const getRoot = (node: ts.Expression): ts.Expression => {

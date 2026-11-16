@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import {
   cpSync,
+  mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
@@ -183,6 +184,35 @@ describe("the CLI with TypeScript files", () => {
 
   it("type checks a file of a project with the project's tsconfig.json", () => {
     const result = runCli(copyFixtures("project"), ["counter.ts"]);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("4 distinct states found");
+  });
+
+  it("type checks a project whose declaration files import Node's built-in modules", () => {
+    const directory = copyFixtures("project");
+    const types = join(directory, "types/host");
+    mkdirSync(types, { recursive: true });
+    writeFileSync(
+      join(types, "events.d.ts"),
+      'declare module "node:events" {\n  export class EventEmitter {}\n}\n',
+    );
+    writeFileSync(
+      join(types, "index.d.ts"),
+      '/// <reference path="./events.d.ts" />\nimport type { EventEmitter } from "node:events";\n\nexport type HostEmitter = EventEmitter;\n',
+    );
+    writeFileSync(
+      join(directory, "tsconfig.json"),
+      JSON.stringify({
+        compilerOptions: {
+          lib: ["esnext"],
+          types: ["host"],
+          typeRoots: ["./types"],
+          paths: { "@limits/*": ["./limits/*"] },
+        },
+        include: ["*.ts", "limits/*.ts"],
+      }),
+    );
+    const result = runCli(directory, ["counter.ts"]);
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("4 distinct states found");
   });

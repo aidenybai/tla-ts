@@ -20,6 +20,7 @@ import {
   isHeapArray,
   isHeapSetOrMap,
   isHeapType,
+  isSetOrMapType,
   REORDER_METHODS,
 } from "./types";
 
@@ -59,6 +60,50 @@ const CALLBACK_METHODS = new Set([
 ]);
 
 const COPYING_CONSTRUCTORS = new Set(["Set", "Map"]);
+
+// The methods of arrays, sets, and maps that call a callback only while they run.
+const RUNNING_CALLBACK_METHODS = new Set([
+  "map",
+  "flatMap",
+  "forEach",
+  "filter",
+  "reduce",
+  "reduceRight",
+  "some",
+  "every",
+  "find",
+  "findIndex",
+  "findLast",
+  "findLastIndex",
+]);
+
+// The call of a built-in method of an array, a set, or a map that calls a function written in
+// place as its callback, only while the call runs.
+const getRunningCall = (node: ts.Node, context: Context) => {
+  const call = node.parent;
+  return (ts.isArrowFunction(node) || ts.isFunctionExpression(node)) &&
+    call !== undefined &&
+    isMethodCall(call) &&
+    call.arguments[0] === node &&
+    RUNNING_CALLBACK_METHODS.has(call.expression.name.text) &&
+    (context.checker.isArrayType(
+      context.checker.getNonNullableType(
+        context.checker.getTypeAtLocation(call.expression.expression),
+      ),
+    ) ||
+      isSetOrMapType(call.expression.expression, context))
+    ? call
+    : undefined;
+};
+
+// The function whose call runs a node, past the callbacks that run while a call in it runs.
+const getRunningFunction = (node: ts.Node, context: Context): ts.Node => {
+  const enclosing = ts.findAncestor(node.parent, ts.isFunctionLike);
+  const call = enclosing === undefined ? undefined : getRunningCall(enclosing, context);
+  return call !== undefined
+    ? getRunningFunction(call, context)
+    : (enclosing ?? node.getSourceFile());
+};
 
 // A place that may keep an object after a read: the variable, or undefined when tla-ts can't
 // tell. The read object sits `source` levels below the top of the variable it came from, and
@@ -564,8 +609,9 @@ export const rejectSharing = (roots: readonly ts.Node[], context: Context) => {
       return false;
     }
     const owner = ts.findAncestor(declaration, ts.isFunctionLike) ?? declaration.getSourceFile();
-    const getOwnerFunction = (reference: ts.Node) =>
-      ts.findAncestor(reference.parent, ts.isFunctionLike) ?? reference.getSourceFile();
+    // A callback that runs while a call runs, which may run again for each element, runs its
+    // references as the call does.
+    const getOwnerFunction = (reference: ts.Node) => getRunningFunction(reference, context);
     // A return ends its function's call, unless a finally block runs after it, so only the rest
     // of the return and the functions that the call makes run after it with the same variable. A
     // call of the function itself, as in a recursive descent, binds a new one.
@@ -602,7 +648,8 @@ export const rejectSharing = (roots: readonly ts.Node[], context: Context) => {
       ts.findAncestor(node, (inner) =>
         inner === owner
           ? "quit"
-          : ts.isIterationStatement(inner, false) &&
+          : (ts.isIterationStatement(inner, false) ||
+              getRunningCall(inner, context) !== undefined) &&
             ts.findAncestor(declaration, (outer) => outer === inner) === undefined,
       ) !== undefined;
     // A variable that no file exports has its references only in the function that declares it.

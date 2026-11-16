@@ -80,9 +80,6 @@ interface SourceRedirectingHost {
   useSourceOfProjectReferenceRedirect: () => boolean;
 }
 
-// A declaration file's name, as types.d.ts, index.d.mts, or styles.d.css.ts.
-const DECLARATION_FILE = /\.d\.(?:[^.]+\.)?[cm]?ts$/;
-
 // TypeScript's error for an if whose branch is the empty statement, which JavaScript runs.
 const EMPTY_IF_BRANCH_ERROR = 1313;
 
@@ -242,13 +239,15 @@ export const createProgram = (
       isExternalLibraryImport: false,
     },
   });
-  // A module that TypeScript finds no code of, as a package or JavaScript, loads as Node loads it.
-  // The modules that tla-ts makes for CommonJS name the files they load by path.
+  // A module that TypeScript finds no code of, as a package or JavaScript, loads as Node loads it,
+  // though a type's import loads nothing. The modules that tla-ts makes for CommonJS
+  // name the files they load by path.
   const resolveModuleNameLiterals = (
     literals: readonly ts.StringLiteralLike[],
     containingFile: string,
     redirectedReference: ts.ResolvedProjectReference | undefined,
     resolutionOptions: ts.CompilerOptions,
+    containingSourceFile: ts.SourceFile,
   ) =>
     literals.map((literal) => {
       if (isCommonJsFile(containingFile) || isCommonJsImport(containingFile)) {
@@ -267,7 +266,7 @@ export const createProgram = (
       const parent = literal.parent;
       if (
         CODE_EXTENSIONS.has(resolved.resolvedModule?.extension ?? "") ||
-        DECLARATION_FILE.test(containingFile) ||
+        containingSourceFile.isDeclarationFile ||
         (ts.isLiteralTypeNode(parent) && ts.isImportTypeNode(parent.parent)) ||
         (ts.isImportDeclaration(parent) && parent.importClause?.isTypeOnly === true) ||
         (ts.isExportDeclaration(parent) && parent.isTypeOnly)

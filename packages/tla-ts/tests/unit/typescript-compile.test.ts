@@ -48082,4 +48082,243 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("leaves alone the documentation tags that tla-ts doesn't know", () => {
+    const getSource = (expected: string, tag: string) => `
+      /**
+       * Doubles a number.
+       *
+       * @${tag} stable
+       * @category math
+       * @since 1.0.0
+       */
+      export const double = (value: number) => value * 2;
+      const seen = String(double(3));
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("6", "stability"))).failure).toBeUndefined();
+    });
+
+    it("rejects a wrong double", async () => {
+      await expect(checkModel(getSource("5", "stability"))).rejects.toThrow("seen 6");
+    });
+
+    it("rejects a typo of a tag that tla-ts knows", () => {
+      expect(() => compile(getSource("6", "alwasy"))).toThrow("Unknown tag: @alwasy");
+    });
+  });
+
+  describe("reads a let that a module's function changes through the module's namespace object", () => {
+    const path = join(import.meta.dirname, "../fixtures/typescript/imports/namespace.ts");
+    const getSource = (expected: string) => `
+      import * as tally from "./tally";
+      import { describeTally } from "./tallying";
+      const box = { size: 0 };
+      const before = describeTally();
+      tally.bump();
+      box.size = tally.count;
+      const seen = [before, describeTally(), tally.count, tally.total, box.size].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await check(compile(getSource("0:10,1:12,1,12,1"), path))).failure).toBeUndefined();
+    });
+
+    it("rejects a binding that the namespace object doesn't follow", async () => {
+      expect(
+        (await check(compile(getSource("0:10,0:10,0,10,0"), path))).failure?.message,
+      ).toContain("seen 0:10,1:12,1,12,1");
+    });
+  });
+
+  describe("shares a map that a callback changes only while forEach runs, once the map changes no more", () => {
+    const getSource = (expected: string) => `
+      class Reason {
+        annotations: Map<string, number> = new Map();
+        annotate(annotations: Map<string, number>, isOverwriting: boolean): this {
+          if (annotations.size === 0) return this;
+          const merged = new Map(this.annotations);
+          annotations.forEach((value, key) => {
+            if (!isOverwriting && merged.has(key)) return;
+            merged.set(key, value);
+          });
+          const next = new Reason();
+          next.annotations = merged;
+          return next as this;
+        }
+      }
+      const first = new Reason();
+      const second = first.annotate(new Map([["a", 1]]), false);
+      const third = second.annotate(new Map([["a", 2], ["b", 3]]), false);
+      const seen = [
+        first.annotations.size,
+        second.annotations.get("a"),
+        third.annotations.get("a"),
+        third.annotations.get("b"),
+        third instanceof Reason,
+      ].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("0,1,1,3,true"))).failure).toBeUndefined();
+    });
+
+    it("rejects a map that the next merge changes", async () => {
+      expect((await checkModel(getSource("0,1,2,3,true"))).failure?.message).toContain(
+        "seen 0,1,1,3,true",
+      );
+    });
+
+    it("stops where the callback runs again after it shares the map", () => {
+      expect(() =>
+        compile(
+          'const m = new Map<string, number>();\nconst held: Map<string, number>[] = [];\n[1, 2].forEach((x) => {\n  m.set("k", x);\n  held.push(m);\n});\nif (held.length !== 2) throw new Error();',
+        ),
+      ).toThrow("m would share an object that changes in place, so copy it");
+    });
+  });
+
+  describe("calls a function of another module that a value holds", () => {
+    const path = join(import.meta.dirname, "../fixtures/typescript/imports/namespace.ts");
+    const getSource = (expected: string) => `
+      import { one, two } from "./pickers";
+      const box = { size: 0 };
+      const held = box.size === 0 ? { run: one } : { run: two };
+      const seen = [held.run(), (box.size === 1 ? one : two)()].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await check(compile(getSource("one,two"), path))).failure).toBeUndefined();
+    });
+
+    it("rejects a call of the other function", async () => {
+      expect((await check(compile(getSource("two,one"), path))).failure?.message).toContain(
+        "seen one,two",
+      );
+    });
+  });
+
+  describe("calls the function that a module's namespace object holds where a value may hold either of two", () => {
+    const path = join(import.meta.dirname, "../fixtures/typescript/imports/namespace.ts");
+    const getSource = (expected: string) => `
+      import * as english from "./english";
+      import * as latin from "./latin";
+      const box = { size: 0 };
+      const pick = (isLatin: boolean) => (isLatin ? latin : english);
+      const seen = [pick(true).greet(), pick(false).greet(), box.size].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await check(compile(getSource("salve,hello,0"), path))).failure).toBeUndefined();
+    });
+
+    it("rejects the function of the module whose type TypeScript gives the value", async () => {
+      expect((await check(compile(getSource("hello,hello,0"), path))).failure?.message).toContain(
+        "seen salve,hello,0",
+      );
+    });
+  });
+
+  describe("makes the namespace object that a module the script imports reads", () => {
+    const path = join(import.meta.dirname, "../fixtures/typescript/imports/namespace.ts");
+    const getSource = (expected: string) => `
+      import { latinNames, pickGreeting } from "./greeting";
+      const box = { size: 0 };
+      const seen = [pickGreeting(true).greet(), pickGreeting(false).greet(), latinNames, box.size].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await check(compile(getSource("salve,hello,greet,label,0"), path))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects a namespace object without its exports", async () => {
+      expect((await check(compile(getSource("salve,hello,,0"), path))).failure?.message).toContain(
+        "seen salve,hello,greet,label,0",
+      );
+    });
+
+    it("stops where a module reads the namespace object of a module that runs after it", () => {
+      expect(() =>
+        compile(
+          'import { read } from "./late-module";\nif (read() !== 1) throw new Error();',
+          path,
+        ),
+      ).toThrow(
+        "tla-ts can't read a module's namespace object in a module that the script imports",
+      );
+    });
+  });
+
+  describe("reads an export's binding through a module's namespace object before the module runs", () => {
+    const path = join(import.meta.dirname, "../fixtures/typescript/imports/namespace.ts");
+    const getSource = (expected: string) => `
+      import { checkSelf } from "./beta";
+      import { check } from "./alpha";
+      import { getBeta } from "./beta-holder";
+      const box = { size: 0 };
+      const seen = [checkSelf(), check("x"), Object.keys(getBeta()).join("|"), box.size].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await check(compile(getSource("true,false,checkSelf|isBeta,0"), path))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects a namespace object without its exports", async () => {
+      expect((await check(compile(getSource("true,false,,0"), path))).failure?.message).toContain(
+        "seen true,false,checkSelf|isBeta,0",
+      );
+    });
+  });
+
+  describe("assigns to the object that Object.create makes, which TypeScript types as any", () => {
+    const getSource = (expected: string) => `
+      class Reason {
+        label = "a";
+        count = 1;
+        relabel(label: string): this {
+          const self = Object.assign(Object.create(Object.getPrototypeOf(this)), this);
+          self.label = label;
+          return self;
+        }
+      }
+      const first = new Reason();
+      const second = first.relabel("b");
+      const made = Object.create(null);
+      const bare = Object.assign(made, { x: 1 });
+      const seen = [
+        first.label,
+        second.label,
+        second.count,
+        second instanceof Reason,
+        Object.keys(second).join("|"),
+        Object.getPrototypeOf(bare) === null,
+        bare.x,
+      ].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("a,b,1,true,label|count,true,1"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects an object that loses its prototype", async () => {
+      expect(
+        (await checkModel(getSource("a,b,1,false,label|count,true,1"))).failure?.message,
+      ).toContain("seen a,b,1,true,label|count,true,1");
+    });
+  });
 });
