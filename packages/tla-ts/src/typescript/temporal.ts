@@ -129,6 +129,29 @@ const TEMPORAL_FUNCTIONS = new Map<string, TemporalFunctions>([
       ]),
     },
   ],
+  [
+    "Instant",
+    {
+      made: "Instant",
+      statics: new Map([
+        ["from", "Instant"],
+        ["fromEpochMilliseconds", "Instant"],
+        ["fromEpochNanoseconds", "Instant"],
+        ["compare", ""],
+      ]),
+      methods: new Map([
+        ["add", "Instant"],
+        ["subtract", "Instant"],
+        ["until", "Duration"],
+        ["since", "Duration"],
+        ["round", "Instant"],
+        ["equals", ""],
+        ["toString", ""],
+        ["toJSON", ""],
+        ["valueOf", ""],
+      ]),
+    },
+  ],
 ]);
 
 export interface TemporalCall {

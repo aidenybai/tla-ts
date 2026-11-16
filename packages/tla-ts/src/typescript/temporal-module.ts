@@ -1843,6 +1843,110 @@ LOCAL TCalendarArgument(value) ==
 \* ---------------------------------------------------------------------------------------------
 \* Instants, year-months, and month-days.
 
+LOCAL TMaxInstant == BigIntMultiply(TBig(100000000), TNsPerDay)
+
+LOCAL TIsValidEpochNs(ns) == ~TLess(TMaxInstant, TAbs(ns))
+
+\* The date and time in UTC of epoch nanoseconds.
+LOCAL TDateTimeOfNs(ns) ==
+  LET balanced == TBalanceTime(TMidnight, ns)
+  IN [date |-> TDateOfDays(TSmall(balanced.days)), time |-> balanced.time]
+
+\* ToBigInt of a value that a Temporal function reads.
+LOCAL TToBigInt(value) ==
+  CASE IsBigInt(value) -> TOk(value)
+    [] TypeOf(value) = "boolean" -> TOk(Big :> IF value THEN 1 ELSE 0)
+    [] IsRef(value) \/ IsSequenceValue(value) ->
+         Assert(FALSE, "tla-ts can't convert an object that a Temporal function reads to a BigInt")
+    [] TypeOf(value) = "string" -> Assert(FALSE, "tla-ts can't convert a string to a BigInt here")
+    [] OTHER -> TFail("TypeError")
+
+\* ToTemporalInstant, as the epoch nanoseconds.
+LOCAL TToInstant(heap, item) ==
+  LET slots == TSlots(heap, item)
+      parsed == TParseISO(item, "Instant")
+      offset == IF parsed.value.z THEN Big :> 0 ELSE TOffsetAt(parsed.value.offset, 1, TRUE).ns
+      ns == BigIntSubtract(TEpochNs(parsed.value.date, parsed.value.time), offset)
+  IN CASE slots.kind \in {"Instant", "ZonedDateTime"} -> TOk(slots.ns)
+       [] IsRef(item) \/ IsSequenceValue(item) ->
+            Assert(FALSE, "tla-ts can't convert an object that a Temporal function reads to a string")
+       [] TypeOf(item) # "string" -> TFail("TypeError")
+       [] parsed.error # "" -> parsed
+       [] ~TIsValidEpochNs(ns) -> TFail("RangeError")
+       [] OTHER -> TOk(ns)
+
+\* The epoch nanoseconds that adding a duration to an instant gives.
+LOCAL TInstantAdd(heap, ns, other, isSubtract) ==
+  LET converted == TToDuration(heap, other)
+      fields == IF isSubtract THEN TNegatedDuration(converted.value) ELSE converted.value
+      result == BigIntAdd(ns, TTimeOf(fields))
+  IN CASE converted.error # "" -> converted
+       [] TIsDateUnit(TDefaultLargestUnit(fields)) -> TFail("RangeError")
+       [] ~TIsValidEpochNs(result) -> TFail("RangeError")
+       [] OTHER -> TOk(result)
+
+\* Temporal.Instant.prototype.until and since.
+LOCAL TInstantDifference(heap, ns, other, options, isSince) ==
+  LET converted == TToInstant(heap, other)
+      resolved == TOptions(heap, options)
+      settings == TDifferenceSettings(heap, isSince, resolved.value, "time", {}, "nanosecond", "second")
+      rounded == TRoundToIncrement(BigIntSubtract(converted.value, ns),
+                                   BigIntMultiply(settings.value.increment, TUnitLength(settings.value.smallest)),
+                                   settings.value.mode)
+  IN CASE converted.error # "" -> converted
+       [] resolved.error # "" -> resolved
+       [] settings.error # "" -> settings
+       [] OTHER -> TDifferenceDuration(TOk([date |-> <<Big :> 0, Big :> 0, Big :> 0, Big :> 0>>, time |-> rounded]),
+                                       settings.value.largest, isSince)
+
+\* ValidateTemporalRoundingIncrement of a dividend that a BigInt holds, inclusive.
+LOCAL TIncrementDivides(increment, dividend) ==
+  ~TLess(dividend, increment) /\ TIsZero(BigIntRemainder(dividend, increment))
+
+\* Temporal.Instant.prototype.round, as the epoch nanoseconds.
+LOCAL TInstantRound(heap, ns, roundTo) ==
+  LET options == IF TypeOf(roundTo) = "string" THEN TOk(Undefined) ELSE TOptions(heap, roundTo)
+      increment == TRoundingIncrementOption(heap, options.value)
+      mode == TRoundingModeOption(heap, options.value, "halfExpand")
+      smallest == IF TypeOf(roundTo) = "string" THEN TUnitOf(roundTo) ELSE TUnitOption(heap, options.value, "smallestUnit")
+      length == TUnitLength(smallest.value)
+  IN CASE roundTo = Undefined -> TFail("TypeError")
+       [] options.error # "" -> options
+       [] increment.error # "" -> increment
+       [] mode.error # "" -> mode
+       [] smallest.error # "" -> smallest
+       [] smallest.value = "unset" -> TFail("RangeError")
+       [] ~TUnitValid(smallest.value, "time", {}) -> TFail("RangeError")
+       [] ~TIncrementDivides(increment.value, BigIntDivide(TNsPerDay, length)) -> TFail("RangeError")
+       [] OTHER -> TOk(TRoundToIncrementAsIfPositive(ns, BigIntMultiply(increment.value, length), mode.value))
+
+\* FormatDateTimeUTCOffsetRounded.
+LOCAL TOffsetText(offset) ==
+  LET minutes == TSmall(BigIntDivide(TRoundToIncrement(offset, TNsPerMinute, "halfExpand"), TNsPerMinute))
+      magnitude == IF minutes < 0 THEN -minutes ELSE minutes
+  IN (IF minutes < 0 THEN "-" ELSE "+") \o TTwoDigits(magnitude \div 60) \o ":" \o TTwoDigits(magnitude % 60)
+
+\* Temporal.Instant.prototype.toString.
+LOCAL TInstantToString(heap, ns, value) ==
+  LET options == TOptions(heap, value)
+      digits == TDigitsOption(heap, options.value)
+      mode == TRoundingModeOption(heap, options.value, "trunc")
+      smallest == TUnitOption(heap, options.value, "smallestUnit")
+      zoneValue == TOption(heap, options.value, "timeZone")
+      zone == IF zoneValue = Undefined THEN TOk([id |-> "UTC", offset |-> Big :> 0]) ELSE TTimeZone(heap, zoneValue)
+      precision == TPrecision(smallest.value, digits.value)
+      rounded == TRoundToIncrementAsIfPositive(ns, BigIntMultiply(TBig(precision.increment), TUnitLength(precision.unit)),
+                                               mode.value)
+      local == TDateTimeOfNs(BigIntAdd(rounded, zone.value.offset))
+  IN CASE options.error # "" -> options
+       [] digits.error # "" -> digits
+       [] mode.error # "" -> mode
+       [] smallest.error # "" -> smallest
+       [] ~TUnitValid(smallest.value, "time", {}) \/ smallest.value = "hour" -> TFail("RangeError")
+       [] zone.error # "" -> zone
+       [] OTHER -> TOk(TDateText(local.date) \o "T" \o TTimeText(local.time, precision.precision)
+                         \o (IF zoneValue = Undefined THEN "Z" ELSE TOffsetText(zone.value.offset)))
+
 \* ---------------------------------------------------------------------------------------------
 
 LOCAL TObject(prototype, slots) == [EmptyObject EXCEPT !.prototype = prototype] @@ [temporal |-> slots]
@@ -1882,6 +1986,10 @@ LOCAL TSlotsOf(kind, value) ==
     [] kind = "PlainDateTime" ->
          [kind |-> kind, date |-> value.date, time |-> value.time, calendar |-> value.calendar,
           getters |-> TDateGetters(value.date, value.calendar) @@ TTimeGetters(value.time)]
+    [] kind = "Instant" ->
+         [kind |-> kind, ns |-> value,
+          getters |-> [epochMilliseconds |-> NumberOfBigInt(TFloorDivide(value, Big :> 1000000)),
+                       epochNanoseconds |-> value]]
 
 \* The heap with a new Temporal object of a kind whose slots a step gives, and the object.
 LOCAL TMakes(heap, prototype, kind, step) ==
@@ -1930,6 +2038,10 @@ TemporalNew(heap, kind, arguments, prototype) ==
                      [] kind = "PlainDate" /\ ~TDateWithinLimits(date) -> TFail("RangeError")
                      [] ~TDateTimeWithinLimits(date, time) -> TFail("RangeError")
                      [] OTHER -> TOk([date |-> date, time |-> time, calendar |-> calendar.value]))
+    [] kind = "Instant" ->
+         LET ns == TToBigInt(TArgument(arguments, 1))
+         IN TMakes(heap, prototype, kind,
+                   CASE ns.error # "" -> ns [] ~TIsValidEpochNs(ns.value) -> TFail("RangeError") [] OTHER -> ns)
     [] OTHER -> Assert(FALSE, "tla-ts can't construct a Temporal." \o kind)
 
 \* The heap once new of a Temporal constructor that an expression evaluates makes its object, where
@@ -1968,7 +2080,40 @@ TemporalStatic(heap, kind, method, arguments, prototype) ==
             IN TGives(heap, CASE one.error # "" -> one [] two.error # "" -> two
                               [] OTHER -> TOk(TCompareSequences(one.value.date \o one.value.time,
                                                                 two.value.date \o two.value.time)))
+       [] kind = "Instant" /\ method = "from" -> TMakes(heap, prototype, kind, TToInstant(heap, first))
+       [] kind = "Instant" /\ method = "fromEpochNanoseconds" ->
+            LET ns == TToBigInt(first)
+            IN TMakes(heap, prototype, kind,
+                      CASE ns.error # "" -> ns [] ~TIsValidEpochNs(ns.value) -> TFail("RangeError") [] OTHER -> ns)
+       [] kind = "Instant" /\ method = "fromEpochMilliseconds" ->
+            LET number == TToNumber(first)
+                ns == BigIntMultiply(ToBigInt(number.value), Big :> 1000000)
+            IN TMakes(heap, prototype, kind,
+                      CASE number.error # "" -> number
+                        [] ~IsIntegral(number.value) -> TFail("RangeError")
+                        [] ~TIsValidEpochNs(ns) -> TFail("RangeError")
+                        [] OTHER -> TOk(ns))
+       [] kind = "Instant" /\ method = "compare" ->
+            LET one == TToInstant(heap, first)
+                two == TToInstant(heap, second)
+            IN TGives(heap, CASE one.error # "" -> one [] two.error # "" -> two
+                              [] OTHER -> TOk(TCompare(one.value, two.value)))
        [] OTHER -> Assert(FALSE, "tla-ts can't call Temporal." \o kind \o "." \o method)
+
+\* A call of Temporal.Instant.prototype's method.
+LOCAL TInstantMethod(heap, slots, method, arguments, prototype) ==
+  LET ns == slots.ns
+      first == TArgument(arguments, 1)
+      second == TArgument(arguments, 2)
+      other == TToInstant(heap, first)
+  IN CASE method = "add" -> TMakes(heap, prototype, "Instant", TInstantAdd(heap, ns, first, FALSE))
+       [] method = "subtract" -> TMakes(heap, prototype, "Instant", TInstantAdd(heap, ns, first, TRUE))
+       [] method = "until" -> TMakes(heap, prototype, "Duration", TInstantDifference(heap, ns, first, second, FALSE))
+       [] method = "since" -> TMakes(heap, prototype, "Duration", TInstantDifference(heap, ns, first, second, TRUE))
+       [] method = "round" -> TMakes(heap, prototype, "Instant", TInstantRound(heap, ns, first))
+       [] method = "equals" -> TGives(heap, IF other.error # "" THEN other ELSE TOk(ns = other.value))
+       [] method = "toString" -> TGives(heap, TInstantToString(heap, ns, first))
+       [] method = "toJSON" -> TGives(heap, TInstantToString(heap, ns, Undefined))
 
 \* A call of Temporal.Duration.prototype's method.
 LOCAL TDurationMethod(heap, slots, method, arguments, prototype) ==
@@ -2111,4 +2256,5 @@ TemporalMethod(heap, kind, method, receiver, arguments, prototype) ==
        [] kind = "PlainTime" -> TTimeMethod(heap, slots, method, arguments, prototype)
        [] kind = "PlainDate" -> TDateMethod(heap, slots, method, arguments, prototype)
        [] kind = "PlainDateTime" -> TDateTimeMethod(heap, slots, method, arguments, prototype)
+       [] kind = "Instant" -> TInstantMethod(heap, slots, method, arguments, prototype)
 `;

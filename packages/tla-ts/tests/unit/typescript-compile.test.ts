@@ -45685,4 +45685,40 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("runs Temporal.Instant", () => {
+    const getSource = (expected: string) => `
+      const thrown = (run: () => unknown) => {
+        try {
+          run();
+          return "none";
+        } catch (error) {
+          return (error as Error).name;
+        }
+      };
+      const instant = new Temporal.Instant(1_000_000_000_123_456_789n);
+      const text = instant.toString();
+      const offset = instant.toString({ timeZone: "+01:00", smallestUnit: "minute" });
+      const parsed = Temporal.Instant.from("1976-11-18T15:23:30.12345+01:00").epochNanoseconds === 217175010123450000n;
+      const until = instant.until(Temporal.Instant.fromEpochMilliseconds(0), { largestUnit: "hours" }).toString();
+      const rounded = instant.round({ smallestUnit: "second", roundingMode: "ceil" }).toString();
+      const local = thrown(() => Temporal.Instant.from("2020-01-01T00:00"));
+      const seen = [instant.epochMilliseconds, text, offset, parsed, until, rounded, local].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      const expected =
+        "1000000000123,2001-09-09T01:46:40.123456789Z,2001-09-09T02:46+01:00,true,-PT277777H46M40.123456789S,2001-09-09T01:46:41Z,RangeError";
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects a ceiling that stays on the second", async () => {
+      const expected =
+        "1000000000123,2001-09-09T01:46:40.123456789Z,2001-09-09T02:46+01:00,true,-PT277777H46M40.123456789S,2001-09-09T01:46:40Z,RangeError";
+      expect((await checkModel(getSource(expected))).failure?.message).toContain(
+        "seen 1000000000123,2001-09-09T01:46:40.123456789Z,2001-09-09T02:46+01:00,true,-PT277777H46M40.123456789S,2001-09-09T01:46:41Z,RangeError",
+      );
+    });
+  });
 });
