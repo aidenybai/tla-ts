@@ -3935,16 +3935,24 @@ export const changesState = (
         : ts.isDeleteExpression(node)
           ? node.expression
           : undefined;
-  const declaration =
+  // The state holds the parameters and vars of a function that runs once, so a write or a binding
+  // of one changes it.
+  const written =
     target !== undefined && ts.isIdentifier(skipCasts(target))
-      ? context.checker.getSymbolAtLocation(skipCasts(target))?.valueDeclaration
-      : undefined;
+      ? context.checker.getSymbolAtLocation(skipCasts(target))
+      : (ts.isParameter(node) ||
+            (ts.isVariableDeclaration(node) && node.initializer !== undefined)) &&
+          ts.isIdentifier(node.name)
+        ? getSymbol(node.name, context.checker)
+        : undefined;
+  const declaration = written?.valueDeclaration;
   if (
-    target !== undefined &&
-    (declaration === undefined ||
-      declaration.getSourceFile() !== callee.getSourceFile() ||
-      declaration.pos < callee.pos ||
-      declaration.end > callee.end)
+    (target !== undefined &&
+      (declaration === undefined ||
+        declaration.getSourceFile() !== callee.getSourceFile() ||
+        declaration.pos < callee.pos ||
+        declaration.end > callee.end)) ||
+    (written !== undefined && context.onceLocals.has(written))
   ) {
     return true;
   }

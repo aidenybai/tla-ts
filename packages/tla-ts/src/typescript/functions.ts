@@ -350,6 +350,27 @@ const inlineCall = (
   receiver = getReceiver(scope, context, called, node && { node, callee }),
 ) => {
   if (callee.body === undefined) throw new TlaTypeScriptError("Give this a body", callee);
+  // The state holds the parameters and vars of a function that runs once, which the functions that
+  // it makes read after it returns, and which a call inside an expression can't change.
+  const keptLocal = findNodes(callee, ts.isIdentifier).find((name) => {
+    const symbol = getSymbol(name, context.checker);
+    const declaration = symbol?.valueDeclaration;
+    return (
+      symbol !== undefined &&
+      declaration !== undefined &&
+      (ts.isParameter(declaration) || ts.isVariableDeclaration(declaration)) &&
+      context.onceLocals.has(symbol) &&
+      ts.findAncestor(declaration, (ancestor) => ancestor === callee) !== undefined &&
+      ts.findAncestor(name.parent, ts.isFunctionLike) !==
+        ts.findAncestor(declaration.parent, ts.isFunctionLike)
+    );
+  });
+  if (keptLocal !== undefined) {
+    throw new TlaTypeScriptError(
+      "tla-ts can't call inside an expression a function that runs once and makes a function that reads its locals",
+      keptLocal,
+    );
+  }
   const passedCallbacks = getParameters(callee).flatMap(
     (parameter, position): [ts.Symbol, FunctionNode][] => {
       const argument = argumentNodes.at(position);

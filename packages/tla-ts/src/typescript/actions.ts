@@ -5753,7 +5753,11 @@ export const getPassedCallbacks = (
           ? undefined
           : (getCallback(argument, path, context) ?? getAsyncCallee(argument, path, context));
     const symbol = getSymbol(parameter.name, context.checker);
-    return callback?.body !== undefined && symbol !== undefined ? [[symbol, callback]] : [];
+    // A parameter of a function that runs once holds its function in the state, where the
+    // functions that it makes read it after it returns.
+    return callback?.body !== undefined && symbol !== undefined && !context.onceLocals.has(symbol)
+      ? [[symbol, callback]]
+      : [];
   });
 
 // The defaults of a helper's parameters that its operator evaluates, once, rather than each call

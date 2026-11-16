@@ -48529,4 +48529,56 @@ describe("BigInts", () => {
       await expect(check(compile(wrong, path))).rejects.toThrow("seen number");
     });
   });
+
+  describe("calls through a closure the functions that a function that runs once takes", () => {
+    const getSource = (expected: string) => `
+      const results: any = {};
+      var slope = function derivative(f: (x: number) => number, dx: number) {
+        return function (x: number) {
+          return (f(x + dx) - f(x)) / dx;
+        };
+      }(function square(x: number) { return x * x; }, 2)(3);
+      var twice = (function (apply: (x: number) => number) {
+        return function (x: number) {
+          return apply(apply(x));
+        };
+      })(function increment(x: number) { return x + 1; });
+      results.offset = (function (step: number) {
+        var doubled = step * 2;
+        return function (x: number) {
+          return x + doubled;
+        };
+      })(5)(1);
+      const seen = [slope, twice(1), twice(10), results.offset].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("8,3,12,11"))).failure).toBeUndefined();
+    });
+
+    it("rejects a wrong value", async () => {
+      expect((await checkModel(getSource("8,3,12,12"))).failure?.message).toContain(
+        "seen 8,3,12,11",
+      );
+    });
+
+    // Node gives 9, but a compound assignment runs the call inside its expression, which can't
+    // keep d in the state for the function that the call makes.
+    it("stops where an expression calls it", () => {
+      const source = `
+        const results: any = {};
+        var total = 0;
+        total += (function (d: number) {
+          return function () {
+            return d;
+          };
+        })(9)();
+        if (total !== 9) throw new Error("seen " + total);
+      `;
+      expect(() => checkModel(source)).toThrow(
+        "tla-ts can't call inside an expression a function that runs once and makes a function that reads its locals",
+      );
+    });
+  });
 });
