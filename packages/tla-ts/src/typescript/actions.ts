@@ -9213,15 +9213,24 @@ const isOrderFree = (body: ts.Node | undefined, element: ts.Node | undefined, co
 
 // Whether a script deletes a key from a set or a map, which leaves a gap in its entries that an
 // iterator that has passed it skips, where a list of its keys closes the gap.
-const isKeyDeleted = (node: ts.Node, context: Context) =>
-  findNodes(
-    node.getSourceFile(),
-    (inner): inner is ts.PropertyAccessExpression =>
-      ts.isPropertyAccessExpression(inner) &&
-      ["delete", "clear"].includes(inner.name.text) &&
-      (["Set", "Map"].includes(getCollection(inner.expression, context) ?? "") ||
-        /^(Set|Map)\.prototype$/.test(inner.expression.getText())),
-  ).length > 0;
+const isKeyDeleted = (node: ts.Node, visited: ts.Expression | undefined, context: Context) => {
+  // A set's delete can't change a map, nor a map's a set.
+  const kind = visited === undefined ? undefined : getCollection(visited, context);
+  const isVisitedKind = (deleted: string | undefined) =>
+    deleted !== undefined &&
+    ["Set", "Map"].includes(deleted) &&
+    (kind === undefined || !["Set", "Map"].includes(kind) || deleted === kind);
+  return (
+    findNodes(
+      node.getSourceFile(),
+      (inner): inner is ts.PropertyAccessExpression =>
+        ts.isPropertyAccessExpression(inner) &&
+        ["delete", "clear"].includes(inner.name.text) &&
+        (isVisitedKind(getCollection(inner.expression, context)) ||
+          /^(Set|Map)\.prototype$/.test(inner.expression.getText())),
+    ).length > 0
+  );
+};
 
 // A set's forEach whose callback ends the same in any order.
 const isOrderFreeForEach = (node: ts.CallExpression, receiver: ts.Expression, context: Context) => {
@@ -9645,7 +9654,7 @@ const translateShortLoopCall = (
   if (
     loop.isOrdered &&
     changed.some((symbol) => symbol === context.heap) &&
-    isKeyDeleted(expression, context)
+    isKeyDeleted(expression, receiver, context)
   ) {
     throw new TlaTypeScriptError(
       "Unsupported call: tla-ts can't call forEach on a set or a map while its callback changes objects and the script deletes keys",
@@ -16958,7 +16967,7 @@ const translateIterations = (
   // entries, where an entry that the loop adds comes last, which reading its entries again at each
   // step matches while no key leaves it.
   const isLive = isHeapIteration && changesObjects(loop, path, context);
-  if (isLive && isKeyDeleted(loop, context)) {
+  if (isLive && isKeyDeleted(loop, iterated?.expression, context)) {
     throw new TlaTypeScriptError(
       "Unsupported loop: tla-ts can't iterate a set or a map while the loop changes objects and the script deletes keys",
       iterated?.expression,

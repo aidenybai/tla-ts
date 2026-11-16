@@ -46308,4 +46308,34 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("runs a map's forEach whose callback changes objects where the script deletes keys only from sets", () => {
+    const getSource = (expected: string) => `
+      const all = new Set<string>();
+      const listeners = new Set<string>();
+      const renderers = new Map<number, string>([
+        [1, "a"],
+        [2, "b"],
+      ]);
+      const forget = (name: string) => listeners.delete(name);
+      listeners.add("x");
+      renderers.forEach((renderer, id) => {
+        all.add(renderer + id);
+        if (id === 1) renderers.set(3, "c");
+      });
+      forget("x");
+      const result = [...all].join() + "|" + listeners.size;
+      if (result !== "${expected}") throw new Error("seen " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("a1,b2,c3|0"))).failure).toBeUndefined();
+    });
+
+    it("rejects a forEach that misses the entry its callback adds", async () => {
+      expect((await checkModel(getSource("a1,b2|0"))).failure?.message).toContain(
+        "seen a1,b2,c3|0",
+      );
+    });
+  });
 });
