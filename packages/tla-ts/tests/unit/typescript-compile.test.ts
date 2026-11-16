@@ -45772,4 +45772,159 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("value:0,done"))).failure).toBeDefined();
     });
   });
+  describe("converts a value of several kinds with Boolean as a condition does", () => {
+    const getSource = (expected: string) => `
+      interface Hook { inject?: () => number; isOwn?: boolean }
+      const isForeign = (hook: Hook | undefined | null) =>
+        Boolean(hook && "inject" in hook && hook.isOwn !== true);
+      const isSet = (value: string | number | undefined) => Boolean(value);
+      const seen = [
+        isForeign({ isOwn: false }),
+        isForeign(undefined),
+        isForeign(null),
+        isForeign({ inject: () => 1 }),
+        isForeign({ inject: () => 1, isOwn: true }),
+        isSet(""),
+        isSet(0),
+        isSet("a"),
+        isSet(2),
+        isSet(undefined),
+      ].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("false,false,false,true,false,false,false,true,true,false")))
+          .failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects an empty string as truthy", async () => {
+      expect(
+        (await checkModel(getSource("false,false,false,true,false,true,false,true,true,false")))
+          .failure?.message,
+      ).toContain("seen false,false,false,true,false,false,false,true,true,false");
+    });
+  });
+
+  describe("holds on the heap the sets that a map's values give where a caller changes them", () => {
+    const getSource = (expected: string) => `
+      const roots = new Map<number, Set<string>>();
+      const getRoots = (id: number): Set<string> => {
+        const found = roots.get(id) ?? new Set<string>();
+        roots.set(id, found);
+        return found;
+      };
+      getRoots(1).add("a");
+      const again = getRoots(1);
+      again.add("b");
+      getRoots(2).add("c");
+      again.delete("a");
+      const seen = [[...getRoots(1)].join(""), getRoots(2).size, getRoots(3).size, roots.size].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("b,1,0,3"))).failure).toBeUndefined();
+    });
+
+    it("rejects a value that a delete keeps", async () => {
+      expect((await checkModel(getSource("ab,1,0,3"))).failure?.message).toContain("seen b,1,0,3");
+    });
+  });
+
+  describe("holds on the heap the sets that a field's functions give where a caller changes them", () => {
+    const getSource = (expected: string) => `
+      interface Hook {
+        getRoots?: (id: number) => Set<string>;
+        commit: (id: number, root: string, isUnmounted: boolean) => void;
+      }
+      const roots = new Map<number, Set<string>>();
+      const getRoots = (id: number): Set<string> => {
+        const found = roots.get(id) ?? new Set<string>();
+        roots.set(id, found);
+        return found;
+      };
+      const hook: Hook = {
+        getRoots,
+        commit: (id, root, isUnmounted) => {
+          const found = getRoots(id);
+          if (isUnmounted) found.delete(root);
+          else found.add(root);
+        },
+      };
+      hook.commit(1, "a", false);
+      hook.commit(1, "b", false);
+      hook.commit(2, "c", false);
+      hook.commit(1, "a", true);
+      const list = (id: number) => {
+        if (!hook.getRoots) return "none";
+        return [...hook.getRoots(id)].join("") || "empty";
+      };
+      const has = hook.getRoots !== undefined && hook.getRoots(2).has("c");
+      const seen = [list(1), list(2), list(3), has].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("b,c,empty,true"))).failure).toBeUndefined();
+    });
+
+    it("rejects a root that the commit dropped", async () => {
+      expect((await checkModel(getSource("ab,c,empty,true"))).failure?.message).toContain(
+        "seen b,c,empty,true",
+      );
+    });
+  });
+
+  describe("reads the kind that Object.prototype.toString tells of a map on the heap", () => {
+    const getSource = (expected: string) => `
+      const getTag = (value: unknown) => Object.prototype.toString.call(value);
+      const holder: { renderers: Map<number, string> } = { renderers: new Map<number, string>() };
+      const weak = new WeakMap<object, number>();
+      const seen = [getTag(holder.renderers), getTag(weak)].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("[object Map],[object WeakMap]"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects a weak map's tag as a map's", async () => {
+      expect((await checkModel(getSource("[object Map],[object Map]"))).failure?.message).toContain(
+        "seen [object Map],[object WeakMap]",
+      );
+    });
+  });
+
+  describe("keeps a map that a field holds on the heap where its object goes to a default, an in, or an unknown parameter", () => {
+    const getSource = (expected: string) => `
+      interface Hook {
+        renderers: Map<number, string>;
+        name: string;
+      }
+      const getRenderers = (hook: Hook) => hook.renderers;
+      const hook: Hook = { renderers: new Map<number, string>(), name: "h" };
+      const describe = (receiver: unknown) => typeof receiver;
+      const isHook = (current: Hook | undefined = hook) =>
+        current !== undefined && "renderers" in current;
+      const renderers = getRenderers(hook);
+      renderers.set(1, "a");
+      const seen = [hook.renderers.size, describe(hook), isHook()].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("1,object,true"))).failure).toBeUndefined();
+    });
+
+    it("rejects a map that the set left empty", async () => {
+      expect((await checkModel(getSource("0,object,true"))).failure?.message).toContain(
+        "seen 1,object,true",
+      );
+    });
+  });
 });

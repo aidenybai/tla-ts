@@ -127,6 +127,7 @@ import {
   getCalledFunction,
   getElementTypeNode,
   getHolders,
+  getValueTypeNode,
   getKind,
   getRegExpIndicesPart,
   isEvery,
@@ -4510,9 +4511,12 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
           parent.right === node) ||
           (isMethodCall(parent) &&
             parent.arguments[0] === node &&
-            KIND_READS.has(
+            (KIND_READS.has(
               `${getBuiltIn(parent.expression.expression, context)}.${parent.expression.name.text}`,
-            ))))
+            ) ||
+              // Object.prototype.toString tells the kind of what it takes as its this.
+              (parent.expression.name.text === "call" &&
+                parent.expression.expression.getText() === "Object.prototype.toString")))))
     );
   };
   const isReached = new Set(reached);
@@ -4562,6 +4566,13 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
       isSetOrMap(use)
     );
   };
+  // A call of get on a map, which gives one of its values.
+  const isMapRead = (
+    node: ts.Expression,
+  ): node is ts.CallExpression & { expression: ts.PropertyAccessExpression } =>
+    isMethodCall(node) &&
+    node.expression.name.text === "get" &&
+    getKind(node.expression.expression, context) === "map";
   // Whether nothing reads what a call gives: a statement makes it, or an arrow function's body that
   // only statements and forEach call.
   const isDiscarded = (call: ts.Expression) => {
@@ -4615,6 +4626,9 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
     // The functions whose results, and the holders whose arrays' elements, are the group's.
     const returns: ts.SignatureDeclaration[] = [];
     const outers = [...startOuters];
+    // The fields that hold functions whose results are the group's.
+    const resultFields: ts.Symbol[] = [];
+    const resultFieldKeys = new Set<ts.Node>();
     const outerKeys = new Set<ts.Node>();
     // The parameters of callbacks that take each element of an outer holder.
     const elementParameters = new Set<ts.Node>();
@@ -4704,16 +4718,120 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
       };
       if (body !== undefined && ts.isBlock(body)) ts.forEachChild(body, findReturned);
       return (
-        called !== undefined &&
+        (called !== undefined || addInlineFields(owner)) &&
         body !== undefined &&
         !isExtended(owner) &&
         (ts.isBlock(body) ? returned : [body]).every(addSource) &&
         (name === undefined ? [] : getReferences(name.parent))
           .filter((reference) => reference !== name)
-          .every((reference) => {
-            const call = getCall(reference);
-            return call !== undefined && isUse(call);
-          })
+          .every(isResultReference)
+      );
+    };
+    // A function written in place as the value of an object literal's property or of an
+    // assignment, which only the fields that take it name, and which then hold only such functions.
+    const addInlineFields = (owner: ts.SignatureDeclaration) => {
+      const holder = ts.findAncestor(
+        owner.parent,
+        (ancestor) =>
+          !ts.isParenthesizedExpression(ancestor) &&
+          !ts.isAsExpression(ancestor) &&
+          !ts.isSatisfiesExpression(ancestor),
+      );
+      const fields =
+        (ts.isArrowFunction(owner) || ts.isFunctionExpression(owner)) && holder !== undefined
+          ? ts.isPropertyAssignment(holder)
+            ? getPropertyFields(holder)
+            : ts.isBinaryExpression(holder) &&
+                holder.operatorToken.kind === ts.SyntaxKind.EqualsToken
+              ? (getAccessedFields(holder.left, checker) ?? [])
+              : []
+          : [];
+      resultFields.push(...fields);
+      return fields.length > 0;
+    };
+    // A reference to a function whose result is the group's: a call, or the value of an object
+    // literal's property, whose fields then hold only such functions.
+    const isResultReference = (reference: ts.Identifier) => {
+      const call = getCall(reference);
+      if (call !== undefined) return isUse(call);
+      const property = reference.parent;
+      if (
+        !(ts.isShorthandPropertyAssignment(property) && property.name === reference) &&
+        !(ts.isPropertyAssignment(property) && property.initializer === reference)
+      ) {
+        return false;
+      }
+      resultFields.push(...getPropertyFields(property));
+      return true;
+    };
+    // A function that an object literal's property or an assignment gives a field whose functions'
+    // results are the group's: one that a name holds, or one written in place.
+    const addResultFunction = (node: ts.Expression): boolean => {
+      const value = skipCasts(node);
+      if (ts.isArrowFunction(value) || ts.isFunctionExpression(value)) {
+        return getCalledName(value) === undefined && addResult(value);
+      }
+      const declaration = ts.isIdentifier(value)
+        ? getSymbol(value, checker)?.valueDeclaration
+        : undefined;
+      const owner =
+        declaration !== undefined && ts.isVariableDeclaration(declaration)
+          ? declaration.initializer
+          : declaration;
+      return (
+        owner !== undefined &&
+        ts.isFunctionLike(owner) &&
+        getCalledName(owner) !== undefined &&
+        addResult(owner)
+      );
+    };
+    // A field whose functions' results are the group's: each value that an object literal or an
+    // assignment gives it is such a function, and each use calls it or checks that it's there.
+    const isResultField = (field: ts.Symbol) => {
+      const declarations = field.declarations ?? [];
+      // The name of each declaration marks the field, as its call gives what the heap holds.
+      nodes.push(
+        ...declarations.flatMap((declaration) => ts.getNameOfDeclaration(declaration) ?? []),
+      );
+      const isFieldUse = (use: ts.Expression): boolean => {
+        const parent = use.parent;
+        if (ts.isCallExpression(parent) && parent.expression === use) return isUse(parent);
+        if (ts.isBinaryExpression(parent)) {
+          const kind = parent.operatorToken.kind;
+          return kind === ts.SyntaxKind.EqualsToken
+            ? parent.left === use && addResultFunction(parent.right)
+            : IDENTITY_OPERATORS.has(kind) ||
+                (kind === ts.SyntaxKind.AmpersandAmpersandToken && parent.left === use);
+        }
+        return (
+          ts.isTypeOfExpression(parent) ||
+          (ts.isIfStatement(parent) && parent.expression === use) ||
+          (ts.isPrefixUnaryExpression(parent) && parent.operator === ts.SyntaxKind.ExclamationToken)
+        );
+      };
+      return (
+        declarations.length > 0 &&
+        declarations.every(
+          (declaration) =>
+            ts.isPropertySignature(declaration) ||
+            ts.isPropertyAssignment(declaration) ||
+            ts.isShorthandPropertyAssignment(declaration),
+        ) &&
+        objects.every((object) =>
+          object.properties.every((property) => {
+            const fields = getPropertyFields(property);
+            if (!fields.some((inner) => isSame(inner, field))) return true;
+            resultFields.push(...fields);
+            return ts.isShorthandPropertyAssignment(property)
+              ? addResultFunction(property.name)
+              : ts.isPropertyAssignment(property) && addResultFunction(property.initializer);
+          }),
+        ) &&
+        accesses
+          .filter((access) =>
+            getAccessedFields(access, checker)?.some((inner) => isSame(inner, field)),
+          )
+          .every(isFieldUse)
       );
     };
     const addSource = (node: ts.Expression): boolean => {
@@ -4739,6 +4857,16 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
       if (ts.isConditionalExpression(node)) {
         return addSource(node.whenTrue) && addSource(node.whenFalse);
       }
+      // ?? and || give one side or the other.
+      if (
+        ts.isBinaryExpression(node) &&
+        (node.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken ||
+          node.operatorToken.kind === ts.SyntaxKind.BarBarToken)
+      ) {
+        return addSource(node.left) && addSource(node.right);
+      }
+      // A value that a map holds, whose holder then holds only the group's.
+      if (isMapRead(node)) return addOuter(node.expression.expression);
       if (ts.isCallExpression(node) && isFreshArrayCall(node, context)) {
         nodes.push(node);
         return true;
@@ -4756,7 +4884,12 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
         const callee = getSymbol(node.expression, checker)?.valueDeclaration;
         const owner =
           callee !== undefined && ts.isVariableDeclaration(callee) ? callee.initializer : callee;
-        return owner !== undefined && ts.isFunctionLike(owner) && addResult(owner);
+        if (owner !== undefined && ts.isFunctionLike(owner)) return addResult(owner);
+        // A call through a field, whose functions then give only the group's.
+        const fields = getAccessedFields(node.expression, checker);
+        if (fields === undefined || fields.length === 0) return false;
+        resultFields.push(...fields);
+        return true;
       }
       return addHolder(node);
     };
@@ -4852,6 +4985,13 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
         return (
           addSource(parent.whenTrue === use ? parent.whenFalse : parent.whenTrue) && isUse(parent)
         );
+      }
+      if (
+        ts.isBinaryExpression(parent) &&
+        (parent.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken ||
+          parent.operatorToken.kind === ts.SyntaxKind.BarBarToken)
+      ) {
+        return addSource(parent.left === use ? parent.right : parent.left) && isUse(parent);
       }
       if (ts.isVariableDeclaration(parent) && ts.isIdentifier(parent.name)) {
         return addHolder(parent.name);
@@ -4986,6 +5126,15 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
         );
       }
       if (!ts.isCallExpression(parent) || parent.arguments.some(ts.isSpreadElement)) return false;
+      // A value that a map's set takes, whose holder then holds only the group's.
+      if (
+        isMethodCall(parent) &&
+        parent.expression.name.text === "set" &&
+        parent.arguments[1] === use &&
+        getKind(parent.expression.expression, context) === "map"
+      ) {
+        return ts.isExpressionStatement(parent.parent) && addOuter(parent.expression.expression);
+      }
       if (isComparedByIdentity(use)) return true;
       if (
         parent.arguments[0] === use &&
@@ -5146,7 +5295,7 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
             ];
       nodes.push(owner);
       return (
-        called !== undefined &&
+        (called !== undefined || addInlineFields(owner)) &&
         body !== undefined &&
         (ts.isBlock(body)
           ? body.statements
@@ -5155,27 +5304,54 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
                 (returned) => returned.expression !== undefined && addSource(returned.expression),
               )
           : addSource(body)) &&
-        (references.get(called) ?? [])
+        (called === undefined ? [] : (references.get(called) ?? []))
           .filter((reference) => reference !== name)
-          .every(
-            (reference) =>
-              ts.isCallExpression(reference.parent) &&
-              reference.parent.expression === reference &&
-              isUse(reference.parent),
-          )
+          .every(isResultReference)
       );
     };
     // A holder whose arrays' elements are the group's arrays: each array that it holds starts as a
     // literal, and each use reads, adds, or drops an element, or reads the length.
+    // A holder of maps whose values are the group's sets or maps works the same way: each map that
+    // it holds starts empty, and each use reads, sets, or drops a value, or reads the size.
     const isOuter = (outer: ts.Symbol) => {
       const declarations = outer.declarations ?? [];
-      const elements = declarations.map(getElementTypeNode);
+      const values = declarations.map((declaration) => getValueTypeNode(declaration, checker));
+      const isMap = values.length > 0 && values.every((value) => value !== undefined);
+      const elements = isMap ? values : declarations.map(getElementTypeNode);
       nodes.push(...elements.filter((element) => element !== undefined));
       const isElementSource = (value: ts.Expression | undefined) =>
         value !== undefined &&
-        ts.isArrayLiteralExpression(value) &&
-        value.elements.every((element) => !ts.isSpreadElement(element) && addSource(element));
+        (isMap
+          ? ts.isNewExpression(value) &&
+            (value.arguments ?? []).length === 0 &&
+            isFreshCollection(value, context)
+          : ts.isArrayLiteralExpression(value) &&
+            value.elements.every((element) => !ts.isSpreadElement(element) && addSource(element)));
+      const isValueUse = (use: ts.Expression) => {
+        const parent = use.parent;
+        if (!ts.isPropertyAccessExpression(parent) || parent.expression !== use) return false;
+        const call = parent.parent;
+        const method = parent.name.text;
+        if (method === "size") return true;
+        if (
+          !ts.isCallExpression(call) ||
+          call.expression !== parent ||
+          call.arguments.some(ts.isSpreadElement)
+        ) {
+          return false;
+        }
+        if (method === "get") return isUse(call);
+        if (method === "set") {
+          return (
+            call.arguments[1] !== undefined &&
+            addSource(call.arguments[1]) &&
+            ts.isExpressionStatement(call.parent)
+          );
+        }
+        return ["has", "delete", "clear"].includes(method);
+      };
       const isElementUse = (use: ts.Expression) => {
+        if (isMap) return isValueUse(use);
         const parent = use.parent;
         if (ts.isPropertyAccessExpression(parent) && parent.expression === use) {
           const call = parent.parent;
@@ -5254,7 +5430,20 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
       );
     };
     const isGrown = () => {
-      while (pending.length > 0 || returns.length > 0 || outers.length > 0) {
+      while (
+        pending.length > 0 ||
+        returns.length > 0 ||
+        outers.length > 0 ||
+        resultFields.length > 0
+      ) {
+        const resultField = resultFields.pop();
+        if (resultField !== undefined) {
+          const key = resultField.declarations?.[0];
+          if (key === undefined || resultFieldKeys.has(key)) continue;
+          resultFieldKeys.add(key);
+          if (!isResultField(resultField)) return false;
+          continue;
+        }
         const owner = returns.pop();
         if (owner !== undefined) {
           if (group.has(owner)) continue;
@@ -5306,7 +5495,10 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
           ts.isIdentifier(parent.name) && keepsFields(type, checker.getTypeAtLocation(parent.name))
         );
       }
-      if (ts.isPropertyDeclaration(parent) && parent.initializer === node) {
+      if (
+        (ts.isPropertyDeclaration(parent) || ts.isParameter(parent)) &&
+        parent.initializer === node
+      ) {
         return keepsFields(type, checker.getTypeAtLocation(parent.name));
       }
       if (
@@ -5345,16 +5537,30 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
         const contextual =
           checker.getContextualType(node) ??
           (property === undefined ? undefined : checker.getTypeOfSymbol(property));
-        return contextual !== undefined && keepsFields(type, contextual);
+        // A script's parameter of type any or unknown takes the object's reference, whose fields a
+        // read finds on the heap by name, unlike a built-in's, such as JSON.stringify's, which reads
+        // every field.
+        const callee = ts.isCallExpression(parent)
+          ? getSymbol(parent.expression, checker)?.valueDeclaration
+          : undefined;
+        const isScriptParameter =
+          callee !== undefined &&
+          !callee.getSourceFile().isDeclarationFile &&
+          contextual !== undefined &&
+          (contextual.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;
+        return isScriptParameter || (contextual !== undefined && keepsFields(type, contextual));
       }
       // A spread copies each field, which keeps the array that the field holds.
       if (ts.isSpreadAssignment(parent)) {
         return keepsFields(type, checker.getTypeAtLocation(parent.parent));
       }
       // A check reads only whether the object is there, as && gives its left side only where
-      // that is falsy.
+      // that is falsy, and in reads only its keys.
       if (
         ts.isIfStatement(parent) ||
+        (ts.isBinaryExpression(parent) &&
+          parent.right === node &&
+          parent.operatorToken.kind === ts.SyntaxKind.InKeyword) ||
         ts.isPrefixUnaryExpression(parent) ||
         (ts.isBinaryExpression(parent) &&
           parent.left === node &&
