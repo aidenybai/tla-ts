@@ -1471,6 +1471,23 @@ export const getTopLevelDeclaration = (symbol: ts.Symbol | undefined) => {
   return isTopLevelConst ? declaration : undefined;
 };
 
+// The symbol that a node names, where a property's read names a module's export only through the
+// module's namespace object, or a namespace's through the namespace: another object of the same
+// type, such as another module's namespace object, may hold another value under the name.
+export const getNamedSymbol = (node: ts.Expression, checker: ts.TypeChecker) => {
+  const symbol = getSymbol(node, checker);
+  const declaration = getTopLevelDeclaration(symbol);
+  if (!ts.isPropertyAccessExpression(node) || declaration === undefined) return symbol;
+  const container = ts.findAncestor(
+    declaration.parent,
+    (ancestor) => ts.isSourceFile(ancestor) || ts.isModuleDeclaration(ancestor),
+  );
+  const receiver = getOwnSymbol(skipCasts(node.expression), checker);
+  return container !== undefined && receiver?.declarations?.includes(container) === true
+    ? symbol
+    : undefined;
+};
+
 const isAsync = (node: FunctionNode) =>
   node.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) === true;
 
@@ -4940,7 +4957,7 @@ export const getFactoryCall = (
 // The function that a callee or callback names: one written in place, one declared elsewhere, one
 // that a factory returns, or a method of a known class.
 const resolve = (node: ts.Expression, context: Context) => {
-  const declaration = getSymbol(skipCasts(node), context.checker)?.valueDeclaration;
+  const declaration = getNamedSymbol(skipCasts(node), context.checker)?.valueDeclaration;
   return (
     getAnyFunction(skipCasts(node)) ??
     getAnyFunction(declaration) ??

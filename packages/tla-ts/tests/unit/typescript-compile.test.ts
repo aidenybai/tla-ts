@@ -47861,4 +47861,26 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("calls the function that a module's namespace object holds where a value may hold either of two", () => {
+    const path = join(import.meta.dirname, "../fixtures/typescript/imports/namespace.ts");
+    const getSource = (expected: string) => `
+      import * as english from "./english";
+      import * as latin from "./latin";
+      const box = { size: 0 };
+      const pick = (isLatin: boolean) => (isLatin ? latin : english);
+      const seen = [pick(true).greet(), pick(false).greet(), box.size].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await check(compile(getSource("salve,hello,0"), path))).failure).toBeUndefined();
+    });
+
+    it("rejects the function of the module whose type TypeScript gives the value", async () => {
+      expect((await check(compile(getSource("hello,hello,0"), path))).failure?.message).toContain(
+        "seen salve,hello,0",
+      );
+    });
+  });
 });

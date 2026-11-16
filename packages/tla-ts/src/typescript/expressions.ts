@@ -41,6 +41,7 @@ import {
   isStrictCode,
   getSharedDeclaration,
   getStaticTruth,
+  getNamedSymbol,
   getSymbol,
   isStatic,
   isAssigned,
@@ -989,7 +990,7 @@ const translateBuiltInCall = (
       ]),
     );
   }
-  const symbol = getSymbol(node.expression, context.checker);
+  const symbol = getNamedSymbol(node.expression, context.checker);
   const helper = getTopLevelDeclaration(symbol);
   if (helper?.getSourceFile().isDeclarationFile) {
     return translateUnknown(node, `Unsupported call: ${node.expression.getText()}`, context);
@@ -1016,14 +1017,19 @@ const translateBuiltInCall = (
   if ((callee !== undefined && ts.isMethodDeclaration(callee)) || isSuperAccess(node.expression)) {
     return translateLocalCall(node, scope, context);
   }
-  // A call of a function that a field holds.
+  // A call of a function that a field holds, or that an object other than a module's namespace
+  // object holds under the name of the module's export.
   const field = symbol?.valueDeclaration;
   if (
     isMethodCall(node) &&
     context.heap !== undefined &&
-    field !== undefined &&
-    !field.getSourceFile().isDeclarationFile &&
-    (ts.isPropertyDeclaration(field) || ts.isParameter(field) || ts.isPropertySignature(field))
+    ((field !== undefined &&
+      !field.getSourceFile().isDeclarationFile &&
+      (ts.isPropertyDeclaration(field) ||
+        ts.isParameter(field) ||
+        ts.isPropertySignature(field))) ||
+      (symbol === undefined &&
+        getTopLevelDeclaration(getSymbol(node.expression, context.checker)) !== undefined))
   ) {
     return translateLocalCall(node, scope, context);
   }
@@ -3121,7 +3127,7 @@ const translatePropertyAccess = (
       context,
     );
   }
-  const property = getSymbol(node, context.checker);
+  const property = getNamedSymbol(node, context.checker);
   // A module's namespace object holds what the module's bindings hold, which a read before the
   // module declares them finds uninitialized.
   if (
