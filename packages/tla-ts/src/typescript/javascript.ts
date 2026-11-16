@@ -16,6 +16,7 @@ import { formatString } from "../printer";
 import {
   PRIMITIVE_NAMES,
   getNumberValue,
+  isGlobalObjectVar,
   translateBigInt,
   translateExpression,
   translateToString,
@@ -23,6 +24,7 @@ import {
 } from "./expressions";
 import { rejectBeforeDeclaration, type Scope } from "./scope";
 import { getMappedParameter } from "./actions";
+import { getHeap } from "./heap";
 import { getKind, isBigIntLike, isEvery } from "./types";
 import { TEMPORAL_DEFINITIONS, TEMPORAL_GETTERS } from "./temporal-module";
 import { apply, boolean, identifier, ifExpression, number, set, string } from "./tla";
@@ -53,7 +55,7 @@ export const JAVASCRIPT_MODULE = `------------------------------ MODULE JavaScri
 EXTENDS Integers, Sequences, FiniteSets, TLC
 
 CONSTANTS Undefined, Null, Ref, Big, Limbs, Wide, Double, BuiltIns, ConstantFunctions, Symbols, Fractions,
-          Doubles,
+          Doubles, SourceTexts,
           Characters, Searches, Cases, Normals, NaN, Infinity, NegativeInfinity, NegativeZero
 
 LOCAL Digits == {"-", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9"}
@@ -1833,6 +1835,18 @@ EnvironmentValue(heap, environment, key) == heap.objects[environment[Ref]].bindi
 \\* Whether an environment holds a local, which its call stores once the local's declaration runs.
 HasEnvironmentValue(heap, environment, key) == key \\in DOMAIN heap.objects[environment[Ref]].bindings
 
+\\* A local that closures share, which a closure reads or writes, and which is uninitialized until
+\\* its declaration runs.
+SharedValue(heap, environment, key) ==
+  IF HasEnvironmentValue(heap, environment, key)
+  THEN EnvironmentValue(heap, environment, key)
+  ELSE Assert(FALSE, "tla-ts can't throw the ReferenceError of reading a local before its declaration")
+
+SetShared(heap, environment, key, value) ==
+  IF HasEnvironmentValue(heap, environment, key)
+  THEN SetEnvironment(heap, environment, key :> value)
+  ELSE Assert(FALSE, "tla-ts can't throw the ReferenceError of writing a local before its declaration")
+
 \\* The environment of the call that made a closure, or Undefined for a function that isn't one.
 EnvironmentOf(heap, value) ==
   IF IsHeap(value) /\\ "environment" \\in DOMAIN heap.objects[value[Ref]]
@@ -1844,6 +1858,24 @@ CodeOf(heap, value) ==
   IF IsHeap(value) /\\ "code" \\in DOMAIN heap.objects[value[Ref]]
   THEN heap.objects[value[Ref]].code
   ELSE value
+
+\\* Function.prototype.toString, which gives the source text of a function that a script declares,
+\\* which SourceTexts holds by the model value of its code, or Undefined where tla-ts can't tell it,
+\\* and shows a built-in function native, with the name it starts with, as it does a callable proxy.
+FunctionSourceText(heap, value) ==
+  LET code == CodeOf(heap, value)
+  IN CASE code \\in DOMAIN SourceTexts /\\ SourceTexts[code] # Undefined -> SourceTexts[code]
+       [] IsProxy(heap, value) /\\ heap.objects[value[Ref]].isCallable ->
+            "function () { [native code] }"
+       [] /\\ code \\notin DOMAIN SourceTexts
+          /\\ ~IsHeap(value)
+          /\\ IsBuiltIn(value)
+          /\\ BuiltIns[BuiltInKey(value)].isCallable ->
+            "function " \\o BuiltIns[BuiltInKey(value)].values["name"] \\o "() { [native code] }"
+       [] TypeOfIn(heap, value) = "function" ->
+            Assert(FALSE, "tla-ts can't tell the source text of this function")
+       [] OTHER ->
+            Assert(FALSE, "tla-ts can't throw the TypeError of Function.prototype.toString on a value that isn't a function")
 
 IsObjectIn(heap, value) == value # Null /\\ TypeOfIn(heap, value) \\in {"object", "function"}
 
@@ -7516,13 +7548,13 @@ IsObjectArgument(value) ==
 \\* that inherits from Object.prototype, and only functions that the heap holds read it. A primitive
 \\* reads only the built-in keys of its prototype as tla-ts compiles, and stops at any other key, so a
 \\* script may define an accessor under a string key that is neither of those nor an index. A typed
-\\* array, which the heap holds, reads its prototypes' accessors as any object on the heap does.
+\\* array, which the heap holds, reads its prototypes' accessors as any object on the heap does. The
+\\* global object's keys that a script's vars and names read are hidden, or stop a change, so only Get
+\\* reads an accessor under another key.
 LOCAL CanDefineOn(ref, key, descriptor) ==
-  \\* A global variable reads its binding, not the global object's accessor.
-  /\\ Assert(~descriptor.isAccessor \\/ ToString(ref) # ToString(GlobalObject),
-            "tla-ts can't define accessors on the global object")
   /\\ Assert(\\/ IsHeap(ref)
             \\/ ~descriptor.isAccessor
+            \\/ ToString(ref) = ToString(GlobalObject)
             \\/ BuiltInKey(ref) \\in {"Array.prototype", "Object.prototype"}
             \\/ BuiltInKey(ref) \\in {"%Int8Array.prototype.[[Prototype]]%"} \\cup
                  {type \\o "Array.prototype" :
@@ -8628,6 +8660,24 @@ export const translateTypeOf = (
   // A write through an arguments object may give a parameter that it maps a value of another type.
   const mapped = ts.isIdentifier(read) ? getMappedParameter(read, scope, context) : undefined;
   if (mapped !== undefined) return useJavaScript("TypeOfIn", [mapped.heap, mapped.raw], context);
+  // typeof reads the global object's property without throwing where it lacks it.
+  if (ts.isIdentifier(read) && isGlobalObjectVar(read, context)) {
+    if (context.heap === undefined) return string("undefined");
+    context.builtIns.add("globalThis");
+    const heap = getHeap(scope, read, context);
+    return ifExpression(
+      useJavaScript("Has", [heap, identifier("GlobalObject"), string(read.text)], context),
+      useJavaScript(
+        "TypeOfIn",
+        [
+          heap,
+          useJavaScript("Get", [heap, identifier("GlobalObject"), string(read.text)], context),
+        ],
+        context,
+      ),
+      string("undefined"),
+    );
+  }
   const symbol = isImplicitGlobal(read, context) ? getSymbol(read, context.checker) : undefined;
   const global = symbol === undefined ? undefined : scope.bindings.get(symbol);
   const typeOf = translateTypeOfValue(node, scope, context);

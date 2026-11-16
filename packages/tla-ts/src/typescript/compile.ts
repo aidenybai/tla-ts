@@ -52,6 +52,7 @@ import { createProgram } from "./program";
 import { link } from "./regions";
 import { translateCall, translateInvariant, translateProperty, VALUE_TAGS } from "./properties";
 import { createStateScope } from "./scope";
+import { translateSourceTexts } from "./source-text";
 import { classifySharedHelpers } from "./shared-calls";
 import { TlaTypeScriptError } from "../errors";
 import { translateStep } from "./steps";
@@ -922,6 +923,7 @@ export const compile = (
         context.heap === undefined ? tuple([]) : translateBuiltIns(sourceFile, context),
       ),
       define("UsedConstantFunctions", [], translateConstantFunctions(context)),
+      define("UsedSourceTexts", [], translateSourceTexts(context)),
       define("UsedSymbols", [], tuple(context.symbols.map((name) => identifier(name)))),
       define(
         "UsedFractions",

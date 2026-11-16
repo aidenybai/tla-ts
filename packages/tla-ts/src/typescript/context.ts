@@ -20,7 +20,7 @@ import { getBindingNames, getLexicalNames } from "./early-errors";
 import { getKeptReads } from "./narrowing";
 import { mayThrow } from "./functions";
 import { getGetterKeys, isProxyOperation } from "./protocols";
-import { isLiteralValue, type Namespace } from "./namespaces";
+import type { Namespace } from "./namespaces";
 import type { Link } from "./regions";
 import { apply, define, identifier, ifExpression, index, letExpression, string } from "./tla";
 
@@ -127,6 +127,8 @@ export interface Context {
   // Whether a script reads a property of a function that may be a built-in accessor, whose objects
   // the heap then holds.
   isAccessorRead: boolean;
+  // Whether Function.prototype.toString reads the source texts of the script's functions.
+  isSourceTextRead: boolean;
   // The literal that each function a script holds as a value returns, by its model value's name,
   // for the functions that return only a literal.
   constantFunctions: Map<string, Expression>;
@@ -524,6 +526,7 @@ export const createContext = (
     heap: undefined,
     builtIns: new Set(),
     isAccessorRead: false,
+    isSourceTextRead: false,
     constantFunctions: new Map(),
     functionObjects: new Map(),
     hasSpecialNumbers: false,
@@ -1383,6 +1386,21 @@ export const rejectDeclaredCall = (node: ts.CallExpression, context: Context) =>
 
 export const isMethodCall = (node: ts.Node): node is MethodCall =>
   ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression);
+
+// The array that a call of a function through apply passes, where the call binds the function's
+// parameters to its elements, as CreateListFromArrayLike takes them, rather than to arguments that it
+// writes.
+export const getAppliedList = (argumentNodes: readonly ts.Expression[]) => {
+  const list = argumentNodes.length === 1 ? argumentNodes[0] : undefined;
+  const call = list?.parent;
+  return call !== undefined &&
+    isMethodCall(call) &&
+    call.expression.name.text === "apply" &&
+    call.arguments.length === 2 &&
+    call.arguments[1] === list
+    ? list
+    : undefined;
+};
 
 export const isSuperAccess = (
   node: ts.Node,
@@ -3323,45 +3341,11 @@ export const getCaptures = (node: Closure, context: Context) => {
   return [...new Set(captures.map((capture) => capture.symbol))];
 };
 
-// The name that a statement steps or gives a literal, as calls++ or done = true does, or that it
-// declares with a literal.
-const getSimplyWritten = (statement: ts.Node) => {
-  if (ts.isVariableStatement(statement)) {
-    const declarations = statement.declarationList.declarations;
-    const declaration = declarations.length === 1 ? declarations[0] : undefined;
-    return declaration !== undefined &&
-      ts.isIdentifier(declaration.name) &&
-      declaration.initializer !== undefined &&
-      isLiteralValue(declaration.initializer)
-      ? declaration.name
-      : undefined;
-  }
-  const expression = ts.isExpressionStatement(statement) ? statement.expression : undefined;
-  if (expression === undefined) return undefined;
-  if (ts.isPrefixUnaryExpression(expression) || ts.isPostfixUnaryExpression(expression)) {
-    return (expression.operator === ts.SyntaxKind.PlusPlusToken ||
-      expression.operator === ts.SyntaxKind.MinusMinusToken) &&
-      ts.isIdentifier(expression.operand)
-      ? expression.operand
-      : undefined;
-  }
-  return ts.isBinaryExpression(expression) &&
-    [
-      ts.SyntaxKind.EqualsToken,
-      ts.SyntaxKind.PlusEqualsToken,
-      ts.SyntaxKind.MinusEqualsToken,
-    ].includes(expression.operatorToken.kind) &&
-    ts.isIdentifier(expression.left) &&
-    isLiteralValue(expression.right)
-    ? expression.left
-    : undefined;
-};
-
 // The declaration of a local that a function shares with the closures it makes, which the
 // function or another closure names after a closure that reads it is made, or that a closure that
 // a function inside it makes reads. An environment of its own holds it from where its declaration
-// runs, which each reads and writes. It's a primitive that a let, or a var of the function's body,
-// declares with a literal, and that only statements that step it or give it a literal change.
+// runs, which each reads and writes. A let, or a var of the function's body, that a statement of
+// its own declares.
 export const getSharedDeclaration = (symbol: ts.Symbol, context: Context) => {
   const declaration = symbol.valueDeclaration;
   const statement = declaration?.parent.parent;
@@ -3370,8 +3354,10 @@ export const getSharedDeclaration = (symbol: ts.Symbol, context: Context) => {
     context.heap === undefined ||
     declaration === undefined ||
     !ts.isVariableDeclaration(declaration) ||
+    !ts.isIdentifier(declaration.name) ||
     statement === undefined ||
-    getSimplyWritten(statement) !== declaration.name ||
+    !ts.isVariableStatement(statement) ||
+    statement.declarationList.declarations.length !== 1 ||
     symbol.declarations?.length !== 1 ||
     owner === undefined ||
     (ts.getCombinedModifierFlags(owner) & ts.ModifierFlags.Async) !== 0 ||
@@ -3385,14 +3371,6 @@ export const getSharedDeclaration = (symbol: ts.Symbol, context: Context) => {
   ) {
     return undefined;
   }
-  const type = context.checker.getTypeAtLocation(declaration.name);
-  if (
-    !(type.isUnion() ? type.types : [type]).every(
-      (member) => (member.flags & PRIMITIVE_FLAGS) !== 0,
-    )
-  ) {
-    return undefined;
-  }
   const names = findNodes(
     owner,
     (inner): inner is ts.Identifier =>
@@ -3402,10 +3380,6 @@ export const getSharedDeclaration = (symbol: ts.Symbol, context: Context) => {
         ? context.checker.getShorthandAssignmentValueSymbol(inner.parent)
         : getSymbol(inner, context.checker)) === symbol,
   );
-  const isSimplyWritten = findNodes(owner, (inner): inner is ts.Node => {
-    const target = getAssignedTarget(inner);
-    return target !== undefined && isWrittenBy(target, symbol, context);
-  }).every((write) => getSimplyWritten(write.parent) === getAssignedTarget(write));
   const isShared = names.some((name) => {
     const closure = ts.findAncestor(name.parent, (ancestor) =>
       ancestor === owner ? "quit" : isClosure(ancestor, context),
@@ -3421,13 +3395,16 @@ export const getSharedDeclaration = (symbol: ts.Symbol, context: Context) => {
         ))
     );
   });
-  return isSimplyWritten && isShared ? declaration : undefined;
+  return isShared ? declaration : undefined;
 };
 
-// The local that closures share that a statement writes, which it writes in its environment.
+// The local that closures share that a statement declares, which makes its environment.
 export const getSharedWrite = (statement: ts.Statement, context: Context) => {
-  const name = getSimplyWritten(statement);
-  const symbol = name && getSymbol(name, context.checker);
+  const declarations = ts.isVariableStatement(statement)
+    ? statement.declarationList.declarations
+    : undefined;
+  const name = declarations?.length === 1 ? declarations[0].name : undefined;
+  const symbol = name && ts.isIdentifier(name) ? getSymbol(name, context.checker) : undefined;
   const declaration = symbol && getSharedDeclaration(symbol, context);
   return symbol === undefined || declaration === undefined ? undefined : { symbol, declaration };
 };

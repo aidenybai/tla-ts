@@ -303,6 +303,7 @@ export const emit = (
                 "  Searches <- UsedSearches",
                 "  Cases <- UsedCases",
                 "  Normals <- UsedNormals",
+                "  SourceTexts <- UsedSourceTexts",
               ]
             : []),
         ]

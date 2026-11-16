@@ -1,4 +1,5 @@
 import ts from "@typescript/typescript6";
+import { isAmbientCode } from "./early-errors";
 import { BUILT_INS } from "./built-ins";
 import type { ExceptPathStep, Expression, OperatorDefinition } from "../ast";
 import {
@@ -111,6 +112,7 @@ import {
   isVarFunction,
   getVarFunctionTarget,
   getOwnSymbol,
+  getAppliedList,
   getSharedDeclaration,
   getSharedWrite,
   getStaticTruth,
@@ -952,6 +954,41 @@ const getTarget = (node: ts.Expression, path: Path, context: Context): Target =>
     const mapped = getMappedTarget(node, path, context);
     if (mapped !== undefined) return mapped;
     const symbol = getSymbol(node, context.checker);
+    // A local that closures share changes in the environment that holds it.
+    const shared = symbol === undefined ? undefined : getSharedDeclaration(symbol, context);
+    if (shared !== undefined) {
+      const environment = path.scope.activations?.get(shared);
+      const heapSymbol = context.heap;
+      const heap = heapSymbol === undefined ? undefined : path.scope.bindings.get(heapSymbol);
+      if (environment === undefined || heapSymbol === undefined || heap === undefined) {
+        throw new TlaTypeScriptError(
+          `tla-ts can't write ${node.text}, which closures share, outside its declaration's run`,
+          node,
+        );
+      }
+      // A closure may run before the declaration gives the local its value.
+      const isOwn =
+        ts.findAncestor(node.parent, ts.isFunctionLike) ===
+        ts.findAncestor(shared.parent, ts.isFunctionLike);
+      const key = string(node.text);
+      const current = useJavaScript(
+        isOwn ? "EnvironmentValue" : "SharedValue",
+        [heap, environment, key],
+        context,
+      );
+      return {
+        symbol: heapSymbol,
+        current,
+        update: (getValue) =>
+          isOwn
+            ? useJavaScript(
+                "SetEnvironment",
+                [heap, environment, functionFrom([[key, getValue(current)]])],
+                context,
+              )
+            : useJavaScript("SetShared", [heap, environment, key, getValue(current)], context),
+      };
+    }
     const current = symbol === undefined ? undefined : path.scope.bindings.get(symbol);
     const whole = ts.findAncestor(
       node,
@@ -4693,6 +4730,91 @@ const translateCallStatementBody = (
           ),
         );
   }
+  const through = getDispatchedThrough(expression, path, context);
+  if (through !== undefined) {
+    const method = through.isApply ? "apply" : "call";
+    // Each function that the value may be continues to one copy of what follows the call.
+    return translateJoined(expression, path, context, continueWith, (continueCall) => {
+      const heap = getHeap(path.scope, expression, context);
+      const value = translateExpression(through.target, path.scope, context);
+      const thisValue =
+        through.thisArgument === undefined
+          ? getUndefined(context)
+          : translateExpression(through.thisArgument, path.scope, context);
+      return through.candidates.reduceRight(
+        (otherwise, candidate) => {
+          const candidateValue = getCandidateValue(candidate, context);
+          if (
+            candidateValue === undefined ||
+            frame.inlining.has(candidate) ||
+            isAnyGenerator(candidate) ||
+            isAsyncFunction(candidate)
+          ) {
+            return otherwise;
+          }
+          const receiver = ts.isArrowFunction(candidate)
+            ? undefined
+            : { value: thisValue, method: candidate };
+          const run = isClosure(candidate, context)
+            ? enterClosure(candidate, value, path, context, frame, (inner, innerFrame, leave) =>
+                inlineBody(
+                  expression,
+                  candidate,
+                  through.argumentNodes,
+                  receiver,
+                  inner,
+                  context,
+                  innerFrame,
+                  (after, result) => continueCall(leave(after), result),
+                ),
+              )
+            : inlineBody(
+                expression,
+                candidate,
+                through.argumentNodes,
+                receiver,
+                path,
+                context,
+                frame,
+                continueCall,
+              );
+          return ifThenElse(
+            apply("=", [
+              isClosure(candidate, context) ||
+              isNestedFunction(candidate, context) ||
+              isHeapFunction(candidate, context)
+                ? useJavaScript("CodeOf", [heap, value], context)
+                : value,
+              candidateValue,
+            ]),
+            ifThenElse(
+              useJavaScript(
+                "HoldsBuiltIn",
+                [
+                  heap,
+                  isHeapFunction(candidate, context)
+                    ? value
+                    : translateBuiltInValue("Function.prototype", expression, context),
+                  string(method),
+                  string(`Function.prototype.${method}`),
+                ],
+                context,
+              ),
+              run,
+              leaf(
+                apply("Assert", [
+                  boolean(false),
+                  string("tla-ts can't tell which function this call runs"),
+                ]),
+              ),
+            ),
+            otherwise,
+          );
+        },
+        leaf(stopUnknownCall(value, context)),
+      );
+    });
+  }
   const callee = called?.method ?? getCallback(expression.expression, path, context);
   const bound = callee === undefined ? getBound(expression.expression, context) : undefined;
   if (bound !== undefined && !bound.isSteady) {
@@ -5267,19 +5389,23 @@ const getCalledThrough = (node: ts.CallExpression, context: Context) => {
     : undefined;
 };
 
-// A call of a script's function or async function through Function.prototype.call or apply,
-// with the this and the arguments that it passes. apply's CreateListFromArrayLike takes no
-// arguments from undefined or null, and an array literal's elements, with undefined at its holes.
-const getAppliedCall = (node: ts.CallExpression, path: Path, context: Context) => {
-  if (!isMethodCall(node) || !["call", "apply"].includes(node.expression.name.text)) {
-    return undefined;
-  }
+// A name of a rest parameter, which holds an array that the call made, as its type may not tell.
+const isRestParameter = (node: ts.Expression, context: Context) => {
+  const declaration = ts.isIdentifier(node)
+    ? getSymbol(node, context.checker)?.valueDeclaration
+    : undefined;
+  return (
+    declaration !== undefined &&
+    ts.isParameter(declaration) &&
+    declaration.dotDotDotToken !== undefined
+  );
+};
+
+// The arguments that a call through Function.prototype.call or apply passes: call's after its this,
+// and apply's CreateListFromArrayLike, which takes none from undefined or null, an array literal's
+// elements, with undefined at its holes, and another array's, which the call then binds as a spread.
+const getAppliedArguments = (node: MethodCall, context: Context) => {
   const isApply = node.expression.name.text === "apply";
-  const target = getCast(node.expression.expression);
-  const callee =
-    ts.isIdentifier(target) || ts.isFunctionExpression(target) || ts.isArrowFunction(target)
-      ? (getCallback(target, path, context) ?? getAsyncCallee(target, path, context))
-      : undefined;
   const listed = isApply ? node.arguments.at(1) : undefined;
   const list = listed === undefined ? undefined : getCast(listed);
   const argumentNodes = !isApply
@@ -5290,15 +5416,65 @@ const getAppliedCall = (node: ts.CallExpression, path: Path, context: Context) =
       ? []
       : ts.isArrayLiteralExpression(list)
         ? list.elements
-        : undefined;
+        : listed !== undefined &&
+            (isHeapArray(list, context) ||
+              getKind(list, context) === "sequence" ||
+              (getKind(list, context) !== "object" && isRestParameter(list, context)))
+          ? [listed]
+          : undefined;
+  return argumentNodes !== undefined &&
+    (!isApply || node.arguments.length <= 2) &&
+    !node.arguments.slice(0, isApply ? 2 : 1).some(ts.isSpreadElement)
+    ? { argumentNodes, thisArgument: node.arguments.at(0), isApply }
+    : undefined;
+};
+
+const isThroughCall = (node: ts.CallExpression): node is MethodCall =>
+  isMethodCall(node) && ["call", "apply"].includes(node.expression.name.text);
+
+// A call through Function.prototype.call or apply itself, which a function's type declares, rather
+// than through an object's own method of either name.
+const isFunctionThroughCall = (node: ts.CallExpression, context: Context): node is MethodCall =>
+  isThroughCall(node) &&
+  (getSymbol(node.expression, context.checker)?.declarations ?? []).some(
+    (declaration) =>
+      declaration.getSourceFile().isDeclarationFile &&
+      ts.isInterfaceDeclaration(declaration.parent) &&
+      ["Function", "CallableFunction", "NewableFunction"].includes(declaration.parent.name.text),
+  );
+
+// A name that a call through call or apply reads its function from, where it may hold any of
+// several: a parameter, or what a for-of takes.
+const isDispatchedName = (node: ts.Expression, context: Context) => {
+  const declaration = ts.isIdentifier(node)
+    ? getSymbol(node, context.checker)?.valueDeclaration
+    : undefined;
+  return (
+    declaration !== undefined &&
+    (ts.isParameter(declaration) ||
+      (ts.isVariableDeclaration(declaration) &&
+        ts.isVariableDeclarationList(declaration.parent) &&
+        ts.isForOfStatement(declaration.parent.parent)))
+  );
+};
+
+// A call of a script's function or async function through Function.prototype.call or apply, with
+// the this and the arguments that it passes, other than an async function's from an array.
+const getAppliedCall = (node: ts.CallExpression, path: Path, context: Context) => {
+  if (!isThroughCall(node)) return undefined;
+  const target = getCast(node.expression.expression);
+  const callee =
+    ts.isIdentifier(target) || ts.isFunctionExpression(target) || ts.isArrowFunction(target)
+      ? (getCallback(target, path, context) ?? getAsyncCallee(target, path, context))
+      : undefined;
+  const applied = getAppliedArguments(node, context);
   return callee?.body !== undefined &&
     (ts.isFunctionDeclaration(callee) ||
       ts.isFunctionExpression(callee) ||
       ts.isArrowFunction(callee)) &&
-    argumentNodes !== undefined &&
-    (!isApply || node.arguments.length <= 2) &&
-    !node.arguments.slice(0, isApply ? 2 : 1).some(ts.isSpreadElement)
-    ? { callee, target, argumentNodes, thisArgument: node.arguments.at(0), isApply }
+    applied !== undefined &&
+    !(isAsyncFunction(callee) && getAppliedList(applied.argumentNodes) !== undefined)
+    ? { ...applied, callee, target }
     : undefined;
 };
 
@@ -5399,6 +5575,21 @@ const translateMapInsert = (
         )
       : run,
   );
+};
+
+// A call through Function.prototype.call or apply of a function that a name holds where tla-ts
+// can't tell which, with the functions that it may be.
+const getDispatchedThrough = (node: ts.CallExpression, path: Path, context: Context) => {
+  if (!isFunctionThroughCall(node, context)) return undefined;
+  const target = getCast(node.expression.expression);
+  const applied = getAppliedArguments(node, context);
+  // Where none fits, the call stops only as it runs.
+  const candidates = isDispatchedName(target, context)
+    ? getCandidates(node, path.scope.functions, context, target)
+    : undefined;
+  return applied === undefined || candidates === undefined
+    ? undefined
+    : { ...applied, target, candidates };
 };
 
 export const getCallback = (node: ts.Expression, path: Path, context: Context) => {
@@ -5528,7 +5719,7 @@ export const getPassedCallbacks = (
     // A parameter that the call passes nothing takes the function that its default writes.
     const callback =
       argument === undefined
-        ? argumentNodes.some(ts.isSpreadElement)
+        ? argumentNodes.some(ts.isSpreadElement) || getAppliedList(argumentNodes) !== undefined
           ? undefined
           : getAnyFunction(parameter.initializer)
         : isObject
@@ -5773,6 +5964,7 @@ export const bindCall = (
     first !== undefined &&
     source !== undefined &&
     !ts.isSpreadElement(source) &&
+    getAppliedList(argumentNodes) === undefined &&
     isGetterPattern(first.name, path, context)
   ) {
     const name = context.names.getFresh("argument");
@@ -5909,7 +6101,10 @@ export const bindCall = (
     const position = parameters.findIndex((parameter) => parameter === assigning.binding);
     const argument = argumentNodes.at(position);
     const passedValue = argument === undefined ? undefined : skipCasts(argument);
-    const isKnown = position >= 0 && !argumentNodes.slice(0, position + 1).some(ts.isSpreadElement);
+    const isKnown =
+      position >= 0 &&
+      !argumentNodes.slice(0, position + 1).some(ts.isSpreadElement) &&
+      getAppliedList(argumentNodes) === undefined;
     const isRun =
       isKnown && (passedValue === undefined || isUndefinedLiteral(passedValue, context));
     const isSkipped =
@@ -5959,7 +6154,7 @@ export const bindCall = (
     restValue,
     deferred,
   );
-  if (!passed.some(ts.isSpreadElement)) {
+  if (!passed.some(ts.isSpreadElement) && getAppliedList(argumentNodes) === undefined) {
     valueParameters.forEach((parameter, position) => {
       const argument = passed.at(position);
       const symbol = ts.isIdentifier(parameter.name)
@@ -6379,6 +6574,7 @@ const isSelfCallable = (
     isAsyncFunction(callee) ||
     argumentNodes.length > parameters.length ||
     argumentNodes.some(ts.isSpreadElement) ||
+    getAppliedList(argumentNodes) !== undefined ||
     findNodes(
       callee,
       (inner): inner is ts.Identifier => getArgumentsOwner(inner, context.checker) === callee,
@@ -9140,15 +9336,24 @@ const isOrderFree = (body: ts.Node | undefined, element: ts.Node | undefined, co
 
 // Whether a script deletes a key from a set or a map, which leaves a gap in its entries that an
 // iterator that has passed it skips, where a list of its keys closes the gap.
-const isKeyDeleted = (node: ts.Node, context: Context) =>
-  findNodes(
-    node.getSourceFile(),
-    (inner): inner is ts.PropertyAccessExpression =>
-      ts.isPropertyAccessExpression(inner) &&
-      ["delete", "clear"].includes(inner.name.text) &&
-      (["Set", "Map"].includes(getCollection(inner.expression, context) ?? "") ||
-        /^(Set|Map)\.prototype$/.test(inner.expression.getText())),
-  ).length > 0;
+const isKeyDeleted = (node: ts.Node, visited: ts.Expression | undefined, context: Context) => {
+  // A set's delete can't change a map, nor a map's a set.
+  const kind = visited === undefined ? undefined : getCollection(visited, context);
+  const isVisitedKind = (deleted: string | undefined) =>
+    deleted !== undefined &&
+    ["Set", "Map"].includes(deleted) &&
+    (kind === undefined || !["Set", "Map"].includes(kind) || deleted === kind);
+  return (
+    findNodes(
+      node.getSourceFile(),
+      (inner): inner is ts.PropertyAccessExpression =>
+        ts.isPropertyAccessExpression(inner) &&
+        ["delete", "clear"].includes(inner.name.text) &&
+        (isVisitedKind(getCollection(inner.expression, context)) ||
+          /^(Set|Map)\.prototype$/.test(inner.expression.getText())),
+    ).length > 0
+  );
+};
 
 // A set's forEach whose callback ends the same in any order.
 const isOrderFreeForEach = (node: ts.CallExpression, receiver: ts.Expression, context: Context) => {
@@ -9603,7 +9808,7 @@ const translateShortLoopCall = (
   if (
     loop.isOrdered &&
     changed.some((symbol) => symbol === context.heap) &&
-    isKeyDeleted(expression, context)
+    isKeyDeleted(expression, receiver, context)
   ) {
     throw new TlaTypeScriptError(
       "Unsupported call: tla-ts can't call forEach on a set or a map while its callback changes objects and the script deletes keys",
@@ -13257,12 +13462,14 @@ const getMadeFunctions = (callee: ts.Expression, context: Context) => {
 // The functions that a call through a value may run, where tla-ts can't tell which one it names:
 // those that no other function encloses, whose type TypeScript lets the callee hold. The call
 // branches on its callee's value between them.
-const getDispatched = (
+// The functions that a call through a value may run, which may be none that the script writes.
+const getCandidates = (
   node: ts.CallExpression,
   functions: ReadonlyMap<ts.Symbol, FunctionNode>,
   context: Context,
+  called: ts.Expression,
 ) => {
-  const callee = skipCasts(node.expression);
+  const callee = skipCasts(called);
   const symbol = getSymbol(callee, context.checker);
   const declarations = symbol?.declarations ?? [];
   const assigned = symbol && functions.get(symbol);
@@ -13285,11 +13492,23 @@ const getDispatched = (
   ) {
     return undefined;
   }
-  const dispatched = getMadeFunctions(callee, context) ?? [
-    ...getFunctionCandidates(callee, context),
-    ...getClosures(callee, context),
-  ];
-  return dispatched.length > 0 ? dispatched : undefined;
+  return (
+    getMadeFunctions(callee, context) ?? [
+      ...getFunctionCandidates(callee, context),
+      ...getClosures(callee, context),
+    ]
+  );
+};
+
+const getDispatched = (
+  node: ts.CallExpression,
+  functions: ReadonlyMap<ts.Symbol, FunctionNode>,
+  context: Context,
+  // The function that the call runs, which a call through call or apply names before them.
+  called: ts.Expression = node.expression,
+) => {
+  const dispatched = getCandidates(node, functions, context, called);
+  return dispatched !== undefined && dispatched.length > 0 ? dispatched : undefined;
 };
 
 // RegExp.prototype.exec and test, where a script stores them as values, which throw a TypeError
@@ -13465,6 +13684,7 @@ const isStatementResult = (node: ts.CallExpression, path: Path, context: Context
     getThisSymbolCall(node, context) !== undefined ||
     getCalledThrough(node, context) !== undefined ||
     getAppliedCall(node, path, context) !== undefined ||
+    getDispatchedThrough(node, path, context) !== undefined ||
     getMisreceivedCall(node, context) !== undefined ||
     getStackCall(node, context) !== undefined ||
     getIteratorDisposeCall(node, context) !== undefined ||
@@ -14911,6 +15131,10 @@ const getEffects = (
             access !== undefined &&
             (ts.isPropertyAccessExpression(access) || ts.isElementAccessExpression(access)) &&
             getKind(root, context) === "object";
+          // A local that closures share changes in the environment that the heap holds.
+          if (symbol !== undefined && getSharedDeclaration(symbol, context) !== undefined) {
+            return context.heap === undefined ? [] : [context.heap];
+          }
           return symbol !== undefined && !isProperty ? [symbol] : [];
         });
   // A var's declaration that gives it a value, or that a for-in or a for-of binds, writes it.
@@ -15030,7 +15254,12 @@ const getEffects = (
     isStackConstruction(node, context) ||
     isUsing;
   const callees = ts.isCallExpression(node)
-    ? [node.expression, ...node.arguments]
+    ? [
+        node.expression,
+        // A call through call or apply runs the function that it reads them from.
+        ...(isFunctionThroughCall(node, context) ? [node.expression.expression] : []),
+        ...node.arguments,
+      ]
     : ts.isTaggedTemplateExpression(node)
       ? [node.tag, ...getSubstitutions(node)]
       : [];
@@ -15073,7 +15302,11 @@ const getEffects = (
       ...(isIteratorDispose ? getMethods(node, "return", context, true) : []),
       ...callees.flatMap((callee) => getFunctionNode(callee) ?? []),
       ...(ts.isCallExpression(node) && getFunctionNode(node.expression) === undefined
-        ? (getDispatched(node, functions, context) ?? [])
+        ? (getDispatched(node, functions, context) ??
+          (isFunctionThroughCall(node, context)
+            ? getDispatched(node, functions, context, getCast(node.expression.expression))
+            : undefined) ??
+          [])
         : []),
       ...(written === undefined
         ? []
@@ -16953,7 +17186,7 @@ const translateIterations = (
   // entries, where an entry that the loop adds comes last, which reading its entries again at each
   // step matches while no key leaves it.
   const isLive = isHeapIteration && changesObjects(loop, path, context);
-  if (isLive && isKeyDeleted(loop, context)) {
+  if (isLive && isKeyDeleted(loop, iterated?.expression, context)) {
     throw new TlaTypeScriptError(
       "Unsupported loop: tla-ts can't iterate a set or a map while the loop changes objects and the script deletes keys",
       iterated?.expression,
@@ -19284,14 +19517,11 @@ const getHoistedAssignment = (statement: ts.Statement, path: Path, context: Cont
 const getVarScoped = (node: ts.Node): (ts.VariableDeclarationList | ts.FunctionDeclaration)[] => {
   if (ts.isFunctionDeclaration(node)) return [node];
   if (ts.isFunctionLike(node) || ts.isClassLike(node)) return [];
-  // A declare's variable is the host's, which nothing here binds.
+  // A declare's variable, as in declare global, is the host's, which nothing here binds.
   if (
     ts.isVariableDeclarationList(node) &&
     (node.flags & ts.NodeFlags.BlockScoped) === 0 &&
-    !(
-      ts.isVariableStatement(node.parent) &&
-      node.parent.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.DeclareKeyword)
-    )
+    !isAmbientCode(node)
   ) {
     return [node];
   }
@@ -19474,10 +19704,10 @@ const hoistVars = (statements: readonly ts.Statement[], path: Path, context: Con
       };
 };
 
-// A statement that writes a local that closures share, which writes the environment that holds the
-// local, or makes it where the statement declares the local.
-const translateSharedWrite = (
-  statement: ts.Statement,
+// A declaration of a local that closures share, which makes the environment that holds it before
+// its initializer runs, as the closures that the initializer makes share it too.
+const translateSharedDeclaration = (
+  statement: ts.VariableStatement,
   shared: { symbol: ts.Symbol; declaration: ts.VariableDeclaration },
   path: Path,
   context: Context,
@@ -19485,96 +19715,63 @@ const translateSharedWrite = (
   continueWith: (path: Path) => Formula,
 ): Formula => {
   const symbol = shared.symbol;
-  const key = string(symbol.name);
-  const environment = path.scope.activations?.get(shared.declaration);
-  const isInitialized = !path.scope.uninitialized.has(symbol);
-  const isDeclaration = ts.isVariableStatement(statement);
-  if (!isDeclaration && (environment === undefined || !isInitialized)) {
-    return leaf(
-      apply("Assert", [
-        boolean(false),
-        string(
-          `tla-ts can't write ${symbol.name}, which closures share, outside its declaration's run`,
-        ),
-      ]),
-    );
-  }
-  const bound =
-    environment === undefined || isDeclaration
-      ? path
-      : {
-          ...path,
-          mutable: new Set([...path.mutable, symbol]),
-          scope: {
-            ...path.scope,
-            bindings: new Map([
-              ...path.scope.bindings,
-              [
-                symbol,
-                useJavaScript(
-                  "EnvironmentValue",
-                  [getHeap(path.scope, statement, context), environment, key],
-                  context,
-                ),
-              ],
-            ]),
-          },
-        };
-  const store = (after: Path) => {
-    const value = after.scope.bindings.get(symbol);
-    if (value === undefined) throw new TlaTypeScriptError("Unsupported write", statement);
-    const heap = getHeap(after.scope, statement, context);
-    const stored: Path = {
-      ...after,
-      mutable: new Set([...after.mutable].filter((other) => other !== symbol)),
-      scope: {
-        ...after.scope,
-        bindings: new Map([...after.scope.bindings].filter((entry) => entry[0] !== symbol)),
-        uninitialized: new Set([...after.scope.uninitialized].filter((other) => other !== symbol)),
-      },
-    };
-    if (environment !== undefined && !isDeclaration) {
-      return continueWith(
-        withHeap(
-          stored,
-          useJavaScript(
-            "SetEnvironment",
-            [heap, environment, functionFrom([[key, value]])],
-            context,
-          ),
-          context,
-        ),
-      );
-    }
-    const name = context.names.getFresh("environment");
-    const made = withHeap(stored, identifier(name), context);
-    return bindOnce(
-      stored,
-      name,
-      useJavaScript(
-        "Allocate",
-        [heap, useJavaScript("EnvironmentObject", [functionFrom([[key, value]])], context)],
-        context,
-      ),
-      continueWith({
+  const name = context.names.getFresh("environment");
+  const environment = useJavaScript("Allocated", [identifier(name)], context);
+  const made = withHeap(path, identifier(name), context);
+  return bindOnce(
+    path,
+    name,
+    useJavaScript(
+      "Allocate",
+      [
+        getHeap(path.scope, statement, context),
+        useJavaScript("EnvironmentObject", [tuple([])], context),
+      ],
+      context,
+    ),
+    translateDeclarations(
+      statement.declarationList.declarations,
+      {
         ...made,
         scope: {
           ...made.scope,
           activations: new Map([
             ...(made.scope.activations ?? []),
-            [shared.declaration, useJavaScript("Allocated", [identifier(name)], context)],
+            [shared.declaration, environment],
           ]),
         },
-      }),
-    );
-  };
-  return ts.isVariableStatement(statement)
-    ? translateDeclarations(statement.declarationList.declarations, bound, context, frame, store)
-    : ts.isExpressionStatement(statement)
-      ? allocate(statement.expression, bound, context, (inner) =>
-          translateExpressionStatement(statement.expression, inner, context, frame, store),
-        )
-      : store(bound);
+      },
+      context,
+      frame,
+      (after) => {
+        const value = after.scope.bindings.get(symbol);
+        if (value === undefined) throw new TlaTypeScriptError("Unsupported write", statement);
+        const stored: Path = {
+          ...after,
+          mutable: new Set([...after.mutable].filter((other) => other !== symbol)),
+          scope: {
+            ...after.scope,
+            bindings: new Map([...after.scope.bindings].filter((entry) => entry[0] !== symbol)),
+          },
+        };
+        return continueWith(
+          withHeap(
+            stored,
+            useJavaScript(
+              "SetEnvironment",
+              [
+                getHeap(after.scope, statement, context),
+                environment,
+                functionFrom([[string(symbol.name), value]]),
+              ],
+              context,
+            ),
+            context,
+          ),
+        );
+      },
+    ),
+  );
 };
 
 // The labels that name a statement, from the nearest out.
@@ -19856,9 +20053,24 @@ export const translateStatements = (
   }
   const continueWith = (inner: Path) =>
     translateStatements(statements.slice(1), leave(inner), context, frame);
+  // A declare's var only types the global object's property.
+  if (
+    ts.isVariableStatement(statement) &&
+    (statement.declarationList.flags & ts.NodeFlags.BlockScoped) === 0 &&
+    isAmbientCode(statement)
+  ) {
+    return continueWith(path);
+  }
   const shared = getSharedWrite(statement, context);
-  if (shared !== undefined) {
-    return translateSharedWrite(statement, shared, path, context, statementFrame, continueWith);
+  if (shared !== undefined && ts.isVariableStatement(statement)) {
+    return translateSharedDeclaration(
+      statement,
+      shared,
+      path,
+      context,
+      statementFrame,
+      continueWith,
+    );
   }
   if (ts.isBlock(statement)) {
     return translateStatements(statement.statements, path, context, {

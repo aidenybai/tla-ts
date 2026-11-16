@@ -44909,7 +44909,7 @@ describe("BigInts", () => {
     });
   });
 
-  describe("stops where a script defines an accessor on the global object", () => {
+  describe("defines a data property or an accessor on the global object", () => {
     const getSource = (descriptor: string, expected: number) => `
       const global = globalThis as unknown as Record<string, unknown>;
       Object.defineProperty(globalThis, "data", ${descriptor});
@@ -44928,10 +44928,16 @@ describe("BigInts", () => {
       ).toContain("1");
     });
 
-    it("stops at an accessor, which a global variable's read wouldn't run", async () => {
+    it("agrees with Node on an accessor that the global object's key reads", async () => {
       expect(
-        (await checkModel(getSource("{ get: () => 1, configurable: true }", 1))).failure?.message,
-      ).toContain("tla-ts can't define accessors on the global object");
+        (await checkModel(getSource("{ get: () => 1, configurable: true }", 1))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects an accessor's wrong value", async () => {
+      expect(
+        (await checkModel(getSource("{ get: () => 1, configurable: true }", 2))).failure?.message,
+      ).toContain("1");
     });
   });
 
@@ -45567,23 +45573,27 @@ describe("BigInts", () => {
       ).toContain("seen left: two,right: one,left: one");
     });
 
-    it("stops where something assigns the local", () => {
-      expect(() =>
-        compile(`
-          function outer(tag: string) {
-            let prefix = tag;
-            function make(message: string) {
-              return function () {
-                return prefix + message;
-              };
-            }
-            const made = { first: make("a") };
-            prefix = "z";
-            return made;
-          }
-          if (outer("x").first() !== "za") throw new Error("prefix");
-        `),
-      ).toThrow("tla-ts can't follow a function that outlives its call and reads this name");
+    const getAssigned = (expected: string) => `
+      function outer(tag: string) {
+        let prefix = tag;
+        function make(message: string) {
+          return function () {
+            return prefix + message;
+          };
+        }
+        const made = { first: make("a") };
+        prefix = "z";
+        return made;
+      }
+      if (outer("x").first() !== "${expected}") throw new Error("prefix");
+    `;
+
+    it("agrees with Node where something assigns the local", async () => {
+      expect((await checkModel(getAssigned("za"))).failure).toBeUndefined();
+    });
+
+    it("rejects a closure that keeps the local's first value", async () => {
+      expect((await checkModel(getAssigned("xa"))).failure?.message).toContain("prefix");
     });
   });
 
@@ -45705,22 +45715,26 @@ describe("BigInts", () => {
       ).toContain("seen made 0,made 0,3,2,1,3,2,2,1,13,2,10,5,13");
     });
 
-    it("stops where a statement gives the local more than a literal", () => {
-      expect(() =>
-        compile(`
-          function makeCounter() {
-            let count = 1;
-            const counter = {
-              double() {
-                count = count * 2;
-              },
-            };
-            counter.double();
-            return count;
-          }
-          if (makeCounter() + makeCounter() !== 4) throw new Error("count");
-        `),
-      ).toThrow("tla-ts can't follow a function that outlives its call and shares a local");
+    const getDoubled = (expected: number) => `
+      function makeCounter() {
+        let count = 1;
+        const counter = {
+          double() {
+            count = count * 2;
+          },
+        };
+        counter.double();
+        return count;
+      }
+      if (makeCounter() + makeCounter() !== ${expected}) throw new Error("count");
+    `;
+
+    it("agrees with Node where a statement gives the local more than a literal", async () => {
+      expect((await checkModel(getDoubled(4))).failure).toBeUndefined();
+    });
+
+    it("rejects a local that the method's write misses", async () => {
+      expect((await checkModel(getDoubled(2))).failure?.message).toContain("count");
     });
   });
 
@@ -45957,6 +45971,7 @@ describe("BigInts", () => {
       );
     });
   });
+
   describe("reads process.env and Node's globals as Node gives them", () => {
     const getSource = (expected: string) => `
       // @ts-ignore
@@ -47100,6 +47115,403 @@ describe("BigInts", () => {
       `);
       expect(result.failure?.message).toContain(
         "tla-ts can't tell which iterator this value gives",
+      );
+    });
+  });
+
+  describe("shares a local of any value between a function and the closures it makes", () => {
+    const getSource = (expected: string) => `
+      interface Box {
+        items: string[];
+        label: string;
+      }
+      interface Hook {
+        inject: () => number;
+        current: () => Hook;
+      }
+      const make = () => {
+        let box: Box = { items: [], label: "a" };
+        let count = 0;
+        let last: string | undefined;
+        const put = (item: string) => {
+          box.items.push(item);
+          last = item;
+          return ++count;
+        };
+        const swap = (next: Box) => {
+          const previous = box;
+          box = next;
+          return previous;
+        };
+        const rename = (label: string) => (box.label = label + count);
+        const read = () => [box.label, box.items.join("+"), count, last ?? "none"].join();
+        const reset = () => {
+          [count, last] = [0, undefined];
+          box ??= { items: [], label: "never" };
+        };
+        return { put, swap, rename, read, reset };
+      };
+      const install = (): Hook => {
+        let counter = 0;
+        const hook: Hook = { inject: () => ++counter, current: () => hook };
+        return hook;
+      };
+      const first = make();
+      const second = make();
+      first.put("x");
+      first.put("y");
+      second.put("z");
+      const old = first.swap({ items: ["w"], label: "b" });
+      first.rename("c");
+      const seen = [first.read(), second.read(), old.items.join("+")];
+      first.reset();
+      seen.push(first.read());
+      const hook = install();
+      hook.inject();
+      seen.push(String(hook.inject()), String(hook.current() === hook));
+      const result = seen.join("|");
+      if (result !== "${expected}") throw new Error("seen " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("c2,w,2,y|a,z,1,z|x+y|c2,w,0,none|2|true"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects a closure that keeps its own copy of an object local", async () => {
+      expect(
+        (await checkModel(getSource("c2,w,2,y|a,z,1,z|w|c2,w,0,none|2|true"))).failure?.message,
+      ).toContain("seen c2,w,2,y|a,z,1,z|x+y|c2,w,0,none|2|true");
+    });
+
+    const getLooped = (expected: string) => `
+      const make = (limit: number) => {
+        let total = 0;
+        let item = "none";
+        let flag: string | undefined;
+        for (let index = 1; index <= limit; index++) {
+          total += index;
+          if (total > 4) total -= 1;
+        }
+        const write = () => {
+          for (item of ["a", "b"]) total++;
+          for (let step = 0; step < 2; step++) flag = (flag ?? "") + step;
+          let index = 0;
+          while (index < 3) {
+            total += index;
+            index++;
+          }
+          try {
+            total += 1;
+            throw new Error("x");
+          } catch {
+            total += 1;
+          } finally {
+            flag += "!";
+          }
+        };
+        const read = () => [total, item, flag ?? "unset"].join("/");
+        return { write, read };
+      };
+      const first = make(3);
+      const second = make(1);
+      first.write();
+      const result = [first.read(), second.read()].join(",");
+      if (result !== "${expected}") throw new Error("seen " + result);
+    `;
+
+    it("agrees with Node where loops and a try write the locals", async () => {
+      expect((await checkModel(getLooped("12/b/01!,1/none/unset"))).failure).toBeUndefined();
+    });
+
+    it("rejects a loop whose writes the local misses", async () => {
+      expect((await checkModel(getLooped("5/none/unset,1/none/unset"))).failure?.message).toContain(
+        "seen 12/b/01!,1/none/unset",
+      );
+    });
+  });
+
+  describe("gives the source text that Function.prototype.toString reads, as Node strips types", () => {
+    const getSource = (expected: string) => `
+      function typed<T>(this: unknown, value: T, label?: string): T {
+        return value as T;
+      }
+      const arrow = async (a: number, b?: string): Promise<number> => a!;
+      class Point<T> implements Iterable<T> {
+        private readonly x: number = 1;
+        declare y: string;
+        static make(this: void, n: number): Point<number> {
+          return new Point();
+        }
+        get size(): number {
+          return this.x;
+        }
+        *[Symbol.iterator](): Iterator<T> {}
+      }
+      const object = {
+        method(a: string): void {},
+        async *gen() {},
+        ["computed" + 1]<U>(u: U) {
+          return u;
+        },
+        plain: function () {
+          /* : comment */
+        },
+      };
+      const getter = Object.getOwnPropertyDescriptor(Point.prototype, "size");
+      const listed: unknown[] = [
+        typed,
+        arrow,
+        Point.make,
+        getter === undefined ? undefined : getter.get,
+        object.method,
+        object.gen,
+        object.computed1,
+        object.plain,
+        Point.prototype[Symbol.iterator],
+        Math.max,
+        Function.prototype.call,
+        Function.prototype[Symbol.hasInstance],
+        new Proxy(object.method, {}),
+        Symbol,
+        Function.prototype,
+      ];
+      const seen = JSON.stringify(listed.map((value) => Function.prototype.toString.call(value)));
+      if (seen !== ${JSON.stringify(expected)}) throw new Error("seen " + seen);
+    `;
+    const expected = JSON.stringify([
+      "function typed   (               value   , label         )    {\n        return value     ;\n      }",
+      "async (a        , b         )                  => a",
+      "make(            n        )                {\n          return new Point();\n        }",
+      "get size()         {\n          return this.x;\n        }",
+      "method(a        )       {}",
+      "async *gen() {}",
+      '["computed" + 1]   (u   ) {\n          return u;\n        }',
+      "function () {\n          /* : comment */\n        }",
+      "*[Symbol.iterator]()              {}",
+      "function max() { [native code] }",
+      "function call() { [native code] }",
+      "function [Symbol.hasInstance]() { [native code] }",
+      "function () { [native code] }",
+      "function Symbol() { [native code] }",
+      "function () { [native code] }",
+    ]);
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects a text that keeps the types", async () => {
+      expect(
+        (await checkModel(getSource(expected.replace("label         ", "label?: string")))).failure
+          ?.message,
+      ).toContain("seen ");
+    });
+
+    it("stops at a class that the heap holds, and at a value that isn't a function", async () => {
+      const getStopped = (value: string) => `
+        class Point {
+          static origin = 0;
+        }
+        const text = Function.prototype.toString.call(${value});
+        if (text.length === 0) throw new Error("empty");
+      `;
+      expect((await checkModel(getStopped("Point"))).failure?.message).toContain(
+        "tla-ts can't tell the source text of this function",
+      );
+      expect((await checkModel(getStopped("{}"))).failure?.message).toContain(
+        "tla-ts can't throw the TypeError of Function.prototype.toString",
+      );
+    });
+  });
+
+  describe("applies a function to the elements of an array that apply takes, as a rest parameter holds", () => {
+    const getSource = (expected: string) => `
+      "use strict";
+      type Listener = (...values: unknown[]) => unknown;
+      const seen: string[] = [];
+      const callListener = <Arguments extends unknown[]>(
+        listener: (...listenerArguments: Arguments) => unknown,
+        receiver: unknown,
+        ...listenerArguments: Arguments
+      ): void => {
+        try {
+          listener.apply(receiver, listenerArguments);
+        } catch (error) {
+          seen.push("caught " + (error as Error).message);
+        }
+      };
+      const describe = (label: string, count = 2, ...more: number[]) => {
+        seen.push([label, count, more.length, more.join("+")].join(":"));
+      };
+      function withThis(this: { tag: string } | undefined, suffix?: string) {
+        seen.push((this === undefined ? "none" : this.tag) + "/" + suffix);
+      }
+      callListener(describe, undefined, "a");
+      callListener(describe, undefined, "b", 5, 6, 7);
+      callListener(withThis, { tag: "t" }, "s");
+      callListener(withThis, undefined);
+      callListener(() => {
+        throw new Error("boom");
+      }, undefined);
+      const words = ["x", "y"];
+      describe.apply(undefined, words.length > 1 ? ["long"] : ["short"]);
+      const listeners = new Set<Listener>();
+      listeners.add((...values) => seen.push("first " + values.join("+")));
+      listeners.add(function (this: { tag: string }, value) {
+        seen.push(this.tag + " " + String(value));
+      });
+      const notify = (...values: unknown[]) => {
+        for (const listener of [...listeners]) listener.apply({ tag: "r" }, values);
+      };
+      notify("c", 1);
+      notify();
+      const result = seen.join();
+      if (result !== "${expected}") throw new Error("seen " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (
+          await checkModel(
+            getSource(
+              "a:2:0:,b:5:2:6+7,t/s,none/undefined,caught boom,long:2:0:,first c+1,r c,first ,r undefined",
+            ),
+          )
+        ).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects a rest parameter that takes the array whole", async () => {
+      expect(
+        (
+          await checkModel(
+            getSource(
+              "a:2:0:,b:5:1:6+7,t/s,none/undefined,caught boom,long:2:0:,first c+1,r c,first ,r undefined",
+            ),
+          )
+        ).failure?.message,
+      ).toContain(
+        "seen a:2:0:,b:5:2:6+7,t/s,none/undefined,caught boom,long:2:0:,first c+1,r c,first ,r undefined",
+      );
+    });
+
+    it("runs a call through call where no function fits only as far as the call", async () => {
+      const getUnfit = (expected: string) => `
+        "use strict";
+        const seen: string[] = [];
+        const invoke = (listener: (value: symbol) => bigint, value: symbol): void => {
+          listener.call(undefined, value);
+        };
+        const holder: { listener?: (value: symbol) => bigint } = {};
+        const notify = (isCalled: boolean) => {
+          if (isCalled && holder.listener !== undefined) invoke(holder.listener, Symbol());
+          seen.push(String(isCalled));
+        };
+        notify(false);
+        if (seen.join() !== "${expected}") throw new Error(seen.join());
+      `;
+      expect((await checkModel(getUnfit("false"))).failure).toBeUndefined();
+      expect((await checkModel(getUnfit("true"))).failure?.message).toContain('"false"');
+    });
+  });
+
+  describe("holds the global object's keys that a script's declare global types, and accessors under them", () => {
+    const getSource = (expected: string) => `
+      interface Hook {
+        count: number;
+      }
+      declare global {
+        var hook: Hook | undefined;
+        var other: Hook | undefined;
+      }
+      interface Target {
+        hook?: Hook;
+      }
+      const read = (target: Target = globalThis) => target.hook;
+      const seen: unknown[] = [Object.hasOwn(globalThis, "hook")];
+      globalThis.hook = { count: 1 };
+      seen.push(read()?.count, hook?.count, Object.hasOwn(globalThis, "hook"));
+      globalThis.hook = undefined;
+      seen.push(read(), hook);
+      Object.defineProperty(globalThis, "other", {
+        configurable: true,
+        enumerable: false,
+        get: () => undefined,
+      });
+      const descriptor = Object.getOwnPropertyDescriptor(globalThis, "other");
+      seen.push(typeof descriptor?.get, descriptor?.enumerable, "other" in globalThis);
+      const result = seen.join();
+      if (result !== "${expected}") throw new Error("seen " + result);
+      export {};
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("false,1,1,true,,,function,false,true"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects a read that misses the global object's write", async () => {
+      expect(
+        (await checkModel(getSource("false,1,1,true,1,,function,false,true"))).failure?.message,
+      ).toContain("seen false,1,1,true,,,function,false,true");
+    });
+
+    it("stops at a read of a declared global that the global object lacks", async () => {
+      await expect(
+        checkModel(`
+          declare global {
+            var missing: number | undefined;
+          }
+          if (missing === 1) throw new Error("one");
+          export {};
+        `),
+      ).rejects.toThrow("tla-ts can't throw the ReferenceError of reading missing");
+    });
+
+    it("gives typeof of a declared var that the global object lacks, which a script's declare never binds", async () => {
+      const getTyped = (expected: string) => `
+        declare var window: object | undefined;
+        const seen: string[] = [typeof window];
+        (globalThis as unknown as { window: object }).window = {};
+        seen.push(typeof window, String(window === undefined));
+        if (seen.join() !== "${expected}") throw new Error(seen.join());
+      `;
+      expect((await checkModel(getTyped("undefined,object,false"))).failure).toBeUndefined();
+      expect((await checkModel(getTyped("undefined,object,true"))).failure?.message).toContain(
+        "undefined,object,false",
+      );
+    });
+  });
+
+  describe("runs a map's forEach whose callback changes objects where the script deletes keys only from sets", () => {
+    const getSource = (expected: string) => `
+      const all = new Set<string>();
+      const listeners = new Set<string>();
+      const renderers = new Map<number, string>([
+        [1, "a"],
+        [2, "b"],
+      ]);
+      const forget = (name: string) => listeners.delete(name);
+      listeners.add("x");
+      renderers.forEach((renderer, id) => {
+        all.add(renderer + id);
+        if (id === 1) renderers.set(3, "c");
+      });
+      forget("x");
+      const result = [...all].join() + "|" + listeners.size;
+      if (result !== "${expected}") throw new Error("seen " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("a1,b2,c3|0"))).failure).toBeUndefined();
+    });
+
+    it("rejects a forEach that misses the entry its callback adds", async () => {
+      expect((await checkModel(getSource("a1,b2|0"))).failure?.message).toContain(
+        "seen a1,b2,c3|0",
       );
     });
   });
