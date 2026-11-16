@@ -43765,17 +43765,17 @@ describe("BigInts", () => {
   });
 
   describe("names why it can't make a method of an object literal that runs more than once", () => {
-    it("stops at a getter that reads its function's locals", () => {
+    it("stops at an async method that reads its function's locals", () => {
       expect(() =>
         compile(`
           const make = (label: string) => ({
-            get name() {
+            async name() {
               return label;
             },
           });
           const first = make("a");
           const second = make("b");
-          if (first.name === second.name) throw new Error("same");
+          if (first === second) throw new Error("same");
         `),
       ).toThrow("reads the locals of its function in an object literal that runs more than once");
     });
@@ -45447,6 +45447,47 @@ describe("BigInts", () => {
     it("rejects a stack that move leaves pending", async () => {
       expect((await checkModel(getSource("false,false"))).failure?.message).toContain(
         "seen false,true",
+      );
+    });
+  });
+
+  describe("makes a method of an object literal that reads its function's locals each call", () => {
+    const getSource = (expected: string) => `
+      const log: string[] = [];
+      function makeCounter(label: string, start: number) {
+        const step = start * 10;
+        return {
+          valueOf() {
+            log.push(label);
+            return start + step;
+          },
+          toString() {
+            return label + "!";
+          },
+          describe() {
+            return label + ":" + start;
+          },
+        };
+      }
+      const first = makeCounter("a", 1);
+      const second = makeCounter("b", 2);
+      const seen = [
+        +first + +second,
+        \`\${second}\${first}\`,
+        second.describe(),
+        first.describe(),
+        log.join(),
+      ].join(" ");
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("33 b!a! b:2 a:1 a,b"))).failure).toBeUndefined();
+    });
+
+    it("rejects a method that reads another call's locals", async () => {
+      expect((await checkModel(getSource("33 b!a! b:2 a:2 a,b"))).failure?.message).toContain(
+        "seen 33 b!a! b:2 a:1 a,b",
       );
     });
   });

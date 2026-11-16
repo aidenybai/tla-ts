@@ -2901,7 +2901,12 @@ const getOuterLocals = (node: ts.Node, context: Context) =>
       : [];
   });
 
-export type Closure = ts.FunctionExpression | ts.ArrowFunction;
+export type Closure =
+  | ts.FunctionExpression
+  | ts.ArrowFunction
+  | ts.MethodDeclaration
+  | ts.GetAccessorDeclaration
+  | ts.SetAccessorDeclaration;
 
 // The const whose object literal holds a closure as a property's value, which tla-ts makes before
 // the closure, so that the closure's environment holds the object, which the property then holds.
@@ -2933,15 +2938,21 @@ const getHeldName = (node: ts.Node) =>
 
 // A function that a function makes and that outlives the call that made it, which reads the locals
 // of that call from its environment: one that the function assigns to a name declared outside it,
-// an async one that it returns, or one that an object literal or a property assignment holds, or one
-// that it returns, itself or by the name of the const that holds it, that reads a local of the
-// function. An arrow reads the this of the function around it, which the environment doesn't hold,
+// an async one that it returns, or one that an object literal or a property assignment holds, a
+// method or an accessor of an object literal, or one that it returns, itself or by the name of the
+// const that holds it, that reads a local of the function. An arrow reads the this of the function around it, which the environment doesn't hold,
 // and an async closure that awaits would resume after its call returns.
 export const isClosure = (node: ts.Node, context: Context): node is Closure => {
+  const isMember =
+    ((ts.isMethodDeclaration(node) && node.body !== undefined) || isPlainAccessor(node)) &&
+    ts.isObjectLiteralExpression(node.parent) &&
+    !isOnce(node.parent);
   if (
     context.heap === undefined ||
-    !(ts.isFunctionExpression(node) || ts.isArrowFunction(node)) ||
-    (ts.isFunctionExpression(node) && (node.name !== undefined || node.asteriskToken !== undefined))
+    !(ts.isFunctionExpression(node) || ts.isArrowFunction(node) || isMember) ||
+    (ts.isFunctionExpression(node) && node.name !== undefined) ||
+    ((ts.isFunctionExpression(node) || ts.isMethodDeclaration(node)) &&
+      node.asteriskToken !== undefined)
   ) {
     return false;
   }
@@ -2966,6 +2977,18 @@ export const isClosure = (node: ts.Node, context: Context): node is Closure => {
         ts.findAncestor(declaration.parent, ts.isFunctionLike) === maker
       );
     });
+  // A method or an accessor of an object literal that runs more than once is an object of its own
+  // each time, as a function expression that the literal holds is. Its super reads the literal,
+  // which the environment doesn't hold. A live method runs only in the call that made it.
+  if (isMember) {
+    return (
+      !isAsync &&
+      getLiveMaker(node, context) === undefined &&
+      findNodes(node, (inner): inner is ts.Node => inner.kind === ts.SyntaxKind.SuperKeyword)
+        .length === 0 &&
+      isReadingLocals()
+    );
+  }
   const assignment = node.parent;
   const isAssignment =
     ts.isBinaryExpression(assignment) &&

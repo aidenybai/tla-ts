@@ -626,7 +626,7 @@ export const translateObject = (
         context,
       );
     }
-    if (isNestedFunction(property, context)) {
+    if (isNestedFunction(property, context) || isClosure(property, context)) {
       const allocated = scope.allocated.get(property);
       if (allocated === undefined) {
         throw new TlaTypeScriptError("Make objects only where a statement always runs", property);
@@ -1448,7 +1448,7 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
         useJavaScript(
           "ClosureObject",
           [
-            // An arrow or an async function can't construct.
+            // An arrow, a method, or an async function can't construct.
             useJavaScript(
               ts.isFunctionExpression(node) &&
                 (ts.getCombinedModifierFlags(node) & ts.ModifierFlags.Async) === 0
@@ -1456,7 +1456,11 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
                 : "MethodObject",
               [
                 translateBuiltInValue("Function.prototype", node, context),
-                translateFunctionValue(node, context),
+                ts.isFunctionExpression(node) || ts.isArrowFunction(node)
+                  ? translateFunctionValue(node, context)
+                  : ts.isMethodDeclaration(node)
+                    ? getMethodValue(node, context)
+                    : getAccessorValue(node, context),
               ],
               context,
             ),
