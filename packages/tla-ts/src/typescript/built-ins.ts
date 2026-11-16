@@ -586,7 +586,7 @@ export const BUILT_INS: Record<string, [string | null, boolean, boolean, string[
       ["name", "c", "sIterator"],
       ["prototype", "", "oIterator.prototype"],
       ["from", "wc", "oIterator.from"],
-      ["concat", "wc", "x"],
+      ["concat", "wc", "oIterator.concat"],
     ],
     true,
   ],
@@ -3419,6 +3419,16 @@ export const BUILT_INS: Record<string, [string | null, boolean, boolean, string[
     [
       ["length", "c", "n1"],
       ["name", "c", "sfrom"],
+    ],
+    false,
+  ],
+  "Iterator.concat": [
+    "Function.prototype",
+    true,
+    true,
+    [
+      ["length", "c", "n0"],
+      ["name", "c", "sconcat"],
     ],
     false,
   ],

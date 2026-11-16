@@ -209,7 +209,7 @@ export const getBuiltInKey = (node: ts.Expression, context: Context) => {
 
 // The built-in object that a node is, by its path in BUILT_INS, such as "Array.prototype".
 const getName = (node: ts.Expression, context: Context): string | undefined => {
-  if (ts.isParenthesizedExpression(node)) return getName(node.expression, context);
+  if (skipCasts(node) !== node) return getName(skipCasts(node), context);
   const builtIn = getBuiltIn(node, context);
   if (builtIn !== undefined) return builtIn;
   // A read in the block that declares the variable, outside any function there or in an arrow or a

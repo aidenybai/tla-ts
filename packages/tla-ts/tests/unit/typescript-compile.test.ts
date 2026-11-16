@@ -46200,4 +46200,36 @@ describe("BigInts", () => {
       ).toContain("seen NaN,259200000,60000,60000,-62130240000000,-62130240000000");
     });
   });
+
+  describe("reads Iterator.concat, which TypeScript doesn't declare, through a cast", () => {
+    const getSource = (expected: string) => `
+      const concat = (Iterator as unknown as { concat: (...items: unknown[]) => unknown }).concat;
+      const seen = [
+        typeof concat,
+        concat.length,
+        concat.name,
+        Object.getPrototypeOf(concat) === Function.prototype,
+        Iterator.propertyIsEnumerable("concat"),
+      ].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("function,0,concat,true,false"))).failure).toBeUndefined();
+    });
+
+    it("rejects Iterator.from's length", async () => {
+      expect(
+        (await checkModel(getSource("function,1,concat,true,false"))).failure?.message,
+      ).toContain("seen function,0,concat,true,false");
+    });
+
+    it("stops at a call, which tla-ts doesn't run", () => {
+      expect(() =>
+        compile(
+          "const iterator = (Iterator as unknown as { concat: (...items: unknown[]) => unknown }).concat([1]);",
+        ),
+      ).toThrow("Unsupported call");
+    });
+  });
 });
