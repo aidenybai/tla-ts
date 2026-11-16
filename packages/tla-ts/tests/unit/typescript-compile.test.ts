@@ -45792,4 +45792,43 @@ describe("BigInts", () => {
       ).toContain("seen P1M9D,2,366,true,-1,RangeError");
     });
   });
+
+  describe("rejects a calendar that Node doesn't take", () => {
+    const getSource = (expected: string) => `
+      const thrown = (run: () => unknown) => {
+        try {
+          run();
+          return "none";
+        } catch (error) {
+          return (error as Error).name;
+        }
+      };
+      const unknown = thrown(() => new Temporal.PlainDate(2000, 1, 1, "notacal"));
+      const empty = thrown(() => Temporal.PlainDate.from({ year: 2000, month: 1, day: 1, calendar: "" }));
+      const unsupported = thrown(() => new Temporal.PlainDate(2000, 1, 1, "islamic"));
+      const upper = new Temporal.PlainDate(2000, 1, 1, "ISO8601").calendarId;
+      const seen = [unknown, empty, unsupported, upper].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("RangeError,RangeError,RangeError,iso8601"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects a calendar that it takes", async () => {
+      expect(
+        (await checkModel(getSource("none,RangeError,RangeError,iso8601"))).failure?.message,
+      ).toContain("seen RangeError,RangeError,RangeError,iso8601");
+    });
+
+    it("stops at a calendar that Node takes", async () => {
+      const result = await checkModel(`
+        const date = new Temporal.PlainDate(2000, 1, 1, "gregory");
+        if (date.year !== 2000) throw new Error("year " + date.year);
+      `);
+      expect(result.failure?.message).toContain("tla-ts can't use the calendar gregory");
+    });
+  });
 });

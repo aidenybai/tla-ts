@@ -1055,11 +1055,19 @@ LOCAL TParseISO(text, goal) ==
                   ELSE TDateTimeAt(text, FALSE, "offset", FALSE)
   IN IF parsed.ok /\ ~parsed.isRejected THEN TOk(parsed) ELSE TFail("RangeError")
 
-\* CanonicalizeCalendar, which tla-ts runs for the ISO 8601 calendar alone.
+\* The calendars other than the ISO 8601 calendar that Node 26 takes, by their ASCII-lowercase forms,
+\* aliases included.
+LOCAL TOtherCalendars ==
+  {"buddhist", "chinese", "coptic", "dangi", "ethioaa", "ethiopic", "ethiopic-amete-alem", "gregory",
+   "hebrew", "indian", "islamic-civil", "islamic-tbla", "islamic-umalqura", "islamicc", "japanese",
+   "persian", "roc"}
+
+\* CanonicalizeCalendar, which tla-ts runs for the ISO 8601 calendar alone. Another calendar that
+\* Node takes stops, as tla-ts holds none of its data, and one that it doesn't throws a RangeError.
 LOCAL TCalendar(text) ==
-  IF TLowercase(text) = "iso8601"
-  THEN TOk("iso8601")
-  ELSE Assert(FALSE, "tla-ts can't use the calendar " \o text)
+  CASE TLowercase(text) = "iso8601" -> TOk("iso8601")
+    [] TLowercase(text) \in TOtherCalendars -> Assert(FALSE, "tla-ts can't use the calendar " \o text)
+    [] OTHER -> TFail("RangeError")
 
 \* ---------------------------------------------------------------------------------------------
 \* Reading Temporal objects and property bags.
