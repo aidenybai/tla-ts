@@ -1423,7 +1423,12 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
         const shared = getSharedDeclaration(symbol, context);
         if (shared !== undefined) {
           const environment = scope.activations?.get(shared);
-          if (environment === undefined || scope.uninitialized.has(symbol)) {
+          // A closure that the declaration's initializer makes shares the environment it made.
+          if (
+            environment === undefined ||
+            (scope.uninitialized.has(symbol) &&
+              ts.findAncestor(node, (ancestor) => ancestor === shared) === undefined)
+          ) {
             throw new TlaTypeScriptError(
               `tla-ts can't make a closure that shares ${symbol.name} before its declaration runs`,
               node,

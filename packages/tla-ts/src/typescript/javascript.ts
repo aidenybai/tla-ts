@@ -1820,6 +1820,18 @@ EnvironmentValue(heap, environment, key) == heap.objects[environment[Ref]].bindi
 \\* Whether an environment holds a local, which its call stores once the local's declaration runs.
 HasEnvironmentValue(heap, environment, key) == key \\in DOMAIN heap.objects[environment[Ref]].bindings
 
+\\* A local that closures share, which a closure reads or writes, and which is uninitialized until
+\\* its declaration runs.
+SharedValue(heap, environment, key) ==
+  IF HasEnvironmentValue(heap, environment, key)
+  THEN EnvironmentValue(heap, environment, key)
+  ELSE Assert(FALSE, "tla-ts can't throw the ReferenceError of reading a local before its declaration")
+
+SetShared(heap, environment, key, value) ==
+  IF HasEnvironmentValue(heap, environment, key)
+  THEN SetEnvironment(heap, environment, key :> value)
+  ELSE Assert(FALSE, "tla-ts can't throw the ReferenceError of writing a local before its declaration")
+
 \\* The environment of the call that made a closure, or Undefined for a function that isn't one.
 EnvironmentOf(heap, value) ==
   IF IsHeap(value) /\\ "environment" \\in DOMAIN heap.objects[value[Ref]]

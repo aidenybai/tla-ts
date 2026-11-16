@@ -45537,23 +45537,27 @@ describe("BigInts", () => {
       ).toContain("seen left: two,right: one,left: one");
     });
 
-    it("stops where something assigns the local", () => {
-      expect(() =>
-        compile(`
-          function outer(tag: string) {
-            let prefix = tag;
-            function make(message: string) {
-              return function () {
-                return prefix + message;
-              };
-            }
-            const made = { first: make("a") };
-            prefix = "z";
-            return made;
-          }
-          if (outer("x").first() !== "za") throw new Error("prefix");
-        `),
-      ).toThrow("tla-ts can't follow a function that outlives its call and reads this name");
+    const getAssigned = (expected: string) => `
+      function outer(tag: string) {
+        let prefix = tag;
+        function make(message: string) {
+          return function () {
+            return prefix + message;
+          };
+        }
+        const made = { first: make("a") };
+        prefix = "z";
+        return made;
+      }
+      if (outer("x").first() !== "${expected}") throw new Error("prefix");
+    `;
+
+    it("agrees with Node where something assigns the local", async () => {
+      expect((await checkModel(getAssigned("za"))).failure).toBeUndefined();
+    });
+
+    it("rejects a closure that keeps the local's first value", async () => {
+      expect((await checkModel(getAssigned("xa"))).failure?.message).toContain("prefix");
     });
   });
 
@@ -45675,22 +45679,26 @@ describe("BigInts", () => {
       ).toContain("seen made 0,made 0,3,2,1,3,2,2,1,13,2,10,5,13");
     });
 
-    it("stops where a statement gives the local more than a literal", () => {
-      expect(() =>
-        compile(`
-          function makeCounter() {
-            let count = 1;
-            const counter = {
-              double() {
-                count = count * 2;
-              },
-            };
-            counter.double();
-            return count;
-          }
-          if (makeCounter() + makeCounter() !== 4) throw new Error("count");
-        `),
-      ).toThrow("tla-ts can't follow a function that outlives its call and shares a local");
+    const getDoubled = (expected: number) => `
+      function makeCounter() {
+        let count = 1;
+        const counter = {
+          double() {
+            count = count * 2;
+          },
+        };
+        counter.double();
+        return count;
+      }
+      if (makeCounter() + makeCounter() !== ${expected}) throw new Error("count");
+    `;
+
+    it("agrees with Node where a statement gives the local more than a literal", async () => {
+      expect((await checkModel(getDoubled(4))).failure).toBeUndefined();
+    });
+
+    it("rejects a local that the method's write misses", async () => {
+      expect((await checkModel(getDoubled(2))).failure?.message).toContain("count");
     });
   });
 
@@ -45924,6 +45932,119 @@ describe("BigInts", () => {
     it("rejects a map that the set left empty", async () => {
       expect((await checkModel(getSource("0,object,true"))).failure?.message).toContain(
         "seen 1,object,true",
+      );
+    });
+  });
+
+  describe("shares a local of any value between a function and the closures it makes", () => {
+    const getSource = (expected: string) => `
+      interface Box {
+        items: string[];
+        label: string;
+      }
+      interface Hook {
+        inject: () => number;
+        current: () => Hook;
+      }
+      const make = () => {
+        let box: Box = { items: [], label: "a" };
+        let count = 0;
+        let last: string | undefined;
+        const put = (item: string) => {
+          box.items.push(item);
+          last = item;
+          return ++count;
+        };
+        const swap = (next: Box) => {
+          const previous = box;
+          box = next;
+          return previous;
+        };
+        const rename = (label: string) => (box.label = label + count);
+        const read = () => [box.label, box.items.join("+"), count, last ?? "none"].join();
+        const reset = () => {
+          [count, last] = [0, undefined];
+          box ??= { items: [], label: "never" };
+        };
+        return { put, swap, rename, read, reset };
+      };
+      const install = (): Hook => {
+        let counter = 0;
+        const hook: Hook = { inject: () => ++counter, current: () => hook };
+        return hook;
+      };
+      const first = make();
+      const second = make();
+      first.put("x");
+      first.put("y");
+      second.put("z");
+      const old = first.swap({ items: ["w"], label: "b" });
+      first.rename("c");
+      const seen = [first.read(), second.read(), old.items.join("+")];
+      first.reset();
+      seen.push(first.read());
+      const hook = install();
+      hook.inject();
+      seen.push(String(hook.inject()), String(hook.current() === hook));
+      const result = seen.join("|");
+      if (result !== "${expected}") throw new Error("seen " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("c2,w,2,y|a,z,1,z|x+y|c2,w,0,none|2|true"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects a closure that keeps its own copy of an object local", async () => {
+      expect(
+        (await checkModel(getSource("c2,w,2,y|a,z,1,z|w|c2,w,0,none|2|true"))).failure?.message,
+      ).toContain("seen c2,w,2,y|a,z,1,z|x+y|c2,w,0,none|2|true");
+    });
+
+    const getLooped = (expected: string) => `
+      const make = (limit: number) => {
+        let total = 0;
+        let item = "none";
+        let flag: string | undefined;
+        for (let index = 1; index <= limit; index++) {
+          total += index;
+          if (total > 4) total -= 1;
+        }
+        const write = () => {
+          for (item of ["a", "b"]) total++;
+          for (let step = 0; step < 2; step++) flag = (flag ?? "") + step;
+          let index = 0;
+          while (index < 3) {
+            total += index;
+            index++;
+          }
+          try {
+            total += 1;
+            throw new Error("x");
+          } catch {
+            total += 1;
+          } finally {
+            flag += "!";
+          }
+        };
+        const read = () => [total, item, flag ?? "unset"].join("/");
+        return { write, read };
+      };
+      const first = make(3);
+      const second = make(1);
+      first.write();
+      const result = [first.read(), second.read()].join(",");
+      if (result !== "${expected}") throw new Error("seen " + result);
+    `;
+
+    it("agrees with Node where loops and a try write the locals", async () => {
+      expect((await checkModel(getLooped("12/b/01!,1/none/unset"))).failure).toBeUndefined();
+    });
+
+    it("rejects a loop whose writes the local misses", async () => {
+      expect((await checkModel(getLooped("5/none/unset,1/none/unset"))).failure?.message).toContain(
+        "seen 12/b/01!,1/none/unset",
       );
     });
   });

@@ -2713,11 +2713,19 @@ const translateIdentifier = (node: ts.Identifier, scope: Scope, context: Context
             `tla-ts can't read ${node.text}, which closures share, outside its declaration's run`,
           ),
         ])
-      : useJavaScript(
-          "EnvironmentValue",
-          [getHeap(scope, node, context), environment, string(node.text)],
-          context,
-        );
+      : ts.findAncestor(node.parent, ts.isFunctionLike) ===
+          ts.findAncestor(shared.parent, ts.isFunctionLike)
+        ? useJavaScript(
+            "EnvironmentValue",
+            [getHeap(scope, node, context), environment, string(node.text)],
+            context,
+          )
+        : // A closure may run before the declaration gives the local its value.
+          useJavaScript(
+            "SharedValue",
+            [getHeap(scope, node, context), environment, string(node.text)],
+            context,
+          );
   }
   // A call holds the arguments object it makes under the body of the function it calls.
   const argumentsBody = getArgumentsOwner(node, context.checker)?.body;
