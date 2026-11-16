@@ -5332,7 +5332,9 @@ export const getFunctionCandidates = (callee: ts.Expression, context: Context) =
     ? [...context.functionCandidates.entries()].flatMap((entry) =>
         entry[0] === sourceFile ? entry[1] : (context.sharedFunctionCandidates.get(entry[0]) ?? []),
       )
-    : findFunctionCandidates(sourceFile, context);
+    : findFunctionCandidates(sourceFile, context).filter((candidate) =>
+        isReached(candidate, context),
+      );
   const checker = context.checker;
   const type = checker.getTypeAtLocation(callee);
   const call = callee.parent;
@@ -5366,14 +5368,12 @@ export const getFunctionCandidates = (callee: ts.Expression, context: Context) =
   };
   return found.filter(
     (candidate) =>
-      isReached(candidate, context) &&
-      checker.isTypeAssignableTo(checker.getTypeAtLocation(candidate), type) &&
-      isTyped(candidate),
+      checker.isTypeAssignableTo(checker.getTypeAtLocation(candidate), type) && isTyped(candidate),
   );
 };
 
 // Whether the model reaches a node's code, as no value holds a function that nothing names.
-const isReached = (node: ts.Node, context: Context) => {
+export const isReached = (node: ts.Node, context: Context) => {
   const reached = context.reached;
   return (
     reached === undefined ||
@@ -5385,9 +5385,7 @@ const isReached = (node: ts.Node, context: Context) => {
 export const getClosures = (callee: ts.Expression, context: Context) => {
   if (isHeldBuiltInObject(callee, context)) return [];
   const type = context.checker.getTypeAtLocation(callee);
-  return (context.closures.get(callee.getSourceFile()) ?? []).filter(
-    (closure) =>
-      isReached(closure, context) &&
-      context.checker.isTypeAssignableTo(context.checker.getTypeAtLocation(closure), type),
+  return (context.closures.get(callee.getSourceFile()) ?? []).filter((closure) =>
+    context.checker.isTypeAssignableTo(context.checker.getTypeAtLocation(closure), type),
   );
 };
