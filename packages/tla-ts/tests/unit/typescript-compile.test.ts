@@ -45491,4 +45491,61 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("copies a local of a function around the one that makes a closure", () => {
+    const getSource = (expected: string) => `
+      function makeThrowers(label: string) {
+        const prefix = label + ": ";
+        function getThrower(message: string) {
+          return function () {
+            throw new Error(prefix + message);
+          };
+        }
+        return { first: getThrower("one"), second: getThrower("two") };
+      }
+      const left = makeThrowers("left");
+      const right = makeThrowers("right");
+      const messages: string[] = [];
+      for (const thrower of [left.second, right.first, left.first]) {
+        try {
+          thrower();
+        } catch (error) {
+          messages.push((error as Error).message);
+        }
+      }
+      const seen = messages.join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("left: two,right: one,left: one"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects a closure that reads another call's local", async () => {
+      expect(
+        (await checkModel(getSource("left: two,right: two,left: one"))).failure?.message,
+      ).toContain("seen left: two,right: one,left: one");
+    });
+
+    it("stops where something assigns the local", () => {
+      expect(() =>
+        compile(`
+          function outer(tag: string) {
+            let prefix = tag;
+            function make(message: string) {
+              return function () {
+                return prefix + message;
+              };
+            }
+            const made = { first: make("a") };
+            prefix = "z";
+            return made;
+          }
+          if (outer("x").first() !== "za") throw new Error("prefix");
+        `),
+      ).toThrow("tla-ts can't follow a function that outlives its call and reads this name");
+    });
+  });
 });

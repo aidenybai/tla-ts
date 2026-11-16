@@ -2968,13 +2968,14 @@ export const isClosure = (node: ts.Node, context: Context): node is Closure => {
   ) {
     return false;
   }
+  // The locals of the functions around it, which bind them as the function that makes it runs.
   const isReadingLocals = () =>
     findNodes(node, ts.isIdentifier).some((name) => {
       const declaration = getSymbol(name, context.checker)?.valueDeclaration;
       return (
         declaration !== undefined &&
         ts.findAncestor(declaration, (ancestor) => ancestor === node) === undefined &&
-        ts.findAncestor(declaration.parent, ts.isFunctionLike) === maker
+        ts.findAncestor(declaration.parent, ts.isFunctionLike) !== undefined
       );
     });
   // A method or an accessor of an object literal that runs more than once is an object of its own
@@ -3147,14 +3148,21 @@ export const getCaptures = (node: Closure, context: Context) => {
         capture.name,
       );
     }
+    // A local of a function around the maker holds the value it had as the maker ran, which the
+    // environment copies where nothing assigns it, and where it's a let, a const, or a parameter,
+    // which the maker can't read before it holds its value.
+    const owner = ts.findAncestor(declaration.parent, ts.isFunctionLike);
     if (
       !(ts.isVariableDeclaration(declaration) || ts.isParameter(declaration)) ||
       !ts.isIdentifier(declaration.name) ||
-      ts.findAncestor(declaration.parent, ts.isFunctionLike) !== maker ||
       isRepeated(node) ||
-      (ts.isVariableDeclaration(declaration) &&
-        (isRepeated(declaration) ||
-          (declaration.end > node.getStart() && getHolder(node)?.declaration !== declaration)))
+      (owner === maker
+        ? ts.isVariableDeclaration(declaration) &&
+          (isRepeated(declaration) ||
+            (declaration.end > node.getStart() && getHolder(node)?.declaration !== declaration))
+        : isAssigned(capture.symbol, node.getSourceFile(), context) ||
+          (ts.isVariableDeclaration(declaration) &&
+            (ts.getCombinedNodeFlags(declaration) & ts.NodeFlags.BlockScoped) === 0))
     ) {
       throw new TlaTypeScriptError(
         "tla-ts can't follow a function that outlives its call and reads this name",
