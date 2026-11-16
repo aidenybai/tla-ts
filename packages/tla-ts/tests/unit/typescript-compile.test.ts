@@ -45659,4 +45659,31 @@ describe("BigInts", () => {
       expect((await checkModel(getSource(11))).failure?.message).toContain("total 10");
     });
   });
+
+  describe("passes the object that Array.prototype's method calls back for as the array", () => {
+    const getSource = (expected: string) => `
+      const object = { 0: 1, 1: 2, length: 2 };
+      const arrays: unknown[] = [];
+      let lengths = 0;
+      Array.prototype.forEach.call(object, function (value, index, array) {
+        arrays.push(array);
+      });
+      Array.prototype.every.call(object, function (value, index, array) {
+        lengths += array.length;
+        return true;
+      });
+      const seen = [arrays.length, arrays[0] === object, arrays[1] === object, lengths].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("2,true,true,4"))).failure).toBeUndefined();
+    });
+
+    it("rejects a length that the object doesn't have", async () => {
+      expect((await checkModel(getSource("2,true,true,2"))).failure?.message).toContain(
+        "seen 2,true,true,4",
+      );
+    });
+  });
 });

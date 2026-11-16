@@ -458,6 +458,7 @@ import {
   isSymbolIndexCall,
   getArrayMethodCall,
   REORDER_METHODS,
+  LOOP_METHODS,
 } from "./types";
 
 export interface Path {
@@ -8875,20 +8876,6 @@ const getCreatedGenerator = (node: ts.CallExpression, path: Path, context: Conte
   const generator = called?.method ?? getGeneratorCallee(node.expression, path, context);
   return generator === undefined ? undefined : { generator, called };
 };
-
-const LOOP_METHODS = new Set([
-  "forEach",
-  "every",
-  "some",
-  "find",
-  "findIndex",
-  "findLast",
-  "findLastIndex",
-  "filter",
-  "map",
-  "reduce",
-  "reduceRight",
-]);
 
 // The array methods that sort an array value with a comparator, which V8 calls on the pairs that it
 // compares, in its order.
