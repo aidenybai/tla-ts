@@ -46093,4 +46093,74 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("holds on the heap the arrays and errors that a variable, a return, or a parameter of type any keeps", () => {
+    const getSource = (expected: string) => `
+      const list: any = [1];
+      const alias: any = list;
+      alias.push(2);
+      const typed = [1];
+      const shared: any = typed;
+      shared.push(2, 3);
+      const failure: any = Error("boom");
+      failure.code = 7;
+      let caught: any;
+      try {
+        throw failure;
+      } catch (error) {
+        caught = error;
+      }
+      const seen = [
+        list.length,
+        typed.length,
+        list === alias,
+        caught === failure,
+        caught.code,
+        caught.message,
+        caught instanceof Error,
+        Array.isArray(alias),
+      ].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("2,3,true,true,7,boom,true,true"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects an alias that copies the array", async () => {
+      expect(
+        (await checkModel(getSource("1,1,true,true,7,boom,true,true"))).failure?.message,
+      ).toContain("seen 2,3,true,true,7,boom,true,true");
+    });
+  });
+
+  describe("converts the message of an error that lands where any types the place", () => {
+    const getSource = (expected: string) => `
+      const none: any = undefined;
+      const five: any = 5;
+      const first: any = Error(none);
+      const second: any = new TypeError(five);
+      second.stack = "s";
+      const seen = [
+        first.message,
+        Object.hasOwn(first, "message"),
+        second.message,
+        second.stack,
+        second instanceof TypeError,
+      ].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(",false,5,s,true"))).failure).toBeUndefined();
+    });
+
+    it("rejects an undefined message that the error keeps", async () => {
+      expect((await checkModel(getSource("undefined,true,5,s,true"))).failure?.message).toContain(
+        "seen ,false,5,s,true",
+      );
+    });
+  });
 });

@@ -143,6 +143,7 @@ import {
   isWeakHolderName,
   type WeakHolderName,
   isCollectionName,
+  isAnyPlace,
   isHoleyNewArray,
   isNewArrayOfElements,
   getArraySource,
@@ -1714,10 +1715,25 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
     }
     const isSuppressed = getBuiltIn(node.expression, context) === "SuppressedError";
     const message = parts.at(isSuppressed ? 2 : 0);
+    // A message that any or unknown types may be undefined, which leaves the message out, or
+    // another value, which converts to a string.
+    const isAnyMessage =
+      message !== undefined &&
+      (context.checker.getTypeAtLocation(message).flags &
+        (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !==
+        0;
     const described =
       message === undefined
         ? error
-        : define(error, "message", translateExpression(message, scope, context));
+        : isAnyMessage
+          ? share(translateExpression(message, scope, context), "message", context, (value) =>
+              ifExpression(
+                apply("=", [value, getUndefined(context)]),
+                error,
+                define(error, "message", useJavaScript("StringOf", [value], context)),
+              ),
+            )
+          : define(error, "message", translateExpression(message, scope, context));
     return useJavaScript(
       "Allocate",
       [
@@ -3628,6 +3644,14 @@ const ARRAY_OBJECT_USES = new Set([
 // Whether an array that the heap holds may appear here, where tla-ts reads it as an object.
 const isArrayObjectUse = (node: ts.Expression, context: Context): boolean => {
   const parent = node.parent;
+  // A value that any or unknown types reads as whatever it holds.
+  if (
+    isAnyPlace(node, context) ||
+    (context.checker.getTypeAtLocation(node).flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !==
+      0
+  ) {
+    return true;
+  }
   if (
     ts.isParenthesizedExpression(parent) ||
     ts.isAsExpression(parent) ||
@@ -5806,6 +5830,15 @@ export const findHeapArrays = (
     if (isHoleyArray(node, context)) arrays.add(node);
     if (isPrototypeArray(node, context)) arrays.add(node);
     if (isThrownArray(node)) arrays.add(node);
+    if (
+      ((ts.isArrayLiteralExpression(node) &&
+        !(node.elements.some(ts.isSpreadElement) && node.elements.some(ts.isOmittedExpression))) ||
+        isNewArrayOfElements(node, context) ||
+        isHoleyNewArray(node, context)) &&
+      isAnyPlace(node, context)
+    ) {
+      arrays.add(node);
+    }
     ts.forEachChild(node, find);
   };
   roots.forEach(find);
@@ -5944,7 +5977,8 @@ export const findHeapArrays = (
           isPatternResult(use) ||
           getKeptIterator(use.parent.parent, context) !== undefined ||
           getIteratedArray(use.parent, context) === use ||
-          isIdentityUse(use),
+          isIdentityUse(use) ||
+          isAnyPlace(use, context),
       ) &&
       reads.every((use) => isArrayObjectUse(use, context))
     ) {

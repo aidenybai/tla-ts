@@ -8,6 +8,7 @@ import {
   type BufferName,
   getArrayMethodCall,
   getKind,
+  isAnyPlace,
   isBufferName,
   isCollectionName,
   isHeapArray,
@@ -4281,15 +4282,18 @@ const OWN_PROPERTY_FUNCTIONS = new Set([
 // each use reads it as an object: as an Object function's argument, as the object of a property
 // access, in a comparison, typeof, or instanceof, or as the argument of a script's function whose
 // parameter takes an object that isn't an error. The heap holds such an error as an object, with
-// the slot that marks it as one. An error that a script throws, or keeps elsewhere, stays a record.
+// the slot that marks it as one, as it holds an error, new or called, that a place of type any
+// keeps. An error that a script throws, or keeps elsewhere, stays a record.
 // A SuppressedError takes its message after the error and the error that it suppressed.
 // It assumes that the errors it is already deciding are held, so two of them can be compared.
 export const isHeldError = (
   node: ts.Node,
   context: Context,
   assumed: ReadonlySet<ts.Node> = new Set(),
-): node is ts.NewExpression => {
-  if (context.heap === undefined || !ts.isNewExpression(node)) return false;
+): node is ts.NewExpression | ts.CallExpression => {
+  if (context.heap === undefined || !(ts.isNewExpression(node) || ts.isCallExpression(node))) {
+    return false;
+  }
   const name = getBuiltIn(node.expression, context);
   const holder = node.parent;
   const isSuppressed = name === "SuppressedError";
@@ -4304,7 +4308,16 @@ export const isHeldError = (
       : (node.arguments ?? []).length > (isSuppressed ? 3 : 1) ||
         (message !== undefined &&
           getTypeNames(context.checker.getTypeAtLocation(message), context.checker)?.join() !==
-            "string")) ||
+            "string" &&
+          (context.checker.getTypeAtLocation(message).flags &
+            (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) ===
+            0))
+  ) {
+    return false;
+  }
+  if (isAnyPlace(node, context)) return true;
+  if (
+    !ts.isNewExpression(node) ||
     !ts.isVariableDeclaration(holder) ||
     holder.initializer !== node ||
     !ts.isIdentifier(holder.name)

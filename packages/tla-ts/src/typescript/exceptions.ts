@@ -604,9 +604,14 @@ export const translateThrown = (node: ts.Expression, scope: Scope, context: Cont
       (initializer !== undefined &&
         ts.isObjectLiteralExpression(initializer) &&
         getLiteralName(initializer, context) !== undefined));
+  // A value that any or unknown types passes on what it holds, where the heap holds every object
+  // that lands in such a place.
+  const isAnyValue =
+    context.heap !== undefined && (type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;
   if (
     !isPrimitive &&
     !isHeapObject &&
+    !isAnyValue &&
     !isHeapArray(node, context) &&
     getErrorClass(type.getSymbol(), context.checker) === undefined &&
     !isCaught(node, context)

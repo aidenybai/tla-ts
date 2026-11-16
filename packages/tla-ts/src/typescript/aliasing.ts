@@ -8,8 +8,9 @@ import {
   getCallee,
   getSymbol,
   hasObjectLiteral,
-  isMethodCall,
   isDeclarationOnly,
+  isHeldError,
+  isMethodCall,
 } from "./context";
 import { TlaTypeScriptError } from "../errors";
 import { type Scope } from "./scope";
@@ -689,7 +690,10 @@ export const rejectSharing = (roots: readonly ts.Node[], context: Context) => {
           : isHeapRead
             ? context.heap
             : undefined;
-    if (symbol !== undefined || (ts.isCallExpression(node) && !isMethodCall(node))) {
+    if (
+      symbol !== undefined ||
+      (ts.isCallExpression(node) && !isMethodCall(node) && !isHeldError(node, context))
+    ) {
       const escapes = getEscapes(
         node as ts.Expression,
         { source: 0, landing: 0 },
