@@ -20,6 +20,7 @@ import {
   getTopLevelDeclaration,
   getUndefined,
   type HelperDeclaration,
+  isClosure,
   isInlined,
   isLiteral,
   isPlain,
@@ -38,6 +39,7 @@ import {
   getImmutableWrite,
   isMaybeNullish,
   throwOnUnentered,
+  enterScope,
   isValueReturn,
   translateLocalStatements,
 } from "./actions";
@@ -1196,27 +1198,24 @@ export const translateFoundGetter = (
           (rest, getter) => {
             const candidate = getCandidateValue(getter, context);
             if (getter.body === undefined || candidate === undefined) return rest;
+            const found = useJavaScript("GetterOf", [sharedHeap, sharedObject, sharedKey], context);
+            const received = {
+              ...scope,
+              receiver: { value: receiver ?? sharedObject, method: getter },
+            };
             context.inProgress.add(getter);
             const value = translateBody(
               getter.body,
-              { ...scope, receiver: { value: receiver ?? sharedObject, method: getter } },
+              isClosure(getter, context)
+                ? enterScope(getter, found, sharedHeap, received, context)
+                : received,
               context,
             );
             context.inProgress.delete(getter);
             return ifExpression(
               junction("And", [
                 useJavaScript("IsRef", [sharedObject], context),
-                apply("=", [
-                  useJavaScript(
-                    "CodeOf",
-                    [
-                      sharedHeap,
-                      useJavaScript("GetterOf", [sharedHeap, sharedObject, sharedKey], context),
-                    ],
-                    context,
-                  ),
-                  candidate,
-                ]),
+                apply("=", [useJavaScript("CodeOf", [sharedHeap, found], context), candidate]),
               ]),
               value,
               rest,

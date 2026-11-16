@@ -23124,16 +23124,20 @@ describe("errors", () => {
     expect((await checkModel(getBoxSource(32))).failure?.message).toContain("box");
   });
 
-  it("stops where a call doesn't enter the closure that it runs", () => {
-    expect(() =>
-      compile(`
-        const seen = { count: 0 };
-        function make(x: number) {
-          return { get: function () { return x; } };
-        }
-        if (make(3).get() !== 3) throw new Error("get");
-      `),
-    ).toThrow("tla-ts can't tell which call made this function");
+  const getGetSource = (expected: number) => `
+      const seen = { count: 0 };
+      function make(x: number) {
+        return { get: function () { return x; } };
+      }
+      if (make(3).get() * 10 + make(4).get() !== ${expected}) throw new Error("get");
+  `;
+
+  it("reads a closure that a property named get holds, which may be a getter, in its environment", async () => {
+    expect((await checkModel(getGetSource(34))).failure).toBeUndefined();
+  });
+
+  it("reads the locals of the call that made the closure that a property named get holds", async () => {
+    expect((await checkModel(getGetSource(43))).failure?.message).toContain("get");
   });
 
   const getCounterSource = (expected: string) => `
@@ -49062,6 +49066,40 @@ describe("BigInts", () => {
         export const isSmall = () => backEdges < 3;
       `);
       expect([result.status, result.distinctStates]).toEqual(["deadlock", 3]);
+    });
+  });
+
+  describe("runs a closure that a getter or a setter holds in the environment of the call that made it", () => {
+    const getSource = (expected: string) => `
+      const memo = (type: number) => {
+        const element = { type };
+        let ownName: string | undefined;
+        Object.defineProperty(element, "displayName", {
+          enumerable: false,
+          configurable: true,
+          get: function () {
+            return ownName;
+          },
+          set: function (name: string) {
+            ownName = name + type;
+          },
+        });
+        return element as { type: number; displayName?: string };
+      };
+      const first = memo(1);
+      const second = memo(2);
+      first.displayName = "A";
+      second.displayName = "B";
+      const names = first.displayName + "," + second.displayName;
+      if (names !== "${expected}") throw new Error("names " + names);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("A1,B2"))).failure).toBeUndefined();
+    });
+
+    it("rejects the names of another call", async () => {
+      expect((await checkModel(getSource("B2,B2"))).failure?.message).toContain("names A1,B2");
     });
   });
 });

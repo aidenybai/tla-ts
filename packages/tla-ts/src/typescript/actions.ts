@@ -6898,6 +6898,65 @@ const isAction = (callee: FunctionNode, context: Context) =>
     ts.ModifierFlags.Export) !==
     0;
 
+// The locals that a closure reads from its environment: those that it copies there, those that
+// closures share, which stay in environments of their own that its environment holds, and the
+// function whose arguments object it reads.
+const getEnvironment = (closure: Closure, context: Context) => {
+  const read = getCaptures(closure, context);
+  const shared = read.flatMap((symbol) => {
+    const declaration = getSharedDeclaration(symbol, context);
+    return declaration === undefined ? [] : [{ symbol, declaration }];
+  });
+  const isShared = (symbol: ts.Symbol) => shared.some((entry) => entry.symbol === symbol);
+  return {
+    captures: read.filter((symbol) => !isShared(symbol)),
+    shared,
+    isShared,
+    argumentsBody: getCapturedArguments(closure, context)?.body,
+  };
+};
+
+// A scope that binds the locals that a closure reads to those that the environment of the closure
+// that a value holds has in a heap, for a run of its body.
+export const enterScope = (
+  closure: Closure,
+  value: Expression,
+  heap: Expression,
+  scope: Scope,
+  context: Context,
+): Scope => {
+  const environment = getEnvironment(closure, context);
+  const argumentsBody = environment.argumentsBody;
+  return {
+    ...scope,
+    allocated:
+      argumentsBody === undefined
+        ? scope.allocated
+        : new Map([
+            ...scope.allocated,
+            [argumentsBody, useJavaScript("Captured", [heap, value, string("arguments")], context)],
+          ]),
+    entered: closure,
+    bindings: new Map([
+      ...scope.bindings,
+      ...environment.captures.map((symbol): [ts.Symbol, Expression] => [
+        symbol,
+        useJavaScript("Captured", [heap, value, string(symbol.name)], context),
+      ]),
+    ]),
+    activations: new Map([
+      ...(scope.activations ?? []),
+      ...environment.shared.map((entry): [ts.Node, Expression] => [
+        entry.declaration,
+        useJavaScript("Captured", [heap, value, string(entry.symbol.name)], context),
+      ]),
+    ]),
+    uninitialized: new Set(
+      [...scope.uninitialized].filter((symbol) => !environment.isShared(symbol)),
+    ),
+  };
+};
+
 // Binds the locals that a closure reads to those its environment holds, for a call of the closure
 // that a value holds. Once the call returns or throws, the environment holds the locals that the
 // closure changed, and the caller's bindings are as they were.
@@ -6909,17 +6968,12 @@ export const enterClosure = (
   frame: Frame,
   run: (inner: Path, innerFrame: Frame, leave: (after: Path) => Path) => Formula,
 ) => {
-  // The locals that closures share stay in their own environments, which the closure's holds, and
-  // which its body reads and writes.
-  const read = getCaptures(closure, context);
-  const shared = read.flatMap((symbol) => {
-    const declaration = getSharedDeclaration(symbol, context);
-    return declaration === undefined ? [] : [{ symbol, declaration }];
-  });
-  const isShared = (symbol: ts.Symbol) => shared.some((entry) => entry.symbol === symbol);
-  const isSharedKey = (key: ts.Node) => shared.some((entry) => entry.declaration === key);
-  const captures = read.filter((symbol) => !isShared(symbol));
-  const argumentsBody = getCapturedArguments(closure, context)?.body;
+  const environment = getEnvironment(closure, context);
+  const isShared = environment.isShared;
+  const isSharedKey = (key: ts.Node) =>
+    environment.shared.some((entry) => entry.declaration === key);
+  const captures = environment.captures;
+  const argumentsBody = environment.argumentsBody;
   const written = captures.filter((symbol) => isAssigned(symbol, closure, context));
   const heapSymbol = context.heap;
   const leave = (after: Path): Path => ({
@@ -6972,41 +7026,12 @@ export const enterClosure = (
       ]),
     },
   });
-  const heap = getHeap(path.scope, closure, context);
   const throwTo = frame.throwTo;
   return run(
     {
       ...path,
       mutable: new Set([...path.mutable, ...written]),
-      scope: {
-        ...path.scope,
-        allocated:
-          argumentsBody === undefined
-            ? path.scope.allocated
-            : new Map([
-                ...path.scope.allocated,
-                [
-                  argumentsBody,
-                  useJavaScript("Captured", [heap, value, string("arguments")], context),
-                ],
-              ]),
-        entered: closure,
-        bindings: new Map([
-          ...path.scope.bindings,
-          ...captures.map((symbol): [ts.Symbol, Expression] => [
-            symbol,
-            useJavaScript("Captured", [heap, value, string(symbol.name)], context),
-          ]),
-        ]),
-        activations: new Map([
-          ...(path.scope.activations ?? []),
-          ...shared.map((entry): [ts.Node, Expression] => [
-            entry.declaration,
-            useJavaScript("Captured", [heap, value, string(entry.symbol.name)], context),
-          ]),
-        ]),
-        uninitialized: new Set([...path.scope.uninitialized].filter((symbol) => !isShared(symbol))),
-      },
+      scope: enterScope(closure, value, getHeap(path.scope, closure, context), path.scope, context),
     },
     {
       ...frame,
@@ -13341,30 +13366,27 @@ const translateWriteStatement = (
   return translateJoined(expression, path, context, continueWith, (next) =>
     setters.reduceRight((rest, setter) => {
       const value = getCandidateValue(setter, context);
+      const found = useJavaScript("SetterOf", [write.heap, write.ref, write.key], context);
+      const run = (inner: Path, innerFrame: Frame, after: (path: Path) => Formula) =>
+        inlineBody(
+          expression,
+          setter,
+          [right],
+          { value: write.ref, method: setter },
+          inner,
+          context,
+          innerFrame,
+          after,
+        );
       return value === undefined
         ? rest
         : ifThenElse(
-            apply("=", [
-              useJavaScript(
-                "CodeOf",
-                [
-                  write.heap,
-                  useJavaScript("SetterOf", [write.heap, write.ref, write.key], context),
-                ],
-                context,
-              ),
-              value,
-            ]),
-            inlineBody(
-              expression,
-              setter,
-              [right],
-              { value: write.ref, method: setter },
-              path,
-              context,
-              frame,
-              next,
-            ),
+            apply("=", [useJavaScript("CodeOf", [write.heap, found], context), value]),
+            isClosure(setter, context)
+              ? enterClosure(setter, found, path, context, frame, (inner, innerFrame, leave) =>
+                  run(inner, innerFrame, (after) => next(leave(after))),
+                )
+              : run(path, frame, next),
             rest,
           );
     }, translateWrite(next)),
