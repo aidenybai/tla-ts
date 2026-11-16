@@ -1332,10 +1332,14 @@ const translatePure = (
             ? getUndefined(context)
             : translateExpression(initializer, current.scope, context);
         const added = bindPattern(declaration.name, value, current.scope, context);
+        // A name forces the value that it binds, rather than a copy of it.
+        const symbol = ts.isIdentifier(declaration.name)
+          ? getSymbol(declaration.name, context.checker)
+          : undefined;
         return {
           definitions: [...current.definitions, ...added.definitions],
           scope: added.scope,
-          values: [...current.values, value],
+          values: [...current.values, (symbol && added.scope.bindings.get(symbol)) ?? value],
         };
       },
       { definitions: [], scope, values: [] },

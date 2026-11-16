@@ -49064,4 +49064,37 @@ describe("BigInts", () => {
       expect([result.status, result.distinctStates]).toEqual(["deadlock", 3]);
     });
   });
+
+  describe("forces what a name in a function that an expression calls binds, not a copy of it", () => {
+    const getNested = (helpers: number, position = 1): string =>
+      position > helpers
+        ? "id"
+        : `(y${position}: number): number => h${position}(${getNested(helpers, position + 1)}, y${position})`;
+    const getSource = (helpers: number, expected: number) => `
+      const box: { a: number } = { a: 1 };
+      ${Array.from(
+        { length: helpers },
+        (_, position) => `function h${position + 1}(f: any, x: number): number {
+          const value: number = f(x);
+          return value + ${position + 1};
+        }`,
+      ).join("\n")}
+      const id = (x: number): number => x;
+      const result = (${getNested(helpers)})(0);
+      if (result !== ${expected}) throw new Error("result " + result);
+    `;
+    const getSize = (helpers: number) => printModule(compile(getSource(helpers, 0)).source).length;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(3, 6))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkModel(getSource(3, 7))).failure?.message).toContain("result 6");
+    });
+
+    it("grows by less than a copy of each value for each call", () => {
+      expect(getSize(4)).toBeLessThan(getSize(3) * 5);
+    });
+  });
 });
