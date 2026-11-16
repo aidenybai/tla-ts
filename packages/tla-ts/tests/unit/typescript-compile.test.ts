@@ -45911,4 +45911,25 @@ describe("BigInts", () => {
       ).toContain("seen 2020-01-02,M01,TypeError,TypeError");
     });
   });
+
+  describe("spreads an array literal into a Temporal constructor's arguments", () => {
+    const getSource = (expected: string) => `
+      const args = [1, 2, 3] as const;
+      const explicit = new Temporal.Duration(...args, undefined).toString();
+      const implicit = new Temporal.PlainDate(...args).toString();
+      const literal = new Temporal.PlainTime(...[4, 5], 6).toString();
+      const seen = [explicit, implicit, literal].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("P1Y2M3W,0001-02-03,04:05:06"))).failure).toBeUndefined();
+    });
+
+    it("rejects a spread that leaves the days out", async () => {
+      expect((await checkModel(getSource("P1Y2M,0001-02-03,04:05:06"))).failure?.message).toContain(
+        "seen P1Y2M3W,0001-02-03,04:05:06",
+      );
+    });
+  });
 });

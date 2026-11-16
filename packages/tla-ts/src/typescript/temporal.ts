@@ -8,7 +8,7 @@ import {
   throwError,
   throwTypeError,
 } from "./actions";
-import { type Context, skipCasts } from "./context";
+import { type Context, findNodes, getSymbol, skipCasts } from "./context";
 import { translateExpression } from "./expressions";
 import { type Formula, ifThenElse, leaf } from "./formula";
 import { getAllocated, getHeap, getOrigin } from "./heap";
@@ -267,6 +267,42 @@ export const getTemporalKind = (type: ts.Type) => {
     : undefined;
 };
 
+// The arguments of a call, with each spread of an array literal, or of a const that holds one and
+// that only spreads read, written out, or undefined where a spread is of anything else.
+const getArguments = (values: readonly ts.Expression[], context: Context) => {
+  const expanded = values.map((value) => {
+    if (!ts.isSpreadElement(value)) return [value];
+    const spread = skipCasts(value.expression);
+    const symbol = ts.isIdentifier(spread) ? getSymbol(spread, context.checker) : undefined;
+    const declaration = symbol?.valueDeclaration;
+    const isOnlySpread =
+      symbol !== undefined &&
+      declaration !== undefined &&
+      ts.isVariableDeclaration(declaration) &&
+      (declaration.parent.flags & ts.NodeFlags.Const) !== 0 &&
+      findNodes(
+        value.getSourceFile(),
+        (node): node is ts.Identifier =>
+          ts.isIdentifier(node) &&
+          node !== declaration.name &&
+          getSymbol(node, context.checker) === symbol,
+      ).every((reference) => ts.isSpreadElement(reference.parent));
+    const literal = ts.isArrayLiteralExpression(spread)
+      ? spread
+      : isOnlySpread && declaration.initializer !== undefined
+        ? skipCasts(declaration.initializer)
+        : undefined;
+    return literal !== undefined &&
+      ts.isArrayLiteralExpression(literal) &&
+      !literal.elements.some(
+        (element) => ts.isSpreadElement(element) || ts.isOmittedExpression(element),
+      )
+      ? [...literal.elements]
+      : undefined;
+  });
+  return expanded.every((value) => value !== undefined) ? expanded.flat() : undefined;
+};
+
 // new of a Temporal class, a call of one of its functions, or a call of its prototype's method on
 // a value of its type, which tla-ts runs as a statement, as it may throw.
 export const getTemporalCall = (node: ts.Node, context: Context): TemporalCall | undefined => {
@@ -274,16 +310,15 @@ export const getTemporalCall = (node: ts.Node, context: Context): TemporalCall |
   if (ts.isNewExpression(node)) {
     const kind = getTemporalClass(node.expression, context);
     const functions = kind === undefined ? undefined : TEMPORAL_FUNCTIONS.get(kind);
-    return kind !== undefined &&
-      functions !== undefined &&
-      !(node.arguments ?? []).some(ts.isSpreadElement)
+    const values = getArguments(node.arguments ?? [], context);
+    return kind !== undefined && functions !== undefined && values !== undefined
       ? {
           kind,
           method: "new",
           isStatic: true,
           made: functions.made,
           callee: node.expression,
-          values: node.arguments ?? [],
+          values,
         }
       : undefined;
   }
