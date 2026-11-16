@@ -96,6 +96,7 @@ import {
   isUndefinedValue,
   translateRegExpValue,
 } from "./intrinsics";
+import { getTemporalCall } from "./temporal";
 import {
   getTypeNames,
   translateNumberString,
@@ -1939,6 +1940,20 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
     );
     return translateNewBufferOf(node, buffered, heap, values, scope, context);
   }
+  const temporal = getTemporalCall(node, context);
+  if (ts.isNewExpression(node) && temporal !== undefined) {
+    return useJavaScript(
+      "TemporalAllocate",
+      [
+        heap,
+        string(temporal.kind),
+        translateExpression(node.expression, scope, context),
+        tuple(temporal.values.map((value) => translateExpression(value, scope, context))),
+        translateBuiltInValue(`Temporal.${temporal.made}.prototype`, node, context),
+      ],
+      context,
+    );
+  }
   if (isNewDate(node, context)) {
     const values = node.arguments ?? [];
     const time = isClockDate(node, context)
@@ -2437,6 +2452,7 @@ export const isAllocation = (node: ts.Node, context: Context) =>
   isGroupBy(node, context) ||
   isNewObject(node, context) ||
   isNewDate(node, context) ||
+  (ts.isNewExpression(node) && getTemporalCall(node, context) !== undefined) ||
   getNewIntl(node, context) !== undefined ||
   isNewProxy(node, context) ||
   getNewBuffer(node, context) !== undefined ||
@@ -3183,6 +3199,29 @@ const GETTERS = new Map([
   ],
   ["Map", new Set(["size"])],
   ["Set", new Set(["size"])],
+  // The getters of Temporal's prototypes, which read only their receiver's internal slots.
+  ...[
+    "Duration",
+    "Instant",
+    "PlainDate",
+    "PlainDateTime",
+    "PlainMonthDay",
+    "PlainTime",
+    "PlainYearMonth",
+    "ZonedDateTime",
+  ].map(
+    (kind) =>
+      [
+        `Temporal.${kind}`,
+        new Set(
+          Object.keys(BUILT_INS).flatMap((name) =>
+            name.startsWith(`get Temporal.${kind}.prototype.`)
+              ? [name.slice(`get Temporal.${kind}.prototype.`.length)]
+              : [],
+          ),
+        ),
+      ] as const,
+  ),
   [
     "%Int8Array.[[Prototype]]%",
     new Set(["buffer", "byteLength", "byteOffset", "length", "@@toStringTag"]),
@@ -3237,8 +3276,8 @@ export const getGetterCall = (node: ts.Node, context: Context) => {
     ? "%Int8Array.[[Prototype]]%"
     : constructor !== undefined &&
         ts.isPropertyAccessExpression(constructor) &&
-        getBuiltIn(constructor.expression, context) === "Intl"
-      ? `Intl.${constructor.name.text}`
+        ["Intl", "Temporal"].includes(getBuiltIn(constructor.expression, context) ?? "")
+      ? `${getBuiltIn(constructor.expression, context)}.${constructor.name.text}`
       : constructor === undefined
         ? undefined
         : getBuiltIn(constructor, context);
@@ -3361,7 +3400,7 @@ export const isRevocable = (node: ts.Node, context: Context) =>
   !node.arguments.some(ts.isSpreadElement);
 
 // What a variable holds where its declaration gives its value, or else the expression itself.
-const getOrigin = (node: ts.Expression, context: Context): ts.Expression => {
+export const getOrigin = (node: ts.Expression, context: Context): ts.Expression => {
   const inner = skipCasts(node);
   const declaration = ts.isIdentifier(inner)
     ? getSymbol(inner, context.checker)?.valueDeclaration

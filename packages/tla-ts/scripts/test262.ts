@@ -115,6 +115,10 @@ const PORTED_INCLUDES = new Map([
   ],
   ["deepEqual.js", readFileSync(join(CONFORMANCE_DIRECTORY, "test262-deep-equal.ts"), "utf8")],
   ["testAtomics.js", readFileSync(join(CONFORMANCE_DIRECTORY, "test262-test-atomics.ts"), "utf8")],
+  [
+    "temporalHelpers.js",
+    readFileSync(join(CONFORMANCE_DIRECTORY, "test262-temporal-helpers.ts"), "utf8"),
+  ],
 ]);
 
 // An async test's harness defines $DONE, as doneprintHandle.js does.

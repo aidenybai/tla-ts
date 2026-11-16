@@ -24,6 +24,7 @@ import {
 import { rejectBeforeDeclaration, type Scope } from "./scope";
 import { getMappedParameter } from "./actions";
 import { getKind, isBigIntLike } from "./types";
+import { TEMPORAL_DEFINITIONS, TEMPORAL_GETTERS } from "./temporal-module";
 import { apply, boolean, identifier, ifExpression, number, set, string } from "./tla";
 
 // The names of the well-known symbols, such as iterator for Symbol.iterator.
@@ -2372,7 +2373,7 @@ LOCAL CollectionSize(heap, path, receiver) ==
             Assert(FALSE, "tla-ts can't throw the TypeError of a getter on another kind of object")
        [] object.collection = "Map" -> Cardinality(DOMAIN object.data)
        [] OTHER -> Cardinality(object.data)
-
+${TEMPORAL_GETTERS}
 
 \\* internal slots reads the receiver's. An array outside the heap, which a value typed only as
 \\* array-like may hold, holds its elements and its length, and reads the rest from its prototype.
@@ -2400,6 +2401,11 @@ GetFrom(heap, ref, key, receiver) ==
                    CollectionSize(heap, path, receiver)
               [] key \\in DOMAIN object.values /\\ object.attributes[key].kind = "accessor"
                    /\\ IntlGetterKind(path) # "" -> IntlGet(heap, path, receiver)
+              [] key \\in DOMAIN object.values /\\ object.attributes[key].kind = "accessor"
+                   /\\ HasPrefix(path, "get Temporal.") ->
+                   IF TemporalGets(heap, path, receiver)
+                   THEN TemporalGetterValue(heap, path, receiver)
+                   ELSE Assert(FALSE, "tla-ts can't throw the TypeError of a getter on another kind of object")
               [] key \\in DOMAIN object.values /\\ object.attributes[key].kind = "accessor"
                    /\\ path = "get Symbol.prototype.description" ->
                    CASE IsSymbol(receiver) -> SymbolDescription(heap, receiver)
@@ -5612,6 +5618,8 @@ GetterCall(heap, getter, receiver) ==
               [] IntlMayWalk(heap, IntlGetterKind(path), receiver) ->
                    Assert(FALSE, "tla-ts can't run a proxy's internal method here")
               [] OTHER -> typeError
+       [] HasPrefix(path, "get Temporal.") ->
+            IF TemporalGets(heap, path, receiver) THEN give(TemporalGetterValue(heap, path, receiver)) ELSE typeError
        [] path \\in SpeciesGetters \\cup {"get %Int8Array.[[Prototype]]%.@@species"} -> give(receiver)
        [] OTHER -> Assert(FALSE, "tla-ts can't tell which function this value holds")
 
@@ -8501,7 +8509,7 @@ JSONClose(heap, frames) ==
   IN [heap |-> made,
       frames |-> Append(SubSeq(frames, 1, Len(frames) - 2),
                         [parent EXCEPT !.pairs = Append(@, <<top.key, Allocated(made)>>)])]
-
+${TEMPORAL_DEFINITIONS}
 ===============================================================================`;
 
 // The lines of the JavaScript module, in units that each start at a line that isn't indented or a

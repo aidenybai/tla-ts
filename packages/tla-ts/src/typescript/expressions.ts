@@ -179,6 +179,7 @@ import {
   string,
   tuple,
 } from "./tla";
+import { getTemporalCall } from "./temporal";
 import {
   getCollection,
   rejectAnyReceiver,
@@ -4418,6 +4419,7 @@ export const translateNode = (
     isHeldError(node, context) ||
     isNewObject(node, context) ||
     isNewDate(node, context) ||
+    (ts.isNewExpression(node) && getTemporalCall(node, context) !== undefined) ||
     getNewIntl(node, context) !== undefined ||
     isNewProxy(node, context) ||
     getNewBuffer(node, context) !== undefined ||

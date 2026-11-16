@@ -24,6 +24,7 @@ import {
   skipCasts,
   PRIMITIVE_FLAGS,
 } from "./context";
+import { getTemporalConstructorKind, getTemporalKind } from "./temporal";
 import {
   type Collection,
   getBuiltIn,
@@ -241,6 +242,11 @@ const isPlainObject = (type: ts.Type, context: Context): boolean => {
     TYPED_ARRAYS.has(constructed) &&
     (symbol?.declarations ?? []).every((inner) => inner.getSourceFile().isDeclarationFile)
   ) {
+    return true;
+  }
+  // An object that a Temporal constructor makes, or the constructor, which a variable may hold
+  // where a script destructures Temporal, and whose properties a script reads from the heap.
+  if (getTemporalKind(type) !== undefined || getTemporalConstructorKind(type) !== undefined) {
     return true;
   }
   // An object that an Intl constructor makes.

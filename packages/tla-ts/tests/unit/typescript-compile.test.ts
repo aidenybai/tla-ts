@@ -46162,7 +46162,7 @@ describe("BigInts", () => {
 
     it("stops at the value of a member that tla-ts doesn't model", async () => {
       const result = await checkModel(
-        'const read = Object.getOwnPropertyDescriptor(Date.prototype, "toTemporalInstant");\nif (read?.value === undefined) throw new Error("undefined");',
+        'const read = Object.getOwnPropertyDescriptor(Uint8Array, "fromBase64");\nif (read?.value === undefined) throw new Error("undefined");',
       );
       expect(result.failure?.message).toContain("tla-ts can't represent this value");
     });
@@ -46338,6 +46338,496 @@ describe("BigInts", () => {
     it("rejects a callback that runs for a key the map holds", async () => {
       expect((await checkModel(getSource("1,2,TypeError"))).failure?.message).toContain(
         "seen 1,1,TypeError",
+      );
+    });
+  });
+
+  describe("records Temporal's built-in objects", () => {
+    const getSource = (expected: string) => `
+      const seen = [
+        typeof Temporal,
+        Temporal.Duration.length,
+        Temporal.PlainDate.name,
+        Temporal.Duration.prototype[Symbol.toStringTag],
+        Object.getOwnPropertyNames(Temporal).join("|"),
+        typeof Object.getOwnPropertyDescriptor(Temporal.Duration.prototype, "years")!.get,
+        Object.getOwnPropertyNames(Date.prototype).includes("toTemporalInstant"),
+      ].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      const expected =
+        "object,0,PlainDate,Temporal.Duration,Now|PlainDate|PlainTime|PlainDateTime|ZonedDateTime|Duration|Instant|PlainYearMonth|PlainMonthDay,function,true";
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects a Temporal without its PlainDate", async () => {
+      const expected =
+        "object,0,PlainDate,Temporal.Duration,Now|PlainTime|PlainDateTime|ZonedDateTime|Duration|Instant|PlainYearMonth|PlainMonthDay,function,true";
+      expect((await checkModel(getSource(expected))).failure?.message).toContain(
+        "seen object,0,PlainDate,Temporal.Duration,Now|PlainDate|",
+      );
+    });
+  });
+
+  describe("runs Temporal.Duration", () => {
+    const getSource = (expected: string) => `
+      const thrown = (run: () => unknown) => {
+        try {
+          run();
+          return "none";
+        } catch (error) {
+          return (error as Error).name;
+        }
+      };
+      const duration = new Temporal.Duration(1, 2, 3, 4, 5, 6, 7, 8, 9, 10);
+      const negated = duration.negated().toString();
+      const minutes = Temporal.Duration.from("PT1.5H").minutes;
+      const hours = new Temporal.Duration(0, 0, 0, 0, 1, 30).total("hours") === 1.5;
+      const order = Temporal.Duration.compare({ hours: 25 }, { days: 1 });
+      const rounded = new Temporal.Duration(0, 0, 0, 1, 2).round({ largestUnit: "hours" }).hours;
+      const text = Temporal.Duration.from({ minutes: 90 })
+        .add({ seconds: 30 })
+        .toString({ fractionalSecondDigits: 2 });
+      const mixed = thrown(() => new Temporal.Duration(1, -1));
+      const empty = thrown(() => Temporal.Duration.from({}));
+      const seen = [
+        duration instanceof Temporal.Duration,
+        duration.years,
+        duration.nanoseconds,
+        duration.sign,
+        negated,
+        minutes,
+        hours,
+        order,
+        rounded,
+        text,
+        mixed,
+        empty,
+      ].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      const expected =
+        "true,1,10,1,-P1Y2M3W4DT5H6M7.00800901S,30,true,1,26,PT90M30.00S,RangeError,TypeError";
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects a sum that drops the fraction's digits", async () => {
+      const expected =
+        "true,1,10,1,-P1Y2M3W4DT5H6M7.00800901S,30,true,1,26,PT90M30S,RangeError,TypeError";
+      expect((await checkModel(getSource(expected))).failure?.message).toContain(
+        "seen true,1,10,1,-P1Y2M3W4DT5H6M7.00800901S,30,true,1,26,PT90M30.00S,",
+      );
+    });
+  });
+
+  describe("runs Temporal.PlainTime", () => {
+    const getSource = (expected: string) => `
+      const thrown = (run: () => unknown) => {
+        try {
+          run();
+          return "none";
+        } catch (error) {
+          return (error as Error).name;
+        }
+      };
+      const time = new Temporal.PlainTime(12, 34, 56, 987, 654, 321);
+      const added = time.add({ hours: 13 }).toString();
+      const rounded = time.round({ smallestUnit: "minute", roundingIncrement: 15 }).toString();
+      const until = time.until("18:00", { largestUnit: "minutes" }).toString();
+      const parsed = Temporal.PlainTime.from("T0123").toString({ smallestUnit: "seconds" });
+      const constrained = time.with({ hour: 25 }).hour;
+      const rejected = thrown(() => time.with({ hour: 25 }, { overflow: "reject" }));
+      const order = Temporal.PlainTime.compare("12:00", time);
+      const seen = [time instanceof Temporal.PlainTime, time.nanosecond, added, rounded, until, parsed, constrained, rejected, order].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      const expected =
+        "true,321,01:34:56.987654321,12:30:00,PT325M3.012345679S,01:23:00,23,RangeError,-1";
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects a time that rounding leaves at the quarter after", async () => {
+      const expected =
+        "true,321,01:34:56.987654321,12:45:00,PT325M3.012345679S,01:23:00,23,RangeError,-1";
+      expect((await checkModel(getSource(expected))).failure?.message).toContain(
+        "seen true,321,01:34:56.987654321,12:30:00,PT325M3.012345679S,01:23:00,23,RangeError,-1",
+      );
+    });
+  });
+
+  describe("runs Temporal.PlainDate", () => {
+    const getSource = (expected: string) => `
+      const thrown = (run: () => unknown) => {
+        try {
+          run();
+          return "none";
+        } catch (error) {
+          return (error as Error).name;
+        }
+      };
+      const date = new Temporal.PlainDate(2020, 2, 29);
+      const added = date.add({ years: 1 }).toString();
+      const until = date.until("2021-03-01", { largestUnit: "months" }).toString();
+      const constrained = Temporal.PlainDate.from({ year: 2021, monthCode: "M02", day: 31 }).toString();
+      const rejected = thrown(() => Temporal.PlainDate.from({ year: 2021, month: 2, day: 31 }, { overflow: "reject" }));
+      const since = date.since("2019-01-01", { smallestUnit: "months", roundingMode: "halfExpand" }).toString();
+      const weeks = date.until("2020-12-25", { largestUnit: "weeks" }).toString();
+      const seen = [date.dayOfWeek, date.dayOfYear, date.weekOfYear, date.inLeapYear, added, until, constrained, rejected, since, weeks].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      const expected = "6,60,9,true,2021-02-28,P12M1D,2021-02-28,RangeError,P14M,P42W6D";
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects a difference that rounds the half month down", async () => {
+      const expected = "6,60,9,true,2021-02-28,P12M1D,2021-02-28,RangeError,P13M,P42W6D";
+      expect((await checkModel(getSource(expected))).failure?.message).toContain(
+        "seen 6,60,9,true,2021-02-28,P12M1D,2021-02-28,RangeError,P14M,P42W6D",
+      );
+    });
+  });
+
+  describe("runs Temporal.PlainDateTime", () => {
+    const getSource = (expected: string) => `
+      const thrown = (run: () => unknown) => {
+        try {
+          run();
+          return "none";
+        } catch (error) {
+          return (error as Error).name;
+        }
+      };
+      const dateTime = Temporal.PlainDateTime.from("1976-11-18T15:23:30.123456789");
+      const rounded = dateTime.round({ smallestUnit: "hour" }).toString();
+      const added = dateTime.add({ days: 1, hours: 12 }).toString();
+      const until = dateTime.until("2019-10-29T10:46:38.271986102", { largestUnit: "years" }).toString();
+      const text = dateTime.toString({ fractionalSecondDigits: 3, calendarName: "always" });
+      const date = dateTime.toPlainDate().toString();
+      const changed = dateTime.with({ minute: 0 }).toString();
+      const zoned = thrown(() => Temporal.PlainDateTime.from("1976-11-18T15:23Z"));
+      const seen = [dateTime.hour, dateTime.dayOfWeek, rounded, added, until, text, date, changed, zoned].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      const expected =
+        "15,4,1976-11-18T15:00:00,1976-11-20T03:23:30.123456789,P42Y11M10DT19H23M8.148529313S,1976-11-18T15:23:30.123[u-ca=iso8601],1976-11-18,1976-11-18T15:00:30.123456789,RangeError";
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects a rounding that carries into the next hour", async () => {
+      const expected =
+        "15,4,1976-11-18T16:00:00,1976-11-20T03:23:30.123456789,P42Y11M10DT19H23M8.148529313S,1976-11-18T15:23:30.123[u-ca=iso8601],1976-11-18,1976-11-18T15:00:30.123456789,RangeError";
+      expect((await checkModel(getSource(expected))).failure?.message).toContain(
+        "seen 15,4,1976-11-18T15:00:00,1976-11-20T03:23:30.123456789,P42Y11M10DT19H23M8.148529313S,1976-11-18T15:23:30.123[u-ca=iso8601],1976-11-18,1976-11-18T15:00:30.123456789,RangeError",
+      );
+    });
+  });
+
+  describe("runs Temporal.Instant", () => {
+    const getSource = (expected: string) => `
+      const thrown = (run: () => unknown) => {
+        try {
+          run();
+          return "none";
+        } catch (error) {
+          return (error as Error).name;
+        }
+      };
+      const instant = new Temporal.Instant(1_000_000_000_123_456_789n);
+      const text = instant.toString();
+      const offset = instant.toString({ timeZone: "+01:00", smallestUnit: "minute" });
+      const parsed = Temporal.Instant.from("1976-11-18T15:23:30.12345+01:00").epochNanoseconds === 217175010123450000n;
+      const until = instant.until(Temporal.Instant.fromEpochMilliseconds(0), { largestUnit: "hours" }).toString();
+      const rounded = instant.round({ smallestUnit: "second", roundingMode: "ceil" }).toString();
+      const local = thrown(() => Temporal.Instant.from("2020-01-01T00:00"));
+      const seen = [instant.epochMilliseconds, text, offset, parsed, until, rounded, local].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      const expected =
+        "1000000000123,2001-09-09T01:46:40.123456789Z,2001-09-09T02:46+01:00,true,-PT277777H46M40.123456789S,2001-09-09T01:46:41Z,RangeError";
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects a ceiling that stays on the second", async () => {
+      const expected =
+        "1000000000123,2001-09-09T01:46:40.123456789Z,2001-09-09T02:46+01:00,true,-PT277777H46M40.123456789S,2001-09-09T01:46:40Z,RangeError";
+      expect((await checkModel(getSource(expected))).failure?.message).toContain(
+        "seen 1000000000123,2001-09-09T01:46:40.123456789Z,2001-09-09T02:46+01:00,true,-PT277777H46M40.123456789S,2001-09-09T01:46:41Z,RangeError",
+      );
+    });
+  });
+
+  describe("runs Temporal.PlainYearMonth and Temporal.PlainMonthDay", () => {
+    const getSource = (expected: string) => `
+      const thrown = (run: () => unknown) => {
+        try {
+          run();
+          return "none";
+        } catch (error) {
+          return (error as Error).name;
+        }
+      };
+      const yearMonth = new Temporal.PlainYearMonth(2019, 6);
+      const added = yearMonth.add({ months: 8 }).toString();
+      const months = yearMonth.until("2021-01", { largestUnit: "months" }).months;
+      const date = yearMonth.toPlainDate({ day: 31 }).toString();
+      const monthDay = Temporal.PlainMonthDay.from({ monthCode: "M02", day: 29 });
+      const leap = monthDay.toPlainDate({ year: 2019 }).toString();
+      const reference = new Temporal.PlainDate(2020, 5, 17).toPlainMonthDay().toString({ calendarName: "always" });
+      const days = thrown(() => yearMonth.add({ days: 1 }));
+      const seen = [yearMonth.daysInMonth, yearMonth.toString(), added, months, date, monthDay.toString(), leap, reference, days].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      const expected =
+        "30,2019-06,2020-02,19,2019-06-30,02-29,2019-02-28,1972-05-17[u-ca=iso8601],RangeError";
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects a leap day in a common year", async () => {
+      const expected =
+        "30,2019-06,2020-02,19,2019-06-30,02-29,2019-02-29,1972-05-17[u-ca=iso8601],RangeError";
+      expect((await checkModel(getSource(expected))).failure?.message).toContain(
+        "seen 30,2019-06,2020-02,19,2019-06-30,02-29,2019-02-28,1972-05-17[u-ca=iso8601],RangeError",
+      );
+    });
+  });
+
+  describe("rounds and totals a duration relative to a plain date", () => {
+    const getSource = (expected: string) => `
+      const thrown = (run: () => unknown) => {
+        try {
+          run();
+          return "none";
+        } catch (error) {
+          return (error as Error).name;
+        }
+      };
+      const duration = new Temporal.Duration(0, 0, 0, 40);
+      const rounded = duration.round({ largestUnit: "months", relativeTo: "2020-01-01" }).toString();
+      const years = new Temporal.Duration(1, 2, 3, 4).round({ smallestUnit: "years", relativeTo: "2020-01-01", roundingMode: "ceil" }).years;
+      const days = new Temporal.Duration(1).total({ unit: "days", relativeTo: new Temporal.PlainDate(2020, 1, 1) });
+      const months = new Temporal.Duration(0, 0, 0, 46).total({ unit: "months", relativeTo: "2021-03-01" }) === 1.5;
+      const order = Temporal.Duration.compare({ months: 1 }, { days: 30 }, { relativeTo: "2020-02-01" });
+      const missing = thrown(() => Temporal.Duration.compare({ months: 1 }, { days: 30 }));
+      const seen = [rounded, years, days, months, order, missing].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("P1M9D,2,366,true,-1,RangeError"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects a month of 30 days in January", async () => {
+      expect(
+        (await checkModel(getSource("P1M10D,2,366,true,-1,RangeError"))).failure?.message,
+      ).toContain("seen P1M9D,2,366,true,-1,RangeError");
+    });
+  });
+
+  describe("rejects a calendar that Node doesn't take", () => {
+    const getSource = (expected: string) => `
+      const thrown = (run: () => unknown) => {
+        try {
+          run();
+          return "none";
+        } catch (error) {
+          return (error as Error).name;
+        }
+      };
+      const unknown = thrown(() => new Temporal.PlainDate(2000, 1, 1, "notacal"));
+      const empty = thrown(() => Temporal.PlainDate.from({ year: 2000, month: 1, day: 1, calendar: "" }));
+      const unsupported = thrown(() => new Temporal.PlainDate(2000, 1, 1, "islamic"));
+      const upper = new Temporal.PlainDate(2000, 1, 1, "ISO8601").calendarId;
+      const seen = [unknown, empty, unsupported, upper].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("RangeError,RangeError,RangeError,iso8601"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects a calendar that it takes", async () => {
+      expect(
+        (await checkModel(getSource("none,RangeError,RangeError,iso8601"))).failure?.message,
+      ).toContain("seen RangeError,RangeError,RangeError,iso8601");
+    });
+
+    it("stops at a calendar that Node takes", async () => {
+      const result = await checkModel(`
+        const date = new Temporal.PlainDate(2000, 1, 1, "gregory");
+        if (date.year !== 2000) throw new Error("year " + date.year);
+      `);
+      expect(result.failure?.message).toContain("tla-ts can't use the calendar gregory");
+    });
+  });
+
+  describe("runs Temporal.ZonedDateTime in UTC and fixed-offset time zones", () => {
+    const getSource = (expected: string) => `
+      const thrown = (run: () => unknown) => {
+        try {
+          run();
+          return "none";
+        } catch (error) {
+          return (error as Error).name;
+        }
+      };
+      const zoned = new Temporal.ZonedDateTime(1_000_000_000_123_456_789n, "+01:00");
+      const text = zoned.toString();
+      const added = zoned.add({ days: 1, hours: 2 }).toString({ smallestUnit: "minute" });
+      const start = Temporal.ZonedDateTime.from("2020-03-08T01:00-08:00[-08:00]");
+      const until = start.until("2020-04-09T03:30-08:00[-08:00]", { largestUnit: "months" }).toString();
+      const day = start.round({ smallestUnit: "day" }).toString();
+      const utc = Temporal.PlainDate.from("2020-01-01").toZonedDateTime("UTC").epochMilliseconds;
+      const relative = new Temporal.Duration(0, 0, 0, 0, 25).round({ largestUnit: "days", relativeTo: start }).toString();
+      const mismatch = thrown(() => Temporal.ZonedDateTime.from("2020-03-08T01:00-07:00[-08:00]"));
+      const seen = [zoned.hour, zoned.offset, text, added, until, day, utc, relative, mismatch].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      const expected =
+        "2,+01:00,2001-09-09T02:46:40.123456789+01:00[+01:00],2001-09-10T04:46+01:00[+01:00],P1M1DT2H30M,2020-03-08T00:00:00-08:00[-08:00],1577836800000,P1DT1H,RangeError";
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects a difference an hour too long", async () => {
+      const expected =
+        "2,+01:00,2001-09-09T02:46:40.123456789+01:00[+01:00],2001-09-10T04:46+01:00[+01:00],P1M1DT3H30M,2020-03-08T00:00:00-08:00[-08:00],1577836800000,P1DT1H,RangeError";
+      expect((await checkModel(getSource(expected))).failure?.message).toContain(
+        "seen 2,+01:00,2001-09-09T02:46:40.123456789+01:00[+01:00],2001-09-10T04:46+01:00[+01:00],P1M1DT2H30M,2020-03-08T00:00:00-08:00[-08:00],1577836800000,P1DT1H,RangeError",
+      );
+    });
+
+    it("stops at a named time zone", async () => {
+      const result = await checkModel(`
+        const zoned = new Temporal.ZonedDateTime(0n, "Europe/Paris");
+        if (zoned.hour !== 1) throw new Error("hour " + zoned.hour);
+      `);
+      expect(result.failure?.message).toContain("tla-ts can't use the time zone Europe/Paris");
+    });
+  });
+
+  describe("runs a Temporal prototype's method or getter through call", () => {
+    const getSource = (expected: string) => `
+      const thrown = (run: () => unknown) => {
+        try {
+          run();
+          return "none";
+        } catch (error) {
+          return (error as Error).name;
+        }
+      };
+      const toJSON = Temporal.PlainDate.prototype.toJSON;
+      const monthCode = Object.getOwnPropertyDescriptor(Temporal.PlainDate.prototype, "monthCode")!.get!;
+      const date = new Temporal.PlainDate(2020, 1, 2);
+      const text = toJSON.call(date);
+      const code = monthCode.call(date);
+      const plain = thrown(() => toJSON.call({}));
+      const prototype = thrown(() => monthCode.call(Temporal.PlainDate.prototype));
+      const seen = [text, code, plain, prototype].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("2020-01-02,M01,TypeError,TypeError"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects a getter that reads a prototype", async () => {
+      expect(
+        (await checkModel(getSource("2020-01-02,M01,TypeError,M01"))).failure?.message,
+      ).toContain("seen 2020-01-02,M01,TypeError,TypeError");
+    });
+  });
+
+  describe("spreads an array literal into a Temporal constructor's arguments", () => {
+    const getSource = (expected: string) => `
+      const args = [1, 2, 3] as const;
+      const explicit = new Temporal.Duration(...args, undefined).toString();
+      const implicit = new Temporal.PlainDate(...args).toString();
+      const literal = new Temporal.PlainTime(...[4, 5], 6).toString();
+      const seen = [explicit, implicit, literal].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("P1Y2M3W,0001-02-03,04:05:06"))).failure).toBeUndefined();
+    });
+
+    it("rejects a spread that leaves the days out", async () => {
+      expect((await checkModel(getSource("P1Y2M,0001-02-03,04:05:06"))).failure?.message).toContain(
+        "seen P1Y2M3W,0001-02-03,04:05:06",
+      );
+    });
+  });
+
+  describe("reads a Temporal constructor that a script destructures from the heap", () => {
+    it("agrees with Node on a constructor that Temporal holds", async () => {
+      const result = await checkModel(`
+        const prototype = Temporal.Instant.prototype;
+        if (Object.getPrototypeOf(prototype) !== Object.prototype) throw new Error("prototype");
+      `);
+      expect(result.failure).toBeUndefined();
+    });
+
+    it("stops at a destructured constructor rather than read it as a record", async () => {
+      const result = await checkModel(`
+        const { Instant } = Temporal;
+        if (Object.getPrototypeOf(Instant.prototype) !== Object.prototype) throw new Error("prototype");
+      `);
+      expect(result.failure?.message).toContain("tla-ts can't read the properties of");
+    });
+  });
+
+  describe("makes a plain date on the day before the earliest date time", () => {
+    const getSource = (expected: string) => `
+      const thrown = (run: () => unknown) => {
+        try {
+          run();
+          return "none";
+        } catch (error) {
+          return (error as Error).name;
+        }
+      };
+      const earliest = new Temporal.PlainDate(-271821, 4, 19);
+      const before = thrown(() => new Temporal.PlainDate(-271821, 4, 18));
+      const midnight = thrown(() => new Temporal.PlainDateTime(-271821, 4, 19));
+      const after = new Temporal.PlainDateTime(-271821, 4, 19, 0, 0, 0, 0, 0, 1).toString();
+      const earlier = thrown(() => earliest.add({ months: -1 }));
+      const later = earliest.add({ days: 1 }).toString();
+      const seen = [earliest.toString(), before, midnight, after, earlier, later].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      const expected =
+        "-271821-04-19,RangeError,RangeError,-271821-04-19T00:00:00.000000001,RangeError,-271821-04-20";
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects a plain date time at the midnight of that day", async () => {
+      const expected =
+        "-271821-04-19,RangeError,none,-271821-04-19T00:00:00.000000001,RangeError,-271821-04-20";
+      expect((await checkModel(getSource(expected))).failure?.message).toContain(
+        "seen -271821-04-19,RangeError,RangeError,",
       );
     });
   });
