@@ -45623,4 +45623,32 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("keeps a map that a field holds on the heap where its object goes to a default, an in, or an unknown parameter", () => {
+    const getSource = (expected: string) => `
+      interface Hook {
+        renderers: Map<number, string>;
+        name: string;
+      }
+      const getRenderers = (hook: Hook) => hook.renderers;
+      const hook: Hook = { renderers: new Map<number, string>(), name: "h" };
+      const describe = (receiver: unknown) => typeof receiver;
+      const isHook = (current: Hook | undefined = hook) =>
+        current !== undefined && "renderers" in current;
+      const renderers = getRenderers(hook);
+      renderers.set(1, "a");
+      const seen = [hook.renderers.size, describe(hook), isHook()].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("1,object,true"))).failure).toBeUndefined();
+    });
+
+    it("rejects a map that the set left empty", async () => {
+      expect((await checkModel(getSource("0,object,true"))).failure?.message).toContain(
+        "seen 1,object,true",
+      );
+    });
+  });
 });

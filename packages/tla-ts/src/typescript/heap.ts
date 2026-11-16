@@ -5478,7 +5478,10 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
           ts.isIdentifier(parent.name) && keepsFields(type, checker.getTypeAtLocation(parent.name))
         );
       }
-      if (ts.isPropertyDeclaration(parent) && parent.initializer === node) {
+      if (
+        (ts.isPropertyDeclaration(parent) || ts.isParameter(parent)) &&
+        parent.initializer === node
+      ) {
         return keepsFields(type, checker.getTypeAtLocation(parent.name));
       }
       if (
@@ -5517,16 +5520,30 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
         const contextual =
           checker.getContextualType(node) ??
           (property === undefined ? undefined : checker.getTypeOfSymbol(property));
-        return contextual !== undefined && keepsFields(type, contextual);
+        // A script's parameter of type any or unknown takes the object's reference, whose fields a
+        // read finds on the heap by name, unlike a built-in's, such as JSON.stringify's, which reads
+        // every field.
+        const callee = ts.isCallExpression(parent)
+          ? getSymbol(parent.expression, checker)?.valueDeclaration
+          : undefined;
+        const isScriptParameter =
+          callee !== undefined &&
+          !callee.getSourceFile().isDeclarationFile &&
+          contextual !== undefined &&
+          (contextual.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;
+        return isScriptParameter || (contextual !== undefined && keepsFields(type, contextual));
       }
       // A spread copies each field, which keeps the array that the field holds.
       if (ts.isSpreadAssignment(parent)) {
         return keepsFields(type, checker.getTypeAtLocation(parent.parent));
       }
       // A check reads only whether the object is there, as && gives its left side only where
-      // that is falsy.
+      // that is falsy, and in reads only its keys.
       if (
         ts.isIfStatement(parent) ||
+        (ts.isBinaryExpression(parent) &&
+          parent.right === node &&
+          parent.operatorToken.kind === ts.SyntaxKind.InKeyword) ||
         ts.isPrefixUnaryExpression(parent) ||
         (ts.isBinaryExpression(parent) &&
           parent.left === node &&
