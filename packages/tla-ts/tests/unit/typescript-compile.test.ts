@@ -45738,4 +45738,38 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("runs a thenable's then that an async function passed to a helper makes", () => {
+    const getSource = (expected: string) => `
+      declare function setTimeout(callback: () => void): void;
+      const log: string[] = [];
+      function runTest(body: () => Promise<void>) {
+        body().then(() => {
+          log.push("done");
+        });
+      }
+      runTest(async function () {
+        let counter = 0;
+        const thenable = {
+          then(resolve: (value: string) => void) {
+            counter++;
+            resolve("value");
+          },
+        };
+        const value = await thenable;
+        log.push(\`\${value}:\${counter}\`);
+      });
+      setTimeout(() => {
+        if (log.join() !== "${expected}") throw new Error(log.join());
+      });
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("value:1,done"))).failure).toBeUndefined();
+    });
+
+    it("rejects a then that leaves the counter as it was", async () => {
+      expect((await checkModel(getSource("value:0,done"))).failure).toBeDefined();
+    });
+  });
 });

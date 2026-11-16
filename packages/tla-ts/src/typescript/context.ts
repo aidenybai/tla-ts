@@ -1604,11 +1604,13 @@ const getPassedTo = (callee: ts.Expression) => {
 
 // A function that a call passes to a function that calls it at one place, outside loops and
 // functions of its own, and names it nowhere else, so that it runs at most once where the call
-// runs once.
+// runs once. An async one isn't, as the methods it makes read its locals from the environment of
+// its call, which only a function that may run more than once makes.
 const isPassedOnce = (node: ts.SignatureDeclaration) => {
   const call = node.parent;
   if (
     !(ts.isFunctionExpression(node) || ts.isArrowFunction(node)) ||
+    (ts.getCombinedModifierFlags(node) & ts.ModifierFlags.Async) !== 0 ||
     !ts.isCallExpression(call) ||
     !call.arguments.includes(node) ||
     call.arguments.slice(0, call.arguments.indexOf(node)).some(ts.isSpreadElement) ||
