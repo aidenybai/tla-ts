@@ -109,7 +109,7 @@ import {
 import { getFingerprintDistance, OUT_DEGREE_BUCKETS } from "./tlc/summary";
 import { createActionRecord, createCounterExample } from "./tlc/tlcext-operators";
 import type { TlcVersion } from "./tlc/version";
-import { runTypedSearch } from "./typed-tier";
+import { runTypedSearch, type TypedResult } from "./typed-tier";
 import {
   createCanonicalizer,
   createModelValue,
@@ -1121,7 +1121,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       isFingerprinted: !options.isFingerprintDistanceSkipped,
       livenessCheck: options.livenessCheck ?? "default",
     });
-  if (typed && !typed.deadlock && !typed.violation) {
+  if (typed && !typed.deadlock && !typed.violation && !typed.lasso) {
     for (let count = 2; count < typed.initialStates.generated; count *= 2) {
       reportInitialStatesProgress(count, options.onProgress);
     }
@@ -1549,6 +1549,15 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     periodic.time += performance.now() - now;
     return lasso;
   };
+  const adoptTypedSearch = (searched: TypedResult) => {
+    runtime.generatedStates = searched.generatedStates;
+    runtime.distinctStates = searched.distinctStates;
+    runtime.queueSize = searched.queuedStates;
+    runtime.diameter = searched.depth;
+    searchDepth = searched.depth;
+    outDegrees.splice(0, outDegrees.length, ...searched.outDegrees);
+    newStateCount = 0;
+  };
   // The tier found a state without successors, or a successor that violates an invariant or an
   // action property. The interpreter rebuilds the tier's path to it and reports it, as it would after
   // its own search.
@@ -1586,13 +1595,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         visitSuccessor(parent.index, step.successor, [], undefined, step.action);
         parent.index = states.length - 1;
       }
-      runtime.generatedStates = typed.generatedStates;
-      runtime.distinctStates = typed.distinctStates;
-      runtime.queueSize = typed.queuedStates;
-      runtime.diameter = typed.depth;
-      searchDepth = typed.depth;
-      outDegrees.splice(0, outDegrees.length, ...typed.outDegrees);
-      newStateCount = 0;
+      adoptTypedSearch(typed);
       Object.assign(current, { index: parent.index, candidate: undefined, isExpanding: true });
       if (violating && violated) {
         lookUpSuccessor(states[parent.index], violating.successor);
@@ -1609,7 +1612,46 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       if (result) return result;
     }
   }
-  for (let index = 0; index < states.length && !runtime.isStopped; index++) {
+  // The tier found a behavior that violates a temporal property after its whole search. The
+  // interpreter stores the paths to the lasso's states and reports it, as it would after its own.
+  const lassoSteps = new Map<number, { successor: Successor; action: SpecAction | undefined }>();
+  for (const entry of typed?.lasso?.states ?? []) {
+    const initial = entry.parent === -1 ? states.find(entry.isState) : undefined;
+    if (initial) {
+      lassoSteps.set(entry.index, {
+        successor: { state: initial, action: undefined },
+        action: undefined,
+      });
+    }
+    const parent = lassoSteps.get(entry.parent)?.successor.state;
+    if (!parent) continue;
+    // The interpreter expands only the states it stores, which it has canonicalized.
+    canonicalizeState(parent);
+    forEachActionSuccessor(parent, undefined, (successor, action) => {
+      if (!entry.isState(successor.state)) return false;
+      lassoSteps.set(entry.index, { successor, action });
+      return true;
+    });
+  }
+  const lassoIndexes = new Map<number, number>();
+  const typedLasso =
+    typed?.lasso && lassoSteps.size === typed.lasso.states.length ? typed.lasso : undefined;
+  typedLasso?.states.forEach((entry) => {
+    const step = lassoSteps.get(entry.index);
+    const parent = lassoIndexes.get(entry.parent);
+    if (step && parent !== undefined)
+      visitSuccessor(parent, step.successor, [], undefined, step.action);
+    lassoIndexes.set(
+      entry.index,
+      parent === undefined ? states.findIndex(entry.isState) : states.length - 1,
+    );
+  });
+  if (typed && typedLasso) adoptTypedSearch(typed);
+  for (
+    let index = typedLasso ? states.length : 0;
+    index < states.length && !runtime.isStopped;
+    index++
+  ) {
     current.index = index;
     current.candidate = undefined;
     runtime.queueSize = states.length - index - 1;
@@ -1654,7 +1696,15 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       statistics: createResult("success"),
     });
   }
-  const lasso = finalLiveness?.findViolation();
+  const getLassoIndexes = (indexes: number[]) =>
+    indexes.map((index) => lassoIndexes.get(index) ?? -1);
+  const lasso = typedLasso
+    ? {
+        prefix: getLassoIndexes(typedLasso.prefix),
+        cycle: getLassoIndexes(typedLasso.cycle),
+        isCycleConstrained: typedLasso.isCycleConstrained,
+      }
+    : finalLiveness?.findViolation();
   if (finalLiveness && lasso) return reportLasso(finalLiveness, lasso);
 
   if (finalLiveness) options.onProgress?.({ kind: "liveness-finished" });

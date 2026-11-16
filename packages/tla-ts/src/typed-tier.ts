@@ -17,6 +17,7 @@ import { isStackOverflow, TlaError } from "./errors";
 import {
   createLiveGraph,
   getLiveAtoms,
+  type Lasso,
   type LiveAtom,
   type LiveSuccessor,
 } from "./liveness-checker";
@@ -244,6 +245,8 @@ export interface TypedResult {
   // The path to the first successor that violates an invariant or an action property, which is its
   // last state.
   violation: TypedPath | undefined;
+  // A behavior that violates a temporal property, found after the whole search.
+  lasso: TypedLasso | undefined;
   // TLC's fingerprints of the states, in runs each below the next.
   forEachFingerprintRun: (visit: (run: BigInt64Array) => void) => void;
 }
@@ -252,6 +255,12 @@ export interface TypedResult {
 export interface TypedPath {
   length: number;
   isPathState: (position: number, state: Value[]) => boolean;
+}
+
+// A lasso of the tier's states, which the interpreter stores to report it. Each state comes after
+// the state it was first found from, from an initial state.
+export interface TypedLasso extends Lasso {
+  states: { index: number; parent: number; isState: (state: Value[]) => boolean }[];
 }
 
 const UNSUPPORTED = { reason: "unsupported" };
@@ -6156,7 +6165,10 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
   // path to a deadlock or a violation. States are expanded in the order they are found, so the 0 bits
   // before a state's 1 bit count the state it was found from.
   const isPathKept =
-    check.isDeadlockChecked || check.invariants.length > 0 || check.actionProperties.length > 0;
+    check.isDeadlockChecked ||
+    check.invariants.length > 0 ||
+    check.actionProperties.length > 0 ||
+    (check.liveness !== undefined && check.livenessCheck !== "off");
   const finds = { data: new Int32Array(isPathKept ? 1 << 11 : 0), size: 0 };
   // TLC's fingerprints of the states, as low and high words in small pages, one list of pages for
   // each top byte in signed order. Each list sorts alone, and none grows by copying.
@@ -6280,14 +6292,14 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
     }
     return compiled.decode(reader);
   };
-  // Each state on the path is the first successor of the one before it with its key, as it was found.
-  const getPath = (index: number) => {
+  // The states on the path to a state, given the number of states expanded.
+  const getPathIndexes = (index: number, expanded: number) => {
     // A state's 1 bit comes after the one of the state it was found from, so one pass back over the
-    // bits of the states expanded before this one finds the whole path.
+    // bits of the states expanded finds the whole path.
     const indexes = [index];
     let bit = finds.size;
-    let zeros = expanding.index;
-    let ones = finds.size - expanding.index;
+    let zeros = expanded;
+    let ones = finds.size - expanded;
     while (indexes[0] >= initialStates.distinct) {
       const found = indexes[0] - initialStates.distinct;
       for (;;) {
@@ -6297,6 +6309,10 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
       }
       indexes.unshift(zeros);
     }
+    return indexes;
+  };
+  // Each state on the path is the first successor of the one before it with its key, as it was found.
+  const getPath = (indexes: number[]) => {
     const findFirst = (states: (emit: (state: Plain[]) => void) => void, target: number) => {
       const found: Plain[][] = [];
       states((state) => {
@@ -6393,19 +6409,17 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
     if (isViolated) violations.push({ state: successor, queued: distinct - expanding.index - 1 });
     if (live && index !== -1) liveSuccessors.push({ index, state: successor });
   };
+  const isPlainState = (plain: Plain[], values: Value[]) =>
+    values.every((value, variable) =>
+      isSame(toPlain(value, program.variableTypes[variable], program.plains), plain[variable]),
+    );
   const getTypedPath = (path: Plain[][]): TypedPath => ({
     length: path.length,
-    isPathState: (position, values) =>
-      values.every((value, variable) =>
-        isSame(
-          toPlain(value, program.variableTypes[variable], program.plains),
-          path[position][variable],
-        ),
-      ),
+    isPathState: (position, values) => isPlainState(path[position], values),
   });
   const getResult = (
     queued: number,
-    paths: Pick<TypedResult, "deadlock" | "violation">,
+    paths: Pick<TypedResult, "deadlock" | "violation" | "lasso">,
   ): TypedResult => ({
     generatedStates: statistics.generated,
     distinctStates: statistics.distinct,
@@ -6448,7 +6462,11 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
     if (violations.length > 0) {
       return getResult(violations[0].queued, {
         deadlock: undefined,
-        violation: getTypedPath([...getPath(index), violations[0].state]),
+        violation: getTypedPath([
+          ...getPath(getPathIndexes(index, expanding.index)),
+          violations[0].state,
+        ]),
+        lasso: undefined,
       });
     }
     const isDeadlocked = expansion.successors === 0 && check.isDeadlockChecked;
@@ -6463,13 +6481,45 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
     if (isChecked && isPeriodic && !isDeadlocked && live?.findViolation()) deopt();
     if (isDeadlocked) {
       return getResult(statistics.distinct - index - 1, {
-        deadlock: getTypedPath(getPath(index)),
+        deadlock: getTypedPath(getPath(getPathIndexes(index, expanding.index))),
         violation: undefined,
+        lasso: undefined,
       });
     }
     outDegrees[Math.min(expansion.newStates, OUT_DEGREE_BUCKETS - 1)]++;
     if (isPathKept) pushFinds(finds, expansion.newStates);
   }
-  if (check.livenessCheck !== "off" && live?.findViolation()) deopt();
-  return getResult(0, { deadlock: undefined, violation: undefined });
+  const lasso = check.livenessCheck === "off" ? undefined : live?.findViolation();
+  if (lasso === undefined) {
+    return getResult(0, { deadlock: undefined, violation: undefined, lasso: undefined });
+  }
+  // With symmetry, a state stands for its class, so the cycle the tier finds may differ from the
+  // interpreter's.
+  if (isImaged) deopt();
+  const found = new Map<number, { index: number; parent: number; state: Plain[] }>();
+  [...lasso.prefix, ...lasso.cycle].forEach((target) => {
+    const indexes = getPathIndexes(target, statistics.distinct);
+    getPath(indexes).forEach((state, position) =>
+      found.set(indexes[position], {
+        index: indexes[position],
+        parent: indexes[position - 1] ?? -1,
+        state,
+      }),
+    );
+  });
+  return getResult(0, {
+    deadlock: undefined,
+    violation: undefined,
+    lasso: {
+      ...lasso,
+      // A state comes after the one it was found from, which was found before it.
+      states: [...found.values()]
+        .toSorted((left, right) => left.index - right.index)
+        .map((entry) => ({
+          index: entry.index,
+          parent: entry.parent,
+          isState: (values: Value[]) => isPlainState(entry.state, values),
+        })),
+    },
+  });
 };
