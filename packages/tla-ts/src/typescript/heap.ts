@@ -49,6 +49,7 @@ import {
   isNestedFunction,
   isClosure,
   getCaptures,
+  getSharedDeclaration,
   getCapturedArguments,
   skipCasts,
   getGivenValue,
@@ -1414,6 +1415,18 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
     }
     const bindings = [
       ...getCaptures(node, context).map((symbol): [Expression, Expression] => {
+        // A local that closures share is in an environment of its own, which this one holds.
+        const shared = getSharedDeclaration(symbol, context);
+        if (shared !== undefined) {
+          const environment = scope.activations?.get(shared);
+          if (environment === undefined || scope.uninitialized.has(symbol)) {
+            throw new TlaTypeScriptError(
+              `tla-ts can't make a closure that shares ${symbol.name} before its declaration runs`,
+              node,
+            );
+          }
+          return [string(symbol.name), environment];
+        }
         // A parameter that the call binds to a function holds that function.
         const bound = scope.functions.get(symbol);
         const value =

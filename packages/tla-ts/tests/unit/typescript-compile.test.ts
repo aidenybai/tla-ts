@@ -22754,20 +22754,24 @@ describe("errors", () => {
     expect((await checkModel(getClosureSource("hi bhi b"))).failure?.message).toContain("closures");
   });
 
-  it("stops where a function that made a closure changes a local after making it", () => {
-    expect(() =>
-      compile(`
-        const seen = { count: 0 };
-        let probe: (() => number) | undefined;
-        function make() {
-          let count = 0;
-          probe = function () { return count; };
-          count += 1;
-        }
-        make();
-        if (probe!() !== 1) throw new Error("closures");
-      `),
-    ).toThrow("tla-ts can't follow a function that outlives its call");
+  const getChangedAfterSource = (expected: number) => `
+      const seen = { count: 0 };
+      let probe: (() => number) | undefined;
+      function make() {
+        let count = 0;
+        probe = function () { return count; };
+        count += 1;
+      }
+      make();
+      if (probe!() !== ${expected}) throw new Error("closures");
+  `;
+
+  it("reads a local that a function that made a closure changes after making it", async () => {
+    expect((await checkModel(getChangedAfterSource(1))).failure).toBeUndefined();
+  });
+
+  it("rejects the local's value as the closure was made", async () => {
+    expect((await checkModel(getChangedAfterSource(0))).failure?.message).toContain("closures");
   });
 
   const getOwnNameSource = (operator: string) => `
@@ -23086,20 +23090,24 @@ describe("errors", () => {
     );
   });
 
-  it("stops where a function reads a local after a closure that changes it is made", () => {
-    expect(() =>
-      compile(`
-        const seen = { count: 0 };
-        let next: (() => number) | undefined;
-        function counter() {
-          let count = 0;
-          next = function () { count += 1; return count; };
-          return count;
-        }
-        counter();
-        if (next!() !== 1) throw new Error("counters");
-      `),
-    ).toThrow("tla-ts can't follow a function that outlives its call and shares a local");
+  const getReadAfterSource = (expected: number) => `
+      const seen = { count: 0 };
+      let next: (() => number) | undefined;
+      function counter() {
+        let count = 0;
+        next = function () { count += 1; return count; };
+        return count;
+      }
+      const made = counter();
+      if (next!() + made !== ${expected}) throw new Error("counters");
+  `;
+
+  it("reads a local after a closure that changes it is made", async () => {
+    expect((await checkModel(getReadAfterSource(1))).failure).toBeUndefined();
+  });
+
+  it("rejects a closure that changes a copy of the local", async () => {
+    expect((await checkModel(getReadAfterSource(2))).failure?.message).toContain("counters");
   });
 
   it("makes a class expression that a script only reads where it runs", async () => {
@@ -45605,6 +45613,84 @@ describe("BigInts", () => {
           });
         `),
       ).toThrow("tla-ts can't make a class in code that may run more than once");
+    });
+  });
+
+  describe("shares a local between a function and the closures it makes", () => {
+    const getSource = (expected: string) => `
+      const log: string[] = [];
+      function makePair(label: string) {
+        let count = 0;
+        const pair = {
+          up() {
+            count++;
+            return count;
+          },
+          get current() {
+            return label + count;
+          },
+          reset: function () {
+            count = 0;
+          },
+        };
+        log.push("made " + count);
+        return pair;
+      }
+      function countReads(label: number) {
+        var calls = 0;
+        const box = {
+          valueOf() {
+            calls++;
+            return label;
+          },
+        };
+        const total = +box + +box;
+        log.push(String(calls), String(total));
+        calls += 10;
+        log.push(String(+box), String(calls));
+      }
+      const first = makePair("a");
+      const second = makePair("b");
+      first.up();
+      first.up();
+      second.up();
+      log.push(String(first.up()), String(second.up()));
+      first.reset();
+      log.push(String(first.up()), String(second.up()));
+      countReads(1);
+      countReads(5);
+      const seen = log.join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("made 0,made 0,3,2,1,3,2,2,1,13,2,10,5,13"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects a closure that keeps its own copy of the local", async () => {
+      expect(
+        (await checkModel(getSource("made 0,made 0,3,2,4,3,2,2,1,13,2,10,5,13"))).failure?.message,
+      ).toContain("seen made 0,made 0,3,2,1,3,2,2,1,13,2,10,5,13");
+    });
+
+    it("stops where a statement gives the local more than a literal", () => {
+      expect(() =>
+        compile(`
+          function makeCounter() {
+            let count = 1;
+            const counter = {
+              double() {
+                count = count * 2;
+              },
+            };
+            counter.double();
+            return count;
+          }
+          if (makeCounter() + makeCounter() !== 4) throw new Error("count");
+        `),
+      ).toThrow("tla-ts can't follow a function that outlives its call and shares a local");
     });
   });
 });

@@ -18,7 +18,7 @@ import { createNames, type Names } from "./names";
 import { getBindingNames, getLexicalNames } from "./early-errors";
 import { getKeptReads } from "./narrowing";
 import { mayThrow } from "./functions";
-import type { Namespace } from "./namespaces";
+import { isLiteralValue, type Namespace } from "./namespaces";
 import type { Link } from "./regions";
 import { apply, define, identifier, ifExpression, index, letExpression, string } from "./tla";
 
@@ -3223,6 +3223,9 @@ export const getCaptures = (node: Closure, context: Context) => {
     });
   captures.forEach((capture) => {
     const declaration = capture.declaration;
+    // A local that closures share holds its value in an environment of its own, which the
+    // closure's environment holds.
+    if (getSharedDeclaration(capture.symbol, context) !== undefined) return;
     // A local that changes lives in the environment once the closure is made, so nothing but the
     // closure may name it after that.
     if (
@@ -3266,6 +3269,115 @@ export const getCaptures = (node: Closure, context: Context) => {
     }
   });
   return [...new Set(captures.map((capture) => capture.symbol))];
+};
+
+// The name that a statement steps or gives a literal, as calls++ or done = true does, or that it
+// declares with a literal.
+const getSimplyWritten = (statement: ts.Node) => {
+  if (ts.isVariableStatement(statement)) {
+    const declarations = statement.declarationList.declarations;
+    const declaration = declarations.length === 1 ? declarations[0] : undefined;
+    return declaration !== undefined &&
+      ts.isIdentifier(declaration.name) &&
+      declaration.initializer !== undefined &&
+      isLiteralValue(declaration.initializer)
+      ? declaration.name
+      : undefined;
+  }
+  const expression = ts.isExpressionStatement(statement) ? statement.expression : undefined;
+  if (expression === undefined) return undefined;
+  if (ts.isPrefixUnaryExpression(expression) || ts.isPostfixUnaryExpression(expression)) {
+    return (expression.operator === ts.SyntaxKind.PlusPlusToken ||
+      expression.operator === ts.SyntaxKind.MinusMinusToken) &&
+      ts.isIdentifier(expression.operand)
+      ? expression.operand
+      : undefined;
+  }
+  return ts.isBinaryExpression(expression) &&
+    [
+      ts.SyntaxKind.EqualsToken,
+      ts.SyntaxKind.PlusEqualsToken,
+      ts.SyntaxKind.MinusEqualsToken,
+    ].includes(expression.operatorToken.kind) &&
+    ts.isIdentifier(expression.left) &&
+    isLiteralValue(expression.right)
+    ? expression.left
+    : undefined;
+};
+
+// The declaration of a local that a function shares with the closures it makes, which the
+// function or another closure names after a closure that reads it is made, or that a closure that
+// a function inside it makes reads. An environment of its own holds it from where its declaration
+// runs, which each reads and writes. It's a primitive that a let, or a var of the function's body,
+// declares with a literal, and that only statements that step it or give it a literal change.
+export const getSharedDeclaration = (symbol: ts.Symbol, context: Context) => {
+  const declaration = symbol.valueDeclaration;
+  const statement = declaration?.parent.parent;
+  const owner = declaration && ts.findAncestor(declaration.parent, ts.isFunctionLike);
+  if (
+    context.heap === undefined ||
+    declaration === undefined ||
+    !ts.isVariableDeclaration(declaration) ||
+    statement === undefined ||
+    getSimplyWritten(statement) !== declaration.name ||
+    symbol.declarations?.length !== 1 ||
+    owner === undefined ||
+    (ts.getCombinedModifierFlags(owner) & ts.ModifierFlags.Async) !== 0 ||
+    ((ts.isFunctionDeclaration(owner) ||
+      ts.isFunctionExpression(owner) ||
+      ts.isMethodDeclaration(owner)) &&
+      owner.asteriskToken !== undefined) ||
+    ((ts.getCombinedNodeFlags(declaration) & ts.NodeFlags.BlockScoped) === 0 &&
+      !(ts.isBlock(statement.parent) && statement.parent.parent === owner)) ||
+    !isAssigned(symbol, declaration.getSourceFile(), context)
+  ) {
+    return undefined;
+  }
+  const type = context.checker.getTypeAtLocation(declaration.name);
+  if (
+    !(type.isUnion() ? type.types : [type]).every(
+      (member) => (member.flags & PRIMITIVE_FLAGS) !== 0,
+    )
+  ) {
+    return undefined;
+  }
+  const names = findNodes(
+    owner,
+    (inner): inner is ts.Identifier =>
+      ts.isIdentifier(inner) &&
+      inner.text === symbol.name &&
+      (ts.isShorthandPropertyAssignment(inner.parent)
+        ? context.checker.getShorthandAssignmentValueSymbol(inner.parent)
+        : getSymbol(inner, context.checker)) === symbol,
+  );
+  const isSimplyWritten = findNodes(owner, (inner): inner is ts.Node => {
+    const target = getAssignedTarget(inner);
+    return target !== undefined && isWrittenBy(target, symbol, context);
+  }).every((write) => getSimplyWritten(write.parent) === getAssignedTarget(write));
+  const isShared = names.some((name) => {
+    const closure = ts.findAncestor(name.parent, (ancestor) =>
+      ancestor === owner ? "quit" : isClosure(ancestor, context),
+    );
+    return (
+      closure !== undefined &&
+      (ts.findAncestor(closure.parent, ts.isFunctionLike) !== owner ||
+        names.some(
+          (other) =>
+            ts.findAncestor(other, (ancestor) => ancestor === closure) === undefined &&
+            (other.end > closure.getStart() ||
+              ts.findAncestor(other.parent, ts.isFunctionLike) !== owner),
+        ))
+    );
+  });
+  return isSimplyWritten && isShared ? declaration : undefined;
+};
+
+// The local that closures share that a statement writes, which it writes in its environment.
+export const getSharedWrite = (statement: ts.Statement, context: Context) => {
+  const name = getSimplyWritten(statement);
+  const symbol = name && getSymbol(name, context.checker);
+  const declaration = symbol && getSharedDeclaration(symbol, context);
+  return symbol === undefined || declaration === undefined ? undefined : { symbol, declaration };
 };
 
 // The async function around a function that binds each local the function reads from outside it.

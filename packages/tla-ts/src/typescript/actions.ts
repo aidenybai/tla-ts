@@ -109,6 +109,8 @@ import {
   isVarFunction,
   getVarFunctionTarget,
   getOwnSymbol,
+  getSharedDeclaration,
+  getSharedWrite,
   getSymbol,
   isAssigned,
   getTopLevelDeclaration,
@@ -403,6 +405,7 @@ import {
   except,
   exceptAt,
   field,
+  functionFrom,
   functionOf,
   getLocation,
   identifier,
@@ -6541,7 +6544,16 @@ export const enterClosure = (
   frame: Frame,
   run: (inner: Path, innerFrame: Frame, leave: (after: Path) => Path) => Formula,
 ) => {
-  const captures = getCaptures(closure, context);
+  // The locals that closures share stay in their own environments, which the closure's holds, and
+  // which its body reads and writes.
+  const read = getCaptures(closure, context);
+  const shared = read.flatMap((symbol) => {
+    const declaration = getSharedDeclaration(symbol, context);
+    return declaration === undefined ? [] : [{ symbol, declaration }];
+  });
+  const isShared = (symbol: ts.Symbol) => shared.some((entry) => entry.symbol === symbol);
+  const isSharedKey = (key: ts.Node) => shared.some((entry) => entry.declaration === key);
+  const captures = read.filter((symbol) => !isShared(symbol));
   const argumentsBody = getCapturedArguments(closure, context)?.body;
   const written = captures.filter((symbol) => isAssigned(symbol, closure, context));
   const heapSymbol = context.heap;
@@ -6553,6 +6565,14 @@ export const enterClosure = (
     scope: {
       ...after.scope,
       entered: path.scope.entered,
+      activations: new Map([
+        ...[...(after.scope.activations ?? [])].filter((entry) => !isSharedKey(entry[0])),
+        ...[...(path.scope.activations ?? [])].filter((entry) => isSharedKey(entry[0])),
+      ]),
+      uninitialized: new Set([
+        ...[...after.scope.uninitialized].filter((symbol) => !isShared(symbol)),
+        ...[...path.scope.uninitialized].filter(isShared),
+      ]),
       allocated: new Map([
         ...[...after.scope.allocated].filter((entry) => entry[0] !== argumentsBody),
         ...[...path.scope.allocated].filter((entry) => entry[0] === argumentsBody),
@@ -6613,6 +6633,14 @@ export const enterClosure = (
             useJavaScript("Captured", [heap, value, string(symbol.name)], context),
           ]),
         ]),
+        activations: new Map([
+          ...(path.scope.activations ?? []),
+          ...shared.map((entry): [ts.Node, Expression] => [
+            entry.declaration,
+            useJavaScript("Captured", [heap, value, string(entry.symbol.name)], context),
+          ]),
+        ]),
+        uninitialized: new Set([...path.scope.uninitialized].filter((symbol) => !isShared(symbol))),
       },
     },
     {
@@ -19202,7 +19230,10 @@ const hoistVars = (statements: readonly ts.Statement[], path: Path, context: Con
   ) {
     return path;
   }
-  const hoisted = getHoistedVars(statements, context);
+  // A var that closures share has no binding, as its environment holds it once it's declared.
+  const hoisted = getHoistedVars(statements, context).filter(
+    (symbol) => getSharedDeclaration(symbol, context) === undefined,
+  );
   return hoisted.length === 0
     ? path
     : {
@@ -19216,6 +19247,109 @@ const hoistVars = (statements: readonly ts.Statement[], path: Path, context: Con
         },
         mutable: new Set([...path.mutable, ...hoisted]),
       };
+};
+
+// A statement that writes a local that closures share, which writes the environment that holds the
+// local, or makes it where the statement declares the local.
+const translateSharedWrite = (
+  statement: ts.Statement,
+  shared: { symbol: ts.Symbol; declaration: ts.VariableDeclaration },
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path) => Formula,
+): Formula => {
+  const symbol = shared.symbol;
+  const key = string(symbol.name);
+  const environment = path.scope.activations?.get(shared.declaration);
+  const isInitialized = !path.scope.uninitialized.has(symbol);
+  const isDeclaration = ts.isVariableStatement(statement);
+  if (!isDeclaration && (environment === undefined || !isInitialized)) {
+    return leaf(
+      apply("Assert", [
+        boolean(false),
+        string(
+          `tla-ts can't write ${symbol.name}, which closures share, outside its declaration's run`,
+        ),
+      ]),
+    );
+  }
+  const bound =
+    environment === undefined || isDeclaration
+      ? path
+      : {
+          ...path,
+          mutable: new Set([...path.mutable, symbol]),
+          scope: {
+            ...path.scope,
+            bindings: new Map([
+              ...path.scope.bindings,
+              [
+                symbol,
+                useJavaScript(
+                  "EnvironmentValue",
+                  [getHeap(path.scope, statement, context), environment, key],
+                  context,
+                ),
+              ],
+            ]),
+          },
+        };
+  const store = (after: Path) => {
+    const value = after.scope.bindings.get(symbol);
+    if (value === undefined) throw new TlaTypeScriptError("Unsupported write", statement);
+    const heap = getHeap(after.scope, statement, context);
+    const stored: Path = {
+      ...after,
+      mutable: new Set([...after.mutable].filter((other) => other !== symbol)),
+      scope: {
+        ...after.scope,
+        bindings: new Map([...after.scope.bindings].filter((entry) => entry[0] !== symbol)),
+        uninitialized: new Set([...after.scope.uninitialized].filter((other) => other !== symbol)),
+      },
+    };
+    if (environment !== undefined && !isDeclaration) {
+      return continueWith(
+        withHeap(
+          stored,
+          useJavaScript(
+            "SetEnvironment",
+            [heap, environment, functionFrom([[key, value]])],
+            context,
+          ),
+          context,
+        ),
+      );
+    }
+    const name = context.names.getFresh("environment");
+    const made = withHeap(stored, identifier(name), context);
+    return bindOnce(
+      stored,
+      name,
+      useJavaScript(
+        "Allocate",
+        [heap, useJavaScript("EnvironmentObject", [functionFrom([[key, value]])], context)],
+        context,
+      ),
+      continueWith({
+        ...made,
+        scope: {
+          ...made.scope,
+          activations: new Map([
+            ...(made.scope.activations ?? []),
+            [shared.declaration, useJavaScript("Allocated", [identifier(name)], context)],
+          ]),
+        },
+      }),
+    );
+  };
+  return ts.isVariableStatement(statement)
+    ? translateDeclarations(statement.declarationList.declarations, bound, context, frame, store)
+    : ts.isExpressionStatement(statement)
+      ? allocate(statement.expression, bound, context, (inner) =>
+          translateExpressionStatement(statement.expression, inner, context, frame, store),
+        )
+      : store(bound);
 };
 
 // The labels that name a statement, from the nearest out.
@@ -19399,6 +19533,39 @@ export const translateStatements = (
       frame,
     );
   }
+  // A function's body starts with no environment for the vars that closures share, which their
+  // declarations make, so that it reads none of an earlier call's.
+  const sharedVars =
+    block !== undefined &&
+    ts.isBlock(block) &&
+    block.statements === statements &&
+    ts.isFunctionLike(block.parent)
+      ? statements.flatMap((inner) =>
+          ts.isVariableStatement(inner)
+            ? inner.declarationList.declarations.filter(
+                (declaration) => path.scope.activations?.has(declaration) ?? false,
+              )
+            : [],
+        )
+      : [];
+  if (sharedVars.length > 0) {
+    return translateStatements(
+      statements,
+      {
+        ...path,
+        scope: {
+          ...path.scope,
+          activations: new Map(
+            [...(path.scope.activations ?? [])].filter(
+              (entry) => !sharedVars.some((declaration) => declaration === entry[0]),
+            ),
+          ),
+        },
+      },
+      context,
+      frame,
+    );
+  }
   // A run of statements that run nothing, such as thousands of vars, passes in one step rather
   // than one statement inside another.
   const unrun = statements.findIndex(
@@ -19464,6 +19631,10 @@ export const translateStatements = (
   }
   const continueWith = (inner: Path) =>
     translateStatements(statements.slice(1), leave(inner), context, frame);
+  const shared = getSharedWrite(statement, context);
+  if (shared !== undefined) {
+    return translateSharedWrite(statement, shared, path, context, statementFrame, continueWith);
+  }
   if (ts.isBlock(statement)) {
     return translateStatements(statement.statements, path, context, {
       ...statementFrame,

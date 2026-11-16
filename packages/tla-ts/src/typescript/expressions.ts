@@ -37,6 +37,7 @@ import {
   getArgumentsOwner,
   isModuleFile,
   isStrictCode,
+  getSharedDeclaration,
   getSymbol,
   isStatic,
   isAssigned,
@@ -2700,6 +2701,23 @@ const translateIdentifier = (node: ts.Identifier, scope: Scope, context: Context
   }
   if (binding !== undefined) {
     return isImplicitGlobal(node, context) ? readGlobal(node, binding, context) : binding;
+  }
+  // A local that closures share reads the environment that holds it.
+  const shared = symbol === undefined ? undefined : getSharedDeclaration(symbol, context);
+  if (shared !== undefined) {
+    const environment = scope.activations?.get(shared);
+    return environment === undefined
+      ? apply("Assert", [
+          boolean(false),
+          string(
+            `tla-ts can't read ${node.text}, which closures share, outside its declaration's run`,
+          ),
+        ])
+      : useJavaScript(
+          "EnvironmentValue",
+          [getHeap(scope, node, context), environment, string(node.text)],
+          context,
+        );
   }
   // A call holds the arguments object it makes under the body of the function it calls.
   const argumentsBody = getArgumentsOwner(node, context.checker)?.body;
