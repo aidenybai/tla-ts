@@ -45601,4 +45601,26 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("reads the kind that Object.prototype.toString tells of a map on the heap", () => {
+    const getSource = (expected: string) => `
+      const getTag = (value: unknown) => Object.prototype.toString.call(value);
+      const holder: { renderers: Map<number, string> } = { renderers: new Map<number, string>() };
+      const weak = new WeakMap<object, number>();
+      const seen = [getTag(holder.renderers), getTag(weak)].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("[object Map],[object WeakMap]"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects a weak map's tag as a map's", async () => {
+      expect((await checkModel(getSource("[object Map],[object Map]"))).failure?.message).toContain(
+        "seen [object Map],[object WeakMap]",
+      );
+    });
+  });
 });

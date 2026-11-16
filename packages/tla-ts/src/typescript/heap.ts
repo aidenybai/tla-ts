@@ -4494,9 +4494,12 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
           parent.right === node) ||
           (isMethodCall(parent) &&
             parent.arguments[0] === node &&
-            KIND_READS.has(
+            (KIND_READS.has(
               `${getBuiltIn(parent.expression.expression, context)}.${parent.expression.name.text}`,
-            ))))
+            ) ||
+              // Object.prototype.toString tells the kind of what it takes as its this.
+              (parent.expression.name.text === "call" &&
+                parent.expression.expression.getText() === "Object.prototype.toString")))))
     );
   };
   const isReached = new Set(reached);
