@@ -180,6 +180,9 @@ export interface Context {
   // The functions of each file that a value may hold where tla-ts can't tell which, once the
   // script's heap is known.
   functionCandidates: ReadonlyMap<ts.SourceFile, readonly FunctionNode[]>;
+  // Those of the functions that a module that imports the file may hold, which read no locals of a
+  // function around them.
+  sharedFunctionCandidates: ReadonlyMap<ts.SourceFile, readonly FunctionNode[]>;
   // The proxies of arrays, sets, and maps that a script makes, and the variables, parameters, calls,
   // and reads of Proxy.revocable's proxy that hold them, which tla-ts reads as objects.
   collectionProxies: Set<ts.Node>;
@@ -591,6 +594,7 @@ export const createContext = (
     onceFunctions: new Set(),
     guardedStatements: findGuardedStatements(files),
     functionCandidates: new Map(),
+    sharedFunctionCandidates: new Map(),
     collectionProxies: new Set(),
     checkedGlobals: new Set(),
     implicitGlobals,
@@ -5296,6 +5300,19 @@ export const findFunctionCandidates = (sourceFile: ts.SourceFile, context: Conte
     );
   });
 
+// The candidates of each file that read no locals of a function around them, which another module
+// may call.
+export const findSharedFunctionCandidates = (
+  candidates: ReadonlyMap<ts.SourceFile, readonly FunctionNode[]>,
+  context: Context,
+) =>
+  new Map(
+    [...candidates].map(([file, functions]) => [
+      file,
+      functions.filter((candidate) => getOuterLocals(candidate, context).length === 0),
+    ]),
+  );
+
 // The functions that a value whose type has calls may hold, where tla-ts can't tell which, whose
 // type TypeScript lets the value hold: those of the callee's module, and of the modules it imports
 // but for one that reads the locals of a function that runs once around it, which only that
@@ -5305,9 +5322,7 @@ export const getFunctionCandidates = (callee: ts.Expression, context: Context) =
   const sourceFile = callee.getSourceFile();
   const found = context.functionCandidates.has(sourceFile)
     ? [...context.functionCandidates.entries()].flatMap((entry) =>
-        entry[0] === sourceFile
-          ? entry[1]
-          : entry[1].filter((candidate) => getOuterLocals(candidate, context).length === 0),
+        entry[0] === sourceFile ? entry[1] : (context.sharedFunctionCandidates.get(entry[0]) ?? []),
       )
     : findFunctionCandidates(sourceFile, context);
   const checker = context.checker;

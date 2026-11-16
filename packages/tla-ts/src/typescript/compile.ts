@@ -7,6 +7,7 @@ import {
   createContext,
   findNodes,
   findFunctionCandidates,
+  findSharedFunctionCandidates,
   findOnceFunctions,
   findValueEnums,
   findOnceLocals,
@@ -822,6 +823,10 @@ export const compile = (
     );
     context.functionCandidates = new Map(
       program.files.map((file) => [file, findFunctionCandidates(file, context)]),
+    );
+    context.sharedFunctionCandidates = findSharedFunctionCandidates(
+      context.functionCandidates,
+      context,
     );
     // A name, or a string that keys a property by it, as in Object.getOwnPropertyDescriptor.
     const isTyped = (node: ts.Expression, flags: ts.TypeFlags) => {
