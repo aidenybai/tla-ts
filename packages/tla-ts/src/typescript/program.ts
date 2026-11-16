@@ -17,6 +17,7 @@ import {
   typeExportsAsAny,
 } from "./common-js";
 import { rejectEarlyErrors } from "./early-errors";
+import { withNameSymbols } from "./name-symbols";
 import { rewriteNameDeletes } from "./name-deletes";
 import { rewriteWithStatements } from "./with-statements";
 
@@ -443,11 +444,12 @@ export const createProgram = (
   const diagnostics = program === modelProgram ? modelDiagnostics : getDiagnostics(program);
   if (diagnostics.length > 0) throw new TlaTypeScriptError(ts.formatDiagnostics(diagnostics, host));
   const sourceFile = getModelSourceFile(program);
-  const checker = typeExportsAsAny(program.getTypeChecker());
+  const files = getModelFiles(program).filter((file) => !file.isDeclarationFile);
+  const checker = typeExportsAsAny(withNameSymbols(program.getTypeChecker(), files));
   return {
     sourceFile,
     checker,
-    files: getModelFiles(program).filter((file) => !file.isDeclarationFile),
+    files,
     defaultLibraries: new Set(
       program.getSourceFiles().filter((file) => program.isSourceFileDefaultLibrary(file)),
     ),
