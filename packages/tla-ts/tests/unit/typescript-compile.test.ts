@@ -48514,9 +48514,9 @@ describe("BigInts", () => {
       'import { kind } from "./typing-reader.ts";\nimport "./typing-values.ts";',
     );
 
-    it("agrees with Node", async () => {
+    it("stops where Node throws the ReferenceError", async () => {
       await expect(check(compile(source, path))).rejects.toThrow(
-        "tla-ts can't call a function that reads a let or a const before it's declared",
+        "tla-ts can't throw the ReferenceError of reading late before its declaration",
       );
     });
 
