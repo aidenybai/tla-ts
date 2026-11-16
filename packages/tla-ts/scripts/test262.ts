@@ -4177,6 +4177,9 @@ const runTest = async (path: string): Promise<TestRun> => {
     // A noStrict test runs outside strict mode, as a script, and any other runs in strict mode, as
     // Node runs it as a module.
     const program = isSloppy ? annotated : `"use strict"; ${annotated}`;
+    // A linked test's own file is on disk, as its fixtures are, so that TypeScript resolves an
+    // import of the test's .js path to the test's code rather than to the .js that Node runs.
+    if (isLinked) writeFileSync(programPath, program);
     const result = await check({
       ...compile(program, isLinked ? programPath : "test262.ts"),
       onPrint: () => {},
