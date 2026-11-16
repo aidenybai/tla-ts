@@ -1,7 +1,9 @@
 import ts from "@typescript/typescript6";
 import { TlaTypeScriptError } from "../errors";
+import type { Expression } from "../ast";
 import type { Context } from "./context";
 import { useJavaScript } from "./javascript";
+import { getJsonHeapObjects, parseJson } from "./json";
 import { identifier, number, string } from "./tla";
 
 // The modules that Node builds in, which a specifier names before any package does.
@@ -484,11 +486,22 @@ export const getWrapperName = (node: ts.Identifier, checker: ts.TypeChecker) => 
   return isDeclared ? undefined : node.text;
 };
 
-// The module that a require of a string loads, which TypeScript resolves as Node does, or
-// undefined where it never runs.
+// The JSON file that Node loads for a module's specifier, which TypeScript doesn't read, as it
+// reads only what code declares, and tla-ts reads JSON's value as any.
+export const getJsonPath = (specifier: ts.Expression) => {
+  const path = ts.isStringLiteralLike(specifier)
+    ? resolveModule(specifier, specifier.getSourceFile().fileName)
+    : undefined;
+  return path?.endsWith(".json") === true ? path : undefined;
+};
+
+// The module that a require of a string loads, which TypeScript resolves as Node does, or the path
+// of a JSON file, or undefined where it never runs.
 export const getRequiredFile = (call: ts.CallExpression, checker: ts.TypeChecker) => {
   const declaration = checker.getSymbolAtLocation(call.arguments[0])?.valueDeclaration;
-  return declaration !== undefined && ts.isSourceFile(declaration) ? declaration : undefined;
+  return declaration !== undefined && ts.isSourceFile(declaration)
+    ? declaration
+    : getJsonPath(call.arguments[0]);
 };
 
 // A require of a string, which a CommonJS module calls where no declaration of its own binds
@@ -649,7 +662,8 @@ const isCertain = (node: ts.Node, statement: ts.Statement, isProcessDeclared: bo
   (isRunFirst(node, node.parent, isProcessDeclared) &&
     isCertain(node.parent, statement, isProcessDeclared));
 
-// The modules that each statement of a CommonJS module's code requires, in order: whether Node loads each as the statement starts, as nothing else of the statement
+// The modules that each statement of a CommonJS module's code requires, in order, as a file or the
+// path of JSON: whether Node loads each as the statement starts, as nothing else of the statement
 // that another module could see runs first, and whether a function that the module declares
 // requires it, which may run before the statement does.
 export const getRequires = (file: ts.SourceFile, checker: ts.TypeChecker) => {
@@ -657,7 +671,7 @@ export const getRequires = (file: ts.SourceFile, checker: ts.TypeChecker) => {
   return file.statements.map((statement) => {
     const requires: {
       call: ts.CallExpression;
-      file: ts.SourceFile;
+      file: ts.SourceFile | string;
       isCertain: boolean;
       isHoisted: boolean;
     }[] = [];
@@ -698,10 +712,10 @@ const getModuleRef = (position: number, context: Context) =>
     context,
   );
 
-// The refs of a CommonJS module's exports object and its module object, which the heap holds from
-// the start.
-export const getModuleRefs = (file: ts.SourceFile, context: Context) => {
-  const position = context.commonJsModules.indexOf(file);
+// The refs of a CommonJS or a JSON module's exports object and its module object, which the heap
+// holds from the start.
+export const getModuleRefs = (module: ts.SourceFile | string, context: Context) => {
+  const position = [...context.commonJsModules, ...context.jsonModules.keys()].indexOf(module);
   if (position === -1) {
     throw new TlaTypeScriptError("tla-ts can't load this module here", context.script?.sourceFile);
   }
@@ -711,24 +725,54 @@ export const getModuleRefs = (file: ts.SourceFile, context: Context) => {
   };
 };
 
-// The objects of the CommonJS modules, which the heap holds from the start: each one's exports
-// object, and its module object, whose exports property holds that object until the module's code
-// assigns another.
-export const getModuleObjects = (context: Context) =>
-  context.commonJsModules.flatMap((file) => [
-    identifier("EmptyObject"),
-    useJavaScript(
-      "Put",
-      [identifier("EmptyObject"), string("exports"), getModuleRefs(file, context).exports],
-      context,
-    ),
-  ]);
+// The value that JSON.parse gives of a JSON file's text, which Node reads as the module's value.
+const readJson = (path: string, node: ts.Node) => {
+  const parsed = parseJson(ts.sys.readFile(path) ?? "");
+  if ("error" in parsed) {
+    throw new TlaTypeScriptError(`tla-ts can't load ${path}, which isn't JSON`, node);
+  }
+  return parsed.value;
+};
+
+// The objects of the CommonJS and JSON modules, which the heap holds from the start: each one's
+// exports object, and its module object, whose exports property holds that object until the
+// module's code assigns another, or a JSON module's value, and then the objects that JSON.parse
+// makes of the JSON modules' values.
+export const getModuleObjects = (context: Context) => {
+  const modules = [...context.jsonModules].reduce<{ values: Expression[]; objects: Expression[] }>(
+    (current, entry) => {
+      const start =
+        2 * (context.commonJsModules.length + context.jsonModules.size) + current.objects.length;
+      const made = getJsonHeapObjects(
+        entry[1],
+        readJson(entry[0], entry[1]),
+        (position) => getModuleRef(start + position - 1, context),
+        context,
+      );
+      return {
+        values: [...current.values, made.value],
+        objects: [...current.objects, ...made.objects],
+      };
+    },
+    {
+      values: context.commonJsModules.map((file) => getModuleRefs(file, context).exports),
+      objects: [],
+    },
+  );
+  return [
+    ...modules.values.flatMap((value) => [
+      identifier("EmptyObject"),
+      useJavaScript("Put", [identifier("EmptyObject"), string("exports"), value], context),
+    ]),
+    ...modules.objects,
+  ];
+};
 
 // The CommonJS module whose exports a name that an import binds gives, through the exports of
 // other modules: its default export, which Node gives as the module's exports once its code has
 // run.
 export const getImportedCommonJs = (node: ts.Identifier, checker: ts.TypeChecker) => {
-  const find = (symbol: ts.Symbol | undefined): ts.SourceFile | undefined => {
+  const find = (symbol: ts.Symbol | undefined): ts.SourceFile | string | undefined => {
     if (symbol === undefined || (symbol.flags & ts.SymbolFlags.Alias) === 0) return undefined;
     const declaration = symbol.declarations?.at(0);
     const isDefault =
@@ -741,9 +785,13 @@ export const getImportedCommonJs = (node: ts.Identifier, checker: ts.TypeChecker
       statement === undefined
         ? undefined
         : checker.getSymbolAtLocation(statement.moduleSpecifier)?.valueDeclaration;
-    return module !== undefined && ts.isSourceFile(module) && isCommonJsFile(module)
-      ? module
-      : find(checker.getImmediateAliasedSymbol(symbol));
+    if (module !== undefined && ts.isSourceFile(module) && isCommonJsFile(module)) return module;
+    // TypeScript reads a JSON module through the declaration of JSON's modules.
+    const json =
+      statement !== undefined && module !== undefined && !ts.isSourceFile(module)
+        ? getJsonPath(statement.moduleSpecifier)
+        : undefined;
+    return json ?? find(checker.getImmediateAliasedSymbol(symbol));
   };
   return find(checker.getSymbolAtLocation(node));
 };
@@ -790,6 +838,31 @@ export const rejectWrapperUses = (file: ts.SourceFile, checker: ts.TypeChecker) 
     ts.forEachChild(node, visit);
   };
   visit(file);
+};
+
+// Stops where an ES module imports a JSON file other than as Node does: its default export, which
+// is the file's value, with the attribute type json.
+export const rejectJsonImport = (statement: ts.Statement) => {
+  const clause = ts.isImportDeclaration(statement) ? statement.importClause : undefined;
+  const isTyped =
+    ts.isImportDeclaration(statement) &&
+    (statement.attributes?.elements ?? []).some(
+      (attribute) =>
+        attribute.name.text === "type" &&
+        ts.isStringLiteral(attribute.value) &&
+        attribute.value.text === "json",
+    );
+  if (
+    clause === undefined ||
+    clause.name === undefined ||
+    clause.namedBindings !== undefined ||
+    !isTyped
+  ) {
+    throw new TlaTypeScriptError(
+      'tla-ts can\'t import JSON other than its default export, with { type: "json" }',
+      statement,
+    );
+  }
 };
 
 // Stops where an ES module imports what Node doesn't give as a CommonJS module's default export,
@@ -890,4 +963,13 @@ export const typeExportsAsAny = (checker: ts.TypeChecker): ts.TypeChecker => {
         : checker.getContextualType(node);
     },
   };
+};
+
+// Whether a JSON module's value holds a number that TLC's 32-bit integers don't, such as a fraction.
+export const hasSpecialJsonNumbers = (context: Context) => {
+  const isSpecial = (value: unknown): boolean =>
+    typeof value === "number"
+      ? !Number.isInteger(value) || Object.is(value, -0) || Math.abs(value) > 2 ** 31 - 1
+      : typeof value === "object" && value !== null && Object.values(value).some(isSpecial);
+  return [...context.jsonModules].some((entry) => isSpecial(readJson(entry[0], entry[1])));
 };

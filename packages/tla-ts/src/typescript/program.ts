@@ -75,7 +75,14 @@ const CODE_EXTENSIONS = new Set<string>([
   ts.Extension.Json,
 ]);
 
-// The extension of a file that Node loads.
+// The declaration of JSON's modules, which TypeScript reads where it finds no other: a JSON file's
+// value, which tla-ts reads as any, as JSON.parse gives it.
+const JSON_DECLARATIONS = {
+  path: "/tla-ts/json.d.ts",
+  text: 'declare module "*.json" { const value: any; export = value; }',
+};
+
+// The extension of a file that Node loads as JavaScript or JSON.
 const getExtension = (path: string) =>
   [
     ts.Extension.Js,
@@ -286,12 +293,16 @@ export const createProgram = (
             undefined,
             redirectedReference,
           );
+      // tla-ts reads JSON's value as any, which the declaration of JSON's modules gives.
+      if (resolved?.resolvedModule?.extension === ts.Extension.Json) {
+        return { resolvedModule: undefined };
+      }
       if (resolved !== undefined && CODE_EXTENSIONS.has(resolved.resolvedModule?.extension ?? "")) {
         return resolved;
       }
       const found = resolveModule(literal, containingFile);
       const extension = found === undefined ? undefined : getExtension(found);
-      return found === undefined || extension === undefined
+      return found === undefined || extension === undefined || extension === ts.Extension.Json
         ? (resolved ?? { resolvedModule: undefined })
         : {
             resolvedModule: { resolvedFileName: found, extension, isExternalLibraryImport: false },
@@ -306,13 +317,16 @@ export const createProgram = (
     globals: ReadonlySet<string>,
   ) =>
     ts.createProgram({
-      rootNames,
+      rootNames: [...rootNames, JSON_DECLARATIONS.path],
       options,
       projectReferences: project?.projectReferences,
       host: {
         ...host,
         // The program's options parse the model as a module, where await can start a statement.
         getSourceFile: (fileName, languageVersion) => {
+          if (fileName === JSON_DECLARATIONS.path) {
+            return ts.createSourceFile(fileName, JSON_DECLARATIONS.text, languageVersion);
+          }
           if (fileName === path) {
             return createFile(
               path,

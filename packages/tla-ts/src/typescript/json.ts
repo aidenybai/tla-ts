@@ -430,51 +430,64 @@ const translateJsonPrimitive = (node: ts.Node, value: unknown, context: Context)
   throw new TlaTypeScriptError(`Unsupported call: ${node.getText()}`, node);
 };
 
-// The heap once it holds the objects that JSON.parse makes of a value, the last of which is the
-// value's own.
-const translateJsonObjects = (
+// The objects that JSON.parse makes of a value, innermost first, each of which takes the ref that
+// its position from one gives, and the value, which is the last's ref where it's an object.
+export const getJsonHeapObjects = (
   node: ts.Node,
   value: unknown,
-  heap: Expression,
+  getRef: (position: number) => Expression,
   context: Context,
 ) => {
   const objects = getJsonObjects(value);
   const translateValue = (inner: unknown) =>
     isJsonObject(inner)
-      ? useJavaScript("NextRef", [heap, number(objects.indexOf(inner) + 1)], context)
+      ? getRef(objects.indexOf(inner) + 1)
       : translateJsonPrimitive(node, inner, context);
-  return useJavaScript(
+  return {
+    value: translateValue(value),
+    objects: objects.map((object) =>
+      Array.isArray(object)
+        ? useJavaScript(
+            "ArrayObject",
+            [
+              translateBuiltInValue("Array.prototype", node, context),
+              tuple(object.map(translateValue)),
+            ],
+            context,
+          )
+        : useJavaScript(
+            "PairsObject",
+            [
+              tuple(
+                Object.entries(object).map((entry) =>
+                  tuple([translateString(entry[0], context), translateValue(entry[1])]),
+                ),
+              ),
+            ],
+            context,
+          ),
+    ),
+  };
+};
+
+// The heap once it holds the objects that JSON.parse makes of a value, the last of which is the
+// value's own.
+const translateJsonObjects = (node: ts.Node, value: unknown, heap: Expression, context: Context) =>
+  useJavaScript(
     "AllocateEach",
     [
       heap,
       tuple(
-        objects.map((object) =>
-          Array.isArray(object)
-            ? useJavaScript(
-                "ArrayObject",
-                [
-                  translateBuiltInValue("Array.prototype", node, context),
-                  tuple(object.map(translateValue)),
-                ],
-                context,
-              )
-            : useJavaScript(
-                "PairsObject",
-                [
-                  tuple(
-                    Object.entries(object).map((entry) =>
-                      tuple([translateString(entry[0], context), translateValue(entry[1])]),
-                    ),
-                  ),
-                ],
-                context,
-              ),
-        ),
+        getJsonHeapObjects(
+          node,
+          value,
+          (position) => useJavaScript("NextRef", [heap, number(position)], context),
+          context,
+        ).objects,
       ),
     ],
     context,
   );
-};
 
 // The heap once it holds the objects that JSON.parse makes of a literal's text.
 export const translateParsedObjects = (

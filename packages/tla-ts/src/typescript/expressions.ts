@@ -2738,10 +2738,15 @@ const getEnvironmentVariable = (node: ts.Expression, context: Context) => {
 };
 
 // What a CommonJS module's exports are, which its module object holds.
-const readModuleExports = (file: ts.SourceFile, node: ts.Node, scope: Scope, context: Context) =>
+const readModuleExports = (
+  module: ts.SourceFile | string,
+  node: ts.Node,
+  scope: Scope,
+  context: Context,
+) =>
   useJavaScript(
     "Get",
-    [getHeap(scope, node, context), getModuleRefs(file, context).module, string("exports")],
+    [getHeap(scope, node, context), getModuleRefs(module, context).module, string("exports")],
     context,
   );
 

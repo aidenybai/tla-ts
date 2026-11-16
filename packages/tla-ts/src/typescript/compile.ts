@@ -56,10 +56,13 @@ import {
 } from "./namespaces";
 import { createProgram } from "./program";
 import {
+  getJsonPath,
   getRequires,
+  hasSpecialJsonNumbers,
   isCommonJsFile,
   isNodeModule,
   rejectCommonJsImport,
+  rejectJsonImport,
   rejectWrapperUses,
 } from "./common-js";
 import { link } from "./regions";
@@ -228,6 +231,7 @@ export const compile = (
   // require that may run later only reads the exports of a module that has started: one that
   // started before the require, or, in a function that its module declares, before the module.
   const visited = new Set<ts.SourceFile>();
+  const jsonModules = new Map<string, ts.Node>();
   const files: ts.SourceFile[] = [];
   const statements: ts.Statement[] = [];
   const getImportedFile = (statement: ts.Statement) => {
@@ -250,6 +254,11 @@ export const compile = (
       rejectWrapperUses(file, program.checker);
       getRequires(file, program.checker).forEach((entry) => {
         entry.requires.forEach((required) => {
+          // JSON runs no code, so it loads the same wherever it does.
+          if (typeof required.file === "string") {
+            jsonModules.set(required.file, required.call);
+            return;
+          }
           if (!isCommonJsFile(required.file)) {
             throw new TlaTypeScriptError(
               "tla-ts can't require an ES module, which Node gives as an object of its exports",
@@ -289,6 +298,12 @@ export const compile = (
           );
         }
         const imported = getImportedFile(statement);
+        const json =
+          imported === undefined && specifier !== undefined ? getJsonPath(specifier) : undefined;
+        if (json !== undefined) {
+          rejectJsonImport(statement);
+          jsonModules.set(json, statement);
+        }
         if (imported !== undefined && isCommonJsFile(imported)) {
           rejectCommonJsImport(statement, imported);
         }
@@ -304,6 +319,7 @@ export const compile = (
   getDynamicImports(sourceFile, program.checker).forEach(load);
   rejectRunningModules(files.slice(loaded));
   context.commonJsModules = [...visited].filter(isCommonJsFile);
+  context.jsonModules = jsonModules;
   // A CommonJS model's statements run where its requires run the modules, and an ES module's after
   // the statements of all the modules it loads.
   const positions = new Map(
@@ -748,7 +764,8 @@ export const compile = (
     (changedArrays.length > 0 ||
       reached.some(usesObjects) ||
       context.namespaces.size > 0 ||
-      context.commonJsModules.length > 0)
+      context.commonJsModules.length > 0 ||
+      context.jsonModules.size > 0)
   ) {
     context.heap = heap;
     context.variables.set(heap, identifier(context.names.getFresh("heap")));
@@ -859,7 +876,7 @@ export const compile = (
         (!Number.isInteger(Number(node.text)) || Number(node.text) > 2 ** 31 - 1)) ||
       (ts.isStringLiteral(node) && isFractionKey(node.text)) ||
       (ts.forEachChild(node, usesSpecialNumbers) ?? false);
-    context.hasSpecialNumbers = roots.some(usesSpecialNumbers);
+    context.hasSpecialNumbers = roots.some(usesSpecialNumbers) || hasSpecialJsonNumbers(context);
     // TypedKey finds a number that a string gives in Fractions by its text.
     const addFractionKeys = (node: ts.Node) => {
       if (ts.isStringLiteral(node) && isFractionKey(node.text)) {

@@ -47797,4 +47797,31 @@ describe("BigInts", () => {
       expect(() => compile(fixture.source, fixture.path)).toThrow(message);
     });
   });
+
+  describe("loads JSON as Node does", () => {
+    const getFixture = (name: string) => {
+      const path = join(import.meta.dirname, `../fixtures/typescript/json/${name}.ts`);
+      return { path, source: readFileSync(path, "utf8") };
+    };
+    const expected = "data,3,,true,-0.5,name+list+nested+extra,true,true,added,3";
+
+    it("agrees with Node", async () => {
+      const fixture = getFixture("json");
+      expect((await check(compile(fixture.source, fixture.path))).failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      const fixture = getFixture("json");
+      const wrong = expected.replace("true,true,added", "true,false,added");
+      const result = await check(compile(fixture.source.replace(expected, wrong), fixture.path));
+      expect(result.failure?.message).toContain(`seen ${expected}`);
+    });
+
+    it("stops where an import of JSON lacks its attribute", () => {
+      const fixture = getFixture("untyped");
+      expect(() => compile(fixture.source, fixture.path)).toThrow(
+        'tla-ts can\'t import JSON other than its default export, with { type: "json" }',
+      );
+    });
+  });
 });

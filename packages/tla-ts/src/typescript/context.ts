@@ -194,8 +194,10 @@ export interface Context {
   // The sites of the tagged templates other than String.raw's, each of whose template object and
   // its raw strings' array the heap holds from the start, after the namespace objects.
   templateSites: readonly ts.TaggedTemplateExpression[];
-  // The CommonJS modules that the script runs, whose objects the heap holds from the start.
+  // The CommonJS modules that the script runs, and the JSON files that it loads, by path, with a
+  // specifier of each, whose objects the heap holds from the start.
   commonJsModules: readonly ts.SourceFile[];
+  jsonModules: ReadonlyMap<string, ts.Node>;
   // Whether a script gives Array.prototype or Object.prototype properties, which an array reads
   // past its end.
   hasInheritedElements: boolean;
@@ -586,6 +588,7 @@ export const createContext = (
     namespaces: new Map(),
     templateSites: [],
     commonJsModules: [],
+    jsonModules: new Map(),
     hasInheritedElements: false,
     characters: new Set(),
     longLiterals: new Set(),

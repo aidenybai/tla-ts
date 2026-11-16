@@ -21400,7 +21400,8 @@ export const translateScript = (
                 // CommonJS modules.
                 context.namespaces.size === 0 &&
                 context.templateSites.length === 0 &&
-                context.commonJsModules.length === 0
+                context.commonJsModules.length === 0 &&
+                context.jsonModules.size === 0
                   ? prototypes
                   : useJavaScript(
                       "AllocateEach",
