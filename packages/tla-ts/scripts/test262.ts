@@ -1752,10 +1752,10 @@ const typePushedArrays = () => {
 
 const REDECLARED_TYPE_ERROR = 2403;
 
-// A var that one declaration declares without a type or a value, which TypeScript types as any, and
-// another declares with a value, as var x; then for (var x of [1]), which TypeScript rejects as
-// declarations of two types. The one without a value takes the other's type, where each other
-// declaration has the same type.
+// A var that one declaration declares without a type or a value, which TypeScript types as any, or
+// with an empty array of any, as Array() gives, and another declares with a value, as var x; then
+// for (var x of [1]), which TypeScript rejects as declarations of two types. The first takes the
+// other's type, an array's for an array of any, where each other declaration has the same type.
 const typeRedeclaredVars = () => {
   const program = service.getProgram();
   const sourceFile = program?.getSourceFile(file.path);
@@ -1771,11 +1771,19 @@ const typeRedeclaredVars = () => {
     const found = visit(sourceFile);
     return found === undefined ? undefined : ts.findAncestor(found, ts.isVariableDeclaration);
   };
-  const isBare = (declaration: ts.Declaration) =>
+  const isEmptyArray = (value: ts.Expression) =>
+    ts.isArrayLiteralExpression(value)
+      ? value.elements.length === 0
+      : (ts.isCallExpression(value) || ts.isNewExpression(value)) &&
+        value.expression.getText() === "Array" &&
+        (value.arguments ?? []).length === 0;
+  const isLoose = (declaration: ts.Declaration, type: string, other: string) =>
     ts.isVariableDeclaration(declaration) &&
     declaration.type === undefined &&
-    declaration.initializer === undefined &&
-    !ts.isForInOrOfStatement(declaration.parent.parent);
+    !ts.isForInOrOfStatement(declaration.parent.parent) &&
+    (declaration.initializer === undefined
+      ? type === "any"
+      : type === "any[]" && other.endsWith("[]") && isEmptyArray(declaration.initializer));
   const types = Map.groupBy(
     service.getSemanticDiagnostics(file.path).flatMap((diagnostic) => {
       const match =
@@ -1791,10 +1799,9 @@ const typeRedeclaredVars = () => {
           : (checker.getSymbolAtLocation(declaration.name)?.declarations ?? []);
       const first = declarations[0];
       if (match === null || declaration === undefined || first === undefined) return [];
-      // The first declaration is bare and has any, or the error's is bare and has any.
-      return first !== declaration && isBare(first) && match[1] === "any"
+      return first !== declaration && isLoose(first, match[1], match[2])
         ? [{ declaration: first, type: match[2] }]
-        : isBare(declaration) && match[2] === "any"
+        : isLoose(declaration, match[2], match[1])
           ? [{ declaration, type: match[1] }]
           : [];
     }),
