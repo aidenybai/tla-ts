@@ -37,6 +37,7 @@ import {
   getArgumentsOwner,
   isModuleFile,
   isStrictCode,
+  getStaticTruth,
   getSymbol,
   isStatic,
   isAssigned,
@@ -2573,28 +2574,28 @@ const translateFraction = (value: number, node: ts.Node, context: Context) => {
 };
 
 // An expression that a literal condition keeps from running, as x in false && x or true ? 1 : x.
-const isSkipped = (node: ts.Node): boolean => {
+const isSkipped = (node: ts.Node, context: Context): boolean => {
   const parent = node.parent;
   if (ts.isBinaryExpression(parent) && parent.right === node) {
-    const left = skipCasts(parent.left).kind;
+    const left = getStaticTruth(parent.left, context);
     const operator = parent.operatorToken.kind;
     if (
-      (operator === ts.SyntaxKind.AmpersandAmpersandToken && left === ts.SyntaxKind.FalseKeyword) ||
-      (operator === ts.SyntaxKind.BarBarToken && left === ts.SyntaxKind.TrueKeyword)
+      (operator === ts.SyntaxKind.AmpersandAmpersandToken && left === false) ||
+      (operator === ts.SyntaxKind.BarBarToken && left === true)
     ) {
       return true;
     }
   }
   if (ts.isConditionalExpression(parent)) {
-    const condition = skipCasts(parent.condition).kind;
+    const condition = getStaticTruth(parent.condition, context);
     if (
-      (parent.whenTrue === node && condition === ts.SyntaxKind.FalseKeyword) ||
-      (parent.whenFalse === node && condition === ts.SyntaxKind.TrueKeyword)
+      (parent.whenTrue === node && condition === false) ||
+      (parent.whenFalse === node && condition === true)
     ) {
       return true;
     }
   }
-  return ts.isExpression(parent) && isSkipped(parent);
+  return ts.isExpression(parent) && isSkipped(parent, context);
 };
 
 // A statement that a return or a throw before it in the same list keeps from running.
@@ -2790,7 +2791,7 @@ const translateIdentifier = (node: ts.Identifier, scope: Scope, context: Context
   if (symbol !== undefined && isUnset(symbol, context)) return getUndefined(context);
   // A name that nothing declares throws a ReferenceError where a read runs, which a literal
   // condition may keep from running.
-  if (symbol === undefined && isSkipped(node)) {
+  if (symbol === undefined && isSkipped(node, context)) {
     return apply("Assert", [
       boolean(false),
       string(

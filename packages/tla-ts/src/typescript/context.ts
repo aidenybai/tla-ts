@@ -986,6 +986,40 @@ const getLiteralTruth = (node: ts.Expression) => {
   return Number.isNaN(value) ? undefined : value !== 0;
 };
 
+// Whether a condition is truthy where it only reads literals and the typeof of names that nothing
+// declares, which is "undefined", as a guard of a global that a host may give does.
+export const getStaticTruth = (node: ts.Expression, context: Context): boolean | undefined => {
+  const inner = skipCasts(node);
+  if (inner.kind === ts.SyntaxKind.TrueKeyword) return true;
+  if (inner.kind === ts.SyntaxKind.FalseKeyword) return false;
+  if (ts.isPrefixUnaryExpression(inner) && inner.operator === ts.SyntaxKind.ExclamationToken) {
+    const operand = getStaticTruth(inner.operand, context);
+    return operand === undefined ? undefined : !operand;
+  }
+  if (!ts.isBinaryExpression(inner)) return undefined;
+  const kind = inner.operatorToken.kind;
+  if (kind === ts.SyntaxKind.AmpersandAmpersandToken || kind === ts.SyntaxKind.BarBarToken) {
+    const left = getStaticTruth(inner.left, context);
+    return left === undefined || left === (kind === ts.SyntaxKind.BarBarToken)
+      ? left
+      : getStaticTruth(inner.right, context);
+  }
+  const isUndeclaredTypeOf = (side: ts.Expression) => {
+    const operand = skipCasts(side);
+    return ts.isTypeOfExpression(operand) && isUnresolved(skipCasts(operand.expression), context);
+  };
+  const text = [inner.left, inner.right]
+    .map(skipCasts)
+    .find((side): side is ts.StringLiteral => ts.isStringLiteral(side))?.text;
+  if (text === undefined || ![inner.left, inner.right].some(isUndeclaredTypeOf)) return undefined;
+  return kind === ts.SyntaxKind.EqualsEqualsEqualsToken || kind === ts.SyntaxKind.EqualsEqualsToken
+    ? text === "undefined"
+    : kind === ts.SyntaxKind.ExclamationEqualsEqualsToken ||
+        kind === ts.SyntaxKind.ExclamationEqualsToken
+      ? text !== "undefined"
+      : undefined;
+};
+
 // The name that an expression reads before it evaluates anything that could change state or throw,
 // whose reading throws a ReferenceError there: one that no declaration binds, or that isThrowing
 // tells, such as a let before its declaration runs.

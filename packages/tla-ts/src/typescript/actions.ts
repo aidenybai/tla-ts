@@ -109,6 +109,7 @@ import {
   isVarFunction,
   getVarFunctionTarget,
   getOwnSymbol,
+  getStaticTruth,
   getSymbol,
   isAssigned,
   getTopLevelDeclaration,
@@ -11923,6 +11924,8 @@ const translateExpressionStatement = (
   if (ts.isParenthesizedExpression(expression)) {
     return translateExpressionStatement(expression.expression, path, context, frame, continueWith);
   }
+  // A guard of a global that nothing declares does nothing, and skips what it guards.
+  if (getStaticTruth(expression, context) !== undefined) return continueWith(path);
   // A comma runs its operands in order, as a for loop's incrementor may.
   if (
     ts.isBinaryExpression(expression) &&

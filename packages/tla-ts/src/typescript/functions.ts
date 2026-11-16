@@ -14,6 +14,7 @@ import {
   getFunction,
   getFunctionCandidates,
   getGetters,
+  getStaticTruth,
   getSymbol,
   getTopLevelDeclaration,
   getUndefined,
@@ -1304,6 +1305,14 @@ export const translateIf = (
   translateBranch: (branch: ts.Statement) => Formula,
   translateRest: () => Formula,
 ) => {
+  // A guard of a global that nothing declares runs only one branch.
+  const truth = getStaticTruth(statement.expression, context);
+  if (truth === true) return translateBranch(statement.thenStatement);
+  if (truth === false) {
+    return statement.elseStatement === undefined
+      ? translateRest()
+      : translateBranch(statement.elseStatement);
+  }
   const condition = translateCondition(statement.expression, scope, context);
   const whenTrue = translateBranch(statement.thenStatement);
   const whenFalse =

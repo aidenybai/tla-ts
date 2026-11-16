@@ -45606,4 +45606,28 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("skips what a typeof guard of a global that nothing declares keeps from running", () => {
+    const getSource = (expected: string) => `
+      const seen: string[] = [];
+      // @ts-ignore
+      "undefined" !== typeof __TLA_HOOK__ && "function" === typeof __TLA_HOOK__.start && __TLA_HOOK__.start(seen);
+      // @ts-ignore
+      if (typeof __TLA_HOOK__ === "undefined") seen.push("absent");
+      // @ts-ignore
+      else __TLA_HOOK__.stop();
+      // @ts-ignore
+      const kind = typeof __TLA_HOOK__ !== "undefined" ? __TLA_HOOK__.kind : "none";
+      seen.push(kind);
+      if (seen.join() !== "${expected}") throw new Error("seen " + seen.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("absent,none"))).failure).toBeUndefined();
+    });
+
+    it("rejects a guard that runs the branch it skips", async () => {
+      expect((await checkModel(getSource("none"))).failure?.message).toContain("seen absent,none");
+    });
+  });
 });
