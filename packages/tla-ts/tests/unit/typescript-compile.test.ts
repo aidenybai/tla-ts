@@ -45487,4 +45487,35 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("0,1,2,3"))).failure?.message).toContain("seen 0,1,2");
     });
   });
+
+  describe("throws the ReferenceError of a name that a spread or a method's argument reads", () => {
+    const getSource = (expected: number) => `
+      const values = [1, 2];
+      let caught = 0;
+      const record = (error: unknown) => {
+        if (error instanceof ReferenceError) caught += 1;
+      };
+      try {
+        // @ts-expect-error the name is never declared
+        values.map(missing);
+      } catch (error) {
+        record(error);
+      }
+      try {
+        // @ts-expect-error the name is never declared
+        Math.max(0, ...missing);
+      } catch (error) {
+        record(error);
+      }
+      if (caught !== ${expected}) throw new Error("caught " + caught);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(2))).failure).toBeUndefined();
+    });
+
+    it("rejects a ReferenceError that neither threw", async () => {
+      expect((await checkModel(getSource(1))).failure?.message).toContain("caught 2");
+    });
+  });
 });

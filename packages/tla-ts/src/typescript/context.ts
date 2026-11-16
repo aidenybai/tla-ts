@@ -18,6 +18,7 @@ import { createNames, type Names } from "./names";
 import { getBindingNames, getLexicalNames } from "./early-errors";
 import { getKeptReads } from "./narrowing";
 import { mayThrow } from "./functions";
+import { getGetterKeys, isProxyOperation } from "./protocols";
 import type { Namespace } from "./namespaces";
 import type { Link } from "./regions";
 import { apply, define, identifier, ifExpression, index, letExpression, string } from "./tla";
@@ -992,7 +993,9 @@ export const getUnresolvedRead = (
   // Reads each operand in order while the ones before it are literals.
   const readInOrder = (operands: readonly ts.Expression[]): ts.Identifier | undefined => {
     const first = operands.at(0);
-    if (first === undefined || ts.isSpreadElement(first)) return undefined;
+    if (first === undefined) return undefined;
+    // A spread reads its expression before it runs the iterator, which may run anything.
+    if (ts.isSpreadElement(first)) return getUnresolvedRead(first.expression, context, isThrowing);
     const read = getUnresolvedRead(first, context, isThrowing);
     if (read !== undefined || getLiteralTruth(first) === undefined) return read;
     return readInOrder(operands.slice(1));
@@ -1066,11 +1069,18 @@ export const getUnresolvedRead = (
     // A function declaration binds its name before any code runs, so reading it can't throw, and
     // a class declaration that comes before binds its name, or reading it throws a ReferenceError
     // too. A new evaluates its arguments before the class runs any code, and a function written
-    // in place, or super, evaluates nothing that can throw before them.
+    // in place, or super, evaluates nothing that can throw before them, and nor does a method of a
+    // name that no getter or proxy can answer.
     const callee = skipCasts(node.expression);
     const declaration = ts.isIdentifier(callee)
       ? context.checker.getSymbolAtLocation(callee)?.valueDeclaration
       : undefined;
+    if (ts.isPropertyAccessExpression(callee) && ts.isIdentifier(callee.expression)) {
+      if (isThrowing(callee.expression)) return callee.expression;
+      return getGetterKeys(node).has(callee.name.text) || isProxyOperation(callee, context)
+        ? undefined
+        : readInOrder(node.arguments ?? []);
+    }
     return ts.isFunctionExpression(callee) ||
       callee.kind === ts.SyntaxKind.SuperKeyword ||
       (declaration !== undefined &&
