@@ -47883,4 +47883,37 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("makes the namespace object that a module the script imports reads", () => {
+    const path = join(import.meta.dirname, "../fixtures/typescript/imports/namespace.ts");
+    const getSource = (expected: string) => `
+      import { latinNames, pickGreeting } from "./greeting";
+      const box = { size: 0 };
+      const seen = [pickGreeting(true).greet(), pickGreeting(false).greet(), latinNames, box.size].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await check(compile(getSource("salve,hello,greet,label,0"), path))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects a namespace object without its exports", async () => {
+      expect((await check(compile(getSource("salve,hello,,0"), path))).failure?.message).toContain(
+        "seen salve,hello,greet,label,0",
+      );
+    });
+
+    it("stops where a module reads the namespace object of a module that runs after it", () => {
+      expect(() =>
+        compile(
+          'import { read } from "./late-module";\nif (read() !== 1) throw new Error();',
+          path,
+        ),
+      ).toThrow(
+        "tla-ts can't read a module's namespace object in a module that the script imports",
+      );
+    });
+  });
 });
