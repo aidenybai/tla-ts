@@ -1,0 +1,11 @@
+{
+  "compilerOptions": {
+    "composite": true,
+    "strict": true,
+    "module": "Preserve",
+    "moduleResolution": "Bundler",
+    "outDir": "../built/app"
+  },
+  "references": [{ "path": "../shapes" }],
+  "include": ["*.ts"]
+}

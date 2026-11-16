@@ -47834,4 +47834,18 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("compiles the code of the projects that a project references", () => {
+    const path = join(import.meta.dirname, "../fixtures/typescript/projects/app/main.ts");
+    const source = readFileSync(path, "utf8");
+
+    it("agrees with Node", async () => {
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      const wrong = source.replace('"12"', '"7"');
+      await expect(check(compile(wrong, path))).rejects.toThrow("seen 12");
+    });
+  });
 });

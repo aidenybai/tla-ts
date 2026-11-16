@@ -75,6 +75,11 @@ const CODE_EXTENSIONS = new Set<string>([
   ts.Extension.Json,
 ]);
 
+// TypeScript reads this of any host, though only its WatchCompilerHost declares it.
+interface SourceRedirectingHost {
+  useSourceOfProjectReferenceRedirect: () => boolean;
+}
+
 // A declaration file's name, as types.d.ts, index.d.mts, or styles.d.css.ts.
 const DECLARATION_FILE = /\.d\.(?:[^.]+\.)?[cm]?ts$/;
 
@@ -279,65 +284,70 @@ export const createProgram = (
     rootNames: string[],
     text: string,
     globals: ReadonlySet<string>,
-  ) =>
-    ts.createProgram({
-      rootNames,
-      options,
-      projectReferences: project?.projectReferences,
-      host: {
-        ...host,
-        // The program's options parse the model as a module, where await can start a statement.
-        getSourceFile: (fileName, languageVersion) => {
-          if (fileName === path) {
-            return ts.createSourceFile(
-              path,
-              [...globals].map((name) => `var ${name}: any;`).join("") + text,
-              languageVersion,
-              true,
-            );
-          }
-          if (isCommonJsImport(fileName)) {
-            return ts.createSourceFile(
-              fileName,
-              getImportText(fileName),
-              languageVersion,
-              true,
-              ts.ScriptKind.TS,
-            );
-          }
-          const moduleText = isCommonJsFile(fileName) ? ts.sys.readFile(fileName) : undefined;
-          if (moduleText !== undefined) {
-            return typeAsAny(
-              ts.createSourceFile(
-                fileName,
-                declareVarFunctions(fileName, getModuleText(fileName, moduleText)),
-                languageVersion,
-                true,
-                ts.ScriptKind.TS,
-              ),
-            );
-          }
-          const cached = libraryFiles.get(fileName);
-          if (cached !== undefined) return cached;
-          const file = host.getSourceFile(fileName, languageVersion);
-          if (file === undefined || file.isDeclarationFile) {
-            if (file !== undefined && fileName.startsWith(libraryDirectory)) {
-              libraryFiles.set(fileName, file);
-            }
-            return file;
-          }
+  ) => {
+    const programHost: ts.CompilerHost & SourceRedirectingHost = {
+      ...host,
+      // A project that references others compiles their code, as an editor does, rather than
+      // the declarations that building them would write.
+      useSourceOfProjectReferenceRedirect: () => true,
+      // The program's options parse the model as a module, where await can start a statement.
+      getSourceFile: (fileName, languageVersion) => {
+        if (fileName === path) {
           return ts.createSourceFile(
-            fileName,
-            declareVarFunctions(fileName, assignParameterProperties(fileName, file.text)),
+            path,
+            [...globals].map((name) => `var ${name}: any;`).join("") + text,
             languageVersion,
             true,
           );
-        },
-        fileExists: (fileName) => fileName === path || host.fileExists(fileName),
-        readFile: (fileName) => (fileName === path ? source : host.readFile(fileName)),
-        resolveModuleNameLiterals: libraries === undefined ? resolveModuleNameLiterals : undefined,
+        }
+        if (isCommonJsImport(fileName)) {
+          return ts.createSourceFile(
+            fileName,
+            getImportText(fileName),
+            languageVersion,
+            true,
+            ts.ScriptKind.TS,
+          );
+        }
+        const moduleText = isCommonJsFile(fileName) ? ts.sys.readFile(fileName) : undefined;
+        if (moduleText !== undefined) {
+          return typeAsAny(
+            ts.createSourceFile(
+              fileName,
+              declareVarFunctions(fileName, getModuleText(fileName, moduleText)),
+              languageVersion,
+              true,
+              ts.ScriptKind.TS,
+            ),
+          );
+        }
+        const cached = libraryFiles.get(fileName);
+        if (cached !== undefined) return cached;
+        const file = host.getSourceFile(fileName, languageVersion);
+        if (file === undefined || file.isDeclarationFile) {
+          if (file !== undefined && fileName.startsWith(libraryDirectory)) {
+            libraryFiles.set(fileName, file);
+          }
+          return file;
+        }
+        return ts.createSourceFile(
+          fileName,
+          declareVarFunctions(fileName, assignParameterProperties(fileName, file.text)),
+          languageVersion,
+          true,
+        );
       },
+      fileExists: (fileName) => fileName === path || host.fileExists(fileName),
+      readFile: (fileName) => (fileName === path ? source : host.readFile(fileName)),
+      resolveModuleNameLiterals: libraries === undefined ? resolveModuleNameLiterals : undefined,
+    };
+    return ts.createProgram({
+      rootNames,
+      options,
+      projectReferences: project?.projectReferences,
+      host: programHost,
     });
+  };
   const getModelSourceFile = (program: ts.Program) => {
     const file = program.getSourceFile(path);
     if (file === undefined) throw new TlaTypeScriptError(`Can't read ${path}`);
