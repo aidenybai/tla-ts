@@ -49140,4 +49140,29 @@ describe("BigInts", () => {
       ).toContain("seen true,1,false,false,true,1,function,false");
     });
   });
+
+  describe("reads a built-in whose type a file's declare global adds to as the built-in", () => {
+    const getSource = (expected: string) => `
+      declare global {
+        interface Error {
+          readonly reported?: boolean;
+        }
+      }
+      const described = Object.getOwnPropertyDescriptor(Error, "stackTraceLimit");
+      const error = new Error("made");
+      const seen = [described?.value, described?.writable, error instanceof Error, error.reported].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+      export {};
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("10,true,true,"))).failure).toBeUndefined();
+    });
+
+    it("rejects another description", async () => {
+      expect((await checkModel(getSource("10,false,true,"))).failure?.message).toContain(
+        "seen 10,true,true,",
+      );
+    });
+  });
 });

@@ -1418,6 +1418,12 @@ const getCastNamespaceMember = (node: ts.Node, checker: ts.TypeChecker) => {
     : undefined;
 };
 
+// Whether a declaration runs no code, as a declaration file's doesn't, or one that a file's declare
+// global holds to add to a built-in's type.
+export const isAmbientDeclaration = (declaration: ts.Node) =>
+  declaration.getSourceFile().isDeclarationFile ||
+  ts.findAncestor(declaration, isAmbient) !== undefined;
+
 // Whether only declarations, such as a declaration file's, declare a name.
 const isOnlyDeclared = (symbol: ts.Symbol) => {
   const declarations = symbol.declarations ?? [];

@@ -10,6 +10,7 @@ import {
   getSymbol,
   getUndefined,
   hasObjectMembers,
+  isAmbientDeclaration,
   isModuleFile,
   isOnce,
   share,
@@ -43,7 +44,7 @@ export const isNativeErrorName = (name: string): name is `${string}Error` =>
 const isNative = (symbol: ts.Symbol) =>
   NATIVE_ERRORS.has(symbol.name) &&
   (symbol.declarations ?? []).length > 0 &&
-  (symbol.declarations ?? []).every((declaration) => declaration.getSourceFile().isDeclarationFile);
+  (symbol.declarations ?? []).every(isAmbientDeclaration);
 
 const getBase = (symbol: ts.Symbol, checker: ts.TypeChecker) => {
   const expression = (symbol.declarations ?? [])
