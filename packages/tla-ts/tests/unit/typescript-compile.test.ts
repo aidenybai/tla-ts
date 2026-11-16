@@ -46048,4 +46048,98 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("gives the source text that Function.prototype.toString reads, as Node strips types", () => {
+    const getSource = (expected: string) => `
+      function typed<T>(this: unknown, value: T, label?: string): T {
+        return value as T;
+      }
+      const arrow = async (a: number, b?: string): Promise<number> => a!;
+      class Point<T> implements Iterable<T> {
+        private readonly x: number = 1;
+        declare y: string;
+        static make(this: void, n: number): Point<number> {
+          return new Point();
+        }
+        get size(): number {
+          return this.x;
+        }
+        *[Symbol.iterator](): Iterator<T> {}
+      }
+      const object = {
+        method(a: string): void {},
+        async *gen() {},
+        ["computed" + 1]<U>(u: U) {
+          return u;
+        },
+        plain: function () {
+          /* : comment */
+        },
+      };
+      const getter = Object.getOwnPropertyDescriptor(Point.prototype, "size");
+      const listed: unknown[] = [
+        typed,
+        arrow,
+        Point.make,
+        getter === undefined ? undefined : getter.get,
+        object.method,
+        object.gen,
+        object.computed1,
+        object.plain,
+        Point.prototype[Symbol.iterator],
+        Math.max,
+        Function.prototype.call,
+        Function.prototype[Symbol.hasInstance],
+        new Proxy(object.method, {}),
+        Symbol,
+        Function.prototype,
+      ];
+      const seen = JSON.stringify(listed.map((value) => Function.prototype.toString.call(value)));
+      if (seen !== ${JSON.stringify(expected)}) throw new Error("seen " + seen);
+    `;
+    const expected = JSON.stringify([
+      "function typed   (               value   , label         )    {\n        return value     ;\n      }",
+      "async (a        , b         )                  => a",
+      "make(            n        )                {\n          return new Point();\n        }",
+      "get size()         {\n          return this.x;\n        }",
+      "method(a        )       {}",
+      "async *gen() {}",
+      '["computed" + 1]   (u   ) {\n          return u;\n        }',
+      "function () {\n          /* : comment */\n        }",
+      "*[Symbol.iterator]()              {}",
+      "function max() { [native code] }",
+      "function call() { [native code] }",
+      "function [Symbol.hasInstance]() { [native code] }",
+      "function () { [native code] }",
+      "function Symbol() { [native code] }",
+      "function () { [native code] }",
+    ]);
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects a text that keeps the types", async () => {
+      expect(
+        (await checkModel(getSource(expected.replace("label         ", "label?: string")))).failure
+          ?.message,
+      ).toContain("seen ");
+    });
+
+    it("stops at a class that the heap holds, and at a value that isn't a function", async () => {
+      const getStopped = (value: string) => `
+        class Point {
+          static origin = 0;
+        }
+        const text = Function.prototype.toString.call(${value});
+        if (text.length === 0) throw new Error("empty");
+      `;
+      expect((await checkModel(getStopped("Point"))).failure?.message).toContain(
+        "tla-ts can't tell the source text of this function",
+      );
+      expect((await checkModel(getStopped("{}"))).failure?.message).toContain(
+        "tla-ts can't throw the TypeError of Function.prototype.toString",
+      );
+    });
+  });
 });

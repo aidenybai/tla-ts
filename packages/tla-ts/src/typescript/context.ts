@@ -125,6 +125,8 @@ export interface Context {
   // Whether a script reads a property of a function that may be a built-in accessor, whose objects
   // the heap then holds.
   isAccessorRead: boolean;
+  // Whether Function.prototype.toString reads the source texts of the script's functions.
+  isSourceTextRead: boolean;
   // The literal that each function a script holds as a value returns, by its model value's name,
   // for the functions that return only a literal.
   constantFunctions: Map<string, Expression>;
@@ -522,6 +524,7 @@ export const createContext = (
     heap: undefined,
     builtIns: new Set(),
     isAccessorRead: false,
+    isSourceTextRead: false,
     constantFunctions: new Map(),
     functionObjects: new Map(),
     hasSpecialNumbers: false,

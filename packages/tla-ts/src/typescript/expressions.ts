@@ -1601,6 +1601,20 @@ const translateBuiltInCall = (
   }
   const arrayLike = translateArrayLikeCall(node, scope, context);
   if (arrayLike !== undefined) return arrayLike;
+  if (method === "call" && receiver.getText() === "Function.prototype.toString") {
+    context.isSourceTextRead = true;
+    const argument = node.arguments.at(0);
+    return useJavaScript(
+      "FunctionSourceText",
+      [
+        getHeap(scope, node, context),
+        argument === undefined
+          ? getUndefined(context)
+          : translateExpression(argument, scope, context),
+      ],
+      context,
+    );
+  }
   const calledMethod =
     method === "call" &&
     ts.isPropertyAccessExpression(receiver) &&

@@ -94,6 +94,8 @@ const RESERVED = new Set([
   "UsedBuiltIns",
   "ConstantFunctions",
   "UsedConstantFunctions",
+  "SourceTexts",
+  "UsedSourceTexts",
   "Null",
   "Undefined",
   "Unresolvable",
