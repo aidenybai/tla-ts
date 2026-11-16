@@ -2660,12 +2660,15 @@ export const readGlobal = (name: ts.Identifier, value: Expression, context: Cont
     value,
   );
 
-// Node's process object, which the host gives, where no code of the script's declares process.
+// Node's process object, which the host gives, where only a declaration file or a declare, if
+// anything, declares process.
 const isProcess = (node: ts.Expression, context: Context) =>
   ts.isIdentifier(node) &&
   node.text === "process" &&
   (getSymbol(node, context.checker)?.declarations ?? []).every(
-    (declaration) => declaration.getSourceFile().isDeclarationFile,
+    (declaration) =>
+      declaration.getSourceFile().isDeclarationFile ||
+      (ts.getCombinedModifierFlags(declaration) & ts.ModifierFlags.Ambient) !== 0,
   );
 
 // The name of the environment variable that a read of process.env names. tla-ts reads the

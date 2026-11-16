@@ -45630,4 +45630,36 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("none"))).failure?.message).toContain("seen absent,none");
     });
   });
+
+  describe("reads process.env where a declare declares process", () => {
+    const getSource = (expected: string) => `
+      declare const process: { env: Record<string, string | undefined> };
+      const box = { size: 0 };
+      const seen = [
+        process.env.TLA_TS_MODE,
+        process.env["TLA_TS_UNSET"] === undefined,
+        typeof process.env.TLA_TS_UNSET,
+        box.size,
+      ].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    it("agrees with Node", async () => {
+      vi.stubEnv("TLA_TS_MODE", "checked");
+      vi.stubEnv("TLA_TS_UNSET", undefined);
+      expect((await checkModel(getSource("checked,true,undefined,0"))).failure).toBeUndefined();
+    });
+
+    it("rejects a variable that the environment doesn't set as set", async () => {
+      vi.stubEnv("TLA_TS_MODE", "checked");
+      vi.stubEnv("TLA_TS_UNSET", undefined);
+      expect((await checkModel(getSource("checked,false,string,0"))).failure?.message).toContain(
+        "seen checked,true,undefined,0",
+      );
+    });
+  });
 });
