@@ -1,4 +1,5 @@
 import ts from "@typescript/typescript6";
+import { isAmbientCode } from "./early-errors";
 import { BUILT_INS } from "./built-ins";
 import type { ExceptPathStep, Expression, OperatorDefinition } from "../ast";
 import {
@@ -19282,14 +19283,11 @@ const getHoistedAssignment = (statement: ts.Statement, path: Path, context: Cont
 const getVarScoped = (node: ts.Node): (ts.VariableDeclarationList | ts.FunctionDeclaration)[] => {
   if (ts.isFunctionDeclaration(node)) return [node];
   if (ts.isFunctionLike(node) || ts.isClassLike(node)) return [];
-  // A declare's variable is the host's, which nothing here binds.
+  // A declare's variable, as in declare global, is the host's, which nothing here binds.
   if (
     ts.isVariableDeclarationList(node) &&
     (node.flags & ts.NodeFlags.BlockScoped) === 0 &&
-    !(
-      ts.isVariableStatement(node.parent) &&
-      node.parent.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.DeclareKeyword)
-    )
+    !isAmbientCode(node)
   ) {
     return [node];
   }
@@ -19821,6 +19819,14 @@ export const translateStatements = (
   }
   const continueWith = (inner: Path) =>
     translateStatements(statements.slice(1), leave(inner), context, frame);
+  // A declare's var only types the global object's property.
+  if (
+    ts.isVariableStatement(statement) &&
+    (statement.declarationList.flags & ts.NodeFlags.BlockScoped) === 0 &&
+    isAmbientCode(statement)
+  ) {
+    return continueWith(path);
+  }
   const shared = getSharedWrite(statement, context);
   if (shared !== undefined && ts.isVariableStatement(statement)) {
     return translateSharedDeclaration(

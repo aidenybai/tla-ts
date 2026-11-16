@@ -44880,7 +44880,7 @@ describe("BigInts", () => {
     });
   });
 
-  describe("stops where a script defines an accessor on the global object", () => {
+  describe("defines a data property or an accessor on the global object", () => {
     const getSource = (descriptor: string, expected: number) => `
       const global = globalThis as unknown as Record<string, unknown>;
       Object.defineProperty(globalThis, "data", ${descriptor});
@@ -44899,10 +44899,16 @@ describe("BigInts", () => {
       ).toContain("1");
     });
 
-    it("stops at an accessor, which a global variable's read wouldn't run", async () => {
+    it("agrees with Node on an accessor that the global object's key reads", async () => {
       expect(
-        (await checkModel(getSource("{ get: () => 1, configurable: true }", 1))).failure?.message,
-      ).toContain("tla-ts can't define accessors on the global object");
+        (await checkModel(getSource("{ get: () => 1, configurable: true }", 1))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects an accessor's wrong value", async () => {
+      expect(
+        (await checkModel(getSource("{ get: () => 1, configurable: true }", 2))).failure?.message,
+      ).toContain("1");
     });
   });
 
@@ -46231,6 +46237,75 @@ describe("BigInts", () => {
       `;
       expect((await checkModel(getUnfit("false"))).failure).toBeUndefined();
       expect((await checkModel(getUnfit("true"))).failure?.message).toContain('"false"');
+    });
+  });
+
+  describe("holds the global object's keys that a script's declare global types, and accessors under them", () => {
+    const getSource = (expected: string) => `
+      interface Hook {
+        count: number;
+      }
+      declare global {
+        var hook: Hook | undefined;
+        var other: Hook | undefined;
+      }
+      interface Target {
+        hook?: Hook;
+      }
+      const read = (target: Target = globalThis) => target.hook;
+      const seen: unknown[] = [Object.hasOwn(globalThis, "hook")];
+      globalThis.hook = { count: 1 };
+      seen.push(read()?.count, hook?.count, Object.hasOwn(globalThis, "hook"));
+      globalThis.hook = undefined;
+      seen.push(read(), hook);
+      Object.defineProperty(globalThis, "other", {
+        configurable: true,
+        enumerable: false,
+        get: () => undefined,
+      });
+      const descriptor = Object.getOwnPropertyDescriptor(globalThis, "other");
+      seen.push(typeof descriptor?.get, descriptor?.enumerable, "other" in globalThis);
+      const result = seen.join();
+      if (result !== "${expected}") throw new Error("seen " + result);
+      export {};
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("false,1,1,true,,,function,false,true"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects a read that misses the global object's write", async () => {
+      expect(
+        (await checkModel(getSource("false,1,1,true,1,,function,false,true"))).failure?.message,
+      ).toContain("seen false,1,1,true,,,function,false,true");
+    });
+
+    it("stops at a read of a declared global that the global object lacks", async () => {
+      await expect(
+        checkModel(`
+          declare global {
+            var missing: number | undefined;
+          }
+          if (missing === 1) throw new Error("one");
+          export {};
+        `),
+      ).rejects.toThrow("tla-ts can't throw the ReferenceError of reading missing");
+    });
+
+    it("gives typeof of a declared var that the global object lacks, which a script's declare never binds", async () => {
+      const getTyped = (expected: string) => `
+        declare var window: object | undefined;
+        const seen: string[] = [typeof window];
+        (globalThis as unknown as { window: object }).window = {};
+        seen.push(typeof window, String(window === undefined));
+        if (seen.join() !== "${expected}") throw new Error(seen.join());
+      `;
+      expect((await checkModel(getTyped("undefined,object,false"))).failure).toBeUndefined();
+      expect((await checkModel(getTyped("undefined,object,true"))).failure?.message).toContain(
+        "undefined,object,false",
+      );
     });
   });
 });

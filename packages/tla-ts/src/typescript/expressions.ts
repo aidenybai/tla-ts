@@ -1,4 +1,6 @@
 import ts from "@typescript/typescript6";
+import { BUILT_INS, HOST_GLOBAL_KEYS } from "./built-ins";
+import { isAmbientCode } from "./early-errors";
 import {
   getHeapSetOrMapChange,
   translateArrayConstructor,
@@ -2661,6 +2663,26 @@ const isUnset = (symbol: ts.Symbol, context: Context) => {
 
 // A read of a global that a write outside strict mode makes, which throws a ReferenceError until
 // the write runs. A statement that reads it first throws there, and tla-ts stops at any other read.
+// A var that only a declaration gives and that the host lacks, as declare global's, or a library's
+// for another host, as the browser's window. It's the global object's property where a script
+// writes one there, and nothing binds it otherwise.
+export const isGlobalObjectVar = (node: ts.Identifier, context: Context) => {
+  const declarations = getSymbol(node, context.checker)?.declarations ?? [];
+  return (
+    declarations.length > 0 &&
+    !HOST_GLOBAL_KEYS.includes(node.text) &&
+    !BUILT_INS.globalThis[3].some((property) => property[0] === node.text) &&
+    declarations.every(
+      (declaration) =>
+        ts.isVariableDeclaration(declaration) &&
+        (ts.getCombinedNodeFlags(declaration) & ts.NodeFlags.BlockScoped) === 0 &&
+        (isAmbientCode(declaration) ||
+          (declaration.getSourceFile().isDeclarationFile &&
+            !declaration.getSourceFile().fileName.includes("/@types/node/"))),
+    )
+  );
+};
+
 export const readGlobal = (name: ts.Identifier, value: Expression, context: Context) =>
   ifExpression(
     isUnresolvable(value, context),
@@ -2777,6 +2799,22 @@ const translateIdentifier = (node: ts.Identifier, scope: Scope, context: Context
   if (errorClass !== undefined) return getConstructor(errorClass, context);
   const intrinsic = translateIntrinsic(node, scope, context);
   if (intrinsic !== undefined) return intrinsic;
+  if (isGlobalObjectVar(node, context)) {
+    const missing = apply("Assert", [
+      boolean(false),
+      string(
+        `tla-ts can't throw the ReferenceError of reading ${node.text}, which the global object lacks`,
+      ),
+    ]);
+    if (context.heap === undefined) return missing;
+    context.builtIns.add("globalThis");
+    const heap = getHeap(scope, node, context);
+    return ifExpression(
+      useJavaScript("Has", [heap, identifier("GlobalObject"), string(node.text)], context),
+      useJavaScript("Get", [heap, identifier("GlobalObject"), string(node.text)], context),
+      missing,
+    );
+  }
   if (symbol !== undefined && isDeclarationOnly(symbol)) {
     throw new TlaTypeScriptError(
       `tla-ts can't run ${node.text}, which only a declaration gives`,

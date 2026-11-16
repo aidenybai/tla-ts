@@ -15,6 +15,7 @@ import { formatString } from "../printer";
 import {
   PRIMITIVE_NAMES,
   getNumberValue,
+  isGlobalObjectVar,
   translateBigInt,
   translateExpression,
   translateToString,
@@ -22,6 +23,7 @@ import {
 } from "./expressions";
 import { rejectBeforeDeclaration, type Scope } from "./scope";
 import { getMappedParameter } from "./actions";
+import { getHeap } from "./heap";
 import { getKind, isBigIntLike } from "./types";
 import { apply, boolean, identifier, ifExpression, number, set, string } from "./tla";
 
@@ -7510,13 +7512,13 @@ IsObjectArgument(value) ==
 \\* that inherits from Object.prototype, and only functions that the heap holds read it. A primitive
 \\* reads only the built-in keys of its prototype as tla-ts compiles, and stops at any other key, so a
 \\* script may define an accessor under a string key that is neither of those nor an index. A typed
-\\* array, which the heap holds, reads its prototypes' accessors as any object on the heap does.
+\\* array, which the heap holds, reads its prototypes' accessors as any object on the heap does. The
+\\* global object's keys that a script's vars and names read are hidden, or stop a change, so only Get
+\\* reads an accessor under another key.
 LOCAL CanDefineOn(ref, key, descriptor) ==
-  \\* A global variable reads its binding, not the global object's accessor.
-  /\\ Assert(~descriptor.isAccessor \\/ ToString(ref) # ToString(GlobalObject),
-            "tla-ts can't define accessors on the global object")
   /\\ Assert(\\/ IsHeap(ref)
             \\/ ~descriptor.isAccessor
+            \\/ ToString(ref) = ToString(GlobalObject)
             \\/ BuiltInKey(ref) \\in {"Array.prototype", "Object.prototype"}
             \\/ BuiltInKey(ref) \\in {"%Int8Array.prototype.[[Prototype]]%"} \\cup
                  {type \\o "Array.prototype" :
@@ -8622,6 +8624,24 @@ export const translateTypeOf = (
   // A write through an arguments object may give a parameter that it maps a value of another type.
   const mapped = ts.isIdentifier(read) ? getMappedParameter(read, scope, context) : undefined;
   if (mapped !== undefined) return useJavaScript("TypeOfIn", [mapped.heap, mapped.raw], context);
+  // typeof reads the global object's property without throwing where it lacks it.
+  if (ts.isIdentifier(read) && isGlobalObjectVar(read, context)) {
+    if (context.heap === undefined) return string("undefined");
+    context.builtIns.add("globalThis");
+    const heap = getHeap(scope, read, context);
+    return ifExpression(
+      useJavaScript("Has", [heap, identifier("GlobalObject"), string(read.text)], context),
+      useJavaScript(
+        "TypeOfIn",
+        [
+          heap,
+          useJavaScript("Get", [heap, identifier("GlobalObject"), string(read.text)], context),
+        ],
+        context,
+      ),
+      string("undefined"),
+    );
+  }
   const symbol = isImplicitGlobal(read, context) ? getSymbol(read, context.checker) : undefined;
   const global = symbol === undefined ? undefined : scope.bindings.get(symbol);
   const typeOf = translateTypeOfValue(node, scope, context);

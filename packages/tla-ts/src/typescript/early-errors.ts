@@ -37,8 +37,20 @@ export const getLexicalNames = (statements: readonly ts.Statement[], isFunctionB
 
 // The names that var declarations among statements declare, through nested blocks but not
 // nested functions.
+// Code that a declare holds, as declare global does, which only types the host's values and never
+// runs.
+export const isAmbientCode = (node: ts.Node) =>
+  ts.findAncestor(
+    node,
+    (ancestor) =>
+      ts.canHaveModifiers(ancestor) &&
+      (ts.getModifiers(ancestor) ?? []).some(
+        (modifier) => modifier.kind === ts.SyntaxKind.DeclareKeyword,
+      ),
+  ) !== undefined;
+
 export const getVarNames = (node: ts.Node): string[] => {
-  if (ts.isFunctionLike(node) || ts.isClassLike(node)) return [];
+  if (ts.isFunctionLike(node) || ts.isClassLike(node) || isAmbientCode(node)) return [];
   const own =
     ts.isVariableDeclarationList(node) && (node.flags & ts.NodeFlags.BlockScoped) === 0
       ? node.declarations.flatMap((declaration) => getBindingNames(declaration.name))
