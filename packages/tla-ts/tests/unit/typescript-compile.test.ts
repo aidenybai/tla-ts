@@ -48757,4 +48757,25 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("4,6,5,2"))).failure?.message).toContain("seen 5,6,5,2");
     });
   });
+
+  describe("gives a module's function on the heap the arguments object of the call that TLC makes", () => {
+    const getSource = (operator: string) => `
+      const seen = new Set<number>();
+      const view = seen;
+      view.add(1);
+      export function pick(first: 0 | 1, second: 0 | 1): number {
+        if (arguments.length !== 2 || arguments[1] ${operator} second) throw new Error("arguments");
+        return first + second + seen.size;
+      }
+    `;
+
+    it("agrees with Node, checking only the initial state, as no action changes the heap", async () => {
+      const result = await checkModel(getSource("!=="));
+      expect([result.status, result.failure]).toEqual(["success", undefined]);
+    });
+
+    it("rejects an argument that the object lacks", async () => {
+      expect((await checkModel(getSource("==="))).failure?.message).toContain("arguments");
+    });
+  });
 });

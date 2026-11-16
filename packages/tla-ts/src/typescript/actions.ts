@@ -21226,36 +21226,58 @@ export const translateHeapBody = (owner: FunctionNode, scope: Scope, context: Co
     }
     return leaf(value);
   };
-  return translateStatements(
-    ts.isBlock(body) ? body.statements : [ts.factory.createReturnStatement(body)],
-    {
-      scope,
-      mutable: new Set([
-        heapSymbol,
-        ...owner.parameters.flatMap((parameter) => {
-          const symbol = ts.isIdentifier(parameter.name)
-            ? getSymbol(parameter.name, context.checker)
-            : undefined;
-          return symbol !== undefined && scope.bindings.has(symbol) ? [symbol] : [];
-        }),
-      ]),
-      isAssigned: false,
-      isLast: false,
-      isLooping: true,
-      generators: new Map(),
-      tasks: undefined,
-    },
+  // TLC passes the function its parameters, which its arguments object holds.
+  const made = allocateArguments(
+    owner,
+    tuple(
+      owner.parameters.map((parameter) => {
+        const symbol = ts.isIdentifier(parameter.name)
+          ? getSymbol(parameter.name, context.checker)
+          : undefined;
+        const value = symbol === undefined ? undefined : scope.bindings.get(symbol);
+        if (value === undefined) {
+          throw new TlaTypeScriptError("tla-ts can't pass this parameter on the heap", parameter);
+        }
+        return value;
+      }),
+    ),
+    owner,
+    { definitions: [], scope },
     context,
-    {
-      next: (path) => leave(path, getUndefined(context)),
-      exit: (path, value) => leave(path, value ?? getUndefined(context)),
-      breakTo: undefined,
-      continueTo: undefined,
-      throwTo: undefined,
-      yieldTo: undefined,
-      awaitTo: undefined,
-      inlining: new Set([owner]),
-    },
+  );
+  return letIn(
+    made.definitions,
+    translateStatements(
+      ts.isBlock(body) ? body.statements : [ts.factory.createReturnStatement(body)],
+      {
+        scope: made.scope,
+        mutable: new Set([
+          heapSymbol,
+          ...owner.parameters.flatMap((parameter) => {
+            const symbol = ts.isIdentifier(parameter.name)
+              ? getSymbol(parameter.name, context.checker)
+              : undefined;
+            return symbol !== undefined && scope.bindings.has(symbol) ? [symbol] : [];
+          }),
+        ]),
+        isAssigned: false,
+        isLast: false,
+        isLooping: true,
+        generators: new Map(),
+        tasks: undefined,
+      },
+      context,
+      {
+        next: (path) => leave(path, getUndefined(context)),
+        exit: (path, value) => leave(path, value ?? getUndefined(context)),
+        breakTo: undefined,
+        continueTo: undefined,
+        throwTo: undefined,
+        yieldTo: undefined,
+        awaitTo: undefined,
+        inlining: new Set([owner]),
+      },
+    ),
   );
 };
 
