@@ -4,6 +4,7 @@ import {
   type Context,
   getSymbol,
   getUndefined,
+  isAbsentModuleVariable,
   isNodeGlobal,
   isAssignedElsewhere,
   isImplicitGlobal,
@@ -8658,6 +8659,7 @@ export const translateTypeOf = (
   context: Context,
 ): Expression => {
   const read = skipCasts(node.expression);
+  if (ts.isIdentifier(read) && isAbsentModuleVariable(read, context)) return string("undefined");
   // A write through an arguments object may give a parameter that it maps a value of another type.
   const mapped = ts.isIdentifier(read) ? getMappedParameter(read, scope, context) : undefined;
   if (mapped !== undefined) return useJavaScript("TypeOfIn", [mapped.heap, mapped.raw], context);

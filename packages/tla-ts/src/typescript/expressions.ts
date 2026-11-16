@@ -38,6 +38,7 @@ import {
   isHeldErrorName,
   getArgumentsOwner,
   isModuleFile,
+  isAbsentModuleVariable,
   isNodeGlobal,
   isStrictCode,
   getSharedDeclaration,
@@ -2857,6 +2858,14 @@ const translateIdentifier = (node: ts.Identifier, scope: Scope, context: Context
       useJavaScript("Get", [heap, identifier("GlobalObject"), string(node.text)], context),
       missing,
     );
+  }
+  if (isAbsentModuleVariable(node, context)) {
+    return apply("Assert", [
+      boolean(false),
+      string(
+        `tla-ts can't throw the ReferenceError of reading ${node.text}, which an ES module doesn't have`,
+      ),
+    ]);
   }
   if (symbol !== undefined && isDeclarationOnly(symbol)) {
     throw new TlaTypeScriptError(

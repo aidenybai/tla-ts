@@ -672,10 +672,25 @@ export const isModuleFile = (file: ts.SourceFile) =>
   !isCommonJsFile(file.fileName) &&
   (file.statements.some(isModuleSyntax) || hasTopLevelAwait(file));
 
+// The variables that Node gives a CommonJS module's code, which an ES module doesn't have, though
+// Node's types declare them.
+const COMMON_JS_VARIABLES = new Set(["require", "module", "exports", "__filename", "__dirname"]);
+
 // A read of a global that Node gives, which nothing but declarations, such as Node's types, declares.
 export const isNodeGlobal = (node: ts.Identifier, context: Context) => {
   const symbol = getSymbol(node, context.checker);
   return NODE_GLOBALS.has(node.text) && (symbol === undefined || isDeclarationOnly(symbol));
+};
+
+// A read in an ES module of a variable that only Node's types declare for a CommonJS module.
+export const isAbsentModuleVariable = (node: ts.Identifier, context: Context) => {
+  const declarations = getSymbol(node, context.checker)?.declarations ?? [];
+  return (
+    COMMON_JS_VARIABLES.has(node.text) &&
+    declarations.length > 0 &&
+    declarations.every((declaration) => declaration.getSourceFile().isDeclarationFile) &&
+    isModuleFile(node.getSourceFile())
+  );
 };
 
 // A "use strict" directive is in the string literals that start the statements, and later it is

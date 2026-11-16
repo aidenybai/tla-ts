@@ -47884,4 +47884,30 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("has none of the variables of CommonJS's code in an ES module", () => {
+    const path = join(import.meta.dirname, "../fixtures/typescript/common-js/absent.ts");
+    const source = readFileSync(path, "utf8");
+
+    it("agrees with Node", async () => {
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects a require that an ES module has", async () => {
+      const wrong = source.replace(
+        "undefined,undefined,undefined false",
+        "function,undefined,undefined true",
+      );
+      await expect(check(compile(wrong, path))).rejects.toThrow(
+        "seen object,function,undefined,undefined,undefined false",
+      );
+    });
+
+    it("stops where an ES module reads require", async () => {
+      const read = `${source}\nif (require === undefined) throw new Error("none");`;
+      await expect(check(compile(read, path))).rejects.toThrow(
+        "tla-ts can't throw the ReferenceError of reading require, which an ES module doesn't have",
+      );
+    });
+  });
 });
