@@ -18508,10 +18508,12 @@ const findLeadingCall = (
       (ts.isElementAccessExpression(node.expression) &&
         getHeapRegExpCall(node, context) !== undefined &&
         isPlainCallee(getCast(node.expression.expression), context, path.scope.results));
+    // super evaluates nothing before its arguments.
     if (
       !isListed &&
       !isMadeCollection &&
       !isRegExpMethod &&
+      node.expression.kind !== ts.SyntaxKind.SuperKeyword &&
       !isPlainCallee(node.expression, context, path.scope.results)
     ) {
       return blocked;

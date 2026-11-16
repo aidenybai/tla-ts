@@ -45450,4 +45450,41 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("takes a super call's spread through the iterator", () => {
+    const getSource = (expected: string) => `
+      let count = 0;
+      const iterable = {
+        [Symbol.iterator]() {
+          return {
+            next() {
+              count += 1;
+              return { done: count === 3, value: count };
+            },
+          };
+        },
+      };
+      let seen = "";
+      class Base {
+        constructor(...values: number[]) {
+          seen = values.join();
+        }
+      }
+      class Derived extends Base {
+        constructor() {
+          super(0, ...iterable);
+        }
+      }
+      new Derived();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("0,1,2"))).failure).toBeUndefined();
+    });
+
+    it("rejects arguments that the iterator didn't give", async () => {
+      expect((await checkModel(getSource("0,1,2,3"))).failure?.message).toContain("seen 0,1,2");
+    });
+  });
 });
