@@ -7038,7 +7038,9 @@ export const inlineBody = (
     translateSelfCall(node, callee, argumentNodes, receiver, path, context, frame, continueWith);
   const inlineCall = (bound: Bound, inner: Path) => {
     // What the call evaluated or made of the function's own code, such as a default that it
-    // skipped or an object that a default made, belongs to that call, not to a later one.
+    // skipped or an object that a default made, belongs to that call, not to a later one. The
+    // caller keeps what it evaluated before the call, which the function's code holds where the
+    // caller is a function that it made.
     const isOwn = (entry: [ts.Node, Expression]) =>
       ts.findAncestor(entry[0], (ancestor) => ancestor === callee) !== undefined;
     const getCaller = (current: Path): Path => ({
@@ -7047,8 +7049,14 @@ export const inlineBody = (
         ...current.scope,
         previous: inner.scope.previous,
         entered: inner.scope.entered,
-        results: new Map([...current.scope.results].filter((entry) => !isOwn(entry))),
-        allocated: new Map([...current.scope.allocated].filter((entry) => !isOwn(entry))),
+        results: new Map([
+          ...[...current.scope.results].filter((entry) => !isOwn(entry)),
+          ...[...path.scope.results].filter(isOwn),
+        ]),
+        allocated: new Map([
+          ...[...current.scope.allocated].filter((entry) => !isOwn(entry)),
+          ...[...path.scope.allocated].filter(isOwn),
+        ]),
       },
     });
     return translateJoined(node, getCaller(inner), context, continueWith, (next) => {

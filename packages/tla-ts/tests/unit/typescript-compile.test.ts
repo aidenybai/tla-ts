@@ -48581,4 +48581,24 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("calls an untyped callback that may be the function that made the caller", () => {
+    const getSource = (expected: string) => `
+      const results: any = {};
+      var slope = (function (f: any, dx: any) {
+        return function (x: any) {
+          return (f(x + dx) - f(x)) / dx;
+        };
+      })(function double(x: number) { return x * 2; }, 1)(3);
+      if (slope !== ${expected}) throw new Error("seen " + slope);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("2"))).failure).toBeUndefined();
+    });
+
+    it("rejects a wrong value", async () => {
+      expect((await checkModel(getSource("3"))).failure?.message).toContain("seen 2");
+    });
+  });
 });
