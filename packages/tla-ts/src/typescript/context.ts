@@ -3519,7 +3519,11 @@ export const getCaptures = (node: Closure, context: Context) => {
 // its own declares.
 export const getSharedDeclaration = (symbol: ts.Symbol, context: Context) => {
   const declaration = symbol.valueDeclaration;
-  const statement = declaration?.parent.parent;
+  // A module's namespace object has its source file as its declaration, which has no parent.
+  const statement =
+    declaration !== undefined && ts.isVariableDeclaration(declaration)
+      ? declaration.parent.parent
+      : undefined;
   const owner = declaration && ts.findAncestor(declaration.parent, ts.isFunctionLike);
   if (
     context.heap === undefined ||
