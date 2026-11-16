@@ -1964,14 +1964,13 @@ const annotate = (text: string, path = PROGRAM_PATH) => {
                 held.every(
                   (value) => ts.isArrayLiteralExpression(value) && value.elements.length === 0,
                 );
-              // A variable that only numbers are assigned to, which the fix infers as unknown where
-              // a function reads it, holds a number.
-              const isNumberHeld =
+              // A variable that only numbers, or only strings, are assigned to, which the fix infers
+              // as unknown where a function reads it, holds a number or a string.
+              const isHeld = (flags: ts.TypeFlags) =>
                 held.length > 0 &&
                 held.every(
                   (value) =>
-                    checker !== undefined &&
-                    (checker.getTypeAtLocation(value).flags & ts.TypeFlags.NumberLike) !== 0,
+                    checker !== undefined && (checker.getTypeAtLocation(value).flags & flags) !== 0,
                 );
               return (
                 current.slice(0, change.span.start) +
@@ -1984,9 +1983,11 @@ const annotate = (text: string, path = PROGRAM_PATH) => {
                     ? ": unknown[]"
                     : isEmptyArrayHeld
                       ? getArrayOfUnion(inferred)
-                      : inferred === ": unknown" && isNumberHeld
+                      : inferred === ": unknown" && isHeld(ts.TypeFlags.NumberLike)
                         ? ": number"
-                        : inferred) +
+                        : inferred === ": unknown" && isHeld(ts.TypeFlags.StringLike)
+                          ? ": string"
+                          : inferred) +
                 current.slice(change.span.start + change.span.length)
               );
             }, file.text);
