@@ -2587,7 +2587,7 @@ TemporalNew(heap, kind, arguments, prototype) ==
                      [] ~TIsYearKept(date[1]) \/ ~TIsValidDate(date[1], date[2], date[3]) -> TFail("RangeError")
                      [] ~TIsValidTime(time) -> TFail("RangeError")
                      [] kind = "PlainDate" /\ ~TDateWithinLimits(date) -> TFail("RangeError")
-                     [] ~TDateTimeWithinLimits(date, time) -> TFail("RangeError")
+                     [] kind = "PlainDateTime" /\ ~TDateTimeWithinLimits(date, time) -> TFail("RangeError")
                      [] OTHER -> TOk([date |-> date, time |-> time, calendar |-> calendar.value]))
     [] kind = "Instant" ->
          LET ns == TToBigInt(TArgument(arguments, 1))

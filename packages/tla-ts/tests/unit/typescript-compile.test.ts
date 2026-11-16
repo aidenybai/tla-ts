@@ -45950,4 +45950,39 @@ describe("BigInts", () => {
       expect(result.failure?.message).toContain("tla-ts can't read the properties of");
     });
   });
+
+  describe("makes a plain date on the day before the earliest date time", () => {
+    const getSource = (expected: string) => `
+      const thrown = (run: () => unknown) => {
+        try {
+          run();
+          return "none";
+        } catch (error) {
+          return (error as Error).name;
+        }
+      };
+      const earliest = new Temporal.PlainDate(-271821, 4, 19);
+      const before = thrown(() => new Temporal.PlainDate(-271821, 4, 18));
+      const midnight = thrown(() => new Temporal.PlainDateTime(-271821, 4, 19));
+      const after = new Temporal.PlainDateTime(-271821, 4, 19, 0, 0, 0, 0, 0, 1).toString();
+      const earlier = thrown(() => earliest.add({ months: -1 }));
+      const later = earliest.add({ days: 1 }).toString();
+      const seen = [earliest.toString(), before, midnight, after, earlier, later].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      const expected =
+        "-271821-04-19,RangeError,RangeError,-271821-04-19T00:00:00.000000001,RangeError,-271821-04-20";
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects a plain date time at the midnight of that day", async () => {
+      const expected =
+        "-271821-04-19,RangeError,none,-271821-04-19T00:00:00.000000001,RangeError,-271821-04-20";
+      expect((await checkModel(getSource(expected))).failure?.message).toContain(
+        "seen -271821-04-19,RangeError,RangeError,",
+      );
+    });
+  });
 });
