@@ -4,6 +4,7 @@ import {
   type Context,
   getSymbol,
   getUndefined,
+  isNodeGlobal,
   isAssignedElsewhere,
   isImplicitGlobal,
   isUnresolvable,
@@ -8702,7 +8703,10 @@ const translateTypeOfValue = (node: ts.TypeOfExpression, scope: Scope, context: 
     : node.expression;
   // A name that no binding has is undefined to typeof, which reads it without throwing, but for
   // one of the globals that Node gives.
-  if (ts.isIdentifier(read) && getSymbol(read, context.checker) === undefined) {
+  if (
+    ts.isIdentifier(read) &&
+    (getSymbol(read, context.checker) === undefined || isNodeGlobal(read, context))
+  ) {
     return string(NODE_GLOBALS.get(read.text) ?? "undefined");
   }
   // A binding that a name has throws before its declaration runs, though typeof only reads it.

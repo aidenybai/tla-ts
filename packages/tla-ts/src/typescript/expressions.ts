@@ -38,6 +38,7 @@ import {
   isHeldErrorName,
   getArgumentsOwner,
   isModuleFile,
+  isNodeGlobal,
   isStrictCode,
   getSharedDeclaration,
   getStaticTruth,
@@ -72,7 +73,6 @@ import {
   isDeclarationOnly,
   getClassStop,
 } from "./context";
-import { NODE_GLOBALS } from "./built-ins";
 import { TlaTypeScriptError } from "../errors";
 import { translateJsonCall } from "./json";
 import {
@@ -2730,7 +2730,7 @@ const getEnvironmentVariable = (node: ts.Expression, context: Context) => {
 
 const translateIdentifier = (node: ts.Identifier, scope: Scope, context: Context) => {
   if (node.text === "undefined") return getUndefined(context);
-  if (NODE_GLOBALS.has(node.text) && getSymbol(node, context.checker) === undefined) {
+  if (isNodeGlobal(node, context)) {
     return apply("Assert", [
       boolean(false),
       string(

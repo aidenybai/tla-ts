@@ -672,6 +672,12 @@ export const isModuleFile = (file: ts.SourceFile) =>
   !isCommonJsFile(file.fileName) &&
   (file.statements.some(isModuleSyntax) || hasTopLevelAwait(file));
 
+// A read of a global that Node gives, which nothing but declarations, such as Node's types, declares.
+export const isNodeGlobal = (node: ts.Identifier, context: Context) => {
+  const symbol = getSymbol(node, context.checker);
+  return NODE_GLOBALS.has(node.text) && (symbol === undefined || isDeclarationOnly(symbol));
+};
+
 // A "use strict" directive is in the string literals that start the statements, and later it is
 // only an expression.
 const hasStrictDirective = (statements: readonly ts.Statement[]) => {

@@ -47864,4 +47864,24 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("gives typeof of the globals that Node gives where Node's types declare them", () => {
+    const path = join(import.meta.dirname, "../fixtures/typescript/common-js/typing.ts");
+    const getSource = (expected: string) => `/// <reference types="node" />
+      const seen = [typeof process, typeof Buffer, typeof URL].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await check(compile(getSource("object,function,function"), path))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects another type", async () => {
+      await expect(check(compile(getSource("object,object,function"), path))).rejects.toThrow(
+        "seen object,function,function",
+      );
+    });
+  });
 });
