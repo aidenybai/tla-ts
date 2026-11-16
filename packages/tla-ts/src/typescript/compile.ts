@@ -58,7 +58,6 @@ import { createProgram } from "./program";
 import {
   getRequires,
   isCommonJsFile,
-  isJavaScriptFile,
   isNodeModule,
   rejectCommonJsImport,
   rejectWrapperUses,
@@ -223,9 +222,6 @@ export const compile = (
     rejectArgumentsVarReads(file, context);
   });
   const sourceFile = program.sourceFile;
-  if (isJavaScriptFile(sourceFile.fileName)) {
-    throw new TlaTypeScriptError("tla-ts can't run JavaScript as the model", sourceFile);
-  }
   // The files that the model loads, each once it has run, and the statements of them all, with the
   // model's own, in the order they run: an ES module's after those of the modules it imports, and a
   // CommonJS module's each after those of the modules that its requires load as it starts. A
@@ -308,7 +304,17 @@ export const compile = (
   getDynamicImports(sourceFile, program.checker).forEach(load);
   rejectRunningModules(files.slice(loaded));
   context.commonJsModules = [...visited].filter(isCommonJsFile);
-  const positions = new Map(statements.map((statement, position) => [statement, position]));
+  // A CommonJS model's statements run where its requires run the modules, and an ES module's after
+  // the statements of all the modules it loads.
+  const positions = new Map(
+    (isCommonJsFile(sourceFile)
+      ? statements
+      : [
+          ...statements.filter((statement) => statement.getSourceFile() !== sourceFile),
+          ...sourceFile.statements,
+        ]
+    ).map((statement, position) => [statement, position]),
+  );
   // The files in the order they run, the model's last.
   const order = [...files, sourceFile];
   const getDeclaration = (node: ts.Node) => {
@@ -935,7 +941,7 @@ export const compile = (
       !isHeapSetOrMap(node, context)) ||
     (ts.forEachChild(node, makesMapValue) ?? false);
   context.isEveryMapHeld = !roots.some(makesMapValue);
-  const model = readModel(sourceFile, imported, context);
+  const model = readModel(sourceFile, imported, positions, context);
   context.script =
     isNodeScript && model.exported.length === 0
       ? { sourceFile, isEsModule: isEsModule(sourceFile) }

@@ -47773,12 +47773,13 @@ describe("BigInts", () => {
       return { path, source: readFileSync(path, "utf8") };
     };
 
-    it.each(["wrapped.ts", "mixed.ts"])("agrees with Node on %s", async (name) => {
+    it.each(["entry.cjs", "wrapped.ts", "mixed.ts"])("agrees with Node on %s", async (name) => {
       const fixture = getFixture(name);
       expect((await check(compile(fixture.source, fixture.path))).failure).toBeUndefined();
     });
 
     it.each([
+      ["entry.cjs", "early,,1,true,string,true,true", "early,late,1,true,string,true,true"],
       ["wrapped.ts", "wrapped:2,inner,true,2", "wrapped:1,inner,true,2"],
       ["mixed.ts", "legacy,require,import", "legacy,import,import"],
     ])("rejects another outcome of %s", async (name, expected, wrong) => {
