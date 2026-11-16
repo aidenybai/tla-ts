@@ -41,6 +41,7 @@ import {
 } from "./actions";
 import { TlaTypeScriptError } from "../errors";
 import { readsUninitialized } from "./aliasing";
+import { getConversion } from "./conversions";
 import { getUncaughtText } from "./exceptions";
 import { translateCondition, translateExpression, translateNegatedCondition } from "./expressions";
 import { type Formula, ifThenElse, letIn, render, leaf } from "./formula";
@@ -1183,7 +1184,16 @@ export const translateBody = (body: ts.ConciseBody, scope: Scope, context: Conte
     .find((node) => ts.isObjectLiteralExpression(node) && !scope.allocated.has(node));
   const isMaking =
     literal !== undefined && ts.isFunctionLike(owner) && isValueReturn(owner, context);
-  const isPure = body.statements.every(isPureStatement);
+  // An operator that converts an operand, which may run its valueOf or toString, runs as a
+  // statement does.
+  const isConverting =
+    findNodes(
+      body,
+      (node): node is ts.Node =>
+        getConversion(node, context) !== undefined &&
+        ts.findAncestor(node.parent, ts.isFunctionLike) === owner,
+    ).length > 0;
+  const isPure = body.statements.every(isPureStatement) && !isConverting;
   if (literal !== undefined && isPure && !isMaking) {
     throw new TlaTypeScriptError(
       "tla-ts can't make objects in a function that an expression calls and that may return them",

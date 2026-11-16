@@ -45579,4 +45579,31 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("converts the operands of an operator in a function that a value holds", () => {
+    const getSource = (expected: string) => `
+      const functions: any = {};
+      functions.join = function (left: any, right: any): any {
+        return left + right;
+      };
+      functions.scale = function (value: any): any {
+        const doubled = value * 2;
+        return doubled - 1;
+      };
+      const join = functions.join as (left: any, right: any) => any;
+      const scale = functions.scale as (value: any) => any;
+      const seen = [join("x", 1), join(1, 2), join(true, null), scale("3")].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("x1,3,1,5"))).failure).toBeUndefined();
+    });
+
+    it("rejects a sum that doesn't convert a string", async () => {
+      expect((await checkModel(getSource("x1,3,1,32"))).failure?.message).toContain(
+        "seen x1,3,1,5",
+      );
+    });
+  });
 });
