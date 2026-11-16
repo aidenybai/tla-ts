@@ -57,6 +57,7 @@ import {
   getObjectGetter,
   type HeapClass,
   type ChangeSummary,
+  type Effects,
   type Context,
   type FunctionNode,
   getAccessKey,
@@ -14667,18 +14668,6 @@ const bindDeclaration = (
 // which changes no object that exists before it, so isIdentityIgnored leaves it out.
 const NO_FUNCTIONS = new Map<ts.Symbol, FunctionNode>();
 
-// What running a node changes, apart from what the functions that it runs change.
-interface Effects {
-  // The names that it assigns, and the heap where it changes the heap other than by making an error.
-  changed: ts.Symbol[];
-  // Whether it makes an error, which changes the heap unless the caller ignores its identity.
-  isErrorMade: boolean;
-  // The functions that it runs.
-  called: ts.Node[];
-  // The parameters that it calls or passes, which a path may bind to functions.
-  parameters: ts.Symbol[];
-}
-
 const getEffects = (
   node: ts.Node,
   functions: ReadonlyMap<ts.Symbol, FunctionNode>,
@@ -14908,6 +14897,48 @@ const getEffects = (
   };
 };
 
+// Whether a node runs a function that a parameter may hold, which the functions that a path binds
+// to its parameters tell.
+const isCallingParameter = (
+  node: ts.Node,
+  functions: ReadonlyMap<ts.Symbol, FunctionNode>,
+  context: Context,
+) => {
+  const callees = ts.isCallExpression(node)
+    ? [node.expression, ...node.arguments]
+    : ts.isTaggedTemplateExpression(node)
+      ? [node.tag, ...getSubstitutions(node)]
+      : [];
+  return callees.some((callee) =>
+    [callee, skipCasts(callee)].some((inner) => {
+      const symbol = getSymbol(inner, context.checker);
+      return symbol !== undefined && functions.has(symbol);
+    }),
+  );
+};
+
+// What a node changes, from what the model's code changes where no parameter holds a function.
+const getNodeEffects = (
+  node: ts.Node,
+  functions: ReadonlyMap<ts.Symbol, FunctionNode>,
+  context: Context,
+) =>
+  (functions.size === 0 || !isCallingParameter(node, functions, context)
+    ? context.effects.get(node)
+    : undefined) ?? getEffects(node, functions, context);
+
+// What each node of the model's code changes where no parameter holds a function.
+export const findEffects = (reached: readonly ts.Node[], context: Context) => {
+  const effects = new Map<ts.Node, Effects>();
+  const visit = (node: ts.Node) => {
+    if (effects.has(node)) return;
+    effects.set(node, getEffects(node, NO_FUNCTIONS, context));
+    ts.forEachChild(node, visit);
+  };
+  reached.forEach(visit);
+  return effects;
+};
+
 // A node's place in its file, which tells it apart from every other node.
 const getNodeKey = (node: ts.Node) =>
   `${node.getSourceFile().fileName}:${node.pos}:${node.end}:${node.kind}`;
@@ -14943,7 +14974,7 @@ const summarize = (
     onStack.add(node);
     const found: Effects[] = [];
     const visit = (inner: ts.Node) => {
-      found.push(getEffects(inner, bindings, context));
+      found.push(getNodeEffects(inner, bindings, context));
       ts.forEachChild(inner, visit);
     };
     visit(node);
@@ -15023,7 +15054,7 @@ export const findChanged = (
     }
   };
   const visit = (node: ts.Node) => {
-    const effects = getEffects(node, functions, context);
+    const effects = getNodeEffects(node, functions, context);
     add(effects);
     effects.called.forEach((called) => {
       if (visited.has(called)) return;

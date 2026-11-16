@@ -157,6 +157,11 @@ export interface Context {
   // The array literals, new sets and maps, and the rest elements, variables, parameters, fields,
   // and functions that hold them, which the heap holds.
   heapCollections: Set<ts.Node>;
+  // The built-in methods that each file reads as values, as obj.pop = Array.prototype.pop does,
+  // which a call of a key whose type doesn't tell which function it holds may run.
+  storedBuiltIns: ReadonlyMap<ts.SourceFile, ReadonlySet<string>>;
+  // The closures of each file, which a call through a value whose type has calls may run.
+  closures: ReadonlyMap<ts.SourceFile, readonly Closure[]>;
   // The proxies of arrays, sets, and maps that a script makes, and the variables, parameters, calls,
   // and reads of Proxy.revocable's proxy that hold them, which tla-ts reads as objects.
   collectionProxies: Set<ts.Node>;
@@ -198,6 +203,21 @@ export interface Context {
   // What each function that a statement runs changes, with the functions that it runs in turn, by
   // the functions that the paths bind to the parameters that they call.
   changeSummaries: Map<string, Map<ts.Node, ChangeSummary>>;
+  // What running each node of the model's code changes where no parameter holds a function, which
+  // tla-ts finds once before it compiles the code.
+  effects: ReadonlyMap<ts.Node, Effects>;
+}
+
+// What running a node changes, apart from what the functions that it runs change.
+export interface Effects {
+  // The names that it assigns, and the heap where it changes the heap other than by making an error.
+  changed: ts.Symbol[];
+  // Whether it makes an error, which changes the heap unless the caller ignores its identity.
+  isErrorMade: boolean;
+  // The functions that it runs.
+  called: ts.Node[];
+  // The parameters that it calls or passes, which a path may bind to functions.
+  parameters: ts.Symbol[];
 }
 
 export interface FunctionObject {
@@ -535,6 +555,8 @@ export const createContext = (
     fractions: new Map(),
     doubles: new Set(),
     heapCollections: new Set(),
+    storedBuiltIns: new Map(),
+    closures: new Map(),
     collectionProxies: new Set(),
     checkedGlobals: new Set(),
     implicitGlobals,
@@ -547,6 +569,7 @@ export const createContext = (
     regExps: [],
     passed: new Map(),
     changeSummaries: new Map(),
+    effects: new Map(),
     assignedNames: new Map(
       files.map((file) => [
         file,
@@ -4969,9 +4992,7 @@ const isReached = (node: ts.Node, context: Context) => {
 export const getClosures = (callee: ts.Expression, context: Context) => {
   if (isHeldBuiltInObject(callee, context)) return [];
   const type = context.checker.getTypeAtLocation(callee);
-  return findNodes(callee.getSourceFile(), (inner): inner is Closure =>
-    isClosure(inner, context),
-  ).filter(
+  return (context.closures.get(callee.getSourceFile()) ?? []).filter(
     (closure) =>
       isReached(closure, context) &&
       context.checker.isTypeAssignableTo(context.checker.getTypeAtLocation(closure), type),
