@@ -191,6 +191,8 @@ export interface Context {
   // The modules whose namespace objects a script reads, which the heap holds from the start, after
   // the generator prototypes, and which take the modules' exports once the modules have run.
   namespaces: ReadonlyMap<ts.SourceFile, Namespace>;
+  // The enums of the files' top levels that code reads as objects, other than to read a member.
+  valueEnums: ReadonlySet<ts.EnumDeclaration>;
   // The sites of the tagged templates other than String.raw's, each of whose template object and
   // its raw strings' array the heap holds from the start, after the namespace objects.
   templateSites: readonly ts.TaggedTemplateExpression[];
@@ -582,6 +584,7 @@ export const createContext = (
     implicitGlobals,
     generatorPrototypes: new Map(),
     namespaces: new Map(),
+    valueEnums: new Set(),
     templateSites: [],
     hasInheritedElements: false,
     characters: new Set(),
@@ -2969,6 +2972,61 @@ export const isOnceField = (node: ts.ClassLikeDeclaration, context: Context) => 
         ts.isNewExpression(use.parent.parent) &&
         use.parent.parent.expression === use.parent,
     )
+  );
+};
+
+// An enum that code reads as an object, which the heap holds as the object that TypeScript makes,
+// with a property of each member's name and, for a number, one of its value that gives the name.
+export const isHeapEnum = (node: ts.Node, context: Context): node is ts.EnumDeclaration =>
+  ts.isEnumDeclaration(node) && context.heap !== undefined && context.valueEnums.has(node);
+
+// The enums of the files' top levels that a file reads as an object: other than to read a
+// member, which gives the member's constant, or in a type.
+export const findValueEnums = (files: readonly ts.SourceFile[], checker: ts.TypeChecker) => {
+  const enums = new Set(files.flatMap((file) => file.statements.filter(ts.isEnumDeclaration)));
+  const names = new Set([...enums].map((declaration) => declaration.name.text));
+  const getEnum = (node: ts.Node) => {
+    const declarations = getSymbol(node, checker)?.declarations ?? [];
+    return declarations.length === 1 && ts.isEnumDeclaration(declarations[0])
+      ? declarations[0]
+      : undefined;
+  };
+  const isValueRead = (node: ts.Expression) => {
+    const parent = node.parent;
+    const member =
+      (ts.isPropertyAccessExpression(parent) || ts.isElementAccessExpression(parent)) &&
+      parent.expression === node
+        ? getSymbol(parent, checker)
+        : undefined;
+    return (
+      member === undefined ||
+      (member.flags & ts.SymbolFlags.EnumMember) === 0 ||
+      (ts.isElementAccessExpression(parent) && !ts.isStringLiteralLike(parent.argumentExpression))
+    );
+  };
+  return new Set(
+    files.flatMap((file) =>
+      findNodes(
+        file,
+        (node): node is ts.Identifier | ts.PropertyAccessExpression =>
+          (ts.isIdentifier(node) &&
+            names.has(node.text) &&
+            !(ts.isPropertyAccessExpression(node.parent) && node.parent.name === node)) ||
+          (ts.isPropertyAccessExpression(node) && names.has(node.name.text)),
+      ).flatMap((node) => {
+        const declaration = getEnum(node);
+        return declaration !== undefined &&
+          enums.has(declaration) &&
+          declaration.name !== node &&
+          !ts.isImportSpecifier(node.parent) &&
+          !ts.isImportClause(node.parent) &&
+          !ts.isExportSpecifier(node.parent) &&
+          ts.findAncestor(node, ts.isTypeNode) === undefined &&
+          isValueRead(node)
+          ? [declaration]
+          : [];
+      }),
+    ),
   );
 };
 

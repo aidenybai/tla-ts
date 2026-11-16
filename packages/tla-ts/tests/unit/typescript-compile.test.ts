@@ -47848,4 +47848,20 @@ describe("BigInts", () => {
       await expect(check(compile(wrong, path))).rejects.toThrow("seen 12");
     });
   });
+
+  describe("reads an enum as the object that TypeScript makes of it", () => {
+    const path = join(import.meta.dirname, "../fixtures/typescript/imports/enumerating.ts");
+    const source = readFileSync(path, "utf8");
+
+    it("agrees with Node", async () => {
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects an object without the names that its values give", async () => {
+      const wrong = source.replace("0,5,6,Red,Green,Blue;", "Red,Green,Blue;");
+      expect((await check(compile(wrong, path))).failure?.message).toContain(
+        "seen 0,5,6,Red,Green,Blue;",
+      );
+    });
+  });
 });

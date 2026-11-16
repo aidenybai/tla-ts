@@ -8,6 +8,7 @@ import {
   findNodes,
   findFunctionCandidates,
   findOnceFunctions,
+  findValueEnums,
   findOnceLocals,
   getCallee,
   getFunction,
@@ -260,6 +261,7 @@ export const compile = (
           .valueDeclaration;
   };
   context.namespaces = findNamespaces(sourceFile, files, context);
+  context.valueEnums = findValueEnums(order, program.checker);
   // A file that imports reads an export through a module's namespace object as the module's
   // binding where tla-ts makes no namespace object for the module, and then other than a var's or
   // a let's, whose binding tla-ts keeps as state. It reads a default export of an expression or of
@@ -505,10 +507,12 @@ export const compile = (
       declared.some((state) => state.isChanged) || run.length > 0
         ? declared
         : declared.filter((state) => isMakingObjects(state.statement, context));
-    // A class of an imported file that the model reaches, which its file makes where it declares it.
+    // A class of an imported file that the model reaches, which its file makes where it declares
+    // it, as it does an enum that code reads as an object.
     const classes = reachedNodes.filter(
-      (node): node is ts.ClassDeclaration =>
-        ts.isClassDeclaration(node) &&
+      (node): node is ts.ClassDeclaration | ts.EnumDeclaration =>
+        (ts.isClassDeclaration(node) ||
+          (ts.isEnumDeclaration(node) && context.valueEnums.has(node))) &&
         ts.isSourceFile(node.parent) &&
         node.parent !== sourceFile &&
         files.includes(node.parent),
@@ -541,6 +545,7 @@ export const compile = (
     node !== undefined && ts.isClassLike(node) && !node.getSourceFile().isDeclarationFile;
   const usesObjects = (node: ts.Node): boolean =>
     ts.isObjectLiteralExpression(node) ||
+    (ts.isEnumDeclaration(node) && context.valueEnums.has(node)) ||
     // A tagged template's template object.
     (ts.isTaggedTemplateExpression(node) && !isRawTemplate(node, context)) ||
     (ts.isClassLike(node) &&

@@ -33,6 +33,8 @@ import {
   isStatic,
   isFunctionObject,
   isHeapClass,
+  isHeapEnum,
+  translateString,
   isHeapFunction,
   isOnce,
   isStatementNew,
@@ -582,6 +584,42 @@ export const translateHoldsMethod = (
         ),
         getMethodValue(called.method, context),
       ]);
+};
+
+// The object that TypeScript makes of an enum: each member's name gives its value, and a number's
+// value gives the name back.
+const translateEnumObject = (node: ts.EnumDeclaration, context: Context) => {
+  context.prelude.add("JavaScript");
+  return node.members.reduce<Expression>((object, member) => {
+    const value = context.checker.getConstantValue(member);
+    const name = ts.isComputedPropertyName(member.name) ? undefined : member.name.text;
+    if (
+      name === undefined ||
+      value === undefined ||
+      !(typeof value === "string" || Number.isInteger(value))
+    ) {
+      throw new TlaTypeScriptError(
+        "tla-ts can't make the object of an enum whose member's value isn't a string or an integer",
+        member,
+      );
+    }
+    const named = useJavaScript(
+      "Put",
+      [
+        object,
+        string(name),
+        typeof value === "string" ? translateString(value, context) : number(value),
+      ],
+      context,
+    );
+    return typeof value === "string"
+      ? named
+      : useJavaScript(
+          "Put",
+          [named, string(String(value)), translateString(name, context)],
+          context,
+        );
+  }, identifier("EmptyObject"));
 };
 
 export const translateObject = (
@@ -1807,6 +1845,9 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
   }
   if (ts.isObjectLiteralExpression(node)) {
     return useJavaScript("Allocate", [heap, translateObject(node, scope, context)], context);
+  }
+  if (ts.isEnumDeclaration(node)) {
+    return useJavaScript("Allocate", [heap, translateEnumObject(node, context)], context);
   }
   if (ts.isCallExpression(node) && isParsedObject(node, context)) {
     return translateParsedObjects(node, heap, context);
@@ -3631,6 +3672,7 @@ export const isMade = (node: ts.Node, context: Context, isSometimes = false): bo
   }
   if (ts.isFunctionLike(node)) return false;
   if (ts.isClassLike(node)) return isHeapClass(node, context) && !isSometimes;
+  if (ts.isEnumDeclaration(node)) return isHeapEnum(node, context);
   if (ts.isOptionalChain(node) || ts.isConditionalExpression(node) || ts.isBinaryExpression(node)) {
     return false;
   }
