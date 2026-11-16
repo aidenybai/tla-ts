@@ -421,19 +421,10 @@ const getCallback = (argument: ts.Expression, scope: Scope, context: Context) =>
     : undefined;
 };
 
-const inlineCall = (
-  callee: FunctionNode,
-  argumentNodes: readonly ts.Expression[],
-  scope: Scope,
-  context: Context,
-  called?: CalledMethod,
-  node?: ts.CallExpression,
-  receiver = getReceiver(scope, context, called, node && { node, callee }),
-) => {
-  if (callee.body === undefined) throw new TlaTypeScriptError("Give this a body", callee);
-  // The state holds the parameters and vars of a function that runs once, which the functions that
-  // it makes read after it returns, and which a call inside an expression can't change.
-  const keptLocal = findNodes(callee, ts.isIdentifier).find((name) => {
+// The state holds the parameters and vars of a function that runs once, which the functions that
+// it makes read after it returns, and which a call inside an expression can't change.
+const getKeptLocal = (callee: FunctionNode, context: Context) =>
+  findNodes(callee, ts.isIdentifier).find((name) => {
     const symbol = getSymbol(name, context.checker);
     const declaration = symbol?.valueDeclaration;
     return (
@@ -446,6 +437,18 @@ const inlineCall = (
         ts.findAncestor(declaration.parent, ts.isFunctionLike)
     );
   });
+
+const inlineCall = (
+  callee: FunctionNode,
+  argumentNodes: readonly ts.Expression[],
+  scope: Scope,
+  context: Context,
+  called?: CalledMethod,
+  node?: ts.CallExpression,
+  receiver = getReceiver(scope, context, called, node && { node, callee }),
+) => {
+  if (callee.body === undefined) throw new TlaTypeScriptError("Give this a body", callee);
+  const keptLocal = getKeptLocal(callee, context);
   if (keptLocal !== undefined) {
     throw new TlaTypeScriptError(
       "tla-ts can't call inside an expression a function that runs once and makes a function that reads its locals",
@@ -642,6 +645,12 @@ const translateOperatorArgument = (
   );
 };
 
+// The name of a function's operator: the function's own, or the name of what holds it.
+const getFunctionName = (node: HelperDeclaration | FunctionNode) => {
+  const named = ts.isVariableDeclaration(node.parent) ? node.parent.name : node.name;
+  return named !== undefined && ts.isIdentifier(named) ? named.text : "helper";
+};
+
 // A call to a top-level helper, or a reference to a top-level constant when node is undefined.
 // A call to a helper that calls itself where a statement changed the state that it reads, which
 // runs an operator that takes that state, so that each call reads the state as it is there. A
@@ -649,7 +658,7 @@ const translateOperatorArgument = (
 // A call of a function from inside itself, as a recursive operator that takes the state that the
 // call reads and the values that it passes.
 export const callStateOperator = (
-  declaration: HelperDeclaration,
+  declaration: HelperDeclaration | undefined,
   callee: FunctionNode,
   values: readonly Expression[],
   scope: Scope,
@@ -683,7 +692,7 @@ export const callStateOperator = (
         };
       });
       const made: Definition = {
-        name: context.names.getFresh(`${declaration.name?.getText() ?? "helper"}At`),
+        name: context.names.getFresh(`${getFunctionName(declaration ?? callee)}At`),
         parameters: [...states, ...parameters].map((parameter) => ({
           name: parameter.name,
           arity: 0,
@@ -715,8 +724,13 @@ export const callStateOperator = (
           ),
         ]),
       };
+      // The operator inlines no call in progress outside it, but for the helpers whose definitions
+      // compile there, which it calls by name as they call it.
       const outer = context.inProgress;
-      context.inProgress = new Set([callee]);
+      context.inProgress = new Set([
+        ...[...context.definitions.keys()].filter((declaration) => outer.has(declaration)),
+        callee,
+      ]);
       const value = translateBody(body, defaulted, context);
       context.inProgress = outer;
       context.output.push(
@@ -1026,6 +1040,52 @@ export const translateLiftedCall = (
   );
 };
 
+// Whether a call through a value runs one of the functions that the value may hold as the
+// function's operator, which takes the state and compiles once, rather than as a copy of its body,
+// which would copy the bodies of every function that each call through a value inside it may run in
+// turn. The operator reads no this, arguments object, or function that an argument names, and
+// starts with no let or const of the script uninitialized and nothing that catches its throws.
+const isOperatorCandidate = (
+  candidate: FunctionNode,
+  node: ts.CallExpression,
+  scope: Scope,
+  context: Context,
+) =>
+  scope.uninitialized.size === 0 &&
+  !scope.isCatching &&
+  !node.arguments.some(ts.isSpreadElement) &&
+  node.arguments.every((argument) => getCallback(argument, scope, context) === undefined) &&
+  getParameters(candidate).every(
+    (parameter) =>
+      ts.isIdentifier(parameter.name) &&
+      parameter.dotDotDotToken === undefined &&
+      (parameter.initializer === undefined || isLiteral(parameter.initializer)),
+  ) &&
+  findNodes(
+    candidate,
+    (inner): inner is ts.ThisExpression => inner.kind === ts.SyntaxKind.ThisKeyword,
+  ).length === 0 &&
+  getArgumentsReads(candidate, context).length === 0 &&
+  getKeptLocal(candidate, context) === undefined;
+
+const translateOperatorCandidate = (
+  candidate: FunctionNode,
+  node: ts.CallExpression,
+  scope: Scope,
+  context: Context,
+) => {
+  const values = shareArguments(
+    node.arguments.map((argument) => translateExpression(argument, scope, context)),
+    context,
+  );
+  return render(
+    values.evaluate(
+      leaf(callStateOperator(undefined, candidate, values.shared, scope, context)),
+      leaf(getUndefined(context)),
+    ),
+  );
+};
+
 // A call to a function declared inside another, or to a method a caller resolves, which is
 // inlined.
 export const translateLocalCall = (
@@ -1048,7 +1108,8 @@ export const translateLocalCall = (
       ? getFunctionCandidates(node.expression, context).filter(
           (candidate) =>
             isPlain(candidate) &&
-            !context.inProgress.has(candidate) &&
+            (!context.inProgress.has(candidate) ||
+              isOperatorCandidate(candidate, node, scope, context)) &&
             (ts.isArrowFunction(candidate) ||
               (superReceiver !== undefined && ts.isMethodDeclaration(candidate)) ||
               findNodes(
@@ -1117,15 +1178,17 @@ export const translateLocalCall = (
               ? otherwise
               : ifExpression(
                   apply("=", [value, candidateValue]),
-                  inlineCall(
-                    candidate,
-                    node.arguments,
-                    scope,
-                    context,
-                    superReceiver !== undefined && ts.isMethodDeclaration(candidate)
-                      ? { method: candidate, receiver: superReceiver, key: "" }
-                      : undefined,
-                  ),
+                  isOperatorCandidate(candidate, node, scope, context)
+                    ? translateOperatorCandidate(candidate, node, scope, context)
+                    : inlineCall(
+                        candidate,
+                        node.arguments,
+                        scope,
+                        context,
+                        superReceiver !== undefined && ts.isMethodDeclaration(candidate)
+                          ? { method: candidate, receiver: superReceiver, key: "" }
+                          : undefined,
+                      ),
                   otherwise,
                 );
           },

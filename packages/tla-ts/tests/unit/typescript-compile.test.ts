@@ -49097,4 +49097,37 @@ describe("BigInts", () => {
       expect(getSize(4)).toBeLessThan(getSize(3) * 5);
     });
   });
+
+  describe("runs each function that a call through a value may run as one operator", () => {
+    const getNested = (helpers: number, position = 1): string =>
+      position > helpers
+        ? "id"
+        : `(y${position}: number): number => h${position}(${getNested(helpers, position + 1)}, y${position})`;
+    const getSource = (helpers: number, expected: number) => `
+      const box: { a: number } = { a: 1 };
+      ${Array.from(
+        { length: helpers },
+        (_, position) => `function h${position + 1}(f: any, x: number): number {
+          const value: number = f(x);
+          return value + ${position + 1};
+        }`,
+      ).join("\n")}
+      const id = (x: number): number => x;
+      const result = (${getNested(helpers)})(0);
+      if (result !== ${expected}) throw new Error("result " + result);
+    `;
+    const getSize = (helpers: number) => printModule(compile(getSource(helpers, 0)).source).length;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(4, 10))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkModel(getSource(4, 11))).failure?.message).toContain("result 10");
+    });
+
+    it("grows with the functions rather than with the ways to nest their calls", () => {
+      expect(getSize(8)).toBeLessThan(getSize(4) * 3);
+    });
+  });
 });
