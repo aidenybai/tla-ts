@@ -793,12 +793,13 @@ export const compile = (
     context.namespaces.size > 0 ||
     context.commonJsModules.length > 0 ||
     context.jsonModules.size > 0;
+  const shareable = getReached(roots, context);
   // Where a TLA+ value would copy an object that JavaScript shares and that changes in place, the
   // heap holds the file's objects, as JavaScript does.
   const isSharing =
     heap !== undefined &&
     !(isScript(sourceFile) && isUsingHeap) &&
-    findSharing(roots, context) !== undefined;
+    findSharing(shareable, context) !== undefined;
   const isHeapFile = isScript(sourceFile) || isSharing;
   context.hasOrderedCollections = isHeapFile && reached.some(usesOrder);
   const changedArrays = isHeapFile ? findChangedArrays(reached, context) : [];
@@ -992,7 +993,7 @@ export const compile = (
     );
     // Where the heap's arrays, sets, and maps would still share one that a value holds, the heap
     // holds every one.
-    if (findSharing(roots, context) !== undefined) {
+    if (findSharing(shareable, context) !== undefined) {
       findMadeCollections(roots, context).forEach((node) => context.heapCollections.add(node));
       context.isEveryCollectionHeld = true;
       context.collectionProxies = findCollectionProxies(roots, context);
@@ -1012,7 +1013,7 @@ export const compile = (
       : undefined;
   // Only where the heap holds every array, set, and map may an object that a value holds still be
   // shared, as the heap decided above found none otherwise.
-  if (context.isEveryCollectionHeld) rejectSharing(roots, context);
+  if (context.isEveryCollectionHeld) rejectSharing(shareable, context);
   rejectRegExpIndicesUses(roots, context);
   if (context.heap !== undefined) context.effects = findEffects(reached, context);
   classifySharedHelpers(reached, context);

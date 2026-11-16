@@ -650,16 +650,17 @@ const isCollectionProxy = (node: ts.Expression, context: Context): boolean => {
 };
 
 export const isHeapArray = (node: ts.Expression, context: Context) => {
+  if (context.heap === undefined) return false;
   const type = context.checker.getNonNullableType(context.checker.getTypeAtLocation(node));
   // The heap holds the arrays that a match gives, with their indices.
-  if (
-    context.heap !== undefined &&
-    (isRegExpArray(type) || getRegExpIndicesPart(node, context) === "pair")
-  ) {
-    return true;
-  }
-  if (context.heapCollections.size === 0) return false;
-  return !isSetType(type) && !isMapType(type) && isHeld(node, context);
+  return (
+    isRegExpArray(type) ||
+    (context.heapCollections.size > 0 &&
+      !isSetType(type) &&
+      !isMapType(type) &&
+      isHeld(node, context)) ||
+    getRegExpIndicesPart(node, context) === "pair"
+  );
 };
 
 // The methods that reorder or overwrite an array in place, and give the array.

@@ -588,8 +588,8 @@ const isFreshCall = (node: ts.Node, context: Context) => {
 };
 
 // The first read that would share an object that changes in place, which a TLA+ value would copy,
-// with the variable that it reads, where it reads one.
-export const findSharing = (roots: readonly ts.Node[], context: Context) => {
+// with the variable that it reads, where it reads one, in the code that getReached finds.
+export const findSharing = (reached: readonly ts.Node[], context: Context) => {
   // The references to each symbol in a file, which one walk of the file finds.
   const fileReferences = new Map<ts.SourceFile, Map<ts.Symbol, ts.Identifier[]>>();
   const getReferences = (sourceFile: ts.SourceFile) => {
@@ -673,7 +673,6 @@ export const findSharing = (roots: readonly ts.Node[], context: Context) => {
     );
   };
 
-  const reached = getReached(roots, context);
   const changed = new Map<ts.Symbol, number>();
   const changeCounts = new Map<ts.Symbol, number>();
   // The heap objects' fields that change in place, by name, as one object may have many types.
@@ -804,8 +803,8 @@ export const findSharing = (roots: readonly ts.Node[], context: Context) => {
 };
 
 // Rejects what still shares an object that changes in place where the heap would hold it.
-export const rejectSharing = (roots: readonly ts.Node[], context: Context) => {
-  const sharing = findSharing(roots, context);
+export const rejectSharing = (reached: readonly ts.Node[], context: Context) => {
+  const sharing = findSharing(reached, context);
   if (sharing === undefined) return;
   const text = sharing.node.getText();
   // A copy of what only a declaration gives would still have no code to run.
