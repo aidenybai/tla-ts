@@ -45518,4 +45518,36 @@ describe("BigInts", () => {
       expect((await checkModel(getSource(1))).failure?.message).toContain("caught 2");
     });
   });
+
+  describe("converts an array-like object's length that a getter returns as an object", () => {
+    const getSource = (expected: number) => `
+      const object = { 0: 11, 1: 12, 2: 13 };
+      let conversions = 0;
+      Object.defineProperty(object, "length", {
+        get() {
+          return {
+            valueOf() {
+              conversions += 1;
+              return 2;
+            },
+          };
+        },
+      });
+      let total = 0;
+      Array.prototype.forEach.call(object, (value: number) => {
+        total += value;
+      });
+      if (total !== ${expected} || conversions !== 1) {
+        throw new Error("total " + total + " after " + conversions);
+      }
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(23))).failure).toBeUndefined();
+    });
+
+    it("rejects a total past the converted length", async () => {
+      expect((await checkModel(getSource(36))).failure?.message).toContain("total 23 after 1");
+    });
+  });
 });

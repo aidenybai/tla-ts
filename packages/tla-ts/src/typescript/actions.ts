@@ -9169,21 +9169,27 @@ const isObjectIndex = (method: string, from: ts.Expression | undefined, context:
 const isObjectLength = (receiver: ts.Node, context: Context) => {
   const receiverType = context.checker.getTypeAtLocation(receiver);
   const length = receiverType.getProperty("length");
-  const type =
+  // A getter that Object.defineProperty defines gives what it returns, which the type can't show.
+  const types = [
     length === undefined
       ? receiverType.getStringIndexType()
-      : context.checker.getTypeOfSymbol(length);
-  return (
-    type !== undefined &&
-    (type.isUnion() ? type.types : [type]).some(
-      (member) =>
-        (member.flags &
-          (ts.TypeFlags.Object |
-            ts.TypeFlags.NonPrimitive |
-            ts.TypeFlags.Unknown |
-            ts.TypeFlags.Any)) !==
-        0,
-    )
+      : context.checker.getTypeOfSymbol(length),
+    ...getDefinedGetters(receiver, "length", context).map((getter) =>
+      context.checker.getSignatureFromDeclaration(getter)?.getReturnType(),
+    ),
+  ];
+  return types.some(
+    (type) =>
+      type !== undefined &&
+      (type.isUnion() ? type.types : [type]).some(
+        (member) =>
+          (member.flags &
+            (ts.TypeFlags.Object |
+              ts.TypeFlags.NonPrimitive |
+              ts.TypeFlags.Unknown |
+              ts.TypeFlags.Any)) !==
+          0,
+      ),
   );
 };
 
