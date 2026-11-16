@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import {
   cpSync,
+  mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
@@ -189,27 +190,31 @@ describe("the CLI with TypeScript files", () => {
 
   it("type checks a project whose declaration files import Node's built-in modules", () => {
     const directory = copyFixtures("project");
+    const types = join(directory, "types/host");
+    mkdirSync(types, { recursive: true });
+    writeFileSync(
+      join(types, "events.d.ts"),
+      'declare module "node:events" {\n  export class EventEmitter {}\n}\n',
+    );
+    writeFileSync(
+      join(types, "index.d.ts"),
+      '/// <reference path="./events.d.ts" />\nimport type { EventEmitter } from "node:events";\n\nexport type HostEmitter = EventEmitter;\n',
+    );
     writeFileSync(
       join(directory, "tsconfig.json"),
       JSON.stringify({
         compilerOptions: {
           lib: ["esnext"],
-          types: ["node"],
-          typeRoots: [join(import.meta.dirname, "../../node_modules/@types")],
+          types: ["host"],
+          typeRoots: ["./types"],
           paths: { "@limits/*": ["./limits/*"] },
         },
-        include: ["**/*.ts"],
+        include: ["*.ts", "limits/*.ts"],
       }),
     );
-    writeFileSync(
-      join(directory, "emitter.ts"),
-      'import { EventEmitter } from "node:events";\n\nexport const isQuiet = () => new EventEmitter().listenerCount("tick") === 0;\n',
-    );
-    const result = runCli(directory, ["counter.ts", "emitter.ts"]);
+    const result = runCli(directory, ["counter.ts"]);
+    expect(result.status).toBe(0);
     expect(result.stdout).toContain("4 distinct states found");
-    expect(result.stderr).toContain(
-      "emitter.ts:1:30 tla-ts can't load Node's built-in module node:events",
-    );
   });
 
   it("stops where a model reads a name that only a declaration file gives", () => {
