@@ -18,6 +18,7 @@ import {
   translateBigInt,
   translateExpression,
   translateToString,
+  translateTruthy,
 } from "./expressions";
 import { rejectBeforeDeclaration, type Scope } from "./scope";
 import { getMappedParameter } from "./actions";
@@ -8907,6 +8908,8 @@ export const translateConversion = (node: ts.CallExpression, scope: Scope, conte
     if (isEmpty || kind === "object" || kind === "function" || kind === "symbol") {
       return boolean(!isEmpty);
     }
+    // A value of several kinds converts as a condition does.
+    return translateTruthy(argument, value, context);
   }
   if (name === "String") {
     const heap = context.heap === undefined ? undefined : scope.bindings.get(context.heap);

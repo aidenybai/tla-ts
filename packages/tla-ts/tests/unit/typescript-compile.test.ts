@@ -45495,4 +45495,40 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("converts a value of several kinds with Boolean as a condition does", () => {
+    const getSource = (expected: string) => `
+      interface Hook { inject?: () => number; isOwn?: boolean }
+      const isForeign = (hook: Hook | undefined | null) =>
+        Boolean(hook && "inject" in hook && hook.isOwn !== true);
+      const isSet = (value: string | number | undefined) => Boolean(value);
+      const seen = [
+        isForeign({ isOwn: false }),
+        isForeign(undefined),
+        isForeign(null),
+        isForeign({ inject: () => 1 }),
+        isForeign({ inject: () => 1, isOwn: true }),
+        isSet(""),
+        isSet(0),
+        isSet("a"),
+        isSet(2),
+        isSet(undefined),
+      ].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("false,false,false,true,false,false,false,true,true,false")))
+          .failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects an empty string as truthy", async () => {
+      expect(
+        (await checkModel(getSource("false,false,false,true,false,true,false,true,true,false")))
+          .failure?.message,
+      ).toContain("seen false,false,false,true,false,false,false,true,true,false");
+    });
+  });
 });
