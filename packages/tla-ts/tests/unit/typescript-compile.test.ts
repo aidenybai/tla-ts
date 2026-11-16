@@ -45495,4 +45495,33 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("records Temporal's built-in objects", () => {
+    const getSource = (expected: string) => `
+      const seen = [
+        typeof Temporal,
+        Temporal.Duration.length,
+        Temporal.PlainDate.name,
+        Temporal.Duration.prototype[Symbol.toStringTag],
+        Object.getOwnPropertyNames(Temporal).join("|"),
+        typeof Object.getOwnPropertyDescriptor(Temporal.Duration.prototype, "years")!.get,
+        Object.getOwnPropertyNames(Date.prototype).includes("toTemporalInstant"),
+      ].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      const expected =
+        "object,0,PlainDate,Temporal.Duration,Now|PlainDate|PlainTime|PlainDateTime|ZonedDateTime|Duration|Instant|PlainYearMonth|PlainMonthDay,function,true";
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects a Temporal without its PlainDate", async () => {
+      const expected =
+        "object,0,PlainDate,Temporal.Duration,Now|PlainTime|PlainDateTime|ZonedDateTime|Duration|Instant|PlainYearMonth|PlainMonthDay,function,true";
+      expect((await checkModel(getSource(expected))).failure?.message).toContain(
+        "seen object,0,PlainDate,Temporal.Duration,Now|PlainDate|",
+      );
+    });
+  });
 });
