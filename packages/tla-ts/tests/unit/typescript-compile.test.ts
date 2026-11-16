@@ -45721,4 +45721,41 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("runs Temporal.PlainYearMonth and Temporal.PlainMonthDay", () => {
+    const getSource = (expected: string) => `
+      const thrown = (run: () => unknown) => {
+        try {
+          run();
+          return "none";
+        } catch (error) {
+          return (error as Error).name;
+        }
+      };
+      const yearMonth = new Temporal.PlainYearMonth(2019, 6);
+      const added = yearMonth.add({ months: 8 }).toString();
+      const months = yearMonth.until("2021-01", { largestUnit: "months" }).months;
+      const date = yearMonth.toPlainDate({ day: 31 }).toString();
+      const monthDay = Temporal.PlainMonthDay.from({ monthCode: "M02", day: 29 });
+      const leap = monthDay.toPlainDate({ year: 2019 }).toString();
+      const reference = new Temporal.PlainDate(2020, 5, 17).toPlainMonthDay().toString({ calendarName: "always" });
+      const days = thrown(() => yearMonth.add({ days: 1 }));
+      const seen = [yearMonth.daysInMonth, yearMonth.toString(), added, months, date, monthDay.toString(), leap, reference, days].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      const expected =
+        "30,2019-06,2020-02,19,2019-06-30,02-29,2019-02-28,1972-05-17[u-ca=iso8601],RangeError";
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects a leap day in a common year", async () => {
+      const expected =
+        "30,2019-06,2020-02,19,2019-06-30,02-29,2019-02-29,1972-05-17[u-ca=iso8601],RangeError";
+      expect((await checkModel(getSource(expected))).failure?.message).toContain(
+        "seen 30,2019-06,2020-02,19,2019-06-30,02-29,2019-02-28,1972-05-17[u-ca=iso8601],RangeError",
+      );
+    });
+  });
 });
