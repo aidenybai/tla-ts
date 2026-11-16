@@ -1959,6 +1959,8 @@ const UPDATES = new Map<Kind, Map<string, Update>>([
 export const MUTATING_METHODS = new Set([
   ...[...UPDATES.values()].flatMap((updates) => [...updates.keys()]),
   ...SEQUENCE_UPDATES,
+  // A map's getOrInsertComputed calls its callback, so only a statement runs it.
+  "getOrInsertComputed",
 ]);
 
 // The value of a collection after a mutating method call, or undefined if the method doesn't

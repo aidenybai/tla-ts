@@ -1294,6 +1294,9 @@ KeyOf(value) ==
     [] IsBig(value) -> BeyondInteger
     [] OTHER -> value
 
+\\* The key that a map's getOrInsertComputed passes its callback, which is +0 for -0.
+CanonicalKey(value) == IF value = NegativeZero THEN 0 ELSE value
+
 \\* Whether TLC can compare a value with values of the kinds that typeof gives them. Model values,
 \\* such as undefined, null, and symbols, compare with any value.
 IsComparableKind(value, kinds) ==

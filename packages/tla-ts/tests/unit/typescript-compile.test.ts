@@ -26338,7 +26338,7 @@ describe("errors", () => {
     ).toContain(expected);
   });
 
-  it("throws the TypeError of calling an upsert method that Node lacks", async () => {
+  it("throws the TypeError of an upsert method on a receiver that isn't a weak map", async () => {
     const getSource = (expected: number) => `
       let thrown = 0;
       const map = new WeakMap<object, number>();
@@ -26354,8 +26354,8 @@ describe("errors", () => {
       }
       if (thrown !== ${expected}) throw new Error("thrown");
     `;
-    expect((await checkModel(getSource(2))).failure).toBeUndefined();
-    expect((await checkModel(getSource(1))).failure?.message).toContain("thrown");
+    expect((await checkModel(getSource(1))).failure).toBeUndefined();
+    expect((await checkModel(getSource(2))).failure?.message).toContain("thrown");
   });
 
   it("throws the TypeError of a weak collection's subclass on a registered symbol", async () => {
@@ -46275,6 +46275,70 @@ describe("BigInts", () => {
         (await checkModel(getSource("b,z,z,c,3,2,TypeError,2,getOrInsertComputed"))).failure
           ?.message,
       ).toContain("seen a,z,z,c,3,1,TypeError,2,getOrInsertComputed");
+    });
+  });
+
+  describe("runs a map's getOrInsertComputed, whose callback runs only for a missing key and may change the map", () => {
+    const getSource = (expected: string) => `
+      const map = new Map<number, number | string>();
+      map.set(1, "one");
+      const kept = map.getOrInsertComputed(1, () => "never");
+      const computed = map.getOrInsertComputed(-0, (key) => (Object.is(key, 0) ? 7 : 8));
+      for (let step = 0; step < 3; step++) map.getOrInsertComputed(4, () => step);
+      map.getOrInsertComputed(2, (key) => {
+        map.set(key, "inner");
+        return "outer";
+      });
+      let isThrown = false;
+      try {
+        map.getOrInsertComputed(3, () => {
+          map.set(1, "changed");
+          throw new RangeError("callback");
+        });
+      } catch (error) {
+        isThrown = error instanceof RangeError;
+      }
+      const seen = [kept, computed, map.get(2), map.get(1), map.has(3), isThrown, map.get(4)].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("one,7,outer,changed,false,true,0"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects the value that the callback set over the one it gave", async () => {
+      expect(
+        (await checkModel(getSource("one,7,inner,changed,false,true,2"))).failure?.message,
+      ).toContain("seen one,7,outer,changed,false,true,0");
+    });
+  });
+
+  describe("runs a weak map's getOrInsertComputed, which throws on a registered symbol", () => {
+    const getSource = (expected: string) => `
+      const weak = new WeakMap<object | symbol, number>();
+      const key = {};
+      const first = weak.getOrInsertComputed(key, () => 1);
+      const second = weak.getOrInsertComputed(key, () => 2);
+      let thrown = "";
+      try {
+        weak.getOrInsertComputed(Symbol.for("registered"), () => 3);
+      } catch (error) {
+        thrown = (error as Error).constructor.name;
+      }
+      const seen = [first, second, thrown].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("1,1,TypeError"))).failure).toBeUndefined();
+    });
+
+    it("rejects a callback that runs for a key the map holds", async () => {
+      expect((await checkModel(getSource("1,2,TypeError"))).failure?.message).toContain(
+        "seen 1,1,TypeError",
+      );
     });
   });
 });

@@ -4443,6 +4443,9 @@ const translateCallStatementBody = (
       return and([leaf(apply("Assert", [values[0], message])), continueWith(path)]);
     }
     const kind = getKind(receiver, context);
+    if (isMapInsert(expression, context)) {
+      return translateMapInsert(expression, path, context, frame, continueWith);
+    }
     // A set or a map that the heap holds changes through getHeapSetOrMapChange, or not at all.
     if (
       MUTATING_METHODS.has(method) &&
@@ -4472,7 +4475,7 @@ const translateCallStatementBody = (
       // A weak collection throws a TypeError on a symbol that Symbol.for registered.
       if (
         getCollection(receiver, context)?.startsWith("Weak") !== true ||
-        (method !== "set" && method !== "add" && method !== "getOrInsert") ||
+        (method !== "set" && method !== "add") ||
         key === undefined ||
         context.heap === undefined
       ) {
@@ -5275,6 +5278,105 @@ const getAppliedCall = (node: ts.CallExpression, path: Path, context: Context) =
     !node.arguments.slice(0, isApply ? 2 : 1).some(ts.isSpreadElement)
     ? { callee, target, argumentNodes, thisArgument: node.arguments.at(0), isApply }
     : undefined;
+};
+
+// A call of getOrInsertComputed on a map or a weak map that the heap doesn't hold, which a statement
+// runs, as its callback may change state, or of a weak map's getOrInsert, which may throw.
+const isMapInsert = (node: ts.Node, context: Context) =>
+  isMethodCall(node) &&
+  getKind(node.expression.expression, context) === "map" &&
+  !isHeapSetOrMap(node.expression.expression, context) &&
+  ((node.expression.name.text === "getOrInsertComputed" &&
+    ["Map", "WeakMap"].includes(getCollection(node.expression.expression, context) ?? "")) ||
+    (node.expression.name.text === "getOrInsert" &&
+      getCollection(node.expression.expression, context) === "WeakMap"));
+
+// A map's getOrInsert or getOrInsertComputed, which gives the value that the map holds at the key,
+// or else sets the key to the value it takes, or that its callback gives once it ran with the key,
+// where -0 is +0, in the map as the callback left it. A weak map throws a TypeError first on a symbol
+// that Symbol.for registered.
+const translateMapInsert = (
+  expression: MethodCall,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path, value?: Expression) => Formula,
+) => {
+  const receiver = expression.expression.expression;
+  const keyNode = expression.arguments.at(0);
+  const given = expression.arguments.at(1);
+  const isComputed = expression.expression.name.text === "getOrInsertComputed";
+  const callback =
+    isComputed && given !== undefined && expression.arguments.length === 2
+      ? getCallback(given, path, context)
+      : undefined;
+  if (keyNode === undefined || (isComputed && callback === undefined)) {
+    throw new TlaTypeScriptError("tla-ts can't tell which function this call runs", expression);
+  }
+  const keyName = context.names.getFresh("key");
+  const key = identifier(keyName);
+  const map = translateExpression(receiver, path.scope, context);
+  const insert = (current: Path, value: Expression) => {
+    const valueName = context.names.getFresh("value");
+    return bindOnce(
+      current,
+      valueName,
+      value,
+      continueWith(
+        assign(receiver, current, context, (held) =>
+          apply("@@", [apply(":>", [key, identifier(valueName)]), held]),
+        ),
+        identifier(valueName),
+      ),
+    );
+  };
+  const run = ifThenElse(
+    apply("\\in", [key, apply("DOMAIN", [map])]),
+    continueWith(path, index(map, [key])),
+    callback === undefined
+      ? insert(
+          path,
+          given === undefined
+            ? getUndefined(context)
+            : translateExpression(given, path.scope, context),
+        )
+      : inlineValues(
+          callback,
+          [
+            useJavaScript(
+              "CanonicalKey",
+              [translateExpression(keyNode, path.scope, context)],
+              context,
+            ),
+          ],
+          ts.isArrowFunction(callback)
+            ? path.scope.receiver
+            : { value: getUndefined(context), method: callback },
+          path,
+          context,
+          frame,
+          (done, result) => insert(done, result ?? getUndefined(context)),
+        ),
+  );
+  return bindOnce(
+    path,
+    keyName,
+    translateSetKey(keyNode, path.scope, context),
+    getCollection(receiver, context) === "WeakMap" && context.heap !== undefined
+      ? ifThenElse(
+          useJavaScript(
+            "IsRegisteredSymbol",
+            [
+              getHeap(path.scope, expression, context),
+              translateExpression(keyNode, path.scope, context),
+            ],
+            context,
+          ),
+          throwTypeError(path, expression, context, frame),
+          run,
+        )
+      : run,
+  );
 };
 
 export const getCallback = (node: ts.Expression, path: Path, context: Context) => {
@@ -13326,6 +13428,7 @@ const isStatementResult = (node: ts.CallExpression, path: Path, context: Context
     isStoredStatement(node, context) ||
     getArrayLikeChange(node, context) !== undefined ||
     getHeapSetOrMapChange(node, context) !== undefined ||
+    isMapInsert(node, context) ||
     getArrayIteratorCall(node, context) !== undefined ||
     isNullishArrayMethodCall(node, context) ||
     isSizelessSetLikeCall(node, context) ||
