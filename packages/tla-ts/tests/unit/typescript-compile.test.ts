@@ -48959,4 +48959,45 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("==="))).failure?.message).toContain("first");
     });
   });
+
+  describe("carries the heap through a loop of a function that an expression calls", () => {
+    const getSource = (expected: number) => `
+      const count = <Resolution,>(entries: number[], getOld: (entry: number) => Resolution) => {
+        let total = 0;
+        for (const entry of entries) {
+          const old = getOld(entry);
+          if (old !== undefined) total++;
+        }
+        return total;
+      };
+      const counted = count([1, 2], (entry) => ({ entry }));
+      if (counted !== ${expected}) throw new Error("counted " + counted);
+    `;
+
+    it("agrees with Node where the function returns none of the objects that its loop makes", async () => {
+      expect((await checkModel(getSource(2))).failure).toBeUndefined();
+    });
+
+    it("rejects a wrong count", async () => {
+      expect((await checkModel(getSource(1))).failure?.message).toContain("counted 2");
+    });
+
+    it("stops where the function may return the objects that its loop makes", () => {
+      const source = `
+        const pick = <Resolution,>(entries: number[], getOld: (entry: number) => Resolution | undefined) => {
+          const result: Resolution[] = [];
+          for (const entry of entries) {
+            const old = getOld(entry);
+            if (old !== undefined) result.push(old);
+          }
+          return result;
+        };
+        const made = pick([1, 2], (entry) => ({ entry }));
+        if (made.length !== 2 || made[1].entry !== 2) throw new Error("picked");
+      `;
+      expect(() => compile(source)).toThrow(
+        "spec.ts:2:109 A function that an expression calls can change only its locals",
+      );
+    });
+  });
 });

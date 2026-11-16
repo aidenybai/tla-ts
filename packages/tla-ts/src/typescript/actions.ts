@@ -21330,13 +21330,21 @@ export const translateLocalStatements = (
           ),
     );
   };
+  // A loop carries only what may change, so one that changes objects carries the heap, whose
+  // change leave then sees, where it would otherwise drop the objects that the loop made.
+  const heap =
+    heapSymbol ??
+    (context.heap !== undefined &&
+    findChanged(body, scope.functions, context, true).has(context.heap)
+      ? context.heap
+      : undefined);
   return translateStatements(
     body.statements,
     {
       scope,
       // A parameter is a local binding, which the body may assign as it does a let.
       mutable: new Set([
-        ...(heapSymbol === undefined ? [] : [heapSymbol]),
+        ...(heap === undefined ? [] : [heap]),
         ...(ts.isFunctionLike(owner) ? owner.parameters : []).flatMap((parameter) => {
           const symbol = ts.isIdentifier(parameter.name)
             ? getSymbol(parameter.name, context.checker)
