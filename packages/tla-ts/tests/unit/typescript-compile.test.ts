@@ -45758,4 +45758,38 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("rounds and totals a duration relative to a plain date", () => {
+    const getSource = (expected: string) => `
+      const thrown = (run: () => unknown) => {
+        try {
+          run();
+          return "none";
+        } catch (error) {
+          return (error as Error).name;
+        }
+      };
+      const duration = new Temporal.Duration(0, 0, 0, 40);
+      const rounded = duration.round({ largestUnit: "months", relativeTo: "2020-01-01" }).toString();
+      const years = new Temporal.Duration(1, 2, 3, 4).round({ smallestUnit: "years", relativeTo: "2020-01-01", roundingMode: "ceil" }).years;
+      const days = new Temporal.Duration(1).total({ unit: "days", relativeTo: new Temporal.PlainDate(2020, 1, 1) });
+      const months = new Temporal.Duration(0, 0, 0, 46).total({ unit: "months", relativeTo: "2021-03-01" }) === 1.5;
+      const order = Temporal.Duration.compare({ months: 1 }, { days: 30 }, { relativeTo: "2020-02-01" });
+      const missing = thrown(() => Temporal.Duration.compare({ months: 1 }, { days: 30 }));
+      const seen = [rounded, years, days, months, order, missing].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("P1M9D,2,366,true,-1,RangeError"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects a month of 30 days in January", async () => {
+      expect(
+        (await checkModel(getSource("P1M10D,2,366,true,-1,RangeError"))).failure?.message,
+      ).toContain("seen P1M9D,2,366,true,-1,RangeError");
+    });
+  });
 });

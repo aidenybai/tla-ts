@@ -577,81 +577,6 @@ LOCAL TDurationAdd(heap, fields, other, isSubtract) ==
        [] TLess(TMaxTimeDuration, TAbs(sum)) -> TFail("RangeError")
        [] OTHER -> TDurationFromInternal(<<Big :> 0, Big :> 0, Big :> 0, Big :> 0>>, sum, largestUnit)
 
-\* GetTemporalRelativeToOption, which tla-ts runs only where relativeTo is undefined.
-LOCAL TRelativeToUnset(heap, options) ==
-  TOption(heap, options, "relativeTo") = Undefined
-
-LOCAL TRelativeToStop == Assert(FALSE, "tla-ts can't round or compare a duration relative to a date")
-
-\* Temporal.Duration.prototype.round, without relativeTo.
-LOCAL TDurationRound(heap, fields, roundTo) ==
-  LET options == IF TypeOf(roundTo) = "string" THEN TOk(Undefined) ELSE TOptions(heap, roundTo)
-      unitOf(key) ==
-        IF TypeOf(roundTo) = "string"
-        THEN IF key = "smallestUnit" THEN TUnitOf(roundTo) ELSE TOk("unset")
-        ELSE TUnitOption(heap, options.value, key)
-      largest == unitOf("largestUnit")
-      increment == IF TypeOf(roundTo) = "string" THEN TOk(Big :> 1) ELSE TRoundingIncrementOption(heap, options.value)
-      mode == IF TypeOf(roundTo) = "string" THEN TOk("halfExpand") ELSE TRoundingModeOption(heap, options.value, "halfExpand")
-      smallest == unitOf("smallestUnit")
-      smallestUnit == IF smallest.value = "unset" THEN "nanosecond" ELSE smallest.value
-      existing == TDefaultLargestUnit(fields)
-      defaultLargest == TLargerUnit(existing, smallestUnit)
-      largestUnit == IF largest.value \in {"unset", "auto"} THEN defaultLargest ELSE largest.value
-      maximum == TMaximumIncrement(smallestUnit)
-      time == BigIntAdd(TTimeOf(fields), BigIntMultiply(fields[4], TNsPerDay))
-      rounded == TRoundToIncrement(time, BigIntMultiply(increment.value, TUnitLength(smallestUnit)), mode.value)
-  IN CASE roundTo = Undefined -> TFail("TypeError")
-       [] options.error # "" -> options
-       [] largest.error # "" -> largest
-       [] TypeOf(roundTo) # "string" /\ ~TRelativeToUnset(heap, options.value) -> TRelativeToStop
-       [] increment.error # "" -> increment
-       [] mode.error # "" -> mode
-       [] smallest.error # "" -> smallest
-       [] ~TUnitValid(smallest.value, "datetime", {}) -> TFail("RangeError")
-       [] smallest.value = "unset" /\ largest.value = "unset" -> TFail("RangeError")
-       [] TLargerUnit(largestUnit, smallestUnit) # largestUnit -> TFail("RangeError")
-       [] maximum # 0 /\ ~TIncrementValid(increment.value, maximum, FALSE) -> TFail("RangeError")
-       [] TLess(Big :> 1, increment.value) /\ largestUnit # smallestUnit /\ TIsDateUnit(smallestUnit) ->
-            TFail("RangeError")
-       [] TIsCalendarUnit(existing) \/ TIsCalendarUnit(largestUnit) -> TFail("RangeError")
-       [] TLess(TMaxTimeDuration, TAbs(rounded)) -> TFail("RangeError")
-       [] smallestUnit = "day" ->
-            TDurationFromInternal(<<Big :> 0, Big :> 0, Big :> 0, BigIntDivide(rounded, TNsPerDay)>>, Big :> 0,
-                                  largestUnit)
-       [] OTHER -> TDurationFromInternal(<<Big :> 0, Big :> 0, Big :> 0, Big :> 0>>, rounded, largestUnit)
-
-\* Temporal.Duration.prototype.total, without relativeTo, as the total.
-LOCAL TDurationTotal(heap, fields, totalOf) ==
-  LET options == IF TypeOf(totalOf) = "string" THEN TOk(Undefined) ELSE TOptions(heap, totalOf)
-      unit == IF TypeOf(totalOf) = "string"
-              THEN TUnitOf(totalOf)
-              ELSE TUnitOption(heap, options.value, "unit")
-      time == BigIntAdd(TTimeOf(fields), BigIntMultiply(fields[4], TNsPerDay))
-  IN CASE totalOf = Undefined -> TFail("TypeError")
-       [] options.error # "" -> options
-       [] TypeOf(totalOf) # "string" /\ ~TRelativeToUnset(heap, options.value) -> TRelativeToStop
-       [] unit.error # "" -> unit
-       [] unit.value = "unset" -> TFail("RangeError")
-       [] ~TUnitValid(unit.value, "datetime", {}) -> TFail("RangeError")
-       [] TIsCalendarUnit(TDefaultLargestUnit(fields)) \/ TIsCalendarUnit(unit.value) -> TFail("RangeError")
-       [] OTHER -> TOk(TQuotientNumber(time, TUnitLength(unit.value)))
-
-\* Temporal.Duration.compare, as a number.
-LOCAL TDurationCompare(heap, one, two, value) ==
-  LET first == TToDuration(heap, one)
-      second == TToDuration(heap, two)
-      options == TOptions(heap, value)
-      isCalendar == TIsCalendarUnit(TDefaultLargestUnit(first.value)) \/ TIsCalendarUnit(TDefaultLargestUnit(second.value))
-      total(duration) == BigIntAdd(TTimeOf(duration), BigIntMultiply(duration[4], TNsPerDay))
-  IN CASE first.error # "" -> first
-       [] second.error # "" -> second
-       [] options.error # "" -> options
-       [] ~TRelativeToUnset(heap, options.value) -> TRelativeToStop
-       [] first.value = second.value -> TOk(0)
-       [] isCalendar -> TFail("RangeError")
-       [] OTHER -> TOk(TCompare(total(first.value), total(second.value)))
-
 \* ---------------------------------------------------------------------------------------------
 \* The ISO 8601 calendar, where a date is <<year, month, day>> and a time <<hour, minute, second,
 \* millisecond, microsecond, nanosecond>>, each of TLC integers.
@@ -1641,6 +1566,165 @@ LOCAL TDifferenceDuration(difference, largestUnit, isSince) ==
        [] made.error # "" -> made
        [] isSince -> TOk(TNegatedDuration(made.value))
        [] OTHER -> made
+
+\* ---------------------------------------------------------------------------------------------
+\* Rounding, totaling, and comparing durations, relative to a plain date where relativeTo is one.
+
+LOCAL TZonedStop == Assert(FALSE, "tla-ts can't compute a duration relative to a zoned date-time")
+
+\* GetTemporalRelativeToOption, as a record whose kind is "none", or "plain" with its date. tla-ts
+\* stops at a zoned date-time.
+LOCAL TRelativeTo(heap, options) ==
+  LET value == TOption(heap, options, "relativeTo")
+      slots == TSlots(heap, value)
+      calendar == TCalendarOfBag(heap, value)
+      fields == TPrepareFields(heap, value, TDateTimeKeys \cup {"offset", "timeZone"}, {}, FALSE)
+      date == TDateFromFields(fields.value, "constrain")
+      time == TRegulateTime(TTimeOfFields(fields.value), "constrain")
+      zoned == TParseISO(value, "ZonedDateTime")
+      parsed == IF zoned.error = "" THEN zoned ELSE TParseISO(value, "DateTime")
+      parsedCalendar == IF parsed.value.calendar = "" THEN TOk("iso8601") ELSE TCalendar(parsed.value.calendar)
+  IN CASE value = Undefined -> TOk([kind |-> "none"])
+       [] slots.kind = "ZonedDateTime" -> TZonedStop
+       [] slots.kind \in {"PlainDate", "PlainDateTime"} -> TOk([kind |-> "plain", date |-> slots.date])
+       [] TIsObject(heap, value) ->
+            CASE calendar.error # "" -> calendar
+              [] fields.error # "" -> fields
+              [] date.error # "" -> date
+              [] time.error # "" -> time
+              [] fields.value["timeZone"] # Undefined -> TZonedStop
+              [] OTHER -> TOk([kind |-> "plain", date |-> date.value])
+       [] TypeOf(value) # "string" -> TFail("TypeError")
+       [] parsed.error # "" -> parsed
+       [] parsed.value.zone # "" -> TZonedStop
+       [] parsedCalendar.error # "" -> parsedCalendar
+       [] ~TDateWithinLimits(parsed.value.date) -> TFail("RangeError")
+       [] OTHER -> TOk([kind |-> "plain", date |-> parsed.value.date])
+
+\* The date and time that adding a duration with 24-hour days to midnight of a date gives.
+LOCAL TRelativeTarget(fields, date) ==
+  LET target == TBalanceTime(TMidnight, BigIntAdd(TTimeOf(fields), BigIntMultiply(fields[4], TNsPerDay)))
+      added == TDateAdd(date, <<fields[1], fields[2], fields[3], target.days>>, "constrain")
+  IN IF added.error # "" THEN added ELSE TOk([date |-> added.value, time |-> target.time])
+
+\* Temporal.Duration.prototype.round.
+LOCAL TDurationRound(heap, fields, roundTo) ==
+  LET options == IF TypeOf(roundTo) = "string" THEN TOk(Undefined) ELSE TOptions(heap, roundTo)
+      unitOf(key) ==
+        IF TypeOf(roundTo) = "string"
+        THEN IF key = "smallestUnit" THEN TUnitOf(roundTo) ELSE TOk("unset")
+        ELSE TUnitOption(heap, options.value, key)
+      largest == unitOf("largestUnit")
+      relative == IF TypeOf(roundTo) = "string" THEN TOk([kind |-> "none"]) ELSE TRelativeTo(heap, options.value)
+      increment == IF TypeOf(roundTo) = "string" THEN TOk(Big :> 1) ELSE TRoundingIncrementOption(heap, options.value)
+      mode == IF TypeOf(roundTo) = "string" THEN TOk("halfExpand") ELSE TRoundingModeOption(heap, options.value, "halfExpand")
+      smallest == unitOf("smallestUnit")
+      smallestUnit == IF smallest.value = "unset" THEN "nanosecond" ELSE smallest.value
+      existing == TDefaultLargestUnit(fields)
+      defaultLargest == TLargerUnit(existing, smallestUnit)
+      largestUnit == IF largest.value \in {"unset", "auto"} THEN defaultLargest ELSE largest.value
+      maximum == TMaximumIncrement(smallestUnit)
+      time == BigIntAdd(TTimeOf(fields), BigIntMultiply(fields[4], TNsPerDay))
+      rounded == TRoundToIncrement(time, BigIntMultiply(increment.value, TUnitLength(smallestUnit)), mode.value)
+      target == TRelativeTarget(fields, relative.value.date)
+      difference == TDifferenceRounded(relative.value.date, TMidnight, target.value.date, target.value.time,
+                                       [largest |-> largestUnit, increment |-> increment.value,
+                                        smallest |-> smallestUnit, mode |-> mode.value])
+  IN CASE roundTo = Undefined -> TFail("TypeError")
+       [] options.error # "" -> options
+       [] largest.error # "" -> largest
+       [] relative.error # "" -> relative
+       [] increment.error # "" -> increment
+       [] mode.error # "" -> mode
+       [] smallest.error # "" -> smallest
+       [] ~TUnitValid(smallest.value, "datetime", {}) -> TFail("RangeError")
+       [] smallest.value = "unset" /\ largest.value = "unset" -> TFail("RangeError")
+       [] TLargerUnit(largestUnit, smallestUnit) # largestUnit -> TFail("RangeError")
+       [] maximum # 0 /\ ~TIncrementValid(increment.value, maximum, FALSE) -> TFail("RangeError")
+       [] TLess(Big :> 1, increment.value) /\ largestUnit # smallestUnit /\ TIsDateUnit(smallestUnit) ->
+            TFail("RangeError")
+       [] relative.value.kind = "plain" ->
+            CASE target.error # "" -> target
+              [] difference.error # "" -> difference
+              [] OTHER -> TDurationFromInternal(difference.value.date, difference.value.time, largestUnit)
+       [] TIsCalendarUnit(existing) \/ TIsCalendarUnit(largestUnit) -> TFail("RangeError")
+       [] TLess(TMaxTimeDuration, TAbs(rounded)) -> TFail("RangeError")
+       [] smallestUnit = "day" ->
+            TDurationFromInternal(<<Big :> 0, Big :> 0, Big :> 0, BigIntDivide(rounded, TNsPerDay)>>, Big :> 0,
+                                  largestUnit)
+       [] OTHER -> TDurationFromInternal(<<Big :> 0, Big :> 0, Big :> 0, Big :> 0>>, rounded, largestUnit)
+
+\* A quotient of two integers whose divisor isn't 0, rounded to the nearest Number.
+LOCAL TSignedQuotientNumber(dividend, divisor) ==
+  IF TIsNegative(divisor)
+  THEN TQuotientNumber(BigIntNegate(dividend), BigIntNegate(divisor))
+  ELSE TQuotientNumber(dividend, divisor)
+
+\* DifferencePlainDateTimeWithTotal, as a Number.
+LOCAL TDifferenceTotal(date1, date2, time2, unit) ==
+  LET difference == TDifferenceDateTime(date1, TMidnight, date2, time2, unit)
+      sign == IF TDurationSign(<<difference.date[1], difference.date[2], difference.date[3], difference.date[4],
+                                 difference.time>>) < 0 THEN -1 ELSE 1
+      nudge == TNudgeToCalendarUnit(sign, difference.date, TEpochNs(date1, TMidnight), TEpochNs(date2, time2),
+                                    [date |-> date1, time |-> TMidnight], Big :> 1, unit, "trunc")
+      time == BigIntAdd(difference.time, BigIntMultiply(difference.date[4], TNsPerDay))
+  IN CASE TCompareSequences(date1 \o TMidnight, date2 \o time2) = 0 -> TOk(0)
+       [] ~TDateTimeWithinLimits(date1, TMidnight) \/ ~TDateTimeWithinLimits(date2, time2) -> TFail("RangeError")
+       [] unit = "nanosecond" -> TOk(NumberOfBigInt(difference.time))
+       [] TIsCalendarUnit(unit) ->
+            IF nudge.error # "" THEN nudge
+            ELSE TOk(TSignedQuotientNumber(nudge.value.totalNumerator, nudge.value.totalDenominator))
+       [] OTHER -> TOk(TQuotientNumber(time, TUnitLength(unit)))
+
+\* Temporal.Duration.prototype.total, as the total.
+LOCAL TDurationTotal(heap, fields, totalOf) ==
+  LET options == IF TypeOf(totalOf) = "string" THEN TOk(Undefined) ELSE TOptions(heap, totalOf)
+      relative == IF TypeOf(totalOf) = "string" THEN TOk([kind |-> "none"]) ELSE TRelativeTo(heap, options.value)
+      unit == IF TypeOf(totalOf) = "string"
+              THEN TUnitOf(totalOf)
+              ELSE TUnitOption(heap, options.value, "unit")
+      time == BigIntAdd(TTimeOf(fields), BigIntMultiply(fields[4], TNsPerDay))
+      target == TRelativeTarget(fields, relative.value.date)
+  IN CASE totalOf = Undefined -> TFail("TypeError")
+       [] options.error # "" -> options
+       [] relative.error # "" -> relative
+       [] unit.error # "" -> unit
+       [] unit.value = "unset" -> TFail("RangeError")
+       [] ~TUnitValid(unit.value, "datetime", {}) -> TFail("RangeError")
+       [] relative.value.kind = "plain" ->
+            IF target.error # "" THEN target
+            ELSE TDifferenceTotal(relative.value.date, target.value.date, target.value.time, unit.value)
+       [] TIsCalendarUnit(TDefaultLargestUnit(fields)) \/ TIsCalendarUnit(unit.value) -> TFail("RangeError")
+       [] OTHER -> TOk(TQuotientNumber(time, TUnitLength(unit.value)))
+
+\* DateDurationDays.
+LOCAL TDurationDays(fields, date) ==
+  LET later == TDateAdd(date, <<fields[1], fields[2], fields[3], Big :> 0>>, "constrain")
+  IN CASE TIsZero(fields[1]) /\ TIsZero(fields[2]) /\ TIsZero(fields[3]) -> TOk(fields[4])
+       [] later.error # "" -> later
+       [] OTHER -> TOk(BigIntAdd(fields[4], TBig(TEpochDays(later.value) - TEpochDays(date))))
+
+\* Temporal.Duration.compare, as a number.
+LOCAL TDurationCompare(heap, one, two, value) ==
+  LET first == TToDuration(heap, one)
+      second == TToDuration(heap, two)
+      options == TOptions(heap, value)
+      relative == TRelativeTo(heap, options.value)
+      isCalendar == TIsCalendarUnit(TDefaultLargestUnit(first.value)) \/ TIsCalendarUnit(TDefaultLargestUnit(second.value))
+      days1 == IF isCalendar THEN TDurationDays(first.value, relative.value.date) ELSE TOk(first.value[4])
+      days2 == IF isCalendar THEN TDurationDays(second.value, relative.value.date) ELSE TOk(second.value[4])
+      total1 == BigIntAdd(TTimeOf(first.value), BigIntMultiply(days1.value, TNsPerDay))
+      total2 == BigIntAdd(TTimeOf(second.value), BigIntMultiply(days2.value, TNsPerDay))
+  IN CASE first.error # "" -> first
+       [] second.error # "" -> second
+       [] options.error # "" -> options
+       [] relative.error # "" -> relative
+       [] first.value = second.value -> TOk(0)
+       [] isCalendar /\ relative.value.kind = "none" -> TFail("RangeError")
+       [] days1.error # "" -> days1
+       [] days2.error # "" -> days2
+       [] TLess(TMaxTimeDuration, TAbs(total1)) \/ TLess(TMaxTimeDuration, TAbs(total2)) -> TFail("RangeError")
+       [] OTHER -> TOk(TCompare(total1, total2))
 
 \* ---------------------------------------------------------------------------------------------
 \* The methods of PlainTime, PlainDate, and PlainDateTime.
