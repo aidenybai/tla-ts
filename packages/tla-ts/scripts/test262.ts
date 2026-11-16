@@ -1748,6 +1748,81 @@ const typePushedArrays = () => {
   );
 };
 
+// A generator's parameter that the generator only delegates to with yield*, which the fix types as
+// unknown where the test calls the generator through a getter, as C.$([1]) calls the private
+// method that C's getter returns. It takes the array type of the array literals that each call
+// TypeScript resolves to the generator passes it.
+const typeDelegatedParameters = () => {
+  const program = service.getProgram();
+  const sourceFile = program?.getSourceFile(file.path);
+  if (program === undefined || sourceFile === undefined) return;
+  const checker = program.getTypeChecker();
+  const calls: ts.CallExpression[] = [];
+  const names: ts.Identifier[] = [];
+  const visit = (node: ts.Node) => {
+    if (ts.isCallExpression(node)) calls.push(node);
+    if (ts.isIdentifier(node)) names.push(node);
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  const getCalled = (call: ts.CallExpression) =>
+    checker.getResolvedSignature(call)?.getDeclaration();
+  const generators = new Set(
+    calls
+      .map(getCalled)
+      .filter(
+        (declaration) =>
+          declaration !== undefined &&
+          (ts.isMethodDeclaration(declaration) || ts.isFunctionExpression(declaration)) &&
+          declaration.asteriskToken !== undefined &&
+          declaration.getSourceFile() === sourceFile,
+      ),
+  );
+  const replacements = [...generators].flatMap((generator) =>
+    (generator?.parameters ?? []).flatMap((parameter, position) => {
+      const symbol = checker.getSymbolAtLocation(parameter.name);
+      const uses = names.filter(
+        (name) => name !== parameter.name && checker.getSymbolAtLocation(name) === symbol,
+      );
+      const types = new Set(
+        calls
+          .filter((call) => getCalled(call) === generator)
+          .map((call) => {
+            const value = call.arguments[position];
+            return value !== undefined &&
+              ts.isArrayLiteralExpression(value) &&
+              !value.elements.some(ts.isSpreadElement)
+              ? checker.typeToString(checker.getTypeAtLocation(value))
+              : undefined;
+          }),
+      );
+      const type = [...types][0];
+      return parameter.type?.kind === ts.SyntaxKind.UnknownKeyword &&
+        parameter.dotDotDotToken === undefined &&
+        uses.length > 0 &&
+        uses.every(
+          (use) =>
+            ts.isYieldExpression(use.parent) &&
+            use.parent.asteriskToken !== undefined &&
+            use.parent.expression === use,
+        ) &&
+        types.size === 1 &&
+        type !== undefined
+        ? [{ start: parameter.type.getStart(), end: parameter.type.getEnd(), text: type }]
+        : [];
+    }),
+  );
+  setText(
+    replacements
+      .toSorted((left, right) => right.start - left.start)
+      .reduce(
+        (current, replacement) =>
+          current.slice(0, replacement.start) + replacement.text + current.slice(replacement.end),
+        file.text,
+      ),
+  );
+};
+
 // test262 is JavaScript, so its functions and variables have no types. This annotates them as
 // TypeScript's "Infer type from usage" fix does, with unknown where it infers any, then loosens
 // the types of the objects it describes.
@@ -1845,6 +1920,7 @@ const annotate = (text: string, path = PROGRAM_PATH) => {
     setText(annotated);
   }
   typePushedArrays();
+  typeDelegatedParameters();
   // A type that one loosening gives can show where another is needed.
   while (loosen());
   ignoreSoundErrors();
