@@ -1793,6 +1793,14 @@ const translateReflectSet = (
 
 const REMOVING_METHODS = new Set(["push", "unshift", "splice", "shift", "pop"]);
 
+// The methods of console that write what they take to stdout or stderr.
+const CONSOLE_WRITERS = new Set(["log", "error", "warn", "info", "debug"]);
+
+const isConsoleWrite = (node: ts.CallExpression) =>
+  isMethodCall(node) &&
+  node.expression.expression.getText() === "console" &&
+  CONSOLE_WRITERS.has(node.expression.name.text);
+
 // Whether a call changes an array, a set, or a map, and gives what it removed, how long the array
 // became, or the collection.
 const isRemoving = (node: ts.Expression, context: Context): boolean => {
@@ -4438,7 +4446,9 @@ const translateCallStatementBody = (
     const receiver = expression.expression.expression;
     const method = expression.expression.name.text;
     const isConsole = receiver.getText() === "console";
-    if (isConsole && method === "log") {
+    // console's methods that write what they take, which nothing in the model reads, print it as
+    // log does.
+    if (isConsole && CONSOLE_WRITERS.has(method)) {
       const values = translateArguments(expression.arguments);
       const value = values.length === 1 ? values[0] : tuple(values);
       return and([leaf(apply("PrintT", [value])), continueWith(path)]);
@@ -13329,7 +13339,8 @@ const isPromiseMaking = (node: ts.CallExpression, path: Path, context: Context) 
 // A call whose value only statements can compute, which an assignment or a declaration takes.
 const isStatementResult = (node: ts.CallExpression, path: Path, context: Context) =>
   getCalledError(node, context) === undefined &&
-  (getFormatCall(node, context) !== undefined ||
+  (isConsoleWrite(node) ||
+    getFormatCall(node, context) !== undefined ||
     isPromiseMaking(node, path, context) ||
     getBound(node.expression, context) !== undefined ||
     getDateCall(node, context) !== undefined ||

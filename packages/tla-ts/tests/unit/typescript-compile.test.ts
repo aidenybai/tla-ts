@@ -46208,4 +46208,41 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("64,a"))).failure?.message).toContain("seen 64,a1");
     });
   });
+
+  describe("prints what console's error, warn, info, and debug take", () => {
+    const getSource = (expected: number) => `
+      declare const console: {
+        error(...data: unknown[]): void;
+        warn(...data: unknown[]): void;
+        info(...data: unknown[]): void;
+        debug(...data: unknown[]): void;
+      };
+      const box = { size: 2 };
+      console.error("size", box.size);
+      console.warn("warned");
+      console.info("informed", 1);
+      box.size += 1;
+      box.size > 2 && console.debug("debugged", box.size);
+      if (box.size !== ${expected}) throw new Error("seen " + box.size);
+    `;
+
+    it("agrees with Node", async () => {
+      const printed: string[] = [];
+      const result = await check({
+        ...compile(getSource(3)),
+        onPrint: (text) => printed.push(text),
+      });
+      expect(result.failure).toBeUndefined();
+      expect(printed).toEqual([
+        '<<"size", 2>>',
+        '"warned"',
+        '<<"informed", 1>>',
+        '<<"debugged", 3>>',
+      ]);
+    });
+
+    it("rejects a size that the writes skip", async () => {
+      expect((await checkModel(getSource(2))).failure?.message).toContain("seen 3");
+    });
+  });
 });
