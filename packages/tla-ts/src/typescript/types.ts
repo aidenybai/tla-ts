@@ -1811,6 +1811,14 @@ export const findDomain = (type: ts.Type, context: Context): Expression | Infini
   if (literal !== undefined) return set([literal]);
   if (type.flags & ts.TypeFlags.Number) return getIntegers();
   if (type.flags & ts.TypeFlags.String) return getStrings();
+  // A value can't stand for an object that the heap holds.
+  if (isHeldCollectionType(type, context)) {
+    return getInfinite(
+      type,
+      "tla-ts can't list the arrays, sets, and maps that the heap holds",
+      context,
+    );
+  }
   // A subclass's instances are objects, which no domain lists.
   if (
     ((isSetType(type) || isMapType(type)) && getCollectionType(type) === type) ||
@@ -1869,6 +1877,9 @@ export const findDomain = (type: ts.Type, context: Context): Expression | Infini
       "use a union of literals, or records, tuples, and sets of them",
       context,
     );
+  }
+  if (context.heap !== undefined) {
+    return getInfinite(type, "tla-ts can't list the objects that the heap holds", context);
   }
   const optional = properties.find((property) => property.flags & ts.SymbolFlags.Optional);
   if (optional !== undefined) {

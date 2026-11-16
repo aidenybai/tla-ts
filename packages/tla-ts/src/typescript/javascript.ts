@@ -1563,6 +1563,53 @@ NextRef(heap, offset) == Ref :> (Len(heap.objects) + offset)
 \\* Allocates objects in turn, which may hold the refs that NextRef gives each.
 AllocateEach(heap, objects) == [heap EXCEPT !.objects = @ \\o objects]
 
+\\* The places on the heap of the objects that a value holds, at any depth, in its keys or values.
+RECURSIVE HeldRefs(_)
+HeldRefs(value) ==
+  LET text == ToString(value)
+      first == SubSeq(text, 1, 1)
+  IN CASE IsRef(value) -> IF IsHeap(value) THEN {value[Ref]} ELSE {}
+       [] first \\in {"[", "<", "("} ->
+            UNION {HeldRefs(key) \\cup HeldRefs(value[key]) : key \\in DOMAIN value}
+       [] first = "{" -> UNION {HeldRefs(element) : element \\in value}
+       [] OTHER -> {}
+
+\\* A value whose refs to the objects that moved take their new places.
+RECURSIVE Moved(_, _, _)
+Moved(value, places, moved) ==
+  LET text == ToString(value)
+      first == SubSeq(text, 1, 1)
+      Move(inner) == Moved(inner, places, moved)
+  IN CASE HeldRefs(value) \\cap moved = {} -> value
+       [] IsRef(value) -> Ref :> places[value[Ref]]
+       [] first \\in {"[", "<", "("} /\\ \\A key \\in DOMAIN value : HeldRefs(key) \\cap moved = {} ->
+            [key \\in DOMAIN value |-> Move(value[key])]
+       [] first \\in {"[", "<", "("} ->
+            LET pairs == {<<Move(key), Move(value[key])>> : key \\in DOMAIN value}
+            IN [key \\in {pair[1] : pair \\in pairs} |-> (CHOOSE pair \\in pairs : pair[1] = key)[2]]
+       [] OTHER -> {Move(element) : element \\in value}
+
+RECURSIVE ReachedRefs(_, _, _)
+ReachedRefs(objects, found, frontier) ==
+  LET next == UNION {HeldRefs(objects[place]) : place \\in frontier} \\ found
+  IN IF next = {} THEN found ELSE ReachedRefs(objects, found \\cup next, next)
+
+\\* The heap without the objects that nothing reaches any more, from the first fixed ones, which code
+\\* names, the roots, and the built-ins that a script changed, with the roots. The objects left keep
+\\* their order, so that the same objects take the same places, and refs take the new places.
+Collect(heap, roots, fixed) ==
+  LET start == (1..fixed \\cap DOMAIN heap.objects) \\cup HeldRefs(<<roots, heap.changed, heap.symbols, heap.registry>>)
+      live == ReachedRefs(heap.objects, start, start)
+      places == [place \\in live |-> Cardinality({other \\in live : other <= place})]
+      moved == {place \\in live : places[place] # place}
+      order == [position \\in 1..Cardinality(live) |-> CHOOSE place \\in live : places[place] = position]
+      Move(value) == IF moved = {} THEN value ELSE Moved(value, places, moved)
+  IN IF Cardinality(live) = Len(heap.objects)
+     THEN [heap |-> heap, roots |-> roots]
+     ELSE [heap |-> [heap EXCEPT !.objects = [position \\in DOMAIN order |-> Move(@[order[position]])],
+                                 !.changed = Move(@), !.symbols = Move(@), !.registry = Move(@)],
+           roots |-> Move(roots)]
+
 \\* Whether a heap holds what another does, and only adds objects after them.
 IsExtendedHeap(heap, before) == [heap EXCEPT !.objects = SubSeq(@, 1, Len(before.objects))] = before
 

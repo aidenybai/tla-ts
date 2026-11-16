@@ -8575,11 +8575,12 @@ describe("definitions", () => {
     expect(result.failure?.message).toContain("count is one");
   });
 
-  it("rejects a function of another file that shares an object it changes", () => {
+  it("runs a function of another file that shares an object it changes", async () => {
     const path = join(import.meta.dirname, "../fixtures/typescript/imports/aliasing.ts");
-    expect(() => compile(readFileSync(path, "utf8"), path)).toThrow(
-      "first would share an object that changes in place, so copy it",
-    );
+    const source = readFileSync(path, "utf8");
+    expect((await check(compile(source, path))).failure).toBeUndefined();
+    const wrong = await check(compile(source.replace("count !== 1", "count !== 2"), path));
+    expect(wrong.status).toBe("invariant-violation");
   });
 
   it("runs the files a script imports first, in the order they import each other", async () => {
@@ -9982,8 +9983,8 @@ describe("errors", () => {
     expect(result.status).toBe("success");
   });
 
-  it("rejects a local that a returned object literal holds while an array keeps it", () => {
-    const source = `
+  describe("shares a local that a returned object literal holds while an array keeps it", () => {
+    const getSource = (expected: number) => `
       const make = () => {
         const items: number[] = [];
         const kept = [items];
@@ -9996,8 +9997,17 @@ describe("errors", () => {
       export const tick = () => {
         count = make().size;
       };
+
+      export const isCounted = () => count === 0 || count === ${expected};
     `;
-    expect(() => compile(source)).toThrow("items would share an object that changes in place");
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(1))).failure).toBeUndefined();
+    });
+
+    it("rejects a copy of the local", async () => {
+      expect((await checkModel(getSource(0))).status).toBe("invariant-violation");
+    });
   });
 
   it("returns a local that closures the function only calls change", async () => {
@@ -15923,12 +15933,11 @@ describe("errors", () => {
     expect(result.status).toBe("success");
   });
 
-  it("rejects a function that an expression calls where it shares an object it changes", () => {
-    expect(() =>
-      compile(
-        "const getShared = () => {\n  const first = { value: 1 };\n  const second = first;\n  second.value = 2;\n  return first.value;\n};\nlet count = 0;\nexport const tick = () => {\n  count = 1 - count;\n};\nexport const isCorrect = () => getShared() === 2;",
-      ),
-    ).toThrow("spec.ts:3:18 first would share an object that changes in place, so copy it");
+  it("calls in an invariant a function that shares an object it changes", async () => {
+    const getSource = (expected: number) =>
+      `const getShared = () => {\n  const first = { value: 1 };\n  const second = first;\n  second.value = 2;\n  return first.value;\n};\nlet count = 0;\nexport const tick = () => {\n  count = 1 - count;\n};\nexport const isCorrect = () => getShared() === ${expected};`;
+    expect((await checkModel(getSource(2))).failure).toBeUndefined();
+    expect((await checkModel(getSource(1))).status).toBe("invariant-violation");
   });
 
   describe("compares the arrays of a script by identity", () => {
@@ -39986,7 +39995,7 @@ describe("BigInts", () => {
     expect((await checkModel(getSource(2))).status).toBe("invariant-violation");
   });
 
-  it("stops where a model would share an object that only a declaration gives", () => {
+  it("stops where a model would share a set that only a declaration gives", async () => {
     const getSource = (declaration: string) => `
       ${declaration}
       let seen = new Set<number>();
@@ -39997,10 +40006,13 @@ describe("BigInts", () => {
       };
     `;
     expect(() => compile(getSource("declare const pending: Set<number>;"))).toThrow(
-      "tla-ts can't run pending, which only a declaration gives",
+      "spec.ts:2:21 Give this a value",
     );
-    expect(() => compile(getSource("let pending = new Set<number>();"))).toThrow(
-      "pending would share an object that changes in place, so copy it",
+    const shared = `${getSource("let pending = new Set<number>();")}
+      export const isShared = () => seen.size === 0 || seen.has(1);`;
+    expect((await checkModel(shared)).status).toBe("deadlock");
+    expect((await checkModel(shared.replace("seen.has(1)", "!seen.has(1)"))).status).toBe(
+      "invariant-violation",
     );
   });
   describe("keeps what a cast yield*'s iterator method changes", () => {
@@ -48612,6 +48624,117 @@ describe("BigInts", () => {
       expect(() => checkModel(source)).toThrow(
         "tla-ts can't call inside an expression a function that runs once and makes a function that reads its locals",
       );
+    });
+  });
+
+  describe("holds a module's objects on the heap where it would share one that changes in place", () => {
+    const getSource = (bound: number) => `
+      interface Box {
+        items: number[];
+      }
+      let state: Box = { items: [] };
+      export const add = (value: 0 | 1) => {
+        const list = state.items;
+        if (list.length < 2) list.push(value);
+      };
+      export const isSmall = () => state.items.length <= ${bound};
+    `;
+
+    it("agrees with Node, as an action changes the array through another name", async () => {
+      const result = await checkModel(getSource(2));
+      expect([result.status, result.failure, result.distinctStates]).toEqual([
+        "success",
+        undefined,
+        7,
+      ]);
+    });
+
+    it("rejects a copy of the array", async () => {
+      expect((await checkModel(getSource(1))).status).toBe("invariant-violation");
+    });
+
+    it("drops the objects that nothing reaches any more, so the states stay finite", async () => {
+      const source = `${getSource(2)}
+        export const reset = () => {
+          state = { items: [] };
+        };
+      `;
+      const result = await checkModel(source);
+      expect([result.status, result.failure, result.distinctStates]).toEqual([
+        "success",
+        undefined,
+        7,
+      ]);
+    });
+
+    it("checks fairness and a liveness property over the heap", async () => {
+      const getLive = (tag: string) => `
+        interface Box {
+          items: number[];
+        }
+        let state: Box = { items: [] };
+        /** @fair */
+        export const add = (value: 0 | 1) => {
+          const list = state.items;
+          if (list.length < 2) list.push(value);
+        };
+        /** ${tag} */
+        export const reset = () => {
+          if (state.items.length < 2) return;
+          state = { items: [] };
+        };
+        /** @alwaysEventually */
+        export const isEmpty = () => state.items.length === 0;
+      `;
+      expect((await checkModel(getLive("@fair"))).failure).toBeUndefined();
+      expect((await checkModel(getLive("@since 1"))).status).toBe("liveness-violation");
+    });
+
+    it("checks an assumption in the initial state only", async () => {
+      const getAssumed = (expected: number) => `${getSource(2)}
+        /** @assume */
+        export const isFresh = () => state.items.length === ${expected};
+      `;
+      expect((await checkModel(getAssumed(0))).failure).toBeUndefined();
+      const wrong = await checkModel(getAssumed(1));
+      expect([wrong.status, wrong.distinctStates]).toEqual(["invariant-violation", 1]);
+    });
+  });
+
+  describe("calls a module's function that makes objects and changes them, with every argument", () => {
+    const getSource = (check: string) => `
+      interface Box {
+        items: number[];
+      }
+      const make = (size: number): Box => {
+        const box: Box = { items: [] };
+        const view = box.items;
+        for (let index = 0; index < size; index++) view.push(index);
+        return box;
+      };
+      export const count = (size: 0 | 1 | 2) => {
+        const made = make(size);
+        if (${check}) throw new Error("count " + size);
+        return made.items.length;
+      };
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("made.items.length !== size"))).failure).toBeUndefined();
+    });
+
+    it("rejects a copy of the array", async () => {
+      expect((await checkModel(getSource("made.items.length === 2"))).failure?.message).toContain(
+        "count 2",
+      );
+    });
+
+    it("stops at a parameter whose objects the heap would hold", () => {
+      expect(() =>
+        compile(`${getSource("made.items.length !== size")}
+          export const read = (box: Box) => box.items.length;
+        `),
+      ).toThrow("Box isn't finite: tla-ts can't list the objects that the heap holds");
     });
   });
 

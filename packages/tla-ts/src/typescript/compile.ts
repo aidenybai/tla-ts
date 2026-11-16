@@ -796,10 +796,9 @@ export const compile = (
   // heap holds the file's objects, as JavaScript does.
   const isSharing =
     heap !== undefined &&
-    isScript(sourceFile) &&
-    !isUsingHeap &&
+    !(isScript(sourceFile) && isUsingHeap) &&
     findSharing(roots, context) !== undefined;
-  const isHeapFile = isScript(sourceFile);
+  const isHeapFile = isScript(sourceFile) || isSharing;
   context.hasOrderedCollections = isHeapFile && reached.some(usesOrder);
   const changedArrays = isHeapFile ? findChangedArrays(reached, context) : [];
   if (heap !== undefined && isHeapFile && (isSharing || changedArrays.length > 0 || isUsingHeap)) {
@@ -1006,9 +1005,9 @@ export const compile = (
     isNodeScript && model.exported.length === 0
       ? { sourceFile, isEsModule: isEsModule(sourceFile) }
       : undefined;
-  // Only where the heap holds every array, set, and map, or in a module, which has no heap, may an
-  // object that a value holds still be shared, as the heap decided above found none otherwise.
-  if (context.isEveryCollectionHeld || !isScript(sourceFile)) rejectSharing(roots, context);
+  // Only where the heap holds every array, set, and map may an object that a value holds still be
+  // shared, as the heap decided above found none otherwise.
+  if (context.isEveryCollectionHeld) rejectSharing(roots, context);
   rejectRegExpIndicesUses(roots, context);
   if (context.heap !== undefined) context.effects = findEffects(reached, context);
   classifySharedHelpers(reached, context);

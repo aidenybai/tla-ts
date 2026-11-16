@@ -1,5 +1,7 @@
 import ts from "@typescript/typescript6";
 import type { Expression } from "../ast";
+import { translateHeapBody } from "./actions";
+import { render } from "./formula";
 import { type Context, getSymbol } from "./context";
 import type { Sections } from "./emit";
 import { TlaTypeScriptError } from "../errors";
@@ -20,8 +22,10 @@ import {
   junction,
   letExpression,
   locate,
+  number,
   prime,
   quantify,
+  string,
   temporal,
   unchanged,
 } from "./tla";
@@ -123,7 +127,7 @@ export const translateProperty = (
       quantified.map((parameter) => bound(parameter.name, parameter.domain)),
       body,
     );
-  const value = translateBody(definition.body, scope, context);
+  const value = translateExportedBody(definition, scope, context);
   const operator = TEMPORAL_OPERATORS.get(tag);
   const predicate = PREDICATE_TAGS.get(tag);
   const addTemporal = (body: Expression) => {
@@ -167,12 +171,24 @@ export const translateProperty = (
     );
   }
   if (predicate !== undefined) {
+    // An assumption can't read the heap, which the state holds, so it holds in the initial states
+    // instead, before the search goes on.
+    const isInitial = predicate === "assumptions" && context.heap !== undefined;
+    const checked = isInitial
+      ? junction("Or", [apply(">", [apply("TLCGet", [string("level")]), number(1)]), value])
+      : value;
     sections.predicates.push(
-      link(context, "predicate", name, definition.declaration, defineAt(node, name, [], value)),
+      link(context, "predicate", name, definition.declaration, defineAt(node, name, [], checked)),
     );
-    sections[predicate].push(name);
+    sections[isInitial ? "invariants" : predicate].push(name);
   }
 };
+
+// What an exported function returns, which runs as statements where the heap holds objects.
+const translateExportedBody = (definition: Exported, scope: Scope, context: Context) =>
+  context.heap === undefined
+    ? translateBody(definition.body, scope, context)
+    : render(translateHeapBody(definition.node, scope, context));
 
 // An exported function that returns a value without asserting it, which TLC calls with every
 // argument, in every state when it reads state and once before the search otherwise. TLC reports a
@@ -184,7 +200,7 @@ export const translateCall = (definition: Exported, sections: Sections, context:
   }));
   const result = context.names.getFresh("result");
   const body = collectUnknowns(definition.node, context, () =>
-    translateBody(definition.body, bindNames(createStateScope(context), quantified), context),
+    translateExportedBody(definition, bindNames(createStateScope(context), quantified), context),
   );
   // TLC evaluates a LET definition only when something uses it.
   const checked = letExpression(
@@ -211,11 +227,10 @@ export const translateCall = (definition: Exported, sections: Sections, context:
       ),
     ),
   );
-  const isStateLevel = readsState(
-    definition.declaration,
-    context,
-    new Set([definition.declaration]),
-  );
+  // A check reads the heap, which the state holds, where it holds objects.
+  const isStateLevel =
+    context.heap !== undefined ||
+    readsState(definition.declaration, context, new Set([definition.declaration]));
   (isStateLevel ? sections.invariants : sections.assumptions).push(definition.name);
 };
 
@@ -228,9 +243,11 @@ export const translateInvariant = (definition: Exported, sections: Sections, con
   const body = definition.body;
   const scope = createStateScope(context);
   const value = collectUnknowns(definition.node, context, () =>
-    ts.isBlock(body)
-      ? translateBody(body, scope, context)
-      : translateCondition(body, scope, context),
+    context.heap !== undefined
+      ? translateExportedBody(definition, scope, context)
+      : ts.isBlock(body)
+        ? translateBody(body, scope, context)
+        : translateCondition(body, scope, context),
   );
   sections.predicates.push(
     link(

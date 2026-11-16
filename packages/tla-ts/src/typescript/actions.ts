@@ -255,6 +255,7 @@ import {
   isNewError,
   getCandidateValue,
   getHeldName,
+  getFixedObjectCount,
   getHeap,
   hasPrototypeArray,
   getIntlError,
@@ -21111,12 +21112,20 @@ export const translateAction = (
   scope: Scope,
   context: Context,
 ): Formula => {
+  const heapSymbol = context.heap;
+  const heap = heapSymbol === undefined ? undefined : context.variables.get(heapSymbol);
   const finish = (path: Path): Formula => {
-    if (!path.isAssigned) return DISABLED;
     const assignments = [...context.variables].map((entry) => ({
       name: entry[1],
       value: path.scope.bindings.get(entry[0]) ?? entry[1],
     }));
+    const changedHeap = assignments.find(
+      (assignment) => assignment.name === heap && assignment.value !== heap,
+    )?.value;
+    if (!path.isAssigned && changedHeap === undefined) return DISABLED;
+    if (heap !== undefined && changedHeap !== undefined) {
+      return collectGarbage(heap, changedHeap, assignments, context);
+    }
     const kept = assignments.filter((assignment) => assignment.value === assignment.name);
     return and([
       ...assignments
@@ -21148,6 +21157,104 @@ export const translateAction = (
       yieldTo: undefined,
       awaitTo: undefined,
       inlining: new Set(),
+    },
+  );
+};
+
+// An action's next state where it changed the heap, without the objects that nothing reaches any
+// more, which keeps the states that an action that makes objects reaches finite.
+const collectGarbage = (
+  heap: Expression,
+  changedHeap: Expression,
+  assignments: readonly { name: Expression; value: Expression }[],
+  context: Context,
+): Formula => {
+  const others = assignments.filter((assignment) => assignment.name !== heap);
+  const roots = tuple(others.map((assignment) => assignment.value));
+  const name = context.names.getFresh("collected");
+  const collected = identifier(name);
+  const getLength = (value: Expression) => apply("Len", [field(value, "objects")]);
+  return letIn(
+    [
+      define(
+        name,
+        [],
+        ifExpression(
+          apply("=", [getLength(changedHeap), getLength(heap)]),
+          record("Record", [
+            { name: "heap", value: changedHeap },
+            { name: "roots", value: roots },
+          ]),
+          useJavaScript(
+            "Collect",
+            [changedHeap, roots, number(getFixedObjectCount(context))],
+            context,
+          ),
+        ),
+      ),
+    ],
+    and([
+      leaf(apply("=", [prime(heap), field(collected, "heap")])),
+      ...others.map((assignment, position) =>
+        leaf(
+          apply("=", [
+            prime(assignment.name),
+            index(field(collected, "roots"), [number(position + 1)]),
+          ]),
+        ),
+      ),
+    ]),
+  );
+};
+
+// The value that an exported function returns where the heap holds objects. TLC calls it with each
+// argument from the state, so what it changes on the heap lasts only for the call.
+export const translateHeapBody = (owner: FunctionNode, scope: Scope, context: Context): Formula => {
+  const body = owner.body;
+  const heapSymbol = context.heap;
+  if (body === undefined || heapSymbol === undefined) {
+    throw new TlaTypeScriptError("tla-ts can't run this function on the heap", owner);
+  }
+  const leave = (path: Path, value: Expression) => {
+    if (
+      [...context.variables.keys()].some(
+        (symbol) =>
+          symbol !== heapSymbol && path.scope.bindings.get(symbol) !== scope.bindings.get(symbol),
+      )
+    ) {
+      throw new TlaTypeScriptError("A function that returns a value can't change state", owner);
+    }
+    return leaf(value);
+  };
+  return translateStatements(
+    ts.isBlock(body) ? body.statements : [ts.factory.createReturnStatement(body)],
+    {
+      scope,
+      mutable: new Set([
+        heapSymbol,
+        ...owner.parameters.flatMap((parameter) => {
+          const symbol = ts.isIdentifier(parameter.name)
+            ? getSymbol(parameter.name, context.checker)
+            : undefined;
+          return symbol !== undefined && scope.bindings.has(symbol) ? [symbol] : [];
+        }),
+      ]),
+      isAssigned: false,
+      isLast: false,
+      isLooping: true,
+      generators: new Map(),
+      tasks: undefined,
+    },
+    context,
+    {
+      next: (path) => leave(path, getUndefined(context)),
+      exit: (path, value) => leave(path, value ?? getUndefined(context)),
+      breakTo: undefined,
+      continueTo: undefined,
+      throwTo: undefined,
+      yieldTo: undefined,
+      awaitTo: undefined,
+      inlining: new Set([owner]),
     },
   );
 };

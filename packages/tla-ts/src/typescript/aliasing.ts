@@ -820,9 +820,7 @@ export const rejectSharing = (roots: readonly ts.Node[], context: Context) => {
     );
   }
   throw new TlaTypeScriptError(
-    context.heap === undefined
-      ? `${text} would share an object that changes in place, so copy it`
-      : `tla-ts can't hold ${text} on the heap, which would share an object that changes in place`,
+    `tla-ts can't hold ${text} on the heap, which would share an object that changes in place`,
     sharing.node,
   );
 };
