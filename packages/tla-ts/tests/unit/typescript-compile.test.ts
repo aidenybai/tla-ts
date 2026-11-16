@@ -48778,4 +48778,32 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("==="))).failure?.message).toContain("arguments");
     });
   });
+
+  describe("shares a value of a type parameter's NonNullable where the heap holds every array", () => {
+    const getSource = (expected: number) => `
+      const holder: { items: unknown[] } = { items: [] };
+      const put = <T,>(value: NonNullable<T>) => {
+        holder.items[0] = value;
+      };
+      const box = { list: [1] };
+      const keep = (value: number[]) => value;
+      const run = keep;
+      const list = run(box.list);
+      list.push(2);
+      const other: { field: Error } = { field: new Error("e") };
+      other.field.message = "m";
+      const item = { count: 1 };
+      put(item);
+      (holder.items[0] as { count: number }).count = 5;
+      if (item.count !== ${expected} || box.list.length !== 2) throw new Error("count " + item.count);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(5))).failure).toBeUndefined();
+    });
+
+    it("rejects a copy of the object", async () => {
+      expect((await checkModel(getSource(1))).failure?.message).toContain("count 5");
+    });
+  });
 });

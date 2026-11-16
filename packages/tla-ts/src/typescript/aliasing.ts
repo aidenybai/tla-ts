@@ -140,7 +140,8 @@ const isUpdate = (node: ts.Node, context: Context) =>
   getKind(node.expression.expression, context) !== "other";
 
 // A script's heap objects are references, which share as JavaScript objects do, so only the other
-// objects that a value holds can be copied by mistake.
+// objects that a value holds can be copied by mistake. Where the heap holds every array, set, and
+// map, {} tells no more than unknown does, as NonNullable gives it to a type parameter.
 const holdsObject = (type: ts.Type, context: Context): boolean =>
   type.isUnion() || type.isIntersection()
     ? type.types.some((member) => holdsObject(member, context))
@@ -148,7 +149,8 @@ const holdsObject = (type: ts.Type, context: Context): boolean =>
       type.getCallSignatures().length === 0 &&
       type.getConstructSignatures().length === 0 &&
       !isHeapType(type, context) &&
-      !isHeldCollectionType(type, context);
+      !isHeldCollectionType(type, context) &&
+      !(context.isEveryCollectionHeld && type.getProperties().length === 0);
 
 const holdsObjectAt = (type: ts.Type, depth: number, context: Context): boolean => {
   const checker = context.checker;
