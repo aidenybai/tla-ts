@@ -1,6 +1,6 @@
 import { CodeActions, CodeContent, CodeCopy, CodeFooter, CodeRoot, CodeRun } from "./code";
 import { ExampleDescription, ExampleHint, ExampleRoot, ExampleSource } from "./example";
-import { HeroBody, HeroCopy, HeroRoot, HeroTitle } from "./hero";
+import { HeroBody, HeroRoot, HeroTitle } from "./hero";
 import { ResultBody, ResultHeader, ResultRoot, ResultSection, ResultStates } from "./result";
 import { SectionRoot, SectionTitle } from "./section";
 
@@ -24,7 +24,6 @@ export const Hero = {
   Root: HeroRoot,
   Title: HeroTitle,
   Body: HeroBody,
-  Copy: HeroCopy,
 };
 
 export const Result = {
