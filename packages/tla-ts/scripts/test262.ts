@@ -1748,6 +1748,71 @@ const typePushedArrays = () => {
   );
 };
 
+const REDECLARED_TYPE_ERROR = 2403;
+
+// A var that one declaration declares without a type or a value, which TypeScript types as any, and
+// another declares with a value, as var x; then for (var x of [1]), which TypeScript rejects as
+// declarations of two types. The one without a value takes the other's type, where each other
+// declaration has the same type.
+const typeRedeclaredVars = () => {
+  const program = service.getProgram();
+  const sourceFile = program?.getSourceFile(file.path);
+  if (program === undefined || sourceFile === undefined) return;
+  const checker = program.getTypeChecker();
+  const getDeclaration = (position: number): ts.VariableDeclaration | undefined => {
+    const visit = (node: ts.Node): ts.Node | undefined =>
+      ts.forEachChild(node, (child) =>
+        child.getStart() <= position && position < child.getEnd()
+          ? (visit(child) ?? child)
+          : undefined,
+      );
+    const found = visit(sourceFile);
+    return found === undefined ? undefined : ts.findAncestor(found, ts.isVariableDeclaration);
+  };
+  const isBare = (declaration: ts.Declaration) =>
+    ts.isVariableDeclaration(declaration) &&
+    declaration.type === undefined &&
+    declaration.initializer === undefined &&
+    !ts.isForInOrOfStatement(declaration.parent.parent);
+  const types = Map.groupBy(
+    service.getSemanticDiagnostics(file.path).flatMap((diagnostic) => {
+      const match =
+        diagnostic.code === REDECLARED_TYPE_ERROR
+          ? /must be of type '([^']*)', but here has type '([^']*)'\.$/.exec(
+              ts.flattenDiagnosticMessageText(diagnostic.messageText, " "),
+            )
+          : null;
+      const declaration = getDeclaration(diagnostic.start ?? 0);
+      const declarations =
+        declaration === undefined
+          ? []
+          : (checker.getSymbolAtLocation(declaration.name)?.declarations ?? []);
+      const first = declarations[0];
+      if (match === null || declaration === undefined || first === undefined) return [];
+      // The first declaration is bare and has any, or the error's is bare and has any.
+      return first !== declaration && isBare(first) && match[1] === "any"
+        ? [{ declaration: first, type: match[2] }]
+        : isBare(declaration) && match[2] === "any"
+          ? [{ declaration, type: match[1] }]
+          : [];
+    }),
+    (entry) => entry.declaration,
+  );
+  const edits = new Map(
+    [...types].flatMap(([declaration, entries]) => {
+      const typeTexts = new Set(entries.map((entry) => entry.type));
+      const type = entries[0]?.type;
+      return typeTexts.size === 1 &&
+        type !== undefined &&
+        !type.includes("...") &&
+        ts.isVariableDeclaration(declaration)
+        ? [[declaration.name.getEnd(), `: ${type}`] as const]
+        : [];
+    }),
+  );
+  if (edits.size > 0) applyEdits(edits);
+};
+
 // A generator's parameter that the generator only delegates to with yield*, which the fix types as
 // unknown where the test calls the generator through a getter, as C.$([1]) calls the private
 // method that C's getter returns. It takes the array type of the array literals that each call
@@ -1921,6 +1986,7 @@ const annotate = (text: string, path = PROGRAM_PATH) => {
   }
   typePushedArrays();
   typeDelegatedParameters();
+  typeRedeclaredVars();
   // A type that one loosening gives can show where another is needed.
   while (loosen());
   ignoreSoundErrors();
