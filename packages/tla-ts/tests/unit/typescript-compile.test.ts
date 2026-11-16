@@ -48806,4 +48806,29 @@ describe("BigInts", () => {
       expect((await checkModel(getSource(1))).failure?.message).toContain("count 5");
     });
   });
+
+  describe("shares a function that lib's Function types where the heap holds every array", () => {
+    const getSource = (operator: string) => `
+      const steps: Function[] = [];
+      const box = { list: [1] };
+      const keep = (value: number[]) => value;
+      const run = keep;
+      const list = run(box.list);
+      list.push(2);
+      const other: { field: Error } = { field: new Error("e") };
+      other.field.message = "m";
+      const add = (value: number) => value + 1;
+      steps.push(add);
+      const first = steps[0];
+      if (first ${operator} add || box.list.length !== 2) throw new Error("first");
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("!=="))).failure).toBeUndefined();
+    });
+
+    it("rejects another function", async () => {
+      expect((await checkModel(getSource("==="))).failure?.message).toContain("first");
+    });
+  });
 });
