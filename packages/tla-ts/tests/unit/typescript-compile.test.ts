@@ -10041,8 +10041,8 @@ describe("errors", () => {
 
   it.each([
     [
-      "an array that a heap object shares and that then changes",
-      "const box = { list: [1] };\nlet list = box.list;\nlist.push(2);\nlet size = box.list.length;",
+      "an array that a heap object shares through a function that another name holds and that then changes",
+      "const box = { list: [1] };\nconst keep = (value: number[]) => value;\nconst run = keep;\nlet list = run(box.list);\nlist.push(2);\nlet size = box.list.length;",
       "would share an object that changes in place",
     ],
     [
@@ -47800,6 +47800,24 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("1,2,0,1,2,2,3,false,true"))).failure?.message).toContain(
         "seen 1,2,0,1,3,3,3,false,true",
       );
+    });
+  });
+
+  describe("shares the array that a heap object holds with a let that changes it", () => {
+    const getSource = (expected: number) => `
+      const box = { list: [1] };
+      let list = box.list;
+      list.push(2);
+      const size = box.list.length;
+      if (size !== ${expected}) throw new Error("seen " + size);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(2))).failure).toBeUndefined();
+    });
+
+    it("rejects a let that changes a copy", async () => {
+      expect((await checkModel(getSource(1))).failure?.message).toContain("seen 2");
     });
   });
 
