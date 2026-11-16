@@ -1382,11 +1382,15 @@ LOCAL SortedInsert(sorted, value, IsBefore(_, _)) ==
             ELSE CHOOSE position \\in after : \\A other \\in after : position <= other
   IN SubSeq(sorted, 1, at - 1) \\o <<value>> \\o SubSeq(sorted, at, Len(sorted))
 
-RECURSIVE SortedPrefix(_, _, _)
+\\* SANY rejects a RECURSIVE operator that takes an operator, so each recursion that applies one is a
+\\* LET inside the operator that takes it.
 SortedPrefix(sequence, length, IsBefore(_, _)) ==
-  IF length = 0
-  THEN <<>>
-  ELSE SortedInsert(SortedPrefix(sequence, length - 1, IsBefore), sequence[length], IsBefore)
+  LET RECURSIVE SortedPrefixOf(_)
+      SortedPrefixOf(count) ==
+        IF count = 0
+        THEN <<>>
+        ELSE SortedInsert(SortedPrefixOf(count - 1), sequence[count], IsBefore)
+  IN SortedPrefixOf(length)
 
 \\* sort() as V8 runs it on fewer than 64 elements, between the calls of its comparator: it takes the
 \\* run that starts the elements, reversed where it descends, and inserts each element after it by
@@ -1450,12 +1454,14 @@ SortNext(state, isBefore) ==
 \\* The array that sort() gives, with undefined last.
 SortResult(state) == state.sorted \\o [position \\in 1..state.trailing |-> Undefined]
 
-RECURSIVE SortedState(_, _)
 SortedState(state, IsBefore(_, _)) ==
-  IF state.stage = "done"
-  THEN state
-  ELSE LET pair == SortPair(state)
-       IN SortedState(SortNext(state, IsBefore(pair[1], pair[2])), IsBefore)
+  LET RECURSIVE SortedStateFrom(_)
+      SortedStateFrom(current) ==
+        IF current.stage = "done"
+        THEN current
+        ELSE LET pair == SortPair(current)
+             IN SortedStateFrom(SortNext(current, IsBefore(pair[1], pair[2])))
+  IN SortedStateFrom(state)
 
 \\* sort(). V8 merges runs of 64 or more elements, which only a comparator that can't throw and
 \\* orders them consistently sorts alike.
@@ -1477,11 +1483,13 @@ Join(sequence, separator) ==
     [] Len(sequence) = 1 -> JoinPart(Head(sequence))
     [] OTHER -> JoinPart(Head(sequence)) \\o separator \\o Join(Tail(sequence), separator)
 
-RECURSIVE ReduceAt(_, _, _)
 ReduceAt(Op(_, _), accumulator, positions) ==
-  IF positions = <<>>
-  THEN accumulator
-  ELSE ReduceAt(Op, Op(accumulator, Head(positions)), Tail(positions))
+  LET RECURSIVE ReduceFrom(_, _)
+      ReduceFrom(current, rest) ==
+        IF rest = <<>>
+        THEN current
+        ELSE ReduceFrom(Op(current, Head(rest)), Tail(rest))
+  IN ReduceFrom(accumulator, positions)
 
 Reduce(sequence, Op(_, _), isRight, hasInitial, initial) ==
   LET length == Len(sequence)
