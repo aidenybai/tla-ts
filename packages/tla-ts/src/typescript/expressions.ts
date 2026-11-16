@@ -157,7 +157,7 @@ import {
   translateTypeOf,
   useJavaScript,
 } from "./javascript";
-import { getNamespaceModule, getNamespaceName, getNamespaceRef } from "./namespaces";
+import { getNamespaceModule, getNamespaceName, getNamespaceRef, isBindingRead } from "./namespaces";
 import { getThisOwner, isBeforeDeclaration, rejectBeforeDeclaration, type Scope } from "./scope";
 import { getMappedParameter } from "./actions";
 import {
@@ -3116,10 +3116,12 @@ const translatePropertyAccess = (
   if (node.expression.kind === ts.SyntaxKind.SuperKeyword) {
     return translateSuperRead(node, string(node.name.text), scope, context);
   }
-  // A read through a namespace object that tla-ts makes reads the object.
-  const namespace = ts.isIdentifier(node.expression)
-    ? getNamespaceName(node.expression, context)
-    : undefined;
+  // A read through a namespace object that tla-ts makes reads the object, but for an export's
+  // binding, which the object holds as it is.
+  const namespace =
+    ts.isIdentifier(node.expression) && !isBindingRead(node, context.checker)
+      ? getNamespaceName(node.expression, context)
+      : undefined;
   if (namespace !== undefined) {
     return useJavaScript(
       "Get",

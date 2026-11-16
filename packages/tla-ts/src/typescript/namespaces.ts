@@ -130,6 +130,25 @@ const getModule = (symbol: ts.Symbol | undefined, checker: ts.TypeChecker) => {
 export const getNamespaceModule = (node: ts.Identifier, checker: ts.TypeChecker) =>
   getModule(checker.getSymbolAtLocation(node), checker)?.file;
 
+// Whether a read through a module's namespace object reads an export's binding, which the module
+// declares by name, rather than a namespace object or a default export of an expression.
+export const isBindingRead = (node: ts.PropertyAccessExpression, checker: ts.TypeChecker) => {
+  const member = checker.getSymbolAtLocation(node.name);
+  const declaration = (
+    member !== undefined && member.flags & ts.SymbolFlags.Alias
+      ? checker.getAliasedSymbol(member)
+      : member
+  )?.valueDeclaration;
+  return (
+    declaration !== undefined &&
+    (ts.isVariableDeclaration(declaration) ||
+      ts.isFunctionDeclaration(declaration) ||
+      ts.isClassDeclaration(declaration)) &&
+    declaration.name !== undefined &&
+    ts.isIdentifier(declaration.name)
+  );
+};
+
 // The module whose namespace object a namespace import gives where a script reads it as a value,
 // other than to read an export through it.
 export const getNamespaceRead = (node: ts.Identifier, checker: ts.TypeChecker) => {
@@ -265,7 +284,9 @@ export const findNamespaces = (
       ? getModule(checker.getSymbolAtLocation(node.arguments.at(0) ?? node), checker)
       : ts.isIdentifier(node)
         ? (getNamespaceRead(node, checker) ??
-          (ts.isPropertyAccessExpression(node.parent) && node.parent.expression === node
+          (ts.isPropertyAccessExpression(node.parent) &&
+          node.parent.expression === node &&
+          !isBindingRead(node.parent, checker)
             ? getModule(checker.getSymbolAtLocation(node), checker)
             : undefined))
         : undefined;

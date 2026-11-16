@@ -47916,4 +47916,28 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("reads an export's binding through a module's namespace object before the module runs", () => {
+    const path = join(import.meta.dirname, "../fixtures/typescript/imports/namespace.ts");
+    const getSource = (expected: string) => `
+      import { checkSelf } from "./beta";
+      import { check } from "./alpha";
+      import { getBeta } from "./beta-holder";
+      const box = { size: 0 };
+      const seen = [checkSelf(), check("x"), Object.keys(getBeta()).join("|"), box.size].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await check(compile(getSource("true,false,checkSelf|isBeta,0"), path))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects a namespace object without its exports", async () => {
+      expect((await check(compile(getSource("true,false,,0"), path))).failure?.message).toContain(
+        "seen true,false,checkSelf|isBeta,0",
+      );
+    });
+  });
 });
