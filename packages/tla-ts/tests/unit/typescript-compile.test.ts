@@ -48659,4 +48659,38 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("changes what the function that a function calling itself takes changes", () => {
+    const getSource = (expected: number) => `
+      let total = 0;
+      let visits = 0;
+      function each(xs: number[], f: (x: number) => void, i = 0): void {
+        if (i < xs.length) {
+          f(xs[i]);
+          each(xs, f, i + 1);
+        }
+      }
+      export const step = () => {
+        if (total > 0) return;
+        let sum = 0;
+        each([1, 2, 3], (x) => {
+          sum += x;
+          visits++;
+        });
+        total = sum;
+      };
+      export const isUnseen = () => total !== ${expected};
+    `;
+
+    it("agrees with Node", async () => {
+      expect(getTrace(await checkModel(getSource(6)))).toEqual([
+        { total: "0", visits: "0" },
+        { total: "6", visits: "3" },
+      ]);
+    });
+
+    it("rejects a wrong value", async () => {
+      expect((await checkModel(getSource(7))).status).toBe("deadlock");
+    });
+  });
 });

@@ -6723,9 +6723,19 @@ const translateSelfCall = (
         ts.findAncestor(declaration, (ancestor) => ancestor === callee) !== undefined,
     );
   const isMethod = receiver !== undefined && !ts.isArrowFunction(callee);
+  const held = parameters.flatMap((parameter, position): [ts.Symbol, FunctionNode][] => {
+    const symbol = getSymbol(parameter.name, context.checker);
+    const called = functions[position];
+    return symbol === undefined || called === undefined ? [] : [[symbol, called]];
+  });
+  const holding = {
+    ...path,
+    scope: { ...path.scope, functions: new Map([...path.scope.functions, ...held]) },
+  };
+  // What the function changes includes what the functions that its parameters hold change.
   const selfCall = defined ?? {
     name: context.names.getFresh("Call"),
-    changed: getChanged(callee, path, context).filter(isOuter),
+    changed: getChanged(callee, holding, context).filter(isOuter),
     functions,
   };
   const valueParameters = parameters.filter((_, position) => functions[position] === undefined);
@@ -6816,14 +6826,7 @@ const translateSelfCall = (
       // What the call's own statements evaluated belongs to that call, not this one.
       results: new Map([...outer.scope.results].filter((entry) => !isInside(entry[0]))),
       allocated: new Map([...outer.scope.allocated].filter((entry) => !isInside(entry[0]))),
-      functions: new Map([
-        ...outer.scope.functions,
-        ...parameters.flatMap((parameter, position): [ts.Symbol, FunctionNode][] => {
-          const symbol = getSymbol(parameter.name, context.checker);
-          const called = functions[position];
-          return symbol === undefined || called === undefined ? [] : [[symbol, called]];
-        }),
-      ]),
+      functions: new Map([...outer.scope.functions, ...held]),
       receiver: isMethod
         ? { ...receiver, value: identifier(parameterNames[valueParameters.length]) }
         : receiver,
