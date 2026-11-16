@@ -65,6 +65,8 @@ const getBenchmarks = (): Benchmark[] => {
   });
 };
 
+const PROMPT = /```text\n(?<prompt>[\s\S]*?)\n```/;
+
 const REFERENCE_TITLES = ["CLI", "API"];
 const REFERENCE_BLOCK =
   /^```(?<language>\w+)\n(?<code>[\s\S]*?)\n```$|^### (?<heading>.+)$|(?<table>(?:^\|.*\n?)+)|^(?<paragraph>[^#\n].*)$/gm;
@@ -112,6 +114,7 @@ const siteData = (): Plugin => ({
     return [
       `export const examples = ${JSON.stringify(paths.map((path) => getExample(path, highlight)))};`,
       `export const benchmarks = ${JSON.stringify(getBenchmarks())};`,
+      `export const prompt = ${JSON.stringify(PROMPT.exec(readFileSync(README_URL, "utf8"))?.groups?.prompt)};`,
       `export const install = ${JSON.stringify(highlight("npm install tla-ts", "shellscript"))};`,
       `export const reference = ${JSON.stringify(getReference(highlight))};`,
     ].join("\n");

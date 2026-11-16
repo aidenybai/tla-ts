@@ -9,7 +9,7 @@ import { Test262Chart } from "./components/test262-chart";
 import { buttonVariants } from "./components/ui/button-variants";
 import { Link } from "./components/ui/link";
 import { cn } from "cn";
-import { install } from "virtual:site-data";
+import { install, prompt } from "virtual:site-data";
 import { getTest262Percent, TEST262_RUNS } from "./test262";
 
 export const App = () => (
@@ -22,9 +22,10 @@ export const App = () => (
           <Link href="https://lamport.azurewebsites.net/tla/tla.html">TLA+</Link>.
         </p>
         <div className="flex gap-2">
+          <Hero.Copy text={prompt}>Copy prompt</Hero.Copy>
           <a
             href="https://github.com/aidenybai/tla-ts"
-            className={buttonVariants({ variant: "primary" })}
+            className={cn(buttonVariants(), "text-foreground")}
           >
             <GitHubIcon />
             GitHub

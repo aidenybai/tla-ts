@@ -1,9 +1,10 @@
-import { useRef, useState, type ReactNode } from "react";
+import { useRef, type ReactNode } from "react";
 import { cn } from "cn";
 import { createPartsContext } from "@/lib/utils";
 import type { LineNote } from "../run-worker";
 import type { Search } from "../search";
 import type { Source } from "../site-data";
+import { useCopy } from "../use-copy";
 import { useIsHydrated } from "../use-is-hydrated";
 import { useTokenMorph } from "../use-token-morph";
 import { CodeLine } from "./code-line";
@@ -12,7 +13,6 @@ import { RunIcon } from "./run-icon";
 import { SearchCell, useSearchPath } from "./search-cell";
 import { Button } from "./ui/button";
 
-const COPIED_MS = 1500;
 const NO_HIGHLIGHTS = {};
 
 interface CodeState {
@@ -159,19 +159,10 @@ export const CodeRun = (props: RunProps) => {
 };
 
 export const CodeCopy = () => {
-  const code = codeContext.useParts();
-  const [isCopied, setIsCopied] = useState(false);
+  const copy = useCopy(codeContext.useParts().source.code);
   return (
-    <Button
-      size="icon"
-      aria-label={isCopied ? "Copied" : "Copy"}
-      onClick={async () => {
-        await navigator.clipboard.writeText(code.source.code);
-        setIsCopied(true);
-        setTimeout(() => setIsCopied(false), COPIED_MS);
-      }}
-    >
-      <CopyIcon isCopied={isCopied} />
+    <Button size="icon" aria-label={copy.isCopied ? "Copied" : "Copy"} onClick={copy.copy}>
+      <CopyIcon isCopied={copy.isCopied} />
     </Button>
   );
 };

@@ -52,6 +52,14 @@ small == count < 3 \* violated after three calls to increment
 
 ## Install
 
+Paste this prompt into your coding agent:
+
+```text
+Read https://tla-ts.aidenybai.com/llms.txt, then use TLA-ts to formally verify the TypeScript code in this project. Show me each violation it finds with the steps that cause it, and ask before you change any code.
+```
+
+Or install it yourself:
+
 ```shell
 npm install tla-ts
 ```
