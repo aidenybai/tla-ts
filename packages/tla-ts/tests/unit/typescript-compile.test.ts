@@ -46186,4 +46186,26 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("3,13,3"))).failure?.message).toContain("seen 6,16,6");
     });
   });
+
+  describe("converts what a compound assignment reads from a property of type any", () => {
+    const getSource = (expected: string) => `
+      const box: any = { n: 1, text: "a" };
+      const one: any = "1";
+      box.n += 2;
+      box.n *= 3;
+      box.text += 1;
+      box.n -= one;
+      box.n **= 2;
+      const seen = [box.n, box.text].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("64,a1"))).failure).toBeUndefined();
+    });
+
+    it("rejects a sum that joins the number as a string", async () => {
+      expect((await checkModel(getSource("64,a"))).failure?.message).toContain("seen 64,a1");
+    });
+  });
 });

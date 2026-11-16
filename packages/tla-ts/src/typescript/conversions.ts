@@ -130,6 +130,28 @@ const hasFlags = (node: ts.Expression, flags: ts.TypeFlags, context: Context) =>
 export const isAnyOperand = (node: ts.Expression, context: Context) =>
   hasFlags(node, ts.TypeFlags.Any, context);
 
+// How a compound assignment combines the primitives that it reads and takes, as + joins a string
+// and every other operator converts to numbers. ToNumber stops at an object.
+export const getPrimitiveUpdate = (kind: ts.SyntaxKind, context: Context) => {
+  const operator = COMPOUND_OPERATORS.get(kind);
+  const operation =
+    operator === undefined
+      ? undefined
+      : (NUMBER_OPERATIONS.get(operator) ?? BITWISE_OPERATORS.get(operator));
+  if (operator !== ts.SyntaxKind.PlusToken && operation === undefined) return undefined;
+  return (current: Expression, value: Expression) => {
+    const result =
+      operation === undefined
+        ? useJavaScript("AddPrimitives", [current, value], context)
+        : useJavaScript(
+            operation,
+            [current, value].map((primitive) => useJavaScript("ToNumber", [primitive], context)),
+            context,
+          );
+    return context.hasSpecialNumbers ? result : useJavaScript("PlainNumber", [result], context);
+  };
+};
+
 const PRIMITIVE_FLAGS =
   ts.TypeFlags.NumberLike |
   ts.TypeFlags.StringLike |

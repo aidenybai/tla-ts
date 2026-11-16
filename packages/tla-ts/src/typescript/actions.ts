@@ -156,6 +156,7 @@ import {
   isObjectOperand,
   runConversion,
   runToPrimitive,
+  getPrimitiveUpdate,
 } from "./conversions";
 import {
   getBuiltJsonText,
@@ -2058,6 +2059,17 @@ const getUpdate = (expression: ts.BinaryExpression, path: Path, context: Context
   const bitwise = bitwiseKind === undefined ? undefined : BITWISE_OPERATORS.get(bitwiseKind);
   const operator = isConcatenated ? "\\o" : (bitwise ?? COMPOUND_OPERATORS.get(kind));
   if (operator === undefined) return undefined;
+  // A value that any types holds a primitive, which the operator converts, or an object.
+  const primitiveUpdate = getPrimitiveUpdate(kind, context);
+  if (
+    !isConcatenated &&
+    primitiveUpdate !== undefined &&
+    context.heap !== undefined &&
+    (isAnyOperand(expression.left, context) || isAnyOperand(expression.right, context))
+  ) {
+    const value = translateExpression(expression.right, path.scope, context);
+    return (current: Expression) => primitiveUpdate(current, value);
+  }
   if (
     !isConcatenated &&
     (!isNumberLike(expression.left, context) || !isNumberLike(expression.right, context))
