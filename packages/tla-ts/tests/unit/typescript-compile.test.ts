@@ -45648,4 +45648,41 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("runs Temporal.PlainDateTime", () => {
+    const getSource = (expected: string) => `
+      const thrown = (run: () => unknown) => {
+        try {
+          run();
+          return "none";
+        } catch (error) {
+          return (error as Error).name;
+        }
+      };
+      const dateTime = Temporal.PlainDateTime.from("1976-11-18T15:23:30.123456789");
+      const rounded = dateTime.round({ smallestUnit: "hour" }).toString();
+      const added = dateTime.add({ days: 1, hours: 12 }).toString();
+      const until = dateTime.until("2019-10-29T10:46:38.271986102", { largestUnit: "years" }).toString();
+      const text = dateTime.toString({ fractionalSecondDigits: 3, calendarName: "always" });
+      const date = dateTime.toPlainDate().toString();
+      const changed = dateTime.with({ minute: 0 }).toString();
+      const zoned = thrown(() => Temporal.PlainDateTime.from("1976-11-18T15:23Z"));
+      const seen = [dateTime.hour, dateTime.dayOfWeek, rounded, added, until, text, date, changed, zoned].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      const expected =
+        "15,4,1976-11-18T15:00:00,1976-11-20T03:23:30.123456789,P42Y11M10DT19H23M8.148529313S,1976-11-18T15:23:30.123[u-ca=iso8601],1976-11-18,1976-11-18T15:00:30.123456789,RangeError";
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects a rounding that carries into the next hour", async () => {
+      const expected =
+        "15,4,1976-11-18T16:00:00,1976-11-20T03:23:30.123456789,P42Y11M10DT19H23M8.148529313S,1976-11-18T15:23:30.123[u-ca=iso8601],1976-11-18,1976-11-18T15:00:30.123456789,RangeError";
+      expect((await checkModel(getSource(expected))).failure?.message).toContain(
+        "seen 15,4,1976-11-18T15:00:00,1976-11-20T03:23:30.123456789,P42Y11M10DT19H23M8.148529313S,1976-11-18T15:23:30.123[u-ca=iso8601],1976-11-18,1976-11-18T15:00:30.123456789,RangeError",
+      );
+    });
+  });
 });
