@@ -47792,4 +47792,52 @@ describe("BigInts", () => {
       ).toContain("seen 0:10,1:12,1,12,1");
     });
   });
+
+  describe("shares a map that a callback changes only while forEach runs, once the map changes no more", () => {
+    const getSource = (expected: string) => `
+      class Reason {
+        annotations: Map<string, number> = new Map();
+        annotate(annotations: Map<string, number>, isOverwriting: boolean): this {
+          if (annotations.size === 0) return this;
+          const merged = new Map(this.annotations);
+          annotations.forEach((value, key) => {
+            if (!isOverwriting && merged.has(key)) return;
+            merged.set(key, value);
+          });
+          const next = new Reason();
+          next.annotations = merged;
+          return next as this;
+        }
+      }
+      const first = new Reason();
+      const second = first.annotate(new Map([["a", 1]]), false);
+      const third = second.annotate(new Map([["a", 2], ["b", 3]]), false);
+      const seen = [
+        first.annotations.size,
+        second.annotations.get("a"),
+        third.annotations.get("a"),
+        third.annotations.get("b"),
+        third instanceof Reason,
+      ].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("0,1,1,3,true"))).failure).toBeUndefined();
+    });
+
+    it("rejects a map that the next merge changes", async () => {
+      expect((await checkModel(getSource("0,1,2,3,true"))).failure?.message).toContain(
+        "seen 0,1,1,3,true",
+      );
+    });
+
+    it("stops where the callback runs again after it shares the map", () => {
+      expect(() =>
+        compile(
+          'const m = new Map<string, number>();\nconst held: Map<string, number>[] = [];\n[1, 2].forEach((x) => {\n  m.set("k", x);\n  held.push(m);\n});\nif (held.length !== 2) throw new Error();',
+        ),
+      ).toThrow("m would share an object that changes in place, so copy it");
+    });
+  });
 });
