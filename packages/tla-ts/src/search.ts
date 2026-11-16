@@ -1056,7 +1056,13 @@ export const createSearch = (
   if (config.rlReward !== undefined) getConfigOperator("rlreward", config.rlReward, environment);
   if (config.periodic !== undefined) getConfigOperator("periodic", config.periodic, environment);
   const possible = getPossiblePredicates(config.possible, environment);
-  if (environment.variables.length === 0) return undefined;
+  // Tool.getInitStates evaluates the initial predicate of a spec without variables too, so an error
+  // in it fails the check.
+  if (environment.variables.length === 0) {
+    if (spec.init !== undefined)
+      evaluate(spec.init, getContext(environment, [], undefined, spec.scope));
+    return undefined;
+  }
   const symmetryGroup =
     config.symmetry === undefined
       ? undefined

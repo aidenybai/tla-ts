@@ -1403,6 +1403,18 @@ describe("initial predicate and next-state relation match TLC", () => {
     ]);
   });
 
+  it("evaluates the initial predicate of a spec without variables as TLC does", async () => {
+    const getResult = (condition: string) =>
+      checkBody(
+        `EXTENDS TLC\nInit == Assert(${condition}, "wrong")\nSpec == Init /\\ [][FALSE]_<<>>`,
+        "SPECIFICATION Spec",
+      );
+    expect((await getResult("TRUE")).status).toBe("success");
+    await expect(getResult("FALSE")).rejects.toThrow(
+      'The first argument of Assert evaluated to FALSE; the second argument was:\n"wrong"',
+    );
+  });
+
   it("requires an initial predicate when the spec has variables", async () => {
     await expect(
       checkBody("VARIABLE x\nSpec == [][x' = x]_x", "SPECIFICATION Spec"),
