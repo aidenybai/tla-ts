@@ -1,0 +1,24 @@
+(*---
+description: >-
+  Zenon refutes an equality of records with different fields with record_eq_mismatch, which lltoisar
+  prints as an auto step.
+ref: zenon/ext_tla.ml#newnodes_prop
+outcome: unsat
+---*)
+;; obligation #1
+$goal (-. (= (TLA.record "a" a_CONSTANTunde_xunde_a)
+(TLA.record "b" a_CONSTANTunde_yunde_a)))
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: |-
+    unsat
+    proof (rule zenon_nnpp)
+     assume z_Ha:"(~((''a'' :> (a_CONSTANTunde_xunde_a))~=(''b'' :> (a_CONSTANTunde_yunde_a))))" (is "~~?z_hi")
+     have z_Hi: "?z_hi" (is "?z_hc=?z_hf")
+     by (rule zenon_notnot_0 [OF z_Ha])
+     show FALSE
+     using z_Hi by auto
+    qed
+---*)

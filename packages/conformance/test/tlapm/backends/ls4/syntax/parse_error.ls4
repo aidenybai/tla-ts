@@ -1,0 +1,12 @@
+(*---
+description: ptl_to_trp rejects an unbalanced parenthesis, so LS4 reaches no verdict.
+ref: translate/foyacc.mly#connective
+outcome: unknown
+---*)
+(p & ~p
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: unknown
+---*)

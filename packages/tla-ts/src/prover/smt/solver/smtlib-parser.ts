@@ -1,17 +1,29 @@
-// Ported from Z3 (src/parsers/smt2/smt2parser.cpp), MIT license, see z3-license.txt.
-// Parses the SMT-LIB subset that tlapm emits into Z3-style expressions.
+// Ported from Z3 (src/parsers/smt2/smt2scanner.cpp, src/parsers/smt2/smt2parser.cpp,
+// src/cmd_context/cmd_context.cpp), MIT license, see z3-license.txt.
 import { SmtParseError, SmtUnsupportedError } from "../../../errors";
 import {
-  AstManager,
+  type AstManager,
+  getSymbolHash,
   FAMILY_ARITH,
   FAMILY_BASIC,
+  KIND_APP,
   KIND_QUANTIFIER,
   KIND_VAR,
   OP_ABS,
   OP_ADD,
   OP_AND,
+  OP_AT_LEAST_K,
+  OP_AT_MOST_K,
+  OP_PB_EQ,
+  OP_PB_GE,
+  OP_PB_LE,
+  OP_ARRAY_DEFAULT,
+  OP_ARRAY_MAP,
+  OP_CONST_ARRAY,
   OP_DISTINCT,
   OP_DIV,
+  OP_DT_ACCESSOR,
+  OP_DT_CONSTRUCTOR,
   OP_EQ,
   OP_GE,
   OP_GT,
@@ -22,71 +34,523 @@ import {
   OP_LE,
   OP_LT,
   OP_MOD,
+  OP_REM,
   OP_MUL,
   OP_NOT,
   OP_OR,
+  OP_PATTERN,
+  OP_POWER,
+  OP_POWER0,
+  OP_SIN,
+  OP_COS,
+  OP_TAN,
+  OP_ASIN,
+  OP_ACOS,
+  OP_ATAN,
+  OP_SINH,
+  OP_COSH,
+  OP_TANH,
+  OP_ASINH,
+  OP_ACOSH,
+  OP_ATANH,
+  OP_EXP,
+  OP_ATAN2,
+  OP_LOG,
+  OP_SELECT,
+  OP_STORE,
   OP_SUB,
   OP_TO_INT,
   OP_TO_REAL,
   OP_TRUE,
   OP_FALSE,
   OP_UMINUS,
-  OP_UNINTERPRETED,
   OP_XOR,
   SORT_BOOL,
   SORT_INT,
   SORT_REAL,
   isArithSort,
+  QUANTIFIER_EXISTS,
+  QUANTIFIER_FORALL,
+  QUANTIFIER_LAMBDA,
 } from "./ast";
+import { getArraySignature, getMapSignature, mkAsArray } from "./array-decl-plugin";
+import { BV_OP_NAMES, getBvSignature } from "./bv-decl-plugin";
+import {
+  type ConstructorDef,
+  type DatatypeDef,
+  getConstructorAccessors,
+  getConstructorIs,
+  getConstructorRecognizer,
+  getDatatypeConstructors,
+  getDatatypeDef,
+  instantiateAccessor,
+  instantiateConstructor,
+  mkDatatypeDef,
+  mkDatatypeSort,
+  mkDatatypes,
+  mkUpdateField,
+  removeDatatype,
+  substituteSort,
+} from "./datatype-decl-plugin";
+import {
+  FPA_OP_NAMES,
+  FPA_SORT_NAMES,
+  getFloatSortError,
+  getFpaSignature,
+  mkFpaAppOf,
+} from "./fpa-decl-plugin";
+import { createLogicChecker } from "./check-logic";
+import { shrink } from "./array";
+import { ObjMap } from "./hashtable";
+import {
+  CHAR_OP_NAMES,
+  getSeqSignature,
+  mkSeqAppOf,
+  parseZstring,
+  SEQ_OP_NAMES,
+  SEQ_SORT_NAMES,
+} from "./seq-decl-plugin";
 import { Rational } from "./rational";
-import { replaceFreeVars } from "./var-subst";
+import {
+  logicHasArith,
+  logicHasArray,
+  logicHasBv,
+  logicHasFpa,
+  logicHasRealsOnly,
+  logicHasSeq,
+  isSupportedLogic,
+} from "./smt-logics";
+import { setRecFunDefinition } from "./recfun-decl-plugin";
+import { DEFAULT_PRINT_OPTIONS, printExpr } from "./smt2-printer";
+import { replaceFreeVars, VarSubst } from "./var-subst";
+import { UpolynomialManager } from "./nlsat/upolynomial";
 
-type SExpr = string | SExpr[];
+export interface ParserOptions {
+  isIgnoringBadPatterns: boolean;
+}
 
-// A name in scope: a variable bound by a quantifier, or a let binding's term. depth is the number of
-// binders above it.
-type Binding =
-  | { kind: "var"; depth: number; sort: number }
-  | { kind: "let"; depth: number; expr: number };
+const DEFAULT_PARSER_OPTIONS: ParserOptions = { isIgnoringBadPatterns: true };
+
+// Z3 counts the columns of the first line from 1 and of the others from 0.
+export interface SmtToken {
+  kind: "(" | ")" | "symbol" | "keyword" | "string" | "numeral" | "decimal" | "bitvector";
+  text: string;
+  line: number;
+  column: number;
+  offset: number;
+  endOffset: number;
+}
+
+export interface SmtList {
+  kind: "list";
+  items: SExpr[];
+  line: number;
+  column: number;
+  offset: number;
+  // Z3 reports an error in making an application at its closing parenthesis.
+  end: SmtToken;
+  // The token after a root-obj or an indexed or qualified identifier, where Z3 reports an error in
+  // making it.
+  follower?: SmtToken;
+  // The command that a list a command reader read is part of.
+  root?: SmtList;
+}
+
+export type SExpr = SmtToken | SmtList;
+
+// smt2parser's local: a term, and the number of binders around it where it was bound.
+interface Local {
+  expr: number;
+  level: number;
+}
+
+interface ParsedTerm {
+  expr: number;
+  isOwned: boolean;
+  root: SmtList | undefined;
+}
+
+interface Macro {
+  domain: number[];
+  range: number;
+  body: number;
+}
+
+interface ConstantSortDecl {
+  kind: "sort";
+  sort: number;
+}
+
+interface UserSortDecl {
+  kind: "user";
+  name: string;
+  arity: number;
+}
+
+interface DatatypeSortDecl {
+  kind: "datatype";
+  name: string;
+  arity: number;
+  siblings: string[];
+  instances: Map<string, number>;
+}
+
+interface DefinedSortDecl {
+  kind: "definition";
+  parameters: string[];
+  body: SExpr;
+}
+
+// Z3's List datatype, which exists when no logic is set, declared here at its first use.
+interface ListSortDecl {
+  kind: "list";
+}
+
+type SortDecl = ConstantSortDecl | UserSortDecl | DatatypeSortDecl | DefinedSortDecl | ListSortDecl;
+
+const NO_BINDINGS: ReadonlyMap<string, number> = new Map();
+
+const UPOLYNOMIALS = new UpolynomialManager();
 
 interface SmtProblem {
   assertions: number[];
-  // Z3 prints no answer for a script without check-sat.
   hasCheckSat: boolean;
+  rlimit: number;
 }
 
-// An application that parseTerm is parsing: its name, its list, where its arguments start on the
-// result stack, and its next argument.
-interface ApplicationFrame {
-  name: string;
-  list: SExpr[];
+interface QualifiedHead {
+  head: SmtToken;
+  indices: number[];
+  build?: (args: number[]) => number;
+}
+
+interface ApplicationFrame extends QualifiedHead {
+  kind: "application";
+  list: SmtList;
+  isTail: boolean;
   start: number;
   next: number;
 }
 
+// An application whose head is a term, which selects from the array it stands for.
+interface SelectionFrame {
+  kind: "selection";
+  list: SmtList;
+  isTail: boolean;
+  start: number;
+  next: number;
+}
+
+interface LetFrame {
+  kind: "let";
+  list: SmtList;
+  bindings: SmtList;
+  names: string[];
+  isInDecls: boolean;
+  isTail: boolean;
+  start: number;
+  next: number;
+}
+
+interface LetDeclFrame {
+  kind: "let-decl";
+  list: SmtList;
+  next: number;
+}
+
+interface QuantifierFrame {
+  kind: "quantifier";
+  list: SmtList;
+  quantifierKind: number;
+  names: string[];
+  varSorts: number[];
+  weight: number;
+  qid: string;
+  skid: string | undefined;
+  isTail: boolean;
+  start: number;
+  patternStart: number;
+  noPatternStart: number;
+  next: number;
+}
+
+interface AttributeFrame {
+  kind: "attribute";
+  list: SmtList;
+  quantifier: QuantifierFrame | undefined;
+  lastKeyword: string;
+  isTail: boolean;
+  start: number;
+  next: number;
+}
+
+interface PatternFrame {
+  kind: "pattern";
+  list: SmtList;
+  start: number;
+  next: number;
+}
+
+// smt2parser.cpp's expr_frame.
+type TermFrame =
+  | ApplicationFrame
+  | SelectionFrame
+  | LetFrame
+  | LetDeclFrame
+  | QuantifierFrame
+  | AttributeFrame
+  | PatternFrame;
+
+const QUANTIFIER_KINDS = new Map([
+  ["forall", QUANTIFIER_FORALL],
+  ["exists", QUANTIFIER_EXISTS],
+  ["lambda", QUANTIFIER_LAMBDA],
+]);
+
+const LET_MESSAGE = "invalid let declaration, symbol expected";
+
+// The attributes that consume_attributes takes only in the body of a quantifier.
+const QUANTIFIER_ATTRIBUTES = new Set([":weight", ":skolemid", ":qid", ":pattern", ":no-pattern"]);
+
+const IS_PARAMETER_MESSAGE =
+  "invalid parameter to datatype function arity == 1 && num_parameters == 1 && parameters[0].is_ast() && is_func_decl(parameters[0].get_ast())";
+
 const BUILTIN_OPS = new Map<string, number>([
   ["and", OP_AND],
+  ["-", OP_SUB],
   ["or", OP_OR],
   ["not", OP_NOT],
   ["=>", OP_IMPLIES],
   ["xor", OP_XOR],
   ["ite", OP_ITE],
+  ["if", OP_ITE],
   ["distinct", OP_DISTINCT],
   ["+", OP_ADD],
   ["*", OP_MUL],
   ["/", OP_DIV],
   ["div", OP_IDIV],
   ["mod", OP_MOD],
+  ["rem", OP_REM],
   ["abs", OP_ABS],
   ["to_real", OP_TO_REAL],
   ["to_int", OP_TO_INT],
   ["is_int", OP_IS_INT],
 ]);
 
-// arith_decl_plugin's use_coercion: the operators that are Real when any argument is Real.
-const COERCING_OPS = new Set([OP_ADD, OP_SUB, OP_UMINUS, OP_MUL, OP_LE, OP_GE, OP_LT, OP_GT]);
+// basic_decl_plugin's aliases, which Z3 knows only when the script sets no logic.
+const LOGIC_FREE_ALIASES = new Map([
+  ["implies", "=>"],
+  ["iff", "="],
+  ["if_then_else", "ite"],
+  ["&&", "and"],
+  ["||", "or"],
+  ["equals", "="],
+  ["equiv", "="],
+]);
 
-const DECIMAL = /^([0-9]+)\.([0-9]+)$/;
+// Z3 declares these only without a logic, in ALL or in QF_NTA.
+const TRANSCENDENTAL_OPS = new Map([
+  ["^", OP_POWER],
+  ["^0", OP_POWER0],
+  ["sin", OP_SIN],
+  ["cos", OP_COS],
+  ["tan", OP_TAN],
+  ["asin", OP_ASIN],
+  ["acos", OP_ACOS],
+  ["atan", OP_ATAN],
+  ["sinh", OP_SINH],
+  ["cosh", OP_COSH],
+  ["tanh", OP_TANH],
+  ["asinh", OP_ASINH],
+  ["acosh", OP_ACOSH],
+  ["atanh", OP_ATANH],
+  ["exp", OP_EXP],
+  ["atan2", OP_ATAN2],
+  ["arctan2", OP_ATAN2],
+  ["log", OP_LOG],
+  ["ln", OP_LOG],
+]);
+const TRANSCENDENTALS = new Set([
+  ...TRANSCENDENTAL_OPS.keys(),
+  "pi",
+  "euler",
+  "/0",
+  "div0",
+  "mod0",
+  "complex.make",
+  "complex.real",
+  "complex.imag",
+]);
+
+const hasTranscendentals = (logic: string | undefined) =>
+  logic === undefined || logic === "ALL" || logic === "QF_NTA";
+
+const THEORY_SORTS = new Set([
+  "BitVec",
+  "Array",
+  "Set",
+  "Seq",
+  "String",
+  "StringSequence",
+  "RegEx",
+  "RegLan",
+  "Unicode",
+  "FloatingPoint",
+  "RoundingMode",
+  "Float16",
+  "Float32",
+  "Float64",
+  "Float128",
+  "FiniteSet",
+  "FiniteField",
+  "Complex",
+]);
+const PB_OP_NAMES = new Map([
+  ["at-most", OP_AT_MOST_K],
+  ["at-least", OP_AT_LEAST_K],
+  ["pble", OP_PB_LE],
+  ["pbge", OP_PB_GE],
+  ["pbeq", OP_PB_EQ],
+]);
+const THEORY_OPERATOR = /^(bv|fp\.|str\.|seq\.|re\.|char\.|ff\.)/;
+const THEORY_OPERATORS = new Set([
+  "bit0",
+  "bit1",
+  "concat",
+  "sign_extend",
+  "zero_extend",
+  "extract",
+  "repeat",
+  "rotate_left",
+  "rotate_right",
+  "ext_rotate_left",
+  "ext_rotate_right",
+  "bit2bool",
+  "ubv_to_int",
+  "sbv_to_int",
+  "int_to_bv",
+  "int2bv",
+  "mkbv",
+  "store",
+  "select",
+  "const",
+  "map",
+  "default",
+  "union",
+  "intersection",
+  "setminus",
+  "complement",
+  "subset",
+  "as-array",
+  "choice",
+  "array-ext",
+  "set-has-size",
+  "card",
+  "is",
+  "update-field",
+  "int.to.str",
+  "char",
+  "fp",
+  "to_fp",
+  "to_fp_unsigned",
+  "to_ieee_bv",
+  "+oo",
+  "-oo",
+  "+zero",
+  "-zero",
+  "NaN",
+  "roundNearestTiesToEven",
+  "roundNearestTiesToAway",
+  "roundTowardPositive",
+  "roundTowardNegative",
+  "roundTowardZero",
+  "RNE",
+  "RNA",
+  "RTP",
+  "RTN",
+  "RTZ",
+  "at-most",
+  "at-least",
+  "pble",
+  "pbge",
+  "pbeq",
+  "linear-order",
+  "partial-order",
+  "piecewise-linear-order",
+  "tree-order",
+  "transitive-closure",
+]);
+
+// func_decl_info of the builtin declarations: associative to both sides, flat, and associative to
+// the left only. => alone is associative to the right only.
+const ASSOCIATIVE_OPS = new Set([OP_AND, OP_OR, OP_XOR, OP_ADD, OP_MUL]);
+const FLAT_OPS = new Set([OP_AND, OP_OR, OP_ADD, OP_MUL]);
+const LEFT_ASSOCIATIVE_OPS = new Set([OP_SUB, OP_DIV, OP_IDIV]);
+
+// arith_decl_plugin's use_coercion.
+const COERCING_OPS = new Set([
+  OP_ADD,
+  OP_SUB,
+  OP_UMINUS,
+  OP_MUL,
+  OP_POWER,
+  OP_LE,
+  OP_GE,
+  OP_LT,
+  OP_GT,
+]);
+
+const REAL_FUNCTION_OPS = new Set([
+  OP_SIN,
+  OP_COS,
+  OP_TAN,
+  OP_ASIN,
+  OP_ACOS,
+  OP_ATAN,
+  OP_SINH,
+  OP_COSH,
+  OP_TANH,
+  OP_ASINH,
+  OP_ACOSH,
+  OP_ATANH,
+  OP_EXP,
+  OP_ATAN2,
+  OP_LOG,
+]);
+
+// The arity of each builtin declaration but distinct, which takes the arguments it is given.
+const ARITIES = new Map<number, number>([
+  [OP_ITE, 3],
+  ...[OP_NOT, OP_UMINUS, OP_ABS, OP_TO_REAL, OP_TO_INT, OP_IS_INT, ...REAL_FUNCTION_OPS]
+    .filter((op) => op !== OP_ATAN2)
+    .map((op): [number, number] => [op, 1]),
+]);
+
+const RANGES = new Map<number, number>([
+  [OP_TO_REAL, SORT_REAL],
+  [OP_POWER, SORT_REAL],
+  [OP_POWER0, SORT_REAL],
+  ...[...REAL_FUNCTION_OPS].map((op): [number, number] => [op, SORT_REAL]),
+  [OP_DIV, SORT_REAL],
+  [OP_TO_INT, SORT_INT],
+  [OP_IDIV, SORT_INT],
+  [OP_MOD, SORT_INT],
+  [OP_REM, SORT_INT],
+  ...[
+    OP_EQ,
+    OP_DISTINCT,
+    OP_AND,
+    OP_OR,
+    OP_XOR,
+    OP_NOT,
+    OP_IMPLIES,
+    OP_LE,
+    OP_GE,
+    OP_LT,
+    OP_GT,
+  ].map((op): [number, number] => [op, SORT_BOOL]),
+  [OP_IS_INT, SORT_BOOL],
+]);
 
 const CHAINABLE_OPS = new Map<string, number>([
   ["=", OP_EQ],
@@ -95,220 +559,895 @@ const CHAINABLE_OPS = new Map<string, number>([
   ["<", OP_LT],
   [">", OP_GT],
 ]);
+const CHAINABLE_DECLS = new Set(CHAINABLE_OPS.values());
 
-const tokenize = (text: string) => {
-  const tokens: string[] = [];
-  let position = 0;
-  while (position < text.length) {
-    const char = text[position];
-    if (char === ";") {
-      const end = text.indexOf("\n", position);
-      position = end === -1 ? text.length : end + 1;
-    } else if (char === "(" || char === ")") {
-      tokens.push(char);
-      position++;
-    } else if (char === " " || char === "\n" || char === "\t" || char === "\r") {
-      position++;
-    } else if (char === "|") {
-      const end = text.indexOf("|", position + 1);
-      if (end === -1) throw new SmtParseError("unterminated quoted symbol");
-      tokens.push(text.slice(position + 1, end));
-      position = end + 1;
-    } else if (char === '"') {
-      let end = position + 1;
-      while (end < text.length && (text[end] !== '"' || text[end + 1] === '"'))
-        end += text[end] === '"' ? 2 : 1;
-      tokens.push(text.slice(position, end + 1));
-      position = end + 1;
-    } else {
-      let end = position;
-      while (end < text.length && !' \n\t\r();|"'.includes(text[end])) end++;
-      tokens.push(text.slice(position, end));
-      position = end;
+const BV_EXTENSION_NAMES = new Set([
+  "bvumul_noovfl",
+  "bvsmul_noovfl",
+  "bvsmul_noudfl",
+  "bvsdiv0",
+  "bvudiv0",
+  "bvsrem0",
+  "bvurem0",
+  "bvsmod0",
+  "ext_rotate_left",
+  "ext_rotate_right",
+  "int2bv",
+  "bv2int",
+  "bv2nat",
+  "mkbv",
+]);
+
+const BV_EXTENSION_LOGICS = new Set(["ALL", "QF_FD", "HORN"]);
+
+const ARRAY_SORT_NAMES = new Set(["Array", "=>", "->"]);
+
+// array_decl_plugin::get_op_names: select and store in every logic with arrays, the others only
+// without a logic or in HORN and ALL.
+const ARRAY_OPS = new Map([
+  ["select", OP_SELECT],
+  ["store", OP_STORE],
+]);
+const ARRAY_EXTENSION_OPS = new Map([["default", OP_ARRAY_DEFAULT]]);
+
+const UNARY_BOOL_REFS = new Map([["not", OP_NOT]]);
+const BINARY_BOOL_REFS = new Map([
+  ["and", OP_AND],
+  ["or", OP_OR],
+  ["=>", OP_IMPLIES],
+  ["xor", OP_XOR],
+]);
+
+const REAL_RANGE_OPS = new Set([OP_DIV, OP_TO_REAL]);
+const INT_RANGE_OPS = new Set([OP_IDIV, OP_MOD, OP_REM, OP_TO_INT]);
+const DOMAIN_RANGE_OPS = new Set([OP_ADD, OP_SUB, OP_MUL, OP_ABS]);
+
+// mk_func_decl of a builtin ignores the range of the reference and gives its own.
+const getBuiltinRange = (op: number, domain: number[]) =>
+  op === OP_ITE
+    ? domain[1]
+    : REAL_RANGE_OPS.has(op)
+      ? SORT_REAL
+      : INT_RANGE_OPS.has(op)
+        ? SORT_INT
+        : DOMAIN_RANGE_OPS.has(op)
+          ? domain[0]
+          : SORT_BOOL;
+
+interface MappedDecl {
+  decl: number;
+  domain: readonly number[];
+  range: number;
+}
+const ARRAY_EXTENSION_LOGICS = new Set(["HORN", "ALL"]);
+
+// arith_decl_plugin::get_sort_names gives these logics no Int.
+const INT_FREE_LOGICS = new Set(["NRA", "QF_NRA", "QF_NTA", "QF_UFNRA"]);
+
+const BUILTIN_NAMES = new Set([
+  "true",
+  "false",
+  "~",
+  ...BV_OP_NAMES.keys(),
+  ...CHAINABLE_OPS.keys(),
+  ...BUILTIN_OPS.keys(),
+  ...LOGIC_FREE_ALIASES.keys(),
+  ...TRANSCENDENTALS,
+  ...THEORY_OPERATORS,
+  ...SEQ_OP_NAMES.keys(),
+  ...CHAR_OP_NAMES.keys(),
+]);
+
+const FOLLOWED_HEADS = new Set(["root-obj", "_", "as"]);
+
+const FF_LITERAL = /^#f-?[0-9]+m[0-9]+$/;
+const FF_LOGICS = new Set(["QF_FF", "QF_FFA", "ALL", "HO_ALL"]);
+
+// rational::is_unsigned of a numeral token.
+const isUnsigned = (numeral: string) => BigInt(numeral) >= 0n && BigInt(numeral) <= 0xffffffffn;
+
+const SYMBOL_CHARACTER = /[A-Za-z0-9~!@$%^&*_\-+=<>.?/,]/;
+
+const createScanner = (text: string) => {
+  const state = { index: 0, line: 1, lineStart: -1 };
+  const getColumn = () => state.index - state.lineStart - (state.line === 1 ? 0 : 1);
+  const advance = () => {
+    if (text[state.index] === "\n") {
+      state.line++;
+      state.lineStart = state.index;
     }
-  }
-  return tokens;
+    state.index++;
+  };
+  const readWhile = (pattern: RegExp) => {
+    while (state.index < text.length && pattern.test(text[state.index])) advance();
+  };
+  const next = (): SmtToken | undefined => {
+    for (;;) {
+      const character = text[state.index];
+      if (character === undefined) return undefined;
+      if (character === ";") {
+        while (state.index < text.length && text[state.index] !== "\n") advance();
+        continue;
+      }
+      if (character === " " || character === "\t" || character === "\r" || character === "\n") {
+        advance();
+        continue;
+      }
+      const start = state.index;
+      const position = { line: state.line, column: getColumn() };
+      const getToken = (kind: SmtToken["kind"], tokenText = text.slice(start, state.index)) => ({
+        kind,
+        text: tokenText,
+        ...position,
+        offset: start,
+        endOffset: state.index,
+      });
+      if (character === "(" || character === ")") {
+        advance();
+        return getToken(character);
+      }
+      if (character === "|" || character === '"') {
+        advance();
+        for (;;) {
+          if (state.index >= text.length)
+            throw new SmtParseError(
+              character === "|" ? "unexpected end of quoted symbol" : "unexpected end of string",
+              { line: state.line, column: getColumn() },
+            );
+          const current = text[state.index];
+          if (character === "|" && current === "\\")
+            throw new SmtParseError("invalid character '\\' in quoted symbol", {
+              line: state.line,
+              column: getColumn(),
+            });
+          advance();
+          // Z3's scanner starts the line before it reads past a newline in a quoted symbol or a
+          // string, so the columns of the rest of the line count one more.
+          if (current === "\n") state.lineStart--;
+          if (current !== character) continue;
+          if (character !== '"' || text[state.index] !== '"') break;
+          advance();
+        }
+        const inner = text.slice(start + 1, state.index - 1);
+        return character === "|"
+          ? getToken("symbol", inner)
+          : getToken("string", inner.replaceAll('""', '"'));
+      }
+      if (/[0-9]/.test(character) || (character === "-" && /[0-9]/.test(text[start + 1] ?? ""))) {
+        advance();
+        readWhile(/[0-9]/);
+        if (text[state.index] !== ".") return getToken("numeral");
+        advance();
+        readWhile(/[0-9]/);
+        return getToken("decimal");
+      }
+      if (character === "#") {
+        advance();
+        const radix = text[state.index];
+        if (radix === "|") {
+          advance();
+          while (state.index < text.length) {
+            const current = text[state.index];
+            advance();
+            if (current !== "|" || text[state.index] !== "#") continue;
+            advance();
+            break;
+          }
+          continue;
+        }
+        if (radix === "f") {
+          advance();
+          readWhile(/[0-9m-]/);
+          return getToken("symbol");
+        }
+        if (radix !== "x" && radix !== "b")
+          throw new SmtParseError("invalid bit-vector literal, expecting 'x' or 'b'", {
+            line: state.line,
+            column: getColumn(),
+          });
+        advance();
+        const digitsStart = state.index;
+        readWhile(radix === "x" ? /[0-9a-fA-F]/ : /[01]/);
+        if (state.index === digitsStart)
+          throw new SmtParseError("invalid empty bit-vector literal", {
+            line: state.line,
+            column: getColumn(),
+          });
+        return getToken("bitvector");
+      }
+      if (character === ":" || SYMBOL_CHARACTER.test(character)) {
+        advance();
+        readWhile(SYMBOL_CHARACTER);
+        return getToken(character === ":" ? "keyword" : "symbol");
+      }
+      advance();
+      throw new SmtParseError("unexpected character", position);
+    }
+  };
+  return { next, getPosition: () => ({ line: state.line, column: getColumn() }) };
 };
 
-const readSExprs = (tokens: string[]) => {
-  const stack: SExpr[][] = [[]];
-  for (const token of tokens) {
-    if (token === "(") stack.push([]);
-    else if (token === ")") {
-      const list = stack.pop();
-      if (list === undefined || stack.length === 0)
-        throw new SmtParseError("unbalanced parentheses");
-      stack[stack.length - 1].push(list);
-    } else stack[stack.length - 1].push(token);
-  }
-  if (stack.length !== 1) throw new SmtParseError("unbalanced parentheses");
-  return stack[0];
+export const createCommandReader = (text: string) => {
+  const scanner = createScanner(text);
+  const state: { lookahead: SmtToken | undefined; depth: number } = {
+    lookahead: undefined,
+    depth: 0,
+  };
+  const take = () => {
+    const token = state.lookahead ?? scanner.next();
+    state.lookahead = undefined;
+    return token;
+  };
+  const readList = (open: SmtToken): SmtList => {
+    const stack: SmtList[] = [];
+    const root: SmtList = {
+      kind: "list",
+      items: [],
+      line: open.line,
+      column: open.column,
+      offset: open.offset,
+      end: open,
+    };
+    let followed: SmtList | undefined;
+    for (let current = root; ;) {
+      const token = take();
+      if (token === undefined)
+        throw new SmtParseError("unexpected end of file", scanner.getPosition());
+      if (followed !== undefined) followed.follower = token;
+      followed = undefined;
+      if (token.kind === "(") {
+        const list: SmtList = {
+          kind: "list",
+          items: [],
+          line: token.line,
+          column: token.column,
+          offset: token.offset,
+          end: token,
+          root,
+        };
+        current.items.push(list);
+        stack.push(current);
+        state.depth++;
+        current = list;
+        continue;
+      }
+      if (token.kind !== ")") {
+        current.items.push(token);
+        continue;
+      }
+      current.end = token;
+      if (isSymbol(current.items[0]) && FOLLOWED_HEADS.has(current.items[0].text))
+        followed = current;
+      state.depth--;
+      const parent = stack.pop();
+      if (parent === undefined) return root;
+      current = parent;
+    }
+  };
+  const read = (): SmtList | undefined => {
+    const token = take();
+    if (token === undefined) return undefined;
+    if (token.kind !== "(") throw new SmtParseError("invalid command, '(' expected", token);
+    state.depth = 1;
+    return readList(token);
+  };
+  const skip = (report: (error: SmtParseError) => void) => {
+    for (;;) {
+      try {
+        const token = take();
+        if (token === undefined) return;
+        if (token.kind === "(" && state.depth === 0) {
+          state.lookahead = token;
+          return;
+        }
+        if (token.kind === "(") state.depth++;
+        if (token.kind === ")") state.depth = Math.max(0, state.depth - 1);
+      } catch (error) {
+        if (!(error instanceof SmtParseError)) throw error;
+        report(error);
+      }
+    }
+  };
+  return { read, skip };
 };
 
-const expectList = (sexpr: SExpr | undefined): SExpr[] => {
-  if (!Array.isArray(sexpr)) throw new SmtParseError("expected a list");
+export const isSymbol = (sexpr: SExpr | undefined, text?: string): sexpr is SmtToken =>
+  sexpr !== undefined && sexpr.kind === "symbol" && (text === undefined || sexpr.text === text);
+
+// The identifier Z3's scanner read last, which check_next prints after "got".
+const getLastId = (sexpr: SExpr | undefined): string | undefined => {
+  if (sexpr === undefined) return undefined;
+  if (sexpr.kind !== "list")
+    return sexpr.kind === "symbol" || sexpr.kind === "keyword" ? sexpr.text : undefined;
+  return getLastIdBefore(sexpr.items, sexpr.items.length);
+};
+
+const getLastIdBefore = (items: SExpr[], end: number): string | undefined => {
+  for (let index = end - 1; index >= 0; index--) {
+    const id = getLastId(items[index]);
+    if (id !== undefined) return id;
+  }
+  return undefined;
+};
+
+const isSimpleIndex = (index: SExpr) =>
+  index.kind === "numeral" ||
+  index.kind === "bitvector" ||
+  index.kind === "decimal" ||
+  index.kind === "keyword";
+
+const expectList = (sexpr: SExpr | undefined, message: string, at: SExpr): SmtList => {
+  if (sexpr?.kind !== "list") throw new SmtParseError(message, sexpr ?? at);
   return sexpr;
 };
 
-const expectSymbol = (sexpr: SExpr | undefined): string => {
-  if (typeof sexpr !== "string") throw new SmtParseError("expected a symbol");
+const expectSymbol = (sexpr: SExpr | undefined, message: string, at: SExpr): SmtToken => {
+  if (!isSymbol(sexpr)) throw new SmtParseError(message, sexpr ?? at);
   return sexpr;
 };
 
-// Parses a script, and hands each assertion to assertExpr as Z3's cmd_context does, before it parses
-// the next command. Expressions are created in the order of Z3's parser, and live as long as there.
-export const parseSmtlib = (
-  text: string,
+export const createSmtlibReader = (
   manager: AstManager,
-  assertExpr: (assertion: number) => void,
-): SmtProblem => {
-  const sorts = new Map<string, number>([
-    ["Bool", SORT_BOOL],
-    ["Int", SORT_INT],
-    ["Real", SORT_REAL],
+  logic?: string,
+  options: ParserOptions = DEFAULT_PARSER_OPTIONS,
+) => {
+  const hasArith = logic === undefined || logicHasArith(logic);
+  const hasBv = logic === undefined || logicHasBv(logic);
+  const logicChecker = createLogicChecker(manager, logic);
+  const sortDecls = new Map<string, SortDecl>([
+    ["Bool", { kind: "sort", sort: SORT_BOOL }],
+    ...(hasArith && !(logic !== undefined && INT_FREE_LOGICS.has(logic))
+      ? [["Int", { kind: "sort", sort: SORT_INT }] as const]
+      : []),
+    ...(hasArith ? [["Real", { kind: "sort", sort: SORT_REAL }] as const] : []),
+    ...(logic === undefined ? [["List", { kind: "list" }] as const] : []),
   ]);
-  const funcs = new Map<string, number>();
-  const assertions: number[] = [];
-  const scopes: Map<string, Binding>[] = [];
-  let depth = 0;
+  const funcs = new Map<string, readonly number[]>();
+  const macros = new Map<string, Macro>();
+  const lastNamed = { name: "", expr: -1 };
+  const notifiedSorts = new Set<number>();
+  const undo: (() => void)[] = [];
+  const scopeStarts: number[] = [];
+  // smt2parser's m_env, a scoped symbol table: one map, and the trail of what each scope shadowed.
+  const locals = new Map<string, Local>();
+  const shadowedNames: string[] = [];
+  const shadowedLocals: (Local | undefined)[] = [];
+  const localScopes: number[] = [];
+  const binders = { depth: 0 };
+  // smt2parser's expr_stack, pattern_stack and nopattern_stack, which hold a reference to each term.
+  // -1 on the first stands for a pattern that Z3 ignores.
+  const exprStack: number[] = [];
+  const patternStack: number[] = [];
+  const noPatternStack: number[] = [];
+  // The term that parseTerm returns leaves the stack before its caller takes a reference. One that
+  // only the stack held keeps a reference in pending until a term of another command is parsed, and
+  // one that nothing held, in floating or, where its command is not known, in unrooted, gets one
+  // there when another term is parsed while its caller may still read it.
+  const parsed: ParsedTerm = { expr: -1, isOwned: false, root: undefined };
+  const floating: number[] = [];
+  const unrooted: number[] = [];
+  const pending: number[] = [];
 
-  const parseSort = (sexpr: SExpr) => {
-    const sort = sorts.get(expectSymbol(sexpr));
-    if (sort === undefined) throw new SmtParseError(`unknown sort ${String(sexpr)}`);
+  const declare = <Value>(names: Map<string, Value>, name: string, value: Value) => {
+    const previous = names.get(name);
+    undo.push(() => {
+      if (previous === undefined) names.delete(name);
+      else names.set(name, previous);
+    });
+    names.set(name, value);
+  };
+
+  const hasArrays = logic === undefined || logicHasArray(logic);
+  const hasFpa = logic === undefined || logicHasFpa(logic);
+  const hasArrayExtensions = logic === undefined || ARRAY_EXTENSION_LOGICS.has(logic);
+  const hasSeq = logic === undefined || logicHasSeq(logic);
+  const restricted = {
+    isNumeralAsReal: logic !== undefined && logicHasRealsOnly(logic),
+    hasSetSort: hasArrayExtensions,
+    hasFf: logic === undefined || FF_LOGICS.has(logic),
+  };
+
+  const getFirstFunc = (name: string) => funcs.get(name)?.[0];
+
+  // func_decls::signatures_collide: the domain, and the range unless it is -1.
+  const hasSignature = (decl: number, domain: readonly number[], range: number) =>
+    (range === -1 || manager.funcDecls[decl].range === range) &&
+    manager.funcDecls[decl].domain.length === domain.length &&
+    manager.funcDecls[decl].domain.every((sort, index) => sort === domain[index]);
+
+  const checkDecl = (decl: number, at: SExpr) => {
+    const error = logicChecker.checkDecl(decl);
+    if (error !== undefined) throw new SmtParseError(error, at);
+  };
+
+  const insertFunc = (decl: number, at: SExpr) => {
+    checkDecl(decl, at);
+    const funcDecl = manager.funcDecls[decl];
+    const name = String(funcDecl.name);
+    if (macros.has(name))
+      throw new SmtParseError(
+        `invalid declaration, named expression already defined with this name ${name}`,
+        at,
+      );
+    const existing = funcs.get(name) ?? [];
+    if (existing.includes(decl))
+      throw new SmtParseError(
+        `invalid declaration, ${funcDecl.domain.length === 0 ? "constant" : "function"} '${name}' (with the given signature) already declared`,
+        at,
+      );
+    declare(funcs, name, [...existing, decl]);
+  };
+
+  const insertDatatypeDecls = (sort: number, at: SExpr) => {
+    for (const constructor of getDatatypeConstructors(manager, sort)) {
+      insertFunc(constructor, at);
+      insertFunc(getConstructorRecognizer(manager, constructor), at);
+      for (const accessor of getConstructorAccessors(manager, constructor))
+        insertFunc(accessor, at);
+    }
+  };
+
+  const notifyDatatype = (sort: number, at: SExpr) => {
+    const parameters = manager.getSortParameters(sort);
+    if (parameters.length === 0 || notifiedSorts.has(sort)) return;
+    if (getDatatypeDef(manager, sort) === undefined) return;
+    if (parameters.every((parameter) => manager.getTypeParameterIndex(parameter) === -1))
+      insertDatatypeDecls(sort, at);
+    notifiedSorts.add(sort);
+    undo.push(() => notifiedSorts.delete(sort));
+  };
+
+  const getDatatypeInstance = (decl: DatatypeSortDecl, parameters: number[], at: SExpr) => {
+    const key = parameters.join(",");
+    const sort = decl.instances.get(key) ?? mkDatatypeSort(manager, decl.name, parameters);
+    decl.instances.set(key, sort);
+    notifyDatatype(sort, at);
     return sort;
   };
 
-  const lookup = (name: string) => {
-    for (let index = scopes.length - 1; index >= 0; index--) {
-      const binding = scopes[index].get(name);
-      if (binding !== undefined) return binding;
+  const instantiateDatatype = (decl: DatatypeSortDecl, parameters: number[], at: SExpr) => {
+    const sort = getDatatypeInstance(decl, parameters, at);
+    const def = getDatatypeDef(manager, sort);
+    if (def === undefined || parameters.length === 0 || decl.siblings.length === 0) return sort;
+    const marked = new Set([sort]);
+    for (const constructor of def.constructors)
+      for (const accessor of constructor.accessors) {
+        const range = accessor.range;
+        if (!manager.isDatatypeSort(range) || marked.has(range)) continue;
+        marked.add(range);
+        const sibling = sortDecls.get(manager.sortNames[range]);
+        if (sibling?.kind !== "datatype" || !decl.siblings.includes(sibling.name)) continue;
+        const instance = substituteSort(manager, range, def.parameters, parameters);
+        getDatatypeInstance(sibling, [...manager.getSortParameters(instance)], at);
+      }
+    return sort;
+  };
+
+  const getSortDeclArity = (decl: SortDecl) =>
+    decl.kind === "sort"
+      ? 0
+      : decl.kind === "list"
+        ? 1
+        : decl.kind === "definition"
+          ? decl.parameters.length
+          : decl.arity;
+
+  const instantiateSort = (decl: SortDecl, parameters: number[], at: SExpr): number => {
+    if (decl.kind === "sort") return decl.sort;
+    if (decl.kind === "list") {
+      const element = manager.mkTypeParameter(0);
+      mkDatatypes(manager, [
+        mkDatatypeDef(
+          manager,
+          "List",
+          [element],
+          [
+            { name: "nil", recognizer: "is-nil", accessors: [] },
+            {
+              name: "insert",
+              recognizer: "is-insert",
+              accessors: [
+                { name: "head", range: element },
+                { name: "tail", range: -1 },
+              ],
+            },
+          ],
+        ),
+      ]);
+      const list: DatatypeSortDecl = {
+        kind: "datatype",
+        name: "List",
+        arity: 1,
+        siblings: [],
+        instances: new Map(),
+      };
+      sortDecls.set("List", list);
+      return instantiateSort(list, parameters, at);
     }
-    return undefined;
+    if (decl.kind === "user") return manager.mkUninterpretedSort(decl.name, parameters);
+    if (decl.kind === "datatype") return instantiateDatatype(decl, parameters, at);
+    return parseSort(
+      decl.body,
+      "",
+      new Map(decl.parameters.map((name, index) => [name, parameters[index]])),
+    );
   };
 
-  // basic_decl_plugin::join: Int and Real join to Real. Other sorts join only with themselves.
-  const getJoin = (args: number[]) => {
-    const argSorts = args.map((arg) => manager.sorts[arg]);
-    if (!argSorts.every(isArithSort)) return argSorts[0];
-    return argSorts.includes(SORT_REAL) ? SORT_REAL : SORT_INT;
+  const parseParametricSort = (
+    sexpr: SmtList,
+    context: string,
+    bindings: ReadonlyMap<string, number>,
+  ): number => {
+    const head = sexpr.items[0];
+    if (!isSymbol(head)) throw new SmtParseError("invalid sort, symbol or '_' expected", head);
+    const isArray =
+      ARRAY_SORT_NAMES.has(head.text) || (head.text === "Set" && restricted.hasSetSort);
+    if (isArray && hasArrays) {
+      const parameters = sexpr.items.slice(1).map((item) => parseSort(item, context, bindings));
+      if (head.text === "Set" ? parameters.length !== 1 : parameters.length < 2)
+        throw new SmtParseError(
+          "invalid array sort definition, invalid number of parameters",
+          sexpr.end,
+        );
+      return manager.mkArraySort(head.text === "Set" ? [parameters[0], SORT_BOOL] : parameters);
+    }
+    const decl = sortDecls.get(head.text);
+    if (decl === undefined && hasSeq && (head.text === "Seq" || head.text === "RegEx")) {
+      const parameters = sexpr.items.slice(1).map((item) => parseSort(item, context, bindings));
+      if (parameters.length !== 1)
+        throw new SmtParseError(
+          head.text === "Seq"
+            ? "Invalid sequence sort, expecting one parameter"
+            : "Invalid regex sort, expecting one parameter",
+          sexpr.end,
+        );
+      return head.text === "Seq"
+        ? manager.mkSeqSort(parameters[0])
+        : manager.mkReSort(parameters[0]);
+    }
+    if (decl === undefined && hasFpa && FPA_SORT_NAMES.has(head.text)) {
+      const parameters = sexpr.items.slice(1).map((item) => parseSort(item, context, bindings));
+      if (head.text === "FloatingPoint") return mkFloatSort([], sexpr);
+      if (parameters.length > 0)
+        throw new SmtUnsupportedError("parameters on a floating-point sort");
+      return parseSort(head, context, bindings);
+    }
+    if (decl === undefined) {
+      if (THEORY_SORTS.has(head.text) && !isLackingSort(head.text))
+        throw new SmtUnsupportedError(`the sort ${head.text}`);
+      throw new SmtParseError(`unknown sort '${head.text}'`, head);
+    }
+    const parameters = sexpr.items.slice(1).map((item) => parseSort(item, context, bindings));
+    if (parameters.length !== getSortDeclArity(decl))
+      throw new SmtParseError("invalid number of parameters to sort constructor", sexpr.end);
+    return instantiateSort(decl, parameters, sexpr);
   };
 
-  // The sort of the arguments of a builtin, as Z3's decl plugins pick its declaration.
-  const getDomainSort = (op: number, args: number[]) => {
-    if (op === OP_ITE) return getJoin(args.slice(1));
-    if (op === OP_EQ || op === OP_DISTINCT) return getJoin(args);
-    if (COERCING_OPS.has(op)) return getJoin(args) === SORT_REAL ? SORT_REAL : SORT_INT;
-    if (op === OP_ABS || op === OP_TO_REAL || op === OP_TO_INT) return manager.sorts[args[0]];
-    if (op === OP_IDIV || op === OP_MOD) return SORT_INT;
-    if (op === OP_DIV || op === OP_IS_INT) return SORT_REAL;
-    return SORT_BOOL;
+  // parse_psort: Z3 makes the leaves and the indexed sorts of a sort definition, and an application
+  // of a builtin sort, which takes any number of parameters, only when the definition is used.
+  const checkPsort = (sexpr: SExpr, bindings: ReadonlyMap<string, number>) => {
+    const head = sexpr.kind === "list" ? sexpr.items[0] : undefined;
+    if (
+      head === undefined ||
+      !isSymbol(head) ||
+      head.text === "_" ||
+      sortDecls.has(head.text) ||
+      !isBuiltinParametricSort(head.text)
+    ) {
+      parseSort(sexpr, "", bindings);
+      return;
+    }
+    for (const item of (sexpr as SmtList).items.slice(1)) checkPsort(item, bindings);
   };
 
-  const getRange = (op: number, domainSort: number) =>
-    op === OP_TO_REAL || op === OP_DIV
-      ? SORT_REAL
-      : op === OP_TO_INT || op === OP_IDIV || op === OP_MOD
-        ? SORT_INT
-        : op === OP_ITE ||
-            op === OP_ABS ||
-            op === OP_ADD ||
-            op === OP_SUB ||
-            op === OP_UMINUS ||
-            op === OP_MUL
-          ? domainSort
-          : SORT_BOOL;
+  // Z3 does not know the sorts of a theory that the logic lacks.
+  const isLackingSort = (name: string) =>
+    name === "Set"
+      ? !hasArrays || !restricted.hasSetSort
+      : ARRAY_SORT_NAMES.has(name)
+        ? !hasArrays
+        : name === "BitVec"
+          ? !hasBv
+          : SEQ_SORT_NAMES.has(name) || name === "Unicode"
+            ? !hasSeq
+            : FPA_SORT_NAMES.has(name) && !hasFpa;
 
-  // ast_manager::coerce_to: an Int argument of a Real position becomes to_real, and a Real argument
-  // of an Int position to_int.
+  const isBuiltinParametricSort = (name: string) =>
+    (hasArrays && (ARRAY_SORT_NAMES.has(name) || (name === "Set" && restricted.hasSetSort))) ||
+    (hasSeq && (name === "Seq" || name === "RegEx")) ||
+    (hasFpa && FPA_SORT_NAMES.has(name));
+
+  const mkFloatSort = (indices: SExpr[], at: SExpr) => {
+    const ebitsIndex = indices[0];
+    const sbitsIndex = indices[1];
+    if (indices.length !== 2 || ebitsIndex.kind !== "numeral" || sbitsIndex.kind !== "numeral")
+      throw new SmtParseError(
+        "expecting two integer parameters to floating point sort (ebits, sbits)",
+        at.kind === "list" ? at.end : at,
+      );
+    const ebits = Number(ebitsIndex.text);
+    const sbits = Number(sbitsIndex.text);
+    const error = getFloatSortError(ebits, sbits);
+    if (error !== undefined) throw new SmtParseError(error, at.kind === "list" ? at.end : at);
+    return manager.mkFpSort(ebits, sbits);
+  };
+
+  const parseSort = (
+    sexpr: SExpr,
+    context: string,
+    bindings: ReadonlyMap<string, number> = NO_BINDINGS,
+  ): number => {
+    if (sexpr.kind === ")")
+      throw new SmtParseError(`${context} invalid sort, unexpected ')'`, sexpr);
+    if (sexpr.kind === "list") {
+      if (!isSymbol(sexpr.items[0], "_")) return parseParametricSort(sexpr, context, bindings);
+      // parse_indexed_sort.
+      const name = sexpr.items[1];
+      if (!isSymbol(name))
+        throw new SmtParseError("invalid indexed sort, symbol expected", name ?? sexpr.end);
+      if (hasFpa && name.text === "FloatingPoint") return mkFloatSort(sexpr.items.slice(2), sexpr);
+      const indices = sexpr.items.slice(2);
+      if (isLackingSort(name.text) || !(THEORY_SORTS.has(name.text) || sortDecls.has(name.text)))
+        throw new SmtParseError(`unknown sort '${name.text}'`, indices[0] ?? sexpr.end);
+      if (name.text !== "BitVec") throw new SmtUnsupportedError("indexed sorts");
+      for (const index of indices) {
+        if (index.kind !== "numeral")
+          throw new SmtParseError("invalid indexed sort, integer or ')' expected", index);
+        if (!isUnsigned(index.text))
+          throw new SmtParseError(
+            "invalid indexed identifier, index is too big to fit in an unsigned machine integer",
+            index,
+          );
+      }
+      const width = indices[0];
+      if (indices.length !== 1 || width.kind !== "numeral")
+        throw new SmtParseError("expecting one integer parameter to bit-vector sort", sexpr.end);
+      if (BigInt(width.text) === 0n)
+        throw new SmtParseError("bit-vector size must be greater than zero", sexpr.end);
+      return manager.mkBvSort(Number(width.text));
+    }
+    const decl = sortDecls.get(sexpr.text);
+    if (decl !== undefined) {
+      if (getSortDeclArity(decl) !== 0)
+        throw new SmtParseError("sort constructor expects parameters", sexpr);
+      return instantiateSort(decl, [], sexpr);
+    }
+    const bound = bindings.get(sexpr.text);
+    if (bound !== undefined) return bound;
+    if (hasSeq && (SEQ_SORT_NAMES.has(sexpr.text) || sexpr.text === "Unicode")) {
+      if (sexpr.text === "String" || sexpr.text === "StringSequence") return manager.mkStringSort();
+      if (sexpr.text === "RegLan") return manager.mkReSort(manager.mkStringSort());
+      if (sexpr.text === "Unicode") return manager.mkCharSort();
+      throw new SmtParseError(
+        sexpr.text === "Seq"
+          ? "Invalid sequence sort, expecting one parameter"
+          : "Invalid regex sort, expecting one parameter",
+        sexpr,
+      );
+    }
+    if (hasFpa && FPA_SORT_NAMES.has(sexpr.text)) {
+      if (sexpr.text === "RoundingMode") return manager.mkRmSort();
+      const bits = FPA_SORT_NAMES.get(sexpr.text);
+      return bits === undefined ? mkFloatSort([], sexpr) : manager.mkFpSort(bits[0], bits[1]);
+    }
+    if (THEORY_SORTS.has(sexpr.text) && !isLackingSort(sexpr.text))
+      throw new SmtUnsupportedError(`the sort ${sexpr.text}`);
+    throw new SmtParseError(
+      `${context === "" ? "" : `${context}: `}unknown sort '${sexpr.text}'`,
+      sexpr,
+    );
+  };
+
+  const beginScope = () => localScopes.push(shadowedNames.length);
+
+  const insertLocal = (name: string, expr: number) => {
+    shadowedNames.push(name);
+    shadowedLocals.push(locals.get(name));
+    locals.set(name, { expr, level: binders.depth });
+  };
+
+  const endScope = () => {
+    const start = localScopes.pop() ?? 0;
+    for (let index = shadowedNames.length - 1; index >= start; index--) {
+      const shadowed = shadowedLocals[index];
+      if (shadowed === undefined) locals.delete(shadowedNames[index]);
+      else locals.set(shadowedNames[index], shadowed);
+    }
+    shrink(shadowedNames, start);
+    shrink(shadowedLocals, start);
+  };
+
+  const pushRef = (stack: number[], expr: number) => {
+    if (expr !== -1) manager.incRef(expr);
+    stack.push(expr);
+  };
+
+  // ref_vector::shrink, which releases from the new end on.
+  const shrinkRefs = (stack: number[], size: number) => {
+    for (let index = size; index < stack.length; index++)
+      if (stack[index] !== -1) manager.decRef(stack[index]);
+    shrink(stack, size);
+  };
+
+  const releasePending = () => {
+    for (const expr of pending) manager.decRef(expr);
+    shrink(pending, 0);
+  };
+
+  const protect = (exprs: number[]) => {
+    for (const expr of exprs)
+      if (manager.ids[expr] !== -1 && manager.getRefCount(expr) === 0) pushRef(pending, expr);
+    shrink(exprs, 0);
+  };
+
+  // push_local: var_shifter moves the free variables of a term that was bound under fewer binders.
+  // Its cache holds the terms it makes, which replaceFreeVars rebuilds.
+  const getLocalTerm = (local: Local) => {
+    if (local.level === binders.depth) return local.expr;
+    if (manager.kinds[local.expr] === KIND_VAR)
+      return manager.mkVar(
+        manager.values[local.expr] + binders.depth - local.level,
+        manager.sorts[local.expr],
+      );
+    return replaceFreeVars(manager, local.expr, (variable, index, shift) =>
+      manager.mkVar(index + shift + binders.depth - local.level, manager.sorts[variable]),
+    );
+  };
+
+  // basic_decl_plugin::join.
+  const getJoin = (left: number, right: number, at: SExpr) => {
+    if (left === right) return left;
+    if (isArithSort(left) && isArithSort(right)) return left === SORT_REAL ? left : right;
+    if (left === SORT_BOOL && isArithSort(right)) return right;
+    if (right === SORT_BOOL && isArithSort(left)) return left;
+    throw new SmtParseError(
+      `Sorts ${manager.getSortName(left)} and ${manager.getSortName(right)} are incompatible`,
+      at,
+    );
+  };
+
+  const getJoinOfArgs = (args: number[], at: SExpr) =>
+    args.reduce((join, arg) => getJoin(join, manager.sorts[arg], at), manager.sorts[args[0]]);
+
+  // basic_decl_plugin::mk_func_decl and arith_decl_plugin::mk_func_decl: the sort of the arguments
+  // that the declaration takes, the condition of ite aside, or -1 where the plugin makes none.
+  const getDomainSort = (op: number, args: number[], at: SExpr) => {
+    if (op === OP_ITE)
+      return args.length === 3 ? getJoin(manager.sorts[args[1]], manager.sorts[args[2]], at) : -1;
+    if (op === OP_EQ) return args.length >= 2 ? getJoinOfArgs(args, at) : -1;
+    if (op === OP_DISTINCT) return args.length === 0 ? SORT_BOOL : getJoinOfArgs(args, at);
+    if (manager.funcDecls[op].family === FAMILY_BASIC) return SORT_BOOL;
+    if (COERCING_OPS.has(op))
+      return args.some((arg) => manager.sorts[arg] === SORT_REAL) ? SORT_REAL : SORT_INT;
+    if (op === OP_DIV || op === OP_IS_INT || REAL_FUNCTION_OPS.has(op)) return SORT_REAL;
+    if (op === OP_IDIV || op === OP_MOD || op === OP_REM) return SORT_INT;
+    return manager.sorts[args[0]] === SORT_REAL ? SORT_REAL : SORT_INT;
+  };
+
+  // ast_manager::coerce_to.
   const coerce = (arg: number, sort: number) => {
     const argSort = manager.sorts[arg];
-    if (argSort === sort || !isArithSort(argSort) || !isArithSort(sort)) return arg;
-    return sort === SORT_REAL
-      ? manager.mkApp(OP_TO_REAL, [arg], SORT_REAL)
-      : manager.mkApp(OP_TO_INT, [arg], SORT_INT);
+    if (argSort === sort || !isArithSort(sort)) return arg;
+    if (isArithSort(argSort))
+      return sort === SORT_REAL
+        ? manager.mkApp(OP_TO_REAL, [arg], SORT_REAL)
+        : manager.mkApp(OP_TO_INT, [arg], SORT_INT);
+    if (argSort !== SORT_BOOL) return arg;
+    const one = manager.mkNumeralOfSort(Rational.of(1n), sort);
+    return manager.mkApp(OP_ITE, [arg, one, manager.mkNumeralOfSort(Rational.of(0n), sort)], sort);
   };
 
-  // Coerces the arguments of an application to the sorts of its declaration, as Z3 does with its
-  // default int_real_coercions, then checks their sorts and number, so the solver only sees
-  // well-sorted terms, and that quantifiers occur only under Boolean connectives.
-  const mkApp = (decl: number, inputArgs: number[], domainSort?: number) => {
-    const op = manager.funcDecls[decl].op;
-    const name = manager.funcDecls[decl].name;
-    const isUninterpreted = op === OP_UNINTERPRETED;
-    const domain = manager.funcDecls[decl].domain;
-    const builtinSort = isUninterpreted ? -1 : (domainSort ?? getDomainSort(op, inputArgs));
-    const getExpected = (index: number) =>
-      isUninterpreted ? domain[index] : op === OP_ITE && index === 0 ? SORT_BOOL : builtinSort;
-    const args = inputArgs.map((arg, index) =>
-      getExpected(index) === undefined ? arg : coerce(arg, getExpected(index)),
+  // A declaration of the script has its own domain, and a builtin one takes domainSort.
+  const getArity = (decl: number, numArgs: number, domainSort: number) =>
+    domainSort === -1
+      ? manager.funcDecls[decl].domain.length
+      : decl === OP_DISTINCT
+        ? numArgs
+        : (ARITIES.get(decl) ?? 2);
+
+  const getExpectedSort = (decl: number, index: number, domainSort: number) =>
+    domainSort === -1
+      ? manager.funcDecls[decl].domain[index]
+      : decl === OP_ITE && index === 0
+        ? SORT_BOOL
+        : domainSort;
+
+  const formatDecl = (decl: number, numArgs: number, domainSort: number) => {
+    const domain = Array.from({ length: getArity(decl, numArgs, domainSort) }, (_unused, index) =>
+      manager.getSortName(getExpectedSort(decl, index, domainSort)),
     );
-    const isArity = (min: number, max: number) => args.length >= min && args.length <= max;
-    const isArityOk = isUninterpreted
-      ? args.length === domain.length
-      : op === OP_AND || op === OP_OR
-        ? true
-        : op === OP_ITE
-          ? isArity(3, 3)
-          : op === OP_EQ || op === OP_DISTINCT
-            ? isArity(2, Infinity)
-            : op === OP_NOT ||
-                op === OP_UMINUS ||
-                op === OP_ABS ||
-                op === OP_TO_REAL ||
-                op === OP_TO_INT ||
-                op === OP_IS_INT
-              ? isArity(1, 1)
-              : op === OP_IMPLIES ||
-                  op === OP_XOR ||
-                  op === OP_IDIV ||
-                  op === OP_MOD ||
-                  op === OP_DIV ||
-                  op === OP_LE ||
-                  op === OP_GE ||
-                  op === OP_LT ||
-                  op === OP_GT
-                ? isArity(2, 2)
-                : isArity(1, Infinity);
-    const isBuiltinArith = manager.funcDecls[decl].family === FAMILY_ARITH;
-    const isWellSorted =
-      isArityOk &&
-      (!isBuiltinArith || isArithSort(builtinSort)) &&
-      args.every((arg, index) => manager.sorts[arg] === getExpected(index));
-    if (!isWellSorted) throw new SmtParseError(`ill-sorted application of ${name}`);
+    const range =
+      domainSort === -1 ? manager.funcDecls[decl].range : (RANGES.get(decl) ?? domainSort);
+    return `(declare-fun ${String(manager.funcDecls[decl].name)} (${domain.join(" ")}) ${manager.getSortName(range)})`;
+  };
+
+  // ast_manager::mk_app_core: coercion_needed, coerce_to and check_args.
+  const mkAppCore = (decl: number, args: number[], at: SExpr, domainSort: number) => {
+    const isAssociative = domainSort !== -1 && ASSOCIATIVE_OPS.has(decl);
+    const isCoercing =
+      (isAssociative || getArity(decl, args.length, domainSort) === args.length) &&
+      args.some((arg, index) => {
+        const expected = getExpectedSort(decl, index, domainSort);
+        return isArithSort(expected) && expected !== manager.sorts[arg];
+      });
+    const coerced = isCoercing
+      ? args.map((arg, index) => coerce(arg, getExpectedSort(decl, index, domainSort)))
+      : args;
+    for (let index = 0; index < coerced.length; index++) {
+      const sort = manager.sorts[coerced[index]];
+      if (sort !== getExpectedSort(decl, index, domainSort))
+        throw new SmtParseError(
+          `Sort mismatch at argument #${index + 1} for function ${formatDecl(decl, args.length, domainSort)} supplied sort is ${manager.getSortName(sort)}`,
+          at,
+        );
+    }
+    // Z3 keeps xor, / and div of fewer than two arguments until its rewriters make false or the
+    // argument of them, which those of this port do not.
+    if (
+      coerced.length < 2 &&
+      domainSort !== -1 &&
+      (decl === OP_XOR || LEFT_ASSOCIATIVE_OPS.has(decl))
+    )
+      return coerced[0] ?? manager.falseExpr;
     return manager.mkApp(
       decl,
-      args,
-      isUninterpreted ? manager.funcDecls[decl].range : getRange(op, builtinSort),
+      coerced,
+      domainSort === -1 ? manager.funcDecls[decl].range : (RANGES.get(decl) ?? domainSort),
     );
   };
 
-  const mkChain = (op: number, args: number[]) => {
-    const domainSort = getDomainSort(op, args);
+  // ast_manager::mk_app.
+  const mkApp = (decl: number, args: number[], at: SExpr, domainSort = -1): number => {
+    const isBuiltin = domainSort !== -1;
+    const isAssociative = isBuiltin && ASSOCIATIVE_OPS.has(decl);
+    const isLeftAssociative = isAssociative || (isBuiltin && LEFT_ASSOCIATIVE_OPS.has(decl));
+    const isRightAssociative = isAssociative || (isBuiltin && decl === OP_IMPLIES);
+    const isChainable = isBuiltin && CHAINABLE_DECLS.has(decl);
+    if (
+      getArity(decl, args.length, domainSort) !== args.length &&
+      ((!isLeftAssociative && !isRightAssociative && !isChainable) ||
+        (args.length < 2 && manager.funcDecls[decl].family === FAMILY_BASIC && !isAssociative))
+    ) {
+      const environment = { options: DEFAULT_PRINT_OPTIONS, isUsed, isClashing };
+      // Z3 prints an error without the newlines that end it.
+      throw new SmtParseError(
+        `Wrong number of arguments (${args.length}) passed to function ${formatDecl(decl, args.length, domainSort)} ${args
+          .map((arg) => `\narg: ${printExpr(manager, environment, arg)}\n`)
+          .join("")}`.replace(/\n+$/, ""),
+        at,
+      );
+    }
+    if (args.length === 1 && isChainable) return manager.trueExpr;
+    if (args.length <= 2 || (isBuiltin && FLAT_OPS.has(decl)))
+      return mkAppCore(decl, args, at, domainSort);
+    if (isRightAssociative)
+      return args
+        .slice(0, -2)
+        .reduceRight(
+          (right, left) => mkAppCore(decl, [left, right], at, domainSort),
+          mkAppCore(decl, args.slice(-2), at, domainSort),
+        );
+    if (isLeftAssociative)
+      return args
+        .slice(2)
+        .reduce(
+          (left, right) => mkAppCore(decl, [left, right], at, domainSort),
+          mkAppCore(decl, args.slice(0, 2), at, domainSort),
+        );
+    if (!isChainable) return mkAppCore(decl, args, at, domainSort);
     const pairs: number[] = [];
-    for (let index = 0; index + 1 < args.length; index++)
-      pairs.push(mkApp(op, [args[index], args[index + 1]], domainSort));
-    return pairs.length === 1 ? pairs[0] : mkApp(OP_AND, pairs);
+    for (let index = 1; index < args.length; index++)
+      pairs.push(mkAppCore(decl, [args[index - 1], args[index]], at, domainSort));
+    return mkApp(OP_AND, pairs, at, SORT_BOOL);
   };
 
-  const expectBool = (expr: number) => {
-    if (manager.sorts[expr] !== SORT_BOOL) throw new SmtParseError("expected a formula");
-    return expr;
+  // ast_manager::mk_pattern.
+  const mkPattern = (terms: number[], at: SExpr) => {
+    if (terms.some((term) => manager.kinds[term] !== KIND_APP))
+      throw new SmtParseError("patterns cannot be variables or quantifiers", at);
+    return manager.mkPattern(terms);
   };
 
-  // push_pattern_frame with ignore_bad_patterns: (t1 ... tn) is a multi-pattern, (f a ...) a pattern
-  // of one term, and a pattern that starts with a constant is dropped unparsed.
-  const parsePattern = (sexpr: SExpr) => {
-    if (!Array.isArray(sexpr) || sexpr.length === 0) return undefined;
-    const head = sexpr[0];
-    if (Array.isArray(head)) return manager.mkPattern(sexpr.map(parseTerm));
-    const decl = head === "true" || head === "false" ? -1 : funcs.get(head);
-    if (decl === -1 || (decl !== undefined && manager.funcDecls[decl].domain.length === 0))
-      return undefined;
-    return manager.mkPattern([parseTerm(sexpr)]);
-  };
-
-  // pattern_validator: a pattern has no Boolean operator other than equality, no quantifier, and
-  // every variable of its quantifier.
   const isValidPattern = (pattern: number, numDecls: number) => {
     const found = new Set<number>();
     const isValid = (expr: number): boolean => {
@@ -331,196 +1470,1834 @@ export const parseSmtlib = (
     return manager.everyArg(pattern, isValid) && found.size === numDecls;
   };
 
-  const parseQuantifier = (list: SExpr[], isForall: boolean) => {
-    const declarations = expectList(list[1]);
-    const scope = new Map<string, Binding>();
-    const names = declarations.map((declaration) => expectSymbol(expectList(declaration)[0]));
-    const varSorts = declarations.map((declaration, index) => {
-      const sort = parseSort(expectList(declaration)[1]);
-      scope.set(names[index], { kind: "var", depth: depth + index, sort });
-      return sort;
-    });
-    scopes.push(scope);
-    depth += varSorts.length;
-    // parse_sorted_vars: the variables are created first, the first declared with the largest index,
-    // and the parser's stack holds them until the quantifier is created.
-    const boundVars = varSorts.map((sort, index) =>
-      manager.mkVar(varSorts.length - 1 - index, sort),
-    );
-    for (const boundVar of boundVars) manager.incRef(boundVar);
-    const bodySExpr = list[2];
-    const isAnnotated = Array.isArray(bodySExpr) && bodySExpr[0] === "!";
-    const body = expectBool(parseTerm(isAnnotated ? bodySExpr[1] : bodySExpr));
-    const patterns: number[] = [];
-    let weight = 1;
-    let qid = "";
-    if (isAnnotated)
-      for (let index = 2; index < bodySExpr.length; index += 2) {
-        const keyword = bodySExpr[index];
-        const value = bodySExpr[index + 1];
-        if (keyword === ":pattern") {
-          const pattern = parsePattern(value);
-          if (pattern !== undefined) {
-            manager.incRef(pattern);
-            patterns.push(pattern);
-          }
-        } else if (keyword === ":weight") weight = Number(value);
-        else if (keyword === ":qid") qid = expectSymbol(value);
+  // parse_sorted_vars: the variables are created the first declared with the largest index, and
+  // the stack holds them. previousId is the identifier before the list.
+  const bindSortedVars = (sexpr: SExpr | undefined, at: SExpr, previousId: string) => {
+    if (sexpr?.kind !== "list")
+      throw new SmtParseError(
+        `invalid list of sorted variables, '(' expected got ${getLastId(sexpr) ?? previousId}`,
+        sexpr ?? at,
+      );
+    const names: string[] = [];
+    const varSorts: number[] = [];
+    for (const [index, declaration] of sexpr.items.entries()) {
+      if (declaration.kind !== "list")
+        throw new SmtParseError(
+          `invalid sorted variable, '(' expected got ${getLastId(declaration) ?? getLastIdBefore(sexpr.items, index) ?? previousId}`,
+          declaration,
+        );
+      const name = declaration.items[0];
+      if (!isSymbol(name))
+        throw new SmtParseError(
+          "invalid sorted variable, symbol expected",
+          name ?? declaration.end,
+        );
+      names.push(name.text);
+      varSorts.push(parseSort(declaration.items[1] ?? declaration.end, "invalid sorted variables"));
+      const extra = declaration.items[2];
+      if (extra !== undefined)
+        throw new SmtParseError(
+          `invalid sorted variable, ')' expected got ${getLastId(extra) ?? getLastId(declaration.items[1]) ?? name.text}`,
+          extra,
+        );
+    }
+    beginScope();
+    binders.depth += varSorts.length;
+    for (const [index, sort] of varSorts.entries()) {
+      const boundVar = manager.mkVar(varSorts.length - 1 - index, sort);
+      pushRef(exprStack, boundVar);
+      insertLocal(names[index], boundVar);
+    }
+    return { names, varSorts };
+  };
+
+  const unbindSortedVars = (count: number) => {
+    endScope();
+    binders.depth -= count;
+  };
+
+  // pop_quant_frame, up to the quantifier.
+  const mkParsedQuantifier = (frame: QuantifierFrame) => {
+    const list = frame.list;
+    const numDecls = frame.varSorts.length;
+    if (exprStack.length - frame.start !== numDecls + 1)
+      throw new SmtParseError(
+        "invalid quantified expression, syntax error: (forall|exists ((<symbol> <sort>)*) <expr>) expected",
+        list.end,
+      );
+    let numKept = frame.patternStart;
+    for (let index = frame.patternStart; index < patternStack.length; index++) {
+      const pattern = patternStack[index];
+      if (!isValidPattern(pattern, numDecls)) {
+        if (!options.isIgnoringBadPatterns) throw new SmtParseError("invalid pattern", list.end);
+        continue;
       }
-    scopes.pop();
-    depth -= varSorts.length;
-    // pop_quant_frame: the invalid patterns leave the parser's stack before the quantifier is made,
-    // and the valid ones after.
-    let numKept = 0;
-    for (const pattern of patterns) {
-      if (!isValidPattern(pattern, varSorts.length)) continue;
       manager.incRef(pattern);
-      manager.decRef(patterns[numKept]);
-      patterns[numKept] = pattern;
+      manager.decRef(patternStack[numKept]);
+      patternStack[numKept] = pattern;
       numKept++;
     }
-    for (const removed of patterns.splice(numKept)) manager.decRef(removed);
-    const quantifier = manager.mkQuantifier({
-      isForall,
-      sorts: varSorts,
-      names,
+    shrinkRefs(patternStack, numKept);
+    const body = exprStack[exprStack.length - 1];
+    if (frame.quantifierKind !== QUANTIFIER_LAMBDA && manager.sorts[body] !== SORT_BOOL)
+      throw new SmtParseError("quantifier body must be a Boolean expression", list.end);
+    if (patternStack.length > frame.patternStart && noPatternStack.length > frame.noPatternStart)
+      throw new SmtParseError("simultaneous patterns and no-patterns not supported", list.end);
+    return manager.mkQuantifier({
+      kind: frame.quantifierKind,
+      sorts: frame.varSorts,
+      names: frame.names,
       body,
-      patterns,
-      weight,
-      qid,
+      patterns: patternStack.slice(frame.patternStart),
+      noPatterns: noPatternStack.slice(frame.noPatternStart),
+      weight: frame.weight,
+      qid: frame.qid,
+      ...(frame.skid === undefined ? {} : { skid: frame.skid }),
     });
-    for (const pattern of patterns) manager.decRef(pattern);
-    for (const boundVar of boundVars) manager.decRef(boundVar);
-    return quantifier;
   };
 
-  const parseLet = (list: SExpr[]) => {
-    const scope = new Map<string, Binding>();
-    for (const binding of expectList(list[1])) {
-      const pair = expectList(binding);
-      const expr = parseTerm(pair[1]);
-      scope.set(expectSymbol(pair[0]), { kind: "let", depth, expr });
-    }
-    scopes.push(scope);
-    const body = parseTerm(list[2]);
-    scopes.pop();
-    return body;
+  const expandMacro = (macro: Macro, args: number[]) =>
+    replaceFreeVars(manager, macro.body, (_variable, index, shift) => {
+      const arg = args[args.length - 1 - index];
+      return shift === 0
+        ? arg
+        : replaceFreeVars(manager, arg, (inner, innerIndex, innerShift) =>
+            manager.mkVar(innerIndex + innerShift + shift, manager.sorts[inner]),
+          );
+    });
+
+  const isBvOpName = (name: string) =>
+    hasBv &&
+    BV_OP_NAMES.has(name) &&
+    (!BV_EXTENSION_NAMES.has(name) || logic === undefined || BV_EXTENSION_LOGICS.has(logic));
+
+  const mkBvApp = (name: string, args: number[], indices: number[], at: SExpr) => {
+    const op = BV_OP_NAMES.get(name) ?? -1;
+    const signature = getBvSignature(
+      manager,
+      op,
+      args.map((arg) => manager.sorts[arg]),
+      indices,
+    );
+    if (typeof signature === "string") throw new SmtParseError(signature, at);
+    const decl = manager.mkBvDecl(op, signature.name, indices, signature.domain, signature.range);
+    return manager.mkApp(decl, args, signature.range);
   };
 
-  const parseApp = (name: string, args: number[]) => {
-    const chainable = CHAINABLE_OPS.get(name);
-    if (chainable !== undefined) return mkChain(chainable, args);
-    if (name === "-") return mkApp(args.length === 1 ? OP_UMINUS : OP_SUB, args);
-    // ast_manager::mk_app: / is left associative, so more arguments nest to the left.
-    if (name === "/" && args.length > 2)
-      return args
-        .slice(1)
-        .reduce((dividend, divisor) => mkApp(OP_DIV, [dividend, divisor]), args[0]);
-    const op = BUILTIN_OPS.get(name);
-    if (op !== undefined) return mkApp(op, args);
-    const decl = funcs.get(name);
-    if (decl === undefined) throw new SmtParseError(`unknown function ${name}`);
-    return mkApp(decl, args);
+  const isFpaOpName = (name: string) => hasFpa && FPA_OP_NAMES.has(name);
+
+  // pb_decl_plugin::get_op_names and mk_func_decl.
+  const isPbOpName = (name: string) =>
+    PB_OP_NAMES.has(name) &&
+    (logic === undefined || logic === "QF_FD" || logic === "ALL" || logic === "HORN");
+
+  const mkPbTerm = (name: string, args: number[], parameters: Rational[], at: SExpr) => {
+    const op = PB_OP_NAMES.get(name) ?? -1;
+    if (args.some((arg) => manager.sorts[arg] !== SORT_BOOL))
+      throw new SmtParseError("invalid non-Boolean sort applied to Pseudo-Boolean relation", at);
+    const isCardinality = op === OP_AT_MOST_K || op === OP_AT_LEAST_K;
+    if (isCardinality && parameters.length !== 1)
+      throw new SmtParseError("function expects one non-negative integer parameter", at);
+    if (!isCardinality && parameters.length !== 1 + args.length)
+      throw new SmtParseError("function expects arity+1 rational parameters", at);
+    const decl = manager.mkPbDecl(
+      op,
+      parameters,
+      args.map(() => SORT_BOOL),
+    );
+    return manager.mkApp(decl, args, SORT_BOOL);
   };
 
-  // A term without nested applications to parse first: a symbol, a quantifier, a let or an
-  // annotation.
-  const parseLeaf = (sexpr: SExpr): number => {
-    if (typeof sexpr === "string") {
-      if (/^[0-9]+$/.test(sexpr)) return manager.mkNumeral(BigInt(sexpr));
-      const decimal = DECIMAL.exec(sexpr);
-      if (decimal !== null)
-        return manager.mkRealNumeral(
-          Rational.of(BigInt(decimal[1] + decimal[2]), 10n ** BigInt(decimal[2].length)),
-        );
-      if (sexpr === "true") return manager.trueExpr;
-      if (sexpr === "false") return manager.falseExpr;
-      const binding = lookup(sexpr);
-      if (binding?.kind === "var") return manager.mkVar(depth - 1 - binding.depth, binding.sort);
-      // Z3's var_shifter moves the free variables of a let binding up by the binders since. Its cache
-      // holds the terms it makes, but this parser holds no references, so it rebuilds the binding
-      // with replaceFreeVars.
-      if (binding !== undefined)
-        return depth === binding.depth
-          ? binding.expr
-          : replaceFreeVars(manager, binding.expr, (variable, index, shift) =>
-              manager.mkVar(index + shift + depth - binding.depth, manager.sorts[variable]),
-            );
-      return parseApp(sexpr, []);
-    }
-    const head = sexpr[0];
-    if (head === "forall" || head === "exists") return parseQuantifier(sexpr, head === "forall");
-    if (head === "let") return parseLet(sexpr);
-    const named = parseTerm(sexpr[1]);
-    // name_expr: cmd_context keeps a named expression as a macro.
-    const nameIndex = sexpr.indexOf(":named");
-    if (nameIndex !== -1) {
-      manager.incRef(named);
-      manager.mkMacro(expectSymbol(sexpr[nameIndex + 1]), named);
-    }
-    return named;
-  };
-
-  // Applications keep their own stack, like Z3's parser, so deeply nested terms do not exhaust the
-  // call stack.
-  const parseTerm = (sexpr: SExpr): number => {
-    const frames: ApplicationFrame[] = [];
-    const results: number[] = [];
-    const enter = (current: SExpr) => {
-      const head = Array.isArray(current) ? current[0] : undefined;
-      if (
-        !Array.isArray(current) ||
-        head === "forall" ||
-        head === "exists" ||
-        head === "let" ||
-        head === "!"
-      )
-        results.push(parseLeaf(current));
-      else frames.push({ name: expectSymbol(head), list: current, start: results.length, next: 1 });
+  const mkFpaTerm = (name: string, args: number[], indices: number[], at: SExpr) => {
+    const op = FPA_OP_NAMES.get(name) ?? -1;
+    const getSignature = (innerArgs: number[]) => {
+      const signature = getFpaSignature(
+        manager,
+        op,
+        indices,
+        innerArgs.map((arg) => manager.sorts[arg]),
+      );
+      if (typeof signature === "string") throw new SmtParseError(signature, at);
+      return signature;
     };
-    enter(sexpr);
+    const signature = getSignature(args);
+    if (signature.domain.length === args.length) return mkFpaAppOf(manager, signature, args);
+    const pairs: number[] = [];
+    for (let index = 0; index + 1 < args.length; index++) {
+      const pair = [args[index], args[index + 1]];
+      pairs.push(mkFpaAppOf(manager, getSignature(pair), pair));
+    }
+    return mkApp(OP_AND, pairs, at, SORT_BOOL);
+  };
+
+  const isSeqOpName = (name: string) =>
+    hasSeq && (SEQ_OP_NAMES.has(name) || CHAR_OP_NAMES.has(name));
+
+  const mkSeqTerm = (
+    name: string,
+    args: number[],
+    indices: number[],
+    at: SExpr,
+    range?: number,
+  ) => {
+    const signature = getSeqSignature(
+      manager,
+      SEQ_OP_NAMES.get(name) ?? CHAR_OP_NAMES.get(name) ?? -1,
+      indices,
+      args.map((arg) => manager.sorts[arg]),
+      range,
+    );
+    if (typeof signature === "string") throw new SmtParseError(signature, at);
+    return mkSeqAppOf(manager, signature, args);
+  };
+
+  const parseUpolynomial = (sexpr: SExpr): bigint[] => {
+    if (sexpr.kind === "numeral") return UPOLYNOMIALS.set([BigInt(sexpr.text)]);
+    if (sexpr.kind === "decimal") {
+      const parts = sexpr.text.split(".");
+      const value = Rational.of(BigInt(parts[0] + parts[1]), 10n ** BigInt(parts[1].length));
+      if (!value.isInt())
+        throw new SmtParseError(
+          "invalid univariate polynomial, integer coefficient expected",
+          sexpr,
+        );
+      return UPOLYNOMIALS.set([value.num]);
+    }
+    if (sexpr.kind === "symbol") {
+      if (sexpr.text !== "x")
+        throw new SmtParseError("invalid univariate polynomial, variable 'x' expected", sexpr);
+      return [0n, 1n];
+    }
+    if (sexpr.kind !== "list")
+      throw new SmtParseError("invalid univariate polynomial, unexpected ", sexpr);
+    const head = sexpr.items[0];
+    if (!isSymbol(head))
+      throw new SmtParseError("invalid univariate polynomial, symbol expected", sexpr);
+    const operands = sexpr.items.slice(1);
+    if (head.text === "^") {
+      if (operands.length !== 2)
+        throw new SmtParseError(
+          "invalid univariate polynomial, '^' operator expects two arguments",
+          sexpr,
+        );
+      const exponent = operands[1];
+      if (exponent.kind !== "numeral" || BigInt(exponent.text) > 0xffffffffn)
+        throw new SmtParseError(
+          "invalid univariate polynomial, exponent must be an unsigned integer",
+          exponent,
+        );
+      return UPOLYNOMIALS.pw(parseUpolynomial(operands[0]), Number(exponent.text));
+    }
+    const combine =
+      head.text === "+"
+        ? UPOLYNOMIALS.add
+        : head.text === "-"
+          ? UPOLYNOMIALS.sub
+          : head.text === "*"
+            ? UPOLYNOMIALS.mul
+            : undefined;
+    if (combine === undefined)
+      throw new SmtParseError(
+        "invalid univariate polynomial, '+', '-', '^' or '*' expected",
+        sexpr,
+      );
+    if (operands.length === 0)
+      throw new SmtParseError(
+        `invalid univariate polynomial, '${head.text}' operator expects at least one argument`,
+        sexpr,
+      );
+    const first = parseUpolynomial(operands[0]);
+    if (head.text === "-" && operands.length === 1) return UPOLYNOMIALS.neg(first);
+    return operands
+      .slice(1)
+      .reduce(
+        (result, operand) => combine.call(UPOLYNOMIALS, result, parseUpolynomial(operand)),
+        first,
+      );
+  };
+
+  const parseRootObj = (list: SmtList) => {
+    const polynomial = list.items[1] ?? list.end;
+    const index = list.items[2] ?? list.end;
+    if (index.kind !== "numeral")
+      throw new SmtParseError("invalid root-obj, (unsigned) integer expected", index);
+    if (BigInt(index.text) > 0xffffffffn)
+      throw new SmtParseError(
+        "invalid root-obj, index must fit in an unsigned machine integer",
+        index,
+      );
+    if (BigInt(index.text) === 0n)
+      throw new SmtParseError("invalid root-obj, index must be >= 1", index);
+    if (list.items.length > 3)
+      throw new SmtParseError("invalid root-obj, ')' expected", list.items[3]);
+    const coeffs = parseUpolynomial(polynomial);
+    const follower = list.follower ?? list.end;
+    if (coeffs.length === 0)
+      throw new SmtParseError(
+        "invalid root object, polynomial must not be the zero polynomial",
+        follower,
+      );
+    const roots = manager.am.isolateUnivariateRoots(coeffs);
+    const root = roots[Number(index.text) - 1];
+    if (root === undefined)
+      throw new SmtParseError(
+        "invalid root object, polynomial does have sufficient roots",
+        follower,
+      );
+    return manager.mkAlgebraicNumeral(root);
+  };
+
+  const isKnownOperator = (name: string) => BUILTIN_NAMES.has(name) || THEORY_OPERATOR.test(name);
+
+  // parse_indexed_identifier_core.
+  const getIndexedName = (list: SmtList) => {
+    const name = list.items[1];
+    if (!isSymbol(name))
+      throw new SmtParseError("invalid indexed identifier, symbol expected", name ?? list.end);
+    for (const index of list.items.slice(2)) {
+      if (index.kind === "string")
+        throw new SmtParseError(
+          "invalid indexed identifier, integer, identifier or '(' expected",
+          index,
+        );
+      // parse_func_decl_ref of an index that is a symbol.
+      if (
+        index.kind === "symbol" &&
+        name.text !== "is" &&
+        !isUsed(index.text) &&
+        !macros.has(index.text)
+      )
+        throw new SmtParseError(
+          `invalid function declaration reference, unknown function ${index.text}`,
+          index,
+        );
+    }
+    return name;
+  };
+
+  // parse_qualified_identifier_core on (as <identifier> <sort>), up to the sort.
+  const parseQualifierSort = (list: SmtList) => {
+    const target = list.items[1];
+    if (target === undefined || (target.kind !== "symbol" && target.kind !== "list"))
+      throw new SmtParseError(
+        `invalid (indexed) identifier, '(_' or symbol expected got ${getLastId(target) ?? "as"}`,
+        target ?? list.end,
+      );
+    if (target.kind === "list") {
+      if (!isSymbol(target.items[0], "_"))
+        throw new SmtParseError(
+          "invalid indexed identifier, '_' expected",
+          target.items[0] ?? target.end,
+        );
+      getIndexedName(target);
+    }
+    const sort = parseSort(list.items[2] ?? list.end, "Invalid qualified identifier");
+    const extra = list.items[3];
+    if (extra !== undefined)
+      throw new SmtParseError(
+        `invalid qualified identifier, ')' expected got ${getLastId(extra) ?? getLastIdBefore(list.items, 3) ?? "as"}`,
+        extra,
+      );
+    return sort;
+  };
+
+  // parse_qualified_name on (_ <symbol> <index>*). Z3 makes the term once it has read past the
+  // closing parenthesis, where at is.
+  const parseIndexedTerm = (list: SmtList, at: SExpr, range?: number) => {
+    const name = getIndexedName(list);
+    const indices = list.items.slice(2);
+    const local = locals.get(name.text);
+    if (local !== undefined) {
+      if (indices.length > 0)
+        throw new SmtParseError("invalid indexed identifier, symbol is a local declaration", at);
+      return getLocalTerm(local);
+    }
+    const value = /^bv([0-9]+)$/.exec(name.text);
+    if (value !== null) {
+      const width = indices[0];
+      const digits =
+        indices.length !== 1
+          ? "-1"
+          : width.kind === "bitvector"
+            ? `0${width.text.slice(1)}`
+            : width.kind === "numeral"
+              ? width.text
+              : "-1";
+      if (!isUnsigned(digits))
+        throw new SmtParseError("invalid bit-vector constant, index expected", at);
+      if (BigInt(digits) === 0n)
+        throw new SmtParseError("bit-vector size must be greater than zero", at);
+      return manager.mkBvNumeral(BigInt(value[1]), Number(BigInt(digits)));
+    }
+    const isNumbered = indices.every((index) => index.kind === "numeral");
+    if (isNumbered && isSeqOpName(name.text))
+      return mkSeqTerm(
+        name.text,
+        [],
+        indices.map((index) => (index.kind === "list" ? 0 : Number(index.text))),
+        at,
+      );
+    if (isNumbered && isFpaOpName(name.text)) {
+      const signature = getFpaSignature(
+        manager,
+        FPA_OP_NAMES.get(name.text) ?? -1,
+        indices.map((index) => (index.kind === "list" ? 0 : Number(index.text))),
+        [],
+      );
+      if (typeof signature === "string") throw new SmtParseError(signature, at);
+      return mkFpaAppOf(manager, signature, []);
+    }
+    if (isKnownOperator(name.text) || !indices.every(isSimpleIndex))
+      throw new SmtUnsupportedError("indexed identifiers");
+    return parseApp(name, [], at, [], range);
+  };
+
+  // parse_qualified_name.
+  const parseQualifiedName = (list: SmtList) => {
+    const at = list.follower ?? list.end;
+    if (isSymbol(list.items[0], "_")) return parseIndexedTerm(list, at);
+    const sort = parseQualifierSort(list);
+    const target = list.items[1];
+    const local = isSymbol(target) ? locals.get(target.text) : undefined;
+    if (isSymbol(target) && local === undefined)
+      return hasArrays && target.text === "const"
+        ? mkArrayTerm(OP_CONST_ARRAY, [], [sort], at)
+        : parseApp(target, [], at, [], sort);
+    const term =
+      local === undefined
+        ? parseIndexedTerm(
+            expectList(target, "invalid indexed identifier, '_' expected", list),
+            at,
+            sort,
+          )
+        : getLocalTerm(local);
+    if (manager.sorts[term] !== sort)
+      throw new SmtParseError(
+        `sort mismatch in qualified identifier, expected: ${manager.getSortName(sort)}, got: ${manager.getSortName(manager.sorts[term])}`,
+        at,
+      );
+    return term;
+  };
+
+  const mkArrayTerm = (op: number, inputArgs: number[], parameters: number[], at: SExpr) => {
+    const signature = getArraySignature(
+      manager,
+      op,
+      inputArgs.map((arg) => manager.sorts[arg]),
+      parameters,
+    );
+    if (typeof signature === "string") throw new SmtParseError(signature, at);
+    const args = inputArgs.map((arg, index) => coerce(arg, signature.domain[index]));
+    const decl = manager.mkArrayDecl(
+      op,
+      signature.name,
+      parameters,
+      signature.domain,
+      signature.range,
+    );
+    return manager.mkApp(decl, args, signature.range);
+  };
+
+  const findFuncDecl = (sexpr: SmtToken) => {
+    const decls = funcs.get(sexpr.text);
+    if (decls !== undefined && decls.length > 1)
+      throw new SmtParseError(
+        `ambiguous function declaration reference, provide full signature to disambiguate (<symbol> (<sort>*) <sort>) ${sexpr.text}`,
+        sexpr,
+      );
+    return decls?.[0];
+  };
+
+  const throwAmbiguousConstant = (name: string, at: SExpr) => {
+    throw new SmtParseError(
+      `ambiguous constant reference, more than one constant with the same sort, use a qualified expression (as <symbol> <sort>) to disambiguate ${name}`,
+      at,
+    );
+  };
+
+  // An exact signature wins, else the last one that matches once Int and Real coerce.
+  const mkDeclaredApp = (
+    name: string,
+    decls: readonly number[],
+    args: number[],
+    range: number | undefined,
+    at: SExpr,
+  ) => {
+    if (args.length === 0 && range === undefined) {
+      if (decls.length > 1) throwAmbiguousConstant(name, at);
+      return manager.funcDecls[decls[0]].domain.length > 0
+        ? mkAsArray(manager, decls[0])
+        : mkApp(decls[0], args, at);
+    }
+    const argSorts = args.map((arg) => manager.sorts[arg]);
+    const candidates = decls.filter(
+      (decl) =>
+        (range === undefined || manager.funcDecls[decl].range === range) &&
+        manager.funcDecls[decl].domain.length === args.length &&
+        manager.funcDecls[decl].domain.every(
+          (sort, index) =>
+            sort === argSorts[index] || (isArithSort(sort) && isArithSort(argSorts[index])),
+        ),
+    );
+    const found = candidates.find((decl) => hasSignature(decl, argSorts, -1)) ?? candidates.at(-1);
+    if (found !== undefined) return mkApp(found, args, at);
+    if (args.length === 0 || range !== undefined) return undefined;
+    if (decls.length > 1) throwAmbiguousConstant(name, at);
+    const array = manager.funcDecls[decls[0]];
+    if (array.domain.length > 0 || !manager.isArraySort(array.range)) return undefined;
+    const parameters = manager.getSortParameters(array.range);
+    if (
+      parameters.length !== args.length + 1 ||
+      argSorts.some((sort, index) => sort !== parameters[index])
+    )
+      return undefined;
+    return mkArrayTerm(OP_SELECT, [mkApp(decls[0], [], at), ...args], [], at);
+  };
+
+  const mkDatatypeInstanceApp = (name: string, args: number[], at: SExpr) => {
+    const argSorts = args.map((arg) => manager.sorts[arg]);
+    for (const def of manager.datatypeDefs.values())
+      for (const [index, constructor] of def.constructors.entries()) {
+        if (constructor.name !== name || constructor.accessors.length !== args.length) continue;
+        const binding: number[] = [];
+        const isMatch = constructor.accessors.every((accessor, position) => {
+          if (accessor.range === argSorts[position]) return true;
+          const parameter = manager.getTypeParameterIndex(accessor.range);
+          if (parameter === -1) return false;
+          if (binding[parameter] !== undefined && binding[parameter] !== argSorts[position])
+            return false;
+          binding[parameter] = argSorts[position];
+          return true;
+        });
+        if (
+          !isMatch ||
+          binding.length !== def.parameters.length ||
+          !def.parameters.every((_parameter, parameter) => binding[parameter] !== undefined)
+        )
+          continue;
+        return mkApp(instantiateConstructor(manager, def, index, binding), args, at);
+      }
+    if (args.length !== 1 || !manager.isDatatypeSort(argSorts[0])) return undefined;
+    for (const def of manager.datatypeDefs.values())
+      for (const [index, constructor] of def.constructors.entries()) {
+        const position = constructor.accessors.findIndex((accessor) => accessor.name === name);
+        if (position === -1) continue;
+        const sort = mkDatatypeSort(manager, def.name, [...manager.getSortParameters(argSorts[0])]);
+        return mkApp(instantiateAccessor(manager, sort, index, position), args, at);
+      }
+    return undefined;
+  };
+
+  const mkIsApp = (constructorName: SmtToken, args: number[], at: SExpr) => {
+    const declared = findFuncDecl(constructorName);
+    // datatype::decl::plugin::mk_is.
+    if (declared !== undefined) {
+      if (args.length !== 1) throw new SmtParseError(IS_PARAMETER_MESSAGE, at);
+      if (!manager.isDatatypeSort(manager.sorts[args[0]]))
+        throw new SmtParseError(
+          "invalid parameter to datatype function u().is_datatype(domain[0])",
+          at,
+        );
+      if (manager.sorts[args[0]] !== manager.funcDecls[declared].range)
+        throw new SmtParseError("invalid sort argument passed to recognizer", at);
+      if (manager.funcDecls[declared].op !== OP_DT_CONSTRUCTOR)
+        throw new SmtParseError("expecting constructor argument to recognizer", at);
+      return manager.mkApp(getConstructorIs(manager, declared), args, SORT_BOOL);
+    }
+    const argSort = args.length === 1 ? manager.sorts[args[0]] : -1;
+    if (argSort === -1 || !manager.isDatatypeSort(argSort))
+      throw new SmtParseError(IS_PARAMETER_MESSAGE, at);
+    const constructor = getDatatypeConstructors(manager, argSort).find(
+      (decl) => manager.funcDecls[decl].name === constructorName.text,
+    );
+    if (constructor === undefined)
+      throw new SmtParseError(
+        `invalid datatype recognizer, unknown constructor ${constructorName.text}`,
+        at,
+      );
+    return mkApp(getConstructorIs(manager, constructor), args, at);
+  };
+
+  const mkUpdateFieldApp = (accessorName: SmtToken, args: number[], at: SExpr) => {
+    const accessor = findFuncDecl(accessorName);
+    if (accessor === undefined)
+      throw new SmtParseError(
+        `invalid function declaration reference, unknown function ${accessorName.text}`,
+        accessorName,
+      );
+    // datatype::decl::plugin::mk_update_field.
+    if (args.length !== 2)
+      throw new SmtParseError("invalid number of arguments for datatype field update", at);
+    const funcDecl = manager.funcDecls[accessor];
+    if (funcDecl.op !== OP_DT_ACCESSOR)
+      throw new SmtParseError(
+        "datatype field update requires a datatype accessor as the second argument",
+        at,
+      );
+    if (funcDecl.domain[0] !== manager.sorts[args[0]])
+      throw new SmtParseError("first argument to field update should be a data-type", at);
+    if (funcDecl.range !== manager.sorts[args[1]])
+      throw new SmtParseError(
+        `second argument to field update should be ${manager.getSortName(funcDecl.range)} instead of ${manager.getSortName(manager.sorts[args[1]])}`,
+        at,
+      );
+    return manager.mkApp(mkUpdateField(manager, accessor), args, funcDecl.domain[0]);
+  };
+
+  const getUnknownConstantMessage = (name: string, args: number[], range: number | undefined) => {
+    const argSorts =
+      args.length === 0
+        ? ""
+        : ` (${args.map((arg) => manager.getSortName(manager.sorts[arg])).join(" ")}) `;
+    const declared = (funcs.get(name) ?? []).map((decl) => {
+      const domain = manager.funcDecls[decl].domain.map((sort) => manager.getSortName(sort));
+      return `\ndeclared: (declare-fun ${name} (${domain.join(" ")}) ${manager.getSortName(manager.funcDecls[decl].range)}) `;
+    });
+    return `unknown constant ${name}${argSorts}${range === undefined ? "" : `${manager.getSortName(range)} `}${declared.join("")}`;
+  };
+
+  const parseFuncDeclRef = (sexpr: SExpr): MappedDecl => {
+    if (sexpr.kind === "symbol") {
+      const decl = findFuncDecl(sexpr);
+      if (decl !== undefined) return { decl, ...manager.funcDecls[decl] };
+      const unary = UNARY_BOOL_REFS.get(sexpr.text);
+      if (unary !== undefined) return { decl: unary, domain: [SORT_BOOL], range: SORT_BOOL };
+      const binary = BINARY_BOOL_REFS.get(sexpr.text);
+      if (binary !== undefined)
+        return { decl: binary, domain: [SORT_BOOL, SORT_BOOL], range: SORT_BOOL };
+      throw new SmtUnsupportedError(`the declaration reference ${sexpr.text}`);
+    }
+    const name = sexpr.kind === "list" ? sexpr.items[0] : undefined;
+    const domainList = sexpr.kind === "list" ? sexpr.items[1] : undefined;
+    const rangeSort = sexpr.kind === "list" ? sexpr.items[2] : undefined;
+    if (!isSymbol(name) || domainList?.kind !== "list" || rangeSort === undefined)
+      throw new SmtUnsupportedError("the declaration reference");
+    const domain = domainList.items.map((item) => parseSort(item, "Invalid function name"));
+    const range = parseSort(rangeSort, "Invalid function name");
+    const declared = funcs.get(name.text)?.find((decl) => hasSignature(decl, domain, range));
+    if (declared !== undefined) return { decl: declared, domain, range };
+    const builtin = CHAINABLE_OPS.get(name.text) ?? BUILTIN_OPS.get(name.text);
+    if (builtin === undefined)
+      throw new SmtUnsupportedError(`the declaration reference ${name.text}`);
+    return { decl: builtin, domain, range: getBuiltinRange(builtin, domain) };
+  };
+
+  const mkMapTerm = (mapped: MappedDecl, args: number[], at: SExpr) => {
+    const signature = getMapSignature(
+      manager,
+      mapped,
+      args.map((arg) => manager.sorts[arg]),
+    );
+    if (typeof signature === "string") throw new SmtParseError(signature, at);
+    const decl = manager.mkArrayDecl(
+      OP_ARRAY_MAP,
+      signature.name,
+      [mapped.decl],
+      signature.domain,
+      signature.range,
+    );
+    return manager.mkApp(decl, args, signature.range);
+  };
+
+  const getArrayOp = (name: string) =>
+    hasArrays
+      ? (ARRAY_OPS.get(name) ?? (hasArrayExtensions ? ARRAY_EXTENSION_OPS.get(name) : undefined))
+      : undefined;
+
+  const parseApp = (
+    head: SmtToken,
+    args: number[],
+    at: SExpr,
+    indices: number[] = [],
+    range?: number,
+  ) => {
+    const name = head.text;
+    // A bound variable applied to arguments selects from the array it stands for, one at a time.
+    const local = locals.get(name);
+    if (args.length > 0 && local !== undefined)
+      return args.reduce(
+        (array, arg) => mkArrayTerm(OP_SELECT, [array, arg], [], at),
+        getLocalTerm(local),
+      );
+    if (indices.length > 0)
+      return isFpaOpName(name)
+        ? mkFpaTerm(name, args, indices, at)
+        : isSeqOpName(name)
+          ? mkSeqTerm(name, args, indices, at)
+          : mkBvApp(name, args, indices, at);
+    const macro = macros.get(name);
+    // macros_find: a macro takes its own sorts, and Int for Real or Real for Int. Any other
+    // application leaves the name to a declaration.
+    if (
+      macro !== undefined &&
+      macro.domain.length === args.length &&
+      args.every(
+        (arg, index) =>
+          manager.sorts[arg] === macro.domain[index] ||
+          (isArithSort(manager.sorts[arg]) && isArithSort(macro.domain[index])),
+      )
+    )
+      return expandMacro(
+        macro,
+        args.map((arg, index) => coerce(arg, macro.domain[index])),
+      );
+    const decls = funcs.get(name);
+    const declared = decls === undefined ? undefined : mkDeclaredApp(name, decls, args, range, at);
+    if (declared !== undefined) return declared;
+    // cmd_context::mk_app: a constant that starts with #f is a finite-field literal.
+    if (args.length === 0 && name.startsWith("#f")) {
+      if (!FF_LITERAL.test(name))
+        throw new SmtParseError("invalid finite-field literal, expected #f<integer>m<prime>", at);
+      if (!restricted.hasFf) throw new SmtParseError("logic does not support finite fields", at);
+      throw new SmtUnsupportedError("finite-field literals");
+    }
+    if (isSeqOpName(name)) return mkSeqTerm(name, args, indices, at, range);
+    if (range !== undefined)
+      throw new SmtParseError(getUnknownConstantMessage(name, args, range), at);
+    if (isBvOpName(name)) return mkBvApp(name, args, indices, at);
+    if (isFpaOpName(name)) return mkFpaTerm(name, args, indices, at);
+    const arrayOp = getArrayOp(name);
+    if (arrayOp !== undefined) return mkArrayTerm(arrayOp, args, [], at);
+    const builtin = (logic === undefined ? LOGIC_FREE_ALIASES.get(name) : undefined) ?? name;
+    const isTranscendental = TRANSCENDENTALS.has(builtin) && hasTranscendentals(logic);
+    if (isTranscendental && args.length === 0 && builtin === "pi") return manager.piExpr;
+    if (isTranscendental && args.length === 0 && builtin === "euler") return manager.eulerExpr;
+    const transcendentalOp = isTranscendental ? TRANSCENDENTAL_OPS.get(builtin) : undefined;
+    if (isTranscendental && transcendentalOp === undefined)
+      throw new SmtUnsupportedError(`the operator ${name}`);
+    const named =
+      builtin === "~"
+        ? OP_UMINUS
+        : (CHAINABLE_OPS.get(builtin) ?? BUILTIN_OPS.get(builtin) ?? transcendentalOp);
+    if (
+      args.length === 0 &&
+      named !== undefined &&
+      manager.funcDecls[named].family === FAMILY_ARITH
+    )
+      throw new SmtParseError("no arguments supplied to arithmetical operator", head);
+    // arith_decl_plugin::fix_kind.
+    const op = named === OP_SUB && args.length === 1 ? OP_UMINUS : named;
+    const domainSort = op === undefined ? -1 : getDomainSort(op, args, at);
+    if (op !== undefined && domainSort !== -1) return mkApp(op, args, at, domainSort);
+    if (op === undefined && (THEORY_OPERATOR.test(name) || THEORY_OPERATORS.has(name)))
+      throw new SmtUnsupportedError(`the operator ${name}`);
+    const instance = mkDatatypeInstanceApp(name, args, at);
+    if (instance !== undefined) return instance;
+    throw new SmtParseError(getUnknownConstantMessage(name, args, undefined), at);
+  };
+
+  const parseLeaf = (sexpr: SmtToken): number => {
+    if (sexpr.kind === "numeral")
+      return restricted.isNumeralAsReal
+        ? manager.mkRealNumeral(Rational.of(BigInt(sexpr.text), 1n))
+        : manager.mkNumeral(BigInt(sexpr.text));
+    if (sexpr.kind === "decimal") {
+      const parts = sexpr.text.split(".");
+      return manager.mkRealNumeral(
+        Rational.of(BigInt(parts[0] + parts[1]), 10n ** BigInt(parts[1].length)),
+      );
+    }
+    if (sexpr.kind === "bitvector") {
+      const isBinary = sexpr.text[1] === "b";
+      const digits = sexpr.text.slice(2);
+      return manager.mkBvNumeral(
+        BigInt(`0${isBinary ? "b" : "x"}${digits}`),
+        digits.length * (isBinary ? 1 : 4),
+      );
+    }
+    if (sexpr.kind === "string") return manager.mkString(parseZstring(sexpr.text, manager.maxChar));
+    if (sexpr.kind === "symbol") {
+      const local = locals.get(sexpr.text);
+      if (local !== undefined) return getLocalTerm(local);
+      if (sexpr.text === "true") return manager.trueExpr;
+      if (sexpr.text === "false") return manager.falseExpr;
+      return parseApp(sexpr, [], sexpr);
+    }
+    throw new SmtParseError(
+      sexpr.kind === "keyword"
+        ? "invalid expression, unexpected keyword"
+        : "invalid expression, unexpected ')'",
+      sexpr,
+    );
+  };
+
+  // name_expr and cmd_context::insert of a named term. Z3 reports an error at the token after the
+  // name.
+  const nameExpr = (expr: number, name: string, at: SExpr) => {
+    if (manager.freeVarBounds[expr] > 0)
+      throw new SmtParseError("invalid named expression, expression contains free variables", at);
+    if (macros.get(name)?.domain.length === 0)
+      throw new SmtParseError("named expression already defined", at);
+    if ((funcs.get(name) ?? []).some((decl) => hasSignature(decl, [], manager.sorts[expr])))
+      throw new SmtParseError(
+        `invalid named expression, declaration already defined with this name ${name}`,
+        at,
+      );
+    manager.incRef(expr);
+    lastNamed.name = name;
+    lastNamed.expr = expr;
+    manager.mkMacro(name, expr);
+    declare(macros, name, { domain: [], range: manager.sorts[expr], body: expr });
+  };
+
+  // push_app_frame's parse_qualified_identifier_core, on a head that is (_ <symbol> <index>*) or
+  // (as <identifier> <sort>).
+  const parseQualifiedHead = (list: SmtList, head: SmtList): QualifiedHead => {
+    if (isSymbol(head.items[0], "as")) {
+      const range = parseQualifierSort(head);
+      const target = head.items[1];
+      if (!isSymbol(target)) throw new SmtUnsupportedError("indexed and qualified identifiers");
+      return {
+        head: target,
+        indices: [],
+        build:
+          hasArrays && target.text === "const"
+            ? (args) => mkArrayTerm(OP_CONST_ARRAY, args, [range], list.end)
+            : (args) => parseApp(target, args, list.end, [], range),
+      };
+    }
+    const name = getIndexedName(head);
+    const indices = head.items.slice(2);
+    const indexed = indices[0];
+    if (hasArrays && hasArrayExtensions && name.text === "map" && indices.length === 1) {
+      const mapped = parseFuncDeclRef(indexed);
+      return { head: name, indices: [], build: (args) => mkMapTerm(mapped, args, list.end) };
+    }
+    if ((name.text === "is" || name.text === "update-field") && indices.length === 1) {
+      if (!isSymbol(indexed)) throw new SmtUnsupportedError("indexed and qualified identifiers");
+      return {
+        head: name,
+        indices: [],
+        build: (args) =>
+          name.text === "is"
+            ? mkIsApp(indexed, args, list.end)
+            : mkUpdateFieldApp(indexed, args, list.end),
+      };
+    }
+    const isNumbered = indices.every((index) => index.kind === "numeral");
+    if (isNumbered && isPbOpName(name.text)) {
+      const parameters = indices.map((index) =>
+        Rational.of(BigInt(index.kind === "list" ? 0 : index.text)),
+      );
+      return {
+        head: name,
+        indices: [],
+        build: (args) => mkPbTerm(name.text, args, parameters, list.end),
+      };
+    }
+    if (isNumbered && (isBvOpName(name.text) || isFpaOpName(name.text) || isSeqOpName(name.text)))
+      return {
+        head: name,
+        indices: indices.map((index) => (index.kind === "list" ? 0 : Number(index.text))),
+      };
+    // cmd_context::mk_app finds a name that no theory knows among the declarations, whatever its
+    // indices are.
+    if (isKnownOperator(name.text) || !indices.every(isSimpleIndex))
+      throw new SmtUnsupportedError("indexed and qualified identifiers");
+    return { head: name, indices: [] };
+  };
+
+  // parse_expr. Z3 leaves the term on its stack until the command ends. A tail term is one whose
+  // value is the value of the whole: it stays off the stack, in parsed, so that the caller of
+  // parseTerm can have a term that nothing else holds without a reference of the parser's.
+  const runTerm = (sexpr: SExpr, isRootTail: boolean) => {
+    const root = sexpr.kind === "list" ? sexpr.root : undefined;
+    if (root === undefined || root === parsed.root) protect(floating);
+    else {
+      releasePending();
+      shrink(floating, 0);
+      parsed.root = root;
+    }
+    protect(unrooted);
+    const frames: TermFrame[] = [];
+    // The value of a frame replaces what the frame left on the stack. Z3 holds it in an expr_ref
+    // meanwhile.
+    const deliver = (expr: number, isTail: boolean, start: number) => {
+      const isOwned = !isTail || manager.getRefCount(expr) > 0;
+      if (isOwned) manager.incRef(expr);
+      shrinkRefs(exprStack, start);
+      if (!isTail) {
+        exprStack.push(expr);
+        return;
+      }
+      parsed.expr = expr;
+      parsed.isOwned = isOwned;
+    };
+    // push_pattern_frame.
+    const enterPattern = (value: SExpr, frame: AttributeFrame) => {
+      if (value.kind !== "list") {
+        if (!options.isIgnoringBadPatterns)
+          throw new SmtParseError("invalid pattern, '(' expected", value);
+        // Z3 skips a bad pattern as an s-expression, which cannot start with ')'.
+        if (value.kind === ")")
+          throw new SmtParseError("invalid s-expression, unexpected ')'", value);
+        frame.next++;
+        exprStack.push(-1);
+        return;
+      }
+      frame.next++;
+      const first = value.items[0];
+      if (first === undefined) {
+        exprStack.push(-1);
+        return;
+      }
+      if (first.kind === "list") {
+        frames.push({ kind: "pattern", list: value, start: exprStack.length, next: 0 });
+        return;
+      }
+      const decl = first.text === "true" || first.text === "false" ? -1 : getFirstFunc(first.text);
+      if (decl === -1 || (decl !== undefined && manager.funcDecls[decl].domain.length === 0)) {
+        if (!options.isIgnoringBadPatterns)
+          throw new SmtParseError("invalid constant pattern", first);
+        exprStack.push(-1);
+        return;
+      }
+      if (first.kind !== "symbol")
+        throw new SmtParseError("invalid pattern, '(' or identifier expected", first);
+      frames.push({
+        kind: "application",
+        list: value,
+        head: first,
+        indices: [],
+        isTail: false,
+        start: exprStack.length,
+        next: 1,
+      });
+    };
+    const enter = (current: SExpr, isTail: boolean) => {
+      if (current.kind !== "list") {
+        deliver(parseLeaf(current), isTail, exprStack.length);
+        return;
+      }
+      const head = current.items[0];
+      if (head === undefined || (head.kind !== "symbol" && head.kind !== "list"))
+        throw new SmtParseError("invalid expression, '(' or symbol expected", head ?? current.end);
+      if (head.kind === "list") {
+        // push_app_frame: Z3 reads a head that is neither indexed nor qualified as a term.
+        if (isSymbol(head.items[0], "lambda"))
+          throw new SmtUnsupportedError("indexed and qualified identifiers");
+        frames.push(
+          isSymbol(head.items[0], "_") || isSymbol(head.items[0], "as")
+            ? {
+                kind: "application",
+                list: current,
+                ...parseQualifiedHead(current, head),
+                isTail,
+                start: exprStack.length,
+                next: 1,
+              }
+            : { kind: "selection", list: current, isTail, start: exprStack.length, next: 0 },
+        );
+        return;
+      }
+      if (head.text === "_" || head.text === "as") {
+        deliver(parseQualifiedName(current), isTail, exprStack.length);
+        return;
+      }
+      if (head.text === "root-obj") {
+        deliver(parseRootObj(current), isTail, exprStack.length);
+        return;
+      }
+      if (head.text === "match") throw new SmtUnsupportedError("the expression match");
+      if (head.text === "let") {
+        const bindings = current.items[1];
+        if (bindings?.kind !== "list")
+          throw new SmtParseError(
+            `invalid let declaration, '(' expected got ${getLastId(bindings) ?? "let"}`,
+            bindings ?? current.end,
+          );
+        frames.push({
+          kind: "let",
+          list: current,
+          bindings,
+          names: [],
+          isInDecls: true,
+          isTail,
+          start: exprStack.length,
+          next: 0,
+        });
+        return;
+      }
+      if (head.text === "!") {
+        const parent = frames[frames.length - 1];
+        frames.push({
+          kind: "attribute",
+          list: current,
+          quantifier: parent?.kind === "quantifier" ? parent : undefined,
+          lastKeyword: "",
+          isTail,
+          start: exprStack.length,
+          next: 1,
+        });
+        return;
+      }
+      const quantifierKind = QUANTIFIER_KINDS.get(head.text);
+      if (quantifierKind === undefined) {
+        frames.push({
+          kind: "application",
+          list: current,
+          head,
+          indices: [],
+          isTail,
+          start: exprStack.length,
+          next: 1,
+        });
+        return;
+      }
+      // push_quant_frame.
+      const start = exprStack.length;
+      const bound = bindSortedVars(current.items[1], current.end, head.text);
+      if (bound.varSorts.length === 0)
+        throw new SmtParseError(
+          "invalid quantifier, list of sorted variables is empty",
+          current.items[2] ?? current.end,
+        );
+      frames.push({
+        kind: "quantifier",
+        list: current,
+        quantifierKind,
+        names: bound.names,
+        varSorts: bound.varSorts,
+        weight: 1,
+        qid: "",
+        skid: undefined,
+        isTail,
+        start,
+        patternStart: patternStack.length,
+        noPatternStart: noPatternStack.length,
+        next: 2,
+      });
+    };
+    enter(sexpr, isRootTail);
     while (frames.length > 0) {
       const frame = frames[frames.length - 1];
-      if (frame.next < frame.list.length) {
-        enter(frame.list[frame.next++]);
+      if (frame.kind === "let") {
+        if (frame.isInDecls) {
+          const declaration = frame.bindings.items[frame.next];
+          if (declaration !== undefined) {
+            // push_let_decl_frame.
+            if (declaration.kind !== "list")
+              throw new SmtParseError(
+                `invalid let declaration, '(' expected got ${getLastId(declaration) ?? getLastIdBefore(frame.bindings.items, frame.next) ?? "let"}`,
+                declaration,
+              );
+            const name = declaration.items[0];
+            if (!isSymbol(name)) throw new SmtParseError(LET_MESSAGE, name ?? declaration.end);
+            frame.names.push(name.text);
+            frame.next++;
+            frames.push({ kind: "let-decl", list: declaration, next: 1 });
+            continue;
+          }
+          // pop_let_frame at the end of the declarations.
+          if (frame.names.length !== exprStack.length - frame.start)
+            throw new SmtParseError("malformed let expression", frame.bindings.end);
+          beginScope();
+          for (const [index, name] of frame.names.entries())
+            insertLocal(name, exprStack[frame.start + index]);
+          frame.isInDecls = false;
+          frame.next = 2;
+          continue;
+        }
+        const body = frame.list.items[frame.next];
+        if (body !== undefined) {
+          frame.next++;
+          enter(body, frame.isTail && frame.next === frame.list.items.length);
+          continue;
+        }
+        frames.pop();
+        // Z3 takes the last expression on its stack, so a let without a body is its last binding.
+        if (frame.isTail && frame.list.items.length > 2) shrinkRefs(exprStack, frame.start);
+        else if (exprStack.length === frame.start)
+          throw new SmtParseError("invalid let expression", frame.list.end);
+        else deliver(exprStack[exprStack.length - 1], frame.isTail, frame.start);
+        endScope();
+        continue;
+      }
+      const items = frame.list.items;
+      if (frame.kind === "attribute") {
+        // consume_attributes.
+        if (exprStack.length === frame.start) {
+          if (frame.next >= items.length)
+            throw new SmtParseError("invalid expression", frame.list.end);
+          enter(items[frame.next++], false);
+          continue;
+        }
+        // process_last_symbol.
+        const last = exprStack[exprStack.length - 1];
+        if (frame.lastKeyword === ":pattern") {
+          const at = items[frame.next] ?? frame.list.end;
+          if (last === -1 && !options.isIgnoringBadPatterns)
+            throw new SmtParseError("invalid empty pattern", at);
+          if (last !== -1)
+            pushRef(
+              patternStack,
+              manager.kinds[last] === KIND_APP && manager.decls[last] === OP_PATTERN
+                ? last
+                : mkPattern([last], at),
+            );
+          shrinkRefs(exprStack, exprStack.length - 1);
+        } else if (frame.lastKeyword === ":no-pattern") {
+          pushRef(noPatternStack, last);
+          shrinkRefs(exprStack, exprStack.length - 1);
+        }
+        frame.lastKeyword = "";
+        if (frame.next >= items.length) {
+          frames.pop();
+          if (frame.isTail) deliver(exprStack[exprStack.length - 1], true, frame.start);
+          continue;
+        }
+        while (frame.next < items.length && frame.lastKeyword === "") {
+          const keyword = items[frame.next];
+          if (keyword.kind !== "keyword")
+            throw new SmtParseError("invalid attributed expression, keyword expected", keyword);
+          const value = items[frame.next + 1] ?? frame.list.end;
+          const annotated = exprStack[exprStack.length - 1];
+          const quantifier = frame.quantifier;
+          if (keyword.text === ":named") {
+            if (!isSymbol(value))
+              throw new SmtParseError("invalid attribute value, symbol expected", value);
+            nameExpr(annotated, value.text, items[frame.next + 2] ?? frame.list.end);
+            frame.next += 2;
+          } else if (keyword.text === ":lblpos" || keyword.text === ":lblneg") {
+            if (!isSymbol(value))
+              throw new SmtParseError("invalid attribute value, symbol expected", value);
+            if (manager.sorts[annotated] !== SORT_BOOL)
+              throw new SmtParseError(
+                "invalid labeled expression, expression must have Bool sort",
+                value,
+              );
+            deliver(
+              manager.mkLabel(keyword.text === ":lblpos", [value.text], annotated),
+              false,
+              exprStack.length - 1,
+            );
+            frame.next += 2;
+          } else if (!QUANTIFIER_ATTRIBUTES.has(keyword.text)) {
+            // Z3 warns of an unknown attribute and skips its value as an s-expression.
+            if (value.kind === ")")
+              throw new SmtParseError("invalid s-expression, unexpected ')'", value);
+            frame.next += 2;
+          } else if (quantifier === undefined)
+            throw new SmtParseError("invalid attribute, not in the scope of a quantifier", keyword);
+          else if (keyword.text === ":weight") {
+            // check_int, and curr_unsigned.
+            if (value.kind !== "numeral")
+              throw new SmtParseError("invalid weight attribute, integer expected", value);
+            if (!isUnsigned(value.text))
+              throw new SmtParseError(
+                "invalid indexed identifier, index is too big to fit in an unsigned machine integer",
+                value,
+              );
+            quantifier.weight = Number(value.text);
+            frame.next += 2;
+          } else if (keyword.text === ":skolemid" || keyword.text === ":qid") {
+            if (!isSymbol(value))
+              throw new SmtParseError("invalid attribute value, symbol expected", value);
+            if (keyword.text === ":qid") quantifier.qid = value.text;
+            else quantifier.skid = value.text;
+            frame.next += 2;
+          } else {
+            frame.lastKeyword = keyword.text;
+            frame.next++;
+            if (keyword.text === ":pattern") enterPattern(value, frame);
+            else if (value.kind === ")")
+              throw new SmtParseError("invalid expression, unexpected input", value);
+            else enter(items[frame.next++], false);
+          }
+        }
+        continue;
+      }
+      if (frame.next < items.length) {
+        enter(items[frame.next++], false);
         continue;
       }
       frames.pop();
-      results.push(parseApp(frame.name, results.splice(frame.start)));
+      if (frame.kind === "let-decl") continue;
+      if (frame.kind === "pattern") {
+        deliver(mkPattern(exprStack.slice(frame.start), frame.list.end), false, frame.start);
+        continue;
+      }
+      if (frame.kind === "quantifier") {
+        // pop_quant_frame.
+        deliver(mkParsedQuantifier(frame), frame.isTail, frame.start);
+        shrinkRefs(patternStack, frame.patternStart);
+        shrinkRefs(noPatternStack, frame.noPatternStart);
+        unbindSortedVars(frame.varSorts.length);
+        continue;
+      }
+      // pop_app_frame.
+      const args = exprStack.slice(frame.start);
+      if (args.length < (frame.kind === "selection" ? 2 : 1))
+        throw new SmtParseError("invalid function application, arguments missing", frame.list.end);
+      deliver(
+        frame.kind === "selection"
+          ? args
+              .slice(1)
+              .reduce(
+                (array, arg) => mkArrayTerm(OP_SELECT, [array, arg], [], frame.list.end),
+                args[0],
+              )
+          : (frame.build?.(args) ?? parseApp(frame.head, args, frame.list.end, frame.indices)),
+        frame.isTail,
+        frame.start,
+      );
     }
-    return results[0];
   };
 
-  let hasCheckSat = false;
-  for (const command of readSExprs(tokenize(text))) {
-    const list = expectList(command);
-    const name = expectSymbol(list[0]);
-    if (name === "declare-sort") {
-      if (list[2] !== undefined && list[2] !== "0")
-        throw new SmtUnsupportedError("parametric sorts are not supported");
-      sorts.set(expectSymbol(list[1]), manager.mkSort(expectSymbol(list[1])));
-    } else if (name === "declare-fun" || name === "declare-const") {
-      const domain = name === "declare-fun" ? expectList(list[2]).map(parseSort) : [];
-      const range = parseSort(name === "declare-fun" ? list[3] : list[2]);
-      // builtin_signature_collides and is_transcendental_shadow_decl each apply the builtin of that
-      // name to fresh variables, which they then release.
-      for (let round = 0; round < 2; round++) {
-        const vars = domain.map((sort, index) => manager.mkVar(index, sort));
-        for (const domainVar of vars) manager.incRef(domainVar);
-        for (const domainVar of vars) manager.decRef(domainVar);
+  const parseTerm = (sexpr: SExpr) => {
+    runTerm(sexpr, true);
+    const expr = parsed.expr;
+    parsed.expr = -1;
+    if (!parsed.isOwned)
+      (sexpr.kind === "list" && sexpr.root !== undefined ? floating : unrooted).push(expr);
+    else if (manager.getRefCount(expr) > 1) manager.decRef(expr);
+    else pending.push(expr);
+    return expr;
+  };
+
+  const parseDomain = (sexpr: SExpr | undefined, at: SExpr) => {
+    const context = "Parsing function declaration. Expecting sort list '('";
+    return expectList(sexpr, context, at).items.map((item) => parseSort(item, context));
+  };
+
+  const parseSortParameters = (sexpr: SExpr | undefined, message: string, at: SExpr) =>
+    expectList(sexpr, "invalid sort declaration, parameters missing", at).items.map(
+      (item) => expectSymbol(item, message, item).text,
+    );
+
+  const bindTypeParameters = (names: string[]) =>
+    new Map(names.map((name, index) => [name, manager.mkTypeParameter(index)]));
+
+  const parseAccessorSort = (
+    sexpr: SExpr,
+    bindings: ReadonlyMap<string, number>,
+    datatypeIndexes: ReadonlyMap<string, number>,
+    missing: string[],
+  ) => {
+    if (sexpr.kind === "list") return parseSort(sexpr, "", bindings);
+    if (sexpr.kind !== "symbol")
+      throw new SmtParseError("invalid sort, symbol, '_' or '(' expected", sexpr);
+    if (sortDecls.has(sexpr.text) || bindings.has(sexpr.text))
+      return parseSort(sexpr, "", bindings);
+    const index = datatypeIndexes.get(sexpr.text);
+    if (index !== undefined) return -1 - index;
+    missing.push(sexpr.text);
+    return SORT_BOOL;
+  };
+
+  const parseConstructors = (
+    items: SExpr[],
+    bindings: ReadonlyMap<string, number>,
+    datatypeIndexes: ReadonlyMap<string, number>,
+    missing: string[],
+    at: SExpr,
+  ): ConstructorDef[] => {
+    if (items.length === 0)
+      throw new SmtParseError(
+        "invalid datatype declaration, datatype does not have any constructors",
+        at,
+      );
+    return items.map((item) => {
+      if (isSymbol(item)) return { name: item.text, recognizer: `is-${item.text}`, accessors: [] };
+      const constructor = expectList(
+        item,
+        "invalid datatype declaration, '(' or ')' expected",
+        item,
+      );
+      const name = expectSymbol(
+        constructor.items[0],
+        "invalid constructor declaration, symbol (constructor name) expected",
+        constructor,
+      ).text;
+      const accessors = constructor.items.slice(1).map((accessorItem) => {
+        const accessor = expectList(
+          accessorItem,
+          "invalid datatype declaration, '(' or ')' expected",
+          accessorItem,
+        );
+        const accessorName = expectSymbol(
+          accessor.items[0],
+          "invalid accessor declaration, symbol (accessor name) expected",
+          accessor,
+        ).text;
+        const range = parseAccessorSort(
+          accessor.items[1] ?? accessor.end,
+          bindings,
+          datatypeIndexes,
+          missing,
+        );
+        if (accessor.items.length > 2)
+          throw new SmtParseError("invalid accessor declaration, ')' expected", accessor.items[2]);
+        return { name: accessorName, range };
+      });
+      return { name, recognizer: `is-${name}`, accessors };
+    });
+  };
+
+  const parseDatatypeBody = (
+    sexpr: SExpr | undefined,
+    datatypeIndexes: ReadonlyMap<string, number>,
+    missing: string[],
+    at: SExpr,
+  ) => {
+    const body = expectList(sexpr, "invalid datatype declaration, '(' expected", at);
+    if (!isSymbol(body.items[0], "par"))
+      return {
+        parameters: [],
+        constructors: parseConstructors(body.items, NO_BINDINGS, datatypeIndexes, missing, body),
+      };
+    const parameters = parseSortParameters(
+      body.items[1],
+      "invalid sort parameter, symbol or ')' expected",
+      body,
+    );
+    const constructors = expectList(
+      body.items[2],
+      "invalid constructor declaration after par, '(' expected",
+      body,
+    );
+    return {
+      parameters: parameters.map((_name, index) => manager.mkTypeParameter(index)),
+      constructors: parseConstructors(
+        constructors.items,
+        bindTypeParameters(parameters),
+        datatypeIndexes,
+        missing,
+        constructors,
+      ),
+    };
+  };
+
+  const commitDatatypes = (defs: DatatypeDef[], missing: string[], at: SExpr, end: SExpr) => {
+    if (missing.length > 0)
+      throw new SmtParseError(`invalid datatype declaration, unknown sort '${missing[0]}'`, at);
+    const sorts = mkDatatypes(manager, defs);
+    if (typeof sorts === "string") throw new SmtParseError(sorts, end);
+    for (const def of defs) undo.push(() => removeDatatype(manager, def.name));
+    defs.forEach((def, index) => {
+      if (def.parameters.length === 0) insertDatatypeDecls(sorts[index], end);
+    });
+    for (const def of defs) {
+      const names = def.constructors.flatMap((constructor) =>
+        constructor.accessors.map((accessor) => accessor.name),
+      );
+      const duplicated = names.find((name, index) => names.indexOf(name) !== index);
+      if (duplicated !== undefined)
+        throw new SmtParseError(
+          `invalid datatype declaration, repeated accessor identifier '${duplicated}'`,
+          at,
+        );
+    }
+  };
+
+  const declareSortDecl = (name: string, decl: SortDecl, at: SExpr) => {
+    if (sortDecls.has(name)) throw new SmtParseError(`sort already defined ${name}`, at);
+    declare(sortDecls, name, decl);
+  };
+
+  const declareDatatypes = (list: SmtList) => {
+    const declaration = expectList(
+      list.items[1],
+      "invalid sort declaration, parameters missing",
+      list,
+    );
+    const isSmt26 = declaration.items[0]?.kind === "list";
+    const datatypeIndexes = new Map<string, number>();
+    const names: string[] = [];
+    const arities: number[] = [];
+    const parameterNames: string[] = [];
+    declaration.items.forEach((item, index) => {
+      if (!isSmt26) {
+        parameterNames.push(
+          expectSymbol(item, "invalid sort parameter, symbol or ')' expected", item).text,
+        );
+        return;
       }
-      funcs.set(expectSymbol(list[1]), manager.mkFuncDecl(expectSymbol(list[1]), domain, range));
+      const sortDeclaration = expectList(item, "invalid sort declaration, '(' expected", item);
+      const name = expectSymbol(
+        sortDeclaration.items[0],
+        "invalid sort name, identified expected",
+        sortDeclaration,
+      ).text;
+      const arity = sortDeclaration.items[1];
+      if (arity?.kind !== "numeral")
+        throw new SmtParseError(
+          "invalid sort declaration, arity expected",
+          arity ?? sortDeclaration.end,
+        );
+      if (sortDeclaration.items.length > 2)
+        throw new SmtParseError("invalid sort declaration, ')' expected", sortDeclaration.items[2]);
+      datatypeIndexes.set(name, index);
+      names.push(name);
+      arities.push(Number(arity.text));
+      declareSortDecl(
+        name,
+        { kind: "datatype", name, arity: Number(arity.text), siblings: [], instances: new Map() },
+        sortDeclaration,
+      );
+    });
+    const bodies = expectList(list.items[2], "invalid datatype declaration, '(' expected", list);
+    // A datatype of the older syntax may refer to any datatype of its declaration.
+    if (!isSmt26)
+      bodies.items.forEach((item, index) => {
+        const datatype = expectList(
+          item,
+          "invalid datatype declaration, '(' or ')' expected",
+          item,
+        );
+        const name = expectSymbol(
+          datatype.items[0],
+          "invalid datatype declaration, symbol (datatype name) expected",
+          datatype,
+        ).text;
+        datatypeIndexes.set(name, index);
+        names.push(name);
+      });
+    const missing: string[] = [];
+    const typeParameters = parameterNames.map((_name, index) => manager.mkTypeParameter(index));
+    const bindings = bindTypeParameters(parameterNames);
+    const defs = bodies.items.map((item, index) => {
+      if (isSmt26) {
+        if (index >= names.length)
+          throw new SmtParseError(
+            "invalid datatype declaration, too many data-type bodies defined",
+            item,
+          );
+        return mkDatatypeDef(
+          manager,
+          names[index],
+          Array.from({ length: arities[index] }, (_unused, parameter) =>
+            manager.mkTypeParameter(parameter),
+          ),
+          parseDatatypeBody(item, datatypeIndexes, missing, list).constructors,
+        );
+      }
+      const datatype = expectList(item, "invalid datatype declaration, '(' or ')' expected", item);
+      return mkDatatypeDef(
+        manager,
+        names[index],
+        typeParameters,
+        parseConstructors(datatype.items.slice(1), bindings, datatypeIndexes, missing, datatype),
+      );
+    });
+    if (defs.length < arities.length)
+      throw new SmtParseError(
+        "invalid datatype declaration, too few datatype definitions compared to declared sorts",
+        bodies.end,
+      );
+    if (list.items.length > 3)
+      throw new SmtParseError("invalid datatype declaration", list.items[3]);
+    if (defs.length === 0) return;
+    commitDatatypes(defs, missing, declaration, list.end);
+    if (isSmt26) return;
+    for (const def of defs)
+      declareSortDecl(
+        def.name,
+        {
+          kind: "datatype",
+          name: def.name,
+          arity: def.parameters.length,
+          siblings: defs.length > 1 ? names : [],
+          instances: new Map(),
+        },
+        list.end,
+      );
+  };
+
+  const declareDatatype = (list: SmtList) => {
+    const name = expectSymbol(list.items[1], "unexpected token used as datatype name", list);
+    const missing: string[] = [];
+    const bodyList = list.items[2];
+    const arity =
+      bodyList?.kind === "list" &&
+      isSymbol(bodyList.items[0], "par") &&
+      bodyList.items[1]?.kind === "list"
+        ? bodyList.items[1].items.length
+        : 0;
+    declareSortDecl(
+      name.text,
+      { kind: "datatype", name: name.text, arity, siblings: [], instances: new Map() },
+      name,
+    );
+    const body = parseDatatypeBody(bodyList, new Map([[name.text, 0]]), missing, list);
+    if (list.items.length > 3)
+      throw new SmtParseError("invalid end of datatype declaration, ')' expected", list.items[3]);
+    commitDatatypes(
+      [mkDatatypeDef(manager, name.text, body.parameters, body.constructors)],
+      missing,
+      name,
+      list.end,
+    );
+  };
+
+  // parse_rec_fun_decl: the variables are bound only while the range is parsed, and Z3 holds them
+  // until the command ends, as the stack does here.
+  const declareRecFun = (items: SExpr[], at: SExpr) => {
+    const symbol = expectSymbol(
+      items[0],
+      "invalid function/constant definition, symbol expected",
+      at,
+    );
+    const bound = bindSortedVars(items[1], at, symbol.text);
+    const range = parseSort(items[2] ?? at, "Invalid recursive function definition");
+    unbindSortedVars(bound.varSorts.length);
+    return manager.mkRecFuncDecl(symbol.text, bound.varSorts, range);
+  };
+
+  // parse_rec_fun_body: Z3 reports a body of another sort at the token after it.
+  const defineRecFun = (decl: number, variables: SExpr, body: SExpr, next: SExpr) => {
+    const start = exprStack.length;
+    const bound = bindSortedVars(variables, body, "");
+    runTerm(body, false);
+    const parsedBody = exprStack[exprStack.length - 1];
+    unbindSortedVars(bound.varSorts.length);
+    const range = manager.funcDecls[decl].range;
+    if (manager.sorts[parsedBody] !== range)
+      throw new SmtParseError(
+        `invalid function definition, sort mismatch. Expcected ${manager.getSortName(range)} but function body has sort ${manager.getSortName(manager.sorts[parsedBody])}`,
+        next,
+      );
+    setRecFunDefinition(manager, manager.recFunDefs.get(decl)!, false, parsedBody);
+    shrinkRefs(exprStack, start);
+  };
+
+  // parse_define and insert_macro: Z3 declares a macro as a recursive function with one case, which
+  // a reference without arguments takes as an array. The reference that the body with its variables
+  // reversed keeps stands for Z3's macro_decls, and those of the variables for the definition's.
+  const defineMacroFunc = (name: string, domain: number[], body: number) => {
+    const count = domain.length;
+    if (count > 1) {
+      const subst = new VarSubst(manager, true);
+      subst.apply(
+        body,
+        domain.map((sort, index) => manager.mkVar(index, sort)),
+      );
+      subst.release();
+    }
+    for (const [index, sort] of domain.entries()) manager.incRef(manager.mkVar(index, sort));
+    const reversedVars = domain.map((_, index) => manager.mkVar(index, domain[count - index - 1]));
+    for (const reversedVar of reversedVars) manager.incRef(reversedVar);
+    const decl = manager.mkRecFuncDecl(name, domain, manager.sorts[body]);
+    for (const reversedVar of reversedVars) manager.decRef(reversedVar);
+    setRecFunDefinition(manager, manager.recFunDefs.get(decl)!, true, body);
+    declare(funcs, name, [...(funcs.get(name) ?? []), decl]);
+  };
+
+  const declareCommand = (list: SmtList) => {
+    releasePending();
+    const name = list.items[0].kind === "list" ? "" : list.items[0].text;
+    if (name === "define-fun-rec") {
+      const decl = declareRecFun(list.items.slice(1), list.end);
+      insertFunc(decl, list.items[4] ?? list.end);
+      defineRecFun(decl, list.items[2], list.items[4] ?? list.end, list.items[5] ?? list.end);
+      shrinkRefs(exprStack, 0);
+      return;
+    }
+    if (name === "define-funs-rec") {
+      const message = "invalid recursive function definition, '(' expected";
+      const signatures = expectList(list.items[1], message, list.end).items.map((signature) => {
+        const declaration = expectList(signature, message, signature);
+        const items = declaration.items;
+        if (items.length > 3)
+          throw new SmtParseError("invalid recursive function definition, ')' expected", items[3]);
+        return { items, decl: declareRecFun(items, declaration.end) };
+      });
+      for (const signature of signatures) insertFunc(signature.decl, list.items[2] ?? list.end);
+      const bodies = expectList(list.items[2], message, list.end);
+      signatures.forEach((signature, index) => {
+        const body = bodies.items[index];
+        if (body === undefined)
+          throw new SmtParseError(
+            "the number of declarations does not match number of supplied definitions",
+            bodies.end,
+          );
+        defineRecFun(
+          signature.decl,
+          signature.items[1],
+          body,
+          bodies.items[index + 1] ?? bodies.end,
+        );
+      });
+      const extra = bodies.items[signatures.length];
+      if (extra !== undefined)
+        throw new SmtParseError("invalid recursive function definition, ')' expected", extra);
+      shrinkRefs(exprStack, 0);
+      return;
+    }
+    if (name === "declare-datatypes") {
+      declareDatatypes(list);
+      return;
+    }
+    if (name === "declare-datatype") {
+      declareDatatype(list);
+      return;
+    }
+    const symbol = expectSymbol(list.items[1], "invalid declaration, symbol expected", list);
+    if (name === "declare-sort") {
+      if (sortDecls.has(symbol.text))
+        throw new SmtParseError("invalid sort declaration, sort already declared/defined", symbol);
+      const arity = list.items[2];
+      if (arity !== undefined && arity.kind !== "numeral")
+        throw new SmtParseError(
+          "invalid sort declaration, arity (<numeral>) or ')' expected",
+          arity,
+        );
+      if (list.items.length > 3)
+        throw new SmtParseError("invalid sort declaration, ')' expected", list.items[3]);
+      declare(
+        sortDecls,
+        symbol.text,
+        arity === undefined || arity.text === "0"
+          ? { kind: "sort", sort: manager.mkSort(symbol.text) }
+          : { kind: "user", name: symbol.text, arity: Number(arity.text) },
+      );
+      return;
+    }
+    if (name === "define-sort") {
+      if (sortDecls.has(symbol.text))
+        throw new SmtParseError("invalid sort definition, sort already declared/defined", symbol);
+      const parameters = parseSortParameters(
+        list.items[2],
+        "invalid sort parameter, symbol or ')' expected",
+        list,
+      );
+      const body = list.items[3] ?? list.end;
+      checkPsort(body, bindTypeParameters(parameters));
+      declare(sortDecls, symbol.text, { kind: "definition", parameters, body });
+      return;
+    }
+    if (name === "define-fun" || name === "define-const") {
+      const isConst = name === "define-const";
+      const bound = isConst
+        ? { names: [], varSorts: [] }
+        : bindSortedVars(list.items[2], list.end, symbol.text);
+      const range = parseSort(
+        list.items[isConst ? 2 : 3] ?? list.end,
+        isConst ? "Invalid constant definition" : "Invalid function definition",
+      );
+      runTerm(list.items[isConst ? 3 : 4] ?? list.end, false);
+      const body = exprStack[exprStack.length - 1];
+      if (!isConst) unbindSortedVars(bound.varSorts.length);
+      if (manager.sorts[body] !== range)
+        throw new SmtParseError(
+          isConst
+            ? "invalid constant definition, sort mismatch"
+            : "invalid function/constant definition, sort mismatch",
+          list.end,
+        );
+      manager.incRef(body);
+      declare(macros, symbol.text, { domain: bound.varSorts, range, body });
+      defineMacroFunc(symbol.text, bound.varSorts, body);
+      shrinkRefs(exprStack, 0);
+      return;
+    }
+    const domain = name === "declare-fun" ? parseDomain(list.items[2], list) : [];
+    const range = parseSort(
+      list.items[name === "declare-fun" ? 3 : 2] ?? list.end,
+      name === "declare-fun" ? "Invalid function declaration" : "Invalid constant declaration",
+    );
+    // Z3's builtin_signature_collides and is_transcendental_shadow_decl each make and release fresh variables of the domain.
+    for (let round = 0; round < 2; round++) {
+      const vars = domain.map((sort, index) => manager.mkVar(index, sort));
+      for (const domainVar of vars) manager.incRef(domainVar);
+      for (const domainVar of vars) manager.decRef(domainVar);
+    }
+    const decl = manager.mkFuncDecl(symbol.text, domain, range);
+    checkDecl(decl, list.end);
+    if (macros.has(symbol.text))
+      throw new SmtUnsupportedError(`the overloaded symbol ${symbol.text}`);
+    const existing = funcs.get(symbol.text) ?? [];
+    if (existing.some((other) => hasSignature(other, domain, range)))
+      throw new SmtParseError(
+        `invalid declaration, ${domain.length === 0 ? "constant" : "function"} '${symbol.text}' (with the given signature) already declared`,
+        list.end,
+      );
+    declare(funcs, symbol.text, [...existing, decl]);
+  };
+
+  // The caller takes the reference of the stack.
+  const parseFormula = (sexpr: SExpr) => {
+    runTerm(sexpr, false);
+    const assertion = exprStack[exprStack.length - 1];
+    if (manager.sorts[assertion] !== SORT_BOOL)
+      throw new SmtParseError("invalid assert command, term is not Boolean", sexpr);
+    exprStack.pop();
+    return assertion;
+  };
+
+  // An assertion is named when the last name of its term is its own.
+  const parseAssertion = (sexpr: SExpr) => {
+    releasePending();
+    lastNamed.expr = -1;
+    const formula = parseFormula(sexpr);
+    return { formula, name: lastNamed.expr === formula ? lastNamed.name : undefined };
+  };
+
+  const push = () => {
+    releasePending();
+    scopeStarts.push(undo.length);
+  };
+
+  const pop = () => {
+    releasePending();
+    const start = scopeStarts.pop() ?? 0;
+    for (const restore of undo.splice(start).reverse()) restore();
+  };
+
+  // parser::reset, after an error: Z3 frees its stacks, and with them the terms that only the
+  // command that failed held.
+  const reset = () => {
+    protect(floating);
+    protect(unrooted);
+    releasePending();
+    shrinkRefs(exprStack, 0);
+    if (parsed.expr !== -1) {
+      if (!parsed.isOwned) manager.incRef(parsed.expr);
+      manager.decRef(parsed.expr);
+      parsed.expr = -1;
+    }
+    shrinkRefs(patternStack, 0);
+    shrinkRefs(noPatternStack, 0);
+    locals.clear();
+    shrink(shadowedNames, 0);
+    shrink(shadowedLocals, 0);
+    shrink(localScopes, 0);
+    binders.depth = 0;
+  };
+
+  // cmd_context::set_logic on a manager that is in use: restrict_builtin_sorts takes the sorts the
+  // logic lacks, and the declarations and the operators stay.
+  const restrictSorts = (name: string) => {
+    releasePending();
+    if (logicHasRealsOnly(name)) restricted.isNumeralAsReal = true;
+    if (!ARRAY_EXTENSION_LOGICS.has(name)) restricted.hasSetSort = false;
+    if (INT_FREE_LOGICS.has(name)) sortDecls.delete("Int");
+    restricted.hasFf = FF_LOGICS.has(name);
+  };
+
+  const isUsed = (name: string) => funcs.has(name) || BUILTIN_NAMES.has(name);
+
+  const isClashing = (decl: number) => {
+    const domain = manager.funcDecls[decl].domain;
+    const decls = funcs.get(String(manager.funcDecls[decl].name)) ?? [];
+    return (
+      decls.includes(decl) &&
+      decls.some((other) => other !== decl && hasSignature(other, domain, -1))
+    );
+  };
+
+  // The first declaration of each name, in the slot order of cmd_context's dictionary.
+  const getDeclaredFuncs = () => {
+    const table = new ObjMap<true>((decl) => getSymbolHash(manager.funcDecls[decl].name));
+    for (const decls of funcs.values()) table.set(decls[0], true);
+    return [...table.keys()];
+  };
+
+  // Z3 registers each named term and defined function as a recursive function definition.
+  const hasDefinitions = () =>
+    macros.size > 0 ||
+    [...funcs.values()].some((decls) => decls.some((decl) => manager.recFunDefs.has(decl)));
+
+  return {
+    declareCommand,
+    insertFunc,
+    getFuncs: (name: string) => funcs.get(name) ?? [],
+    hasDefinitions,
+    parseTerm,
+    parseSort: (sexpr: SExpr) => parseSort(sexpr, ""),
+    parseFormula,
+    parseAssertion,
+    getLogicError: logicChecker.checkExpr,
+    push,
+    pop,
+    reset,
+    restrictSorts,
+    isUsed,
+    isClashing,
+    getDeclaredFuncs,
+  };
+};
+
+export type SmtlibReader = ReturnType<typeof createSmtlibReader>;
+
+export const DECLARATIONS = new Set([
+  "declare-sort",
+  "declare-datatypes",
+  "declare-datatype",
+  "declare-fun",
+  "declare-const",
+  "define-fun",
+  "define-const",
+  "define-sort",
+  "define-fun-rec",
+  "define-funs-rec",
+]);
+
+// Z3 reports an error in a command, skips the command and goes on.
+export const parseSmtlib = (
+  text: string,
+  manager: AstManager,
+  assertExpr: (assertion: number) => void,
+  report: (error: SmtParseError) => void,
+): SmtProblem => {
+  const commands = createCommandReader(text);
+  const state = { reader: createSmtlibReader(manager), logic: "", rlimit: 0, isInUse: false };
+  const assertions: number[] = [];
+  const runCommand = (list: SmtList) => {
+    const name = expectSymbol(list.items[0], "invalid command, symbol expected", list).text;
+    const option = list.items[1];
+    const value = list.items[2];
+    if (
+      name === "set-option" &&
+      option?.kind === "keyword" &&
+      option.text === ":rlimit" &&
+      value?.kind === "numeral"
+    )
+      state.rlimit = Number(value.text);
+    if (name === "set-logic") {
+      if (option === undefined)
+        throw new SmtParseError("invalid command, argument(s) missing", list.end);
+      if (!isSymbol(option))
+        throw new SmtParseError("invalid command argument, symbol expected", option);
+      if (value !== undefined)
+        throw new SmtParseError("invalid command, too many arguments", value);
+      if (state.logic !== "") throw new SmtParseError("the logic has already been set", option);
+      if (assertions.length > 0)
+        throw new SmtParseError("logic must be set before initialization", option);
+      if (!isSupportedLogic(option.text)) return;
+      state.logic = option.text;
+      if (state.isInUse) state.reader.restrictSorts(option.text);
+      else state.reader = createSmtlibReader(manager, option.text);
+    } else if (DECLARATIONS.has(name)) {
+      state.isInUse = true;
+      if (name.startsWith("define-"))
+        throw new SmtUnsupportedError(`the command ${name} is not supported`);
+      state.reader.declareCommand(list);
     } else if (name === "assert") {
-      // cmd_context::assert_expr keeps the assertion, and passes it to the solver.
-      const assertion = expectBool(parseTerm(list[1]));
-      manager.incRef(assertion);
+      state.isInUse = true;
+      const assertion = state.reader.parseFormula(list.items[1] ?? list.end);
+      const logicError = state.reader.getLogicError(assertion);
+      if (logicError !== undefined) {
+        manager.decRef(assertion);
+        throw new SmtParseError(logicError, list.end);
+      }
       assertions.push(assertion);
       assertExpr(assertion);
-    } else if (name === "check-sat") {
-      hasCheckSat = true;
-      break;
-    } else if (name === "push" || name === "pop" || name === "define-fun" || name === "define-sort")
+    } else if (name === "push" || name === "pop")
       throw new SmtUnsupportedError(`the command ${name} is not supported`);
+  };
+  for (;;) {
+    try {
+      const list = commands.read();
+      if (list === undefined) return { assertions, hasCheckSat: false, rlimit: state.rlimit };
+      if (isSymbol(list.items[0], "check-sat"))
+        return { assertions, hasCheckSat: true, rlimit: state.rlimit };
+      runCommand(list);
+    } catch (error) {
+      if (!(error instanceof SmtParseError)) throw error;
+      report(error);
+      state.reader.reset();
+      commands.skip(report);
+    }
   }
-  return { assertions, hasCheckSat };
 };

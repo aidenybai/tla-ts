@@ -1,11 +1,6 @@
-// encode/n_flatten.ml: each application of a second-order construct becomes a fresh first-order
-// symbol, declared with its axioms before the fact that uses it.
-
-import { declare, formatName, getClosing } from "./format";
+import { formatName, getClosing } from "./format";
 import type { Axiom } from "./table";
 
-// A symbol that Flatten introduces, with the text tlapm's collect pass visits for its
-// higher-order arguments.
 export interface Flattened {
   symbol: string;
   kind: string;
@@ -13,20 +8,14 @@ export interface Flattened {
   getLines: (axioms: Set<string>) => string[];
 }
 
-// A fact that tlapm encodes, so its symbols bring their axioms, but leaves out of the text.
 interface OmittedFact {
   omitted: string;
 }
 
 export type Entry = string | Flattened | OmittedFact;
 
-// A bound variable's placeholder: its name and its depth, which the printer names in scope.
-export const getVariable = (name: string, depth: number) => `${name}#${depth}`;
-
 export const getDepth = (variable: string) => Number(variable.slice(variable.lastIndexOf("#") + 1));
 
-// The head that marks the Unprimable WITNESS wraps around its witness, which Prep never removes:
-// (?unprimable term). Flatten.compare_expr tells it apart, and the printed text drops it.
 export const UNPRIMABLE = "?unprimable";
 
 export const removeUnprimable = (text: string): string => {
@@ -40,30 +29,22 @@ export const removeUnprimable = (text: string): string => {
   );
 };
 
-// Flatten.compare_expr: an application matches an earlier one with the same higher-order
-// arguments, whatever the variables bound outside them. It can't compare quantifiers or
-// conditionals, so an argument with one matches nothing.
 const getFlatKey = (text: string, depth: number) =>
-  /\((forall|exists|ite) /.test(text)
+  /\((forall|exists|ite|let) /.test(text)
     ? undefined
     : text.replace(/[^\s()]+#(\d+)/g, (_match, found: string) =>
         Number(found) < depth ? "#" : `#${Number(found) - depth}`,
       );
 
-// Where an application occurs: its depth of bound variables, and whether it's in a fact that
-// Smtlib leaves out, which Flatten doesn't enter.
 interface Site {
   depth: number;
   isOmitted: boolean;
 }
 
-// The state of Flatten.main over one obligation: its blueprint count, which init_bp_count resets
-// for each obligation, and the symbols it introduced.
 export const createFlattener = () => {
   const flattened = new Map<string, Flattened>();
   const flatKeys = new Map<string, Flattened>();
-  const counter = { blueprints: 0 };
-  // The symbols that the fact being encoded introduces, declared before it.
+  let blueprintCount = 0;
   const introduced: Flattened[] = [];
 
   const flatten = (
@@ -71,11 +52,9 @@ export const createFlattener = () => {
     visit: string,
     site: Site,
     getAxioms: (symbol: string, axioms: Set<string>) => Axiom[],
-    arity: number,
+    sorts: string[],
     name = `TLA__${kind}`,
   ) => {
-    // Flatten.find_hoapp skips a second-order ASSUME, so the application stays and only
-    // N_axiomatize.collect, which runs before Flatten, visits it.
     if (site.isOmitted) {
       const symbol = formatName(`${name}_omitted_${flattened.size}`);
       flattened.set(symbol, { symbol, kind, visit: removeUnprimable(visit), getLines: () => [] });
@@ -83,17 +62,17 @@ export const createFlattener = () => {
     }
     const key = getFlatKey(`${name} ${visit}`, site.depth);
     // Flatten.new_bp_id counts every application, even one that reuses an earlier symbol.
-    counter.blueprints++;
+    blueprintCount++;
     const known = key === undefined ? undefined : flatKeys.get(key);
     if (known) return known.symbol;
-    const raw = `${name}_flatnd_${counter.blueprints}`;
+    const raw = `${name}_flatnd_${blueprintCount}`;
     const symbol = formatName(raw);
     const flat: Flattened = {
       symbol,
       kind,
       visit: removeUnprimable(visit),
       getLines: (axioms) => [
-        declare(symbol, arity),
+        `(declare-fun ${symbol} (${sorts.join(" ")}) Idv)`,
         ...getAxioms(symbol, axioms).map(
           (entry) =>
             `(assert (! ${removeUnprimable(entry.formula ?? "")} :named |${entry.label} ${raw}|))`,

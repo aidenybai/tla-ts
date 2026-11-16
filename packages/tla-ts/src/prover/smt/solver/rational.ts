@@ -1,5 +1,5 @@
-// Ported from Z3 (src/util/rational.h), MIT license, see z3-license.txt. Exact rationals for the
-// simplex tableau, normalized with a positive denominator.
+// Ported from Z3 (src/util/rational.h), MIT license, see z3-license.txt.
+import { SmtInvariantError } from "../../../errors";
 
 export const getGcd = (first: bigint, second: bigint) => {
   let left = first < 0n ? -first : first;
@@ -14,13 +14,25 @@ export const getGcd = (first: bigint, second: bigint) => {
 
 const isBigInt = (value: bigint) => value <= -2147483648n || value > 2147483647n;
 
+// mpz's get_double sums the 32-bit digits of a bignum from the least significant one, which rounds
+// differently from Number.
+const getDouble = (value: bigint) => {
+  if (!isBigInt(value)) return Number(value);
+  let result = 0;
+  let scale = 1;
+  for (let rest = value < 0n ? -value : value; rest > 0n; rest >>= 32n) {
+    result += scale * Number(rest & 0xffffffffn);
+    scale *= 4294967296;
+  }
+  if (!(result >= 0)) result = 2 ** 64;
+  return value < 0n ? -result : result;
+};
+
 export const getLcm = (first: bigint, second: bigint) => {
   const product = first * second;
   return (product < 0n ? -product : product) / getGcd(first, second);
 };
 
-// mpz_manager's div and mod: SMT-LIB's, whose remainder is never negative. By a positive divisor,
-// div is the floor of the quotient.
 export const getEuclideanDiv = (dividend: bigint, divisor: bigint) => {
   const quotient = dividend / divisor;
   if (dividend >= 0n || quotient * divisor === dividend) return quotient;
@@ -33,7 +45,6 @@ export const getEuclideanMod = (dividend: bigint, divisor: bigint) => {
   return divisor > 0n ? remainder + divisor : remainder - divisor;
 };
 
-// The n-th root of an integer when it is exact.
 const getIntRoot = (value: bigint, degree: number): bigint | undefined => {
   if (value < 0n) {
     if (degree % 2 === 0) return undefined;
@@ -51,6 +62,21 @@ const getIntRoot = (value: bigint, degree: number): bigint | undefined => {
     else high = mid;
   }
   return low ** exponent === value ? low : undefined;
+};
+
+// rational::mult_inverse: the inverse of the value modulo 2^bits, which only an odd value has.
+export const getMultInverse = (value: bigint, bits: number) => {
+  if (value === 1n) return 1n;
+  if (value % 2n === 0n) return undefined;
+  const modulus = 1n << BigInt(bits);
+  let [oldRemainder, remainder] = [((value % modulus) + modulus) % modulus, modulus];
+  let [oldCoefficient, coefficient] = [1n, 0n];
+  while (remainder !== 0n) {
+    const quotient = oldRemainder / remainder;
+    [oldRemainder, remainder] = [remainder, oldRemainder - quotient * remainder];
+    [oldCoefficient, coefficient] = [coefficient, oldCoefficient - quotient * coefficient];
+  }
+  return ((oldCoefficient % modulus) + modulus) % modulus;
 };
 
 export class Rational {
@@ -74,6 +100,17 @@ export class Rational {
     return new Rational(BigInt(value), 1n);
   }
 
+  static fromDouble(value: number) {
+    if (!Number.isFinite(value)) throw new SmtInvariantError(`${value} is not a rational number`);
+    let den = 1n;
+    let scaled = value;
+    while (!Number.isInteger(scaled)) {
+      scaled *= 2;
+      den *= 2n;
+    }
+    return Rational.of(BigInt(scaled), den);
+  }
+
   isZero() {
     return this.num === 0n;
   }
@@ -90,7 +127,6 @@ export class Rational {
     return this.num < 0n;
   }
 
-  // A sum with zero is the other operand, so a sum that starts at zero allocates nothing.
   add(other: Rational) {
     if (this.num === 0n) return other;
     if (other.num === 0n) return this;
@@ -121,7 +157,6 @@ export class Rational {
     return this.num < 0n ? this.neg() : this;
   }
 
-  // root: the n-th root when it is rational.
   root(degree: number) {
     const num = getIntRoot(this.num, degree);
     const den = num === undefined ? undefined : getIntRoot(this.den, degree);
@@ -132,7 +167,6 @@ export class Rational {
     return Rational.of(this.num ** BigInt(exponent), this.den ** BigInt(exponent));
   }
 
-  // is_big: mpz keeps a numerator or denominator outside a 32-bit int as a bignum.
   isBig() {
     return isBigInt(this.num) || isBigInt(this.den);
   }
@@ -157,6 +191,10 @@ export class Rational {
     if (this.den === 1n) return this;
     const quotient = this.num / this.den;
     return new Rational(this.num < 0n ? quotient : quotient + 1n, 1n);
+  }
+
+  toDouble() {
+    return getDouble(this.num) / getDouble(this.den);
   }
 
   toString() {

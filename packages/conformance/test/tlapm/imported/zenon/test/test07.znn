@@ -1,0 +1,49 @@
+(*---
+description: Zenon's own test zenon/test/test07.znn, which Zenon must prove.
+ref: zenon/test/test07.znn
+features:
+  - zenon-test
+outcome: unsat
+---*)
+;  Copyright 2006 INRIA
+;  $Id: test07.znn,v 1.4 2006-03-01 14:39:03 doligez Exp $
+
+# TPTP syn064+1
+
+$sig P ("nat" "nat") "Prop"
+
+$goal
+(E. ((X "nat") (E. ((Y "nat")
+  (=> (P X Y) (A. ((Z "nat") (A. ((W "nat") (P Z W))))))))))
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: |-
+    unsat
+    proof (rule zenon_nnpp)
+     assume z_Hc:"(~(\\E X:(\\E Y:(P(X, Y)=>(\\A Z:(\\A W:P(Z, W)))))))" (is "~(\\E x : ?z_hn(x))")
+     have z_Ho: "~?z_hn((CHOOSE x : TRUE))" (is "~(\\E x : ?z_hq(x))")
+     by (rule zenon_notex_0 [of "?z_hn" "(CHOOSE x : TRUE)", OF z_Hc])
+     have z_Hr: "~?z_hq((CHOOSE x : TRUE))" (is "~(?z_ht=>?z_hi)")
+     by (rule zenon_notex_0 [of "?z_hq" "(CHOOSE x : TRUE)", OF z_Ho])
+     have z_Hu: "(~?z_hi)" (is "~(\\A x : ?z_hv(x))")
+     by (rule zenon_notimply_1 [OF z_Hr])
+     have z_Hw: "(\\E Z:(~(\\A W:P(Z, W))))" (is "\\E x : ?z_hy(x)")
+     by (rule zenon_notallex_0 [of "?z_hv", OF z_Hu])
+     have z_Hz: "?z_hy((CHOOSE Z:(~(\\A W:P(Z, W)))))" (is "~(\\A x : ?z_hbb(x))")
+     by (rule zenon_ex_choose_0 [of "?z_hy", OF z_Hw])
+     have z_Hbc: "(\\E W:(~P((CHOOSE Z:(~(\\A W:P(Z, W)))), W)))" (is "\\E x : ?z_hbf(x)")
+     by (rule zenon_notallex_0 [of "?z_hbb", OF z_Hz])
+     have z_Hbg: "?z_hbf((CHOOSE W:(~P((CHOOSE Z:(~(\\A W:P(Z, W)))), W))))" (is "~?z_hbi")
+     by (rule zenon_ex_choose_0 [of "?z_hbf", OF z_Hbc])
+     have z_Hbj: "~?z_hn((CHOOSE Z:(~(\\A W:P(Z, W)))))" (is "~(\\E x : ?z_hbk(x))")
+     by (rule zenon_notex_0 [of "?z_hn" "(CHOOSE Z:(~(\\A W:P(Z, W))))", OF z_Hc])
+     have z_Hbl: "~?z_hbk((CHOOSE W:(~P((CHOOSE Z:(~(\\A W:P(Z, W)))), W))))"
+     by (rule zenon_notex_0 [of "?z_hbk" "(CHOOSE W:(~P((CHOOSE Z:(~(\\A W:P(Z, W)))), W)))", OF z_Hbj])
+     have z_Hbi: "?z_hbi"
+     by (rule zenon_notimply_0 [OF z_Hbl])
+     show FALSE
+     by (rule notE [OF z_Hbg z_Hbi])
+    qed
+---*)

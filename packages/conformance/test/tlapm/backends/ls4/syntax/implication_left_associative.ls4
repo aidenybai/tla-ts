@@ -1,0 +1,14 @@
+(*---
+description: >-
+  ptl_to_trp makes -> left associative, so a -> b -> c reads as (a -> b) -> c, which a false and c
+  false refute.
+ref: translate/foyacc.mly#connective
+outcome: unsat
+---*)
+~a & ~c & (a -> b -> c)
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: unsat
+---*)

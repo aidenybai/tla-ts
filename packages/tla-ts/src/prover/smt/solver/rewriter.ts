@@ -1,19 +1,42 @@
-// Ported from Z3 (src/ast/rewriter/th_rewriter.cpp, bool_rewriter.cpp, arith_rewriter.cpp), MIT
-// license, see z3-license.txt. Only the rewrites that tlapm's encoding exercises are ported.
+// Ported from Z3 (src/ast/rewriter/th_rewriter.cpp, bool_rewriter.cpp, arith_rewriter.cpp), MIT license, see z3-license.txt.
+import { mkArrayApp } from "./array-decl-plugin";
+import { ArrayRewriter } from "./array-rewriter";
+import { mkRecFunApp } from "./recfun-rewriter";
+import { mkDatatypeAppCore, mkDatatypeEqCore } from "./datatype-rewriter";
 import { ArithRewriter, KERNEL_ARITH_OPTIONS, TACTIC_ARITH_OPTIONS } from "./arith-rewriter";
+import { type BvRewriterOptions, BvRewriter, DEFAULT_BV_OPTIONS } from "./bv-rewriter";
+import { isAssociativeBvOp } from "./bv-decl-plugin";
 import type { ArithRewriterOptions } from "./poly-rewriter";
 import { isAstLess } from "./ast-lt";
 import { Der } from "./der";
+import { type Dependency, joinDependencies } from "./goal";
+import { mkFpaAppCore, mkFpaEqCore } from "./fpa-rewriter";
+import { mkPbAppCore } from "./pb-rewriter";
+import { SeqRewriter } from "./seq-rewriter";
 import {
-  AstManager,
+  type AstManager,
   FAMILY_ARITH,
+  FAMILY_ARRAY,
   FAMILY_BASIC,
+  FAMILY_BV,
+  FAMILY_CHAR,
+  FAMILY_DATATYPE,
+  FAMILY_FPA,
+  FAMILY_PB,
+  FAMILY_RECFUN,
+  FAMILY_SEQ,
   KIND_APP,
   KIND_QUANTIFIER,
   KIND_VAR,
   OP_ABS,
   OP_ADD,
   OP_AND,
+  OP_BADD,
+  OP_BAND,
+  OP_BCOMP,
+  OP_BMUL,
+  OP_BOR,
+  OP_BXOR,
   OP_DISTINCT,
   OP_DIV,
   OP_EQ,
@@ -22,53 +45,68 @@ import {
   OP_IDIV,
   OP_IMPLIES,
   OP_IS_INT,
+  OP_POWER,
+  OP_SIN,
+  OP_COS,
+  OP_TAN,
+  OP_ASIN,
+  OP_ACOS,
+  OP_ATAN,
+  OP_SINH,
+  OP_COSH,
+  OP_TANH,
   OP_ITE,
   OP_LE,
   OP_LT,
   OP_MOD,
+  OP_REM,
   OP_MUL,
   OP_NOT,
   OP_OR,
   OP_SUB,
   OP_TO_INT,
   OP_TO_REAL,
+  OP_UBV2INT,
   OP_UMINUS,
   OP_UNINTERPRETED,
   OP_XOR,
   SORT_BOOL,
   isArithSort,
+  OP_CONST_ARRAY,
+  QUANTIFIER_FORALL,
+  QUANTIFIER_LAMBDA,
 } from "./ast";
 import { getRewriteDepth, type Rewrite, RewriterTpl } from "./rewriter-tpl";
 import { sortByKey } from "./sort";
 import { UnusedVarsEliminator } from "./var-subst";
 
-interface RewriterOptions {
-  // Replaces (and a b) with (not (or (not a) (not b))), as Z3's asserted_formulas does after NNF.
+export interface RewriterOptions {
   readonly isEliminatingAnd: boolean;
   readonly arith: ArithRewriterOptions;
-  // rewrite_patterns: the patterns of a quantifier are rewritten like its body. The kernel's rewriters
-  // set it, and the tactics' leave it off.
   readonly isRewritingPatterns: boolean;
-  // pull_cheap_ite: a binary predicate or a function of an ite with values distributes over the ite.
   readonly isPullingCheapIte?: boolean;
+  readonly isPushingIteBv?: boolean;
+  readonly isKeepingDistinct?: boolean;
+  readonly blastDistinctThreshold?: number;
+  readonly bv?: BvRewriterOptions;
+  readonly isFlatAndOr?: boolean;
+  readonly localCtxLimit?: number;
+  readonly isCoalescingChars?: boolean;
+  readonly isSortingStore?: boolean;
 }
 
-// The parameters that asserted_formulas gives the kernel's rewriters.
 export const KERNEL_REWRITER_OPTIONS: RewriterOptions = {
   isEliminatingAnd: false,
   arith: KERNEL_ARITH_OPTIONS,
   isRewritingPatterns: true,
 };
 
-// th_rewriter's defaults, which the tactics and the model use.
 export const TACTIC_REWRITER_OPTIONS: RewriterOptions = {
   isEliminatingAnd: false,
   arith: TACTIC_ARITH_OPTIONS,
   isRewritingPatterns: false,
 };
 
-// A term that reduceTo is rewriting: the depth left for its arguments, its next argument, and where
-// its arguments' results start.
 interface ReduceFrame {
   expr: number;
   depth: number;
@@ -76,15 +114,18 @@ interface ReduceFrame {
   spos: number;
 }
 
-// rewriter_tpl with th_rewriter_cfg.
 export class Rewriter extends RewriterTpl {
   private arith: ArithRewriter;
+  private bv: BvRewriter;
+  private array: ArrayRewriter;
+  private seq: SeqRewriter;
   private substitution = new Map<number, number>();
+  private substitutionDependencies = new Map<number, Dependency | undefined>();
+  usedDependencies: Dependency | undefined;
   private unusedVarsEliminator: UnusedVarsEliminator;
   private der: Der;
-  // try_ite_value writes the result of reduce_app, which is the m_r of the rewriter that applies
-  // this one, as it goes: the first write releases what m_r held.
   releaseResult = () => this.setLastResult(-1);
+  private localCtxCost = 0;
 
   constructor(
     manager: AstManager,
@@ -93,20 +134,27 @@ export class Rewriter extends RewriterTpl {
   ) {
     super(manager);
     this.arith = new ArithRewriter(manager, options.arith);
+    const bvOptions = options.bv ?? { ...DEFAULT_BV_OPTIONS, isHiDiv0: manager.isHiDiv0 };
+    this.bv = new BvRewriter(manager, options.arith, bvOptions, {
+      mkEq: (left, right) => this.mkEq(left, right),
+      mkIte: (condition, thenExpr, elseExpr) => {
+        const result = this.mkIte(condition, thenExpr, elseExpr);
+        return typeof result === "number" ? result : result.expr;
+      },
+    });
+    this.array = new ArrayRewriter(manager, options.isSortingStore);
+    this.seq = new SeqRewriter(manager, options.isCoalescingChars ?? true, this);
     this.unusedVarsEliminator = new UnusedVarsEliminator(manager);
     this.der = new Der(manager);
   }
 
-  // ~imp: the members of th_rewriter_cfg go before the caches of rewriter_tpl.
   release() {
     this.unusedVarsEliminator.release();
     this.der.release();
+    this.seq.release();
     super.release();
   }
 
-  // Rewrites the top depth levels of a term, outside the main loop. Like rewriter_tpl, it keeps its
-  // frames on an explicit stack, so a deep term or a long chain of rewrites cannot overflow the call
-  // stack.
   private reduceTo(expr: number, depth: number): number {
     const manager = this.manager;
     const frames: ReduceFrame[] = [];
@@ -134,28 +182,46 @@ export class Rewriter extends RewriterTpl {
     return results[0];
   }
 
-  // updt_params with elim_and, which asserted_formulas turns on after NNF. The caller resets the
-  // rewriter.
   setEliminatingAnd(isEliminatingAnd: boolean) {
     this.options = { ...this.options, isEliminatingAnd };
   }
 
-  // th_rewriter::set_substitution: rewrites replace each key of the substitution with its value, and
-  // the rewriter is reset. The caller may extend the substitution between rewrites without a reset.
-  setSubstitution(substitution: Map<number, number>) {
+  setEq2Ineq(isEq2Ineq: boolean) {
+    this.arith.isEq2Ineq = isEq2Ineq;
+  }
+
+  // The caller may extend the substitution between rewrites without a reset.
+  setSubstitution(
+    substitution: Map<number, number>,
+    dependencies = new Map<number, Dependency | undefined>(),
+  ) {
     this.substitution = substitution;
+    this.substitutionDependencies = dependencies;
     this.reset();
   }
 
   getSubst(expr: number) {
-    return this.substitution.size === 0 ? undefined : this.substitution.get(expr);
+    const replacement = this.substitution.size === 0 ? undefined : this.substitution.get(expr);
+    if (replacement !== undefined)
+      this.usedDependencies = joinDependencies(
+        this.usedDependencies,
+        this.substitutionDependencies.get(expr),
+      );
+    return replacement;
   }
 
-  // flat_assoc: th_rewriter flattens and, or and + into an enclosing application of the same
-  // operator.
   isFlatAssoc(decl: number) {
     const op = this.manager.funcDecls[decl].op;
-    return op === OP_AND || op === OP_OR || op === OP_ADD;
+    return (
+      this.options.arith.isFlat !== false &&
+      (op === OP_AND ||
+        op === OP_OR ||
+        op === OP_ADD ||
+        op === OP_BADD ||
+        op === OP_BOR ||
+        op === OP_BAND ||
+        op === OP_BXOR)
+    );
   }
 
   isRewritingPatterns() {
@@ -164,7 +230,6 @@ export class Rewriter extends RewriterTpl {
 
   reduceApp(decl: number, args: number[], sort: number) {
     const manager = this.manager;
-    // An uninterpreted application only reduces by pull_ite, which needs two arguments.
     if (
       manager.funcDecls[decl].op === OP_UNINTERPRETED &&
       (args.length !== 2 || this.options.isPullingCheapIte !== true)
@@ -181,41 +246,54 @@ export class Rewriter extends RewriterTpl {
     return this.manager.withTemporaries(() => this.reduceQuantifierCore(expr, body, patterns));
   }
 
-  // th_rewriter_cfg::reduce_quantifier: a bound Boolean variable among the conjuncts of a universal
-  // body or the disjuncts of an existential one decides the quantifier. Otherwise it merges a
-  // directly nested quantifier of the same kind when neither has patterns, eliminates unused
-  // variables, and applies der to pattern-free quantifiers.
   private reduceQuantifierCore(expr: number, body: number, newPatterns: number[]) {
     const manager = this.manager;
     const data = manager.getQuantifier(expr);
+    const isLambda = data.kind === QUANTIFIER_LAMBDA;
     const isNegated = manager.isNot(body);
     const junction = isNegated ? manager.getArg(body, 0) : body;
     if (
-      manager.getOp(junction) === (data.isForall !== isNegated ? OP_AND : OP_OR) &&
+      !isLambda &&
+      manager.getOp(junction) ===
+        ((data.kind === QUANTIFIER_FORALL) !== isNegated ? OP_AND : OP_OR) &&
       manager.someArg(junction, (arg) => {
         const atom = manager.isNot(arg) ? manager.getArg(arg, 0) : arg;
         return manager.kinds[atom] === KIND_VAR && manager.values[atom] < data.sorts.length;
       })
     )
-      return data.isForall ? manager.falseExpr : manager.trueExpr;
+      return data.kind === QUANTIFIER_FORALL ? manager.falseExpr : manager.trueExpr;
     const nested =
       manager.kinds[body] === KIND_QUANTIFIER ? manager.getQuantifier(body) : undefined;
-    // remove_duplicates.
-    const patterns = newPatterns.filter((pattern, index) => newPatterns.indexOf(pattern) === index);
-    const merged =
+    const isMerging =
       nested !== undefined &&
-      nested.isForall === data.isForall &&
-      data.patterns.length === 0 &&
-      nested.patterns.length === 0
-        ? manager.mkQuantifier({
-            ...data,
-            sorts: [...data.sorts, ...nested.sorts],
-            names: [...data.names, ...nested.names],
-            body: nested.body,
-            patterns: [],
-            weight: Math.min(data.weight, nested.weight),
-          })
-        : manager.mkQuantifier({ ...data, body, patterns: this.substitutePatterns(patterns) });
+      nested.kind === data.kind &&
+      !isLambda &&
+      data.patterns.length + data.noPatterns.length === 0 &&
+      nested.patterns.length + nested.noPatterns.length === 0;
+    if (!isMerging && isLambda && manager.isGroundApp(body))
+      return mkArrayApp(manager, OP_CONST_ARRAY, [body], [manager.sorts[expr]]);
+    if (!isMerging && isLambda) {
+      const reduced = this.array.mkLambdaCore(expr, body);
+      if (reduced !== -1) return reduced;
+    }
+    const patterns = newPatterns.filter((pattern, index) => newPatterns.indexOf(pattern) === index);
+    const merged = isMerging
+      ? manager.mkQuantifier({
+          ...data,
+          sorts: [...data.sorts, ...nested.sorts],
+          names: [...data.names, ...nested.names],
+          body: nested.body,
+          patterns: [],
+          weight: Math.min(data.weight, nested.weight),
+        })
+      : manager.mkQuantifier({
+          ...data,
+          body,
+          patterns: this.substitutePatterns(patterns),
+          noPatterns: data.noPatterns.filter(
+            (noPattern, index) => data.noPatterns.indexOf(noPattern) === index,
+          ),
+        });
     const reduced = this.unusedVarsEliminator.apply(merged);
     manager.releaseLater(reduced);
     if (
@@ -232,8 +310,6 @@ export class Rewriter extends RewriterTpl {
     return rewritten;
   }
 
-  // th_rewriter_cfg::apply_subst: the substitution replaces terms in the patterns without rewriting
-  // them, like expr_safe_replace.
   private substitutePatterns(patterns: number[]) {
     const manager = this.manager;
     if (this.substitution.size === 0) return patterns;
@@ -255,7 +331,6 @@ export class Rewriter extends RewriterTpl {
     return patterns.map((pattern) => manager.mkPattern(manager.mapArgs(pattern, replace)));
   }
 
-  // th_rewriter::mk_app: one reduction, without rewriting what it returns.
   mkApp(decl: number, args: number[], sort: number) {
     const reduced = this.reduceAppTop(decl, args, sort);
     return reduced === -1
@@ -265,7 +340,34 @@ export class Rewriter extends RewriterTpl {
         : reduced.expr;
   }
 
-  // th_rewriter's mk_app, with the result of a Rewrite rewritten again.
+  // bool_rewriter::mk_app, for a Boolean operator: an equality is not passed to the theories.
+  mkBoolApp(decl: number, args: number[], sort: number) {
+    const op = this.manager.funcDecls[decl].op;
+    const reduced =
+      op === OP_EQ
+        ? this.mkEqCore(args[0], args[1])
+        : op === OP_DISTINCT
+          ? this.mkDistinct(args)
+          : op === OP_AND
+            ? this.mkAndCore(args)
+            : op === OP_OR
+              ? this.mkOr(args)
+              : op === OP_NOT
+                ? this.mkNot(args[0])
+                : op === OP_ITE
+                  ? this.mkIte(args[0], args[1], args[2])
+                  : op === OP_IMPLIES
+                    ? this.mkOr([this.mkNot(args[0]), args[1]])
+                    : op === OP_XOR
+                      ? this.mkEq(this.mkNot(args[0]), args[1])
+                      : undefined;
+    return reduced === undefined || reduced === -1
+      ? this.manager.mkApp(decl, args, sort)
+      : typeof reduced === "number"
+        ? reduced
+        : reduced.expr;
+  }
+
   mkAppCore(decl: number, args: number[], sort: number): number {
     const reduced = this.reduceAppTop(decl, args, sort);
     return reduced === -1
@@ -275,11 +377,25 @@ export class Rewriter extends RewriterTpl {
         : this.reduceTo(reduced.expr, getRewriteDepth(reduced));
   }
 
-  // th_rewriter_cfg::reduce_app: reduce_app_core, then pull_ite with pull_cheap_ite. -1 is BR_FAILED.
   private reduceAppTop(decl: number, args: number[], sort: number) {
     const manager = this.manager;
-    const reduced = this.reduceAppCore(decl, args);
-    if (typeof reduced !== "number" || this.options.isPullingCheapIte !== true) return reduced;
+    const core = this.reduceAppCore(decl, args);
+    if (typeof core !== "number") return core;
+    const reduced =
+      this.options.isPushingIteBv !== true
+        ? core
+        : core === -1
+          ? decl === OP_ITE
+            ? (this.pushIte(args[0], args[1], args[2]) ?? -1)
+            : -1
+          : this.isIte(core)
+            ? (this.pushIte(
+                manager.getArg(core, 0),
+                manager.getArg(core, 1),
+                manager.getArg(core, 2),
+              ) ?? core)
+            : core;
+    if (this.options.isPullingCheapIte !== true) return reduced;
     if (reduced === -1)
       return (args.length === 2 ? this.pullIte(decl, args[0], args[1], sort) : undefined) ?? -1;
     return manager.kinds[reduced] === KIND_APP && manager.getNumArgs(reduced) === 2
@@ -292,8 +408,60 @@ export class Rewriter extends RewriterTpl {
       : reduced;
   }
 
-  // pull_ite: (p (ite c a b) v) is (ite c (p a v) (p b v)) for a value v, and likewise for
-  // (p (ite c a b) (ite c a' b')) and a value first, for a p of two arguments.
+  private pushIte(condition: number, thenExpr: number, elseExpr: number) {
+    const manager = this.manager;
+    const isBvApp = (expr: number) =>
+      manager.kinds[expr] === KIND_APP && manager.getFamily(expr) === FAMILY_BV;
+    const isThenApp = isBvApp(thenExpr);
+    if (!isThenApp && !isBvApp(elseExpr)) return undefined;
+    const app = isThenApp ? thenExpr : elseExpr;
+    const unified = this.unify(app, isThenApp ? elseExpr : thenExpr);
+    if (unified === undefined) return undefined;
+    const [newThen, newElse] = isThenApp ? unified.args : [unified.args[1], unified.args[0]];
+    const ite = manager.mkApp(OP_ITE, [condition, newThen, newElse], manager.sorts[newThen]);
+    const decl = manager.decls[app];
+    return manager.mkApp(
+      decl,
+      unified.isCommonFirst ? [unified.common, ite] : [ite, unified.common],
+      manager.funcDecls[decl].range,
+    );
+  }
+
+  private unify(app: number, other: number) {
+    const manager = this.manager;
+    if (manager.getNumArgs(app) !== 2) return undefined;
+    const first = manager.getArg(app, 0);
+    const second = manager.getArg(app, 1);
+    const op = manager.getOp(app);
+    const getNeutral = () =>
+      op === OP_BADD || op === OP_BMUL
+        ? manager.mkBvNumeral(op === OP_BADD ? 0n : 1n, manager.getBvSize(manager.sorts[app]))
+        : undefined;
+    if (other === second || other === first) {
+      const neutral = getNeutral();
+      return neutral === undefined
+        ? undefined
+        : other === second
+          ? { args: [first, neutral], common: second, isCommonFirst: false }
+          : { args: [second, neutral], common: first, isCommonFirst: true };
+    }
+    if (manager.kinds[other] !== KIND_APP || manager.decls[other] !== manager.decls[app])
+      return undefined;
+    if (manager.getNumArgs(other) !== 2) return undefined;
+    const otherFirst = manager.getArg(other, 0);
+    const otherSecond = manager.getArg(other, 1);
+    if (second === otherSecond)
+      return { args: [first, otherFirst], common: second, isCommonFirst: false };
+    if (first === otherFirst)
+      return { args: [second, otherSecond], common: first, isCommonFirst: true };
+    if (!isAssociativeBvOp(op) && op !== OP_BCOMP) return undefined;
+    if (first === otherSecond)
+      return { args: [second, otherFirst], common: first, isCommonFirst: true };
+    if (second === otherFirst)
+      return { args: [first, otherSecond], common: second, isCommonFirst: false };
+    return undefined;
+  }
+
   private pullIte(decl: number, first: number, second: number, sort: number): Rewrite | undefined {
     const manager = this.manager;
     if (sort === SORT_BOOL && manager.sorts[first] !== SORT_BOOL) {
@@ -318,7 +486,8 @@ export class Rewriter extends RewriterTpl {
         return this.pullIteCore(decl, second, first, sort, true);
     }
     const family = manager.funcDecls[decl].family;
-    if (family !== FAMILY_BASIC && family !== FAMILY_ARITH) return undefined;
+    if (family !== FAMILY_BASIC && family !== FAMILY_ARITH && family !== FAMILY_BV)
+      return undefined;
     if (manager.isUniqueValue(first) && this.isIteValueTree(second))
       return this.pullIteCore(decl, second, first, sort, true);
     if (manager.isUniqueValue(second) && this.isIteValueTree(first))
@@ -326,8 +495,6 @@ export class Rewriter extends RewriterTpl {
     return undefined;
   }
 
-  // pull_ite_core: the value comes first when isSwapped. An equality of a branch and the value is
-  // decided when the branch is a value.
   private pullIteCore(
     decl: number,
     ite: number,
@@ -348,7 +515,6 @@ export class Rewriter extends RewriterTpl {
     return { expr: manager.mkApp(OP_ITE, [manager.getArg(ite, 0), ...branches], sort), depth: 2 };
   }
 
-  // is_ite_value_tree: an unshared ite whose leaves are values, through unshared ites.
   private isIteValueTree(expr: number) {
     const manager = this.manager;
     if (!this.isIte(expr) || manager.getRefCount(expr) !== 1) return false;
@@ -362,15 +528,59 @@ export class Rewriter extends RewriterTpl {
     return true;
   }
 
-  // The reductions of the Boolean and arithmetic rewriters, which the model evaluator applies too.
+  private reduceEq(left: number, right: number) {
+    const manager = this.manager;
+    const sort = manager.sorts[left];
+    const theoryResult = isArithSort(sort)
+      ? this.arith.mkEq(left, right)
+      : manager.isBvSort(sort)
+        ? this.bv.mkEqCore(left, right)
+        : manager.isDatatypeSort(sort)
+          ? mkDatatypeEqCore(manager, left, right)
+          : manager.isArraySort(sort)
+            ? this.array.mkEqCore(left, right)
+            : manager.getSortFamily(sort) === FAMILY_FPA
+              ? mkFpaEqCore(manager, left, right)
+              : manager.getSortFamily(sort) === FAMILY_SEQ
+                ? this.seq.mkEqCore(left, right)
+                : undefined;
+    if (theoryResult !== undefined) return theoryResult;
+    if (manager.getOp(left) === OP_UBV2INT || manager.getOp(right) === OP_UBV2INT) {
+      const bv2intResult = this.bv.mkEqBv2int(left, right);
+      if (bv2intResult !== undefined) return bv2intResult;
+    }
+    return this.applyTamagotchi(left, right) ?? this.applyTamagotchi(right, left);
+  }
+
+  private applyTamagotchi(eq: number, other: number): Rewrite | undefined {
+    const manager = this.manager;
+    const eqBit = this.bv.getEqBit(eq);
+    if (eqBit === undefined) return undefined;
+    const bit = manager.mkBvNumeral(eqBit.bit, 1);
+    const otherBit = manager.mkBvNumeral(1n - eqBit.bit, 1);
+    const ite = manager.mkApp(OP_ITE, [other, bit, otherBit], manager.sorts[bit]);
+    return { expr: manager.mkEq(eqBit.term, ite), depth: 2 };
+  }
+
   reduceAppCore(decl: number, args: number[]): number | Rewrite {
     const manager = this.manager;
-    const op = manager.funcDecls[decl].op;
+    const funcDecl = manager.funcDecls[decl];
+    if (funcDecl.family === FAMILY_BV) return this.bv.mkAppCore(decl, args) ?? -1;
+    if (funcDecl.family === FAMILY_ARRAY) return this.array.mkAppCore(funcDecl.op, args) ?? -1;
+    if (funcDecl.family === FAMILY_DATATYPE) return mkDatatypeAppCore(manager, decl, args) ?? -1;
+    if (funcDecl.family === FAMILY_FPA) return mkFpaAppCore(manager, decl, args) ?? -1;
+    if (funcDecl.family === FAMILY_PB) return mkPbAppCore(manager, decl, args);
+    if (funcDecl.family === FAMILY_SEQ || funcDecl.family === FAMILY_CHAR)
+      return this.seq.mkAppCore(decl, args) ?? -1;
+    if (funcDecl.family === FAMILY_RECFUN) return mkRecFunApp(manager, decl, args) ?? -1;
+    const op = funcDecl.op;
     switch (op) {
       case OP_AND:
-        return this.mkAndCore(args);
+        return (
+          (manager.isReUsed ? this.seq.mkBoolApp(true, args) : undefined) ?? this.mkAndCore(args)
+        );
       case OP_OR:
-        return this.mkOr(args);
+        return (manager.isReUsed ? this.seq.mkBoolApp(false, args) : undefined) ?? this.mkOr(args);
       case OP_NOT:
         return this.mkNot(args[0]);
       case OP_IMPLIES:
@@ -379,14 +589,25 @@ export class Rewriter extends RewriterTpl {
         return this.mkEq(this.mkNot(args[0]), args[1]);
       case OP_EQ:
         return (
-          (isArithSort(manager.sorts[args[0]]) ? this.arith.mkEq(args[0], args[1]) : undefined) ??
+          this.reduceEq(args[0], args[1]) ??
+          (manager.isSeqUsed && manager.getFamily(args[0]) === FAMILY_SEQ
+            ? this.seq.mkEqCore(args[0], args[1])
+            : undefined) ??
           this.mkEqCore(args[0], args[1]) ??
           -1
         );
       case OP_DISTINCT:
-        return this.mkDistinct(args);
+        return (
+          (args.length > 0 && manager.isBvSort(manager.sorts[args[0]])
+            ? this.bv.mkDistinct(args)
+            : undefined) ?? this.mkDistinct(args)
+        );
       case OP_ITE:
-        return this.mkIte(args[0], args[1], args[2]);
+        return (
+          (manager.isBvSort(manager.sorts[args[1]])
+            ? this.bv.mkIteCore(args[0], args[1], args[2])
+            : undefined) ?? this.mkIte(args[0], args[1], args[2])
+        );
       case OP_LE:
         return this.arith.mkLe(args[0], args[1]) ?? -1;
       case OP_GE:
@@ -396,7 +617,7 @@ export class Rewriter extends RewriterTpl {
       case OP_GT:
         return this.arith.mkGt(args[0], args[1]);
       case OP_ADD:
-        return this.arith.mkAdd(args) ?? -1;
+        return this.arith.mkAddCore(args) ?? -1;
       case OP_SUB:
         return this.arith.mkSub(args);
       case OP_UMINUS:
@@ -407,6 +628,8 @@ export class Rewriter extends RewriterTpl {
         return this.arith.mkIdiv(args[0], args[1]) ?? -1;
       case OP_MOD:
         return this.arith.mkMod(args[0], args[1]) ?? -1;
+      case OP_REM:
+        return this.arith.mkRem(args[0], args[1]) ?? -1;
       case OP_ABS:
         return this.arith.mkAbs(args[0]);
       case OP_DIV:
@@ -417,12 +640,29 @@ export class Rewriter extends RewriterTpl {
         return this.arith.mkToInt(args[0]) ?? -1;
       case OP_IS_INT:
         return this.arith.mkIsInt(args[0]);
+      case OP_POWER:
+        return this.arith.mkPower(args[0], args[1]) ?? -1;
+      case OP_SIN:
+        return this.arith.mkSin(args[0]) ?? -1;
+      case OP_COS:
+        return this.arith.mkCos(args[0]) ?? -1;
+      case OP_TAN:
+        return this.arith.mkTan(args[0]) ?? -1;
+      case OP_ASIN:
+        return this.arith.mkAsin(args[0]) ?? -1;
+      case OP_ACOS:
+        return this.arith.mkAcos(args[0]) ?? -1;
+      case OP_ATAN:
+        return this.arith.mkAtan(args[0]) ?? -1;
+      case OP_SINH:
+      case OP_COSH:
+      case OP_TANH:
+        return this.arith.mkHyperbolic(op, args[0]) ?? -1;
       default:
         return -1;
     }
   }
 
-  // bool_rewriter::mk_not: (not (= a b)) of Booleans is (= (not a) b).
   mkNot(arg: number): number {
     const manager = this.manager;
     if (manager.isNot(arg)) return manager.getArg(arg, 0);
@@ -431,12 +671,10 @@ export class Rewriter extends RewriterTpl {
     return manager.mkNot(arg);
   }
 
-  // bool_rewriter::mk_flat_or_core and mk_nflat_or_core: lifts the disjuncts of nested disjunctions
-  // one level, drops false and duplicates, and detects true or a complementary pair. With
-  // sort_disjunctions, a disjunction that changed or is out of ast_lt's order is stably sorted by id.
   mkOr(args: number[]): number {
     const manager = this.manager;
-    const isNested = args.some((arg) => manager.getOp(arg) === OP_OR);
+    const isNested =
+      this.options.isFlatAndOr !== false && args.some((arg) => manager.getOp(arg) === OP_OR);
     const flatArgs = isNested ? this.flattenArgs(args, OP_OR) : args;
     const literals = manager.flatLiterals;
     literals.clear();
@@ -446,25 +684,163 @@ export class Rewriter extends RewriterTpl {
       if (literals.add(arg)) return manager.trueExpr;
     }
     const result = literals.list;
+    const limit = this.options.localCtxLimit;
+    if (result.length > 1 && limit !== undefined && this.localCtxCost <= limit) {
+      const simplified = manager.withTemporaries(() => this.simplifyLocalCtx([...result]));
+      if (simplified !== -1) {
+        manager.releaseLater(simplified);
+        return simplified;
+      }
+    }
     const isOutOfOrder = result.some(
       (arg, index) => index > 0 && isAstLess(manager, arg, result[index - 1]),
     );
-    // Dropping false or a duplicate disjunct also sets mk_nflat_or_core's s.
     if (isNested || result.length !== flatArgs.length || isOutOfOrder)
       sortByKey(result, (arg) => manager.ids[arg]);
     return manager.mkOr(result);
   }
 
-  // bool_rewriter::mk_and_core: with elim_and, mk_and_as_or. Otherwise mk_flat_and_core lifts the
-  // conjuncts of nested conjunctions one level, and has the result rewritten again.
+  private simplifyNestedNotOr(args: number[], negatives: Set<number>, positives: Set<number>) {
+    const manager = this.manager;
+    this.localCtxCost += args.length;
+    const kept: number[] = [];
+    let isSimplified = false;
+    for (const arg of args) {
+      if (negatives.has(arg)) return manager.falseExpr;
+      if (positives.has(arg)) {
+        isSimplified = true;
+        continue;
+      }
+      if (manager.isNot(arg)) {
+        const atom = manager.getArg(arg, 0);
+        if (negatives.has(atom)) {
+          isSimplified = true;
+          continue;
+        }
+        if (positives.has(atom)) return manager.falseExpr;
+      }
+      kept.push(arg);
+    }
+    if (!isSimplified) return -1;
+    if (kept.length === 0) return manager.trueExpr;
+    return kept.length === 1 ? this.mkNot(kept[0]) : manager.mkNot(manager.mkOr(kept));
+  }
+
+  private simplifyLiteral(arg: number, negatives: Set<number>, positives: Set<number>) {
+    const manager = this.manager;
+    const isNegated = manager.isNot(arg);
+    const atom = isNegated ? manager.getArg(arg, 0) : arg;
+    if (negatives.has(atom)) return isNegated ? manager.falseExpr : manager.trueExpr;
+    if (positives.has(atom)) return isNegated ? manager.trueExpr : manager.falseExpr;
+    return arg;
+  }
+
+  private mkNestedIte(condition: number, thenExpr: number, elseExpr: number) {
+    const manager = this.manager;
+    if (manager.isTrue(condition)) return thenExpr;
+    if (manager.isFalse(condition)) return elseExpr;
+    if (thenExpr === elseExpr) return thenExpr;
+    if (manager.sorts[thenExpr] === SORT_BOOL) {
+      if (manager.isTrue(thenExpr))
+        return manager.isFalse(elseExpr) ? condition : manager.mkOr([condition, elseExpr]);
+      if (manager.isFalse(thenExpr))
+        return manager.isTrue(elseExpr)
+          ? this.mkNot(condition)
+          : manager.mkNot(manager.mkOr([condition, this.mkNot(elseExpr)]));
+      if (manager.isTrue(elseExpr)) return manager.mkOr([this.mkNot(condition), thenExpr]);
+      if (manager.isFalse(elseExpr) || condition === elseExpr)
+        return manager.mkNot(manager.mkOr([this.mkNot(condition), this.mkNot(thenExpr)]));
+      if (condition === thenExpr) return manager.mkOr([condition, elseExpr]);
+      if (
+        (manager.isNot(thenExpr) && manager.getArg(thenExpr, 0) === elseExpr) ||
+        (manager.isNot(elseExpr) && manager.getArg(elseExpr, 0) === thenExpr)
+      )
+        return this.mkEq(condition, thenExpr);
+    }
+    return manager.mkApp(OP_ITE, [condition, thenExpr, elseExpr], manager.sorts[thenExpr]);
+  }
+
+  private simplifyNestedEqIte(form: number, negatives: Set<number>, positives: Set<number>) {
+    const manager = this.manager;
+    this.localCtxCost += 3;
+    const isNegated = manager.isNot(form);
+    const atom = isNegated ? manager.getArg(form, 0) : form;
+    const op = manager.getOp(atom);
+    if (op !== OP_EQ && op !== OP_ITE) return -1;
+    const args = manager.getArgs(atom);
+    const simplified = args.map((arg) => this.simplifyLiteral(arg, negatives, positives));
+    if (simplified.every((arg, index) => arg === args[index])) return -1;
+    const result =
+      op === OP_EQ
+        ? this.mkEq(simplified[0], simplified[1])
+        : this.mkNestedIte(simplified[0], simplified[1], simplified[2]);
+    return isNegated ? this.mkNot(result) : result;
+  }
+
+  private simplifyLocalCtx(initialArgs: number[]) {
+    const manager = this.manager;
+    let args = initialArgs;
+    let isSimplified = false;
+    let isModified = false;
+    let isForward = true;
+    for (;;) {
+      const negatives = new Set<number>();
+      const positives = new Set<number>();
+      const kept: number[] = [];
+      const push = (arg: number) => {
+        const isNegated = manager.isNot(arg);
+        const marks = isNegated ? negatives : positives;
+        const atom = isNegated ? manager.getArg(arg, 0) : arg;
+        if (marks.has(atom)) return;
+        marks.add(atom);
+        kept.push(arg);
+      };
+      this.localCtxCost += 2 * args.length;
+      const order = isForward ? args : [...args].reverse();
+      for (const original of order) {
+        let arg = original;
+        if (manager.isNot(arg) && manager.getOp(manager.getArg(arg, 0)) === OP_OR) {
+          const nested = this.simplifyNestedNotOr(
+            manager.getArgs(manager.getArg(arg, 0)),
+            negatives,
+            positives,
+          );
+          if (nested !== -1) {
+            isModified = true;
+            isSimplified = true;
+            arg = nested;
+          }
+        }
+        const nested = this.simplifyNestedEqIte(arg, negatives, positives);
+        if (nested !== -1) {
+          isModified = true;
+          isSimplified = true;
+          arg = nested;
+        }
+        if (manager.isFalse(arg)) continue;
+        if (manager.isTrue(arg)) return arg;
+        if (this.options.isFlatAndOr !== false && manager.getOp(arg) === OP_OR)
+          for (const inner of manager.getArgs(arg)) push(inner);
+        else push(arg);
+      }
+      if (!isForward) {
+        if (!isModified) return isSimplified ? manager.mkOr(args) : -1;
+        kept.reverse();
+        isModified = false;
+      }
+      isForward = !isForward;
+      args = kept;
+    }
+  }
+
   private mkAndCore(args: number[]): number | Rewrite {
     const manager = this.manager;
     if (this.options.isEliminatingAnd) return this.mkAndAsOr(args);
-    if (!args.some((arg) => manager.getOp(arg) === OP_AND)) return this.mkNflatAnd(args);
+    if (this.options.isFlatAndOr === false || !args.some((arg) => manager.getOp(arg) === OP_AND))
+      return this.mkNflatAnd(args);
     return { expr: this.mkNflatAnd(this.flattenArgs(args, OP_AND)), depth: 1 };
   }
 
-  // The arguments with those that apply op replaced by their own arguments, one level deep.
   private flattenArgs(args: number[], op: number) {
     const manager = this.manager;
     const flatArgs: number[] = [];
@@ -474,14 +850,11 @@ export class Rewriter extends RewriterTpl {
     return flatArgs;
   }
 
-  // bool_rewriter::mk_and, which takes the result of mk_and_core as it is.
   mkAnd(args: number[]): number {
     const result = this.mkAndCore(args);
     return typeof result === "number" ? result : result.expr;
   }
 
-  // bool_rewriter::mk_nflat_and_core: drops true and duplicates, and detects false or a complementary
-  // pair.
   private mkNflatAnd(args: number[]) {
     const manager = this.manager;
     const literals = manager.flatLiterals;
@@ -495,8 +868,6 @@ export class Rewriter extends RewriterTpl {
     return result.length === 1 ? result[0] : manager.mkAnd(result);
   }
 
-  // bool_rewriter::mk_and_as_or: the negation of the disjunction of the negated conjuncts. Each
-  // negation is built with its own temporaries, and the negations outlive the disjunction.
   private mkAndAsOr(args: number[]) {
     const manager = this.manager;
     const negations = args.map((arg) => manager.withTemporaries(() => this.mkNot(arg)));
@@ -506,8 +877,6 @@ export class Rewriter extends RewriterTpl {
     return result;
   }
 
-  // try_ite_eq: (ite c t e) = t is c when e is a value distinct from t, and likewise for e. The main
-  // loop rewrites the result again.
   private tryIteEq(ite: number, other: number): Rewrite | undefined {
     const manager = this.manager;
     if (!this.isIte(ite)) return undefined;
@@ -527,7 +896,6 @@ export class Rewriter extends RewriterTpl {
     return first !== second && manager.isUniqueValue(first) && manager.isUniqueValue(second);
   }
 
-  // The ite_extra_rules of mk_eq_core: an ite against a value, or two ites of values.
   private mkIteValueEq(left: number, right: number): number | Rewrite | undefined {
     const manager = this.manager;
     if (this.isIte(left) && manager.isUniqueValue(right)) return this.tryIteValue(left, right);
@@ -569,22 +937,17 @@ export class Rewriter extends RewriterTpl {
     return { expr: manager.mkApp(OP_AND, clauses, SORT_BOOL), depth: Infinity };
   }
 
-  // try_ite_value: (ite c t e) = v for a value v. It builds its results without rewriting them, and
-  // the main loop rewrites them again.
   private tryIteValue(ite: number, value: number): number | Rewrite | undefined {
     const manager = this.manager;
     const condition = manager.getArg(ite, 0);
     const thenExpr = manager.getArg(ite, 1);
     const elseExpr = manager.getArg(ite, 2);
-    // An equality of a branch is the first write to the result.
     const write = (result: number) => {
       this.releaseResult();
       return result;
     };
-    // Z3 rewrites the equality of a branch only below depth 500.
     const mkBranchEq = (branch: number) =>
       write(manager.depths[branch] < 500 ? this.mkEq(branch, value) : manager.mkEq(branch, value));
-    // mk_eq_plain.
     const mkPlainEq = (branch: number) =>
       branch === value
         ? manager.trueExpr
@@ -621,12 +984,10 @@ export class Rewriter extends RewriterTpl {
       const branches = [mkPlainEq(thenExpr), getExpr(elseEq)];
       return { expr: manager.mkApp(OP_ITE, [condition, ...branches], SORT_BOOL), depth: 2 };
     }
-    // simplify_eq_ite's result is written even when it is null.
     this.releaseResult();
     return this.isDisjointFrom(ite, value) ? manager.falseExpr : undefined;
   }
 
-  // simplify_eq_ite: whether every leaf of a tree of ites is a value distinct from the value.
   private isDisjointFrom(ite: number, value: number) {
     const manager = this.manager;
     const visited = new Set<number>();
@@ -642,7 +1003,6 @@ export class Rewriter extends RewriterTpl {
     return true;
   }
 
-  // bool_rewriter::mk_eq, which does not rewrite the result of mk_eq_core again.
   mkEq(left: number, right: number): number {
     const result = this.mkEqCore(left, right);
     return result === undefined
@@ -652,7 +1012,6 @@ export class Rewriter extends RewriterTpl {
         : result.expr;
   }
 
-  // bool_rewriter::mk_eq_core, after arith_rewriter::mk_eq_core folds numerals.
   private mkEqCore(inputLeft: number, inputRight: number): number | Rewrite | undefined {
     const manager = this.manager;
     if (inputLeft === inputRight) return manager.trueExpr;
@@ -677,7 +1036,6 @@ export class Rewriter extends RewriterTpl {
     if (manager.isNot(lhs))
       return { expr: manager.mkNot(manager.mkEq(manager.getArg(lhs, 0), rhs)), depth: 2 };
     if (isUnfolded) return { expr: manager.mkEq(lhs, rhs), depth: 1 };
-    // (= (= a b) (= a (not b))) is false.
     if (manager.getOp(lhs) === OP_EQ && manager.getOp(rhs) === OP_EQ) {
       const isNegationOf = (expr: number, other: number) =>
         manager.isNot(expr) && manager.getArg(expr, 0) === other;
@@ -694,34 +1052,44 @@ export class Rewriter extends RewriterTpl {
     return undefined;
   }
 
-  // bool_rewriter::mk_distinct_core: two arguments become a disequality, which the main loop rewrites
-  // again, since mk_eq may dispatch to other rewriters. Z3 keeps a longer distinct, which tlapm does
-  // not send, and this port expands it into disequalities.
+  // Z3 keeps a distinct of more than two arguments, which tlapm does not send, where this expands it into disequalities.
   private mkDistinct(args: number[]): number | Rewrite {
+    const manager = this.manager;
+    if (args.length <= 1) return manager.trueExpr;
     if (args.length === 2) return { expr: this.mkNot(this.mkEq(args[0], args[1])), depth: 2 };
+    if (new Set(args).size < args.length) return manager.falseExpr;
+    const firstNonValue = args.findIndex((arg) => !manager.isUniqueValue(arg));
+    const isAllDifferent = args.every(
+      (arg, index) =>
+        firstNonValue === -1 ||
+        index < firstNonValue ||
+        args.slice(0, index).every((previous) => manager.areDistinct(arg, previous)),
+    );
+    if (isAllDifferent) return manager.trueExpr;
+    if (manager.sorts[args[0]] === SORT_BOOL) return manager.falseExpr;
+    if (
+      this.options.isKeepingDistinct === true ||
+      args.length >= (this.options.blastDistinctThreshold ?? Infinity)
+    )
+      return -1;
     const pairs: number[] = [];
     for (let left = 0; left < args.length; left++)
       for (let right = left + 1; right < args.length; right++)
-        pairs.push(this.mkNot(this.mkEq(args[left], args[right])));
-    return this.mkAnd(pairs);
+        pairs.push(manager.mkNot(manager.mkEq(args[left], args[right])));
+    return { expr: manager.mkAnd(pairs), depth: 3 };
   }
 
-  // bool_rewriter::mk_ite_core with elim_ite and ite_extra_rules. It applies the rules that change
-  // only the condition or a branch in sequence, and a result that it builds from new terms comes as a
-  // Rewrite for the main loop.
-  private mkIte(inputCondition: number, inputThen: number, inputElse: number): number | Rewrite {
+  mkIte(inputCondition: number, inputThen: number, inputElse: number): number | Rewrite {
     const manager = this.manager;
     const isNegated = manager.isNot(inputCondition);
     const condition = isNegated ? manager.getArg(inputCondition, 0) : inputCondition;
     const elseCandidate = isNegated ? inputThen : inputElse;
     const thenCandidate = isNegated ? inputElse : inputThen;
-    // (ite c (ite c t1 t2) t3) is (ite c t1 t3).
     const thenExpr =
       this.isIte(thenCandidate) && manager.getArg(thenCandidate, 0) === condition
         ? manager.getArg(thenCandidate, 1)
         : thenCandidate;
     const sort = manager.sorts[thenExpr];
-    // (ite c t1 (ite c2 t1 t2)) is (ite (or c c2) t1 t2).
     if (this.isIte(elseCandidate) && manager.getArg(elseCandidate, 1) === thenExpr) {
       const disjunction = manager.mkApp(
         OP_OR,
@@ -737,7 +1105,6 @@ export class Rewriter extends RewriterTpl {
         depth: 3,
       };
     }
-    // (ite c t1 (ite c t2 t3)) is (ite c t1 t3).
     const elseExpr =
       this.isIte(elseCandidate) && manager.getArg(elseCandidate, 0) === condition
         ? manager.getArg(elseCandidate, 2)
@@ -756,7 +1123,6 @@ export class Rewriter extends RewriterTpl {
       if (manager.isFalse(elseExpr) || elseExpr === condition)
         return { expr: this.mkAnd([condition, thenExpr]), depth: 1 };
       if (thenExpr === condition) return this.mkOr([condition, elseExpr]);
-      // is_complement_core: one branch is the negation of the other.
       if (
         (manager.isNot(thenExpr) && manager.getArg(thenExpr, 0) === elseExpr) ||
         (manager.isNot(elseExpr) && manager.getArg(elseExpr, 0) === thenExpr)
@@ -765,7 +1131,6 @@ export class Rewriter extends RewriterTpl {
     }
     const isElseIte = this.isIte(elseExpr);
     if (this.isIte(thenExpr)) {
-      // (ite c1 (ite c2 t1 t2) t1) is (ite (and c1 (not c2)) t2 t1).
       if (elseExpr === manager.getArg(thenExpr, 1)) {
         const conjunction = this.mkAnd([condition, this.mkNot(manager.getArg(thenExpr, 0))]);
         return {
@@ -773,7 +1138,6 @@ export class Rewriter extends RewriterTpl {
           depth: 2,
         };
       }
-      // (ite c1 (ite c2 t1 t2) t2) is (ite (and c1 c2) t1 t2).
       if (elseExpr === manager.getArg(thenExpr, 2)) {
         const conjunction = this.mkAnd([condition, manager.getArg(thenExpr, 0)]);
         return {
@@ -781,8 +1145,6 @@ export class Rewriter extends RewriterTpl {
           depth: 2,
         };
       }
-      // (ite c1 (ite c2 t1 t2) (ite c3 t1 t2)) is (ite (or (and c1 c2) (and (not c1) c3)) t1 t2),
-      // and with (ite c3 t2 t1) the last conjunct is (not c3).
       const isSameBranches =
         isElseIte &&
         manager.getArg(thenExpr, 1) === manager.getArg(elseExpr, 1) &&
@@ -810,7 +1172,6 @@ export class Rewriter extends RewriterTpl {
       }
     }
     if (isElseIte) {
-      // (ite c1 t1 (ite c2 t1 t2)) is (ite (or c1 c2) t1 t2).
       if (thenExpr === manager.getArg(elseExpr, 1)) {
         const disjunction = this.mkOr([condition, manager.getArg(elseExpr, 0)]);
         return {
@@ -818,7 +1179,6 @@ export class Rewriter extends RewriterTpl {
           depth: 1,
         };
       }
-      // (ite c1 t1 (ite c2 t2 t1)) is (ite (or c1 (not c2)) t1 t2).
       if (thenExpr === manager.getArg(elseExpr, 2)) {
         const disjunction = this.mkOr([condition, this.mkNot(manager.getArg(elseExpr, 0))]);
         return {
@@ -830,8 +1190,6 @@ export class Rewriter extends RewriterTpl {
     return manager.mkApp(OP_ITE, [condition, thenExpr, elseExpr], sort);
   }
 
-  // poly_rewriter::mk_add and mk_sub with a result: arith_rewriter's sum or difference, which is
-  // not rewritten again.
   mkAdd(args: number[]) {
     return this.arith.mkAdd(args) ?? this.arith.mkAddApp(args);
   }

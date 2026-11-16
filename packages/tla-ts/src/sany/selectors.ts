@@ -21,18 +21,12 @@ import {
   type ThmOrAssumpDefNode,
 } from "./nodes";
 
-// A port of SANY's Generator.selectorToNode, which turns a name such as Op(a)!lab(b)!:!2 into the
-// semantic node it names, following the Subexpression algorithm of SANY's Subexpression.tla.
-
-// An operand selector !i is the number i, and the other selectors are named after SANY's NameSel,
-// NullSel, GGSel, LLSel, ColonSel and AtSel.
 type SelectorOp = number | "Name" | "Null" | ">>" | "<<" | ":" | "@";
 
 export interface SelectorItem {
   op: SelectorOp;
   name: string;
   args: Expression[] | undefined;
-  // Where SANY locates the selector and its parenthesized arguments, when known.
   location?: SanyLocation;
   argsLocation?: SanyLocation;
 }
@@ -62,10 +56,7 @@ interface SelectorGenerator {
   createLambda: (params: FormalParamNode[], body: ExprNode, location: SanyLocation) => OpDefNode;
   copySubstIn: (prefix: SubstInNode, body: ExprNode) => SubstInNode;
   getBuiltin: (name: string) => OpDefNode;
-  // Errors.addMessage for an error SANY recovers from, and the null node SANY returns after one.
   addError: (location: SanyLocation, text: string) => OpApplNode;
-  // Generator.illegalLabelRef and illegalAPPosRef: whether the node being generated lies outside
-  // the scope of a declaration that a label or a clause of an ASSUME/PROVE lies in.
   isOutOfLabelScope: (label: LabelNode) => boolean;
   isOutOfClauseScope: (assumeProve: AssumeProveNode, position: number) => boolean;
 }
@@ -80,8 +71,8 @@ const PROOF_STEP_OPERATORS = new Map([
   ["$Suffices", "SUFFICES"],
 ]);
 
-// The parts of a name like I!Op or Op!lab, except for an operator such as !! that contains a "!".
-const getNameParts = (name: string) => {
+const getNameParts = (name: string): string[] => {
+  if (name.length > 3 && name.endsWith("!!!")) return [...getNameParts(name.slice(0, -3)), "!!"];
   const parts = name.split("!");
   return parts.some((part) => part.length === 0) ? [name] : parts;
 };
@@ -94,11 +85,11 @@ export const getSelectorItems = (expression: Expression): SelectorItem[] | undef
       const parts = getNameParts(expression.operator);
       const counts =
         expression.argumentCounts ??
-        parts.map((_, index) => (index === parts.length - 1 ? expression.args.length : 0));
-      const cursor = { value: 0 };
+        parts.map((_part, index) => (index === parts.length - 1 ? expression.args.length : 0));
+      let cursor = 0;
       return parts.map((name, index) => {
-        const args = expression.args.slice(cursor.value, cursor.value + counts[index]);
-        cursor.value += counts[index];
+        const args = expression.args.slice(cursor, cursor + counts[index]);
+        cursor += counts[index];
         return { op: "Name", name, args: args.length > 0 ? args : undefined };
       });
     }
@@ -125,29 +116,23 @@ export const getSelectorItems = (expression: Expression): SelectorItem[] | undef
   return undefined;
 };
 
-// A selector SANY parses as a GeneralId rather than an OpApplication: one whose last part is not a
-// name with arguments.
 export const isGeneralId = (items: SelectorItem[]) => {
   const last = items[items.length - 1];
   return last.op !== "Name" || last.args === undefined;
 };
 
-// SANY's selectorItemToString, which names an operand selector after the argument it selects.
 const getSelectorItemName = (item: SelectorItem) =>
   typeof item.op === "number" ? `argument selector ${item.name}` : item.name;
 
-// Subexpression.tla's ArgNum: the human number of the operand that a selector picks out of an
-// expression with arity operands, or -1.
-const getArgNumber = (op: SelectorOp, arity: number) => {
-  if (typeof op === "number") return op > 0 && op <= arity ? op : -1;
-  if (op === "<<") return arity > 0 ? 1 : -1;
-  if (op === ">>") return arity === 2 ? 2 : -1;
+const getArgNumber = (selector: SelectorOp, arity: number) => {
+  if (typeof selector === "number") return selector > 0 && selector <= arity ? selector : -1;
+  if (selector === "<<") return arity > 0 ? 1 : -1;
+  if (selector === ">>") return arity === 2 ? 2 : -1;
   return -1;
 };
 
 type Mode = "FindingOpName" | "FollowingLabels" | "FindingSubExpr";
 
-// The state of Generator.selectorToNode as it walks the items.
 interface SelectorWalk {
   name: string | undefined;
   nameLocation: SanyLocation | undefined;
@@ -176,13 +161,9 @@ const isSymbol = (node: LevelNode | SymbolNode): node is SymbolNode =>
 const getQuantifierSymbols = (node: OpApplNode) =>
   (node.bounded?.length ?? 0) > 0 ? (node.bounded ?? []).flat() : (node.unbounded ?? []);
 
-// Generator.extendedBy: a name's location grown to the end of its next part.
 const extendLocation = (name: SanyLocation | undefined, part: SanyLocation): SanyLocation =>
   name === undefined ? part : { ...name, endLine: part.endLine, endColumn: part.endColumn };
 
-// selectorToNode: with expectedArity 0 the expression a selector names, with a positive one the
-// operator argument, and with -1 the definition a DEF clause names. A fact can also be an
-// ASSUME/PROVE, a NEW clause or a module instance.
 export const createSelectorResolver =
   (generator: SelectorGenerator) =>
   (
@@ -195,7 +176,6 @@ export const createSelectorResolver =
     const substInPrefix: SubstInNode[] = [];
     const params: FormalParamNode[] = [];
     const allArgs: ExprOrOpArgNode[] = [];
-    const getItemLocation = (itemIndex: number) => items[itemIndex].location ?? location;
     const walk: SelectorWalk = {
       name: undefined,
       nameLocation: undefined,
@@ -208,6 +188,7 @@ export const createSelectorResolver =
       definitionArgs: [],
       isInSuffices: false,
     };
+    const getItemLocation = () => items[walk.index].location ?? location;
     const getArgs = (item: SelectorItem) => item.args ?? [];
 
     while (walk.index < items.length) {
@@ -217,7 +198,7 @@ export const createSelectorResolver =
         item.args !== undefined
       ) {
         return generator.addError(
-          getItemLocation(walk.index),
+          getItemLocation(),
           `Selector \`${item.name}' should not have argument(s).`,
         );
       }
@@ -236,7 +217,7 @@ export const createSelectorResolver =
                 : undefined;
             if (walk.name === undefined && current.op !== "Name") {
               return generator.addError(
-                getItemLocation(walk.index),
+                getItemLocation(),
                 `Need name or step number here, not \`${current.name}'.`,
               );
             }
@@ -249,19 +230,17 @@ export const createSelectorResolver =
             if (symbol === undefined) {
               if (newName !== undefined) {
                 walk.name = newName;
-                walk.nameLocation = extendLocation(walk.nameLocation, getItemLocation(walk.index));
+                walk.nameLocation = extendLocation(walk.nameLocation, getItemLocation());
               }
               collectedArgs.push(...getArgs(current));
               walk.index++;
             }
           }
-          // TLC 1.7.4's SANY names only the last item of a selector it can't resolve, as
-          // selectorItemToString does, which fails on an argument selector that isn't a number.
           if (symbol === undefined && generator.version === "1.7.4") {
-            const last = items.length - 1;
+            const lastIndex = items.length - 1;
             return generator.addError(
-              getItemLocation(last),
-              `Unknown operator: \`${getSelectorItemName(items[last])}'.`,
+              items[lastIndex].location ?? location,
+              `Unknown operator: \`${getSelectorItemName(items[lastIndex])}'.`,
             );
           }
           if (symbol === undefined) {
@@ -272,16 +251,16 @@ export const createSelectorResolver =
           }
           if (symbol.kind === "Module") {
             return generator.addError(
-              getItemLocation(walk.index),
+              getItemLocation(),
               `Module name (${items[walk.index].name}) not allowed here.`,
             );
           }
           walk.node = symbol;
-          walk.nameLocation = extendLocation(walk.nameLocation, getItemLocation(walk.index));
+          walk.nameLocation = extendLocation(walk.nameLocation, getItemLocation());
           walk.name = newName;
           if (isDeclarationLike(symbol) && items.length !== 1) {
             return generator.addError(
-              getItemLocation(walk.index),
+              getItemLocation(),
               `Cannot take subexpression of \`${walk.name}'.`,
             );
           }
@@ -300,7 +279,7 @@ export const createSelectorResolver =
                   symbol,
                   argumentIndex + walk.definitionArityFound,
                   argument,
-                  getItemLocation(walk.index),
+                  getItemLocation(),
                 ),
               ),
             );
@@ -309,7 +288,7 @@ export const createSelectorResolver =
           if (symbol.kind === "OpDef" && symbol.defKind === "ModuleInstance") {
             if (walk.index === items.length - 1 && !(isDef || isFact)) {
               return generator.addError(
-                getItemLocation(walk.index),
+                getItemLocation(),
                 `Operator name ${walk.name} is incomplete.`,
               );
             }
@@ -326,7 +305,7 @@ export const createSelectorResolver =
               items.length !== 1
             ) {
               return generator.addError(
-                getItemLocation(walk.index),
+                getItemLocation(),
                 `Subexpression of  \`${walk.name}' used inside the operator's definition.`,
               );
             }
@@ -361,21 +340,18 @@ export const createSelectorResolver =
               ? owner.labels.get(item.name)
               : undefined;
           if (label === undefined)
-            return generator.addError(
-              getItemLocation(walk.index),
-              `Cannot find label \`${item.name}'.`,
-            );
+            return generator.addError(getItemLocation(), `Cannot find label \`${item.name}'.`);
           walk.node = label;
           if (generator.isOutOfLabelScope(label)) {
             return generator.addError(
-              getItemLocation(walk.index),
+              getItemLocation(),
               `Accessing subexpression labeled \`${item.name}' of ASSUME/PROVE clause within the scope of a declaration\n from outside that declaration's scope.`,
             );
           }
           if (expectedArity === 0) {
             if (label.params.length !== getArgs(item).length) {
               return generator.addError(
-                getItemLocation(walk.index),
+                getItemLocation(),
                 `Label \`${item.name}' used with wrong number of arguments.`,
               );
             }
@@ -392,7 +368,7 @@ export const createSelectorResolver =
           const node = walk.node;
           const addNonexistentError = () =>
             generator.addError(
-              getItemLocation(walk.index),
+              getItemLocation(),
               `Nonexistent operand specified by \`${getSelectorItemName(item)}'.`,
             );
           if (item.op === ":") {
@@ -402,19 +378,19 @@ export const createSelectorResolver =
                 (walk.index < items.length - 1 && items[walk.index + 1].op === "Name"));
             if (!isAllowed) {
               return generator.addError(
-                getItemLocation(walk.index),
+                getItemLocation(),
                 "`!:' can be used only after a name and either at the end after an\noperator name or before an operator name.",
               );
             }
           } else if (node === undefined) {
             return generator.addError(
-              getItemLocation(walk.index),
+              getItemLocation(),
               "Subexpression selection failed, probably due to an error in the selected expression.",
             );
           } else if (node.kind === "LetIn") {
             if (getArgNumber(item.op, 1) !== 1)
               return generator.addError(
-                getItemLocation(walk.index),
+                getItemLocation(),
                 "A LET/IN expression has only one operand.",
               );
             walk.node = node.body;
@@ -427,7 +403,7 @@ export const createSelectorResolver =
               (operator.kind === "OpDef" && operator.defKind === "UserDefined");
             const addNotPairError = () =>
               generator.addError(
-                getItemLocation(walk.index),
+                getItemLocation(),
                 "Internal error: Expecting $Pair and didn't find it.",
               );
             const isPair = (pair: ExprOrOpArgNode | undefined): pair is OpApplNode =>
@@ -446,7 +422,7 @@ export const createSelectorResolver =
               } else if (operator.name === "$Case") {
                 if (walk.index === items.length - 1) {
                   return generator.addError(
-                    getItemLocation(walk.index),
+                    getItemLocation(),
                     "Subexpression of CASE must have form !i!j.",
                   );
                 }
@@ -457,20 +433,20 @@ export const createSelectorResolver =
                 const number = getArgNumber(items[walk.index].op, 2);
                 if (number === -1) {
                   return generator.addError(
-                    getItemLocation(walk.index),
+                    getItemLocation(),
                     "Second selector for CASE subexpression must specify  one of two operands.",
                   );
                 }
                 walk.node = pair.operands[number - 1];
                 if (walk.node === undefined)
                   return generator.addError(
-                    getItemLocation(walk.index),
+                    getItemLocation(),
                     "Selecting OTHER in a CASE statement.",
                   );
               } else if (operator.name === "$Except") {
                 if (operandNumber > 1) {
                   return generator.addError(
-                    getItemLocation(walk.index),
+                    getItemLocation(),
                     "Selecting subexpression of an EXCEPT not yet implemented.",
                   );
                 }
@@ -485,7 +461,7 @@ export const createSelectorResolver =
                 if (item.op === "Null") {
                   if (getArgs(item).length !== symbols.length) {
                     return generator.addError(
-                      getItemLocation(walk.index),
+                      getItemLocation(),
                       `Selector with ${getArgs(item).length} argument(s) used for quantifier with ${symbols.length} bound identifier(s).`,
                     );
                   }
@@ -499,7 +475,7 @@ export const createSelectorResolver =
               }
             } else {
               return generator.addError(
-                getItemLocation(walk.index),
+                getItemLocation(),
                 `Choosing operand \`${item.name}' of subexpression with no operands.`,
               );
             }
@@ -507,7 +483,7 @@ export const createSelectorResolver =
             if (node.isSuffices && !walk.isInSuffices) {
               if (getArgNumber(item.op, 1) !== 1) {
                 return generator.addError(
-                  getItemLocation(walk.index),
+                  getItemLocation(),
                   "Accessing non-existent subexpression of a SUFFICES",
                 );
               }
@@ -518,7 +494,7 @@ export const createSelectorResolver =
               if (number === -1) return addNonexistentError();
               if (generator.isOutOfClauseScope(node, number)) {
                 return generator.addError(
-                  getItemLocation(walk.index),
+                  getItemLocation(),
                   "Accessing ASSUME/PROVE clause within the scope of a declaration\n from outside that declaration's scope.",
                 );
               }
@@ -526,7 +502,7 @@ export const createSelectorResolver =
                 walk.node = node.assumptions[number - 1];
                 if (walk.node.kind === "NewSymb" && walk.index !== items.length - 1) {
                   return generator.addError(
-                    getItemLocation(walk.index),
+                    getItemLocation(),
                     "Selected a subexpression of a NEW clause of an ASSUME.",
                   );
                 }
@@ -536,20 +512,20 @@ export const createSelectorResolver =
             const lambda = node.op;
             if (lambda.kind !== "OpDef" || lambda.name !== "LAMBDA") {
               return generator.addError(
-                getItemLocation(walk.index),
+                getItemLocation(),
                 "Trying to select subexpression of an operator argument.",
               );
             }
             if (item.op !== "Null" && item.op !== "@") {
               return generator.addError(
-                getItemLocation(walk.index),
+                getItemLocation(),
                 `Cannot use !${item.name} to select subexpression of a LAMBDA.`,
               );
             }
             if (item.op === "Null") {
               if (lambda.arity !== getArgs(item).length) {
                 return generator.addError(
-                  getItemLocation(walk.index),
+                  getItemLocation(),
                   `Selector with ${getArgs(item).length} arguments used for LAMBDA expression taking ${lambda.arity} arguments.`,
                 );
               }
@@ -562,13 +538,13 @@ export const createSelectorResolver =
             walk.index--;
           } else {
             return generator.addError(
-              getItemLocation(walk.index),
+              getItemLocation(),
               "Selecting subexpression of expression that has none.",
             );
           }
           if (walk.node === undefined)
             return generator.addError(
-              getItemLocation(walk.index),
+              getItemLocation(),
               `An unexpected null node specified by '${item.name}'.\nThis is probably due to a previous error.`,
             );
           if (walk.index !== items.length - 1) {
@@ -577,7 +553,7 @@ export const createSelectorResolver =
               while (walk.node?.kind === "Label") walk.node = walk.node.body;
               if (walk.node?.kind !== "LetIn") {
                 return generator.addError(
-                  getItemLocation(walk.index),
+                  getItemLocation(),
                   "A name selector here must be from a LET clause.",
                 );
               }
@@ -585,7 +561,7 @@ export const createSelectorResolver =
               walk.mode = "FindingOpName";
             } else if (next.op === ":") {
               return generator.addError(
-                getItemLocation(walk.index),
+                getItemLocation(),
                 "!: should not follow an operand selector.",
               );
             }
@@ -674,7 +650,7 @@ export const createSelectorResolver =
       if (params.length + substInPrefix.length > 0) {
         const operator = current.op;
         params.push(
-          ...Array.from({ length: getSymbolArity(operator) }, (_, paramIndex) =>
+          ...Array.from({ length: getSymbolArity(operator) }, (_element, paramIndex) =>
             generator.createFormalParam(`NewParam${paramIndex}`, 0, undefined),
           ),
         );
@@ -682,10 +658,7 @@ export const createSelectorResolver =
       }
     }
     if (!isFact) {
-      const isAssumeProve =
-        (current.kind === "ThmOrAssumpDef" && current.body.kind === "AssumeProve") ||
-        (current.kind === "Label" && current.isAssumeProve);
-      if (isAssumeProve)
+      if (current.kind === "ThmOrAssumpDef" && current.body.kind === "AssumeProve")
         return generator.addError(location, "ASSUME/PROVE used where an expression is required.");
       if (current.kind === "ThmOrAssumpDef" && current.body.kind === "OpAppl") {
         const step = PROOF_STEP_OPERATORS.get(current.body.operator.name);

@@ -1,9 +1,3 @@
-// An independent check of the proofs that the Zenon port finds. It shares no code with the search:
-// formulas compare by their own alpha-equivalence, substitution and unfolding are rebuilt here, and
-// each rule's branches come from the lemma that justifies the rule in tlapm's Zenon.thy rather than
-// from the prover. The check walks the proof bottom up and computes the formulas each subproof
-// needs. A proof is valid when every rule is one of the lemmas and the root needs only hypotheses.
-
 import { getLimitFailure, type Limits } from "../limits";
 import type { PlainRuleName, Proof, RuleArgs } from "../proof";
 import { getDefinitionSpec } from "./definitions";
@@ -57,8 +51,6 @@ const getRuleSpec = (proof: Proof<Term>, checker: Checker): RuleSpec => {
   }
 };
 
-// True when the proof refutes the hypotheses.
-// Whether the proof is valid, or false once the limits pass.
 export const checkProof = (root: Proof<Term>, context: CheckContext, limits: Limits) => {
   const keys = createKeys();
   const hasRelation = createRelationProperties(context);
@@ -79,7 +71,6 @@ export const checkProof = (root: Proof<Term>, context: CheckContext, limits: Lim
     return result;
   };
   try {
-    // Subproofs before their parents, without recursion: proofs can be deep.
     const stack: [Proof<Term>, boolean][] = [[root, false]];
     while (stack.length > 0) {
       if (getLimitFailure(limits) !== undefined) return false;
@@ -96,8 +87,7 @@ export const checkProof = (root: Proof<Term>, context: CheckContext, limits: Lim
         if (!needed.has(subproof)) stack.push([subproof, false]);
     }
     const hypotheses = new Set(context.hypotheses.map(keys.getTopKey));
-    const missing = [...(needed.get(root) ?? [])].filter((key) => !hypotheses.has(key));
-    return missing.length === 0;
+    return [...(needed.get(root) ?? [])].every((key) => hypotheses.has(key));
   } catch (error) {
     if (error instanceof UncheckedError) return false;
     throw error;

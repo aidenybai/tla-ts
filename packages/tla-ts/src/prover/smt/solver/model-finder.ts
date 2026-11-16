@@ -1,8 +1,4 @@
-// Ported from Z3 (src/smt/smt_model_finder.cpp), MIT license, see z3-license.txt. Completes the
-// model of the ground formulas so that it may satisfy the universal quantifiers, following
-// "Complete instantiation for quantified SMT formulas": the quantifier analyzer collects how the
-// variables occur, and the AUF solver gives each group of argument positions and variables a
-// projection function onto its instantiation set.
+// Ported from Z3 (src/smt/smt_model_finder.cpp), MIT license, see z3-license.txt.
 import { OP_OR, SORT_BOOL, type AstManager } from "./ast";
 import type { Context } from "./context";
 import { L_TRUE } from "./lbool";
@@ -10,28 +6,26 @@ import { solveMacros } from "./model-macro-solver";
 import type { ProtoModel } from "./proto-model";
 import { Rewriter, TACTIC_REWRITER_OPTIONS } from "./rewriter";
 import { AufSolver } from "./auf-solver";
-import { MBQI_FORCE_TEMPLATE, QuantifierAnalyzer, QuantifierInfo } from "./quantifier-analyzer";
+import { QuantifierAnalyzer, QuantifierInfo } from "./quantifier-analyzer";
 import { RefVector } from "./ref-vector";
 import { shrink } from "./array";
 
 export class ModelFinder {
+  private manager: AstManager;
   private q2info = new Map<number, QuantifierInfo>();
   private quantifiers: number[] = [];
   private scopes: number[] = [];
   private rewriter: Rewriter;
-  // m_mutil of quantifier_analyzer: macro_util's rewriting, kept apart from the rewriter above so that
-  // its last result is never released early.
+  // macro_util's rewriter stays apart from the one above, so that its last result is never released early.
   private macroRewriter: Rewriter;
   readonly aufSolver: AufSolver;
   private newConstraints: number[] = [];
 
-  constructor(
-    private manager: AstManager,
-    private context: Context,
-  ) {
-    this.rewriter = new Rewriter(manager, TACTIC_REWRITER_OPTIONS);
-    this.macroRewriter = new Rewriter(manager, TACTIC_REWRITER_OPTIONS);
-    this.aufSolver = new AufSolver(manager, this.rewriter);
+  constructor(private context: Context) {
+    this.manager = context.manager;
+    this.rewriter = new Rewriter(this.manager, TACTIC_REWRITER_OPTIONS);
+    this.macroRewriter = new Rewriter(this.manager, TACTIC_REWRITER_OPTIONS);
+    this.aufSolver = new AufSolver(this.manager, this.rewriter);
   }
 
   getQuantifierInfo(quantifier: number) {
@@ -39,7 +33,7 @@ export class ModelFinder {
   }
 
   registerQuantifier(quantifier: number) {
-    const info = new QuantifierInfo(this.manager, this.context, quantifier, this.macroRewriter);
+    const info = new QuantifierInfo(this.context, quantifier, this.macroRewriter);
     this.q2info.set(quantifier, info);
     this.quantifiers.push(quantifier);
     new QuantifierAnalyzer(this.manager, this.rewriter, info).analyze();
@@ -60,8 +54,6 @@ export class ModelFinder {
     shrink(this.scopes, this.scopes.length - numScopes);
   }
 
-  // fix_model: tries to satisfy the relevant quantifiers by changing the model while keeping the
-  // ground formulas satisfied.
   fixModel(model: ProtoModel) {
     const context = this.context;
     if (this.quantifiers.length === 0) return;
@@ -72,12 +64,8 @@ export class ModelFinder {
     );
     if (quantifiers.length === 0) return;
     for (const quantifier of quantifiers) this.getQuantifierInfo(quantifier).resetTheOne();
-    const residue = solveMacros(
-      this.manager,
-      model,
-      quantifiers,
-      (quantifier) => this.getQuantifierInfo(quantifier),
-      MBQI_FORCE_TEMPLATE,
+    const residue = solveMacros(this.manager, model, quantifiers, (quantifier) =>
+      this.getQuantifierInfo(quantifier),
     );
     const solver = this.aufSolver;
     solver.reset();
@@ -92,7 +80,6 @@ export class ModelFinder {
     return this.getQuantifierInfo(quantifier).flatQ;
   }
 
-  // get_uvar_inst_set: the set of variable index of the quantifier before flattening.
   getUvarInstSet(quantifier: number, index: number) {
     const manager = this.manager;
     const flatQ = this.getFlatQuantifier(quantifier);
@@ -105,17 +92,15 @@ export class ModelFinder {
     );
   }
 
-  // get_inv: a term of the instantiation set whose value is value.
-  getInv(quantifier: number, index: number, value: number, model: ProtoModel) {
+  getInv(quantifier: number, index: number, value: number) {
     const set = this.getUvarInstSet(quantifier, index);
     if (set === null) return null;
-    const term = set.getInv(value, model);
+    const term = set.getInv(value);
     if (term !== undefined && this.aufSolver.isDefaultRepresentative(term))
       return { term: value, generation: 0 };
     return term === undefined ? null : { term, generation: set.getGeneration(term) };
   }
 
-  // restrict_sks_to_inst_set: each Skolem constant must take the value of a term in its set.
   restrictSksToInstSet(quantifier: number, sks: number[], assert: (expr: number) => void) {
     const manager = this.manager;
     const numDecls = manager.getQuantifier(quantifier).sorts.length;
@@ -124,12 +109,11 @@ export class ModelFinder {
       const sk = sks[sks.length - index - 1];
       const set = this.getUvarInstSet(quantifier, index);
       if (set === null || set.inv.size === 0) continue;
-      // eqs and new_cnstr hold their terms until the restriction is asserted. ast_manager::mk_or keeps
-      // a single disjunct in an or.
       const eqs = new RefVector(manager);
       for (const value of set.inv.keys())
         if (manager.sorts[value] === manager.sorts[sk]) eqs.push(manager.mkEq(sk, value));
       if (eqs.size > 0) {
+        // ast_manager::mk_or keeps a single disjunct in an or.
         const constraint = manager.mkApp(OP_OR, eqs.items, SORT_BOOL);
         manager.incRef(constraint);
         assert(constraint);
@@ -141,7 +125,6 @@ export class ModelFinder {
     return isAsserted;
   }
 
-  // restart_eh: the constraints of the last model become axioms.
   restartEh() {
     const context = this.context;
     for (const constraint of this.newConstraints) {

@@ -1,9 +1,6 @@
-// Ported from Z3 (src/smt/theory_lra.cpp), MIT license, see z3-license.txt. How theory_lra
-// propagates: asserted bounds go to the lp solver, the tableau is made feasible, and implied bounds
-// and equalities of fixed columns come back as literals and equalities.
+// Ported from Z3 (src/smt/theory_lra.cpp), MIT license, see z3-license.txt.
 import { OP_ITE, OP_SUB, SORT_BOOL } from "./ast";
 import { TheoryJustification } from "./enode";
-import { getIdentityHash, ObjMap } from "./hashtable";
 import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
 import { Literal, negate } from "./literal";
 import { Rational } from "./rational";
@@ -12,8 +9,8 @@ import { type ConstraintKind, KIND_GE, KIND_GT, KIND_LE, KIND_LT } from "./lp/co
 import { LP_INFEASIBLE } from "./lp/core-solver";
 import { Dependency, linearize, mkJoin, mkLeaf } from "./lp/dependency";
 import { Explanation } from "./lp/explanation";
-import type { LarTerm } from "./lp/lar-term";
 import { getAtomLiteral, TheoryLraBounds } from "./theory-lra-bounds";
+import { getTermCoeffs } from "./arith-terms";
 import type { ApiBound } from "./theory-lra-internalize";
 
 const NULL_THEORY_VAR = -1;
@@ -41,6 +38,7 @@ export abstract class TheoryLraPropagate extends TheoryLraBounds {
   private lowerTerms: (TermBound | undefined)[] = [];
   private upperTerms: (TermBound | undefined)[] = [];
   protected isModelInitialized = false;
+  private activeInfEpsConstraints: number[] = [];
 
   canPropagate() {
     return (
@@ -55,7 +53,6 @@ export abstract class TheoryLraPropagate extends TheoryLraBounds {
     this.propagateCore();
   }
 
-  // propagate_core: whether there was anything to propagate.
   protected propagateCore() {
     const context = this.context;
     this.isModelInitialized = false;
@@ -124,6 +121,10 @@ export abstract class TheoryLraPropagate extends TheoryLraBounds {
     const constraint = isTrue ? bound.constraintTrue : bound.constraintFalse;
     if (solver.constraintIsRedundant(constraint)) return solver.status !== LP_INFEASIBLE;
     solver.activate(constraint);
+    if (isTrue && !bound.eps.isZero()) {
+      this.context.pushTrail(() => this.activeInfEpsConstraints.pop());
+      this.activeInfEpsConstraints.push(constraint);
+    }
     if (solver.status === LP_INFEASIBLE) return false;
     const kind = this.getBoundKind(bound, isTrue);
     const value = isTrue
@@ -131,11 +132,11 @@ export abstract class TheoryLraPropagate extends TheoryLraBounds {
       : bound.isLower
         ? bound.value.sub(Rational.one)
         : bound.value.add(Rational.one);
-    if (bound.isInt || isTrue) this.propagateEqs(bound.column, constraint, kind, bound, value);
+    if (isTrue ? bound.eps.isZero() : bound.isInt)
+      this.propagateEqs(bound.column, constraint, kind, bound, value);
     return true;
   }
 
-  // propagate_eqs: a bound that fixes a column, with the opposite bound of the same value.
   private propagateEqs(
     column: number,
     constraint: number,
@@ -151,7 +152,6 @@ export abstract class TheoryLraPropagate extends TheoryLraBounds {
     this.fixedVarEh(bound.thVar, column, mkJoin(mkLeaf(constraint), opposite), value);
   }
 
-  // set_bound: records the bound of a term column, or checks that a column has the bound.
   private setTermBound(column: number, constraint: number, value: Rational, isLower: boolean) {
     const solver = this.solver;
     if (!solver.hasTerm(column)) {
@@ -172,7 +172,6 @@ export abstract class TheoryLraPropagate extends TheoryLraBounds {
     return true;
   }
 
-  // has_bound: the dependency of a bound of the column with the value, if it has one.
   private getFixingBound(
     column: number,
     value: Rational,
@@ -199,7 +198,6 @@ export abstract class TheoryLraPropagate extends TheoryLraBounds {
     return this.getEnode(first).root === this.getEnode(second).root;
   }
 
-  // report_equality_of_fixed_vars: two columns fixed to the same value are equal.
   protected reportEqualityOfFixedVars(first: number, second: number) {
     const solver = this.solver;
     const v1 = solver.getExternal(first);
@@ -220,8 +218,6 @@ export abstract class TheoryLraPropagate extends TheoryLraBounds {
     this.assignEq(v1, v2);
   }
 
-  // fixed_var_eh: a column fixed to a value is equal to an offset term, or to the variable of the
-  // numeral with that value.
   private fixedVarEh(thVar: number, column: number, dep: Dependency, value: Rational) {
     if (this.propagateOffsetEq(column, dep, value)) return;
     const isInt = this.isIntVar(thVar);
@@ -238,10 +234,9 @@ export abstract class TheoryLraPropagate extends TheoryLraBounds {
     this.assignEq(thVar, other);
   }
 
-  // propagate_offset_eq: x - y fixed to 0 makes x and y equal.
   private propagateOffsetEq(column: number, dep: Dependency, value: Rational) {
     if (!value.isZero() || !this.solver.hasTerm(column)) return false;
-    const coeffs = this.getTermCoeffs(this.solver.getTerm(column));
+    const coeffs = getTermCoeffs(this.solver, this.solver.getTerm(column));
     if (coeffs.length !== 2) return false;
     const first = coeffs[0];
     const second = coeffs[1];
@@ -254,34 +249,13 @@ export abstract class TheoryLraPropagate extends TheoryLraBounds {
     return true;
   }
 
-  // term2coeffs: the coefficients of the theory variables of a term, with term columns expanded,
-  // in the slot order of Z3's u_map.
-  protected getTermCoeffs(term: LarTerm) {
-    const coeffs = new ObjMap<Rational>(getIdentityHash);
-    const visit = (current: LarTerm, coeff: Rational) => {
-      for (const entry of current.coeffs) {
-        if (this.solver.hasTerm(entry[0])) {
-          visit(this.solver.getTerm(entry[0]), coeff.mul(entry[1]));
-          continue;
-        }
-        const thVar = this.solver.getExternal(entry[0]);
-        const sum = (coeffs.get(thVar) ?? Rational.zero).add(entry[1].mul(coeff));
-        if (coeffs.has(thVar)) coeffs.replace(thVar, sum);
-        else coeffs.set(thVar, sum);
-      }
-    };
-    visit(term, Rational.one);
-    return [...coeffs];
-  }
-
   private assignEq(first: number, second: number) {
     this.context.pushEq(this.getEnode(first), this.getEnode(second), {
       kind: "justification",
-      justification: new TheoryJustification(this.coreLiterals, []),
+      justification: new TheoryJustification(this.id, this.coreLiterals, []),
     });
   }
 
-  // add_eq: an equality that the lp solver implies, with its explanation.
   protected addEq(first: number, second: number, explanation: Explanation, isFixed: boolean) {
     if (this.context.isInconsistent()) return false;
     const v1 = this.solver.getExternal(first);
@@ -339,7 +313,19 @@ export abstract class TheoryLraPropagate extends TheoryLraBounds {
     }
   }
 
+  // An implied bound keeps only a rational and a strict bit, so one explained by a bound with an
+  // infinitesimal could strengthen x >= r - eps into x > r.
   private propagateLpSolverBound(implied: ImpliedBound) {
+    const epsConstraints = this.activeInfEpsConstraints;
+    if (
+      epsConstraints.length > 0 &&
+      implied
+        .explain()
+        .some((entry) =>
+          linearize([entry[1]]).some((constraint) => epsConstraints.includes(constraint)),
+        )
+    )
+      return;
     const thVar = this.solver.getExternal(implied.column);
     if (thVar === NULL_THEORY_VAR || this.unassignedBounds[thVar] === 0) return;
     const context = this.context;
@@ -359,11 +345,10 @@ export abstract class TheoryLraPropagate extends TheoryLraBounds {
             this.explanation.addPair(constraint, entry[0]);
           }
       }
-      context.assign(literal, new TheoryJustification(this.coreLiterals, []));
+      context.assign(literal, new TheoryJustification(this.id, this.coreLiterals, []));
     }
   }
 
-  // is_bound_implied: the literal of the bound that the implied bound makes true or false.
   private isBoundImplied(kind: ConstraintKind, value: Rational, bound: ApiBound) {
     const literal = getAtomLiteral(bound);
     const comparison = value.compare(bound.value);
@@ -400,6 +385,6 @@ export abstract class TheoryLraPropagate extends TheoryLraBounds {
     this.resetEvidence();
     this.numConflicts++;
     for (const constraint of this.explanation) this.setEvidence(constraint);
-    this.context.setConflict(new TheoryJustification(this.coreLiterals, []), null);
+    this.context.setConflict(new TheoryJustification(this.id, this.coreLiterals, []), null);
   }
 }

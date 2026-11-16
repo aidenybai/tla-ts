@@ -1,6 +1,4 @@
 // Ported from Z3 (src/smt/theory_lra.cpp, src/math/lp/lp_api.h), MIT license, see z3-license.txt.
-// The atoms of theory_lra: each is a bound on a column, with axioms between the bounds of the same
-// column.
 import { OP_GE, OP_IS_INT, OP_LE } from "./ast";
 import { BoolVar, Literal, mkLiteral, negate } from "./literal";
 import { Rational } from "./rational";
@@ -27,7 +25,7 @@ export abstract class TheoryLraBounds extends TheoryLraInternalize {
     const op = manager.getOp(expr);
     const boolVar = context.mkBoolVar(expr);
     this.boolVarToBound[boolVar] = undefined;
-    context.setVarTheory(boolVar);
+    context.setVarTheory(boolVar, this.id);
     if (op === OP_IS_INT) {
       this.mkEnode(expr);
       if (!context.relevancy.isEnabled) this.mkIsIntAxiom(expr);
@@ -60,6 +58,27 @@ export abstract class TheoryLraBounds extends TheoryLraInternalize {
     return true;
   }
 
+  // mk_ge of theory_lra: the atom of an objective bound, without the enode of its term.
+  protected mkObjectiveBound(
+    atom: number,
+    thVar: number,
+    isLower: boolean,
+    value: Rational,
+    eps: Rational,
+  ) {
+    const context = this.context;
+    if (context.isBInternalized(atom)) return;
+    const boolVar = context.mkBoolVar(atom);
+    this.boolVarToBound[boolVar] = undefined;
+    context.setVarTheory(boolVar, this.id);
+    const apiBound = this.mkVarBound(boolVar, thVar, isLower, value, eps);
+    this.mkBoundAxioms(apiBound);
+    this.updateUnassignedBounds(thVar, 1);
+    this.bounds[thVar].push(apiBound);
+    this.boundsTrail.push(thVar);
+    this.boolVarToBound[boolVar] = apiBound;
+  }
+
   private updateUnassignedBounds(thVar: number, increment: number) {
     const saved = this.unassignedBounds[thVar];
     this.context.pushTrail(() => {
@@ -68,21 +87,25 @@ export abstract class TheoryLraBounds extends TheoryLraInternalize {
     this.unassignedBounds[thVar] = saved + increment;
   }
 
-  // bound2constraint_kind: the kind of the bound when its atom is true or false.
   protected getBoundKind(bound: ApiBound, isTrue: boolean) {
     if (bound.isLower) return isTrue ? KIND_GE : bound.isInt ? KIND_LE : KIND_LT;
     return isTrue ? KIND_LE : bound.isInt ? KIND_GE : KIND_GT;
   }
 
-  private mkVarBound(boolVar: BoolVar, thVar: number, isLower: boolean, value: Rational) {
+  private mkVarBound(
+    boolVar: BoolVar,
+    thVar: number,
+    isLower: boolean,
+    value: Rational,
+    eps = Rational.zero,
+  ) {
     this.pushInternalizeState();
     this.internalizeHead--;
     const column = this.registerVar(thVar);
     const isInt = this.isIntVar(thVar);
-    const partial = { isLower, isInt };
     const kindTrue = isLower ? KIND_GE : KIND_LE;
     const kindFalse = isLower ? (isInt ? KIND_LE : KIND_LT) : isInt ? KIND_GE : KIND_GT;
-    const constraintTrue = this.solver.mkVarBound(column, kindTrue, value);
+    const constraintTrue = this.solver.mkVarBound(column, kindTrue, value, eps);
     const falseValue = isInt
       ? isLower
         ? value.sub(Rational.one)
@@ -91,10 +114,9 @@ export abstract class TheoryLraBounds extends TheoryLraInternalize {
     const constraintFalse = this.solver.mkVarBound(column, kindFalse, falseValue);
     this.constraintSources[constraintTrue] = mkLiteral(boolVar);
     this.constraintSources[constraintFalse] = mkLiteral(boolVar, true);
-    return { boolVar, thVar, column, value, constraintTrue, constraintFalse, ...partial };
+    return { boolVar, thVar, column, value, eps, constraintTrue, constraintFalse, isLower, isInt };
   }
 
-  // mk_bound_axioms: implications between a new bound and its closest neighbors on the variable.
   private mkBoundAxioms(bound: ApiBound) {
     if (!this.context.isSearching) {
       this.newBounds.push(bound);
@@ -146,7 +168,6 @@ export abstract class TheoryLraBounds extends TheoryLraInternalize {
     else mkClause([negate(l1), l2]);
   }
 
-  // flush_bound_axioms: the axioms of the bounds created before the search, per variable.
   protected flushBoundAxioms() {
     while (this.newBounds.length > 0) {
       const pending = this.newBounds.slice().sort((first, second) => first.thVar - second.thVar);

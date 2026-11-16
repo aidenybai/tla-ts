@@ -6,8 +6,6 @@ import { parseModule } from "../../src/parser";
 import { printModule } from "../../src/printer";
 import { compile } from "../../src/typescript/compile";
 
-// Values print as strings that are equal for equal TLA+ values. Sets ignore order, and arrays,
-// Maps, and objects all print as functions from their keys, as TLA+ represents them.
 const formatSet = (elements: string[]) => `{${elements.sort().join(", ")}}`;
 
 const formatFunction = (entries: [string, string][]) =>
@@ -82,7 +80,6 @@ const getCanonicalTla = (value: Value, heap?: Value): string => {
   throw new Error(`Unexpected value kind: ${value.kind}`);
 };
 
-// Runs a TypeScript module as JavaScript and returns what its getResult export returns.
 const runJavaScript = (source: string) => {
   const output = ts.transpileModule(source, {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ESNext },
@@ -95,7 +92,7 @@ const runJavaScript = (source: string) => {
 };
 
 const isWrittenField = (key: string) =>
-  /^(location|text|isBulleted|prefixEnds)$|[rR]anges?$/.test(key);
+  /^(location|head|text|isBulleted|prefixEnds)$|[rR]anges?$/.test(key);
 
 const getParsedShape = (value: unknown): unknown => {
   if (Array.isArray(value)) return value.map(getParsedShape);
@@ -140,7 +137,6 @@ export const evaluateExpression = async (expression: string, setup = "") => {
   };
 };
 
-// The variables after an action runs statements once, in JavaScript and in the TLA+ that tla-ts compiles it to.
 export const runStatements = async (variables: string, statements: string, setup = "") => {
   const names = ts
     .createSourceFile("variables.ts", `let ${variables};`, ts.ScriptTarget.ESNext)

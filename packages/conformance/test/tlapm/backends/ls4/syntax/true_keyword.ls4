@@ -1,0 +1,12 @@
+(*---
+description: LS4 finds a model of always True.
+ref: translate/foyacc.mly#connective
+outcome: sat
+---*)
+always True
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: sat
+---*)

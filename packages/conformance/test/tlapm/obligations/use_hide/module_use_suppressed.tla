@@ -1,0 +1,39 @@
+(*---
+description: The suppress pragma before a module-level USE is parsed but ignored, so the USE still gives its support obligation. A suppressed USE step gives none, but Module.Gen.generate emits every obligation of Proof.Gen.mutate without checking Props.supp (src/module/m_gen.ml#generate).
+ref: src/module/m_gen.ml#generate
+features: [tlapm-bug]
+mode: obligations
+outcome: proved
+---*)
+---- MODULE module_use_suppressed ----
+CONSTANT c
+AXIOM A == c = 1
+(*{_}*) USE A
+THEOREM c = 1
+  OBVIOUS
+====
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: |-
+    @type: obligation
+    @id: 1
+    @loc: 11:1:11:12
+    @status: to be proved
+    @obl: ASSUME NEW CONSTANT c,
+           A == c = 1
+    PROVE  A
+
+    @type: obligation
+    @id: 2
+    @loc: 13:3:13:10
+    @status: to be proved
+    @obl: ASSUME NEW CONSTANT c,
+           A == c = 1,
+           A 
+    PROVE  c = 1
+
+    @type: obligationsnumber
+    @count: 2
+---*)

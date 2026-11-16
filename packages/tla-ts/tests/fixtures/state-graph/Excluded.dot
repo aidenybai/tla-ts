@@ -1,0 +1,31 @@
+strict digraph DiskGraph {
+node [shape=box,style=rounded]
+edge [colorscheme="paired12"]
+nodesep=0.35;
+subgraph cluster_graph {
+color="white";
+-3406341414084290173 [label="x = 0",style = filled]
+-3406341414084290173 -> -686636423115914061 [label="Next",color="2",fontcolor="2"];
+-686636423115914061 [label="x = 1",tooltip="x = 1"];
+-3406341414084290173 -> -7115858903467826205 [label="Next",color="2",fontcolor="2"];
+-7115858903467826205 [label="x = 2",tooltip="x = 2"];
+-3406341414084290173 -> -3406341414084290173 [label="Next",color="2",fontcolor="2"];
+-3406341414084290173 -> -3406341414084290173 [style="dashed",color="lightgray"];
+-686636423115914061 -> -7115858903467826205 [label="Next",color="2",fontcolor="2"];
+-686636423115914061 -> -4900539538744082733 [label="Next
+line 14, col 9 to line 14, col 14 of module Excluded",color="2",fontcolor="2"];
+-4900539538744082733 [label="x = 3",tooltip="x = 3",style = filled, fillcolor=lightyellow];
+-686636423115914061 -> -686636423115914061 [label="Next",color="2",fontcolor="2"];
+-686636423115914061 -> -686636423115914061 [style="dashed",color="lightgray"];
+-7115858903467826205 -> -4900539538744082733 [label="Next
+line 8, col 26 to line 8, col 31 of module Excluded",color="2",fontcolor="2"];
+-4900539538744082733 [label="x = 3",tooltip="x = 3",style = filled, fillcolor=lightyellow];
+-7115858903467826205 -> 5454012627852832067 [label="Next
+line 12, col 10 to line 12, col 14 of module Excluded",color="2",fontcolor="2"];
+5454012627852832067 [label="x = 4",tooltip="x = 4",style = filled, fillcolor=lightyellow];
+-7115858903467826205 -> -7115858903467826205 [label="Next",color="2",fontcolor="2"];
+-7115858903467826205 -> -7115858903467826205 [style="dashed",color="lightgray"];
+{rank = same; -3406341414084290173;}
+{rank = same; -686636423115914061;-7115858903467826205;}
+}
+}

@@ -1,0 +1,39 @@
+(*---
+description: The syntax corpus case "Proof by Multiple Definitions" in proofs.txt, which tlapm's parser tests read.
+ref: test/parser/syntax_corpus/proofs.txt
+features:
+  - tlapm-test
+  - syntax-corpus
+mode: obligations
+outcome: rejected
+---*)
+---- MODULE proofs_proof_by_multiple_definitions ----
+EXTENDS TestPrelude
+LEMMA TRUE
+PROOF BY ONLY
+  P,
+  Q
+  DEFS
+    >,
+    R
+====
+---- MODULE TestPrelude ----
+x > y == TRUE
+P == TRUE
+Q == TRUE
+R == TRUE
+====
+
+(*--- recorded
+all:
+  exit: 3
+  transcript: |-
+    @type: warning
+    @msg: File "./proofs_proof_by_multiple_definitions.tla", line 11, characters 9-19
+
+    Unknown module "TestPrelude"
+
+    File "./proofs_proof_by_multiple_definitions.tla", line 11, characters 9-19:
+    Error: Unknown module "TestPrelude"
+     tlapm ending abnormally with Failure("Module.Parser.load_module")
+---*)

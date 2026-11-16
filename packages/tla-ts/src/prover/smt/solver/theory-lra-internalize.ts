@@ -1,9 +1,9 @@
-// Ported from Z3 (src/smt/theory_lra.cpp), MIT license, see z3-license.txt. How theory_lra
-// internalizes terms: a term becomes a column of the lp solver, a linear sum becomes a term column,
-// nonlinear products and divisions go to nla, and numerals are fixed columns.
+// Ported from Z3 (src/smt/theory_lra.cpp), MIT license, see z3-license.txt.
 import {
   FAMILY_ARITH,
+  KIND_APP,
   OP_ADD,
+  OP_ATAN2,
   OP_DIV,
   OP_DIV0,
   OP_IDIV,
@@ -12,6 +12,9 @@ import {
   OP_MOD0,
   OP_MUL,
   OP_NUM,
+  OP_PI,
+  OP_POWER,
+  OP_REM,
   OP_SUB,
   OP_TO_INT,
   OP_TO_REAL,
@@ -19,7 +22,7 @@ import {
   SORT_INT,
   SORT_REAL,
 } from "./ast";
-import { Enode } from "./enode";
+import { getExtendedNumeral } from "./ast-util";
 import { BoolVar, getVar, Literal } from "./literal";
 import { Rational } from "./rational";
 import { RefVector } from "./ref-vector";
@@ -27,15 +30,17 @@ import { type ConstraintKind, KIND_GE, KIND_LE } from "./lp/constraints";
 import { NULL_LPVAR } from "./lp/lar-solver";
 import { NlaCore } from "./lp/nla-core";
 import type { Division } from "./lp/nla-divisions";
+import { TRANSCENDENTAL_OPS } from "./nlsat/transcendental-eval";
 import { TheoryLraAxioms } from "./theory-lra-axioms";
 
-// api_bound: an atom v <= value or v >= value, with its constraints when true and when false.
 export interface ApiBound {
   readonly boolVar: BoolVar;
   readonly thVar: number;
   readonly column: number;
   readonly isInt: boolean;
   readonly value: Rational;
+  // The infinitesimal of the true literal's bound, value + eps*delta.
+  readonly eps: Rational;
   readonly isLower: boolean;
   readonly constraintTrue: number;
   readonly constraintFalse: number;
@@ -48,7 +53,8 @@ interface Scope {
   numVars: number;
 }
 
-// The theory variables of a linear sum and their coefficients.
+const MAX_POWER_DEGREE = 10n;
+
 interface LinearizedSum {
   vars: number[];
   coeffs: Rational[];
@@ -62,30 +68,23 @@ export abstract class TheoryLraInternalize extends TheoryLraAxioms {
   protected realOneVar = NULL_LPVAR;
   protected realZeroVar = NULL_LPVAR;
 
-  // The literal of each inequality constraint, and null for a definition.
   protected constraintSources: (Literal | null)[] = [];
 
   protected bounds: ApiBound[][] = [];
   protected unassignedBounds: number[] = [];
   protected isNewDef = false;
 
-  // m_internalize_states: the terms of each nesting depth of internalize_def and mk_var_bound, which
-  // hold references until the next one at that depth resets them.
   private internalizeStates: RefVector[] = [];
 
   protected internalizeHead = 0;
   protected scopes: Scope[] = [];
   protected value2var = new Map<string, number>();
 
-  // m_not_handled: terms that the theory treats as uninterpreted, so a model may not satisfy them.
-  // Their arguments have variables, as the factors of an nla monomial do.
   protected unsupportedTerms: number[] = [];
 
   protected underspecifiedTerms: number[] = [];
   protected nla: NlaCore | undefined;
 
-  // init: the constants 1 and 0, integer and then real, each in a scope of its own. The context
-  // runs it once, when it registers the theory.
   init() {
     const manager = this.manager;
     this.oneVar = this.addConst(manager.mkNumeral(1n));
@@ -104,20 +103,16 @@ export abstract class TheoryLraInternalize extends TheoryLraAxioms {
     return column;
   }
 
-  isAttachedToVar(node: Enode) {
-    return node.thVar >= 0 && this.varEnodes[node.thVar] === node;
-  }
-
-  private mkVar(expr: number) {
+  protected mkVar(expr: number) {
     const node = this.getInternalizedEnode(expr);
-    if (this.isAttachedToVar(node)) return node.thVar;
+    if (this.isAttachedToVar(node)) return node.getThVar(this.id);
     const thVar = this.varEnodes.length;
     this.varEnodes.push(node);
     while (this.bounds.length <= thVar) {
       this.bounds.push([]);
       this.unassignedBounds.push(0);
     }
-    this.context.attachThVar(node, thVar);
+    this.context.attachThVar(node, this, thVar);
     return thVar;
   }
 
@@ -126,7 +121,6 @@ export abstract class TheoryLraInternalize extends TheoryLraAxioms {
     return column !== NULL_LPVAR ? column : this.solver.addVar(thVar, this.isIntVar(thVar));
   }
 
-  // mk_enode: the arguments, which become relevant, then the term.
   protected mkEnode(expr: number) {
     const context = this.context;
     for (let index = 0; index < this.manager.getNumArgs(expr); index++) {
@@ -149,14 +143,11 @@ export abstract class TheoryLraInternalize extends TheoryLraAxioms {
     }
   }
 
-  // found_unsupported: the list of unsupported terms is on the trail.
   protected foundUnsupported(expr: number) {
     this.unsupportedTerms.push(expr);
     this.context.pushTrail(() => this.unsupportedTerms.pop());
   }
 
-  // found_underspecified: a division by a term or by zero equals the division by zero it stands
-  // for, which the model interprets freely.
   private foundUnderspecified(expr: number) {
     const manager = this.manager;
     const context = this.context;
@@ -165,7 +156,9 @@ export abstract class TheoryLraInternalize extends TheoryLraAxioms {
     const op = manager.getOp(expr);
     const zero = manager.mkNumeral(0n);
     const dividend =
-      op === OP_MOD ? manager.mkApp(OP_MOD, [manager.getArg(expr, 0), zero], SORT_INT) : expr;
+      op === OP_MOD || op === OP_REM
+        ? manager.mkApp(op, [manager.getArg(expr, 0), zero], SORT_INT)
+        : expr;
     const byZero =
       op === OP_DIV
         ? manager.mkApp(OP_DIV0, manager.getArgs(expr), SORT_REAL)
@@ -197,7 +190,6 @@ export abstract class TheoryLraInternalize extends TheoryLraAxioms {
     return thVar;
   }
 
-  // internalize_mul: a product of terms is a variable whose arguments have variables.
   private internalizeMul(expr: number) {
     this.internalizeArgs(expr);
     const hasVar = this.context.isEInternalized(expr) && this.isAttachedExpr(expr);
@@ -214,19 +206,45 @@ export abstract class TheoryLraInternalize extends TheoryLraAxioms {
     return thVar;
   }
 
-  // ensure_nla: the nonlinear solver, made on the first nonlinear term, in the current scopes.
+  private getPowerDegree(power: number) {
+    const manager = this.manager;
+    if (manager.kinds[manager.getArg(power, 0)] !== KIND_APP) return undefined;
+    const degree = getExtendedNumeral(manager, manager.getArg(power, 1));
+    return degree !== undefined &&
+      degree.isInt() &&
+      degree.num > 0n &&
+      degree.num <= MAX_POWER_DEGREE
+      ? Number(degree.num)
+      : undefined;
+  }
+
+  private internalizePower(power: number, degree: number) {
+    this.internalizeArgs(power);
+    const hasVar = this.context.isEInternalized(power) && this.isAttachedExpr(power);
+    this.mkEnode(power);
+    const thVar = this.mkVar(power);
+    if (hasVar) return thVar;
+    const base = this.manager.getArg(power, 0);
+    this.internalizeTermCore(base);
+    const baseVar = this.mkVar(base);
+    const vars = Array.from({ length: degree }, () => this.registerVar(baseVar));
+    const nla = this.ensureNla();
+    this.solver.registerExistingTerms();
+    nla.addMonic(this.registerVar(thVar), vars);
+    return thVar;
+  }
+
   private ensureNla() {
     if (this.nla !== undefined) return this.nla;
     const nla = new NlaCore(this.solver, this.manager.limit);
     for (let index = 0; index < this.scopes.length; index++) nla.push();
     nla.isRelevant = (lpVar) =>
       this.context.isRelevant(this.getExpr(this.solver.getExternal(lpVar)));
+    nla.grobner.updateParams();
     this.nla = nla;
     return nla;
   }
 
-  // The columns of a quotient, its dividend and divisor, and the remainder, internalized in that
-  // order.
   private registerDivision(quotient: number, remainder: number): Division {
     const register = (expr: number) => {
       this.internalizeTermCore(expr);
@@ -244,7 +262,6 @@ export abstract class TheoryLraInternalize extends TheoryLraAxioms {
     return this.manager.isNumeral(expr) && !this.manager.getRationalValue(expr).isZero();
   }
 
-  // arith_util::is_bounded: a numeral, a mod by a numeral, or a div by a numeral of a bounded term.
   private isBounded(expr: number): boolean {
     const manager = this.manager;
     const op = manager.getOp(expr);
@@ -258,7 +275,6 @@ export abstract class TheoryLraInternalize extends TheoryLraAxioms {
     return node !== undefined && this.isAttachedToVar(node);
   }
 
-  // scoped_internalize_state: the terms of the next depth, reset. The caller decrements the head.
   protected pushInternalizeState() {
     const terms = (this.internalizeStates[this.internalizeHead] ??= new RefVector(this.manager));
     this.internalizeHead++;
@@ -266,7 +282,6 @@ export abstract class TheoryLraInternalize extends TheoryLraAxioms {
     return terms;
   }
 
-  // linearize: the theory variables of a weighted sum of terms, with their coefficients.
   private linearize(terms: RefVector, coeffs: Rational[]) {
     const manager = this.manager;
     const context = this.context;
@@ -287,10 +302,8 @@ export abstract class TheoryLraInternalize extends TheoryLraAxioms {
       toEnsureEnode.push(term);
       const op = manager.getOp(term);
       if (op === OP_ADD) {
-        for (let argIndex = 0; argIndex < manager.getNumArgs(term); argIndex++) {
-          const arg = manager.getArg(term, argIndex);
-          push(arg, coeffs[index]);
-        }
+        for (let argIndex = 0; argIndex < manager.getNumArgs(term); argIndex++)
+          push(manager.getArg(term, argIndex), coeffs[index]);
         if (terms.size !== index + 1) {
           terms.set(index, terms.items[terms.size - 1]);
           coeffs[index] = coeffs[coeffs.length - 1];
@@ -320,6 +333,9 @@ export abstract class TheoryLraInternalize extends TheoryLraAxioms {
       } else if (op === OP_MUL) {
         addVar(index, this.internalizeMul(term));
         index++;
+      } else if (op === OP_POWER && this.getPowerDegree(term) !== undefined) {
+        addVar(index, this.internalizePower(term, this.getPowerDegree(term)!));
+        index++;
       } else if (op === OP_NUM) {
         addVar(index, this.internalizeNumeral(term, manager.getRationalValue(term)));
         index++;
@@ -340,16 +356,14 @@ export abstract class TheoryLraInternalize extends TheoryLraAxioms {
         const isFirst = !context.isEInternalized(term);
         this.internalizeArgs(term);
         this.mkEnode(term);
-        addVar(index, this.mkVar(term));
+        const thVar = this.mkVar(term);
+        addVar(index, thVar);
         index++;
         if (isFirst) {
           if (op === OP_DIV) {
             const divisor = context.rewriter.rewrite(manager.getArg(term, 1));
             if (!this.isNonzeroNumeral(divisor)) this.foundUnderspecified(term);
-            for (let argIndex = 0; argIndex < manager.getNumArgs(term); argIndex++) {
-              const arg = manager.getArg(term, argIndex);
-              toEnsureVar.push(arg);
-            }
+            manager.pushArgs(term, toEnsureVar);
           } else if (op === OP_IDIV) {
             if (!this.isNonzeroNumeral(manager.getArg(term, 1))) this.foundUnderspecified(term);
             const remainder = manager.mkApp(OP_MOD, manager.getArgs(term), SORT_INT);
@@ -367,7 +381,6 @@ export abstract class TheoryLraInternalize extends TheoryLraAxioms {
           } else if (op === OP_MOD) {
             const isNonzeroDivisor = this.isNonzeroNumeral(manager.getArg(term, 1));
             if (!isNonzeroDivisor) this.foundUnderspecified(term);
-            // Without relevancy, Z3 makes the axioms before it registers the division with nla.
             if (!context.relevancy.isEnabled)
               this.mkIdivModAxioms(manager.getArg(term, 0), manager.getArg(term, 1));
             if (this.nla !== undefined && isNonzeroDivisor) {
@@ -384,17 +397,41 @@ export abstract class TheoryLraInternalize extends TheoryLraAxioms {
               context.internalize(quotient, false);
               nla.divisions.addDivisibility(this.registerDivision(quotient, term));
             }
+          } else if (op === OP_REM) {
+            if (!this.isNonzeroNumeral(manager.getArg(term, 1))) this.foundUnderspecified(term);
           } else if (op === OP_IDIV0 || op === OP_MOD0) {
-            for (let argIndex = 0; argIndex < manager.getNumArgs(term); argIndex++) {
-              const arg = manager.getArg(term, argIndex);
-              toEnsureVar.push(arg);
-            }
+            manager.pushArgs(term, toEnsureVar);
+          } else if (TRANSCENDENTAL_OPS.has(op)) {
+            const nla = this.ensureNla();
+            const arg = manager.getArg(term, 0);
+            this.internalizeTermCore(arg);
+            const argVar = this.mkVar(arg);
+            nla.transcendentals.add(
+              TRANSCENDENTAL_OPS.get(op)!,
+              this.registerVar(argVar),
+              this.registerVar(thVar),
+            );
+            toEnsureVar.push(arg);
+          } else if (op === OP_ATAN2) {
+            const nla = this.ensureNla();
+            const y = manager.getArg(term, 0);
+            const x = manager.getArg(term, 1);
+            this.internalizeTermCore(y);
+            this.internalizeTermCore(x);
+            const yVar = this.mkVar(y);
+            const xVar = this.mkVar(x);
+            nla.transcendentals.addAtan2(
+              this.registerVar(yVar),
+              this.registerVar(xVar),
+              this.registerVar(thVar),
+            );
+            toEnsureVar.push(y, x);
+          } else if (op === OP_PI) {
+            this.ensureNla().transcendentals.addPi(this.registerVar(thVar));
           } else if (op !== OP_TO_INT && op !== OP_DIV0) {
+            if (op === OP_POWER) this.ensureNla();
             this.foundUnsupported(term);
-            for (let argIndex = 0; argIndex < manager.getNumArgs(term); argIndex++) {
-              const arg = manager.getArg(term, argIndex);
-              toEnsureVar.push(arg);
-            }
+            manager.pushArgs(term, toEnsureVar);
           }
           if (!context.relevancy.isEnabled && op !== OP_MOD) this.relevantEh(term);
         }
@@ -411,7 +448,6 @@ export abstract class TheoryLraInternalize extends TheoryLraAxioms {
     return { vars, coeffs: coeffs.slice(0, vars.length) };
   }
 
-  // init_left_side: the coefficients of the variables summed, in the order of the variables.
   private initLeftSide(vars: number[], coeffs: Rational[]) {
     const sums = new Map<number, Rational>();
     vars.forEach((thVar, index) =>
@@ -427,7 +463,6 @@ export abstract class TheoryLraInternalize extends TheoryLraAxioms {
     return leftSide;
   }
 
-  // internalize_def: the variable of a term, with a column for its linear combination.
   protected internalizeDef(expr: number) {
     const terms = this.pushInternalizeState();
     terms.push(expr);
@@ -436,7 +471,6 @@ export abstract class TheoryLraInternalize extends TheoryLraAxioms {
     return thVar;
   }
 
-  // internalize_linearized_def: term - v = 0, unless the term is its own variable.
   private internalizeLinearizedDef(expr: number, linearized: LinearizedSum) {
     const thVar = this.mkVar(expr);
     if (

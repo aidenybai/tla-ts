@@ -1,7 +1,3 @@
-// A port of tlapm's action frontend (Action.process_obligation), which makes an obligation first
-// order for the backends: [A]_v, <<A>>_v and UNCHANGED become primes (Expr.Tla_norm), primes move
-// down to the variables (Symbol_commute), and what remains modal becomes opaque (Coalesce).
-
 import { TlapmBugError } from "../../errors";
 import { rewriteUnchanged } from "../../obligations/temporal";
 import {
@@ -44,13 +40,14 @@ const getHyp = (scope: Scope | undefined, index: number) => {
 const getLevel = (scope: Scope | undefined, expression: Expr) =>
   getLevelInfo(scope, expression).level;
 
-const isBuiltin = (expression: Expr, builtins: Builtin[]) =>
+const isBuiltin = (
+  expression: Expr,
+  builtins: Builtin[],
+): expression is Extract<Expr, { kind: "Apply" }> =>
   expression.kind === "Apply" &&
   expression.operator.kind === "Internal" &&
   builtins.includes(expression.operator.builtin);
 
-// Visit.map over a sequent: each hypothesis maps in the scope before it, hidden ones too if hyps
-// is "all". The context maps by the obligation's own hypotheses, from which it derives.
 const createSequentMap = (map: Rewrite, hyps: "visible" | "all") => {
   const mapContext = createContextMap<Scope | undefined>(undefined, (scope, hyp) => {
     const mapped = mapHyp(hyp, (inner) => map(scope, inner), hyps);
@@ -62,7 +59,6 @@ const createSequentMap = (map: Rewrite, hyps: "visible" | "all") => {
   };
 };
 
-// Expr.Tla_norm.expand_action, then expand_unchanged.
 const expandAction: Rewrite = (scope, expression) => {
   if (expression.kind === "Sub" || expression.kind === "Tsub") {
     const action = expandAction(scope, expression.action);
@@ -79,16 +75,13 @@ const expandAction: Rewrite = (scope, expression) => {
 };
 
 const expandUnchanged: Rewrite = (scope, expression) =>
-  expression.kind === "Apply" &&
-  isBuiltin(expression, ["UNCHANGED"]) &&
-  expression.args.length === 1
+  isBuiltin(expression, ["UNCHANGED"]) && expression.args.length === 1
     ? rewriteUnchanged(expression.args[0])
     : mapScoped(scope, expression, expandUnchanged, adjoin, "all");
 
 const applyModal = (builtin: Builtin, expression: Expr) =>
   applyBuiltin(builtin, [expression], expression);
 
-// prime_commuter: a prime distributes down to the declarations that are not constant.
 const commutePrime: Rewrite = (scope, expression) => {
   if (expression.kind === "Ix") {
     const hyp = getHyp(scope, expression.index);
@@ -127,8 +120,6 @@ const commutePrime: Rewrite = (scope, expression) => {
   return mapScoped(scope, expression, commutePrime, adjoin);
 };
 
-// box_commuter and dia_commuter: [] distributes over /\ and \A, and <> over \/ and \E, and both
-// vanish on a constant.
 const getModalCommuter = (builtin: "BoxTrue" | "Diamond"): Rewrite => {
   const connective: Builtin = builtin === "BoxTrue" ? "Conj" : "Disj";
   const quantifier = builtin === "BoxTrue" ? "Forall" : "Exists";
@@ -151,7 +142,6 @@ const COMMUTERS: Partial<Record<Builtin, Rewrite>> = {
   Diamond: getModalCommuter("Diamond"),
 };
 
-// symbol_commute: each prime, [] and <> commutes down its operand.
 const commuteSymbols: Rewrite = (scope, expression) => {
   if (expression.kind === "Apply" && expression.operator.kind === "Internal") {
     const commuter = COMMUTERS[expression.operator.builtin];
@@ -163,8 +153,6 @@ const commuteSymbols: Rewrite = (scope, expression) => {
   return mapScoped(scope, expression, commuteSymbols, adjoin, "all");
 };
 
-// The prefix rename_with_loc gives a declaration of each level, and a definition by the number of
-// its body's level.
 export const LEVEL_PREFIXES: Record<Level, string> = {
   Constant: "CONSTANT",
   State: "STATE",
@@ -182,8 +170,6 @@ interface RenameState {
   original: Scope | undefined;
 }
 
-// rename_with_loc: each declaration's name tells its level, as in CONSTANT_x_ or VARIABLE_x_. A
-// definition's level is the one its body had before the commuters ran, unless given.
 const renameDefn = (scope: Scope | undefined, definition: Defn, level?: number): Defn => {
   if (definition.kind !== "Operator") {
     return definition.kind === "Bpragma"
@@ -213,30 +199,20 @@ const renameHyp = (scope: Scope | undefined, hyp: Hyp, level?: number): Hyp => {
   }
 };
 
-// tlapm reads levels from properties that Expr.Levels computes before the frontend rewrites
-// anything, and each node it builds takes the properties of a node it replaces: UNCHANGED's
-// equalities those of the tuple or its only element, and a commuted prime, [] or <> those of its
-// operand. A definition's name tells the level its body's top node ends up with.
 const getOriginalLevel = (scope: Scope | undefined, hyp: Hyp) => {
   if (hyp.kind !== "Defn" || hyp.definition.kind !== "Operator") return undefined;
   const getNodeLevel = (expression: Expr) => {
-    if (!isBuiltin(expression, ["UNCHANGED"]) || expression.kind !== "Apply") {
-      return getLevel(scope, expression);
-    }
+    if (!isBuiltin(expression, ["UNCHANGED"])) return getLevel(scope, expression);
     const flatten = (inner: Expr): Expr[] =>
       inner.kind === "Tuple" ? inner.elements.flatMap(flatten) : [inner];
     const items = flatten(expression.args[0]);
     return getLevel(scope, items.length === 1 ? items[0] : expression.args[0]);
   };
   const body = hyp.definition.body;
-  const isCommuted =
-    isBuiltin(body, ["Prime", "BoxTrue", "Diamond"]) &&
-    body.kind === "Apply" &&
-    body.args.length === 1;
-  return getNodeLevel(isCommuted && body.kind === "Apply" ? body.args[0] : body);
+  const isCommuted = isBuiltin(body, ["Prime", "BoxTrue", "Diamond"]) && body.args.length === 1;
+  return getNodeLevel(isCommuted ? body.args[0] : body);
 };
 
-// renameSequent on the obligation, with the levels of its definitions from before commuting.
 const renameContext = createContextMap<RenameState>(
   { scope: undefined, original: undefined },
   (current, hyp, original) => {
@@ -325,8 +301,6 @@ const rename: Rewrite = (scope, expression) => {
   }
 };
 
-// E_substitutive.make_array: for each parameter of an operator, counting from the last, whether
-// the body uses it only outside primes and the other modal operators.
 const substitutiveArgs = new WeakMap<Defn, boolean[]>();
 
 const getSubstitutiveArgs = (scope: Scope | undefined, definition: Defn): boolean[] => {
@@ -354,7 +328,6 @@ const UNARY_MODALS: Builtin[] = [
 
 const BINARY_MODALS: Builtin[] = ["Leadsto", "Actplus", "Cdot"];
 
-// compute_substitutivity_array: whether the parameter at index occurs only where scope holds.
 const isSubstitutive = (
   scope: Scope | undefined,
   expression: Expr,
@@ -388,30 +361,26 @@ const isSubstitutive = (
       });
     }
   }
-  const found = { isSubstitutive: true };
+  let isEverySubstitutive = true;
   mapScoped(
     { scope, index },
     expression,
     (state, inner) => {
-      found.isSubstitutive &&= isSubstitutive(state.scope, inner, state.index, isInScope);
+      isEverySubstitutive &&= isSubstitutive(state.scope, inner, state.index, isInScope);
       return inner;
     },
     (state, hyp) => ({ scope: adjoin(state.scope, hyp), index: state.index + 1 }),
     "all",
   );
-  return found.isSubstitutive;
+  return isEverySubstitutive;
 };
 
-// Coalesce.crypthash: h and the first five hexadecimal digits of the MD5 of the expression as
-// tlapm prints it.
 export const getHashName = (hyps: Hyp[], expression: Expr) =>
   `h${getMd5(renderDoc(printExpression(hyps, expression))).slice(0, 5)}`;
 
 const coalesce = (scope: Scope | undefined, expression: Expr): Expr =>
   at({ kind: "Opaque", name: getHashName(getScopeHyps(scope), expression) }, expression);
 
-// coalesce_operator: an operator applied to arguments that are not all substitutive is opaque,
-// hiding the arguments that are constant or substitutive.
 const coalesceOperator = (
   scope: Scope | undefined,
   name: string,
@@ -441,19 +410,12 @@ const MODAL_BUILTINS: Builtin[] = [
   "UNCHANGED",
 ];
 
-// coalesce_modal_visitor: a primed declaration becomes the opaque name#prime, and every other
-// modal expression an opaque name. tlapm means to apply that name to the expression's free
-// variables, but compute_vars collects them into an instance variable and returns its own empty
-// set, so the name always stands alone.
 const coalesceModal: Rewrite = (scope, expression) => {
   if (expression.kind !== "Apply") return mapScoped(scope, expression, coalesceModal, adjoin);
   const operator = expression.operator;
-  const [arg] = expression.args;
-  if (
-    isBuiltin(expression, ["Prime", "StrongPrime"]) &&
-    expression.args.length === 1 &&
-    arg.kind === "Ix"
-  ) {
+  const args = expression.args;
+  const arg = args[0];
+  if (isBuiltin(expression, ["Prime", "StrongPrime"]) && args.length === 1 && arg.kind === "Ix") {
     const hyp = getHyp(scope, arg.index);
     if (hyp.kind === "Fresh" || hyp.kind === "Flex") {
       return at({ kind: "Opaque", name: `${hyp.name}#prime` }, expression);
@@ -464,34 +426,37 @@ const coalesceModal: Rewrite = (scope, expression) => {
   const hypScope = getScopeAt(scope, operator.index - 1);
   const hyp = hypScope?.hyp;
   if (!hyp) throw new TlapmBugError();
-  const args = expression.args;
+  const applyCoalesced = (applied: Expr) =>
+    at(
+      { kind: "Apply", operator: applied, args: args.map((inner) => coalesceModal(scope, inner)) },
+      expression,
+    );
   if (hyp.kind === "Defn" && hyp.definition.kind === "Operator") {
     const substitutive = getSubstitutiveArgs(hypScope.rest, hyp.definition);
     const isKept = args.every(
       (inner, position) => getLevel(scope, inner) === 0 || substitutive[args.length - position - 1],
     );
     if (isKept) return mapScoped(scope, expression, coalesceModal, adjoin);
-    const opaque = coalesceOperator(scope, hyp.definition.name, substitutive, operator, args);
-    return at(
-      { kind: "Apply", operator: opaque, args: args.map((inner) => coalesceModal(scope, inner)) },
-      expression,
+    return applyCoalesced(
+      coalesceOperator(scope, hyp.definition.name, substitutive, operator, args),
     );
   }
   if (hyp.kind === "Flex") return mapScoped(scope, expression, coalesceModal, adjoin);
   if (hyp.kind === "Fresh") {
-    if (hyp.level === "Constant") {
-      return at(
-        { kind: "Apply", operator, args: args.map((inner) => coalesceModal(scope, inner)) },
-        expression,
-      );
-    }
-    const notSubstitutive = args.map(() => false);
-    return coalesceOperator(scope, hyp.name, notSubstitutive, operator, args);
+    if (hyp.level === "Constant") return applyCoalesced(operator);
+    return applyCoalesced(
+      coalesceOperator(
+        scope,
+        hyp.name,
+        args.map(() => false),
+        operator,
+        args,
+      ),
+    );
   }
   throw new TlapmBugError();
 };
 
-// process_eob, on an obligation's sequent.
 const expandActionSequent = createSequentMap(expandAction, "all");
 
 const expandUnchangedSequent = createSequentMap(expandUnchanged, "all");
@@ -501,6 +466,8 @@ const commuteSequent = createSequentMap(commuteSymbols, "all");
 const coalesceSequent = createSequentMap(coalesceModal, "visible");
 
 export const processObligation = (sequent: Sequent): Sequent => {
+  // Levels.compute_level, whose levels the passes below read on demand: only its errors matter.
+  getLevelInfo(undefined, { kind: "Sequent", sequent });
   const keys = sequent.context;
   const expanded = expandUnchangedSequent(keys, expandActionSequent(keys, sequent));
   const commuted = commuteSequent(keys, expanded);

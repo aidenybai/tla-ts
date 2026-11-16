@@ -1,12 +1,29 @@
-// ctx.ml and backend/smtlib.ml's naming: each name is salted past the names in scope.
-
 import { formatName } from "./format";
 
-// A quantifier's variables, in scope until the quantifier's closing parenthesis.
 interface QuantifierScope {
   depth: number;
   exits: (() => void)[];
 }
+
+interface LetScope {
+  depth: number;
+  names: number[];
+}
+
+// The index of each name a LET binds, and of the parenthesis that closes its definitions.
+const getLetNames = (tokens: RegExpMatchArray[], start: number) => {
+  const names: number[] = [];
+  let position = start;
+  let depth = 0;
+  do {
+    const token = tokens[position][0];
+    if (token === "(") depth++;
+    if (token === ")") depth--;
+    if (token === "(" && depth === 2) names.push(position + 1);
+    position++;
+  } while (depth > 0);
+  return { names, end: position - 1 };
+};
 
 export interface Identifier {
   base: string;
@@ -16,8 +33,6 @@ export interface Identifier {
 
 const getSaltedName = (base: string, salt: number) => (salt === 0 ? base : `${base}_${salt}`);
 
-// Ctx.maybe_adj: a name is its formatted base, salted past the last one with that base and past
-// every name in scope.
 export const createContext = () => {
   const salts = new Map<string, number>();
   const names = new Set<string>();
@@ -30,7 +45,6 @@ export const createContext = () => {
       ) ?? start;
     return { base, salt, name: getSaltedName(base, salt) };
   };
-  // Brings an identifier into scope and returns how to take it out again.
   const enter = (identifier: Identifier) => {
     const previous = salts.get(identifier.base);
     salts.set(identifier.base, identifier.salt);
@@ -44,11 +58,9 @@ export const createContext = () => {
   return { names, adjoin, enter };
 };
 
-// Smtlib.pp_print_obligation names each declaration for the rest of the obligation, and each
-// quantifier's variables within it, so a variable's name depends on the names in scope.
 export const createPrinter = (declared: Map<string, Identifier>) => {
   const context = createContext();
-  const resolve = (line: string) => {
+  return (line: string) => {
     const declaration = /^\(declare-fun (\S+)/.exec(line)?.[1];
     if (declaration !== undefined) {
       const identifier = declared.get(declaration);
@@ -60,42 +72,59 @@ export const createPrinter = (declared: Map<string, Identifier>) => {
     const replacements = new Map<number, string>();
     const renames = new Map<string, string[]>();
     const scopes: QuantifierScope[] = [];
-    const state = { index: 0, depth: 0 };
-    while (state.index < tokens.length) {
-      const token = tokens[state.index][0];
+    const lets = new Map<number, LetScope>();
+    const bindName = (index: number, scope: QuantifierScope) => {
+      const raw = tokens[index][0];
+      const identifier = context.adjoin(raw.replace(/(:\w+)?#\d+$/, ""));
+      const stack = renames.get(raw) ?? [];
+      renames.set(raw, [...stack, identifier.name]);
+      scope.exits.push(context.enter(identifier), () => renames.set(raw, stack));
+      replacements.set(index, identifier.name);
+    };
+    let position = 0;
+    let depth = 0;
+    while (position < tokens.length) {
+      const token = tokens[position][0];
+      if (token === "(" && tokens[position + 1]?.[0] === "let") {
+        const found = getLetNames(tokens, position + 2);
+        lets.set(found.end, { depth: depth + 1, names: found.names });
+      }
       const isQuantifier =
         token === "(" &&
-        (tokens[state.index + 1]?.[0] === "forall" || tokens[state.index + 1]?.[0] === "exists") &&
-        tokens[state.index + 2]?.[0] === "(";
+        (tokens[position + 1]?.[0] === "forall" || tokens[position + 1]?.[0] === "exists") &&
+        tokens[position + 2]?.[0] === "(";
       if (isQuantifier) {
-        state.depth++;
-        const scope: QuantifierScope = { depth: state.depth, exits: [] };
+        depth++;
+        const scope: QuantifierScope = { depth, exits: [] };
         scopes.push(scope);
-        state.index += 3;
-        while (tokens[state.index]?.[0] === "(") {
-          const raw = tokens[state.index + 1][0];
-          const identifier = context.adjoin(raw.replace(/#\d+$/, ""));
-          const stack = renames.get(raw) ?? [];
-          renames.set(raw, [...stack, identifier.name]);
-          scope.exits.push(context.enter(identifier), () => renames.set(raw, stack));
-          replacements.set(state.index + 1, identifier.name);
-          state.index += 4;
+        position += 3;
+        while (tokens[position]?.[0] === "(") {
+          bindName(position + 1, scope);
+          position += 4;
         }
-        state.index++;
+        position++;
         continue;
       }
-      if (token === "(") state.depth++;
+      if (token === "(") depth++;
       if (token === ")") {
-        if (scopes.at(-1)?.depth === state.depth)
+        if (scopes.at(-1)?.depth === depth)
           scopes
             .pop()
             ?.exits.toReversed()
             .forEach((exit) => exit());
-        state.depth--;
+        depth--;
       }
       const name = renames.get(token)?.at(-1);
-      if (name !== undefined) replacements.set(state.index, name);
-      state.index++;
+      if (name !== undefined) replacements.set(position, name);
+      // Smtlib names a LET's definitions in order, though it prints them last first, and only its
+      // body sees them.
+      const letScope = lets.get(position);
+      if (letScope !== undefined) {
+        const scope: QuantifierScope = { depth: letScope.depth, exits: [] };
+        letScope.names.toReversed().forEach((index) => bindName(index, scope));
+        scopes.push(scope);
+      }
+      position++;
     }
     return tokens
       .map((match, index) => {
@@ -104,5 +133,4 @@ export const createPrinter = (declared: Map<string, Identifier>) => {
       })
       .join("");
   };
-  return { resolve };
 };

@@ -1,8 +1,7 @@
-// Ported from Z3 (src/smt/smt_enode.h, src/smt/smt_eq_justification.h, src/smt/smt_justification.h),
-// MIT license, see z3-license.txt. E-graph nodes and the justifications for their equalities.
+// Ported from Z3 (src/smt/smt_enode.h, src/smt/smt_eq_justification.h, src/smt/smt_justification.h), MIT license, see z3-license.txt.
 import type { Literal } from "./literal";
 
-interface Antecedents {
+export interface Antecedents {
   markLiteral(literal: Literal): void;
   markEq(first: Enode, second: Enode): void;
   markJustification(justification: Justification): void;
@@ -11,10 +10,10 @@ interface Antecedents {
 
 export abstract class Justification {
   isMarked = false;
+  readonly fromTheory: number = -1;
   abstract getAntecedents(antecedents: Antecedents): void;
 }
 
-// eq_justification: why two nodes on a transitivity branch are equal.
 export type EqJustification =
   | { kind: "axiom" }
   | { kind: "congruence"; isCommutative: boolean }
@@ -23,15 +22,11 @@ export type EqJustification =
 
 export const AXIOM_EQ_JUSTIFICATION: EqJustification = { kind: "axiom" };
 
-// The congruence justifications, which carry no data of their own and so are shared.
 export const CONGRUENCE_JUSTIFICATIONS: readonly EqJustification[] = [
   { kind: "congruence", isCommutative: false },
   { kind: "congruence", isCommutative: true },
 ];
 
-// The parents of a node without any, and the arguments past the second of a node with at most two.
-// Nothing adds to it: addParent gives a node its own list, so that a node with one parent holds one
-// entry instead of V8's sixteen.
 export const NO_ENODES: Enode[] = [];
 
 const IS_EQ = 1;
@@ -41,8 +36,17 @@ const IS_CGC_ENABLED = 8;
 const IS_MARKED = 16;
 const IS_MARKED2 = 32;
 const IS_INTERPRETED = 64;
-// The number of arguments, in the bits of flags above the Boolean fields.
-const NUM_ARGS_SHIFT = 7;
+const IS_COMMUTATIVE = 128;
+const IS_COMMUTATIVE_TABLE = 256;
+const NUM_ARGS_SHIFT = 9;
+
+class ThVarCell {
+  constructor(
+    public thId: number,
+    public thVar: number,
+    public next: ThVarCell | null,
+  ) {}
+}
 
 export class Enode {
   root: Enode = this;
@@ -50,26 +54,22 @@ export class Enode {
   cg: Enode = this;
   classSize = 1;
   parents: Enode[] = NO_ENODES;
-  // m_trans: the next node on the transitivity branch toward the root of the proof tree, and why the
-  // two are equal.
   transTarget: Enode | null = null;
   transJustification: EqJustification = AXIOM_EQ_JUSTIFICATION;
+  // The first theory variable inline, -1 when there is none, then the rest in the order added.
   thVar = -1;
-  // The approximate label sets of the class, 64 bits in two words: the low 32 bits, then the high.
+  thId = -1;
+  thNext: ThVarCell | null = null;
   lbls = 0;
   lblsHigh = 0;
   plbls = 0;
   plblsHigh = 0;
   lblHash = -1;
-  // The Boolean fields, one bit each, so a node takes 48 bytes less, and the number of arguments.
   private flags: number;
-  // m_args: the first two arguments inline, like Z3's arguments after the node, and the rest in an
-  // array. A missing argument is the node itself.
   private readonly arg0: Enode;
   private readonly arg1: Enode;
   private readonly moreArgs: Enode[];
 
-  // moreArgs are the arguments past the second, and arg0 and arg1 are null when there are fewer.
   constructor(
     readonly owner: number,
     readonly decl: number,
@@ -79,6 +79,8 @@ export class Enode {
     moreArgs: Enode[],
     public generation: number,
     isEq: boolean,
+    isCommutative: boolean,
+    isCommutativeTable: boolean,
     isBool: boolean,
     isMergeTf: boolean,
     isCgcEnabled: boolean,
@@ -90,6 +92,8 @@ export class Enode {
     this.flags =
       (numArgs << NUM_ARGS_SHIFT) |
       (isEq ? IS_EQ : 0) |
+      (isCommutative ? IS_COMMUTATIVE : 0) |
+      (isCommutativeTable ? IS_COMMUTATIVE_TABLE : 0) |
       (isBool ? IS_BOOL : 0) |
       (isMergeTf ? IS_MERGE_TF : 0) |
       (isCgcEnabled ? IS_CGC_ENABLED : 0);
@@ -109,6 +113,14 @@ export class Enode {
 
   get isEq() {
     return (this.flags & IS_EQ) !== 0;
+  }
+
+  get isCommutative() {
+    return (this.flags & IS_COMMUTATIVE) !== 0;
+  }
+
+  get isCommutativeTable() {
+    return (this.flags & IS_COMMUTATIVE_TABLE) !== 0;
   }
 
   get isBool() {
@@ -151,6 +163,77 @@ export class Enode {
     this.setFlag(IS_INTERPRETED, value);
   }
 
+  getThVar(thId: number) {
+    if (this.thVar < 0) return -1;
+    if (this.thId === thId) return this.thVar;
+    for (let cell = this.thNext; cell !== null; cell = cell.next)
+      if (cell.thId === thId) return cell.thVar;
+    return -1;
+  }
+
+  forEachThVar(visit: (thId: number, thVar: number) => void) {
+    if (this.thVar < 0) return;
+    visit(this.thId, this.thVar);
+    for (let cell = this.thNext; cell !== null; cell = cell.next) visit(cell.thId, cell.thVar);
+  }
+
+  addThVar(thVar: number, thId: number) {
+    if (this.thVar < 0) {
+      this.thVar = thVar;
+      this.thId = thId;
+      this.thNext = null;
+      return;
+    }
+    const cell = new ThVarCell(thId, thVar, null);
+    if (this.thNext === null) {
+      this.thNext = cell;
+      return;
+    }
+    let last = this.thNext;
+    while (last.next !== null) last = last.next;
+    last.next = cell;
+  }
+
+  replaceThVar(thVar: number, thId: number) {
+    if (this.thId === thId) {
+      this.thVar = thVar;
+      return;
+    }
+    for (let cell = this.thNext; cell !== null; cell = cell.next)
+      if (cell.thId === thId) {
+        cell.thVar = thVar;
+        return;
+      }
+  }
+
+  delThVar(thId: number) {
+    if (this.thId === thId) {
+      const next = this.thNext;
+      this.thVar = next === null ? -1 : next.thVar;
+      this.thId = next === null ? -1 : next.thId;
+      this.thNext = next === null ? null : next.next;
+      return;
+    }
+    let previous: ThVarCell | null = null;
+    for (let cell = this.thNext; cell !== null; previous = cell, cell = cell.next) {
+      if (cell.thId !== thId) continue;
+      if (previous === null) this.thNext = cell.next;
+      else previous.next = cell.next;
+      return;
+    }
+  }
+
+  restoreThVars(getEnode: (thId: number, thVar: number) => Enode) {
+    const kept: [number, number][] = [];
+    this.forEachThVar((thId, thVar) => {
+      if (getEnode(thId, thVar).root === this) kept.push([thId, thVar]);
+    });
+    this.thVar = -1;
+    this.thId = -1;
+    this.thNext = null;
+    for (const entry of kept) this.addThVar(entry[1], entry[0]);
+  }
+
   addParent(parent: Enode) {
     if (this.parents.length === 0) this.parents = [parent];
     else this.parents.push(parent);
@@ -169,7 +252,6 @@ export class Enode {
   }
 }
 
-// eq_propagation_justification: the equality atom is true because its sides are in one class.
 export class EqPropagationJustification extends Justification {
   constructor(
     private first: Enode,
@@ -183,7 +265,6 @@ export class EqPropagationJustification extends Justification {
   }
 }
 
-// eq_root_propagation_justification: a Boolean node merged with true or false.
 export class EqRootPropagationJustification extends Justification {
   constructor(private node: Enode) {
     super();
@@ -194,7 +275,6 @@ export class EqRootPropagationJustification extends Justification {
   }
 }
 
-// eq_conflict_justification: two interpreted roots, such as two numerals, were merged.
 export class EqConflictJustification extends Justification {
   constructor(
     private first: Enode,
@@ -211,7 +291,6 @@ export class EqConflictJustification extends Justification {
   }
 }
 
-// mp_iff_justification: a Boolean node takes the value of an equal node.
 export class MpIffJustification extends Justification {
   constructor(
     private first: Enode,
@@ -227,7 +306,6 @@ export class MpIffJustification extends Justification {
   }
 }
 
-// unit_resolution_justification: a clause simplified with literals that were false.
 export class UnitResolutionJustification extends Justification {
   constructor(
     private justification: Justification | null,
@@ -242,9 +320,9 @@ export class UnitResolutionJustification extends Justification {
   }
 }
 
-// ext_theory_propagation_justification: theory reasoning from literals and equalities.
 export class TheoryJustification extends Justification {
   constructor(
+    readonly fromTheory: number,
     private literals: Literal[],
     private eqs: Enode[],
   ) {

@@ -9,9 +9,11 @@ const checkInit = (init: string) =>
 
 describe("bundled modules match TLC's sources", () => {
   it("reports errors at the lines of TLC's Reals and RealTime modules", async () => {
-    expect((await checkInit("Infinity = 0")).failure?.message).toContain("at line 17, column 13");
+    expect((await checkInit("Infinity = 0")).failure?.message).toContain(
+      "line 17, col 13 to line 17, col 65 of module Reals",
+    );
     expect((await checkInit("RTBound(x' = x, x, 0, 1)")).failure?.message).toContain(
-      "at line 20, column 6",
+      "line 20, col 6 to line 20, col 49 of module RealTime",
     );
   });
 

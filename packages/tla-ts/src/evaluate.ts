@@ -1,5 +1,6 @@
 import {
   getChildren,
+  getReferencedName,
   isLocallyResolved,
   type Bound,
   type BoundPattern,
@@ -10,30 +11,43 @@ import {
   type NumberExpression,
   type OperatorParam,
   type RecordField,
-  type SourceRange,
 } from "./ast";
 import { getKindString } from "./builtins";
-import { isStackOverflow, TlaEvaluationError, TlaUnassignedError } from "./errors";
+import {
+  isStackOverflow,
+  TlaEvaluationError,
+  TlaSetBoundError,
+  TlaUnassignedError,
+  formatRange,
+} from "./errors";
 import { EXIT_STATUS, setExitCode } from "./exit-codes";
 import { generateEvaluator } from "./codegen";
+import { countCoverage, getCoverageNode, runAtCoverageNode, type Coverage } from "./coverage";
 import { MESSAGE_CODE } from "./tlc/messages";
 import type { CheckerRuntime } from "./runtime";
-import { getReadVariables } from "./dependencies";
-import { contextualApplications, mapChildren, substitutedExpressions } from "./instances";
+import {
+  isConstantLevel,
+  isImpureDefinition,
+  isNonconstant,
+  type DefinitionFacts,
+} from "./dependencies";
+import { contextualApplications, substitutionFrames } from "./instances";
 import { prettyPrint } from "./pretty-print";
-import { getReadLocals, isEnabled, type Runner } from "./successors";
+import { isEnabled, type Runner } from "./successors";
 import {
   applyFunction,
   describeMissingArgument,
-  combineHash,
   compareValues,
   createFunction,
+  addBoundedElement,
   createNonIntegerKeyError,
+  forEachElement,
+  isBeyondSetBound,
   createRecord,
   createEnumeratedSet,
   createSortedFunction,
   createSortedRecord,
-  createSortedSet,
+  createNormalizedSet,
   createWrittenRecord,
   createTuple,
   formatValue,
@@ -43,14 +57,14 @@ import {
   getIntervalElements,
   getLazySubsets,
   getStreamedElements,
+  normalizeShallowly,
   getFunctionClass,
+  getNormalizedSetElements,
   getSequenceElements,
-  getValueHash,
   isElementOf,
   isEnumerable,
   isFunctionValue,
   isOverriddenSet,
-  isSameValue,
   markLambdaFunction,
   isReducibleSet,
   isSetValue,
@@ -78,7 +92,6 @@ export interface OperatorValue {
   arity: number;
   call: (args: Value[]) => Value;
   expression?: Expression;
-  literalBody?: Value;
 }
 
 export type BuiltinArgument = Value | OperatorValue;
@@ -91,8 +104,8 @@ export interface Builtin {
   evaluateUnary: ((value: Value) => Value) | undefined;
   evaluateBinary: ((left: Value, right: Value) => Value) | undefined;
   isStateLevel?: boolean;
-  // Whether TLC takes an application for a constant one although its value depends on the state.
   isLevelConstant?: boolean;
+  isActionLevel?: boolean;
   isLazy?: boolean;
 }
 
@@ -113,12 +126,14 @@ export interface Thunk {
   state: State | undefined;
   next: State | undefined;
   cache: Value | undefined;
-  // Whether the expression may build a set that streams until TLC caches it, so that the thunk
-  // caches only a settled value.
   isStreamed: boolean;
+  isReleased?: boolean;
 }
 
-type Binding = { kind: "Value"; value: Value } | Thunk | { kind: "Operator"; operator: Operator };
+type Binding =
+  | { kind: "Value"; value: Value; argument?: Expression }
+  | Thunk
+  | { kind: "Operator"; operator: Operator };
 
 export interface Scope {
   name: string;
@@ -132,61 +147,42 @@ export interface Environment {
   builtins: Map<string, Builtin>;
   constants: Map<string, Value>;
   substitutions: Map<string, string>;
-  // The name SANY gives each definition that a named instance such as `M == INSTANCE Module`
-  // copies, such as M!Op, by the key of the copy.
   instanceNames: Map<string, string>;
   variables: string[];
   variableIndex: Map<string, number>;
-  definitionValues: Map<Definition, Value>;
-  constantLevels: Map<Definition, boolean>;
-  // The definitions an INSTANCE copies from a module that declares constants or variables. SANY
-  // wraps the body of each in its substitutions.
+  facts: DefinitionFacts;
+  startupValues: (Value | undefined)[];
   substitutedDefinitions: Set<Definition>;
+  instanceParams: Set<OperatorParam>;
   evaluators: WeakMap<Expression, Evaluator>;
-  // What the check works out once for each expression, operator or definition of its modules. The
-  // same modules checked with another config or other modules work it out again.
   entryEvaluators: WeakMap<Expression, Evaluator>;
-  applyOperators: WeakMap<Expression, Operator | null>;
-  argumentBinders: WeakMap<Expression, ArgumentBinder>;
-  argumentLocals: WeakMap<Expression, string[] | false>;
-  closedConstants: WeakMap<Expression, boolean>;
-  callMemos: WeakMap<Closure, CallMemos>;
+  definitionEvaluators: WeakMap<Definition, Evaluator>;
+  // The runners of the check's actions, kept to the check, as another config of the same parsed
+  // modules compiles them again.
   initRunners: WeakMap<Expression, Runner>;
   nextRunners: WeakMap<Expression, Runner>;
-  definitionLevels: WeakMap<Definition, number>;
-  closureLevels: WeakMap<Closure, number>;
-  // The expressions being evaluated, outermost first, when the environment replays an error to
-  // find where it occurred, as TLC's CallStackTool does.
+  // The calls in the tail of each recursive body that runs as a loop, or null for any other body.
+  tailCalls: WeakMap<Expression, TailStep | null>;
   callStack?: CallStack;
+  coverage?: Coverage;
 }
 
 export interface CallStack {
   expressions: Expression[];
-  // TLC stops popping the stack once an evaluation fails, so it keeps where the failure occurred.
   isFrozen: boolean;
-  // The expression that built each value of the replay that TLC's CallStackTool gives a source.
   sources: WeakMap<ObjectValue, Expression>;
-  // The value each expression of the replay last evaluated to.
   values: WeakMap<Expression, Value>;
-  // The expression each failure last left, which tells a failure of an operand from one of the
-  // method that computes the operator.
   failures: WeakMap<Error, Expression>;
-  // The failure of a value with a source, which TLC raises as a FingerprintException.
   fingerprint?: FingerprintFailure;
 }
 
 export interface FingerprintFailure {
-  // The sources of the values whose methods failed, outermost first.
   sources: Expression[];
-  // The message of the error the innermost one raised.
   reason: string;
 }
 
-// The operators of Tool#evalAppl whose value TLC's CallStackTool gives a source.
 const SOURCED_OPERATORS = new Set(["SUBSET", "UNION", "DOMAIN", "\\cup", "\\cap", "\\"]);
 
-// CallStackTool copies the SetPredValue, FcnLambdaValue and OpLambdaValue that an evaluation
-// returns without their source, and a function TLC builds from a FcnLambdaValue has none.
 const SOURCED_KINDS = new Set<Expression["kind"]>([
   "SetEnumeration",
   "SetFilter",
@@ -202,8 +198,6 @@ const isSourced = (expression: Expression) =>
   SOURCED_KINDS.has(expression.kind) ||
   (expression.kind === "Apply" && SOURCED_OPERATORS.has(expression.operator));
 
-// The argument whose method Tool#evalAppl calls to compute an operator, as with S.member(e) for
-// e \in S, f.apply(e) for f[e] when f is a function, or S.diff(T) for S \ T when S is Reducible.
 const getReceiver = (expression: Expression, values: CallStack["values"]) => {
   if (expression.kind === "FunctionApplication" || expression.kind === "Except") {
     return expression.function;
@@ -224,8 +218,6 @@ export interface Context {
   scope: Scope | undefined;
   state: State | undefined;
   next: State | undefined;
-  // EvalControl.KeepLazy, which Tool#evalAppl sets to evaluate the function it applies and which
-  // the evaluation passes on, so that a function constructor within builds a FcnLambdaValue.
   isKeepLazy?: boolean;
 }
 
@@ -249,15 +241,23 @@ const EXCEPT_AT = "@";
 export const describeLocation = (expression: Expression) =>
   `line ${expression.location.line}, column ${expression.location.column}`;
 
-export const formatRange = (range: SourceRange) =>
-  `line ${range.start.line}, col ${range.start.column} to line ${range.end.line}, col ${range.end.column} of module ${range.module}`;
-
 export const describeRange = (expression: Expression) => {
   const range = expression.location.range;
   return range ? formatRange(range) : describeLocation(expression);
 };
 
-// SANY prints a numeral as written and any other expression by its location.
+const TEMPORAL_FORMS = {
+  Always: "[]A",
+  Eventually: "<>A",
+  WeakFairness: "WF",
+  StrongFairness: "SF",
+};
+
+const createTemporalFormulaError = (form: string, expression: Expression) =>
+  new TlaEvaluationError(
+    `TLC encountered a temporal formula (${form}) when evaluating a predicate or action.\n${describeRange(expression)}`,
+  );
+
 export const describeNode = (expression: Expression) =>
   expression.kind === "Number"
     ? (expression.text ?? String(expression.value))
@@ -268,8 +268,6 @@ export const createConditionError = (expression: Expression, value: Value) =>
     `A non-boolean expression (${getKindString(value)}) was used as the condition of an IF.\n${describeRange(expression)}`,
   );
 
-// TLC parses an infix chain of /\ or \/ as nested binary junctions and a bulleted list as one
-// junction list, and it words the error differently for each.
 export const createJunctionError = (
   expression: Expression & { kind: "And" | "Or" },
   index: number,
@@ -290,12 +288,10 @@ export const createJunctionError = (
   );
 };
 
-// TLC selects a field of a record, and of another function from the function it converts it to,
-// which for a tuple keeps its domain as an interval.
 export const getFieldSelector = (expression: Expression & { kind: "FieldAccess" }) => {
   const field = expression.field;
   const describeMissing = (record: Value) =>
-    `Attempted to select nonexistent field "${field}" from the record\n${formatValue(record)}\n${describeRange(expression)}`;
+    `Attempted to select nonexistent field "${field}" from the record\n${prettyPrint(formatValue(record))}\n${describeRange(expression)}`;
   const describeNotInDomain = (functionValue: Value) =>
     `Attempted to apply function:\n${prettyPrint(formatValue(functionValue))}\nto argument "${field}", which is not in the domain of the function.`;
   return (value: Value) => {
@@ -306,17 +302,14 @@ export const getFieldSelector = (expression: Expression & { kind: "FieldAccess" 
     }
     const functionClass = getFunctionClass(value);
     if (functionClass === "tuple") throw createNonIntegerKeyError(field);
-    // Only TLC's RecordValue names the field it lacks. Any other function, such as a FcnRcdValue
-    // whose keys are strings, reports an argument outside its domain.
     return applyFunction(
-      value,
+      value.kind === "LazyFunction" ? toFiniteFunction(value) : value,
       field,
       functionClass === "record" ? describeMissing : describeNotInDomain,
     );
   };
 };
 
-// TLC 1.7.4 words what a tuple or a record lacks differently.
 export const getMissingArgumentDescriber = (version: TlcVersion | undefined) =>
   version === "1.7.4"
     ? (functionValue: Value, argument: Value) =>
@@ -339,46 +332,37 @@ export const getSubsetOperator =
         `Attempted to evaluate an expression of form S \\subseteq T, but S was not enumerable.\n${describeRange(expression)}`,
       );
     }
-    return builtin.evaluate([left, right]);
+    return builtin.evaluateBinary
+      ? builtin.evaluateBinary(left, right)
+      : builtin.evaluate([left, right]);
   };
 
-// TLC rejects a decimal, or an integer literal too big for it, while it processes the spec.
 export const createRealNumberError = (expression: DecimalExpression) =>
   setExitCode(
-    new TlaEvaluationError(
-      `TLC can't handle real numbers: ${expression.text} at ${describeLocation(expression)}`,
-    ),
+    new TlaEvaluationError(`TLC can't handle real numbers.\n${expression.text}`),
     EXIT_STATUS.configParseError,
   );
 
 export const createBigNumberError = (expression: NumberExpression) =>
   setExitCode(
     new TlaEvaluationError(
-      `TLC can't handle a number this big: ${expression.text ?? expression.value} at ${describeLocation(expression)}`,
+      `TLC can't handle a number this big.\n${expression.text ?? expression.value}`,
     ),
     EXIT_STATUS.error,
   );
 
-// TLC's Tool#evalAppl fails to look up a variable the state doesn't assign.
 export const createUnassignedError = (name: string, expression: Expression) =>
   new TlaUnassignedError(
     `In evaluation, the identifier ${name} is either undefined or not an operator.\n${describeRange(expression)}`,
     name,
   );
 
-// TLC's Tool#enabled reads the subscript of <<A>>_v in the successor as a state of its own, and
-// names the fairness condition when A leaves a variable of v unassigned, unlike TLC 1.7.4's.
 export const toUnspecifiedSubscriptError = (error: unknown, version: TlcVersion | undefined) =>
   error instanceof TlaUnassignedError && version !== "1.7.4"
     ? new TlaEvaluationError(
         `The action formula A appearing in a WF_v(A) or SF_v(A) operator does not specify the primed value of the variable ${error.variable} occurring in the state formula v.\n`,
       )
     : error;
-
-export const createPrimeOutsideActionError = (expression: Expression) =>
-  new TlaEvaluationError(
-    `A primed expression appears outside an action at ${describeLocation(expression)}`,
-  );
 
 export const lookupScope = (scope: Scope | undefined, name: string): Binding | undefined => {
   for (let current = scope; current; current = current.parent) {
@@ -393,12 +377,13 @@ export const bindValue = (scope: Scope | undefined, name: string, value: Value):
   parent: scope,
 });
 
-const bindPattern = (scope: Scope | undefined, pattern: BoundPattern, value: Value) => {
+export const bindPattern = (scope: Scope | undefined, pattern: BoundPattern, value: Value) => {
   if (pattern.kind === "Name") return bindValue(scope, pattern.name, value);
   const elements = getSequenceElements(value);
   if (!elements || elements.length !== pattern.names.length) {
+    const range = pattern.ranges?.[0];
     throw new TlaEvaluationError(
-      `Cannot bind <<${pattern.names.join(", ")}>> to ${formatValue(value)}, which is not a tuple of that length`,
+      `Argument mismatch in operator application.${range ? formatRange(range) : ""}`,
     );
   }
   return pattern.names.reduce<Scope | undefined>(
@@ -407,7 +392,6 @@ const bindPattern = (scope: Scope | undefined, pattern: BoundPattern, value: Val
   );
 };
 
-// Tool#evalAppl checks that it applies a function before it evaluates the argument.
 export const expectFunction = (value: Value, application: Expression) => {
   if (isFunctionValue(value)) return value;
   throw new TlaEvaluationError(
@@ -443,59 +427,44 @@ export const expectBoolean = (value: Value, description: string) => {
   return value;
 };
 
+export const expectImplication = (value: Value, expression: Expression, side: "P" | "Q") => {
+  if (typeof value !== "boolean") {
+    throw new TlaEvaluationError(
+      `Attempted to evaluate an expression of form P => Q when ${side} was\n${getKindString(value)}.\n${describeRange(expression)}`,
+    );
+  }
+  return value;
+};
+
+export const negate = (value: Value, expression: Expression) => {
+  if (typeof value !== "boolean") {
+    throw new TlaEvaluationError(
+      `Attempted to apply the operator ~ to a non-boolean\n(${getKindString(value)})\n${describeRange(expression)}`,
+    );
+  }
+  return !value;
+};
+
+export const isEquivalent = (left: Value, right: Value, expression: Expression) => {
+  if (typeof left !== "boolean" || typeof right !== "boolean") {
+    throw new TlaEvaluationError(
+      `Attempted to evaluate an expression of form P <=> Q when P or Q was not a boolean.\n${describeRange(expression)}`,
+    );
+  }
+  return left === right;
+};
+
+export const expectBooleanBody = (value: Value, expression: Expression) => {
+  if (typeof value !== "boolean") {
+    throw new TlaEvaluationError(
+      `TLC expected a boolean value, but did not find one. ${describeNode(expression)}`,
+    );
+  }
+  return value;
+};
+
 export const getDefinition = (name: string, environment: Environment) =>
   environment.definitions.get(environment.substitutions.get(name) ?? name);
-
-// TLC bounds the level of every action and temporal operator above constant, whatever its operands.
-const NONCONSTANT_KINDS = new Set<Expression["kind"]>([
-  "Prime",
-  "Unchanged",
-  "Enabled",
-  "BoxAction",
-  "AngleAction",
-  "Always",
-  "Eventually",
-  "WeakFairness",
-  "StrongFairness",
-]);
-
-const NONCONSTANT_OPERATORS = new Set(["~>", "-+->", "\\cdot"]);
-
-const isNonconstant = (expression: Expression, environment: Environment): boolean => {
-  if (
-    NONCONSTANT_KINDS.has(expression.kind) ||
-    (expression.kind === "UnboundedQuantifier" && expression.isTemporal === true) ||
-    (expression.kind === "Apply" && NONCONSTANT_OPERATORS.has(expression.operator))
-  ) {
-    return true;
-  }
-  const name =
-    expression.kind === "Identifier"
-      ? expression.name
-      : expression.kind === "Apply"
-        ? expression.operator
-        : undefined;
-  if (name !== undefined) {
-    if (environment.variableIndex.has(name) || environment.builtins.get(name)?.isStateLevel)
-      return true;
-    const definition = getDefinition(name, environment);
-    if (definition && !environment.constants.has(name) && !isConstantLevel(definition, environment))
-      return true;
-  }
-  return getChildren(expression).some((child) => isNonconstant(child, environment));
-};
-
-export const isConstantLevel = (definition: Definition, environment: Environment): boolean => {
-  const cached = environment.constantLevels.get(definition);
-  if (cached !== undefined) return cached;
-  environment.constantLevels.set(definition, true);
-  const isConstant =
-    !isNonconstant(definition.body, environment) &&
-    (definition.kind === "Operator" ||
-      !definition.bounds.some((bound) => isNonconstant(bound.set, environment)));
-  environment.constantLevels.set(definition, isConstant);
-  return isConstant;
-};
 
 const getBoundExplanation = (set: Value, text: string) => {
   const quantified = `universally (\\A) or existentially (\\E) quantify over ${text}, because this would require checking an\ninfinite number of cases.`;
@@ -513,12 +482,9 @@ const getBoundExplanation = (set: Value, text: string) => {
   return undefined;
 };
 
-// TLC enumerates every set except the ones it implements in Java, so any other set fails as its own
-// class does.
 const checkEnumerable = (set: Value, expression: Expression, version: TlcVersion) => {
   if (!isSetValue(set) || isOverriddenSet(set)) {
     const text = formatValue(set);
-    // TLC 1.7.4 doesn't explain why it can't enumerate a set.
     const explanation = version === "1.7.4" ? undefined : getBoundExplanation(set, text);
     throw new TlaEvaluationError(
       explanation === undefined
@@ -531,19 +497,15 @@ const checkEnumerable = (set: Value, expression: Expression, version: TlcVersion
 const getEnumeratedElements = (set: Value, expression: Expression, version: TlcVersion) => {
   checkEnumerable(set, expression, version);
   if (typeof set === "object" && set.kind === "Interval") return getIntervalElements(set);
-  return getLazySubsets(set) ?? toFiniteSet(set).elements;
+  return getLazySubsets(set) ?? getNormalizedSetElements(set);
 };
 
-// The elements Tool.contexts binds to the bound of a quantifier or a set map. TLC 1.7.4 streams a
-// lazy set's elements, where later versions normalize the set first.
 export const getContextElements = (set: Value, expression: Expression, version: TlcVersion) => {
   if (version !== "1.7.4") return getEnumeratedElements(set, expression, version);
   checkEnumerable(set, expression, version);
   return getLazySubsets(set) ?? getStreamedElements(set);
 };
 
-// Like TLC, a quantifier keeps an interval as an interval, so that it can stop at the first witness
-// in a large interval such as 1..2000000000 without listing it.
 const getKeptInterval = (set: Value) => {
   if (typeof set !== "object" || set.kind !== "Interval") return undefined;
   getCardinality(set);
@@ -553,7 +515,6 @@ const getKeptInterval = (set: Value) => {
 export const getQuantifierElements = (set: Value, expression: Expression, version: TlcVersion) =>
   getKeptInterval(set) ?? getContextElements(set, expression, version);
 
-// CHOOSE and a function constructor visit the elements of the normalized set.
 const getNormalizedElements = (set: Value, expression: Expression, version: TlcVersion) =>
   getKeptInterval(set) ?? getEnumeratedElements(set, expression, version);
 
@@ -568,16 +529,19 @@ const someElement = (
   return false;
 };
 
+export const mapBoundSets = <Result>(bounds: Bound[], map: (set: Expression) => Result) =>
+  bounds.reduce<Result[]>((results, bound, index) => {
+    results.push(
+      index > 0 && bounds[index - 1].set === bound.set ? results[index - 1] : map(bound.set),
+    );
+    return results;
+  }, []);
+
 export const getBoundElements = (bounds: Bound[], context: Context) =>
-  bounds.map((bound) =>
-    getQuantifierElements(
-      evaluate(bound.set, context),
-      bound.set,
-      context.environment.runtime.version,
-    ),
+  mapBoundSets(bounds, (set) =>
+    getQuantifierElements(evaluate(set, context), set, context.environment.runtime.version),
   );
 
-// Visits each binding of the bounds to the elements of their sets, until visit returns true.
 export const forEachBoundElement = (
   bounds: Bound[],
   sets: ReturnType<typeof getBoundElements>,
@@ -600,7 +564,7 @@ export const forEachBinding = (
 ) => forEachBoundElement(bounds, getBoundElements(bounds, context), context.scope, visit);
 
 const getBoundsDomain = (bounds: Bound[], context: Context): Value => {
-  const sets = bounds.map((bound) => evaluate(bound.set, context));
+  const sets = mapBoundSets(bounds, (set) => evaluate(set, context));
   return sets.length === 1 ? sets[0] : { kind: "ProductSet", factors: sets };
 };
 
@@ -613,8 +577,6 @@ const bindArgument = (bounds: Bound[], scope: Scope | undefined, argument: Value
   );
 };
 
-// The parameters, body and scope of each function a constructor or a definition keeps lazy, whose
-// body TLC's getInitStates and getNextStates walk for an argument, as they do a FcnLambdaValue's.
 interface LazyFunction {
   value: LazyFunctionValue;
   bounds: Bound[];
@@ -622,8 +584,7 @@ interface LazyFunction {
   scope: Scope | undefined;
 }
 
-// The function keeps its parameters, body and scope itself, since a WeakMap entry for each
-// short-lived function makes every garbage collection slower.
+// Kept on the value itself, since a WeakMap entry per short-lived function slows every GC.
 interface KeptLazyFunctionValue extends LazyFunctionValue {
   lambda: LazyFunction;
 }
@@ -636,8 +597,6 @@ const keepLambda = (lambda: LazyFunction) => Object.assign(lambda.value, { lambd
 export const getLazyFunction = (value: Value) =>
   isKeptLazyFunction(value) ? value.lambda : undefined;
 
-// Tool.getFcnContext: the scope of a lazy function's body for the arguments of an application. It
-// ignores arguments beyond the parameters.
 export const bindLazyArguments = (
   lambda: LazyFunction,
   expression: Expression & { kind: "FunctionApplication" },
@@ -662,12 +621,14 @@ export const bindLazyArguments = (
     typeof value.domain === "object" && value.domain.kind === "ProductSet"
       ? value.domain.factors
       : [];
-  if (elements === undefined || elements.length < bounds.length) {
-    throw new TlaEvaluationError(
-      `Attempted to apply a function to an argument not in its domain.\n${describeRange(expression.function)}`,
+  // Deviation from TLC: FcnLambdaValue#apply indexes past an argument tuple shorter than the bounds and ignores a longer one.
+  const createListError = () =>
+    new TlaEvaluationError(
+      `In applying the function\n${prettyPrint(formatValue(value))},\nthe argument list is:\n${prettyPrint(formatValue(argument))}\nwhich does not match its formal parameter.\n`,
     );
-  }
+  if (elements === undefined) throw createListError();
   bounds.forEach((bound, index) => {
+    if (index >= elements.length) throw createListError();
     const element = elements[index];
     const ordinal = `argument number ${index + 1}`;
     if (!isElementOf(element, domains[index])) {
@@ -688,24 +649,19 @@ export const bindLazyArguments = (
       );
     }
   });
-  return bindArgument(bounds, lambda.scope, createTuple(elements.slice(0, bounds.length)));
+  if (elements.length > bounds.length) throw createListError();
+  return bindArgument(bounds, lambda.scope, argument);
 };
 
-// TLC prints a function it can't enumerate as its parameters and the location of its body. It
-// prints only the first name of a group such as `m, n \in S`.
 interface LazyFunctionTemplate {
   parameters: { index: number; name: string }[];
   body: string;
 }
 
-const lazyFunctionTemplates = new WeakMap<Expression, LazyFunctionTemplate>();
-
 const getLazyFunctionTemplate = (bounds: Bound[], body: Expression) => {
-  const cached = lazyFunctionTemplates.get(body);
-  if (cached) return cached;
   const range = body.location.range;
   if (!range) return undefined;
-  const template = {
+  return {
     parameters: bounds.flatMap((bound, index) =>
       index > 0 && bounds[index - 1].set === bound.set
         ? []
@@ -721,12 +677,13 @@ const getLazyFunctionTemplate = (bounds: Bound[], body: Expression) => {
     ),
     body: formatRange(range),
   };
-  lazyFunctionTemplates.set(body, template);
-  return template;
 };
 
-const getLazyFunctionSource = (bounds: Bound[], body: Expression, domain: Value) => {
-  const template = getLazyFunctionTemplate(bounds, body);
+const getLazyFunctionSource = (
+  template: LazyFunctionTemplate | undefined,
+  bounds: Bound[],
+  domain: Value,
+) => {
   if (!template) return undefined;
   const domains =
     bounds.length > 1 && typeof domain === "object" && domain.kind === "ProductSet"
@@ -745,47 +702,36 @@ const createLazyFunction = (
   domain: Value,
   compute: (argument: Value, self: LazyFunctionValue) => Value,
   source: LazyFunctionSource | undefined,
+  boundTupleLengths: (number | undefined)[] | undefined,
 ) => {
-  const memo = new Map<number, Value[]>();
   const self: LazyFunctionValue = {
     kind: "LazyFunction",
     domain,
     source,
-    apply: (argument) => {
-      const hash = getValueHash(argument);
-      const bucket = memo.get(hash);
-      if (bucket !== undefined) {
-        for (let index = 0; index < bucket.length; index += 2) {
-          if (isSameValue(bucket[index], argument)) return bucket[index + 1];
-        }
-      }
-      const value = compute(argument, self);
-      const current = memo.get(hash);
-      if (current === undefined) memo.set(hash, [argument, value]);
-      else current.push(argument, value);
-      return value;
-    },
+    boundTupleLengths,
+    apply: (argument) => compute(argument, self),
   };
   return self;
 };
 
-const definitionSources = new WeakMap<FunctionDefinition, Expression>();
+const getBoundTupleLengths = (bounds: Bound[]) =>
+  bounds.length === 1
+    ? undefined
+    : bounds.map((bound) =>
+        bound.pattern.kind === "Tuple" ? bound.pattern.names.length : undefined,
+      );
 
-// The function constructor of a definition, which SANY locates at the whole definition.
-const getDefinitionSource = (definition: FunctionDefinition) => {
-  const cached = definitionSources.get(definition);
-  if (cached) return cached;
-  const source: Expression = {
-    kind: "FunctionConstruction",
-    bounds: definition.bounds,
-    body: definition.body,
-    location: definition.location,
-  };
-  definitionSources.set(definition, source);
-  return source;
-};
+const getDefinitionSource = (definition: FunctionDefinition): Expression => ({
+  kind: "FunctionConstruction",
+  bounds: definition.bounds,
+  body: definition.body,
+  location: definition.location,
+});
 
-const createRecursiveFunction = (definition: FunctionDefinition, context: Context) => {
+const createRecursiveFunction = (
+  definition: FunctionDefinition,
+  context: Context,
+): RebindableLazyFunction => {
   const domain = getBoundsDomain(definition.bounds, context);
   const functionValue = createLazyFunction(
     domain,
@@ -797,7 +743,12 @@ const createRecursiveFunction = (definition: FunctionDefinition, context: Contex
           bindArgument(definition.bounds, bindValue(undefined, definition.name, self), argument),
         ),
       ),
-    getLazyFunctionSource(definition.bounds, definition.body, domain),
+    getLazyFunctionSource(
+      getLazyFunctionTemplate(definition.bounds, definition.body),
+      definition.bounds,
+      domain,
+    ),
+    getBoundTupleLengths(definition.bounds),
   );
   keepLambda({
     value: functionValue,
@@ -805,11 +756,16 @@ const createRecursiveFunction = (definition: FunctionDefinition, context: Contex
     body: definition.body,
     scope: bindValue(undefined, definition.name, functionValue),
   });
-  return definition.bounds.length === 1 ? markLambdaFunction(functionValue) : functionValue;
+  const rebindable: RebindableLazyFunction = Object.assign(functionValue, {
+    rebind: (tracing: Environment) => {
+      const rebound = createRecursiveFunction(definition, { ...context, environment: tracing });
+      rebound.enumerated = functionValue.enumerated;
+      return rebound;
+    },
+  });
+  return definition.bounds.length === 1 ? markLambdaFunction(rebindable) : rebindable;
 };
 
-// TLC computes a constant definition when it starts, without keeping a function it constructs
-// lazy, so a function over an interval or an enumerated set is a FcnRcdValue.
 const toStartupValue = (definition: Definition, value: Value): Value => {
   if (typeof value !== "object" || getFunctionClass(value) !== "lambda") return value;
   if (
@@ -824,84 +780,112 @@ const toStartupValue = (definition: Definition, value: Value): Value => {
     const finite = toFiniteFunction(value);
     return createSortedFunction(finite.domain, finite.range);
   } catch (error) {
-    // TLC leaves a definition it fails to compute to evaluate where the spec uses it.
     if (error instanceof TlaEvaluationError) return value;
     throw error;
   }
 };
 
-// TLC evaluates a function definition that isn't recursive as it does a function constructor.
-const evaluateDefinitionBody = (definition: Definition, context: Context) => {
-  if (definition.kind !== "Function") return evaluate(definition.body, context);
-  return definition.isSelfReferential
-    ? createRecursiveFunction(definition, context)
-    : evaluate(getDefinitionSource(definition), context);
-};
-
-const evaluateDefinitionValue = (definition: Definition, context: Context) => {
-  const isConstant = isConstantLevel(definition, context.environment);
-  const cached = isConstant ? context.environment.definitionValues.get(definition) : undefined;
-  if (cached !== undefined) return cached;
+const compileDefinitionBody = (definition: Definition, environment: Environment): Evaluator => {
   if (definition.kind === "Operator" && definition.params.length > 0) {
-    throw new TlaEvaluationError(
-      `Operator ${definition.name} requires ${definition.params.length} arguments`,
-    );
+    return () => {
+      throw new TlaEvaluationError(
+        `Operator ${definition.name} requires ${definition.params.length} arguments`,
+      );
+    };
   }
-  const topLevel = withScope(context, undefined);
-  if (!isConstant) return evaluateDefinitionBody(definition, topLevel);
-  const value = context.environment.runtime.evaluateAtStartup(() =>
-    toStartupValue(definition, evaluateDefinitionBody(definition, topLevel)),
-  );
-  context.environment.definitionValues.set(definition, value);
-  return value;
+  if (definition.kind !== "Function") return getEntryEvaluator(definition.body, environment);
+  if (definition.isSelfReferential)
+    return (context) => createRecursiveFunction(definition, context);
+  return getEntryEvaluator(getDefinitionSource(definition), environment);
 };
 
-// TLC computes each constant definition the configuration doesn't replace when it starts, and
-// leaves one it fails to compute to evaluate where the spec uses it.
+const getDefinitionEvaluator = (definition: Definition, environment: Environment): Evaluator => {
+  const compiled = environment.definitionEvaluators.get(definition);
+  if (compiled) return compiled;
+  const body = compileDefinitionBody(definition, environment);
+  const definitionId = environment.facts.ids.get(definition);
+  const startupValues = environment.startupValues;
+  const evaluator: Evaluator =
+    definitionId === undefined
+      ? (context) => body(withScope(context, undefined))
+      : (context) => startupValues[definitionId] ?? body(withScope(context, undefined));
+  environment.definitionEvaluators.set(definition, evaluator);
+  return evaluator;
+};
+
+export const getStartupValue = (definition: Definition, environment: Environment) => {
+  const definitionId = environment.facts.ids.get(definition);
+  return definitionId === undefined ? undefined : environment.startupValues[definitionId];
+};
+
 export const evaluateStartupDefinitions = (definitions: Definition[], environment: Environment) =>
   definitions.forEach((definition) => {
     if (definition.kind === "Operator" && definition.params.length > 0) return;
     const name = definition.name;
     if (environment.constants.has(name) || environment.substitutions.has(name)) return;
     if (!isConstantLevel(definition, environment)) return;
+    const definitionId = environment.facts.ids.get(definition);
+    if (definitionId === undefined || environment.startupValues[definitionId] !== undefined) return;
+    const context = { environment, scope: undefined, state: undefined, next: undefined };
     try {
-      markNormalized(
-        evaluateDefinitionValue(definition, {
-          environment,
-          scope: undefined,
-          state: undefined,
-          next: undefined,
-        }),
+      const value = environment.runtime.evaluateAtStartup(() =>
+        toStartupValue(definition, compileDefinitionBody(definition, environment)(context)),
       );
+      markNormalized(value);
+      environment.startupValues[definitionId] = value;
     } catch (error) {
       // TLC swallows whatever the definition throws, a stack overflow included.
       if (!(error instanceof TlaEvaluationError) && !isStackOverflow(error)) throw error;
     }
   });
 
+const isStateWithin = (state: State | undefined, cached: State | undefined) => {
+  if (cached === undefined || state === cached) return true;
+  try {
+    return cached.every(
+      (value, index) =>
+        value === undefined || (state?.[index] !== undefined && valuesEqual(state[index], value)),
+    );
+  } catch (error) {
+    if (error instanceof TlaEvaluationError) return false;
+    throw error;
+  }
+};
+
 const forceThunk = (thunk: Thunk, context: Context) => {
-  const isSameState = thunk.state === context.state && thunk.next === context.next;
-  if (isSameState && thunk.cache !== undefined) return thunk.cache;
-  const value = evaluate(thunk.expression, withScope(context, thunk.scope));
-  if (isSameState && (!thunk.isStreamed || isSettledValue(value))) thunk.cache = value;
+  const cache = thunk.cache;
+  const isCached =
+    cache !== undefined &&
+    isStateWithin(context.state, thunk.state) &&
+    isStateWithin(context.next, thunk.next);
+  if (isCached) return cache;
+  const coverage = context.environment.coverage;
+  const node = coverage?.current === -1 ? undefined : coverage?.values.get(thunk);
+  const value =
+    coverage && node !== undefined
+      ? runAtCoverageNode(coverage, node, () =>
+          evaluate(thunk.expression, withScope(context, thunk.scope)),
+        )
+      : evaluate(thunk.expression, withScope(context, thunk.scope));
+  if (!thunk.isStreamed || isSettledValue(value)) {
+    thunk.cache = value;
+    thunk.state = context.state;
+    thunk.next = context.next;
+  }
+  if (thunk.cache !== undefined && thunk.state === undefined && thunk.next === undefined) {
+    thunk.scope = undefined;
+    thunk.isReleased = true;
+  }
   return value;
 };
 
-const definitionClosures = new WeakMap<Definition, Closure>();
-
-const getDefinitionClosure = (definition: Definition & { kind: "Operator" }) => {
-  const cached = definitionClosures.get(definition);
-  if (cached) return cached;
-  const closure: Closure = {
-    kind: "Closure",
-    name: definition.name,
-    params: definition.params,
-    body: definition.body,
-    scope: undefined,
-  };
-  definitionClosures.set(definition, closure);
-  return closure;
-};
+export const getDefinitionClosure = (definition: Definition & { kind: "Operator" }): Closure => ({
+  kind: "Closure",
+  name: definition.name,
+  params: definition.params,
+  body: definition.body,
+  scope: undefined,
+});
 
 export const resolveGlobalOperator = (
   name: string,
@@ -917,16 +901,11 @@ export const resolveGlobalOperator = (
 export const resolveApplyOperator = (
   expression: Expression & { kind: "Apply" },
   context: Context,
-): Operator | undefined => {
-  if (isLocallyResolved(expression)) return resolveOperator(expression.operator, context);
-  const cached = context.environment.applyOperators.get(expression);
-  const global =
-    cached === undefined
-      ? (resolveGlobalOperator(expression.operator, context.environment) ?? null)
-      : cached;
-  if (cached === undefined) context.environment.applyOperators.set(expression, global);
-  return global ?? resolveOperator(expression.operator, context);
-};
+): Operator | undefined =>
+  isLocallyResolved(expression)
+    ? resolveOperator(expression.operator, context)
+    : (resolveGlobalOperator(expression.operator, context.environment) ??
+      resolveOperator(expression.operator, context));
 
 export const resolveOperator = (name: string, context: Context): Operator | undefined => {
   const binding = lookupScope(context.scope, name);
@@ -964,6 +943,12 @@ const evaluateOperatorArgument = (expression: Expression, context: Context): Ope
 };
 
 const callOperatorWithValues = (operator: Operator, args: Value[], context: Context): Value => {
+  if (operator.kind === "Builtin" && operator.isLazy) {
+    return operator.evaluate(
+      args.map((value) => ({ kind: "Operator", name: "argument", arity: 0, call: () => value })),
+      context,
+    );
+  }
   if (operator.kind === "Builtin") return operator.evaluate(args, context);
   if (operator.kind === "Operator") return operator.call(args);
   const scope = operator.params.reduce<Scope | undefined>(
@@ -981,11 +966,6 @@ const toOperatorValue = (operator: Operator, context: Context): OperatorValue =>
         name: operator.name,
         arity: getArity(operator),
         call: (args) => callOperatorWithValues(operator, args, context),
-        literalBody:
-          operator.kind === "Closure" &&
-          (operator.body.kind === "Number" || operator.body.kind === "String")
-            ? operator.body.value
-            : undefined,
       };
 
 const isOperatorArgument = (expression: Expression, context: Context) => {
@@ -1037,8 +1017,16 @@ const compileArgumentBinder = (argument: Expression, environment: Environment): 
   const isLiteral =
     argument.kind === "String" || (argument.kind === "Number" && isTlcInteger(argument.value));
   if (isLiteral) {
-    const binding: Binding = { kind: "Value", value: argument.value };
+    const binding: Binding = { kind: "Value", value: argument.value, argument };
     return () => binding;
+  }
+  const coverage = environment.coverage;
+  if (coverage) {
+    return (context) => {
+      const thunk = createThunk(argument, context);
+      if (coverage.current !== -1) coverage.values.set(thunk, coverage.current);
+      return thunk;
+    };
   }
   if (argument.kind === "Identifier") {
     const global = isLocallyResolved(argument)
@@ -1048,7 +1036,7 @@ const compileArgumentBinder = (argument: Expression, environment: Environment): 
       const binding: Binding = { kind: "Value", value: global.value };
       return () => binding;
     }
-    if (global === undefined) {
+    if (global === undefined && !environment.callStack) {
       return (context) => {
         const binding = lookupScope(context.scope, argument.name);
         return binding?.kind === "Value" || binding?.kind === "Thunk"
@@ -1058,14 +1046,6 @@ const compileArgumentBinder = (argument: Expression, environment: Environment): 
     }
   }
   return (context) => createThunk(argument, context);
-};
-
-const getArgumentBinder = (argument: Expression, environment: Environment) => {
-  const cached = environment.argumentBinders.get(argument);
-  if (cached) return cached;
-  const binder = compileArgumentBinder(argument, environment);
-  environment.argumentBinders.set(argument, binder);
-  return binder;
 };
 
 export const bindOperatorArguments = (
@@ -1081,18 +1061,11 @@ export const bindOperatorArguments = (
     const binding: Binding =
       param.arity > 0
         ? { kind: "Operator", operator: evaluateOperatorArgument(args[index], context) }
-        : (binders?.[index] ?? getArgumentBinder(args[index], context.environment))(context);
+        : (binders?.[index] ?? compileArgumentBinder(args[index], context.environment))(context);
     scope = { name: param.name, binding, parent: scope };
   }
   return scope;
 };
-
-// The body a call site last called and its evaluator, as a site mostly calls one closure.
-interface CalledBody {
-  body: Expression;
-  evaluator: Evaluator;
-  tail: TailStep | undefined;
-}
 
 // TLC calls an operator in its own body as a nested Java call. A call in the tail of the body runs
 // here as the next turn of a loop instead, so that a deep recursion, such as a loop that tla-ts
@@ -1221,7 +1194,7 @@ const compileTailStep = (
   return {
     kind: "Call",
     expression,
-    binders: expression.args.map((arg) => getArgumentBinder(arg, environment)),
+    binders: expression.args.map((arg) => compileArgumentBinder(arg, environment)),
     evaluator: getEntryEvaluator(expression, environment),
     entered:
       operator === undefined || entered === undefined
@@ -1234,7 +1207,6 @@ const compileTailStep = (
 // operator that the tail enters compiles once, into a table that every path through the body reads,
 // as the branches of a body may all enter one operator.
 const compileTailCalls = (closure: Closure, environment: Environment) => {
-  if (environment.callStack) return undefined;
   const collected = new Map<Definition, ReadonlyMap<string, Definition>>();
   collectTailOperators(closure.body, closure.name, new Map(), collected, new Set());
   const entries = new Map<Definition, TailStep | undefined>();
@@ -1261,9 +1233,9 @@ const evaluateTailCalls = (closure: Closure, body: TailStep, bodyContext: Contex
     } else if (step.kind === "Call") {
       const callee = resolveApplyOperator(step.expression, context);
       const entered = step.entered;
+      // A global operator resolves to a new closure at each call, so the body tells it apart.
       const isEntered =
-        callee?.kind === "Closure" &&
-        (entered === undefined ? callee === closure : callee.body === entered.body);
+        callee?.kind === "Closure" && callee.body === (entered?.body ?? closure.body);
       if (!isEntered) return step.evaluator(context);
       context = withScope(
         context,
@@ -1278,92 +1250,110 @@ const evaluateTailCalls = (closure: Closure, body: TailStep, bodyContext: Contex
   throw new RangeError("Maximum call stack size exceeded");
 };
 
+// A trace or coverage evaluates each call as a nested one, to see every expression it evaluates.
+const getTailCalls = (closure: Closure, environment: Environment) => {
+  if (environment.callStack || environment.coverage) return undefined;
+  const known = environment.tailCalls.get(closure.body);
+  if (known !== undefined) return known ?? undefined;
+  const tail = compileTailCalls(closure, environment);
+  environment.tailCalls.set(closure.body, tail ?? null);
+  return tail;
+};
+
 const callOperator = (
   operator: Operator,
   args: Expression[],
   context: Context,
-  called: { entry: CalledBody | undefined },
   binders: ArgumentBinder[],
 ) => {
   if (operator.kind === "Closure") {
     const bodyContext = withScope(context, bindOperatorArguments(operator, args, context, binders));
-    if (context.environment.callStack) return evaluate(operator.body, bodyContext);
-    const entry =
-      called.entry?.body === operator.body
-        ? called.entry
-        : (called.entry = {
-            body: operator.body,
-            evaluator: getEntryEvaluator(operator.body, context.environment),
-            tail: compileTailCalls(operator, context.environment),
-          });
-    return entry.tail
-      ? evaluateTailCalls(operator, entry.tail, bodyContext)
-      : entry.evaluator(bodyContext);
+    const tail = getTailCalls(operator, context.environment);
+    return tail
+      ? evaluateTailCalls(operator, tail, bodyContext)
+      : evaluate(operator.body, bodyContext);
   }
   if (operator.kind === "Operator") return operator.call(args.map((arg) => evaluate(arg, context)));
   if (operator.isLazy) return operator.evaluate(getLazyArguments(args, context), context);
   return operator.evaluate(evaluateBuiltinArguments(args, context), context);
 };
 
-// The LET definitions that a reference evaluates again, and those that cache only a settled value.
 interface ReevaluatedDefinitions {
   impure: ReadonlySet<Definition>;
   streamed: ReadonlySet<Definition>;
 }
 
+const letFunctionConstructions = new WeakMap<FunctionDefinition, Expression>();
+
+const getLetFunctionConstruction = (definition: FunctionDefinition): Expression => {
+  const known = letFunctionConstructions.get(definition);
+  if (known) return known;
+  const construction: Expression = {
+    kind: "FunctionConstruction",
+    bounds: definition.bounds,
+    body: definition.body,
+    location: definition.location,
+    isRecursive: true,
+  };
+  letFunctionConstructions.set(definition, construction);
+  return construction;
+};
+
 export const bindDefinitions = (
   definitions: Definition[],
   context: Context,
   reevaluated?: ReevaluatedDefinitions,
-): Scope | undefined =>
-  definitions.reduce<Scope | undefined>((scope, definition) => {
-    const node: Scope = {
-      name: definition.name,
-      binding: { kind: "Value", value: false },
-      parent: scope,
-    };
-    if (definition.kind === "Function") {
-      node.binding = {
-        kind: "Thunk",
-        expression: {
-          kind: "FunctionConstruction",
-          bounds: definition.bounds,
-          body: definition.body,
-          location: definition.location,
-          isRecursive: true,
-        },
-        scope: node,
-        state: context.state,
-        next: context.next,
-        cache: undefined,
-        isStreamed: false,
-      };
-      return node;
-    }
-    if (definition.params.length > 0 || reevaluated?.impure.has(definition)) {
-      node.binding = {
-        kind: "Operator",
-        operator: {
-          kind: "Closure",
-          name: definition.name,
-          params: definition.params,
-          body: definition.body,
-          scope: node,
-        },
-      };
-      return node;
-    }
-    node.binding = {
-      kind: "Thunk",
-      expression: definition.body,
-      scope: node,
-      state: context.state,
-      next: context.next,
-      cache: undefined,
-      isStreamed: reevaluated?.streamed.has(definition) ?? false,
-    };
+): Scope | undefined => {
+  const nodes = definitions.map((definition): Scope => ({
+    name: definition.name,
+    binding: { kind: "Value", value: false },
+    parent: undefined,
+  }));
+  const scope = nodes.reduce<Scope | undefined>((parent, node) => {
+    node.parent = parent;
     return node;
   }, context.scope);
+  definitions.forEach((definition, index) => {
+    nodes[index].binding =
+      definition.kind === "Function"
+        ? {
+            kind: "Thunk",
+            expression: getLetFunctionConstruction(definition),
+            scope,
+            state: context.state,
+            next: context.next,
+            cache: undefined,
+            isStreamed: false,
+          }
+        : definition.params.length > 0 || reevaluated?.impure.has(definition)
+          ? {
+              kind: "Operator",
+              operator: {
+                kind: "Closure",
+                name: definition.name,
+                params: definition.params,
+                body: definition.body,
+                scope,
+              },
+            }
+          : {
+              kind: "Thunk",
+              expression: definition.body,
+              scope,
+              state: context.state,
+              next: context.next,
+              cache: undefined,
+              isStreamed: reevaluated?.streamed.has(definition) ?? false,
+            };
+  });
+  const coverage = context.environment.coverage;
+  if (coverage && coverage.current !== -1) {
+    nodes.forEach((node) => {
+      if (node.binding.kind === "Thunk") coverage.values.set(node.binding, coverage.current);
+    });
+  }
+  return scope;
+};
 
 const evaluateLocalIdentifier = (name: string, expression: Expression, context: Context): Value => {
   const binding = lookupScope(context.scope, name);
@@ -1382,267 +1372,62 @@ const evaluateLocalIdentifier = (name: string, expression: Expression, context: 
     return value;
   }
   if (global?.kind === "Value") return global.value;
-  if (global?.kind === "Definition") return evaluateDefinitionValue(global.definition, context);
+  if (global?.kind === "Definition") {
+    return getDefinitionEvaluator(global.definition, context.environment)(context);
+  }
   const builtin = context.environment.builtins.get(name);
   if (builtin?.arity === 0) return builtin.evaluate([], context);
   throw new TlaEvaluationError(`Unknown identifier ${name} at ${describeLocation(expression)}`);
 };
 
-const IMPURE_BUILTINS = new Set([
-  "Print",
-  "PrintT",
-  "Assert",
-  "JavaTime",
-  "RandomElement",
-  "TLCGet",
-  "TLCSet",
-]);
-
-export const isImpureBuiltin = (name: string, environment: Environment) =>
-  IMPURE_BUILTINS.has(name) || environment.builtins.get(name)?.isStateLevel === true;
-
-interface Impurity {
-  builtins: Set<string>;
-  definitions: WeakMap<Definition, boolean>;
-}
-
-const ANY_EFFECT: Impurity = { builtins: IMPURE_BUILTINS, definitions: new WeakMap() };
-
-// An Assert that held holds again, so evaluating it twice looks the same as evaluating it once.
-const REPEATED_EFFECT: Impurity = {
-  builtins: new Set([...IMPURE_BUILTINS].filter((name) => name !== "Assert")),
-  definitions: new WeakMap(),
-};
-
-const isEvaluatedOnce = (definition: Definition, environment: Environment) =>
-  definition.kind === "Operator" &&
-  definition.params.length === 0 &&
-  isConstantLevel(definition, environment);
-
-const callsImpureBuiltin = (
-  expression: Expression,
-  environment: Environment,
-  impurity: Impurity,
-): boolean => {
-  const name =
-    expression.kind === "Identifier"
-      ? expression.name
-      : expression.kind === "Apply" || expression.kind === "OperatorReference"
-        ? expression.operator
-        : undefined;
-  if (name !== undefined && !isLocallyResolved(expression)) {
-    const definition = getDefinition(name, environment);
-    const isImpureCall =
-      impurity.builtins.has(name) || environment.builtins.get(name)?.isStateLevel === true;
-    if (!definition && isImpureCall) return true;
-    if (
-      definition &&
-      !isEvaluatedOnce(definition, environment) &&
-      isImpureDefinition(definition, environment, impurity)
-    ) {
-      return true;
-    }
-  }
-  return getChildren(expression).some((child) => callsImpureBuiltin(child, environment, impurity));
-};
-
-// TLC evaluates a constant definition without parameters once, so only other definitions pass
-// on the side effects and random choices of the builtins they call.
-const isImpureDefinition = (
-  definition: Definition,
-  environment: Environment,
-  impurity = ANY_EFFECT,
-): boolean => {
-  const cached = impurity.definitions.get(definition);
-  if (cached !== undefined) return cached;
-  impurity.definitions.set(definition, false);
-  const isImpure =
-    callsImpureBuiltin(definition.body, environment, impurity) ||
-    (definition.kind === "Function" &&
-      definition.bounds.some((bound) => callsImpureBuiltin(bound.set, environment, impurity)));
-  impurity.definitions.set(definition, isImpure);
-  return isImpure;
-};
-
-// UNION and \cup build sets that stream the sets they combine until TLC caches them, and TLC
-// builds a new one at each evaluation.
-const STREAMED_SET: Impurity = {
-  builtins: new Set(["UNION", "\\cup"]),
-  definitions: new WeakMap(),
-};
-
-// TLC's next-state generator does not bind LET definitions to values, so each reference to one
-// evaluates it again: one that calls an impure builtin repeats its effects, and a set one builds
-// with UNION or \cup starts out uncached.
 export const getReevaluatedDefinitions = (
   definitions: Definition[],
   environment: Environment,
 ): ReevaluatedDefinitions => ({
   impure: new Set(definitions.filter((definition) => isImpureDefinition(definition, environment))),
   streamed: new Set(
-    definitions.filter((definition) => isImpureDefinition(definition, environment, STREAMED_SET)),
+    definitions.filter((definition) => isImpureDefinition(definition, environment, "streamed")),
   ),
 });
 
 export const isImpure = (environment: Environment) =>
-  [...environment.definitions.values()].some((definition) =>
+  [...environment.facts.ids.keys()].some((definition) =>
     isImpureDefinition(definition, environment),
   );
 
-// Whether evaluating a definition again can show, such as by printing twice.
 export const hasRepeatedEffects = (environment: Environment) =>
-  [...environment.definitions.values()].some((definition) =>
-    isImpureDefinition(definition, environment, REPEATED_EFFECT),
+  [...environment.facts.ids.keys()].some((definition) =>
+    isImpureDefinition(definition, environment, "repeated"),
   );
 
-export const isClosedConstant = (expression: Expression, environment: Environment): boolean => {
-  const cached = environment.closedConstants.get(expression);
-  if (cached !== undefined) return cached;
-  const isClosed = computeIsClosedConstant(expression, environment, NO_BOUND_NAMES);
-  environment.closedConstants.set(expression, isClosed);
-  return isClosed;
-};
-
-const CLOSED_KINDS = new Set([
-  "Number",
-  "String",
-  "Identifier",
-  "Apply",
-  "And",
-  "Or",
-  "If",
-  "Case",
-  "SetEnumeration",
-  "Tuple",
-  "FunctionSet",
-  "Record",
-  "RecordSet",
-  "FunctionApplication",
-  "FieldAccess",
-  "Product",
-  "SetFilter",
-  "SetMap",
-  "Forall",
-  "Exists",
-  "Choose",
-  "FunctionConstruction",
-  "Let",
-]);
-
-const NO_BOUND_NAMES: ReadonlySet<string> = new Set();
-
-const isClosedIn = (
-  expression: Expression,
-  environment: Environment,
-  bound: ReadonlySet<string>,
-) =>
-  bound.size === 0
-    ? isClosedConstant(expression, environment)
-    : computeIsClosedConstant(expression, environment, bound);
-
-const computeIsClosedConstant = (
-  expression: Expression,
-  environment: Environment,
-  bound: ReadonlySet<string>,
-): boolean => {
-  if (!CLOSED_KINDS.has(expression.kind)) return false;
-  if (expression.kind === "Identifier" && isLocallyResolved(expression)) {
-    return bound.has(expression.name);
-  }
-  if (isLocallyResolved(expression)) return false;
-  if (expression.kind === "Identifier") {
-    const global = findGlobalName(expression.name, environment);
-    if (global?.kind === "Value") return true;
-    return global?.kind === "Definition" && isEvaluatedOnce(global.definition, environment);
-  }
-  if (expression.kind === "Apply") {
-    if (
-      isImpureBuiltin(expression.operator, environment) ||
-      STREAMED_SET.builtins.has(expression.operator) ||
-      expression.operator === "~>"
-    ) {
-      return false;
-    }
-    const operator = resolveGlobalOperator(expression.operator, environment);
-    if (operator?.kind !== "Builtin" && operator?.kind !== "Closure") return false;
-    if (operator.kind === "Closure") {
-      const definition = getDefinition(expression.operator, environment);
-      if (
-        !definition ||
-        !isConstantLevel(definition, environment) ||
-        isImpureDefinition(definition, environment)
-      ) {
-        return false;
-      }
-    }
-    const params = operator.kind === "Closure" ? operator.params : [];
-    const hasOperatorArgument = params.some((param) => param.arity > 0);
-    if (hasOperatorArgument) return false;
-    return expression.args.every(
-      (arg) =>
-        arg.kind !== "Lambda" &&
-        arg.kind !== "OperatorReference" &&
-        isClosedIn(arg, environment, bound),
-    );
-  }
-  const isClosed = { value: true };
-  mapChildren(expression, (child, names) => {
-    isClosed.value &&= isClosedIn(
-      child,
-      environment,
-      names.length === 0 ? bound : new Set([...bound, ...names]),
-    );
-    return child;
-  });
-  return isClosed.value;
-};
-
-export const isWorthCaching = (expression: Expression) =>
-  expression.kind !== "Number" && expression.kind !== "String" && expression.kind !== "Identifier";
-
-const cacheFirstValue = (evaluator: Evaluator): Evaluator => {
-  const cache = { value: undefined as Value | undefined };
-  return (context) => {
-    if (cache.value !== undefined) return cache.value;
-    const value = evaluator(context);
-    cache.value = value;
-    return value;
-  };
-};
-
-const hasFreeLocals = (expression: Expression, bound: ReadonlySet<string>): boolean => {
-  if (expression.kind === "Identifier" && isLocallyResolved(expression)) {
-    return !bound.has(expression.name);
-  }
-  if (isLocallyResolved(expression)) return true;
-  const isFree = { value: false };
-  mapChildren(expression, (child, names) => {
-    isFree.value ||= hasFreeLocals(
-      child,
-      names.length === 0 ? bound : new Set([...bound, ...names]),
-    );
-    return child;
-  });
-  return isFree.value;
-};
-
-const isStateCached = (expression: Expression, environment: Environment) =>
-  substitutedExpressions.has(expression) &&
-  isWorthCaching(expression) &&
-  getReadVariables(expression, environment) !== undefined &&
-  !hasFreeLocals(expression, NO_BOUND_NAMES);
-
-// A set filter TLC evaluates lazily, with how to rebuild it so that its predicate runs in another
-// environment.
 interface RebindableFilteredSet extends FilteredSetValue {
   rebind: (environment: Environment) => Value;
 }
 
-const isRebindableFilteredSet = (value: Value): value is RebindableFilteredSet =>
-  typeof value === "object" && value.kind === "FilteredSet" && "rebind" in value;
+interface RebindableLazyFunction extends LazyFunctionValue {
+  rebind: (environment: Environment) => Value;
+}
 
-// TLC's CallStackTool rebinds the lazy values its evaluations return, so their later evaluation
-// records its call stack too.
+const isRebindable = (value: Value): value is RebindableFilteredSet | RebindableLazyFunction =>
+  typeof value === "object" &&
+  (value.kind === "FilteredSet" || value.kind === "LazyFunction") &&
+  "rebind" in value;
+
+export const toNextContext = (context: Context): Context => ({
+  environment: context.environment,
+  scope: context.scope,
+  state: context.next,
+  next: undefined,
+  isKeepLazy: context.isKeepLazy,
+});
+
+const compileUnchanged =
+  (evaluator: Evaluator): Evaluator =>
+  (context) => {
+    const current = evaluator(context);
+    return valuesEqual(current, evaluator(toNextContext(context)));
+  };
+
 const traceEvaluator =
   (
     expression: Expression,
@@ -1660,13 +1445,17 @@ const traceEvaluator =
     setTrace.callStack = callStack;
     try {
       const computed = evaluator(context);
-      const value = isRebindableFilteredSet(computed) ? computed.rebind(environment) : computed;
+      const value = isRebindable(computed) ? computed.rebind(environment) : computed;
       callStack.values.set(expression, value);
       if (typeof value === "object" && value.kind !== "FilteredSet" && isSourced(expression)) {
         callStack.sources.set(value, expression);
       }
       return value;
     } catch (error) {
+      if (error instanceof TlaSetBoundError && !callStack.isFrozen) {
+        callStack.expressions.length = 0;
+        callStack.isFrozen = true;
+      }
       const failed = error instanceof Error ? callStack.failures.get(error) : undefined;
       if (error instanceof Error) callStack.failures.set(error, expression);
       const receiver = getReceiver(expression, callStack.values);
@@ -1694,20 +1483,15 @@ const traceEvaluator =
     }
   };
 
-// A method of a value with a source raises a FingerprintException, which each value with a source
-// whose method called it heads in turn. CallStack#freeze adds their sources to the stack, outermost
-// first. The values are those whose methods failed, outermost first.
 export const freezeCallStack = (
   callStack: CallStack,
   values: (Value | undefined)[],
   error: unknown,
 ) => {
-  // A set that streams its elements enumerates itself too, so it can appear twice.
   const sources = [...new Set(values)].flatMap((item) => {
     const source = typeof item === "object" ? callStack.sources.get(item) : undefined;
     return source ? [source] : [];
   });
-  // A value with a source raises a FingerprintException even when the stack is frozen already.
   if (sources.length > 0 && error instanceof TlaEvaluationError) {
     if (!callStack.isFrozen) callStack.expressions.push(...sources);
     const inner = callStack.fingerprint;
@@ -1719,8 +1503,6 @@ export const freezeCallStack = (
   callStack.isFrozen = true;
 };
 
-// A FingerprintException that a method of a value with a source raises, or that passes through one,
-// takes the value's source as its new head.
 const headFingerprint = (callStack: CallStack, source: Expression, error: unknown) => {
   if (!(error instanceof TlaEvaluationError)) return;
   if (!callStack.isFrozen) callStack.expressions.push(source);
@@ -1732,11 +1514,12 @@ const headFingerprint = (callStack: CallStack, source: Expression, error: unknow
   };
 };
 
-// A copy of the environment that records the call stack of each evaluation, with evaluators of its
-// own since the environment's evaluators record nothing.
 export const createTracingEnvironment = (environment: Environment): Environment => ({
   ...environment,
+  coverage: undefined,
   evaluators: new WeakMap(),
+  entryEvaluators: new WeakMap(),
+  definitionEvaluators: new WeakMap(),
   callStack: {
     expressions: [],
     isFrozen: false,
@@ -1746,30 +1529,64 @@ export const createTracingEnvironment = (environment: Environment): Environment 
   },
 });
 
+const traceFrames =
+  (
+    expression: Expression,
+    frames: Expression[],
+    evaluator: Evaluator,
+    callStack: CallStack,
+  ): Evaluator =>
+  (context) => {
+    if (callStack.expressions.at(-1) === expression) return evaluator(context);
+    callStack.expressions.push(...frames);
+    try {
+      return evaluator(context);
+    } finally {
+      if (!callStack.isFrozen) callStack.expressions.length -= frames.length;
+    }
+  };
+
+const countEvaluator =
+  (expression: Expression, evaluator: Evaluator, coverage: Coverage): Evaluator =>
+  (context) => {
+    const outer = coverage.current;
+    if (outer === -1 || !coverage.covered.has(expression)) return evaluator(context);
+    const node = getCoverageNode(coverage, outer, expression);
+    countCoverage(coverage, node);
+    coverage.current = node;
+    try {
+      const value = evaluator(context);
+      if (typeof value === "object" && expression.kind === "SetEnumeration") {
+        coverage.values.set(value, node);
+      }
+      return value;
+    } finally {
+      coverage.current = outer;
+    }
+  };
+
 export const getEvaluator = (expression: Expression, environment: Environment): Evaluator => {
   const cached = environment.evaluators.get(expression);
   if (cached) return cached;
   const compiled = compile(expression, environment);
   const callStack = environment.callStack;
-  const evaluator = callStack
+  const frames = callStack && substitutionFrames.get(expression);
+  const traced = callStack
     ? traceEvaluator(expression, compiled, environment, callStack)
-    : isWorthCaching(expression) && isClosedConstant(expression, environment)
-      ? cacheFirstValue(compiled)
-      : isStateCached(expression, environment)
-        ? cacheStateValue(compiled)
-        : compiled;
+    : compiled;
+  const framed = callStack && frames ? traceFrames(expression, frames, traced, callStack) : traced;
+  const coverage = environment.coverage;
+  const evaluator = coverage ? countEvaluator(expression, framed, coverage) : framed;
   environment.evaluators.set(expression, evaluator);
   return evaluator;
 };
 
 export const getEntryEvaluator = (expression: Expression, environment: Environment) => {
-  if (environment.callStack) return getEvaluator(expression, environment);
-  const cached = environment.entryEvaluators.get(expression);
-  if (cached) return cached;
+  if (environment.callStack || environment.coverage) return getEvaluator(expression, environment);
+  const compiled = environment.entryEvaluators.get(expression);
+  if (compiled) return compiled;
   const evaluator =
-    (isWorthCaching(expression) && isClosedConstant(expression, environment)
-      ? undefined
-      : generateEvaluator(expression, environment)) ?? getEvaluator(expression, environment);
+    generateEvaluator(expression, environment) ?? getEvaluator(expression, environment);
   environment.entryEvaluators.set(expression, evaluator);
   return evaluator;
 };
@@ -1795,58 +1612,12 @@ const compileIdentifier = (
     const value = global.value;
     return () => value;
   }
-  if (global?.kind === "Definition" && global.definition.kind === "Operator") {
-    const definition = global.definition;
-    if (definition.params.length === 0 && isConstantLevel(definition, environment)) {
-      return (context) => evaluateDefinitionValue(definition, context);
-    }
-    if (definition.params.length === 0) {
-      const compiled = { body: undefined as Evaluator | undefined };
-      const evaluator: Evaluator = (context) => {
-        compiled.body ??= getEntryEvaluator(definition.body, environment);
-        return compiled.body(withScope(context, undefined));
-      };
-      return isStatePure(definition, environment) ? cacheStateValue(evaluator) : evaluator;
-    }
-    return (context) => evaluateDefinitionValue(definition, context);
-  }
   if (global?.kind === "Definition") {
     const definition = global.definition;
-    const evaluator: Evaluator = (context) => evaluateDefinitionValue(definition, context);
-    return isConstantLevel(definition, environment) || !isStatePure(definition, environment)
-      ? evaluator
-      : cacheStateValue(evaluator);
+    let compiled: Evaluator | undefined;
+    return (context) => (compiled ??= getDefinitionEvaluator(definition, environment))(context);
   }
   return (context) => evaluateLocalIdentifier(name, expression, context);
-};
-
-const isStatePure = (definition: Definition, environment: Environment) =>
-  getReadVariables(definition.body, environment) !== undefined &&
-  (definition.kind === "Operator" ||
-    definition.bounds.every((bound) => getReadVariables(bound.set, environment) !== undefined));
-
-const cacheStateValue = (evaluator: Evaluator): Evaluator => {
-  const cache = {
-    recent: undefined as Context["state"],
-    recentValue: undefined as Value | undefined,
-    previous: undefined as Context["state"],
-    previousValue: undefined as Value | undefined,
-  };
-  return (context) => {
-    const state = context.state;
-    if (state !== undefined && cache.recent === state && cache.recentValue !== undefined) {
-      return cache.recentValue;
-    }
-    if (state !== undefined && cache.previous === state && cache.previousValue !== undefined) {
-      return cache.previousValue;
-    }
-    const value = evaluator(context);
-    cache.previous = cache.recent;
-    cache.previousValue = cache.recentValue;
-    cache.recent = state;
-    cache.recentValue = value;
-    return value;
-  };
 };
 
 export const isValueArgument = (argument: Expression, environment: Environment) => {
@@ -1903,7 +1674,7 @@ export const compileArgumentScope = (
   }
   const params = closure.params;
   const binders = args.map((arg, index) =>
-    params[index].arity > 0 ? undefined : getArgumentBinder(arg, environment),
+    params[index].arity > 0 ? undefined : compileArgumentBinder(arg, environment),
   );
   return (context) => {
     let scope = closure.scope;
@@ -1918,240 +1689,27 @@ export const compileArgumentScope = (
   };
 };
 
-interface MemoizedCall {
-  sources: (Expression | undefined)[];
-  args: Value[];
-  value: Value;
-}
-
-const MEMOIZED_CALL_LIMIT = 1 << 16;
-
-// A call site that finds fewer than half its calls in a state's memo after this many new ones
-// stops paying for the lookups.
-const MEMOIZED_TRIAL_CALLS = 1 << 10;
-
-interface CallMemo {
-  calls: Map<number, MemoizedCall[]>;
-  size: number;
-  state: Context["state"];
-}
-
-interface CallMemos {
-  constant: CallMemo;
-  state: CallMemo;
-}
-
-const createCallMemo = (): CallMemo => ({ calls: new Map(), size: 0, state: undefined });
-
-const getCallMemos = (closure: Closure, environment: Environment) => {
-  const cached = environment.callMemos.get(closure);
-  if (cached) return cached;
-  const memos = { constant: createCallMemo(), state: createCallMemo() };
-  environment.callMemos.set(closure, memos);
-  return memos;
-};
-
-const readsExceptAt = (expression: Expression): boolean =>
-  expression.kind === "ExceptAt" || getChildren(expression).some(readsExceptAt);
-
-// The locals an argument expression reads, when the state and their values decide its value. An @
-// reads the value its EXCEPT binds.
-const getArgumentLocals = (expression: Expression, environment: Environment) => {
-  const cached = environment.argumentLocals.get(expression);
-  if (cached !== undefined) return cached;
-  const locals =
-    getReadVariables(expression, environment) !== undefined &&
-    getReadLocals(expression, NO_BOUND_NAMES);
-  const unique = locals && [
-    ...new Set(readsExceptAt(expression) ? [...locals, EXCEPT_AT] : locals),
-  ];
-  environment.argumentLocals.set(expression, unique ?? false);
-  return unique ?? false;
-};
-
-// Hashing a lazy set or function would enumerate it, which TLC does only when it has to.
-const isEagerValue = (value: Value) =>
-  typeof value !== "object" ||
-  value.kind === "ModelValue" ||
-  value.kind === "Set" ||
-  value.kind === "Function" ||
-  value.kind === "Interval";
-
-// The key of the call being looked up, copied into the memo only when the call is new. Counts
-// mark its ends, since shortening an array is slow.
-const callKey = {
-  sources: [] as (Expression | undefined)[],
-  sourceCount: 0,
-  args: [] as Value[],
-  argCount: 0,
-  hash: 0,
-  isStateKeyed: false,
-};
-
-// A model value's rank tells it apart without hashing its name.
-const getKeyHash = (value: Value) =>
-  typeof value === "object" && value.kind === "ModelValue" ? value.rank : getValueHash(value);
-
-const pushKeyValue = (value: Value) => {
-  if (!isEagerValue(value)) return false;
-  callKey.sources[callKey.sourceCount++] = undefined;
-  callKey.args[callKey.argCount++] = value;
-  callKey.hash = combineHash(callKey.hash, getKeyHash(value));
-  return true;
-};
-
-// An argument TLC has not evaluated yet stands for its expression and the values of the locals it
-// reads, so a call keeps the laziness of its arguments.
-const pushKeyExpression = (
-  expression: Expression,
-  locals: string[] | false,
-  scope: Scope | undefined,
-) => {
-  if (!locals) return false;
-  callKey.sources[callKey.sourceCount++] = expression;
-  callKey.isStateKeyed = true;
-  for (let index = 0; index < locals.length; index++) {
-    const local = lookupScope(scope, locals[index]);
-    if (local?.kind !== "Value" || !isEagerValue(local.value)) return false;
-    callKey.args[callKey.argCount++] = local.value;
-    callKey.hash = combineHash(callKey.hash, getKeyHash(local.value));
-  }
-  return true;
-};
-
-// Each argument adds to the key what compileArgumentBinder would bind its parameter to.
-const compileArgumentKey = (
-  argument: Expression,
-  environment: Environment,
-): ((context: Context) => boolean) => {
-  const isLiteral =
-    argument.kind === "String" || (argument.kind === "Number" && isTlcInteger(argument.value));
-  if (isLiteral) return () => pushKeyValue(argument.value);
-  if (argument.kind === "Identifier") {
-    const global = isLocallyResolved(argument)
-      ? undefined
-      : findGlobalName(argument.name, environment);
-    if (global?.kind === "Value") return () => pushKeyValue(global.value);
-    if (global === undefined) {
-      return (context) => {
-        const binding = lookupScope(context.scope, argument.name);
-        if (binding?.kind === "Value") return pushKeyValue(binding.value);
-        if (binding?.kind !== "Thunk" || binding.state !== context.state) return false;
-        return pushKeyExpression(
-          binding.expression,
-          getArgumentLocals(binding.expression, environment),
-          binding.scope,
-        );
-      };
-    }
-  }
-  const locals = getArgumentLocals(argument, environment);
-  return (context) => pushKeyExpression(argument, locals, context.scope);
-};
-
-const isKnownCall = (call: MemoizedCall) => {
-  if (call.args.length !== callKey.argCount || call.sources.length !== callKey.sourceCount) {
-    return false;
-  }
-  for (let index = 0; index < callKey.sourceCount; index++) {
-    if (call.sources[index] !== callKey.sources[index]) return false;
-  }
-  for (let index = 0; index < callKey.argCount; index++) {
-    if (!isSameValue(call.args[index], callKey.args[index])) return false;
-  }
-  return true;
-};
-
-const findCall = (bucket: MemoizedCall[] | undefined) => {
-  if (bucket === undefined) return undefined;
-  for (let index = 0; index < bucket.length; index++) {
-    if (isKnownCall(bucket[index])) return bucket[index];
-  }
-  return undefined;
-};
-
-// An operator without side effects yields the same value for the same arguments, a state-level one
-// in the same state, so its calls share one result.
-const getMemoizedLevel = (expression: Expression & { kind: "Apply" }, environment: Environment) => {
-  const definition = getDefinition(expression.operator, environment);
-  const isMemoizable =
-    definition?.kind === "Operator" &&
-    definition.params.length > 0 &&
-    definition.params.every((param) => param.arity === 0) &&
-    !isImpureDefinition(definition, environment);
-  if (!isMemoizable) return undefined;
-  if (isConstantLevel(definition, environment)) return "constant";
-  return isStatePure(definition, environment) ? "state" : undefined;
-};
-
 const compileClosureCall = (
   closure: Closure,
   args: Expression[],
   environment: Environment,
-  memoizedLevel: "constant" | "state" | undefined,
 ): Evaluator => {
   const bindArguments = compileArgumentScope(closure, args, environment);
-  const compiled = { body: undefined as Evaluator | undefined };
-  const evaluateBody = (scope: Scope | undefined, context: Context) => {
-    if (compiled.body === undefined) {
-      const tail = compileTailCalls(closure, environment);
-      compiled.body = tail
+  let body: Evaluator | undefined;
+  return (context) => {
+    if (body === undefined) {
+      const tail = getTailCalls(closure, environment);
+      body = tail
         ? (bodyContext) => evaluateTailCalls(closure, tail, bodyContext)
         : getEntryEvaluator(closure.body, environment);
     }
-    return compiled.body({
+    return body({
       environment,
-      scope,
+      scope: bindArguments(context),
       state: context.state,
       next: context.next,
       isKeepLazy: context.isKeepLazy,
     });
-  };
-  if (!memoizedLevel || args.length !== closure.params.length) {
-    return (context) => evaluateBody(bindArguments(context), context);
-  }
-  const memos = getCallMemos(closure, environment);
-  const keys = args.map((arg) => compileArgumentKey(arg, environment));
-  const usage = { hits: 0, misses: 0 };
-  return (context) => {
-    // A call TLC evaluates with EvalControl.KeepLazy builds what a memoized one wouldn't.
-    if (context.isKeepLazy) return evaluateBody(bindArguments(context), context);
-    callKey.sourceCount = 0;
-    callKey.argCount = 0;
-    callKey.hash = args.length;
-    callKey.isStateKeyed = false;
-    for (let index = 0; index < keys.length; index++) {
-      if (!keys[index](context)) return evaluateBody(bindArguments(context), context);
-    }
-    const isStateKeyed = memoizedLevel === "state" || callKey.isStateKeyed;
-    if (isStateKeyed && usage.misses > MEMOIZED_TRIAL_CALLS && usage.hits < usage.misses) {
-      return evaluateBody(bindArguments(context), context);
-    }
-    const memo = isStateKeyed ? memos.state : memos.constant;
-    if (isStateKeyed && memo.state !== context.state) {
-      memo.state = context.state;
-      memo.calls.clear();
-      memo.size = 0;
-    }
-    // A small integer key keeps the Map from boxing it.
-    const hash = callKey.hash & 0x3fffffff;
-    const bucket = memo.calls.get(hash);
-    const known = findCall(bucket);
-    if (known) {
-      if (isStateKeyed) usage.hits++;
-      return known.value;
-    }
-    if (isStateKeyed) usage.misses++;
-    const sources = callKey.sources.slice(0, callKey.sourceCount);
-    const keyArgs = callKey.args.slice(0, callKey.argCount);
-    const value = evaluateBody(bindArguments(context), context);
-    if (memo.size < MEMOIZED_CALL_LIMIT) {
-      memo.size++;
-      const call = { sources, args: keyArgs, value };
-      if (bucket) bucket.push(call);
-      else memo.calls.set(hash, [call]);
-    }
-    return value;
   };
 };
 
@@ -2164,37 +1722,43 @@ const compileApply = (
     const left = getEvaluator(args[0], environment);
     const right = getEvaluator(args[1], environment);
     return (context) =>
-      !expectBoolean(left(context), "the left side of =>") ||
-      expectBoolean(right(context), "the right side of =>");
+      !expectImplication(left(context), expression, "P") ||
+      expectImplication(right(context), expression, "Q");
   }
-  if (expression.operator === "~>") {
+  if (expression.operator === "~" && args.length === 1) {
+    const operand = getEvaluator(args[0], environment);
+    return (context) => negate(operand(context), expression);
+  }
+  if (expression.operator === "<=>") {
+    const left = getEvaluator(args[0], environment);
+    const right = getEvaluator(args[1], environment);
+    return (context) => isEquivalent(left(context), right(context), expression);
+  }
+  if (expression.operator === "~>" || expression.operator === "-+->") {
     return () => {
-      throw new TlaEvaluationError("TLC cannot evaluate a temporal formula such as ~> in a state");
+      throw createTemporalFormulaError(
+        expression.operator === "~>" ? "a ~> b" : "a -+-> formula",
+        expression,
+      );
     };
   }
   const global = isLocallyResolved(expression)
     ? undefined
     : resolveGlobalOperator(expression.operator, environment);
-  if (global?.kind === "Closure") {
-    // The replay records the evaluation of each call, which TLC repeats.
-    const memoizedLevel = environment.callStack
-      ? undefined
-      : getMemoizedLevel(expression, environment);
-    return compileClosureCall(global, args, environment, memoizedLevel);
-  }
+  if (global?.kind === "Closure") return compileClosureCall(global, args, environment);
   if (global?.kind === "Builtin" && global.name === "DOMAIN") {
     const operand = getEvaluator(args[0], environment);
     const domain = getDomainOperator(expression);
     return (context) => domain(operand(context));
   }
-  // TLC sorts the value of a constant TLCEval argument only where no context binds a name.
   if (global?.kind === "Builtin" && global.name === "TLCEval" && args.length === 1) {
-    const operand = getEvaluator(args[0], environment);
-    if (contextualApplications.has(expression) || isNonconstant(args[0], environment)) {
-      return operand;
-    }
+    const isCached =
+      !contextualApplications.has(expression) && !isNonconstant(args[0], environment);
     return (context) =>
-      context.scope === undefined ? global.evaluate([operand(context)]) : operand(context);
+      global.evaluate(
+        getLazyArguments(args, context),
+        isCached && context.scope === undefined ? undefined : context,
+      );
   }
   if (global?.kind === "Builtin" && global.name === "\\subseteq" && args.length === 2) {
     const left = getEvaluator(args[0], environment);
@@ -2203,7 +1767,6 @@ const compileApply = (
     return (context) => subset(left(context), right(context));
   }
   if (global?.kind === "Builtin") return compileBuiltinCall(global, args, environment);
-  // TLC refuses action composition unless a Java property enables its incomplete implementation.
   if (expression.operator === "\\cdot" && args.length === 2) {
     return () => {
       throw new TlaEvaluationError(
@@ -2213,11 +1776,10 @@ const compileApply = (
       );
     };
   }
-  const called = { entry: undefined as CalledBody | undefined };
-  const binders = args.map((arg) => getArgumentBinder(arg, environment));
+  const binders = args.map((arg) => compileArgumentBinder(arg, environment));
   return (context) => {
     const operator = resolveOperator(expression.operator, context);
-    if (operator) return callOperator(operator, args, context, called, binders);
+    if (operator) return callOperator(operator, args, context, binders);
     const definition = environment.definitions.get(expression.operator);
     if (definition?.kind === "Function") {
       throw new TlaEvaluationError(`${expression.operator} is a function; apply it with brackets`);
@@ -2233,7 +1795,6 @@ const compileQuantifier = (
   environment: Environment,
 ): Evaluator => {
   const isForall = expression.kind === "Forall";
-  const description = isForall ? "the body of \\A" : "the body of \\E";
   const body = getEvaluator(expression.body, environment);
   const bound = expression.bounds[0];
   if (expression.bounds.length === 1 && bound.pattern.kind === "Name") {
@@ -2243,9 +1804,9 @@ const compileQuantifier = (
       const isFound = someElement(
         getQuantifierElements(set(context), bound.set, environment.runtime.version),
         (element) =>
-          expectBoolean(
+          expectBooleanBody(
             body(withScope(context, bindValue(context.scope, name, element))),
-            description,
+            expression,
           ) !== isForall,
       );
       return isFound ? !isForall : isForall;
@@ -2254,14 +1815,17 @@ const compileQuantifier = (
   const bounds = expression.bounds;
   if (bounds.every((item) => item.pattern.kind === "Name")) {
     const names = bounds.map((item) => (item.pattern.kind === "Name" ? item.pattern.name : ""));
-    const sets = bounds.map((item) => getEvaluator(item.set, environment));
     return (context) => {
-      const lists = sets.map((set, index) =>
-        getQuantifierElements(set(context), bounds[index].set, environment.runtime.version),
+      const lists = mapBoundSets(bounds, (set) =>
+        getQuantifierElements(
+          getEvaluator(set, environment)(context),
+          set,
+          environment.runtime.version,
+        ),
       );
       const visit = (index: number, scope: Scope | undefined): boolean => {
         if (index < 0) {
-          return expectBoolean(body(withScope(context, scope)), description) !== isForall;
+          return expectBooleanBody(body(withScope(context, scope)), expression) !== isForall;
         }
         return someElement(lists[index], (element) =>
           visit(index - 1, bindValue(scope, names[index], element)),
@@ -2274,7 +1838,7 @@ const compileQuantifier = (
     const isFound = forEachBinding(
       bounds,
       context,
-      (scope) => expectBoolean(body(withScope(context, scope)), description) !== isForall,
+      (scope) => expectBooleanBody(body(withScope(context, scope)), expression) !== isForall,
     );
     return isFound ? !isForall : isForall;
   };
@@ -2293,8 +1857,6 @@ const getBoundValue = (pattern: BoundPattern, scope: Scope | undefined) => {
   return binding?.kind === "Value" ? binding.value : undefined;
 };
 
-// TLC keeps a function constructor lazy when it is the function of an application, or the base of
-// an EXCEPT that is, so it evaluates the body only at the arguments it is applied to.
 const keptLazyExpressions = new WeakSet<Expression>();
 
 export const keepLazy = (expression: Expression) => {
@@ -2303,34 +1865,65 @@ export const keepLazy = (expression: Expression) => {
   }
 };
 
-const compileFunctionConstruction = (
+const scopeNames = new WeakMap<Expression, string[] | undefined>();
+
+const getScopeNames = (expression: Expression) => {
+  if (scopeNames.has(expression)) return scopeNames.get(expression);
+  const names = new Set<string>();
+  const visit = (node: Expression): boolean => {
+    if (node.kind === "Subexpression") return false;
+    const name = getReferencedName(node);
+    if (name !== undefined) names.add(name);
+    if (node.kind === "ExceptAt") names.add(EXCEPT_AT);
+    return getChildren(node).every(visit);
+  };
+  const result = visit(expression) ? [...names] : undefined;
+  scopeNames.set(expression, result);
+  return result;
+};
+
+const trimScope = (scope: Scope | undefined, names: string[] | undefined) =>
+  names === undefined || scope === undefined
+    ? scope
+    : names.reduce<Scope>(
+        (trimmed, name) => {
+          const binding = lookupScope(scope, name);
+          return binding ? { name, binding, parent: trimmed } : trimmed;
+        },
+        { name: "", binding: { kind: "Value", value: false }, parent: undefined },
+      );
+
+export const isKeptLazy = (expression: Expression) => keptLazyExpressions.has(expression);
+
+export const getFunctionBuilder = (
   expression: Expression & { kind: "FunctionConstruction" },
   environment: Environment,
-): Evaluator => {
-  const isKeptLazy = keptLazyExpressions.has(expression);
+) => {
+  const isKeptLazyExpression = isKeptLazy(expression);
   const body = getEvaluator(expression.body, environment);
   const bounds = expression.bounds;
   const bound = bounds[0];
   const isSingleName = bounds.length === 1 && bound.pattern.kind === "Name";
-  const set = getEvaluator(bound.set, environment);
   const construct = (domain: Value, context: Context) => {
     if (isSingleName && bound.pattern.kind === "Name") {
       const name = bound.pattern.name;
+      const evaluateAt = (key: Value) =>
+        body(withScope(context, bindValue(context.scope, name, key)));
+      // TLC sizes the domain and evaluates the body at each element of a domain too large to hold.
+      if (isBeyondSetBound(domain)) {
+        getCardinality(domain);
+        forEachElement(domain, evaluateAt);
+        return createLazy(domain, context);
+      }
       const keys = getFunctionDomain(domain);
-      const functionValue = createSortedFunction(
-        keys,
-        keys.map((key) => body(withScope(context, bindValue(context.scope, name, key)))),
-      );
-      // FcnLambdaValue#toFcnRcd builds a FcnRcdValue over an interval or an enumerated set.
-      return isReducibleSet(domain) ? functionValue : markLambdaFunction(functionValue);
+      const functionValue = createSortedFunction(keys, keys.map(evaluateAt));
+      if (isReducibleSet(domain)) return functionValue;
+      functionValue.lambdaDomain = domain;
+      return markLambdaFunction(functionValue);
     }
     const pairs: [Value, Value][] = [];
-    const sets = bounds.map((item) =>
-      getNormalizedElements(
-        evaluate(item.set, context),
-        item.set,
-        context.environment.runtime.version,
-      ),
+    const sets = mapBoundSets(bounds, (set) =>
+      getNormalizedElements(evaluate(set, context), set, context.environment.runtime.version),
     );
     forEachBoundElement(bounds, sets, context.scope, (scope) => {
       const key =
@@ -2342,29 +1935,42 @@ const compileFunctionConstruction = (
     });
     return createFunction(pairs);
   };
+  const template = getLazyFunctionTemplate(bounds, expression.body);
+  const boundTupleLengths = getBoundTupleLengths(bounds);
+  const bodyNames = getScopeNames(expression.body);
   const createLazy = (domain: Value, context: Context) => {
+    const scope = trimScope(context.scope, bodyNames);
+    const lambdaContext = withScope(context, scope);
     const functionValue = keepLambda({
       value: createLazyFunction(
         domain,
-        (argument) => body(withScope(context, bindArgument(bounds, context.scope, argument))),
-        getLazyFunctionSource(bounds, expression.body, domain),
+        (argument) => body(withScope(lambdaContext, bindArgument(bounds, scope, argument))),
+        getLazyFunctionSource(template, bounds, domain),
+        boundTupleLengths,
       ),
       bounds,
       body: expression.body,
-      scope: context.scope,
+      scope,
     });
     return bounds.length === 1 ? markLambdaFunction(functionValue) : functionValue;
   };
   const callStack = environment.callStack;
-  return (context) => {
-    const domain = isSingleName ? set(context) : getBoundsDomain(bounds, context);
-    if (expression.isRecursive || isKeptLazy || context.isKeepLazy || !isEnumerable(domain)) {
+  const build = (domain: Value, context: Context) => {
+    if (
+      expression.isRecursive ||
+      isKeptLazyExpression ||
+      context.isKeepLazy ||
+      !isEnumerable(domain)
+    ) {
       return createLazy(domain, context);
     }
-    // TLC builds a function over a domain other than a set enumeration or an interval lazily, so
-    // its body fails only where TLC forces it, as the replay does. Building it at once is faster
-    // otherwise.
-    if (!isReducibleSet(domain)) {
+    const isReducibleDomain =
+      bounds.length === 1
+        ? isReducibleSet(domain)
+        : typeof domain === "object" &&
+          domain.kind === "ProductSet" &&
+          domain.factors.every(isReducibleSet);
+    if (!isReducibleDomain) {
       if (callStack) return createLazy(domain, context);
       try {
         return construct(domain, context);
@@ -2374,7 +1980,6 @@ const compileFunctionConstruction = (
       }
     }
     if (!callStack) return construct(domain, context);
-    // TLC builds the function in a method of the FcnLambdaValue that CallStackTool gives a source.
     try {
       return construct(domain, context);
     } catch (error) {
@@ -2382,14 +1987,28 @@ const compileFunctionConstruction = (
       throw error;
     }
   };
+  return { build, createLazy };
+};
+
+const compileFunctionConstruction = (
+  expression: Expression & { kind: "FunctionConstruction" },
+  environment: Environment,
+): Evaluator => {
+  const build = getFunctionBuilder(expression, environment).build;
+  const bounds = expression.bounds;
+  if (bounds.length === 1 && bounds[0].pattern.kind === "Name") {
+    const set = getEvaluator(bounds[0].set, environment);
+    return (context) => build(set(context), context);
+  }
+  return (context) => build(getBoundsDomain(bounds, context), context);
 };
 
 const compileExcept = (
   expression: Expression & { kind: "Except" },
   environment: Environment,
 ): Evaluator => {
-  const isKeptLazy = keptLazyExpressions.has(expression);
-  if (isKeptLazy) keepLazy(expression.function);
+  const isKeptLazyExpression = keptLazyExpressions.has(expression);
+  if (isKeptLazyExpression) keepLazy(expression.function);
   const evaluateFunction = getEvaluator(expression.function, environment);
   const updates = expression.updates.map((update) => ({
     path: update.path.map((step): CompiledStep =>
@@ -2422,19 +2041,18 @@ const compileExcept = (
       current,
       getKey(path[depth], context),
       (previous) => update(previous, path, depth + 1, context, value),
-      isKeptLazy && depth === 0,
+      isKeptLazyExpression && depth === 0,
     );
   };
   return (context) => {
     let current = evaluateFunction(context);
     for (const item of updates) {
-      // TLC leaves the value as it is when an update's path is not in it, and warns.
-      const found = { value: false };
+      let isFound = false;
       current = update(current, item.path, 0, context, (inner) => {
-        found.value = true;
+        isFound = true;
         return item.value(inner);
       });
-      if (!found.value) {
+      if (!isFound) {
         context.environment.runtime.warn(
           MESSAGE_CODE.exceptAppliedToUnknownField,
           `The EXCEPT was applied to non-existing fields of the value at\n${describeRange(expression.function)}`,
@@ -2445,6 +2063,98 @@ const compileExcept = (
   };
 };
 
+export const getLazyFilter = (
+  expression: Expression & { kind: "SetFilter" },
+  environment: Environment,
+) => {
+  const predicate = getEvaluator(expression.predicate, environment);
+  const pattern = expression.bound.pattern;
+  const range = expression.predicate.location.range;
+  const source = range && {
+    names: pattern.kind === "Name" ? pattern.name : pattern.names.join(", "),
+    predicate: formatRange(range),
+  };
+  const predicateNode = describeNode(expression.predicate);
+  const coverage = environment.coverage;
+  const testCovered = (node: number, isMember: boolean, test: () => Value) => {
+    if (!coverage || node === -1) return test();
+    if (!isMember) coverage.secondary[node]++;
+    const value = runAtCoverageNode(coverage, isMember ? -1 : node, test);
+    if (!isMember && value === true) coverage.secondary[node]++;
+    return value;
+  };
+  const createFiltered = (
+    base: Value,
+    context: Context,
+    evaluator: Evaluator,
+    node: number,
+  ): RebindableFilteredSet => ({
+    kind: "FilteredSet",
+    base,
+    test: (element, isMember) => {
+      if (
+        pattern.kind === "Tuple" &&
+        getSequenceElements(element)?.length !== pattern.names.length
+      ) {
+        throw new TlaEvaluationError(
+          `Attempted to check if the value:\n${prettyPrint(formatValue(element))}\nis an element of a set of ${pattern.names.length}-tuples.`,
+        );
+      }
+      const value = testCovered(node, isMember, () =>
+        evaluator(withScope(context, bindPattern(context.scope, pattern, element))),
+      );
+      if (typeof value !== "boolean") {
+        throw new TlaEvaluationError(
+          `${isMember ? "The evaluation of predicate" : "Evaluating predicate"} ${predicateNode} yielded non-Boolean value.`,
+        );
+      }
+      return value;
+    },
+    source,
+    rebind: (tracing) =>
+      createFiltered(
+        base,
+        { ...context, environment: tracing },
+        getEvaluator(expression.predicate, tracing),
+        -1,
+      ),
+  });
+  return (base: Value, context: Context, node = -1) =>
+    createFiltered(base, context, predicate, node);
+};
+
+export const expectFilterPredicate = (
+  value: Value,
+  expression: Expression & { kind: "SetFilter" },
+) => {
+  if (typeof value !== "boolean") {
+    throw new TlaEvaluationError(
+      `Attempted to evaluate an expression of form {x \\in S : P(x)} when P was ${getKindString(value)}.\n${describeNode(expression.predicate)}`,
+    );
+  }
+  return value;
+};
+
+export const getChoiceElements = (
+  base: Value,
+  expression: Expression & { kind: "Choose" },
+  set: Expression,
+  version: TlcVersion,
+) => {
+  if (!isSetValue(base) || isOverriddenSet(base)) {
+    throw new TlaEvaluationError(
+      `Attempted to compute the value of an expression of\nform CHOOSE x \\in S: P, but S was not enumerable.\n${describeRange(expression)}`,
+    );
+  }
+  normalizeShallowly(base);
+  return getNormalizedElements(base, set, version);
+};
+
+export const createNoChoiceError = (expression: Expression & { kind: "Choose" }) =>
+  new TlaEvaluationError(
+    `Attempted to compute the value of an expression of form\nCHOOSE x \\in S: P, but no element of S satisfied P.\n${describeRange(expression)}`,
+  );
+
 const compileSetComprehension = (
   expression: Expression & { kind: "SetFilter" | "SetMap" | "Choose" },
   environment: Environment,
@@ -2452,38 +2162,25 @@ const compileSetComprehension = (
   if (expression.kind === "SetFilter") {
     const predicate = getEvaluator(expression.predicate, environment);
     const set = getEvaluator(expression.bound.set, environment);
+    const filterLazily = getLazyFilter(expression, environment);
     const pattern = expression.bound.pattern;
-    const range = expression.predicate.location.range;
-    const source = range && {
-      names: pattern.kind === "Name" ? pattern.name : pattern.names.join(", "),
-      predicate: formatRange(range),
-    };
-    const createTest = (evaluator: Evaluator, context: Context) => (element: Value) =>
-      expectBoolean(
-        evaluator(withScope(context, bindPattern(context.scope, pattern, element))),
-        "a set filter predicate",
-      );
-    const createFiltered = (
-      base: Value,
-      context: Context,
-      evaluator: Evaluator,
-    ): RebindableFilteredSet => ({
-      kind: "FilteredSet",
-      base,
-      test: createTest(evaluator, context),
-      source,
-      rebind: (tracing) =>
-        createFiltered(
-          base,
-          { ...context, environment: tracing },
-          getEvaluator(expression.predicate, tracing),
-        ),
-    });
+    const coverage = environment.coverage;
     return (context) => {
       const base = set(context);
-      // TLC filters any value it can't enumerate lazily, and fails only when it uses the result.
-      if (!isReducibleSet(base)) return createFiltered(base, context, predicate);
-      return createSortedSet(toFiniteSet(base).elements.filter(createTest(predicate, context)));
+      if (!isReducibleSet(base)) return filterLazily(base, context, coverage?.current);
+      const kept: Value[] = [];
+      const visit = (element: Value) => {
+        const value = predicate(withScope(context, bindPattern(context.scope, pattern, element)));
+        if (expectFilterPredicate(value, expression)) addBoundedElement(kept, element);
+      };
+      const elements = base.kind === "Interval" ? base : toFiniteSet(base).elements;
+      forEachElement(elements, visit);
+      if (coverage && coverage.current !== -1) {
+        coverage.secondary[coverage.current] +=
+          (Array.isArray(elements) ? elements.length : elements.high - elements.low + 1) +
+          kept.length;
+      }
+      return createNormalizedSet(kept);
     };
   }
   if (expression.kind === "SetMap") {
@@ -2491,7 +2188,7 @@ const compileSetComprehension = (
     return (context) => {
       const elements: Value[] = [];
       forEachBinding(expression.bounds, context, (scope) => {
-        elements.push(mapped(withScope(context, scope)));
+        addBoundedElement(elements, mapped(withScope(context, scope)));
         return false;
       });
       return createEnumeratedSet(elements);
@@ -2501,37 +2198,40 @@ const compileSetComprehension = (
   if (!set) {
     return () => {
       throw new TlaEvaluationError(
-        `TLC cannot evaluate an unbounded CHOOSE at ${describeLocation(expression)}`,
+        `TLC attempted to evaluate an unbounded CHOOSE.\nMake sure that the expression is of form CHOOSE x \\in S: P(x).\n${describeRange(expression)}`,
       );
     };
   }
   const body = getEvaluator(expression.body, environment);
   const evaluateSet = getEvaluator(set, environment);
   return (context) => {
-    const base = evaluateSet(context);
-    if (!isSetValue(base) || isOverriddenSet(base)) {
-      throw new TlaEvaluationError(
-        `Attempted to compute the value of an expression of\nform CHOOSE x \\in S: P, but S was not enumerable.\n${describeRange(expression)}`,
-      );
-    }
-    const chosen = { value: undefined as Value | undefined };
-    const elements = getNormalizedElements(base, set, context.environment.runtime.version);
+    const elements = getChoiceElements(
+      evaluateSet(context),
+      expression,
+      set,
+      context.environment.runtime.version,
+    );
+    let chosen: Value | undefined;
+    const pattern = expression.pattern;
     someElement(elements, (element) => {
-      const scope = bindPattern(context.scope, expression.pattern, element);
-      if (!expectBoolean(body(withScope(context, scope)), "the body of CHOOSE")) return false;
-      chosen.value = getBoundValue(expression.pattern, scope);
+      if (
+        pattern.kind === "Tuple" &&
+        getSequenceElements(element)?.length !== pattern.names.length
+      ) {
+        throw new TlaEvaluationError(
+          `Attempted to compute the value of an expression of form\nCHOOSE <<x1, ... , xN>> \\in S: P, but S was not a set\nof N-tuples.\n${describeRange(expression)}`,
+        );
+      }
+      const scope = bindPattern(context.scope, pattern, element);
+      if (!expectBooleanBody(body(withScope(context, scope)), expression)) return false;
+      chosen = getBoundValue(pattern, scope);
       return true;
     });
-    if (chosen.value === undefined) {
-      throw new TlaEvaluationError(
-        `Attempted to compute the value of an expression of form\nCHOOSE x \\in S: P, but no element of S satisfied P.\n${describeRange(expression)}`,
-      );
-    }
-    return chosen.value;
+    if (chosen === undefined) throw createNoChoiceError(expression);
+    return chosen;
   };
 };
 
-// TLC orders a record's fields by name.
 export const getSortedFields = (fields: RecordField[]) =>
   [...fields].sort((left, right) => compareValues(left.name, right.name));
 
@@ -2625,26 +2325,10 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
     }
     case "Prime": {
       const inner = getChildEvaluator(expression.expression);
-      return (context) => {
-        if (!context.next) throw createPrimeOutsideActionError(expression);
-        return inner({
-          environment: context.environment,
-          scope: context.scope,
-          state: context.next,
-          next: undefined,
-          isKeepLazy: context.isKeepLazy,
-        });
-      };
+      return (context) => inner(toNextContext(context));
     }
-    case "Unchanged": {
-      const primed = getChildEvaluator({
-        kind: "Prime",
-        expression: expression.expression,
-        location: expression.location,
-      });
-      const current = getChildEvaluator(expression.expression);
-      return (context) => valuesEqual(primed(context), current(context));
-    }
+    case "Unchanged":
+      return compileUnchanged(getChildEvaluator(expression.expression));
     case "If": {
       const condition = getChildEvaluator(expression.condition);
       const consequent = getChildEvaluator(expression.consequent);
@@ -2688,8 +2372,15 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
       return compileQuantifier(expression, environment);
     case "UnboundedQuantifier":
       return () => {
+        const operator = expression.quantifier === "Forall" ? "\\A" : "\\E";
+        if (expression.isTemporal) {
+          throw createTemporalFormulaError(
+            expression.quantifier === "Forall" ? "\\AA" : "\\EE",
+            expression,
+          );
+        }
         throw new TlaEvaluationError(
-          `TLC cannot evaluate an unbounded quantifier at ${describeLocation(expression)}`,
+          `TLC attempted to evaluate an unbounded ${operator}.\nMake sure that the expression is of form ${operator} x \\in S: P(x).\n${describeRange(expression)}`,
         );
       };
     case "Choose":
@@ -2765,16 +2456,18 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
     case "BoxAction":
     case "AngleAction": {
       const action = getChildEvaluator(expression.action);
-      const unchanged = getChildEvaluator({
-        kind: "Unchanged",
-        expression: expression.subscript,
-        location: expression.location,
-      });
+      const unchanged = compileUnchanged(getChildEvaluator(expression.subscript));
       const isBox = expression.kind === "BoxAction";
-      return (context) =>
-        isBox
-          ? expectBoolean(action(context), "an action") || unchanged(context)
-          : expectBoolean(action(context), "an action") && !unchanged(context);
+      const form = isBox ? "[A]_e" : "<A>_e";
+      return (context) => {
+        const value = action(context);
+        if (typeof value !== "boolean") {
+          throw new TlaEvaluationError(
+            `Attempted to evaluate an expression of form ${form}, but A was not a boolean.\n${describeRange(expression)}`,
+          );
+        }
+        return isBox ? value || unchanged(context) : value && !unchanged(context);
+      };
     }
     case "Enabled": {
       const action = expression.expression;
@@ -2793,9 +2486,7 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
     case "WeakFairness":
     case "StrongFairness":
       return () => {
-        throw new TlaEvaluationError(
-          `TLC cannot evaluate a temporal formula in a state at ${describeLocation(expression)}`,
-        );
+        throw createTemporalFormulaError(TEMPORAL_FORMS[expression.kind], expression);
       };
   }
 };

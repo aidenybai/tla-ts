@@ -1,0 +1,264 @@
+(*---
+description: Zenon's own test zenon/test/test29.znn, which Zenon must prove.
+ref: zenon/test/test29.znn
+features:
+  - zenon-test
+outcome: unsat
+---*)
+;  Copyright 2006 INRIA
+;  $Id: test29.znn,v 1.7 2011-12-28 16:43:33 doligez Exp $
+
+# file: species_general_set.foc
+# species: partial_order
+# theorem: gt_is_lt
+
+#  (* to be proved *)
+#(x: abst_T) (y: abst_T)
+#(and
+#  ((Is_true ((abst_gt  x y)) ))-> 
+#    (and (Is_true ((abst_geq  x y)) ) (Is_true ((abst_different  x y)) ))
+#  ((Is_true ((abst_geq  x y)) ))-> 
+#    (or (Is_true ((abst_gt  x y)) ) (Is_true ((abst_equal  x y)) )))
+#By
+#  abst_equal_symmetric: (x: abst_T) (y: abst_T)
+#  ((Is_true ((abst_equal  x y)) ))-> 
+#    (Is_true ((abst_equal  y x)) )
+#  abst_lt_is_not_leq: (x: abst_T) (y: abst_T)
+#  (and
+#    ((Is_true ((abst_lt  x y)) ))-> 
+#      (and (Is_true ((abst_leq  x y)) ) (Is_true ((abst_different  x y)) ))
+#    ((Is_true ((abst_leq  x y)) ))-> 
+#      (or (Is_true ((abst_lt  x y)) ) (Is_true ((abst_equal  x y)) )))
+#By def
+#      abst_different:= [x: abst_T][y: abst_T](not_b  (abst_equal  x y))
+#      abst_geq:= [x: abst_T][y: abst_T](abst_leq  y x) abst_gt:=
+#      [x: abst_T][y: abst_T](abst_lt  y x)
+#(* Qed *).
+
+$sig not_b ("bool") "bool"
+$sig abst_equal ("zenon_U" "zenon_U") "bool"
+$sig abst_leq ("zenon_U" "zenon_U") "bool"
+$sig abst_lt ("zenon_U" "zenon_U") "bool"
+
+$def "d1" (abst_different x y) (not_b (abst_equal x y))
+$def "d2" (abst_geq x y) (abst_leq y x)
+$def "d3" (abst_gt x y) (abst_lt y x)
+
+$hyp "h1"
+  (A. ((x) (A. ((y)
+    (=> (Is_true (abst_equal x y)) (Is_true (abst_equal y x)))))))
+
+$hyp "h2"
+  (A. ((x) (A. ((y)
+    (/\ (=> (Is_true (abst_lt x y))
+            (/\ (Is_true (abst_leq x y)) (Is_true (abst_different x y))))
+        (=> (Is_true (abst_leq x y))
+            (\/ (Is_true (abst_lt x y)) (Is_true (abst_equal x y)))))))))
+
+
+
+# from Bool.v
+$hyp "h3" (A. ((x "bool") (<=> (Is_true (not_b x)) (-. (Is_true x)))))
+
+$goal
+  (A. ((x) (A. ((y)
+    (/\ (=> (Is_true (abst_gt x y))
+            (/\ (Is_true (abst_geq x y)) (Is_true (abst_different x y))))
+        (=> (Is_true (abst_geq x y))
+            (\/ (Is_true (abst_gt x y)) (Is_true (abst_equal x y)))))))))
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: |-
+    unsat
+    proof (rule zenon_nnpp)
+     have z_Hb:"(\\A x:(\\A y:((Is_true(abst_lt(x, y))=>(Is_true(abst_leq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_leq(x, y))=>(Is_true(abst_lt(x, y))|Is_true(abst_equal(x, y)))))))" (is "\\A x : ?z_hu(x)")
+     using h2 by blast
+     have z_Hc:"(\\A x:(Is_true(not_b(x))<=>(~Is_true(x))))" (is "\\A x : ?z_hba(x)")
+     using h3 by blast
+     have z_Ha:"(\\A x:(\\A y:(Is_true(abst_equal(x, y))=>Is_true(abst_equal(y, x)))))" (is "\\A x : ?z_hbf(x)")
+     using h1 by blast
+     have zenon_L1_: "(\\A x:(\\A y:(Is_true(abst_equal(x, y))=>Is_true(abst_equal(y, x))))) ==> Is_true(abst_equal((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), (CHOOSE y:(~((Is_true(abst_gt((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))=>(Is_true(abst_geq((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))&Is_true(abst_different((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))))&(Is_true(abst_geq((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))=>(Is_true(abst_gt((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))|Is_true(abst_equal((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))))))))) ==> (\\A x:(Is_true(not_b(x))<=>(~Is_true(x)))) ==> Is_true(abst_lt((CHOOSE y:(~((Is_true(abst_gt((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))=>(Is_true(abst_geq((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))&Is_true(abst_different((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))))&(Is_true(abst_geq((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))=>(Is_true(abst_gt((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))|Is_true(abst_equal((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))))))), (CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))))) ==> (\\A x:(\\A y:((Is_true(abst_lt(x, y))=>(Is_true(abst_leq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_leq(x, y))=>(Is_true(abst_lt(x, y))|Is_true(abst_equal(x, y))))))) ==> FALSE" (is "?z_ha ==> ?z_hbg ==> ?z_hc ==> ?z_hcj ==> ?z_hb ==> FALSE")
+     proof -
+      assume z_Ha:"?z_ha"
+      assume z_Hbg:"?z_hbg"
+      assume z_Hc:"?z_hc"
+      assume z_Hcj:"?z_hcj"
+      assume z_Hb:"?z_hb"
+      have z_Hcl: "?z_hbf((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))))" (is "\\A x : ?z_hcm(x)")
+      by (rule zenon_all_0 [of "?z_hbf" "(CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y))))))))", OF z_Ha])
+      have z_Hcn: "?z_hu((CHOOSE y:(~((Is_true(abst_gt((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))=>(Is_true(abst_geq((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))&Is_true(abst_different((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))))&(Is_true(abst_geq((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))=>(Is_true(abst_gt((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))|Is_true(abst_equal((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))))))))" (is "\\A x : ?z_hco(x)")
+      by (rule zenon_all_0 [of "?z_hu" "(CHOOSE y:(~((Is_true(abst_gt((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))=>(Is_true(abst_geq((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))&Is_true(abst_different((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))))&(Is_true(abst_geq((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))=>(Is_true(abst_gt((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))|Is_true(abst_equal((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y)))))))", OF z_Hb])
+      have z_Hcp: "?z_hcm((CHOOSE y:(~((Is_true(abst_gt((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))=>(Is_true(abst_geq((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))&Is_true(abst_different((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))))&(Is_true(abst_geq((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))=>(Is_true(abst_gt((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))|Is_true(abst_equal((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))))))))" (is "_=>?z_hcq")
+      by (rule zenon_all_0 [of "?z_hcm" "(CHOOSE y:(~((Is_true(abst_gt((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))=>(Is_true(abst_geq((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))&Is_true(abst_different((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))))&(Is_true(abst_geq((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))=>(Is_true(abst_gt((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))|Is_true(abst_equal((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y)))))))", OF z_Hcl])
+      show FALSE
+      proof (rule zenon_imply [OF z_Hcp])
+       assume z_Hcr:"(~?z_hbg)"
+       show FALSE
+       by (rule notE [OF z_Hcr z_Hbg])
+      next
+       assume z_Hcq:"?z_hcq"
+       have z_Hcs: "?z_hba(abst_equal((CHOOSE y:(~((Is_true(abst_gt((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))=>(Is_true(abst_geq((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))&Is_true(abst_different((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))))&(Is_true(abst_geq((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))=>(Is_true(abst_gt((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))|Is_true(abst_equal((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))))))), (CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y))))))))))" (is "?z_hcu<=>?z_hcv")
+       by (rule zenon_all_0 [of "?z_hba" "abst_equal((CHOOSE y:(~((Is_true(abst_gt((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))=>(Is_true(abst_geq((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))&Is_true(abst_different((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))))&(Is_true(abst_geq((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))=>(Is_true(abst_gt((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))|Is_true(abst_equal((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))))))), (CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))))", OF z_Hc])
+       show FALSE
+       proof (rule zenon_equiv [OF z_Hcs])
+        assume z_Hcw:"(~?z_hcu)"
+        assume z_Hcx:"(~?z_hcv)"
+        have z_Hcy: "?z_hco((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))))" (is "?z_hcz&?z_hda")
+        by (rule zenon_all_0 [of "?z_hco" "(CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y))))))))", OF z_Hcn])
+        have z_Hcz: "?z_hcz" (is "_=>?z_hdb")
+        by (rule zenon_and_0 [OF z_Hcy])
+        show FALSE
+        proof (rule zenon_imply [OF z_Hcz])
+         assume z_Hdc:"(~?z_hcj)"
+         show FALSE
+         by (rule notE [OF z_Hdc z_Hcj])
+        next
+         assume z_Hdb:"?z_hdb" (is "?z_hdd&?z_hde")
+         have z_Hde: "?z_hde"
+         by (rule zenon_and_1 [OF z_Hdb])
+         have z_Hcu_z_Hde: "?z_hcu == ?z_hde" (is "_ == _")
+         by (unfold d1)
+         have z_Hcu: "?z_hcu"
+         by (unfold z_Hcu_z_Hde, fact z_Hde)
+         show FALSE
+         by (rule notE [OF z_Hcw z_Hcu])
+        qed
+       next
+        assume z_Hcu:"?z_hcu"
+        assume z_Hcv:"?z_hcv"
+        show FALSE
+        by (rule notE [OF z_Hcv z_Hcq])
+       qed
+      qed
+     qed
+     assume z_Hd:"(~(\\A x:(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y))))))))" (is "~(\\A x : ?z_hdg(x))")
+     have z_Hdh: "(\\E x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y))))))))" (is "\\E x : ?z_hdi(x)")
+     by (rule zenon_notallex_0 [of "?z_hdg", OF z_Hd])
+     have z_Hdj: "?z_hdi((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))))" (is "~(\\A x : ?z_hdk(x))")
+     by (rule zenon_ex_choose_0 [of "?z_hdi", OF z_Hdh])
+     have z_Hdl: "(\\E y:(~((Is_true(abst_gt((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))=>(Is_true(abst_geq((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))&Is_true(abst_different((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))))&(Is_true(abst_geq((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))=>(Is_true(abst_gt((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))|Is_true(abst_equal((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y)))))))" (is "\\E x : ?z_hdm(x)")
+     by (rule zenon_notallex_0 [of "?z_hdk", OF z_Hdj])
+     have z_Hdn: "?z_hdm((CHOOSE y:(~((Is_true(abst_gt((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))=>(Is_true(abst_geq((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))&Is_true(abst_different((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))))&(Is_true(abst_geq((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))=>(Is_true(abst_gt((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))|Is_true(abst_equal((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))))))))" (is "~(?z_hdo&?z_hdp)")
+     by (rule zenon_ex_choose_0 [of "?z_hdm", OF z_Hdl])
+     show FALSE
+     proof (rule zenon_notand [OF z_Hdn])
+      assume z_Hdq:"(~?z_hdo)" (is "~(?z_hdr=>?z_hds)")
+      have z_Hdr: "?z_hdr"
+      by (rule zenon_notimply_0 [OF z_Hdq])
+      have z_Hdt: "(~?z_hds)" (is "~(?z_hdu&?z_hdv)")
+      by (rule zenon_notimply_1 [OF z_Hdq])
+      show FALSE
+      proof (rule zenon_notand [OF z_Hdt])
+       assume z_Hdw:"(~?z_hdu)"
+       have z_Hdx_z_Hdw: "(~Is_true(abst_leq((CHOOSE y:(~((Is_true(abst_gt((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))=>(Is_true(abst_geq((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))&Is_true(abst_different((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))))&(Is_true(abst_geq((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))=>(Is_true(abst_gt((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))|Is_true(abst_equal((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))))))), (CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y))))))))))) == (~?z_hdu)" (is "?z_hdx == ?z_hdw")
+       by (unfold d2)
+       have z_Hdx: "?z_hdx" (is "~?z_hdd")
+       by (unfold z_Hdx_z_Hdw, fact z_Hdw)
+       have z_Hcj_z_Hdr: "Is_true(abst_lt((CHOOSE y:(~((Is_true(abst_gt((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))=>(Is_true(abst_geq((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))&Is_true(abst_different((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))))&(Is_true(abst_geq((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))=>(Is_true(abst_gt((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))|Is_true(abst_equal((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))))))), (CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))))) == ?z_hdr" (is "?z_hcj == _")
+       by (unfold d3)
+       have z_Hcj: "?z_hcj"
+       by (unfold z_Hcj_z_Hdr, fact z_Hdr)
+       have z_Hcn: "?z_hu((CHOOSE y:(~((Is_true(abst_gt((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))=>(Is_true(abst_geq((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))&Is_true(abst_different((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))))&(Is_true(abst_geq((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))=>(Is_true(abst_gt((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))|Is_true(abst_equal((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))))))))" (is "\\A x : ?z_hco(x)")
+       by (rule zenon_all_0 [of "?z_hu" "(CHOOSE y:(~((Is_true(abst_gt((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))=>(Is_true(abst_geq((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))&Is_true(abst_different((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))))&(Is_true(abst_geq((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))=>(Is_true(abst_gt((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))|Is_true(abst_equal((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y)))))))", OF z_Hb])
+       have z_Hcy: "?z_hco((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))))" (is "?z_hcz&?z_hda")
+       by (rule zenon_all_0 [of "?z_hco" "(CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y))))))))", OF z_Hcn])
+       have z_Hcz: "?z_hcz" (is "_=>?z_hdb")
+       by (rule zenon_and_0 [OF z_Hcy])
+       show FALSE
+       proof (rule zenon_imply [OF z_Hcz])
+        assume z_Hdc:"(~?z_hcj)"
+        show FALSE
+        by (rule notE [OF z_Hdc z_Hcj])
+       next
+        assume z_Hdb:"?z_hdb" (is "_&?z_hde")
+        have z_Hdd: "?z_hdd"
+        by (rule zenon_and_0 [OF z_Hdb])
+        show FALSE
+        by (rule notE [OF z_Hdx z_Hdd])
+       qed
+      next
+       assume z_Hdz:"(~?z_hdv)"
+       have z_Hea_z_Hdz: "(~Is_true(not_b(abst_equal((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), (CHOOSE y:(~((Is_true(abst_gt((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))=>(Is_true(abst_geq((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))&Is_true(abst_different((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))))&(Is_true(abst_geq((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))=>(Is_true(abst_gt((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))|Is_true(abst_equal((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))))))))))) == (~?z_hdv)" (is "?z_hea == ?z_hdz")
+       by (unfold d1)
+       have z_Hea: "?z_hea" (is "~?z_heb")
+       by (unfold z_Hea_z_Hdz, fact z_Hdz)
+       have z_Hcj_z_Hdr: "Is_true(abst_lt((CHOOSE y:(~((Is_true(abst_gt((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))=>(Is_true(abst_geq((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))&Is_true(abst_different((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))))&(Is_true(abst_geq((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))=>(Is_true(abst_gt((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))|Is_true(abst_equal((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))))))), (CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))))) == ?z_hdr" (is "?z_hcj == _")
+       by (unfold d3)
+       have z_Hcj: "?z_hcj"
+       by (unfold z_Hcj_z_Hdr, fact z_Hdr)
+       have z_Hed: "?z_hba(abst_equal((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), (CHOOSE y:(~((Is_true(abst_gt((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))=>(Is_true(abst_geq((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))&Is_true(abst_different((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))))&(Is_true(abst_geq((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))=>(Is_true(abst_gt((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))|Is_true(abst_equal((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y)))))))))" (is "_<=>?z_hcr")
+       by (rule zenon_all_0 [of "?z_hba" "abst_equal((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), (CHOOSE y:(~((Is_true(abst_gt((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))=>(Is_true(abst_geq((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))&Is_true(abst_different((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))))&(Is_true(abst_geq((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))=>(Is_true(abst_gt((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))|Is_true(abst_equal((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))))))))", OF z_Hc])
+       show FALSE
+       proof (rule zenon_equiv [OF z_Hed])
+        assume z_Hea:"?z_hea"
+        assume z_Hee:"(~?z_hcr)" (is "~~?z_hbg")
+        have z_Hbg: "?z_hbg"
+        by (rule zenon_notnot_0 [OF z_Hee])
+        show FALSE
+        by (rule zenon_L1_ [OF z_Ha z_Hbg z_Hc z_Hcj z_Hb])
+       next
+        assume z_Heb:"?z_heb"
+        assume z_Hcr:"?z_hcr" (is "~?z_hbg")
+        show FALSE
+        by (rule notE [OF z_Hea z_Heb])
+       qed
+      qed
+     next
+      assume z_Hef:"(~?z_hdp)" (is "~(?z_hdu=>?z_heg)")
+      have z_Hdu: "?z_hdu"
+      by (rule zenon_notimply_0 [OF z_Hef])
+      have z_Heh: "(~?z_heg)" (is "~(?z_hdr|?z_hbg)")
+      by (rule zenon_notimply_1 [OF z_Hef])
+      have z_Hei: "(~?z_hdr)"
+      by (rule zenon_notor_0 [OF z_Heh])
+      have z_Hcr: "(~?z_hbg)"
+      by (rule zenon_notor_1 [OF z_Heh])
+      have z_Hdd_z_Hdu: "Is_true(abst_leq((CHOOSE y:(~((Is_true(abst_gt((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))=>(Is_true(abst_geq((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))&Is_true(abst_different((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))))&(Is_true(abst_geq((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))=>(Is_true(abst_gt((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))|Is_true(abst_equal((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))))))), (CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))))) == ?z_hdu" (is "?z_hdd == _")
+      by (unfold d2)
+      have z_Hdd: "?z_hdd"
+      by (unfold z_Hdd_z_Hdu, fact z_Hdu)
+      have z_Hdc_z_Hei: "(~Is_true(abst_lt((CHOOSE y:(~((Is_true(abst_gt((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))=>(Is_true(abst_geq((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))&Is_true(abst_different((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))))&(Is_true(abst_geq((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))=>(Is_true(abst_gt((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))|Is_true(abst_equal((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))))))), (CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y))))))))))) == (~?z_hdr)" (is "?z_hdc == ?z_hei")
+      by (unfold d3)
+      have z_Hdc: "?z_hdc" (is "~?z_hcj")
+      by (unfold z_Hdc_z_Hei, fact z_Hei)
+      have z_Hej: "?z_hbf((CHOOSE y:(~((Is_true(abst_gt((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))=>(Is_true(abst_geq((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))&Is_true(abst_different((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))))&(Is_true(abst_geq((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))=>(Is_true(abst_gt((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))|Is_true(abst_equal((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))))))))" (is "\\A x : ?z_hek(x)")
+      by (rule zenon_all_0 [of "?z_hbf" "(CHOOSE y:(~((Is_true(abst_gt((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))=>(Is_true(abst_geq((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))&Is_true(abst_different((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))))&(Is_true(abst_geq((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))=>(Is_true(abst_gt((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))|Is_true(abst_equal((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y)))))))", OF z_Ha])
+      have z_Hel: "?z_hek((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))))" (is "?z_hcq=>_")
+      by (rule zenon_all_0 [of "?z_hek" "(CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y))))))))", OF z_Hej])
+      show FALSE
+      proof (rule zenon_imply [OF z_Hel])
+       assume z_Hcv:"(~?z_hcq)"
+       have z_Hcn: "?z_hu((CHOOSE y:(~((Is_true(abst_gt((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))=>(Is_true(abst_geq((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))&Is_true(abst_different((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))))&(Is_true(abst_geq((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))=>(Is_true(abst_gt((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))|Is_true(abst_equal((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))))))))" (is "\\A x : ?z_hco(x)")
+       by (rule zenon_all_0 [of "?z_hu" "(CHOOSE y:(~((Is_true(abst_gt((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))=>(Is_true(abst_geq((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))&Is_true(abst_different((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))))&(Is_true(abst_geq((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))=>(Is_true(abst_gt((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y))|Is_true(abst_equal((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))), y)))))))", OF z_Hb])
+       have z_Hcy: "?z_hco((CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y)))))))))" (is "?z_hcz&?z_hda")
+       by (rule zenon_all_0 [of "?z_hco" "(CHOOSE x:(~(\\A y:((Is_true(abst_gt(x, y))=>(Is_true(abst_geq(x, y))&Is_true(abst_different(x, y))))&(Is_true(abst_geq(x, y))=>(Is_true(abst_gt(x, y))|Is_true(abst_equal(x, y))))))))", OF z_Hcn])
+       have z_Hda: "?z_hda" (is "_=>?z_hem")
+       by (rule zenon_and_1 [OF z_Hcy])
+       show FALSE
+       proof (rule zenon_imply [OF z_Hda])
+        assume z_Hdx:"(~?z_hdd)"
+        show FALSE
+        by (rule notE [OF z_Hdx z_Hdd])
+       next
+        assume z_Hem:"?z_hem"
+        show FALSE
+        proof (rule zenon_or [OF z_Hem])
+         assume z_Hcj:"?z_hcj"
+         show FALSE
+         by (rule notE [OF z_Hdc z_Hcj])
+        next
+         assume z_Hcq:"?z_hcq"
+         show FALSE
+         by (rule notE [OF z_Hcv z_Hcq])
+        qed
+       qed
+      next
+       assume z_Hbg:"?z_hbg"
+       show FALSE
+       by (rule notE [OF z_Hcr z_Hbg])
+      qed
+     qed
+    qed
+---*)

@@ -1,0 +1,114 @@
+(*---
+description: Zenon's own test zenon/test/test05.znn, which Zenon must prove.
+ref: zenon/test/test05.znn
+features:
+  - zenon-test
+outcome: unsat
+---*)
+;  Copyright 2006 INRIA
+;  $Id: test05.znn,v 1.6 2011-12-28 16:43:33 doligez Exp $
+
+# TPTP syn051+1
+
+$sig F ("nat") "Prop"
+
+$hyp "h1" (E. ((X "nat") (=> p (F X))))
+$hyp "h2" (E. ((X "nat") (=> (F X) p)))
+
+$goal (E. ((X "nat") (<=> p (F X))))
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: |-
+    unsat
+    proof (rule zenon_nnpp)
+     have z_Hb:"(\\E X:(p=>F(X)))" (is "\\E x : ?z_hi(x)")
+     using h1 by blast
+     have z_Hc:"(\\E X:(F(X)=>p))" (is "\\E x : ?z_hk(x)")
+     using h2 by blast
+     have zenon_L1_: "(~(\\E X:(p<=>F(X)))) ==> (~F((CHOOSE X:(F(X)=>p)))) ==> (~p) ==> FALSE" (is "?z_hd ==> ?z_hm ==> ?z_hp ==> FALSE")
+     proof -
+      assume z_Hd:"?z_hd" (is "~(\\E x : ?z_hq(x))")
+      assume z_Hm:"?z_hm" (is "~?z_hn")
+      assume z_Hp:"?z_hp"
+      have z_Hr: "~?z_hq((CHOOSE X:(F(X)=>p)))"
+      by (rule zenon_notex_0 [of "?z_hq" "(CHOOSE X:(F(X)=>p))", OF z_Hd])
+      show FALSE
+      proof (rule zenon_notequiv [OF z_Hr])
+       assume z_Hp:"?z_hp"
+       assume z_Hn:"?z_hn"
+       show FALSE
+       by (rule notE [OF z_Hm z_Hn])
+      next
+       assume z_Hf:"p"
+       assume z_Hm:"?z_hm"
+       show FALSE
+       by (rule notE [OF z_Hp z_Hf])
+      qed
+     qed
+     have zenon_L2_: "(~(\\E X:(p<=>F(X)))) ==> p ==> F((CHOOSE X:(p=>F(X)))) ==> FALSE" (is "?z_hd ==> _ ==> ?z_hs ==> FALSE")
+     proof -
+      assume z_Hd:"?z_hd" (is "~(\\E x : ?z_hq(x))")
+      assume z_Hf:"p"
+      assume z_Hs:"?z_hs"
+      have z_Hu: "~?z_hq((CHOOSE X:(p=>F(X))))"
+      by (rule zenon_notex_0 [of "?z_hq" "(CHOOSE X:(p=>F(X)))", OF z_Hd])
+      show FALSE
+      proof (rule zenon_notequiv [OF z_Hu])
+       assume z_Hp:"(~p)"
+       assume z_Hs:"?z_hs"
+       show FALSE
+       by (rule notE [OF z_Hp z_Hf])
+      next
+       assume z_Hf:"p"
+       assume z_Hv:"(~?z_hs)"
+       show FALSE
+       by (rule notE [OF z_Hv z_Hs])
+      qed
+     qed
+     assume z_Hd:"(~(\\E X:(p<=>F(X))))" (is "~(\\E x : ?z_hq(x))")
+     have z_Hw: "?z_hi((CHOOSE X:(p=>F(X))))" (is "_=>?z_hs")
+     by (rule zenon_ex_choose_0 [of "?z_hi", OF z_Hb])
+     have z_Hx: "?z_hk((CHOOSE X:(F(X)=>p)))" (is "?z_hn=>_")
+     by (rule zenon_ex_choose_0 [of "?z_hk", OF z_Hc])
+     show FALSE
+     proof (rule zenon_imply [OF z_Hx])
+      assume z_Hm:"(~?z_hn)"
+      show FALSE
+      proof (rule zenon_imply [OF z_Hw])
+       assume z_Hp:"(~p)"
+       show FALSE
+       by (rule zenon_L1_ [OF z_Hd z_Hm z_Hp])
+      next
+       assume z_Hs:"?z_hs"
+       have z_Hy: "~?z_hq((CHOOSE x : TRUE))" (is "~(_<=>?z_hba)")
+       by (rule zenon_notex_0 [of "?z_hq" "(CHOOSE x : TRUE)", OF z_Hd])
+       show FALSE
+       proof (rule zenon_notequiv [OF z_Hy])
+        assume z_Hp:"(~p)"
+        assume z_Hba:"?z_hba"
+        show FALSE
+        by (rule zenon_L1_ [OF z_Hd z_Hm z_Hp])
+       next
+        assume z_Hf:"p"
+        assume z_Hbb:"(~?z_hba)"
+        show FALSE
+        by (rule zenon_L2_ [OF z_Hd z_Hf z_Hs])
+       qed
+      qed
+     next
+      assume z_Hf:"p"
+      show FALSE
+      proof (rule zenon_imply [OF z_Hw])
+       assume z_Hp:"(~p)"
+       show FALSE
+       by (rule notE [OF z_Hp z_Hf])
+      next
+       assume z_Hs:"?z_hs"
+       show FALSE
+       by (rule zenon_L2_ [OF z_Hd z_Hf z_Hs])
+      qed
+     qed
+    qed
+---*)

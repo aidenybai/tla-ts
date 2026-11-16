@@ -1,8 +1,4 @@
-// Ported from Zenon's node.ml and heap.ml, as shipped in tlapm. Copyright 2001-2004 INRIA, see
-// LICENSE.
-//
-// Tableau nodes and the queue that orders them. The search keeps the queue of every open branch,
-// so the queue is persistent: inserting or removing returns a new queue and shares the rest.
+// Ported from Zenon's node.ml and heap.ml, as shipped in tlapm. Copyright 2001-2004 INRIA, see LICENSE.
 
 import type { Expr } from "./expr";
 import type { Rule } from "./proof";
@@ -32,7 +28,6 @@ const reverse = <Item>(list: List<Item>) => {
   return result;
 };
 
-// A node in the instance heap, with the size of the term that instantiates its formula.
 interface Entry {
   node: Node;
   size: number;
@@ -44,7 +39,6 @@ interface Tree {
   right: Tree | undefined;
 }
 
-// Zenon's Heap: a persistent binary heap that alternates insertion paths.
 interface Heap {
   tree: Tree | undefined;
   path: number;
@@ -101,9 +95,9 @@ export interface Queue {
   instSize: List<[number, Heap]>;
   instFront: List<Node>;
   instBack: List<Node>;
-  // The nodes inserted since the root. Removed nodes still count, because the queues of the
-  // branches above keep them.
-  insertedCount: number;
+  // The OCaml words of the nodes inserted so far. Removed nodes still count, because the queues of
+  // the branches above keep them.
+  nodeWords: number;
 }
 
 const SMALL_INSTANCES = 16;
@@ -124,7 +118,7 @@ export const EMPTY_QUEUE: Queue = {
   instSize: undefined,
   instFront: undefined,
   instBack: undefined,
-  insertedCount: 0,
+  nodeWords: 0,
 };
 
 const insertByGoalness = (list: List<[number, Heap]>, entry: Entry): List<[number, Heap]> => {
@@ -163,8 +157,23 @@ const canInstantiate = (meta: Expr, expression: Expr): boolean => {
   }
 };
 
+// A list cell and a node record take 3 and 6 words, and each block has a header word.
+const getNodeWords = (node: Node) => {
+  let words =
+    3 +
+    6 +
+    3 * node.conclusions.length +
+    1 +
+    node.rule.args.length +
+    (typeof node.priority === "object" ? 2 : 0) +
+    1 +
+    node.branches.length;
+  for (const branch of node.branches) words += 3 * branch.length;
+  return words;
+};
+
 export const insertNode = (previous: Queue, node: Node): Queue => {
-  const queue = { ...previous, insertedCount: previous.insertedCount + 1 };
+  const queue = { ...previous, nodeWords: previous.nodeWords + getNodeWords(node) };
   const priority = node.priority;
   if (priority === "prop")
     return node.branches.length < 2
@@ -212,8 +221,6 @@ const removeAt = (
   return [removed[0], cons([list.head[0], removed[1]], list.tail)];
 };
 
-// On even states, the smallest instance of the most goal-directed formulas; on odd states, the
-// smallest instance overall.
 const removeByGoalness = (state: number, list: List<[number, Heap]>) => {
   if (state % 2 === 0) return removeAt(0, list);
   let best = 0;

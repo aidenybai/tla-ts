@@ -1,10 +1,9 @@
-// Ported from Isabelle2025's Pure/simplifier.ML and the PREFER_GOAL of Pure/goal.ML, the
-// simplification tactics. Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet
-// Muenchen, and contributors, see LICENSE.
+// Ported from Isabelle2025's Pure/simplifier.ML and Pure/goal.ML. Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
 
-import { genAll, isNormHhf, normHhfEq } from "./drule";
+import { genAll, isNormHhf, normHhfEq, protectCong } from "./drule";
 import { preferGoal } from "./goal";
-import { addSimps, emptySimpset, type SimpContext, type Solver } from "./raw-simplifier";
+import { congKey, makeSimpContext, type SimpContext, type Solver } from "./raw-simplifier";
+import { updateTable } from "./table";
 import { fconvRule } from "./conv";
 import {
   genericRewriteGoalTac,
@@ -32,7 +31,6 @@ const withSolvers = (context: SimpContext, solvers: readonly Solver[]): SimpCont
   simpset: { ...context.simpset, unsafeSolvers: solvers, safeSolvers: solvers },
 });
 
-// solve_all_tac: solves goal 1 completely with the subgoaler.
 const solveAllTac = (solvers: readonly Solver[], context: SimpContext): Tactic => {
   const inner = withSolvers(context, solvers);
   const solveTac = thenAllNew(inner.simpset.subgoalTac(inner), () => noTac);
@@ -47,7 +45,6 @@ const singleProver =
   (context, thm) =>
     solveAllTac(solvers, context)(thm).pull()?.[0];
 
-// generic_simp_tac
 const genericSimpTac =
   (isSafe: boolean, mode: RewriteMode) =>
   (context: SimpContext): GoalTactic =>
@@ -62,6 +59,7 @@ const genericSimpTac =
       );
     return preferGoal(simpLoopTac(1))(index);
   };
+
 export const asmSimpTac = genericSimpTac(false, { simprem: false, useprem: true, mutsimp: false });
 export const asmLrSimpTac = genericSimpTac(false, { simprem: true, useprem: true, mutsimp: false });
 export const asmFullSimpTac = genericSimpTac(false, {
@@ -75,7 +73,6 @@ export const safeAsmFullSimpTac = genericSimpTac(true, {
   mutsimp: true,
 });
 
-// Simplifier.simp_thm: simplifies a theorem's proposition.
 const simpThm = (mode: RewriteMode, context: SimpContext, thm: Thm): Thm => {
   const prover = singleProver([...context.simpset.unsafeSolvers].reverse());
   return fconvRule((term) => rewriteCterm(mode, prover, context, term), thm);
@@ -84,13 +81,24 @@ const simpThm = (mode: RewriteMode, context: SimpContext, thm: Thm): Thm => {
 export const simplify = (context: SimpContext, thm: Thm) =>
   simpThm({ simprem: false, useprem: false, mutsimp: false }, context, thm);
 
-// Raw_Simplifier.norm_hhf: moves the quantifiers of a theorem left of its implications, then makes
-// the outermost ones schematic. Drule.sort_constraint_eq, the other rule of hhf_ss, never applies:
-// tlapm's terms carry no sort constraints.
-export const normHhf = (limits: Limits, thm: Thm): Thm => {
-  if (isNormHhf(false, thm.prop)) return genAll(thm);
-  const empty = { limits, simpset: emptySimpset, bounds: 0 };
-  const context = { ...empty, simpset: addSimps(empty, [normHhfEq]) };
+// Drule.sort_constraint_eq, the other rule of hhf_ss, never applies: tlapm's terms carry no sort
+// constraints.
+const genNormHhf = (isProtecting: boolean, limits: Limits, thm: Thm): Thm => {
+  if (isNormHhf(isProtecting, thm.prop)) return genAll(thm);
+  const hhfContext = makeSimpContext(limits, [normHhfEq]);
+  const context = isProtecting
+    ? {
+        ...hhfContext,
+        simpset: {
+          ...hhfContext.simpset,
+          congs: updateTable(
+            hhfContext.simpset.congs,
+            congKey({ isConst: true, name: "Pure.prop" }),
+            protectCong,
+          ),
+        },
+      }
+    : hhfContext;
   return genAll(
     fconvRule(
       (term) =>
@@ -104,3 +112,8 @@ export const normHhf = (limits: Limits, thm: Thm): Thm => {
     ),
   );
 };
+
+export const normHhf = (limits: Limits, thm: Thm) => genNormHhf(false, limits, thm);
+
+// Raw_Simplifier.norm_hhf_protect leaves protected propositions alone.
+export const normHhfProtect = (limits: Limits, thm: Thm) => genNormHhf(true, limits, thm);

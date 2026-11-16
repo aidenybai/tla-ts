@@ -1,8 +1,3 @@
-// Runs a script under Node, so the backends it times get V8's speed, about 85 times Bun's on the SMT
-// solver. Bun bundles the script and the worker entries scripts start into .scripts, which sits
-// beside scripts, so paths built from import.meta.dirname resolve as they do from the source.
-// Usage: bun scripts/run.ts <script name> [arguments]
-
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 

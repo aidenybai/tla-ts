@@ -1,8 +1,5 @@
-// backend/smtlib.ml's names and the SMT-LIB terms the encoding builds.
-
 import type { Builtin } from "../../obligations/expression";
 
-// Smtlib.format_smt: spells out each special character, then doubles each underscore.
 const SPELLED: Record<string, string> = {
   "\\": "backslash_",
   "+": "plussign_",
@@ -39,7 +36,6 @@ const SPELLED_WORDS = new RegExp(`(${[...UNSPELLED.keys()].join("|")})`, "g");
 
 export const tla = (name: string) => formatName(`TLA__${name}`);
 
-// The builtin a symbol that tla names stands for, or undefined for any other symbol.
 export const getTlaName = (symbol: string) =>
   symbol.startsWith(TLA_PREFIX)
     ? symbol
@@ -65,6 +61,8 @@ export const NAT_SET = tla("NatSet");
 export const CAST_INT = tla("Cast_Int");
 export const PROJ_INT = tla("Proj_Int");
 export const INT_LTEQ = tla("IntLteq");
+export const INT_PLUS = tla("IntPlus");
+export const INT_MINUS = tla("IntMinus");
 export const INT_RANGE = tla("IntRange");
 export const FUN_APP = tla("FunApp");
 export const FUN_DOM = tla("FunDom");
@@ -82,6 +80,19 @@ export const TAIL = tla("Tail");
 export const SUB_SEQ = tla("SubSeq");
 export const TUPLE_0 = tla("Tuple_0");
 
+export const NATIVE_OPERATORS = new Map(
+  [
+    ["TIntPlus", "+"],
+    ["TIntMinus", "-"],
+    ["TIntTimes", "*"],
+    ["TIntUminus", "-"],
+    ["TIntLteq", "<="],
+    ["TIntLt", "<"],
+    ["TIntGteq", ">="],
+    ["TIntGt", ">"],
+  ].map((entry) => [tla(entry[0]), entry[1]]),
+);
+
 export const BUILTIN_SYMBOLS: Partial<Record<Builtin, string>> = {
   Cup: CUP,
   Cap: CAP,
@@ -89,8 +100,8 @@ export const BUILTIN_SYMBOLS: Partial<Record<Builtin, string>> = {
   SUBSET,
   UNION,
   DOMAIN: FUN_DOM,
-  Plus: tla("IntPlus"),
-  Minus: tla("IntMinus"),
+  Plus: INT_PLUS,
+  Minus: INT_MINUS,
   Times: tla("IntTimes"),
   Exp: tla("IntExp"),
   Quotient: tla("IntQuotient"),
@@ -110,8 +121,14 @@ export const BUILTIN_SYMBOLS: Partial<Record<Builtin, string>> = {
 export const getNames = (prefix: string, count: number) =>
   Array.from({ length: count }, (_value, index) => `${prefix}${index + 1}`);
 
+// A bound variable is name#depth, or name:Sort#depth when Type.Synthesize sorts it Int or Bool.
+export const getVariable = (name: string, depth: number, sort = "Idv") =>
+  `${name}${sort === "Idv" ? "" : `:${sort}`}#${depth}`;
+
+export const getVariableSort = (variable: string) => /:(\w+)#\d+$/.exec(variable)?.[1];
+
 export const getBinders = (variables: string[], sort = "Idv") =>
-  variables.map((variable) => `(${variable} ${sort})`).join(" ");
+  variables.map((variable) => `(${variable} ${getVariableSort(variable) ?? sort})`).join(" ");
 
 export const forall = (
   variables: string[],
@@ -139,16 +156,18 @@ export const call = (symbol: string, args: string[]) =>
 export const declare = (symbol: string, arity: number, sort = "Idv", argSort = "Idv") =>
   `(declare-fun ${symbol} (${Array.from({ length: arity }, () => argSort).join(" ")}) ${sort})`;
 
-// The index of the parenthesis that closes the one at from.
 export const getClosing = (text: string, from: number) => {
-  const state = { depth: 0, index: from };
-  for (; state.index < text.length; state.index++) {
-    if (text[state.index] === "(") state.depth++;
-    if (text[state.index] === ")") state.depth--;
-    if (state.depth === 0) return state.index;
+  let depth = 0;
+  for (let index = from; index < text.length; index++) {
+    if (text[index] === "(") depth++;
+    if (text[index] === ")") depth--;
+    if (depth === 0) return index;
   }
   return text.length;
 };
 
+export const replaceTokens = (text: string, replacements: Map<string, string>) =>
+  text.replace(/[^\s()]+/g, (found) => replacements.get(found) ?? found);
+
 export const replaceToken = (text: string, token: string, replacement: string) =>
-  text.replace(/[^\s()]+/g, (found) => (found === token ? replacement : found));
+  replaceTokens(text, new Map([[token, replacement]]));

@@ -1,6 +1,5 @@
 // Ported from Z3 (src/math/lp/nla_types.h, src/math/lp/nla_defs.h, src/math/lp/nla_common.h, and
-// lemma_builder of src/math/lp/nla_core.cpp), MIT license, see z3-license.txt. The inequalities and
-// lemmas that the nla passes make, and the builder that adds a lemma to the core.
+// lemma_builder of src/math/lp/nla_core.cpp), MIT license, see z3-license.txt.
 import { Rational } from "../rational";
 import { KIND_EQ, KIND_GE, KIND_GT, KIND_LE, KIND_LT, KIND_NE } from "./constraints";
 import { Explanation } from "./explanation";
@@ -31,7 +30,6 @@ export const getRatSign = (value: Rational) =>
 
 export const signToRat = (isNegated: boolean) => (isNegated ? Rational.minusOne : Rational.one);
 
-// An ineq: term cmp rs.
 export interface Ineq {
   readonly cmp: number;
   readonly term: LarTerm;
@@ -44,7 +42,6 @@ export const mkIneq = (term: LarTerm | number, cmp: number, rs: Rational | numbe
   rs: typeof rs === "number" ? Rational.fromNumber(rs) : rs,
 });
 
-// A lemma: its explanation implies one of its inequalities, or false when it has none.
 export interface Lemma {
   readonly ineqs: Ineq[];
   readonly expl: Explanation;
@@ -52,7 +49,6 @@ export interface Lemma {
 
 export const isConflictLemma = (lemma: Lemma) => lemma.ineqs.length === 0 && !lemma.expl.isEmpty;
 
-// lemma_builder: adds a lemma to the core and builds it in place.
 export class LemmaBuilder {
   private readonly lemma: Lemma = { ineqs: [], expl: new Explanation() };
 
@@ -60,11 +56,6 @@ export class LemmaBuilder {
     core.lemmas.push(this.lemma);
   }
 
-  get expl() {
-    return this.lemma.expl;
-  }
-
-  // |=: an inequality, unless the bounds already explain its negation away.
   addIneq(ineq: Ineq) {
     if (!this.core.explainIneq(this, ineq.term, ineq.cmp, ineq.rs)) this.lemma.ineqs.push(ineq);
     return this;
@@ -75,7 +66,6 @@ export class LemmaBuilder {
     return this;
   }
 
-  // &= on a monic: the equivalences of its variables.
   explainMonic(monic: Monic) {
     for (const lpVar of monic.vars) this.explainVar(lpVar);
     return this;

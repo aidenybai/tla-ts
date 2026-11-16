@@ -1,19 +1,13 @@
-// The checks of the TLA+ extension's rules that rewrite a subterm in place: evaluating a function
-// application, DOMAIN, IF, CASE, Len, or a formula used as a term. Each rule names the context of
-// the subterm as a lambda, (\x. context).
-
 import type { PlainRuleName } from "../proof";
-import { getFields } from "./records";
+import { getFields, getLabels } from "./records";
 import {
   and,
-  app,
   domain,
   ensure,
   equal,
   expectApp,
   FALSE,
   fapply,
-  getPairs,
   getStringText,
   instantiate,
   isApp,
@@ -28,7 +22,6 @@ import {
   type Term,
 } from "./terms";
 
-// The term that fills the hole of a context to give a formula.
 const getFilled = (lambda: Term, formula: Term) => {
   ensure(lambda.kind === "lam");
   const hole = lambda.args[0].symbol;
@@ -68,7 +61,6 @@ const getCaseBranches = (lambda: Term, args: Term[], condition: Term): Term[][] 
   ];
 };
 
-// A formula used as a term splits into the cases where it equals TRUE and FALSE.
 const getBoolCaseSpec = (
   checker: Checker,
   args: Term[],
@@ -163,18 +155,7 @@ export const REWRITE_RULES = {
   record_domain: (args, checker) =>
     getRewriteSpec(checker, args[0], args[2], (filled) => {
       const record = expectApp(filled, "TLA.DOMAIN", 1)[0];
-      const fields = getPairs(expectApp(record, "TLA.record"));
-      return [
-        [
-          instantiate(
-            args[2],
-            app(
-              "TLA.set",
-              fields.map((field) => field[0]),
-            ),
-          ),
-        ],
-      ];
+      return [[instantiate(args[2], getLabels(getFields(record, "TLA.record")))]];
     }),
   boolcase_not: (args, checker) =>
     getBoolCaseSpec(checker, args, (operand) => operand.kind === "not"),

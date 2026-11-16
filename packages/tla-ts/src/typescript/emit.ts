@@ -255,6 +255,7 @@ export const emit = (
           ...declaration,
           location: ordinal,
         })),
+        location: ordinal,
       };
     }
     if (unit.kind === "Definition") {

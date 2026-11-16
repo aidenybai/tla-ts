@@ -1,0 +1,25 @@
+(*---
+description: z3test's regression regressions/smt2/3713.smt2.
+ref: regressions/smt2/3713.smt2
+features:
+  - z3test
+outcome: unsat
+---*)
+(set-option :model_validate true)
+(set-option :rewriter.flat false)
+(set-option :rewriter.cache_all true)
+(declare-const v0 Bool)
+(declare-const v10 Bool)
+(declare-const v17 Bool)
+(assert (exists ((q0 Bool) (q1 Bool) (q2 Bool)) q0))
+(assert (not (forall ((q8 Bool) (q9 Bool) (q10 Bool)) (not (not (=> v0 v10))))))
+(assert v17)
+(assert (or (=> v0 v10) v0 v17))
+(assert (=> v0 v10))
+(check-sat-using (then simplify dom-simplify purify-arith qfuf))
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: unsat
+---*)

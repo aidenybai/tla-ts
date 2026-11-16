@@ -1,0 +1,42 @@
+(*---
+description: Zenon proves x \in UNION T from a witness with notin_UNION.
+ref: zenon/ext_tla.ml#newnodes_prop
+outcome: unsat
+---*)
+;; obligation #1
+$goal (=> (/\ (TLA.in a_CONSTANTunde_xunde_a a_CONSTANTunde_Sunde_a)
+(TLA.in a_CONSTANTunde_Sunde_a a_CONSTANTunde_Tunde_a))
+(TLA.in a_CONSTANTunde_xunde_a
+(TLA.UNION a_CONSTANTunde_Tunde_a)))
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: |-
+    unsat
+    proof (rule zenon_nnpp)
+     assume z_Ha:"(~(((a_CONSTANTunde_xunde_a \\in a_CONSTANTunde_Sunde_a)&(a_CONSTANTunde_Sunde_a \\in a_CONSTANTunde_Tunde_a))=>(a_CONSTANTunde_xunde_a \\in UNION(a_CONSTANTunde_Tunde_a))))" (is "~(?z_hc=>?z_hi)")
+     have z_Hc: "?z_hc" (is "?z_hd&?z_hg")
+     by (rule zenon_notimply_0 [OF z_Ha])
+     have z_Hk: "(~?z_hi)"
+     by (rule zenon_notimply_1 [OF z_Ha])
+     have z_Hd: "?z_hd"
+     by (rule zenon_and_0 [OF z_Hc])
+     have z_Hg: "?z_hg"
+     by (rule zenon_and_1 [OF z_Hc])
+     have z_Hl: "(~(\\E zenon_Vi:((zenon_Vi \\in a_CONSTANTunde_Tunde_a)&(a_CONSTANTunde_xunde_a \\in zenon_Vi))))" (is "~(\\E x : ?z_hr(x))")
+     by (rule zenon_notin_UNION_0 [of "a_CONSTANTunde_xunde_a" "a_CONSTANTunde_Tunde_a", OF z_Hk])
+     have z_Hs: "~?z_hr(a_CONSTANTunde_Sunde_a)"
+     by (rule zenon_notex_0 [of "?z_hr" "a_CONSTANTunde_Sunde_a", OF z_Hl])
+     show FALSE
+     proof (rule zenon_notand [OF z_Hs])
+      assume z_Ht:"(~?z_hg)"
+      show FALSE
+      by (rule notE [OF z_Ht z_Hg])
+     next
+      assume z_Hu:"(~?z_hd)"
+      show FALSE
+      by (rule notE [OF z_Hu z_Hd])
+     qed
+    qed
+---*)

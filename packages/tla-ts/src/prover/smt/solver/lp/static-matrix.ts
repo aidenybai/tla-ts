@@ -1,7 +1,4 @@
-// Ported from Z3 (src/math/lp/static_matrix.h, src/math/lp/static_matrix_def.h), MIT license, see
-// z3-license.txt. The sparse tableau: every row cell knows the offset of its column cell and back,
-// and cells are removed by moving the last cell of the strip into their place, so the order of
-// the cells is Z3's.
+// Ported from Z3 (src/math/lp/static_matrix.h, src/math/lp/static_matrix_def.h), MIT license, see z3-license.txt.
 import { Rational } from "../rational";
 import type { LarTerm } from "./lar-term";
 
@@ -11,6 +8,11 @@ const getTermCells = (term: LarTerm) =>
 export interface RowCell {
   column: number;
   offset: number;
+  coeff: Rational;
+}
+
+interface CoeffCell {
+  column: number;
   coeff: Rational;
 }
 
@@ -60,8 +62,7 @@ export class StaticMatrix {
     this.rowOffsets = [];
   }
 
-  // set: appends a nonzero cell to the row and to the column.
-  set(row: number, column: number, coeff: Rational) {
+  private set(row: number, column: number, coeff: Rational) {
     if (coeff.isZero()) return;
     this.addNewElement(row, column, coeff);
   }
@@ -96,8 +97,6 @@ export class StaticMatrix {
       this.rowOffsets[rowCells[index].column] = index;
   }
 
-  // pivot_row_to_row_given_cell: eliminates the pivot column from the row of the cell by adding a
-  // multiple of the pivot row.
   pivotRowToRowGivenCell(pivotRow: number, cell: ColumnCell, pivotColumn: number) {
     const target = cell.row;
     const targetCells = this.rows[target];
@@ -135,13 +134,10 @@ export class StaticMatrix {
     for (const cell of this.rows[row]) cell.coeff = cell.coeff.div(alpha);
   }
 
-  // add_rows: adds row from multiplied by alpha to row to.
   addRows(alpha: Rational, from: number, to: number) {
     this.addCellsToRow(to, this.rows[from], alpha, -1);
   }
 
-  // pivot_row_to_row_given_cell_with_sign: eliminates the pivot column from the row of the cell by
-  // adding the pivot row times the sign.
   pivotRowToRowGivenCellWithSign(
     pivotRow: number,
     cell: ColumnCell,
@@ -151,19 +147,17 @@ export class StaticMatrix {
     this.pivotCellsToRow(this.rows[pivotRow], cell, pivotColumn, sign);
   }
 
-  // pivot_term_to_row_given_cell: the same with the cells of a term in place of the pivot row.
   pivotTermToRowGivenCell(term: LarTerm, cell: ColumnCell, pivotColumn: number, sign: number) {
     this.pivotCellsToRow(getTermCells(term), cell, pivotColumn, sign);
   }
 
-  // add_term_to_row: adds the term multiplied by alpha to the row.
   addTermToRow(alpha: Rational, term: LarTerm, row: number) {
     for (const entry of term.coeffs) this.addColumnsUpTo(entry[0]);
     this.addCellsToRow(row, getTermCells(term), alpha, -1);
   }
 
   private pivotCellsToRow(
-    cells: readonly { column: number; coeff: Rational }[],
+    cells: readonly CoeffCell[],
     cell: ColumnCell,
     pivotColumn: number,
     sign: number,
@@ -175,11 +169,9 @@ export class StaticMatrix {
     this.addCellsToRow(target, cells, alpha, pivotColumn);
   }
 
-  // The cells times alpha added to the row, skipping a column, and the cells that cancel removed
-  // from the end.
   private addCellsToRow(
     row: number,
-    cells: readonly { column: number; coeff: Rational }[],
+    cells: readonly CoeffCell[],
     alpha: Rational,
     skippedColumn: number,
   ) {
@@ -206,8 +198,6 @@ export class StaticMatrix {
     for (const cell of this.rows[second]) this.columns[cell.column][cell.offset].row = second;
   }
 
-  // fill_last_row_with_pivoting: the row of a new basic column for a term, with the basic columns
-  // of the term substituted by their rows.
   fillLastRowWithPivoting(term: LarTerm, basic: number, basisHeading: number[]) {
     const work: Rational[] = [];
     const index: number[] = [];

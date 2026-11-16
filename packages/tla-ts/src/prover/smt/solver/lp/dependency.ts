@@ -1,6 +1,4 @@
-// Ported from Z3 (src/util/dependency.h), MIT license, see z3-license.txt. The witnesses of bounds:
-// a DAG whose leaves are constraint indices. Without proofs, lar_solver's evidence_manager is the
-// plain u_dependency_manager.
+// Ported from Z3 (src/util/dependency.h), MIT license, see z3-license.txt.
 
 export interface DependencyLeaf {
   readonly isLeaf: true;
@@ -25,7 +23,6 @@ export const mkJoin = (first: Dependency, second: Dependency): Dependency => {
   return { isLeaf: false, first, second, isMarked: false };
 };
 
-// linearize: the leaves in breadth-first order, each once, from the given roots.
 export const linearize = (roots: Dependency[]) => {
   const todo: (DependencyLeaf | DependencyJoin)[] = [];
   for (const root of roots) {

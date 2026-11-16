@@ -1,0 +1,14 @@
+(*---
+description: >-
+  LS4 refutes the negation of [](TRUE) /\ ~<>(FALSE), where tlapm writes TRUE as (cc | ~ cc) and
+  FALSE as (cc & ~ cc).
+ref: src/backend/ls4.ml#visitor
+outcome: unsat
+---*)
+not (((always (cc | ~ cc)) -> ((always (cc | ~ cc)) & (~ (sometime (cc & ~ cc))))))
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: unsat
+---*)

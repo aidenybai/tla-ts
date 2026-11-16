@@ -1,0 +1,21 @@
+(*---
+description: map_over applied to union, a UnionValue.
+ref: tlc2/tool/impl/Tool.java#OPCODE_sso
+features:
+  - value-matrix
+flags:
+  - expression
+contexts:
+  - assume
+outcome: any
+---*)
+---- MODULE map_over_union ----
+EXTENDS Integers, Sequences, FiniteSets, Bags, TLC
+Test == PrintT({e : e \in UNION {{1}, {2}}})
+====
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: "| {1, 2}"
+---*)

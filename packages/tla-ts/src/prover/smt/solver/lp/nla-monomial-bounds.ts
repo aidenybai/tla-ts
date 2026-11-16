@@ -1,12 +1,9 @@
 // Ported from Z3 (src/math/lp/monomial_bounds.{h,cpp}, src/util/mpq.h root), MIT license, see
-// z3-license.txt. Bounds of monomials from the intervals of their factors and back, the
-// linearization of monomials with at most one non-fixed factor, and the optimization of the bounds
-// of nonlinear variables over the tableau. The shared-factor and binomial-sign lemmas, off by
-// default (arith.nl.monomial_sandwich, arith.nl.monomial_binomial_sign), are not ported.
+// z3-license.txt.
 import { getLcm, Rational } from "../rational";
 import { type ConstraintKind, KIND_EQ, KIND_GE, KIND_GT, KIND_LE, KIND_LT } from "./constraints";
 import {
-  DepInterval,
+  type DepInterval,
   div,
   mkDepInterval,
   mul,
@@ -16,7 +13,7 @@ import {
   setValue,
 } from "./dep-intervals";
 import { LP_INFEASIBLE } from "./core-solver";
-import { Dependency, linearize, mkJoin } from "./dependency";
+import { type Dependency, linearize, mkJoin } from "./dependency";
 import { Explanation } from "./explanation";
 import { NULL_LPVAR } from "./lar-solver";
 import { Impq } from "./numeric-pair";
@@ -40,8 +37,7 @@ interface ImprovedBound {
 const getAbs = (value: Impq) =>
   value.x.isNegative() || (value.x.isZero() && value.y.isNegative()) ? value.neg() : value;
 
-// normalize_gain: rounds a value down to a multiple of an integral divisor, -1 meaning none.
-const roundDown = (value: Impq, divisor: Rational) => {
+const normalizeGain = (value: Impq, divisor: Rational) => {
   if (divisor.equals(Rational.one)) return new Impq(value.floor());
   if (divisor.equals(Rational.minusOne)) return value;
   return new Impq(value.div(divisor).floor().mul(divisor));
@@ -50,8 +46,6 @@ const roundDown = (value: Impq, divisor: Rational) => {
 export class MonomialBounds {
   constructor(private core: NlaCore) {}
 
-  // generate_lemmas: with the sandwich and binomial-sign lemmas off, the conflict of an infeasible
-  // lp solver, once some monic needs refinement.
   generateLemmas() {
     if (this.core.toRefine.size > 0) this.addLemma();
   }
@@ -87,7 +81,6 @@ export class MonomialBounds {
     } else interval.isUpperInf = true;
   }
 
-  // tighten_lp: the bounds of the factors from the monic's interval, and of the monic from theirs.
   private tightenLp(monic: Monic) {
     const analysis = this.analyzeMonomial(monic);
     const isPropagatingUp = analysis.numFree === 0;
@@ -145,7 +138,6 @@ export class MonomialBounds {
     );
   }
 
-  // analyze_monomial: the number of free variables of odd degree, and the last of them.
   private analyzeMonomial(monic: Monic) {
     let numFree = 0;
     let freeVar = -1;
@@ -176,7 +168,6 @@ export class MonomialBounds {
     return isPropagated;
   }
 
-  // add_lemma: a conflict lemma when the lp solver is infeasible.
   private addLemma() {
     const lra = this.core.lra;
     if (lra.status !== LP_INFEASIBLE) return false;
@@ -195,21 +186,16 @@ export class MonomialBounds {
   }
 
   private linearize(monic: Monic, nonFixed: number, fixedToZero: number) {
-    let isPropagated: boolean;
-    if (fixedToZero !== -1) isPropagated = this.propagateFixedToZero(monic, fixedToZero);
-    else {
-      const product = this.getFixedVarProduct(monic, nonFixed);
-      isPropagated =
-        nonFixed === -1
-          ? this.propagateFixed(monic, product)
-          : this.propagateNonfixed(monic, product, nonFixed);
-    }
+    const isPropagated =
+      fixedToZero !== -1
+        ? this.propagateFixedToZero(monic, fixedToZero)
+        : nonFixed === -1
+          ? this.propagateFixed(monic, this.getFixedVarProduct(monic, nonFixed))
+          : this.propagateNonfixed(monic, this.getFixedVarProduct(monic, nonFixed), nonFixed);
     if (isPropagated) this.core.stats.nlaPropagateEq++;
     return isPropagated;
   }
 
-  // propagate_violated_linear_monomials: the defining rows of violated monomials with at most one
-  // non-fixed factor, except for small fixed products, which branching enumerates.
   propagateViolatedLinearMonomials() {
     const core = this.core;
     if (!NLA_PARAMS.linearizeViolatedMonomials || !core.lra.isFeasible()) return false;
@@ -220,7 +206,7 @@ export class MonomialBounds {
       if (linear === undefined) continue;
       if (linear.fixedToZero === -1 && linear.nonFixed !== -1) {
         const product = this.getFixedVarProduct(monic, linear.nonFixed);
-        if (product.isInt() && getBitSize(product) <= 16) continue;
+        if (product.isInt() && getNumeratorBitSize(product) <= 16) continue;
       }
       if (this.linearize(monic, linear.nonFixed, linear.fixedToZero)) isPropagated = true;
       if (core.lra.status === LP_INFEASIBLE) break;
@@ -261,7 +247,6 @@ export class MonomialBounds {
     return true;
   }
 
-  // propagate_nonfixed: the row m - k * w = 0.
   private propagateNonfixed(monic: Monic, coeff: Rational, nonFixed: number) {
     const core = this.core;
     if (core.val(monic.variable).equals(coeff.mul(core.val(nonFixed)))) return false;
@@ -298,7 +283,6 @@ export class MonomialBounds {
     return dep;
   }
 
-  // is_linear: the one non-fixed factor, or a factor fixed to zero, unless two are non-fixed.
   private getLinear(monic: Monic) {
     const core = this.core;
     let nonFixed = -1;
@@ -311,7 +295,6 @@ export class MonomialBounds {
     return { nonFixed, fixedToZero: -1 };
   }
 
-  // fixed_var_product: from the lower bounds, since a value may lie outside its bounds.
   private getFixedVarProduct(monic: Monic, nonFixed: number) {
     let product = Rational.one;
     for (const lpVar of monic.vars)
@@ -319,7 +302,6 @@ export class MonomialBounds {
     return product;
   }
 
-  // range is an interval that v^p lies in: v's upper bound from it.
   private tightenLpUpperBound(range: DepInterval, lpVar: number, exponent: number) {
     const core = this.core;
     const isImprovingUpper = (candidate: Rational) =>
@@ -392,7 +374,6 @@ export class MonomialBounds {
     return isTightened;
   }
 
-  // propagate_lp_bound: a bound on v, integral when v is.
   private propagateLpBound(lpVar: number, kind: ConstraintKind, value: Rational, dep: Dependency) {
     const lra = this.core.lra;
     const update = (updateKind: ConstraintKind, bound: Rational) =>
@@ -418,9 +399,6 @@ export class MonomialBounds {
     for (const monic of this.core.emons.monics) if (this.tightenLp(monic)) isNewBound = true;
     return isNewBound;
   }
-
-  // max_min: a bounded-effort primal simplex walk that maximizes or minimizes a column, keeping
-  // integer columns integral, as theory_arith::max_min does.
 
   private isSafeGain(gain: Gain) {
     return gain.isUnbounded || new Impq(gain.minGain).compare(gain.maxGain) <= 0;
@@ -462,12 +440,12 @@ export class MonomialBounds {
       gain.minGain = gain.minGain.isNegative()
         ? coeffDen
         : Rational.of(getLcm(gain.minGain.num, coeffDen.num));
-      if (!gain.isUnbounded) gain.maxGain = roundDown(gain.maxGain, gain.minGain);
+      if (!gain.isUnbounded) gain.maxGain = normalizeGain(gain.maxGain, gain.minGain);
     }
     if (isBasicInt && !gain.isUnbounded && !gain.maxGain.isInt())
-      gain.maxGain = roundDown(new Impq(gain.maxGain.floor()), gain.minGain);
+      gain.maxGain = normalizeGain(new Impq(gain.maxGain.floor()), gain.minGain);
     if (!isBounded) return false;
-    if (isBasicInt) maxIncrease = roundDown(new Impq(maxIncrease.floor()), gain.minGain);
+    if (isBasicInt) maxIncrease = normalizeGain(new Impq(maxIncrease.floor()), gain.minGain);
     if (gain.isUnbounded) {
       gain.isUnbounded = false;
       gain.maxGain = maxIncrease;
@@ -588,7 +566,7 @@ export class MonomialBounds {
         if (bestEfforts !== 0 || !core.x[target].y.isZero()) return undefined;
         return core.x[target].x;
       }
-      const gain: Gain = best;
+      const gain = best;
       if (gain.minGain.isPositive() && !gain.minGain.equals(Rational.one)) bestEfforts++;
       if (leaving === -1) {
         const hasBlockingBound = isIncreasing
@@ -616,7 +594,6 @@ export class MonomialBounds {
     return undefined;
   }
 
-  // mm_dep_from_row: the witnesses of the bounds that bound the column through its row.
   private getDepFromRow(target: number, isMaximizing: boolean) {
     const lra = this.core.lra;
     const core = lra.core;
@@ -656,8 +633,6 @@ export class MonomialBounds {
     return { bound, dep };
   }
 
-  // optimize_nl_bounds: tightens the bounds of the variables of monomials by optimizing each over
-  // the tableau, then applies them together and makes the tableau feasible again.
   optimizeNlBounds() {
     const core = this.core;
     const lra = core.lra;
@@ -709,7 +684,7 @@ export class MonomialBounds {
   }
 }
 
-const getBitSize = (value: Rational) => {
+const getNumeratorBitSize = (value: Rational) => {
   const magnitude = value.num < 0n ? -value.num : value.num;
   return magnitude === 0n ? 1 : magnitude.toString(2).length;
 };

@@ -1,12 +1,12 @@
-// Generates the proof obligations tlapm prints for a module, in tlapm's order and layout.
-
 import { TlaProofError, TlaSyntaxError, type SyntaxFailure } from "../errors";
 import { createAnonymizer } from "./anonymize";
 import {
   getAtPrefix,
   getErrorNote,
+  getErrorSetting,
   getLocusPosition,
   getLocusPrefix,
+  warnError,
   type Locus,
   type Warn,
   type Sequent,
@@ -19,11 +19,11 @@ import {
 } from "./generate";
 import { compareNames, flatten, getDependencies, STANDARD_MODULES, type Mule } from "./module";
 import { expandInstance, normalize, type Pipeline } from "./normalize";
-import { formatObligation } from "./printer";
-import type { Counter, ObligationKind } from "./proof";
+import { formatObligation, type PrinterOptions } from "./printer";
+import { getUnique, type Counter, type ObligationKind } from "./proof";
 import type { OldMethod } from "./pragma";
 import { createSimplifier } from "./simplify";
-import { createSource } from "./source";
+import { createModuleConverter } from "./source";
 import { tokenize } from "../lexer";
 import { parseTlapmModule } from "../parser";
 import type { Module } from "../ast";
@@ -41,6 +41,7 @@ export interface PrintedObligation {
   kind: ObligationKind;
   sequent: Sequent;
   method?: OldMethod;
+  isEnabledAxiomsSound?: boolean;
 }
 
 export interface ModuleObligations {
@@ -55,6 +56,7 @@ export const WHOLE_MODULE: LineRange = { start: 0, end: Infinity };
 interface ObligationOptions {
   lines?: LineRange;
   onWarning?: Warn;
+  printing?: PrinterOptions;
 }
 
 const MODULE_HEADER = /-{4,} *MODULE/;
@@ -65,7 +67,7 @@ const formatLocus = (locus: Locus | undefined) =>
   locus ? `${locus.startLine}:${locus.startColumn}:${locus.endLine}:${locus.endColumn}` : "";
 
 const findTab = (source: string) => {
-  const tokens = tokenize(source);
+  const tokens = tokenize(source, true);
   const lines = source.split("\n");
   const endLine = tokens.at(-1)?.line ?? lines.length;
   const moduleEnd =
@@ -120,7 +122,6 @@ const parseSource = (source: string): Module | SyntaxFailure[] => {
   return isSyntaxFailure(parsed) ? [parsed] : parsed;
 };
 
-// Module.Save.parse_file warns when a module's name differs from its file's, then renames it.
 const loadMule = (
   input: ObligationSource,
   counter: Counter,
@@ -130,17 +131,42 @@ const loadMule = (
 ): Mule => {
   if (!MODULE_HEADER.test(input.source)) throw new TlaProofError("No tokens in file");
   const parsed = parseSource(input.source);
+  const proofFailure = Array.isArray(parsed) ? parsed[0].proof : undefined;
+  if (Array.isArray(parsed) && proofFailure) {
+    const locus = {
+      file: input.file,
+      startLine: parsed[0].line,
+      startColumn: parsed[0].column,
+      endLine: proofFailure.stop.line,
+      endColumn: proofFailure.stop.column,
+    };
+    onWarning(getErrorNote(locus, proofFailure.printed));
+    onWarning(getErrorSetting(locus, parsed[0].reason));
+    throw new TlaProofError(parsed[0].reason, { failure: proofFailure.exception });
+  }
   if (Array.isArray(parsed)) {
     parsed.forEach((failure) => {
       const text = `File ${JSON.stringify(input.file)}, line ${failure.line}, character ${failure.column}\n${failure.reason}`;
       onWarning({ text, channel: "stderr" });
       onWarning({ text: `${text}\n`, channel: "toolboxOnly" });
+      onWarning(
+        getErrorSetting(
+          {
+            file: input.file,
+            startLine: failure.line,
+            startColumn: failure.column,
+            endLine: failure.line,
+            endColumn: failure.column + 1,
+          },
+          `${failure.reason}\n`,
+        ),
+      );
     });
     const message = `Could not parse ${JSON.stringify(input.file)} successfully.`;
     onWarning({ text: `${errorPrefix}Error: ${message}`, channel: "stderr" });
     throw new TlaProofError(message, { failure: "Module.Parser.parse_file" });
   }
-  const mule = createSource(input.file, input.source, counter, isMain).convertModule(parsed);
+  const mule = createModuleConverter(input.file, input.source, counter, isMain)(parsed);
   const fileName = input.file.slice(input.file.lastIndexOf("/") + 1);
   const name = fileName.replace(/\.tla$/, "");
   if (mule.name === name) return mule;
@@ -151,7 +177,6 @@ const loadMule = (
   return { ...mule, name };
 };
 
-// Module.Dep.schedule: dependencies first, visiting modules and their dependencies by name.
 const schedule = (modules: Map<string, Mule>) => {
   const dependencies = new Map(
     [...modules].map(([name, module]) => [name, getDependencies(module).dependencies]),
@@ -220,8 +245,6 @@ export const formatSummary = (result: ModuleObligations) => {
   ].join("\n");
 };
 
-// Each main module is one file given to tlapm. They load into one context and report in schedule
-// order, each numbering its obligations from 1.
 export const getObligations = (
   mains: ObligationSource[],
   loadModule: (name: string) => ObligationSource | undefined,
@@ -238,9 +261,7 @@ export const getObligations = (
     };
     modules.set(module.name, module);
   });
-  // Module.Save.complete_load: breadth first from every known module, by name.
   const queue = [...modules.values()].sort((left, right) => compareNames(left.name, right.name));
-  // A missing module is fine only if some loaded module declares it as a submodule.
   const requested = new Map<string, Locus | undefined>();
   const found = new Set<string>();
   for (let index = 0; index < queue.length; index++) {
@@ -249,7 +270,6 @@ export const getObligations = (
       found.add(name);
       if (!modules.has(name)) modules.set(name, submodule);
     });
-    // A file named like a standard module replaces it, and is read again for each module citing it.
     for (const name of result.dependencies) {
       if (modules.has(name) && !STANDARD_MODULES.has(name)) continue;
       const input = loadModule(name);
@@ -271,7 +291,7 @@ export const getObligations = (
   }
   const missing = [...requested.keys()].filter((name) => !found.has(name)).sort(compareNames);
   missing.forEach((name) =>
-    onWarning(getErrorNote(requested.get(name), `Unknown module ${JSON.stringify(name)}`)),
+    warnError(onWarning, requested.get(name), `Unknown module ${JSON.stringify(name)}`),
   );
   if (missing.length > 0)
     throw new TlaProofError(`Unknown module ${JSON.stringify(missing[0])}`, {
@@ -279,7 +299,7 @@ export const getObligations = (
     });
   const pipeline: Pipeline = {
     anonymizer: createAnonymizer(
-      counter,
+      () => `_a${getUnique(counter)}`,
       (scope, definition) => expandInstance(pipeline, scope, definition),
       onWarning,
     ),
@@ -292,14 +312,12 @@ export const getObligations = (
     module.isStandard ? module : flatten(modules, module, new Set()),
   );
   const generateModule = createGenerator(new Set(mains.map((main) => main.file)), lines, onWarning);
-  // Instances see each module as flattened, and as normalized once its turn has come.
   const normalized = new Map(order.map((module) => [module.name, module]));
   return order.flatMap((module): ModuleObligations[] => {
     if (module.isStandard) return [];
     const result = normalize(pipeline, normalized, undefined, module);
     if (!module.isImportant) return [];
     const generated = generateModule([], result);
-    // tlapm numbers the obligations, then drops the omitted ones and those outside the lines.
     const obligations = generated.obligations.flatMap((obligation, index): PrintedObligation[] => {
       const location = obligation.location;
       if (
@@ -310,7 +328,7 @@ export const getObligations = (
       const text =
         obligation.kind.kind === "Error"
           ? obligation.kind.message
-          : `${formatObligation(obligation.sequent)}\n`;
+          : `${formatObligation(obligation.sequent, options.printing)}\n`;
       return [
         {
           id: index + 1,
@@ -320,6 +338,7 @@ export const getObligations = (
           kind: obligation.kind,
           sequent: obligation.sequent,
           method: obligation.method,
+          isEnabledAxiomsSound: obligation.isEnabledAxiomsSound,
         },
       ];
     });

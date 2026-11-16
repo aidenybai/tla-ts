@@ -1,4 +1,4 @@
-// tlapm's Optable: each operator's precedence range and fixity, by every spelling it has.
+// A port of tlapm's Optable.
 
 import type { Builtin } from "./expression";
 
@@ -113,7 +113,6 @@ const OPERATORS: [string, number, number, Fixity, string[]][] = [
   ["\\propto", 5, 5, "InfixNon", []],
 ];
 
-// OCaml's Hashtbl.find returns the most recent binding, so later aliases win over earlier names.
 const OPERATOR_TABLE = new Map<string, Operator>();
 for (const [name, low, high, fixity, aliases] of OPERATORS) {
   const operator = { name, low, high, fixity };

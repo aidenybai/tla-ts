@@ -1,4 +1,4 @@
-// tlapm's proof IR (P_t).
+// A port of tlapm's proof IR (P_t).
 
 import type { Bound, Defn, Expr, Locus, Sequent } from "./expression";
 import type { OldMethod } from "./pragma";
@@ -24,21 +24,22 @@ export type ObligationKind =
   | { kind: "Error"; message: string }
   | { kind: "Omitted"; omission: Omission };
 
-// method is the one an old-style pragma names, which keeps find_meth from choosing.
 export interface Obligation {
   sequent: Sequent;
   location: Locus | undefined;
   kind: ObligationKind;
   method?: OldMethod;
+  isEnabledAxiomsSound?: boolean;
 }
 
-// useLocation is where a USE step comes from, so find_meth can tell apart the facts of each BY.
 interface ProofProps {
   location?: Locus;
   step?: StepNumber;
   obligations?: Obligation[];
   method?: OldMethod;
   useLocation?: Locus;
+  isSuppressed?: boolean;
+  isEnabledAxiomsSound?: boolean;
 }
 
 export type Proof = ProofCore & ProofProps;
@@ -72,8 +73,6 @@ type StepCore =
 export const getStepName = (step: StepNumber) =>
   step.kind === "Named" ? `<${step.level}>${step.label}` : `<${step.level}>`;
 
-// Std.unique: one counter for the whole run, shared by the parser, anonymization, and
-// simplification, so anonymous step names match tlapm's.
 export interface Counter {
   value: number;
 }

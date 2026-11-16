@@ -1,13 +1,8 @@
-// Ported from Isabelle2025's Tools/intuitionistic.ML and the rule order of
-// Pure/Isar/context_rules.ML. Copyright (c) 1986-2025 University of Cambridge, Technische
-// Universitaet Muenchen, and contributors, see LICENSE.
-//
-// iprover: intuitionistic proof search with the context rules, the rules declared intro, elim and
-// dest. Isabelle/TLA+ declares no context rule wrappers, so Swrap and wrap leave tactics as they
-// are.
+// Ported from Isabelle2025's Tools/intuitionistic.ML and Pure/Isar/context_rules.ML. Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
 
 import { remdupsRl } from "../pure/drule";
 import { selectGoal } from "../pure/goal";
+import { unifyTermNet } from "../pure/net";
 import { deepen } from "../pure/search";
 import { stripAssumsConcl, stripAssumsHyp } from "../pure/logic";
 import type { Limits } from "../pure/interrupt";
@@ -42,7 +37,6 @@ export interface ContextRule {
 
 export interface IntuitionisticContext {
   readonly limits: Limits;
-  // Context_Rules.netpair_bang and Context_Rules.netpair.
   readonly safeRules: NetPair<ContextRule>;
   readonly rules: NetPair<ContextRule>;
 }
@@ -52,20 +46,36 @@ interface Visited {
   readonly concl: Term;
 }
 
-// Context_Rules.orderlist: by weight, then by tag, dropping all but the last of equal keys.
-const orderRules = (rules: ContextRule[]): BiresRule[] => {
+// orderlist_no_weight sorts by tag alone.
+const orderContextRules = (rules: readonly ContextRule[], isWeighted: boolean) => {
   const sorted = [...rules].sort(
-    (left, right) => left.weight - right.weight || left.tag - right.tag,
+    (left, right) => (isWeighted ? left.weight - right.weight : 0) || left.tag - right.tag,
   );
-  return sorted
-    .filter(
-      (rule, index) =>
-        index + 1 >= sorted.length ||
-        sorted[index + 1].weight !== rule.weight ||
-        sorted[index + 1].tag !== rule.tag,
-    )
-    .map((rule) => ({ isElim: rule.isElim, rule: rule.rule }));
+  return sorted.filter(
+    (rule, index) =>
+      index + 1 >= sorted.length ||
+      sorted[index + 1].weight !== rule.weight ||
+      sorted[index + 1].tag !== rule.tag,
+  );
 };
+
+const orderRules = (rules: ContextRule[]): BiresRule[] =>
+  orderContextRules(rules, true).map((rule) => ({ isElim: rule.isElim, rule: rule.rule }));
+
+// Context_Rules.find_rules_netpair: the elimination rules for the first fact, then the
+// introduction rules for the goal.
+export const findRulesNetpair = (
+  isWeighted: boolean,
+  facts: readonly Thm[],
+  goal: Term,
+  netpair: NetPair<ContextRule>,
+): Thm[] =>
+  [
+    ...(facts.length === 0
+      ? []
+      : orderContextRules(unifyTermNet(netpair.elim, stripAssumsConcl(facts[0].prop)), isWeighted)),
+    ...orderContextRules(unifyTermNet(netpair.intro, stripAssumsConcl(goal)), isWeighted),
+  ].map((rule) => rule.rule);
 
 const countDistinct = (terms: readonly Term[]) =>
   terms.reduce<Term[]>(
@@ -127,6 +137,5 @@ const intproverTac = (
     )(index);
   });
 
-// Intuitionistic.prover_tac with the default depth limit.
 export const proverTac = (context: IntuitionisticContext): GoalTactic =>
   selectGoal(deepen(2, 20, (limit) => intproverTac(context, [], 0, limit), 4)(1));

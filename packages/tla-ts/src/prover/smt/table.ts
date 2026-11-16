@@ -1,9 +1,5 @@
-// encode/n_table.ml: the axioms tlapm's SMT encoding can assert, in the order it prints them.
-
 import { compareValues } from "../ocaml";
 
-// The order of tlapm's Table.tla_axm constructors. OCaml compares constant constructors before
-// those with arguments, so the axioms of an obligation print in this order.
 const CONSTANT_AXIOMS = [
   "ChooseDef",
   "ChooseExt",
@@ -124,7 +120,6 @@ const BLOCK_AXIOMS = [
   "AssertIsSetOf",
 ];
 
-// Table.tla_smb's typed constant constructors, which Typing takes, in order.
 export const TYPED_SYMBOLS = [
   "TIntPlus",
   "TIntUminus",
@@ -135,10 +130,8 @@ export const TYPED_SYMBOLS = [
   "TIntLteq",
 ];
 
-export type AxiomArgument = number | string | string[];
+export type AxiomArgument = number | bigint | string | AxiomArgument[];
 
-// An axiom without a formula belongs to a second-order symbol. Flattening instantiates it for
-// each use of the symbol, and otherwise it isn't printed.
 export interface Axiom {
   name: string;
   args: AxiomArgument[];
@@ -158,13 +151,13 @@ export const axiom = (
   formula,
 });
 
-export const getAxiomKey = (entry: Axiom) => `${entry.name} ${JSON.stringify(entry.args)}`;
+export const getAxiomKey = (entry: Axiom) =>
+  `${entry.name} ${JSON.stringify(entry.args, (_key, value: unknown) => (typeof value === "bigint" ? `${value}n` : value))}`;
 
 const getAxiomRank = (entry: Axiom) => {
   const constant = CONSTANT_AXIOMS.indexOf(entry.name);
   return constant === -1 ? CONSTANT_AXIOMS.length + BLOCK_AXIOMS.indexOf(entry.name) : constant;
 };
 
-// N_axiomatize.TlaAxmSet orders axioms as OCaml's compare does.
 export const compareAxioms = (left: Axiom, right: Axiom) =>
   getAxiomRank(left) - getAxiomRank(right) || compareValues(left.args, right.args);

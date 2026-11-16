@@ -1,0 +1,30 @@
+(*---
+description: Zenon proves x = y => x + 1 = y + 1 by congruence, treating + as uninterpreted.
+ref: zenon/prove.ml#newnodes_match_congruence
+outcome: unsat
+---*)
+;; obligation #1
+$goal (=> (= a_CONSTANTunde_xunde_a a_CONSTANTunde_yunde_a)
+(= (arith.add a_CONSTANTunde_xunde_a (TLA.fapply TLA.Succ 0))
+(arith.add a_CONSTANTunde_yunde_a
+(TLA.fapply TLA.Succ 0))))
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: |-
+    unsat
+    proof (rule zenon_nnpp)
+     assume z_Ha:"(~((a_CONSTANTunde_xunde_a=a_CONSTANTunde_yunde_a)=>((a_CONSTANTunde_xunde_a + 1)=(a_CONSTANTunde_yunde_a + 1))))" (is "~(?z_hc=>?z_hf)")
+     have z_Hc: "?z_hc"
+     by (rule zenon_notimply_0 [OF z_Ha])
+     have z_Hj: "((a_CONSTANTunde_xunde_a + 1)~=(a_CONSTANTunde_yunde_a + 1))" (is "?z_hg~=?z_hi")
+     by (rule zenon_notimply_1 [OF z_Ha])
+     show FALSE
+     proof (rule zenon_noteq [of "?z_hi"])
+      have z_Hk: "(?z_hi~=?z_hi)"
+      by (rule subst [where P="(\<lambda>zenon_Vg. ((zenon_Vg + 1)~=?z_hi))", OF z_Hc], fact z_Hj)
+      thus "(?z_hi~=?z_hi)" .
+     qed
+    qed
+---*)

@@ -2,7 +2,6 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 
-// HourClock comes from tlaplus/Examples. Workers load from the build, as in a package.
 const DIRECTORY = join(import.meta.dirname, "../fixtures/prove");
 const DIST = join(import.meta.dirname, "../../dist/index.js");
 

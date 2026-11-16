@@ -1,9 +1,38 @@
-// Ported from Z3 (src/ast/ast_util.cpp), MIT license, see z3-license.txt. Flattening of conjunctions
-// and disjunctions in Z3's worklist order, and negation that strips a negation instead of nesting one.
-import { OP_AND, OP_IMPLIES, OP_NOT, OP_OR, type AstManager } from "./ast";
+// Ported from Z3 (src/ast/ast_util.cpp, src/ast/for_each_expr.cpp, src/ast/arith_decl_plugin.cpp),
+// MIT license, see z3-license.txt.
+import {
+  KIND_APP,
+  KIND_QUANTIFIER,
+  OP_ADD,
+  OP_AND,
+  OP_DIV,
+  OP_DIV0,
+  OP_IDIV,
+  OP_IDIV0,
+  OP_IMPLIES,
+  OP_MOD,
+  OP_MOD0,
+  OP_MUL,
+  OP_NOT,
+  OP_OR,
+  OP_POWER,
+  OP_POWER0,
+  OP_REM,
+  OP_SEQ_CONCAT,
+  OP_SUB,
+  OP_TO_INT,
+  OP_TO_REAL,
+  OP_UMINUS,
+  OP_XOR,
+  type AstManager,
+} from "./ast";
+import { isAssociativeBvOp } from "./bv-decl-plugin";
+import { Rational } from "./rational";
 import { RefVector } from "./ref-vector";
 
-// mk_not.
+export const isAppOf = (manager: AstManager, expr: number, op: number) =>
+  manager.kinds[expr] === KIND_APP && manager.getOp(expr) === op;
+
 export const mkNot = (manager: AstManager, expr: number) =>
   manager.isNot(expr)
     ? manager.getArg(expr, 0)
@@ -13,8 +42,6 @@ export const mkNot = (manager: AstManager, expr: number) =>
         ? manager.trueExpr
         : manager.mkNot(expr);
 
-// flatten_and and flatten_or on an expr_ref_vector, with Z3's references: the vector holds its
-// expressions, and pin holds each visited one until the end.
 const flattenVector = (manager: AstManager, result: RefVector, isAnd: boolean) => {
   const pin = new RefVector(manager);
   const seen = new Set<number>();
@@ -71,7 +98,6 @@ export const flattenAndVector = (manager: AstManager, result: RefVector) =>
 export const flattenOrVector = (manager: AstManager, result: RefVector) =>
   flattenVector(manager, result, false);
 
-// push_not with Z3's references: the result comes with a reference, which the caller releases.
 export const pushNotOwned = (manager: AstManager, expr: number): number => {
   const op = manager.getOp(expr);
   if (op !== OP_AND && op !== OP_OR) {
@@ -88,4 +114,133 @@ export const pushNotOwned = (manager: AstManager, expr: number): number => {
   manager.incRef(result);
   args.reset();
   return result;
+};
+
+const ASSOCIATIVE_OPS = new Set([OP_AND, OP_OR, OP_XOR, OP_ADD, OP_MUL, OP_SEQ_CONCAT]);
+
+export const isAssociativeOp = (op: number) => ASSOCIATIVE_OPS.has(op) || isAssociativeBvOp(op);
+
+// Like Z3, marks only the expressions with several references, and counts an associative
+// application of n arguments as n - 1 binary ones.
+export const getNumExprs = (manager: AstManager, root: number) => {
+  const marked = new Set<number>();
+  const isUnvisited = (expr: number) => {
+    if (manager.getRefCount(expr) <= 1) return true;
+    if (marked.has(expr)) return false;
+    marked.add(expr);
+    return true;
+  };
+  const todo = [root];
+  let count = 0;
+  for (let expr = todo.pop(); expr !== undefined; expr = todo.pop()) {
+    const kind = manager.kinds[expr];
+    if (kind === KIND_QUANTIFIER) {
+      const data = manager.getQuantifier(expr);
+      for (const child of [data.body, ...data.patterns, ...data.noPatterns])
+        if (isUnvisited(child)) todo.push(child);
+      count++;
+      continue;
+    }
+    if (kind !== KIND_APP) {
+      count++;
+      continue;
+    }
+    const op = manager.getOp(expr);
+    const numArgs = manager.getNumArgs(expr);
+    count += isAssociativeOp(op) ? numArgs - 1 : 1;
+    for (let index = 0; index < numArgs; index++) {
+      const arg = manager.getArg(expr, index);
+      if (isUnvisited(arg)) todo.push(arg);
+    }
+  }
+  return count;
+};
+
+export const getExtendedNumeral = (manager: AstManager, expr: number) => {
+  if (manager.isNumeral(expr)) return manager.getRationalValue(expr);
+  const todo = [{ term: expr, isVisited: false, isNegated: false }];
+  const values: Rational[] = [];
+  for (let frame = todo.pop(); frame !== undefined; frame = todo.pop()) {
+    if (frame.isVisited) {
+      const op = manager.getOp(frame.term);
+      const numArgs = manager.getNumArgs(frame.term);
+      const operands = values.splice(values.length - (op === OP_TO_INT ? 1 : numArgs));
+      const value =
+        op === OP_TO_INT
+          ? operands[0].floor()
+          : op === OP_ADD
+            ? operands.reduce((sum, operand) => sum.add(operand), Rational.zero)
+            : op === OP_MUL
+              ? operands.reduce((product, operand) => product.mul(operand), Rational.one)
+              : op === OP_DIV
+                ? operands[1].isZero()
+                  ? undefined
+                  : operands[0].div(operands[1])
+                : operands[0].sub(operands[1]);
+      if (value === undefined) return undefined;
+      values.push(frame.isNegated ? value.neg() : value);
+      continue;
+    }
+    let term = frame.term;
+    let isNegated = frame.isNegated;
+    while (manager.getOp(term) === OP_UMINUS || manager.getOp(term) === OP_TO_REAL) {
+      if (manager.getOp(term) === OP_UMINUS) isNegated = !isNegated;
+      term = manager.getArg(term, 0);
+    }
+    if (manager.isNumeral(term)) {
+      const value = manager.getRationalValue(term);
+      values.push(isNegated ? value.neg() : value);
+      continue;
+    }
+    const op = manager.getOp(term);
+    if (
+      manager.kinds[term] !== KIND_APP ||
+      (op !== OP_TO_INT &&
+        op !== OP_ADD &&
+        op !== OP_MUL &&
+        !(op === OP_SUB && manager.getNumArgs(term) === 2) &&
+        op !== OP_DIV)
+    )
+      return undefined;
+    todo.push({ term, isVisited: true, isNegated });
+    for (let index = manager.getNumArgs(term); index-- > 0;)
+      todo.push({ term: manager.getArg(term, index), isVisited: false, isNegated: false });
+  }
+  return values[values.length - 1];
+};
+
+const isZeroNumeral = (manager: AstManager, expr: number) =>
+  manager.isNumeral(expr) && manager.getRationalValue(expr).isZero();
+
+// m.is_considered_uninterpreted and arith_util's.
+const isConsideredUninterpreted = (manager: AstManager, expr: number) => {
+  const op = manager.getOp(expr);
+  const args = manager.getArgs(expr);
+  if (manager.isUninterpreted(expr)) return true;
+  if (op === OP_DIV0 || op === OP_IDIV0 || op === OP_MOD0 || op === OP_POWER0) return true;
+  if ((op === OP_DIV || op === OP_IDIV || op === OP_MOD || op === OP_REM) && args.length === 2)
+    return isZeroNumeral(manager, args[1]);
+  return (
+    op === OP_POWER &&
+    args.length === 2 &&
+    isZeroNumeral(manager, args[0]) &&
+    isZeroNumeral(manager, args[1])
+  );
+};
+
+export const hasUninterpreted = (manager: AstManager, expr: number) => {
+  const visited = new Set<number>();
+  const todo = [expr];
+  for (let current = todo.pop(); current !== undefined; current = todo.pop()) {
+    if (visited.has(current)) continue;
+    visited.add(current);
+    if (manager.kinds[current] === KIND_QUANTIFIER) {
+      todo.push(manager.getQuantifier(current).body);
+      continue;
+    }
+    if (manager.kinds[current] !== KIND_APP || manager.getNumArgs(current) === 0) continue;
+    if (isConsideredUninterpreted(manager, current)) return true;
+    manager.pushArgs(current, todo);
+  }
+  return false;
 };

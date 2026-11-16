@@ -1,19 +1,8 @@
-// Ported from Z3 (src/smt/smt_quantifier.cpp), MIT license, see
-// z3-license.txt. Z3's default quantifier plugin: patterns go to an eager matcher, except that a
-// quantifier with only multi-patterns keeps one of them eager and sends the rest to a lazy matcher
-// that runs in the final check. With MBQI, the model finder and the model checker turn candidate
-// models into instances.
-import {
-  CHECK_MODEL_RESTART,
-  CHECK_MODEL_SAT,
-  CHECK_MODEL_UNKNOWN,
-  FC_CONTINUE,
-  FC_DONE,
-  type Context,
-} from "./context";
+// Ported from Z3 (src/smt/smt_quantifier.cpp), MIT license, see z3-license.txt.
+import { CHECK_MODEL_RESTART, CHECK_MODEL_SAT, CHECK_MODEL_UNKNOWN, type Context } from "./context";
+import { FC_CONTINUE, FC_DONE } from "./theory";
 import { Mam } from "./e-matching";
 import type { Enode } from "./enode";
-import { FingerprintSet } from "./fingerprints";
 import { ModelChecker } from "./model-checker";
 import { ModelFinder } from "./model-finder";
 import type { ProtoModel } from "./proto-model";
@@ -22,8 +11,6 @@ import { QiQueue } from "./qi-queue";
 const QI_MAX_EAGER_MULTIPATTERNS = 0;
 const QI_MAX_LAZY_MULTIPATTERN_MATCHING = 2;
 
-// Model-based quantifier instantiation: the finder completes candidate models, the checker refutes
-// them with instances.
 interface Mbqi {
   finder: ModelFinder;
   checker: ModelChecker;
@@ -35,7 +22,6 @@ export class DefaultQuantifierManager {
   private qiQueue: QiQueue;
   private mam: Mam;
   private lazyMam: Mam;
-  private fingerprints: FingerprintSet;
   private isActive = false;
   private lazyMatchingIndex = 0;
   private mbqi: Mbqi | null = null;
@@ -45,13 +31,12 @@ export class DefaultQuantifierManager {
     isMbqi: boolean,
   ) {
     this.qiQueue = new QiQueue(context);
-    this.fingerprints = new FingerprintSet(context.manager);
     const onMatch = (quantifier: number, bindings: Enode[], maxGeneration: number) =>
       this.addInstance(quantifier, bindings, maxGeneration);
     this.mam = new Mam(context, onMatch);
     this.lazyMam = new Mam(context, onMatch);
     if (!isMbqi) return;
-    const finder = new ModelFinder(context.manager, context);
+    const finder = new ModelFinder(context);
     this.mbqi = { finder, checker: new ModelChecker(context, finder, this) };
   }
 
@@ -96,7 +81,6 @@ export class DefaultQuantifierManager {
     }
   }
 
-  // is_shared: a ground term of a pattern, once a quantifier was asserted.
   isShared(node: Enode) {
     return this.isActive && (this.mam.isShared(node) || this.lazyMam.isShared(node));
   }
@@ -116,7 +100,6 @@ export class DefaultQuantifierManager {
     this.lazyMam.pushScope();
     this.mbqi?.finder.pushScope();
     this.qiQueue.push();
-    this.fingerprints.push();
   }
 
   pop(numScopes: number) {
@@ -124,7 +107,6 @@ export class DefaultQuantifierManager {
     this.lazyMam.popScope(numScopes);
     this.mbqi?.finder.popScope(numScopes);
     this.qiQueue.pop(numScopes);
-    this.fingerprints.pop(numScopes);
   }
 
   canPropagate() {
@@ -138,7 +120,11 @@ export class DefaultQuantifierManager {
 
   addInstance(quantifier: number, bindings: Enode[], maxGeneration: number) {
     const generation = Math.max(maxGeneration, this.getGeneration(quantifier));
-    const roots = this.fingerprints.insert(quantifier, bindings);
+    const roots = this.context.fingerprints.insert(
+      quantifier,
+      this.context.manager.ids[quantifier],
+      bindings,
+    );
     if (roots !== null) this.qiQueue.insert(quantifier, roots, generation);
   }
 

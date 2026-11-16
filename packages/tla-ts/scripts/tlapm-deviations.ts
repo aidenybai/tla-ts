@@ -1,6 +1,3 @@
-// The recorded obligations where tla-ts deliberately differs from tlapm, because tlapm is wrong
-// there. The conformance scripts report them apart from mismatches, with the tlapm source at fault.
-
 interface Deviation {
   module: string;
   id: number;
@@ -18,7 +15,6 @@ const DEVIATIONS: Deviation[] = [
   },
 ];
 
-// Why tla-ts differs from tlapm on an obligation, if it does on purpose.
 export const getDeviation = (module: string, id: number) => {
   const deviation = DEVIATIONS.find(
     (innerDeviation) => innerDeviation.module === module && innerDeviation.id === id,

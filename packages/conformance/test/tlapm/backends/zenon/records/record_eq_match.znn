@@ -1,0 +1,30 @@
+(*---
+description: >-
+  Zenon decomposes an equality of two records with the same fields with record_eq_match, which
+  lltoisar prints as an auto step.
+ref: zenon/ext_tla.ml#newnodes_prop
+outcome: unsat
+---*)
+;; obligation #1
+$goal (=> (= (TLA.record "a" a_CONSTANTunde_xunde_a "b" a_CONSTANTunde_yunde_a)
+(TLA.record "a" a_CONSTANTunde_zunde_a "b" a_CONSTANTunde_wunde_a))
+(= a_CONSTANTunde_xunde_a
+a_CONSTANTunde_zunde_a))
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: |-
+    unsat
+    proof (rule zenon_nnpp)
+     assume z_Ha:"(~(((''a'' :> (a_CONSTANTunde_xunde_a) @@ ''b'' :> (a_CONSTANTunde_yunde_a))=(''a'' :> (a_CONSTANTunde_zunde_a) @@ ''b'' :> (a_CONSTANTunde_wunde_a)))=>(a_CONSTANTunde_xunde_a=a_CONSTANTunde_zunde_a)))" (is "~(?z_hc=>?z_hl)")
+     have z_Hc: "?z_hc" (is "?z_hd=?z_hi")
+     by (rule zenon_notimply_0 [OF z_Ha])
+     have z_Hm: "(a_CONSTANTunde_xunde_a~=a_CONSTANTunde_zunde_a)"
+     by (rule zenon_notimply_1 [OF z_Ha])
+     have z_Hl: "?z_hl"
+     using z_Hc by auto
+     show FALSE
+     by (rule notE [OF z_Hm z_Hl])
+    qed
+---*)

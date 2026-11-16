@@ -1,0 +1,32 @@
+(*---
+description: z3test's regression regressions/smt2/2856.smt2.
+ref: regressions/smt2/2856.smt2
+features:
+  - z3test
+outcome: sat
+---*)
+(set-option :produce-models true)
+(set-option :model_validate true)
+(set-logic QF_BV)
+(declare-fun a () (_ BitVec 32))
+(assert (bvslt a (_ bv32768 32)))
+(assert (bvslt (_ bv4294934527 32) a))
+(check-sat)
+(push 1)
+(assert (bvslt a (_ bv11 32)))
+(push 1)
+(pop 1)
+(pop 1)
+(assert (not (bvslt a (_ bv11 32))))
+(check-sat)
+(assert (= a (_ bv123 32)))
+(check-sat)
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: |-
+    sat
+    sat
+    sat
+---*)

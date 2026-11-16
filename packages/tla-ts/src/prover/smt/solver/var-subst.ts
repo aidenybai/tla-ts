@@ -1,12 +1,8 @@
-// Ported from Z3 (src/ast/rewriter/var_subst.cpp), MIT license, see z3-license.txt. Substitution and
-// shifting of de Bruijn variables.
+// Ported from Z3 (src/ast/rewriter/var_subst.cpp), MIT license, see z3-license.txt.
 import { KIND_APP, KIND_QUANTIFIER, KIND_VAR, type AstManager, type SmtSymbol } from "./ast";
 import { ExprSafeReplace } from "./expr-safe-replace";
 import { BetaReducer } from "./rewriter-tpl";
 
-// var_subst: substitutes args for the free variables, args[n - 1 - i] for (:var i) in standard
-// order and args[i] otherwise, where -1 keeps the variable. Each result comes with a reference,
-// which the caller releases.
 export class VarSubst {
   private reducer: BetaReducer;
 
@@ -61,14 +57,11 @@ export class VarSubst {
     return this.reducer.rewrite(expr);
   }
 
-  // ~var_subst.
   release() {
     this.reducer.release();
   }
 }
 
-// A term whose children replaceFreeVars is rebuilding: where its children's results start on the
-// result stack, and the next child to visit.
 interface ReplaceFrame {
   expr: number;
   shift: number;
@@ -76,15 +69,13 @@ interface ReplaceFrame {
   next: number;
 }
 
-// Rebuilds expr with each free variable replaced. replace gets the variable, its de Bruijn index
-// relative to expr, and the number of binders above it. Like Z3's rewriter_tpl, it keeps its own
-// stack, so deep terms do not exhaust the call stack.
 export const replaceFreeVars = (
   manager: AstManager,
   expr: number,
   replace: (variable: number, index: number, shift: number) => number,
 ) => {
   const cache = new Map<number, number>();
+  const numNodes = manager.kinds.length;
   const frames: ReplaceFrame[] = [];
   const results: number[] = [];
   const visit = (current: number, shift: number) => {
@@ -92,7 +83,7 @@ export const replaceFreeVars = (
       results.push(current);
       return;
     }
-    const key = current * 64 + shift;
+    const key = shift * numNodes + current;
     const cached = cache.get(key);
     if (cached !== undefined) results.push(cached);
     else if (manager.kinds[current] !== KIND_VAR)
@@ -108,30 +99,34 @@ export const replaceFreeVars = (
     const frame = frames[frames.length - 1];
     const current = frame.expr;
     const data = manager.kinds[current] === KIND_QUANTIFIER ? manager.getQuantifier(current) : null;
-    // A quantifier's children are its body and its patterns, under its binders.
-    const numChildren = data === null ? manager.getNumArgs(current) : 1 + data.patterns.length;
+    const quantifierChildren =
+      data === null ? [] : [data.body, ...data.patterns, ...data.noPatterns];
+    const numChildren = data === null ? manager.getNumArgs(current) : quantifierChildren.length;
     if (frame.next < numChildren) {
       const index = frame.next++;
       if (data === null) visit(manager.getArg(current, index), frame.shift);
-      else
-        visit(index === 0 ? data.body : data.patterns[index - 1], frame.shift + data.sorts.length);
+      else visit(quantifierChildren[index], frame.shift + data.sorts.length);
       continue;
     }
     const children = results.splice(frame.start);
     const result =
       data === null
         ? manager.mkApp(manager.decls[current], children, manager.sorts[current])
-        : manager.mkQuantifier({ ...data, body: children[0], patterns: children.slice(1) });
+        : children.every((child, index) => child === quantifierChildren[index])
+          ? current
+          : manager.mkQuantifier({
+              ...data,
+              body: children[0],
+              patterns: children.slice(1, 1 + data.patterns.length),
+              noPatterns: children.slice(1 + data.patterns.length),
+            });
     frames.pop();
-    cache.set(current * 64 + frame.shift, result);
+    cache.set(frame.shift * numNodes + current, result);
     results.push(result);
   }
   return results[0];
 };
 
-// used_vars::process: the sort of each free variable of expr below count, indexed by de Bruijn
-// index, undefined for a variable that does not occur. Like Z3, it walks the term without rebuilding
-// it, and visits a shared term once for each number of binders above it.
 export const getFreeVarSorts = (manager: AstManager, expr: number, count: number) => {
   const sorts: (number | undefined)[] = Array.from({ length: count }, () => undefined);
   const exprs = [expr];
@@ -141,7 +136,7 @@ export const getFreeVarSorts = (manager: AstManager, expr: number, count: number
     const delta = deltas.pop() ?? 0;
     if (manager.freeVarBounds[current] <= delta) continue;
     if (manager.getRefCount(current) > 1) {
-      const key = current * 64 + delta;
+      const key = delta * manager.kinds.length + current;
       if (visited.has(key)) continue;
       visited.add(key);
     }
@@ -151,13 +146,12 @@ export const getFreeVarSorts = (manager: AstManager, expr: number, count: number
       if (index < count && sorts[index] === undefined) sorts[index] = manager.sorts[current];
     } else if (kind === KIND_APP)
       for (let index = 0; index < manager.getNumArgs(current); index++) {
-        const arg = manager.getArg(current, index);
-        exprs.push(arg);
+        exprs.push(manager.getArg(current, index));
         deltas.push(delta);
       }
     else {
       const data = manager.getQuantifier(current);
-      for (const child of [data.body, ...data.patterns]) {
+      for (const child of [data.body, ...data.patterns, ...data.noPatterns]) {
         exprs.push(child);
         deltas.push(delta + data.sorts.length);
       }
@@ -166,12 +160,9 @@ export const getFreeVarSorts = (manager: AstManager, expr: number, count: number
   return sorts;
 };
 
-// Which variables of a quantifier body occur, indexed by de Bruijn index.
 export const collectUsedVars = (manager: AstManager, expr: number, count: number) =>
   getFreeVarSorts(manager, expr, count).map((sort) => sort !== undefined);
 
-// unused_vars_eliminator: drops the variables that neither the body nor a pattern uses. Its
-// var_subst keeps the cache of its last substitution until the next one.
 export class UnusedVarsEliminator {
   private subst: VarSubst;
 
@@ -179,20 +170,20 @@ export class UnusedVarsEliminator {
     this.subst = new VarSubst(manager, true);
   }
 
-  // The result comes with a reference, which the caller releases.
   apply(expr: number) {
     const manager = this.manager;
     return manager.withoutTemporaries(() => {
-      const data = manager.kinds[expr] === KIND_QUANTIFIER ? manager.getQuantifier(expr) : null;
-      // ignore_patterns_on_ground_qbody: a ground body drops the patterns with the variables.
-      const kept = data === null ? expr : manager.isGround(data.body) ? data.body : -1;
+      const data =
+        manager.kinds[expr] === KIND_QUANTIFIER && !manager.isLambda(expr)
+          ? manager.getQuantifier(expr)
+          : null;
+      const kept = data === null ? expr : manager.isGroundApp(data.body) ? data.body : -1;
       if (kept !== -1 || data === null) {
         manager.incRef(kept);
         return kept;
       }
-      // used_vars: the sort of each free variable of the body and the patterns.
       const usedSorts: (number | undefined)[] = [];
-      for (const term of [data.body, ...data.patterns])
+      for (const term of [data.body, ...data.patterns, ...data.noPatterns])
         getFreeVarSorts(manager, term, manager.freeVarBounds[term]).forEach((sort, index) => {
           if (sort !== undefined) usedSorts[index] = sort;
         });
@@ -208,7 +199,6 @@ export class UnusedVarsEliminator {
         keptSorts.push(sort);
         keptNames.push(data.names[index]);
       });
-      // var_mapping: (:var i) becomes the variable it moves to, and an unused variable stays.
       const mapping: number[] = [];
       let numRemoved = 0;
       for (let index = 0; index < Math.max(numDecls, usedSorts.length); index++) {
@@ -228,13 +218,24 @@ export class UnusedVarsEliminator {
         numRemoved === numDecls
           ? []
           : data.patterns.map((pattern) => this.subst.apply(pattern, mapping));
+      const noPatterns =
+        numRemoved === numDecls
+          ? []
+          : data.noPatterns.map((noPattern) => this.subst.apply(noPattern, mapping));
       const result =
         numRemoved === numDecls
           ? body
-          : manager.mkQuantifier({ ...data, sorts: keptSorts, names: keptNames, body, patterns });
+          : manager.mkQuantifier({
+              ...data,
+              sorts: keptSorts,
+              names: keptNames,
+              body,
+              patterns,
+              noPatterns,
+            });
       if (result !== body) {
         manager.incRef(result);
-        for (const pattern of patterns) manager.decRef(pattern);
+        for (const pattern of [...patterns, ...noPatterns]) manager.decRef(pattern);
         manager.decRef(body);
       }
       for (const variable of mapping) if (variable !== -1) manager.decRef(variable);
@@ -242,13 +243,11 @@ export class UnusedVarsEliminator {
     });
   }
 
-  // ~unused_vars_eliminator.
   release() {
     this.subst.release();
   }
 }
 
-// elim_unused_vars: unused_vars_eliminator with a var_subst of its own. The result is a temporary.
 export const elimUnusedVars = (manager: AstManager, expr: number) => {
   const eliminator = new UnusedVarsEliminator(manager);
   const result = eliminator.apply(expr);

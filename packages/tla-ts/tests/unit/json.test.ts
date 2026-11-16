@@ -1,15 +1,13 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
-import { check } from "../../src";
+import { checkFixture } from "./check-harness";
 
 const DIRECTORY = join(import.meta.dirname, "../fixtures/json");
 
-const checkFixture = async (name: string) => {
+const checkJson = async (name: string) => {
   const written = new Map<string, string>();
-  const result = await check({
-    source: readFileSync(join(DIRECTORY, `${name}.tla`), "utf8"),
-    config: readFileSync(join(DIRECTORY, `${name}.cfg`), "utf8"),
+  const result = await checkFixture("json", name, name, {
     readFile: (path) => {
       const fixturePath = join(DIRECTORY, path);
       return (
@@ -17,20 +15,20 @@ const checkFixture = async (name: string) => {
         (existsSync(fixturePath) ? readFileSync(fixturePath, "utf8") : undefined)
       );
     },
-    writeFile: (path, content) => written.set(path, content),
+    writeFile: (path, content) => written.set(path, String(content)),
   });
   return { ...result, written };
 };
 
 describe("Json matches TLC", () => {
   it("checks TLC's JsonTests model", async () => {
-    const result = await checkFixture("JsonTests");
+    const result = await checkJson("JsonTests");
     expect(result.status).toBe("success");
     expect(result.written.get("target/json/test.json")).toBe('{"a":3,"b":{"c":[4,5,6]}}');
   });
 
   it("converts and reads values like TLC's Java Json module", async () => {
-    const result = await checkFixture("JsonValues");
+    const result = await checkJson("JsonValues");
     expect(result.status).toBe("success");
     expect(result.written.size).toBe(0);
   });

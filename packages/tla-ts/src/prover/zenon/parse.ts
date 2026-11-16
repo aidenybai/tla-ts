@@ -1,7 +1,4 @@
-// Ported from Zenon's lexzen.mll and parsezen.mly, as shipped in tlapm. Copyright 2005 INRIA, see
-// LICENSE.
-//
-// Reads Zenon's native input format, the .znn files that tlapm writes.
+// Ported from Zenon's lexzen.mll and parsezen.mly, as shipped in tlapm. Copyright 2005 INRIA, see LICENSE.
 
 import { TlaZenonError } from "../../errors";
 import {
@@ -109,7 +106,6 @@ const tokenize = (text: string) => {
   return tokens;
 };
 
-// Zenon's myfold: an n-ary connective nests to the right.
 const foldRight = (combine: (left: Expr, right: Expr) => Expr, first: Expr, rest: Expr[]): Expr =>
   rest.length === 0 ? first : combine(first, foldRight(combine, rest[0], rest.slice(1)));
 
@@ -127,18 +123,14 @@ export const parseZenon = (exprs: Expressions, text: string): Phrase[] => {
   };
   const tokens = tokenize(text);
   let position = 0;
-  const peek = (offset = 0) => tokens[position + offset];
   const next = () => tokens[position++];
-  const expect = (kind: TokenKind, value?: string) => {
+  const expect = (kind: TokenKind) => {
     const token = next();
-    if (token.kind !== kind || (value !== undefined && token.text !== value))
-      throw new TlaZenonError(`Zenon: line ${token.line}: syntax error`);
+    if (token.kind !== kind) throw new TlaZenonError(`Zenon: line ${token.line}: syntax error`);
     return token;
   };
-  const isAt = (kind: TokenKind, value?: string) =>
-    peek().kind === kind && (value === undefined || peek().text === value);
+  const isAt = (kind: TokenKind) => tokens[position].kind === kind;
 
-  // A lambda after its first parenthesis: ((x y "type") body).
   const parseLambda = () => {
     expect("open");
     const names: string[] = [];
@@ -241,6 +233,12 @@ export const parseZenon = (exprs: Expressions, text: string): Phrase[] => {
         kind: "def",
         definition: { kind: "real", name, symbol, params, body },
       });
+    } else if (token.kind === "keyword" && token.text === "$sig") {
+      expect("ident");
+      expect("open");
+      while (isAt("string")) next();
+      expect("close");
+      expect("string");
     } else throw new TlaZenonError(`Zenon: line ${token.line}: unsupported phrase ${token.text}`);
   }
   return phrases;

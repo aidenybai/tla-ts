@@ -1377,10 +1377,13 @@ const translateSetMethod = (node: MethodCall, scope: Scope, context: Context) =>
     ["isDisjointFrom", (values, other) => apply("=", [apply("\\cap", [values, other]), set([])])],
   ]);
   const operation = operations.get(method);
-  if (operation === undefined || node.arguments[0] === undefined) {
+  if (operation === undefined) {
     throw new TlaTypeScriptError(`Unsupported Set method: ${method}`, node);
   }
-  const argument = node.arguments[0];
+  const argument = node.arguments.at(0);
+  if (argument === undefined) {
+    throw new TlaTypeScriptError(`Set method needs an argument: ${method}`, node);
+  }
   const kind = getKind(argument, context);
   if (method !== "has" && kind !== "set" && kind !== "map") {
     throw new TlaTypeScriptError(`Pass a Set or a Map to ${method}()`, argument);
@@ -1410,11 +1413,15 @@ const translateMapMethod = (
   isDefined: boolean,
 ) => {
   const method = node.expression.name.text;
-  if ((method !== "has" && method !== "get") || node.arguments[0] === undefined) {
+  if (method !== "has" && method !== "get") {
     throw new TlaTypeScriptError(`Unsupported Map method: ${method}`, node);
   }
+  const argument = node.arguments.at(0);
+  if (argument === undefined) {
+    throw new TlaTypeScriptError(`Map method needs a key: ${method}`, node);
+  }
   const value = translateExpression(node.expression.expression, scope, context);
-  const key = translateSetKey(node.arguments[0], scope, context);
+  const key = translateSetKey(argument, scope, context);
   if (method === "has") return apply("\\in", [key, getDomain(value)]);
   if (isDefined) return index(value, [key]);
   return share(value, "map", context, (sharedMap) =>

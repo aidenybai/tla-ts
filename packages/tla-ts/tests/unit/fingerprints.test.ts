@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { createTlcFingerprinter, getTlcFingerprint } from "../../src/tlc/fingerprint";
+import { getTlcFingerprint, getTlcFingerprints } from "../../src/tlc/fingerprint";
 import {
   createModelValue,
   createRecord,
@@ -8,8 +8,8 @@ import {
   type Value,
 } from "../../src/values";
 
-describe("the fingerprinter for stored states", () => {
-  it("matches TLC's fingerprint when states share and repeat values", () => {
+describe("the fingerprints of stored states", () => {
+  it("match TLC's fingerprint of each state in the variable order", () => {
     const queue = createTuple([1, -2, 2147483647, -2147483648]);
     const message = createRecord([
       ["type", "req"],
@@ -32,10 +32,11 @@ describe("the fingerprinter for stored states", () => {
     const states = values.flatMap((first) =>
       values.map((second, index) => [first, second, values[(index * 7) % values.length], first]),
     );
-    const fingerprints = new BigInt64Array(states.length);
-    states.forEach(createTlcFingerprinter([0, 1, 2, 3], new Int32Array(fingerprints.buffer)));
-    expect([...fingerprints]).toEqual(
-      states.map((state) => BigInt.asIntN(64, getTlcFingerprint(state))),
+    const order = [2, 0, 1, 3];
+    expect([...getTlcFingerprints(states, order)]).toEqual(
+      states.map((state) =>
+        BigInt.asIntN(64, getTlcFingerprint(order.map((index) => state[index]))),
+      ),
     );
   });
 });

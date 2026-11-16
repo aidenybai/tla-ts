@@ -1,0 +1,12 @@
+(*---
+description: LS4 finds a model of the negation of (p ~> q) => (q ~> p).
+ref: src/backend/ls4.ml#visitor
+outcome: sat
+---*)
+not (((always (cc | ~ cc)) -> ((always (hd71cd -> (sometime hb593a))) -> (always (hb593a -> (sometime hd71cd))))))
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: sat
+---*)

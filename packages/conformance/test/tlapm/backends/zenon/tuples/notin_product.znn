@@ -1,0 +1,69 @@
+(*---
+description: Zenon proves <<x, y>> \in S \X T with notin_product.
+ref: zenon/ext_tla.ml#newnodes_prop
+outcome: unsat
+---*)
+;; obligation #1
+$goal (=> (/\ (TLA.in a_CONSTANTunde_xunde_a a_CONSTANTunde_Sunde_a)
+(TLA.in a_CONSTANTunde_yunde_a a_CONSTANTunde_Tunde_a))
+(TLA.in (TLA.tuple a_CONSTANTunde_xunde_a a_CONSTANTunde_yunde_a)
+(TLA.prod a_CONSTANTunde_Sunde_a a_CONSTANTunde_Tunde_a)))
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: |-
+    unsat
+    proof (rule zenon_nnpp)
+     assume z_Ha:"(~(((a_CONSTANTunde_xunde_a \\in a_CONSTANTunde_Sunde_a)&(a_CONSTANTunde_yunde_a \\in a_CONSTANTunde_Tunde_a))=>(<<a_CONSTANTunde_xunde_a, a_CONSTANTunde_yunde_a>> \\in prod(a_CONSTANTunde_Sunde_a, a_CONSTANTunde_Tunde_a))))" (is "~(?z_hc=>?z_hj)")
+     have z_Hc: "?z_hc" (is "?z_hd&?z_hg")
+     by (rule zenon_notimply_0 [OF z_Ha])
+     have z_Hm: "(~?z_hj)"
+     by (rule zenon_notimply_1 [OF z_Ha])
+     have z_Hd: "?z_hd"
+     by (rule zenon_and_0 [OF z_Hc])
+     have z_Hg: "?z_hg"
+     by (rule zenon_and_1 [OF z_Hc])
+     have z_Hn_z_Hm: "(~(<<a_CONSTANTunde_xunde_a, a_CONSTANTunde_yunde_a>> \\in Product(<<a_CONSTANTunde_Sunde_a, a_CONSTANTunde_Tunde_a>>))) == (~?z_hj)" (is "?z_hn == ?z_hm")
+     by (unfold prod_def)
+     have z_Hn: "?z_hn" (is "~?z_ho")
+     by (unfold z_Hn_z_Hm, fact z_Hm)
+     let ?z_hk = "<<a_CONSTANTunde_xunde_a, a_CONSTANTunde_yunde_a>>"
+     have z_Hr: "isASeq(?z_hk)" (is "?z_hr")
+     proof (rule zenon_nnpp)
+      assume z_Hs: "(~?z_hr)"
+      show FALSE using z_Hs by auto
+     qed
+     have z_Ht: "(Len(?z_hk)=2)" (is "?z_hu=?z_hv")
+     proof (rule zenon_nnpp)
+      assume z_Hw: "(?z_hu~=?z_hv)"
+      have z_Ht: "(?z_hu=?z_hv)"
+      by auto
+      have z_Hx: "(?z_hv~=?z_hv)"
+      by (rule subst [where P="(\<lambda>zenon_Vu. (zenon_Vu~=?z_hv))", OF z_Ht z_Hw])
+      show FALSE
+      by (rule zenon_noteq [OF z_Hx])
+     qed
+     have z_Hbb: "((?z_hk[1]) \\in a_CONSTANTunde_Sunde_a)" (is "?z_hbb")
+     proof (rule zenon_nnpp)
+      assume z_Hbe: "(~?z_hbb)"
+      have z_Hbf: "((?z_hk[1])=a_CONSTANTunde_xunde_a)" (is "?z_hbc=_")
+      by auto
+      have z_Hbg: "(~?z_hd)"
+      by (rule subst [where P="(\<lambda>zenon_Vs. (~(zenon_Vs \\in a_CONSTANTunde_Sunde_a)))", OF z_Hbf z_Hbe])
+      show FALSE
+      by (rule notE [OF z_Hbg z_Hd])
+     qed
+     have z_Hbl: "((?z_hk[?z_hv]) \\in a_CONSTANTunde_Tunde_a)" (is "?z_hbl")
+     proof (rule zenon_nnpp)
+      assume z_Hbn: "(~?z_hbl)"
+      have z_Hbo: "((?z_hk[?z_hv])=a_CONSTANTunde_yunde_a)" (is "?z_hbm=_")
+      by auto
+      have z_Hbp: "(~?z_hg)"
+      by (rule subst [where P="(\<lambda>zenon_Vo. (~(zenon_Vo \\in a_CONSTANTunde_Tunde_a)))", OF z_Hbo z_Hbn])
+      show FALSE
+      by (rule notE [OF z_Hbp z_Hg])
+     qed
+     show FALSE using z_Hn z_Hr z_Ht z_Hbb z_Hbl inProductI[where s="<<a_CONSTANTunde_Sunde_a, a_CONSTANTunde_Tunde_a>>"] by auto
+    qed
+---*)

@@ -1,0 +1,14 @@
+(*---
+description: >-
+  LS4 refutes ASSUME []p, [](p => q) PROVE []q, whose hypotheses tlapm joins with & under one more
+  always each, before ->.
+ref: src/backend/ls4.ml#visitor
+outcome: unsat
+---*)
+not (((always (always hd71cd)) & (always (always (hd71cd -> hb593a))) & (always (cc | ~ cc)) -> (always hb593a)))
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: unsat
+---*)

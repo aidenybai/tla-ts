@@ -1,9 +1,9 @@
-// A port of tlapm's Module.Elab: normalization anonymizes a module unit by unit and expands each
-// instance into the units of the module it instantiates.
+// A port of tlapm's Module.Elab.
 
 import { TlaProofError, TlapmBugError } from "../errors";
 import { lambdify } from "./action";
 import type { Anonymizer } from "./anonymize";
+import { checkEnabledAxioms } from "./enabled-axioms";
 import { isEqualHyp } from "./equality";
 import {
   adjoinAll,
@@ -16,6 +16,7 @@ import {
   getLocationText,
   getLocusPrefix,
   getScopeHyps,
+  getTrue,
   mapAccumulate,
   type Defn,
   type Expr,
@@ -48,8 +49,6 @@ import {
 } from "./substitution";
 import { getScopeTime } from "./temporal";
 
-// latestModules is the module context of the latest anonymization of an axiom, theorem or USE,
-// which tlapm's anonymizer keeps using for the instances inside later definitions.
 export interface Pipeline {
   anonymizer: Anonymizer;
   simplify: ReturnType<typeof createSimplifier>;
@@ -77,7 +76,7 @@ const lambdifyTheorem = (
     const message = `${error.failure}\nCould not instantiate the theorem ${name === undefined ? "" : `named: ${name}, `}at: ${getLocationText(location)}`;
     pipeline.onWarning({ text: `${getAtPrefix(location)}[ERROR]${message}`, channel: "stdout" });
     pipeline.onWarning({ text: message, channel: "toolboxOnly" });
-    return { context: [], active: at({ kind: "Internal", builtin: "TRUE" }, sequent.active) };
+    return { context: [], active: getTrue(sequent.active) };
   }
 };
 
@@ -92,9 +91,6 @@ const lambdifyUnit = (pipeline: Pipeline, scope: Scope | undefined, unit: Module
   return { ...unit, definition: { ...definition, body } };
 };
 
-// lambdify_enabled_cdot: the ENABLED and \cdot of each definition and theorem statement bind
-// their variables before instantiation substitutes for them. A theorem that cannot be lambdified
-// states TRUE.
 const lambdifyUnits = (
   pipeline: Pipeline,
   scope: Scope | undefined,
@@ -109,7 +105,6 @@ const lambdifyUnits = (
     return [adjoinAll(current, getUnitHyps(lambdified)), lambdified];
   });
 
-// apply_subst: each parameter declaration of the instancee gives way to its substitute.
 const applyParameters = (units: ModuleUnit[], substitutes: Map<string, Expr>) => {
   const body: ModuleUnit[] = [];
   let size = 0;
@@ -142,8 +137,6 @@ const applyParameters = (units: ModuleUnit[], substitutes: Map<string, Expr>) =>
   return body;
 };
 
-// resub_for: references to the instancee's own units become applications to the instance
-// arguments, which the definitions now bind themselves.
 const getLocalSubstitution = (
   count: number,
   argumentCount: number,
@@ -171,8 +164,6 @@ const addParameters = (expression: Expr, args: string[]): Expr => {
     : at({ kind: "Lambda", params, body: expression }, expression);
 };
 
-// localize: names the instancee's units under the instance name, salting its local definitions, and
-// abstracts each over the instance arguments.
 const localize = (
   pipeline: Pipeline,
   units: ModuleUnit[],
@@ -195,7 +186,7 @@ const localize = (
   while (rest.length > 0) {
     const [unit, ...tail] = rest;
     rest = tail;
-    const localized = (expression: Expr) =>
+    const localizeExpr = (expression: Expr) =>
       addParameters(
         substituteExpr(getLocalSubstitution(size, argumentCount, location), expression),
         instance.args,
@@ -214,7 +205,7 @@ const localize = (
           definition: {
             ...definition,
             name: getLocalizedName(name),
-            body: localized(definition.body),
+            body: localizeExpr(definition.body),
           },
           whereDefined: unit.isLocal ? "Builtin" : unit.whereDefined,
           isLocal: unit.isLocal || isLocal,
@@ -229,7 +220,7 @@ const localize = (
         const axiom: ModuleUnit = {
           ...unit,
           name: unit.name === undefined ? undefined : getLocalizedName(unit.name),
-          expression: localized(unit.expression),
+          expression: localizeExpr(unit.expression),
         };
         body.push(axiom);
         size += getHypSize(axiom);
@@ -239,7 +230,7 @@ const localize = (
         complain(
           `${getAtPrefix(location)}Warning: Instancing produces parametric theorems.\nSuch theorems will be forcibly hidden and cannot be cited.\n(This warning appears at-most once per INSTANCE declaration.)`,
         );
-        const expression = localized(at(exprifySequent(unit.sequent), unit));
+        const expression = localizeExpr(at(exprifySequent(unit.sequent), unit));
         body.push({
           ...unit,
           name: unit.name === undefined ? undefined : getLocalizedName(unit.name),
@@ -264,8 +255,6 @@ const localize = (
   return body;
 };
 
-// localize_axioms: an axiom becomes a hypothesis of each theorem after it, and a named one also a
-// definition.
 const localizeAxioms = (units: ModuleUnit[]) => {
   const body: ModuleUnit[] = [];
   let rest = units;
@@ -321,7 +310,6 @@ const getParameters = (module: Mule) =>
     ),
   );
 
-// Module.Elab.instantiate: the units of an instantiated module, in the context of the instance.
 const instantiate = (
   pipeline: Pipeline,
   modules: Map<string, Mule>,
@@ -336,9 +324,13 @@ const instantiate = (
   const parameters = getParameters(module);
   for (const substitution of instance.substitutions) {
     if (!parameters.has(substitution.name)) {
-      throw new TlaProofError(
-        `Parameter ${substitution.name} occurs in the statement \`INSTANCE ${instance.module} WITH\`, and is not declared in the module ${instance.module}`,
-      );
+      pipeline.onWarning({
+        text: `${getLocusPrefix(substitution.location)}Parameter ${substitution.name} occurs in the statement \`INSTANCE ${instance.module} WITH\`, and is not declared in the module ${instance.module}\n`,
+        channel: "toolbox",
+      });
+      throw new TlaProofError("Module.Elab.instance_substitutes_declared_identifiers", {
+        failure: "Module.Elab.instance_substitutes_declared_identifiers",
+      });
     }
   }
   const instanceScope = adjoinAll(
@@ -351,9 +343,12 @@ const instantiate = (
   for (const name of [...parameters].sort(compareNames)) {
     if (substitutes.has(name)) continue;
     if (!findNamed(instanceScope, name)) {
-      throw new TlaProofError(
-        `Required parameter ${name} for module ${instance.module} could not be inferred.`,
-      );
+      const message = `Required parameter ${name} for module ${instance.module} could not be inferred.`;
+      pipeline.onWarning({
+        text: `${getLocusPrefix(instance.instanceLocation)}${message}\n`,
+        channel: "toolbox",
+      });
+      throw new TlaProofError(message, { failure: "Module.Elab.complete_with_statement_params" });
     }
     substitutes.set(name, at({ kind: "Opaque", name }, { location }));
   }
@@ -387,7 +382,6 @@ const instantiate = (
   );
 };
 
-// make_defs: the definitions among the units an INSTANCE inside a LET or DEFINE stands for.
 export const expandInstance = (
   pipeline: Pipeline,
   scope: Scope | undefined,
@@ -426,9 +420,6 @@ export const expandInstance = (
   return definitions;
 };
 
-// Module.Elab.normalize: anonymizes each unit in the context of the ones before it, expands
-// instances, merges repeated definitions, and simplifies the proofs of important modules. The
-// result also joins the modules that later instances can name.
 export const normalize = (
   pipeline: Pipeline,
   modules: Map<string, Mule>,
@@ -443,7 +434,6 @@ export const normalize = (
   };
   const isRedundant = (name: string | undefined) =>
     name !== undefined && findNamed(current, name) !== undefined;
-  // Instantiated units arrive anonymized.
   const queue = module.body.map((unit) => ({ unit, isAnonymized: false }));
   for (let index = 0; index < queue.length; index++) {
     const unit = queue[index].unit;
@@ -528,12 +518,17 @@ export const normalize = (
           binding.sequent.context,
         );
         const anonymized = pipeline.anonymizer.proof(proofScope, proof);
+        const proofContext = getScopeHyps(proofScope);
         const simplified = module.isImportant
-          ? pipeline.simplify(
-              getScopeHyps(proofScope),
-              binding.sequent.active,
-              anonymized,
-              getScopeTime(binding.sequent.context, "Always"),
+          ? checkEnabledAxioms(
+              proofContext,
+              pipeline.simplify(
+                proofContext,
+                binding.sequent.active,
+                anonymized,
+                getScopeTime(binding.sequent.context, "Always"),
+              ),
+              pipeline.onWarning,
             )
           : anonymized;
         emit({ ...unit, name, sequent, proof: simplified });

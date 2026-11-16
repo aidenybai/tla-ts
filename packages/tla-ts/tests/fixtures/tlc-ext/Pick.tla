@@ -11,6 +11,6 @@ Next == x' = (x + 1) % 3
 \* condition, and x' = 0 always returns to the initial state.
 Seen == PickSuccessor(x' # 0)
 
-\* PickSuccessor needs a complete successor state.
-Incomplete == PickSuccessor(TRUE)
+\* Outside an action, PickSuccessor is TRUE, whatever its condition.
+Incomplete == PickSuccessor(FALSE)
 =============================================================================

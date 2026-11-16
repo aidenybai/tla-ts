@@ -1,22 +1,20 @@
-// Decides satisfiability of propositional linear temporal logic over infinite traces, the logic LS4
-// decides. A tableau node is the set of formulas that must hold now. A SAT call per step picks the
-// atoms and the formulas the next node must hold, and the formula is satisfiable when a reachable
-// strongly connected component can fulfill every eventuality it postpones.
-
 import type { Verdict } from "../verdict";
 import { createSolver } from "./sat";
 
+export type BinaryKind = "And" | "Or" | "Implies" | "Equiv" | "Until" | "Unless";
+
 export type PtlFormula =
   | { kind: "Atom"; name: string }
+  | { kind: "Constant"; value: boolean }
   | { kind: "Not" | "Next" | "Always" | "Eventually"; body: PtlFormula }
-  | { kind: "And" | "Or" | "Implies" | "Equiv"; left: PtlFormula; right: PtlFormula };
+  | { kind: BinaryKind; left: PtlFormula; right: PtlFormula };
 
-// Formulas in negation normal form, numbered so that equal formulas share a number.
 type Normal =
   | { kind: "Constant"; value: boolean }
   | { kind: "Literal"; atom: string; isPositive: boolean }
   | { kind: "And" | "Or"; children: number[] }
-  | { kind: "Next" | "Always" | "Eventually"; body: number };
+  | { kind: "Next" | "Always" | "Eventually"; body: number }
+  | { kind: "Until" | "Unless"; left: number; right: number };
 
 interface Step {
   next: number[];
@@ -40,19 +38,19 @@ const createTable = () => {
   };
   const getConstant = (value: boolean) => intern(String(value), { kind: "Constant", value });
   const getJunction = (kind: "And" | "Or", operands: number[]): number => {
-    const absorbing = kind === "Or";
+    const isAbsorbing = kind === "Or";
     const children = new Set<number>();
     for (const operand of operands) {
       const normal = normals[operand];
       if (normal.kind === "Constant") {
-        if (normal.value === absorbing) return operand;
+        if (normal.value === isAbsorbing) return operand;
         continue;
       }
       if (normal.kind === kind) normal.children.forEach((child) => children.add(child));
       else children.add(operand);
     }
     const sorted = [...children].sort((left, right) => left - right);
-    if (sorted.length === 0) return getConstant(!absorbing);
+    if (sorted.length === 0) return getConstant(!isAbsorbing);
     if (sorted.length === 1) return sorted[0];
     return intern(`${kind}(${sorted.join(",")})`, { kind, children: sorted });
   };
@@ -61,6 +59,8 @@ const createTable = () => {
     if (normal.kind === "Constant" || (kind !== "Next" && normal.kind === kind)) return body;
     return intern(`${kind}(${body})`, { kind, body });
   };
+  const getUntil = (kind: "Until" | "Unless", left: number, right: number) =>
+    intern(`${kind}(${left},${right})`, { kind, left, right });
   const memo = [new WeakMap<PtlFormula, number>(), new WeakMap<PtlFormula, number>()];
   const normalize = (formula: PtlFormula, isNegated: boolean): number => {
     const cache = memo[isNegated ? 1 : 0];
@@ -74,6 +74,8 @@ const createTable = () => {
             atom: formula.name,
             isPositive: !isNegated,
           });
+        case "Constant":
+          return getConstant(formula.value !== isNegated);
         case "Not":
           return normalize(formula.body, !isNegated);
         case "Next":
@@ -106,6 +108,15 @@ const createTable = () => {
               normalize(formula.right, !isNegated),
             ]),
           ]);
+        case "Until":
+        case "Unless": {
+          // translate/fofunctions.ml#negate: ~(f until g) is ~g unless (~f & ~g), and dually.
+          const kind = (formula.kind === "Until") === isNegated ? "Unless" : "Until";
+          const right = normalize(formula.right, isNegated);
+          return isNegated
+            ? getUntil(kind, right, getJunction("And", [normalize(formula.left, true), right]))
+            : getUntil(kind, normalize(formula.left, false), right);
+        }
       }
     })();
     cache.set(formula, result);
@@ -114,10 +125,6 @@ const createTable = () => {
   return { normals, normalize };
 };
 
-// Every way to satisfy the formulas now, keeping only the steps that require the fewest next
-// formulas and leave the fewest eventualities pending. A step that requires more of both can only
-// do what a smaller one can, so dropping it keeps the decision complete. Undefined once isExpired
-// turns true.
 const getSteps = (
   normals: Normal[],
   formulas: number[],
@@ -128,8 +135,8 @@ const getSteps = (
   const nexts = new Map<number, number>();
   const pendings = new Map<number, number>();
   const literals = new Map<number, number>();
-  const counter = { value: 0 };
-  const createVariable = () => ++counter.value;
+  let variableCount = 0;
+  const createVariable = () => ++variableCount;
   const getVariable = <Key>(variables: Map<Key, number>, key: Key) => {
     const existing = variables.get(key);
     if (existing !== undefined) return existing;
@@ -137,7 +144,6 @@ const getSteps = (
     variables.set(key, variable);
     return variable;
   };
-  // Plaisted-Greenbaum: a formula's literal implies the formula, which suffices in normal form.
   const encode = (formula: number): number => {
     const cached = literals.get(formula);
     if (cached !== undefined) return cached;
@@ -177,6 +183,15 @@ const getSteps = (
           clauses.push([-variable, body, next], [-next, body, getVariable(pendings, formula)]);
           return variable;
         }
+        case "Until":
+        case "Unless": {
+          const variable = createVariable();
+          const right = encode(normal.right);
+          const next = getVariable(nexts, formula);
+          clauses.push([-variable, right, encode(normal.left)], [-variable, right, next]);
+          if (normal.kind === "Until") clauses.push([-next, right, getVariable(pendings, formula)]);
+          return variable;
+        }
       }
     })();
     literals.set(formula, literal);
@@ -184,14 +199,12 @@ const getSteps = (
   };
   formulas.forEach((formula) => clauses.push([encode(formula)]));
   const choices = [...nexts.values(), ...pendings.values()];
-  const solver = createSolver(counter.value, isExpired);
+  const solver = createSolver(variableCount, isExpired);
   clauses.forEach(solver.addClause);
   const steps: Step[] = [];
   for (;;) {
     const model = solver.solve([]);
     if (typeof model === "string") return model === "unsat" ? steps : undefined;
-    // Drops each chosen variable that a model with no other choice can do without. A variable one
-    // pass keeps stays needed as the set shrinks, so the set that remains is minimal.
     const minimal = choices.reduce<Int8Array | undefined>((current, choice) => {
       if (current?.[choice] !== 1) return current;
       const unchosen = choices.filter((other) => current[other] !== 1);
@@ -209,7 +222,6 @@ const getSteps = (
   }
 };
 
-// Whether the formula is satisfiable, or unknown once isExpired turns true.
 export const getSatisfiability = (formula: PtlFormula, isExpired: () => boolean): Verdict => {
   const table = createTable();
   const nodes: number[][] = [];
@@ -230,12 +242,12 @@ export const getSatisfiability = (formula: PtlFormula, isExpired: () => boolean)
     if (!steps) return "unknown";
     edges.push(steps.map((step) => ({ target: getNode(step.next), pending: step.pending })));
   }
-  // Tarjan's algorithm, checking each component as it closes.
   const indices = new Int32Array(nodes.length).fill(-1);
   const lowlinks = new Int32Array(nodes.length);
   const components = new Int32Array(nodes.length).fill(-1);
   const stack: number[] = [];
-  const counter = { index: 0, component: 0 };
+  let nextIndex = 0;
+  let componentCount = 0;
   const isFair = (component: number) => {
     const inner = edges.flatMap((outgoing, source) =>
       components[source] === component
@@ -252,9 +264,9 @@ export const getSatisfiability = (formula: PtlFormula, isExpired: () => boolean)
     return unfulfilled.length === 0;
   };
   const visit = (node: number): boolean => {
-    indices[node] = counter.index;
-    lowlinks[node] = counter.index;
-    counter.index++;
+    indices[node] = nextIndex;
+    lowlinks[node] = nextIndex;
+    nextIndex++;
     stack.push(node);
     for (const edge of edges[node]) {
       if (indices[edge.target] === -1) {
@@ -265,7 +277,7 @@ export const getSatisfiability = (formula: PtlFormula, isExpired: () => boolean)
       }
     }
     if (lowlinks[node] !== indices[node]) return false;
-    const component = counter.component++;
+    const component = componentCount++;
     for (let member = stack.pop(); member !== undefined; member = stack.pop()) {
       components[member] = component;
       if (member === node) break;

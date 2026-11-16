@@ -1,5 +1,4 @@
-// A port of tlapm's Backend.Zenon: an obligation as the input of Zenon's TLA+ front end, a $hyp for
-// each visible fact and a $goal, naming identifiers as Isabelle does.
+// A port of tlapm's Backend.Zenon.
 
 import { TlapmBugError, TlaProverError, TlaUnsupportedError } from "../../errors";
 import { createContext, getBoundName, popNames, pushName } from "../../obligations/printer";
@@ -74,9 +73,6 @@ const getSuccessors = (integer: string) => {
   return `${"(TLA.fapply TLA.Succ ".repeat(count)}0${")".repeat(count)}`;
 };
 
-// pp_print_obligation: the text tlapm writes to the .znn file it hands Zenon, for an obligation
-// that Backend.Prep has shipped. Unsupported in the goal fails the obligation and in a fact omits
-// it.
 export const encodeZenon = (id: number, sequent: Sequent) => {
   const context = createContext();
   const adjoin = (name: string) => pushName(context, pickle(name));
@@ -85,7 +81,6 @@ export const encodeZenon = (id: number, sequent: Sequent) => {
   const delimited = (args: Expr[]) => formatDelimited(args, printExpr, SPACE);
   const nonatomic = (name: string, args: Expr[]) => format("(%s %a)", name, delimited(args));
 
-  // A binder's name binds in the body, and what comes before prints outside it.
   const printBinder = (name: string, before: Doc, body: Expr) => {
     const bound = adjoin(name);
     const doc = format("%a((%s) %a))", before, bound, printExpr(body));
@@ -163,7 +158,6 @@ export const encodeZenon = (id: number, sequent: Sequent) => {
     );
   };
 
-  // SetOf and Fcn take one bound, whose domain prints outside it.
   const printOneBound = (name: string, bounds: Bound[], body: Expr, what: string) => {
     if (bounds.length !== 1) throw new TlaUnsupportedError(`${what} (multiple declared constants)`);
     const bound = bounds[0];
@@ -175,7 +169,6 @@ export const encodeZenon = (id: number, sequent: Sequent) => {
     );
   };
 
-  // A sequent inside an expression, as an implication under quantifiers.
   const printNestedSequent = (sequent: Sequent): Doc => {
     if (sequent.context.length === 0) return printExpr(sequent.active);
     const hyp = sequent.context[0];

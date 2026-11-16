@@ -1,5 +1,4 @@
-// Expr.Levels: the level of an expression (0 constant, 1 state, 2 action, 3 temporal, 4 undefined),
-// the weights of an operator's arguments, and the declared names the level depends on.
+// A port of tlapm's Expr.Levels.
 
 import { TlaProofError, TlapmBugError } from "../errors";
 import {
@@ -16,6 +15,7 @@ import {
   type Bound,
   type Builtin,
   type Expr,
+  type Hyp,
   type Level,
   type Scope,
 } from "./expression";
@@ -114,15 +114,14 @@ export const LEVEL_NUMBERS: Record<Level, number> = {
   Unknown: 0,
 };
 
-const union = (sets: Set<string>[]) => new Set(sets.flatMap((set) => [...set]));
+const getUnion = (sets: Set<string>[]) => new Set(sets.flatMap((set) => [...set]));
 
 const combineLevels = (infos: LevelInfo[]): LevelInfo => ({
   level: Math.max(0, ...infos.map((info) => info.level)),
   weights: [],
-  params: union(infos.map((info) => info.params)),
+  params: getUnion(infos.map((info) => info.params)),
 });
 
-// The level of each hypothesis depends only on the scope before it.
 const hypLevels = new WeakMap<Scope, LevelInfo>();
 
 const computeHypLevel = (scope: Scope): LevelInfo => {
@@ -162,16 +161,27 @@ const getBoundsLevel = (scope: Scope | undefined, bounds: Bound[], body: Expr) =
   ]);
 };
 
-const applyOperator = (operator: LevelInfo, args: LevelInfo[]): LevelInfo => {
+const applyOperator = (operator: LevelInfo, args: LevelInfo[], from: Expr): LevelInfo => {
   if (operator.weights.length !== args.length) {
-    throw new TlaProofError("Invalid number of arguments");
+    throw new TlaProofError("Invalid number of arguments", {
+      failure: "Expr.Levels: ARITY",
+      locus: from.location,
+    });
   }
   const weighted = args.filter((_arg, index) => operator.weights[index]);
   return {
     level: Math.max(operator.level, ...weighted.map((arg) => arg.level)),
     weights: [],
-    params: union([operator.params, ...weighted.map((arg) => arg.params)]),
+    params: getUnion([operator.params, ...weighted.map((arg) => arg.params)]),
   };
+};
+
+export const getContextLevel = (scope: Scope | undefined, hyps: Hyp[]) => {
+  const [inner, levels] = mapAccumulate(scope, hyps, (current, hyp) => {
+    const next = adjoin(current, hyp);
+    return [next, getHypLevel(next).level];
+  });
+  return { scope: inner, level: Math.max(0, ...levels) };
 };
 
 export const getLevelInfo = (scope: Scope | undefined, expression: Expr): LevelInfo => {
@@ -205,13 +215,15 @@ export const getLevelInfo = (scope: Scope | undefined, expression: Expr): LevelI
     }
     case "Apply": {
       const operator = expression.operator;
-      // The action frontend commutes a prime onto an operator, and tlapm keeps the level that
-      // the application had.
       if (isBuiltinApply(operator, "Prime") && operator.args.length === 1) {
         return recurse({ ...expression, operator: operator.args[0] });
       }
       if (operator.kind === "Opaque") {
-        return applyOperator(getInfo(0, expression.args.length), expression.args.map(recurse));
+        return applyOperator(
+          getInfo(0, expression.args.length),
+          expression.args.map(recurse),
+          expression,
+        );
       }
       if (operator.kind === "Internal" && expression.args.length === 1) {
         const arg = expression.args[0];
@@ -240,14 +252,13 @@ export const getLevelInfo = (scope: Scope | undefined, expression: Expr): LevelI
         expression.args.forEach(recurse);
         return getInfo(3, 2);
       }
-      return applyOperator(recurse(operator), expression.args.map(recurse));
+      return applyOperator(recurse(operator), expression.args.map(recurse), expression);
     }
     case "Sequent": {
-      const [inner, levels] = mapAccumulate(scope, expression.sequent.context, (current, hyp) => {
-        const next = adjoin(current, hyp);
-        return [next, getHypLevel(next).level];
-      });
-      return getInfo(Math.max(0, ...levels, getLevelInfo(inner, expression.sequent.active).level));
+      const context = getContextLevel(scope, expression.sequent.context);
+      return getInfo(
+        Math.max(context.level, getLevelInfo(context.scope, expression.sequent.active).level),
+      );
     }
     case "With":
     case "Dot":

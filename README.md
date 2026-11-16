@@ -92,6 +92,8 @@ result.violation?.trace;
 | `loadModule` | Returns the source of an imported module    |
 | `workers`    | The number of worker threads. Defaults to 1 |
 
+A check with several workers starts over on one worker when it orders two strings that the search created, such as with `\o` or `ToString`. This happens when both strings go into one set or one function's domain. TLC orders strings by when it first sees them, and workers share that order only for strings that exist before the search. The CLI prints a warning when this happens, and `check` passes `onProgress` a `sequential-fallback` event.
+
 ### `prove`
 
 ```ts
@@ -174,6 +176,14 @@ Run the conformance suite against TLC's recorded results:
 ```shell
 pnpm --filter tla-ts conformance:fetch
 pnpm --filter tla-ts conformance
+```
+
+Run the TLC and tlapm conformance suites in `packages/conformance`:
+
+```shell
+pnpm --filter @tla-ts/conformance fetch-tlc
+pnpm --filter @tla-ts/conformance fetch-tlapm
+pnpm --filter @tla-ts/conformance conformance
 ```
 
 Rerun the benchmarks with `TLA2TOOLS_JAR` set to the path of `tla2tools.jar`:

@@ -1,0 +1,29 @@
+(*---
+description: Zenon's own test zenon/test/test24.znn, which Zenon must prove.
+ref: zenon/test/test24.znn
+features:
+  - zenon-test
+outcome: unsat
+---*)
+;  Copyright 2006 INRIA
+;  $Id: test24.znn,v 1.5 2011-12-28 16:43:33 doligez Exp $
+
+$def "def_x" (x) _1
+
+$goal (= x _1)
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: |-
+    unsat
+    proof (rule zenon_nnpp)
+     assume z_Ha:"(x~=_1)"
+     have z_Hd_z_Ha: "(_1~=_1) == (x~=_1)" (is "?z_hd == ?z_ha")
+     by (unfold def_x)
+     have z_Hd: "?z_hd"
+     by (unfold z_Hd_z_Ha, fact z_Ha)
+     show FALSE
+     by (rule zenon_noteq [OF z_Hd])
+    qed
+---*)

@@ -1,13 +1,8 @@
-// Ported from Z3 (src/ast/normal_forms/nnf.cpp, name_exprs.cpp, defined_names.cpp), MIT license, see
-// z3-license.txt. Negation normal form in Z3's default NNF_SKOLEM mode: only subformulas that
-// contain quantifiers are normalized, and existential quantifiers in positive positions become
-// Skolem functions of the enclosing universal variables. A quantifier inside an atom gets a name, a
-// fresh predicate over its free variables, with a definition that is normalized too. Like Z3, the
-// frames, the result stack and the caches hold their expressions, so that expressions are created
-// and deleted in Z3's order.
+// Ported from Z3 (src/ast/normal_forms/nnf.cpp, name_exprs.cpp, defined_names.cpp), MIT license, see z3-license.txt.
 import { ActCache } from "./act-cache";
 import {
-  AstManager,
+  type AstManager,
+  FAMILY_BASIC,
   KIND_APP,
   KIND_QUANTIFIER,
   KIND_VAR,
@@ -15,17 +10,18 @@ import {
   OP_EQ,
   OP_IMPLIES,
   OP_ITE,
+  OP_LABEL,
   OP_NOT,
   OP_OR,
   OP_XOR,
   SORT_BOOL,
+  QUANTIFIER_FORALL,
 } from "./ast";
 import { mkNot } from "./ast-util";
 import { RefVector } from "./ref-vector";
 import { RewriterTpl } from "./rewriter-tpl";
 import { elimUnusedVars, getFreeVarSorts, VarSubst } from "./var-subst";
 
-// defined_names: the name of each named expression. It holds the expressions and their names.
 export class DefinedNames {
   private names = new Map<number, number>();
   private exprs: RefVector;
@@ -41,7 +37,6 @@ export class DefinedNames {
     this.lims.push(this.exprs.size);
   }
 
-  // pop_scope: forgets the names since the matching push, the last first.
   pop() {
     const size = this.lims[this.lims.length - 1];
     this.lims.pop();
@@ -52,27 +47,37 @@ export class DefinedNames {
     }
   }
 
-  // mk_name: (n x1 ... xk) for the free variables x1 ... xk of the quantifier, with n => q and q => n
-  // as the definition, under a universal quantifier whose pattern is the name. The definition comes
-  // with a reference, and is -1 when the quantifier already has a name.
-  mkName(quantifier: number) {
+  get numNames() {
+    return this.nameRefs.size;
+  }
+
+  getNameDecl(index: number) {
+    return this.manager.decls[this.nameRefs.items[index]];
+  }
+
+  release() {
+    this.nameRefs.reset();
+    this.exprs.reset();
+  }
+
+  mkName(expr: number) {
     const manager = this.manager;
-    const existing = this.names.get(quantifier);
+    const existing = this.names.get(expr);
     if (existing !== undefined) return { name: existing, definition: -1 };
-    // gen_name: a variable that does not occur still takes a position, filled with true.
-    const freeVarSorts = getFreeVarSorts(manager, quantifier, manager.freeVarBounds[quantifier]);
+    // A variable that does not occur still takes a position, filled with true.
+    const freeVarSorts = getFreeVarSorts(manager, expr, manager.freeVarBounds[expr]);
     const varSorts = freeVarSorts.map((sort) => sort ?? SORT_BOOL);
+    const sort = manager.sorts[expr];
     const name = manager.mkApp(
-      manager.mkFreshFuncDecl("z3name", varSorts, SORT_BOOL),
-      freeVarSorts.map((sort, index) =>
-        sort === undefined ? manager.trueExpr : manager.mkVar(index, sort),
+      manager.mkFreshFuncDecl("z3name", varSorts, sort),
+      freeVarSorts.map((varSort, index) =>
+        varSort === undefined ? manager.trueExpr : manager.mkVar(index, varSort),
       ),
-      SORT_BOOL,
+      sort,
     );
-    this.names.set(quantifier, name);
-    this.exprs.push(quantifier);
+    this.names.set(expr, name);
+    this.exprs.push(expr);
     this.nameRefs.push(name);
-    // bound_vars: the variables are in reverse order in the quantifier.
     const definition = manager.withTemporaries(() => {
       const boundVars = (conjunct: number) =>
         varSorts.length === 0
@@ -80,37 +85,57 @@ export class DefinedNames {
           : elimUnusedVars(
               manager,
               manager.mkQuantifier({
-                isForall: true,
+                kind: QUANTIFIER_FORALL,
                 sorts: varSorts.toReversed(),
                 names: varSorts.map((_sort, index) => varSorts.length - 1 - index),
                 body: conjunct,
                 patterns: [manager.mkPattern([name])],
+                noPatterns: [],
                 weight: 1,
                 qid: "",
               }),
             );
-      const first = boundVars(manager.mkOr([manager.mkNot(name), quantifier]));
-      const second = boundVars(manager.mkOr([name, manager.mkNot(quantifier)]));
+      if (manager.isBool(expr)) {
+        const first = boundVars(manager.mkOr([manager.mkNot(name), expr]));
+        const second = boundVars(manager.mkOr([name, manager.mkNot(expr)]));
+        return manager.mkAnd([first, second]);
+      }
+      if (manager.getOp(expr) !== OP_ITE) return boundVars(manager.mkEq(expr, name));
+      const notCondition = manager.mkNot(manager.getArg(expr, 0));
+      const thenEq = manager.mkEq(name, manager.getArg(expr, 1));
+      const first = boundVars(manager.mkOr([notCondition, thenEq]));
+      const elseEq = manager.mkEq(name, manager.getArg(expr, 2));
+      const second = boundVars(manager.mkOr([manager.getArg(expr, 0), elseEq]));
       return manager.mkAnd([first, second]);
     });
     return { name, definition };
   }
 }
 
-// name_quantifier_labels: a rewriter that replaces each quantifier by its name, and collects the
-// definitions of the new names.
-class QuantifierNamer extends RewriterTpl {
+// The nested formula namer also names each application of a Boolean operator below the root.
+class ExprNamer extends RewriterTpl {
   private definitions: RefVector | null = null;
+  private root = -1;
 
   constructor(
     manager: AstManager,
     private names: DefinedNames,
+    private isNamingFormulas: boolean,
   ) {
     super(manager);
   }
 
   getSubst(expr: number) {
-    if (this.manager.kinds[expr] !== KIND_QUANTIFIER) return undefined;
+    const manager = this.manager;
+    const isNamed =
+      (manager.kinds[expr] === KIND_QUANTIFIER && !manager.isLambda(expr)) ||
+      (manager.kinds[expr] === KIND_APP && manager.getOp(expr) === OP_LABEL) ||
+      (this.isNamingFormulas &&
+        manager.kinds[expr] === KIND_APP &&
+        manager.funcDecls[manager.decls[expr]].family === FAMILY_BASIC &&
+        manager.getNumArgs(expr) > 0 &&
+        expr !== this.root);
+    if (!isNamed) return undefined;
     const named = this.names.mkName(expr);
     if (named.definition !== -1) {
       this.definitions?.push(named.definition);
@@ -119,15 +144,13 @@ class QuantifierNamer extends RewriterTpl {
     return named.name;
   }
 
-  // The result comes with a reference, which the caller releases.
   name(expr: number, definitions: RefVector) {
     this.definitions = definitions;
+    this.root = expr;
     return this.rewrite(expr);
   }
 }
 
-// skolemizer: the Skolem functions take the free variables of the quantifier. The function of the
-// last variable comes first, and takes the variable's name.
 class Skolemizer {
   private cache: ActCache;
   private subst: VarSubst;
@@ -137,7 +160,6 @@ class Skolemizer {
     this.subst = new VarSubst(manager, true);
   }
 
-  // The result comes with a reference, which the caller releases.
   skolemize(quantifier: number) {
     const manager = this.manager;
     const cached = this.cache.find(quantifier, 0);
@@ -163,7 +185,11 @@ class Skolemizer {
     for (let index = count - 1; index >= 0; index--) {
       const sort = data.sorts[index];
       substitution.push(
-        manager.mkApp(manager.mkFreshFuncDecl(data.names[index], argSorts, sort), args.items, sort),
+        manager.mkApp(
+          manager.mkFreshFuncDecl(data.names[index], argSorts, sort, true, data.skid),
+          args.items,
+          sort,
+        ),
       );
     }
     freeVarSorts.forEach((sort, index) =>
@@ -177,15 +203,12 @@ class Skolemizer {
     return result;
   }
 
-  // ~skolemizer: the cache goes first, then the substitution.
   release() {
     this.cache.reset();
     this.subst.release();
   }
 }
 
-// A normalization still to finish: its expression, the next child, its polarity, whether it is
-// nested in a quantifier, whether to cache its result, and where its children's results start.
 interface Frame {
   curr: number;
   index: number;
@@ -195,38 +218,40 @@ interface Frame {
   spos: number;
 }
 
-// nnf: one object normalizes the formulas of a reduction, and keeps its caches until it is
-// released.
+export const NNF_SKOLEM = 0;
+export const NNF_QUANT = 1;
+export const NNF_FULL = 2;
+
 export class Nnf {
   private frames: Frame[] = [];
   private results: RefVector;
-  // One cache per polarity and nesting in a quantifier, in Z3's order of get_cache_idx.
   private caches: ActCache[];
   private todoDefs: RefVector;
   private skolemizer: Skolemizer;
-  private namer: QuantifierNamer;
+  private namer: ExprNamer;
+  private nestedNamer: ExprNamer;
 
   constructor(
     private manager: AstManager,
     names: DefinedNames,
+    private mode = NNF_SKOLEM,
+    private isIgnoringLabels = false,
   ) {
     this.results = new RefVector(manager);
     this.caches = Array.from({ length: 4 }, () => new ActCache(manager, manager.getNumAsts()));
     this.todoDefs = new RefVector(manager);
     this.skolemizer = new Skolemizer(manager);
-    this.namer = new QuantifierNamer(manager, names);
+    this.namer = new ExprNamer(manager, names, false);
+    this.nestedNamer = new ExprNamer(manager, names, true);
   }
 
-  // operator(): pushes the normal forms of the definitions of the names it introduced, the last
-  // first, then returns the normal form of expr with a reference, which the caller releases.
   apply(expr: number, definitions: RefVector) {
     return this.manager.withoutTemporaries(() => {
       this.reset();
       const result = this.process(expr);
       const start = definitions.size;
       for (let index = 0; index < this.todoDefs.size; index++) {
-        const definition = this.process(this.todoDefs.items[index]);
-        definitions.pushOwned(definition);
+        definitions.pushOwned(this.process(this.todoDefs.items[index]));
       }
       const added = definitions.items.splice(start).reverse();
       definitions.items.push(...added);
@@ -234,9 +259,9 @@ export class Nnf {
     });
   }
 
-  // ~nnf: the namer, then the skolemizer, the definitions and the caches, the last first.
   release() {
     this.manager.withoutTemporaries(() => {
+      this.nestedNamer.release();
       this.namer.release();
       this.skolemizer.release();
       this.todoDefs.reset();
@@ -281,10 +306,10 @@ export class Nnf {
     this.results.push(isPositive ? expr : mkNot(this.manager, expr));
   }
 
-  // visit: whether the result of expr is on the result stack. Otherwise it pushes a frame for expr.
   private visit(expr: number, isPositive: boolean, isInQuantifier: boolean) {
     const manager = this.manager;
-    if (!manager.hasQuantifierFlags[expr]) {
+    const isSkipping = this.mode === NNF_SKOLEM || (this.mode === NNF_QUANT && !isInQuantifier);
+    if (isSkipping && !manager.hasQuantifierFlags[expr] && !manager.hasLabelFlags[expr]) {
       this.skip(expr, isPositive);
       return true;
     }
@@ -305,7 +330,6 @@ export class Nnf {
     return false;
   }
 
-  // process: the normal form of expr, with a reference.
   private process(expr: number) {
     const manager = this.manager;
     if (!this.visit(expr, true, false))
@@ -339,7 +363,6 @@ export class Nnf {
     return result;
   }
 
-  // Visits the children from frame.index on, each with its polarity, and whether all are done.
   private visitChildren(frame: Frame, children: [number, boolean][]) {
     while (frame.index < children.length) {
       const child = children[frame.index++];
@@ -348,7 +371,6 @@ export class Nnf {
     return true;
   }
 
-  // Replaces the results from spos on with result.
   private setResult(spos: number, result: number) {
     this.manager.incRef(result);
     this.results.shrink(spos);
@@ -432,9 +454,29 @@ export class Nnf {
         this.setResult(frame.spos, manager.mkApp(OP_AND, [first, second], SORT_BOOL));
         return true;
       }
+      case OP_LABEL: {
+        if (!this.visitChildren(frame, [[manager.getArg(expr, 0), isPositive]])) return false;
+        const decl = manager.decls[expr];
+        if (this.isIgnoringLabels || isPositive !== manager.isLabelPositive(decl)) return true;
+        const arg = this.results.items[this.results.size - 1];
+        const literal = manager.mkLabelLit(manager.getLabelNames(decl));
+        this.setResult(frame.spos, manager.mkApp(OP_AND, [arg, literal], SORT_BOOL));
+        return true;
+      }
       default: {
-        // process_default: the quantifiers of an atom get names.
-        const named = this.namer.name(expr, this.todoDefs);
+        if (
+          this.mode !== NNF_FULL &&
+          !manager.hasQuantifierFlags[expr] &&
+          !manager.hasLabelFlags[expr]
+        ) {
+          this.skip(expr, isPositive);
+          return true;
+        }
+        const namer =
+          this.mode === NNF_FULL || (this.mode !== NNF_SKOLEM && frame.isInQuantifier)
+            ? this.nestedNamer
+            : this.namer;
+        const named = namer.name(expr, this.todoDefs);
         if (isPositive) this.results.pushOwned(named);
         else {
           this.results.push(mkNot(manager, named));
@@ -448,22 +490,28 @@ export class Nnf {
   private processQuantifier(quantifier: number, frame: Frame) {
     const manager = this.manager;
     const data = manager.getQuantifier(quantifier);
-    const isUniversal = data.isForall === frame.isPositive;
+    const isUniversal = (data.kind === QUANTIFIER_FORALL) === frame.isPositive;
     if (frame.index === 0) {
       frame.index = 1;
       if (isUniversal) {
         if (!this.visit(data.body, frame.isPositive, true)) return false;
       } else {
         const skolemized = this.skolemizer.skolemize(quantifier);
-        const isDone = this.visit(skolemized, !data.isForall, frame.isInQuantifier);
+        const isDone = this.visit(
+          skolemized,
+          data.kind !== QUANTIFIER_FORALL,
+          frame.isInQuantifier,
+        );
         manager.decRef(skolemized);
         if (!isDone) return false;
       }
     }
-    // A skolemized quantifier's result is already on the stack.
     if (!isUniversal) return true;
     const body = this.results.items[this.results.size - 1];
-    this.setResult(this.results.size - 1, manager.mkQuantifier({ ...data, isForall: true, body }));
+    this.setResult(
+      this.results.size - 1,
+      manager.mkQuantifier({ ...data, kind: QUANTIFIER_FORALL, body }),
+    );
     return true;
   }
 }

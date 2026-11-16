@@ -1,0 +1,14 @@
+(*---
+description: >-
+  ptl_to_trp parses alwaysp, the past always, but its DSNF translation raises Illegal1 on it, so LS4
+  gets no clauses and reaches no verdict.
+ref: translate/fofunctions.ml#dsnf
+outcome: unknown
+---*)
+alwaysp p & ~p
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: unknown
+---*)

@@ -1,15 +1,12 @@
 // Ported from Z3 (src/math/lp/nla_divisions.h, src/math/lp/nla_divisions.cpp), MIT license, see
-// z3-license.txt. The lemmas of nla on div, mod and /: monotonicity in the dividend and the
-// divisor, bounded divisions by numerals, and divisibility closures over a shared divisor. The
-// check is skipped while nla uses nlsat's model.
+// z3-license.txt.
 import { getEuclideanDiv, Rational } from "../rational";
 import { KIND_EQ, KIND_GE, KIND_GT, KIND_LE, KIND_LT, KIND_NE } from "./constraints";
 import { NULL_LPVAR } from "./lar-solver";
 import { LarTerm } from "./lar-term";
-import { type NlaCore } from "./nla-core";
+import type { NlaCore } from "./nla-core";
 import { LemmaBuilder, mkIneq } from "./nla-types";
 
-// A division q = x / y with r its remainder, or a divisibility fact r = mod(x, y), q = div(x, y).
 export interface Division {
   readonly quotient: number;
   readonly dividend: number;
@@ -26,7 +23,6 @@ interface DivisionValues {
   readonly quotientValue: Rational;
 }
 
-// div on integers: Euclidean division, as mpz_manager::div.
 const getIntDiv = (dividend: Rational, divisor: Rational) =>
   Rational.of(getEuclideanDiv(dividend.num, divisor.num));
 
@@ -45,7 +41,6 @@ const mkDifference = (first: number, second: number) =>
 export class Divisions {
   private idivisions: Division[] = [];
   private boundedDivisions: Division[] = [];
-  // Divisibility facts, whose quotient is div(x, y) and remainder mod(x, y).
   private divisibility: Division[] = [];
 
   constructor(private core: NlaCore) {}
@@ -73,7 +68,6 @@ export class Divisions {
     this.pushDivision(this.divisibility, division);
   }
 
-  // y1 >= y2 > 0 & 0 <= x1 <= x2 => x1/y1 <= x2/y2
   private monotonicity1(first: DivisionValues, second: DivisionValues) {
     if (
       !(
@@ -94,7 +88,6 @@ export class Divisions {
     return true;
   }
 
-  // y2 <= y1 < 0 & x1 >= x2 >= 0 => x1/y1 <= x2/y2
   private monotonicity2(first: DivisionValues, second: DivisionValues) {
     if (
       !(
@@ -115,7 +108,6 @@ export class Divisions {
     return true;
   }
 
-  // y2 <= y1 < 0 & x1 <= x2 <= 0 => x1/y1 >= x2/y2
   private monotonicity3(first: DivisionValues, second: DivisionValues) {
     if (
       !(
@@ -159,8 +151,6 @@ export class Divisions {
     };
   }
 
-  // The monotonicity lemmas of the integer divisions whose quotients are wrong, against the others.
-  // Z3's theory_lra registers no real divisions, so the rdivisions it would also check stay empty.
   private checkMonotonicity(divisions: Division[]) {
     const core = this.core;
     for (const division of divisions) {
@@ -187,8 +177,6 @@ export class Divisions {
     this.checkModCongruence();
   }
 
-  // p <= q * div(r, q) + q - 1 => div(p, q) <= div(r, q), and p >= q * div(r, q) =>
-  // div(r, q) <= div(p, q), for a bounded p, a value q and r = eval(p).
   checkBoundedDivisions() {
     const core = this.core;
     const offset = core.random();
@@ -222,7 +210,6 @@ export class Divisions {
     }
   }
 
-  // mod(factor, p) = 0 => mod(factor * k, p) = 0
   private checkModMult() {
     const core = this.core;
     const offset = core.random();
@@ -249,40 +236,40 @@ export class Divisions {
     }
   }
 
-  // y != 0 & mod(a, y) = 0 & x = c * a, for an integer constant c, => mod(x, y) = 0
   private checkLinearDivisibility() {
     const core = this.core;
     const size = this.divisibility.length;
     for (let index = 0; index < size; index++) {
       const fact = this.divisibility[index];
-      const x = fact.dividend;
-      const y = fact.divisor;
+      const dividend = fact.dividend;
+      const divisor = fact.divisor;
       if (!core.isRelevant(fact.remainder)) continue;
       if (core.val(fact.remainder).isZero()) continue;
-      const xValue = core.val(x);
-      const yValue = core.val(y);
-      if (yValue.isZero() || xValue.isZero()) continue;
+      const dividendValue = core.val(dividend);
+      const divisorValue = core.val(divisor);
+      if (divisorValue.isZero() || dividendValue.isZero()) continue;
       for (let otherIndex = 0; otherIndex < size; otherIndex++) {
         if (index === otherIndex) continue;
         const other = this.divisibility[otherIndex];
-        const a = other.dividend;
-        const y2 = other.divisor;
-        if (y2 !== y && !core.val(y2).equals(yValue)) continue;
+        const otherDividend = other.dividend;
+        const otherDivisor = other.divisor;
+        if (otherDivisor !== divisor && !core.val(otherDivisor).equals(divisorValue)) continue;
         if (!core.isRelevant(other.remainder)) continue;
         if (!core.val(other.remainder).isZero()) continue;
-        const aValue = core.val(a);
-        if (aValue.isZero()) continue;
-        const coeff = xValue.div(aValue);
+        const otherDividendValue = core.val(otherDividend);
+        if (otherDividendValue.isZero()) continue;
+        const coeff = dividendValue.div(otherDividendValue);
         if (!coeff.isInt() || coeff.isZero()) continue;
-        if (!xValue.equals(coeff.mul(aValue))) continue;
+        if (!dividendValue.equals(coeff.mul(otherDividendValue))) continue;
         const lemma = new LemmaBuilder(core);
-        lemma.addIneq(mkIneq(y, KIND_EQ, 0));
-        if (y2 !== y) lemma.addIneq(mkIneq(mkDifference(y, y2), KIND_NE, 0));
+        lemma.addIneq(mkIneq(divisor, KIND_EQ, 0));
+        if (otherDivisor !== divisor)
+          lemma.addIneq(mkIneq(mkDifference(divisor, otherDivisor), KIND_NE, 0));
         lemma.addIneq(
           mkIneq(
             new LarTerm([
-              [x, Rational.one],
-              [a, coeff.neg()],
+              [dividend, Rational.one],
+              [otherDividend, coeff.neg()],
             ]),
             KIND_NE,
             0,
@@ -295,35 +282,38 @@ export class Divisions {
     }
   }
 
-  // div(x,y) - div(s,y) = delta => mod(x,y) - mod(s,y) = (x - s) - delta*y, for y != 0
   private checkModCongruence() {
     const core = this.core;
     const size = this.divisibility.length;
     for (let index = 0; index < size; index++) {
       const fact = this.divisibility[index];
-      const y = fact.divisor;
+      const divisor = fact.divisor;
       if (!core.isRelevant(fact.remainder)) continue;
-      const yValue = core.val(y);
-      if (yValue.isZero()) continue;
+      const divisorValue = core.val(divisor);
+      if (divisorValue.isZero()) continue;
       for (let otherIndex = index + 1; otherIndex < size; otherIndex++) {
         const other = this.divisibility[otherIndex];
-        const y2 = other.divisor;
+        const otherDivisor = other.divisor;
         if (!core.isRelevant(other.remainder)) continue;
-        if (y2 !== y && !core.val(y2).equals(yValue)) continue;
+        if (otherDivisor !== divisor && !core.val(otherDivisor).equals(divisorValue)) continue;
         const delta = core.val(fact.quotient).sub(core.val(other.quotient));
         const left = core.val(fact.remainder).sub(core.val(other.remainder));
-        const right = core.val(fact.dividend).sub(core.val(other.dividend)).sub(delta.mul(yValue));
+        const right = core
+          .val(fact.dividend)
+          .sub(core.val(other.dividend))
+          .sub(delta.mul(divisorValue));
         if (left.equals(right)) continue;
         const lemma = new LemmaBuilder(core);
-        lemma.addIneq(mkIneq(y, KIND_EQ, 0));
-        if (y2 !== y) lemma.addIneq(mkIneq(mkDifference(y, y2), KIND_NE, 0));
+        lemma.addIneq(mkIneq(divisor, KIND_EQ, 0));
+        if (otherDivisor !== divisor)
+          lemma.addIneq(mkIneq(mkDifference(divisor, otherDivisor), KIND_NE, 0));
         lemma.addIneq(mkIneq(mkDifference(fact.quotient, other.quotient), KIND_NE, delta));
         const term = new LarTerm();
         term.addMonomial(Rational.one, fact.remainder);
         term.addMonomial(Rational.minusOne, other.remainder);
         term.addMonomial(Rational.minusOne, fact.dividend);
         term.addMonomial(Rational.one, other.dividend);
-        term.addMonomial(delta, y);
+        term.addMonomial(delta, divisor);
         lemma.addIneq(mkIneq(term, KIND_EQ, 0));
         return;
       }

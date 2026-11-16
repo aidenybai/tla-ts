@@ -1,9 +1,5 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
-import { check } from "../../src";
-
-const FIXTURES = join(import.meta.dirname, "../fixtures");
+import { checkFixture, getModuleLoader } from "./check-harness";
 
 describe("TLCGet matches TLC", () => {
   it.each([
@@ -13,11 +9,8 @@ describe("TLCGet matches TLC", () => {
     ["Unnamed", [5, 3, 3]],
     ["Param", [13, 4, 2]],
   ])("describes the %s specification as TLC does", async (name, counts) => {
-    const directory = join(FIXTURES, "tlc-spec");
-    const result = await check({
-      source: readFileSync(join(directory, `${name}.tla`), "utf8"),
-      config: readFileSync(join(directory, `${name}.cfg`), "utf8"),
-      loadModule: (module) => readFileSync(join(directory, `${module}.tla`), "utf8"),
+    const result = await checkFixture("tlc-spec", name, name, {
+      loadModule: getModuleLoader("tlc-spec"),
     });
     expect(result.status).toBe("success");
     expect([result.generatedStates, result.distinctStates, result.depth]).toEqual(counts);

@@ -1,8 +1,4 @@
 // Ported from Zenon's mlproof.ml, as shipped in tlapm. Copyright 2004 INRIA, see LICENSE.
-//
-// The proofs that the search builds and the checker reads. Each rule takes a fixed number of
-// arguments, or at least a fixed number, so a rule application can't have the wrong arity. The
-// rules of the TLA+ extension, Zenon's Ext, sit beside the core rules: their names don't clash.
 
 import type { Expr } from "./expr";
 import type { Definition } from "./parse";
@@ -14,7 +10,6 @@ type Five<Term> = [Term, Term, Term, Term, Term];
 type Six<Term> = [Term, Term, Term, Term, Term, Term];
 type Seven<Term> = [Term, Term, Term, Term, Term, Term, Term];
 
-// The arguments of each rule that names neither a relation nor a definition.
 interface PlainRuleArgs<Term> {
   close: [Term];
   false: [];
@@ -141,7 +136,6 @@ interface PlainRuleArgs<Term> {
   tuple_len: Five<Term>;
 }
 
-// The rules that hold for any relation that the hypotheses make reflexive or symmetric.
 interface RelationRuleArgs<Term> {
   close_refl: [Term];
   close_sym: Two<Term>;
@@ -167,14 +161,11 @@ type RelationRules<Term> = {
   };
 };
 
-// A rule application, as in Zenon's Mlproof.rule. "definition" unfolds `definition`.
 export type Rule<Term = Expr> =
   | PlainRules<Term>[PlainRuleName]
   | RelationRules<Term>[RelationRuleName]
   | { name: "definition"; definition: Definition; args: Two<Term> };
 
-// A proof of the formulas in `conclusions`: the node's rule applied to `uses`, with a subproof for
-// each of its branches.
 export interface Proof<Term = Expr> {
   conclusions: Term[];
   rule: Rule<Term>;

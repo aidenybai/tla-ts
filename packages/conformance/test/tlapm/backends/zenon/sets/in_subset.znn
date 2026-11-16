@@ -1,0 +1,50 @@
+(*---
+description: Zenon unfolds x \in SUBSET S to x \subseteq S with in_SUBSET.
+ref: zenon/ext_tla.ml#newnodes_prop
+outcome: unsat
+---*)
+;; obligation #1
+$goal (=> (/\ (TLA.in a_CONSTANTunde_xunde_a
+(TLA.SUBSET a_CONSTANTunde_Sunde_a)) (TLA.in a_CONSTANTunde_yunde_a
+a_CONSTANTunde_xunde_a)) (TLA.in a_CONSTANTunde_yunde_a
+a_CONSTANTunde_Sunde_a))
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: |-
+    unsat
+    proof (rule zenon_nnpp)
+     assume z_Ha:"(~(((a_CONSTANTunde_xunde_a \\in SUBSET(a_CONSTANTunde_Sunde_a))&(a_CONSTANTunde_yunde_a \\in a_CONSTANTunde_xunde_a))=>(a_CONSTANTunde_yunde_a \\in a_CONSTANTunde_Sunde_a)))" (is "~(?z_hc=>?z_hj)")
+     have z_Hc: "?z_hc" (is "?z_hd&?z_hh")
+     by (rule zenon_notimply_0 [OF z_Ha])
+     have z_Hk: "(~?z_hj)"
+     by (rule zenon_notimply_1 [OF z_Ha])
+     have z_Hd: "?z_hd"
+     by (rule zenon_and_0 [OF z_Hc])
+     have z_Hh: "?z_hh"
+     by (rule zenon_and_1 [OF z_Hc])
+     have z_Hl: "(a_CONSTANTunde_xunde_a \\subseteq a_CONSTANTunde_Sunde_a)" (is "?z_hl")
+     by (rule zenon_in_SUBSET_0 [of "a_CONSTANTunde_xunde_a" "a_CONSTANTunde_Sunde_a", OF z_Hd])
+     have z_Hm_z_Hl: "bAll(a_CONSTANTunde_xunde_a, (\<lambda>x. (x \\in a_CONSTANTunde_Sunde_a))) == ?z_hl" (is "?z_hm == _")
+     by (unfold subset_def)
+     have z_Hm: "?z_hm"
+     by (unfold z_Hm_z_Hl, fact z_Hl)
+     have z_Hq_z_Hm: "(\\A x:((x \\in a_CONSTANTunde_xunde_a)=>(x \\in a_CONSTANTunde_Sunde_a))) == ?z_hm" (is "?z_hq == _")
+     by (unfold bAll_def)
+     have z_Hq: "?z_hq" (is "\\A x : ?z_ht(x)")
+     by (unfold z_Hq_z_Hm, fact z_Hm)
+     have z_Hu: "?z_ht(a_CONSTANTunde_yunde_a)"
+     by (rule zenon_all_0 [of "?z_ht" "a_CONSTANTunde_yunde_a", OF z_Hq])
+     show FALSE
+     proof (rule zenon_imply [OF z_Hu])
+      assume z_Hv:"(~?z_hh)"
+      show FALSE
+      by (rule notE [OF z_Hv z_Hh])
+     next
+      assume z_Hj:"?z_hj"
+      show FALSE
+      by (rule notE [OF z_Hk z_Hj])
+     qed
+    qed
+---*)

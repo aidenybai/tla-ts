@@ -1,17 +1,13 @@
-// Worker threads that decide the obligations prove sends them, the earliest obligation first.
-
 import { TlaProverError } from "../errors";
 import { spawnWorker, type WorkerHandle } from "../worker";
-import type { DecideOptions, Decision } from "./verdict";
+import type { Backend, DecideOptions, Decision } from "./verdict";
 
 export interface DecideRequest {
-  prover: string;
+  prover: Backend;
   text: string;
   timeLimitMs: number;
 }
 
-// A backend's decision, or the message of the TlaProverError it threw, which prove turns into a
-// result.
 export type DecideResponse = Decision | { error: string };
 
 interface PendingDecision {
@@ -23,12 +19,11 @@ interface PendingDecision {
 
 export interface DecidePool {
   decide: (
-    prover: string,
+    prover: Backend,
     text: string,
     options: DecideOptions,
     priority: number,
   ) => Promise<Decision>;
-  // Rejects every decision not yet made with reason, and stops the workers.
   terminate: (reason: unknown) => void;
 }
 
@@ -37,7 +32,7 @@ export const createDecidePool = async (workerCount: number): Promise<DecidePool>
   const queue: PendingDecision[] = [];
   const running = new Map<number, PendingDecision>();
   const idle: number[] = [];
-  const state: { failure: { reason: unknown } | undefined } = { failure: undefined };
+  let failure: { reason: unknown } | undefined;
   const dispatch = () => {
     while (idle.length > 0 && queue.length > 0) {
       const earliest = queue.reduce(
@@ -60,15 +55,15 @@ export const createDecidePool = async (workerCount: number): Promise<DecidePool>
     dispatch();
   };
   const terminate = (reason: unknown) => {
-    if (state.failure) return;
-    state.failure = { reason };
+    if (failure) return;
+    failure = { reason };
     [...queue.splice(0), ...running.values()].forEach((decision) => decision.reject(reason));
     running.clear();
     workers.forEach((worker) => worker.terminate());
   };
   workers.push(
     ...(await Promise.all(
-      Array.from({ length: workerCount }, (_, index) =>
+      Array.from({ length: workerCount }, (_value, index) =>
         spawnWorker(
           new URL("./prove-worker.js", import.meta.url),
           (message) => onResponse(index, message),
@@ -81,7 +76,7 @@ export const createDecidePool = async (workerCount: number): Promise<DecidePool>
   return {
     decide: (prover, text, options, priority) =>
       new Promise((resolve, reject) => {
-        if (state.failure) return reject(state.failure.reason);
+        if (failure) return reject(failure.reason);
         queue.push({
           request: { prover, text, timeLimitMs: options.timeLimitMs },
           priority,

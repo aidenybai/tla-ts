@@ -1,0 +1,27 @@
+(*---
+description: merge of model_value, a ModelValue, and record_nested, a RecordValue.
+ref: tlc2/module/TLC.java#CombineFcn
+features:
+  - value-matrix
+flags:
+  - expression
+contexts:
+  - assume
+outcome: any
+config: |
+  CONSTANT mv = mv
+---*)
+---- MODULE merge_model_value__record_nested ----
+EXTENDS Integers, Sequences, FiniteSets, Bags, TLC
+CONSTANT mv
+Test == PrintT((mv) @@ ([a |-> [b |-> <<1>>]]))
+====
+
+(*--- recorded
+all:
+  exit: 10
+  transcript: |-
+    2105:1 Evaluating assumption line 18, col 8 to line 18, col 11 of module merge_model_value__record_nested failed.
+    2169:0 The first argument of @@ should be a function, but instead it is:
+    mv
+---*)

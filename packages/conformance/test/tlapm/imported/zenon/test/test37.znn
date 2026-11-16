@@ -1,0 +1,89 @@
+(*---
+description: Zenon's own test zenon/test/test37.znn, which Zenon must prove.
+ref: zenon/test/test37.znn
+features:
+  - zenon-test
+outcome: unsat
+---*)
+;  Copyright 2006 INRIA
+;  $Id: test37.znn,v 1.7 2011-12-28 16:43:33 doligez Exp $
+
+# file: species_general_additive_law.foc
+# species: partially_ordered_additive_monoid
+# property: inf_idempotent / __lemma_1_1
+
+;       (* to be proved *)
+; (Is_true ((abst_equal (abst_plus x abst_zero ) y ))
+; )
+; By
+;   abst_equal_transitive: (x: abst_T) (y: abst_T) (z: abst_T)
+;   ((Is_true ((abst_equal  x y)) ))-> 
+;     ((Is_true ((abst_equal  y z)) ))-> 
+;       (Is_true ((abst_equal  x z)) )
+;   abst_zero_is_neutral: (x: abst_T)
+;   (and (Is_true ((abst_equal  (abst_plus  x abst_zero) x)) ) (Is_true
+;   ((abst_equal  (abst_plus  abst_zero x) x)) )) H_1_1: (Is_true
+;   ((abst_equal x y )) )
+; By def 
+; (* Qed *).
+
+$sig abst_equal ("zenon_U" "zenon_U") "bool"
+
+$hyp "abst_equal_transitive"
+(A. ((x) (A. ((y) (A. ((z)
+  (=> (Is_true (abst_equal x y))
+      (=> (Is_true (abst_equal y z))
+          (Is_true (abst_equal x z))))))))))
+
+$hyp "abst_zero_is_neutral"
+(A. ((x) (/\ (Is_true (abst_equal (abst_plus x abst_zero) x))
+             (Is_true (abst_equal (abst_plus abst_zero x) x)))))
+
+$hyp "H_1_1"
+(Is_true (abst_equal x y))
+
+$goal (Is_true (abst_equal (abst_plus x abst_zero) y))
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: |-
+    unsat
+    proof (rule zenon_nnpp)
+     have z_Ha:"(\\A x:(\\A y:(\\A z:(Is_true(abst_equal(x, y))=>(Is_true(abst_equal(y, z))=>Is_true(abst_equal(x, z)))))))" (is "\\A x : ?z_hq(x)")
+     using abst_equal_transitive by blast
+     have z_Hb:"(\\A x:(Is_true(abst_equal(abst_plus(x, abst_zero), x))&Is_true(abst_equal(abst_plus(abst_zero, x), x))))" (is "\\A x : ?z_hz(x)")
+     using abst_zero_is_neutral by blast
+     have z_Hc:"Is_true(abst_equal(x, y))" (is "?z_hc")
+     using H_1_1 by blast
+     assume z_Hd:"(~Is_true(abst_equal(abst_plus(x, abst_zero), y)))" (is "~?z_hba")
+     have z_Hbc: "?z_hq(abst_plus(x, abst_zero))" (is "\\A x : ?z_hbd(x)")
+     by (rule zenon_all_0 [of "?z_hq" "abst_plus(x, abst_zero)", OF z_Ha])
+     have z_Hbe: "?z_hbd(x)" (is "\\A x : ?z_hbf(x)")
+     by (rule zenon_all_0 [of "?z_hbd" "x", OF z_Hbc])
+     have z_Hbg: "?z_hbf(y)" (is "?z_hs=>?z_hbh")
+     by (rule zenon_all_0 [of "?z_hbf" "y", OF z_Hbe])
+     show FALSE
+     proof (rule zenon_imply [OF z_Hbg])
+      assume z_Hbi:"(~?z_hs)"
+      have z_Hr: "?z_hz(x)" (is "_&?z_hw")
+      by (rule zenon_all_0 [of "?z_hz" "x", OF z_Hb])
+      have z_Hs: "?z_hs"
+      by (rule zenon_and_0 [OF z_Hr])
+      show FALSE
+      by (rule notE [OF z_Hbi z_Hs])
+     next
+      assume z_Hbh:"?z_hbh"
+      show FALSE
+      proof (rule zenon_imply [OF z_Hbh])
+       assume z_Hbj:"(~?z_hc)"
+       show FALSE
+       by (rule notE [OF z_Hbj z_Hc])
+      next
+       assume z_Hba:"?z_hba"
+       show FALSE
+       by (rule notE [OF z_Hd z_Hba])
+      qed
+     qed
+    qed
+---*)

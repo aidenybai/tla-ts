@@ -1,0 +1,13 @@
+(*---
+description: ptl_to_trp skips a ; comment to the end of the line.
+ref: translate/folex.mll#lexer
+outcome: unsat
+---*)
+; a comment
+p & ~p ; another
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: unsat
+---*)

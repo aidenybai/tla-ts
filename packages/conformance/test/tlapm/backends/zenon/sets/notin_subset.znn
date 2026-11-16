@@ -1,0 +1,38 @@
+(*---
+description: Zenon proves S \in SUBSET S with notin_SUBSET.
+ref: zenon/ext_tla.ml#newnodes_prop
+outcome: unsat
+---*)
+;; obligation #1
+$goal (TLA.in a_CONSTANTunde_Sunde_a
+(TLA.SUBSET a_CONSTANTunde_Sunde_a))
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: |-
+    unsat
+    proof (rule zenon_nnpp)
+     assume z_Ha:"(~(a_CONSTANTunde_Sunde_a \\in SUBSET(a_CONSTANTunde_Sunde_a)))" (is "~?z_hb")
+     have z_He: "(~(a_CONSTANTunde_Sunde_a \\subseteq a_CONSTANTunde_Sunde_a))" (is "~?z_hf")
+     by (rule zenon_notin_SUBSET_0 [of "a_CONSTANTunde_Sunde_a" "a_CONSTANTunde_Sunde_a", OF z_Ha])
+     have z_Hg_z_He: "(~bAll(a_CONSTANTunde_Sunde_a, (\<lambda>x. (x \\in a_CONSTANTunde_Sunde_a)))) == (~?z_hf)" (is "?z_hg == ?z_he")
+     by (unfold subset_def)
+     have z_Hg: "?z_hg" (is "~?z_hh")
+     by (unfold z_Hg_z_He, fact z_He)
+     have z_Hl_z_Hg: "(~(\\A x:((x \\in a_CONSTANTunde_Sunde_a)=>(x \\in a_CONSTANTunde_Sunde_a)))) == ?z_hg" (is "?z_hl == _")
+     by (unfold bAll_def)
+     have z_Hl: "?z_hl" (is "~(\\A x : ?z_ho(x))")
+     by (unfold z_Hl_z_Hg, fact z_Hg)
+     have z_Hp: "(\\E x:(~((x \\in a_CONSTANTunde_Sunde_a)=>(x \\in a_CONSTANTunde_Sunde_a))))" (is "\\E x : ?z_hr(x)")
+     by (rule zenon_notallex_0 [of "?z_ho", OF z_Hl])
+     have z_Hs: "?z_hr((CHOOSE x:(~((x \\in a_CONSTANTunde_Sunde_a)=>(x \\in a_CONSTANTunde_Sunde_a)))))" (is "~(?z_hu=>_)")
+     by (rule zenon_ex_choose_0 [of "?z_hr", OF z_Hp])
+     have z_Hu: "?z_hu"
+     by (rule zenon_notimply_0 [OF z_Hs])
+     have z_Hv: "(~?z_hu)"
+     by (rule zenon_notimply_1 [OF z_Hs])
+     show FALSE
+     by (rule notE [OF z_Hv z_Hu])
+    qed
+---*)

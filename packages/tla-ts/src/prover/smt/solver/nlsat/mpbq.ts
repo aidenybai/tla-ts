@@ -1,7 +1,4 @@
-// Ported from Z3 (src/util/mpbq.{h,cpp}), MIT license, see z3-license.txt. Binary rationals
-// num/2^k, normalized so that k is 0 or num is odd. Like Z3, mul, div2 and power skip normalizing
-// when a normalized input cannot need it, so an unnormalized input stays unnormalized. That
-// matters because magnitudes and is_int read k.
+// Ported from Z3 (src/util/mpbq.{h,cpp}), MIT license, see z3-license.txt.
 import { Rational } from "../rational";
 
 const getPowerOfTwoMultiple = (value: bigint) => {
@@ -15,8 +12,25 @@ const getPowerOfTwoMultiple = (value: bigint) => {
   return count;
 };
 
-// mpz log2: the position of the most significant bit of |value|.
 export const getLog2 = (value: bigint) => (value < 0n ? -value : value).toString(2).length - 1;
+
+// The exact n-th root, or else the ceiling of the real root.
+const getIntegerRoot = (value: bigint, n: number) => {
+  if (value === 0n || n === 1) return { value, isExact: true };
+  const exponent = BigInt(n);
+  const magnitude = value < 0n ? -value : value;
+  let low = 0n;
+  let high = 1n;
+  while (high ** exponent <= magnitude) high *= 2n;
+  while (high - low > 1n) {
+    const middle = (low + high) / 2n;
+    if (middle ** exponent <= magnitude) low = middle;
+    else high = middle;
+  }
+  const isExact = low ** exponent === magnitude;
+  if (value > 0n) return { value: isExact ? low : low + 1n, isExact };
+  return { value: -low, isExact };
+};
 
 export class Mpbq {
   private constructor(
@@ -33,8 +47,6 @@ export class Mpbq {
     return new Mpbq(num >> BigInt(shift), k - shift);
   }
 
-  // to_mpbq: q when its denominator is a power of two, else the binary rational with q's numerator
-  // over 2^(log2(den) + 1), which is not equal to q.
   static fromRational(value: Rational) {
     if (value.den === 1n) return { value: Mpbq.of(value.num), isExact: true };
     const log2 = getLog2(value.den);
@@ -77,14 +89,13 @@ export class Mpbq {
     return Mpbq.of(aligned[0] - aligned[1], aligned[2]);
   }
 
-  // mul: normalized only when a factor is an integer.
+  // Like Z3, mul, div2 and power leave some results unnormalized, and magnitudes and isInt read k.
   mul(other: Mpbq) {
     const product = new Mpbq(this.num * other.num, this.k + other.k);
     return this.k === 0 || other.k === 0 ? Mpbq.of(product.num, product.k) : product;
   }
 
-  // mul(a, b, b): Z3 reads b's k after writing the product's, so it normalizes only when a is an
-  // integer.
+  // Z3's mul(a, b, b) reads b's k after writing the product's k, so only an integer a normalizes.
   mulIntoOther(other: Mpbq) {
     const product = new Mpbq(this.num * other.num, this.k + other.k);
     return this.k === 0 ? Mpbq.of(product.num, product.k) : product;
@@ -115,7 +126,6 @@ export class Mpbq {
     return this.toRational().compare(other);
   }
 
-  // lt_1div2k: this < 1/2^k.
   isLessThanOneDiv2k(k: number) {
     if (this.num <= 0n) return true;
     if (this.k <= k) return false;
@@ -130,6 +140,33 @@ export class Mpbq {
     return this.isInt ? this.num : (this.num >> BigInt(this.k)) + 1n;
   }
 
+  rootLower(n: number) {
+    const root = getIntegerRoot(this.num, n);
+    const num = root.isExact ? root.value : root.value - 1n;
+    const k = Math.floor(this.k / n);
+    return Mpbq.of(num, this.k % n === 0 || num < 0n ? k : k + 1);
+  }
+
+  rootUpper(n: number) {
+    const root = getIntegerRoot(this.num, n);
+    const k = Math.floor(this.k / n);
+    return Mpbq.of(root.value, this.k % n === 0 || root.value >= 0n ? k : k + 1);
+  }
+
+  toDecimal(precision: number) {
+    if (this.isInt) return `${this.num}`;
+    const scale = 1n << BigInt(this.k);
+    const magnitude = this.num < 0n ? -this.num : this.num;
+    const digits: string[] = [];
+    let remainder = magnitude % scale;
+    for (let index = 0; index < precision && remainder !== 0n; index++) {
+      digits.push(`${(remainder * 10n) / scale}`);
+      remainder = (remainder * 10n) % scale;
+    }
+    const sign = this.num < 0n ? "-" : "";
+    return `${sign}${magnitude / scale}.${digits.join("")}${remainder === 0n ? "" : "?"}`;
+  }
+
   toString() {
     return this.k === 0
       ? `${this.num}`
@@ -139,8 +176,6 @@ export class Mpbq {
   }
 }
 
-// refine_upper: l < q < u, where q is not a binary rational. Bisects until the midpoint is above q,
-// which becomes the new u.
 export const refineUpper = (value: Rational, lower: Mpbq, upper: Mpbq) => {
   let currentLower = lower;
   while (true) {
@@ -150,7 +185,6 @@ export const refineUpper = (value: Rational, lower: Mpbq, upper: Mpbq) => {
   }
 };
 
-// refine_lower: as refine_upper, until the midpoint is below q, which becomes the new l.
 export const refineLower = (value: Rational, lower: Mpbq, upper: Mpbq) => {
   let currentUpper = upper;
   while (true) {

@@ -1,0 +1,12 @@
+(*---
+description: ptl_to_trp does not read the TLA+ spelling [], so LS4 reaches no verdict.
+ref: translate/folex.mll#lexer
+outcome: unknown
+---*)
+[]p & ~p
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: unknown
+---*)

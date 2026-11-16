@@ -1,16 +1,4 @@
-// Ported from Isabelle2025's Pure/term.ML. Copyright (c) 1986-2025 University of Cambridge,
-// Technische Universitaet Muenchen, and contributors, see LICENSE.
-//
-// Simply typed lambda terms with de Bruijn indices. Functions that rebuild a term return the
-// very same object when nothing changes, as Isabelle's Same.SAME does, so pointer equality stays a
-// fast path.
-//
-// Unlike Isabelle, applications, abstractions and compound types record what their subterms
-// contain when built: the largest index (maxidx), a bound above every loose bound variable (loose),
-// whether a schematic variable, a beta redex or an eta redex occurs, and a bit for the name of each
-// free variable (flags). A term has every flag of its subterms. Traversals use this to skip
-// subterms they would return unchanged, which gives the same results while touching only the parts
-// that change.
+// Ported from Isabelle2025's Pure/term.ML. Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
 
 import { TlaIsabelleError } from "../../../errors";
 
@@ -26,9 +14,7 @@ export type Typ =
   | { readonly kind: "TFree"; readonly name: string; readonly sort: Sort }
   | { readonly kind: "TVar"; readonly name: string; readonly index: number; readonly sort: Sort };
 
-// The fields of every kind of term. A term has all of them, with the ones its kind doesn't use
-// undefined, and the constructors below list them in this order. So all terms share one object
-// layout, and V8 compiles the many switches on kind to monomorphic loads.
+// Every term lists every field in this order, unused ones undefined, so V8 sees one object layout.
 interface TermFields {
   readonly name: string;
   readonly type: Typ;
@@ -79,7 +65,6 @@ export const maxidxOfTerm = (term: Term, maxidx = -1): number => {
   }
 };
 
-// The bound on loose bound variables: every one is below it.
 const looseOf = (term: Term) =>
   term.kind === "Bound"
     ? term.index + 1
@@ -87,7 +72,6 @@ const looseOf = (term: Term) =>
       ? term.loose
       : 0;
 
-// One of the 28 bits above the others, picked by a cheap hash of the name.
 const freeBit = (name: string) =>
   8 <<
   ((name.length * 31 + (name.charCodeAt(0) | 0) * 7 + (name.charCodeAt(name.length - 1) | 0)) % 28);
@@ -101,7 +85,6 @@ export const flagsOf = (term: Term) =>
         ? term.flags
         : 0;
 
-// Whether a subterm aconv to pattern could occur in term.
 export const mayOccur = (pattern: Term, term: Term) => (flagsOf(pattern) & ~flagsOf(term)) === 0;
 
 export const mkType = (name: string, args: readonly Typ[] = []): Typ => ({
@@ -198,7 +181,6 @@ export const propT = mkType("prop");
 
 export const funT = (domain: Typ, range: Typ) => mkType("fun", [domain, range]);
 
-// op --->
 export const funTs = (domains: readonly Typ[], range: Typ) =>
   domains.reduceRight((result, domain) => funT(domain, result), range);
 
@@ -238,8 +220,6 @@ export const eqTyp = (left: Typ, right: Typ): boolean => {
   );
 };
 
-// fastype_of1: the type of a term, with minimal checking. Types holds the types of the loose
-// bound variables, innermost first.
 export const fastypeOf1 = (types: readonly Typ[], term: Term): Typ => {
   switch (term.kind) {
     case "Const":
@@ -309,14 +289,12 @@ export const stripAllVars = (term: Term): { name: string; type: Typ }[] =>
     ? [{ name: term.arg.name, type: term.arg.type }, ...stripAllVars(term.arg.body)]
     : [];
 
-// Rebuilds an application, keeping the original object when neither part changed.
 export const updateApp = (term: App, fun: Term, arg: Term): Term =>
   fun === term.fun && arg === term.arg ? term : mkApp(fun, arg);
 
 export const updateAbs = (term: Abs, body: Term, type: Typ = term.type): Term =>
   body === term.body && type === term.type ? term : mkAbs(term.name, type, body);
 
-// incr_bv: increments the bound variables at or above level by increment.
 const incrBvAt = (increment: number, level: number, term: Term): Term => {
   if (looseOf(term) <= level) return term;
   switch (term.kind) {
@@ -340,7 +318,6 @@ const incrBv = (increment: number, level: number, term: Term) =>
 
 export const incrBoundvars = (increment: number, term: Term) => incrBv(increment, 0, term);
 
-// loose_bvar: whether term has a loose bound variable at level or beyond.
 const looseBvar = (term: Term, level: number) => looseOf(term) > level;
 
 export const looseBvar1 = (term: Term, level: number): boolean => {
@@ -360,7 +337,6 @@ export const looseBvar1 = (term: Term, level: number): boolean => {
 export const isOpen = (term: Term) => looseBvar(term, 0);
 export const isDependent = (term: Term) => looseBvar1(term, 0);
 
-// loose_bnos: the loose bound variables, in Isabelle's insertion order.
 export const looseBnos = (term: Term): number[] => {
   const numbers: number[] = [];
   const add = (current: Term, level: number) => {
@@ -384,7 +360,6 @@ export const looseBnos = (term: Term): number[] => {
   return numbers;
 };
 
-// subst_bounds: Bound i becomes args[i]; loose bound variables beyond shift down.
 const substBoundsAt = (args: readonly Term[], level: number, term: Term): Term => {
   if (looseOf(term) <= level) return term;
   switch (term.kind) {
@@ -438,7 +413,6 @@ export const aconv = (left: Term, right: Term): boolean => {
   }
 };
 
-// Structural equality including the names of abstractions, ML's (op =) on terms.
 export const eqTerm = (left: Term, right: Term): boolean => {
   if (left === right) return true;
   switch (left.kind) {
@@ -456,7 +430,6 @@ export const eqTerm = (left: Term, right: Term): boolean => {
   }
 };
 
-// could_unify: a fast filter, false only if the normal terms can't unify.
 const matchRands = (left: Term, right: Term): boolean => {
   let currentLeft = left;
   let currentRight = right;
@@ -482,7 +455,6 @@ export const couldUnify = (left: Term, right: Term): boolean => {
   return false;
 };
 
-// abstract_over: replaces the occurrences of pattern with Bound, ready to become an Abs body.
 const abstractAt = (pattern: Term, level: number, term: Term): Term => {
   if (!mayOccur(pattern, term)) return term;
   if (aconv(pattern, term)) return mkBound(level);
@@ -501,15 +473,6 @@ const abstractAt = (pattern: Term, level: number, term: Term): Term => {
 };
 
 export const abstractOver = (pattern: Term, body: Term) => abstractAt(pattern, 0, body);
-
-const baseName = (name: string) => name.slice(name.lastIndexOf(".") + 1);
-
-export const termName = (term: Term) =>
-  term.kind === "Const"
-    ? baseName(term.name)
-    : term.kind === "Free" || term.kind === "Var"
-      ? term.name
-      : "uu";
 
 export const mapTypes = (mapType: (type: Typ) => Typ, term: Term): Term => {
   const visit = (current: Term): Term => {
@@ -555,7 +518,6 @@ const foldAterms = <State>(
   }
 };
 
-// fold_aterms over the schematic variables only, skipping the subterms without one.
 export const foldVars = <State>(
   visit: (variable: Var, state: State) => State,
   term: Term,
@@ -628,7 +590,6 @@ export const existsType = (predicate: (type: Typ) => boolean, term: Term): boole
 const sameVar = (left: Var, right: Var) =>
   left.name === right.name && left.index === right.index && eqTyp(left.type, right.type);
 
-// add_vars: the schematic variables, latest first, as Isabelle's insert builds the list.
 export const addVars = (term: Term, vars: Var[]): Var[] =>
   foldVars(
     (current, result: Var[]) =>
@@ -647,7 +608,6 @@ export const addFreeNames = (term: Term, names: string[]): string[] =>
     names,
   );
 
-// match_bvs: the pairs of corresponding abstraction names while two terms look alike.
 const matchBvs = (left: Term, right: Term, pairs: [string, string][]): [string, string][] => {
   if (left.kind === "Abs" && right.kind === "Abs") {
     const added: [string, string][] =
@@ -676,7 +636,6 @@ const mapAbsVars = (rename: (name: string) => string, term: Term): Term => {
   }
 };
 
-// rename_abs: renames the abstractions of term after those of obj where pat matches obj.
 export const renameAbs = (pattern: Term, object: Term, term: Term): Term | undefined => {
   const renaming = new Map<string, string>();
   matchBvs(pattern, object, []).forEach(([from, to]) => {

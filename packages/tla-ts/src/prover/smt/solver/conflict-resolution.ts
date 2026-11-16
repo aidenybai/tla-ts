@@ -1,6 +1,4 @@
 // Ported from Z3 (src/smt/smt_conflict_resolution.cpp), MIT license, see z3-license.txt.
-// First-UIP conflict resolution with lemma minimization. Equalities in a conflict are explained
-// by walking the transitivity branches of the E-graph down to literals.
 import { BinJustification, type BJustification } from "./clause";
 import type { Context } from "./context";
 import { Enode, EqJustification, Justification } from "./enode";
@@ -15,14 +13,12 @@ export class ConflictResolution {
   private todoEqs: Enode[] = [];
   private processedEqs = new Set<string>();
   lemma: Literal[] = [];
-  // m_lemma_atoms: the atoms of the lemma, which it holds until the lemma is a clause.
   readonly lemmaAtoms: RefVector;
   private conflictLevel = 0;
   newScopeLevel = 0;
   lemmaIscopeLevel = 0;
   private unmark: BoolVar[] = [];
-  // m_lvl_set: a level_approx_set, whose bit level mod 32 stands for each level of the lemma, so
-  // other levels can pass for them.
+  unsatCore: Literal[] = [];
   private levelSet = 0;
   private minimizationStack: BoolVar[] = [];
 
@@ -34,8 +30,6 @@ export class ConflictResolution {
     this.antecedents.push(literal);
   }
 
-  // mark_eq: the pair starts with the node whose owner has the smaller id, which fixes the order in
-  // which eq2literals walks the two branches.
   markEq(first: Enode, second: Enode) {
     if (first === second) return;
     const ids = this.context.manager.ids;
@@ -140,6 +134,17 @@ export class ConflictResolution {
     return result;
   }
 
+  eqToLiterals(first: Enode, second: Enode) {
+    const saved = this.antecedents;
+    this.antecedents = [];
+    this.markEq(first, second);
+    this.processJustifications();
+    const result = this.antecedents;
+    this.antecedents = saved;
+    this.unmarkJustifications(0);
+    return result;
+  }
+
   private getJustificationMaxLevel(justification: Justification) {
     let result = 0;
     for (const literal of this.justificationToLiterals(justification))
@@ -192,7 +197,6 @@ export class ConflictResolution {
       this.processAntecedent(literal, marks);
   }
 
-  // Returns false when the conflict is at the search level, so the problem is unsat.
   resolve(conflict: BJustification, notLiteral: Literal | null) {
     const context = this.context;
     this.lemma = [];
@@ -200,11 +204,13 @@ export class ConflictResolution {
     let justification = conflict;
     let consequent = notLiteral !== null ? negate(notLiteral) : context.falseLiteral;
     this.conflictLevel = this.getMaxLevel(consequent, justification);
-    if (this.conflictLevel <= context.searchLevel) return false;
+    if (this.conflictLevel <= context.searchLevel) {
+      if (context.isTrackingAssumptions()) this.mkUnsatCore(conflict, notLiteral);
+      return false;
+    }
     const assigned = context.assignedLiterals;
     let index = assigned.length - 1;
     while (index > 0 && context.getAssignLevel(assigned[index]) > this.conflictLevel) index--;
-    // The first slot holds the negated first unique implication point, found below.
     this.lemma.push(context.falseLiteral);
     this.lemmaAtoms.push(-1);
     const marks = { count: 0 };
@@ -243,6 +249,68 @@ export class ConflictResolution {
     this.lemmaAtoms.set(0, context.boolVar2Expr[getVar(consequent)]);
     this.finalizeResolve();
     return true;
+  }
+
+  private processAntecedentForUnsatCore(antecedent: Literal) {
+    const context = this.context;
+    const boolVar = getVar(antecedent);
+    if (!context.isMarked(boolVar)) {
+      context.setMark(boolVar, true);
+      this.unmark.push(boolVar);
+    }
+    if (context.isAssumption(boolVar)) this.unsatCore.push(antecedent);
+  }
+
+  private mkUnsatCore(conflict: BJustification, notLiteral: Literal | null) {
+    const context = this.context;
+    this.unsatCore = [];
+    this.unmark = [];
+    const searchLevel = context.searchLevel;
+    const assigned = context.assignedLiterals;
+    let justification = conflict;
+    let consequent = notLiteral !== null ? negate(notLiteral) : context.falseLiteral;
+    let index = assigned.length - 1;
+    while (index > 0 && context.getAssignLevel(assigned[index]) > this.conflictLevel) index--;
+    if (notLiteral !== null) this.processAntecedentForUnsatCore(consequent);
+    while (assigned.length > 0) {
+      if (justification instanceof Justification)
+        for (const literal of this.justificationToLiteralsCore(justification))
+          this.processAntecedentForUnsatCore(literal);
+      else if (justification instanceof BinJustification)
+        this.processAntecedentForUnsatCore(justification.literal);
+      else if (justification !== null && justification !== "axiom") {
+        const clauses = context.clauses;
+        const numLiterals = clauses.getNumLiterals(justification);
+        let start = 0;
+        if (consequent !== context.falseLiteral) {
+          if (clauses.getLiteral(justification, 0) === consequent) start = 1;
+          else {
+            this.processAntecedentForUnsatCore(negate(clauses.getLiteral(justification, 0)));
+            start = 2;
+          }
+        }
+        for (let literalIndex = start; literalIndex < numLiterals; literalIndex++)
+          this.processAntecedentForUnsatCore(
+            negate(clauses.getLiteral(justification, literalIndex)),
+          );
+        const clauseJustification = clauses.getJustification(justification);
+        if (clauseJustification !== null)
+          for (const literal of this.justificationToLiteralsCore(clauseJustification))
+            this.processAntecedentForUnsatCore(literal);
+      }
+      if (context.isAssumption(getVar(consequent))) this.unsatCore.push(consequent);
+      while (
+        index >= 0 &&
+        context.getAssignLevel(assigned[index]) >= searchLevel &&
+        !context.isMarked(getVar(assigned[index]))
+      )
+        index--;
+      if (index < 0 || context.getAssignLevel(assigned[index]) < searchLevel) break;
+      consequent = assigned[index];
+      justification = context.justifications[getVar(consequent)];
+      index--;
+    }
+    this.resetUnmark(0, 0);
   }
 
   private finalizeResolve() {

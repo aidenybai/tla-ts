@@ -1,9 +1,16 @@
-// Ported from Z3 (src/ast/rewriter/der.cpp), MIT license, see z3-license.txt. Destructive equality
-// resolution: a quantified variable that a literal of the body defines is replaced by its
-// definition.
-import { KIND_QUANTIFIER, KIND_VAR, OP_EQ, SORT_BOOL, type AstManager } from "./ast";
+// Ported from Z3 (src/ast/rewriter/der.cpp), MIT license, see z3-license.txt.
+import {
+  KIND_QUANTIFIER,
+  KIND_VAR,
+  OP_EQ,
+  SORT_BOOL,
+  type AstManager,
+  QUANTIFIER_FORALL,
+  QUANTIFIER_LAMBDA,
+} from "./ast";
 import { flattenAndVector, flattenOrVector } from "./ast-util";
 import { RefVector } from "./ref-vector";
+import { RewriterTpl } from "./rewriter-tpl";
 import { collectUsedVars, elimUnusedVars, VarSubst } from "./var-subst";
 
 interface VarDefinition {
@@ -11,7 +18,6 @@ interface VarDefinition {
   definition: number;
 }
 
-// der::is_var_diseq for a universal quantifier and der::is_var_eq for an existential one.
 const getVarDefinition = (
   manager: AstManager,
   literal: number,
@@ -60,8 +66,6 @@ const getVarDefinition = (
 export const isOccurring = (manager: AstManager, index: number, expr: number) =>
   collectUsedVars(manager, expr, index + 1)[index];
 
-// der_sort_vars: the definitions in an order where each only uses the ones before it, dropping the
-// definitions on a cycle.
 const getEliminationOrder = (manager: AstManager, definitions: (number | undefined)[]) => {
   for (let index = 0; index < definitions.length; index++) {
     const definition = definitions[index];
@@ -94,8 +98,7 @@ const getEliminationOrder = (manager: AstManager, definitions: (number | undefin
       return;
     }
     for (let index = 0; index < manager.getNumArgs(expr); index++) {
-      const arg = manager.getArg(expr, index);
-      visit(arg);
+      visit(manager.getArg(expr, index));
     }
     done.add(expr);
   };
@@ -105,8 +108,6 @@ const getEliminationOrder = (manager: AstManager, definitions: (number | undefin
   return order;
 };
 
-// der: destructive equality resolution. Its var_subst keeps the cache of its last substitution, and
-// m_map, m_subst_map and m_new_args keep their expressions, until der next fills them.
 export class Der {
   private subst: VarSubst;
   private map: RefVector;
@@ -120,8 +121,6 @@ export class Der {
     this.newArgs = new RefVector(manager);
   }
 
-  // der::operator(): reduces until nothing changes, then drops the eliminated variables. The result
-  // is a temporary.
   apply(expr: number) {
     const manager = this.manager;
     let current = expr;
@@ -132,7 +131,6 @@ export class Der {
     return current === expr ? expr : elimUnusedVars(manager, current);
   }
 
-  // ~der.
   release() {
     this.newArgs.reset();
     this.substMap.reset();
@@ -140,23 +138,22 @@ export class Der {
     this.subst.release();
   }
 
-  // der::reduce1.
   private reduce(expr: number) {
     const manager = this.manager;
     const data = manager.getQuantifier(expr);
+    if (data.kind === QUANTIFIER_LAMBDA) return expr;
     const count = data.sorts.length;
-    const single = getVarDefinition(manager, data.body, count, data.isForall);
+    const single = getVarDefinition(manager, data.body, count, data.kind === QUANTIFIER_FORALL);
     if (
       single !== undefined &&
       !manager.hasQuantifierFlags[single.definition] &&
       !isOccurring(manager, single.index, single.definition)
     )
-      return data.isForall ? manager.falseExpr : manager.trueExpr;
-    // The literals vector holds its expressions until reduce1 returns, and releases them in order.
+      return data.kind === QUANTIFIER_FORALL ? manager.falseExpr : manager.trueExpr;
     const vector = new RefVector(manager);
     manager.withoutTemporaries(() => {
       vector.push(data.body);
-      if (data.isForall) flattenOrVector(manager, vector);
+      if (data.kind === QUANTIFIER_FORALL) flattenOrVector(manager, vector);
       else flattenAndVector(manager, vector);
     });
     const result = this.reduceLiterals(expr, vector.items);
@@ -164,7 +161,6 @@ export class Der {
     return result;
   }
 
-  // The rest of der::reduce1, on the flattened literals of the body.
   private reduceLiterals(expr: number, literals: number[]) {
     const manager = this.manager;
     const data = manager.getQuantifier(expr);
@@ -172,53 +168,67 @@ export class Der {
     const map = this.map;
     map.reset();
     const positions = literals.map((literal) => {
-      const found = getVarDefinition(manager, literal, count, data.isForall);
+      const found = getVarDefinition(manager, literal, count, data.kind === QUANTIFIER_FORALL);
       if (found === undefined || (map.items[found.index] ?? -1) !== -1) return -1;
       if (map.size <= found.index) map.resize(found.index + 1);
       map.set(found.index, found.definition);
       return found.index;
     });
     if (positions.every((position) => position === -1)) return expr;
-    // der_sort_vars drops the definitions on a cycle from m_map.
     const definitions = map.items.map((definition) => (definition === -1 ? undefined : definition));
     const order = getEliminationOrder(manager, definitions);
     definitions.forEach((definition, index) => {
       if (definition === undefined && map.items[index] !== -1) map.set(index, -1);
     });
     if (order.length === 0) return expr;
-    // create_substitution: (:var i) becomes the entry at size - i - 1, with the definitions before it
-    // in the order substituted.
     const size = map.size;
     const substMap = this.substMap;
     substMap.reset();
     substMap.resize(size);
     for (const index of order)
       substMap.setOwned(size - index - 1, this.subst.apply(map.items[index], substMap.items));
-    // apply_substitution: m_new_args holds the kept literals, and the junction of them is held
-    // until it returns.
     this.newArgs.reset();
     literals.forEach((literal, position) => {
       const index = positions[position];
       if (index === -1 || map.items[index] === -1) this.newArgs.push(literal);
     });
     const kept = this.newArgs.items;
-    const empty = data.isForall ? manager.falseExpr : manager.trueExpr;
+    const empty = data.kind === QUANTIFIER_FORALL ? manager.falseExpr : manager.trueExpr;
     const combined = manager.withoutTemporaries(() =>
       kept.length === 0
         ? empty
         : kept.length === 1
           ? kept[0]
-          : data.isForall
+          : data.kind === QUANTIFIER_FORALL
             ? manager.mkOr(kept)
             : manager.mkAnd(kept),
     );
     manager.incRef(combined);
     const body = this.subst.apply(combined, substMap.items);
     const patterns = data.patterns.map((pattern) => this.subst.apply(pattern, substMap.items));
-    const result = manager.mkQuantifier({ ...data, body, patterns });
-    for (const pattern of patterns) manager.releaseLater(pattern);
+    const noPatterns = data.noPatterns.map((noPattern) =>
+      this.subst.apply(noPattern, substMap.items),
+    );
+    const result = manager.mkQuantifier({ ...data, body, patterns, noPatterns });
+    for (const pattern of [...patterns, ...noPatterns]) manager.releaseLater(pattern);
     manager.releaseLater(body);
     manager.decRef(combined);
     return result;
+  }
+}
+
+export class DerRewriter extends RewriterTpl {
+  readonly der: Der;
+
+  constructor(manager: AstManager) {
+    super(manager);
+    this.der = new Der(manager);
+  }
+
+  reduceQuantifier(expr: number, body: number, patterns: number[]) {
+    const manager = this.manager;
+    return manager.withTemporaries(() =>
+      this.der.apply(manager.mkQuantifier({ ...manager.getQuantifier(expr), body, patterns })),
+    );
   }
 }

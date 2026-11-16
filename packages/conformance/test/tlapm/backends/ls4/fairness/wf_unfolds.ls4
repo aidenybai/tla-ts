@@ -1,0 +1,14 @@
+(*---
+description: >-
+  LS4 refutes the negation of a goal that compares WF_p(q') with its definition; tlapm expands WF to
+  <>[]ENABLED => []<>action and coalesces the ENABLED and action subformulas into atoms.
+ref: src/backend/ls4.ml#visitor
+outcome: unsat
+---*)
+not (((always (cc | ~ cc)) -> (((sometime (always hf9c3a)) -> (always (sometime ((next hb593a) & (~ h718b8))))) <-> ((always (sometime (~ hf9c3a))) | (always (sometime ((next hb593a) & (~ h718b8))))))))
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: unsat
+---*)

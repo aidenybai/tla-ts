@@ -1,15 +1,11 @@
-// Ported from Z3 (src/math/lp/monic.h, src/math/lp/emonics.h, src/math/lp/emonics.cpp), MIT
-// license, see z3-license.txt. The monomials v := v1 * ... * vn of nla, canonized over the
-// variable equivalences, with the cyclic use lists of their variables and the congruence classes
-// of monomials equal up to sign.
-import { getSignedVarVar, isSignedVarNegated, negateSignedVar, VarEqs } from "./nla-var-eqs";
+// Ported from Z3 (src/math/lp/monic.h, src/math/lp/emonics.h, src/math/lp/emonics.cpp), MIT license, see z3-license.txt.
+import { getSignedVarVar, isSignedVarNegated, negateSignedVar, type VarEqs } from "./nla-var-eqs";
 import { TrailStack, UnionFind } from "./union-find";
 
 const compareNumbers = (first: number, second: number) => first - second;
 
 export class Monic {
   readonly vars: number[];
-  // The roots of the variables, sorted, and the parity of their signs.
   rvars: number[] = [];
   rsign = false;
   visited = 0;
@@ -32,7 +28,6 @@ export class Monic {
   }
 }
 
-// A cell of a cyclic use list: the index of a monic, and the next cell.
 class Cell {
   next: Cell = this;
 
@@ -53,15 +48,13 @@ export class Emonics {
   private var2index: number[] = [];
   private visitedStamp = 0;
   private useLists: HeadTail[] = [];
-  // The congruence table: the monics of each rooted variable list, the first its representative.
   private cgTable = new Map<string, number[]>();
 
   constructor(private varEqs: VarEqs) {
     varEqs.setMergeHandler(this.varEqsHandler);
   }
 
-  // The handlers of var_eqs' union-find, over signed variables.
-  readonly varEqsHandler = {
+  private readonly varEqsHandler = {
     afterMergeEh: (r2: number, r1: number) => {
       if (
         getSignedVarVar(r1) !== getSignedVarVar(r2) &&
@@ -230,7 +223,6 @@ export class Emonics {
     return this.useLists[root].head;
   }
 
-  // The monics in the use list of a variable's root, around the cycle from its head.
   *getUseList(lpVar: number) {
     const head = this.getHead(lpVar);
     if (head === null) return;
@@ -244,11 +236,6 @@ export class Emonics {
   findCanonical(vars: number[]) {
     const table = this.cgTable.get(getKey([...vars].sort(compareNumbers)));
     return table === undefined || table.length === 0 ? undefined : this.get(table[0]);
-  }
-
-  isCanonicalMonic(lpVar: number) {
-    const index = this.var2index[lpVar];
-    return index >= this.unionFind.numVars || this.unionFind.find(index) === index;
   }
 
   private removeCg(lpVar: number) {
@@ -328,8 +315,7 @@ export class Emonics {
     for (const monic of this.monics) this.doCanonize(monic);
   }
 
-  // canonize_divides: whether the rooted variables of the first are a sub-multiset of the second's.
-  canonizeDivides(divisor: Monic, product: Monic) {
+  private canonizeDivides(divisor: Monic, product: Monic) {
     if (divisor.size > product.size) return false;
     let divisorIndex = 0;
     let productIndex = 0;
@@ -346,8 +332,6 @@ export class Emonics {
     }
   }
 
-  // get_products_of: the monics, other than the given one, that it divides, or every monic using
-  // the variable, each once.
   *getProductsOf(factor: Monic | number) {
     this.incVisited();
     const isMonic = factor instanceof Monic;
@@ -360,7 +344,6 @@ export class Emonics {
     }
   }
 
-  // enum_sign_equiv_monics: the monics equal to this one up to sign, around its class's cycle.
   *getSignEquivMonics(monic: Monic) {
     const start = this.var2index[monic.variable];
     let index = start;

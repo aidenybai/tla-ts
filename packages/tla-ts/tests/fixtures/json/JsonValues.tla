@@ -1,10 +1,9 @@
 ----------------------------- MODULE JsonValues -----------------------------
 EXTENDS Integers, Json, TLCExt
 
-\* TLC reads a JSON number with Gson, which truncates it toward zero and keeps
-\* its low 32 bits.
-ASSUME JsonDeserialize("Numbers.json") =
-           <<1, -2, 1, -1, 1000, -1294967296, -350287150, 0, 0>>
+\* TLC reads a JSON number with Integer.parseInt, which accepts only 32-bit
+\* integers.
+ASSUME JsonDeserialize("Numbers.json") = <<1, -2, 2147483647, -2147483647 - 1, 0>>
 
 \* Newline delimited JSON skips blank lines and trims the others.
 ASSUME ndJsonDeserialize("Lines.ndjson") = <<1, <<2, "x">>, [a |-> TRUE]>>

@@ -1,7 +1,4 @@
 // Ported from Z3 (src/ast/pattern/pattern_inference.cpp), MIT license, see z3-license.txt.
-// Infers E-matching patterns for quantifiers that have none, with Z3's default parameters:
-// pi.max_multi_patterns=0, pi.block_loop_patterns=true, pi.decompose_patterns=true,
-// pi.arith=1 (conservative), pi.avoid_skolems=true.
 import {
   AstManager,
   FAMILY_ARITH,
@@ -12,6 +9,7 @@ import {
   OP_FALSE,
   OP_IDIV,
   OP_MOD,
+  OP_REM,
   OP_MUL,
   OP_TRUE,
 } from "./ast";
@@ -40,12 +38,11 @@ const isSameSet = (left: Set<number>, right: Set<number>) =>
 const isSubset = (left: Set<number>, right: Set<number>) =>
   [...left].every((element) => right.has(element));
 
-// pattern_inference_cfg, which asserted_formulas keeps as long as it lives. m_candidates holds its
-// candidates until the end of mk_patterns.
 export class PatternInference {
   private candidates: RefVector;
   private candidateInfos = new Map<number, CandidateInfo>();
   private numBindings = 0;
+  private noPatterns: number[] = [];
   private isArithForbidden = true;
   private isNestedArithOnly = true;
   private isBlockingLoopPatterns = true;
@@ -56,7 +53,7 @@ export class PatternInference {
 
   private isForbidden(expr: number) {
     const manager = this.manager;
-    if (manager.isGround(expr)) return false;
+    if (manager.isGroundApp(expr)) return false;
     const decl = manager.funcDecls[manager.decls[expr]];
     if (decl.isSkolem) return true;
     if (decl.family === FAMILY_BASIC) return decl.op !== OP_TRUE && decl.op !== OP_FALSE;
@@ -97,7 +94,7 @@ export class PatternInference {
           const decl = manager.funcDecls[manager.decls[expr]];
           const isArithCandidate =
             !this.isNestedArithOnly &&
-            (decl.op === OP_IDIV || decl.op === OP_MOD || decl.op === OP_MUL);
+            (decl.op === OP_IDIV || decl.op === OP_MOD || decl.op === OP_REM || decl.op === OP_MUL);
           if (
             freeVars.size > 0 &&
             boundVars.size === 0 &&
@@ -129,12 +126,11 @@ export class PatternInference {
   }
 
   private addCandidate(expr: number, freeVars: Set<number>, size: number) {
-    if (this.candidateInfos.has(expr)) return;
+    if (this.noPatterns.includes(expr) || this.candidateInfos.has(expr)) return;
     this.candidateInfos.set(expr, { freeVars, boundVars: new Set(), size });
     this.candidates.push(expr);
   }
 
-  // smaller_pattern: whether second is an instance of first.
   private isSmaller(first: number, second: number) {
     const manager = this.manager;
     const bindings = Array.from({ length: this.numBindings }, () => -1);
@@ -231,7 +227,7 @@ export class PatternInference {
       args[index] = args[args.length - 1];
       index--;
       args.pop();
-      if (manager.isGround(arg)) continue;
+      if (manager.isGroundApp(arg)) continue;
       for (let argIndex = 0; argIndex < manager.getNumArgs(arg); argIndex++) {
         const innerArg = manager.getArg(arg, argIndex);
         if (manager.kinds[innerArg] !== KIND_APP) return manager.mkPattern([candidate]);
@@ -274,15 +270,15 @@ export class PatternInference {
     }
   }
 
-  private mkPatterns(numBindings: number, body: number) {
+  private mkPatterns(numBindings: number, body: number, noPatterns: number[]) {
     this.numBindings = numBindings;
+    this.noPatterns = noPatterns;
     this.collect(body);
     const result: number[] = [];
     if (this.candidates.size > 0) {
       const looseCandidates = this.filterLoopingPatterns().filter(
         (candidate) => !this.containsSubpattern(candidate),
       );
-      // m_tmp1: the candidates that do not cover every variable, which may form a multi-pattern.
       const partialCandidates: number[] = [];
       for (const candidate of looseCandidates) {
         const info = this.candidateInfos.get(candidate);
@@ -292,13 +288,11 @@ export class PatternInference {
       }
       const numExtraMultiPatterns = result.length === 0 ? 1 : 0;
       if (numExtraMultiPatterns > 0 && partialCandidates.length > 0) {
-        // std::stable_sort with m_pattern_weight_lt.
-        const weightOf = (candidate: number) => this.candidateInfos.get(candidate);
         const sorted = partialCandidates
           .map((candidate, index) => ({ candidate, index }))
           .sort((left, right) => {
-            const leftInfo = weightOf(left.candidate);
-            const rightInfo = weightOf(right.candidate);
+            const leftInfo = this.candidateInfos.get(left.candidate);
+            const rightInfo = this.candidateInfos.get(right.candidate);
             if (leftInfo === undefined || rightInfo === undefined) return left.index - right.index;
             if (leftInfo.freeVars.size !== rightInfo.freeVars.size)
               return rightInfo.freeVars.size - leftInfo.freeVars.size;
@@ -314,34 +308,36 @@ export class PatternInference {
     return result;
   }
 
-  // reduce_quantifier for a quantifier without patterns: arithmetic, then looping and non-nested
-  // arithmetic patterns, are allowed when no pattern is found without them.
-  infer(numBindings: number, body: number, weight: number): InferredPatterns {
+  // Arithmetic, then looping and non-nested arithmetic patterns, are allowed when no pattern is
+  // found without them. The no-patterns are ignored only when they leave no other pattern.
+  infer(numBindings: number, body: number, weight: number, noPatterns: number[]): InferredPatterns {
     this.isArithForbidden = true;
     this.isNestedArithOnly = true;
     this.isBlockingLoopPatterns = true;
-    const patterns = this.mkPatterns(numBindings, body);
+    const patterns = this.mkPatterns(numBindings, body, noPatterns);
     if (patterns.length > 0) return { patterns, weight };
+    if (noPatterns.length > 0) {
+      const ignoringPatterns = this.mkPatterns(numBindings, body, []);
+      if (ignoringPatterns.length > 0) return { patterns: ignoringPatterns, weight };
+    }
     this.isArithForbidden = false;
     this.isBlockingLoopPatterns = false;
-    const arithPatterns = this.mkPatterns(numBindings, body);
+    const arithPatterns = this.mkPatterns(numBindings, body, noPatterns);
     if (arithPatterns.length > 0)
       return { patterns: arithPatterns, weight: Math.max(weight, PI_ARITH_WEIGHT) };
     this.isNestedArithOnly = false;
-    const nonNestedPatterns = this.mkPatterns(numBindings, body);
+    const nonNestedPatterns = this.mkPatterns(numBindings, body, noPatterns);
     return {
       patterns: nonNestedPatterns,
       weight: nonNestedPatterns.length > 0 ? Math.max(weight, PI_NON_NESTED_ARITH_WEIGHT) : weight,
     };
   }
 
-  // The patterns of a quantifier that pull_quant changed, found once with the settings that infer
-  // restores: arithmetic is allowed, but only nested, and looping patterns are blocked.
   inferPulled(numBindings: number, body: number) {
     this.isArithForbidden = false;
     this.isNestedArithOnly = true;
     this.isBlockingLoopPatterns = true;
-    return this.mkPatterns(numBindings, body);
+    return this.mkPatterns(numBindings, body, []);
   }
 }
 

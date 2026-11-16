@@ -1,0 +1,22 @@
+(*---
+description: Zenon rewrites DOMAIN [f EXCEPT ![x] = y] with domain_except.
+ref: zenon/ext_tla.ml#rewrites
+outcome: unsat
+---*)
+;; obligation #1
+$goal (= (TLA.DOMAIN (TLA.except a_CONSTANTunde_funde_a a_CONSTANTunde_xunde_a a_CONSTANTunde_yunde_a))
+(TLA.DOMAIN a_CONSTANTunde_funde_a))
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: |-
+    unsat
+    proof (rule zenon_nnpp)
+     assume z_Ha:"(DOMAIN(except(a_CONSTANTunde_funde_a, a_CONSTANTunde_xunde_a, a_CONSTANTunde_yunde_a))~=DOMAIN(a_CONSTANTunde_funde_a))" (is "?z_hb~=?z_hg")
+     have z_Hh: "(?z_hg~=?z_hg)"
+     by (rule zenon_domain_except_0 [of "(\<lambda>zenon_Vf. (zenon_Vf~=?z_hg))" "a_CONSTANTunde_funde_a" "a_CONSTANTunde_xunde_a" "a_CONSTANTunde_yunde_a", OF z_Ha])
+     show FALSE
+     by (rule zenon_noteq [OF z_Hh])
+    qed
+---*)

@@ -1,0 +1,14 @@
+(*---
+description: >-
+  ptl_to_trp gives | lower precedence than ->, so a | b -> c reads as a | (b -> c), which a true and
+  c false satisfy.
+ref: translate/foyacc.mly#connective
+outcome: sat
+---*)
+a & ~c & (a | b -> c)
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: sat
+---*)

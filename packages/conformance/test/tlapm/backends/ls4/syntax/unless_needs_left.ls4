@@ -1,0 +1,12 @@
+(*---
+description: LS4 refutes p unless q with ~p and ~q now.
+ref: translate/foyacc.mly#connective
+outcome: unsat
+---*)
+(p unless q) & ~p & ~q
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: unsat
+---*)

@@ -1,0 +1,34 @@
+(*---
+description: Zenon's own test zenon/test/test25.znn, which Zenon must prove.
+ref: zenon/test/test25.znn
+features:
+  - zenon-test
+outcome: unsat
+---*)
+;  Copyright 2006 INRIA
+;  $Id: test25.znn,v 1.4 2006-03-01 14:39:03 doligez Exp $
+
+$sig abst_T () "Type"
+$sig abst_p ("abst_T") "bool"
+
+$goal (A. ((x "abst_T") (=> (Is_true (abst_p x)) (Is_true (abst_p x)))))
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: |-
+    unsat
+    proof (rule zenon_nnpp)
+     assume z_Ha:"(~(\\A x:(Is_true(abst_p(x))=>Is_true(abst_p(x)))))" (is "~(\\A x : ?z_hg(x))")
+     have z_Hh: "(\\E x:(~(Is_true(abst_p(x))=>Is_true(abst_p(x)))))" (is "\\E x : ?z_hj(x)")
+     by (rule zenon_notallex_0 [of "?z_hg", OF z_Ha])
+     have z_Hk: "?z_hj((CHOOSE x:(~(Is_true(abst_p(x))=>Is_true(abst_p(x))))))" (is "~(?z_hm=>_)")
+     by (rule zenon_ex_choose_0 [of "?z_hj", OF z_Hh])
+     have z_Hm: "?z_hm"
+     by (rule zenon_notimply_0 [OF z_Hk])
+     have z_Hn: "(~?z_hm)"
+     by (rule zenon_notimply_1 [OF z_Hk])
+     show FALSE
+     by (rule notE [OF z_Hn z_Hm])
+    qed
+---*)

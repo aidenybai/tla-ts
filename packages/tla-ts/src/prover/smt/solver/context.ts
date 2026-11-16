@@ -1,13 +1,32 @@
-// Ported from Z3 (src/smt/smt_context.cpp), MIT license, see z3-license.txt. The SMT kernel's
-// search: a CDCL loop over Boolean variables combined with an E-graph for congruence closure,
-// relevancy propagation, the arithmetic theory and quantifier instantiation, with Z3's default
-// parameters for UFNIA.
+// Ported from Z3 (src/smt/smt_context.cpp), MIT license, see z3-license.txt.
 import type { AssertedFormulas } from "./asserted-formulas";
-import { AstManager, FAMILY_ARITH, KIND_APP, KIND_QUANTIFIER, KIND_VAR } from "./ast";
+import {
+  AstManager,
+  FAMILY_ARITH,
+  FAMILY_ARRAY,
+  FAMILY_BASIC,
+  FAMILY_BV,
+  FAMILY_CHAR,
+  FAMILY_DATATYPE,
+  FAMILY_FINITE_SET,
+  FAMILY_FPA,
+  FAMILY_PB,
+  FAMILY_POLY,
+  FAMILY_RECFUN,
+  FAMILY_SEQ,
+  KIND_APP,
+  KIND_QUANTIFIER,
+  KIND_VAR,
+  OP_IMPLIES,
+  OP_ITE,
+  OP_NOT,
+  SORT_BOOL,
+} from "./ast";
 import { getCongruenceJustification, isCongruent } from "./cg-table";
 import { BJustification, type Clause, CLS_LEARNED, CLS_TH_LEMMA, HEADER_SIZE } from "./clause";
 import { ConflictResolution } from "./conflict-resolution";
 import { DynAckManager } from "./dyn-ack";
+import { FingerprintSet } from "./fingerprints";
 import {
   Enode,
   EqConflictJustification,
@@ -29,83 +48,128 @@ import {
   UNDO_TH_VAR,
 } from "./internalizer";
 import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
-import { BoolVar, getVar, isNegated, Literal, mkLiteral, negate } from "./literal";
+import { MaxCliques } from "./max-cliques";
+import { BoolVar, getVar, isNegated, Literal, mkLiteral, negate, toBoolVar } from "./literal";
+import type { MacroManager } from "./macro-finder";
 import { mkModel } from "./model-generator";
+import { TheoryRecfun } from "./theory-recfun";
 import type { GeneratedModel } from "./model-generator";
 import type { ProtoModel } from "./proto-model";
 import { DefaultQuantifierManager } from "./quantifier-manager";
+import { FC_CONTINUE, FC_DONE, FC_GIVEUP, Theory } from "./theory";
+import { TheoryArray } from "./theory-array";
+import { TheoryBv } from "./theory-bv";
+import { TheoryFpa } from "./theory-fpa";
+import { TheoryChar } from "./theory-char";
+import { TheorySeq } from "./theory-seq";
+import { TheoryDatatype } from "./theory-datatype";
+import { TheoryFiniteSet } from "./theory-finite-set";
+import { TheoryPb } from "./theory-pb";
+import { TheoryPolymorphism } from "./theory-polymorphism";
 import { TheoryLra } from "./theory-lra";
 import { shrink } from "./array";
-
-export const FC_DONE = 0;
-export const FC_CONTINUE = 1;
-export const FC_GIVEUP = 2;
+import {
+  getSmtConfig,
+  PS_ALWAYS_FALSE,
+  PS_CACHING_CONSERVATIVE,
+  PS_CACHING_CONSERVATIVE2,
+  PS_THEORY,
+  RS_GEOMETRIC,
+  RS_LUBY,
+  type SmtSetup,
+} from "./smt-setup";
 
 const ACTIVITY_LIMIT = 1e100;
 const INV_ACTIVITY_LIMIT = 1e-100;
 const INV_DECAY = 1.052;
 const RESTART_INITIAL = 100;
-const RESTART_FACTOR = 1.1;
-// phase_caching_on and phase_caching_off: the numbers of conflicts while phase caching is on and off.
 const PHASE_CACHING_ON = 400;
 const PHASE_CACHING_OFF = 100;
 const AGILITY_FACTOR = 0.9999;
-// The LGC_FIXED lemma garbage collection: lemma_gc_initial conflicts between collections, and the
-// activity and unassigned literal thresholds of del_inactive_lemmas2.
 const LEMMA_GC_INITIAL = 5000;
-// theory_lra::num_final_check_levels: level 2 also runs nlsat's full check.
-const NUM_ARITH_FINAL_CHECK_LEVELS = 2;
 const NEW_OLD_RATIO = 16;
 const OLD_CLAUSE_ACTIVITY = 500;
 const NEW_CLAUSE_RELEVANCY = 45;
 const OLD_CLAUSE_RELEVANCY = 6;
 const RESTART_AGILITY_THRESHOLD = 0.18;
 
+export const MBQI_MAX_ITERATIONS = 1000;
+
 export const CHECK_MODEL_SAT = 0;
 export const CHECK_MODEL_UNKNOWN = 1;
 export const CHECK_MODEL_RESTART = 2;
 
-// The reasons a search may stop without an answer that MBQI cares about.
 const FAILURE_OK = 0;
 const FAILURE_THEORY = 1;
 const FAILURE_QUANTIFIERS = 2;
 const FAILURE_CANCELED = 3;
+const FAILURE_NUM_CONFLICTS = 4;
 
 type SearchFailure =
   | typeof FAILURE_OK
   | typeof FAILURE_THEORY
   | typeof FAILURE_QUANTIFIERS
-  | typeof FAILURE_CANCELED;
+  | typeof FAILURE_CANCELED
+  | typeof FAILURE_NUM_CONFLICTS;
 
-// smt_params: the kernel runs model-based quantifier instantiation with relevancy level 2 and the
-// CS_ACTIVITY_DELAY_NEW case split queue. The model checker's auxiliary context runs neither, as Z3
-// sets its relevancy level to 0 and its case split strategy to CS_ACTIVITY.
-// m_model_generator's model, m_proto_model and m_model. The model generator holds the last model it
-// made. From mk_proto_model to reset_model the context holds that model too as its proto model, and
-// get_model adds the model the proto model makes.
 type ModelState =
   | { kind: "none" }
   | { kind: "generated"; generated: GeneratedModel }
   | { kind: "proto"; generated: GeneratedModel }
   | { kind: "final"; generated: GeneratedModel; model: ProtoModel };
 
-interface SmtParams {
+const THEORY_MAKERS = new Map<number, (context: Context) => Theory>([
+  [FAMILY_ARITH, (context) => new TheoryLra(context)],
+  [FAMILY_ARRAY, (context) => new TheoryArray(context)],
+  [FAMILY_BV, (context) => new TheoryBv(context)],
+  [FAMILY_DATATYPE, (context) => new TheoryDatatype(context)],
+  [FAMILY_RECFUN, (context) => new TheoryRecfun(context)],
+  [FAMILY_SEQ, (context) => new TheorySeq(context)],
+  [FAMILY_CHAR, (context) => new TheoryChar(context)],
+  [FAMILY_FPA, (context) => new TheoryFpa(context)],
+  [FAMILY_FINITE_SET, (context) => new TheoryFiniteSet(context)],
+  [FAMILY_POLY, (context) => new TheoryPolymorphism(context)],
+  [FAMILY_PB, (context) => new TheoryPb(context)],
+]);
+
+// get_luby
+const getLuby = (index: number): number => {
+  if (index === 1) return 1;
+  const exponent = Math.log(index + 1) / Math.log(2);
+  if (exponent === Math.floor(exponent + 0.5)) return 2 ** (exponent - 1);
+  return getLuby(index - 2 ** Math.floor(exponent) + 1);
+};
+
+const isValidAssumption = (manager: AstManager, expr: number) => {
+  if (manager.sorts[expr] !== SORT_BOOL) return false;
+  if (manager.isUninterpretedConst(expr)) return true;
+  if (manager.isNot(expr) && manager.isUninterpretedConst(manager.getArg(expr, 0))) return true;
+  if (manager.kinds[expr] !== KIND_APP || expr === manager.falseExpr) return false;
+  if (expr === manager.trueExpr) return true;
+  return manager.getFamily(expr) !== FAMILY_BASIC && manager.getNumArgs(expr) === 0;
+};
+
+export interface SmtParams {
   isMbqi: boolean;
+  mbqiMaxIterations: number;
   relevancyLevel: 0 | 2;
+  // The model checker's auxiliary context pretends every array operation is supported.
+  isArrayFakeSupport?: boolean;
 }
 
 export class Context extends Internalizer {
-  // setup_context makes the theories after the first formulas are asserted, so the field starts
-  // unassigned.
-  theory!: TheoryLra;
+  arith: TheoryLra | undefined;
+  setup: SmtSetup | undefined;
+  readonly theories: Theory[] = [];
+  private theoryByFamily: (Theory | undefined)[] = [];
   readonly qmanager: DefaultQuantifierManager;
+  readonly fingerprints = new FingerprintSet(this.manager);
   readonly conflictResolution: ConflictResolution = new ConflictResolution(this);
   private readonly dynAck = new DynAckManager(this);
   private qhead = 0;
   private scopeAssignedLimits: number[] = [];
   private scopeAuxClauseLimits: number[] = [];
   private scopeTrailLimits: number[] = [];
-  // The number of lemmas when each user scope began.
   private baseScopeLemmaLimits: number[] = [];
   private atomPropagationQueue: Literal[] = [];
   private thEqQueue: number[] = [];
@@ -113,35 +177,76 @@ export class Context extends Internalizer {
   private bvarInc = 1;
   private agility = 0;
   private numConflicts = 0;
+  maxConflicts = Infinity;
   private numConflictsSinceRestart = 0;
   private numConflictsSinceLemmaGc = 0;
   private restartThreshold = RESTART_INITIAL;
   private restartOuterThreshold = RESTART_INITIAL;
   private isPhaseCacheOn = true;
   private phaseCounter = 0;
+  private phaseDefault = false;
+  private lubyIndex = 1;
   private finalCheckIndex = 0;
+  private literalAssumptions = new Map<Literal, number>();
+  unsatCore: number[] = [];
   private r1ParentGenerations = new Map<Enode, number>();
   private erasedGenerations = new Map<Enode, number>();
   private lastSearchFailure: SearchFailure = FAILURE_OK;
+  private hasCaseSplit = true;
+  private incompleteTheories: Theory[] = [];
   private modelState: ModelState = { kind: "none" };
+  private asserted: AssertedFormulas | undefined;
+  macros: MacroManager | undefined;
+  hasQuantifiers = false;
 
-  constructor(manager: AstManager, params: SmtParams) {
-    super(manager, params.relevancyLevel > 0, params.relevancyLevel > 0);
+  constructor(
+    manager: AstManager,
+    readonly params: SmtParams,
+  ) {
+    super(manager, params.relevancyLevel > 0);
     this.qmanager = new DefaultQuantifierManager(this, params.isMbqi);
   }
 
-  // register_plugin initializes each theory it registers.
-  setupContext() {
-    this.theory = new TheoryLra(this);
-    this.theory.init();
+  // setup_context and setup_components. The setup's theories come in its order, then setup_card's.
+  setupContext(
+    setup: SmtSetup | undefined,
+    isUsingStaticFeatures: boolean,
+    asserted: AssertedFormulas,
+  ) {
+    const config = getSmtConfig(
+      this.manager,
+      setup,
+      isUsingStaticFeatures,
+      asserted.getFormulas(),
+      this.config,
+    );
+    this.setup = setup;
+    this.config = config;
+    if (config.relevancyLevel !== undefined) this.relevancy.isEnabled = config.relevancyLevel > 0;
+    for (const family of config.theories)
+      if (family !== FAMILY_POLY || this.manager.hasTypeVars) this.registerFamily(family);
+    this.registerFamily(FAMILY_PB);
+    asserted.setup(config);
   }
 
-  // The search stops with unknown when the manager's resource limit cancels it.
+  // register_plugin keeps the theory a family already has.
+  registerFamily(family: number) {
+    if (this.getTheory(family) !== undefined) return;
+    const theory = THEORY_MAKERS.get(family)!(this);
+    if (theory instanceof TheoryLra) this.arith = theory;
+    this.theories.push(theory);
+    this.theoryByFamily[theory.id] = theory;
+    theory.init();
+    for (let level = 0; level < this.scopeLevel; level++) theory.pushScopeEh();
+  }
+
+  getTheory(family: number) {
+    return family < 0 ? undefined : this.theoryByFamily[family];
+  }
+
   checkCanceled() {
     return !this.manager.limit.inc();
   }
-
-  // Assignment and propagation.
 
   assign(literal: Literal, justification: BJustification, isDecision = false) {
     const value = this.assignment[literal];
@@ -157,7 +262,7 @@ export class Context extends Internalizer {
     this.justifications[boolVar] = justification;
     this.setLevel(boolVar, this.scopeLevel);
     const isNegative = isNegated(literal);
-    if (this.hasBoolVarFlag(boolVar, BV_PHASE_AVAILABLE)) {
+    if (this.config.isRestartAdaptive && this.hasBoolVarFlag(boolVar, BV_PHASE_AVAILABLE)) {
       this.agility *= AGILITY_FACTOR;
       if (!isDecision && this.hasBoolVarFlag(boolVar, BV_PHASE) === isNegative)
         this.agility += 1 - AGILITY_FACTOR;
@@ -189,7 +294,6 @@ export class Context extends Internalizer {
       }
       const list = this.watches[literal];
       if (list === undefined) continue;
-      // Nothing below makes a clause, so the clause data stays in place.
       const data = this.clauses.data;
       let kept = 0;
       let index = 0;
@@ -260,13 +364,13 @@ export class Context extends Internalizer {
           const lhs = this.exprToEnode[this.manager.getArg(eq, 0)];
           const rhs = this.exprToEnode[this.manager.getArg(eq, 1)];
           if (lhs !== undefined && rhs !== undefined) {
-            if (value === L_TRUE) this.addEq(lhs, rhs, { kind: "equation", literal: literal });
+            if (value === L_TRUE) this.addEq(lhs, rhs, { kind: "equation", literal });
             else if (!this.addDiseq(lhs, rhs) && !this.isInconsistent())
               this.setConflict(new EqPropagationJustification(lhs, rhs), mkLiteral(boolVar, true));
           }
         }
       } else if (this.hasBoolVarFlag(boolVar, BV_THEORY))
-        this.theory.assignEh(boolVar, value === L_TRUE);
+        this.getTheory(this.getBoolVarTheory(boolVar))?.assignEh(boolVar, value === L_TRUE);
       else if (this.hasBoolVarFlag(boolVar, BV_QUANTIFIER) && value === L_TRUE)
         this.qmanager.assignEh(this.boolVar2Expr[boolVar]);
       if (this.isInconsistent()) return false;
@@ -316,8 +420,14 @@ export class Context extends Internalizer {
     if (this.manager.kinds[expr] !== KIND_APP) return;
     const node = this.exprToEnode[expr];
     if (node !== undefined) this.qmanager.relevantEh(node);
-    if (this.manager.getFamily(expr) === FAMILY_ARITH || (node !== undefined && node.thVar >= 0))
-      this.theory.relevantEh(expr);
+    const propagated = this.getTheory(this.manager.getFamily(expr));
+    propagated?.relevantEh(expr);
+    if (node === undefined || node.thVar < 0) return;
+    if (this.theoryByFamily[node.thId] !== propagated)
+      this.theoryByFamily[node.thId]?.relevantEh(expr);
+    for (let cell = node.thNext; cell !== null; cell = cell.next)
+      if (this.theoryByFamily[cell.thId] !== propagated)
+        this.theoryByFamily[cell.thId]?.relevantEh(expr);
   }
 
   private propagateRelevancy(qhead: number) {
@@ -330,16 +440,29 @@ export class Context extends Internalizer {
 
   private propagateThEqs() {
     const queue = this.thEqQueue;
-    for (let index = 0; index < queue.length && !this.isInconsistent(); index += 2)
-      this.theory.newEqEh(queue[index], queue[index + 1]);
+    for (let index = 0; index < queue.length && !this.isInconsistent(); index += 3)
+      this.theoryByFamily[queue[index]]?.newEqEh(queue[index + 1], queue[index + 2]);
     this.thEqQueue = [];
   }
 
   private propagateThDiseqs() {
     const queue = this.thDiseqQueue;
-    for (let index = 0; index < queue.length && !this.isInconsistent(); index += 2)
-      this.theory.newDiseqEh(queue[index], queue[index + 1]);
+    for (let index = 0; index < queue.length && !this.isInconsistent(); index += 3)
+      this.theoryByFamily[queue[index]]?.newDiseqEh(queue[index + 1], queue[index + 2]);
     this.thDiseqQueue = [];
+  }
+
+  private canTheoriesPropagate() {
+    for (const theory of this.theories) if (theory.canPropagate()) return true;
+    return false;
+  }
+
+  private propagateTheories() {
+    for (const theory of this.theories) {
+      theory.propagate();
+      if (this.isInconsistent()) return false;
+    }
+    return true;
   }
 
   canPropagate() {
@@ -348,7 +471,7 @@ export class Context extends Internalizer {
       this.relevancy.canPropagate() ||
       this.atomPropagationQueue.length > 0 ||
       this.qmanager.canPropagate() ||
-      this.theory.canPropagate() ||
+      this.canTheoriesPropagate() ||
       this.eqPropagationQueue.length > 0 ||
       this.thEqQueue.length > 0 ||
       this.thDiseqQueue.length > 0
@@ -367,8 +490,7 @@ export class Context extends Internalizer {
       this.propagateThEqs();
       this.propagateThDiseqs();
       if (this.isInconsistent()) return false;
-      this.theory.propagate();
-      if (this.isInconsistent()) return false;
+      if (!this.propagateTheories()) return false;
       if (!this.checkCanceled()) this.qmanager.propagate();
       if (this.isInconsistent()) return false;
       if (this.isResourceLimitExceeded()) {
@@ -379,11 +501,12 @@ export class Context extends Internalizer {
     }
   }
 
-  // Equalities.
-
-  private getClosestVar(start: Enode) {
-    for (let node: Enode | null = start; node !== null; node = node.transTarget)
-      if (node.thVar >= 0) return node.thVar;
+  private getClosestVar(start: Enode, thId: number) {
+    if (thId < 0) return -1;
+    for (let node: Enode | null = start; node !== null; node = node.transTarget) {
+      const thVar = node.getThVar(thId);
+      if (thVar >= 0) return thVar;
+    }
     return -1;
   }
 
@@ -403,17 +526,19 @@ export class Context extends Internalizer {
     }
   }
 
-  private pushNewThEq(first: number, second: number) {
-    this.thEqQueue.push(first, second);
+  private pushNewThEq(thId: number, first: number, second: number) {
+    this.thEqQueue.push(thId, first, second);
   }
 
-  private pushNewThDiseq(first: number, second: number) {
-    const theory = this.theory;
+  private pushNewThDiseq(thId: number, first: number, second: number) {
+    const theory = this.theoryByFamily[thId];
+    if (theory === undefined) return;
     if (theory.getEnode(first).isInterpreted && theory.getEnode(second).isInterpreted) return;
-    this.thDiseqQueue.push(first, second);
+    this.thDiseqQueue.push(thId, first, second);
   }
 
-  private pushNewThDiseqs(root: Enode, thVar: number) {
+  private pushNewThDiseqs(root: Enode, thVar: number, thId: number) {
+    if (!this.theoryByFamily[thId]?.useDiseqs()) return;
     for (const parent of root.parents) {
       if (!parent.isEq) continue;
       if (this.assignment[mkLiteral(this.getBoolVar(parent.owner))] !== L_FALSE) continue;
@@ -424,10 +549,10 @@ export class Context extends Internalizer {
         lhs = rhs;
         rhs = saved;
       }
-      const rhsVar = this.getClosestVar(rhs);
-      const lhsVar = this.getClosestVar(lhs);
+      const rhsVar = this.getClosestVar(rhs, thId);
+      const lhsVar = this.getClosestVar(lhs, thId);
       const finalVar = lhsVar >= 0 ? lhsVar : thVar;
-      if (rhsVar >= 0 && finalVar !== rhsVar) this.pushNewThDiseq(finalVar, rhsVar);
+      if (rhsVar >= 0 && finalVar !== rhsVar) this.pushNewThDiseq(thId, finalVar, rhsVar);
     }
   }
 
@@ -435,39 +560,65 @@ export class Context extends Internalizer {
     const r2 = n2.root;
     const r1 = n1.root;
     if (r1.thVar < 0 && r2.thVar < 0) return;
-    const isFromTheory = justification.kind === "justification";
-    const v2 = this.getClosestVar(n2);
-    const v1 = this.getClosestVar(n1);
-    if (v2 >= 0 && v1 >= 0) {
-      if (!isFromTheory) this.pushNewThEq(v2, v1);
-    } else if (v1 < 0 && v2 >= 0) this.pushNewThDiseqs(r1, v2);
-    else if (v1 >= 0 && v2 < 0) {
-      r2.thVar = v1;
-      this.pushNewThDiseqs(r2, v1);
+    const fromTheory =
+      justification.kind === "justification" ? justification.justification.fromTheory : -1;
+    if (r2.thNext === null && r1.thNext === null) {
+      const t2 = r2.thId;
+      const t1 = r1.thId;
+      const v2 = this.getClosestVar(n2, t2);
+      const v1 = this.getClosestVar(n1, t1);
+      if (v2 >= 0 && v1 >= 0) {
+        if (t1 === t2) {
+          if (t1 !== fromTheory) this.pushNewThEq(t1, v2, v1);
+          return;
+        }
+        r2.addThVar(v1, t1);
+        this.pushNewThDiseqs(r2, v1, t1);
+        this.pushNewThDiseqs(r1, v2, t2);
+      } else if (v1 < 0 && v2 >= 0) this.pushNewThDiseqs(r1, v2, t2);
+      else if (v1 >= 0 && v2 < 0) {
+        r2.thVar = v1;
+        r2.thId = t1;
+        this.pushNewThDiseqs(r2, v1, t1);
+      }
+      return;
     }
+    r2.forEachThVar((t2) => {
+      const v2 = this.getClosestVar(n2, t2);
+      const v1 = this.getClosestVar(n1, t2);
+      if (v1 >= 0) {
+        if (t2 !== fromTheory) this.pushNewThEq(t2, v2, v1);
+      } else this.pushNewThDiseqs(r1, v2, t2);
+    });
+    r1.forEachThVar((t1) => {
+      const v1 = this.getClosestVar(n1, t1);
+      if (r2.getThVar(t1) >= 0) return;
+      r2.addThVar(v1, t1);
+      this.pushNewThDiseqs(r2, v1, t1);
+    });
   }
 
-  attachThVar(node: Enode, thVar: number) {
-    const oldVar = node.thVar;
-    // A variable that an equality moved to the node's list, which the node's own replaces.
+  attachThVar(node: Enode, theory: Theory, thVar: number) {
+    const thId = theory.id;
+    const oldVar = node.getThVar(thId);
     if (oldVar >= 0) {
-      node.thVar = thVar;
+      node.replaceThVar(thVar, thId);
       this.pushTrail(() => {
-        node.thVar = oldVar;
+        node.replaceThVar(oldVar, thId);
       });
-      this.pushNewThEq(thVar, oldVar);
+      this.pushNewThEq(thId, thVar, oldVar);
       return;
     }
     const root = node.root;
-    const rootVar = root.thVar;
-    node.thVar = thVar;
-    this.trailInts.push(thVar);
+    const rootVar = root.getThVar(thId);
+    node.addThVar(thVar, thId);
+    this.trailInts.push(thId);
     this.trailNodes.push(node);
     this.trailKinds.push(UNDO_TH_VAR);
     if (rootVar < 0) {
-      if (root !== node) root.thVar = thVar;
-      this.pushNewThDiseqs(root, thVar);
-    } else if (root !== node) this.pushNewThEq(rootVar, thVar);
+      if (root !== node) root.addThVar(thVar, thId);
+      this.pushNewThDiseqs(root, thVar, thId);
+    } else if (root !== node) this.pushNewThEq(thId, rootVar, thVar);
   }
 
   addEq(inputN1: Enode, inputN2: Enode, justification: EqJustification) {
@@ -524,8 +675,6 @@ export class Context extends Internalizer {
     }
   }
 
-  // n1 = n2, justified by the justification, implied r1 = r2. A congruence that makes a false
-  // equality true is the root of a conflict, which dynamic Ackermannization counts.
   private reinsertParentsIntoCgTable(
     r1: Enode,
     r2: Enode,
@@ -582,9 +731,10 @@ export class Context extends Internalizer {
       }
       case UNDO_TH_VAR: {
         const node = this.popTrailNode();
-        const thVar = this.popTrailInt();
-        node.thVar = -1;
-        if (node.root !== node && node.root.thVar === thVar) node.root.thVar = -1;
+        const thId = this.popTrailInt();
+        const thVar = node.getThVar(thId);
+        node.delThVar(thId);
+        if (node.root !== node && node.root.getThVar(thId) === thVar) node.root.delThVar(thId);
         return;
       }
       default:
@@ -628,7 +778,12 @@ export class Context extends Internalizer {
       parent.cg = congruent;
       if (congruent === parent) parent.generation = generation;
     }
-    if (r2.thVar >= 0 && this.theory.getEnode(r2.thVar).root !== r2) r2.thVar = -1;
+    if (r2.thNext === null) {
+      if (r2.thVar >= 0 && this.theoryByFamily[r2.thId]?.getEnode(r2.thVar).root !== r2) {
+        r2.thVar = -1;
+        r2.thId = -1;
+      }
+    } else r2.restoreThVars((thId, thVar) => this.theoryByFamily[thId]?.getEnode(thVar) ?? r2);
     n1.transTarget = null;
     this.invertTrans(r1);
   }
@@ -670,14 +825,38 @@ export class Context extends Internalizer {
   private addDiseq(n1: Enode, n2: Enode) {
     const r1 = n1.root;
     const r2 = n2.root;
-    if (r1 === r2) return r1.thVar >= 0;
-    const v1 = this.getClosestVar(n1);
-    const v2 = this.getClosestVar(n2);
-    if (v1 >= 0 && v2 >= 0) this.pushNewThDiseq(v1, v2);
+    if (r1 === r2) return this.theoryByFamily[r1.thId]?.useDiseqs() ?? false;
+    if (r1.thNext === null && r2.thNext === null) {
+      const t1 = r1.thId;
+      const v1 = this.getClosestVar(n1, t1);
+      const v2 = this.getClosestVar(n2, t1);
+      if (v1 >= 0 && v2 >= 0 && t1 === r2.thId && this.theoryByFamily[t1]?.useDiseqs())
+        this.pushNewThDiseq(t1, v1, v2);
+      return true;
+    }
+    r1.forEachThVar((t1) => {
+      if (!this.theoryByFamily[t1]?.useDiseqs()) return;
+      const v1 = this.getClosestVar(n1, t1);
+      const v2 = this.getClosestVar(n2, t1);
+      if (v2 >= 0) this.pushNewThDiseq(t1, v1, v2);
+    });
     return true;
   }
 
-  // Theory combination: assume that two shared terms are equal.
+  isShared(node: Enode) {
+    const root = node.root;
+    if (this.manager.getOp(root.owner) === OP_ITE) return true;
+    if (root.thVar < 0) return false;
+    if (root.thNext !== null) return true;
+    if (this.qmanager.isShared(root)) return true;
+    for (const parent of root.parents) {
+      const family = this.manager.getFamily(parent.owner);
+      if (family === root.thId || family === FAMILY_BASIC) continue;
+      if (!this.getTheory(family)?.isBetaRedex(parent, root)) return true;
+    }
+    return this.getTheory(root.thId)?.isShared(root.thVar) ?? false;
+  }
+
   assumeEq(lhs: Enode, rhs: Enode) {
     if (lhs.root === rhs.root) return false;
     const eq = this.mkEqAtom(lhs.owner, rhs.owner);
@@ -687,7 +866,10 @@ export class Context extends Internalizer {
       const boolVar = this.getBoolVar(eq);
       this.setBoolVarFlag(boolVar, BV_EQ, true);
       this.setTrueFirstFlag(boolVar);
-      this.theory.internalizeEqEh(eq);
+      this.getTheory(this.manager.getSortFamily(this.manager.sorts[lhs.owner]))?.internalizeEqEh(
+        eq,
+        boolVar,
+      );
       isNew = true;
     }
     const boolVar = this.getBoolVar(eq);
@@ -703,8 +885,6 @@ export class Context extends Internalizer {
     return isNew;
   }
 
-  // Search.
-
   incBvarActivity(boolVar: BoolVar) {
     this.activity[boolVar] += this.bvarInc;
     if (this.activity[boolVar] > ACTIVITY_LIMIT) {
@@ -715,14 +895,15 @@ export class Context extends Internalizer {
     this.caseSplitQueue.activityIncreased(boolVar);
   }
 
-  private pushScope() {
+  pushScope() {
     this.scopeLevel++;
     this.scopeAssignedLimits.push(this.assignedLiterals.length);
     this.scopeAuxClauseLimits.push(this.auxClauses.length);
     this.scopeTrailLimits.push(this.trailKinds.length);
     this.relevancy.push();
     this.qmanager.push();
-    this.theory.pushScopeEh();
+    this.fingerprints.push();
+    for (const theory of this.theories) theory.pushScopeEh();
   }
 
   private cacheGenerationOfExpr(expr: number, newLevel: number, visited: Set<number>) {
@@ -780,6 +961,7 @@ export class Context extends Internalizer {
     const newLevel = this.scopeLevel - numScopes;
     this.cacheGeneration(newLevel, visited);
     this.qmanager.pop(numScopes);
+    this.fingerprints.pop(numScopes);
     if (newLevel < this.baseLevel) {
       this.deleteClauses(this.lemmas, this.baseScopeLemmaLimits[newLevel]);
       shrink(this.baseScopeLemmaLimits, newLevel);
@@ -789,7 +971,7 @@ export class Context extends Internalizer {
     this.relevancy.pop(numScopes);
     this.unassignVars(this.scopeAssignedLimits[newLevel]);
     this.popTrail(this.scopeTrailLimits[newLevel]);
-    this.theory.popScopeEh(numScopes);
+    for (const theory of this.theories) theory.popScopeEh(numScopes);
     this.eqPropagationQueue = [];
     this.thEqQueue = [];
     this.thDiseqQueue = [];
@@ -807,7 +989,7 @@ export class Context extends Internalizer {
     return numBoolVars;
   }
 
-  private popScope(numScopes: number) {
+  popScope(numScopes: number) {
     this.popScopeCore(numScopes, new Set());
     this.cachedGeneration.clear();
   }
@@ -888,7 +1070,6 @@ export class Context extends Internalizer {
     return true;
   }
 
-  // is_unit_clause: exactly one literal is unassigned and the rest are false.
   private isUnitClause(clause: Clause) {
     const store = this.clauses;
     let isFound = false;
@@ -903,15 +1084,20 @@ export class Context extends Internalizer {
     return isFound;
   }
 
-  // guess with PS_CACHING_CONSERVATIVE: the cached phase while phase caching is on, else false.
   private guess(boolVar: BoolVar) {
     if (this.manager.kinds[this.boolVar2Expr[boolVar]] === KIND_QUANTIFIER) return false;
     if (this.hasBoolVarFlag(boolVar, BV_TRUE_FIRST)) return true;
-    return (
-      this.isPhaseCacheOn &&
-      this.hasBoolVarFlag(boolVar, BV_PHASE_AVAILABLE) &&
-      this.hasBoolVarFlag(boolVar, BV_PHASE)
-    );
+    const phaseSelection = this.config.phaseSelection;
+    if (phaseSelection === PS_ALWAYS_FALSE) return false;
+    const isPhaseAvailable = this.hasBoolVarFlag(boolVar, BV_PHASE_AVAILABLE);
+    if (phaseSelection === PS_THEORY) {
+      const phase = this.getTheory(this.getBoolVarTheory(boolVar))?.getPhase(boolVar) ?? L_UNDEF;
+      if (phase !== L_UNDEF) return phase === L_TRUE;
+      return isPhaseAvailable ? this.hasBoolVarFlag(boolVar, BV_PHASE) : this.phaseDefault;
+    }
+    return this.isPhaseCacheOn && isPhaseAvailable
+      ? this.hasBoolVarFlag(boolVar, BV_PHASE)
+      : this.phaseDefault;
   }
 
   private updatePhaseCacheCounter() {
@@ -919,18 +1105,27 @@ export class Context extends Internalizer {
     if (this.phaseCounter < (this.isPhaseCacheOn ? PHASE_CACHING_ON : PHASE_CACHING_OFF)) return;
     this.phaseCounter = 0;
     this.isPhaseCacheOn = !this.isPhaseCacheOn;
+    if (this.config.phaseSelection === PS_CACHING_CONSERVATIVE2)
+      this.phaseDefault = !this.phaseDefault;
   }
 
   private decide() {
     const boolVar = this.caseSplitQueue.nextCaseSplit();
-    if (boolVar === undefined) return false;
+    if (boolVar === undefined) {
+      const hadCaseSplit = this.hasCaseSplit;
+      this.pushTrail(() => {
+        this.hasCaseSplit = hadCaseSplit;
+      });
+      this.hasCaseSplit = false;
+      return false;
+    }
     const isPositive = this.guess(boolVar);
     this.pushScope();
     this.assign(mkLiteral(boolVar, !isPositive), "axiom", true);
     return true;
   }
 
-  private resolveConflict() {
+  resolveConflict() {
     this.numConflicts++;
     this.numConflictsSinceRestart++;
     this.numConflictsSinceLemmaGc++;
@@ -938,9 +1133,15 @@ export class Context extends Internalizer {
     this.eqPropagationQueue = [];
     this.thEqQueue = [];
     this.thDiseqQueue = [];
+    const phaseSelection = this.config.phaseSelection;
     const head = this.scopeLevel === 0 ? 0 : this.scopeAssignedLimits[this.scopeLevel - 1];
-    for (let index = head; index < this.assignedLiterals.length; index++)
-      this.setBoolVarFlag(getVar(this.assignedLiterals[index]), BV_PHASE_AVAILABLE, false);
+    if (
+      phaseSelection === PS_THEORY ||
+      phaseSelection === PS_CACHING_CONSERVATIVE ||
+      phaseSelection === PS_CACHING_CONSERVATIVE2
+    )
+      for (let index = head; index < this.assignedLiterals.length; index++)
+        this.setBoolVarFlag(getVar(this.assignedLiterals[index]), BV_PHASE_AVAILABLE, false);
     const resolution = this.conflictResolution;
     if (
       this.conflict === null ||
@@ -966,7 +1167,6 @@ export class Context extends Internalizer {
           ? negate(this.getLiteral(atoms[index]))
           : this.getLiteral(atoms[index]);
       }
-    // restore_relevancy: marking propagates, so it only marks the literals that lost relevancy.
     for (let index = 0; index < literals.length; index++)
       if (wasRelevant[index] && !this.isRelevant(this.boolVar2Expr[getVar(literals[index])]))
         this.markLiteralAsRelevant(literals[index]);
@@ -987,37 +1187,33 @@ export class Context extends Internalizer {
     let failure: SearchFailure = FAILURE_OK;
     let level = 1;
     let maxLevel = 1;
+    this.incompleteTheories = [];
     for (;;) {
-      const isTheory = this.finalCheckIndex === 0;
-      // Z3 registers every theory for UFNIA, and only arithmetic acts on tlapm's obligations. Of
-      // the theories between arithmetic and the quantifiers, theory_finite_set makes a set.range
-      // declaration, and its assume_eqs draws a random value.
-      if (!isTheory) {
-        this.manager.initFiniteSetPlugin();
-        this.getRandomValue();
-      }
-      const check = isTheory ? this.theory.finalCheckEh(level) : qmanager.finalCheckEh(true);
-      if (isTheory) maxLevel = Math.max(maxLevel, NUM_ARITH_FINAL_CHECK_LEVELS);
-      // Z3 reads the cancel flag after each theory's final check, and a canceled check gives up.
-      const isCanceled = isTheory && this.checkCanceled();
+      const theory = this.theories[this.finalCheckIndex];
+      const check = theory === undefined ? qmanager.finalCheckEh(true) : theory.finalCheckEh(level);
+      if (theory !== undefined) maxLevel = Math.max(maxLevel, theory.numFinalCheckLevels());
+      const isCanceled = theory === this.arith && this.checkCanceled();
       if (isCanceled) failure = FAILURE_CANCELED;
-      else if (isTheory && check === FC_GIVEUP) failure = FAILURE_THEORY;
-      this.finalCheckIndex = (this.finalCheckIndex + 1) % 2;
+      else if (theory !== undefined && check === FC_GIVEUP) {
+        failure = FAILURE_THEORY;
+        if (!this.incompleteTheories.includes(theory)) this.incompleteTheories.push(theory);
+      }
+      this.finalCheckIndex = (this.finalCheckIndex + 1) % (this.theories.length + 1);
       if (check === FC_CONTINUE) return FC_CONTINUE;
       if (check === FC_GIVEUP || isCanceled) result = FC_GIVEUP;
       if (this.finalCheckIndex !== oldIndex) continue;
       if (level >= maxLevel || result === FC_DONE || this.canPropagate()) break;
-      // A higher level reruns every check with the give-up state of the lower one cleared.
       level++;
       result = FC_DONE;
       failure = FAILURE_OK;
+      this.incompleteTheories = [];
     }
     if (this.canPropagate()) return FC_CONTINUE;
     if (result === FC_GIVEUP && failure !== FAILURE_OK) this.lastSearchFailure = failure;
     return result;
   }
 
-  private boundedSearch() {
+  boundedSearch() {
     for (;;) {
       while (!this.propagate()) {
         if (!this.resolveConflict()) return L_FALSE;
@@ -1028,6 +1224,10 @@ export class Context extends Internalizer {
             this.scopeLevel - this.baseLevel > 2
           )
             return L_UNDEF;
+          if (this.numConflicts > this.maxConflicts) {
+            this.lastSearchFailure = FAILURE_NUM_CONFLICTS;
+            return L_UNDEF;
+          }
         }
         if (this.numConflictsSinceLemmaGc > LEMMA_GC_INITIAL) this.delInactiveLemmas();
         this.dynAck.propagateEh();
@@ -1044,15 +1244,13 @@ export class Context extends Internalizer {
     }
   }
 
-  // resource_limits_exceeded: while searching, a failure stops the search, and the cancel flag is
-  // read twice.
+  // Z3's resource_limits_exceeded reads the cancel flag twice while searching.
   private isResourceLimitExceeded() {
     if (this.isSearching && (this.lastSearchFailure !== FAILURE_OK || this.checkCanceled()))
       return true;
     return this.checkCanceled();
   }
 
-  // reset_model: the model generator still holds the proto model.
   private resetModel() {
     const state = this.modelState;
     if (state.kind === "none" || state.kind === "generated") return;
@@ -1061,8 +1259,6 @@ export class Context extends Internalizer {
     this.modelState = { kind: "generated", generated: state.generated };
   }
 
-  // mk_proto_model: the model of the current assignment, which the quantifier manager adjusts. The
-  // model generator releases the last model first.
   private mkProtoModel() {
     if (this.modelState.kind !== "none") this.modelState.generated.model.decRef();
     const generated = mkModel(this);
@@ -1076,27 +1272,51 @@ export class Context extends Internalizer {
     return generated;
   }
 
-  // get_model: the model that the proto model makes, which the caller holds too. add_rec_funs gives
-  // each named expression without an interpretation its expression.
+  getLastFailureMessage() {
+    if (this.lastSearchFailure === FAILURE_CANCELED) return "canceled";
+    if (this.lastSearchFailure === FAILURE_NUM_CONFLICTS) return "max-conflicts-reached";
+    if (this.lastSearchFailure === FAILURE_QUANTIFIERS) return "(incomplete quantifiers)";
+    if (this.lastSearchFailure === FAILURE_THEORY)
+      return `(incomplete (theory${this.incompleteTheories.map((theory) => ` ${theory.name}`).join("")}))`;
+    return "unknown";
+  }
+
+  private hasCaseSplits() {
+    if (!this.hasCaseSplit) return false;
+    for (let index = this.numBoolVars; index-- > 0;)
+      if (
+        this.isRelevant(this.boolVar2Expr[index]) &&
+        this.assignment[mkLiteral(toBoolVar(index))] === L_UNDEF
+      )
+        return true;
+    return false;
+  }
+
+  isQuantifierIncomplete() {
+    return this.lastSearchFailure === FAILURE_QUANTIFIERS;
+  }
+
+  // Z3's update_model always answers false, after it recomputes a final state for the next model.
+  updateModel() {
+    if (!this.hasCaseSplits() && this.finalCheck() === FC_DONE) this.resetModel();
+  }
+
   getModel() {
     if (this.modelState.kind === "final") return this.modelState.model;
     const generated =
       this.modelState.kind === "proto" ? this.modelState.generated : this.mkProtoModel();
     const model = generated.model.mkModel();
-    for (const entry of this.manager.macros)
-      if (!model.constInterps.has(entry[0])) model.registerConst(entry[0], entry[1]);
+    model.addRecFuns();
     model.incRef();
     this.modelState = { kind: "final", generated, model };
     return model;
   }
 
-  // validate_model: every relevant ground literal of the assignment holds in the model.
   validateModel(model: ProtoModel) {
     const manager = this.manager;
     for (const literal of this.assignedLiterals) {
       const atom = this.boolVar2Expr[getVar(literal)];
       if (!this.isRelevant(atom)) continue;
-      // n and res of Z3's loop hold the literal and its value.
       const expr = isNegated(literal) ? manager.mkNot(atom) : atom;
       manager.incRef(expr);
       const value = manager.isGround(expr) ? model.eval(expr, false) : -1;
@@ -1107,9 +1327,6 @@ export class Context extends Internalizer {
     return true;
   }
 
-  // restart: decides whether the search goes on after a bounded search. A candidate model of a
-  // problem with quantifiers goes to model-based quantifier instantiation, which may add instances
-  // and force a restart.
   private restart(status: number, currentLevel: number): number | undefined {
     const qmanager = this.qmanager;
     this.resetModel();
@@ -1119,7 +1336,7 @@ export class Context extends Internalizer {
         this.lastSearchFailure !== FAILURE_THEORY ||
         status === L_FALSE ||
         this.isInconsistent() ||
-        !qmanager.hasQuantifiers() ||
+        qmanager.quantifiers.length === 0 ||
         !qmanager.isModelBased()
       )
         return status;
@@ -1131,7 +1348,7 @@ export class Context extends Internalizer {
       isForcedRestart = true;
     }
     if (status === L_FALSE) return L_FALSE;
-    if (status === L_TRUE && !qmanager.hasQuantifiers()) return L_TRUE;
+    if (status === L_TRUE && qmanager.quantifiers.length === 0) return L_TRUE;
     if (status === L_TRUE) {
       const generated = this.mkProtoModel();
       const result = qmanager.isModelBased()
@@ -1143,18 +1360,15 @@ export class Context extends Internalizer {
         return L_UNDEF;
       }
     }
-    // inc_limits with RS_IN_OUT_GEOMETRIC.
-    if (this.numConflictsSinceRestart >= this.restartThreshold) {
-      this.restartThreshold = Math.trunc(this.restartThreshold * RESTART_FACTOR);
-      if (this.restartThreshold > this.restartOuterThreshold) {
-        this.restartThreshold = RESTART_INITIAL;
-        this.restartOuterThreshold = Math.trunc(this.restartOuterThreshold * RESTART_FACTOR);
-      }
-    }
-    this.numConflictsSinceRestart = 0;
-    if (isForcedRestart || status === L_TRUE || this.agility < RESTART_AGILITY_THRESHOLD) {
+    this.incLimits();
+    if (
+      isForcedRestart ||
+      status === L_TRUE ||
+      !this.config.isRestartAdaptive ||
+      this.agility < RESTART_AGILITY_THRESHOLD
+    ) {
       if (this.scopeLevel > currentLevel) this.popScope(this.scopeLevel - currentLevel);
-      if (!this.isInconsistent()) this.theory.restartEh();
+      for (const theory of this.theories) if (!this.isInconsistent()) theory.restartEh();
       if (!this.isInconsistent()) qmanager.restartEh();
       if (this.isInconsistent()) {
         this.resolveConflict();
@@ -1164,7 +1378,28 @@ export class Context extends Internalizer {
     return undefined;
   }
 
-  // can_delete: a lemma that justifies neither of its watched literals.
+  incLimits() {
+    const config = this.config;
+    if (this.numConflictsSinceRestart >= this.restartThreshold) {
+      if (config.restartStrategy === RS_LUBY) {
+        this.lubyIndex++;
+        this.restartThreshold = getLuby(this.lubyIndex) * RESTART_INITIAL;
+      } else {
+        this.restartThreshold = Math.trunc(this.restartThreshold * config.restartFactor);
+        if (
+          config.restartStrategy !== RS_GEOMETRIC &&
+          this.restartThreshold > this.restartOuterThreshold
+        ) {
+          this.restartThreshold = RESTART_INITIAL;
+          this.restartOuterThreshold = Math.trunc(
+            this.restartOuterThreshold * config.restartFactor,
+          );
+        }
+      }
+    }
+    this.numConflictsSinceRestart = 0;
+  }
+
   private isDeletable(clause: Clause) {
     const store = this.clauses;
     if (store.isReinit(clause)) return false;
@@ -1183,8 +1418,6 @@ export class Context extends Internalizer {
     return false;
   }
 
-  // del_inactive_lemmas2: deletes the lemmas of the current user scope with low activity and many
-  // unassigned literals. The newest sixteenth of them tolerates more unassigned literals.
   private delInactiveLemmas() {
     const lemmas = this.lemmas;
     const startAt = this.baseLevel === 0 ? 0 : this.baseScopeLemmaLimits[this.baseLevel - 1];
@@ -1212,7 +1445,6 @@ export class Context extends Internalizer {
     this.numConflictsSinceLemmaGc = 0;
   }
 
-  // push: a user scope, which pop removes with everything asserted in it.
   push() {
     this.popToBaseLevel();
     this.pushScope();
@@ -1226,14 +1458,30 @@ export class Context extends Internalizer {
     this.popScope(numScopes);
   }
 
-  // pop_to_base_lvl: undoes the decisions of the last search, before new assertions.
   popToBaseLevel() {
     if (this.scopeLevel > this.baseLevel) this.popScope(this.scopeLevel - this.baseLevel);
   }
 
-  // internalize_assertions: the formulas of the asserted formulas, after preprocessing. When they
-  // are inconsistent, none is internalized and the context has an axiom conflict.
+  popToSearchLevel() {
+    if (this.scopeLevel > this.searchLevel) this.popScope(this.scopeLevel - this.searchLevel);
+  }
+
+  hasSearchFailure() {
+    return this.lastSearchFailure !== FAILURE_OK;
+  }
+
+  resetConflict() {
+    this.conflict = null;
+  }
+
+  getNumAssertedFormulas() {
+    return this.asserted?.getNumFormulas() ?? 0;
+  }
+
   internalizeAssertions(asserted: AssertedFormulas) {
+    this.asserted = asserted;
+    this.macros = asserted.macros;
+    this.hasQuantifiers = asserted.hasQuantifiers;
     const formulas = asserted.reduce();
     if (asserted.isInconsistent) {
       this.setConflict("axiom", null);
@@ -1245,35 +1493,132 @@ export class Context extends Internalizer {
     }
   }
 
-  // init_assumptions: the search runs above a scope where the assumptions hold.
-  initAssumptions(assumptions: number[]) {
+  initAssumptions(assumptions: number[], asserted: AssertedFormulas) {
+    this.literalAssumptions.clear();
+    for (const assumption of this.unsatCore) this.manager.decRef(assumption);
+    this.unsatCore = [];
     if (assumptions.length > 0) {
       this.propagate();
       if (this.isInconsistent()) return;
       this.delInactiveLemmas();
       this.pushScope();
-      for (const assumption of assumptions) {
+      const manager = this.manager;
+      const proxies = assumptions.map((assumption) => {
+        if (isValidAssumption(manager, assumption)) return assumption;
+        const proxy = manager.mkFreshConst(null, SORT_BOOL);
+        asserted.assertExpr(manager.mkApp(OP_IMPLIES, [proxy, assumption], SORT_BOOL));
+        return proxy;
+      });
+      this.internalizeAssertions(asserted);
+      for (const [index, proxy] of proxies.entries()) {
         if (this.isInconsistent()) break;
-        this.internalizeAssertion(assumption, 0);
+        if (proxy === manager.trueExpr) continue;
+        this.internalizeAssertion(proxy, 0);
+        const literal = this.getLiteral(proxy);
+        if (literal === this.trueLiteral || literal === this.falseLiteral) continue;
+        this.literalAssumptions.set(literal, assumptions[index]);
       }
     }
     this.searchLevel = this.scopeLevel;
   }
 
+  addTheoryAssumptions(assumptions: number[]) {
+    for (const theory of this.theories) theory.addTheoryAssumptions(assumptions);
+  }
+
+  checkResearching(asserted: AssertedFormulas, assumptions: readonly number[]) {
+    let result: number;
+    for (;;) {
+      this.popToBaseLevel();
+      this.internalizeAssertions(asserted);
+      const all = [...assumptions];
+      this.addTheoryAssumptions(all);
+      this.initAssumptions(all, asserted);
+      result = this.mkUnsatCore(this.search());
+      if (result !== L_FALSE || this.unsatCore.length === 0) return result;
+      if (!this.theories.some((theory) => theory.shouldResearch(this.unsatCore))) return result;
+    }
+  }
+
+  findMutexes(vars: readonly number[]) {
+    const manager = this.manager;
+    const cliques = new MaxCliques((index) => index ^ 1);
+    const literals: number[] = [];
+    for (const variable of vars) {
+      const isNot = manager.getOp(variable) === OP_NOT;
+      const atom = isNot ? manager.getArg(variable, 0) : variable;
+      const boolVar = this.findBoolVar(atom);
+      if (boolVar !== undefined) literals.push(mkLiteral(boolVar, isNot));
+    }
+    for (let index = 0; index < this.binaryWatches.length; index++)
+      for (const other of this.binaryWatches[index] ?? []) {
+        const source = index ^ 1;
+        if (source < other) cliques.addEdge(source, other);
+      }
+    return cliques.cliques2(literals).map((mutex) =>
+      mutex.map((index) => {
+        const literal = index as Literal;
+        if (literal === this.trueLiteral) return manager.trueExpr;
+        if (literal === this.falseLiteral) return manager.falseExpr;
+        const atom = this.boolVar2Expr[getVar(literal)];
+        return isNegated(literal) ? manager.mkApp(OP_NOT, [atom], SORT_BOOL) : atom;
+      }),
+    );
+  }
+
+  isAssumption(boolVar: BoolVar) {
+    return (
+      this.literalAssumptions.has(mkLiteral(boolVar)) ||
+      this.literalAssumptions.has(mkLiteral(boolVar, true))
+    );
+  }
+
+  isTrackingAssumptions() {
+    return this.literalAssumptions.size > 0 && this.searchLevel > this.baseLevel;
+  }
+
+  mkUnsatCore(result: number) {
+    if (result !== L_FALSE || !this.isTrackingAssumptions()) return result;
+    const literalAssumptions = this.literalAssumptions;
+    const found = new Set<Literal>();
+    const core: number[] = [];
+    for (const literal of this.conflictResolution.unsatCore) {
+      const assumed = literalAssumptions.has(literal) ? literal : negate(literal);
+      const assumption = literalAssumptions.get(assumed);
+      if (assumption === undefined || found.has(assumed)) continue;
+      found.add(assumed);
+      this.manager.incRef(assumption);
+      core.push(assumption);
+    }
+    literalAssumptions.clear();
+    this.popToBaseLevel();
+    this.searchLevel = this.baseLevel;
+    const ids = this.manager.ids;
+    this.unsatCore = core.sort((left, right) => ids[left] - ids[right]);
+    return L_FALSE;
+  }
+
   search() {
-    if (this.isInconsistent()) return L_FALSE;
+    if (this.isInconsistent()) {
+      this.resolveConflict();
+      return L_FALSE;
+    }
     this.resetModel();
-    this.theory.initSearchEh();
+    for (const theory of this.theories) theory.initSearchEh();
     this.qmanager.initSearchEh();
     this.dynAck.initSearchEh();
+    this.incompleteTheories = [];
     this.numConflicts = 0;
     this.numConflictsSinceRestart = 0;
     this.numConflictsSinceLemmaGc = 0;
     this.restartThreshold = RESTART_INITIAL;
     this.restartOuterThreshold = RESTART_INITIAL;
     this.agility = 0;
+    this.lubyIndex = 1;
     this.finalCheckIndex = 0;
     this.lastSearchFailure = FAILURE_OK;
+    this.phaseDefault = false;
+    if (this.manager.hasTypeVars) this.registerFamily(FAMILY_POLY);
     this.isSearching = true;
     const currentLevel = this.scopeLevel;
     let result: number | undefined;

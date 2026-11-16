@@ -12,7 +12,6 @@ const HEADER = [
   "Op(i) == Name[i]",
 ].join("\n");
 
-// The positions TLC prints for a call stack, which skip a node that repeats the one before it.
 const formatCallStack = (expressions: Expression[] | undefined) =>
   expressions
     ?.filter((expression, index) => expression !== expressions[index - 1])
@@ -43,7 +42,6 @@ const getFailure = async (
   };
 };
 
-// Each call stack is the one TLC 1.8.0 prints for the same spec.
 describe("the call stack of a replayed failure matches TLC", () => {
   it("walks the conjuncts and quantifiers of the next-state relation", async () => {
     expect(
@@ -118,13 +116,10 @@ describe("the call stack of a replayed failure matches TLC", () => {
     });
   });
 
-  // TLC's worker adds a state to the behavior graph even after its next states fail or violate a
-  // property, which evaluates ENABLED for the fairness of the spec.
   const FAIRNESS = "Spec == Init /\\ [][Next]_x /\\ WF_x(Fair)\nLive == []<>(x = 0)";
 
   const LIVE_STACK = ["13.36-13.39", "12.9-12.12", "11.9-11.14", "11.9-11.9"];
 
-  // Without a replay, TLC exits with the code of the error rather than of a failed replay.
   it.each([
     [undefined, "1 \\div x", [...LIVE_STACK, "9.6-9.18", "9.11-9.18"], 255],
     ["1.7.4" as const, "1 \\div x", ["9.6-9.18", "9.11-9.18"], 255],
@@ -143,7 +138,6 @@ describe("the call stack of a replayed failure matches TLC", () => {
     },
   );
 
-  // TLC's enabled walks every conjunct, even once the action has assigned every variable.
   it("walks the conjuncts of a fair action after it assigns every variable", async () => {
     expect(
       await getFailure(
@@ -215,8 +209,6 @@ describe("the replay of a failed initial state matches TLC", () => {
 });
 
 describe("the replay of an initial state that fails to join the behavior graph matches TLC", () => {
-  // The replay skips the state that failed, which TLC has already added to its set of states, and
-  // fails on the next one.
   it.each([undefined, "1.7.4" as const])(
     "adds a new state to the graph (TLC %s)",
     async (version) => {

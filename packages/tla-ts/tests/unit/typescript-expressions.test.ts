@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import { evaluateExpression } from "./typescript-harness";
 
-// Each expression evaluates the same in JavaScript and in the TLA+ that tla-ts compiles it to.
 const CASES: Record<string, (string | [string, string])[]> = {
   numbers: [
     "1 + 2 * 3 - 4",

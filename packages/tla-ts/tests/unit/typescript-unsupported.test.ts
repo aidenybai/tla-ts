@@ -2,8 +2,6 @@ import { expect, it } from "vite-plus/test";
 import { TlaTypeScriptError } from "../../src/errors";
 import { compile } from "../../src/typescript/compile";
 
-// TypeScript with no TLA+ equivalent fails to compile with a TlaTypeScriptError at the construct, rather
-// than producing a spec that TLC rejects or that means something else.
 const CASES: [string, string][] = [
   ["for-in loops", "for (const key in record) count++;"],
   ["for-of loops over a set", "for (const value of new Set([1, 2])) count += value;"],
@@ -116,6 +114,5 @@ it.each(CASES)("rejects %s", (_, statements) => {
     };
   `;
   expect(() => compile(model)).toThrow(TlaTypeScriptError);
-  // The error points at the statement, on line 8, as either a compile or a TypeScript type error.
   expect(() => compile(model)).toThrow(/spec\.ts[:(]8[:,]/);
 });

@@ -1,0 +1,17 @@
+(*---
+description: >-
+  Zenon has no rule for arith.intrange and exhausts the search on 2 \in 1..3, whose literals tlapm
+  writes as TLA.Succ chains.
+ref: zenon/ext_tla.ml#newnodes_prop
+outcome: unknown
+---*)
+;; obligation #1
+$goal (TLA.in (TLA.fapply TLA.Succ (TLA.fapply TLA.Succ 0))
+(arith.intrange (TLA.fapply TLA.Succ 0)
+(TLA.fapply TLA.Succ (TLA.fapply TLA.Succ (TLA.fapply TLA.Succ 0)))))
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: unknown
+---*)

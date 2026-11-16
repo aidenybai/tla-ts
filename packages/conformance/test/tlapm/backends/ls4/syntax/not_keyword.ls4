@@ -1,0 +1,12 @@
+(*---
+description: ptl_to_trp reads not as ~; LS4 refutes p & not p.
+ref: translate/folex.mll#lexer
+outcome: unsat
+---*)
+p & not p
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: unsat
+---*)

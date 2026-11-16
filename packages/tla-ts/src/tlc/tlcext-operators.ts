@@ -1,24 +1,24 @@
 import {
-  createJavaOverrideError,
-  defineHigherOrderOperator,
   defineLazyOperator,
   defineOperator,
   defineStateOperator,
+  getKindString,
   getOperator,
   getThunk,
   getValue,
 } from "../builtins";
-import { TlaEvaluationError, TlaModuleError, TlaUnsupportedError } from "../errors";
+import { formatRange, TlaEndOfInputError, TlaEvaluationError, TlaModuleError } from "../errors";
 import { getTlcFingerprint } from "./fingerprint";
-import { formatNestedMessage } from "./messages";
+import { formatMessage, formatNestedMessage, MESSAGE_CODE, MESSAGE_LEVEL } from "./messages";
 import {
+  describeRange,
   evaluate,
-  expectBoolean,
   getDefinition,
   type Builtin,
   type Environment,
 } from "../evaluate";
 import { getChildren, isLocallyResolved, type Definition, type Expression } from "../ast";
+import { ACTION_LEVEL, CONSTANT_LEVEL, VARIABLE_LEVEL } from "../levels";
 import {
   getNamedRegisters,
   getPossibleCounts,
@@ -32,25 +32,13 @@ import {
   createSet,
   createTuple,
   formatValue,
-  getDomain,
+  getFingerprintError,
   getSequenceElements,
   getValueKey,
-  isFunctionValue,
   toFiniteSet,
-  valuesEqual,
   type Value,
 } from "../values";
 
-const OVERRIDE_PARAMETERS =
-  "tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel";
-
-const ASSERT_ERROR_METHOD = `public static synchronized tlc2.value.impl.Value tlc2.module.TLCExt.assertError(${OVERRIDE_PARAMETERS})`;
-
-const TRACE_METHOD = `public static tlc2.value.impl.TupleValue tlc2.module.TLCExt.getTrace(${OVERRIDE_PARAMETERS}) throws java.io.IOException`;
-
-const PICK_SUCCESSOR_METHOD = `public static synchronized tlc2.value.impl.Value tlc2.module.TLCExt.pickSuccessor(${OVERRIDE_PARAMETERS})`;
-
-// TLC's record for an action it doesn't store, such as every action in breadth-first search.
 export const createActionRecord = (action: string | undefined) =>
   createRecord([
     ["name", action ?? "UnnamedAction"],
@@ -66,9 +54,17 @@ export const createActionRecord = (action: string | undefined) =>
     ],
   ]);
 
-// TLC's CounterExample is a graph of the violating behavior: the states numbered from 1, an edge
-// for each step, and for a lasso an edge from the last state back to where the loop starts. Each
-// edge holds the record of the action TLC found for the step.
+const counterExamples = new WeakSet<Value & object>();
+
+const createCounterExampleRecord = (action: Value[], states: Value[]) => {
+  const counterExample = createRecord([
+    ["action", createSet(action)],
+    ["state", createSet(states)],
+  ]);
+  counterExamples.add(counterExample);
+  return counterExample;
+};
+
 export const createCounterExample = (
   stateRecords: Record<string, Value>[],
   actions: Value[],
@@ -83,10 +79,7 @@ export const createCounterExample = (
   const closing = loop
     ? [createTuple([states[states.length - 1], loop.action, states[loop.start]])]
     : [];
-  return createRecord([
-    ["action", createSet([...steps, ...closing])],
-    ["state", createSet(states)],
-  ]);
+  return createCounterExampleRecord([...steps, ...closing], states);
 };
 
 const getRegister = (runtime: CheckerRuntime, key: Value) => {
@@ -97,7 +90,6 @@ const getRegister = (runtime: CheckerRuntime, key: Value) => {
   return undefined;
 };
 
-// TLC's TLCSet. TLCExt's TLCGetAndSet is a TLA+ definition that calls it.
 export const setTlcValue = (
   runtime: CheckerRuntime,
   print: (text: string) => void,
@@ -113,7 +105,7 @@ export const setTlcValue = (
     return;
   }
   if (key === "pause") {
-    if (value !== true) return;
+    if (value !== true || !runtime.pause) return;
     print("Press enter to resume model checking.");
     runtime.pause();
     return;
@@ -131,33 +123,39 @@ export const setTlcValue = (
   );
 };
 
+const describeNode = (expression: Expression) =>
+  expression.kind === "Number"
+    ? (expression.text ?? String(expression.value))
+    : expression.kind === "Decimal"
+      ? expression.text
+      : describeRange(expression);
+
 const isCompleteState = (state: (Value | undefined)[]): state is Value[] =>
   state.every((value) => value !== undefined);
 
-const toStateRecord = (state: Value[], environment: Environment) =>
-  createRecord(environment.variables.map((name, index): [string, Value] => [name, state[index]]));
-
-const mentionsVariables = (
+const getMentionedLevel = (
   expression: Expression,
   environment: Environment,
   visited: Set<Definition>,
-): boolean => {
+): number => {
+  if (expression.kind === "Prime" || expression.kind === "Unchanged") return ACTION_LEVEL;
   const name =
     expression.kind === "Identifier"
       ? expression.name
       : expression.kind === "Apply"
         ? expression.operator
         : undefined;
-  if (expression.kind === "Prime" || expression.kind === "Unchanged") return true;
-  if (name !== undefined && !isLocallyResolved(expression)) {
-    if (environment.variableIndex.has(name)) return true;
-    const definition = getDefinition(name, environment);
-    if (definition && !visited.has(definition)) {
-      visited.add(definition);
-      if (mentionsVariables(definition.body, environment, visited)) return true;
-    }
+  const isGlobal = name !== undefined && !isLocallyResolved(expression);
+  if (isGlobal && environment.variableIndex.has(name)) return VARIABLE_LEVEL;
+  const levels = getChildren(expression).map((child) =>
+    getMentionedLevel(child, environment, visited),
+  );
+  const definition = isGlobal ? getDefinition(name, environment) : undefined;
+  if (definition && !visited.has(definition)) {
+    visited.add(definition);
+    levels.push(getMentionedLevel(definition.body, environment, visited));
   }
-  return getChildren(expression).some((child) => mentionsVariables(child, environment, visited));
+  return Math.max(CONSTANT_LEVEL, ...levels);
 };
 
 export const createTlcExtOperators = (
@@ -172,23 +170,11 @@ export const createTlcExtOperators = (
     return caches;
   };
   return [
-    defineOperator("AssertEq", 2, (args) => {
-      const left = getValue(args, 0, "AssertEq");
-      const right = getValue(args, 1, "AssertEq");
-      const isEqual = valuesEqual(left, right);
-      if (!isEqual) {
-        print(formatValue("Assertion failed", true));
-        print(formatValue(left, true));
-        print(formatValue(right, true));
-      }
-      return isEqual;
-    }),
     defineLazyOperator("AssertError", 2, (args) => {
       const message = getOperator(args, 0, "AssertError").expression;
       if (message && message.kind !== "String") {
-        throw createJavaOverrideError(
-          ASSERT_ERROR_METHOD,
-          `In computing AssertError, a non-string expression (line ${message.location.line}, col ${message.location.column}) was used as the err of an AssertError(err, exp).`,
+        throw new TlaEvaluationError(
+          `In computing AssertError, a non-string expression (${describeNode(message)}) was used as the err of an AssertError(err, exp).`,
         );
       }
       const expected = getThunk(args, 0, "AssertError")();
@@ -202,57 +188,43 @@ export const createTlcExtOperators = (
       }
       return false;
     }),
-    defineStateOperator("TLCGetOrDefault", 2, (args) => {
-      const key = getValue(args, 0, "TLCGetOrDefault");
-      return getRegister(runtime, key) ?? getValue(args, 1, "TLCGetOrDefault");
-    }),
-    {
-      ...defineHigherOrderOperator("TLCGetAndSet", 4, (args) => {
-        const key = getValue(args, 0, "TLCGetAndSet");
-        const previous = getRegister(runtime, key) ?? getValue(args, 3, "TLCGetAndSet");
-        const update = getOperator(args, 1, "TLCGetAndSet");
-        setTlcValue(
-          runtime,
-          print,
-          key,
-          update.call([previous, getValue(args, 2, "TLCGetAndSet")]),
-        );
-        return previous;
-      }),
-      isStateLevel: true,
-    },
-    defineStateOperator("Trace", 0, (_, context) => {
-      const state = context?.state;
-      if (!context || !state || !isCompleteState(state)) {
-        const unassigned = (context?.environment.variables ?? []).filter(
-          (_, index) => state?.[index] === undefined,
-        );
-        throw createJavaOverrideError(
-          TRACE_METHOD,
+    defineStateOperator(
+      "TLCGetOrDefault",
+      2,
+      (args) =>
+        getRegister(runtime, getValue(args, 0, "TLCGetOrDefault")) ??
+        getValue(args, 1, "TLCGetOrDefault"),
+    ),
+    defineStateOperator("Trace", 0, (_args, context) => {
+      const variables = context?.environment.variables ?? [];
+      const state = context?.state ?? variables.map(() => undefined);
+      if (!context || !isCompleteState(state)) {
+        const unassigned = variables.filter((_name, index) => state[index] === undefined);
+        throw new TlaEvaluationError(
           `In evaluating TLCExt!Trace, the state is not completely specified yet (variable${unassigned.length > 1 ? "s" : ""} ${unassigned.join(", ")} undefined).`,
         );
       }
+      if (!context.state) return createTuple([createRecord([])]);
       return createTuple(
-        runtime.getBehavior(state).map((step) => toStateRecord(step, context.environment)),
+        runtime.getBehavior(state).map((step) => {
+          const fields = context.environment.variables.map((name, index): [string, Value] => [
+            name,
+            step[index],
+          ]);
+          const action = runtime.getSimulationValue?.("action", step);
+          return createRecord(action === undefined ? fields : [["_action", action], ...fields]);
+        }),
       );
     }),
     defineStateOperator(
       "CounterExample",
       0,
-      () =>
-        runtime.counterExample ??
-        createRecord([
-          ["action", createSet([])],
-          ["state", createSet([])],
-        ]),
+      () => runtime.counterExample ?? createCounterExampleRecord([], []),
     ),
     defineOperator("ToTrace", 1, (args) => {
       const counterExample = getValue(args, 0, "ToTrace");
-      if (
-        !isFunctionValue(counterExample) ||
-        !valuesEqual(getDomain(counterExample), createSet(["action", "state"]))
-      ) {
-        throw new TlaEvaluationError(
+      if (typeof counterExample !== "object" || !counterExamples.has(counterExample)) {
+        throw new TlaModuleError(
           `The argument of ToTrace should be a CounterExample, but instead it is:\n${formatValue(counterExample)}`,
         );
       }
@@ -272,31 +244,59 @@ export const createTlcExtOperators = (
       }
       return createModelValue(name);
     }),
-    // TLC runs the deferred expression only in simulation, when it extends a behavior.
-    defineLazyOperator("TLCDefer", 1, () => true),
-    defineOperator("TLCNoOp", 1, (args) => getValue(args, 0, "TLCNoOp")),
-    defineLazyOperator("PickSuccessor", 1, (args, context) => {
-      const next = context?.next;
-      if (!next || !isCompleteState(next)) {
-        throw createJavaOverrideError(
-          PICK_SUCCESSOR_METHOD,
-          'Cannot invoke "tlc2.value.IValue.fingerPrint(long)" because "minVals[i]" is null',
-        );
+    defineLazyOperator("TLCDefer", 1, (args, context) => {
+      const expression = getOperator(args, 0, "TLCDefer").expression;
+      if (context && expression) {
+        runtime.deferred = (next) => {
+          evaluate(expression, { ...context, next });
+        };
       }
-      if (runtime.isSeen(next)) return true;
-      if (expectBoolean(getThunk(args, 0, "PickSuccessor")(), "the condition of PickSuccessor")) {
-        return true;
-      }
-      throw new TlaUnsupportedError(
-        "PickSuccessor needs interactive input to extend the behavior with a new state",
-      );
+      return true;
     }),
+    defineOperator("TLCNoOp", 1, (args) => getValue(args, 0, "TLCNoOp")),
+    {
+      ...defineLazyOperator("PickSuccessor", 1, (args, context) => {
+        // Deviation from TLC: TLCExt#pickSuccessor fingerprints a partial successor and fails, where TLCExt.tla promises TRUE.
+        const next = context?.next ?? (context?.environment.variables ?? []).map(() => undefined);
+        if (!isCompleteState(next)) return true;
+        if (context?.next && runtime.isSeen(next)) return true;
+        const guard = getOperator(args, 0, "PickSuccessor");
+        const isPicked = guard.call([]);
+        if (typeof isPicked !== "boolean") {
+          throw new TlaEvaluationError(
+            `In evaluating TLCExt!PickSuccessor, a non-boolean expression (${getKindString(isPicked)}) was used as the condition of an IF.\n${guard.expression ? describeNode(guard.expression) : ""}`,
+          );
+        }
+        if (isPicked || !context?.next || !context.state || !isCompleteState(context.state)) {
+          return true;
+        }
+        const action = runtime.getSuccessorAction(context.state, next);
+        print(
+          formatMessage(
+            runtime.isTool,
+            MESSAGE_CODE.moduleOverrideStdout,
+            MESSAGE_LEVEL.none,
+            `Extend behavior of length ${runtime.getLevel(context.state)} with a "${action?.name}" step [<Action ${action?.location.range && formatRange(action.location.range)}>]? (Yes/no/explored/states/diff):`,
+          ),
+        );
+        // Deviation from TLC: PickSuccessor has no standard input to read an answer from.
+        throw new TlaEndOfInputError();
+      }),
+      isActionLevel: true,
+    },
     defineLazyOperator("TLCCache", 2, (args, context) => {
       const expression = getOperator(args, 0, "TLCCache");
       const closure = getValueKey(getThunk(args, 1, "TLCCache")());
       const source = expression.expression;
       if (!source || !context) return expression.call([]);
-      const isStateLevel = mentionsVariables(source, context.environment, new Set());
+      const level = getMentionedLevel(source, context.environment, new Set());
+      if (level === ACTION_LEVEL) return expression.call([]);
+      const isStateLevel = level === VARIABLE_LEVEL;
+      // TLC's model checker keeps no cache in a state, so its TLA+ definition evaluates it again.
+      if (isStateLevel && context.state && runtime.getSimulationValue === undefined) {
+        expression.call([]);
+        return expression.call([]);
+      }
       const caches = isStateLevel && context.state ? getStateCaches(context.state) : globalCaches;
       const cache = caches.get(source) ?? new Map<string, Value>();
       caches.set(source, cache);
@@ -306,24 +306,41 @@ export const createTlcExtOperators = (
       cache.set(closure, value);
       return value;
     }),
-    defineOperator("TLCFP", 1, (args) =>
-      Number(BigInt.asIntN(32, getTlcFingerprint([getValue(args, 0, "TLCFP")]))),
-    ),
-    defineStateOperator("TLCEvalDefinition", 1, (args, context) => {
-      const name = getValue(args, 0, "TLCEvalDefinition");
-      const definition =
-        typeof name === "string" && context ? getDefinition(name, context.environment) : undefined;
-      if (!definition || typeof name !== "string" || !context) {
+    defineOperator("TLCFP", 1, (args) => {
+      const value = getValue(args, 0, "TLCFP");
+      const error = getFingerprintError(value);
+      if (error) throw error;
+      return Number(BigInt.asIntN(32, getTlcFingerprint([value])));
+    }),
+    defineLazyOperator("TLCEvalDefinition", 1, (args, context) => {
+      const name = getThunk(args, 0, "TLCEvalDefinition")();
+      if (typeof name !== "string") {
+        throw new TlaModuleError(
+          `The argument of TLCEvalDefinition should be a string, but instead it is:\n${formatValue(name)}`,
+        );
+      }
+      const definition = context ? getDefinition(name, context.environment) : undefined;
+      const builtin = definition ? undefined : context?.environment.builtins.get(name);
+      if (builtin?.arity === 0) return builtin.evaluate([], context);
+      if (!definition || !context) {
         throw new TlaModuleError(
           `The argument of TLCEvalDefinition should be a name of a definition reachable from the root module, but instead it is:\n${formatValue(name)}`,
         );
       }
       if (definition.kind === "Operator" && definition.params.length > 0) {
+        const parameters = definition.params.map((param) =>
+          param.arity === 0
+            ? param.name
+            : `${param.name}(${Array.from({ length: param.arity }, () => "_").join(",")})`,
+        );
+        // TLC's message template puts another "a" before the expected kind.
         throw new TlaModuleError(
-          `The argument of TLCEvalDefinition should be a zero-arity definition, but instead it is:\n${name}`,
+          `The argument of TLCEvalDefinition should be a a zero-arity definition, but instead it is:\n${name}(${parameters.join(", ")})`,
         );
       }
-      return evaluate({ kind: "Identifier", name, location: definition.location }, context);
+      return definition.kind === "Operator"
+        ? evaluate(definition.body, context)
+        : evaluate({ kind: "Identifier", name, location: definition.location }, context);
     }),
   ];
 };

@@ -1,8 +1,4 @@
 // Ported from Z3 (src/smt/smt_context.cpp), MIT license, see z3-license.txt.
-// m_sticky_generation_updates: the generations that update_generation lowered, by node. Only a node
-// of the same declaration can be congruent to another, so the updates are grouped by declaration.
-// Each group keeps its updates in the order of insertion, as a Map does, in arrays that iterate
-// without allocating. A deleted update leaves a hole until holes are half of its group.
 import { shrink } from "./array";
 import type { Enode } from "./enode";
 
@@ -47,7 +43,6 @@ export class StickyGenerations {
     if (2 * group.numHoles > group.nodes.length) compact(group);
   }
 
-  // The updates of the declaration in the order of insertion, where a deleted one is null.
   getGroup(decl: number): Readonly<Pick<Group, "nodes" | "generations">> | undefined {
     return this.groups.get(decl);
   }

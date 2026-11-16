@@ -1,0 +1,37 @@
+(*---
+description: Zenon unfolds a bounded universal with bAll_def.
+ref: zenon/ext_tla.ml#built_in_defs
+outcome: unsat
+---*)
+;; obligation #1
+$goal (=> (TLA.bAll a_CONSTANTunde_Sunde_a ((a_CONSTANTunde_aunde_a) (a_CONSTANTunde_Punde_a a_CONSTANTunde_aunde_a)))
+(TLA.bAll a_CONSTANTunde_Sunde_a ((a_CONSTANTunde_aunde_a) (\/ (a_CONSTANTunde_Punde_a a_CONSTANTunde_aunde_a)
+(-. (a_CONSTANTunde_Punde_a a_CONSTANTunde_aunde_a))))))
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: |-
+    unsat
+    proof (rule zenon_nnpp)
+     assume z_Ha:"(~(bAll(a_CONSTANTunde_Sunde_a, (\<lambda>a_CONSTANTunde_aunde_a. a_CONSTANTunde_Punde_a(a_CONSTANTunde_aunde_a)))=>bAll(a_CONSTANTunde_Sunde_a, (\<lambda>a_CONSTANTunde_aunde_a. (a_CONSTANTunde_Punde_a(a_CONSTANTunde_aunde_a)|(~a_CONSTANTunde_Punde_a(a_CONSTANTunde_aunde_a)))))))" (is "~(?z_hc=>?z_hh)")
+     have z_Hl: "(~?z_hh)"
+     by (rule zenon_notimply_1 [OF z_Ha])
+     have z_Hm_z_Hl: "(~(\\A x:((x \\in a_CONSTANTunde_Sunde_a)=>(a_CONSTANTunde_Punde_a(x)|(~a_CONSTANTunde_Punde_a(x)))))) == (~?z_hh)" (is "?z_hm == ?z_hl")
+     by (unfold bAll_def)
+     have z_Hm: "?z_hm" (is "~(\\A x : ?z_hu(x))")
+     by (unfold z_Hm_z_Hl, fact z_Hl)
+     have z_Hv: "(\\E x:(~((x \\in a_CONSTANTunde_Sunde_a)=>(a_CONSTANTunde_Punde_a(x)|(~a_CONSTANTunde_Punde_a(x))))))" (is "\\E x : ?z_hx(x)")
+     by (rule zenon_notallex_0 [of "?z_hu", OF z_Hm])
+     have z_Hy: "?z_hx((CHOOSE x:(~((x \\in a_CONSTANTunde_Sunde_a)=>(a_CONSTANTunde_Punde_a(x)|(~a_CONSTANTunde_Punde_a(x)))))))" (is "~(?z_hba=>?z_hbb)")
+     by (rule zenon_ex_choose_0 [of "?z_hx", OF z_Hv])
+     have z_Hbc: "(~?z_hbb)" (is "~(?z_hbd|?z_hbe)")
+     by (rule zenon_notimply_1 [OF z_Hy])
+     have z_Hbe: "?z_hbe"
+     by (rule zenon_notor_0 [OF z_Hbc])
+     have z_Hbf: "(~?z_hbe)"
+     by (rule zenon_notor_1 [OF z_Hbc])
+     show FALSE
+     by (rule notE [OF z_Hbf z_Hbe])
+    qed
+---*)

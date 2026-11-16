@@ -1,0 +1,26 @@
+(*---
+description: sortseq applied to function_lazy, a FcnLambdaValue.
+ref: tlc2/module/TLC.java#SortSeq
+features:
+  - value-matrix
+flags:
+  - expression
+contexts:
+  - assume
+outcome: any
+---*)
+---- MODULE sortseq_function_lazy ----
+EXTENDS Integers, Sequences, FiniteSets, Bags, TLC
+Test == PrintT(SortSeq([x \in Nat |-> x], LAMBDA a, b : a < b))
+====
+
+(*--- recorded
+all:
+  exit: 10
+  transcript: |-
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module sortseq_function_lazy failed.
+    2154:0 Attempted to apply the operator overridden by the Java method
+    public static tlc2.value.impl.Value tlc2.module.TLC.SortSeq(tlc2.value.impl.Value,tlc2.value.impl.Value),
+    but it produced the following error:
+    To convert a function of form [x \in S |-> f(x)] to a tuple, the set S must be enumerable.
+---*)

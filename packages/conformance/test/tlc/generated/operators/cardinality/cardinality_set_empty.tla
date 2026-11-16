@@ -1,0 +1,21 @@
+(*---
+description: cardinality applied to set_empty, a SetEnumValue.
+ref: tlc2/module/FiniteSets.java#Cardinality
+features:
+  - value-matrix
+flags:
+  - expression
+contexts:
+  - assume
+outcome: any
+---*)
+---- MODULE cardinality_set_empty ----
+EXTENDS Integers, Sequences, FiniteSets, Bags, TLC
+Test == PrintT(Cardinality({}))
+====
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: "| 0"
+---*)

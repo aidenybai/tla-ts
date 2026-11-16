@@ -9,7 +9,6 @@ const FIXTURES = join(import.meta.dirname, "../fixtures/zenon-encoder");
 
 const SESSION = { caseErrors: 0 };
 
-// tlapm's .znn files differ from tla-ts's only in comments and line breaks.
 const normalize = (text: string) => text.replace(/^;.*$/gm, "").replace(/\s+/g, " ").trim();
 
 const obligations = getObligations(

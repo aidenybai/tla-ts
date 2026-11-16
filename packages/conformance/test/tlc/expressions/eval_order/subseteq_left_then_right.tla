@@ -1,0 +1,19 @@
+(*---
+description: "\\subseteq evaluates its left operand first."
+ref: "tlc2/tool/impl/Tool.java#OPCODE_subseteq"
+flags: [expression]
+outcome: success
+---*)
+---- MODULE subseteq_left_then_right ----
+EXTENDS Integers, TLC
+P(m, v) == IF PrintT(m) THEN v ELSE v
+Test == P(1, {}) \subseteq P(2, {})
+====
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: |-
+    | 1
+    | 2
+---*)

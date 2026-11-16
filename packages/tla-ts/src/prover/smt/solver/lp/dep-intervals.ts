@@ -1,8 +1,6 @@
 // Ported from Z3 (src/math/interval/interval.h, src/math/interval/interval_def.h,
 // src/math/interval/dep_intervals.h, src/math/interval/dep_intervals.cpp), MIT license, see
-// z3-license.txt. Exact rational intervals with open, closed, or infinite bounds, where each bound
-// carries the dependency that justifies it. Only the operations nla_intervals, horner,
-// pdd_interval, and monomial_bounds call are here; mpq is exact, so there is no rounding.
+// z3-license.txt.
 import { Rational } from "../rational";
 import { type Dependency, linearize, mkJoin } from "./dependency";
 
@@ -17,7 +15,6 @@ export interface DepInterval {
   upperDep: Dependency;
 }
 
-// with_deps_t: whether an operation also computes the dependencies of the result.
 export type DepsMode = "with-deps" | "without-deps";
 
 interface ExtNumeral {
@@ -25,7 +22,6 @@ interface ExtNumeral {
   readonly value: Rational;
 }
 
-// interval_deps_combine_rule: bitmasks of the argument bounds that justify each result bound.
 interface CombineRule {
   readonly lower: number;
   readonly upper: number;
@@ -99,8 +95,6 @@ const extLt = (first: ExtNumeral, second: ExtNumeral) => {
   return second.kind === "plus-inf";
 };
 
-// The bounds of a result go in only after every bound of the arguments is read, since the result
-// may be one of the arguments.
 const setBounds = (
   result: DepInterval,
   lower: ExtNumeral,
@@ -130,7 +124,6 @@ const isN0 = (interval: DepInterval) => upperIsZero(interval) && !interval.isUpp
 const isN1 = (interval: DepInterval) =>
   upperIsNeg(interval) || (upperIsZero(interval) && interval.isUpperOpen);
 const isM = (interval: DepInterval) => lowerIsNeg(interval) && upperIsPos(interval);
-// interval_manager::is_zero, which unlike dep_intervals::is_zero ignores openness.
 const areBoundsZero = (interval: DepInterval) => lowerIsZero(interval) && upperIsZero(interval);
 
 const imSet = (target: DepInterval, source: DepInterval) => {
@@ -152,7 +145,6 @@ const imAdd = (first: DepInterval, second: DepInterval, result: DepInterval) =>
     first.isUpperOpen || second.isUpperOpen,
   );
 
-// div_mul with inv_k false.
 const imMulScalar = (scalar: Rational, interval: DepInterval, result: DepInterval) => {
   if (scalar.isZero()) return setBounds(result, MINUS_INF, true, PLUS_INF, true);
   const factor = mkNumeral(scalar);
@@ -236,7 +228,7 @@ const imMul = (first: DepInterval, second: DepInterval, result: DepInterval) => 
   );
 };
 
-// The divisor must not contain zero. Like Z3, a zero test of c or d reads the stored value.
+// Z3 tests the stored value of c and d for zero even when the bound is infinite.
 const imDiv = (first: DepInterval, second: DepInterval, result: DepInterval) => {
   if (areBoundsZero(first))
     return setBounds(result, mkNumeral(Rational.zero), false, mkNumeral(Rational.zero), false);
@@ -451,7 +443,6 @@ const getPowerRule = (interval: DepInterval, exponent: number): CombineRule => {
   return { lower: 0, upper: DEP_IN_LOWER1 | DEP_IN_UPPER1 };
 };
 
-// im_config::mk_dependency: the joined dependencies of the bounds in the mask.
 const mkDependency = (first: DepInterval, second: DepInterval | null, mask: number) => {
   const withLower1 = mask & DEP_IN_LOWER1 ? first.lowerDep : null;
   const withLower2 =
@@ -460,8 +451,7 @@ const mkDependency = (first: DepInterval, second: DepInterval | null, mask: numb
   return second !== null && mask & DEP_IN_UPPER2 ? mkJoin(withUpper1, second.upperDep) : withUpper1;
 };
 
-// im_config::add_deps.
-const combineDeps = (
+const addDeps = (
   first: DepInterval,
   second: DepInterval | null,
   rule: CombineRule,
@@ -489,7 +479,7 @@ export const power = (
   if (exponent === 1 && interval === result) return;
   const rule = getPowerRule(interval, exponent);
   imPower(interval, exponent, result);
-  if (mode === "with-deps") combineDeps(interval, null, rule, result);
+  if (mode === "with-deps") addDeps(interval, null, rule, result);
 };
 
 export const mulScalar = (
@@ -514,7 +504,7 @@ export const mul = (
 ) => {
   const rule = getMulRule(first, second);
   imMul(first, second, result);
-  if (mode === "with-deps") combineDeps(first, second, rule, result);
+  if (mode === "with-deps") addDeps(first, second, rule, result);
 };
 
 export const div = (
@@ -525,7 +515,7 @@ export const div = (
 ) => {
   const rule = getDivRule(first, second);
   imDiv(first, second, result);
-  if (mode === "with-deps") combineDeps(first, second, rule, result);
+  if (mode === "with-deps") addDeps(first, second, rule, result);
 };
 
 export const add = (
@@ -535,10 +525,9 @@ export const add = (
   mode: DepsMode,
 ) => {
   imAdd(first, second, result);
-  if (mode === "with-deps") combineDeps(first, second, getAddRule(), result);
+  if (mode === "with-deps") addDeps(first, second, getAddRule(), result);
 };
 
-// add(rational, interval): shifts the finite bounds and keeps the dependencies.
 export const addScalar = (scalar: Rational, interval: DepInterval) => {
   if (!interval.isLowerInf) interval.lower = interval.lower.add(scalar);
   if (!interval.isUpperInf) interval.upper = interval.upper.add(scalar);
@@ -558,7 +547,6 @@ const copyUpperBound = (source: DepInterval, target: DepInterval, mode: DepsMode
   if (mode === "with-deps") target.upperDep = source.upperDep;
 };
 
-// On equal bounds the bound of first wins if it is open, else the bound of second.
 export const intersect = (
   first: DepInterval,
   second: DepInterval,
@@ -583,7 +571,6 @@ export const intersect = (
   }
 };
 
-// set_value and set_interval_for_scalar: the closed point interval, keeping the dependencies.
 export const setValue = (interval: DepInterval, value: Rational) =>
   setBounds(interval, mkNumeral(value), false, mkNumeral(value), false);
 
@@ -611,8 +598,6 @@ const separatedFromZeroOnUpper = (interval: DepInterval) =>
 export const separatedFromZero = (interval: DepInterval) =>
   separatedFromZeroOnUpper(interval) || separatedFromZeroOnLower(interval);
 
-// When the interval excludes zero, reports the joined dependency of dep and the separating bound,
-// lower first.
 export const checkIntervalForConflictOnZero = (
   interval: DepInterval,
   dep: Dependency,

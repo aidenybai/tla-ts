@@ -1,0 +1,23 @@
+(*---
+description: z3test's regression regressions/smt2/3319.smt2.
+ref: regressions/smt2/3319.smt2
+features:
+  - z3test
+outcome: sat
+---*)
+(set-logic NRA)
+(set-option :model_validate true)
+(set-option :rewriter.arith_lhs true)
+(set-option :rewriter.flat false)
+(declare-const r0 Real)
+(declare-const r2 Real)
+(declare-const r4 Real)
+(declare-const r5 Real)
+(assert (< 0.0 r0 (/ r2 (* (/ r4 (/ 0.9 r5)) r0 7.0 r0))))
+(check-sat)
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: sat
+---*)

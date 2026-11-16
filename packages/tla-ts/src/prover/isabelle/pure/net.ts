@@ -1,15 +1,13 @@
-// Ported from Isabelle2025's Pure/net.ML, discrimination nets. Copyright (c) 1986-2025 University
-// of Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
+// Ported from Isabelle2025's Pure/net.ML. Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
 
+import type { List } from "./list";
 import { boundName } from "./name";
 import {
   emptyTable,
   fastStringOrd,
   foldTable,
-  isEmptyTable,
   lookupTable,
   updateTable,
-  deleteTable,
   type Table,
 } from "./table";
 import { headOf, type Term } from "./term";
@@ -33,8 +31,6 @@ export type Net<Item> =
 
 export const emptyNet: Net<never> = { kind: "Leaf", items: [] };
 
-const isEmptyNet = <Item>(net: Net<Item>) => net.kind === "Leaf" && net.items.length === 0;
-
 const makeNode = <Item>(): Extract<Net<Item>, { kind: "Net" }> => ({
   kind: "Net",
   comb: emptyNet,
@@ -42,7 +38,6 @@ const makeNode = <Item>(): Extract<Net<Item>, { kind: "Net" }> => ({
   atoms: emptyTable(fastStringOrd),
 });
 
-// Net.key_of_term: preorder keys, with any term headed by a variable or an abstraction as a Var.
 export const keyOfTerm = (term: Term): NetKey[] => {
   const keys: NetKey[] = [];
   const add = (current: Term) => {
@@ -68,8 +63,6 @@ export const keyOfTerm = (term: Term): NetKey[] => {
   return keys;
 };
 
-// Net.insert: raises nothing on a duplicate here; insert_safe semantics with eq. It walks down
-// the keys and rebuilds the path bottom-up, so a long key list can't exhaust the stack.
 export const insertNet = <Item>(
   isEqual: (left: Item, right: Item) => boolean,
   keys: readonly NetKey[],
@@ -104,56 +97,7 @@ export const insertNet = <Item>(
 export const insertTermNet = <Item>(term: Term, item: Item, net: Net<Item>) =>
   insertNet(() => false, keyOfTerm(term), item, net) ?? net;
 
-const newNet = <Item>(node: Extract<Net<Item>, { kind: "Net" }>): Net<Item> =>
-  isEmptyNet(node.comb) && isEmptyNet(node.var) && isEmptyTable(node.atoms) ? emptyNet : node;
-
-// Net.delete: undefined where Isabelle raises DELETE.
-const deleteNet = <Item>(
-  isEqual: (left: Item, right: Item) => boolean,
-  keys: readonly NetKey[],
-  item: Item,
-  net: Net<Item>,
-): Net<Item> | undefined => {
-  const del = (position: number, node: Net<Item>): Net<Item> | undefined => {
-    if (node.kind === "Leaf") {
-      if (position < keys.length) return undefined;
-      const index = node.items.findIndex((other) => isEqual(other, item));
-      if (index === -1) return undefined;
-      return { kind: "Leaf", items: node.items.filter((other) => !isEqual(other, item)) };
-    }
-    if (position === keys.length) return undefined;
-    const key = keys[position];
-    if (key.kind === "Comb") {
-      const comb = del(position + 1, node.comb);
-      return comb && newNet({ ...node, comb });
-    }
-    if (key.kind === "Var") {
-      const child = del(position + 1, node.var);
-      return child && newNet({ ...node, var: child });
-    }
-    const existing = lookupTable(node.atoms, key.name);
-    if (existing === undefined) return undefined;
-    const child = del(position + 1, existing);
-    if (child === undefined) return undefined;
-    return newNet({
-      ...node,
-      atoms: isEmptyNet(child)
-        ? deleteTable(node.atoms, key.name)
-        : updateTable(node.atoms, key.name, child),
-    });
-  };
-  return del(0, net);
-};
-
-export const deleteTermSafe = <Item>(
-  isEqual: (left: Item, right: Item) => boolean,
-  term: Term,
-  item: Item,
-  net: Net<Item>,
-) => deleteNet(isEqual, keyOfTerm(term), item, net) ?? net;
-
-// The lists of nets that matching conses up, as Isabelle's lists.
-type Nets<Item> = { readonly head: Net<Item>; readonly tail: Nets<Item> } | undefined;
+type Nets<Item> = List<Net<Item>> | undefined;
 
 const toArray = <Item>(nets: Nets<Item>) => {
   const array: Net<Item>[] = [];

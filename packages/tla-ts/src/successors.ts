@@ -7,7 +7,12 @@ import {
 } from "./ast";
 import { getKindString } from "./builtins";
 import { getReadVariables } from "./dependencies";
-import { TlaEvaluationError, TlaIllegalStateError, TlaIncompleteSuccessorError } from "./errors";
+import {
+  TlaEvaluationError,
+  TlaIllegalStateError,
+  TlaIncompleteSuccessorError,
+  TlaUncodedError,
+} from "./errors";
 import { EXIT_STATUS, setExitCode } from "./exit-codes";
 import {
   describeLocation,
@@ -16,10 +21,10 @@ import {
   bindLazyArguments,
   bindDefinitions,
   bindOperatorArguments,
+  bindPattern,
   bindValue,
   compileArgumentScope,
   evaluate,
-  expectBoolean,
   forEachBinding,
   getLazyFunction,
   toKeepLazyContext,
@@ -27,7 +32,9 @@ import {
   getContextElements,
   getEntryEvaluator,
   getReevaluatedDefinitions,
+  getStartupValue,
   lookupScope,
+  mapBoundSets,
   resolveApplyOperator,
   resolveGlobalOperator,
   toUnspecifiedSubscriptError,
@@ -37,14 +44,22 @@ import {
   type Scope,
   type State,
 } from "./evaluate";
-import { mapChildren } from "./instances";
-import { isAssignedShortcut, LITERAL_KINDS, replayEnabled } from "./tlc/replay";
+import { forEachChild } from "./instances";
+import { CORE_OPERATORS } from "./standard-modules";
+import { getRandomSubset, nextPrime, type JavaRandom } from "./tlc/random";
+import {
+  getEnabledFailure,
+  isAssignedShortcut,
+  LITERAL_KINDS,
+  replayEnabled,
+  warnChangedUnchanged,
+} from "./tlc/replay";
 import {
   formatValue,
   getStreamedElements,
+  isEqualLikeTlc,
   isFunctionValue,
   isTlcEnumerable,
-  valuesEqual,
   type Value,
 } from "./values";
 
@@ -56,10 +71,12 @@ export interface Successor {
 interface Run {
   environment: Environment;
   isInit: boolean;
-  // Whether the run computes ENABLED rather than the successors of the state.
   isEnabled: boolean;
   current: Value[] | undefined;
   isStopped: boolean;
+  generator: JavaRandom | undefined;
+  successors: number;
+  onUnsatisfied?: (state: Value[], conjunct: Expression) => void;
 }
 
 type Continuation = (partial: State, action: string | undefined) => void;
@@ -76,7 +93,7 @@ export type Runner = (
 type Conjunct = { expression: Expression } & (
   | { kind: "Guard" }
   | { kind: "Assign"; index: number; value: Expression }
-  | { kind: "Unchanged"; indices: number[] }
+  | { kind: "Unchanged"; variables: UnchangedVariable[] }
   | { kind: "Branch"; runner: Runner }
 );
 
@@ -91,18 +108,14 @@ const assign = (partial: State, index: number, value: Value) => {
   return copy;
 };
 
-// What TLC says it was computing when it fails.
 const getComputation = (run: Run) =>
   run.isInit ? "initial states" : run.isEnabled ? "ENABLED" : "next states";
 
-// TLC fails with an unexpected exception when it fails to compute the next states or ENABLED.
 const createRunError = (run: Run, message: string) => {
   const error = new TlaEvaluationError(message);
   return run.isInit ? error : setExitCode(error, EXIT_STATUS.error);
 };
 
-// TLC's message for a conjunct that isn't a boolean, which differs for a literal it walks to rather
-// than evaluates.
 const getNonBooleanMessage = (
   run: Run,
   value: Value,
@@ -118,7 +131,6 @@ const getNonBooleanMessage = (
   return `In computing ${getComputation(run)}, TLC expected a boolean expression,\nbut instead found ${formatValue(value)}.\n${node}`;
 };
 
-// TLC words an IF whose condition isn't a boolean differently for each computation.
 const getIfConditionMessage = (run: Run, value: Value, expression: Expression) => {
   const kind = getKindString(value);
   const range = describeRange(expression);
@@ -131,9 +143,19 @@ const getIfConditionMessage = (run: Run, value: Value, expression: Expression) =
 const holds = (run: Run, expression: Expression, context: Context) =>
   holdsValue(run, expression, evaluate(expression, context));
 
+const CORE_OPERATOR_NAMES = new Set(CORE_OPERATORS.map((operator) => operator.name));
+
+const isBuiltInOperation = (expression: Expression) =>
+  expression.kind === "Apply"
+    ? CORE_OPERATOR_NAMES.has(expression.operator)
+    : expression.kind !== "Identifier" && !LITERAL_KINDS.has(expression.kind);
+
 const holdsValue = (run: Run, expression: Expression, value: Value, isWalked = true) => {
   if (typeof value === "boolean") return value;
-  throw createRunError(run, getNonBooleanMessage(run, value, expression, isWalked));
+  const message = getNonBooleanMessage(run, value, expression, isWalked);
+  throw run.isInit && isWalked && isBuiltInOperation(expression)
+    ? new TlaUncodedError(message)
+    : createRunError(run, message);
 };
 
 const evaluateCached = (
@@ -153,7 +175,12 @@ const getRunner = (expression: Expression, environment: Environment, isInit: boo
   const runners = isInit ? environment.initRunners : environment.nextRunners;
   const cached = runners.get(expression);
   if (cached) return cached;
-  const runner = compileAction(expression, environment, isInit);
+  const deterministic = compileAction(expression, environment, isInit);
+  const random = isInit ? undefined : compileRandomAction(expression, environment);
+  const runner: Runner = random
+    ? (run, scope, partial, action, isFixed, onComplete) =>
+        (run.generator ? random : deterministic)(run, scope, partial, action, isFixed, onComplete)
+    : deterministic;
   runners.set(expression, runner);
   return runner;
 };
@@ -201,7 +228,7 @@ const getRuntimeVariableIndex = (
   }
   if (expression.kind !== "Identifier") return undefined;
   const binding = lookupScope(scope, expression.name);
-  if (binding?.kind === "Thunk") {
+  if (binding?.kind === "Thunk" && !binding.isReleased) {
     return getRuntimeVariableIndex(binding.expression, binding.scope, partial, run, isPrimed);
   }
   if (binding) return undefined;
@@ -217,24 +244,29 @@ const isPossiblyAssignable = (target: Expression, isInit: boolean) =>
   (target.kind === "Identifier" && (isInit || isLocallyResolved(target))) ||
   (!isInit && target.kind === "Prime");
 
-const getUnchangedIndices = (
+interface UnchangedVariable {
+  index: number;
+  expression: Expression;
+}
+
+const getUnchangedVariables = (
   expression: Expression,
   environment: Environment,
   visited = new Set<string>(),
-): number[] | undefined => {
+): UnchangedVariable[] | undefined => {
   if (expression.kind === "Tuple") {
-    const indices = expression.elements.map((element) =>
-      getUnchangedIndices(element, environment, visited),
+    const variables = expression.elements.map((element) =>
+      getUnchangedVariables(element, environment, visited),
     );
-    return indices.every((item) => item !== undefined) ? indices.flat() : undefined;
+    return variables.every((item) => item !== undefined) ? variables.flat() : undefined;
   }
   if (expression.kind !== "Identifier" || visited.has(expression.name)) return undefined;
   const index = environment.variableIndex.get(expression.name);
-  if (index !== undefined) return [index];
+  if (index !== undefined) return [{ index, expression }];
   const definition = getZeroArityBody(expression.name, environment);
   if (!definition) return undefined;
   visited.add(expression.name);
-  return getUnchangedIndices(definition.body, environment, visited);
+  return getUnchangedVariables(definition.body, environment, visited);
 };
 
 const ACTION_KINDS = new Set([
@@ -274,9 +306,7 @@ const isGuard = (expression: Expression, environment: Environment, isInit: boole
 
 const NO_NAMES: ReadonlySet<string> = new Set();
 
-// The local names an expression reads from enclosing scopes, or undefined when it applies a local
-// operator, whose body may assign variables.
-export const getReadLocals = (
+const getReadLocals = (
   expression: Expression,
   bound: ReadonlySet<string>,
 ): string[] | undefined => {
@@ -285,21 +315,18 @@ export const getReadLocals = (
     return bound.has(expression.name) ? [] : [expression.name];
   }
   const names: string[] = [];
-  const result = { isReadOnly: true };
-  mapChildren(expression, (child, childNames) => {
-    const childLocals = result.isReadOnly
+  let isReadOnly = true;
+  forEachChild(expression, (child, childNames) => {
+    const childLocals = isReadOnly
       ? getReadLocals(child, childNames.length === 0 ? bound : new Set([...bound, ...childNames]))
       : [];
     if (childLocals) names.push(...childLocals);
-    else result.isReadOnly = false;
-    return child;
+    else isReadOnly = false;
   });
-  return result.isReadOnly ? names : undefined;
+  return isReadOnly ? names : undefined;
 };
 
-// TLC generates a successor for every disjunct and witness that holds, so an expression only
-// checks like a guard when it has neither.
-const hasBranches = (
+export const hasBranches = (
   expression: Expression,
   environment: Environment,
   visited: Set<Definition>,
@@ -334,15 +361,13 @@ const toConjunct = (
     }
   }
   if (!isInit && expression.kind === "Unchanged") {
-    const indices = getUnchangedIndices(expression.expression, environment);
-    if (indices) return { kind: "Unchanged", expression, indices };
+    const variables = getUnchangedVariables(expression.expression, environment);
+    if (variables) return { kind: "Unchanged", expression, variables };
   }
   if (isGuard(expression, environment, isInit)) return { kind: "Guard", expression };
   return { kind: "Branch", expression, runner: getRunner(expression, environment, isInit) };
 };
 
-// The leading guards of `\E x \in S, y \in T : P /\ Q` that read no inner bound hold for every inner
-// binding alike, so they can run once for each element of the outermost bound.
 const getHoistedGuards = (expression: QuantifierExpression, environment: Environment) => {
   if (expression.bounds.length < 2 || expression.body.kind !== "And") return undefined;
   const names = expression.bounds.flatMap((bound) =>
@@ -385,9 +410,25 @@ const compileConjunction = (
       if (index > 0 && isShortcut && isComplete(current)) {
         context ??= getContext(run, scope, current);
         for (let rest = index; rest < conjuncts.length; rest++) {
-          const expression = conjuncts[rest].expression;
+          const conjunct = conjuncts[rest];
+          const state = run.current;
+          const changed =
+            state && conjunct.kind === "Unchanged"
+              ? conjunct.variables.find((variable) => {
+                  const assigned = current[variable.index];
+                  return assigned !== undefined && !isEqualLikeTlc(assigned, state[variable.index]);
+                })
+              : undefined;
+          if (changed) {
+            warnChangedUnchanged(run.environment, changed.index, changed.expression);
+            return;
+          }
+          const expression = conjunct.expression;
           const value = evaluateCached(restEvaluators, rest, expression, context);
-          if (!holdsValue(run, expression, value, false)) return;
+          if (!holdsValue(run, expression, value, false)) {
+            run.onUnsatisfied?.(current, expression);
+            return;
+          }
         }
         onComplete(current, action);
         return;
@@ -406,7 +447,7 @@ const compileConjunction = (
         if (assigned === undefined) {
           current = assign(current, conjunct.index, value);
           context = undefined;
-        } else if (!valuesEqual(assigned, value)) {
+        } else if (!isEqualLikeTlc(assigned, value)) {
           return;
         }
         continue;
@@ -414,14 +455,20 @@ const compileConjunction = (
       if (conjunct.kind === "Unchanged") {
         const state = run.current;
         if (!state) return;
-        for (const variable of conjunct.indices) {
-          const assigned = current[variable];
+        let unchanged: State | undefined;
+        for (const variable of conjunct.variables) {
+          const assigned = (unchanged ?? current)[variable.index];
           if (assigned === undefined) {
-            current = assign(current, variable, state[variable]);
-            context = undefined;
-          } else if (!valuesEqual(assigned, state[variable])) {
+            unchanged ??= current.slice();
+            unchanged[variable.index] = state[variable.index];
+          } else if (!isEqualLikeTlc(assigned, state[variable.index])) {
+            warnChangedUnchanged(run.environment, variable.index, variable.expression);
             return;
           }
+        }
+        if (unchanged) {
+          current = unchanged;
+          context = undefined;
         }
         continue;
       }
@@ -437,11 +484,13 @@ const compileConjunction = (
     runFrom(0, run, scope, partial, action, onComplete);
 };
 
-const compileGuard =
-  (expression: Expression): Runner =>
-  (run, scope, partial, action, _isFixed, onComplete) => {
+const compileGuard = (expression: Expression): Runner => {
+  const enabledFailure = getEnabledFailure(expression);
+  return (run, scope, partial, action, _isFixed, onComplete) => {
+    if (run.isEnabled && enabledFailure !== undefined) throw createRunError(run, enabledFailure);
     if (holds(run, expression, getContext(run, scope, partial))) onComplete(partial, action);
   };
+};
 
 const compileMembership = (
   expression: Expression & { kind: "Apply" },
@@ -465,6 +514,17 @@ const compileMembership = (
       throw createRunError(run, `${message}\n${describeRange(expression)}`);
     }
     const elements = getStreamedElements(value);
+    if (run.generator) {
+      for (const element of getRandomSubset(
+        elements.length,
+        value,
+        run.environment.runtime.getRandom(),
+        run.environment.runtime.version,
+      )) {
+        onComplete(assign(partial, index, element), action);
+        if (run.successors > 0 || run.isStopped) return;
+      }
+    }
     for (let position = 0; position < elements.length && !run.isStopped; position++) {
       onComplete(assign(partial, index, elements[position]), action);
     }
@@ -512,8 +572,6 @@ const compileDynamicAssignment = (
   };
 };
 
-// Tool.getInitStates and Tool.getNextStates walk the body of a function they apply that is still
-// lazy, which they evaluate as TLC computes the initial states eagerly, and otherwise apply it.
 const compileFunctionAction = (
   expression: Expression & { kind: "FunctionApplication" },
   environment: Environment,
@@ -553,15 +611,14 @@ const compileFunctionAction = (
 };
 
 const compileUnchanged = (expression: Expression, environment: Environment): Runner => {
-  const indices = getUnchangedIndices(expression, environment);
-  if (indices) return compileConjunction([getUnchangedWrapper(expression)], environment, false);
-  if (expression.kind === "Tuple")
-    return getRunner(getUnchangedWrapper(expression), environment, false);
   const unchanged = getUnchangedWrapper(expression);
+  if (getUnchangedVariables(expression, environment))
+    return compileConjunction([unchanged], environment, false);
+  if (expression.kind === "Tuple") return getRunner(unchanged, environment, false);
   return (run, scope, partial, action, isFixed, onComplete) => {
     const binding =
       expression.kind === "Identifier" ? lookupScope(scope, expression.name) : undefined;
-    if (binding?.kind === "Thunk") {
+    if (binding?.kind === "Thunk" && !binding.isReleased) {
       getRunner(getUnchangedWrapper(binding.expression), environment, false)(
         run,
         binding.scope,
@@ -572,7 +629,22 @@ const compileUnchanged = (expression: Expression, environment: Environment): Run
       );
       return;
     }
-    if (holds(run, unchanged, getContext(run, scope, partial))) onComplete(partial, action);
+    const context = getContext(run, scope, partial);
+    if (run.isEnabled && expression.kind === "Apply") {
+      const operator = resolveApplyOperator(expression, context);
+      if (operator?.kind === "Closure" && operator.params.length === expression.args.length) {
+        getRunner(getUnchangedWrapper(operator.body), environment, false)(
+          run,
+          bindOperatorArguments(operator, expression.args, context),
+          partial,
+          action,
+          isFixed,
+          onComplete,
+        );
+        return;
+      }
+    }
+    if (holds(run, unchanged, context)) onComplete(partial, action);
   };
 };
 
@@ -589,10 +661,10 @@ const compileCall = (
   if (global?.kind === "Builtin") return guard;
   if (global?.kind === "Closure") {
     const bindArguments = compileArgumentScope(global, expression.args, environment);
-    const compiled = { body: undefined as Runner | undefined };
+    let bodyRunner: Runner | undefined;
     return (run, scope, partial, action, isFixed, onComplete) => {
-      compiled.body ??= getRunner(global.body, environment, isInit);
-      compiled.body(
+      bodyRunner ??= getRunner(global.body, environment, isInit);
+      bodyRunner(
         run,
         bindArguments(getContext(run, scope, partial)),
         partial,
@@ -629,10 +701,10 @@ const compileIdentifier = (
   const definition = isLocallyResolved(expression)
     ? undefined
     : getZeroArityBody(expression.name, environment);
-  const compiled = { body: undefined as Runner | undefined };
+  let bodyRunner: Runner | undefined;
   return (run, scope, partial, action, isFixed, onComplete) => {
     const binding = lookupScope(scope, expression.name);
-    if (binding?.kind === "Thunk") {
+    if (binding?.kind === "Thunk" && !binding.isReleased) {
       getRunner(binding.expression, environment, isInit)(
         run,
         binding.scope,
@@ -656,23 +728,59 @@ const compileIdentifier = (
       );
       return;
     }
-    if (binding || !definition) {
+    if (
+      binding ||
+      !definition ||
+      (expression.location.range && getStartupValue(definition, environment) !== undefined)
+    ) {
       guard(run, scope, partial, action, isFixed, onComplete);
       return;
     }
-    compiled.body ??= getRunner(definition.body, environment, isInit);
-    compiled.body(run, undefined, partial, isFixed ? action : definition.name, isFixed, onComplete);
+    bodyRunner ??= getRunner(definition.body, environment, isInit);
+    bodyRunner(run, undefined, partial, isFixed ? action : definition.name, isFixed, onComplete);
   };
 };
 
-// A PlusCal action starts with a guard such as pc[self] = "L1", and a process is a disjunction of
-// its actions. The labels an expression requires of one variable at one bound name let a
-// disjunction skip the operands whose guard is false without evaluating them.
 interface LabelGuard {
   variable: number;
   argument: string;
   labels: Set<string>;
+  before: ((run: Run, scope: Scope | undefined, partial: State) => void) | undefined;
 }
+
+const toLabelGuard = (expression: Expression, environment: Environment) => {
+  if (expression.kind !== "Apply" || expression.operator !== "=" || isLocallyResolved(expression)) {
+    return undefined;
+  }
+  const target = expression.args[0];
+  const label = expression.args[1];
+  if (target.kind !== "FunctionApplication" || label.kind !== "String") return undefined;
+  const argument = target.args.length === 1 ? target.args[0] : undefined;
+  if (argument?.kind !== "Identifier" || !isLocallyResolved(argument)) return undefined;
+  const variable = getStaticVariableIndex(target.function, environment, false);
+  if (variable === undefined) return undefined;
+  return { variable, argument: argument.name, labels: new Set([label.value]) };
+};
+
+const getConjuncts = (expression: Expression): Expression[] =>
+  expression.kind === "And" ? expression.operands.flatMap(getConjuncts) : [expression];
+
+const isLeadingGuard = (expression: Expression, environment: Environment) =>
+  (expression.kind === "Identifier" ||
+    (expression.kind === "Apply" &&
+      (expression.operator === "=" || expression.operator === "#"))) &&
+  isGuard(expression, environment, false);
+
+const compileLeadingGuards = (guards: Expression[]) => {
+  const evaluators: (Evaluator | undefined)[] = [];
+  return (run: Run, scope: Scope | undefined, partial: State) => {
+    const context = getContext(run, scope, partial);
+    for (let index = 0; index < guards.length; index++) {
+      const guard = guards[index];
+      if (!holdsValue(run, guard, evaluateCached(evaluators, index, guard, context))) return;
+    }
+  };
+};
 
 const getLabelGuard = (
   expression: Expression,
@@ -682,18 +790,16 @@ const getLabelGuard = (
   if (visited.has(expression)) return undefined;
   visited.add(expression);
   if (expression.kind === "And") {
-    const first = expression.operands[0];
-    if (first.kind !== "Apply" || first.operator !== "=" || isLocallyResolved(first)) {
-      return undefined;
-    }
-    const target = first.args[0];
-    const label = first.args[1];
-    if (target.kind !== "FunctionApplication" || label.kind !== "String") return undefined;
-    const argument = target.args.length === 1 ? target.args[0] : undefined;
-    if (argument?.kind !== "Identifier" || !isLocallyResolved(argument)) return undefined;
-    const variable = getStaticVariableIndex(target.function, environment, false);
-    if (variable === undefined) return undefined;
-    return { variable, argument: argument.name, labels: new Set([label.value]) };
+    const conjuncts = getConjuncts(expression);
+    const position = conjuncts.findIndex(
+      (conjunct) => !isLeadingGuard(conjunct, environment) || toLabelGuard(conjunct, environment),
+    );
+    const guard = position === -1 ? undefined : toLabelGuard(conjuncts[position], environment);
+    if (!guard) return undefined;
+    return {
+      ...guard,
+      before: position === 0 ? undefined : compileLeadingGuards(conjuncts.slice(0, position)),
+    };
   }
   if (expression.kind === "Or") {
     const guards = expression.operands.map((operand) =>
@@ -703,12 +809,13 @@ const getLabelGuard = (
     const isShared = guards.every(
       (guard) =>
         guard !== undefined &&
+        guard.before === undefined &&
         guard.variable === first?.variable &&
         guard.argument === first.argument,
     );
     if (!first || !isShared) return undefined;
     const labels = new Set(guards.flatMap((guard) => [...(guard?.labels ?? [])]));
-    return { variable: first.variable, argument: first.argument, labels };
+    return { variable: first.variable, argument: first.argument, labels, before: undefined };
   }
   if (expression.kind !== "Apply" || isLocallyResolved(expression)) return undefined;
   const closure = resolveGlobalOperator(expression.operator, environment);
@@ -721,7 +828,18 @@ const getLabelGuard = (
   if (!guard || argument?.kind !== "Identifier" || !isLocallyResolved(argument)) {
     return undefined;
   }
-  return { variable: guard.variable, argument: argument.name, labels: guard.labels };
+  const before = guard.before;
+  const bindArguments = before && compileArgumentScope(closure, expression.args, environment);
+  return {
+    variable: guard.variable,
+    argument: argument.name,
+    labels: guard.labels,
+    before:
+      before &&
+      bindArguments &&
+      ((run, scope, partial) =>
+        before(run, bindArguments(getContext(run, scope, partial)), partial)),
+  };
 };
 
 const getLabel = (run: Run, scope: Scope | undefined, guard: LabelGuard) => {
@@ -749,18 +867,82 @@ const compileDisjunction = (
     ? []
     : operands.map((operand) => getLabelGuard(operand, environment, new Set()));
   const dispatch = guards.find((guard) => guard !== undefined);
-  const labels = guards.map((guard) =>
+  const dispatched = guards.map((guard) =>
     guard?.variable === dispatch?.variable && guard?.argument === dispatch?.argument
-      ? guard?.labels
+      ? guard
       : undefined,
   );
   return (run, scope, partial, action, isFixed, onComplete) => {
     const label = dispatch && getLabel(run, scope, dispatch);
     for (let index = 0; index < runners.length && !run.isStopped; index++) {
-      if (label !== undefined && labels[index]?.has(label) === false) continue;
+      const guard = dispatched[index];
+      if (label !== undefined && guard?.labels.has(label) === false) {
+        guard.before?.(run, scope, partial);
+        continue;
+      }
       runners[index](run, scope, partial, action, isFixed, onComplete);
     }
   };
+};
+
+const compileRandomChoice =
+  (choices: Runner[]): Runner =>
+  (run, scope, partial, action, isFixed, onComplete) => {
+    const generator = run.generator;
+    if (!generator) throw new Error("A random choice needs the run's generator");
+    const start = Math.floor(generator.nextDouble() * choices.length);
+    const prime = nextPrime(generator);
+    for (let attempt = 0; attempt < choices.length; attempt++) {
+      choices[(start + attempt * prime) % choices.length](
+        run,
+        scope,
+        partial,
+        action,
+        isFixed,
+        onComplete,
+      );
+      if (run.successors > 0 || run.isStopped) return;
+    }
+  };
+
+const compileRandomExists = (
+  expression: QuantifierExpression,
+  environment: Environment,
+): Runner => {
+  const body = getRunner(expression.body, environment, false);
+  return (run, scope, partial, action, isFixed, onComplete) => {
+    const context = getContext(run, scope, partial);
+    const version = environment.runtime.version;
+    const orders = mapBoundSets(expression.bounds, (set) => evaluate(set, context)).map(
+      (set, index) =>
+        getRandomSubset(
+          getContextElements(set, expression.bounds[index].set, version).length,
+          set,
+          environment.runtime.getRandom(),
+          version,
+        ),
+    );
+    const visit = (position: number, boundScope: Scope | undefined): boolean => {
+      if (position < 0) {
+        body(run, boundScope, partial, action, isFixed, onComplete);
+        return run.successors > 0 || run.isStopped;
+      }
+      const pattern = expression.bounds[position].pattern;
+      return orders[position].some((element) =>
+        visit(position - 1, bindPattern(boundScope, pattern, element)),
+      );
+    };
+    visit(orders.length - 1, scope);
+  };
+};
+
+const compileRandomAction = (expression: Expression, environment: Environment) => {
+  if (expression.kind === "Exists") return compileRandomExists(expression, environment);
+  if (expression.kind !== "Or") return undefined;
+  const runners = expression.operands.map((operand) => getRunner(operand, environment, false));
+  return expression.isBulleted
+    ? compileRandomChoice(runners)
+    : runners.reduce((left, right) => compileRandomChoice([left, right]));
 };
 
 const compileAction = (
@@ -802,12 +984,8 @@ const compileAction = (
         const rest = compileConjunction(hoisted.rest, environment, isInit);
         return (run, scope, partial, action, isFixed, onComplete) => {
           const context = getContext(run, scope, partial);
-          const sets = expression.bounds.map((innerBound) =>
-            getContextElements(
-              evaluate(innerBound.set, context),
-              innerBound.set,
-              environment.runtime.version,
-            ),
+          const sets = mapBoundSets(expression.bounds, (set) =>
+            getContextElements(evaluate(set, context), set, environment.runtime.version),
           );
           if (sets.some((elements) => elements.length === 0)) return;
           const visit = (index: number, boundScope: Scope | undefined): void => {
@@ -905,7 +1083,6 @@ const compileAction = (
         const arm = arms.find((candidate) => {
           const value = evaluate(candidate.condition, context);
           if (typeof value === "boolean") return value;
-          // TLC leaves out the space before the kind under ENABLED.
           throw createRunError(
             run,
             `In computing ${getComputation(run)}, a non-boolean expression${run.isEnabled ? "" : " "}(${getKindString(value)}) was used as a guard condition of a CASE.\n${describeNode(candidate.source)}`,
@@ -945,7 +1122,11 @@ const compileAction = (
       return compileUnchanged(expression.expression, environment);
     case "AngleAction": {
       const body = getChildRunner(expression.action);
-      const unchanged = getUnchangedWrapper(expression.subscript);
+      const unchanged: Expression = {
+        kind: "Unchanged",
+        expression: expression.subscript,
+        location: expression.subscript.location,
+      };
       const isUnchanged = (run: Run, scope: Scope | undefined, nextPartial: State) => {
         try {
           return holds(run, unchanged, getContext(run, scope, nextPartial));
@@ -961,11 +1142,11 @@ const compileAction = (
         });
     }
     case "BoxAction":
-      return getChildRunner({
-        kind: "Or",
-        operands: [expression.action, getUnchangedWrapper(expression.subscript)],
-        location: expression.location,
-      });
+      return compileDisjunction(
+        [expression.action, getUnchangedWrapper(expression.subscript)],
+        environment,
+        isInit,
+      );
     case "Label":
       return getChildRunner(expression.body);
     case "Identifier":
@@ -988,11 +1169,19 @@ const compileAction = (
         const right = getChildRunner(args[1]);
         return (run, scope, partial, action, isFixed, onComplete) => {
           const condition = evaluate(args[0], getContext(run, scope, partial));
-          const isTrue =
-            typeof condition === "boolean"
-              ? condition
-              : expectBoolean(condition, `the left side of => at ${describeLocation(args[0])}`);
-          if (!isTrue) {
+          if (typeof condition !== "boolean") {
+            const kind = getKindString(condition);
+            const range = describeRange(expression);
+            throw createRunError(
+              run,
+              run.isInit
+                ? `In computing initial states of a predicate of form P => Q, P was ${kind}\n.${range}`
+                : run.isEnabled
+                  ? `While computing ENABLED of an expression of the form P => Q, P was ${kind}.\n${range}`
+                  : `In computing next states of a predicate of the form P => Q, P was\n${kind}.\n${range}`,
+            );
+          }
+          if (!condition) {
             onComplete(partial, action);
             return;
           }
@@ -1006,15 +1195,8 @@ const compileAction = (
   }
 };
 
-const emptyStates = new WeakMap<Environment, State>();
-
-const getEmptyState = (environment: Environment) => {
-  const cached = emptyStates.get(environment);
-  if (cached) return cached;
-  const state = environment.variables.map((): Value | undefined => undefined);
-  emptyStates.set(environment, state);
-  return state;
-};
+const getEmptyState = (environment: Environment): State =>
+  environment.variables.map((): Value | undefined => undefined);
 
 const isComplete = (partial: State): partial is Value[] => {
   for (let index = 0; index < partial.length; index++) {
@@ -1031,7 +1213,6 @@ export const isEnabled = (expression: Expression, context: Context): boolean => 
     );
   }
   const environment = context.environment;
-  // TLC computes ENABLED again with its call stack recorded as it computes successors.
   if (environment.callStack) return replayEnabled(expression, context.scope, state, environment);
   const run: Run = {
     environment,
@@ -1039,8 +1220,9 @@ export const isEnabled = (expression: Expression, context: Context): boolean => 
     isEnabled: true,
     current: state,
     isStopped: false,
+    generator: undefined,
+    successors: 0,
   };
-  // TLC stops computing ENABLED at the first successor, so it skips the rest of the action.
   getRunner(expression, environment, false)(
     run,
     context.scope,
@@ -1059,6 +1241,7 @@ export const forEachInitialState = (
   environment: Environment,
   onState: (state: Value[]) => boolean,
   scope?: Scope,
+  onIncomplete?: (state: State) => boolean,
 ) => {
   const run: Run = {
     environment,
@@ -1066,6 +1249,8 @@ export const forEachInitialState = (
     isEnabled: false,
     current: undefined,
     isStopped: false,
+    generator: undefined,
+    successors: 0,
   };
   getRunner(expression, environment, true)(
     run,
@@ -1076,8 +1261,10 @@ export const forEachInitialState = (
     (partial) => {
       if (run.isStopped) return;
       if (!isComplete(partial)) {
-        // TLC reports an initial state that isn't completely specified as an illegal state, not as
-        // an evaluation failure.
+        if (onIncomplete) {
+          run.isStopped = onIncomplete([...partial]);
+          return;
+        }
         throw setExitCode(new TlaIllegalStateError([...partial]), EXIT_STATUS.error);
       }
       run.isStopped = onState(partial);
@@ -1109,6 +1296,8 @@ export const forEachSuccessor = (
   environment: Environment,
   onSuccessor: (successor: Successor) => boolean,
   scope?: Scope,
+  generator?: JavaRandom,
+  onUnsatisfied?: Run["onUnsatisfied"],
 ) => {
   const run: Run = {
     environment,
@@ -1116,8 +1305,10 @@ export const forEachSuccessor = (
     isEnabled: false,
     current: state,
     isStopped: false,
+    generator,
+    successors: 0,
+    onUnsatisfied,
   };
-  const counter = { successors: 0 };
   getRunner(expression, environment, false)(
     run,
     scope,
@@ -1127,7 +1318,9 @@ export const forEachSuccessor = (
     (partial, action) => {
       if (run.isStopped) return;
       if (!isComplete(partial)) {
-        const missing = environment.variables.filter((_, index) => partial[index] === undefined);
+        const missing = environment.variables.filter(
+          (_name, index) => partial[index] === undefined,
+        );
         throw new TlaIncompleteSuccessorError(
           `Successor state is not completely specified by action ${action ?? "Next"}. The following variables are not assigned: ${missing.join(", ")}`,
           partial,
@@ -1135,11 +1328,39 @@ export const forEachSuccessor = (
           missing,
         );
       }
-      counter.successors++;
+      run.successors++;
       run.isStopped = onSuccessor({ state: partial, action });
     },
   );
-  return counter.successors;
+  return run.successors;
+};
+
+export const hasIncompleteSuccessor = (
+  expression: Expression,
+  state: Value[],
+  environment: Environment,
+  scope?: Scope,
+) => {
+  const run: Run = {
+    environment,
+    isInit: false,
+    isEnabled: false,
+    current: state,
+    isStopped: false,
+    generator: undefined,
+    successors: 0,
+  };
+  getRunner(expression, environment, false)(
+    run,
+    scope,
+    getEmptyState(environment),
+    undefined,
+    false,
+    (partial) => {
+      if (!isComplete(partial)) run.isStopped = true;
+    },
+  );
+  return run.isStopped;
 };
 
 export const getSuccessors = (

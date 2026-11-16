@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 import { check, TlaConfigError, TlaEvaluationError } from "../../src";
+import { getModuleLoader } from "./check-harness";
 
 const DIRECTORY = join(import.meta.dirname, "../fixtures/specifications");
 
@@ -9,7 +10,7 @@ const checkSpecification = (config: string, moduleName = "Specifications", value
   check({
     source: readFileSync(join(DIRECTORY, `${moduleName}.tla`), "utf8"),
     config: moduleName === "Specifications" ? `CONSTANT P = ${values}\n${config}` : config,
-    loadModule: (name) => readFileSync(join(DIRECTORY, `${name}.tla`), "utf8"),
+    loadModule: getModuleLoader("specifications"),
   });
 
 const getSummary = async (config: string, moduleName?: string) => {

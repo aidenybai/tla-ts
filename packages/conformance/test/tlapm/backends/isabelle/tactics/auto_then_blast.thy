@@ -1,0 +1,40 @@
+(*---
+description: >-
+  BY AutoBlast should run auto and then blast, but tlapm writes its tactic string auto, blast
+  unparenthesized as by auto, blast, which Isabelle rejects with an outer syntax error. The tactic
+  is library/TLAPS.tla#AutoBlast, written verbatim by src/backend/isabelle.ml#thy_temp.
+ref: src/backend/isabelle.ml#thy_temp
+outcome: unknown
+features:
+  - tlapm-bug
+---*)
+(* automatically generated -- do not edit manually *)
+theory auto_then_blast imports Constant Zenon begin
+consts
+  "isReal" :: c
+  "isa_slas_a" :: "[c,c] => c"
+  "isa_bksl_diva" :: "[c,c] => c"
+  "isa_perc_a" :: "[c,c] => c"
+  "isa_peri_peri_a" :: "[c,c] => c"
+  "isInfinity" :: c
+  "isa_lbrk_rbrk_a" :: "[c] => c"
+  "isa_less_more_a" :: "[c] => c"
+
+(* Generated from file "./G.tla", line 5, characters 3-4 *)
+lemma ob'1: (* 3e2e75f76d46e4a57c28866a10a1e0d2 *)
+(* usable definition CONSTANT_EnabledWrapper_ suppressed *)
+(* usable definition CONSTANT_CdotWrapper_ suppressed *)
+fixes a_CONSTANTunde_Sunde_a
+fixes a_CONSTANTunde_Tunde_a
+shows "(((((a_CONSTANTunde_Sunde_a) \<inter> (a_CONSTANTunde_Tunde_a))) \<subseteq> (((a_CONSTANTunde_Tunde_a) \<union> (a_CONSTANTunde_Sunde_a)))))"(is "PROP ?ob'1")
+proof -
+show "PROP ?ob'1"
+by auto, blast
+qed
+end
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: unknown
+---*)

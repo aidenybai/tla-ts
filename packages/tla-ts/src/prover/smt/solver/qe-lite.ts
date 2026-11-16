@@ -1,10 +1,4 @@
-// Ported from Z3 (src/qe/lite/qe_lite_tactic.cpp, src/qe/mbp/mbp_solve_plugin.cpp), MIT license, see
-// z3-license.txt. The qe-lite tactic of Z3's ufnia strategy: each quantifier, innermost first, loses
-// the variables that its body defines by an equality, Fourier-Motzkin elimination removes integer
-// variables that only occur in bounds, and a quantifier over a small integer range becomes a finite
-// disjunction. Like Z3, the port counts references, so that expressions are created and deleted in
-// Z3's order. Arrays, bit-vectors and datatypes are not ported, as tlapm's encoding does not produce
-// them.
+// Ported from Z3 (src/qe/lite/qe_lite_tactic.cpp, src/qe/mbp/mbp_solve_plugin.cpp), MIT license, see z3-license.txt.
 import {
   KIND_QUANTIFIER,
   KIND_VAR,
@@ -19,6 +13,8 @@ import {
   SORT_BOOL,
   SORT_INT,
   type AstManager,
+  QUANTIFIER_FORALL,
+  QUANTIFIER_LAMBDA,
 } from "./ast";
 import { flattenAndVector, flattenOrVector, pushNotOwned } from "./ast-util";
 import { isOccurring } from "./der";
@@ -33,10 +29,8 @@ import { assign, assignOwned, release } from "./expr-ref";
 import { EqDer } from "./qe-lite-der";
 import { Fm } from "./qe-lite-fm";
 
-// qe_lite's EXPAND_BOUND_LIMIT: the largest integer range that is expanded.
 const EXPAND_BOUND_LIMIT = 10000;
 
-// rewriter_tpl with elim_cfg: rewrites the quantifiers bottom-up.
 class ElimStar extends RewriterTpl {
   constructor(
     manager: AstManager,
@@ -50,7 +44,6 @@ class ElimStar extends RewriterTpl {
   }
 }
 
-// qe_lite::impl.
 class QeLite {
   private der: EqDer;
   private fm: Fm;
@@ -66,12 +59,10 @@ class QeLite {
     this.rewriter = new Rewriter(manager, TACTIC_REWRITER_OPTIONS);
   }
 
-  // operator()(expr_ref&): the result comes with a reference, which the caller releases.
   apply(formula: number) {
     return this.elimStar.rewrite(formula);
   }
 
-  // ~impl.
   release() {
     this.rewriter.release();
     this.elimStar.release();
@@ -79,7 +70,6 @@ class QeLite {
     this.der.release();
   }
 
-  // bool_rewriter's mk_and and mk_or, with a reference to the result.
   private mkAnd(args: number[]) {
     return this.manager.withTemporaries(() => this.rewriter.mkAnd(args));
   }
@@ -88,31 +78,35 @@ class QeLite {
     return this.manager.withTemporaries(() => this.rewriter.mkOr(args));
   }
 
-  // elim_cfg::reduce_quantifier.
   private reduceQuantifier(expr: number, body: number, patterns: number[]) {
     const manager = this.manager;
     const data = manager.getQuantifier(expr);
     let result = assign(manager, -1, body);
-    if (data.isForall) result = assign(manager, result, manager.mkApp(OP_NOT, [result], SORT_BOOL));
-    result = this.reduceFormula(data.sorts.length, result);
-    result = this.eliminateDiseqVars(data.sorts, result);
-    let expanded = this.tryExpandBoundedQuantifier(data.sorts, result);
-    if (expanded !== -1) {
-      if (data.isForall) expanded = assignOwned(manager, expanded, pushNotOwned(manager, expanded));
-      result = assignOwned(manager, result, this.rewriter.rewrite(expanded));
-      manager.decRef(expanded);
-      return result;
+    if (data.kind === QUANTIFIER_FORALL)
+      result = assign(manager, result, manager.mkApp(OP_NOT, [result], SORT_BOOL));
+    const numVars = data.sorts.length;
+    if (data.kind !== QUANTIFIER_LAMBDA) {
+      result = this.reduceFormula((index) => index < numVars, result);
+      result = this.eliminateDiseqVars(data.sorts, result);
+      let expanded = this.tryExpandBoundedQuantifier(data.sorts, result);
+      if (expanded !== -1) {
+        if (data.kind === QUANTIFIER_FORALL)
+          expanded = assignOwned(manager, expanded, pushNotOwned(manager, expanded));
+        result = assignOwned(manager, result, this.rewriter.rewrite(expanded));
+        manager.decRef(expanded);
+        return result;
+      }
     }
-    if (data.isForall) result = assignOwned(manager, result, pushNotOwned(manager, result));
+    if (data.kind === QUANTIFIER_FORALL)
+      result = assignOwned(manager, result, pushNotOwned(manager, result));
     const updated = assign(manager, -1, manager.mkQuantifier({ ...data, body: result, patterns }));
     result = assignOwned(manager, result, this.rewriter.rewrite(updated));
     manager.decRef(updated);
     return result;
   }
 
-  // operator()(index_set, index_of_bound, expr_ref&): each disjunct is a conjunction to reduce. The
-  // formula comes with a reference, and so does the result.
-  private reduceFormula(numVars: number, formula: number) {
+  // The formula comes with a reference, and so does the result.
+  private reduceFormula(isVariableIndex: (index: number) => boolean, formula: number) {
     const manager = this.manager;
     const disjs = new RefVector(manager);
     const conjs = new RefVector(manager);
@@ -123,7 +117,7 @@ class QeLite {
     for (let index = 0; index < size; index++) {
       conjs.reset();
       conjs.push(disjs.items[index]);
-      this.reduceConjs(numVars, conjs);
+      this.reduceConjs(isVariableIndex, conjs);
       result = assignOwned(manager, result, this.mkAnd(conjs.items));
       disjs.setOwned(index, result);
       result = -1;
@@ -134,29 +128,25 @@ class QeLite {
     return result;
   }
 
-  // operator()(index_set, index_of_bound, expr_ref_vector&): a single non-ground conjunct is reduced
-  // as a disjunction, and otherwise eq_der and fm run.
-  private reduceConjs(numVars: number, fmls: RefVector) {
+  reduceConjs(isVariableIndex: (index: number) => boolean, fmls: RefVector) {
     const manager = this.manager;
     flattenAndVector(manager, fmls);
     const nonGround = fmls.items.flatMap((fml, index) => (manager.isGroundApp(fml) ? [] : [index]));
     if (fmls.size > 1 && nonGround.length === 1) {
       const index = nonGround[0];
-      const reduced = this.reduceFormula(numVars, assign(manager, -1, fmls.items[index]));
+      const reduced = this.reduceFormula(isVariableIndex, assign(manager, -1, fmls.items[index]));
       fmls.set(index, reduced);
       manager.decRef(reduced);
       return;
     }
-    this.der.numVars = numVars;
-    this.fm.numVars = numVars;
+    this.der.isVariableIndex = isVariableIndex;
+    this.fm.isVariableIndex = isVariableIndex;
     this.der.apply(fmls);
     this.fm.apply(fmls);
-    // ar_der checks the limit for each formula. tlapm's formulas have no arrays for it to solve.
+    // Z3's ar_der checks the limit for each formula, though tlapm's formulas have no arrays for it to solve.
     for (let index = 0; index < fmls.size; index++) manager.limit.checkpoint();
   }
 
-  // collect_negative_equalities: whether every occurrence of the variable is in a negative equality
-  // with a term without it, or outside any equality.
   private collectNegativeEqualities(
     expr: number,
     index: number,
@@ -198,9 +188,6 @@ class QeLite {
     return !isOccurring(manager, index, expr);
   }
 
-  // eliminate_diseq_vars: an integer variable that occurs only in negative equalities can avoid
-  // every value they name, so those equalities are false. The body comes with a reference, and so
-  // does the result.
   private eliminateDiseqVars(sorts: number[], body: number) {
     const manager = this.manager;
     const replace = new ExprSafeReplace(manager);
@@ -227,7 +214,6 @@ class QeLite {
     return result;
   }
 
-  // extract_var_bound: an inclusive integer bound of the variable that a conjunct states.
   private getBound(expr: number, index: number) {
     const manager = this.manager;
     const isNegated = manager.isNot(expr);
@@ -255,8 +241,6 @@ class QeLite {
     return { isLower: isVarOnLeft, value: isVarOnLeft ? value + 1n : value - 1n };
   }
 
-  // try_expand_bounded_quantifier: the disjunction of the body over every value of the integer
-  // variables when their ranges are small, with a reference, or -1.
   private tryExpandBoundedQuantifier(sorts: number[], body: number) {
     const manager = this.manager;
     const numDecls = sorts.length;
@@ -264,8 +248,7 @@ class QeLite {
     const used = collectUsedVars(manager, body, numDecls);
     const remaining = used.flatMap((isUsed, index) => (isUsed ? [index] : []));
     if (remaining.length === 0) return -1;
-    // Z3 checks the declaration at position i for the variable with de Bruijn index i, which is
-    // another variable's sort. This port checks the variable's own sort.
+    // Z3 checks the declaration at position i for the variable with de Bruijn index i, where this checks the variable's own sort.
     if (remaining.some((index) => sorts[numDecls - 1 - index] !== SORT_INT)) return -1;
     const conjs = new RefVector(manager);
     conjs.push(body);
@@ -332,7 +315,6 @@ class QeLite {
       disjuncts.push(instBody);
       manager.decRef(instBody);
       instConjs.reset();
-      // The rightmost variable moves first.
       let position = remaining.length - 1;
       for (; position >= 0; position--) {
         values[position]++;
@@ -352,8 +334,18 @@ class QeLite {
   }
 }
 
-// qe_lite_simplifier::reduce in a dependent_expr_state_tactic, on each formula with a quantifier.
-// The tactic's m_dep holds the formula it read last, until the tactic is done.
+// qe_lite over a vector of conjuncts, with the variables isVariableIndex picks as the eliminable
+// ones.
+export const applyQeLiteToConjuncts = (
+  manager: AstManager,
+  isVariableIndex: (index: number) => boolean,
+  conjs: RefVector,
+) => {
+  const qe = new QeLite(manager);
+  qe.reduceConjs(isVariableIndex, conjs);
+  qe.release();
+};
+
 export const applyQeLite = (manager: AstManager, goal: Goal) => {
   const qe = new QeLite(manager);
   let dep = -1;
@@ -369,7 +361,6 @@ export const applyQeLite = (manager: AstManager, goal: Goal) => {
         formula = assignOwned(manager, formula, qe.apply(formula));
         if (formula !== form) goal.update(index, formula);
       }
-      // The iterator of the simplifier's indices counts a step after each formula.
       manager.limit.checkpoint();
     }
     release(manager, formula);

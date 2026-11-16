@@ -1,0 +1,3 @@
+---- MODULE FixFalseTheorem ----
+THEOREM FALSE
+====

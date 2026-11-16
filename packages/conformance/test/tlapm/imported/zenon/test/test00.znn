@@ -1,0 +1,31 @@
+(*---
+description: Zenon's own test zenon/test/test00.znn, which Zenon must prove.
+ref: zenon/test/test00.znn
+features:
+  - zenon-test
+outcome: unsat
+---*)
+;  Copyright 2006 INRIA
+;  $Id: test00.znn,v 1.6 2011-12-28 16:43:33 doligez Exp $
+
+$hyp "h" (A. ((x) (P x)))
+
+$goal (E. ((x) (P x)))
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: |-
+    unsat
+    proof (rule zenon_nnpp)
+     have z_Ha:"(\\A x:P(x))" (is "\\A x : ?z_he(x)")
+     using h by blast
+     assume z_Hb:"(~(\\E x:P(x)))"
+     have z_Hg: "?z_he((CHOOSE x : TRUE))" (is "?z_hg")
+     by (rule zenon_all_0 [of "?z_he" "(CHOOSE x : TRUE)", OF z_Ha])
+     have z_Hi: "~?z_he((CHOOSE x : TRUE))"
+     by (rule zenon_notex_0 [of "?z_he" "(CHOOSE x : TRUE)", OF z_Hb])
+     show FALSE
+     by (rule notE [OF z_Hi z_Hg])
+    qed
+---*)

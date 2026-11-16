@@ -1,0 +1,14 @@
+(*---
+description: >-
+  LS4 refutes the negation of [](x = 1) => <>(x = 1); tlapm replaces the state predicate x = 1 with
+  one atom.
+ref: src/backend/ls4.ml#visitor
+outcome: unsat
+---*)
+not (((always (cc | ~ cc)) -> ((always h7fe4a) -> (sometime h7fe4a))))
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: unsat
+---*)

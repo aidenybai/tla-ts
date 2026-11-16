@@ -1,8 +1,6 @@
-// A port of tlapm's Expr.Action. Lambdifying gives each ENABLED and \cdot a LAMBDA over the
-// variables it binds, after expanding the definitions soundness needs expanded. The ExpandENABLED
-// and ExpandCdot frontends then replace each LAMBDA with an existential quantifier.
+// A port of tlapm's Expr.Action.
 
-import { TlaProofError, TlapmBugError, TlaProverError } from "../errors";
+import { TlapmBugError, TlaProverError } from "../errors";
 import type { Anonymizer } from "./anonymize";
 import { bumpBy, normalizeApply, shift, substituteExpr, type Substitution } from "./substitution";
 import {
@@ -16,6 +14,7 @@ import {
   getParamFresh,
   getScopeAt,
   isBuiltinApply,
+  mapChildren,
   mapScoped,
   stripProps,
   type Expr,
@@ -24,10 +23,8 @@ import {
   type Scope,
 } from "./expression";
 import { getLevelInfo, LEVEL_NUMBERS } from "./levels";
-import { rewriteUnchanged } from "./temporal";
+import { expandFairness, rewriteUnchanged } from "./temporal";
 
-// Which of ENABLED and \cdot a pass handles, and whether it may expand the definitions that
-// soundness needs expanded, as the AutoUSE directive allows.
 interface ActionOptions {
   isEnabled: boolean;
   isCdot: boolean;
@@ -48,17 +45,7 @@ const NESTED_ENABLED =
 const NESTED_CDOT =
   "Nested occurrence of the operator `\\cdot` found in scope of `ENABLED` when expanding `ENABLED`. Using the proof directive `ExpandCdot` from the module `TLAPS` is expected to avoid this error.";
 
-// Unlike auto_expansion_of_defs, tlapm puts a space before "For example" here.
 const NESTED_CDOT_SPACED = `${NESTED_CDOT} For example, writing \`BY ExpandCdot\`.`;
-
-// Visit.map_visible_hyp with no state.
-const mapVisibleChildren = (expression: Expr, map: (child: Expr) => Expr) =>
-  mapScoped(
-    undefined,
-    expression,
-    (_state, child) => map(child),
-    () => undefined,
-  );
 
 const getHyp = (scope: Scope | undefined, index: number) => {
   const hyp = getScopeAt(scope, index - 1)?.hyp;
@@ -88,8 +75,6 @@ const getInitialLevel = (level: number | undefined) =>
 const getDecrementedLevel = (level: number | undefined) =>
   level === undefined ? undefined : Math.max(1, level - 1);
 
-// auto_expansion_of_defs. ENABLED and the first argument of \cdot need every definition of action
-// level expanded, a prime lowers that bound to 1, and so does the second argument of \cdot.
 const expandDefinitions = (
   options: ActionOptions,
   onWarning: Warn,
@@ -178,7 +163,7 @@ const expandDefinitions = (
   if (hyp.kind === "Fresh") {
     const message = `The expression that results from applying the declared operator \`${hyp.name}\` has expression level ${expressionLevel} within the scope of \`ENABLED\` or \`\\cdot\` where soundness requires expanding expressions of level >= ${level}. A declared operator cannot be expanded.\n${getDeclaration(hyp.name)}\n and has level: ${LEVEL_NUMBERS[hyp.level]}\n and arity: ${hyp.shape}`;
     onWarning(getErrorNote(expression.location, message));
-    throw new TlaProofError(message);
+    throw new TlaProverError(message);
   }
   const definition = hyp.definition;
   if (definition.kind !== "Operator" && definition.kind !== "Bpragma") {
@@ -209,7 +194,6 @@ const expandDefinitions = (
   );
 };
 
-// expand_propositional_action_operators: UNCHANGED v, [A]_v and <<A>>_v in terms of primes.
 const expandPropositional = (expression: Expr): Expr => {
   if (expression.kind === "Apply" && expression.args.length === 1) {
     return rewriteUnchanged(expression.args[0]);
@@ -225,8 +209,7 @@ const expandPropositional = (expression: Expr): Expr => {
   );
 };
 
-// OCaml's Hashtbl.hash of a string: caml_hash's MurmurHash3 over the bytes.
-const getHash = (text: string) => {
+const getOcamlHash = (text: string) => {
   const rotate = (value: number, amount: number) => (value << amount) | (value >>> (32 - amount));
   const mix = (hash: number, data: number) => {
     const word = Math.imul(rotate(Math.imul(data, 0xcc9e2d51), 15), 0x1b873593);
@@ -249,23 +232,18 @@ const getHash = (text: string) => {
   return (hash ^ (hash >>> 16)) & 0x3fffffff;
 };
 
-// The keys of an OCaml Hashtbl.create 16 in Hashtbl.to_seq_keys order. Hashtbl.add prepends to a
-// bucket and doubles the buckets once the table holds more than twice their count.
 const getHashtblKeys = (names: string[]) => {
   let buckets: string[][] = Array.from({ length: 16 }, () => []);
   names.forEach((name, index) => {
-    buckets[getHash(name) & (buckets.length - 1)].unshift(name);
+    buckets[getOcamlHash(name) & (buckets.length - 1)].unshift(name);
     if (index + 1 <= buckets.length * 2) return;
     const resized: string[][] = Array.from({ length: buckets.length * 2 }, () => []);
-    buckets.flat().forEach((key) => resized[getHash(key) & (resized.length - 1)].push(key));
+    buckets.flat().forEach((key) => resized[getOcamlHash(key) & (resized.length - 1)].push(key));
     buckets = resized;
   });
   return buckets.flat();
 };
 
-// lambdify_action_operators. A variable met directly binds into current, and one met under a prime
-// into primed. ENABLED A binds the primes of A, and A \cdot B binds those of A and the unprimed
-// variables of B, each as an opaque name such as x#enabled#prime1.
 const bindVariables = (
   options: ActionOptions,
   onWarning: Warn,
@@ -354,8 +332,6 @@ const bindVariables = (
   );
 };
 
-// shift_indices_after_lambdify, a Subst.map_visible_hyp that makes room in each new LAMBDA body
-// for its parameters and drops the placeholder parameter.
 const shiftIndices = (substitution: Substitution, expression: Expr): Expr => {
   if (expression.kind === "Apply" && isActionOperator(expression.operator)) {
     const [lambda] = expression.args;
@@ -387,7 +363,6 @@ const shiftIndices = (substitution: Substitution, expression: Expr): Expr => {
   return mapScoped(substitution, expression, shiftIndices, (current) => bumpBy(1, current));
 };
 
-// normalize_lambda_param_names.
 const renameParams = (isKeepingNames: boolean, expression: Expr): Expr => {
   if (expression.kind === "Apply" && isActionOperator(expression.operator)) {
     const [lambda] = expression.args;
@@ -410,10 +385,9 @@ const renameParams = (isKeepingNames: boolean, expression: Expr): Expr => {
       ],
     };
   }
-  return mapVisibleChildren(expression, (child) => renameParams(isKeepingNames, child));
+  return mapChildren(expression, (child) => renameParams(isKeepingNames, child), "visible");
 };
 
-// check_arity.
 const checkArity = (expression: Expr): Expr => {
   if (
     isBuiltinApply(expression, "Cdot") &&
@@ -422,10 +396,9 @@ const checkArity = (expression: Expr): Expr => {
   ) {
     throw new TlapmBugError();
   }
-  return mapVisibleChildren(expression, checkArity);
+  return mapChildren(expression, checkArity, "visible");
 };
 
-// lambdify_action_operators#expand.
 const lambdifyOperators = (
   anonymizer: Anonymizer,
   onWarning: Warn,
@@ -447,12 +420,16 @@ export const lambdify = (
   expression: Expr,
   options = LAMBDIFY_ALL,
 ) => {
-  const expanded = expandDefinitions(options, onWarning, scope, expression, undefined);
+  const expanded = expandDefinitions(
+    options,
+    onWarning,
+    scope,
+    options.isEnabled ? expandFairness(expression) : expression,
+    undefined,
+  );
   return checkArity(lambdifyOperators(anonymizer, onWarning, scope, expanded, options, false));
 };
 
-// replace_action_operators_with_quantifiers: each lambdified ENABLED or \cdot that the frontend
-// expands becomes \E over the parameters of its LAMBDA.
 const replaceWithQuantifiers = (
   options: ActionOptions,
   onWarning: Warn,
@@ -521,7 +498,6 @@ const replaceWithQuantifiers = (
   );
 };
 
-// commute_exists_disjunction: \E x : A \/ B as (\E x : A) \/ (\E x : B), everywhere.
 const commuteExistsDisjunction = (expression: Expr): Expr => {
   if (expression.kind === "Quant" && expression.quantifier === "Exists") {
     const body = expression.body;
@@ -539,10 +515,9 @@ const commuteExistsDisjunction = (expression: Expr): Expr => {
       });
     }
   }
-  return mapVisibleChildren(expression, commuteExistsDisjunction);
+  return mapChildren(expression, commuteExistsDisjunction, "visible");
 };
 
-// expand_action_operators, the ExpandENABLED and ExpandCdot frontends.
 export const expandActionOperators = (
   anonymizer: Anonymizer,
   onWarning: Warn,

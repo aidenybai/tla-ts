@@ -1,19 +1,10 @@
-// Runs each Isabelle theory tlapm wrote through decideIsabelle and compares the verdict with
-// Isabelle's. An unsound answer proves what Isabelle couldn't.
-//
-// tlapm's limit is 30 s of wall-clock time, which a loaded machine stretches. So each theory runs
-// in a worker until it has used 30 s of the worker's CPU time, which a run never exceeds in
-// wall-clock time, and its result counts twice: within the limit by wall-clock time, as tlapm
-// would see it here, and within the limit by CPU time, an estimate of a run on an idle core.
-// --jobs runs that many workers at once, which stretches only the wall-clock times.
-
 import { once } from "node:events";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { scheduler } from "node:timers/promises";
 import { Worker } from "node:worker_threads";
 import type { Verdict } from "../src/prover/verdict";
-import { getOption } from "./corpora";
+import { getOption, MAIN_THREAD_STACK_MB } from "./corpora";
 import { getIsabelleDigest, PROOF_INPUTS_DIRECTORY, readProofRecords } from "./proof-records";
 
 type Outcome = "match" | "unsound" | "missed" | "missing" | "stale";
@@ -22,7 +13,6 @@ interface Decision {
   verdict: Exclude<Verdict, "sat">;
   wallMilliseconds: number;
   cpuMilliseconds: number;
-  // The worker was still deciding when the time limit passed.
   isInterrupted: boolean;
 }
 
@@ -46,17 +36,14 @@ const POLL_MS = 100;
 
 const jobCount = Number(getOption("--jobs") ?? 1);
 
-// Node gives the main thread V8's default stack of 984 KB, and keeps 192 KB of a worker's stack in
-// reserve, so this gives decideIsabelle the stack it has on the main thread.
 const spawnWorker = async () => {
   const worker = new Worker(new URL("./isabelle-conformance-worker.js", import.meta.url), {
-    resourceLimits: { stackSizeMb: 1.15 },
+    resourceLimits: { stackSizeMb: MAIN_THREAD_STACK_MB },
   });
   await once(worker, "online");
   return worker;
 };
 
-// Polls the worker's CPU time while it decides, and gives up on it once the time limit passes.
 const decide = async (worker: Worker, text: string): Promise<Decision> => {
   const started = performance.now();
   const startedCpu = await worker.cpuUsage();
@@ -133,7 +120,6 @@ for (const module of readProofRecords()) {
   }
 }
 
-// Each runner takes the next job until none is left, replacing its worker after a time-out.
 const run = async () => {
   let worker = await spawnWorker();
   for (let job = jobs.shift(); job !== undefined; job = jobs.shift()) {
@@ -158,7 +144,6 @@ const summarize = (view: "wall" | "cpu") => {
   return counts.get("unsound") ?? 0;
 };
 const unsound = summarize("wall") + summarize("cpu");
-// The proofs that come closest to the limit. The theories Isabelle can't prove mostly run out of time.
 console.log("\nslowest proofs:");
 results
   .filter((result) => result.expected === "unsat")

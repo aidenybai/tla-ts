@@ -1,12 +1,17 @@
-import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { availableParallelism, tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import {
   findModules,
+  getToolPath,
   LIBRARY_PATH,
   linkLibraryModules,
   listFiles,
+  parseToolboxMessages,
+  runConcurrently,
+  runProcess,
+  sortById,
+  writeLines,
   type CorpusModule,
 } from "./corpora";
 import {
@@ -25,65 +30,13 @@ import {
   type ObligationStatus,
 } from "./proof-records";
 
-// Each tlapm runs its backends on one thread, so a busy machine doesn't push proofs past their
-// time limits.
 const CONCURRENCY = Math.max(1, Math.floor(availableParallelism() / 2));
 
 const HAS_PROOF = /\b(PROOF|BY|OBVIOUS|OMITTED)\b/;
 
 const OBLIGATION_HEADER = /^(?:;; (?:Proof obligation|obligation) #|lemma ob')(\d+)/im;
 
-const tlapmPath = process.env.TLAPM;
-if (!tlapmPath || !existsSync(tlapmPath)) {
-  console.error("Set TLAPM to the path of the tlapm binary");
-  process.exit(1);
-}
-
-// --debug tempfiles keeps every file tlapm sends to a backend, next to the backend's output.
-const runTlapm = (path: string, cacheDirectory: string) =>
-  new Promise<string>((resolve) => {
-    const child = spawn(
-      tlapmPath,
-      [
-        "--toolbox",
-        "0",
-        "0",
-        "--threads",
-        "1",
-        "--nofp",
-        "--debug",
-        "tempfiles",
-        "--cache-dir",
-        cacheDirectory,
-        "-I",
-        LIBRARY_PATH,
-        basename(path),
-      ],
-      { cwd: dirname(path) },
-    );
-    const chunks: Buffer[] = [];
-    child.stdout.on("data", (chunk: Buffer) => chunks.push(chunk));
-    child.stderr.on("data", (chunk: Buffer) => chunks.push(chunk));
-    child.on("close", () => resolve(Buffer.concat(chunks).toString("utf8")));
-  });
-
-// The toolbox protocol frames each message in @!!BEGIN and @!!END, one @!!key:value per line.
-const parseMessages = (output: string) =>
-  output
-    .split("@!!BEGIN\n")
-    .slice(1)
-    .map((block) => {
-      const fields = new Map<string, string>();
-      block
-        .slice(0, block.indexOf("@!!END"))
-        .split("\n@!!")
-        .map((field, index) => (index === 0 ? field.replace(/^@!!/, "") : field))
-        .forEach((field) => {
-          const separator = field.indexOf(":");
-          fields.set(field.slice(0, separator), field.slice(separator + 1).trim());
-        });
-      return fields;
-    });
+const tlapmPath = getToolPath("TLAPM", "the tlapm binary");
 
 const OBLIGATION_STATUSES = new Set<string>([
   "trivial",
@@ -109,7 +62,6 @@ const getObligationRecord = (id: number, fields: Map<string, string>): Obligatio
     prover: fields.get("prover") ?? "",
     ...(timeUsed !== undefined && { timeUsed: Number(timeUsed) }),
   };
-  // Later lines of a reason can list this machine's PATH.
   const reason = fields.get("reason")?.split("\n")[0];
   return status === "proved"
     ? { ...decided, status }
@@ -121,14 +73,35 @@ const readOutput = (path: string) =>
 
 const recordModule = async (module: CorpusModule): Promise<ModuleProofRecord> => {
   const cacheDirectory = mkdtempSync(join(tmpdir(), "tlapm-proofs-"));
-  const output = await runTlapm(module.path, cacheDirectory);
+  const run = await runProcess(
+    tlapmPath,
+    [
+      "--toolbox",
+      "0",
+      "0",
+      "--threads",
+      "1",
+      "--nofp",
+      "--debug",
+      "tempfiles",
+      "--cache-dir",
+      cacheDirectory,
+      "-I",
+      LIBRARY_PATH,
+      basename(module.path),
+    ],
+    dirname(module.path),
+  );
   const inputsDirectory = join(PROOF_INPUTS_DIRECTORY, module.id);
   rmSync(inputsDirectory, { recursive: true, force: true });
   mkdirSync(inputsDirectory, { recursive: true });
 
-  // tlapm sends a message each time an obligation's status changes, so later fields win.
   const fieldsById = new Map<number, Map<string, string>>();
-  parseMessages(output)
+  parseToolboxMessages(run.output)
+    .map(
+      (fields) =>
+        new Map([...fields].map(([name, value]): [string, string] => [name, value.trim()])),
+    )
     .filter((fields) => fields.get("type") === "obligation")
     .forEach((fields) => {
       const id = Number(fields.get("id"));
@@ -145,10 +118,8 @@ const recordModule = async (module: CorpusModule): Promise<ModuleProofRecord> =>
     getVerdict: (output: string) => Verdict,
   ) =>
     files
-      // tlapm also writes a theory of the whole module, which no backend runs.
       .filter((path) => basename(path).startsWith("tlapm_") && path.endsWith(extension))
       .map((path) => ({ path, text: readFileSync(path, "utf8") }))
-      // tlapm sometimes leaves an empty input behind, which belongs to no obligation.
       .filter((file) => file.text !== "")
       .map((file) => {
         const backendOutput = readOutput(file.path);
@@ -166,7 +137,6 @@ const recordModule = async (module: CorpusModule): Promise<ModuleProofRecord> =>
     writeFileSync(join(inputsDirectory, `${name}${extension}`), run.text);
     writeFileSync(join(inputsDirectory, `${name}${extension}.out`), run.backendOutput);
   };
-  // SMT, Z3, Zenon and Isabelle inputs name their obligation in a header, and LS4 inputs don't.
   const getObligationRuns = <Verdict extends BackendVerdict>(
     extension: string,
     getDigest: (text: string) => string,
@@ -198,7 +168,7 @@ const recordModule = async (module: CorpusModule): Promise<ModuleProofRecord> =>
   ls4Runs.forEach((run, index) => saveRun(String(index), ".ls4", run));
   rmSync(cacheDirectory, { recursive: true, force: true });
 
-  const error = output
+  const error = run.output
     .split("\n")
     .find((line) => line.includes("tlapm ending abnormally"))
     ?.trim();
@@ -211,7 +181,6 @@ const recordModule = async (module: CorpusModule): Promise<ModuleProofRecord> =>
 };
 
 linkLibraryModules();
-// Module ids on the command line rerecord just those modules into the existing proofs.json.
 const moduleIds = new Set(process.argv.slice(2));
 const modules = findModules().filter((module) =>
   moduleIds.size > 0 ? moduleIds.has(module.id) : HAS_PROOF.test(readFileSync(module.path, "utf8")),
@@ -223,19 +192,10 @@ const results: ModuleProofRecord[] =
       )
     : [];
 const keptCount = results.length;
-const queue = [...modules];
-await Promise.all(
-  Array.from({ length: CONCURRENCY }, async () => {
-    for (let module = queue.shift(); module; module = queue.shift()) {
-      results.push(await recordModule(module));
-      console.log(`${results.length - keptCount}/${modules.length} ${module.id}`);
-    }
-  }),
-);
-results.sort((left, right) => (left.id < right.id ? -1 : 1));
-writeFileSync(
-  PROOFS_PATH,
-  `[\n${results.map((result) => JSON.stringify(result)).join(",\n")}\n]\n`,
-);
+await runConcurrently(modules, CONCURRENCY, async (module) => {
+  results.push(await recordModule(module));
+  console.log(`${results.length - keptCount}/${modules.length} ${module.id}`);
+});
+writeLines(PROOFS_PATH, sortById(results));
 const obligationCount = results.reduce((sum, result) => sum + result.obligations.length, 0);
 console.log(`recorded ${results.length} modules, ${obligationCount} obligations`);

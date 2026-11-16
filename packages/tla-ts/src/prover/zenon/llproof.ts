@@ -1,7 +1,4 @@
 // Ported from Zenon's llproof.ml, as shipped in tlapm. Copyright 2004 INRIA, see LICENSE.
-//
-// The low-level proofs that Zenon prints: each node's conclusions are the formulas its subproofs
-// leave open, and the proof is a list of lemmas, the theorem last.
 
 import { TlaZenonError } from "../../errors";
 import { FALSE, TRUE, type Expr, type Expressions } from "./expr";
@@ -17,7 +14,6 @@ export type LlRule =
   | { kind: "eqsym"; left: Expr; right: Expr }
   | { kind: "notnot"; formula: Expr }
   | { kind: "connect" | "notconnect"; connective: Connective; left: Expr; right: Expr }
-  // The quantified formula, and the witness or the term that instantiates it.
   | { kind: "ex" | "all" | "notex" | "notall"; quantified: Expr; term: Expr }
   | { kind: "pnotp"; positive: Expr; negative: Expr }
   | { kind: "notequal"; left: Expr; right: Expr }
@@ -37,21 +33,11 @@ export interface LlProof {
   subproofs: LlProof[];
 }
 
-// A lemma's parameters pair each free tau or metavariable with its type.
 export interface Lemma {
   name: string;
   params: [string, Expr][];
   proof: LlProof;
 }
-
-export const connect = (exprs: Expressions, connective: Connective, left: Expr, right: Expr) =>
-  connective === "and"
-    ? exprs.eand(left, right)
-    : connective === "or"
-      ? exprs.eor(left, right)
-      : connective === "imply"
-        ? exprs.eimply(left, right)
-        : exprs.eequiv(left, right);
 
 const getLemma = (lemmas: Map<string, Lemma>, name: string) => {
   const lemma = lemmas.get(name);
@@ -65,7 +51,6 @@ const makeLeaf = (conclusions: Expr[], rule: LlRule): LlProof => ({
   subproofs: [],
 });
 
-// Zenon's direct_close: a node that closes the conclusions at once, if one does.
 const getDirectClose = (exprs: Expressions, conclusions: Expr[]): LlProof | undefined => {
   for (const [position, formula] of conclusions.entries()) {
     const rest = conclusions.slice(position + 1);
@@ -90,7 +75,6 @@ const getDirectClose = (exprs: Expressions, conclusions: Expr[]): LlProof | unde
   return undefined;
 };
 
-// The formulas that a rule takes from its conclusions.
 const getEliminated = (exprs: Expressions, lemmas: Map<string, Lemma>, rule: LlRule): Expr[] => {
   const equal = (left: Expr, right: Expr) => exprs.eapp("=", [left, right]);
   switch (rule.kind) {
@@ -109,9 +93,9 @@ const getEliminated = (exprs: Expressions, lemmas: Map<string, Lemma>, rule: LlR
     case "notnot":
       return [exprs.enot(exprs.enot(rule.formula))];
     case "connect":
-      return [connect(exprs, rule.connective, rule.left, rule.right)];
+      return [exprs.binary(rule.connective, rule.left, rule.right)];
     case "notconnect":
-      return [exprs.enot(connect(exprs, rule.connective, rule.left, rule.right))];
+      return [exprs.enot(exprs.binary(rule.connective, rule.left, rule.right))];
     case "ex":
     case "all":
       return [rule.quantified];
@@ -135,8 +119,6 @@ const getEliminated = (exprs: Expressions, lemmas: Map<string, Lemma>, rule: LlR
   }
 };
 
-// Zenon's Llproof.optimise: drops the conclusions that no rule uses and the nodes whose subproof
-// already proves their conclusions.
 export const optimise = (exprs: Expressions, proof: Lemma[]): Lemma[] => {
   const lemmas = new Map<string, Lemma>();
   const optimiseTree = (tree: LlProof): LlProof => {

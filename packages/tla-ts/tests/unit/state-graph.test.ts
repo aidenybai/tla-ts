@@ -1,14 +1,11 @@
-import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vite-plus/test";
-import { check, type CheckOptions } from "../../src";
+import { afterAll, describe, expect, it } from "vite-plus/test";
+import type { CheckOptions } from "../../src";
+import { checkFixture, FIXTURES, getModuleLoader } from "./check-harness";
+import { runCliWith } from "./cli-harness";
 
-const FIXTURES = join(import.meta.dirname, "../fixtures");
-
-// TLC 1.8.0 -dump output for each model, and TLC 1.7.4's for the files whose names end in 174,
-// recorded with -fp 0 so that its fingerprints match, and with -seed 4 for RandomElementXandY.
 const readTlcDump = (name: string) => readFileSync(join(FIXTURES, "state-graph", name), "utf8");
 
 const dumpFixture = async (
@@ -18,15 +15,10 @@ const dumpFixture = async (
   options: Partial<CheckOptions> = {},
 ) => {
   const written = new Map<string, string>();
-  const result = await check({
-    source: readFileSync(join(FIXTURES, directory, `${name}.tla`), "utf8"),
-    config: readFileSync(join(FIXTURES, directory, `${name}.cfg`), "utf8"),
-    loadModule: (module) => {
-      const path = join(FIXTURES, directory, `${module}.tla`);
-      return existsSync(path) ? readFileSync(path, "utf8") : undefined;
-    },
+  const result = await checkFixture(directory, name, name, {
+    loadModule: getModuleLoader(directory),
     onPrint: () => {},
-    writeFile: (path, content) => written.set(path, content),
+    writeFile: (path, content) => written.set(path, String(content)),
     dump,
     ...options,
   });
@@ -42,6 +34,16 @@ describe("check dumps the state graph like TLC's -dump", () => {
     });
     expect(dump.result.status).toBe("deadlock");
     expect(dump.written.get("Counter.dot")).toBe(readTlcDump("Counter.dot"));
+  });
+
+  it("fingerprints the states with the polynomial that -fp picks", async () => {
+    const dump = await dumpFixture(
+      "counter",
+      "Counter",
+      { path: "Counter130.dot", dot: true, actionLabels: true },
+      { fingerprintPolynomial: 130 },
+    );
+    expect(dump.written.get("Counter130.dot")).toBe(readTlcDump("Counter130.dot"));
   });
 
   it("colors every edge, self loops included, up to an invariant violation", async () => {
@@ -124,6 +126,35 @@ describe("check dumps the state graph like TLC's -dump", () => {
     expect(dump.written.get("FailedInvariant.dot")).toBe(readTlcDump("FailedInvariant.dot"));
   });
 
+  it("writes the stuttering steps and the successors the constraints exclude", async () => {
+    const dump = await dumpFixture("state-graph", "Excluded", {
+      path: "Excluded.dot",
+      dot: true,
+      colorize: true,
+      actionLabels: true,
+      constrained: true,
+      stuttering: true,
+    });
+    expect(dump.written.get("Excluded.dot")).toBe(readTlcDump("Excluded.dot"));
+  });
+
+  it("writes an edge once with strict", async () => {
+    const dump = await dumpFixture("state-graph", "Doubled", {
+      path: "Doubled.dot",
+      dot: true,
+      strict: true,
+    });
+    expect(dump.written.get("Doubled.dot")).toBe(readTlcDump("Doubled.dot"));
+  });
+
+  // Deviation from TLC: it keys an edge by the XOR of its fingerprints and writes one self loop.
+  it("keeps every self loop with strict, unlike TLC", async () => {
+    const options = { path: "Excluded.dot", dot: true };
+    const strict = await dumpFixture("state-graph", "Excluded", { ...options, strict: true });
+    const plain = await dumpFixture("state-graph", "Excluded", options);
+    expect(strict.written.get("Excluded.dot")).toBe(plain.written.get("Excluded.dot"));
+  });
+
   it("leaves a snapshot that matches the finished graph", async () => {
     const dump = await dumpFixture("water-jugs", "WaterJugs", {
       path: "WaterJugs.dot",
@@ -136,15 +167,23 @@ describe("check dumps the state graph like TLC's -dump", () => {
   });
 });
 
-const runCli = (args: string[]) =>
-  spawnSync("bun", [join(import.meta.dirname, "../../src/cli.ts"), "Counter.tla", ...args], {
-    cwd: join(FIXTURES, "counter"),
-    encoding: "utf8",
-  });
+const runCli = (args: string[]) => runCliWith("counter", ["Counter.tla", ...args]);
+
+const directories: string[] = [];
+
+afterAll(() =>
+  directories.forEach((directory) => rmSync(directory, { recursive: true, force: true })),
+);
+
+const createDirectory = () => {
+  const directory = mkdtempSync(join(tmpdir(), "tla-ts-dump-"));
+  directories.push(directory);
+  return directory;
+};
 
 describe("the CLI takes TLC's -dump flag", () => {
   it("adds the extension of the format to the file name", () => {
-    const directory = mkdtempSync(join(tmpdir(), "tla-ts-dump-"));
+    const directory = createDirectory();
     runCli(["-dump", "dot,actionlabels", join(directory, "Counter")]);
     runCli(["-dump", join(directory, "Counter")]);
     expect(readFileSync(join(directory, "Counter.dot"), "utf8")).toBe(readTlcDump("Counter.dot"));
@@ -161,9 +200,9 @@ describe("the CLI takes TLC's -dump flag", () => {
     ]);
   });
 
-  it("rejects a format it cannot write like TLC", () => {
-    const result = runCli(["-dump", "dot,strict", "Counter"]);
-    expect(result.status).toBe(1);
-    expect(result.stderr).toBe("Error: tla-ts does not support the -dump format strict.\n");
+  it("takes the options of a dot format", () => {
+    const directory = createDirectory();
+    runCli(["-dump", "dot,actionlabels,strict,stuttering,constrained", join(directory, "Counter")]);
+    expect(readFileSync(join(directory, "Counter.dot"), "utf8")).toBe(readTlcDump("Counter.dot"));
   });
 });

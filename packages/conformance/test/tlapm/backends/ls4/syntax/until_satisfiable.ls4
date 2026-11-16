@@ -1,0 +1,12 @@
+(*---
+description: LS4 finds a model of p until q.
+ref: translate/foyacc.mly#connective
+outcome: sat
+---*)
+p until q
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: sat
+---*)

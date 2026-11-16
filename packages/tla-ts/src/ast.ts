@@ -27,15 +27,13 @@ export interface DecimalExpression {
   location: SourceLocation;
 }
 
-export interface StringExpression {
+interface StringExpression {
   kind: "String";
   value: string;
   location: SourceLocation;
 }
 
-// selectorRanges holds the range of each part of a name such as foo!lab, where SANY reports an
-// error in selecting that part. spelling holds the text of an operator written as a synonym.
-export interface IdentifierExpression {
+interface IdentifierExpression {
   kind: "Identifier";
   name: string;
   spelling?: string;
@@ -44,36 +42,27 @@ export interface IdentifierExpression {
   resolution?: LocalResolution;
 }
 
-// spelling holds the text of an operator written as a synonym, such as (+) for \oplus, which SANY
-// reports as written.
 export interface ApplyExpression {
   kind: "Apply";
   operator: string;
   spelling?: string;
   args: Expression[];
-  // The number of args each part of a name like F(x)!l(y) takes, when a part before the last takes
-  // some.
   argumentCounts?: number[];
-  // The range of the parenthesized arguments of a named operator, or of the whole name when its
-  // last part takes none, where SANY reports their count.
   argumentsRange?: SourceRange;
   selectorRanges?: SourceRange[];
-  // The range of the arguments of each part of a name like F(x)!l(y), for a part that takes some.
   argumentRanges?: (SourceRange | undefined)[];
   location: SourceLocation;
   resolution?: LocalResolution;
 }
 
-export interface OperatorReferenceExpression {
+interface OperatorReferenceExpression {
   kind: "OperatorReference";
   operator: string;
   spelling?: string;
   location: SourceLocation;
 }
 
-// operator holds the operator, such as SUBSET, that an argument names, which tla-ts reads as a
-// LAMBDA.
-export interface LambdaExpression {
+interface LambdaExpression {
   kind: "Lambda";
   params: string[];
   paramRanges?: SourceRange[];
@@ -82,35 +71,33 @@ export interface LambdaExpression {
   location: SourceLocation;
 }
 
-export interface JunctionExpression {
+interface JunctionExpression {
   kind: "And" | "Or";
   operands: Expression[];
   isBulleted?: boolean;
-  // SANY parses an infix chain such as A /\ B /\ C as (A /\ B) /\ C, whose node of each prefix of
-  // two or more operands ends after the parentheses of its last operand.
   prefixEnds?: SourceLocation[];
   location: SourceLocation;
 }
 
-export interface PrimeExpression {
+interface PrimeExpression {
   kind: "Prime";
   expression: Expression;
   location: SourceLocation;
 }
 
-export interface UnchangedExpression {
+interface UnchangedExpression {
   kind: "Unchanged";
   expression: Expression;
   location: SourceLocation;
 }
 
-export interface EnabledExpression {
+interface EnabledExpression {
   kind: "Enabled";
   expression: Expression;
   location: SourceLocation;
 }
 
-export interface IfExpression {
+interface IfExpression {
   kind: "If";
   condition: Expression;
   consequent: Expression;
@@ -123,10 +110,11 @@ export interface CaseArm {
   body: Expression;
 }
 
-export interface CaseExpression {
+interface CaseExpression {
   kind: "Case";
   arms: CaseArm[];
   other: Expression | undefined;
+  otherRange?: SourceRange;
   location: SourceLocation;
 }
 
@@ -138,7 +126,6 @@ export interface LetExpression {
   location: SourceLocation;
 }
 
-// ranges holds the range of each name the pattern binds.
 export type BoundPattern =
   | { kind: "Name"; name: string; ranges?: SourceRange[] }
   | { kind: "Tuple"; names: string[]; ranges?: SourceRange[] };
@@ -155,7 +142,7 @@ export interface QuantifierExpression {
   location: SourceLocation;
 }
 
-export interface UnboundedQuantifierExpression {
+interface UnboundedQuantifierExpression {
   kind: "UnboundedQuantifier";
   quantifier: "Forall" | "Exists";
   names: string[];
@@ -165,7 +152,7 @@ export interface UnboundedQuantifierExpression {
   location: SourceLocation;
 }
 
-export interface ChooseExpression {
+interface ChooseExpression {
   kind: "Choose";
   pattern: BoundPattern;
   set: Expression | undefined;
@@ -173,27 +160,27 @@ export interface ChooseExpression {
   location: SourceLocation;
 }
 
-export interface SetEnumerationExpression {
+interface SetEnumerationExpression {
   kind: "SetEnumeration";
   elements: Expression[];
   location: SourceLocation;
 }
 
-export interface SetFilterExpression {
+interface SetFilterExpression {
   kind: "SetFilter";
   bound: Bound;
   predicate: Expression;
   location: SourceLocation;
 }
 
-export interface SetMapExpression {
+interface SetMapExpression {
   kind: "SetMap";
   expression: Expression;
   bounds: Bound[];
   location: SourceLocation;
 }
 
-export interface TupleExpression {
+interface TupleExpression {
   kind: "Tuple";
   elements: Expression[];
   location: SourceLocation;
@@ -207,7 +194,7 @@ export interface FunctionConstructionExpression {
   isRecursive?: boolean;
 }
 
-export interface FunctionSetExpression {
+interface FunctionSetExpression {
   kind: "FunctionSet";
   domain: Expression;
   range: Expression;
@@ -220,7 +207,7 @@ export interface RecordField {
   location: SourceLocation;
 }
 
-export interface RecordExpression {
+interface RecordExpression {
   kind: "Record" | "RecordSet";
   fields: RecordField[];
   location: SourceLocation;
@@ -235,60 +222,58 @@ interface ExceptUpdate {
   value: Expression;
 }
 
-export interface ExceptExpression {
+interface ExceptExpression {
   kind: "Except";
   function: Expression;
   updates: ExceptUpdate[];
   location: SourceLocation;
 }
 
-export interface ExceptAtExpression {
+interface ExceptAtExpression {
   kind: "ExceptAt";
   location: SourceLocation;
 }
 
-export interface FunctionApplicationExpression {
+interface FunctionApplicationExpression {
   kind: "FunctionApplication";
   function: Expression;
   args: Expression[];
   location: SourceLocation;
 }
 
-// SANY parses [e1, ..., en] as a function application without the function, and its semantic
-// checker rejects it.
-export interface BracketExpression {
+interface BracketExpression {
   kind: "Bracket";
   args: Expression[];
   location: SourceLocation;
 }
 
-export interface FieldAccessExpression {
+interface FieldAccessExpression {
   kind: "FieldAccess";
   record: Expression;
   field: string;
   location: SourceLocation;
 }
 
-export interface ProductExpression {
+interface ProductExpression {
   kind: "Product";
   factors: Expression[];
   location: SourceLocation;
 }
 
-export interface TemporalExpression {
+interface TemporalExpression {
   kind: "Always" | "Eventually";
   expression: Expression;
   location: SourceLocation;
 }
 
-export interface ActionExpression {
+interface ActionExpression {
   kind: "BoxAction" | "AngleAction";
   action: Expression;
   subscript: Expression;
   location: SourceLocation;
 }
 
-export interface FairnessExpression {
+interface FairnessExpression {
   kind: "WeakFairness" | "StrongFairness";
   subscript: Expression;
   action: Expression;
@@ -301,6 +286,7 @@ export interface LabelExpression {
   name: string;
   params: string[];
   paramRanges?: SourceRange[];
+  head?: SourceRange;
   body: Expression;
   location: SourceLocation;
 }
@@ -312,7 +298,7 @@ export type Selector =
   | { kind: "At" }
   | { kind: "Colon" };
 
-export interface SubexpressionExpression {
+interface SubexpressionExpression {
   kind: "Subexpression";
   selectors: Selector[];
   selectorRanges?: SourceRange[];
@@ -369,6 +355,7 @@ export interface OperatorDefinition {
   params: OperatorParam[];
   body: Expression;
   bodyRange?: SourceRange;
+  head?: SourceRange;
   isLocal: boolean;
   isRecursive: boolean;
   location: SourceLocation;
@@ -381,7 +368,6 @@ export interface FunctionDefinition {
   body: Expression;
   isLocal: boolean;
   isRecursive: boolean;
-  // Whether the body applies the function, which SANY makes a recursive function definition.
   isSelfReferential?: boolean;
   location: SourceLocation;
 }
@@ -438,7 +424,6 @@ export interface AssumeProve {
 
 export type Fact = Expression | { kind: "ModuleFact"; name: string; location: SourceLocation };
 
-// keyword is the range of the USE or HIDE token and any ONLY after it.
 export interface UseOrHide {
   kind: "Use" | "Hide";
   isOnly: boolean;
@@ -448,7 +433,6 @@ export interface UseOrHide {
   location: SourceLocation;
 }
 
-// keyword is the range of the BY, OBVIOUS, or OMITTED token.
 export type Proof =
   | { kind: "Obvious" | "Omitted"; keyword: SourceRange; location: SourceLocation }
   | {
@@ -490,8 +474,6 @@ export type StepBody =
   | { kind: "Assert"; isSuffices: boolean; statement: Expression | AssumeProve }
   | { kind: "Qed" };
 
-// head is the range of the step number and its statement, without the proof, and statement is the
-// range of the statement alone.
 export interface ProofStep {
   name: string | undefined;
   token: string;
@@ -509,10 +491,9 @@ export interface Theorem {
   location: SourceLocation;
 }
 
-// The units of a module in source order, for consumers that need the order across kinds.
 export type ModuleUnit =
   | { kind: "Constants" | "Variables"; declarations: Declaration[]; location: SourceLocation }
-  | { kind: "Recursive"; declarations: Declaration[] }
+  | { kind: "Recursive"; declarations: Declaration[]; location: SourceLocation }
   | { kind: "Definition"; definition: Definition }
   | { kind: "Instance"; instance: Instance }
   | { kind: "Assumption"; assumption: Assumption }
@@ -535,6 +516,11 @@ export interface Module {
   uses: UseOrHide[];
   units: ModuleUnit[];
 }
+
+export const getDefinitionExpressions = (definition: Definition) =>
+  definition.kind === "Function"
+    ? [...definition.bounds.map((bound) => bound.set), definition.body]
+    : [definition.body];
 
 export const getChildren = (expression: Expression): Expression[] => {
   switch (expression.kind) {
@@ -566,14 +552,7 @@ export const getChildren = (expression: Expression): Expression[] => {
         ...(expression.other ? [expression.other] : []),
       ];
     case "Let":
-      return [
-        ...expression.definitions.flatMap((definition) =>
-          definition.kind === "Function"
-            ? [...definition.bounds.map((bound) => bound.set), definition.body]
-            : [definition.body],
-        ),
-        expression.body,
-      ];
+      return [...expression.definitions.flatMap(getDefinitionExpressions), expression.body];
     case "Forall":
     case "Exists":
       return [...expression.bounds.map((bound) => bound.set), expression.body];
@@ -622,6 +601,13 @@ export const getChildren = (expression: Expression): Expression[] => {
     case "Subexpression":
       return expression.selectors.flatMap((selector) => ("args" in selector ? selector.args : []));
   }
+};
+
+export const getReferencedName = (expression: Expression) => {
+  if (expression.kind === "Identifier") return expression.name;
+  if (expression.kind === "Apply" || expression.kind === "OperatorReference")
+    return expression.operator;
+  return undefined;
 };
 
 export const isLocallyResolved = (expression: Expression) =>

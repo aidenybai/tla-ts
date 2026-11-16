@@ -1,0 +1,26 @@
+(*---
+description: Zenon proves p = TRUE => p.
+ref: zenon/ext_tla.ml#newnodes_prop
+outcome: unsat
+---*)
+;; obligation #1
+$goal (=> (= a_CONSTANTunde_punde_a T.)
+a_CONSTANTunde_punde_a)
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: |-
+    unsat
+    proof (rule zenon_nnpp)
+     assume z_Ha:"(~((a_CONSTANTunde_punde_a=TRUE)=>a_CONSTANTunde_punde_a))" (is "~(?z_hc=>_)")
+     have z_Hc: "?z_hc" (is "_=?z_he")
+     by (rule zenon_notimply_0 [OF z_Ha])
+     have z_Hf: "(~a_CONSTANTunde_punde_a)"
+     by (rule zenon_notimply_1 [OF z_Ha])
+     have z_Hd: "a_CONSTANTunde_punde_a"
+     by (rule zenon_eq_x_true_0 [of "a_CONSTANTunde_punde_a", OF z_Hc])
+     show FALSE
+     by (rule notE [OF z_Hf z_Hd])
+    qed
+---*)

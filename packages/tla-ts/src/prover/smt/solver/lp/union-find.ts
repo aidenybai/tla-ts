@@ -1,6 +1,4 @@
-// Ported from Z3 (src/util/trail.h, src/util/union_find.h), MIT license, see z3-license.txt. A
-// scoped undo trail, and the union-find over it whose merges a pop undoes, which nla's variable
-// equivalences and monomial congruence classes use.
+// Ported from Z3 (src/util/trail.h, src/util/union_find.h), MIT license, see z3-license.txt.
 import { shrink } from "../array";
 
 export class TrailStack {
@@ -23,7 +21,10 @@ export class TrailStack {
   }
 }
 
-// The handlers of union_find's context: r2 becomes the root of r1's class.
+export interface UnionFindTrail {
+  push(undo: () => void): void;
+}
+
 export interface UnionFindHandler {
   mergeEh?: (r2: number, r1: number, v2: number, v1: number) => void;
   afterMergeEh?: (r2: number, r1: number, v2: number, v1: number) => void;
@@ -37,7 +38,7 @@ export class UnionFind {
 
   handler: UnionFindHandler = {};
 
-  constructor(private trail: TrailStack) {}
+  constructor(private trail: UnionFindTrail) {}
 
   get numVars() {
     return this.finds.length;

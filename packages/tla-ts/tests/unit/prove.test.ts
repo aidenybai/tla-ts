@@ -1,24 +1,19 @@
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { prove, type ProofObligation, type ProveOptions, TlaUnsupportedError } from "../../src";
 import { getObligations } from "../../src/obligations";
 import { encodeForBackend } from "../../src/prover/prove";
-import { TLAPS_MODULE } from "../../src/prover/tlaps-module";
+import { TLAPM_LIBRARY } from "../../src/prover/tlapm-library";
+import { getModuleLoader } from "./check-harness";
 
-// HourClock and Simple come from tlaplus/Examples. Each .smt file is the input tlapm sent to its
-// SMT solver for that obligation.
 const DIRECTORY = join(import.meta.dirname, "../fixtures/prove");
 
-const loadModule = (name: string) => {
-  const path = join(DIRECTORY, `${name}.tla`);
-  return existsSync(path) ? readFileSync(path, "utf8") : undefined;
-};
+const loadModule = getModuleLoader("prove");
 
 const proveFixture = (name: string, options: Partial<ProveOptions> = {}) =>
   prove({ source: loadModule(name) ?? "", loadModule, ...options });
 
-// tlapm's comments name its version and the obligation, so only the commands are compared.
 const getCommands = (script: string) =>
   script
     .split("\n")
@@ -28,17 +23,17 @@ const getCommands = (script: string) =>
     .join(" ")
     .trim();
 
-const encodeFixture = (name: string, id: number) => {
+const encodeFixture = (name: string, obligationId: number) => {
   const obligation = getObligations(
     [{ file: `${name}.tla`, source: loadModule(name) ?? "" }],
     (moduleName) => {
-      const source = loadModule(moduleName) ?? (moduleName === "TLAPS" ? TLAPS_MODULE : undefined);
+      const source = loadModule(moduleName) ?? TLAPM_LIBRARY.get(moduleName);
       return source === undefined ? undefined : { file: `${moduleName}.tla`, source };
     },
   )
     .flatMap((result) => result.obligations)
-    .find((innerObligation) => innerObligation.id === id);
-  if (!obligation) throw new Error(`no obligation ${id}`);
+    .find((innerObligation) => innerObligation.id === obligationId);
+  if (!obligation) throw new Error(`no obligation ${obligationId}`);
   return encodeForBackend(obligation, "smt", { caseErrors: 0 });
 };
 
@@ -82,7 +77,6 @@ describe("prove follows tlapm's default method", () => {
     await expect(proving).rejects.toThrow(controller.signal.reason);
   });
 
-  // tlapm/test/fast/basic/smt_rlimit_bad_test.tla
   it("fails only the obligation whose method is malformed", async () => {
     const result = await proveFixture("smt_rlimit_bad_test");
     expect(result.obligations.map((obligation) => [obligation.id, obligation.status])).toEqual([

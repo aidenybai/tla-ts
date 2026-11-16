@@ -1,20 +1,22 @@
-// The proof context of a theory tlapm writes, as the Isabelle/TLA+ heap sets it up: its simpset,
-// claset, context rules and atomize rules, and Blast instantiated as PredicateLogic.thy does.
-
 import { TlaIsabelleError } from "../../../errors";
 import type { ProofContext } from "../isar/method";
-import { emptyNet } from "../pure/net";
+import { normHhfEq } from "../pure/drule";
 import type { Limits } from "../pure/interrupt";
-import { insertTaggedBrl, type NetPair } from "../pure/tactic";
-import { blastDepthTac, blastTac, type BlastContext } from "../provers/blast/blast";
+import { symmetric } from "../pure/thm";
+import { blastDepthTac, blastTac } from "../provers/blast/blast";
+import type { BlastContext } from "../provers/blast/state";
 import type { ClassicalContext } from "../provers/classical";
 import { blastHypSubstTac } from "../provers/hypsubst";
-import type { ContextRule } from "../tools/intuitionistic";
-import { getClaset, getClassicalData, getFact, getHypsubstData } from "./classical-setup";
-import type { LogicExtraNetItem, LogicNetPair, TlaLogic } from "./logic";
+import {
+  getClaset,
+  getClassicalData,
+  getFact,
+  getHypsubstData,
+  toNetPair,
+} from "./classical-setup";
+import type { TlaLogic } from "./logic";
 import { getSimpset } from "./simpdata";
 
-// The atomize rules, newest first as Object_Logic keeps them.
 const ATOMIZE_RULES = [
   "Zenon.atomize_object_bAll",
   "Zenon.atomize_meta_bAll",
@@ -25,17 +27,27 @@ const ATOMIZE_RULES = [
   "PredicateLogic.atomize_all",
 ];
 
-// Net.content lists a leaf's items newest first, so inserting them in reverse rebuilds the leaf.
-const toNetPair = (pair: LogicNetPair<LogicExtraNetItem>): NetPair<ContextRule> => {
-  const insertAll = (items: readonly LogicExtraNetItem[], netpair: NetPair<ContextRule>) =>
-    items.reduceRight((result, item) => insertTaggedBrl(item, result), netpair);
-  return insertAll(pair.elim, insertAll(pair.intro, { intro: emptyNet, elim: emptyNet }));
-};
+// PredicateLogic.thy declares these [symmetric, rulify], newest first, after Pure's norm_hhf_eq.
+const RULIFY_RULES = ["PredicateLogic.atomize_imp", "PredicateLogic.atomize_all"];
+
+// PredicateLogic.thy declares these [symmetric, defn].
+const DEFN_RULES = [
+  "PredicateLogic.atomize_all",
+  "PredicateLogic.atomize_imp",
+  "PredicateLogic.atomize_eq",
+];
+
+// PredicateLogic.thy's instantiation of Induct takes case_split as the default cases rule.
+const CASES_DEFAULT = "PredicateLogic.case_split";
 
 export const getProofContext = (logic: TlaLogic, limits: Limits): ProofContext => {
   const atomizeRules = ATOMIZE_RULES.map((name) => getFact(logic, name));
-  const classical = { limits, claset: getClaset(logic, limits), data: getClassicalData(logic) };
   const hypsubst = getHypsubstData(logic);
+  const classical = {
+    limits,
+    claset: getClaset(logic, limits),
+    data: getClassicalData(logic, hypsubst),
+  };
   const toBlastContext = (context: ClassicalContext): BlastContext => ({
     limits: context.limits,
     claset: context.claset,
@@ -53,22 +65,49 @@ export const getProofContext = (logic: TlaLogic, limits: Limits): ProofContext =
       atomize: atomizeRules,
     },
   });
+  const contextRules = [
+    toNetPair(logic.contextRules.bang),
+    toNetPair(logic.contextRules.plain),
+    toNetPair(logic.contextRules.query),
+  ];
+  const getTaggedFact = (name: string) => {
+    const fullName = logic.factNames.get(name) ?? name;
+    return logic.facts
+      .get(fullName)
+      ?.map((rule, index) => ({ rule, tags: logic.factTags.get(fullName)?.get(index) ?? [] }));
+  };
+  const taggedThms = new Set(
+    [...logic.factTags].flatMap((entry) =>
+      [...entry[1].keys()].map((index) => logic.facts.get(entry[0])?.[index]),
+    ),
+  );
   return {
     limits,
     simpset: getSimpset(logic),
     classical,
-    intuitionistic: {
-      limits,
-      safeRules: toNetPair(logic.contextRules.bang),
-      rules: toNetPair(logic.contextRules.plain),
-    },
+    intuitionistic: { limits, safeRules: contextRules[0], rules: contextRules[1] },
     atomizeRules,
+    defnRules: DEFN_RULES.map((name) => symmetric(getFact(logic, name))),
+    rulifyRules: [...RULIFY_RULES.map((name) => symmetric(getFact(logic, name))), normHhfEq],
     blastDepthTac: (context, limit) => blastDepthTac(toBlastContext(context), limit),
     blastTac: (context) => blastTac(toBlastContext(context)),
-    getFact: (name) => {
-      const facts = logic.facts.get(logic.factNames.get(name) ?? name);
-      if (facts === undefined) throw new TlaIsabelleError("ERROR", `Undefined fact: ${name}`);
-      return facts;
+    contextRules,
+    induct: {
+      casesType: logic.casesRules.type,
+      casesPred: logic.casesRules.pred,
+      casesDefault: {
+        rule: getFact(logic, CASES_DEFAULT),
+        tags: getTaggedFact(CASES_DEFAULT)?.[0].tags ?? [],
+      },
+      trivialRule: getFact(logic, "PredicateLogic.cases_trueI"),
+      getTaggedFact,
+      isTagged: (thm) => taggedThms.has(thm),
     },
   };
+};
+
+export const getLogicFact = (logic: TlaLogic, name: string) => {
+  const facts = logic.facts.get(logic.factNames.get(name) ?? name);
+  if (facts === undefined) throw new TlaIsabelleError("ERROR", `Undefined fact: ${name}`);
+  return facts;
 };

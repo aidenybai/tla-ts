@@ -1,5 +1,4 @@
-// Ported from Z3 (src/util/util.h), MIT license, see z3-license.txt. random_gen: Z3's linear
-// congruential generator, which the model finder and the simplex settings seed.
+// Ported from Z3 (src/util/util.h), MIT license, see z3-license.txt.
 export class RandomGen {
   constructor(private seed: number) {}
 

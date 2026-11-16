@@ -1,0 +1,49 @@
+(*---
+description: Zenon proves the updated field of [r EXCEPT !.a = z].
+ref: zenon/ext_tla.ml#rewrites
+outcome: unsat
+---*)
+;; obligation #1
+$goal (=> (TLA.in a_CONSTANTunde_runde_a
+(TLA.recordset "a" a_CONSTANTunde_Sunde_a "b" a_CONSTANTunde_Tunde_a))
+(= (TLA.fapply (TLA.except a_CONSTANTunde_runde_a "a" a_CONSTANTunde_zunde_a) "a")
+a_CONSTANTunde_zunde_a))
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: |-
+    unsat
+    proof (rule zenon_nnpp)
+     assume z_Ha:"(~((a_CONSTANTunde_runde_a \\in [''a'' : (a_CONSTANTunde_Sunde_a), ''b'' : (a_CONSTANTunde_Tunde_a)])=>((except(a_CONSTANTunde_runde_a, ''a'', a_CONSTANTunde_zunde_a)[''a''])=a_CONSTANTunde_zunde_a)))" (is "~(?z_hc=>?z_hj)")
+     have z_Hc: "?z_hc"
+     by (rule zenon_notimply_0 [OF z_Ha])
+     have z_Hn: "((except(a_CONSTANTunde_runde_a, ''a'', a_CONSTANTunde_zunde_a)[''a''])~=a_CONSTANTunde_zunde_a)" (is "?z_hk~=_")
+     by (rule zenon_notimply_1 [OF z_Ha])
+     have z_Ho: "(DOMAIN(a_CONSTANTunde_runde_a)={''a'', ''b''})" using z_Hc by auto
+     let ?z_hr = "<<''a'', ''b''>>"
+     let ?z_hs = "<<a_CONSTANTunde_Sunde_a, a_CONSTANTunde_Tunde_a>>"
+     show FALSE
+     proof (rule zenon_fapplyexcept [of "(\<lambda>zenon_Vg. (zenon_Vg~=a_CONSTANTunde_zunde_a))" "a_CONSTANTunde_runde_a" "''a''" "a_CONSTANTunde_zunde_a" "''a''", OF z_Hn])
+      assume z_Hw:"(''a'' \\in DOMAIN(a_CONSTANTunde_runde_a))" (is "?z_hw")
+      assume z_Hx:"(''a''=''a'')" (is "?z_hf=_")
+      assume z_Hy:"(a_CONSTANTunde_zunde_a~=a_CONSTANTunde_zunde_a)"
+      show FALSE
+      by (rule zenon_noteq [OF z_Hy])
+     next
+      assume z_Hw:"(''a'' \\in DOMAIN(a_CONSTANTunde_runde_a))" (is "?z_hw")
+      assume z_Hz:"(''a''~=''a'')" (is "?z_hf~=_")
+      assume z_Hba:"((a_CONSTANTunde_runde_a[?z_hf])~=a_CONSTANTunde_zunde_a)" (is "?z_hbb~=_")
+      show FALSE
+      by (rule zenon_noteq [OF z_Hz])
+     next
+      assume z_Hbc:"(~(''a'' \\in DOMAIN(a_CONSTANTunde_runde_a)))" (is "~?z_hw")
+      have z_Hbd: "(~(''a'' \\in {''a'', ''b''}))" (is "~?z_hbe")
+      by (rule subst [where P="(\<lambda>zenon_Vt. (~(''a'' \\in zenon_Vt)))", OF z_Ho z_Hbc])
+      have z_Hz: "(''a''~=''a'')" (is "?z_hf~=_")
+      by (rule zenon_notin_addElt_0 [of "?z_hf" "?z_hf" "{''b''}", OF z_Hbd])
+      show FALSE
+      by (rule zenon_noteq [OF z_Hz])
+     qed
+    qed
+---*)

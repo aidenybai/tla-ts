@@ -17,11 +17,13 @@ import {
   defineAt,
   getLocation,
   identifier,
+  junction,
   letExpression,
   locate,
   prime,
   quantify,
   temporal,
+  unchanged,
 } from "./tla";
 import { collectUnknowns, defineWithUnknowns, getDomain } from "./types";
 
@@ -50,6 +52,7 @@ export const VALUE_TAGS = new Set([
   "initially",
   "always",
   "leadsTo",
+  "terminating",
 ]);
 
 // The scope of an action property, whose one parameter names the state before the step, and whose
@@ -74,7 +77,8 @@ const getLeadsToTarget = (
   model: Model,
   context: Context,
 ): Expression => {
-  const targetName = definition.tags.get("leadsTo") ?? "";
+  // Like @param, the tag's first word names the target and the rest describes it.
+  const targetName = (definition.tags.get("leadsTo") ?? "").split(/\s/)[0];
   const target = model.topLevel.get(targetName);
   if (target === undefined) {
     throw new TlaTypeScriptError(
@@ -139,6 +143,21 @@ export const translateProperty = (
       temporal(
         "Always",
         node.parameters.length === 0 ? value : boxAction(value, identifier("vars")),
+      ),
+    );
+  }
+  // An end state takes a step that changes nothing, as PlusCal's Terminating does.
+  if (tag === "terminating") {
+    sections.actions.push(
+      link(context, "action", name, definition.declaration, defineAt(node, name, [], value)),
+    );
+    sections.next.push(
+      link(
+        context,
+        "next",
+        name,
+        definition.declaration,
+        junction("And", [identifier(name), unchanged(identifier("vars"))]),
       ),
     );
   }

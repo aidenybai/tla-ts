@@ -1,10 +1,10 @@
-// tlapm's module units, with the standard modules, flattening EXTENDS (Module.Flatten), the
-// modules a module depends on (Module.Dep), and substitution in units (Module.Subst).
+// A port of tlapm's Module.Standard, Module.Flatten, Module.Dep and Module.Subst.
 
 import { TlaProofError, TlapmBugError } from "../errors";
 import {
   at,
   exprifySequent,
+  getDefinitionHyp,
   getFact,
   getFresh,
   mapAccumulate,
@@ -54,8 +54,6 @@ type ModuleUnitCore =
   | { kind: "Mutate"; mode: "Use" | "Hide"; usable: Usable }
   | { kind: "Anoninst"; instance: InstanceDefinition; isLocal: boolean };
 
-// depth is the size of the context the module was normalized in, which instantiation shifts
-// its body by.
 export interface Mule {
   name: string;
   extendees: string[];
@@ -156,7 +154,6 @@ const getStandardModule = (name: string, body: ModuleUnit[]): Mule => ({
   isStandard: true,
 });
 
-// Module.Standard.initctx, apart from $TLAPM, whose Builtins! names no module of the corpora uses.
 export const STANDARD_MODULES = new Map(
   [
     getStandardModule("Naturals", NATURALS),
@@ -176,31 +173,26 @@ export const getUnitHyps = (unit: ModuleUnit): Hyp[] => {
         location,
       }));
     case "Recursives":
-      return unit.declarations.map((declaration) => ({
-        kind: "Defn",
-        definition: {
-          kind: "Recursive",
-          name: declaration.name,
-          shape: declaration.shape,
+      return unit.declarations.map((declaration) =>
+        getDefinitionHyp(
+          { kind: "Recursive", name: declaration.name, shape: declaration.shape, location },
+          "User",
+          "Hidden",
+          false,
           location,
-        },
-        whereDefined: "User",
-        visibility: "Hidden",
-        isLocal: false,
-        location,
-      }));
+        ),
+      );
     case "Variables":
       return unit.names.map((name) => ({ kind: "Flex", name, location }));
     case "Definition":
       return [
-        {
-          kind: "Defn",
-          definition: unit.definition,
-          whereDefined: unit.whereDefined,
-          visibility: unit.visibility,
-          isLocal: unit.isLocal,
+        getDefinitionHyp(
+          unit.definition,
+          unit.whereDefined,
+          unit.visibility,
+          unit.isLocal,
           location,
-        },
+        ),
       ];
     case "Axiom":
     case "Theorem": {
@@ -240,19 +232,16 @@ export const getHypSize = (unit: ModuleUnit) =>
     : getUnitHyps(unit).length;
 
 const getNamedFact = (name: string, expression: Expr, location: Locus | undefined): Hyp[] => [
-  {
-    kind: "Defn",
-    definition: { kind: "Operator", name, body: expression, location },
-    whereDefined: "User",
-    visibility: "Visible",
-    isLocal: false,
+  getDefinitionHyp(
+    { kind: "Operator", name, body: expression, location },
+    "User",
+    "Visible",
+    false,
     location,
-  },
+  ),
   getFact({ kind: "Ix", index: 1, location }, "Hidden", "Always", location),
 ];
 
-// Module.Flatten.exports: what an extending module sees, with local definitions inlined like
-// builtins and proofs omitted.
 const getExports = (module: Mule): ModuleUnit[] =>
   module.body.flatMap((unit): ModuleUnit[] => {
     switch (unit.kind) {
@@ -271,7 +260,6 @@ const getExports = (module: Mule): ModuleUnit[] =>
     }
   });
 
-// tlapm recurses on a module that extends itself until the stack overflows.
 export const flatten = (
   modules: Map<string, Mule>,
   module: Mule,
@@ -295,8 +283,6 @@ export const flatten = (
   };
 };
 
-// Module.Dep.external_deps: the modules a module extends or instantiates, including those of its
-// submodules.
 export const getDependencies = (module: Mule) => {
   const dependencies = new Map<string, Locus | undefined>();
   const addDependency = (name: string, location: Locus | undefined) => {
@@ -308,7 +294,6 @@ export const getDependencies = (module: Mule) => {
     );
   const locals = new Set<string>();
   const submodules = new Map<string, Mule>();
-  // Every INSTANCE definition inside a value, such as one in a LET.
   const addInstances = (value: unknown) => {
     if (typeof value !== "object" || value === null) return;
     if ("instance" in value && isInstanceDefinition(value.instance)) {
@@ -316,7 +301,6 @@ export const getDependencies = (module: Mule) => {
     }
     Object.values(value).forEach(addInstances);
   };
-  // Leaves out the proofs of theorems.
   const visit = (unit: ModuleUnit) => {
     if (unit.kind !== "Submod") {
       addInstances(unit.kind === "Theorem" ? unit.sequent : unit);
@@ -357,8 +341,6 @@ const substituteUsable = (substitution: Substitution, usable: Usable): Usable =>
   }),
 });
 
-// Module.Subst.app_modunit. Instantiated theorems carry omitted proofs, which a substitution leaves
-// alone.
 const substituteUnit = (
   substitution: Substitution,
   unit: ModuleUnit,
@@ -405,7 +387,7 @@ const substituteUnit = (
           instance: {
             ...unit.instance,
             substitutions: unit.instance.substitutions.map((entry) => ({
-              name: entry.name,
+              ...entry,
               expression: substituteExpr(substitution, entry.expression),
             })),
           },
@@ -417,7 +399,6 @@ const substituteUnit = (
 export const substituteUnits = (substitution: Substitution, units: ModuleUnit[]) =>
   mapAccumulate(substitution, units, substituteUnit)[1];
 
-// A named theorem binds its name as a proof definition, which its statement shifts past.
 export const bindTheoremName = (
   name: string | undefined,
   sequent: Sequent,
@@ -427,19 +408,13 @@ export const bindTheoremName = (
     ? { hyps: [], sequent }
     : {
         hyps: [
-          {
-            kind: "Defn",
-            definition: {
-              kind: "Operator",
-              name,
-              body: at(exprifySequent(sequent), { location }),
-              location,
-            },
-            whereDefined: { kind: "Proof", time: "Always" },
-            visibility: "Visible",
-            isLocal: false,
+          getDefinitionHyp(
+            { kind: "Operator", name, body: at(exprifySequent(sequent), { location }), location },
+            { kind: "Proof", time: "Always" },
+            "Visible",
+            false,
             location,
-          },
+          ),
         ],
         sequent: substituteSequent(shift(1), sequent),
       };

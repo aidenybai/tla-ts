@@ -1,0 +1,82 @@
+(*---
+description: Zenon unfolds \subseteq to a bounded universal with subset_def.
+ref: zenon/ext_tla.ml#newnodes_prop
+outcome: unsat
+---*)
+;; obligation #1
+$goal (=> (/\ (TLA.subseteq a_CONSTANTunde_Sunde_a a_CONSTANTunde_Tunde_a)
+(TLA.subseteq a_CONSTANTunde_Tunde_a a_CONSTANTunde_Uunde_a))
+(TLA.subseteq a_CONSTANTunde_Sunde_a
+a_CONSTANTunde_Uunde_a))
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: |-
+    unsat
+    proof (rule zenon_nnpp)
+     assume z_Ha:"(~(((a_CONSTANTunde_Sunde_a \\subseteq a_CONSTANTunde_Tunde_a)&(a_CONSTANTunde_Tunde_a \\subseteq a_CONSTANTunde_Uunde_a))=>(a_CONSTANTunde_Sunde_a \\subseteq a_CONSTANTunde_Uunde_a)))" (is "~(?z_hc=>?z_hi)")
+     have z_Hc: "?z_hc" (is "?z_hd&?z_hg")
+     by (rule zenon_notimply_0 [OF z_Ha])
+     have z_Hj: "(~?z_hi)"
+     by (rule zenon_notimply_1 [OF z_Ha])
+     have z_Hd: "?z_hd"
+     by (rule zenon_and_0 [OF z_Hc])
+     have z_Hg: "?z_hg"
+     by (rule zenon_and_1 [OF z_Hc])
+     have z_Hk_z_Hd: "bAll(a_CONSTANTunde_Sunde_a, (\<lambda>x. (x \\in a_CONSTANTunde_Tunde_a))) == ?z_hd" (is "?z_hk == _")
+     by (unfold subset_def)
+     have z_Hk: "?z_hk"
+     by (unfold z_Hk_z_Hd, fact z_Hd)
+     have z_Ho_z_Hk: "(\\A x:((x \\in a_CONSTANTunde_Sunde_a)=>(x \\in a_CONSTANTunde_Tunde_a))) == ?z_hk" (is "?z_ho == _")
+     by (unfold bAll_def)
+     have z_Ho: "?z_ho" (is "\\A x : ?z_hr(x)")
+     by (unfold z_Ho_z_Hk, fact z_Hk)
+     have z_Hs_z_Hg: "bAll(a_CONSTANTunde_Tunde_a, (\<lambda>x. (x \\in a_CONSTANTunde_Uunde_a))) == ?z_hg" (is "?z_hs == _")
+     by (unfold subset_def)
+     have z_Hs: "?z_hs"
+     by (unfold z_Hs_z_Hg, fact z_Hg)
+     have z_Hv_z_Hs: "(\\A x:((x \\in a_CONSTANTunde_Tunde_a)=>(x \\in a_CONSTANTunde_Uunde_a))) == ?z_hs" (is "?z_hv == _")
+     by (unfold bAll_def)
+     have z_Hv: "?z_hv" (is "\\A x : ?z_hx(x)")
+     by (unfold z_Hv_z_Hs, fact z_Hs)
+     have z_Hy_z_Hj: "(~bAll(a_CONSTANTunde_Sunde_a, (\<lambda>x. (x \\in a_CONSTANTunde_Uunde_a)))) == (~?z_hi)" (is "?z_hy == ?z_hj")
+     by (unfold subset_def)
+     have z_Hy: "?z_hy" (is "~?z_hz")
+     by (unfold z_Hy_z_Hj, fact z_Hj)
+     have z_Hba_z_Hy: "(~(\\A x:((x \\in a_CONSTANTunde_Sunde_a)=>(x \\in a_CONSTANTunde_Uunde_a)))) == ?z_hy" (is "?z_hba == _")
+     by (unfold bAll_def)
+     have z_Hba: "?z_hba" (is "~(\\A x : ?z_hbd(x))")
+     by (unfold z_Hba_z_Hy, fact z_Hy)
+     have z_Hbe: "(\\E x:(~((x \\in a_CONSTANTunde_Sunde_a)=>(x \\in a_CONSTANTunde_Uunde_a))))" (is "\\E x : ?z_hbg(x)")
+     by (rule zenon_notallex_0 [of "?z_hbd", OF z_Hba])
+     have z_Hbh: "?z_hbg((CHOOSE x:(~((x \\in a_CONSTANTunde_Sunde_a)=>(x \\in a_CONSTANTunde_Uunde_a)))))" (is "~(?z_hbj=>?z_hbk)")
+     by (rule zenon_ex_choose_0 [of "?z_hbg", OF z_Hbe])
+     have z_Hbj: "?z_hbj"
+     by (rule zenon_notimply_0 [OF z_Hbh])
+     have z_Hbl: "(~?z_hbk)"
+     by (rule zenon_notimply_1 [OF z_Hbh])
+     have z_Hbm: "?z_hx((CHOOSE x:(~((x \\in a_CONSTANTunde_Sunde_a)=>(x \\in a_CONSTANTunde_Uunde_a)))))" (is "?z_hbn=>_")
+     by (rule zenon_all_0 [of "?z_hx" "(CHOOSE x:(~((x \\in a_CONSTANTunde_Sunde_a)=>(x \\in a_CONSTANTunde_Uunde_a))))", OF z_Hv])
+     show FALSE
+     proof (rule zenon_imply [OF z_Hbm])
+      assume z_Hbo:"(~?z_hbn)"
+      have z_Hbp: "?z_hr((CHOOSE x:(~((x \\in a_CONSTANTunde_Sunde_a)=>(x \\in a_CONSTANTunde_Uunde_a)))))"
+      by (rule zenon_all_0 [of "?z_hr" "(CHOOSE x:(~((x \\in a_CONSTANTunde_Sunde_a)=>(x \\in a_CONSTANTunde_Uunde_a))))", OF z_Ho])
+      show FALSE
+      proof (rule zenon_imply [OF z_Hbp])
+       assume z_Hbq:"(~?z_hbj)"
+       show FALSE
+       by (rule notE [OF z_Hbq z_Hbj])
+      next
+       assume z_Hbn:"?z_hbn"
+       show FALSE
+       by (rule notE [OF z_Hbo z_Hbn])
+      qed
+     next
+      assume z_Hbk:"?z_hbk"
+      show FALSE
+      by (rule notE [OF z_Hbl z_Hbk])
+     qed
+    qed
+---*)

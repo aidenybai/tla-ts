@@ -1,0 +1,29 @@
+(*---
+description: Zenon proves that every natural number equals itself, the input tlapm writes for BY Zenon.
+outcome: unsat
+---*)
+;; obligation #3
+$goal (TLA.bAll arith.N ((a_CONSTANTunde_xunde_a) (= a_CONSTANTunde_xunde_a
+a_CONSTANTunde_xunde_a)))
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: |-
+    unsat
+    proof (rule zenon_nnpp)
+     assume z_Ha:"(~bAll(Nat, (\<lambda>a_CONSTANTunde_xunde_a. (a_CONSTANTunde_xunde_a=a_CONSTANTunde_xunde_a))))" (is "~?z_hb")
+     have z_Hg_z_Ha: "(~(\\A x:((x \\in Nat)=>(x=x)))) == (~?z_hb)" (is "?z_hg == ?z_ha")
+     by (unfold bAll_def)
+     have z_Hg: "?z_hg" (is "~(\\A x : ?z_hm(x))")
+     by (unfold z_Hg_z_Ha, fact z_Ha)
+     have z_Hn: "(\\E x:(~((x \\in Nat)=>(x=x))))" (is "\\E x : ?z_hp(x)")
+     by (rule zenon_notallex_0 [of "?z_hm", OF z_Hg])
+     have z_Hq: "?z_hp((CHOOSE x:(~((x \\in Nat)=>(x=x)))))" (is "~(?z_hs=>?z_ht)")
+     by (rule zenon_ex_choose_0 [of "?z_hp", OF z_Hn])
+     have z_Hu: "((CHOOSE x:(~((x \\in Nat)=>(x=x))))~=(CHOOSE x:(~((x \\in Nat)=>(x=x)))))" (is "?z_hr~=_")
+     by (rule zenon_notimply_1 [OF z_Hq])
+     show FALSE
+     by (rule zenon_noteq [OF z_Hu])
+    qed
+---*)

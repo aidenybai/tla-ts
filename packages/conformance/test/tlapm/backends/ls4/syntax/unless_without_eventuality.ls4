@@ -1,0 +1,12 @@
+(*---
+description: ptl_to_trp reads unless, the weak until; LS4 finds a model of p unless q with never q.
+ref: translate/foyacc.mly#connective
+outcome: sat
+---*)
+(p unless q) & always ~q
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: sat
+---*)

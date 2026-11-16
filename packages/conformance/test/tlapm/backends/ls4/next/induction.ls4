@@ -1,0 +1,14 @@
+(*---
+description: >-
+  LS4 refutes the negation of the induction rule p /\ [](p => p') => []p, where tlapm prints ' as
+  next.
+ref: src/backend/ls4.ml#visitor
+outcome: unsat
+---*)
+not (((always (cc | ~ cc)) -> ((hd71cd & (always (hd71cd -> (next hd71cd)))) -> (always hd71cd))))
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: unsat
+---*)

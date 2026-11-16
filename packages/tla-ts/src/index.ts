@@ -4,10 +4,13 @@ export type {
   CheckResult,
   CheckStatus,
   EvaluationFailure,
+  ModuleOperator,
+  TraceSpecOptions,
   TraceStep,
   Violation,
 } from "./check";
 export { parseConfig } from "./config";
+export type { CoverageReport } from "./coverage";
 export type { ConfigValue, ConstantAssignment, ModelConfig, Substitution } from "./config";
 export {
   TlaConfigError,

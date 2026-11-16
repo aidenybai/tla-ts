@@ -1,4 +1,4 @@
-// tlapm's expression IR (E_t) with de Bruijn indices, and the visitors that map over it (Visit).
+// A port of tlapm's expression IR (E_t) and its visitors (Visit).
 
 import type { OldMethod, PragmaSetting } from "./pragma";
 
@@ -10,9 +10,10 @@ export interface Locus {
   endColumn: number;
 }
 
-interface ObligationWarning {
+export interface ObligationWarning {
   text: string;
-  channel: "toolbox" | "toolboxOnly" | "stderr" | "stdout";
+  channel: "toolbox" | "toolboxOnly" | "stderr" | "stdout" | "error";
+  locus?: Locus;
 }
 
 export type Warn = (warning: ObligationWarning) => void;
@@ -38,6 +39,17 @@ export const getErrorNote = (locus: Locus | undefined, message: string): Obligat
   text: `${getAtPrefix(locus)}Error: ${message}`,
   channel: "stderr",
 });
+
+export const getErrorSetting = (locus: Locus | undefined, message: string): ObligationWarning => ({
+  text: message,
+  channel: "error",
+  locus,
+});
+
+export const warnError = (onWarning: Warn, locus: Locus | undefined, message: string) => {
+  onWarning(getErrorNote(locus, message));
+  onWarning(getErrorSetting(locus, message));
+};
 
 export const getLocusPrefix = (locus: Locus | undefined) =>
   locus ? `${getLocusText(locus)} :\n` : "";
@@ -129,6 +141,7 @@ export interface Bound {
   name: string;
   level: Level;
   domain: BoundDomain;
+  location?: Locus;
 }
 
 export type Selector =
@@ -149,7 +162,7 @@ interface ExceptSpec {
 
 export type ParenForm =
   | { kind: "Syntax" }
-  | { kind: "Nlabel"; label: string; names: string[] }
+  | { kind: "Nlabel"; label: string; names: string[]; location?: Locus }
   | { kind: "Xlabel"; label: string; indices: { name: string; index: number }[] };
 
 export interface Param {
@@ -158,7 +171,6 @@ export interface Param {
   location?: Locus;
 }
 
-// isAtomic is Expr.Deref.atomic: a resolved subexpression reference, which has no subexpressions.
 interface ExprProps {
   location?: Locus;
   isAtomic?: boolean;
@@ -210,8 +222,9 @@ export interface Field {
 export interface InstanceDefinition {
   args: string[];
   module: string;
-  substitutions: { name: string; expression: Expr }[];
+  substitutions: { name: string; expression: Expr; location?: Locus }[];
   location?: Locus;
+  instanceLocation?: Locus;
 }
 
 export type Defn = DefnCore & { location?: Locus };
@@ -224,10 +237,8 @@ type DefnCore =
 
 export type Visibility = "Visible" | "Hidden";
 
-// When a fact holds: at every point of a behavior, or only at the current one.
 export type Time = "Now" | "Always";
 
-// A step or a DEFINE in a proof keeps the time of the scope it is made in.
 export type WhereDefined = "Builtin" | "User" | { kind: "Proof"; time: Time };
 
 export type Hyp = HypCore & { location?: Locus };
@@ -248,8 +259,6 @@ type HypCore =
       whereDefined: WhereDefined;
       visibility: Visibility;
       isLocal: boolean;
-      // Module.Elab judges whether each module definition is constant. One that anonymization meets
-      // in a proof, such as a step or a DEFINE, has no judgment, so tlapm never counts it constant.
       isConstnessUnset?: boolean;
     }
   | { kind: "Fact"; expression: Expr; visibility: Visibility; time: Time; useLocation?: Locus };
@@ -259,11 +268,14 @@ export interface Sequent {
   active: Expr;
 }
 
-// tlapm's core @@ from, which takes the properties of from.
 export const at = (core: ExprCore, from: ExprProps): Expr => {
   const located = from.location ? { ...core, location: from.location } : core;
   return from.isAtomic ? { ...located, isAtomic: true } : located;
 };
+
+export const AT_NOWHERE: Expr = { kind: "At", isExcept: false };
+
+export const getTrue = (from: ExprProps) => at({ kind: "Internal", builtin: "TRUE" }, from);
 
 export const getHypName = (hyp: Hyp) => {
   switch (hyp.kind) {
@@ -291,7 +303,6 @@ export const applyBuiltin = (builtin: Builtin, args: Expr[], from: ExprProps): E
 export const exprifySequent = (sequent: Sequent): ExprCore =>
   sequent.context.length === 0 ? sequent.active : { kind: "Sequent", sequent };
 
-// A persistent context, newest hypothesis first, so binders extend it without copying.
 export interface Scope {
   hyp: Hyp;
   rest: Scope | undefined;
@@ -342,7 +353,6 @@ export const mapAccumulate = <State, Item, Result>(
   return [final, results];
 };
 
-// A mapped context prefix: the hypothesis its last key maps to, if any, and the state after it.
 interface MappedPrefix<State> {
   state: State;
   hyp: Hyp | undefined;
@@ -350,9 +360,6 @@ interface MappedPrefix<State> {
   next: WeakMap<Hyp, MappedPrefix<State>>;
 }
 
-// mapAccumulate over a context that maps each prefix of keys once, as the obligations of a module
-// share most of their context by identity. The input at each position must depend on the keys up
-// to it alone, and the step on the input, its key, and the state.
 export const createContextMap = <State>(
   initial: State,
   step: (state: State, input: Hyp, key: Hyp) => [State, Hyp | undefined],
@@ -405,8 +412,14 @@ export const getFact = (
   location: Locus | undefined,
 ) => ({ kind: "Fact", expression, visibility, time, location }) satisfies Hyp;
 
-// What a quantifier binds each name as, a LAMBDA each parameter, and a LET each definition, as
-// Visit.map does.
+export const getDefinitionHyp = (
+  definition: Defn,
+  whereDefined: WhereDefined,
+  visibility: Visibility,
+  isLocal: boolean,
+  location: Locus | undefined,
+) => ({ kind: "Defn", definition, whereDefined, visibility, isLocal, location }) satisfies Hyp;
+
 export const getBoundFresh = (bound: Bound) => getFresh(bound.name, bound.level);
 
 export const getParamFresh = (param: Param) => getFresh(param.name, "Unknown", param.shape);
@@ -420,7 +433,6 @@ export const getLocalDefn = (definition: Defn) =>
     isLocal: true,
   }) satisfies Hyp;
 
-// The node without its properties, as tlapm's e.core.
 export const stripProps = (expression: Expr): ExprCore => {
   if (!expression.location && !expression.isAtomic) return expression;
   const { location: _location, isAtomic: _isAtomic, ...core } = expression;
@@ -460,9 +472,7 @@ export const mapHyp = (hyp: Hyp, map: (inner: Expr) => Expr, hyps: "visible" | "
   return { ...hyp, expression: map(hyp.expression) };
 };
 
-// Visit.map, threading a state through each binder: a scope or a substitution. Visit.map_visible_hyp
-// binds hidden hypotheses without visiting them, and Visit.map visits them too. Children map in
-// OCaml evaluation order, last constructor argument first, which decides the error tlapm reports.
+// Children map in OCaml's order, last argument first, which decides the error tlapm reports.
 export const mapScoped = <State>(
   state: State,
   expression: Expr,
@@ -598,14 +608,17 @@ export const mapScoped = <State>(
   }
 };
 
-// Visit.map without a state: every child, the hidden hypotheses of an ASSUME included.
-export const mapChildren = (expression: Expr, map: (inner: Expr) => Expr): Expr =>
+export const mapChildren = (
+  expression: Expr,
+  map: (inner: Expr) => Expr,
+  hyps: "visible" | "all" = "all",
+): Expr =>
   mapScoped(
     undefined,
     expression,
     (_state, inner) => map(inner),
     () => undefined,
-    "all",
+    hyps,
   );
 
 export const getChildren = (expression: Expr) => {

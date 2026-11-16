@@ -1,0 +1,27 @@
+(*---
+description: Zenon proves x \in S \cup T from x \in S with notin_cup.
+ref: zenon/ext_tla.ml#newnodes_prop
+outcome: unsat
+---*)
+;; obligation #1
+$goal (=> (TLA.in a_CONSTANTunde_xunde_a a_CONSTANTunde_Sunde_a)
+(TLA.in a_CONSTANTunde_xunde_a (TLA.cup a_CONSTANTunde_Sunde_a
+a_CONSTANTunde_Tunde_a)))
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: |-
+    unsat
+    proof (rule zenon_nnpp)
+     assume z_Ha:"(~((a_CONSTANTunde_xunde_a \\in a_CONSTANTunde_Sunde_a)=>(a_CONSTANTunde_xunde_a \\in (a_CONSTANTunde_Sunde_a \\cup a_CONSTANTunde_Tunde_a))))" (is "~(?z_hc=>?z_hf)")
+     have z_Hc: "?z_hc"
+     by (rule zenon_notimply_0 [OF z_Ha])
+     have z_Hi: "(~?z_hf)"
+     by (rule zenon_notimply_1 [OF z_Ha])
+     have z_Hj: "(~?z_hc)"
+     by (rule zenon_notin_cup_0 [of "a_CONSTANTunde_xunde_a" "a_CONSTANTunde_Sunde_a" "a_CONSTANTunde_Tunde_a", OF z_Hi])
+     show FALSE
+     by (rule notE [OF z_Hj z_Hc])
+    qed
+---*)

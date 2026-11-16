@@ -1,0 +1,79 @@
+(*---
+description: Zenon's own test zenon/test/test12.znn, which Zenon must prove.
+ref: zenon/test/test12.znn
+features:
+  - zenon-test
+outcome: unsat
+---*)
+;  Copyright 2006 INRIA
+;  $Id: test12.znn,v 1.7 2011-12-28 16:43:33 doligez Exp $
+
+$hyp "h1" (\/ A B)
+$hyp "h2" (=> B C)
+$hyp "h3" (=> A C)
+$hyp "h4" (=> C D)
+$hyp "h5" (-. D)
+
+$goal F.
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: |-
+    unsat
+    proof (rule zenon_nnpp)
+     have z_Ha:"(A|B)"
+     using h1 by blast
+     have z_Hb:"(B=>C)"
+     using h2 by blast
+     have z_Hd:"(C=>D)"
+     using h4 by blast
+     have z_He:"(~D)"
+     using h5 by blast
+     have z_Hc:"(A=>C)"
+     using h3 by blast
+     have zenon_L1_: "(C=>D) ==> (~D) ==> C ==> FALSE" (is "?z_hd ==> ?z_he ==> _ ==> FALSE")
+     proof -
+      assume z_Hd:"?z_hd"
+      assume z_He:"?z_he"
+      assume z_Hi:"C"
+      show FALSE
+      proof (rule zenon_imply [OF z_Hd])
+       assume z_Hk:"(~C)"
+       show FALSE
+       by (rule notE [OF z_Hk z_Hi])
+      next
+       assume z_Hj:"D"
+       show FALSE
+       by (rule notE [OF z_He z_Hj])
+      qed
+     qed
+     assume z_Hf:"(~FALSE)" (is "~?z_hl")
+     show FALSE
+     proof (rule zenon_or [OF z_Ha])
+      assume z_Hg:"A"
+      show FALSE
+      proof (rule zenon_imply [OF z_Hc])
+       assume z_Hm:"(~A)"
+       show FALSE
+       by (rule notE [OF z_Hm z_Hg])
+      next
+       assume z_Hi:"C"
+       show FALSE
+       by (rule zenon_L1_ [OF z_Hd z_He z_Hi])
+      qed
+     next
+      assume z_Hh:"B"
+      show FALSE
+      proof (rule zenon_imply [OF z_Hb])
+       assume z_Hn:"(~B)"
+       show FALSE
+       by (rule notE [OF z_Hn z_Hh])
+      next
+       assume z_Hi:"C"
+       show FALSE
+       by (rule zenon_L1_ [OF z_Hd z_He z_Hi])
+      qed
+     qed
+    qed
+---*)

@@ -1,8 +1,20 @@
-// Ported from Z3 (src/solver/assertions/asserted_formulas.cpp), MIT license, see z3-license.txt. The
-// preprocessing that the SMT kernel runs on its assertions before search.
+// Ported from Z3 (src/solver/assertions/asserted_formulas.cpp), MIT license, see z3-license.txt.
 import { SmtInvariantError } from "../../../errors";
-import { AstManager, KIND_APP, OP_AND, OP_EQ, OP_ITE, OP_NOT, OP_OR, SORT_BOOL } from "./ast";
+import {
+  AstManager,
+  KIND_APP,
+  KIND_QUANTIFIER,
+  OP_AND,
+  OP_EQ,
+  OP_ITE,
+  OP_NOT,
+  OP_OR,
+  SORT_BOOL,
+  QUANTIFIER_FORALL,
+} from "./ast";
 import { mkNot } from "./ast-util";
+import { simplifyInjAxiom } from "./inj-axiom";
+import { MacroManager } from "./macro-finder";
 import { DefinedNames, Nnf } from "./nnf";
 import { PatternInference } from "./pattern-inference";
 import { MaxBvSharing } from "./maximize-ac-sharing";
@@ -10,10 +22,9 @@ import { PullQuant } from "./pull-quant";
 import { RefVector } from "./ref-vector";
 import { KERNEL_REWRITER_OPTIONS, Rewriter } from "./rewriter";
 import { RewriterTpl } from "./rewriter-tpl";
+import type { SmtConfig } from "./smt-setup";
 
-// pattern_inference_rw: infers the patterns of each universal quantifier without patterns. Its
-// cache lives as long as the assertions, like Z3's.
-class PatternInferenceRw extends RewriterTpl {
+export class PatternInferenceRw extends RewriterTpl {
   constructor(
     manager: AstManager,
     private inference: PatternInference,
@@ -24,9 +35,9 @@ class PatternInferenceRw extends RewriterTpl {
   reduceQuantifier(expr: number, body: number) {
     const manager = this.manager;
     const data = manager.getQuantifier(expr);
-    if (!data.isForall || data.patterns.length > 0) return -1;
+    if (data.kind !== QUANTIFIER_FORALL || data.patterns.length > 0) return -1;
     const quantifier = manager.withTemporaries(() => {
-      const inferred = this.inference.infer(data.sorts.length, body, data.weight);
+      const inferred = this.inference.infer(data.sorts.length, body, data.weight, data.noPatterns);
       const withPatterns = manager.mkQuantifier({ ...data, body, patterns: inferred.patterns });
       return inferred.weight === data.weight
         ? withPatterns
@@ -38,9 +49,6 @@ class PatternInferenceRw extends RewriterTpl {
           });
     });
     if (manager.getQuantifier(quantifier).patterns.length > 0) return quantifier;
-    // pi_pull_quantifiers: pulling the nested quantifiers out may give the body a pattern. The
-    // quantifier with the new patterns replaces new_q at once, and the pulled quantifier and
-    // pull_quant's cache go when reduce_quantifier returns.
     const pull = new PullQuant(manager);
     const pulled = pull.rewrite(quantifier);
     const pulledData = manager.getQuantifier(pulled);
@@ -61,12 +69,10 @@ class PatternInferenceRw extends RewriterTpl {
   }
 }
 
-// Z3's Knuth-Bendix style order for propagate_values: values are smallest, then deeper terms are
-// greater.
 const isGreater = (manager: AstManager, left: number, right: number): boolean => {
   if (left === right) return false;
-  const isLeftValue = manager.isUniqueValue(left);
-  const isRightValue = manager.isUniqueValue(right);
+  const isLeftValue = manager.isValue(left);
+  const isRightValue = manager.isValue(right);
   if (!isLeftValue && isRightValue) return true;
   if (isLeftValue && !isRightValue) return false;
   if (manager.depths[left] !== manager.depths[right])
@@ -83,8 +89,6 @@ const isGreater = (manager: AstManager, left: number, right: number): boolean =>
   return false;
 };
 
-// expr_substitution under scoped_expr_substitution: the first entry for a key wins, and pop removes
-// the entries since the matching push. The map and the trail hold their keys and values.
 class Substitution {
   readonly map = new Map<number, number>();
   private trail: RefVector;
@@ -119,11 +123,9 @@ class Substitution {
     this.trail.shrink(size);
   }
 
-  // update_substitution: a ground equality is oriented by the order, and any other formula maps to
-  // true, or its atom to false.
   update(expr: number) {
     const manager = this.manager;
-    if (manager.isGround(expr) && manager.getOp(expr) === OP_EQ) {
+    if (manager.isGroundApp(expr) && manager.getOp(expr) === OP_EQ) {
       const left = manager.getArg(expr, 0);
       const right = manager.getArg(expr, 1);
       if (isGreater(manager, left, right)) {
@@ -140,15 +142,12 @@ class Substitution {
   }
 }
 
-// asserted_formulas: the assertions of a context. Each assertion is rewritten when it is asserted,
-// and reduce preprocesses the new ones. Their units and oriented equalities then rewrite the later
-// assertions. Like Z3, it holds its formulas, so that expressions are deleted in Z3's order.
-// A pushed scope: the number of formulas when it began, and m_inconsistent_old.
 interface AssertedScope {
   numFormulas: number;
   isInconsistent: boolean;
 }
 
+// Like Z3, it holds its formulas, so that expressions are deleted in Z3's order.
 export class AssertedFormulas {
   private formulas: RefVector;
   private qhead = 0;
@@ -156,31 +155,37 @@ export class AssertedFormulas {
   private rewriter: Rewriter;
   private isEliminatingAnd = false;
   private isReducePending = true;
+  private isNnfCnf = true;
+  private isEq2Ineq = false;
   private names: DefinedNames;
   private patternInference: PatternInferenceRw;
   private bvSharing: MaxBvSharing;
-  private hasQuantifiers = false;
-  // m_inconsistent: whether a formula is false, after which no formula is added or preprocessed.
+  hasQuantifiers = false;
+  readonly macros: MacroManager;
   isInconsistent = false;
-  // The scopes that are pushed only when a formula is asserted, and the pushed scopes.
+  isPreprocessing = true;
   private numLazyScopes = 0;
   private scopes: AssertedScope[] = [];
 
-  constructor(private manager: AstManager) {
+  constructor(
+    private manager: AstManager,
+    private isFindingMacros = false,
+  ) {
     this.formulas = new RefVector(manager);
+    this.macros = new MacroManager(manager);
     this.substitution = new Substitution(manager);
-    this.rewriter = new Rewriter(manager, KERNEL_REWRITER_OPTIONS);
+    // set_eliminate_and turns coalesce_chars off when smt.string_solver is seq, its default, so
+    // string literals reach the seq theory as concatenations of units.
+    this.rewriter = new Rewriter(manager, { ...KERNEL_REWRITER_OPTIONS, isCoalescingChars: false });
     this.names = new DefinedNames(manager);
     this.patternInference = new PatternInferenceRw(manager, new PatternInference(manager));
     this.bvSharing = new MaxBvSharing(manager);
   }
 
-  // push_scope: the scope is pushed when a formula is asserted in it.
   push() {
     this.numLazyScopes++;
   }
 
-  // pop_scope: removes the formulas, names and substitutions since the matching push.
   pop() {
     if (this.numLazyScopes > 0) {
       this.numLazyScopes--;
@@ -190,6 +195,7 @@ export class AssertedFormulas {
     this.scopes.pop();
     this.isInconsistent = scope.isInconsistent;
     this.bvSharing.popScope();
+    this.macros.popScope();
     this.names.pop();
     this.substitution.pop();
     this.formulas.shrink(scope.numFormulas);
@@ -197,12 +203,12 @@ export class AssertedFormulas {
     this.flushCache();
   }
 
-  // force_push: the pushed formulas are already reduced and committed.
   private forcePush() {
     for (; this.numLazyScopes > 0; this.numLazyScopes--) {
       this.substitution.push();
       this.scopes.push({ numFormulas: this.formulas.size, isInconsistent: this.isInconsistent });
       this.names.push();
+      this.macros.pushScope();
       this.bvSharing.pushScope();
     }
   }
@@ -211,41 +217,64 @@ export class AssertedFormulas {
     this.forcePush();
     const manager = this.manager;
     if (this.isInconsistent || manager.isTrue(expr)) return;
+    if (manager.hasQuantifierFlags[expr]) this.hasQuantifiers = true;
+    this.isReducePending = true;
+    if (!this.isPreprocessing) {
+      this.pushAssertion(expr, this.formulas);
+      return;
+    }
     this.setEliminateAnd(false);
     const rewritten = this.rewriter.rewrite(expr);
-    if (manager.hasQuantifierFlags[expr]) this.hasQuantifiers = true;
     this.pushAssertion(rewritten, this.formulas);
     manager.decRef(rewritten);
-    this.isReducePending = true;
+  }
+
+  // The setup's parameters, which set_eliminate_and gives the rewriter.
+  setup(config: SmtConfig) {
+    this.isNnfCnf = config.isNnfCnf;
+    this.isEq2Ineq = config.isEq2Ineq;
+    this.isFindingMacros ||= config.isFindingMacros;
   }
 
   getNumFormulas() {
     return this.formulas.size;
   }
 
-  // reduce and commit: the new formulas after preprocessing, which the context internalizes. Like
-  // internalize_assertions, nothing is committed once the formulas are inconsistent.
+  getFormulas() {
+    return this.formulas.items;
+  }
+
+  // Like internalize_assertions, nothing is committed once the formulas are inconsistent.
   reduce() {
     if (this.qhead === this.formulas.size) return [];
-    if (!this.isInconsistent) this.reduceCore();
+    if (!this.isInconsistent && (this.hasQuantifiers || this.isPreprocessing)) this.reduceCore();
     if (this.isInconsistent) return [];
     const result = this.formulas.items.slice(this.qhead);
+    if (this.isFindingMacros) this.macros.markForbidden(result);
     for (const formula of result) this.substitution.update(formula);
     this.qhead = this.formulas.size;
     return result;
   }
 
-  // asserted_formulas::reduce: each step but the last stops the preprocessing when a formula is
-  // false.
   private reduceCore() {
+    if (this.macros.hasMacros()) this.findMacros();
     this.setEliminateAnd(false);
     this.propagateValues();
     if (this.isInconsistent) return;
-    this.isReducePending = true;
-    this.nnfCnf();
+    this.findMacros();
     if (this.isInconsistent) return;
+    if (this.isNnfCnf || this.hasQuantifiers) {
+      this.isReducePending = true;
+      this.nnfCnf();
+      if (this.isInconsistent) return;
+    }
     this.setEliminateAnd(true);
     this.reduceAsserted();
+    if (this.isInconsistent) return;
+    if (this.hasQuantifiers && this.simplifyFormulas((formula) => this.refineInjAxiom(formula)))
+      this.isReducePending = true;
+    if (this.isInconsistent) return;
+    this.findMacros();
     if (this.isInconsistent) return;
     if (
       this.hasQuantifiers &&
@@ -253,7 +282,6 @@ export class AssertedFormulas {
     )
       this.isReducePending = true;
     if (this.isInconsistent) return;
-    // max_bv_sharing, whose post_op reduces the formulas again.
     if (this.simplifyFormulas((formula) => this.bvSharing.rewrite(formula)))
       this.isReducePending = true;
     if (this.isInconsistent) return;
@@ -265,8 +293,6 @@ export class AssertedFormulas {
     this.flushCache();
   }
 
-  // push_assertion: splits conjunctions and negated disjunctions. A false formula makes the
-  // assertions inconsistent.
   private pushAssertion(expr: number, result: RefVector) {
     const manager = this.manager;
     if (this.isInconsistent || manager.isTrue(expr)) return;
@@ -286,7 +312,6 @@ export class AssertedFormulas {
     if (op === OP_NOT && manager.getOp(manager.getArg(expr, 0)) === OP_OR) {
       const disjunction = manager.getArg(expr, 0);
       for (let index = 0; index < manager.getNumArgs(disjunction); index++) {
-        // narg holds the negation while it is pushed.
         const negation = mkNot(manager, manager.getArg(disjunction, index));
         manager.incRef(negation);
         this.pushAssertion(negation, result);
@@ -297,7 +322,23 @@ export class AssertedFormulas {
     result.push(expr);
   }
 
-  // flush_cache: the rewriter is reset, with the committed substitution.
+  private refineInjAxiom(formula: number) {
+    const manager = this.manager;
+    const refined =
+      manager.kinds[formula] === KIND_QUANTIFIER ? simplifyInjAxiom(manager, formula) : undefined;
+    if (refined !== undefined) return refined;
+    manager.incRef(formula);
+    return formula;
+  }
+
+  private findMacros() {
+    if (!this.isFindingMacros || !this.hasQuantifiers) return;
+    this.isReducePending = true;
+    this.swapFormulas(this.macros.find(this.formulas.items.slice(this.qhead)));
+    this.flushCache();
+    this.reduceAsserted();
+  }
+
   private flushCache() {
     this.rewriter.setSubstitution(this.substitution.map);
   }
@@ -307,18 +348,16 @@ export class AssertedFormulas {
     this.isEliminatingAnd = isEliminatingAnd;
     this.isReducePending = true;
     this.rewriter.setEliminatingAnd(isEliminatingAnd);
+    this.rewriter.setEq2Ineq(this.isEq2Ineq);
     this.flushCache();
   }
 
-  // swap_asserted_formulas: the new formulas replace those from qhead on.
   private swapFormulas(formulas: RefVector) {
     this.formulas.shrink(this.qhead);
     for (const formula of formulas.items) this.formulas.push(formula);
     formulas.reset();
   }
 
-  // simplify_fmls: a formula that simplify changes is split again. simplify returns its result with
-  // a reference. Whether a formula changed.
   private simplifyFormulas(simplify: (formula: number) => number) {
     const manager = this.manager;
     const formulas = new RefVector(manager);
@@ -337,17 +376,12 @@ export class AssertedFormulas {
     return isChanged;
   }
 
-  // reduce_asserted_formulas: the rewriter rewrites the formulas, unless they are already in its
-  // normal form.
   private reduceAsserted() {
     if (!this.isReducePending) return;
     this.simplifyFormulas((formula) => this.rewriter.rewrite(formula));
     this.isReducePending = false;
   }
 
-  // asserted_formulas::propagate_values: a forward and a backward pass that rewrite each formula with
-  // the committed substitution and the units of the formulas before it. Z3 stops after one round,
-  // since the passes add no formula. When a formula changed, reduce-asserted rewrites them all.
   private propagateValues() {
     const manager = this.manager;
     const substitution = this.substitution;
@@ -376,8 +410,6 @@ export class AssertedFormulas {
     if (numPropagated > 0) this.reduceAsserted();
   }
 
-  // asserted_formulas::nnf_cnf: one NNF object normalizes every formula, and the rewriter, which does
-  // not eliminate and yet, rewrites each normal form and the definitions of the names it introduced.
   private nnfCnf() {
     const manager = this.manager;
     const nnf = new Nnf(manager, this.names);
@@ -400,8 +432,6 @@ export class AssertedFormulas {
     nnf.release();
   }
 
-  // asserted_formulas::flatten_clauses: an ite at the top becomes two clauses, and a conjunction
-  // that occurs in one binary clause is distributed.
   private flattenClauses() {
     const manager = this.manager;
     const mkNegation = (expr: number) =>

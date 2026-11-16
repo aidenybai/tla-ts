@@ -1,13 +1,9 @@
-// Ported from Z3 (src/nlsat/nlsat_evaluator.cpp), MIT license, see z3-license.txt. Evaluates atoms
-// at the assignment, and computes the intervals of the maximal variable of an atom that falsify a
-// literal at the values of the variables below it. The assignment is the solver's, shared and
-// refined in place.
+// Ported from Z3 (src/nlsat/nlsat_evaluator.cpp), MIT license, see z3-license.txt.
 import type { Anum, AlgebraicManager } from "./algebraic";
 import { type IntervalSet, IntervalSetManager } from "./interval-set";
 import type { Polynomial, PolynomialManager } from "./polynomial";
 import { type Atom, type Clause, type IneqAtom, type RootAtom, isIneqAtom } from "./types";
 
-// Z3's LINEAR_SEARCH_THRESHOLD.
 const LINEAR_SEARCH_THRESHOLD = 8;
 
 interface Section {
@@ -21,8 +17,6 @@ interface PolynomialInfo {
   firstSign: number;
 }
 
-// sign_table: the roots of the factors of an atom merged into one sorted list of sections. Cell 2i
-// is the sector below sorted section i, cell 2i + 1 the section itself.
 class SignTable {
   private sections: Section[] = [];
   private sortedSections: number[] = [];
@@ -55,9 +49,9 @@ class SignTable {
         section.position = sorted.length - 1;
         sortedIndex++;
       } else {
-        const id = this.mkSection(roots[rootIndex], sorted.length);
-        sorted.push(id);
-        sectionIds.push(id);
+        const newSectionId = this.mkSection(roots[rootIndex], sorted.length);
+        sorted.push(newSectionId);
+        sectionIds.push(newSectionId);
         rootIndex++;
       }
     }
@@ -66,9 +60,9 @@ class SignTable {
       sorted.push(this.sortedSections[sortedIndex]);
     }
     for (; rootIndex < roots.length; rootIndex++) {
-      const id = this.mkSection(roots[rootIndex], sorted.length);
-      sorted.push(id);
-      sectionIds.push(id);
+      const newSectionId = this.mkSection(roots[rootIndex], sorted.length);
+      sorted.push(newSectionId);
+      sectionIds.push(newSectionId);
     }
     this.sortedSections = sorted;
     return sectionIds;
@@ -114,7 +108,6 @@ class SignTable {
     return this.polynomialSigns[info.firstSign + index];
   }
 
-  // sign_at: the sign of the infoId-th polynomial in the cell.
   signAt(infoId: number, cell: number) {
     const info = this.infos[infoId];
     const rootCount = info.rootCount;
@@ -215,7 +208,6 @@ export class Evaluator {
     table.add(signed.roots, signed.signs);
   }
 
-  // The maximal runs of cells where the literal is false, as a union of intervals.
   private getIneqInfeasibleIntervals(atom: IneqAtom, isNeg: boolean, clause: Clause | null) {
     const table = new SignTable(this.am);
     for (const polynomial of atom.polynomials) this.addToTable(polynomial, atom.maxVar, table);
@@ -279,7 +271,7 @@ export class Evaluator {
     if (atom.index > roots.length)
       return isNeg ? null : this.ism.mk(true, null, true, null, justification, clause);
     const root = roots[atom.index - 1];
-    const mk = (
+    const mkInterval = (
       isLowerOpen: boolean,
       lower: Anum | null,
       isUpperOpen: boolean,
@@ -288,16 +280,19 @@ export class Evaluator {
     switch (atom.kind) {
       case "ROOT_EQ":
         return isNeg
-          ? mk(false, root, false, root)
-          : this.ism.mkUnion(mk(true, null, true, root), mk(true, root, true, null));
+          ? mkInterval(false, root, false, root)
+          : this.ism.mkUnion(
+              mkInterval(true, null, true, root),
+              mkInterval(true, root, true, null),
+            );
       case "ROOT_LT":
-        return isNeg ? mk(true, null, true, root) : mk(false, root, true, null);
+        return isNeg ? mkInterval(true, null, true, root) : mkInterval(false, root, true, null);
       case "ROOT_GT":
-        return isNeg ? mk(true, root, true, null) : mk(true, null, false, root);
+        return isNeg ? mkInterval(true, root, true, null) : mkInterval(true, null, false, root);
       case "ROOT_LE":
-        return isNeg ? mk(true, null, false, root) : mk(true, root, true, null);
+        return isNeg ? mkInterval(true, null, false, root) : mkInterval(true, root, true, null);
       case "ROOT_GE":
-        return isNeg ? mk(false, root, true, null) : mk(true, null, true, root);
+        return isNeg ? mkInterval(false, root, true, null) : mkInterval(true, null, true, root);
     }
   }
 }

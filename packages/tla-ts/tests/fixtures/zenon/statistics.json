@@ -59,7 +59,7 @@
   "rules/relation-trans_sym.znn": { "nodesSearched": 3, "proofNodes": 3 },
   "rules/relation-transsym.znn": { "nodesSearched": 152, "proofNodes": 19 },
   "rules/setemptyequal.znn": { "nodesSearched": 7, "proofNodes": 4 },
-  "rules/subseteq_cap.znn": { "nodesSearched": 12, "proofNodes": 2 },
+  "rules/subseteq_cap.znn": { "nodesSearched": 14, "proofNodes": 2 },
   "rules/tuple_eq_mismatch.znn": { "nodesSearched": 1, "proofNodes": 1 },
   "unknown/DiningPhilosophers_proof-304.znn": { "nodesSearched": 691, "proofNodes": 57 },
   "unknown/DiningPhilosophers_proof-464.znn": { "nodesSearched": 20, "proofNodes": 0 }

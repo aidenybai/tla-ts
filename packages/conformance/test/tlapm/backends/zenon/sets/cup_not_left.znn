@@ -1,0 +1,15 @@
+(*---
+description: Zenon finds no proof that a member of S \cup T is in S.
+ref: zenon/ext_tla.ml#newnodes_prop
+outcome: unknown
+---*)
+;; obligation #1
+$goal (=> (TLA.in a_CONSTANTunde_xunde_a (TLA.cup a_CONSTANTunde_Sunde_a
+a_CONSTANTunde_Tunde_a)) (TLA.in a_CONSTANTunde_xunde_a
+a_CONSTANTunde_Sunde_a))
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: unknown
+---*)

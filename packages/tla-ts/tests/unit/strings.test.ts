@@ -1,24 +1,15 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 import { check } from "../../src";
-
-const DIRECTORY = join(import.meta.dirname, "../fixtures/strings");
+import { checkFixture } from "./check-harness";
 
 describe("STRING matches TLC's Strings class", () => {
   it("evaluates every assumption of the STRING fixture", async () => {
-    const result = await check({
-      source: readFileSync(join(DIRECTORY, "StringSet.tla"), "utf8"),
-      config: readFileSync(join(DIRECTORY, "StringSet.cfg"), "utf8"),
-    });
+    const result = await checkFixture("strings", "StringSet");
     expect(result.status).toBe("success");
   });
 
   it("compares Nat, Int, and Seq(S) like TLC's Java classes", async () => {
-    const result = await check({
-      source: readFileSync(join(DIRECTORY, "OverriddenSets.tla"), "utf8"),
-      config: readFileSync(join(DIRECTORY, "OverriddenSets.cfg"), "utf8"),
-    });
+    const result = await checkFixture("strings", "OverriddenSets");
     expect(result.status).toBe("success");
   });
 

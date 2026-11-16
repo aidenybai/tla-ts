@@ -1,0 +1,35 @@
+(*---
+description: Zenon chains two equalities.
+ref: zenon/prove.ml#newnodes_match_trans
+outcome: unsat
+---*)
+;; obligation #1
+$goal (=> (/\ (= a_CONSTANTunde_xunde_a a_CONSTANTunde_yunde_a)
+(= a_CONSTANTunde_yunde_a a_CONSTANTunde_zunde_a)) (= a_CONSTANTunde_xunde_a
+a_CONSTANTunde_zunde_a))
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: |-
+    unsat
+    proof (rule zenon_nnpp)
+     assume z_Ha:"(~(((a_CONSTANTunde_xunde_a=a_CONSTANTunde_yunde_a)&(a_CONSTANTunde_yunde_a=a_CONSTANTunde_zunde_a))=>(a_CONSTANTunde_xunde_a=a_CONSTANTunde_zunde_a)))" (is "~(?z_hc=>?z_hi)")
+     have z_Hc: "?z_hc" (is "?z_hd&?z_hg")
+     by (rule zenon_notimply_0 [OF z_Ha])
+     have z_Hj: "(a_CONSTANTunde_xunde_a~=a_CONSTANTunde_zunde_a)"
+     by (rule zenon_notimply_1 [OF z_Ha])
+     have z_Hd: "?z_hd"
+     by (rule zenon_and_0 [OF z_Hc])
+     have z_Hg: "?z_hg"
+     by (rule zenon_and_1 [OF z_Hc])
+     show FALSE
+     proof (rule notE [OF z_Hj])
+      have z_Hk: "(a_CONSTANTunde_yunde_a=a_CONSTANTunde_xunde_a)"
+      by (rule sym [OF z_Hd])
+      have z_Hi: "?z_hi"
+      by (rule subst [where P="(\<lambda>zenon_Vh. (zenon_Vh=a_CONSTANTunde_zunde_a))", OF z_Hk], fact z_Hg)
+      thus "?z_hi" .
+     qed
+    qed
+---*)

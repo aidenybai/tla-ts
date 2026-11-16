@@ -1,0 +1,3 @@
+---- MODULE FixImportsMissing ----
+EXTENDS NoSuchModuleB
+====

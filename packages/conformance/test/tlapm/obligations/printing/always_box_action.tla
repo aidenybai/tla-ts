@@ -1,0 +1,26 @@
+(*---
+description: "[][A]_v prints with the always operator in front of the box action."
+ref: src/expr/e_fmt.ml#fmt_expr
+mode: obligations
+outcome: proved
+---*)
+---- MODULE always_box_action ----
+VARIABLE x
+THEOREM [][x' = x]_x => [][x' = x]_x
+  OBVIOUS
+====
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: |-
+    @type: obligation
+    @id: 1
+    @loc: 10:3:10:10
+    @status: to be proved
+    @obl: ASSUME NEW VARIABLE x
+    PROVE  [][x' = x]_x => [][x' = x]_x
+
+    @type: obligationsnumber
+    @count: 1
+---*)

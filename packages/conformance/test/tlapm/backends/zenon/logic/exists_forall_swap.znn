@@ -1,0 +1,36 @@
+(*---
+description: 'Zenon proves \E a : \A b : R(a, b) implies \A b : \E a : R(a, b).'
+ref: zenon/prove.ml#newnodes_delta
+outcome: unsat
+---*)
+;; obligation #1
+$goal (=> (E. ((a_CONSTANTunde_aunde_a) (A. ((a_CONSTANTunde_bunde_a) (a_CONSTANTunde_Runde_a a_CONSTANTunde_aunde_a
+a_CONSTANTunde_bunde_a)))))
+(A. ((a_CONSTANTunde_bunde_a) (E. ((a_CONSTANTunde_aunde_a) (a_CONSTANTunde_Runde_a a_CONSTANTunde_aunde_a
+a_CONSTANTunde_bunde_a))))))
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: |-
+    unsat
+    proof (rule zenon_nnpp)
+     assume z_Ha:"(~((\\E a_CONSTANTunde_aunde_a:(\\A a_CONSTANTunde_bunde_a:a_CONSTANTunde_Runde_a(a_CONSTANTunde_aunde_a, a_CONSTANTunde_bunde_a)))=>(\\A a_CONSTANTunde_bunde_a:(\\E a_CONSTANTunde_aunde_a:a_CONSTANTunde_Runde_a(a_CONSTANTunde_aunde_a, a_CONSTANTunde_bunde_a)))))" (is "~(?z_hc=>?z_hh)")
+     have z_Hc: "?z_hc" (is "\\E x : ?z_hj(x)")
+     by (rule zenon_notimply_0 [OF z_Ha])
+     have z_Hk: "(~?z_hh)" (is "~(\\A x : ?z_hl(x))")
+     by (rule zenon_notimply_1 [OF z_Ha])
+     have z_Hm: "?z_hj((CHOOSE a_CONSTANTunde_aunde_a:(\\A a_CONSTANTunde_bunde_a:a_CONSTANTunde_Runde_a(a_CONSTANTunde_aunde_a, a_CONSTANTunde_bunde_a))))" (is "\\A x : ?z_ho(x)")
+     by (rule zenon_ex_choose_0 [of "?z_hj", OF z_Hc])
+     have z_Hp: "(\\E a_CONSTANTunde_bunde_a:(~(\\E a_CONSTANTunde_aunde_a:a_CONSTANTunde_Runde_a(a_CONSTANTunde_aunde_a, a_CONSTANTunde_bunde_a))))" (is "\\E x : ?z_hr(x)")
+     by (rule zenon_notallex_0 [of "?z_hl", OF z_Hk])
+     have z_Hs: "?z_hr((CHOOSE a_CONSTANTunde_bunde_a:(~(\\E a_CONSTANTunde_aunde_a:a_CONSTANTunde_Runde_a(a_CONSTANTunde_aunde_a, a_CONSTANTunde_bunde_a)))))" (is "~(\\E x : ?z_hu(x))")
+     by (rule zenon_ex_choose_0 [of "?z_hr", OF z_Hp])
+     have z_Hv: "?z_ho((CHOOSE a_CONSTANTunde_bunde_a:(~(\\E a_CONSTANTunde_aunde_a:a_CONSTANTunde_Runde_a(a_CONSTANTunde_aunde_a, a_CONSTANTunde_bunde_a)))))" (is "?z_hv")
+     by (rule zenon_all_0 [of "?z_ho" "(CHOOSE a_CONSTANTunde_bunde_a:(~(\\E a_CONSTANTunde_aunde_a:a_CONSTANTunde_Runde_a(a_CONSTANTunde_aunde_a, a_CONSTANTunde_bunde_a))))", OF z_Hm])
+     have z_Hw: "~?z_hu((CHOOSE a_CONSTANTunde_aunde_a:(\\A a_CONSTANTunde_bunde_a:a_CONSTANTunde_Runde_a(a_CONSTANTunde_aunde_a, a_CONSTANTunde_bunde_a))))"
+     by (rule zenon_notex_0 [of "?z_hu" "(CHOOSE a_CONSTANTunde_aunde_a:(\\A a_CONSTANTunde_bunde_a:a_CONSTANTunde_Runde_a(a_CONSTANTunde_aunde_a, a_CONSTANTunde_bunde_a)))", OF z_Hs])
+     show FALSE
+     by (rule notE [OF z_Hw z_Hv])
+    qed
+---*)

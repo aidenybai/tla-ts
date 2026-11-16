@@ -35,47 +35,45 @@ const COMMENT_END = "-->";
 const isNameCharacter = (character: string) =>
   character !== " " && character !== ">" && character !== "/" && character !== "\n";
 
-// Parses the elements, text, and CDATA of a document without attributes, like the XML that SANY's
-// XMLExporter writes.
 export const parseXml = (source: string): XmlElement => {
-  const cursor = { index: 0 };
+  let position = 0;
   const root: XmlElement = { name: "", children: [], text: "" };
   const open = [root];
-  while (cursor.index < source.length) {
-    const tag = source.indexOf("<", cursor.index);
+  while (position < source.length) {
+    const tag = source.indexOf("<", position);
     const current = open[open.length - 1];
     if (tag === -1) break;
-    if (tag > cursor.index) current.text += decode(source.slice(cursor.index, tag));
+    if (tag > position) current.text += decode(source.slice(position, tag));
     if (source.startsWith(CDATA_START, tag)) {
       const end = source.indexOf(CDATA_END, tag);
       current.text += source.slice(tag + CDATA_START.length, end);
-      cursor.index = end + CDATA_END.length;
+      position = end + CDATA_END.length;
       continue;
     }
     if (source.startsWith(COMMENT_START, tag)) {
-      cursor.index = source.indexOf(COMMENT_END, tag) + COMMENT_END.length;
+      position = source.indexOf(COMMENT_END, tag) + COMMENT_END.length;
       continue;
     }
     const close = source.indexOf(">", tag);
     if (source[tag + 1] === "?") {
-      cursor.index = close + 1;
+      position = close + 1;
       continue;
     }
     if (source[tag + 1] === "/") {
       open.pop();
-      cursor.index = close + 1;
+      position = close + 1;
       continue;
     }
-    const nameEnd = { index: tag + 1 };
-    while (isNameCharacter(source[nameEnd.index])) nameEnd.index++;
+    let nameEnd = tag + 1;
+    while (isNameCharacter(source[nameEnd])) nameEnd++;
     const element: XmlElement = {
-      name: source.slice(tag + 1, nameEnd.index),
+      name: source.slice(tag + 1, nameEnd),
       children: [],
       text: "",
     };
     current.children.push(element);
     if (source[close - 1] !== "/") open.push(element);
-    cursor.index = close + 1;
+    position = close + 1;
   }
   return root.children[0];
 };

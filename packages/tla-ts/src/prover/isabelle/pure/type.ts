@@ -1,9 +1,4 @@
-// Ported from Isabelle2025's Pure/type.ML, the matching and unification of types. Copyright (c)
-// 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and contributors, see
-// LICENSE.
-//
-// Every type variable of Isabelle/TLA+ has the empty sort, so the order-sorted unification of
-// Type.unify never meets a sort constraint and coincides with Type.raw_unify.
+// Ported from Isabelle2025's Pure/type.ML. Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
 
 import { TlaIsabelleError } from "../../../errors";
 import {
@@ -22,9 +17,6 @@ export type TyEnv = Table<IndexKey, Typ>;
 
 export const emptyTyEnv: TyEnv = emptyTable(fastIndexnameOrd);
 
-export const lookupTyEnv = (tyenv: TyEnv, name: IndexKey) => lookupTable(tyenv, name);
-
-// Type.devar: chases the assignments of a type variable.
 export const devar = (tyenv: TyEnv, type: Typ): Typ => {
   let current = type;
   while (current.kind === "TVar") {
@@ -48,7 +40,6 @@ const updateNew = (tyenv: TyEnv, name: IndexKey, type: Typ): TyEnv => {
   return updateTable(tyenv, { name: name.name, index: name.index }, type);
 };
 
-// Type.unify: undefined where Isabelle raises TUNIFY.
 export const unifyTypes = (left: Typ, right: Typ, tyenv: TyEnv): TyEnv | undefined => {
   const leftType = devar(tyenv, left);
   const rightType = devar(tyenv, right);
@@ -71,7 +62,6 @@ export const unifyTypes = (left: Typ, right: Typ, tyenv: TyEnv): TyEnv | undefin
   return eqTyp(leftType, rightType) ? tyenv : undefined;
 };
 
-// Type.raw_match: undefined where Isabelle raises TYPE_MATCH.
 export const matchTypes = (pattern: Typ, object: Typ, tyenv: TyEnv): TyEnv | undefined => {
   if (pattern.kind === "TVar") {
     const assigned = lookupTable(tyenv, pattern);
@@ -90,7 +80,6 @@ export const matchTypes = (pattern: Typ, object: Typ, tyenv: TyEnv): TyEnv | und
   return object.kind === "TFree" && object.name === pattern.name ? tyenv : undefined;
 };
 
-// Envir.norm_type: instantiates the assigned type variables, chasing chains.
 export const normType = (tyenv: TyEnv, type: Typ): Typ => {
   if (type.kind === "TFree") return type;
   if (type.kind === "TVar") {
@@ -101,7 +90,6 @@ export const normType = (tyenv: TyEnv, type: Typ): Typ => {
   return args.every((arg, index) => arg === type.args[index]) ? type : mkType(type.name, args);
 };
 
-// Envir.subst_type: instantiates without chasing.
 export const substType = (tyenv: TyEnv, type: Typ): Typ => {
   if (type.kind === "TFree") return type;
   if (type.kind === "TVar") return lookupTable(tyenv, type) ?? type;
@@ -109,8 +97,7 @@ export const substType = (tyenv: TyEnv, type: Typ): Typ => {
   return args.every((arg, index) => arg === type.args[index]) ? type : mkType(type.name, args);
 };
 
-// Type.unified: equality modulo the environment. Isabelle2025 compares each argument with itself,
-// so arguments never differ.
+// Isabelle2025's Type.unified compares each argument with itself, so arguments never differ.
 export const unifiedTypes = (tyenv: TyEnv, left: Typ, right: Typ): boolean => {
   if (isEmptyTable(tyenv)) return eqTyp(left, right);
   const leftType = devar(tyenv, left);

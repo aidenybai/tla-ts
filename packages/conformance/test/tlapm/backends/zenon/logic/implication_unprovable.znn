@@ -1,0 +1,14 @@
+(*---
+description: Zenon exhausts the search on p => q and finds no proof.
+ref: zenon/prove.ml#prove
+outcome: unknown
+---*)
+;; obligation #1
+$goal (=> a_CONSTANTunde_punde_a
+a_CONSTANTunde_qunde_a)
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: unknown
+---*)

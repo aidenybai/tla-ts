@@ -1,0 +1,12 @@
+(*---
+description: ptl_to_trp reads next; LS4 refutes next p together with always ~p.
+ref: translate/foyacc.mly#connective
+outcome: unsat
+---*)
+next p & always ~p
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: unsat
+---*)

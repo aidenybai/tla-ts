@@ -1,6 +1,3 @@
-// Converts the tla-ts AST into tlapm's parse trees: expressions name operators opaquely until
-// anonymization resolves them, and proof steps get tlapm's levels and anonymous step numbers.
-
 import type {
   AssumeProve,
   Definition,
@@ -19,6 +16,7 @@ import { TlaProofError, TlaUnsupportedError } from "../errors";
 import {
   at,
   getFact,
+  mapChildren,
   type Bound,
   type Builtin,
   type Defn,
@@ -30,7 +28,7 @@ import {
   type Sequent,
 } from "./expression";
 import type { ModuleUnit, Mule } from "./module";
-import { findPragma, readNewMethod, readOldMethod } from "./pragma";
+import { findPragma, findSuppressPragma, readNewMethod, readOldMethod } from "./pragma";
 import {
   expandChoose,
   expandFcn,
@@ -51,36 +49,38 @@ import {
   type Usable,
 } from "./proof";
 
-const BUILTINS: Record<string, Builtin> = {
-  "=>": "Implies",
-  "<=>": "Equiv",
-  "/\\": "Conj",
-  "\\/": "Disj",
-  "~": "Neg",
-  "=": "Eq",
-  "#": "Neq",
-  SUBSET: "SUBSET",
-  UNION: "UNION",
-  DOMAIN: "DOMAIN",
-  "\\subseteq": "Subseteq",
-  "\\in": "Mem",
-  "\\notin": "Notmem",
-  "\\": "Setminus",
-  "\\cap": "Cap",
-  "\\cup": "Cup",
-  "'": "Prime",
-  "~>": "Leadsto",
-  ENABLED: "ENABLED",
-  UNCHANGED: "UNCHANGED",
-  "\\cdot": "Cdot",
-  "-+->": "Actplus",
-  "[]": "BoxTrue",
-  "<>": "Diamond",
-  TRUE: "TRUE",
-  FALSE: "FALSE",
-  BOOLEAN: "BOOLEAN",
-  STRING: "STRING",
-};
+const BUILTINS = new Map<string, Builtin>(
+  Object.entries({
+    "=>": "Implies",
+    "<=>": "Equiv",
+    "/\\": "Conj",
+    "\\/": "Disj",
+    "~": "Neg",
+    "=": "Eq",
+    "#": "Neq",
+    SUBSET: "SUBSET",
+    UNION: "UNION",
+    DOMAIN: "DOMAIN",
+    "\\subseteq": "Subseteq",
+    "\\in": "Mem",
+    "\\notin": "Notmem",
+    "\\": "Setminus",
+    "\\cap": "Cap",
+    "\\cup": "Cup",
+    "'": "Prime",
+    "~>": "Leadsto",
+    ENABLED: "ENABLED",
+    UNCHANGED: "UNCHANGED",
+    "\\cdot": "Cdot",
+    "-+->": "Actplus",
+    "[]": "BoxTrue",
+    "<>": "Diamond",
+    TRUE: "TRUE",
+    FALSE: "FALSE",
+    BOOLEAN: "BOOLEAN",
+    STRING: "STRING",
+  }),
+);
 
 const getCanonicalName = (name: string) => lookupOperator(name).name;
 
@@ -104,11 +104,12 @@ const mergeLoci = (left: Locus | undefined, right: Locus | undefined): Locus | u
 };
 
 const TUPLY_FAILURE = "use instead the class`E_visit.iter_concrete`";
+const STEP_TUPLY_FAILURE = "use instead the class `P_visit.map_concrete`";
 
 const isDitto = (bounds: QuantifierExpression["bounds"], index: number) =>
   index > 0 && bounds[index - 1].set === bounds[index].set;
 
-export const createSource = (
+export const createModuleConverter = (
   file: string,
   text: string,
   counter: Counter,
@@ -137,14 +138,17 @@ export const createSource = (
   const getMethod = (range: SourceRange | undefined) =>
     range && readOldMethod(lines, { line: range.end.line - 1, column: range.end.column });
 
-  // A method pragma belongs to the node it follows, whose locus then takes it in.
+  const getSuppressPragma = (keyword: SourceRange) =>
+    findSuppressPragma(lines, { line: keyword.start.line - 1, column: keyword.start.column - 1 });
+
+  const isSuppressed = (keyword: SourceRange) => getSuppressPragma(keyword) !== undefined;
+
   const withMethod = (range: SourceRange) => {
     const method = getMethod(range);
     const location = getRangeLocus(range);
     return method ? { location: withPragma(location), method } : { location };
   };
 
-  // Module.Parser's with_meth, which wraps the expression a method follows.
   const withExpressionMethod = (expression: Expr, range: SourceRange | undefined): Expr => {
     const method = getMethod(range);
     return method ? at({ kind: "With", expression, method }, expression) : expression;
@@ -163,13 +167,12 @@ export const createSource = (
 
   const convertOperator = (name: string, location: Locus | undefined): Expr => {
     const canonical = getCanonicalName(name);
-    const builtin = BUILTINS[canonical];
+    const builtin = BUILTINS.get(canonical);
     return at(builtin ? { kind: "Internal", builtin } : { kind: "Opaque", name: canonical }, {
       location,
     });
   };
 
-  // A name with ! selects through instances, which anonymization resolves by joining the names.
   const convertName = (
     name: string,
     args: Expr[],
@@ -180,7 +183,7 @@ export const createSource = (
       const operator = at({ kind: "Opaque", name }, { location });
       return at({ kind: "Bang", expression: operator, selectors: [] }, { location });
     }
-    const builtin = BUILTINS[name];
+    const builtin = BUILTINS.get(name);
     if (builtin && args.length === 0) return at({ kind: "Internal", builtin }, { location });
     const names = name.split("!");
     if (names.length === 1) {
@@ -215,12 +218,14 @@ export const createSource = (
     bounds.map((bound, index) => {
       if (bound.pattern.kind === "Tuple")
         throw new TlaProofError("Unexpected tuple declaration", { failure: TUPLY_FAILURE });
+      const range = bound.pattern.ranges?.[0];
       return {
         name: bound.pattern.name,
         level: "Constant",
         domain: isDitto(bounds, index)
           ? { kind: "Ditto" }
           : { kind: "Domain", expression: convertExpression(bound.set, isExcept) },
+        ...(range && { location: getRangeLocus(range) }),
       };
     });
 
@@ -239,6 +244,13 @@ export const createSource = (
       };
     });
 
+  // P_visit.map fails on the tuples a TAKE or PICK declares before the expression visitors do.
+  const convertStepBounds = (body: { names: string[]; bounds: QuantifierExpression["bounds"] }) => {
+    if (body.bounds.some((bound) => bound.pattern.kind === "Tuple"))
+      throw new TlaProofError("Unexpected tuple declaration", { failure: STEP_TUPLY_FAILURE });
+    return body.names.length > 0 ? getUnbounded(body.names) : convertBounds(body.bounds, false);
+  };
+
   const expandTuples = (expanded: Expr, location: Locus) => {
     if (!isExpandingTuples)
       throw new TlaProofError("Unexpected tuple declaration", { failure: TUPLY_FAILURE });
@@ -251,8 +263,6 @@ export const createSource = (
   const convertExpression = (expression: Expression, isExcept: boolean): Expr => {
     const location = getLocus(expression.location);
     const recurse = (inner: Expression) => convertExpression(inner, isExcept);
-    // tlapm locates an operator application by its operator and operands, and a parenthesized
-    // operand by what is inside the parentheses.
     const getOperatorLocus = (args: Expr[], fixity: Fixity) => {
       if (args.length === 2) return mergeLoci(args[0].location, args[1].location);
       if (args.length !== 1 || !args[0].location) return location;
@@ -286,8 +296,6 @@ export const createSource = (
         return at({ kind: "Num", integer, fraction }, { location });
       }
       case "String": {
-        // tlapm's lexer keeps a string's escapes as written. The location ends at the closing
-        // quote.
         const written = /"((?:[^"\\]|\\.)*)"$/.exec(
           (lines[location.endLine - 1] ?? "").slice(0, location.endColumn - 1),
         );
@@ -303,9 +311,18 @@ export const createSource = (
         const args = expression.args.map(recurse);
         const operator = lookupOperator(expression.operator);
         if (operator.fixity !== "Nonfix") {
+          const operatorLocus = getPointLocus(expression.location, 1);
+          const first = args[0]?.location;
+          const isNonfix =
+            args.length === 2 &&
+            first !== undefined &&
+            (operatorLocus.startLine < first.startLine ||
+              (operatorLocus.startLine === first.startLine &&
+                operatorLocus.startColumn < first.startColumn));
+          const operands = getOperatorLocus(args, operator.fixity);
           return at(
             { kind: "Apply", operator: convertOperator(expression.operator, undefined), args },
-            { location: getOperatorLocus(args, operator.fixity) },
+            { location: isNonfix ? mergeLoci(operatorLocus, operands) : operands },
           );
         }
         return convertName(expression.operator, args, location, expression.argumentCounts);
@@ -474,8 +491,7 @@ export const createSource = (
           { location },
         );
       case "Tuple":
-        // tlapm's tuple parser binds as (<< >>> elements) >>= ">>", which keeps only the location
-        // of the closing >>.
+        // tlapm's tuple parser keeps only the location of the closing >>.
         return at(
           { kind: "Tuple", elements: expression.elements.map(recurse) },
           {
@@ -563,22 +579,14 @@ export const createSource = (
       case "Always":
       case "Eventually": {
         const inner = expression.expression;
-        if (expression.kind === "Always" && inner.kind === "BoxAction") {
+        if (
+          (expression.kind === "Always" && inner.kind === "BoxAction") ||
+          (expression.kind === "Eventually" && inner.kind === "AngleAction")
+        ) {
           return at(
             {
               kind: "Tsub",
-              modal: "Box",
-              action: recurse(inner.action),
-              subscript: recurse(inner.subscript),
-            },
-            { location },
-          );
-        }
-        if (expression.kind === "Eventually" && inner.kind === "AngleAction") {
-          return at(
-            {
-              kind: "Tsub",
-              modal: "Dia",
+              modal: expression.kind === "Always" ? "Box" : "Dia",
               action: recurse(inner.action),
               subscript: recurse(inner.subscript),
             },
@@ -599,22 +607,39 @@ export const createSource = (
           { location },
         );
       case "WeakFairness":
-      case "StrongFairness":
+      case "StrongFairness": {
+        // tlapm lexes WF_vars as WF_ and vars, both located at the whole word.
+        const isGlued = /\w/.test(lines[location.startLine - 1]?.[location.startColumn + 2] ?? "");
+        const moveGluedStart = (inner: Expr): Expr =>
+          isGlued &&
+          inner.location?.startLine === location.startLine &&
+          inner.location.startColumn === location.startColumn + 3
+            ? mapChildren(
+                { ...inner, location: { ...inner.location, startColumn: location.startColumn } },
+                moveGluedStart,
+              )
+            : inner;
         return at(
           {
             kind: "Fair",
             fairness: expression.kind === "WeakFairness" ? "Weak" : "Strong",
-            subscript: recurse(expression.subscript),
+            subscript: moveGluedStart(recurse(expression.subscript)),
             action: recurse(expression.action),
           },
           { location },
         );
+      }
       case "Label":
         return at(
           {
             kind: "Parens",
             expression: recurse(expression.body),
-            form: { kind: "Nlabel", label: expression.name, names: expression.params },
+            form: {
+              kind: "Nlabel",
+              label: expression.name,
+              names: expression.params,
+              location: expression.head && getRangeLocus(expression.head),
+            },
           },
           { location },
         );
@@ -659,11 +684,13 @@ export const createSource = (
 
   const convertInstance = (instance: Instance): InstanceDefinition => ({
     location: getRangeLocus(instance.definitionRange ?? instance.instanceRange),
+    instanceLocation: getRangeLocus(instance.instanceRange),
     args: instance.params.map((param) => param.name),
     module: instance.module,
     substitutions: instance.substitutions.map((substitution) => ({
       name: getCanonicalName(substitution.name),
       expression: convertExpression(substitution.expression, false),
+      location: getRangeLocus(substitution.nameRange),
     })),
   });
 
@@ -678,26 +705,21 @@ export const createSource = (
         location,
       };
     }
-    // A prefix minus is the operator -.
     const name =
       definition.kind === "Operator" && definition.params.length === 1 && definition.name === "-"
         ? "-."
         : getCanonicalName(definition.name);
     const body = convertExpression(definition.body, isExcept);
-    if (definition.kind === "Function" && hasTuple(definition.bounds)) {
-      return {
-        kind: "Operator",
-        name,
-        body: expandTuples(expandFcn(getTuplyBounds(definition.bounds, isExcept), body), location),
-        location,
-      };
-    }
     if (definition.kind === "Function") {
-      const bounds = convertBounds(definition.bounds, isExcept);
       return {
         kind: "Operator",
         name,
-        body: at({ kind: "Fcn", bounds, body }, { location }),
+        body: hasTuple(definition.bounds)
+          ? expandTuples(expandFcn(getTuplyBounds(definition.bounds, isExcept), body), location)
+          : at(
+              { kind: "Fcn", bounds: convertBounds(definition.bounds, isExcept), body },
+              { location },
+            ),
         location,
       };
     }
@@ -719,7 +741,7 @@ export const createSource = (
             { location },
           );
     const end = definition.location.range?.end;
-    const methods = end && readNewMethod(lines, { line: end.line - 1, column: end.column });
+    const methods = end && readNewMethod(lines, { line: end.line - 1, column: end.column }, file);
     return methods
       ? { kind: "Bpragma", name, body: operatorBody, methods, location }
       : { kind: "Operator", name, body: operatorBody, location };
@@ -739,7 +761,6 @@ export const createSource = (
     };
   };
 
-  // Anonymization judges the time of each assumption once it resolves the names in it.
   const convertSequent = (statement: Expression | AssumeProve): Sequent => {
     if (statement.kind !== "AssumeProve")
       return { context: [], active: convertExpression(statement, false) };
@@ -759,7 +780,6 @@ export const createSource = (
     };
   };
 
-  // A labeled hypothesis is an Xlabel without parameters, not an Nlabel like a labeled expression.
   const convertFactLabel = (expression: Expression): Expr => {
     if (expression.kind !== "Label" || expression.params.length > 0)
       return convertExpression(expression, false);
@@ -804,7 +824,6 @@ export const createSource = (
       ? { kind: "Named", level, label: token[2], isAnonymous: false }
       : { kind: "Unnamed", level, id: getUnique(counter) };
 
-  // to_proof: a missing proof is implicitly omitted where the enclosing step is.
   const convertProof = (
     proof: ProofStep["proof"],
     level: number,
@@ -813,7 +832,11 @@ export const createSource = (
     if (!proof) return { kind: "Omitted", omission: "Implicit", location: enclosing };
     switch (proof.kind) {
       case "Obvious":
-        return { kind: "Obvious", ...withMethod(proof.keyword) };
+        return {
+          kind: "Obvious",
+          ...withMethod(proof.keyword),
+          isSuppressed: isSuppressed(proof.keyword),
+        };
       case "Omitted":
         return {
           kind: "Omitted",
@@ -828,14 +851,12 @@ export const createSource = (
           location: getRangeLocus(proof.keyword),
           step: { kind: "Unnamed", level, id: 0 },
           method: getMethod(proof.location.range),
+          isSuppressed: isSuppressed(proof.keyword),
         };
       case "Steps": {
-        // A <*> first step takes the enclosing level only after PROOF, and the top level
-        // always counts as PROOF.
         const tokens = proof.steps.map((step) => STEP_PATTERN.exec(step.token));
         const first = tokens[0];
         const stepLevel = first && first[1] !== "*" && first[1] !== "+" ? Number(first[1]) : level;
-        // The parser ends the steps at the first QED.
         const steps = proof.steps
           .slice(0, -1)
           .map((step, index) =>
@@ -855,8 +876,6 @@ export const createSource = (
     }
   };
 
-  // tlapm locates a USE or HIDE by its keywords and DEF clause, since its parser drops the
-  // facts' location.
   const getUseLocus = (use: UseOrHide) =>
     mergeLoci(
       getRangeLocus(use.keyword),
@@ -874,6 +893,7 @@ export const createSource = (
       ...converted,
       ...withMethod(step.head),
       step: number,
+      isSuppressed: isSuppressed(step.statement),
     });
     switch (body.kind) {
       case "Use":
@@ -891,6 +911,7 @@ export const createSource = (
               location,
               step: number,
               method: getMethod(body.location.range),
+              isSuppressed: isSuppressed(body.keyword),
             }
           : { kind: "Hide", usable, location, step: number };
       }
@@ -909,19 +930,14 @@ export const createSource = (
           expression: convertExpression(body.expression, false),
         });
       case "Take":
-        return withStepMethod({
-          kind: "Take",
-          bounds:
-            body.names.length > 0 ? getUnbounded(body.names) : convertBounds(body.bounds, false),
-        });
+        return withStepMethod({ kind: "Take", bounds: convertStepBounds(body) });
       case "Witness":
         return withStepMethod({
           kind: "Witness",
           expressions: body.expressions.map((expression) => convertExpression(expression, false)),
         });
       case "Pick": {
-        const bounds =
-          body.names.length > 0 ? getUnbounded(body.names) : convertBounds(body.bounds, false);
+        const bounds = convertStepBounds(body);
         const expression = convertExpression(body.body, false);
         return withProof((proof) => ({ kind: "Pick", bounds, expression, proof }));
       }
@@ -958,7 +974,9 @@ export const createSource = (
               name: getCanonicalName(declaration.name),
               shape: declaration.arity,
             })),
-            location: getLocus(unit.declarations[0].location),
+            location: getLocus(
+              unit.kind === "Constants" ? unit.declarations[0].location : unit.location,
+            ),
           };
         case "Variables":
           return {
@@ -1025,18 +1043,24 @@ export const createSource = (
             location,
           };
         }
-        case "Use":
+        case "Use": {
+          // A module unit's locus takes in the suppress pragma that tlapm reads as its first tokens.
+          const pragma = getSuppressPragma(unit.use.keyword);
           return {
             kind: "Mutate",
             mode: unit.use.kind,
             usable: convertUsable(unit.use),
-            location: getUseLocus(unit.use),
+            location: mergeLoci(
+              pragma && getPointLocus({ line: pragma.line + 1, column: pragma.column + 1 }, 0),
+              getUseLocus(unit.use),
+            ),
           };
+        }
         case "Module":
           return { kind: "Submod", module: { ...convertModule(unit.module), isImportant: true } };
       }
     }),
   });
 
-  return { convertModule };
+  return convertModule;
 };

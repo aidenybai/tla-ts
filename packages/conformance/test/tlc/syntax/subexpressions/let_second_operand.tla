@@ -1,0 +1,21 @@
+(*---
+description: A LET has no second operand.
+ref: "tla2sany/semantic/Generator.java#selectorToNode"
+features: [subexpressions]
+outcome: parse-error
+---*)
+---- MODULE let_second_operand ----
+Op == LET a == 3 IN a = 3
+Test == Op!2
+====
+
+(*--- recorded
+all:
+  exit: 150
+  transcript: |-
+    | Semantic errors:
+    | *** Errors: 1
+    | line 9, col 12 to line 9, col 12 of module let_second_operand
+    | A LET/IN expression has only one operand.
+    3002:1 Parsing or semantic analysis failed.
+---*)

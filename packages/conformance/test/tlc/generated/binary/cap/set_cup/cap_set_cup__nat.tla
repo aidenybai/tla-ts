@@ -1,0 +1,21 @@
+(*---
+description: cap of set_cup, a SetCupValue, and nat, a UserValue.
+ref: tlc2/value/impl/SetCapValue.java
+features:
+  - value-matrix
+flags:
+  - expression
+contexts:
+  - assume
+outcome: any
+---*)
+---- MODULE cap_set_cup__nat ----
+EXTENDS Integers, Sequences, FiniteSets, Bags, TLC
+Test == PrintT(({1} \cup {2}) \cap (Nat))
+====
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: "| {1, 2}"
+---*)

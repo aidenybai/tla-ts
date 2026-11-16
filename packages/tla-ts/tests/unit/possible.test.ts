@@ -1,8 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
-import { check, parseConfig, TlaConfigError } from "../../src";
-import { UNEXPECTED_EXCEPTION } from "../../src/errors";
+import { check, parseConfig, TlaConfigError, TlaEvaluationError } from "../../src";
 
 const DIRECTORY = join(import.meta.dirname, "../fixtures/possible");
 
@@ -99,12 +98,10 @@ describe("_POSSIBLE matches TLC", () => {
     ]);
   });
 
-  it("rejects a constant POSTCONDITION like TLC and skips it after a violation", async () => {
-    const failed = await checkModule("Never == FALSE", "POSTCONDITION Never");
-    expect([failed.status, failed.failure?.message]).toEqual([
-      "error",
-      `${UNEXPECTED_EXCEPTION}The post condition Never cannot be a constant.`,
-    ]);
+  it("rejects a constant POSTCONDITION after the run, without TLC's crash, and skips it after a violation", async () => {
+    await expect(checkModule("Never == FALSE", "POSTCONDITION Never")).rejects.toThrow(
+      new TlaEvaluationError("The post condition Never cannot be a constant."),
+    );
     const violated = await checkModule(
       "Never == FALSE\nInv == x < 2",
       "POSTCONDITION Never\nINVARIANT Inv",

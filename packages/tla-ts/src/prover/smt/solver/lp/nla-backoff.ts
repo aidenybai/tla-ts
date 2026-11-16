@@ -1,7 +1,5 @@
-// Ported from Z3 (src/math/lp/nla_backoff.h), MIT license, see z3-license.txt. When the core runs
-// its expensive engines.
+// Ported from Z3 (src/math/lp/nla_backoff.h), MIT license, see z3-license.txt.
 
-// backoff: how many calls to skip before the next run of an expensive engine.
 export class Backoff {
   private delay = 0;
 
@@ -19,7 +17,6 @@ export class Backoff {
   }
 }
 
-// squeeze_schedule: when to run the bounds optimization of the monomials.
 export class SqueezeSchedule {
   private failStreak = 0;
   private squeezesSinceSatCheck = 0;

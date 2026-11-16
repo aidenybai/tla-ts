@@ -1,0 +1,14 @@
+(*---
+description: >-
+  ptl_to_trp passes the first-order literal p(a, b) through, and LS4, a propositional prover,
+  rejects it with a syntax error.
+ref: translate/foyacc.mly#connective
+outcome: unknown
+---*)
+p(a, b) & ~p(b, a)
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: unknown
+---*)

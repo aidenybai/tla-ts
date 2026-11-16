@@ -1,7 +1,5 @@
 // Ported from Z3 (src/math/lp/horner.h, src/math/lp/horner.cpp, and nexvar, create_sum_from_row,
-// and add_deps_of_fixed from src/math/lp/nla_common.cpp), MIT license, see z3-license.txt. Horner
-// lemmas: a tableau row is a sum that equals zero. Each cross-nested form of the row that
-// intervals proves nonzero yields a conflict.
+// and add_deps_of_fixed from src/math/lp/nla_common.cpp), MIT license, see z3-license.txt.
 import { Rational } from "../rational";
 import { CrossNested } from "./cross-nested";
 import { type Dependency, mkJoin } from "./dependency";
@@ -12,7 +10,6 @@ import type { RowCell } from "./static-matrix";
 
 export class Horner {
   private readonly nexCreator = new NexCreator();
-  // The joined bounds of the fixed variables that the row's sum replaced by their values.
   private fixedDep: Dependency = null;
 
   constructor(private readonly core: NlaCore) {}
@@ -38,7 +35,6 @@ export class Horner {
     return false;
   }
 
-  // row_is_interesting: whether two monomials of the row share a variable.
   private rowIsInteresting(row: RowCell[]) {
     if (row.length > NLA_PARAMS.hornerRowLengthLimit) return false;
     const core = this.core;
@@ -60,7 +56,7 @@ export class Horner {
     const core = this.core;
     core.activeVarSet.clear();
     this.fixedDep = null;
-    const summands = row.map((cell) => this.nexvar(cell.coeff, cell.column));
+    const summands = row.map((cell) => this.mkNexVar(cell.coeff, cell.column));
     const fixedDep = this.fixedDep;
     this.setActiveVarsWeights();
     const expr = this.nexCreator.simplify(this.nexCreator.mkSum(summands));
@@ -76,21 +72,17 @@ export class Horner {
     return crossNested.done();
   }
 
-  // set_active_vars_weights: without the weights the comparisons of nex_creator are wrong.
   private setActiveVarsWeights() {
     this.nexCreator.setNumberOfVars(this.core.lra.getColumnCount());
     for (const lpVar of this.core.activeVarSet.elems)
       this.nexCreator.setVarWeight(lpVar, this.core.getVarWeight(lpVar));
   }
 
-  // add_deps_of_fixed.
   private addDepsOfFixed(lpVar: number) {
     this.fixedDep = mkJoin(this.fixedDep, this.core.lra.getBoundWitnesses(lpVar));
   }
 
-  // nexvar: coeff times the column, a product for a monic, where hornerSubsFixed replaces fixed
-  // variables by their values (1) or only those fixed to zero (2).
-  private nexvar(coeff: Rational, lpVar: number): Nex {
+  private mkNexVar(coeff: Rational, lpVar: number): Nex {
     const core = this.core;
     const creator = this.nexCreator;
     const subsFixed: number = NLA_PARAMS.hornerSubsFixed;

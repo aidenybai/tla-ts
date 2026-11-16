@@ -1,13 +1,6 @@
 import { createSanyLexer, escapeLexeme, getKind, type SanyToken } from "./lexer";
 import { SANY_OPERATOR_SYNONYMS } from "../tlc/jar-data";
 
-// The report SANY's parser, TLAplusParser, gives for a module it fails to parse. This interprets
-// the grammar of javacc/tla+.jj the way the code JavaCC generates from it runs: the productions,
-// their lookahead specifications, and the semantic actions that steer parsing or set the
-// `expecting` message. TLAplusParser.msgStackToString prints that message, the token the parser
-// failed at, and the productions it was in, so the interpreter must fail at the same token, in the
-// same productions, and must look as far ahead as JavaCC's jj_rescan_token does.
-
 type Predicate = (state: ParserState) => boolean;
 
 interface TokensUnit {
@@ -35,14 +28,11 @@ interface RepeatUnit {
   body: SequenceUnit;
 }
 
-// Java code in a production, which may throw a ParseException with a message.
 interface ActionUnit {
   type: "action";
   run: (state: ParserState) => string | undefined;
 }
 
-// A LOOKAHEAD specification. First in a choice's alternative or in a loop's body, it decides
-// whether to take that expansion. Elsewhere, JavaCC checks only its semantic part.
 interface LookaheadUnit {
   type: "lookahead";
   amount: number;
@@ -59,11 +49,8 @@ type Unit =
   | ActionUnit
   | LookaheadUnit;
 
-// A token kind in angle brackets, a production's name, or a unit.
 type Part = Unit | string;
 
-// A SyntaxTreeNode: a token, or what a production matched, which spans from its first token to
-// its last.
 interface SyntaxNode {
   kind: string;
   heirs: SyntaxNode[];
@@ -71,22 +58,17 @@ interface SyntaxNode {
   last: SanyToken;
 }
 
-// The production being parsed: the nodes of what it has matched, and the node it returns if that
-// is not a node of its own kind over them.
 interface Frame {
   heirs: SyntaxNode[];
   node: SyntaxNode | undefined;
 }
 
 interface Production {
-  // The name TLAplusParser.bpa pushes on the message stack, if the production calls it.
   message: string | undefined;
   body: SequenceUnit;
-  // Java code that runs after the production's epa.
   exit: ((frame: Frame, state: ParserState) => string | void) | undefined;
 }
 
-// An Operator of Operators.CanonicalOperators. None of them is right-associative.
 interface Operator {
   name: string;
   low: number;
@@ -95,7 +77,6 @@ interface Operator {
   fix: "prefix" | "postfix" | "infix" | "nfix";
 }
 
-// An OSelement of OperatorStack: an operand, or an operator with its node.
 interface StackElement {
   node: SyntaxNode;
   operator: Operator | undefined;
@@ -107,7 +88,6 @@ interface Analysis {
   hasSemanticStart: boolean;
 }
 
-// A jj_2 call, which jj_rescan_token scans again if it looked past the current token: JJCalls.
 interface LookaheadCall {
   generation: number;
   first: SanyToken;
@@ -134,7 +114,6 @@ interface ParserState {
   readToken: () => SanyToken;
   lexicalError: string | undefined;
   token: SanyToken;
-  // jj_gen, which counts consumed tokens, and its value at the last failed jj_ntk switch.
   generation: number;
   failedSwitchGeneration: number;
   scanPosition: SanyToken;
@@ -146,15 +125,14 @@ interface ParserState {
   calls: Map<SequenceUnit, LookaheadCall[]>;
   expecting: string;
   messages: StackMessage[];
+  pushedErrors: string[];
   moduleName: string | undefined;
   junctions: Junction[];
   frames: Frame[];
-  // OperatorStack's stack of stacks, one for each Expression being parsed.
   operatorStacks: StackElement[][];
   lastOperator: Operator | undefined;
   proofLevels: number[];
   isTerminalProof: boolean;
-  // Whether FairnessHook is set, which it is if the last NoOpExtension ended with arguments.
   isFairnessHooked: boolean;
   isFairnessParenthesized: boolean[];
   report: string | undefined;
@@ -162,7 +140,6 @@ interface ParserState {
 
 type ScanResult = "matched" | "failed" | "done";
 
-// JavaCC's amount for a LOOKAHEAD that gives an expansion but no amount.
 const UNBOUNDED_AMOUNT = 2147483647;
 const EOF = getKind("EOF");
 const IDENTIFIER = getKind("IDENTIFIER");
@@ -171,10 +148,9 @@ const DEFBREAK = getKind("DEFBREAK");
 const getKindRange = (first: string, last: string) =>
   Array.from(
     { length: getKind(last) - getKind(first) + 1 },
-    (_, offset) => getKind(first) + offset,
+    (_element, offset) => getKind(first) + offset,
   );
 
-// TLAplusParser.isOp, isInfixOp, isPostfixOp, and isFieldNameToken.
 const OPERATOR_KINDS = new Set(getKindRange("op_57", "op_119"));
 const INFIX_KINDS = new Set(getKindRange("op_1", "op_119"));
 const POSTFIX_KINDS = new Set(getKindRange("op_57", "op_70"));
@@ -196,7 +172,6 @@ const createOperators = (
   ...names: string[]
 ) => names.map((name): [string, Operator] => [name, { name, low, high, isLeftAssociative, fix }]);
 
-// Operators.CanonicalOperators, but for ".", which only OperatorStack.reduceRecord handles.
 const CANONICAL_OPERATORS = new Map([
   ...createOperators("postfix", 160, 160, true, "["),
   ...createOperators("postfix", 150, 150, false, "'", "^+", "^*", "^#"),
@@ -294,15 +269,17 @@ const CANONICAL_OPERATORS = new Map([
   ...createOperators("infix", 10, 10, false, "=>"),
 ]);
 
-// Operators.getOperator, which knows an operator by its name or a synonym.
 const OPERATORS = new Map([
   ...CANONICAL_OPERATORS,
   ...SANY_OPERATOR_SYNONYMS.flatMap((synonyms) =>
-    synonyms.slice(1).map((synonym) => [synonym, CANONICAL_OPERATORS.get(synonyms[0])] as const),
+    synonyms
+      .slice(1)
+      .map((synonym): [string, Operator | undefined] => [
+        synonym,
+        CANONICAL_OPERATORS.get(synonyms[0]),
+      ]),
   ),
 ]);
-// OperatorStack's fcnOp, which a function application's "[" pushes, and Operator.VoidOperator,
-// which OperatorStack.finalReduce pushes to reduce the whole stack.
 const FCN_OPERATOR = OPERATORS.get("[");
 const VOID_OPERATOR: Operator = {
   name: "$$_void",
@@ -355,8 +332,6 @@ const getNext = (state: ParserState, token: SanyToken) => {
   return token.next;
 };
 
-// TLAplusParser.getToken, which counts from the scan position while a semantic lookahead runs
-// during a scan.
 const getToken = (state: ParserState, index: number) => {
   let token = state.isLookingAhead ? state.scanPosition : state.token;
   for (let count = 0; count < index; count++) token = getNext(state, token);
@@ -368,7 +343,6 @@ const isNextKind = (...names: string[]) => {
   return (state: ParserState) => kinds.includes(getToken(state, 1).kind);
 };
 
-// JunctionListContext.isAboveCurrent, for the next token by default, and isNewBullet.
 const isAboveCurrent = (state: ParserState, column = getToken(state, 1).beginColumn) => {
   const junction = state.junctions.at(-1);
   return junction === undefined || junction.column < column;
@@ -380,17 +354,14 @@ const isNewBullet = (state: ParserState) => {
   return junction?.column === token.beginColumn && junction.kind === token.kind;
 };
 
-// TLAplusParser.caseSep.
 const isCaseSeparator = (state: ParserState) =>
   isNextKind("CASESEP")(state) && isAboveCurrent(state);
 
-// The Java code that lets a keyword name a module or a record field.
 const setFieldName = (state: ParserState) => {
   const token = getToken(state, 1);
   if (FIELD_NAME_KINDS.has(token.kind)) token.kind = IDENTIFIER;
 };
 
-// SyntaxTreeNode.getLocation for the tokens first to last, as Location.toString prints it.
 const formatLocation = (state: ParserState, first: SanyToken, last = first) =>
   `line ${first.beginLine}, col ${first.beginColumn} to line ${last.beginLine}, col ${last.beginColumn + last.image.length - 1} of module ${state.moduleName}`;
 
@@ -401,7 +372,6 @@ const createNode = (kind: string, heirs: SyntaxNode[]) => ({
   last: heirs[heirs.length - 1].last,
 });
 
-// The node offset nodes back among those of what the production being parsed has matched.
 const getHeir = (state: ParserState, offset: number) => {
   const heirs = state.frames[state.frames.length - 1].heirs;
   return heirs[heirs.length - offset];
@@ -410,16 +380,12 @@ const getHeir = (state: ParserState, offset: number) => {
 const getOperatorStack = (state: ParserState) =>
   state.operatorStacks[state.operatorStacks.length - 1];
 
-// Operator.succ and Operator.prec: whether left binds tighter than right, or looser.
 const isTighter = (left: Operator, right: Operator) => left.low > right.high;
 const isLooser = (left: Operator, right: Operator) => left.high < right.low;
 
-// Operators.getMixfix, which turns "-" into the prefix "-.".
 const getMixfix = (operator: Operator) =>
   operator.fix === "prefix" ? operator : OPERATORS.get(`${operator.name}.`);
 
-// OperatorStack.reducePostfix: replaces the operand and postfix operator below index top with
-// their expression.
 const reducePostfix = (stack: StackElement[], top: number) => {
   const operand = stack[top - 2].node;
   const postfix = stack[top - 1];
@@ -432,8 +398,6 @@ const reducePostfix = (stack: StackElement[], top: number) => {
   });
 };
 
-// OperatorStack.reducePrefix and reduceInfix: replace the operator below the top of the stack and
-// its operands with their expression.
 const reduceOperator = (stack: StackElement[], operator: Operator) => {
   const top = stack.length - 1;
   if (operator.fix !== "infix" && operator.fix !== "nfix") {
@@ -455,11 +419,6 @@ const reduceOperator = (stack: StackElement[], operator: Operator) => {
   });
 };
 
-// OperatorStack.reduceStack, run when an operator is pushed: it reduces the operators below it
-// that bind tighter, and gives the message it throws where precedence can't order two operators,
-// or two operands follow each other. The grammar pushes an infix or postfix operator only after an
-// operand, except for a "-" that Expression takes for a prefix one, so the checks that reject
-// other orders never fail and are left out.
 const reduceStack = (state: ParserState): string | undefined => {
   const stack = getOperatorStack(state);
   const top = stack.length - 1;
@@ -514,8 +473,6 @@ const reduceStack = (state: ParserState): string | undefined => {
     : `\n  Illegal combination of operators ${operator.name} in block ${location} and ${right.operator.name}.`;
 };
 
-// OperatorStack.pushOnStack for the node of the production just parsed: an operand, or, if
-// isOperator holds of it, an operator, which reduceStack reduces with what is below it.
 const pushOnStack = (isOperator: (node: SyntaxNode) => boolean) =>
   action((state) => {
     const stack = getOperatorStack(state);
@@ -530,30 +487,27 @@ const pushOnStack = (isOperator: (node: SyntaxNode) => boolean) =>
 const PUSH_OPERAND = pushOnStack(() => false);
 const PUSH_OPERATOR = pushOnStack(() => true);
 
-// TLAplusParser's lastOp, which the productions of operators set.
 const SET_LAST_OPERATOR = action((state) => {
   state.lastOperator = OPERATORS.get(state.token.image);
 });
 
-// The OpArgs node that a PrimitiveExp's heirs end with, directly or in their last "!" extension.
 const getArguments = (heirs: SyntaxNode[]) => {
   const last = heirs[heirs.length - 1];
   const node = last.kind === "BangExt" ? last.heirs[last.heirs.length - 1] : last;
   return node.kind === "OpArgs" ? node : undefined;
 };
 
-// TLAplusParser.isLabel: whether a node is an identifier, or an operator applied to identifiers.
+// SANY also takes A!B!lbl(x) for a label, its bug tlaplus/tlaplus#885.
 const isLabel = (node: SyntaxNode) => {
   if (node.kind === "GeneralId") return true;
-  const opArgs = node.kind === "OpApplication" ? getArguments(node.heirs) : undefined;
+  const opArgs =
+    node.kind === "OpApplication" && node.heirs.length === 2 ? getArguments(node.heirs) : undefined;
   return (
     opArgs !== undefined &&
     opArgs.heirs.every((argument, index) => index % 2 === 0 || argument.kind === "GeneralId")
   );
 };
 
-// The first node below node, stopping at junction lists, that does not start to the right of the
-// current junction list's bullet: what TLAplusParser.checkIndentation reports.
 const getMisindentedNode = (state: ParserState, node: SyntaxNode): SyntaxNode | undefined => {
   for (const child of node.heirs) {
     if (child.kind === "Junctions") continue;
@@ -564,9 +518,6 @@ const getMisindentedNode = (state: ParserState, node: SyntaxNode): SyntaxNode | 
   return undefined;
 };
 
-// TLAplusParser.belchDEF, which inserts a DEFBREAK token before the left-hand side of the next
-// definition. It reverses the links of the tokens it walks over, so that `next` leads back toward
-// the definition's start, and restores them when done.
 const belchDef = (state: ParserState) => {
   const stops = ["EOF", "THEOREM", "PROPOSITION", "ASSUMPTION", "END_MODULE"].map(getKind);
   const isKind = (token: SanyToken, ...names: string[]) =>
@@ -627,8 +578,6 @@ const belchDef = (state: ParserState) => {
   current.next = next;
 };
 
-// TLAplusParser.matchFcnConst: whether the next tokens are "<< ... >> \in" or a list of
-// identifiers followed by \in.
 const matchFcnConst = (state: ParserState) => {
   let token = getToken(state, 1);
   if (token.kind === getKind("LAB")) {
@@ -651,13 +600,11 @@ const matchFcnConst = (state: ParserState) => {
   return token.kind === getKind("IN");
 };
 
-// TLAplusParser.levelOfProofStepLexeme: -1 for <*> and -2 for <+>.
 const getStepLevel = (token: SanyToken) => {
   if (token.image[1] === "*") return -1;
   return token.image[1] === "+" ? -2 : Number.parseInt(token.image.slice(1));
 };
 
-// TLAplusParser.getProofLevel. TLAplusParser's proofDepth is the length of proofLevels less 1.
 const getProofLevel = (state: ParserState) => state.proofLevels.at(-1) ?? -1;
 
 const beginsProof = (state: ParserState) => {
@@ -679,7 +626,6 @@ const beginsProof = (state: ParserState) => {
   return isNextKind("BY", "PROOF", "OBVIOUS", "OMITTED")(state);
 };
 
-// TLAplusParser.correctLevel, which also sets the level of a proof from its first step.
 const isCorrectLevel = (state: ParserState, token: SanyToken) => {
   const level = getStepLevel(token);
   const depth = state.proofLevels.length - 1;
@@ -725,8 +671,7 @@ const STEP_START = tokens(
   ].map(getKind),
 );
 
-// The prefix operators and the operand that Expression and ExtendableExpr share. Each use is a
-// separate lookahead site, as in the generated parser.
+// Each use is a separate lookahead site, as in the generated parser.
 const getPrefixOperators = () =>
   zeroOrMore(
     lookahead({ expansion: [choice(PREFIX_OPERATOR, "<op_77>")], semantic: isAboveCurrent }),
@@ -777,7 +722,6 @@ const setTerminalProof = (isTerminalProof: boolean) =>
     state.isTerminalProof = isTerminalProof;
   });
 
-// An alternative of OperatorOrFunctionDefinition: a left-hand side, then "==", then a body.
 const definition = (expecting: string, ...parts: Part[]) =>
   sequence(
     ...parts.slice(0, -1),
@@ -1047,7 +991,6 @@ const PRODUCTIONS: Record<string, Production> = {
     }),
     "Expression",
   ]),
-  // A label returns from AssumeProve after the labeled AssumeProve, which a choice expresses.
   AssumeProve: production("Assume-Prove", [
     choice(
       sequence("Identifier", "<COLONCOLON>", "AssumeProve"),
@@ -1513,7 +1456,14 @@ const PRODUCTIONS: Record<string, Production> = {
   ]),
   ExceptComponent: production("Except Component", [
     choice(
-      sequence("<DOT>", action(setFieldName), "Identifier"),
+      sequence(
+        "<DOT>",
+        action(setFieldName),
+        "Identifier",
+        action((state) => {
+          if (state.token.image === "@") state.pushedErrors.push("@ used in !.@");
+        }),
+      ),
       sequence("<LSB>", "Expression", zeroOrMore("<COMMA>", "Expression"), "<RSB>"),
     ),
   ]),
@@ -1522,7 +1472,6 @@ const PRODUCTIONS: Record<string, Production> = {
     optional("Expression", zeroOrMore("<COMMA>", "Expression")),
     choice("<RAB>", sequence("<ARAB>", "ReducedExpression")),
   ]),
-  // The innermost NoOpExtension sets FairnessHook to its arguments, which end with ")".
   NoOpExtension: production(undefined, [
     "Identifier",
     optional(lookahead({ amount: 2 }), "OpArgs"),
@@ -1599,18 +1548,13 @@ const PRODUCTIONS: Record<string, Production> = {
       state.junctions.pop();
     }),
   ]),
-  JuncItem: production(
-    "Junction Item",
-    [choice("<OR>", "<AND>"), "Expression"],
-    // TLAplusParser.checkIndentation.
-    (frame, state) => {
-      const item = getMisindentedNode(state, frame.heirs[1]);
-      return (
-        item &&
-        `Item at ${formatLocation(state, item.first, item.last)} is not properly indented inside conjunction or  disjunction list item at ${formatLocation(state, frame.heirs[0].first, frame.heirs[1].last)}`
-      );
-    },
-  ),
+  JuncItem: production("Junction Item", [choice("<OR>", "<AND>"), "Expression"], (frame, state) => {
+    const item = getMisindentedNode(state, frame.heirs[1]);
+    return (
+      item &&
+      `Item at ${formatLocation(state, item.first, item.last)} is not properly indented inside conjunction or  disjunction list item at ${formatLocation(state, frame.heirs[0].first, frame.heirs[1].last)}`
+    );
+  }),
   UnboundOrBoundChoose: production("(Un)Bounded Choose", [
     "<CHOOSE>",
     choice("Identifier", "IdentifierTuple"),
@@ -1637,8 +1581,6 @@ const PRODUCTIONS: Record<string, Production> = {
       getPrefixOperators(),
       getOperand(),
     ],
-    // OperatorStack.finalReduce, which pushes an operator that binds looser than any other, whose
-    // node, null in Java, is never printed.
     (frame, state) => {
       const stack = getOperatorStack(state);
       stack.push({ node: frame.heirs[0], operator: VOID_OPERATOR });
@@ -1653,7 +1595,6 @@ const PRODUCTIONS: Record<string, Production> = {
       sequence(
         lookahead({
           expansion: [choice("<AND>", "<OR>")],
-          // OperatorStack.preInEmptyTop.
           semantic: (state) => {
             const top = state.operatorStacks.at(-1)?.at(-1);
             return (
@@ -1680,7 +1621,6 @@ const PRODUCTIONS: Record<string, Production> = {
           action(setFieldName),
           lookahead({ semantic: isAboveCurrent }),
           "Identifier",
-          // OperatorStack.reduceRecord, which first applies a postfix operator on top.
           action((state) => {
             const stack = getOperatorStack(state);
             if (stack[stack.length - 1].operator !== undefined) reducePostfix(stack, stack.length);
@@ -1698,7 +1638,6 @@ const PRODUCTIONS: Record<string, Production> = {
           lookahead({ expansion: ["<LSB>"], semantic: isAboveCurrent }),
           expect("function argument"),
           "SBracketCases",
-          // TLAplusParser.isGenOp, which holds of a function application.
           pushOnStack((node) => node.kind === "FcnAppl"),
         ),
       ),
@@ -1724,7 +1663,6 @@ const PRODUCTIONS: Record<string, Production> = {
             return undefined;
           }),
           "Expression",
-          // TLAplusParser.labelDoesNotChangeParse, given the operator parsed last.
           action((state) => {
             const stack = getOperatorStack(state);
             const labeled = getHeir(state, 1);
@@ -1851,9 +1789,6 @@ const PRODUCTIONS: Record<string, Production> = {
 
 const analyses = new Map<Unit, Analysis>();
 
-// What JavaCC's ParseEngine.genFirstSet and Semanticize.emptyExpansionExists compute: the tokens
-// an expansion can start with, whether it can match nothing, and whether its start passes a
-// semantic lookahead, which makes JavaCC decide by a jj_2 call instead of a switch (jj2LA).
 const analyze = (unit: Unit): Analysis => {
   const cached = analyses.get(unit);
   if (cached) return cached;
@@ -1893,8 +1828,6 @@ const evaluateSemantic = (state: ParserState, semantic: Predicate) => {
   return isPassed;
 };
 
-// jj_scan_token, which also records how far past the current token jj_rescan_token scans, the
-// length of the longest token sequence the ParseException expects.
 const scanToken = (state: ParserState, kinds: Set<number>): ScanResult => {
   if (state.scanPosition === state.lastPosition) {
     state.remaining--;
@@ -1915,8 +1848,6 @@ const scanToken = (state: ParserState, kinds: Set<number>): ScanResult => {
   return state.remaining === 0 && state.scanPosition === state.lastPosition ? "done" : "matched";
 };
 
-// The jj_3 routines, which match an expansion without running its actions. A loop or option skips
-// its body's lookahead, but a choice checks the semantic part of each alternative's.
 const scan = (state: ParserState, unit: Unit): ScanResult => {
   if (unit.type === "tokens") return scanToken(state, unit.kinds);
   if (unit.type === "call") return scan(state, PRODUCTIONS[unit.name].body);
@@ -1965,8 +1896,6 @@ const scan = (state: ParserState, unit: Unit): ScanResult => {
   }
 };
 
-// A jj_2 call, which scans expansion with a budget of amount new tokens. It saves the call for
-// jj_rescan_token as jj_save does, over a call of the same site that can't be rescanned.
 const scanAhead = (state: ParserState, amount: number, expansion: SequenceUnit) => {
   state.remaining = amount;
   state.scanPosition = state.token;
@@ -1985,9 +1914,6 @@ const scanAhead = (state: ParserState, amount: number, expansion: SequenceUnit) 
   return isMatched;
 };
 
-// The index of the alternative that the generated code's lookahead checks choose, or -1. As
-// ParseEngine.buildLookaheadChecker builds them, a check is the semantic lookahead alone where no
-// tokens are needed, a jj_ntk switch where one token decides, and a jj_2 call otherwise.
 const decide = (state: ParserState, alternatives: SequenceUnit[]) =>
   alternatives.findIndex((alternative) => {
     const head = alternative.units[0];
@@ -2005,9 +1931,6 @@ const decide = (state: ParserState, alternatives: SequenceUnit[]) =>
     return scanAhead(state, amount, expansion) && (semantic === undefined || semantic(state));
   });
 
-// ParseExceptionExtended.getShortMessage for the ParseException that generateParseException
-// builds, which shows as many tokens as the longest token sequence it expects. A rescan that
-// finishes its lookahead ends the rescans of its site.
 const getEncountered = (state: ParserState) => {
   state.isRescanning = true;
   for (const [expansion, chain] of state.calls) {
@@ -2032,14 +1955,12 @@ const getEncountered = (state: ParserState) => {
       break;
     }
     images.push(token.image);
-    // SANY's message follows the tokens the parser has read, without reading another.
     if (index < length - 1) token = getNext(state, token);
   }
   return `Encountered "${images.join(" ")}" at line ${next.beginLine}, column ${next.beginColumn} and token "${escapeLexeme(state.token.image)}" `;
 };
 
-// Records TLAplusParser.msgStackToString's report, without its "***Parse Error***" heading.
-const fail = (state: ParserState, message?: string) => {
+const recordParseException = (state: ParserState, message?: string) => {
   const expecting = state.expecting === "" ? "" : `Was expecting "${state.expecting}"\n`;
   const stack = state.messages
     .slice(-5)
@@ -2057,7 +1978,7 @@ const consume = (state: ParserState, kinds: Set<number>) => {
   const next = getNext(state, state.token);
   if (!kinds.has(next.kind)) {
     state.failedSwitchGeneration = state.generation;
-    return fail(state);
+    return recordParseException(state);
   }
   state.token = next;
   state.generation++;
@@ -2070,7 +1991,6 @@ const consume = (state: ParserState, kinds: Set<number>) => {
   return true;
 };
 
-// Parses a production, and adds the node it returns to those of the production that called it.
 const parseProduction = (state: ParserState, name: string) => {
   const production = PRODUCTIONS[name];
   if (production.message !== undefined) {
@@ -2086,23 +2006,21 @@ const parseProduction = (state: ParserState, name: string) => {
     state.expecting = "";
   }
   const message = production.exit?.(frame, state);
-  if (typeof message === "string") return fail(state, message);
+  if (typeof message === "string") return recordParseException(state, message);
   const node = frame.node ?? (frame.heirs.length === 0 ? undefined : createNode(name, frame.heirs));
   if (node !== undefined) state.frames.at(-1)?.heirs.push(node);
   return true;
 };
 
-// Runs the parse-mode code JavaCC generates for unit. It returns false once a ParseException's
-// report is recorded.
 const parse = (state: ParserState, unit: Unit): boolean => {
   if (unit.type === "tokens") return consume(state, unit.kinds);
   if (unit.type === "call") return parseProduction(state, unit.name);
   if (unit.type === "action") {
     const message = unit.run(state);
-    return message === undefined || fail(state, message);
+    return message === undefined || recordParseException(state, message);
   }
   if (unit.type === "lookahead")
-    return unit.semantic === undefined || unit.semantic(state) || fail(state);
+    return unit.semantic === undefined || unit.semantic(state) || recordParseException(state);
   if (unit.type === "sequence") {
     return unit.units.every(
       (inner, index) => (index === 0 && inner.type === "lookahead") || parse(state, inner),
@@ -2110,7 +2028,7 @@ const parse = (state: ParserState, unit: Unit): boolean => {
   }
   if (unit.type === "choice") {
     const index = decide(state, unit.alternatives);
-    return index === -1 ? fail(state) : parse(state, unit.alternatives[index]);
+    return index === -1 ? recordParseException(state) : parse(state, unit.alternatives[index]);
   }
   if (unit.type === "oneOrMore" && !parse(state, unit.body)) return false;
   if (unit.type === "optional") return decide(state, [unit.body]) === -1 || parse(state, unit.body);
@@ -2120,7 +2038,6 @@ const parse = (state: ParserState, unit: Unit): boolean => {
   return true;
 };
 
-// What SANY reports for a module its lexer or parser rejects, or undefined if it accepts the module.
 export const getSanyParseError = (source: string) => {
   const readToken = createSanyLexer(source);
   const start: SanyToken = { kind: EOF, image: "", beginLine: 0, beginColumn: 0, next: undefined };
@@ -2144,6 +2061,7 @@ export const getSanyParseError = (source: string) => {
     calls: new Map(),
     expecting: "nothing",
     messages: [],
+    pushedErrors: [],
     moduleName: undefined,
     junctions: [],
     frames: [],
@@ -2157,5 +2075,9 @@ export const getSanyParseError = (source: string) => {
   };
   const isParsed = parse(state, { type: "call", name: "CompilationUnit" });
   if (state.lexicalError !== undefined) return state.lexicalError;
-  return isParsed || state.report === undefined ? undefined : `***Parse Error***\n${state.report}`;
+  const errors = [
+    ...state.pushedErrors,
+    ...(isParsed || state.report === undefined ? [] : [`***Parse Error***\n${state.report}`]),
+  ];
+  return errors.length === 0 ? undefined : errors.join("\n");
 };

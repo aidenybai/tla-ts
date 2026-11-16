@@ -1,0 +1,38 @@
+(*---
+description: >-
+  Zenon proves P(CHOOSE a : P(a)) from P(x) with the notex and ex_choose rules, so the Isar proof
+  uses zenon_ex_choose_0.
+ref: zenon/prove.ml#newnodes_delta
+outcome: unsat
+---*)
+;; obligation #1
+$goal (=> (a_CONSTANTunde_Punde_a a_CONSTANTunde_xunde_a)
+(a_CONSTANTunde_Punde_a (t. ((a_CONSTANTunde_aunde_a) (a_CONSTANTunde_Punde_a a_CONSTANTunde_aunde_a)))))
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: |-
+    unsat
+    proof (rule zenon_nnpp)
+     assume z_Ha:"(~(a_CONSTANTunde_Punde_a(a_CONSTANTunde_xunde_a)=>a_CONSTANTunde_Punde_a((CHOOSE a_CONSTANTunde_aunde_a:a_CONSTANTunde_Punde_a(a_CONSTANTunde_aunde_a)))))" (is "~(?z_hc=>?z_he)")
+     have z_Hc: "?z_hc"
+     by (rule zenon_notimply_0 [OF z_Ha])
+     have z_Hi: "(~?z_he)"
+     by (rule zenon_notimply_1 [OF z_Ha])
+     show FALSE
+     proof (rule zenon_em [of "(\\E a_CONSTANTunde_aunde_a:a_CONSTANTunde_Punde_a(a_CONSTANTunde_aunde_a))"])
+      assume z_Hj:"(\\E a_CONSTANTunde_aunde_a:a_CONSTANTunde_Punde_a(a_CONSTANTunde_aunde_a))" (is "\\E x : ?z_hk(x)")
+      have z_He: "?z_hk((CHOOSE a_CONSTANTunde_aunde_a:a_CONSTANTunde_Punde_a(a_CONSTANTunde_aunde_a)))"
+      by (rule zenon_ex_choose_0 [of "?z_hk", OF z_Hj])
+      show FALSE
+      by (rule notE [OF z_Hi z_He])
+     next
+      assume z_Hl:"(~(\\E a_CONSTANTunde_aunde_a:a_CONSTANTunde_Punde_a(a_CONSTANTunde_aunde_a)))" (is "~(\\E x : ?z_hk(x))")
+      have z_Hm: "~?z_hk(a_CONSTANTunde_xunde_a)"
+      by (rule zenon_notex_0 [of "?z_hk" "a_CONSTANTunde_xunde_a", OF z_Hl])
+      show FALSE
+      by (rule notE [OF z_Hm z_Hc])
+     qed
+    qed
+---*)

@@ -1,0 +1,30 @@
+(*---
+description: >-
+  Zenon uses an equality of two pairs component by component with tuple_eq_match, which lltoisar
+  prints as an auto step.
+ref: zenon/ext_tla.ml#newnodes_prop
+outcome: unsat
+---*)
+;; obligation #1
+$goal (=> (= (TLA.tuple a_CONSTANTunde_xunde_a a_CONSTANTunde_yunde_a)
+(TLA.tuple a_CONSTANTunde_zunde_a a_CONSTANTunde_wunde_a))
+(= a_CONSTANTunde_yunde_a
+a_CONSTANTunde_wunde_a))
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: |-
+    unsat
+    proof (rule zenon_nnpp)
+     assume z_Ha:"(~((<<a_CONSTANTunde_xunde_a, a_CONSTANTunde_yunde_a>>=<<a_CONSTANTunde_zunde_a, a_CONSTANTunde_wunde_a>>)=>(a_CONSTANTunde_yunde_a=a_CONSTANTunde_wunde_a)))" (is "~(?z_hc=>?z_hj)")
+     have z_Hc: "?z_hc" (is "?z_hd=?z_hg")
+     by (rule zenon_notimply_0 [OF z_Ha])
+     have z_Hk: "(a_CONSTANTunde_yunde_a~=a_CONSTANTunde_wunde_a)"
+     by (rule zenon_notimply_1 [OF z_Ha])
+     have z_Hj: "?z_hj"
+     using z_Hc by auto
+     show FALSE
+     by (rule notE [OF z_Hk z_Hj])
+    qed
+---*)

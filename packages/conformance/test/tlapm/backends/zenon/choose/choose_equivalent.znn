@@ -1,0 +1,32 @@
+(*---
+description: Zenon proves CHOOSEs over equivalent predicates are equal with choose_diff_choose.
+ref: zenon/ext_tla.ml#newnodes_prop
+outcome: unsat
+---*)
+;; obligation #1
+$goal (=> (A. ((a_CONSTANTunde_aunde_a) (<=> (a_CONSTANTunde_Punde_a a_CONSTANTunde_aunde_a)
+(a_CONSTANTunde_Qunde_a a_CONSTANTunde_aunde_a))))
+(= (t. ((a_CONSTANTunde_aunde_a) (a_CONSTANTunde_Punde_a a_CONSTANTunde_aunde_a)))
+(t. ((a_CONSTANTunde_aunde_a) (a_CONSTANTunde_Qunde_a a_CONSTANTunde_aunde_a)))))
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: |-
+    unsat
+    proof (rule zenon_nnpp)
+     assume z_Ha:"(~((\\A a_CONSTANTunde_aunde_a:(a_CONSTANTunde_Punde_a(a_CONSTANTunde_aunde_a)<=>a_CONSTANTunde_Qunde_a(a_CONSTANTunde_aunde_a)))=>((CHOOSE a_CONSTANTunde_aunde_a:a_CONSTANTunde_Punde_a(a_CONSTANTunde_aunde_a))=(CHOOSE a_CONSTANTunde_aunde_a:a_CONSTANTunde_Qunde_a(a_CONSTANTunde_aunde_a)))))" (is "~(?z_hc=>?z_hh)")
+     have z_Hc: "?z_hc" (is "\\A x : ?z_hk(x)")
+     by (rule zenon_notimply_0 [OF z_Ha])
+     have z_Hl: "((CHOOSE a_CONSTANTunde_aunde_a:a_CONSTANTunde_Punde_a(a_CONSTANTunde_aunde_a))~=(CHOOSE a_CONSTANTunde_aunde_a:a_CONSTANTunde_Qunde_a(a_CONSTANTunde_aunde_a)))" (is "?z_hi~=?z_hj")
+     by (rule zenon_notimply_1 [OF z_Ha])
+     have z_Hm: "(\\E zenon_Vh:(~(a_CONSTANTunde_Punde_a(zenon_Vh)<=>a_CONSTANTunde_Qunde_a(zenon_Vh))))" (is "\\E x : ?z_hs(x)")
+     by (rule zenon_choose_diff_choose_0 [of "(\<lambda>a_CONSTANTunde_aunde_a. a_CONSTANTunde_Punde_a(a_CONSTANTunde_aunde_a))" "(\<lambda>a_CONSTANTunde_aunde_a. a_CONSTANTunde_Qunde_a(a_CONSTANTunde_aunde_a))", OF z_Hl])
+     have z_Hv: "?z_hs((CHOOSE zenon_Vh:(~(a_CONSTANTunde_Punde_a(zenon_Vh)<=>a_CONSTANTunde_Qunde_a(zenon_Vh)))))" (is "~(?z_hx<=>?z_hy)")
+     by (rule zenon_ex_choose_0 [of "?z_hs", OF z_Hm])
+     have z_Hz: "?z_hk((CHOOSE zenon_Vh:(~(a_CONSTANTunde_Punde_a(zenon_Vh)<=>a_CONSTANTunde_Qunde_a(zenon_Vh)))))"
+     by (rule zenon_all_0 [of "?z_hk" "(CHOOSE zenon_Vh:(~(a_CONSTANTunde_Punde_a(zenon_Vh)<=>a_CONSTANTunde_Qunde_a(zenon_Vh))))", OF z_Hc])
+     show FALSE
+     by (rule notE [OF z_Hv z_Hz])
+    qed
+---*)

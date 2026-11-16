@@ -7,7 +7,6 @@ import {
   OUT_DEGREE_BUCKETS,
 } from "../../src/tlc/summary";
 
-// Each pair is a value and what TLC's AbstractChecker.ProbabilityToString(value, 2) prints for it.
 const PROBABILITIES: [number, string][] = [
   [0, "0.0"],
   [3.1e-8, "3.1E-8"],
@@ -24,7 +23,6 @@ const PROBABILITIES: [number, string][] = [
   [0.0995, ".100"],
 ];
 
-// Each pair is a distance and 1 divided by it as TLC computes it with BigDecimal and MathContext(2).
 const DISTANCES: [bigint, number][] = [
   [1n, 1],
   [3n, 0.33],
@@ -58,14 +56,25 @@ describe("TLC's summary of a completed check", () => {
   it("measures the distance only within each half of the fingerprints split by the top bit", () => {
     const fingerprints = [-9n, -2n, 4n, 20n, 0x7fff_ffff_ffff_fff0n];
     const getDistance = () =>
-      getFingerprintDistance(1e5, 1e5 + 1e5, () => BigInt64Array.from(fingerprints));
+      getFingerprintDistance(1e5, 1e5 + 1e5, (visit) => visit(BigInt64Array.from(fingerprints)));
     expect(getDistance()).toBe(7n);
     fingerprints.push(1n);
     expect(getDistance()).toBe(3n);
   });
 
+  it("measures the distance across runs of fingerprints as within one", () => {
+    const runs = [[-9n, -20n], [], [-2n], [20n, 4n], [0x7fff_ffff_ffff_fff0n]];
+    expect(
+      getFingerprintDistance(1e5, 1e5 + 1e5, (visit) =>
+        runs.forEach((run) => visit(BigInt64Array.from(run))),
+      ),
+    ).toBe(7n);
+  });
+
   it("skips the distance while the optimistic estimate is below TLC's threshold", () => {
-    expect(getFingerprintDistance(10, 20, () => BigInt64Array.of(1n, 2n))).toBeUndefined();
+    expect(
+      getFingerprintDistance(10, 20, (visit) => visit(BigInt64Array.of(1n, 2n))),
+    ).toBeUndefined();
   });
 
   it("summarizes the outdegrees and caps the last bucket", () => {

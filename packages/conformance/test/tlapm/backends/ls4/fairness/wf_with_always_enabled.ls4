@@ -1,0 +1,12 @@
+(*---
+description: LS4 refutes the negation of WF_p(q') /\ []ENABLED <<q'>>_p => []<><<q'>>_p.
+ref: src/backend/ls4.ml#visitor
+outcome: unsat
+---*)
+not (((always (cc | ~ cc)) -> ((((sometime (always hf9c3a)) -> (always (sometime ((next hb593a) & (~ h718b8))))) & (always hf9c3a)) -> (always (sometime ((next hb593a) & (~ h718b8)))))))
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: unsat
+---*)

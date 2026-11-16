@@ -1,0 +1,12 @@
+(*---
+description: always binds tighter than &, so always p & ~p refutes as (always p) & ~p.
+ref: translate/foyacc.mly#connective
+outcome: unsat
+---*)
+always p & ~p
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: unsat
+---*)

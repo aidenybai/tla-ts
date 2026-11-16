@@ -1,0 +1,74 @@
+(*---
+description: Zenon's own test zenon/test/test75.znn, which Zenon must prove.
+ref: zenon/test/test75.znn
+features:
+  - zenon-test
+outcome: unsat
+---*)
+;  Copyright 2006 INRIA
+;  $Id: test75.znn,v 1.7 2011-12-28 16:43:34 doligez Exp $
+
+$hyp "h1" (A. ((X) (A. ((Y) (A. ((Z) (=> (/\ (r X Y) (r Y Z)) (r X Z))))))))
+$hyp "h2" (A. ((X Y) (=> (r X Y) (r Y X))))
+$hyp "h3" (A. ((x) (r b x)))
+$hyp "h4" (=> T. (= a b))
+$goal (r c a)
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: |-
+    unsat
+    proof (rule zenon_nnpp)
+     have z_Hd:"(TRUE=>(a=b))" (is "?z_hf=>?z_hg")
+     using h4 by blast
+     have z_Hc:"(\\A x:r(b, x))" (is "\\A x : ?z_hl(x)")
+     using h3 by blast
+     have zenon_L1_: "(\\A x:r(b, x)) ==> (~r(b, c)) ==> FALSE" (is "?z_hc ==> ?z_hm ==> FALSE")
+     proof -
+      assume z_Hc:"?z_hc"
+      assume z_Hm:"?z_hm" (is "~?z_hn")
+      have z_Hn: "?z_hl(c)"
+      by (rule zenon_all_0 [of "?z_hl" "c", OF z_Hc])
+      show FALSE
+      by (rule notE [OF z_Hm z_Hn])
+     qed
+     assume z_He:"(~r(c, a))" (is "~?z_hp")
+     show FALSE
+     proof (rule zenon_imply [OF z_Hd])
+      assume z_Hq:"(~?z_hf)"
+      show FALSE
+      by (rule zenon_nottrue [OF z_Hq])
+     next
+      assume z_Hg:"?z_hg"
+      have z_Hr: "(\\A Y:(r(a, Y)=>r(Y, a)))" (is "\\A x : ?z_hx(x)")
+      by (rule zenon_all_0 [of "(\<lambda>X. (\\A Y:(r(X, Y)=>r(Y, X))))" "a", OF z_Hb])
+      have z_Hbd: "?z_hx(c)" (is "?z_hbe=>_")
+      by (rule zenon_all_0 [of "?z_hx" "c", OF z_Hr])
+      show FALSE
+      proof (rule zenon_imply [OF z_Hbd])
+       assume z_Hbf:"(~?z_hbe)"
+       show FALSE
+       proof (rule zenon_em [of "r(b, c)"])
+        assume z_Hn:"r(b, c)" (is "?z_hn")
+        show FALSE
+        proof (rule notE [OF z_Hbf])
+         have z_Hbg: "(b=a)"
+         by (rule sym [OF z_Hg])
+         have z_Hbe: "?z_hbe"
+         by (rule subst [where P="(\<lambda>zenon_Vv. r(zenon_Vv, c))", OF z_Hbg], fact z_Hn)
+         thus "?z_hbe" .
+        qed
+       next
+        assume z_Hm:"(~r(b, c))" (is "~?z_hn")
+        show FALSE
+        by (rule zenon_L1_ [OF z_Hc z_Hm])
+       qed
+      next
+       assume z_Hp:"?z_hp"
+       show FALSE
+       by (rule notE [OF z_He z_Hp])
+      qed
+     qed
+    qed
+---*)

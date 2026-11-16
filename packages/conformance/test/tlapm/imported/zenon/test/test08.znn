@@ -1,0 +1,167 @@
+(*---
+description: Zenon's own test zenon/test/test08.znn, which Zenon must prove.
+ref: zenon/test/test08.znn
+features:
+  - zenon-test
+outcome: unsat
+---*)
+;  Copyright 2006 INRIA
+;  $Id: test08.znn,v 1.5 2011-12-28 16:43:33 doligez Exp $
+
+# File : COM003+1
+# Status : theorem
+# Rating : 0.33
+$hyp "p1" (=> (E. ((X) (/\ (algorithm X) (A. ((Y) (=> (program Y) (A. ((Z) (decides X Y Z))))))))) (E. ((W) (/\ (program W) (A. ((Y) (=> (program Y) (A. ((Z) (decides W Y Z))))))))))
+$hyp "p2" (A. ((W) (=> (/\ (program W) (A. ((Y) (=> (program Y) (A. ((Z) (decides W Y Z))))))) (A. ((Y) (A. ((Z) (/\ (=> (/\ (program Y) (halts2 Y Z)) (/\ (halts3 W Y Z) (outputs W (good)))) (=> (/\ (program Y) (-. (halts2 Y Z))) (/\ (halts3 W Y Z) (outputs W (bad))))))))))))
+$hyp "p3" (=> (E. ((W) (/\ (program W) (A. ((Y) (/\ (=> (/\ (program Y) (halts2 Y Y)) (/\ (halts3 W Y Y) (outputs W (good)))) (=> (/\ (program Y) (-. (halts2 Y Y))) (/\ (halts3 W Y Y) (outputs W (bad)))))))))) (E. ((V) (/\ (program V) (A. ((Y) (/\ (=> (/\ (program Y) (halts2 Y Y)) (/\ (halts2 V Y) (outputs V (good)))) (=> (/\ (program Y) (-. (halts2 Y Y))) (/\ (halts2 V Y) (outputs V (bad)))))))))))
+$hyp "p4" (=> (E. ((V) (/\ (program V) (A. ((Y) (/\ (=> (/\ (program Y) (halts2 Y Y)) (/\ (halts2 V Y) (outputs V (good)))) (=> (/\ (program Y) (-. (halts2 Y Y))) (/\ (halts2 V Y) (outputs V (bad)))))))))) (E. ((U) (/\ (program U) (A. ((Y) (/\ (=> (/\ (program Y) (halts2 Y Y)) (-. (halts2 U Y))) (=> (/\ (program Y) (-. (halts2 Y Y))) (/\ (halts2 U Y) (outputs U (bad)))))))))))
+# [negated] conjecture : prove_this
+$goal (-. (E. ((X1) (/\ (algorithm X1) (A. ((Y1) (=> (program Y1) (A. ((Z1) (decides X1 Y1 Z1))))))))))
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: |-
+    unsat
+    proof (rule zenon_nnpp)
+     have z_Hc:"((\\E W:(program(W)&(\\A Y:(((program(Y)&halts2(Y, Y))=>(halts3(W, Y, Y)&outputs(W, good)))&((program(Y)&(~halts2(Y, Y)))=>(halts3(W, Y, Y)&outputs(W, bad)))))))=>(\\E V:(program(V)&(\\A Y:(((program(Y)&halts2(Y, Y))=>(halts2(V, Y)&outputs(V, good)))&((program(Y)&(~halts2(Y, Y)))=>(halts2(V, Y)&outputs(V, bad))))))))" (is "?z_hf=>?z_hba")
+     using p3 by blast
+     have z_Hd:"(?z_hba=>(\\E U:(program(U)&(\\A Y:(((program(Y)&halts2(Y, Y))=>(~halts2(U, Y)))&((program(Y)&(~halts2(Y, Y)))=>(halts2(U, Y)&outputs(U, bad))))))))" (is "_=>?z_hbn")
+     using p4 by blast
+     have z_Hb:"(\\A W:((program(W)&(\\A Y:(program(Y)=>(\\A Z:decides(W, Y, Z)))))=>(\\A Y:(\\A Z:(((program(Y)&halts2(Y, Z))=>(halts3(W, Y, Z)&outputs(W, good)))&((program(Y)&(~halts2(Y, Z)))=>(halts3(W, Y, Z)&outputs(W, bad))))))))" (is "\\A x : ?z_hcs(x)")
+     using p2 by blast
+     have z_Ha:"((\\E X:(algorithm(X)&(\\A Y:(program(Y)=>(\\A Z:decides(X, Y, Z))))))=>(\\E W:(program(W)&(\\A Y:(program(Y)=>(\\A Z:decides(W, Y, Z)))))))" (is "?z_hct=>?z_hdb")
+     using p1 by blast
+     have zenon_L1_: "((program((CHOOSE U:(program(U)&(\\A Y:(((program(Y)&halts2(Y, Y))=>(~halts2(U, Y)))&((program(Y)&(~halts2(Y, Y)))=>(halts2(U, Y)&outputs(U, bad))))))))&(~halts2((CHOOSE U:(program(U)&(\\A Y:(((program(Y)&halts2(Y, Y))=>(~halts2(U, Y)))&((program(Y)&(~halts2(Y, Y)))=>(halts2(U, Y)&outputs(U, bad))))))), (CHOOSE U:(program(U)&(\\A Y:(((program(Y)&halts2(Y, Y))=>(~halts2(U, Y)))&((program(Y)&(~halts2(Y, Y)))=>(halts2(U, Y)&outputs(U, bad))))))))))=>(halts2((CHOOSE U:(program(U)&(\\A Y:(((program(Y)&halts2(Y, Y))=>(~halts2(U, Y)))&((program(Y)&(~halts2(Y, Y)))=>(halts2(U, Y)&outputs(U, bad))))))), (CHOOSE U:(program(U)&(\\A Y:(((program(Y)&halts2(Y, Y))=>(~halts2(U, Y)))&((program(Y)&(~halts2(Y, Y)))=>(halts2(U, Y)&outputs(U, bad))))))))&outputs((CHOOSE U:(program(U)&(\\A Y:(((program(Y)&halts2(Y, Y))=>(~halts2(U, Y)))&((program(Y)&(~halts2(Y, Y)))=>(halts2(U, Y)&outputs(U, bad))))))), bad))) ==> program((CHOOSE U:(program(U)&(\\A Y:(((program(Y)&halts2(Y, Y))=>(~halts2(U, Y)))&((program(Y)&(~halts2(Y, Y)))=>(halts2(U, Y)&outputs(U, bad)))))))) ==> (~halts2((CHOOSE U:(program(U)&(\\A Y:(((program(Y)&halts2(Y, Y))=>(~halts2(U, Y)))&((program(Y)&(~halts2(Y, Y)))=>(halts2(U, Y)&outputs(U, bad))))))), (CHOOSE U:(program(U)&(\\A Y:(((program(Y)&halts2(Y, Y))=>(~halts2(U, Y)))&((program(Y)&(~halts2(Y, Y)))=>(halts2(U, Y)&outputs(U, bad))))))))) ==> FALSE" (is "?z_hdc ==> ?z_hde ==> ?z_hdg ==> FALSE")
+     proof -
+      assume z_Hdc:"?z_hdc" (is "?z_hdd=>?z_hdi")
+      assume z_Hde:"?z_hde"
+      assume z_Hdg:"?z_hdg" (is "~?z_hdh")
+      show FALSE
+      proof (rule zenon_imply [OF z_Hdc])
+       assume z_Hdk:"(~?z_hdd)"
+       show FALSE
+       proof (rule zenon_notand [OF z_Hdk])
+        assume z_Hdl:"(~?z_hde)"
+        show FALSE
+        by (rule notE [OF z_Hdl z_Hde])
+       next
+        assume z_Hdm:"(~?z_hdg)"
+        show FALSE
+        by (rule notE [OF z_Hdm z_Hdg])
+       qed
+      next
+       assume z_Hdi:"?z_hdi" (is "_&?z_hdj")
+       have z_Hdh: "?z_hdh"
+       by (rule zenon_and_0 [OF z_Hdi])
+       show FALSE
+       by (rule notE [OF z_Hdg z_Hdh])
+      qed
+     qed
+     have zenon_L2_: "?z_hbn ==> FALSE"
+     proof -
+      assume z_Hbn:"?z_hbn" (is "\\E x : ?z_hdn(x)")
+      have z_Hdo: "?z_hdn((CHOOSE U:(program(U)&(\\A Y:(((program(Y)&halts2(Y, Y))=>(~halts2(U, Y)))&((program(Y)&(~halts2(Y, Y)))=>(halts2(U, Y)&outputs(U, bad))))))))" (is "?z_hde&?z_hdp")
+      by (rule zenon_ex_choose_0 [of "?z_hdn", OF z_Hbn])
+      have z_Hde: "?z_hde"
+      by (rule zenon_and_0 [OF z_Hdo])
+      have z_Hdp: "?z_hdp" (is "\\A x : ?z_hdq(x)")
+      by (rule zenon_and_1 [OF z_Hdo])
+      have z_Hdr: "?z_hdq((CHOOSE U:(program(U)&(\\A Y:(((program(Y)&halts2(Y, Y))=>(~halts2(U, Y)))&((program(Y)&(~halts2(Y, Y)))=>(halts2(U, Y)&outputs(U, bad))))))))" (is "?z_hds&?z_hdc")
+      by (rule zenon_all_0 [of "?z_hdq" "(CHOOSE U:(program(U)&(\\A Y:(((program(Y)&halts2(Y, Y))=>(~halts2(U, Y)))&((program(Y)&(~halts2(Y, Y)))=>(halts2(U, Y)&outputs(U, bad)))))))", OF z_Hdp])
+      have z_Hds: "?z_hds" (is "?z_hdt=>?z_hdg")
+      by (rule zenon_and_0 [OF z_Hdr])
+      have z_Hdc: "?z_hdc" (is "?z_hdd=>?z_hdi")
+      by (rule zenon_and_1 [OF z_Hdr])
+      show FALSE
+      proof (rule zenon_imply [OF z_Hds])
+       assume z_Hdu:"(~?z_hdt)" (is "~(_&?z_hdh)")
+       show FALSE
+       proof (rule zenon_notand [OF z_Hdu])
+        assume z_Hdl:"(~?z_hde)"
+        show FALSE
+        by (rule notE [OF z_Hdl z_Hde])
+       next
+        assume z_Hdg:"?z_hdg"
+        show FALSE
+        by (rule zenon_L1_ [OF z_Hdc z_Hde z_Hdg])
+       qed
+      next
+       assume z_Hdg:"?z_hdg" (is "~?z_hdh")
+       show FALSE
+       by (rule zenon_L1_ [OF z_Hdc z_Hde z_Hdg])
+      qed
+     qed
+     assume z_He:"(~(~?z_hct))"
+     have z_Hct: "?z_hct" (is "\\E x : ?z_hdw(x)")
+     by (rule zenon_notnot_0 [OF z_He])
+     show FALSE
+     proof (rule zenon_imply [OF z_Ha])
+      assume z_Hdv:"(~?z_hct)"
+      show FALSE
+      by (rule notE [OF z_Hdv z_Hct])
+     next
+      assume z_Hdb:"?z_hdb" (is "\\E x : ?z_hdx(x)")
+      have z_Hdy: "?z_hdx((CHOOSE W:(program(W)&(\\A Y:(program(Y)=>(\\A Z:decides(W, Y, Z)))))))" (is "?z_hea&?z_heb")
+      by (rule zenon_ex_choose_0 [of "?z_hdx", OF z_Hdb])
+      have z_Hea: "?z_hea"
+      by (rule zenon_and_0 [OF z_Hdy])
+      have z_Heb: "?z_heb" (is "\\A x : ?z_hec(x)")
+      by (rule zenon_and_1 [OF z_Hdy])
+      show FALSE
+      proof (rule zenon_imply [OF z_Hc])
+       assume z_Hed:"(~?z_hf)" (is "~(\\E x : ?z_hee(x))")
+       have z_Hef: "?z_hcs((CHOOSE W:(program(W)&(\\A Y:(program(Y)=>(\\A Z:decides(W, Y, Z)))))))" (is "?z_hdy=>?z_heg")
+       by (rule zenon_all_0 [of "?z_hcs" "(CHOOSE W:(program(W)&(\\A Y:(program(Y)=>(\\A Z:decides(W, Y, Z))))))", OF z_Hb])
+       show FALSE
+       proof (rule zenon_imply [OF z_Hef])
+        assume z_Heh:"(~?z_hdy)"
+        show FALSE
+        proof (rule zenon_notand [OF z_Heh])
+         assume z_Hei:"(~?z_hea)"
+         show FALSE
+         by (rule notE [OF z_Hei z_Hea])
+        next
+         assume z_Hej:"(~?z_heb)"
+         show FALSE
+         by (rule notE [OF z_Hej z_Heb])
+        qed
+       next
+        assume z_Heg:"?z_heg" (is "\\A x : ?z_hek(x)")
+        have z_Hel: "~?z_hee((CHOOSE W:(program(W)&(\\A Y:(program(Y)=>(\\A Z:decides(W, Y, Z)))))))" (is "~(_&?z_hem)")
+        by (rule zenon_notex_0 [of "?z_hee" "(CHOOSE W:(program(W)&(\\A Y:(program(Y)=>(\\A Z:decides(W, Y, Z))))))", OF z_Hed])
+        show FALSE
+        proof (rule zenon_notand [OF z_Hel])
+         assume z_Hei:"(~?z_hea)"
+         show FALSE
+         by (rule notE [OF z_Hei z_Hea])
+        next
+         assume z_Hen:"(~?z_hem)" (is "~(\\A x : ?z_heo(x))")
+         have z_Hep: "(\\E Y:(~(((program(Y)&halts2(Y, Y))=>(halts3((CHOOSE W:(program(W)&(\\A Y:(program(Y)=>(\\A Z:decides(W, Y, Z)))))), Y, Y)&outputs((CHOOSE W:(program(W)&(\\A Y:(program(Y)=>(\\A Z:decides(W, Y, Z)))))), good)))&((program(Y)&(~halts2(Y, Y)))=>(halts3((CHOOSE W:(program(W)&(\\A Y:(program(Y)=>(\\A Z:decides(W, Y, Z)))))), Y, Y)&outputs((CHOOSE W:(program(W)&(\\A Y:(program(Y)=>(\\A Z:decides(W, Y, Z)))))), bad))))))" (is "\\E x : ?z_hez(x)")
+         by (rule zenon_notallex_0 [of "?z_heo", OF z_Hen])
+         have z_Hfa: "?z_hez((CHOOSE Y:(~(((program(Y)&halts2(Y, Y))=>(halts3((CHOOSE W:(program(W)&(\\A Y:(program(Y)=>(\\A Z:decides(W, Y, Z)))))), Y, Y)&outputs((CHOOSE W:(program(W)&(\\A Y:(program(Y)=>(\\A Z:decides(W, Y, Z)))))), good)))&((program(Y)&(~halts2(Y, Y)))=>(halts3((CHOOSE W:(program(W)&(\\A Y:(program(Y)=>(\\A Z:decides(W, Y, Z)))))), Y, Y)&outputs((CHOOSE W:(program(W)&(\\A Y:(program(Y)=>(\\A Z:decides(W, Y, Z)))))), bad)))))))" (is "~(?z_hfc&?z_hfd)")
+         by (rule zenon_ex_choose_0 [of "?z_hez", OF z_Hep])
+         have z_Hfe: "?z_hek((CHOOSE Y:(~(((program(Y)&halts2(Y, Y))=>(halts3((CHOOSE W:(program(W)&(\\A Y:(program(Y)=>(\\A Z:decides(W, Y, Z)))))), Y, Y)&outputs((CHOOSE W:(program(W)&(\\A Y:(program(Y)=>(\\A Z:decides(W, Y, Z)))))), good)))&((program(Y)&(~halts2(Y, Y)))=>(halts3((CHOOSE W:(program(W)&(\\A Y:(program(Y)=>(\\A Z:decides(W, Y, Z)))))), Y, Y)&outputs((CHOOSE W:(program(W)&(\\A Y:(program(Y)=>(\\A Z:decides(W, Y, Z)))))), bad)))))))" (is "\\A x : ?z_hff(x)")
+         by (rule zenon_all_0 [of "?z_hek" "(CHOOSE Y:(~(((program(Y)&halts2(Y, Y))=>(halts3((CHOOSE W:(program(W)&(\\A Y:(program(Y)=>(\\A Z:decides(W, Y, Z)))))), Y, Y)&outputs((CHOOSE W:(program(W)&(\\A Y:(program(Y)=>(\\A Z:decides(W, Y, Z)))))), good)))&((program(Y)&(~halts2(Y, Y)))=>(halts3((CHOOSE W:(program(W)&(\\A Y:(program(Y)=>(\\A Z:decides(W, Y, Z)))))), Y, Y)&outputs((CHOOSE W:(program(W)&(\\A Y:(program(Y)=>(\\A Z:decides(W, Y, Z)))))), bad))))))", OF z_Heg])
+         have z_Hfg: "?z_hff((CHOOSE Y:(~(((program(Y)&halts2(Y, Y))=>(halts3((CHOOSE W:(program(W)&(\\A Y:(program(Y)=>(\\A Z:decides(W, Y, Z)))))), Y, Y)&outputs((CHOOSE W:(program(W)&(\\A Y:(program(Y)=>(\\A Z:decides(W, Y, Z)))))), good)))&((program(Y)&(~halts2(Y, Y)))=>(halts3((CHOOSE W:(program(W)&(\\A Y:(program(Y)=>(\\A Z:decides(W, Y, Z)))))), Y, Y)&outputs((CHOOSE W:(program(W)&(\\A Y:(program(Y)=>(\\A Z:decides(W, Y, Z)))))), bad)))))))"
+         by (rule zenon_all_0 [of "?z_hff" "(CHOOSE Y:(~(((program(Y)&halts2(Y, Y))=>(halts3((CHOOSE W:(program(W)&(\\A Y:(program(Y)=>(\\A Z:decides(W, Y, Z)))))), Y, Y)&outputs((CHOOSE W:(program(W)&(\\A Y:(program(Y)=>(\\A Z:decides(W, Y, Z)))))), good)))&((program(Y)&(~halts2(Y, Y)))=>(halts3((CHOOSE W:(program(W)&(\\A Y:(program(Y)=>(\\A Z:decides(W, Y, Z)))))), Y, Y)&outputs((CHOOSE W:(program(W)&(\\A Y:(program(Y)=>(\\A Z:decides(W, Y, Z)))))), bad))))))", OF z_Hfe])
+         show FALSE
+         by (rule notE [OF z_Hfa z_Hfg])
+        qed
+       qed
+      next
+       assume z_Hba:"?z_hba" (is "\\E x : ?z_hfh(x)")
+       show FALSE
+       proof (rule zenon_imply [OF z_Hd])
+        assume z_Hfi:"(~?z_hba)"
+        show FALSE
+        by (rule notE [OF z_Hfi z_Hba])
+       next
+        assume z_Hbn:"?z_hbn" (is "\\E x : ?z_hdn(x)")
+        show FALSE
+        by (rule zenon_L2_ [OF z_Hbn])
+       qed
+      qed
+     qed
+    qed
+---*)

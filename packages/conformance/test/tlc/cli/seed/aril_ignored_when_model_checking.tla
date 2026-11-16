@@ -1,0 +1,27 @@
+(*---
+description: -aril only reaches the generator in simulation, so model checking prints the same element as without it.
+ref: tlc2/TLC.java#process
+outcome: success
+config: ""
+args:
+  - -aril
+  - "5"
+---*)
+---- MODULE aril_ignored_when_model_checking ----
+EXTENDS Naturals, TLC
+ASSUME PrintT(RandomElement(1..1000000))
+====
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: |-
+    | 730610
+    2190:0 Finished computing initial states: 0 distinct states generated at <date>.
+    2193:0 Model checking completed. No error has been found.
+      Estimates of the probability that TLC did not check all reachable states
+      because two distinct states had the same fingerprint:
+      calculated (optimistic):  val = 0.0
+    2199:0 0 states generated, 0 distinct states found, 0 states left on queue.
+    2194:0 The depth of the complete state graph search is 0.
+---*)

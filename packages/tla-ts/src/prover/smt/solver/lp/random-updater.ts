@@ -1,8 +1,5 @@
 // Ported from Z3 (src/math/lp/random_updater_def.h, and shift_var and
-// get_freedom_interval_for_column in src/math/lp/int_solver.cpp), MIT license, see
-// z3-license.txt. Moves non-basic columns to random values inside the interval that keeps every
-// row feasible, so that columns with equal values, which theory combination would assume equal,
-// become different.
+// get_freedom_interval_for_column in src/math/lp/int_solver.cpp), MIT license, see z3-license.txt.
 import { getLcm, Rational } from "../rational";
 import { IndexedUintSet } from "./containers";
 import type { LarSolver } from "./lar-solver";
@@ -16,8 +13,6 @@ interface FreedomInterval {
   multiple: Rational;
 }
 
-// get_freedom_interval_for_column: the values of a non-basic column that keep the basic columns
-// that depend on it within their bounds.
 const getFreedomInterval = (solver: LarSolver, column: number): FreedomInterval | undefined => {
   const core = solver.core;
   if (core.isBase(column) || solver.isFixed(column)) return undefined;
@@ -68,7 +63,6 @@ const getFreedomInterval = (solver: LarSolver, column: number): FreedomInterval 
   return { lower: shiftedLower, upper: shiftedUpper, multiple: Rational.of(multiple) };
 };
 
-// int_solver::shift_var.
 const shiftVar = (solver: LarSolver, column: number) => {
   if (solver.isFixed(column) || solver.isBase(column) || solver.settings.isCanceled()) return false;
   const interval = getFreedomInterval(solver, column);
@@ -114,7 +108,6 @@ const shiftVar = (solver: LarSolver, column: number) => {
   return true;
 };
 
-// random_updater::update over the given columns.
 export const randomUpdate = (solver: LarSolver, columns: number[]) => {
   const varSet = new IndexedUintSet();
   for (const column of columns) varSet.add(column);

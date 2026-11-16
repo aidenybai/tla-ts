@@ -121,6 +121,6 @@
     "name": "test262",
     "repository": "https://github.com/tc39/test262.git",
     "commit": "bd21f3a3dd39843435b8394c7dd36439bb22dcab",
-    "paths": ["test"]
+    "paths": ["harness", "test"]
   }
 ]

@@ -1,0 +1,103 @@
+(*---
+description: Zenon's own test zenon/test/test35.znn, which Zenon must prove.
+ref: zenon/test/test35.znn
+features:
+  - zenon-test
+outcome: unsat
+---*)
+;  Copyright 2006 INRIA
+;  $Id: test35.znn,v 1.6 2011-12-28 16:43:33 doligez Exp $
+
+# file: species_general_set.foc
+# species: ordered_lattice
+# property: leq_reflexive
+
+;     (* to be proved *)
+; (x: abst_T) (y: abst_T)
+; ((Is_true ((abst_equal  x y)) ))-> 
+;   (Is_true ((abst_leq  x y)) )
+; By
+;   abst_inf_idempotent: (x: abst_T) (y: abst_T)
+;   ((Is_true ((abst_equal  x y)) ))-> 
+;     (Is_true ((abst_equal  x (abst_inf  x y))) )
+;   abst_order_compatible_with_inf: (x: abst_T) (y: abst_T)
+;   ((Is_true ((abst_order_inf  x y)) ))-> 
+;     (Is_true ((abst_leq  x y)) )
+; By def abst_order_inf:= [x: abst_T][y: abst_T](abst_equal  x (abst_inf  x y))
+; (* Qed *).
+
+$sig abst_T () "Type"
+$sig abst_equal ("abst_T" "abst_T") "bool"
+$sig abst_leq ("abst_T" "abst_T") "bool"
+$sig abst_inf ("abst_T" "abst_T") "abst_T"
+
+$def "d" (abst_order_inf x y) (abst_equal x (abst_inf x y))
+
+$hyp "abst_inf_idempotent" (A. ((x "abst_T") (A. ((y "abst_T")
+     (=> (Is_true (abst_equal x y))
+         (Is_true (abst_equal x (abst_inf x y))))))))
+
+$hyp "abst_order_compatible_with_inf" (A. ((x "abst_T") (A. ((y "abst_T")
+     (=> (Is_true (abst_order_inf x y))
+         (Is_true (abst_leq x y)))))))
+
+$goal
+  (A. ((x "abst_T") (A. ((y "abst_T")
+    (=> (Is_true (abst_equal x y))
+        (Is_true (abst_leq x y)))))))
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: |-
+    unsat
+    proof (rule zenon_nnpp)
+     have z_Hb:"(\\A x:(\\A y:(Is_true(abst_order_inf(x, y))=>Is_true(abst_leq(x, y)))))" (is "\\A x : ?z_hl(x)")
+     using abst_order_compatible_with_inf by blast
+     have z_Ha:"(\\A x:(\\A y:(Is_true(abst_equal(x, y))=>Is_true(abst_equal(x, abst_inf(x, y))))))" (is "\\A x : ?z_ht(x)")
+     using abst_inf_idempotent by blast
+     assume z_Hc:"(~(\\A x:(\\A y:(Is_true(abst_equal(x, y))=>Is_true(abst_leq(x, y))))))" (is "~(\\A x : ?z_hx(x))")
+     have z_Hy: "(\\E x:(~(\\A y:(Is_true(abst_equal(x, y))=>Is_true(abst_leq(x, y))))))" (is "\\E x : ?z_hba(x)")
+     by (rule zenon_notallex_0 [of "?z_hx", OF z_Hc])
+     have z_Hbb: "?z_hba((CHOOSE x:(~(\\A y:(Is_true(abst_equal(x, y))=>Is_true(abst_leq(x, y)))))))" (is "~(\\A x : ?z_hbd(x))")
+     by (rule zenon_ex_choose_0 [of "?z_hba", OF z_Hy])
+     have z_Hbe: "(\\E y:(~(Is_true(abst_equal((CHOOSE x:(~(\\A y:(Is_true(abst_equal(x, y))=>Is_true(abst_leq(x, y)))))), y))=>Is_true(abst_leq((CHOOSE x:(~(\\A y:(Is_true(abst_equal(x, y))=>Is_true(abst_leq(x, y)))))), y)))))" (is "\\E x : ?z_hbl(x)")
+     by (rule zenon_notallex_0 [of "?z_hbd", OF z_Hbb])
+     have z_Hbm: "?z_hbl((CHOOSE y:(~(Is_true(abst_equal((CHOOSE x:(~(\\A y:(Is_true(abst_equal(x, y))=>Is_true(abst_leq(x, y)))))), y))=>Is_true(abst_leq((CHOOSE x:(~(\\A y:(Is_true(abst_equal(x, y))=>Is_true(abst_leq(x, y)))))), y))))))" (is "~(?z_hbo=>?z_hbp)")
+     by (rule zenon_ex_choose_0 [of "?z_hbl", OF z_Hbe])
+     have z_Hbo: "?z_hbo"
+     by (rule zenon_notimply_0 [OF z_Hbm])
+     have z_Hbq: "(~?z_hbp)"
+     by (rule zenon_notimply_1 [OF z_Hbm])
+     have z_Hbr: "?z_hl((CHOOSE x:(~(\\A y:(Is_true(abst_equal(x, y))=>Is_true(abst_leq(x, y)))))))" (is "\\A x : ?z_hbs(x)")
+     by (rule zenon_all_0 [of "?z_hl" "(CHOOSE x:(~(\\A y:(Is_true(abst_equal(x, y))=>Is_true(abst_leq(x, y))))))", OF z_Hb])
+     have z_Hbt: "?z_hbs((CHOOSE y:(~(Is_true(abst_equal((CHOOSE x:(~(\\A y:(Is_true(abst_equal(x, y))=>Is_true(abst_leq(x, y)))))), y))=>Is_true(abst_leq((CHOOSE x:(~(\\A y:(Is_true(abst_equal(x, y))=>Is_true(abst_leq(x, y)))))), y))))))" (is "?z_hbu=>_")
+     by (rule zenon_all_0 [of "?z_hbs" "(CHOOSE y:(~(Is_true(abst_equal((CHOOSE x:(~(\\A y:(Is_true(abst_equal(x, y))=>Is_true(abst_leq(x, y)))))), y))=>Is_true(abst_leq((CHOOSE x:(~(\\A y:(Is_true(abst_equal(x, y))=>Is_true(abst_leq(x, y)))))), y)))))", OF z_Hbr])
+     show FALSE
+     proof (rule zenon_imply [OF z_Hbt])
+      assume z_Hbv:"(~?z_hbu)"
+      have z_Hbw_z_Hbv: "(~Is_true(abst_equal((CHOOSE x:(~(\\A y:(Is_true(abst_equal(x, y))=>Is_true(abst_leq(x, y)))))), abst_inf((CHOOSE x:(~(\\A y:(Is_true(abst_equal(x, y))=>Is_true(abst_leq(x, y)))))), (CHOOSE y:(~(Is_true(abst_equal((CHOOSE x:(~(\\A y:(Is_true(abst_equal(x, y))=>Is_true(abst_leq(x, y)))))), y))=>Is_true(abst_leq((CHOOSE x:(~(\\A y:(Is_true(abst_equal(x, y))=>Is_true(abst_leq(x, y)))))), y))))))))) == (~?z_hbu)" (is "?z_hbw == ?z_hbv")
+      by (unfold d)
+      have z_Hbw: "?z_hbw" (is "~?z_hbx")
+      by (unfold z_Hbw_z_Hbv, fact z_Hbv)
+      have z_Hca: "?z_ht((CHOOSE x:(~(\\A y:(Is_true(abst_equal(x, y))=>Is_true(abst_leq(x, y)))))))" (is "\\A x : ?z_hcb(x)")
+      by (rule zenon_all_0 [of "?z_ht" "(CHOOSE x:(~(\\A y:(Is_true(abst_equal(x, y))=>Is_true(abst_leq(x, y))))))", OF z_Ha])
+      have z_Hcc: "?z_hcb((CHOOSE y:(~(Is_true(abst_equal((CHOOSE x:(~(\\A y:(Is_true(abst_equal(x, y))=>Is_true(abst_leq(x, y)))))), y))=>Is_true(abst_leq((CHOOSE x:(~(\\A y:(Is_true(abst_equal(x, y))=>Is_true(abst_leq(x, y)))))), y))))))"
+      by (rule zenon_all_0 [of "?z_hcb" "(CHOOSE y:(~(Is_true(abst_equal((CHOOSE x:(~(\\A y:(Is_true(abst_equal(x, y))=>Is_true(abst_leq(x, y)))))), y))=>Is_true(abst_leq((CHOOSE x:(~(\\A y:(Is_true(abst_equal(x, y))=>Is_true(abst_leq(x, y)))))), y)))))", OF z_Hca])
+      show FALSE
+      proof (rule zenon_imply [OF z_Hcc])
+       assume z_Hcd:"(~?z_hbo)"
+       show FALSE
+       by (rule notE [OF z_Hcd z_Hbo])
+      next
+       assume z_Hbx:"?z_hbx"
+       show FALSE
+       by (rule notE [OF z_Hbw z_Hbx])
+      qed
+     next
+      assume z_Hbp:"?z_hbp"
+      show FALSE
+      by (rule notE [OF z_Hbq z_Hbp])
+     qed
+    qed
+---*)

@@ -1,0 +1,18 @@
+(*---
+description: '[A]_x is expanded to A \/ x'' = x.'
+ref: src/frontend/action.ml#process_obligation
+mode: encoding
+outcome: proved
+---*)
+---- MODULE square_action ----
+EXTENDS TLAPS
+VARIABLE x
+THEOREM [x' = 1]_x => (x' = 1 \/ x' = x)
+  BY SMT
+====
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: "@type: obligation\n@id: 1\n@loc: 11:3:11:5\n@status: to be proved\n\n@type: obligation\n@id: 1\n@loc: 11:3:11:5\n@status: proved\n@prover: smt\n@meth: time-limit: 5\n@already: false\n\n@type: obligation\n@id: 2\n@loc: 11:6:11:9\n@status: to be proved\n\n@type: obligation\n@id: 2\n@loc: 11:6:11:9\n@status: trivial\n@prover: tlapm\n@already: false\n\n@type: obligationsnumber\n@count: 2\n\nFile \"./square_action.tla\", line 7, character 1 to line 12, character 4:\n[INFO]: All 2 obligations proved.\n\n--- isabelle\n(* automatically generated -- do not edit manually *)\ntheory square_action imports Constant Zenon begin\nML_command \\<open> writeln (\"*** TLAPS PARSED\\n\"); \\<close>\nconsts\n  \"isReal\" :: c\n  \"isa_slas_a\" :: \"[c,c] => c\"\n  \"isa_bksl_diva\" :: \"[c,c] => c\"\n  \"isa_perc_a\" :: \"[c,c] => c\"\n  \"isa_peri_peri_a\" :: \"[c,c] => c\"\n  \"isInfinity\" :: c\n  \"isa_lbrk_rbrk_a\" :: \"[c] => c\"\n  \"isa_less_more_a\" :: \"[c] => c\"\n\nend\n\n--- z3\n;; Proof obligation:\n;;\tASSUME NEW VARIABLE VARIABLE_x_\n;;\tPROVE  ?VARIABLE_x_#prime = 1 \\/ ?VARIABLE_x_#prime = VARIABLE_x_\n;;\t       => ?VARIABLE_x_#prime = 1 \\/ ?VARIABLE_x_#prime = VARIABLE_x_\n;; TLA+ Proof Manager b91fb6c\n;; Proof obligation #1\n;; Generated from file \"./square_action.tla\", line 11, characters 3-4\n\n(set-logic UFNIA)\n\n;; Sorts\n\n(declare-sort Idv 0)\n\n;; Hypotheses\n\n(declare-fun smt__TLA____Cast__Int (Int) Idv)\n\n(declare-fun smt__TLA____IntSet () Idv)\n\n(declare-fun smt__TLA____Mem (Idv Idv) Bool)\n\n(declare-fun smt__TLA____Proj__Int (Idv) Int)\n\n(declare-fun smt__TLA____SetExtTrigger (Idv Idv) Bool)\n\n;; Axiom: SetExt\n(assert\n  (!\n    (forall ((smt__x Idv) (smt__y Idv))\n      (!\n        (=>\n          (forall ((smt__z Idv))\n            (= (smt__TLA____Mem smt__z smt__x)\n              (smt__TLA____Mem smt__z smt__y))) (= smt__x smt__y))\n        :pattern ((smt__TLA____SetExtTrigger smt__x smt__y))))\n    :named |SetExt|))\n\n;; Axiom: CastInjAlt Int\n(assert\n  (!\n    (forall ((smt__x Int))\n      (! (= smt__x (smt__TLA____Proj__Int (smt__TLA____Cast__Int smt__x)))\n        :pattern ((smt__TLA____Cast__Int smt__x)))) :named |CastInjAlt Int|))\n\n;; Axiom: TypeGuardIntro Int\n(assert\n  (!\n    (forall ((smt__z Int))\n      (! (smt__TLA____Mem (smt__TLA____Cast__Int smt__z) smt__TLA____IntSet)\n        :pattern ((smt__TLA____Cast__Int smt__z))))\n    :named |TypeGuardIntro Int|))\n\n;; Axiom: TypeGuardElim Int\n(assert\n  (!\n    (forall ((smt__x Idv))\n      (!\n        (=> (smt__TLA____Mem smt__x smt__TLA____IntSet)\n          (= smt__x (smt__TLA____Cast__Int (smt__TLA____Proj__Int smt__x))))\n        :pattern ((smt__TLA____Mem smt__x smt__TLA____IntSet))))\n    :named |TypeGuardElim Int|))\n\n; hidden fact\n\n; hidden fact\n\n; omitted declaration of 'CONSTANT_EnabledWrapper_' (second-order)\n\n; omitted declaration of 'CONSTANT_CdotWrapper_' (second-order)\n\n(declare-fun smt__VARIABLE__x__ () Idv)\n\n(declare-fun smt__VARIABLE__x____prime () Idv)\n\n;; Goal\n(assert\n  (!\n    (not\n      (=>\n        (or (= smt__VARIABLE__x____prime (smt__TLA____Cast__Int 1))\n          (= smt__VARIABLE__x____prime smt__VARIABLE__x__))\n        (or (= smt__VARIABLE__x____prime (smt__TLA____Cast__Int 1))\n          (= smt__VARIABLE__x____prime smt__VARIABLE__x__)))) :named |Goal|))\n\n(check-sat)\n(exit)"
+---*)

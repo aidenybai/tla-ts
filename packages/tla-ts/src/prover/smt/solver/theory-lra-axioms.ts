@@ -1,6 +1,4 @@
-// Ported from Z3 (src/smt/theory_lra.cpp, src/smt/arith_eq_adapter.cpp), MIT license, see
-// z3-license.txt. The axioms of theory_lra: those of div, mod, to_int and is_int, and the
-// arith_eq_adapter axioms that tie an equality of terms to their two inequalities.
+// Ported from Z3 (src/smt/theory_lra.cpp, src/smt/arith_eq_adapter.cpp), MIT license, see z3-license.txt.
 import { SmtInvariantError } from "../../../errors";
 import {
   OP_ADD,
@@ -11,14 +9,19 @@ import {
   OP_LE,
   OP_MOD,
   OP_MUL,
+  OP_POWER,
+  OP_POWER0,
+  OP_REM,
   OP_SUB,
   OP_TO_INT,
   OP_TO_REAL,
+  OP_UMINUS,
   SORT_BOOL,
   SORT_INT,
   SORT_REAL,
 } from "./ast";
-import { Enode } from "./enode";
+import { getExtendedNumeral } from "./ast-util";
+import type { Enode } from "./enode";
 import { FALSE_LITERAL, getVar, isNegated, Literal, negate, TRUE_LITERAL } from "./literal";
 import { Rational } from "./rational";
 import { TheoryLraState } from "./theory-lra-state";
@@ -26,10 +29,8 @@ import { TheoryLraState } from "./theory-lra-state";
 export abstract class TheoryLraAxioms extends TheoryLraState {
   private processedEqs = new Set<string>();
 
-  // m_restart_pairs: equalities whose axioms a backjump to the base level drops, remade on restart.
   protected restartPairs: Enode[][] = [];
 
-  // The enode of a term, internalized first if it has none.
   protected getInternalizedEnode(expr: number) {
     const context = this.context;
     if (!context.isEInternalized(expr)) context.internalize(expr, false);
@@ -113,7 +114,8 @@ export abstract class TheoryLraAxioms extends TheoryLraState {
     const first = context.getEnode(this.manager.getArg(expr, 0));
     const second = context.getEnode(this.manager.getArg(expr, 1));
     if (first === undefined || second === undefined) return;
-    if (first.thVar >= 0 && second.thVar >= 0 && first !== second) this.mkEqAxioms(first, second);
+    if (this.getThVar(first) >= 0 && this.getThVar(second) >= 0 && first !== second)
+      this.mkEqAxioms(first, second);
   }
 
   newEqEh(first: number, second: number) {
@@ -131,29 +133,56 @@ export abstract class TheoryLraAxioms extends TheoryLraState {
     else if (op === OP_TO_INT) this.mkToIntAxiom(expr);
     else if (op === OP_IS_INT) this.mkIsIntAxiom(expr);
     else if (op === OP_MOD) this.mkIdivModAxioms(manager.getArg(expr, 0), manager.getArg(expr, 1));
+    else if (op === OP_REM) this.mkRemAxiom(manager.getArg(expr, 0), manager.getArg(expr, 1));
+    else if (op === OP_POWER) this.mkPowerAxiom(expr);
   }
 
-  // mk_literal.
+  private mkPowerAxiom(power: number) {
+    const manager = this.manager;
+    const context = this.context;
+    const base = manager.getArg(power, 0);
+    const exponent = manager.getArg(power, 1);
+    const zero = manager.mkRealNumeral(Rational.zero);
+    const baseValue = getExtendedNumeral(manager, base);
+    if (baseValue?.isPositive())
+      this.mkAxiom([negate(this.mkLiteral(manager.mkApp(OP_LE, [power, zero], SORT_BOOL)))]);
+    const exponentValue = getExtendedNumeral(manager, exponent);
+    if (exponentValue?.isPositive() && exponentValue.num === 1n && exponentValue.den > 1n) {
+      const isNonnegative = this.mkLiteral(manager.mkApp(OP_GE, [base, zero], SORT_BOOL));
+      const root = manager.mkApp(
+        OP_POWER,
+        [power, manager.mkRealNumeral(Rational.of(exponentValue.den))],
+        SORT_REAL,
+      );
+      const isRoot = this.mkLiteral(manager.mkEq(base, root));
+      this.mkAxiom([negate(isNonnegative), isRoot]);
+    }
+    const isZeroBase =
+      manager.isNumeral(base) &&
+      manager.getRationalValue(base).isZero() &&
+      (!manager.isNumeral(exponent) || manager.getRationalValue(exponent).isZero());
+    if (isZeroBase || (baseValue === undefined && exponentValue === undefined)) {
+      const literal = this.mkEq(power, manager.mkApp(OP_POWER0, [base, exponent], SORT_REAL));
+      context.markLiteralAsRelevant(literal);
+      context.assign(literal, null);
+    }
+  }
+
   protected mkLiteral(atom: number) {
     const context = this.context;
     if (!context.isEInternalized(atom)) context.internalize(atom, false);
     return context.getLiteral(atom);
   }
 
-  // ensure_enode: the relevant enode of a term.
   private ensureEnode(expr: number) {
     const node = this.getInternalizedEnode(expr);
     this.context.markAsRelevant(expr);
     return node;
   }
 
-  // mk_axiom: a theory axiom whose literals are relevant. Of two literals, the second becomes
-  // relevant only once the first is false. A unit axiom is the clause of false and the literal, so
-  // mk_clause drops false and the literal is justified by unit resolution with true, which lemma
-  // minimization can see through, rather than by an axiom.
+  // A unit axiom is the clause of false and the literal, so Z3 justifies the literal by unit resolution, not by an axiom.
   protected mkAxiom(literals: Literal[]) {
     const context = this.context;
-    // mkThAxiom simplifies the literals it is given, which this reads after.
     context.mkThAxiom(
       literals.length === 1 ? [context.falseLiteral, literals[0]] : literals.slice(),
     );
@@ -167,12 +196,23 @@ export abstract class TheoryLraAxioms extends TheoryLraState {
     context.relevancy.addWatch(
       context.boolVar2Expr[getVar(literals[0])],
       isNegated(literals[0]),
-      // simple_relevancy_eh marks the consequent without propagating.
       () => context.relevancy.markAsRelevant(consequent),
     );
   }
 
-  // mk_div_axiom: q = 0 or q * (p / q) = p.
+  private mkRemAxiom(dividend: number, divisor: number) {
+    const manager = this.manager;
+    const zero = manager.mkNumeral(0n);
+    const remainder = manager.mkApp(OP_REM, [dividend, divisor], SORT_INT);
+    const mod = manager.mkApp(OP_MOD, [dividend, divisor], SORT_INT);
+    const negatedMod = manager.mkApp(OP_UMINUS, [mod], SORT_INT);
+    const isNonnegative = this.mkLiteral(manager.mkApp(OP_GE, [divisor, zero], SORT_BOOL));
+    const isPositiveCase = this.mkEq(remainder, mod);
+    const isNegativeCase = this.mkEq(remainder, negatedMod);
+    this.mkAxiom([negate(isNonnegative), isPositiveCase]);
+    this.mkAxiom([isNonnegative, isNegativeCase]);
+  }
+
   private mkDivAxiom(dividend: number, divisor: number) {
     const manager = this.manager;
     if (this.isZeroNumeral(divisor)) return;
@@ -185,7 +225,6 @@ export abstract class TheoryLraAxioms extends TheoryLraState {
     this.mkAxiom([isZero, this.mkEq(product, dividend)]);
   }
 
-  // mk_to_int_axiom: to_int (to_real x) = x, and to_real (to_int x) <= x < to_real (to_int x) + 1.
   private mkToIntAxiom(term: number) {
     const manager = this.manager;
     const arg = manager.getArg(term, 0);
@@ -210,7 +249,6 @@ export abstract class TheoryLraAxioms extends TheoryLraState {
     this.mkAxiom([negate(upperLiteral)]);
   }
 
-  // mk_is_int_axiom: is_int x if and only if to_real (to_int x) = x.
   protected mkIsIntAxiom(atom: number) {
     const manager = this.manager;
     const arg = manager.getArg(atom, 0);
@@ -223,7 +261,6 @@ export abstract class TheoryLraAxioms extends TheoryLraState {
     this.mkAxiom([isInt, negate(eq)]);
   }
 
-  // theory::mk_eq: the literal of an equality between two terms, internalized.
   protected mkEq(first: number, second: number) {
     const manager = this.manager;
     if (first === second) return TRUE_LITERAL;
@@ -233,11 +270,9 @@ export abstract class TheoryLraAxioms extends TheoryLraState {
     return this.context.getLiteral(atom);
   }
 
-  // mk_idiv_mod_axioms: q * (div p q) + (mod p q) = p and 0 <= (mod p q) < |q| when q is not 0.
   protected mkIdivModAxioms(dividend: number, divisor: number) {
     const manager = this.manager;
     if (manager.getNumeral(divisor) === 0n) return;
-    // The expr_refs of mk_idiv_mod_axioms, released in reverse when it returns.
     const refs: number[] = [];
     const hold = (expr: number) => {
       manager.incRef(expr);
@@ -255,7 +290,6 @@ export abstract class TheoryLraAxioms extends TheoryLraState {
     const remainder = hold(manager.mkApp(OP_MOD, [dividend, divisor], SORT_INT));
     const zero = hold(manager.mkNumeral(0n));
     if (manager.getNumeral(dividend) === 0n) {
-      // q != 0 implies div 0 q = 0 and mod 0 q = 0.
       const isDivisorNonnegative = this.mkLiteral(manager.mkApp(OP_GE, [divisor, zero], SORT_BOOL));
       const isDivisorNonpositive = this.mkLiteral(manager.mkApp(OP_LE, [divisor, zero], SORT_BOOL));
       const consequents = [
@@ -289,7 +323,6 @@ export abstract class TheoryLraAxioms extends TheoryLraState {
       this.mkAxiom([this.mkLiteral(manager.mkApp(OP_LE, [remainder, upper], SORT_BOOL))]);
       return;
     }
-    // q = 0 or (mod p q) >= 0, q >= 0 or (mod p q) + q <= -1, and q <= 0 or (mod p q) - q <= -1.
     const minusOne = hold(manager.mkNumeral(-1n));
     const minusDivisor = hold(manager.mkApp(OP_MUL, [minusOne, divisor], SORT_INT));
     const isZero = this.mkLiteral(manager.mkEq(divisor, zero));
@@ -317,8 +350,6 @@ export abstract class TheoryLraAxioms extends TheoryLraState {
     );
     this.mkAxiom([isDivisorNonnegative, isBelowNegatedDivisor]);
     this.mkEqAxioms(this.ensureEnode(combination), this.ensureEnode(dividend));
-    // q = 0 or q * (div p q) <= p. The rewritten atom replaces the unrewritten one, which Z3
-    // releases at once, and its own expr_ref goes at the end of the block.
     const unrewritten = manager.mkApp(
       OP_GE,
       [

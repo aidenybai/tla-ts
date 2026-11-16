@@ -5,16 +5,14 @@ import { describe, expect, it } from "vite-plus/test";
 const FIXTURES = join(import.meta.dirname, "../fixtures");
 const DIST = join(import.meta.dirname, "../../dist/index.js");
 
-const loadPackage = (): Promise<typeof import("../../src")> => import(DIST);
+const tlaTs: typeof import("../../src") = await import(DIST);
 
-const checkFixtureInParallel = async (directory: string, name: string, workers: number) => {
-  const tlaTs = await loadPackage();
-  return tlaTs.check({
+const checkFixtureInParallel = (directory: string, name: string, workers: number) =>
+  tlaTs.check({
     source: readFileSync(join(FIXTURES, directory, `${name}.tla`), "utf8"),
     config: readFileSync(join(FIXTURES, directory, `${name}.cfg`), "utf8"),
     workers,
   });
-};
 
 const getCounts = (result: { generatedStates: number; distinctStates: number; depth: number }) => [
   result.generatedStates,
@@ -30,7 +28,6 @@ describe("check with workers matches TLC", () => {
   });
 
   it("reports an invariant that fails to evaluate on an initial state like one worker", async () => {
-    const tlaTs = await loadPackage();
     const result = await tlaTs.check({
       source:
         "---- MODULE M ----\nEXTENDS Integers\nVARIABLE x\nInit == x \\in 0..1\nNext == UNCHANGED x\nInv == 1 \\div x = 0\n====",
@@ -42,7 +39,6 @@ describe("check with workers matches TLC", () => {
   });
 
   it("summarizes the outdegrees and the fingerprints of every worker like one worker", async () => {
-    const tlaTs = await loadPackage();
     const directory = join(import.meta.dirname, "../../benchmarks/queue");
     const options = {
       source: readFileSync(join(directory, "Queue.tla"), "utf8"),
@@ -62,7 +58,6 @@ describe("check with workers matches TLC", () => {
   });
 
   it("reports an invariant that a successor outside the action constraint violates", async () => {
-    const tlaTs = await loadPackage();
     const result = await tlaTs.check({
       source:
         "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x \\in 0..1\nNext == x < 5 /\\ x' = x + 1\nInv == x # 3\nSkip == x' # 3\n====",
@@ -75,7 +70,6 @@ describe("check with workers matches TLC", () => {
   });
 
   it("prints what assumptions print once when it checks on the calling thread", async () => {
-    const tlaTs = await loadPackage();
     const printed: string[] = [];
     const result = await tlaTs.check({
       source:
@@ -88,8 +82,33 @@ describe("check with workers matches TLC", () => {
     expect(printed).toEqual(['"start"']);
   });
 
+  it("reports the string the search orders as it checks again on the calling thread", async () => {
+    const ordered: string[] = [];
+    const result = await tlaTs.check({
+      source: readFileSync(join(FIXTURES, "strings", "RuntimeStrings.tla"), "utf8"),
+      config: readFileSync(join(FIXTURES, "strings", "RuntimeStrings.cfg"), "utf8"),
+      workers: 2,
+      onProgress: (progress) => {
+        if (progress.kind === "sequential-fallback") ordered.push(progress.string);
+      },
+    });
+    expect(getCounts(result)).toEqual([115, 97, 6]);
+    expect(ordered).toHaveLength(1);
+  });
+
+  it("keeps its workers when the search creates strings it never orders", async () => {
+    const progressKinds = new Set<string>();
+    const result = await tlaTs.check({
+      source: readFileSync(join(FIXTURES, "strings", "RuntimeTags.tla"), "utf8"),
+      config: readFileSync(join(FIXTURES, "strings", "RuntimeTags.cfg"), "utf8"),
+      workers: 2,
+      onProgress: (progress) => progressKinds.add(progress.kind),
+    });
+    expect(getCounts(result)).toEqual([841, 441, 41]);
+    expect(progressKinds.has("sequential-fallback")).toBe(false);
+  });
+
   it("prints values as the version of TLC it matches does", async () => {
-    const tlaTs = await loadPackage();
     const printed: string[] = [];
     await tlaTs.check({
       source:
@@ -103,7 +122,6 @@ describe("check with workers matches TLC", () => {
   });
 
   it("grows the fingerprint table that workers share while they expand a level", async () => {
-    const tlaTs = await loadPackage();
     const result = await tlaTs.check({
       source:
         "---- MODULE Grid ----\nEXTENDS Naturals\nVARIABLES x, y\nInit == x = 0 /\\ y = 0\nNext == \\/ x < 99 /\\ x' = x + 1 /\\ y' = y\n        \\/ y < 99 /\\ y' = y + 1 /\\ x' = x\n====",
@@ -112,6 +130,18 @@ describe("check with workers matches TLC", () => {
     });
     expect(result.status).toBe("success");
     expect(getCounts(result)).toEqual([19801, 10000, 199]);
+  });
+
+  it("explores a level long enough for workers to take breaks like one worker", async () => {
+    const options = {
+      source:
+        "---- MODULE Slow ----\nEXTENDS Naturals\nVARIABLE x\nInit == x \\in 1..4000\nNext == x <= 4000 /\\ (\\A i \\in 1..2000 : i > 0) /\\ x' = x + 4000\n====",
+      config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+    };
+    const sequential = await tlaTs.check(options);
+    const parallel = await tlaTs.check({ ...options, workers: 3 });
+    expect(parallel.status).toBe("success");
+    expect(getCounts(parallel)).toEqual(getCounts(sequential));
   });
 
   it("explores a queue that only grows to its bound", async () => {

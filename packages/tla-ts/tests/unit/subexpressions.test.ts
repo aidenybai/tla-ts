@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 import { check } from "../../src";
 import { createSanyError } from "../../src/errors";
+import { getModuleLoader } from "./check-harness";
 
 const DIRECTORY = join(import.meta.dirname, "../fixtures/subexpressions");
 
@@ -12,7 +13,7 @@ const checkSubexpressions = (source: string, configName: string) =>
   check({
     source,
     config: readFileSync(join(DIRECTORY, configName), "utf8"),
-    loadModule: (name) => readFileSync(join(DIRECTORY, `${name}.tla`), "utf8"),
+    loadModule: getModuleLoader("subexpressions"),
   });
 
 describe("subexpression references match TLC", () => {
@@ -37,7 +38,6 @@ describe("subexpression references match TLC", () => {
   });
 });
 
-// TLC's test210 and variants of it, with the errors SANY reports for them.
 describe("subexpression references into theorems match SANY", () => {
   const SCOPE = "within the scope of a declaration\n from outside that declaration's scope.";
 

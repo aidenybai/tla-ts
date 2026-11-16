@@ -1,0 +1,677 @@
+(*---
+description: Zenon's own test zenon/test/test71.znn, which Zenon must prove.
+ref: zenon/test/test71.znn
+features:
+  - zenon-test
+outcome: unsat
+---*)
+;  Copyright 2006 INRIA
+;  $Id: test71.znn,v 1.7 2008-08-14 14:02:09 doligez Exp $
+
+$sig p ("zenon_U") "Prop"
+$sig f ("zenon_U") "zenon_U"
+$goal
+  (E. ((x) (-. (/\ (\/ (p x) (p (f (f (f (f (f (f (f (f x))))))))))
+                   (\/ (-. (p x)) (-. (p (f (f (f (f (f (f (f x))))))))))))))
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: |-
+    unsat
+    proof (rule zenon_nnpp)
+     have zenon_L1_: "((~p(f(f(f(f(f(f(f(f((CHOOSE x : TRUE)))))))))))|(~p(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f((CHOOSE x : TRUE))))))))))))))))))) ==> (~(\\E x:(~((p(x)|p(f(f(f(f(f(f(f(f(x))))))))))&((~p(x))|(~p(f(f(f(f(f(f(f(x)))))))))))))) ==> p(f(f(f(f(f(f(f(f((CHOOSE x : TRUE)))))))))) ==> FALSE" (is "?z_hc ==> ?z_hb ==> ?z_he ==> FALSE")
+     proof -
+      assume z_Hc:"?z_hc" (is "?z_hd|?z_ho")
+      assume z_Hb:"?z_hb" (is "~(\\E x : ?z_hbp(x))")
+      assume z_He:"?z_he"
+      show FALSE
+      proof (rule zenon_or [OF z_Hc])
+       assume z_Hd:"?z_hd"
+       show FALSE
+       by (rule notE [OF z_Hd z_He])
+      next
+       assume z_Ho:"?z_ho" (is "~?z_hp")
+       have z_Hbq: "~?z_hbp(f(f(f(f(f(f(f((CHOOSE x : TRUE)))))))))" (is "~~?z_hbr")
+       by (rule zenon_notex_0 [of "?z_hbp" "f(f(f(f(f(f(f((CHOOSE x : TRUE))))))))", OF z_Hb])
+       have z_Hbr: "?z_hbr" (is "?z_hbs&?z_hbt")
+       by (rule zenon_notnot_0 [OF z_Hbq])
+       have z_Hbs: "?z_hbs" (is "?z_hbu|_")
+       by (rule zenon_and_0 [OF z_Hbr])
+       have z_Hbt: "?z_hbt" (is "?z_hbv|?z_hbw")
+       by (rule zenon_and_1 [OF z_Hbr])
+       show FALSE
+       proof (rule zenon_or [OF z_Hbs])
+        assume z_Hbu:"?z_hbu"
+        show FALSE
+        proof (rule zenon_or [OF z_Hbt])
+         assume z_Hbv:"?z_hbv"
+         show FALSE
+         by (rule notE [OF z_Hbv z_Hbu])
+        next
+         assume z_Hbw:"?z_hbw" (is "~?z_hbx")
+         have z_Hby: "~?z_hbp(f(f(f(f(f(f((CHOOSE x : TRUE))))))))" (is "~~?z_hbz")
+         by (rule zenon_notex_0 [of "?z_hbp" "f(f(f(f(f(f((CHOOSE x : TRUE)))))))", OF z_Hb])
+         have z_Hbz: "?z_hbz" (is "?z_hca&?z_hcb")
+         by (rule zenon_notnot_0 [OF z_Hby])
+         have z_Hca: "?z_hca" (is "?z_hcc|_")
+         by (rule zenon_and_0 [OF z_Hbz])
+         have z_Hcb: "?z_hcb" (is "?z_hcd|?z_hce")
+         by (rule zenon_and_1 [OF z_Hbz])
+         show FALSE
+         proof (rule zenon_or [OF z_Hca])
+          assume z_Hcc:"?z_hcc"
+          show FALSE
+          proof (rule zenon_or [OF z_Hcb])
+           assume z_Hcd:"?z_hcd"
+           show FALSE
+           by (rule notE [OF z_Hcd z_Hcc])
+          next
+           assume z_Hce:"?z_hce" (is "~?z_hcf")
+           have z_Hcg: "~?z_hbp(f(f(f(f(f((CHOOSE x : TRUE)))))))" (is "~~?z_hch")
+           by (rule zenon_notex_0 [of "?z_hbp" "f(f(f(f(f((CHOOSE x : TRUE))))))", OF z_Hb])
+           have z_Hch: "?z_hch" (is "?z_hci&?z_hcj")
+           by (rule zenon_notnot_0 [OF z_Hcg])
+           have z_Hci: "?z_hci" (is "?z_hck|_")
+           by (rule zenon_and_0 [OF z_Hch])
+           have z_Hcj: "?z_hcj" (is "?z_hcl|?z_hcm")
+           by (rule zenon_and_1 [OF z_Hch])
+           show FALSE
+           proof (rule zenon_or [OF z_Hci])
+            assume z_Hck:"?z_hck"
+            show FALSE
+            proof (rule zenon_or [OF z_Hcj])
+             assume z_Hcl:"?z_hcl"
+             show FALSE
+             by (rule notE [OF z_Hcl z_Hck])
+            next
+             assume z_Hcm:"?z_hcm" (is "~?z_hcn")
+             have z_Hco: "~?z_hbp(f(f(f(f((CHOOSE x : TRUE))))))" (is "~~?z_hcp")
+             by (rule zenon_notex_0 [of "?z_hbp" "f(f(f(f((CHOOSE x : TRUE)))))", OF z_Hb])
+             have z_Hcp: "?z_hcp" (is "?z_hcq&?z_hcr")
+             by (rule zenon_notnot_0 [OF z_Hco])
+             have z_Hcq: "?z_hcq" (is "?z_hcs|_")
+             by (rule zenon_and_0 [OF z_Hcp])
+             have z_Hcr: "?z_hcr" (is "?z_hct|?z_hcu")
+             by (rule zenon_and_1 [OF z_Hcp])
+             show FALSE
+             proof (rule zenon_or [OF z_Hcq])
+              assume z_Hcs:"?z_hcs"
+              show FALSE
+              proof (rule zenon_or [OF z_Hcr])
+               assume z_Hct:"?z_hct"
+               show FALSE
+               by (rule notE [OF z_Hct z_Hcs])
+              next
+               assume z_Hcu:"?z_hcu" (is "~?z_hcv")
+               have z_Hcw: "~?z_hbp(f(f(f((CHOOSE x : TRUE)))))" (is "~~?z_hcx")
+               by (rule zenon_notex_0 [of "?z_hbp" "f(f(f((CHOOSE x : TRUE))))", OF z_Hb])
+               have z_Hcx: "?z_hcx" (is "?z_hcy&?z_hcz")
+               by (rule zenon_notnot_0 [OF z_Hcw])
+               have z_Hcy: "?z_hcy" (is "?z_hda|_")
+               by (rule zenon_and_0 [OF z_Hcx])
+               have z_Hcz: "?z_hcz" (is "?z_hdb|?z_hdc")
+               by (rule zenon_and_1 [OF z_Hcx])
+               show FALSE
+               proof (rule zenon_or [OF z_Hcy])
+                assume z_Hda:"?z_hda"
+                show FALSE
+                proof (rule zenon_or [OF z_Hcz])
+                 assume z_Hdb:"?z_hdb"
+                 show FALSE
+                 by (rule notE [OF z_Hdb z_Hda])
+                next
+                 assume z_Hdc:"?z_hdc" (is "~?z_hdd")
+                 have z_Hde: "~?z_hbp(f(f((CHOOSE x : TRUE))))" (is "~~?z_hdf")
+                 by (rule zenon_notex_0 [of "?z_hbp" "f(f((CHOOSE x : TRUE)))", OF z_Hb])
+                 have z_Hdf: "?z_hdf" (is "?z_hdg&?z_hdh")
+                 by (rule zenon_notnot_0 [OF z_Hde])
+                 have z_Hdg: "?z_hdg" (is "?z_hdi|_")
+                 by (rule zenon_and_0 [OF z_Hdf])
+                 have z_Hdh: "?z_hdh" (is "?z_hdj|?z_hdk")
+                 by (rule zenon_and_1 [OF z_Hdf])
+                 show FALSE
+                 proof (rule zenon_or [OF z_Hdg])
+                  assume z_Hdi:"?z_hdi"
+                  show FALSE
+                  proof (rule zenon_or [OF z_Hdh])
+                   assume z_Hdj:"?z_hdj"
+                   show FALSE
+                   by (rule notE [OF z_Hdj z_Hdi])
+                  next
+                   assume z_Hdk:"?z_hdk" (is "~?z_hdl")
+                   have z_Hdm: "~?z_hbp(f((CHOOSE x : TRUE)))" (is "~~?z_hdn")
+                   by (rule zenon_notex_0 [of "?z_hbp" "f((CHOOSE x : TRUE))", OF z_Hb])
+                   have z_Hdn: "?z_hdn" (is "?z_hdo&?z_hdp")
+                   by (rule zenon_notnot_0 [OF z_Hdm])
+                   have z_Hdo: "?z_hdo" (is "?z_hdq|_")
+                   by (rule zenon_and_0 [OF z_Hdn])
+                   have z_Hdp: "?z_hdp" (is "?z_hdr|_")
+                   by (rule zenon_and_1 [OF z_Hdn])
+                   show FALSE
+                   proof (rule zenon_or [OF z_Hdo])
+                   assume z_Hdq:"?z_hdq"
+                   show FALSE
+                   proof (rule zenon_or [OF z_Hdp])
+                   assume z_Hdr:"?z_hdr"
+                   show FALSE
+                   by (rule notE [OF z_Hdr z_Hdq])
+                   next
+                   assume z_Hd:"?z_hd"
+                   show FALSE
+                   by (rule notE [OF z_Hd z_He])
+                   qed
+                   next
+                   assume z_Hdl:"?z_hdl"
+                   show FALSE
+                   by (rule notE [OF z_Hdk z_Hdl])
+                   qed
+                  qed
+                 next
+                  assume z_Hdd:"?z_hdd"
+                  show FALSE
+                  by (rule notE [OF z_Hdc z_Hdd])
+                 qed
+                qed
+               next
+                assume z_Hcv:"?z_hcv"
+                show FALSE
+                by (rule notE [OF z_Hcu z_Hcv])
+               qed
+              qed
+             next
+              assume z_Hcn:"?z_hcn"
+              show FALSE
+              by (rule notE [OF z_Hcm z_Hcn])
+             qed
+            qed
+           next
+            assume z_Hcf:"?z_hcf"
+            show FALSE
+            by (rule notE [OF z_Hce z_Hcf])
+           qed
+          qed
+         next
+          assume z_Hbx:"?z_hbx"
+          show FALSE
+          by (rule notE [OF z_Hbw z_Hbx])
+         qed
+        qed
+       next
+        assume z_Hp:"?z_hp"
+        show FALSE
+        by (rule notE [OF z_Ho z_Hp])
+       qed
+      qed
+     qed
+     have zenon_L2_: "((~p(f(f(f(f(f(f(f(f(f(f(f(f(f(f((CHOOSE x : TRUE)))))))))))))))))|(~p(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f((CHOOSE x : TRUE))))))))))))))))))))))))) ==> p(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f((CHOOSE x : TRUE))))))))))))))))))))))) ==> p(f(f(f(f(f(f(f(f(f(f(f(f(f(f((CHOOSE x : TRUE)))))))))))))))) ==> FALSE" (is "?z_hds ==> ?z_hdu ==> ?z_hbx ==> FALSE")
+     proof -
+      assume z_Hds:"?z_hds" (is "?z_hbw|?z_hdt")
+      assume z_Hdu:"?z_hdu"
+      assume z_Hbx:"?z_hbx"
+      show FALSE
+      proof (rule zenon_or [OF z_Hds])
+       assume z_Hbw:"?z_hbw"
+       show FALSE
+       by (rule notE [OF z_Hbw z_Hbx])
+      next
+       assume z_Hdt:"?z_hdt"
+       show FALSE
+       by (rule notE [OF z_Hdt z_Hdu])
+      qed
+     qed
+     have zenon_L3_: "((~p(f(f(f(f(f(f(f(f(f(f(f(f(f((CHOOSE x : TRUE))))))))))))))))|(~p(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f((CHOOSE x : TRUE)))))))))))))))))))))))) ==> p(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f((CHOOSE x : TRUE)))))))))))))))))))))) ==> p(f(f(f(f(f(f(f(f(f(f(f(f(f((CHOOSE x : TRUE))))))))))))))) ==> FALSE" (is "?z_heb ==> ?z_hed ==> ?z_hcf ==> FALSE")
+     proof -
+      assume z_Heb:"?z_heb" (is "?z_hce|?z_hec")
+      assume z_Hed:"?z_hed"
+      assume z_Hcf:"?z_hcf"
+      show FALSE
+      proof (rule zenon_or [OF z_Heb])
+       assume z_Hce:"?z_hce"
+       show FALSE
+       by (rule notE [OF z_Hce z_Hcf])
+      next
+       assume z_Hec:"?z_hec"
+       show FALSE
+       by (rule notE [OF z_Hec z_Hed])
+      qed
+     qed
+     have zenon_L4_: "(~(\\E x:(~((p(x)|p(f(f(f(f(f(f(f(f(x))))))))))&((~p(x))|(~p(f(f(f(f(f(f(f(x)))))))))))))) ==> p(f(f(f(f(f(f(f(f(f(f(f(f(f(f((CHOOSE x : TRUE)))))))))))))))) ==> p(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f((CHOOSE x : TRUE))))))))))))))))))))))) ==> FALSE" (is "?z_hb ==> ?z_hbx ==> ?z_hdu ==> FALSE")
+     proof -
+      assume z_Hb:"?z_hb" (is "~(\\E x : ?z_hbp(x))")
+      assume z_Hbx:"?z_hbx"
+      assume z_Hdu:"?z_hdu"
+      have z_Hee: "~?z_hbp(f(f(f(f(f(f(f(f(f(f(f(f(f(f((CHOOSE x : TRUE))))))))))))))))" (is "~~?z_hef")
+      by (rule zenon_notex_0 [of "?z_hbp" "f(f(f(f(f(f(f(f(f(f(f(f(f(f((CHOOSE x : TRUE)))))))))))))))", OF z_Hb])
+      have z_Hef: "?z_hef" (is "?z_heg&?z_hds")
+      by (rule zenon_notnot_0 [OF z_Hee])
+      have z_Hds: "?z_hds" (is "?z_hbw|?z_hdt")
+      by (rule zenon_and_1 [OF z_Hef])
+      show FALSE
+      by (rule zenon_L2_ [OF z_Hds z_Hdu z_Hbx])
+     qed
+     have zenon_L5_: "((~p(f(f(f(f(f(f(f(f(f(f(f(f((CHOOSE x : TRUE)))))))))))))))|(~p(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f((CHOOSE x : TRUE))))))))))))))))))))))) ==> p(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f((CHOOSE x : TRUE))))))))))))))))))))) ==> p(f(f(f(f(f(f(f(f(f(f(f(f((CHOOSE x : TRUE)))))))))))))) ==> FALSE" (is "?z_heh ==> ?z_hej ==> ?z_hcn ==> FALSE")
+     proof -
+      assume z_Heh:"?z_heh" (is "?z_hcm|?z_hei")
+      assume z_Hej:"?z_hej"
+      assume z_Hcn:"?z_hcn"
+      show FALSE
+      proof (rule zenon_or [OF z_Heh])
+       assume z_Hcm:"?z_hcm"
+       show FALSE
+       by (rule notE [OF z_Hcm z_Hcn])
+      next
+       assume z_Hei:"?z_hei"
+       show FALSE
+       by (rule notE [OF z_Hei z_Hej])
+      qed
+     qed
+     have zenon_L6_: "(~(\\E x:(~((p(x)|p(f(f(f(f(f(f(f(f(x))))))))))&((~p(x))|(~p(f(f(f(f(f(f(f(x)))))))))))))) ==> p(f(f(f(f(f(f(f(f(f(f(f(f(f((CHOOSE x : TRUE))))))))))))))) ==> p(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f((CHOOSE x : TRUE)))))))))))))))))))))) ==> FALSE" (is "?z_hb ==> ?z_hcf ==> ?z_hed ==> FALSE")
+     proof -
+      assume z_Hb:"?z_hb" (is "~(\\E x : ?z_hbp(x))")
+      assume z_Hcf:"?z_hcf"
+      assume z_Hed:"?z_hed"
+      have z_Hek: "~?z_hbp(f(f(f(f(f(f(f(f(f(f(f(f(f((CHOOSE x : TRUE)))))))))))))))" (is "~~?z_hel")
+      by (rule zenon_notex_0 [of "?z_hbp" "f(f(f(f(f(f(f(f(f(f(f(f(f((CHOOSE x : TRUE))))))))))))))", OF z_Hb])
+      have z_Hel: "?z_hel" (is "?z_hem&?z_heb")
+      by (rule zenon_notnot_0 [OF z_Hek])
+      have z_Heb: "?z_heb" (is "?z_hce|?z_hec")
+      by (rule zenon_and_1 [OF z_Hel])
+      show FALSE
+      by (rule zenon_L3_ [OF z_Heb z_Hed z_Hcf])
+     qed
+     have zenon_L7_: "((~p(f(f(f(f(f(f(f(f(f(f(f((CHOOSE x : TRUE))))))))))))))|(~p(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f((CHOOSE x : TRUE)))))))))))))))))))))) ==> p(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f((CHOOSE x : TRUE)))))))))))))))))))) ==> p(f(f(f(f(f(f(f(f(f(f(f((CHOOSE x : TRUE))))))))))))) ==> FALSE" (is "?z_hen ==> ?z_hep ==> ?z_hcv ==> FALSE")
+     proof -
+      assume z_Hen:"?z_hen" (is "?z_hcu|?z_heo")
+      assume z_Hep:"?z_hep"
+      assume z_Hcv:"?z_hcv"
+      show FALSE
+      proof (rule zenon_or [OF z_Hen])
+       assume z_Hcu:"?z_hcu"
+       show FALSE
+       by (rule notE [OF z_Hcu z_Hcv])
+      next
+       assume z_Heo:"?z_heo"
+       show FALSE
+       by (rule notE [OF z_Heo z_Hep])
+      qed
+     qed
+     have zenon_L8_: "(~(\\E x:(~((p(x)|p(f(f(f(f(f(f(f(f(x))))))))))&((~p(x))|(~p(f(f(f(f(f(f(f(x)))))))))))))) ==> p(f(f(f(f(f(f(f(f(f(f(f(f((CHOOSE x : TRUE)))))))))))))) ==> p(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f((CHOOSE x : TRUE))))))))))))))))))))) ==> FALSE" (is "?z_hb ==> ?z_hcn ==> ?z_hej ==> FALSE")
+     proof -
+      assume z_Hb:"?z_hb" (is "~(\\E x : ?z_hbp(x))")
+      assume z_Hcn:"?z_hcn"
+      assume z_Hej:"?z_hej"
+      have z_Heq: "~?z_hbp(f(f(f(f(f(f(f(f(f(f(f(f((CHOOSE x : TRUE))))))))))))))" (is "~~?z_her")
+      by (rule zenon_notex_0 [of "?z_hbp" "f(f(f(f(f(f(f(f(f(f(f(f((CHOOSE x : TRUE)))))))))))))", OF z_Hb])
+      have z_Her: "?z_her" (is "?z_hes&?z_heh")
+      by (rule zenon_notnot_0 [OF z_Heq])
+      have z_Heh: "?z_heh" (is "?z_hcm|?z_hei")
+      by (rule zenon_and_1 [OF z_Her])
+      show FALSE
+      by (rule zenon_L5_ [OF z_Heh z_Hej z_Hcn])
+     qed
+     have zenon_L9_: "((~p(f(f(f(f(f(f(f(f(f(f((CHOOSE x : TRUE)))))))))))))|(~p(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f((CHOOSE x : TRUE))))))))))))))))))))) ==> p(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f((CHOOSE x : TRUE))))))))))))))))))) ==> p(f(f(f(f(f(f(f(f(f(f((CHOOSE x : TRUE)))))))))))) ==> FALSE" (is "?z_het ==> ?z_hev ==> ?z_hdd ==> FALSE")
+     proof -
+      assume z_Het:"?z_het" (is "?z_hdc|?z_heu")
+      assume z_Hev:"?z_hev"
+      assume z_Hdd:"?z_hdd"
+      show FALSE
+      proof (rule zenon_or [OF z_Het])
+       assume z_Hdc:"?z_hdc"
+       show FALSE
+       by (rule notE [OF z_Hdc z_Hdd])
+      next
+       assume z_Heu:"?z_heu"
+       show FALSE
+       by (rule notE [OF z_Heu z_Hev])
+      qed
+     qed
+     have zenon_L10_: "(~(\\E x:(~((p(x)|p(f(f(f(f(f(f(f(f(x))))))))))&((~p(x))|(~p(f(f(f(f(f(f(f(x)))))))))))))) ==> p(f(f(f(f(f(f(f(f(f(f(f((CHOOSE x : TRUE))))))))))))) ==> p(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f((CHOOSE x : TRUE)))))))))))))))))))) ==> FALSE" (is "?z_hb ==> ?z_hcv ==> ?z_hep ==> FALSE")
+     proof -
+      assume z_Hb:"?z_hb" (is "~(\\E x : ?z_hbp(x))")
+      assume z_Hcv:"?z_hcv"
+      assume z_Hep:"?z_hep"
+      have z_Hew: "~?z_hbp(f(f(f(f(f(f(f(f(f(f(f((CHOOSE x : TRUE)))))))))))))" (is "~~?z_hex")
+      by (rule zenon_notex_0 [of "?z_hbp" "f(f(f(f(f(f(f(f(f(f(f((CHOOSE x : TRUE))))))))))))", OF z_Hb])
+      have z_Hex: "?z_hex" (is "?z_hey&?z_hen")
+      by (rule zenon_notnot_0 [OF z_Hew])
+      have z_Hen: "?z_hen" (is "?z_hcu|?z_heo")
+      by (rule zenon_and_1 [OF z_Hex])
+      show FALSE
+      by (rule zenon_L7_ [OF z_Hen z_Hep z_Hcv])
+     qed
+     assume z_Hb:"(~(\\E x:(~((p(x)|p(f(f(f(f(f(f(f(f(x))))))))))&((~p(x))|(~p(f(f(f(f(f(f(f(x))))))))))))))" (is "~(\\E x : ?z_hbp(x))")
+     have z_Hez: "~?z_hbp((CHOOSE x : TRUE))" (is "~~?z_hfa")
+     by (rule zenon_notex_0 [of "?z_hbp" "(CHOOSE x : TRUE)", OF z_Hb])
+     have z_Hfa: "?z_hfa" (is "?z_hfb&?z_hfc")
+     by (rule zenon_notnot_0 [OF z_Hez])
+     have z_Hfb: "?z_hfb" (is "?z_hfd|?z_he")
+     by (rule zenon_and_0 [OF z_Hfa])
+     have z_Hfc: "?z_hfc" (is "?z_hfe|?z_hbv")
+     by (rule zenon_and_1 [OF z_Hfa])
+     show FALSE
+     proof (rule zenon_or [OF z_Hfb])
+      assume z_Hfd:"?z_hfd"
+      show FALSE
+      proof (rule zenon_or [OF z_Hfc])
+       assume z_Hfe:"?z_hfe"
+       show FALSE
+       by (rule notE [OF z_Hfe z_Hfd])
+      next
+       assume z_Hbv:"?z_hbv" (is "~?z_hbu")
+       have z_Hbq: "~?z_hbp(f(f(f(f(f(f(f((CHOOSE x : TRUE)))))))))" (is "~~?z_hbr")
+       by (rule zenon_notex_0 [of "?z_hbp" "f(f(f(f(f(f(f((CHOOSE x : TRUE))))))))", OF z_Hb])
+       have z_Hbr: "?z_hbr" (is "?z_hbs&?z_hbt")
+       by (rule zenon_notnot_0 [OF z_Hbq])
+       have z_Hbs: "?z_hbs" (is "_|?z_hp")
+       by (rule zenon_and_0 [OF z_Hbr])
+       show FALSE
+       proof (rule zenon_or [OF z_Hbs])
+        assume z_Hbu:"?z_hbu"
+        show FALSE
+        by (rule notE [OF z_Hbv z_Hbu])
+       next
+        assume z_Hp:"?z_hp"
+        have z_Hff: "~?z_hbp(f(f(f(f(f(f(f(f((CHOOSE x : TRUE))))))))))" (is "~~?z_hfg")
+        by (rule zenon_notex_0 [of "?z_hbp" "f(f(f(f(f(f(f(f((CHOOSE x : TRUE)))))))))", OF z_Hb])
+        have z_Hfg: "?z_hfg" (is "?z_hfh&?z_hc")
+        by (rule zenon_notnot_0 [OF z_Hff])
+        have z_Hfh: "?z_hfh" (is "_|?z_hfi")
+        by (rule zenon_and_0 [OF z_Hfg])
+        have z_Hc: "?z_hc" (is "?z_hd|?z_ho")
+        by (rule zenon_and_1 [OF z_Hfg])
+        show FALSE
+        proof (rule zenon_or [OF z_Hfh])
+         assume z_He:"?z_he"
+         show FALSE
+         by (rule zenon_L1_ [OF z_Hc z_Hb z_He])
+        next
+         assume z_Hfi:"?z_hfi"
+         have z_Hfj: "~?z_hbp(f(f(f(f(f(f(f(f(f((CHOOSE x : TRUE)))))))))))" (is "~~?z_hfk")
+         by (rule zenon_notex_0 [of "?z_hbp" "f(f(f(f(f(f(f(f(f((CHOOSE x : TRUE))))))))))", OF z_Hb])
+         have z_Hfk: "?z_hfk" (is "?z_hfl&?z_hfm")
+         by (rule zenon_notnot_0 [OF z_Hfj])
+         have z_Hfl: "?z_hfl" (is "?z_hdl|?z_hev")
+         by (rule zenon_and_0 [OF z_Hfk])
+         have z_Hfm: "?z_hfm" (is "?z_hdk|?z_hfn")
+         by (rule zenon_and_1 [OF z_Hfk])
+         show FALSE
+         proof (rule zenon_or [OF z_Hfl])
+          assume z_Hdl:"?z_hdl"
+          show FALSE
+          proof (rule zenon_or [OF z_Hfm])
+           assume z_Hdk:"?z_hdk"
+           show FALSE
+           by (rule notE [OF z_Hdk z_Hdl])
+          next
+           assume z_Hfn:"?z_hfn"
+           show FALSE
+           by (rule notE [OF z_Hfn z_Hfi])
+          qed
+         next
+          assume z_Hev:"?z_hev"
+          have z_Hby: "~?z_hbp(f(f(f(f(f(f((CHOOSE x : TRUE))))))))" (is "~~?z_hbz")
+          by (rule zenon_notex_0 [of "?z_hbp" "f(f(f(f(f(f((CHOOSE x : TRUE)))))))", OF z_Hb])
+          have z_Hbz: "?z_hbz" (is "?z_hca&?z_hcb")
+          by (rule zenon_notnot_0 [OF z_Hby])
+          have z_Hca: "?z_hca" (is "?z_hcc|?z_hbx")
+          by (rule zenon_and_0 [OF z_Hbz])
+          have z_Hcb: "?z_hcb" (is "?z_hcd|?z_hce")
+          by (rule zenon_and_1 [OF z_Hbz])
+          show FALSE
+          proof (rule zenon_or [OF z_Hca])
+           assume z_Hcc:"?z_hcc"
+           show FALSE
+           proof (rule zenon_or [OF z_Hcb])
+            assume z_Hcd:"?z_hcd"
+            show FALSE
+            by (rule notE [OF z_Hcd z_Hcc])
+           next
+            assume z_Hce:"?z_hce" (is "~?z_hcf")
+            have z_Hek: "~?z_hbp(f(f(f(f(f(f(f(f(f(f(f(f(f((CHOOSE x : TRUE)))))))))))))))" (is "~~?z_hel")
+            by (rule zenon_notex_0 [of "?z_hbp" "f(f(f(f(f(f(f(f(f(f(f(f(f((CHOOSE x : TRUE))))))))))))))", OF z_Hb])
+            have z_Hel: "?z_hel" (is "?z_hem&?z_heb")
+            by (rule zenon_notnot_0 [OF z_Hek])
+            have z_Hem: "?z_hem" (is "_|?z_hdu")
+            by (rule zenon_and_0 [OF z_Hel])
+            show FALSE
+            proof (rule zenon_or [OF z_Hem])
+             assume z_Hcf:"?z_hcf"
+             show FALSE
+             by (rule notE [OF z_Hce z_Hcf])
+            next
+             assume z_Hdu:"?z_hdu"
+             have z_Hee: "~?z_hbp(f(f(f(f(f(f(f(f(f(f(f(f(f(f((CHOOSE x : TRUE))))))))))))))))" (is "~~?z_hef")
+             by (rule zenon_notex_0 [of "?z_hbp" "f(f(f(f(f(f(f(f(f(f(f(f(f(f((CHOOSE x : TRUE)))))))))))))))", OF z_Hb])
+             have z_Hef: "?z_hef" (is "?z_heg&?z_hds")
+             by (rule zenon_notnot_0 [OF z_Hee])
+             have z_Heg: "?z_heg" (is "_|?z_hfo")
+             by (rule zenon_and_0 [OF z_Hef])
+             have z_Hds: "?z_hds" (is "?z_hbw|?z_hdt")
+             by (rule zenon_and_1 [OF z_Hef])
+             show FALSE
+             proof (rule zenon_or [OF z_Heg])
+              assume z_Hbx:"?z_hbx"
+              show FALSE
+              by (rule zenon_L2_ [OF z_Hds z_Hdu z_Hbx])
+             next
+              assume z_Hfo:"?z_hfo"
+              have z_Hfp: "~?z_hbp(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f((CHOOSE x : TRUE)))))))))))))))))" (is "~~?z_hfq")
+              by (rule zenon_notex_0 [of "?z_hbp" "f(f(f(f(f(f(f(f(f(f(f(f(f(f(f((CHOOSE x : TRUE))))))))))))))))", OF z_Hb])
+              have z_Hfq: "?z_hfq" (is "?z_hfr&?z_hfs")
+              by (rule zenon_notnot_0 [OF z_Hfp])
+              have z_Hfs: "?z_hfs" (is "_|?z_hft")
+              by (rule zenon_and_1 [OF z_Hfq])
+              show FALSE
+              proof (rule zenon_or [OF z_Hfs])
+               assume z_Ho:"?z_ho"
+               show FALSE
+               by (rule notE [OF z_Ho z_Hp])
+              next
+               assume z_Hft:"?z_hft"
+               show FALSE
+               by (rule notE [OF z_Hft z_Hfo])
+              qed
+             qed
+            qed
+           qed
+          next
+           assume z_Hbx:"?z_hbx"
+           have z_Hcg: "~?z_hbp(f(f(f(f(f((CHOOSE x : TRUE)))))))" (is "~~?z_hch")
+           by (rule zenon_notex_0 [of "?z_hbp" "f(f(f(f(f((CHOOSE x : TRUE))))))", OF z_Hb])
+           have z_Hch: "?z_hch" (is "?z_hci&?z_hcj")
+           by (rule zenon_notnot_0 [OF z_Hcg])
+           have z_Hci: "?z_hci" (is "?z_hck|?z_hcf")
+           by (rule zenon_and_0 [OF z_Hch])
+           have z_Hcj: "?z_hcj" (is "?z_hcl|?z_hcm")
+           by (rule zenon_and_1 [OF z_Hch])
+           show FALSE
+           proof (rule zenon_or [OF z_Hci])
+            assume z_Hck:"?z_hck"
+            show FALSE
+            proof (rule zenon_or [OF z_Hcj])
+             assume z_Hcl:"?z_hcl"
+             show FALSE
+             by (rule notE [OF z_Hcl z_Hck])
+            next
+             assume z_Hcm:"?z_hcm" (is "~?z_hcn")
+             have z_Heq: "~?z_hbp(f(f(f(f(f(f(f(f(f(f(f(f((CHOOSE x : TRUE))))))))))))))" (is "~~?z_her")
+             by (rule zenon_notex_0 [of "?z_hbp" "f(f(f(f(f(f(f(f(f(f(f(f((CHOOSE x : TRUE)))))))))))))", OF z_Hb])
+             have z_Her: "?z_her" (is "?z_hes&?z_heh")
+             by (rule zenon_notnot_0 [OF z_Heq])
+             have z_Hes: "?z_hes" (is "_|?z_hed")
+             by (rule zenon_and_0 [OF z_Her])
+             show FALSE
+             proof (rule zenon_or [OF z_Hes])
+              assume z_Hcn:"?z_hcn"
+              show FALSE
+              by (rule notE [OF z_Hcm z_Hcn])
+             next
+              assume z_Hed:"?z_hed"
+              have z_Hek: "~?z_hbp(f(f(f(f(f(f(f(f(f(f(f(f(f((CHOOSE x : TRUE)))))))))))))))" (is "~~?z_hel")
+              by (rule zenon_notex_0 [of "?z_hbp" "f(f(f(f(f(f(f(f(f(f(f(f(f((CHOOSE x : TRUE))))))))))))))", OF z_Hb])
+              have z_Hel: "?z_hel" (is "?z_hem&?z_heb")
+              by (rule zenon_notnot_0 [OF z_Hek])
+              have z_Hem: "?z_hem" (is "_|?z_hdu")
+              by (rule zenon_and_0 [OF z_Hel])
+              have z_Heb: "?z_heb" (is "_|?z_hec")
+              by (rule zenon_and_1 [OF z_Hel])
+              show FALSE
+              proof (rule zenon_or [OF z_Hem])
+               assume z_Hcf:"?z_hcf"
+               show FALSE
+               by (rule zenon_L3_ [OF z_Heb z_Hed z_Hcf])
+              next
+               assume z_Hdu:"?z_hdu"
+               show FALSE
+               by (rule zenon_L4_ [OF z_Hb z_Hbx z_Hdu])
+              qed
+             qed
+            qed
+           next
+            assume z_Hcf:"?z_hcf"
+            have z_Hco: "~?z_hbp(f(f(f(f((CHOOSE x : TRUE))))))" (is "~~?z_hcp")
+            by (rule zenon_notex_0 [of "?z_hbp" "f(f(f(f((CHOOSE x : TRUE)))))", OF z_Hb])
+            have z_Hcp: "?z_hcp" (is "?z_hcq&?z_hcr")
+            by (rule zenon_notnot_0 [OF z_Hco])
+            have z_Hcq: "?z_hcq" (is "?z_hcs|?z_hcn")
+            by (rule zenon_and_0 [OF z_Hcp])
+            have z_Hcr: "?z_hcr" (is "?z_hct|?z_hcu")
+            by (rule zenon_and_1 [OF z_Hcp])
+            show FALSE
+            proof (rule zenon_or [OF z_Hcq])
+             assume z_Hcs:"?z_hcs"
+             show FALSE
+             proof (rule zenon_or [OF z_Hcr])
+              assume z_Hct:"?z_hct"
+              show FALSE
+              by (rule notE [OF z_Hct z_Hcs])
+             next
+              assume z_Hcu:"?z_hcu" (is "~?z_hcv")
+              have z_Hew: "~?z_hbp(f(f(f(f(f(f(f(f(f(f(f((CHOOSE x : TRUE)))))))))))))" (is "~~?z_hex")
+              by (rule zenon_notex_0 [of "?z_hbp" "f(f(f(f(f(f(f(f(f(f(f((CHOOSE x : TRUE))))))))))))", OF z_Hb])
+              have z_Hex: "?z_hex" (is "?z_hey&?z_hen")
+              by (rule zenon_notnot_0 [OF z_Hew])
+              have z_Hey: "?z_hey" (is "_|?z_hej")
+              by (rule zenon_and_0 [OF z_Hex])
+              show FALSE
+              proof (rule zenon_or [OF z_Hey])
+               assume z_Hcv:"?z_hcv"
+               show FALSE
+               by (rule notE [OF z_Hcu z_Hcv])
+              next
+               assume z_Hej:"?z_hej"
+               have z_Heq: "~?z_hbp(f(f(f(f(f(f(f(f(f(f(f(f((CHOOSE x : TRUE))))))))))))))" (is "~~?z_her")
+               by (rule zenon_notex_0 [of "?z_hbp" "f(f(f(f(f(f(f(f(f(f(f(f((CHOOSE x : TRUE)))))))))))))", OF z_Hb])
+               have z_Her: "?z_her" (is "?z_hes&?z_heh")
+               by (rule zenon_notnot_0 [OF z_Heq])
+               have z_Hes: "?z_hes" (is "_|?z_hed")
+               by (rule zenon_and_0 [OF z_Her])
+               have z_Heh: "?z_heh" (is "_|?z_hei")
+               by (rule zenon_and_1 [OF z_Her])
+               show FALSE
+               proof (rule zenon_or [OF z_Hes])
+                assume z_Hcn:"?z_hcn"
+                show FALSE
+                by (rule zenon_L5_ [OF z_Heh z_Hej z_Hcn])
+               next
+                assume z_Hed:"?z_hed"
+                show FALSE
+                by (rule zenon_L6_ [OF z_Hb z_Hcf z_Hed])
+               qed
+              qed
+             qed
+            next
+             assume z_Hcn:"?z_hcn"
+             have z_Hcw: "~?z_hbp(f(f(f((CHOOSE x : TRUE)))))" (is "~~?z_hcx")
+             by (rule zenon_notex_0 [of "?z_hbp" "f(f(f((CHOOSE x : TRUE))))", OF z_Hb])
+             have z_Hcx: "?z_hcx" (is "?z_hcy&?z_hcz")
+             by (rule zenon_notnot_0 [OF z_Hcw])
+             have z_Hcy: "?z_hcy" (is "?z_hda|?z_hcv")
+             by (rule zenon_and_0 [OF z_Hcx])
+             have z_Hcz: "?z_hcz" (is "?z_hdb|?z_hdc")
+             by (rule zenon_and_1 [OF z_Hcx])
+             show FALSE
+             proof (rule zenon_or [OF z_Hcy])
+              assume z_Hda:"?z_hda"
+              show FALSE
+              proof (rule zenon_or [OF z_Hcz])
+               assume z_Hdb:"?z_hdb"
+               show FALSE
+               by (rule notE [OF z_Hdb z_Hda])
+              next
+               assume z_Hdc:"?z_hdc" (is "~?z_hdd")
+               have z_Hfu: "~?z_hbp(f(f(f(f(f(f(f(f(f(f((CHOOSE x : TRUE))))))))))))" (is "~~?z_hfv")
+               by (rule zenon_notex_0 [of "?z_hbp" "f(f(f(f(f(f(f(f(f(f((CHOOSE x : TRUE)))))))))))", OF z_Hb])
+               have z_Hfv: "?z_hfv" (is "?z_hfw&?z_het")
+               by (rule zenon_notnot_0 [OF z_Hfu])
+               have z_Hfw: "?z_hfw" (is "_|?z_hep")
+               by (rule zenon_and_0 [OF z_Hfv])
+               show FALSE
+               proof (rule zenon_or [OF z_Hfw])
+                assume z_Hdd:"?z_hdd"
+                show FALSE
+                by (rule notE [OF z_Hdc z_Hdd])
+               next
+                assume z_Hep:"?z_hep"
+                have z_Hew: "~?z_hbp(f(f(f(f(f(f(f(f(f(f(f((CHOOSE x : TRUE)))))))))))))" (is "~~?z_hex")
+                by (rule zenon_notex_0 [of "?z_hbp" "f(f(f(f(f(f(f(f(f(f(f((CHOOSE x : TRUE))))))))))))", OF z_Hb])
+                have z_Hex: "?z_hex" (is "?z_hey&?z_hen")
+                by (rule zenon_notnot_0 [OF z_Hew])
+                have z_Hey: "?z_hey" (is "_|?z_hej")
+                by (rule zenon_and_0 [OF z_Hex])
+                have z_Hen: "?z_hen" (is "_|?z_heo")
+                by (rule zenon_and_1 [OF z_Hex])
+                show FALSE
+                proof (rule zenon_or [OF z_Hey])
+                 assume z_Hcv:"?z_hcv"
+                 show FALSE
+                 by (rule zenon_L7_ [OF z_Hen z_Hep z_Hcv])
+                next
+                 assume z_Hej:"?z_hej"
+                 show FALSE
+                 by (rule zenon_L8_ [OF z_Hb z_Hcn z_Hej])
+                qed
+               qed
+              qed
+             next
+              assume z_Hcv:"?z_hcv"
+              have z_Hfu: "~?z_hbp(f(f(f(f(f(f(f(f(f(f((CHOOSE x : TRUE))))))))))))" (is "~~?z_hfv")
+              by (rule zenon_notex_0 [of "?z_hbp" "f(f(f(f(f(f(f(f(f(f((CHOOSE x : TRUE)))))))))))", OF z_Hb])
+              have z_Hfv: "?z_hfv" (is "?z_hfw&?z_het")
+              by (rule zenon_notnot_0 [OF z_Hfu])
+              have z_Hfw: "?z_hfw" (is "?z_hdd|?z_hep")
+              by (rule zenon_and_0 [OF z_Hfv])
+              have z_Het: "?z_het" (is "_|?z_heu")
+              by (rule zenon_and_1 [OF z_Hfv])
+              show FALSE
+              proof (rule zenon_or [OF z_Hfw])
+               assume z_Hdd:"?z_hdd"
+               show FALSE
+               by (rule zenon_L9_ [OF z_Het z_Hev z_Hdd])
+              next
+               assume z_Hep:"?z_hep"
+               show FALSE
+               by (rule zenon_L10_ [OF z_Hb z_Hcv z_Hep])
+              qed
+             qed
+            qed
+           qed
+          qed
+         qed
+        qed
+       qed
+      qed
+     next
+      assume z_He:"?z_he"
+      have z_Hff: "~?z_hbp(f(f(f(f(f(f(f(f((CHOOSE x : TRUE))))))))))" (is "~~?z_hfg")
+      by (rule zenon_notex_0 [of "?z_hbp" "f(f(f(f(f(f(f(f((CHOOSE x : TRUE)))))))))", OF z_Hb])
+      have z_Hfg: "?z_hfg" (is "?z_hfh&?z_hc")
+      by (rule zenon_notnot_0 [OF z_Hff])
+      have z_Hc: "?z_hc" (is "?z_hd|?z_ho")
+      by (rule zenon_and_1 [OF z_Hfg])
+      show FALSE
+      by (rule zenon_L1_ [OF z_Hc z_Hb z_He])
+     qed
+    qed
+---*)

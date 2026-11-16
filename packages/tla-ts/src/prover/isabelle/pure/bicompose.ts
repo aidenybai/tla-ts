@@ -1,37 +1,18 @@
-// Ported from Isabelle2025's Pure/thm.ML. Copyright (c) 1986-2025 University of Cambridge,
-// Technische Universitaet Muenchen, and contributors, see LICENSE.
-//
-// The term operations behind Thm.bicompose, which builds the theorem itself in thm.ts.
+// Ported from Isabelle2025's Pure/thm.ML. Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
 
 import { TlaIsabelleError } from "../../../errors";
 import { normTerm, type Envir } from "./envir";
-import { allConst, mkImplies } from "./logic";
+import { allConst, isAllAbs, isImplies, mkImplies } from "./logic";
 import { unifyTypesEnvir } from "./pattern";
 import type { Thm } from "./thm";
 import { normType } from "./type";
 import { eqTyp, foldVars, matchBvars, mkAbs, mkApp, mkVar, type Term, type Typ } from "./term";
 import type { Tpair } from "./unify";
 
-const isImpApp = (
-  term: Term,
-): term is Extract<Term, { kind: "App" }> & { fun: Extract<Term, { kind: "App" }> } =>
-  term.kind === "App" &&
-  term.fun.kind === "App" &&
-  term.fun.fun.kind === "Const" &&
-  term.fun.fun.name === "Pure.imp";
-
-const isAllApp = (
-  term: Term,
-): term is Extract<Term, { kind: "App" }> & { arg: Extract<Term, { kind: "Abs" }> } =>
-  term.kind === "App" &&
-  term.fun.kind === "Const" &&
-  term.fun.name === "Pure.all" &&
-  term.arg.kind === "Abs";
-
 export const stripApply = (apply: (term: Term) => Term, lifted: Term, term: Term): Term => {
-  if (isImpApp(lifted) && isImpApp(term))
+  if (isImplies(lifted) && isImplies(term))
     return mkApp(mkApp(lifted.fun.fun, term.fun.arg), stripApply(apply, lifted.arg, term.arg));
-  if (isAllApp(lifted) && isAllApp(term))
+  if (isAllAbs(lifted) && isAllAbs(term))
     return mkApp(
       lifted.fun,
       mkAbs(term.arg.name, term.arg.type, stripApply(apply, lifted.arg.body, term.arg.body)),
@@ -40,8 +21,8 @@ export const stripApply = (apply: (term: Term) => Term, lifted: Term, term: Term
 };
 
 const stripLifted = (lifted: Term, term: Term): Term => {
-  if (isImpApp(lifted) && isImpApp(term)) return stripLifted(lifted.arg, term.arg);
-  if (isAllApp(lifted) && isAllApp(term)) return stripLifted(lifted.arg.body, term.arg.body);
+  if (isImplies(lifted) && isImplies(term)) return stripLifted(lifted.arg, term.arg);
+  if (isAllAbs(lifted) && isAllAbs(term)) return stripLifted(lifted.arg.body, term.arg.body);
   return term;
 };
 
@@ -54,8 +35,6 @@ const makeDistinct = (pairs: readonly [string, string][]) => {
   return table;
 };
 
-// Thm.rename_bvars: renames bound variables and some unknowns of the new premises after the
-// names in the disagreement pairs.
 export const renameBvars = (
   dpairs: readonly Tpair[],
   tpairs: readonly Tpair[],
@@ -86,16 +65,24 @@ export const renameBvars = (
   );
   const delClashing = (
     isClash: boolean,
-    xs: Set<string>,
-    ys: Set<string>,
+    clashed: Set<string>,
+    taken: Set<string>,
     rest: readonly [string, string][],
     kept: [string, string][],
   ): [string, string][] => {
-    if (rest.length === 0) return isClash ? delClashing(false, xs, new Set(xs), kept, []) : kept;
-    const [pair, ...others] = rest;
-    if (ys.has(pair[1]))
-      return delClashing(true, new Set(xs).add(pair[0]), new Set(ys).add(pair[0]), others, kept);
-    return delClashing(isClash, xs, new Set(ys).add(pair[1]), others, [pair, ...kept]);
+    if (rest.length === 0)
+      return isClash ? delClashing(false, clashed, new Set(clashed), kept, []) : kept;
+    const pair = rest[0];
+    const others = rest.slice(1);
+    if (taken.has(pair[1]))
+      return delClashing(
+        true,
+        new Set(clashed).add(pair[0]),
+        new Set(taken).add(pair[0]),
+        others,
+        kept,
+      );
+    return delClashing(isClash, clashed, new Set(taken).add(pair[1]), others, [pair, ...kept]);
   };
   const vars = makeDistinct(delClashing(false, unchanged, new Set(unchanged), distinct, []));
   const bounds = makeDistinct(pairs);
@@ -122,8 +109,8 @@ export const renameBvars = (
 };
 
 export const stripAssums2 = (lifted: Term, goal: Term): Tpair => {
-  if (isImpApp(lifted) && isImpApp(goal)) return stripAssums2(lifted.arg, goal.arg);
-  if (isAllApp(lifted) && isAllApp(goal)) {
+  if (isImplies(lifted) && isImplies(goal)) return stripAssums2(lifted.arg, goal.arg);
+  if (isAllAbs(lifted) && isAllAbs(goal)) {
     const [left, right] = stripAssums2(lifted.arg.body, goal.arg.body);
     return [
       mkAbs(lifted.arg.name, lifted.arg.type, left),
@@ -135,14 +122,14 @@ export const stripAssums2 = (lifted: Term, goal: Term): Tpair => {
 
 export const normTermSkip = (envir: Envir, count: number, term: Term): Term => {
   if (count === 0) return normTerm(envir, term);
-  if (isAllApp(term)) {
+  if (isAllAbs(term)) {
     const type = normType(envir.tyenv, term.arg.type);
     return mkApp(
       allConst(type),
       mkAbs(term.arg.name, type, normTermSkip(envir, count, term.arg.body)),
     );
   }
-  if (isImpApp(term)) return mkImplies(term.fun.arg, normTermSkip(envir, count - 1, term.arg));
+  if (isImplies(term)) return mkImplies(term.fun.arg, normTermSkip(envir, count - 1, term.arg));
   throw new TlaIsabelleError("ERROR", "norm_term_skip: too few assumptions??");
 };
 

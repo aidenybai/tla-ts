@@ -57,7 +57,8 @@ const getCheckResult = async (request: RunRequest): Promise<RunResult> => {
     config,
     loadModule: (name) => request.modules?.[name],
     dump: request.isSearchShown ? { path: "search.dot", dot: true, actionLabels: true } : undefined,
-    writeFile: (_path, content) => graphs.push(content),
+    writeFile: (_path, content) =>
+      graphs.push(typeof content === "string" ? content : new TextDecoder().decode(content)),
   });
   const lastStep = result.violation?.trace.at(-1);
   const module = parseModule(source);

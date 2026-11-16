@@ -1,9 +1,9 @@
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { TlaUnsupportedError } from "../src/errors";
 import { decidePtl } from "../src/prover/ptl/decide";
 import { encodeForBackend } from "../src/prover/prove";
-import { CONFORMANCE_DIRECTORY, CORPORA_DIRECTORY, getOption } from "./corpora";
+import { CONFORMANCE_DIRECTORY, CORPORA_DIRECTORY, getOption, listFiles } from "./corpora";
 import {
   getLs4Digest,
   getLs4Verdict,
@@ -12,27 +12,20 @@ import {
   readProofRecords,
 } from "./proof-records";
 
-// Formulas that LS4 finds satisfiable, which the corpora never send it, with the reference LS4's
-// output next to each.
 const FIXTURES_DIRECTORY = join(CONFORMANCE_DIRECTORY, "ptl");
 
-// tlapm gives LS4 ten seconds.
 const TIME_LIMIT_MS = 10_000;
 
 const listLs4Files = (directory: string): string[] =>
   existsSync(directory)
-    ? readdirSync(directory, { recursive: true, encoding: "utf8" })
+    ? listFiles(directory)
         .filter((path) => path.endsWith(".ls4"))
         .sort()
-        .map((path) => join(directory, path))
     : [];
 
 const isVerbose = process.argv.includes("--verbose");
 const filter = getOption("--filter");
 
-// The abstraction: the LS4 inputs tla-ts prints for each module's LS4 obligations are the ones
-// tlapm sent. Where .proofs holds the inputs they must match byte for byte, and elsewhere as a
-// multiset of digests, which rename atoms.
 const abstraction = { match: 0, mismatch: 0, unsupported: 0, reused: 0, error: 0 };
 readProofRecords()
   .filter((record) => record.ls4.length > 0)
@@ -88,10 +81,6 @@ readProofRecords()
         extra: new Array<(typeof printed)[0]>(),
       },
     );
-    // tlapm proves an obligation once per fingerprint in a run. Its fingerprint numbers hidden
-    // definitions instead of naming them, so it reuses one LS4 result for obligations that differ
-    // only in which hidden definition they use, and never sends the second. tla-ts doesn't compute
-    // fingerprints, so an extra input with the digest of one tlapm sent counts as reused.
     const isReused = matching.extra.every((item) => digests.includes(getLs4Digest(item.text)));
     const isRefused = matching.unprinted.length <= refused;
     if (matching.extra.length === 0 && matching.unprinted.length === 0) {
@@ -116,7 +105,6 @@ readProofRecords()
     matching.unprinted.forEach((key) => console.log(`  tlapm:\n${key}`));
   });
 
-// The decision: tla-ts answers each recorded LS4 input as LS4 did.
 const decision = { agree: 0, disagree: 0, unknown: 0, timeout: 0, worstMs: 0, worst: "" };
 [
   ...listLs4Files(PROOF_INPUTS_DIRECTORY).filter(

@@ -1,0 +1,33 @@
+(*---
+description: Zenon rewrites [a \in S |-> F(a)][x] to F(x) with fapplyfcn.
+ref: zenon/ext_tla.ml#rewrites
+outcome: unsat
+---*)
+;; obligation #1
+$goal (=> (TLA.in a_CONSTANTunde_xunde_a a_CONSTANTunde_Sunde_a)
+(= (TLA.fapply (TLA.Fcn a_CONSTANTunde_Sunde_a ((a_CONSTANTunde_aunde_a) (a_CONSTANTunde_Funde_a a_CONSTANTunde_aunde_a))) a_CONSTANTunde_xunde_a)
+(a_CONSTANTunde_Funde_a a_CONSTANTunde_xunde_a)))
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: |-
+    unsat
+    proof (rule zenon_nnpp)
+     assume z_Ha:"(~((a_CONSTANTunde_xunde_a \\in a_CONSTANTunde_Sunde_a)=>((Fcn(a_CONSTANTunde_Sunde_a, (\<lambda>a_CONSTANTunde_aunde_a. a_CONSTANTunde_Funde_a(a_CONSTANTunde_aunde_a)))[a_CONSTANTunde_xunde_a])=a_CONSTANTunde_Funde_a(a_CONSTANTunde_xunde_a))))" (is "~(?z_hc=>?z_hf)")
+     have z_Hc: "?z_hc"
+     by (rule zenon_notimply_0 [OF z_Ha])
+     have z_Hm: "((Fcn(a_CONSTANTunde_Sunde_a, (\<lambda>a_CONSTANTunde_aunde_a. a_CONSTANTunde_Funde_a(a_CONSTANTunde_aunde_a)))[a_CONSTANTunde_xunde_a])~=a_CONSTANTunde_Funde_a(a_CONSTANTunde_xunde_a))" (is "?z_hg~=?z_hl")
+     by (rule zenon_notimply_1 [OF z_Ha])
+     show FALSE
+     proof (rule zenon_fapplyfcn [of "(\<lambda>zenon_Vg. (zenon_Vg~=?z_hl))" "a_CONSTANTunde_Sunde_a" "(\<lambda>a_CONSTANTunde_aunde_a. a_CONSTANTunde_Funde_a(a_CONSTANTunde_aunde_a))" "a_CONSTANTunde_xunde_a", OF z_Hm])
+      assume z_Hq:"(~?z_hc)"
+      show FALSE
+      by (rule notE [OF z_Hq z_Hc])
+     next
+      assume z_Hr:"(?z_hl~=?z_hl)"
+      show FALSE
+      by (rule zenon_noteq [OF z_Hr])
+     qed
+    qed
+---*)

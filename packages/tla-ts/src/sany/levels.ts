@@ -27,9 +27,7 @@ import {
   type ThmOrAssumpDefNode,
 } from "./nodes";
 
-// A port of the levelCheck methods of SANY's semantic nodes: the levels, weights and Leibniz flags
-// its XMLExporter writes, and the level errors it reports. Each check returns what SANY's returns,
-// which is whether the node is free of level errors, or true for the nodes that ignore that.
+// A port of the levelCheck methods of SANY's semantic nodes.
 
 type AnyDefNode = OpDefNode | ThmOrAssumpDefNode;
 
@@ -72,7 +70,6 @@ const addArgLevelParams = (
   });
 };
 
-// SetOfLevelConstraints.put keeps the lowest bound.
 const putLevelConstraint = (target: Map<SymbolNode, number>, param: SymbolNode, level: number) => {
   target.set(param, Math.min(level, target.get(param) ?? TEMPORAL_LEVEL));
 };
@@ -89,7 +86,6 @@ const putLevelConstraints = (
 
 const getArgLevelConstraintKey = (param: SymbolNode, position: number) => `${param.id}:${position}`;
 
-// SetOfArgLevelConstraints.put keeps the highest bound.
 const putArgLevelConstraint = (
   target: Map<string, ArgLevelConstraint>,
   param: SymbolNode,
@@ -129,7 +125,6 @@ const mergeLevels = (node: LevelFields, part: LevelFields) => {
   addArgLevelParams(node.argLevelParams, part.argLevelParams);
 };
 
-// ArgLevelParam.occur.
 const isOccurring = (argLevelParam: ArgLevelParam, symbols: SymbolNode[]) =>
   symbols.includes(argLevelParam.op) || symbols.includes(argLevelParam.param);
 
@@ -170,14 +165,12 @@ const getBoundSymbols = (node: OpApplNode) => [
 const getSubstitute = (symbol: SymbolNode, substs: Subst[]) =>
   substs.find((subst) => subst.op === symbol)?.expr;
 
-// Subst.paramSet and Subst.allParamSet.
 const getSubstitutedParams = (param: SymbolNode, substs: Subst[], isAll: boolean) => {
   const substitute = getSubstitute(param, substs);
   if (substitute === undefined) return new Set([param]);
   return isAll ? substitute.allParams : substitute.levelParams;
 };
 
-// Subst.getSubALPSet.
 const getSubstitutedArgLevelParams = (source: Map<string, ArgLevelParam>, substs: Subst[]) => {
   const result = new Map<string, ArgLevelParam>();
   source.forEach((argLevelParam, key) => {
@@ -201,7 +194,6 @@ interface ConstraintSource {
   argLevelParams: Map<string, ArgLevelParam>;
 }
 
-// Subst.getSubLCSet.
 const getSubstitutedLevelConstraints = (
   body: ConstraintSource,
   substs: Subst[],
@@ -235,7 +227,6 @@ const getSubstitutedLevelConstraints = (
   return result;
 };
 
-// Subst.getSubALCSet.
 const getSubstitutedArgLevelConstraints = (
   body: ConstraintSource,
   substs: Subst[],
@@ -268,7 +259,6 @@ const getSubstitutedArgLevelConstraints = (
   return result;
 };
 
-// ModuleNode.isConstant.
 const isConstantModule = (module: ModuleNode, check: LevelCheck) => {
   if (getDeclarations(module, VARIABLE_DECL_KIND).length > 0) return false;
   checkModuleLevels(module, check);
@@ -278,19 +268,18 @@ const isConstantModule = (module: ModuleNode, check: LevelCheck) => {
   return module.topLevel.every((node) => node.kind !== "Theorem" || node.level === CONSTANT_LEVEL);
 };
 
-// The parts of OpDefNode.levelCheck and ThmOrAssumpDefNode.levelCheck that follow the body's.
 const checkDefinitionBody = (node: AnyDefNode, params: FormalParamNode[], body: LevelFields) => {
   node.minMaxLevel = params.map((param) =>
     Array.from(
       { length: param.arity },
-      (_, position) =>
+      (_value, position) =>
         body.argLevelConstraints.get(getArgLevelConstraintKey(param, position))?.level ??
         CONSTANT_LEVEL,
     ),
   );
   node.opLevelCond = params.map((param) =>
     params.map((other) =>
-      Array.from({ length: param.arity }, (_, index) =>
+      Array.from({ length: param.arity }, (_value, index) =>
         body.argLevelParams.has(getArgLevelKey(param, index, other)),
       ),
     ),
@@ -323,8 +312,6 @@ const checkDefinitionBody = (node: AnyDefNode, params: FormalParamNode[], body: 
   );
 };
 
-// The checks of OpApplNode.levelCheck that compare the levels of the arguments of a defined
-// operator with the levels it allows.
 const checkArguments = (
   node: OpApplNode,
   operator: AnyDefNode,
@@ -395,7 +382,6 @@ const checkArguments = (
   });
 };
 
-// The level constraints OpApplNode.levelCheck derives for an application of a defined operator.
 const constrainArguments = (
   node: OpApplNode,
   operator: AnyDefNode,
@@ -405,7 +391,7 @@ const constrainArguments = (
 ) => {
   const params = operator.params ?? [];
   const getArgument = (symbol: SymbolNode) =>
-    node.operands.find((_, index) => params[index] === symbol);
+    node.operands.find((_operand, index) => params[index] === symbol);
   putLevelConstraints(node.levelConstraints, operator.levelConstraints);
   node.operands.forEach((operand) => {
     if (operand === undefined) return;
@@ -532,8 +518,6 @@ const constrainArguments = (
   });
 };
 
-// The operators OpApplNode.levelCheck rejects with both temporal and action arguments, and how its
-// message names them.
 const LOGICAL_OPERATOR_NAMES = new Map([
   ["\\land", "\\land"],
   ["\\lor", "\\lor"],
@@ -543,9 +527,6 @@ const LOGICAL_OPERATOR_NAMES = new Map([
   ["$DisjList", "Disjunction list"],
 ]);
 
-// The checks at the end of OpApplNode.levelCheck of the temporal operators and quantifiers. TLC
-// 1.7.4's SANY reports these errors but leaves the node level-correct, so an operator applied to it
-// still checks its level.
 const checkTemporalApplication = (node: OpApplNode, check: LevelCheck) => {
   const addTemporalError = (location: SanyLocation, text: string) => {
     addError(check, location, text);
@@ -698,7 +679,7 @@ const checkTheoremDefinition = (node: ThmOrAssumpDefNode, iteration: number, che
   node.levelChecked = iteration;
   node.maxLevels = node.params.map(() => TEMPORAL_LEVEL);
   // SANY allocates isLeibnizArg anew for each parameter, so only the last one starts out Leibniz.
-  node.isLeibnizArg = node.params.map((_, index) => index === node.params.length - 1);
+  node.isLeibnizArg = node.params.map((_param, index) => index === node.params.length - 1);
   if (node.params.length > 0) node.isLeibniz = true;
   node.levelCorrect = checkLevel(node.body, iteration, check);
   node.level = node.body.level;
@@ -710,8 +691,6 @@ const checkTheoremDefinition = (node: ThmOrAssumpDefNode, iteration: number, che
   return node.levelCorrect;
 };
 
-// ModuleNode.levelCheck: the definitions of each recursive section are checked twice, the second
-// time with the highest level and the parameters of the section's recursive operators.
 export const checkModuleLevels = (module: ModuleNode, check: LevelCheck) => {
   if (module.isLevelChecked) return module.levelCorrect;
   module.isLevelChecked = true;
@@ -796,7 +775,6 @@ export const checkModuleLevels = (module: ModuleNode, check: LevelCheck) => {
   return module.levelCorrect;
 };
 
-// LevelNode.levelCheckSubnodes, which skips modules.
 const checkSubnodes = (
   node: LevelFields,
   subnodes: SemanticNode[],
@@ -816,8 +794,6 @@ const checkSubnodes = (
   return node.levelCorrect;
 };
 
-// TheoremNode.LevelCheckTemporal: the steps of the proof of a temporal theorem that must be
-// constant.
 const checkTemporalProof = (proof: ProofNode | undefined, check: LevelCheck) => {
   if (proof?.kind !== "NonLeafProof") return;
   proof.steps.forEach((step) => {
@@ -840,7 +816,6 @@ const checkTemporalProof = (proof: ProofNode | undefined, check: LevelCheck) => 
   });
 };
 
-// InstanceNode.levelCheck.
 const checkInstance = (node: InstanceNode, iteration: number, check: LevelCheck) => {
   if (node.levelChecked >= iteration) return node.levelCorrect;
   node.levelChecked = iteration;
@@ -1121,7 +1096,6 @@ const checkLevel = (node: SemanticNode, iteration: number, check: LevelCheck): b
       node.levelChecked = iteration;
       const isBodyCorrect = checkLevel(node.body, iteration, check);
       const isDefinitionCorrect = !node.definition || checkLevel(node.definition, iteration, check);
-      // AssumeNode's getters return its expression's levels.
       node.level = node.body.level;
       shareLevels(node, node.body);
       if (node.level !== CONSTANT_LEVEL) {
@@ -1134,8 +1108,7 @@ const checkLevel = (node: SemanticNode, iteration: number, check: LevelCheck): b
       return isBodyCorrect && isDefinitionCorrect;
     }
     case "Theorem": {
-      // TheoremNode declares its own levelChecked, so levelCheckSubnodes still runs on the
-      // theorem's definition, or its statement when it has none, and its proof.
+      // SANY's TheoremNode declares its own levelChecked, so levelCheckSubnodes still runs on it.
       if (node.levelChecked >= iteration) return true;
       const isCorrect = checkSubnodes(
         node,
@@ -1191,7 +1164,6 @@ const checkLevel = (node: SemanticNode, iteration: number, check: LevelCheck): b
         node.goal.level,
       );
       [node.goal, ...node.assumptions].forEach((part) => mergeLevels(node, part));
-      // LevelNode.addTemporalLevelConstraintToConstants.
       if (node.levelCorrect) {
         node.levelParams.forEach((param) => {
           if (param.kind === "OpDecl" && param.declKind === CONSTANT_DECL_KIND) {

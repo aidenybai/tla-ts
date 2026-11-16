@@ -1,0 +1,35 @@
+(*---
+description: Zenon proves a goal from a fact that the proof cites.
+ref: src/backend/zenon.ml
+outcome: unsat
+---*)
+;; obligation #1
+$hyp "v'8" (TLA.subseteq a_CONSTANTunde_Sunde_a
+a_CONSTANTunde_Tunde_a)
+$goal (=> (TLA.in a_CONSTANTunde_xunde_a a_CONSTANTunde_Sunde_a)
+(TLA.in a_CONSTANTunde_xunde_a
+a_CONSTANTunde_Tunde_a))
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: |-
+    unsat
+    proof (rule zenon_nnpp)
+     have z_Ha:"(a_CONSTANTunde_Sunde_a \\subseteq a_CONSTANTunde_Tunde_a)" (is "?z_ha")
+     using v'8 by blast
+     assume z_Hb:"(~((a_CONSTANTunde_xunde_a \\in a_CONSTANTunde_Sunde_a)=>(a_CONSTANTunde_xunde_a \\in a_CONSTANTunde_Tunde_a)))" (is "~(?z_hf=>?z_hh)")
+     have z_Hi_z_Ha: "bAll(a_CONSTANTunde_Sunde_a, (\<lambda>x. (x \\in a_CONSTANTunde_Tunde_a))) == ?z_ha" (is "?z_hi == _")
+     by (unfold subset_def)
+     have z_Hi: "?z_hi"
+     by (unfold z_Hi_z_Ha, fact z_Ha)
+     have z_Hm_z_Hi: "(\\A x:((x \\in a_CONSTANTunde_Sunde_a)=>(x \\in a_CONSTANTunde_Tunde_a))) == ?z_hi" (is "?z_hm == _")
+     by (unfold bAll_def)
+     have z_Hm: "?z_hm" (is "\\A x : ?z_hp(x)")
+     by (unfold z_Hm_z_Hi, fact z_Hi)
+     have z_He: "?z_hp(a_CONSTANTunde_xunde_a)"
+     by (rule zenon_all_0 [of "?z_hp" "a_CONSTANTunde_xunde_a", OF z_Hm])
+     show FALSE
+     by (rule notE [OF z_Hb z_He])
+    qed
+---*)
