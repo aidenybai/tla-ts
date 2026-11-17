@@ -50,6 +50,7 @@ import {
 import {
   COLLECTIONS,
   getBuiltIn,
+  getBuiltInPath,
   getBuiltInKey,
   isBuiltInObject,
   translateBuiltInValue,
@@ -2542,7 +2543,7 @@ const getPrimitiveCall = (node: MethodCall, kind: Kind, context: Context) => {
   const receiver = node.expression.expression;
   const prototype =
     node.expression.name.text === "call" && ts.isPropertyAccessExpression(receiver)
-      ? PRIMITIVE_PROTOTYPES.get(receiver.expression.getText())
+      ? PRIMITIVE_PROTOTYPES.get(getBuiltInPath(receiver.expression, context) ?? "")
       : undefined;
   if (prototype !== undefined && ts.isPropertyAccessExpression(receiver)) {
     return {

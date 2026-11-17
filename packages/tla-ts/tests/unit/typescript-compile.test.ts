@@ -51816,4 +51816,21 @@ describe("BigInts", () => {
       expect((await checkModel(getSource(3))).failure?.message).toContain("total 43");
     });
   });
+
+  describe("calls a primitive prototype's method through a const that holds the prototype", () => {
+    const getSource = (expected: string) => `
+      const box = { text: "" };
+      const numbers = Number.prototype;
+      box.text = numbers.toFixed.call(1.25, 1) + numbers.toString.call(255, 16);
+      if (box.text !== "${expected}") throw new Error("text " + box.text);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("1.3ff"))).failure).toBeUndefined();
+    });
+
+    it("rejects other text", async () => {
+      expect((await checkModel(getSource("1.2ff"))).failure?.message).toContain("text 1.3ff");
+    });
+  });
 });

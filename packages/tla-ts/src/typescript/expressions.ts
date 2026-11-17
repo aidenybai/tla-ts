@@ -151,6 +151,7 @@ import {
 import {
   getBuiltIn,
   getBuiltInBinding,
+  getBuiltInPath,
   isBuiltInObject,
   translateBuiltInObject,
   translateIntrinsic,
@@ -1691,7 +1692,7 @@ const translateBuiltInCall = (
   const calledMethod =
     method === "call" &&
     ts.isPropertyAccessExpression(receiver) &&
-    receiver.expression.getText() === "Object.prototype"
+    getBuiltInPath(receiver.expression, context) === "Object.prototype"
       ? receiver.name.text
       : undefined;
   const ownMethod =
@@ -3618,7 +3619,7 @@ const isNumericOperand = (node: ts.Expression, context: Context): boolean => {
     return (
       parent.arguments.includes(node) &&
       ts.isPropertyAccessExpression(parent.expression) &&
-      parent.expression.expression.getText() === "Math"
+      getBuiltInPath(parent.expression.expression, context) === "Math"
     );
   }
   if (!ts.isBinaryExpression(parent)) return false;
@@ -3715,7 +3716,7 @@ const isComputedNumber = (node: ts.Expression, context: Context, seen: Set<ts.Sy
     (ts.isPropertyAccessExpression(inner) && inner.name.text === "length") ||
     (ts.isCallExpression(inner) &&
       ts.isPropertyAccessExpression(inner.expression) &&
-      inner.expression.expression.getText() === "Math")
+      getBuiltInPath(inner.expression.expression, context) === "Math")
   );
 };
 
