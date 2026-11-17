@@ -18,6 +18,7 @@ import {
   type Selector,
   type SourceLocation,
   type SourceRange,
+  type StepBody,
   type Theorem,
   type UseOrHide,
 } from "./ast";
@@ -51,6 +52,7 @@ interface Goal {
   statement: Expression | AssumeProve;
   isSuffices: boolean;
   isInProof: boolean;
+  keyword: string | undefined;
 }
 
 interface LocalName extends Binding {
@@ -95,6 +97,7 @@ export interface SelectionArguments {
 
 interface SelectionError {
   applications: SelectionArguments[];
+  nulls: NullSelection[];
   error: SanyError;
 }
 
@@ -108,15 +111,29 @@ type Reference = Expression & { kind: "Identifier" | "Apply" | "Subexpression" }
 
 export const LOCAL_RESOLUTION = { kind: "Local" } as const;
 
+export const SELECTION_NAME = "$subexpression";
+
 export interface NullSelection {
   node: Expression;
   error: SanyError;
 }
 
+interface SelectionArgument {
+  operator: string;
+  index: number;
+  range: SourceRange | undefined;
+}
+
 export const selections = new WeakSet<Expression>();
 export const selectionErrors = new WeakMap<Expression, SelectionError>();
+export const operatorSelectionErrors = new WeakMap<Expression, SanyError>();
+export const factReferences = new WeakMap<Fact[], Fact[]>();
+export const selectionArguments = new WeakMap<Expression, SelectionArgument>();
 export const nullSelections = new WeakMap<Expression, NullSelection[]>();
 const unresolvedExpressions = new WeakSet<Expression>();
+
+const findNullError = (nulls: NullSelection[] | undefined) =>
+  nulls?.find((selection) => unresolvedExpressions.has(selection.node))?.error;
 
 const renamedArities = new WeakMap<Expression, number>();
 
@@ -275,7 +292,9 @@ const findSymbol = (name: string, unit: Unit): ModuleSymbol | undefined => {
     };
   }
   const binding = getModuleBinding(name, unit, undefined);
-  if (binding?.isPending) return { key: name, arity: binding.arity, kind: binding.kind };
+  if (binding?.isPending) {
+    return { key: name, arity: binding.arity, params: binding.params, kind: binding.kind };
+  }
   return binding ? unit.imported.get(name) : undefined;
 };
 
@@ -507,6 +526,7 @@ const checkSelection = (
       (index === undefined ? undefined : reference.selectorRanges?.[index]) ??
       reference.location.range;
     if (range) unit.errors.push({ location: formatRange(range), message });
+    return undefined;
   };
   const isOutOfScope = goal.isSuffices === goal.isInProof;
   const statement = goal.statement;
@@ -524,9 +544,7 @@ const checkSelection = (
           node.kind !== "NewSymbol" &&
           node.kind !== "AssumeProve" &&
           getLabelBody(node).kind === "Let";
-        return isLet
-          ? undefined
-          : report(index - 1, "A name selector here must be from a LET clause.");
+        return isLet ? node : report(index - 1, "A name selector here must be from a LET clause.");
       }
       const clauses =
         statement.kind === "AssumeProve"
@@ -564,7 +582,7 @@ const checkSelection = (
       state.isSufficesOpen = false;
       continue;
     }
-    if (selector.kind === "Colon") return;
+    if (selector.kind === "Colon") return node;
     const operand =
       selector.kind === "Operand"
         ? getOperandName(selector.operand)
@@ -573,6 +591,7 @@ const checkSelection = (
           : "!(...)";
     const getPosition = (count: number) =>
       selector.kind === "Operand" ? getOperandIndex(selector.operand, count) : -1;
+    const unexpectedNull = `An unexpected null node specified by '${operand}'.\nThis is probably due to a previous error.`;
     if (state.isSufficesOpen) {
       if (getPosition(1) !== 0) {
         return report(
@@ -585,9 +604,15 @@ const checkSelection = (
       state.isSufficesOpen = false;
       continue;
     }
-    if (node.kind === "NewSymbol") return;
+    if (node.kind === "NewSymbol") return node;
     if (node.kind !== "AssumeProve") {
       const expression = getLabelBody(node);
+      if (unresolvedExpressions.has(expression)) {
+        return report(
+          index,
+          "Subexpression selection failed, probably due to an error in the selected expression.",
+        );
+      }
       if (["Number", "Decimal", "String"].includes(expression.kind)) {
         return report(index, "Selecting subexpression of expression that has none.");
       }
@@ -599,7 +624,7 @@ const checkSelection = (
         return report(index, `Choosing operand \`${operand}' of subexpression with no operands.`);
       }
       const sets = getBinder(expression)?.sets;
-      if (sets && selector.kind !== "Operand") return;
+      if (sets && selector.kind !== "Operand") return node;
       const operands =
         expression.kind === "Identifier"
           ? []
@@ -607,14 +632,17 @@ const checkSelection = (
             ? sets.length > 0
               ? sets
               : undefined
-            : expression.kind === "Except"
-              ? undefined
-              : getOperands(expression);
-      if (!operands) return;
-      const position = getPosition(operands.length);
+            : getOperands(expression);
+      if (!operands) return node;
+      const isExcept = expression.kind === "Except";
+      const position = getPosition(isExcept ? expression.updates.length + 1 : operands.length);
       if (position === -1) return report(index, `Nonexistent operand specified by \`${operand}'.`);
+      if (isExcept && position > 0) {
+        return report(index, "Selecting subexpression of an EXCEPT not yet implemented.");
+      }
       state.node = operands[position];
       state.isGoal = false;
+      if (unresolvedExpressions.has(state.node)) return report(index, unexpectedNull);
       continue;
     }
     const clauses = [...node.assumptions, node.conclusion];
@@ -629,14 +657,22 @@ const checkSelection = (
     }
     state.node = clause;
     state.isGoal = false;
+    if (
+      clause.kind !== "NewSymbol" &&
+      clause.kind !== "AssumeProve" &&
+      unresolvedExpressions.has(clause)
+    ) {
+      return report(index, unexpectedNull);
+    }
   }
-  if (isFact) return;
+  if (isFact) return state.node;
   if (state.node.kind === "AssumeProve") {
-    report(undefined, "Selected ASSUME/PROVE instead of expression.");
+    return report(undefined, "Selected ASSUME/PROVE instead of expression.");
   }
   if (state.node.kind === "NewSymbol") {
-    report(undefined, "Selected a NEW declaration as an expression or operator.");
+    return report(undefined, "Selected a NEW declaration as an expression or operator.");
   }
+  return state.node;
 };
 
 const isLabelReported = (label: LabelExpression, unit: Unit) => {
@@ -714,8 +750,7 @@ const checkReference = (
     selectors.length > 1 && first.kind === "Name"
       ? (lookupLocal(scope, first.name)?.goal ?? getGoal(first.name, unit))
       : undefined;
-  if (goal) checkSelection(expression, selectors, goal, scope, unit, isFact);
-  return goal !== undefined;
+  return goal && { node: checkSelection(expression, selectors, goal, scope, unit, isFact) };
 };
 
 const getSymbolArity = (
@@ -734,6 +769,14 @@ const getSymbolArity = (
     unit.errors.push({
       location: formatRange(getSpelledNameRange(expression, name)),
       message: "Step number of non-expression step used as an expression.",
+    });
+    return undefined;
+  }
+  const keyword = local?.goal?.keyword;
+  if (keyword) {
+    unit.errors.push({
+      location: formatRange(getSpelledNameRange(expression, name)),
+      message: `${keyword} proof step selected instead of expression.`,
     });
     return undefined;
   }
@@ -759,6 +802,22 @@ const getSymbolArity = (
         getSpelledNameRange(expression, name),
       unit,
     );
+    return undefined;
+  }
+  if (
+    expression.kind !== "OperatorReference" &&
+    prefix !== "" &&
+    isPendingSelectionReported(
+      prefix,
+      expression.kind === "Apply" && expression.argumentCounts
+        ? expression.args.slice(0, expression.argumentCounts[0])
+        : [],
+      expression.selectorRanges?.[0],
+      (expression.kind === "Apply" ? expression.argumentRanges?.[0] : undefined) ?? location.range,
+      scope,
+      unit,
+    )
+  ) {
     return undefined;
   }
   if (selected || (prefix !== "" && isFact(prefix, unit))) {
@@ -1001,16 +1060,22 @@ const isInstanceArityReported = (
   scope: LocalName | undefined,
   unit: Unit,
 ) => {
-  if (expression.kind !== "Identifier" && expression.kind !== "Apply") return false;
+  if (!isReference(expression)) return false;
+  const selectors = getSelectors(expression);
+  const nameCount = selectors.findIndex((selector) => selector.kind !== "Name");
   const instance = findInstance(
-    expression.kind === "Identifier" ? expression.name : expression.operator,
+    selectors
+      .slice(0, nameCount === -1 ? selectors.length : nameCount)
+      .flatMap((selector) => (selector.kind === "Name" ? [selector.name] : []))
+      .join("!"),
     scope,
     unit,
   );
-  const count = expression.kind === "Apply" ? (expression.argumentCounts?.[0] ?? 0) : 0;
+  const first = selectors[0];
+  const count = first.kind === "Name" ? first.args.length : 0;
   if (!instance || count === instance.arity) return false;
   const range =
-    (expression.kind === "Apply" ? expression.argumentRanges?.[0] : undefined) ??
+    (expression.kind === "Identifier" ? undefined : expression.argumentRanges?.[0]) ??
     expression.location.range;
   if (range) {
     unit.errors.push({
@@ -1030,7 +1095,7 @@ const isArgumentCountReported = (
 ) => {
   const params = callee?.kind === "Definition" ? callee.params : undefined;
   if (!callee || !params || params.length === callee.arity) return false;
-  if (range) {
+  if (range && !unit.isGenerated) {
     unit.errors.push({
       location: formatRange(range),
       message: `Wrong number of arguments (${count}) given to operator '${resolveSynonym(name)}', \nwhich requires ${params.length} arguments.`,
@@ -1053,10 +1118,14 @@ const matchArgument = (
   };
   const range = arg.location.range;
   if (expected === 0) {
+    const selectionError = operatorSelectionErrors.get(arg);
     // Deviation from SANY: SANY names its internal node kind here, where tla-ts words it as for a name.
     if (arg.kind === "Lambda" && arg.operator !== undefined) {
       report(range, `The operator ${resolveSynonym(arg.operator)} requires 1 arguments.`);
+    } else if (selectionError) {
+      unit.errors.push(selectionError);
     } else if (arg.kind === "Lambda" && range) {
+      unresolvedExpressions.add(arg);
       report(range, "LAMBDA expression used where an expression is required.");
     } else if (arg.kind === "OperatorReference") {
       const argArity = getSymbolArity(arg, arg.operator, scope, unit);
@@ -1140,11 +1209,19 @@ const resolveApply = (
   }
   const operatorRange =
     expression.selectorRanges?.at(-1) ?? getSpelledNameRange(expression, operator);
-  const matches = expression.args
-    .slice(0, params.length)
-    .map((arg, index) =>
-      matchArgument(arg, params[index], index, operator, operatorRange, scope, unit),
+  const isSelection = operator === SELECTION_NAME;
+  const matches = expression.args.slice(0, params.length).map((arg, index) => {
+    const source = isSelection ? selectionArguments.get(arg) : undefined;
+    return matchArgument(
+      arg,
+      params[index],
+      source?.index ?? index,
+      source?.operator ?? operator,
+      source?.range ?? operatorRange,
+      scope,
+      unit,
     );
+  });
   if (
     isArgumentCountReported(
       callee,
@@ -1160,7 +1237,7 @@ const resolveApply = (
     if (!isMatched && expression.location.range) {
       unit.errors.push({
         location: formatRange(expression.location.range),
-        message: `Argument number ${index + 1} to operator '${operator}' \nshould be a ${params[index]}-parameter operator.`,
+        message: `Argument number ${index + 1} to operator '${isSelection ? "LAMBDA" : operator}' \nshould be a ${params[index]}-parameter operator.`,
       });
     }
   });
@@ -1175,19 +1252,21 @@ const isSelectionReported = (expression: Expression, scope: LocalName | undefine
   const failed = selectionErrors.get(expression);
   if (!failed) return false;
   failed.applications.forEach((application) =>
-    application.args.forEach((arg, index) =>
-      matchArgument(
-        arg,
-        application.params[index],
-        index,
-        application.operator,
-        application.range,
-        scope,
-        unit,
+    application.args
+      .slice(0, application.params.length)
+      .forEach((arg, index) =>
+        matchArgument(
+          arg,
+          application.params[index],
+          index,
+          application.operator,
+          application.range,
+          scope,
+          unit,
+        ),
       ),
-    ),
   );
-  unit.errors.push(failed.error);
+  unit.errors.push(findNullError(failed.nulls) ?? failed.error);
   return true;
 };
 
@@ -1211,10 +1290,8 @@ const resolveExpression = (
   unit: Unit,
 ): void => {
   if (selections.has(expression) && !unit.isGenerated) {
-    const failed = nullSelections
-      .get(expression)
-      ?.find((selection) => unresolvedExpressions.has(selection.node));
-    if (failed) unit.errors.push(failed.error);
+    const failed = findNullError(nullSelections.get(expression));
+    if (failed) unit.errors.push(failed);
     else resolveExpression(expression, scope, { ...unit, isGenerated: true });
     return;
   }
@@ -1266,6 +1343,7 @@ const resolveExpression = (
     case "Lambda":
       if (selections.has(expression)) resolveLambda(expression, scope, unit);
       else if (expression.location.range) {
+        unresolvedExpressions.add(expression);
         unit.errors.push({
           location: formatRange(expression.location.range),
           message: "LAMBDA expression used where an expression is required.",
@@ -1389,85 +1467,150 @@ const resolveExpression = (
       resolveExpression(expression.body, scope, { ...unit, labelParams: [], labels: new Set() });
       checkLabel(expression, scope, unit);
       return;
-    case "Subexpression": {
-      if (isSelectionReported(expression, scope, unit)) return;
-      expression.selectors
-        .flatMap((selector) => ("args" in selector ? selector.args : []))
-        .forEach((arg) => resolveArgument(arg, scope, unit));
-      if (checkReference(expression, scope, unit, false)) return;
-      const head = expression.selectors[0];
-      const range = expression.selectorRanges?.[0];
-      const nameCount = expression.selectors.findIndex((selector) => selector.kind !== "Name");
-      const names = expression.selectors
-        .slice(0, nameCount)
-        .flatMap((selector) => (selector.kind === "Name" ? [selector.name] : []));
-      const symbolIndex = names.findIndex(
-        (_name, index) => index > 0 && findSymbol(names.slice(0, index + 1).join("!"), unit),
-      );
-      const isInstance =
-        names.length > 1 &&
-        (lookupLocal(scope, names[0]) ?? getModuleBinding(names[0], unit, undefined))?.kind ===
-          "Instance";
-      const lastRange = expression.selectorRanges?.[nameCount - 1];
-      if (isInstance && symbolIndex === -1 && range && lastRange) {
-        unit.errors.push({
-          location: formatRange({ module: range.module, start: range.start, end: lastRange.end }),
-          message: `Unknown operator: \`${resolveSynonym(names.join("!"))}'.`,
-        });
-        return;
-      }
-      const name = names.slice(0, symbolIndex + 1).join("!");
-      const symbol = symbolIndex > 0 ? findSymbol(name, unit) : undefined;
-      const argumentCount = expression.selectors
-        .slice(0, symbolIndex + 1)
-        .flatMap((selector) => ("args" in selector ? selector.args : [])).length;
-      const argumentRange = expression.argumentRanges?.[symbolIndex] ?? expression.location.range;
-      if (symbol && symbol.arity !== argumentCount && argumentRange) {
-        unit.errors.push({
-          location: formatRange(argumentRange),
-          message: `The operator ${resolveSynonym(name)} requires ${symbol.arity} arguments.`,
-        });
-        return;
-      }
-      if (head.kind !== "Name" || expression.selectors[1].kind === "Name" || !range) return;
-      const binding = lookupLocal(scope, head.name) ?? findSymbol(head.name, unit);
-      if ((binding === undefined && !isFact(head.name, unit)) || binding?.kind === "Instance") {
-        unit.errors.push({
-          location: formatRange(range),
-          message: `Unknown operator: \`${resolveSynonym(head.name)}'.`,
-        });
-      } else if (binding && !SELECTABLE_KINDS.has(binding.kind)) {
-        reportUnselectable(head.name, range, unit);
-      }
-    }
+    case "Subexpression":
+      isSubexpressionReported(expression, scope, unit);
+      return;
   }
 };
 
-const checkFacts = (facts: Fact[], scope: LocalName | undefined, unit: Unit) =>
-  facts.forEach((fact) => {
-    if (fact.kind === "ExceptAt" && fact.location.range) {
-      unit.errors.push({
-        location: formatRange(fact.location.range),
-        message: "Unknown operator: `@'.",
-      });
-      return;
-    }
-    if (
-      fact.kind === "ModuleFact" ||
-      isInstanceArityReported(fact, scope, unit) ||
-      checkReference(fact, scope, unit, true)
-    ) {
-      return;
-    }
-    const name =
-      fact.kind === "Identifier" ? fact.name : fact.kind === "Apply" ? fact.operator : "";
-    if (fact.kind === "Identifier" && lookupLocal(scope, name)?.isNonFact) {
-      unit.errors.push({
-        location: formatRange(getSpelledNameRange(fact, name)),
-        message: "Step number of non-fact used as a fact",
-      });
-    } else if (!isFact(name, unit)) resolveExpression(fact, scope, unit);
+const isPendingSelectionReported = (
+  name: string,
+  args: Expression[],
+  selectorRange: SourceRange | undefined,
+  argumentsRange: SourceRange | undefined,
+  scope: LocalName | undefined,
+  unit: Unit,
+) => {
+  const pending = lookupLocal(scope, name) ?? getModuleBinding(name, unit, undefined);
+  if (!pending?.isPending || !selectorRange || !argumentsRange) return false;
+  if (args.length !== pending.arity) {
+    unit.errors.push({
+      location: formatRange(argumentsRange),
+      message: `The operator ${name} requires ${pending.arity} arguments.`,
+    });
+    return true;
+  }
+  args.forEach((arg) => resolveExpression(arg, scope, unit));
+  unit.errors.push({
+    location: formatRange(selectorRange),
+    message: `Subexpression of  \`${name}' used inside the operator's definition.`,
   });
+  return true;
+};
+
+const isSubexpressionReported = (
+  expression: Expression & { kind: "Subexpression" },
+  scope: LocalName | undefined,
+  unit: Unit,
+) => {
+  if (
+    isInstanceArityReported(expression, scope, unit) ||
+    isSelectionReported(expression, scope, unit)
+  ) {
+    return true;
+  }
+  const head = expression.selectors[0];
+  const range = expression.selectorRanges?.[0];
+  const nameCount = expression.selectors.findIndex((selector) => selector.kind !== "Name");
+  const names = expression.selectors
+    .slice(0, nameCount)
+    .flatMap((selector) => (selector.kind === "Name" ? [selector.name] : []));
+  const symbolIndex = names.findIndex(
+    (_name, index) => index > 0 && findSymbol(names.slice(0, index + 1).join("!"), unit),
+  );
+  const isInstance =
+    names.length > 1 &&
+    (lookupLocal(scope, names[0]) ?? getModuleBinding(names[0], unit, undefined))?.kind ===
+      "Instance";
+  const lastRange = expression.selectorRanges?.[nameCount - 1];
+  if (isInstance && symbolIndex === -1 && range && lastRange) {
+    unit.errors.push({
+      location: formatRange({ module: range.module, start: range.start, end: lastRange.end }),
+      message: `Unknown operator: \`${resolveSynonym(names.join("!"))}'.`,
+    });
+    return true;
+  }
+  const name = names.slice(0, symbolIndex + 1).join("!");
+  const symbol = symbolIndex > 0 ? findSymbol(name, unit) : undefined;
+  const argumentCount = expression.selectors
+    .slice(0, symbolIndex + 1)
+    .flatMap((selector) => ("args" in selector ? selector.args : [])).length;
+  const argumentRange = expression.argumentRanges?.[symbolIndex] ?? expression.location.range;
+  if (symbol && symbol.arity !== argumentCount && argumentRange) {
+    unit.errors.push({
+      location: formatRange(argumentRange),
+      message: `The operator ${resolveSynonym(name)} requires ${symbol.arity} arguments.`,
+    });
+    return true;
+  }
+  if (head.kind === "Name" && expression.selectors[1].kind !== "Name" && range) {
+    const local = lookupLocal(scope, head.name);
+    const binding = local ?? findSymbol(head.name, unit);
+    if ((binding === undefined && !isFact(head.name, unit)) || binding?.kind === "Instance") {
+      unit.errors.push({
+        location: formatRange(range),
+        message: `Unknown operator: \`${resolveSynonym(head.name)}'.`,
+      });
+      return true;
+    }
+    if (binding && (!SELECTABLE_KINDS.has(binding.kind) || local?.isNonFact)) {
+      reportUnselectable(head.name, range, unit);
+      return true;
+    }
+  }
+  if (
+    head.kind === "Name" &&
+    isPendingSelectionReported(
+      head.name,
+      head.args,
+      range,
+      expression.argumentRanges?.[0] ?? expression.location.range,
+      scope,
+      unit,
+    )
+  ) {
+    return true;
+  }
+  expression.selectors
+    .flatMap((selector) => ("args" in selector ? selector.args : []))
+    .forEach((arg) => resolveArgument(arg, scope, unit));
+  const selected = checkReference(expression, scope, unit, false);
+  return selected ? selected.node === undefined : false;
+};
+
+const checkFact = (fact: Fact, reference: Fact, scope: LocalName | undefined, unit: Unit) => {
+  if (fact.kind === "ModuleFact") return undefined;
+  if (fact.kind === "ExceptAt" && fact.location.range) {
+    unit.errors.push({
+      location: formatRange(fact.location.range),
+      message: "Unknown operator: `@'.",
+    });
+    return BUILTIN_LOCATION;
+  }
+  const hidden = getHiddenExpressionLocation(fact, reference, scope, unit);
+  if (isInstanceArityReported(fact, scope, unit)) return hidden;
+  const selected = checkReference(fact, scope, unit, true);
+  if (selected) {
+    const kind = selected.node?.kind;
+    if (kind === undefined) return BUILTIN_LOCATION;
+    return kind === "AssumeProve" || kind === "NewSymbol"
+      ? undefined
+      : fact.location.range && formatRange(fact.location.range);
+  }
+  if (fact.kind === "Subexpression") {
+    return isSubexpressionReported(fact, scope, unit) ? BUILTIN_LOCATION : hidden;
+  }
+  const name = fact.kind === "Identifier" ? fact.name : fact.kind === "Apply" ? fact.operator : "";
+  if (fact.kind === "Identifier" && lookupLocal(scope, name)?.isNonFact) {
+    unit.errors.push({
+      location: formatRange(getSpelledNameRange(fact, name)),
+      message: "Step number of non-fact used as a fact",
+    });
+    return BUILTIN_LOCATION;
+  }
+  if (!isFact(name, unit) && !lookupLocal(scope, name)?.goal) resolveExpression(fact, scope, unit);
+  return hidden;
+};
 
 const isDefinitionEntry = (def: Fact, scope: LocalName | undefined, unit: Unit) => {
   const range = def.location.range;
@@ -1491,9 +1634,16 @@ const isDefinitionEntry = (def: Fact, scope: LocalName | undefined, unit: Unit) 
   return false;
 };
 
-const getHiddenExpressionLocation = (fact: Fact, scope: LocalName | undefined, unit: Unit) => {
+const getHiddenExpressionLocation = (
+  fact: Expression,
+  reference: Fact,
+  scope: LocalName | undefined,
+  unit: Unit,
+) => {
   const range = fact.location.range && formatRange(fact.location.range);
-  if (fact.kind === "ModuleFact" || selections.has(fact)) return undefined;
+  if (selections.has(fact)) {
+    return reference.location.range && formatRange(reference.location.range);
+  }
   if (selectionErrors.has(fact) || fact.kind === "ExceptAt") return BUILTIN_LOCATION;
   switch (fact.kind) {
     case "Number":
@@ -1526,14 +1676,13 @@ const checkUseOrHide = (
   scope: LocalName | undefined,
   unit: Unit,
 ) => {
-  const hidden =
-    statement.kind === "Hide"
-      ? statement.facts.map((fact) => getHiddenExpressionLocation(fact, scope, unit))
-      : [];
-  checkFacts(statement.facts, scope, unit);
+  const references = factReferences.get(statement.facts) ?? statement.facts;
+  const hidden = statement.facts.map((fact, index) =>
+    checkFact(fact, references[index], scope, unit),
+  );
   const defCount = statement.defs.filter((def) => isDefinitionEntry(def, scope, unit)).length;
   hidden.forEach((location) => {
-    if (location) {
+    if (location && statement.kind === "Hide") {
       unit.errors.push({
         location,
         message:
@@ -1614,6 +1763,42 @@ const resolveLocalInstance = (instance: Instance, scope: LocalName | undefined, 
       );
 };
 
+const getStepGoal = (body: StepBody, location: SourceLocation): Goal | undefined => {
+  const createGoal = (keyword: string, statement: Expression) => ({
+    statement,
+    isSuffices: false,
+    isInProof: false,
+    keyword,
+  });
+  switch (body.kind) {
+    case "Have":
+      return createGoal("HAVE", { kind: "Tuple", elements: [body.expression], location });
+    case "Case":
+      return createGoal("CASE", { kind: "Tuple", elements: [body.expression], location });
+    case "Witness":
+      return createGoal("WITNESS", { kind: "Tuple", elements: body.expressions, location });
+    case "Take":
+      return createGoal("TAKE", { kind: "Tuple", elements: getBoundSets(body.bounds), location });
+    case "Pick":
+      return createGoal(
+        "PICK",
+        body.bounds.length > 0
+          ? { kind: "Exists", bounds: body.bounds, body: body.body, location }
+          : {
+              kind: "UnboundedQuantifier",
+              quantifier: "Exists",
+              names: body.names,
+              body: body.body,
+              location,
+            },
+      );
+    case "Qed":
+      return createGoal("QED step", { kind: "Tuple", elements: [], location });
+    default:
+      return undefined;
+  }
+};
+
 const resolveStep = (
   step: ProofStep,
   scope: LocalName | undefined,
@@ -1624,8 +1809,9 @@ const resolveStep = (
     step.name === undefined
       ? unit
       : { ...unit, hasLabelScope: true, labelParams: [], labels: new Set<string>() };
+  const goal = getStepGoal(body, step.location);
   const bindStep = (parent: LocalName | undefined): LocalName | undefined =>
-    step.name === undefined ? parent : { name: step.name, arity: 0, kind: "Theorem", parent };
+    step.name === undefined ? parent : { name: step.name, arity: 0, kind: "Theorem", parent, goal };
   const bindNonFactStep = (parent: LocalName | undefined): LocalName | undefined =>
     step.name === undefined
       ? parent
@@ -1639,10 +1825,25 @@ const resolveStep = (
         resolveProof(step.proof, proofScope, unit);
         return body.isSuffices ? assumed : scope;
       }
-      const goal = { statement: body.statement, isSuffices: body.isSuffices, isInProof: true };
-      resolveProof(step.proof, { name, arity: 0, kind: "Theorem", parent: proofScope, goal }, unit);
-      goal.isInProof = false;
-      return { name, arity: 0, kind: "Theorem", parent: body.isSuffices ? assumed : scope, goal };
+      const assertion = {
+        statement: body.statement,
+        isSuffices: body.isSuffices,
+        isInProof: true,
+        keyword: body.isSuffices && body.statement.kind !== "AssumeProve" ? "SUFFICES" : undefined,
+      };
+      resolveProof(
+        step.proof,
+        { name, arity: 0, kind: "Theorem", parent: proofScope, goal: assertion },
+        unit,
+      );
+      assertion.isInProof = false;
+      return {
+        name,
+        arity: 0,
+        kind: "Theorem",
+        parent: body.isSuffices ? assumed : scope,
+        goal: assertion,
+      };
     }
     case "Use":
     case "Hide":
@@ -1973,7 +2174,17 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
   const goals = new Map(
     module.theorems.flatMap((theorem): [string, Goal][] =>
       theorem.name !== undefined && theorem.statement.kind === "AssumeProve"
-        ? [[theorem.name, { statement: theorem.statement, isSuffices: false, isInProof: false }]]
+        ? [
+            [
+              theorem.name,
+              {
+                statement: theorem.statement,
+                isSuffices: false,
+                isInProof: false,
+                keyword: undefined,
+              },
+            ],
+          ]
         : [],
     ),
   );

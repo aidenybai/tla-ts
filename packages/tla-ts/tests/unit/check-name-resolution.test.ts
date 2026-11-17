@@ -184,6 +184,8 @@ describe("name resolution matches SANY", () => {
     ).rejects.toThrow(TlaSyntaxError);
   });
 
+  const exceptSelection = "Selecting subexpression of an EXCEPT not yet implemented.";
+  const letSelector = "A name selector here must be from a LET clause.";
   it.each([
     ["f == g", [["line 2, col 6 to line 2, col 6", "Unknown operator: `g'."]]],
     [
@@ -715,6 +717,202 @@ describe("name resolution matches SANY", () => {
         ["line 3, col 24 to line 3, col 27", "Cannot take subexpression of `TRUE'."],
         ["line 3, col 34 to line 3, col 35", "Unknown operator: `zz'."],
         ["line 3, col 58 to line 3, col 58", "Cannot take subexpression of `z'."],
+      ],
+    ],
+    [
+      "CONSTANT c, Cop(_)\nI == INSTANCE Naturals\nOp(P1(_, _)) == Cop(LAMBDA p : p)!1 /\\ P1(G0, 0)!1!: /\\ zz(G1)!1 /\\ c(G2)!1 /\\ I!Nope(G3)!1",
+      [
+        ["line 4, col 17 to line 4, col 19", "Cannot take subexpression of `Cop'."],
+        ["line 4, col 40 to line 4, col 41", "Cannot take subexpression of `P1'."],
+        ["line 4, col 57 to line 4, col 58", "Unknown operator: `zz'."],
+        ["line 4, col 69 to line 4, col 69", "Cannot take subexpression of `c'."],
+        ["line 4, col 80 to line 4, col 85", "Unknown operator: `I!Nope'."],
+      ],
+    ],
+    [
+      "CONSTANT c, f\nOp == [f EXCEPT ![1] = 2, ![2] = 3]\nOp2 == [f EXCEPT ![1] = 2]\nA == Op!1 /\\ Op!2 /\\ Op!3 /\\ Op!4 /\\ Op!>> /\\ Op2!>> /\\ Op!<< /\\ Op!@\nTHEOREM T == [f EXCEPT ![1] = 2] = f\nB == T!1!1 /\\ T!1!2 /\\ T!1!3 /\\ T!1!>> /\\ T!1!@\nTHEOREM U == ASSUME c PROVE [f EXCEPT ![1] = 2, ![2] = 3] = f\nC == U!2!1!1 /\\ U!2!1!2 /\\ U!2!1!4 /\\ U!2!1!>> /\\ U!2!1!@\nUSE U!2!1!2",
+      [
+        ["line 5, col 17 to line 5, col 17", exceptSelection],
+        ["line 5, col 25 to line 5, col 25", exceptSelection],
+        [
+          "line 5, col 33 to line 5, col 33",
+          "Nonexistent operand specified by `argument selector 4'.",
+        ],
+        ["line 5, col 41 to line 5, col 42", "Nonexistent operand specified by `>>'."],
+        ["line 5, col 51 to line 5, col 52", exceptSelection],
+        ["line 5, col 69 to line 5, col 69", "Nonexistent operand specified by `@'."],
+        ["line 7, col 19 to line 7, col 19", exceptSelection],
+        [
+          "line 7, col 28 to line 7, col 28",
+          "Nonexistent operand specified by `argument selector 3'.",
+        ],
+        ["line 7, col 37 to line 7, col 38", exceptSelection],
+        ["line 7, col 47 to line 7, col 47", "Nonexistent operand specified by `@'."],
+        ["line 9, col 23 to line 9, col 23", exceptSelection],
+        [
+          "line 9, col 34 to line 9, col 34",
+          "Nonexistent operand specified by `argument selector 4'.",
+        ],
+        ["line 9, col 45 to line 9, col 46", "Nonexistent operand specified by `>>'."],
+        ["line 9, col 57 to line 9, col 57", "Nonexistent operand specified by `@'."],
+        ["line 10, col 11 to line 10, col 11", exceptSelection],
+      ],
+    ],
+    [
+      "CONSTANT c\nRECURSIVE S, U(_)\nA == S!lab /\\ U(1)!lab /\\ U!lab /\\ U(1, 2)!lab /\\ U(LAMBDA p : p)!lab /\\ U(S)!lab(c)\nB == U!1 /\\ U(1, 2)!1 /\\ U(LAMBDA p : p)!1 /\\ (LET RECURSIVE T IN T!lab) /\\ (LET RECURSIVE V(_) IN V!lab!1)",
+      [
+        [
+          "line 4, col 6 to line 4, col 6",
+          "Subexpression of  `S' used inside the operator's definition.",
+        ],
+        [
+          "line 4, col 15 to line 4, col 15",
+          "Subexpression of  `U' used inside the operator's definition.",
+        ],
+        ["line 4, col 27 to line 4, col 31", "The operator U requires 1 arguments."],
+        ["line 4, col 37 to line 4, col 42", "The operator U requires 1 arguments."],
+        [
+          "line 4, col 53 to line 4, col 64",
+          "LAMBDA expression used where an expression is required.",
+        ],
+        [
+          "line 4, col 51 to line 4, col 51",
+          "Subexpression of  `U' used inside the operator's definition.",
+        ],
+        [
+          "line 4, col 74 to line 4, col 74",
+          "Subexpression of  `U' used inside the operator's definition.",
+        ],
+        ["line 5, col 6 to line 5, col 8", "The operator U requires 1 arguments."],
+        ["line 5, col 14 to line 5, col 19", "The operator U requires 1 arguments."],
+        [
+          "line 5, col 28 to line 5, col 39",
+          "LAMBDA expression used where an expression is required.",
+        ],
+        [
+          "line 5, col 26 to line 5, col 26",
+          "Subexpression of  `U' used inside the operator's definition.",
+        ],
+        [
+          "line 5, col 62 to line 5, col 62",
+          "Symbol T declared in RECURSIVE statement but not defined.",
+        ],
+        [
+          "line 5, col 67 to line 5, col 67",
+          "Subexpression of  `T' used inside the operator's definition.",
+        ],
+        [
+          "line 5, col 92 to line 5, col 95",
+          "Symbol V declared in RECURSIVE statement but not defined.",
+        ],
+        ["line 5, col 100 to line 5, col 106", "The operator V requires 1 arguments."],
+        [
+          "line 6, col 1 to line 6, col 10",
+          "A VARIABLE declaration may not appear within a recursive definition section.",
+        ],
+        [
+          "line 3, col 11 to line 3, col 11",
+          "Symbol S declared in RECURSIVE statement but not defined.",
+        ],
+        [
+          "line 3, col 14 to line 3, col 17",
+          "Symbol U declared in RECURSIVE statement but not defined.",
+        ],
+      ],
+    ],
+    [
+      "CONSTANT c\nOp1 == {c, lab:: c} \\cap {LET L == c IN L}\nOp2(a) == {a, LET K(b) == b IN K(1)}\nA == Op1!1!lab /\\ Op1!<<!lab /\\ Op1!2!L /\\ Op1!2!1!L /\\ Op2(1)!2!1!K /\\ Op1!1!2!lab",
+      [
+        ["line 5, col 10 to line 5, col 10", letSelector],
+        ["line 5, col 23 to line 5, col 24", letSelector],
+        ["line 5, col 37 to line 5, col 37", letSelector],
+        ["line 5, col 66 to line 5, col 66", letSelector],
+        ["line 5, col 79 to line 5, col 79", letSelector],
+      ],
+    ],
+    [
+      "CONSTANT c\nOp0(a0, P1(_, _)) == l1:: a0\nOp3(P(_, _)) == {LET L(G(_)) == lab:: G(1) IN L(P)}\nA == Op0(c, 1)!l1 /\\ Op3(LAMBDA p : p)!1!1 /\\ Op3(Op0)!<<!L(c)!lab",
+      [
+        ["line 4, col 49 to line 4, col 49", "Expected arity 1 but found operator of arity 2."],
+        [
+          "line 4, col 47 to line 4, col 50",
+          "Argument number 1 to operator 'L' \nshould be a 1-parameter operator.",
+        ],
+        [
+          "line 5, col 13 to line 5, col 13",
+          "An expression appears as argument number 2 (counting from 1) to operator 'Op0', in a position an operator is required.",
+        ],
+        [
+          "line 5, col 6 to line 5, col 17",
+          "Argument number 2 to operator 'LAMBDA' \nshould be a 2-parameter operator.",
+        ],
+        [
+          "line 5, col 22 to line 5, col 24",
+          "Lambda expression with arity 1 used as argument 1 of operator `Op3', \nbut an operator of arity 2 is required.",
+        ],
+        [
+          "line 5, col 22 to line 5, col 42",
+          "Argument number 1 to operator 'LAMBDA' \nshould be a 2-parameter operator.",
+        ],
+        ["line 5, col 61 to line 5, col 61", "Expected arity 1 but found operator of arity 0."],
+        [
+          "line 5, col 47 to line 5, col 66",
+          "Argument number 1 to operator 'LAMBDA' \nshould be a 2-parameter operator.",
+        ],
+        [
+          "line 5, col 47 to line 5, col 66",
+          "Argument number 2 to operator 'LAMBDA' \nshould be a 1-parameter operator.",
+        ],
+      ],
+    ],
+    [
+      "CONSTANT c\nOp1(a0) == {a0}\nOp == {c, Op1(LAMBDA p : p)}\nA == Op!2!1!1 /\\ Op!2!1 /\\ Op!2",
+      [
+        [
+          "line 4, col 15 to line 4, col 26",
+          "LAMBDA expression used where an expression is required.",
+        ],
+        [
+          "line 5, col 11 to line 5, col 11",
+          "An unexpected null node specified by 'argument selector 1'.\nThis is probably due to a previous error.",
+        ],
+        [
+          "line 5, col 23 to line 5, col 23",
+          "An unexpected null node specified by 'argument selector 1'.\nThis is probably due to a previous error.",
+        ],
+      ],
+    ],
+    [
+      "CONSTANT c\nRECURSIVE R(_, _), Q(_), P(_, _)\nA == R(c, R)!1!@ /\\ Q(Q)!1 /\\ P(P, LAMBDA p : p)!1\nR(a, b) == a\nQ(a) == Q(a) /\\ Q(Q)!1\nP == c",
+      [
+        ["line 4, col 11 to line 4, col 11", "The operator R requires 2 arguments."],
+        [
+          "line 4, col 6 to line 4, col 6",
+          "Subexpression of  `R' used inside the operator's definition.",
+        ],
+        ["line 4, col 23 to line 4, col 23", "The operator Q requires 1 arguments."],
+        [
+          "line 4, col 21 to line 4, col 21",
+          "Subexpression of  `Q' used inside the operator's definition.",
+        ],
+        ["line 4, col 33 to line 4, col 33", "The operator P requires 2 arguments."],
+        [
+          "line 4, col 36 to line 4, col 47",
+          "LAMBDA expression used where an expression is required.",
+        ],
+        [
+          "line 4, col 31 to line 4, col 31",
+          "Subexpression of  `P' used inside the operator's definition.",
+        ],
+        ["line 6, col 19 to line 6, col 19", "The operator Q requires 1 arguments."],
+        [
+          "line 6, col 17 to line 6, col 17",
+          "Subexpression of  `Q' used inside the operator's definition.",
+        ],
+        [
+          "line 7, col 1 to line 7, col 6",
+          "Definition of P has different arity than its RECURSIVE declaration.",
+        ],
       ],
     ],
     [
@@ -1953,6 +2151,453 @@ describe("name resolution matches SANY", () => {
       ]),
     );
   });
+
+  const hidden =
+    "The only expression allowed as a fact in a HIDE is \nthe name of a theorem, assumption, or step.";
+  it.each<[string, string, [string, string][]]>([
+    [
+      "a definition or a theorem",
+      "EXTENDS Naturals\nCONSTANT c\nOp == 1 + 2\nPar(p) == p + 1\nLab == lab :: 1 + 2\nTHEOREM T == 1 = 1\nHIDE Op!1\nHIDE Par!1\nHIDE Par(2)!1\nHIDE Lab!lab\nHIDE Lab!lab!1\nHIDE T!1, T!<<\nHIDE T!1, T!1\nHIDE T!:\nHIDE Op!3",
+      [
+        ["line 8, col 6 to line 8, col 9", hidden],
+        ["line 9, col 6 to line 9, col 10", "The operator Par requires 1 arguments."],
+        ["In module --TLA+ BUILTINS--", hidden],
+        ["line 10, col 6 to line 10, col 13", hidden],
+        ["line 11, col 6 to line 11, col 12", hidden],
+        ["line 12, col 6 to line 12, col 14", hidden],
+        ["line 13, col 6 to line 13, col 8", hidden],
+        ["line 13, col 11 to line 13, col 14", hidden],
+        ["line 14, col 6 to line 14, col 8", hidden],
+        ["line 14, col 11 to line 14, col 13", hidden],
+        ["line 15, col 6 to line 15, col 8", hidden],
+        [
+          "line 16, col 9 to line 16, col 9",
+          "Nonexistent operand specified by `argument selector 3'.",
+        ],
+      ],
+    ],
+    [
+      "an ASSUME/PROVE theorem",
+      "EXTENDS Naturals\nTHEOREM U == ASSUME NEW c, c = 1, ASSUME TRUE PROVE TRUE PROVE c = 1\nHIDE U!1\nHIDE U!2\nHIDE U!3\nHIDE U!4\nHIDE U!2!1\nHIDE U!:\nHIDE U!5",
+      [
+        [
+          "line 5, col 8 to line 5, col 8",
+          "Accessing ASSUME/PROVE clause within the scope of a declaration\n from outside that declaration's scope.",
+        ],
+        ["In module --TLA+ BUILTINS--", hidden],
+        [
+          "line 6, col 8 to line 6, col 8",
+          "Accessing ASSUME/PROVE clause within the scope of a declaration\n from outside that declaration's scope.",
+        ],
+        [
+          "line 7, col 8 to line 7, col 8",
+          "Accessing ASSUME/PROVE clause within the scope of a declaration\n from outside that declaration's scope.",
+        ],
+        [
+          "line 8, col 8 to line 8, col 8",
+          "Accessing ASSUME/PROVE clause within the scope of a declaration\n from outside that declaration's scope.",
+        ],
+        [
+          "line 10, col 8 to line 10, col 8",
+          "Nonexistent operand specified by `argument selector 5'.",
+        ],
+      ],
+    ],
+    [
+      "a proof step",
+      "EXTENDS Naturals\nTHEOREM T == 1 = 1\n<1>1. 2 = 2\n  OBVIOUS\n<1>2. ASSUME NEW d PROVE d = d\n  OBVIOUS\n<1>3. 3 = 3\n  <2>1. HIDE <1>1!1\n  <2>2. HIDE <1>2!1\n  <2>3. HIDE <1>2!2\n  <2>4. HIDE <1>1\n  <2>5. HIDE <1>1!:\n  <2>6. HIDE <1>1!9\n  <2>7. QED\n<1>4. QED",
+      [
+        ["line 9, col 14 to line 9, col 19", hidden],
+        [
+          "line 11, col 19 to line 11, col 19",
+          "Accessing ASSUME/PROVE clause within the scope of a declaration\n from outside that declaration's scope.",
+        ],
+        ["In module --TLA+ BUILTINS--", hidden],
+        ["line 13, col 14 to line 13, col 19", hidden],
+        [
+          "line 14, col 19 to line 14, col 19",
+          "Nonexistent operand specified by `argument selector 9'.",
+        ],
+      ],
+    ],
+    [
+      "a LET or a quantifier",
+      "EXTENDS Naturals\nOp == LET L == 1 + 2 IN L\nF == \\A x \\in {1} : x = 1\nHIDE Op!L\nHIDE Op!1\nHIDE F!1\nHIDE F!@\nHIDE F!(1)",
+      [
+        ["line 5, col 9 to line 5, col 9", "Cannot find label `L'."],
+        ["In module --TLA+ BUILTINS--", hidden],
+        ["line 6, col 6 to line 6, col 9", hidden],
+        ["line 7, col 6 to line 7, col 8", hidden],
+        ["line 8, col 6 to line 8, col 8", "Expected 1 arguments but found 0."],
+        ["line 9, col 6 to line 9, col 10", hidden],
+      ],
+    ],
+  ])(
+    "reports HIDE facts that select a subexpression of %s like SANY",
+    async (_name, source, errors) => {
+      await expect(checkNames(source)).rejects.toThrow(
+        createSanyError(
+          errors.map((error) => ({
+            location: error[0].startsWith("In module") ? error[0] : `${error[0]} of module M`,
+            message: error[1],
+          })),
+        ),
+      );
+    },
+  );
+
+  it.each<[string, string, string]>([
+    [
+      "EXTENDS Naturals\nTHEOREM T == 1 = 1\n<1>1. T!1 = 1\n  OBVIOUS\n<1>2. T!3 = 1\n  OBVIOUS\n<1>3. QED",
+      "line 6, col 9 to line 6, col 9 of module M",
+      "Nonexistent operand specified by `argument selector 3'.",
+    ],
+    [
+      "EXTENDS Naturals\nOp == 2\nTHEOREM T == Op = 2\nPROOF BY T!1, T!<<, T!9 DEF Op",
+      "line 5, col 23 to line 5, col 23 of module M",
+      "Nonexistent operand specified by `argument selector 9'.",
+    ],
+    [
+      "EXTENDS Naturals\nTHEOREM T == 1 = 1\n<1>1. 2 = 2\n  BY T\n<1>2. QED\n  <2>1. HIDE T!1\n  <2>2. QED",
+      "line 7, col 14 to line 7, col 16 of module M",
+      hidden,
+    ],
+  ])(
+    "selects from a theorem inside its own proof in %j like SANY",
+    async (source, location, message) => {
+      await expect(checkNames(source)).rejects.toThrow(createSanyError([{ location, message }]));
+    },
+  );
+
+  it("resolves a selection through an instance in a proof like SANY", async () => {
+    await expect(
+      checkNames(
+        "EXTENDS Naturals\n---- MODULE Inner ----\nOp == 1 + 2\n====\nI == INSTANCE Inner\nHIDE I!Op!1\nTHEOREM T == 1 = 1\n<1>1. I!Op!1 = 1\n  OBVIOUS\n<1>2. I!Op!3 = 1\n  OBVIOUS\n<1>3. QED\n  BY I!Op!4",
+      ),
+    ).rejects.toThrow(
+      createSanyError([
+        { location: "line 7, col 6 to line 7, col 11 of module M", message: hidden },
+        {
+          location: "line 11, col 12 to line 11, col 12 of module M",
+          message: "Nonexistent operand specified by `argument selector 3'.",
+        },
+        {
+          location: "line 14, col 11 to line 14, col 11 of module M",
+          message: "Nonexistent operand specified by `argument selector 4'.",
+        },
+      ]),
+    );
+  });
+
+  it.each<[string, [string, string][]]>([
+    [
+      "EXTENDS Naturals\nTHEOREM T == 1 = 1\n<1>1. DEFINE Z == 1\n<1>2. HIDE <1>1\n<1>3. USE <1>1\n<1>4. HIDE <1>2, <1>1!1\n<1>5. QED",
+      [
+        ["line 5, col 12 to line 5, col 15", "Step number of non-fact used as a fact"],
+        ["In module --TLA+ BUILTINS--", hidden],
+        ["line 6, col 11 to line 6, col 14", "Step number of non-fact used as a fact"],
+        ["line 7, col 12 to line 7, col 15", "Step number of non-fact used as a fact"],
+        ["line 7, col 18 to line 7, col 21", "Cannot take subexpression of `<1>1'."],
+      ],
+    ],
+    [
+      "EXTENDS Naturals\nCONSTANT c\nTHEOREM T == 1 = 1\n<1>1. DEFINE Z == 1 + 2\n<1>2. <1>1!1 = 1\n  OBVIOUS\n<1>3. c!1 = 1\n  OBVIOUS\n<1>4. QED",
+      [
+        ["line 6, col 7 to line 6, col 10", "Cannot take subexpression of `<1>1'."],
+        ["line 8, col 7 to line 8, col 7", "Cannot take subexpression of `c'."],
+      ],
+    ],
+    [
+      "EXTENDS Naturals\nCONSTANT c\nTHEOREM T == 1 = 1\n<1>1. DEFINE Z == 1 + 2\n<1>2. HIDE <1>1!1\n<1>3. QED",
+      [
+        ["line 6, col 12 to line 6, col 15", "Cannot take subexpression of `<1>1'."],
+        ["In module --TLA+ BUILTINS--", hidden],
+      ],
+    ],
+    [
+      "EXTENDS Naturals\nCONSTANT c\nHIDE c!1",
+      [
+        ["line 4, col 6 to line 4, col 6", "Cannot take subexpression of `c'."],
+        ["In module --TLA+ BUILTINS--", hidden],
+      ],
+    ],
+  ])("reports selecting from a step that is no fact in %j like SANY", async (source, errors) => {
+    await expect(checkNames(source)).rejects.toThrow(
+      createSanyError(
+        errors.map((error) => ({
+          location: error[0].startsWith("In module") ? error[0] : `${error[0]} of module M`,
+          message: error[1],
+        })),
+      ),
+    );
+  });
+
+  it("selects from operators that a DEFINE step defines for later steps like SANY", async () => {
+    await expect(
+      checkNames(
+        "EXTENDS Naturals\nTHEOREM T == 1 = 1\n<1>1. DEFINE Z(a) == a + 1\n<1>2. Z(2)!1 = 2\n  <2>1. DEFINE Y == Z(3)!2 + 1\n  <2>2. Y!1 = Z(1)!3\n    OBVIOUS\n  <2>3. QED\n<1>3. HIDE Y!1, Z(1)!1\n<1>4. QED",
+      ),
+    ).rejects.toThrow(
+      createSanyError([
+        {
+          location: "line 7, col 20 to line 7, col 20 of module M",
+          message: "Nonexistent operand specified by `argument selector 3'.",
+        },
+        {
+          location: "line 10, col 12 to line 10, col 12 of module M",
+          message: "Unknown operator: `Y'.",
+        },
+        { location: "In module --TLA+ BUILTINS--", message: hidden },
+        { location: "line 10, col 17 to line 10, col 22 of module M", message: hidden },
+      ]),
+    );
+  });
+
+  it("selects from LET operators inside theorems and proofs like SANY", async () => {
+    await expect(
+      checkNames(
+        "EXTENDS Naturals\nCONSTANT c\nLEMMA LET L(a, P(_, _)) == a[c] IN L(LAMBDA p : 1, c)!@\n<1>1. LET K(a) == lab:: a + 1 IN K(2)!lab!3 = K(1)!1\n<1> DEFINE D == LET J(b) == {b} IN J(c)!2\n<1>2. QED",
+      ),
+    ).rejects.toThrow(
+      createSanyError([
+        {
+          location: "line 4, col 38 to line 4, col 49 of module M",
+          message: "LAMBDA expression used where an expression is required.",
+        },
+        {
+          location: "line 4, col 52 to line 4, col 52 of module M",
+          message: "Expected arity 2 but found operator of arity 0.",
+        },
+        {
+          location: "line 4, col 55 to line 4, col 55 of module M",
+          message: "Nonexistent operand specified by `@'.",
+        },
+        {
+          location: "line 5, col 43 to line 5, col 43 of module M",
+          message: "Nonexistent operand specified by `argument selector 3'.",
+        },
+        {
+          location: "line 6, col 41 to line 6, col 41 of module M",
+          message: "Nonexistent operand specified by `argument selector 2'.",
+        },
+      ]),
+    );
+  });
+
+  it("reports selecting through an expression that failed to resolve before later selectors like SANY", async () => {
+    const failed =
+      "Subexpression selection failed, probably due to an error in the selected expression.";
+    const unexpected =
+      "An unexpected null node specified by 'argument selector 1'.\nThis is probably due to a previous error.";
+    const getPrefixErrors = (line: number, column: number, end: number) => [
+      {
+        location: `line ${line}, col ${column} to line ${line}, col ${column} of module M`,
+        message: "Could not find declaration or definition of symbol '-.'.",
+      },
+      {
+        location: `line ${line}, col ${column} to line ${line}, col ${end} of module M`,
+        message: "Couldn't resolve prefix operator symbol `-.'.",
+      },
+    ];
+    await expect(
+      checkNames(
+        "CONSTANT c\nOp1(a0) == -{c}\nOp2 == {-c, 1}\nA == Op1(1)!1!@ /\\ Op1(2)!1!9 /\\ Op2!1!1!@\nTHEOREM T == -c\nTHEOREM U == ASSUME -c PROVE c\nTHEOREM V == {-c, 1}\nB == T!1!@ /\\ U!1 /\\ V!1!1",
+      ),
+    ).rejects.toThrow(
+      createSanyError([
+        ...getPrefixErrors(3, 12, 15),
+        ...getPrefixErrors(4, 9, 10),
+        { location: "line 5, col 13 to line 5, col 13 of module M", message: failed },
+        { location: "line 5, col 27 to line 5, col 27 of module M", message: failed },
+        { location: "line 5, col 38 to line 5, col 38 of module M", message: unexpected },
+        ...getPrefixErrors(6, 14, 15),
+        ...getPrefixErrors(7, 21, 22),
+        ...getPrefixErrors(8, 15, 16),
+        { location: "line 9, col 8 to line 9, col 8 of module M", message: failed },
+        { location: "line 9, col 17 to line 9, col 17 of module M", message: unexpected },
+        { location: "line 9, col 24 to line 9, col 24 of module M", message: unexpected },
+      ]),
+    );
+  });
+
+  it("reports a selection that leaves parameters unfilled under a built-in operator like SANY", async () => {
+    await expect(
+      checkNames(
+        "EXTENDS Naturals, Sequences, TLC\nPar(a) == {a}\nL == \\A b \\in {} : lab(b) :: b\nF == \\A y \\in {1} : y = 1\nA1 == Par!1 = 1\nA2 == SUBSET Par!1\nA3 == Len(Par!1)\nA4 == Par!1 :> 1\nA5 == Print(Par!1, 1)\nA6 == IF Par!1 THEN 1 ELSE 2\nA7 == L!lab = 1\nA8 == F!@ = 1\nA9 == SelectSeq(<<>>, Par!1)\nTHEOREM T == 1 = 1\n<1>1. DEFINE Z(c) == c + 1\n<1>2. Z!1 = 1\n  OBVIOUS\n<1>3. QED",
+      ),
+    ).rejects.toThrow(
+      createSanyError(
+        [
+          ["line 6, col 7 to line 6, col 11", "The operator Par requires 1 arguments."],
+          ["line 7, col 14 to line 7, col 18", "The operator Par requires 1 arguments."],
+          ["line 8, col 11 to line 8, col 15", "The operator Par requires 1 arguments."],
+          ["line 9, col 7 to line 9, col 11", "The operator Par requires 1 arguments."],
+          ["line 10, col 13 to line 10, col 17", "The operator Par requires 1 arguments."],
+          ["line 11, col 10 to line 11, col 14", "The operator Par requires 1 arguments."],
+          ["line 12, col 9 to line 12, col 11", "Label `lab' used with wrong number of arguments."],
+          ["line 13, col 7 to line 13, col 9", "Expected 1 arguments but found 0."],
+          ["line 17, col 7 to line 17, col 9", "The operator Z requires 1 arguments."],
+        ].map((error) => ({ location: `${error[0]} of module M`, message: error[1] })),
+      ),
+    );
+  });
+
+  it("checks the arguments of a RECURSIVE operator that is never defined like SANY", async () => {
+    await expect(
+      checkNames(
+        "CONSTANT c\nRECURSIVE R(_, _), S\nA == R(1, R) /\\ R(S, LAMBDA p : p) /\\ R(c, c)\nTHEOREM R(c, R) = 1",
+      ),
+    ).rejects.toThrow(
+      createSanyError([
+        {
+          location: "line 4, col 11 to line 4, col 11 of module M",
+          message: "The operator R requires 2 arguments.",
+        },
+        {
+          location: "line 4, col 22 to line 4, col 33 of module M",
+          message: "LAMBDA expression used where an expression is required.",
+        },
+        {
+          location: "line 5, col 1 to line 5, col 19 of module M",
+          message: "A THEOREM may not appear within a recursive definition section.",
+        },
+        {
+          location: "line 5, col 14 to line 5, col 14 of module M",
+          message: "The operator R requires 2 arguments.",
+        },
+        {
+          location: "line 6, col 1 to line 6, col 10 of module M",
+          message: "A VARIABLE declaration may not appear within a recursive definition section.",
+        },
+        {
+          location: "line 3, col 11 to line 3, col 17 of module M",
+          message: "Symbol R declared in RECURSIVE statement but not defined.",
+        },
+        {
+          location: "line 3, col 20 to line 3, col 20 of module M",
+          message: "Symbol S declared in RECURSIVE statement but not defined.",
+        },
+      ]),
+    );
+  });
+
+  it("selects from a RECURSIVE operator by its declared arity like SANY", async () => {
+    await expect(
+      checkNames(
+        "EXTENDS Naturals\nRECURSIVE R(_)\nR == lab :: 1 + 2\nA == R!lab\nB == R(1)!lab\nC == {R!1}\nD == LET RECURSIVE Q(_, _)\n         Q(x) == x + 1\n     IN Q!1 + Q(1)!1 + Q(1, 2)!1",
+      ),
+    ).rejects.toThrow(
+      createSanyError(
+        [
+          [
+            "line 4, col 1 to line 4, col 17",
+            "Definition of R has different arity than its RECURSIVE declaration.",
+          ],
+          ["line 5, col 6 to line 5, col 10", "The operator R requires 1 arguments."],
+          ["line 6, col 6 to line 6, col 13", "Expected 0 arguments but found 1."],
+          ["line 7, col 7 to line 7, col 9", "The operator R requires 1 arguments."],
+          [
+            "line 9, col 10 to line 9, col 22",
+            "Definition of Q has different arity than its RECURSIVE declaration.",
+          ],
+          ["line 10, col 9 to line 10, col 11", "The operator Q requires 2 arguments."],
+          ["line 10, col 16 to line 10, col 18", "The operator Q requires 2 arguments."],
+          ["line 10, col 24 to line 10, col 32", "Expected 1 arguments but found 2."],
+        ].map((error) => ({ location: `${error[0]} of module M`, message: error[1] })),
+      ),
+    );
+  });
+
+  it("checks an application of a RECURSIVE operator once, where it is written, like SANY", async () => {
+    await expect(
+      checkNames(
+        "EXTENDS Naturals\nRECURSIVE R(_, _)\nOp1 == lab :: R(0, 1)\nR(a) == a\nA == Op1!lab\nB == R(0, 1)",
+      ),
+    ).rejects.toThrow(
+      createSanyError([
+        {
+          location: "line 5, col 1 to line 5, col 9 of module M",
+          message: "Definition of R has different arity than its RECURSIVE declaration.",
+        },
+        {
+          location: "line 7, col 6 to line 7, col 12 of module M",
+          message:
+            "Wrong number of arguments (2) given to operator 'R', \nwhich requires 1 arguments.",
+        },
+      ]),
+    );
+  });
+
+  it("checks the arguments of a parameterized instance in a selection like SANY", async () => {
+    await expect(
+      checkNames(
+        "EXTENDS Naturals\n---- MODULE Inner ----\nH == lab :: 1 + 2\nG(q) == q + 1\n====\nI0(p) == INSTANCE Inner\nA == I0(1, 2)!H!1\nB == I0(1)!H!1\nC == I0!H!1\nD == I0(1)!G(2)!1\nE == I0(1)!G!1\nF == I0(1, 2)!H!lab",
+      ),
+    ).rejects.toThrow(
+      createSanyError(
+        [
+          ["line 8, col 8 to line 8, col 13", "The operator I0 requires 1 arguments."],
+          ["line 10, col 6 to line 10, col 11", "The operator I0 requires 1 arguments."],
+          ["line 12, col 6 to line 12, col 14", "The operator I0!G requires 1 arguments."],
+          ["line 13, col 8 to line 13, col 13", "The operator I0 requires 1 arguments."],
+        ].map((error) => ({ location: `${error[0]} of module M`, message: error[1] })),
+      ),
+    );
+  });
+
+  it.each<[string, [string, string][]]>([
+    [
+      "EXTENDS Naturals\nTHEOREM T == \\A n \\in {1} : n = 1\n<1>1. TAKE n \\in {1}\n<1>2. PICK k \\in {1}, j \\in {2} : k = j\n  OBVIOUS\n<1>3. <1>2!(1, 2) = 1\n  OBVIOUS\n<1>5. <1>2!2!1 = 2\n  OBVIOUS\n<1>6. <1>2!3 = 2\n  OBVIOUS\n<1>7. <1>1!1 = 1\n  OBVIOUS\n<1>8. <1>2 = 1\n  OBVIOUS\n<1>9. <1>1!2 = 1\n  OBVIOUS\n<1>10. QED",
+      [
+        [
+          "line 11, col 12 to line 11, col 12",
+          "Nonexistent operand specified by `argument selector 3'.",
+        ],
+        ["line 15, col 7 to line 15, col 10", "PICK proof step selected instead of expression."],
+        [
+          "line 17, col 12 to line 17, col 12",
+          "Nonexistent operand specified by `argument selector 2'.",
+        ],
+      ],
+    ],
+    [
+      "EXTENDS Naturals\nTHEOREM T == 1 = 1 => 2 = 2\n<1>1. HAVE 1 = 1\n<1>2. CASE 2 = 2\n  <2>1. <1>2!1!1 = 2\n    OBVIOUS\n  <2>2. <1>2!2 = 2\n    OBVIOUS\n  <2>3. QED\n<1>3. WITNESS 1, 2\n<1>4. <1>1!1 = TRUE\n  OBVIOUS\n<1>5. <1>3!2 = 2\n  OBVIOUS\n<1>6. <1>3!3 = 2\n  OBVIOUS\n<1>7. <1>1 = 1\n  OBVIOUS\n<1>8. QED",
+      [
+        [
+          "line 8, col 14 to line 8, col 14",
+          "Nonexistent operand specified by `argument selector 2'.",
+        ],
+        [
+          "line 16, col 12 to line 16, col 12",
+          "Nonexistent operand specified by `argument selector 3'.",
+        ],
+        ["line 18, col 7 to line 18, col 10", "HAVE proof step selected instead of expression."],
+      ],
+    ],
+    [
+      "EXTENDS Naturals\nTHEOREM T == 1 = 1\n<1>1. SUFFICES 2 = 2\n  OBVIOUS\n<1>2. <1>1 = 1\n  OBVIOUS\n<1>3. <1>1!1 = 1\n  OBVIOUS\n<1>4. QED\n  <2>1. <1>4!1 = 1\n    OBVIOUS\n  <2>2. <1>4 = 1\n    OBVIOUS\n  <2>3. QED\n    BY <1>1, <1>4",
+      [
+        ["line 6, col 7 to line 6, col 10", "SUFFICES proof step selected instead of expression."],
+        [
+          "line 11, col 14 to line 11, col 14",
+          "Nonexistent operand specified by `argument selector 1'.",
+        ],
+        [
+          "line 13, col 9 to line 13, col 12",
+          "QED step proof step selected instead of expression.",
+        ],
+      ],
+    ],
+  ])(
+    "checks selections of PICK, TAKE, HAVE, CASE, WITNESS, SUFFICES and QED steps in %j like SANY",
+    async (source, errors) => {
+      await expect(checkNames(source)).rejects.toThrow(
+        createSanyError(
+          errors.map((error) => ({ location: `${error[0]} of module M`, message: error[1] })),
+        ),
+      );
+    },
+  );
 
   it("passes an operator whose definition has fewer parameters than its RECURSIVE declaration, where SANY crashes", async () => {
     await expect(

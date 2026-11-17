@@ -2,6 +2,7 @@ import {
   getChildren,
   type AssumeProve,
   type Bound,
+  type Declaration,
   type Definition,
   type Expression,
   type Fact,
@@ -14,7 +15,7 @@ import {
   type SourceRange,
   type StepBody,
 } from "./ast";
-import { formatRange, TlaSyntaxError } from "./errors";
+import { formatRange, TlaSyntaxError, type SanyError } from "./errors";
 import { getSourceName, mapChildren, mapDefinition } from "./instances";
 import { resolveSynonym } from "./tlc/jar-data";
 import {
@@ -27,8 +28,12 @@ import {
   isBefore,
   LOCAL_RESOLUTION,
   nullSelections,
+  operatorSelectionErrors,
   selectionErrors,
+  selectionArguments,
   selections,
+  SELECTION_NAME,
+  factReferences,
   type NullSelection,
   type SelectionArguments,
 } from "./resolve";
@@ -53,7 +58,15 @@ interface SelectingName {
   argumentRanges?: (SourceRange | undefined)[];
 }
 
-const SELECTION_NAME = "$subexpression";
+const declaredArities = new WeakMap<Definition, number>();
+
+const setDeclaredArities = (declarations: Declaration[], definitions: Definition[]) =>
+  declarations.forEach((declaration) => {
+    const definition = definitions.find(
+      (candidate) => candidate.isRecursive && candidate.name === declaration.name,
+    );
+    if (definition) declaredArities.set(definition, declaration.arity);
+  });
 
 const getSelectorName = (selector: Selector) => {
   switch (selector.kind) {
@@ -192,6 +205,10 @@ const selectSubexpression = (
   let isFailed = false;
   const nulls: NullSelection[] = [];
   const applications: SelectionArguments[] = [];
+  let expressionError: SanyError | undefined;
+  const deferToExpression = (range: SourceRange | undefined, message: string) => {
+    if (!expressionError && range) expressionError = { location: formatRange(range), message };
+  };
   const checkNull = (node: Expression | undefined, message: string) => {
     const range = reference.selectorRanges?.[selectorIndex];
     if (node && range) nulls.push({ node, error: { location: formatRange(range), message } });
@@ -201,6 +218,7 @@ const selectSubexpression = (
     if (!range) throw createError(message, location);
     selectionErrors.set(reference, {
       applications,
+      nulls,
       error: { location: formatRange(range), message },
     });
     isFailed = true;
@@ -234,22 +252,33 @@ const selectSubexpression = (
       return undefined;
     }
     const definition = found.definition;
-    const arity = getArity(definition);
+    const arity = declaredArities.get(definition) ?? getArity(definition);
     const isLast = selectorIndex === selectors.length - 1;
-    if (found.args.length !== arity && (!isOperator || found.args.length !== 0)) {
-      return report(
-        reference.argumentRanges?.[selectorIndex] ?? location.range,
-        `The operator ${resolveSynonym(found.name)} requires ${arity - found.earlier} arguments.`,
-      );
+    if (found.args.length !== arity) {
+      const range = reference.argumentRanges?.[selectorIndex] ?? location.range;
+      const message = `The operator ${resolveSynonym(found.name)} requires ${arity - found.earlier} arguments.`;
+      if (!isOperator || found.args.length !== 0) return report(range, message);
+      deferToExpression(range, message);
     }
+    found.args.forEach((arg, index) =>
+      selectionArguments.set(arg, {
+        operator: found.name,
+        index,
+        range: reference.selectorRanges?.[selectorIndex],
+      }),
+    );
     if (isLast) return { definition, args: found.args };
+    const range = definition.location.range;
+    const isUndefined =
+      declaredArities.has(definition) &&
+      range?.module === location.range?.module &&
+      isBefore(location, definition.location);
     applications.push({
       operator: found.name,
       range: reference.selectorRanges?.[selectorIndex],
       args: found.args,
-      params: getParamArities(definition),
+      params: isUndefined ? Array(arity).fill(0) : getParamArities(definition),
     });
-    const range = definition.location.range;
     if (
       definition.isRecursive &&
       range &&
@@ -279,8 +308,10 @@ const selectSubexpression = (
       const found = current && findLabel(current, selector.name, []);
       if (!found) return report(range, `Cannot find label \`${selector.name}'.`);
       const params = found.label.params;
-      if (!isOperator && selector.args.length !== params.length) {
-        return report(range, `Label \`${selector.name}' used with wrong number of arguments.`);
+      if (selector.args.length !== params.length) {
+        const message = `Label \`${selector.name}' used with wrong number of arguments.`;
+        if (!isOperator) return report(range, message);
+        deferToExpression(range, message);
       }
       selection.lets.push(...found.lets);
       selection.params.push(...params.map((name) => ({ name, arity: 0 })));
@@ -381,6 +412,14 @@ const selectSubexpression = (
       current = chosen;
       return;
     }
+    if (
+      current.kind === "Except" &&
+      selector.kind === "Operand" &&
+      getOperandIndex(selector.operand, current.updates.length + 1) > 0
+    ) {
+      report(range, "Selecting subexpression of an EXCEPT not yet implemented.");
+      return;
+    }
     const operands = binder ? binder.sets : getOperands(current);
     if (!operands && current.kind !== "Identifier") {
       report(range, "Selecting subexpression of expression that has none.");
@@ -407,7 +446,11 @@ const selectSubexpression = (
     if (selector.kind === "Name") {
       while (current?.kind === "Label") current = current.body;
       if (current?.kind !== "Let") {
-        throw createError("A name selector here must be from a LET clause", location);
+        report(
+          reference.selectorRanges?.[selectorIndex - 1],
+          "A name selector here must be from a LET clause.",
+        );
+        return reference;
       }
       selection.lets.push(current.definitions);
       const last = enterDefinition(current.definitions);
@@ -438,12 +481,17 @@ const selectSubexpression = (
   if (!current) throw createError("Subexpression selection failed", location);
   const params = selection.params.length;
   const args = selection.args.length;
-  if (params !== args && (!isOperator || args > 0)) {
-    report(location.range, `Expected ${params} arguments but found ${args}.`);
-    return reference;
+  if (params !== args) {
+    const message = `Expected ${params} arguments but found ${args}.`;
+    if (!isOperator || args > 0) {
+      report(location.range, message);
+      return reference;
+    }
+    deferToExpression(location.range, message);
   }
   const selected = createApplication(selection, current);
   nullSelections.set(selected, nulls);
+  if (expressionError) operatorSelectionErrors.set(selected, expressionError);
   return selected;
 };
 
@@ -473,13 +521,20 @@ const resolveSubexpressions = (
 ): Expression => {
   if (!containsReference(expression)) return expression;
   if (expression.kind === "Let") {
+    if (expression.recursive) setDeclaredArities(expression.recursive, expression.definitions);
     const local: Lookup = (name) =>
       expression.definitions.find((definition) => definition.name === name) ?? lookup(name);
-    const mapped = mapChildren(expression, (child) => resolveSubexpressions(child, local, isGoal));
+    const isLocalGoal = (name: string) =>
+      !expression.definitions.some((definition) => definition.name === name) && isGoal(name);
+    const mapped = mapChildren(expression, (child) =>
+      resolveSubexpressions(child, local, isLocalGoal),
+    );
     return mapped.kind === "Let" && mapped.instances
       ? {
           ...mapped,
-          instances: mapped.instances.map((instance) => resolveInstance(instance, local, isGoal)),
+          instances: mapped.instances.map((instance) =>
+            resolveInstance(instance, local, isLocalGoal),
+          ),
         }
       : mapped;
   }
@@ -507,7 +562,20 @@ const resolveSubexpressions = (
           ? getQualifiedSelectors(mapped.operator, mapped.args, mapped.argumentCounts, lookup)
           : undefined;
   const first = selectors?.[0];
-  if (!selectors || (first?.kind === "Name" && isGoal(first.name))) return mapped;
+  if (!selectors) return mapped;
+  const nameCount = selectors.findIndex((selector) => selector.kind !== "Name");
+  const names = selectors.slice(0, nameCount === -1 ? selectors.length : nameCount);
+  const isQualified = names.some(
+    (_name, index) =>
+      index > 0 &&
+      lookup(
+        names
+          .slice(0, index + 1)
+          .map(getSelectorName)
+          .join("!"),
+      ),
+  );
+  if (first?.kind === "Name" && isGoal(first.name) && !isQualified) return mapped;
   if (first?.kind === "Name" && selectors[1].kind !== "Name" && !lookup(first.name)) return mapped;
   const selected = selectSubexpression(selectors, lookup, isGoal, mapped, isOperator);
   if (selected !== mapped) selections.add(selected);
@@ -564,6 +632,10 @@ export const resolveModuleSubexpressions = (module: Module, available: Definitio
     ];
   });
   const own = new Set([...module.definitions, ...clauses]);
+  setDeclaredArities(
+    module.units.flatMap((unit) => (unit.kind === "Recursive" ? unit.declarations : [])),
+    module.definitions,
+  );
   const recursive = new Map(
     module.units.flatMap((unit): [string, SourceLocation][] =>
       unit.kind === "Recursive"
@@ -595,13 +667,17 @@ export const resolveModuleSubexpressions = (module: Module, available: Definitio
       getVisibleLookup(definitionLookup, location),
       (name) => isGoal(name) && clauses.every((clause) => clause.name !== name),
     );
-  const createProofResolver = (location: SourceLocation) => {
-    const lookup = getVisibleLookup(proofLookup, location);
+  const createProofResolver = (lookup: Lookup) => {
     const isProofGoal = (name: string) => isGoal(name) || !lookup(name);
     const resolveInProof = (expression: Expression) =>
       resolveSubexpressions(expression, lookup, isProofGoal);
-    const resolveFacts = (facts: Fact[]) =>
-      facts.map((fact) => (fact.kind === "ModuleFact" ? fact : resolveInProof(fact)));
+    const resolveFacts = (facts: Fact[]) => {
+      const resolved = facts.map((fact) =>
+        fact.kind === "ModuleFact" ? fact : resolveInProof(fact),
+      );
+      factReferences.set(resolved, facts);
+      return resolved;
+    };
     const resolveBounds = (bounds: Bound[]) =>
       bounds.map((bound) => ({ ...bound, set: resolveInProof(bound.set) }));
     const resolveStatement = (statement: Expression | AssumeProve): Expression | AssumeProve =>
@@ -647,37 +723,55 @@ export const resolveModuleSubexpressions = (module: Module, available: Definitio
           return body;
       }
     };
-    const resolveProof = (proof: Proof | undefined): Proof | undefined =>
-      proof?.kind === "By"
-        ? { ...proof, facts: resolveFacts(proof.facts) }
-        : proof?.kind === "Steps"
-          ? {
-              ...proof,
-              steps: proof.steps.map((step) => ({
-                ...step,
-                body: resolveStep(step.body),
-                proof: resolveProof(step.proof),
-              })),
-            }
-          : proof;
-    return { resolveFacts, resolveStatement, resolveProof };
+    const resolveProof = (proof: Proof | undefined): Proof | undefined => {
+      if (proof?.kind === "By") return { ...proof, facts: resolveFacts(proof.facts) };
+      if (proof?.kind !== "Steps") return proof;
+      let resolver = { lookup, resolveStep, resolveProof };
+      return {
+        ...proof,
+        steps: proof.steps.map((step) => {
+          const resolved = {
+            ...step,
+            body: resolver.resolveStep(step.body),
+            proof: resolver.resolveProof(step.proof),
+          };
+          if (step.body.kind === "Define") {
+            const definitions = step.body.definitions.flatMap((definition) =>
+              definition.kind === "Instance" ? [] : [definition],
+            );
+            const outer = resolver.lookup;
+            resolver = createProofResolver(
+              (name) => definitions.find((definition) => definition.name === name) ?? outer(name),
+            );
+          }
+          return resolved;
+        }),
+      };
+    };
+    return { lookup, resolveFacts, resolveStatement, resolveStep, resolveProof };
   };
   const resolved = {
     ...module,
     theorems: module.theorems.map((theorem) => {
-      const resolver = createProofResolver(theorem.location);
+      const resolver = createProofResolver(getVisibleLookup(proofLookup, theorem.location));
       return {
         ...theorem,
         statement:
           theorem.name !== undefined && theorem.statement.kind !== "AssumeProve"
             ? theorem.statement
             : resolver.resolveStatement(theorem.statement),
-        proof: resolver.resolveProof(theorem.proof),
+        proof:
+          theorem.proof &&
+          createProofResolver(getVisibleLookup(proofLookup, theorem.proof.location)).resolveProof(
+            theorem.proof,
+          ),
       };
     }),
     uses: module.uses.map((use) => ({
       ...use,
-      facts: createProofResolver(use.location).resolveFacts(use.facts),
+      facts: createProofResolver(getVisibleLookup(proofLookup, use.location)).resolveFacts(
+        use.facts,
+      ),
     })),
   };
   const hasReferences =
