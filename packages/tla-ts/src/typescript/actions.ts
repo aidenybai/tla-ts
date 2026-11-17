@@ -15128,6 +15128,69 @@ const shareBinding = (
   );
 };
 
+// The TLA+ operators that give a value without calling Assert, as Allocated gives the reference of
+// the object that the heap allocated last.
+const PURE_OPERATORS = new Set([
+  "=",
+  "#",
+  "+",
+  "-",
+  "*",
+  "<",
+  ">",
+  "<=",
+  ">=",
+  "~",
+  "\\o",
+  "\\in",
+  "\\notin",
+  "\\cup",
+  "\\cap",
+  "..",
+  ":>",
+  "@@",
+  "Len",
+  "Append",
+  "Allocated",
+]);
+
+// Whether a value may call Assert as TLC evaluates it, through an operator other than a pure one.
+const mayStop = (value: unknown): boolean => {
+  if (typeof value !== "object" || value === null) return false;
+  if (Array.isArray(value)) return value.some(mayStop);
+  if (!("kind" in value)) return false;
+  if (
+    value.kind === "Apply" &&
+    "operator" in value &&
+    typeof value.operator === "string" &&
+    !PURE_OPERATORS.has(value.operator)
+  ) {
+    return true;
+  }
+  return Object.entries(value).some((entry) => entry[0] !== "location" && mayStop(entry[1]));
+};
+
+// Names each value that may stop, which a path gave a binding since before, so that it runs there.
+const forceAssigned = (
+  before: Path,
+  path: Path,
+  context: Context,
+  continueWith: (path: Path) => Formula,
+): Formula => {
+  if (path.scope.bindings === before.scope.bindings) return continueWith(path);
+  const symbol = [...path.scope.bindings].find(
+    (entry) =>
+      entry[0] !== context.heap &&
+      before.scope.bindings.get(entry[0]) !== entry[1] &&
+      mayStop(entry[1]),
+  )?.[0];
+  return symbol === undefined
+    ? continueWith(path)
+    : shareBinding(path, symbol, "assigned", context, (shared) =>
+        forceAssigned(before, shared, context, continueWith),
+      );
+};
+
 // Names the heap after a statement changes it, so that later statements share it. A statement that
 // leaves it as it was keeps its binding, so that a join after the statement finds it unchanged.
 const shareHeap = (
@@ -21002,9 +21065,13 @@ export const translateStatements = (
   const breakTo = frame.breakTo;
   const continueTo = frame.continueTo;
   const throwTo = frame.throwTo;
+  // A value that the statement gives a binding runs where the statement does, as in Node, so that a
+  // stop in it fires before what follows rather than where a later read or a join reads it.
+  const force = (inner: Path, continueWith: (forced: Path) => Formula) =>
+    forceAssigned(path, inner, context, (forced) => continueWith(leave(forced)));
   const statementFrame: Frame = {
     ...frame,
-    next: (inner) => frame.next(leave(inner)),
+    next: (inner) => force(inner, frame.next),
     exit: (inner, value) => frame.exit(leave(inner), value),
     breakTo: breakTo && ((inner) => breakTo(leave(inner))),
     continueTo: continueTo && ((inner) => continueTo(leave(inner))),
@@ -21200,7 +21267,7 @@ export const translateStatements = (
     return throwError("ReferenceError", path, first, context, statementFrame);
   }
   const continueWith = (inner: Path) =>
-    translateStatements(statements.slice(1), leave(inner), context, frame);
+    force(inner, (forced) => translateStatements(statements.slice(1), forced, context, frame));
   // A declare's var only types the global object's property.
   if (
     ts.isVariableStatement(statement) &&
@@ -21783,7 +21850,9 @@ export const translateStatements = (
         context,
         statementFrame,
         (inner, innerFrame) =>
-          translateStatements(statements.slice(1), leave(inner), context, innerFrame),
+          force(inner, (forced) =>
+            translateStatements(statements.slice(1), forced, context, innerFrame),
+          ),
       );
     }
     return translateDeclarations(

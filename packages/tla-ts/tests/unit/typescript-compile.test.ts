@@ -52441,4 +52441,25 @@ describe("BigInts", () => {
       "Give this pattern's value an array type",
     );
   });
+
+  it("fires a stop in a value that a statement assigns before a later statement throws", async () => {
+    const source = `
+      var box = { seen: "" };
+      function get() {
+        return /** @type {any} */ (undefined);
+      }
+      var read = 0;
+      try {
+        read = get().x;
+        read = 1;
+        throw new Error("after");
+      } catch (error) {
+        box.seen = error instanceof TypeError ? "type" : error.message;
+      }
+    `;
+    expect(
+      (await check(compile(source, join(import.meta.dirname, "model.js")))).failure?.message,
+    ).toContain("tla-ts can't throw the TypeError of reading a property of undefined or null");
+  });
+
 });
