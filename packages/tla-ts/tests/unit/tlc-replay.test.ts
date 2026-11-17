@@ -201,6 +201,18 @@ describe("the call stack of a replayed failure matches TLC", () => {
     },
   );
 
+  it("enters the prefix of a chain of conjuncts below the temporal level as one formula, as TLC does", async () => {
+    expect(
+      await getFailure(
+        'Init == x \\in [{1, 2} -> 0..1]\nNext == UNCHANGED x\nProp == <>(x[1] = 0 /\\ (x[2] > 5 \\/ Assert(x[2] > 5, "bound")) /\\ [](x[1] = 0))',
+        "INIT Init\nNEXT Next\nPROPERTY Prop",
+      ),
+    ).toEqual({
+      callStack: ["8.9-8.30", "10.12-10.62", "10.25-10.61", "10.37-10.61"],
+      exitCode: 75,
+    });
+  });
+
   const BAD = "x = 1 /\\ CHOOSE y \\in {} : y = x";
 
   it.each([
