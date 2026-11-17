@@ -466,7 +466,12 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       : getFingerprintDistance(runtime.distinctStates, runtime.generatedStates, (visit) =>
           visit(
             search
-              ? search.getStoredFingerprints(states, fingerprintStates)
+              ? search.getStoredFingerprints(
+                  exploredStates.length === 0 ? states : states.concat(exploredStates),
+                  exploredStates.length === 0
+                    ? fingerprintStates
+                    : fingerprintStates.concat(exploredFingerprintStates),
+                )
               : BigInt64Array.from(states, runtime.getFingerprint),
           ),
         ),
@@ -628,8 +633,10 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     return (state: Value[], callStack: CallStack | undefined) => {
       fingerprintReplayed(state, getFingerprintState(state), callStack);
       const fingerprintState = getFingerprintState(state);
+      const hash = getStateHash(fingerprintState);
       const isSeen =
-        findStateIndex(seenStates, getStateHash(fingerprintState), fingerprintState) !== -1 ||
+        findStateIndex(seenStates, hash, fingerprintState) !== -1 ||
+        isExplored(hash, fingerprintState) ||
         replayed.some((seen) => isSameState(seen, fingerprintState));
       if (isSeen) return false;
       replayed.push(fingerprintState);
@@ -756,6 +763,11 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   const actions: (string | undefined)[] = [];
   const depths: number[] = [];
   const seenStates = createStateTable(fingerprintStates);
+  const exploredStates: Value[][] = [];
+  const exploredFingerprintStates: Value[][] = [];
+  let exploredTable: StateTable | undefined;
+  const isExplored = (hash: number, fingerprintState: Value[]) =>
+    exploredTable !== undefined && findStateIndex(exploredTable, hash, fingerprintState) !== -1;
   const pendingFingerprintStates: Value[][] = [];
   let pendingStates: StateTable | undefined;
   const getPendingIndex = (hash: number, fingerprintState: Value[]) => {
@@ -868,7 +880,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   };
   let unstoredFingerprint: Value[] | undefined;
   const countDistinctState = (depth: number) => {
-    runtime.distinctStates = states.length + 1;
+    runtime.distinctStates = states.length + exploredStates.length + 1;
     searchDepth = Math.max(searchDepth, depth);
     runtime.diameter = Math.max(runtime.diameter, depth);
   };
@@ -920,7 +932,19 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     index === -1 ? [] : [...getPath(parents[index]), states[index]];
   runtime.isSeen = (state) => {
     const fingerprintState = getFingerprintState(state);
-    return findStateIndex(seenStates, getStateHash(fingerprintState), fingerprintState) !== -1;
+    const hash = getStateHash(fingerprintState);
+    return (
+      findStateIndex(seenStates, hash, fingerprintState) !== -1 ||
+      isExplored(hash, fingerprintState)
+    );
+  };
+  runtime.markExplored = (state) => {
+    const fingerprintState = getFingerprintState(state);
+    exploredTable ??= createStateTable(exploredFingerprintStates);
+    markSeenState(exploredTable, getStateHash(fingerprintState), exploredStates.length);
+    exploredStates.push(state);
+    exploredFingerprintStates.push(fingerprintState);
+    runtime.distinctStates++;
   };
   runtime.getBehavior = (state) => {
     const index = state === current.candidate ? -1 : states.indexOf(state);
@@ -1025,7 +1049,14 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       fingerprintModelState(fingerprintState);
       successor.state.forEach(markFingerprinted);
     }
-    return { fingerprintState, hash, isInModel, existing: isInModel ? foundIndex : -1 };
+    const existing = isInModel ? foundIndex : -1;
+    return {
+      fingerprintState,
+      hash,
+      isInModel,
+      existing,
+      isSeen: existing !== -1 || (isInModel && isExplored(hash, fingerprintState)),
+    };
   };
   const visitSuccessor = (
     index: number,
@@ -1044,7 +1075,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       stateWriter?.writeSuccessor(
         source,
         getGraphState(successor.state, depths[index] + 1),
-        found.existing !== -1,
+        found.isSeen,
         action && getGraphAction(action),
       );
     }
@@ -1066,7 +1097,13 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       const isStored = stored.every((value, position) => value === successor.state[position]);
       liveSuccessors.push({ index: found.existing, state: isStored ? stored : successor.state });
     }
-    const isNew = found.isInModel && found.existing === -1;
+    if (found.isSeen && found.existing === -1 && liveness) {
+      liveSuccessors.push({
+        index: getPendingIndex(found.hash, found.fingerprintState),
+        state: successor.state,
+      });
+    }
+    const isNew = found.isInModel && !found.isSeen;
     if (isNew && liveness) liveSuccessors.push({ index: states.length, state: successor.state });
     unstoredFingerprint = isNew ? found.fingerprintState : undefined;
     if (isNew) {
@@ -1074,7 +1111,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       newStateCount++;
       if (coverage) coverage.secondary[coveredNode]++;
     }
-    if (found.existing === -1) {
+    if (!found.isSeen) {
       try {
         const violated = search.findViolatedInvariant(successor.state, state);
         const violation = violated && { name: violated.name, ...traces.getTrace(index, successor) };

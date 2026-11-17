@@ -683,6 +683,34 @@ describe("the CLI answers PickSuccessor from standard input like TLC", () => {
     ]);
   });
 
+  it("marks a successor explored, which TLC neither checks nor asks about again", () => {
+    const result = runCliWith("tlc-ext", ["PickExplored.tla"], "y\ny\ne\n");
+    const askExplored = (length: number, line: number) =>
+      `Extend behavior of length ${length} with a "Next" step [<Action line ${line}, col 12 to line ${line}, col 41 of module PickExplored>]? (Yes/no/explored/states/diff):`;
+    expect(result.status).toBe(0);
+    expect(getSteadyLines(result.stdout)).toEqual([
+      "Starting... (_)",
+      "Implied-temporal checking--satisfiability problem has 1 branches.",
+      "Computing initial states...",
+      "Finished computing initial states: 1 distinct state generated at _.",
+      askExplored(1, 10),
+      askExplored(1, 11),
+      askExplored(2, 11),
+      "Progress(2) at _: 5 states generated, 4 distinct states found, 0 states left on queue.",
+      "Checking temporal properties for the complete state space with 4 total distinct states at (_)",
+      "Finished checking temporal properties in _ at _",
+      "Model checking completed. No error has been found.",
+      "  Estimates of the probability that TLC did not check all reachable states",
+      "  because two distinct states had the same fingerprint:",
+      "  calculated (optimistic):  val = 2.2E-19",
+      "5 states generated, 4 distinct states found, 0 states left on queue.",
+      "The depth of the complete state graph search is 2.",
+      "The average outdegree of the complete state graph is 1 (minimum is 0, the maximum 2 and the 95th percentile is 2).",
+      "Finished in _ at (_)",
+      "",
+    ]);
+  });
+
   it("tells a simulation it can't mark a state explored and asks again", () => {
     const lines = getPickLines(
       runCliWith(

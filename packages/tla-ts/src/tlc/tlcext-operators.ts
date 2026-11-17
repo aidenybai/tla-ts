@@ -303,9 +303,13 @@ export const createTlcExtOperators = (
           } else if (answer[0] === "d") {
             printOverride(formatState(runtime.toRecord(next), runtime.toRecord(state)));
           } else if (answer[0] === "e") {
+            if (runtime.markExplored) {
+              runtime.markExplored(next);
+              return true;
+            }
             if (runtime.getSimulationValue === undefined) {
               throw new TlaUnsupportedError(
-                "tla-ts can't mark a state explored while it checks a model.",
+                "tla-ts can't mark a state explored while it searches depth first.",
               );
             }
             printOverride(
