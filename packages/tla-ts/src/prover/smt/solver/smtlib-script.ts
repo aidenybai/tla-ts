@@ -803,8 +803,7 @@ export const runSmtlibScript = (
     );
     return state.datalog;
   };
-  const getTactic = (sexpr: SExpr, end: SmtList["end"]) =>
-    compileTactic(getTacticEnvironment(), sexpr, end);
+  const getTactic = (sexpr: SExpr) => compileTactic(getTacticEnvironment(), sexpr);
   const getGoal = (isTrackingDependencies = false) => {
     const goal = new Goal(state.manager);
     goal.isProofsEnabled = settings.isProducingProofs || state.isProofsEnabled === true;
@@ -1062,7 +1061,7 @@ export const runSmtlibScript = (
         const params = getCommandParams(list.items, CHECK_SAT_USING_PARAMETERS);
         if (list.items[1] === undefined)
           throw new SmtParseError("check-sat-using needs a tactic argument", list.end);
-        const builder = getTactic(list.items[1], list.end);
+        const builder = getTactic(list.items[1]);
         const tactic = builder.build(params);
         clearCheck();
         const deadline = Date.now() + options.timeLimitMs;
@@ -1307,7 +1306,7 @@ export const runSmtlibScript = (
         const params = getCommandParams(list.items, APPLY_PARAMETERS);
         if (list.items[1] === undefined)
           throw new SmtParseError("apply needs a tactic argument", list.end);
-        const builder = getTactic(list.items[1], list.end);
+        const builder = getTactic(list.items[1]);
         const tactic = builder.build(params);
         const isPrintingDependencies = params.get("print_dependencies") === true;
         if (isPrintingDependencies && !builder.isTrackingDependencies && hasNames())

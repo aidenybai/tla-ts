@@ -335,6 +335,66 @@ describe("messages of the reader, as Z3 5.3.2 prints them", () => {
       "(+ 3 a (f 5))",
     ]);
   });
+
+  it("reports a malformed tactic or probe at the s-expression, a list at its closing parenthesis", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(assert (> x 0))",
+        "(apply solve-eqs2)",
+        "(apply (then simplify  foo   ) )",
+        "(apply (then simplify (foo x)  ) )",
+        "(apply (then)  )",
+        "(apply ( )  )",
+        "(apply ((then) simplify) )",
+        "(apply 5  )",
+        "(apply (or-else) )",
+        "(apply (try-for simplify)  )",
+        "(apply (try-for simplify x)  )",
+        "(apply (repeat)  )",
+        "(apply (repeat simplify x) )",
+        "(apply (using-params simplify :foo 1) )",
+        "(apply (using-params simplify foo 1) )",
+        "(apply (using-params simplify :som) )",
+        "(apply (using-params simplify :som 3) )",
+        "(apply (if) )",
+        "(apply (if foo simplify skip) )",
+        "(apply (if (> foo 1) simplify skip) )",
+        "(apply (fail-if) )",
+        "(apply (when) )",
+        "(apply (echo) )",
+        "(apply (fail-if-branching) )",
+        "(check-sat-using (par-or (if has-quantifiers qe aig) (par-or solve-eqs2 qfnia)) :print_unsat_core true)",
+        "(check-sat-using   foo  :print_model true)",
+      ]),
+    ).toEqual([
+      '(error "line 3 column 7: invalid tactic, unknown tactic solve-eqs2")',
+      '(error "line 4 column 23: invalid tactic, unknown tactic foo")',
+      '(error "line 5 column 28: invalid tactic, unknown tactic combinator foo")',
+      '(error "line 6 column 12: invalid and-then combinator, at least one argument expected")',
+      '(error "line 7 column 9: invalid tactic, arguments expected")',
+      '(error "line 8 column 23: invalid tactic, symbol expected")',
+      '(error "line 9 column 7: invalid tactic, unexpected input")',
+      '(error "line 10 column 15: invalid or-else combinator, at least one argument expected")',
+      '(error "line 11 column 24: invalid try-for combinator, two arguments expected")',
+      '(error "line 12 column 26: invalid try-for combinator, second argument must be an unsigned integer")',
+      '(error "line 13 column 14: invalid repeat combinator, one or two arguments expected")',
+      '(error "line 14 column 25: invalid repeat combinator, second argument must be an unsigned integer")',
+      '(error "line 15 column 35: invalid using-params combinator, unknown parameter foo")',
+      '(error "line 16 column 30: invalid using-params combinator, keyword expected")',
+      '(error "line 17 column 30: invalid using-params combinator, parameter value expected")',
+      '(error "line 18 column 35: invalid parameter value, true or false expected")',
+      '(error "line 19 column 10: invalid if/conditional combinator, three arguments expected")',
+      '(error "line 20 column 11: invalid probe, unknown builtin probe foo")',
+      '(error "line 21 column 14: invalid probe, unknown builtin probe foo")',
+      '(error "line 22 column 15: invalid fail-if tactic, one argument expected")',
+      '(error "line 23 column 12: invalid when combinator, two arguments expected")',
+      '(error "line 24 column 12: invalid echo tactic, must have at least one argument")',
+      '(error "line 25 column 25: invalid fail-if-branching combinator, one or two arguments expected")',
+      '(error "line 26 column 61: invalid tactic, unknown tactic solve-eqs2")',
+      '(error "line 27 column 19: invalid tactic, unknown tactic foo")',
+    ]);
+  });
 });
 
 describe("the terms the reader makes and frees, in Z3's order", () => {

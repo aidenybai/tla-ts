@@ -47,7 +47,7 @@ import { getAckrBound } from "./ackr-helper";
 import { BoundManager } from "./bound-manager";
 import { findNonPb } from "./pb2bv-tactic";
 import type { Goal } from "./goal";
-import { isSymbol, type SExpr, type SmtToken } from "./smtlib-parser";
+import { isSymbol, type SExpr } from "./smtlib-parser";
 
 export interface Probe {
   (goal: Goal): number;
@@ -460,48 +460,48 @@ const NARY_PROBES = new Map<string, (first: number, second: number) => number>([
   ["*", (first, second) => first * second],
 ]);
 
-export const compileProbe = (sexpr: SExpr, end: SmtToken, isInternal = false): Probe => {
+export const compileProbe = (sexpr: SExpr, isInternal = false): Probe => {
   if (sexpr.kind === "numeral") {
     const value = Number(sexpr.text);
     if (value > 2 ** 31 - 1)
       throw new SmtParseError(
         "invalid probe, constant is too big to fit in a fixed size integer",
-        end,
+        sexpr,
       );
     return () => value;
   }
   if (sexpr.kind !== "list") {
-    if (!isSymbol(sexpr)) throw new SmtParseError("invalid probe, unexpected input", end);
+    if (!isSymbol(sexpr)) throw new SmtParseError("invalid probe, unexpected input", sexpr);
     const named =
       NAMED_PROBES.get(sexpr.text) ?? (isInternal ? INTERNAL_PROBES.get(sexpr.text) : undefined);
     if (named !== undefined) return named;
     if (UNPORTED_PROBES.has(sexpr.text)) throw new SmtUnsupportedError(`the probe ${sexpr.text}`);
-    throw new SmtParseError(`invalid probe, unknown builtin probe ${sexpr.text}`, end);
+    throw new SmtParseError(`invalid probe, unknown builtin probe ${sexpr.text}`, sexpr);
   }
   const head = sexpr.items[0];
-  if (head === undefined) throw new SmtParseError("invalid probe, arguments expected", end);
-  if (!isSymbol(head)) throw new SmtParseError("invalid probe, symbol expected", end);
+  if (head === undefined) throw new SmtParseError("invalid probe, arguments expected", sexpr.end);
+  if (!isSymbol(head)) throw new SmtParseError("invalid probe, symbol expected", sexpr.end);
   const children = sexpr.items.slice(1);
   if (head.text === "not") {
     if (children.length !== 1)
-      throw new SmtParseError("invalid probe expression, one argument expected", end);
-    const child = compileProbe(children[0], end, isInternal);
+      throw new SmtParseError("invalid probe expression, one argument expected", sexpr.end);
+    const child = compileProbe(children[0], isInternal);
     return (goal) => Number(child(goal) === 0);
   }
   const binary = BINARY_PROBES.get(head.text);
   if (binary !== undefined) {
     if (children.length !== 2)
-      throw new SmtParseError("invalid probe expression, two arguments expected", end);
-    const first = compileProbe(children[0], end, isInternal);
-    const second = compileProbe(children[1], end, isInternal);
+      throw new SmtParseError("invalid probe expression, two arguments expected", sexpr.end);
+    const first = compileProbe(children[0], isInternal);
+    const second = compileProbe(children[1], isInternal);
     return (goal) => binary(first(goal), second(goal));
   }
   const nary = NARY_PROBES.get(head.text);
   if (nary === undefined)
-    throw new SmtParseError(`invalid probe, unknown probe expression ${head.text}`, end);
+    throw new SmtParseError(`invalid probe, unknown probe expression ${head.text}`, sexpr.end);
   if (children.length === 0)
-    throw new SmtParseError("invalid probe, at least one argument expected", end);
-  const probes = children.map((child) => compileProbe(child, end, isInternal));
+    throw new SmtParseError("invalid probe, at least one argument expected", sexpr.end);
+  const probes = children.map((child) => compileProbe(child, isInternal));
   return (goal) => probes.map((probe) => probe(goal)).reduce(nary);
 };
 
