@@ -32,6 +32,7 @@ import {
   selectionErrors,
   selectionArguments,
   selections,
+  selectionSources,
   SELECTION_NAME,
   factReferences,
   type NullSelection,
@@ -121,7 +122,12 @@ const wrapLets = (body: Expression, lets: Definition[][], location: SourceLocati
 const createApplication = (selection: Selection, body: Expression): Expression => {
   const location = selection.location;
   const wrapped = wrapLets(body, selection.lets, location);
-  if (selection.params.length === 0) return wrapped;
+  if (selection.params.length === 0 && wrapped !== body) return wrapped;
+  if (selection.params.length === 0) {
+    const copy = { ...body };
+    selectionSources.set(copy, selectionSources.get(body) ?? body);
+    return copy;
+  }
   if (selection.args.length === 0) {
     if (selection.params.some((param) => param.arity > 0)) {
       throw createError("Selected an operator with operator parameters as an argument", location);
@@ -209,9 +215,11 @@ const selectSubexpression = (
   const deferToExpression = (range: SourceRange | undefined, message: string) => {
     if (!expressionError && range) expressionError = { location: formatRange(range), message };
   };
-  const checkNull = (node: Expression | undefined, message: string) => {
+  const checkNull = (node: Expression | undefined, message: string, isEmpty = false) => {
     const range = reference.selectorRanges?.[selectorIndex];
-    if (node && range) nulls.push({ node, error: { location: formatRange(range), message } });
+    if (node && range) {
+      nulls.push({ node, error: { location: formatRange(range), message }, isEmpty });
+    }
   };
 
   const report = (range: SourceRange | undefined, message: string) => {
@@ -333,15 +341,16 @@ const selectSubexpression = (
         (current.kind === "Apply" && current.operator.includes("!"))) &&
       (currentRange?.module !== location.range?.module || isBefore(current.location, location))
     ) {
-      const selected = resolveSubexpressions(current, lookup, isGoal);
+      const selected = selectionErrors.has(current)
+        ? current
+        : resolveSubexpressions(current, lookup, isGoal);
+      const noOperands = `Choosing operand \`${getSelectorName(selector)}' of subexpression with no operands.`;
       if (selectionErrors.has(selected)) {
-        report(
-          range,
-          `Choosing operand \`${getSelectorName(selector)}' of subexpression with no operands.`,
-        );
+        report(range, noOperands);
         return;
       }
       if (selections.has(selected) && selected.kind !== "Lambda") {
+        checkNull(selected, noOperands, true);
         current =
           selected.kind === "Let" &&
           selected.body.kind === "Apply" &&
@@ -368,6 +377,13 @@ const selectSubexpression = (
     }
     const binder = getBinder(current);
     if (binder && (selector.kind === "Bound" || selector.kind === "At")) {
+      if (selector.kind === "Bound" && selector.args.length !== binder.names.length) {
+        report(
+          range,
+          `Selector with ${selector.args.length} argument(s) used for quantifier with ${binder.names.length} bound identifier(s).`,
+        );
+        return;
+      }
       selection.params.push(...binder.names.map((name) => ({ name, arity: 0 })));
       if (selector.kind === "Bound") {
         selection.args.push(...selector.args);
@@ -469,6 +485,11 @@ const selectSubexpression = (
         current,
         "Subexpression selection failed, probably due to an error in the selected expression.",
       );
+      checkNull(
+        current,
+        `Choosing operand \`${getSelectorName(selector)}' of subexpression with no operands.`,
+        true,
+      );
     }
     selectOperand(selector);
     checkNull(
@@ -539,7 +560,7 @@ const resolveSubexpressions = (
       : mapped;
   }
   const callee = expression.kind === "Apply" ? lookup(expression.operator) : undefined;
-  const mapped =
+  const rebuilt =
     expression.kind === "Apply"
       ? {
           ...expression,
@@ -553,6 +574,10 @@ const resolveSubexpressions = (
           ),
         }
       : mapChildren(expression, (child) => resolveSubexpressions(child, lookup, isGoal));
+  const children = getChildren(expression);
+  const mapped = getChildren(rebuilt).every((child, index) => child === children[index])
+    ? expression
+    : rebuilt;
   const selectors =
     mapped.kind === "Subexpression"
       ? mapped.selectors

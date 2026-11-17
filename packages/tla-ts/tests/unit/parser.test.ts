@@ -191,6 +191,15 @@ describe("parseModule reads operators like SANY", () => {
     expect(parseModule(`---- MODULE M ----\n${header}\nA == 1\n====`).extends).toEqual(extendees);
   });
 
+  it.each(["Op(_)) == 1", "CONSTANT _ )", "CONSTANT _ ]"])(
+    "rejects %j, which declares no operator, as SANY does",
+    (unit) => {
+      expect(() => parseModule(`---- MODULE M ----\nA == 1\n${unit}\n====`)).toThrow(
+        TlaSyntaxError,
+      );
+    },
+  );
+
   it.each(["EXTENDS SUBSET", "EXTENDS THEOREM", "EXTENDS AXIOM"])(
     "rejects %j before a definition as SANY does",
     (header) => {

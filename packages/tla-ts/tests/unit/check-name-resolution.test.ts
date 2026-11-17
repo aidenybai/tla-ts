@@ -139,6 +139,10 @@ describe("name resolution matches SANY", () => {
       "a definition after a field named THEOREM, AXIOM or DOMAIN, which SANY rejects",
       "r == [a |-> 1]\nF == r.THEOREM\nG == [r EXCEPT !.AXIOM = 1]\nH == r.DOMAIN\nI == 1",
     ],
+    [
+      "an operator substituted before a LEMMA, which SANY rejects",
+      "EXTENDS Integers\n---- MODULE Inner ----\nCONSTANT G(_, _)\n====\nI == INSTANCE Inner WITH G <- -\nLEMMA TRUE",
+    ],
   ])("accepts %s", async (_title, source) => {
     expect((await checkNames(source)).status).toBe("success");
   });
@@ -186,6 +190,7 @@ describe("name resolution matches SANY", () => {
 
   const exceptSelection = "Selecting subexpression of an EXCEPT not yet implemented.";
   const letSelector = "A name selector here must be from a LET clause.";
+  const noOperands = "Choosing operand `argument selector 1' of subexpression with no operands.";
   it.each([
     ["f == g", [["line 2, col 6 to line 2, col 6", "Unknown operator: `g'."]]],
     [
@@ -582,6 +587,51 @@ describe("name resolution matches SANY", () => {
       ],
     ],
     [
+      "EXTENDS Integers, Sequences\n---- MODULE Inner ----\nH(Q(_)) == Q(1)\n====\nOp(Q(_, _)) == Q(1, 2)\nI == INSTANCE Inner\nA == Op(SUBSET) /\\ Op(-. ) /\\ I!H(+ ) /\\ SelectSeq(<<>>, + )\nB == LET L(Q(_)) == Q(1) IN L(\\cup)",
+      [
+        [
+          "line 8, col 6 to line 8, col 7",
+          "Operator with incorrect arity passed as argument. \nOperator 'SUBSET' of arity 1 is argument number 1 (counting from 1) to operator `line 6, col 1 to line 6, col 22 of module M', \nbut an operator of arity 2 was expected.",
+        ],
+        [
+          "line 8, col 6 to line 8, col 15",
+          "Argument number 1 to operator 'Op' \nshould be a 2-parameter operator.",
+        ],
+        [
+          "line 8, col 20 to line 8, col 21",
+          "Operator with incorrect arity passed as argument. \nOperator '-.' of arity 1 is argument number 1 (counting from 1) to operator `line 6, col 1 to line 6, col 22 of module M', \nbut an operator of arity 2 was expected.",
+        ],
+        [
+          "line 8, col 20 to line 8, col 26",
+          "Argument number 1 to operator 'Op' \nshould be a 2-parameter operator.",
+        ],
+        [
+          "line 8, col 33 to line 8, col 33",
+          "Operator with incorrect arity passed as argument. \nOperator '+' of arity 2 is argument number 1 (counting from 1) to operator `line 7, col 1 to line 7, col 19 of module M', \nbut an operator of arity 1 was expected.",
+        ],
+        [
+          "line 8, col 31 to line 8, col 37",
+          "Argument number 1 to operator 'I!H' \nshould be a 1-parameter operator.",
+        ],
+        [
+          "line 8, col 42 to line 8, col 50",
+          "Operator with incorrect arity passed as argument. \nOperator '+' of arity 2 is argument number 2 (counting from 1) to operator `line 53, col 1 to line 65, col 14 of module Sequences', \nbut an operator of arity 1 was expected.",
+        ],
+        [
+          "line 8, col 42 to line 8, col 60",
+          "Argument number 2 to operator 'SelectSeq' \nshould be a 1-parameter operator.",
+        ],
+        [
+          "line 9, col 29 to line 9, col 29",
+          "Operator with incorrect arity passed as argument. \nOperator '\\union' of arity 2 is argument number 1 (counting from 1) to operator `line 9, col 10 to line 9, col 24 of module M', \nbut an operator of arity 1 was expected.",
+        ],
+        [
+          "line 9, col 29 to line 9, col 35",
+          "Argument number 1 to operator 'L' \nshould be a 1-parameter operator.",
+        ],
+      ],
+    ],
+    [
       "---- MODULE Inner ----\nH(Op(_)) == Op(1)\nOne(a) == a\n====\nI == INSTANCE Inner\nINSTANCE Inner\nf == I!H(I!One) /\\ I!One(I!One) /\\ I!H(LAMBDA a, b : a) /\\ H(I!H) /\\ One(One)",
       [
         ["line 8, col 26 to line 8, col 30", "The operator I!One requires 1 arguments."],
@@ -621,6 +671,15 @@ describe("name resolution matches SANY", () => {
           "line 3, col 38 to line 3, col 39",
           "Could not find declaration or definition of symbol '^+'.",
         ],
+      ],
+    ],
+    [
+      "EXTENDS Integers\n---- MODULE Inner ----\nCONSTANT e, f, g, h\n====\nI == INSTANCE Inner WITH e <- +, f <- SUBSET, g <- ', h <- -.",
+      [
+        ["line 6, col 31 to line 6, col 31", "The operator + requires 2 arguments."],
+        ["line 6, col 39 to line 6, col 44", "The operator SUBSET requires 1 arguments."],
+        ["line 6, col 52 to line 6, col 52", "The operator ' requires 1 arguments."],
+        ["line 6, col 60 to line 6, col 61", "The operator -. requires 1 arguments."],
       ],
     ],
     [
@@ -880,6 +939,92 @@ describe("name resolution matches SANY", () => {
           "line 5, col 23 to line 5, col 23",
           "An unexpected null node specified by 'argument selector 1'.\nThis is probably due to a previous error.",
         ],
+      ],
+    ],
+    [
+      "Op1 == {1}\nA == -Op1!1!: /\\ Op1!1^+",
+      [
+        [
+          "line 3, col 6 to line 3, col 6",
+          "Could not find declaration or definition of symbol '-.'.",
+        ],
+        ["line 3, col 6 to line 3, col 13", "Couldn't resolve prefix operator symbol `-.'."],
+        [
+          "line 3, col 23 to line 3, col 24",
+          "Could not find declaration or definition of symbol '^+'.",
+        ],
+        ["line 3, col 18 to line 3, col 24", "Couldn't resolve postfix operator symbol `^+'."],
+      ],
+    ],
+    [
+      "---- MODULE Inner ----\nJ(a, Q(_)) == Q(a)\n====\nI0 == INSTANCE Inner\nRECURSIVE Rec1\nRec1(a0) == I0!J(Rec1, LAMBDA y : y)!<<\nVARIABLE z\nOp(a, Q(_)) == lab :: Q(a)\nA == Op(1, LAMBDA z : z)!lab",
+      [
+        [
+          "line 7, col 1 to line 7, col 39",
+          "Definition of Rec1 has different arity than its RECURSIVE declaration.",
+        ],
+        [
+          "line 7, col 18 to line 7, col 21",
+          "Wrong number of arguments (0) given to operator 'Rec1', \nwhich requires 1 arguments.",
+        ],
+        [
+          "line 10, col 19 to line 10, col 19",
+          "Multiply-defined symbol 'z': this definition or declaration conflicts \nwith the one at line 8, col 10 to line 8, col 10 of module M.",
+        ],
+      ],
+    ],
+    [
+      "THEOREM T == \\A a \\in {1} : \\E b \\in {2} : a = b\nUSE T!@\nA == T!(1)!(2) /\\ T!@!@ /\\ T!(1)!@ /\\ T!(1)!(2, 3)\nOp == \\A a \\in {1}, b \\in {2} : a = b\nB == Op!(1) /\\ Op!(1, 2)!1",
+      [
+        ["line 3, col 5 to line 3, col 7", "Expected 1 arguments but found 0."],
+        ["line 4, col 19 to line 4, col 23", "Expected 2 arguments but found 0."],
+        ["line 4, col 28 to line 4, col 34", "Expected 2 arguments but found 1."],
+        [
+          "line 4, col 45 to line 4, col 50",
+          "Selector with 2 argument(s) used for quantifier with 1 bound identifier(s).",
+        ],
+        [
+          "line 6, col 9 to line 6, col 11",
+          "Selector with 1 argument(s) used for quantifier with 2 bound identifier(s).",
+        ],
+      ],
+    ],
+    [
+      "VARIABLE y\nASSUME AS == TRUE\nOp == {y, y', AS}\nA == Op!1!1 /\\ Op!2!1!1 /\\ Op!3!1\nTHEOREM T == TRUE\n<1>1. TRUE OBVIOUS\n<1>2. {<1>1, 1} OBVIOUS\n<1>3. <1>2!1!1 OBVIOUS\n<1>4. QED",
+      [
+        ["line 5, col 11 to line 5, col 11", noOperands],
+        ["line 5, col 23 to line 5, col 23", noOperands],
+        ["line 5, col 33 to line 5, col 33", noOperands],
+        ["line 9, col 14 to line 9, col 14", noOperands],
+      ],
+    ],
+    [
+      "CONSTANT c, F(_, _)\nOp1(a0) == {a0}\nOp == {Undef, F(1), Op1(LAMBDA p : p), c!1, @}\nA == Op!1!1 /\\ Op!2!1 /\\ Op!3!1!1 /\\ Op!4!1 /\\ Op!5!1\nB == Op!1 /\\ Op!2 /\\ Op!3!1 /\\ Op!4 /\\ Op!5\nTHEOREM U == ASSUME c PROVE {Undef, F(2)}\nC == U!2!1!1 /\\ U!2!2!1",
+      [
+        ["line 4, col 8 to line 4, col 12", "Unknown operator: `Undef'."],
+        ["line 4, col 16 to line 4, col 18", "The operator F requires 2 arguments."],
+        [
+          "line 4, col 25 to line 4, col 36",
+          "LAMBDA expression used where an expression is required.",
+        ],
+        ["line 4, col 40 to line 4, col 40", "Cannot take subexpression of `c'."],
+        ["line 4, col 45 to line 4, col 45", "@ used where its meaning is not defined."],
+        ["line 5, col 11 to line 5, col 11", noOperands],
+        ["line 5, col 21 to line 5, col 21", noOperands],
+        [
+          "line 5, col 31 to line 5, col 31",
+          "An unexpected null node specified by 'argument selector 1'.\nThis is probably due to a previous error.",
+        ],
+        ["line 5, col 43 to line 5, col 43", noOperands],
+        ["line 5, col 53 to line 5, col 53", noOperands],
+        [
+          "line 6, col 27 to line 6, col 27",
+          "An unexpected null node specified by 'argument selector 1'.\nThis is probably due to a previous error.",
+        ],
+        ["line 7, col 30 to line 7, col 34", "Unknown operator: `Undef'."],
+        ["line 7, col 38 to line 7, col 40", "The operator F requires 2 arguments."],
+        ["line 8, col 12 to line 8, col 12", noOperands],
+        ["line 8, col 23 to line 8, col 23", noOperands],
       ],
     ],
     [
@@ -2416,6 +2561,33 @@ describe("name resolution matches SANY", () => {
         { location: "line 9, col 8 to line 9, col 8 of module M", message: failed },
         { location: "line 9, col 17 to line 9, col 17 of module M", message: unexpected },
         { location: "line 9, col 24 to line 9, col 24 of module M", message: unexpected },
+      ]),
+    );
+  });
+
+  it("reports each selection of an expression that failed to resolve, and selecting through it, like SANY", async () => {
+    const unexpected =
+      "An unexpected null node specified by 'argument selector 1'.\nThis is probably due to a previous error.";
+    await expect(
+      checkNames(
+        "CONSTANT c\nOp == {-c, 1}\nB == Op!1\nC == Op!1\nD == {Op!1, 1}\nE == D!1!1\nTHEOREM T == {Op!1, 2}\nUSE T!1!1",
+      ),
+    ).rejects.toThrow(
+      createSanyError([
+        {
+          location: "line 3, col 8 to line 3, col 8 of module M",
+          message: "Could not find declaration or definition of symbol '-.'.",
+        },
+        {
+          location: "line 3, col 8 to line 3, col 9 of module M",
+          message: "Couldn't resolve prefix operator symbol `-.'.",
+        },
+        { location: "line 4, col 9 to line 4, col 9 of module M", message: unexpected },
+        { location: "line 5, col 9 to line 5, col 9 of module M", message: unexpected },
+        { location: "line 6, col 10 to line 6, col 10 of module M", message: unexpected },
+        { location: "line 7, col 10 to line 7, col 10 of module M", message: noOperands },
+        { location: "line 8, col 18 to line 8, col 18 of module M", message: unexpected },
+        { location: "line 9, col 9 to line 9, col 9 of module M", message: noOperands },
       ]),
     );
   });

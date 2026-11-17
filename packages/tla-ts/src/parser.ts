@@ -251,6 +251,7 @@ const OPERATOR_ARGUMENTS = new Set([
 
 const SELECTOR_SYMBOLS = new Set(["<<", ">>", ":", "@", "("]);
 
+// Deviation from SANY: TLAplusParser#OpOrExpr's lookahead omits PROPOSITION, LEMMA and COROLLARY, so SANY parses an operator argument before them as an expression.
 const UNIT_KEYWORDS = new Set([
   "ASSUME",
   "ASSUMPTION",
@@ -1956,7 +1957,11 @@ const parse = (
 
   const parseDeclarationUnit = (): Declaration => {
     const location = getLocation(peek());
-    if (isAt("_") && peek(1).kind === "Operator") {
+    const isOperatorDeclaration =
+      isAt("_") &&
+      peek(1).kind === "Operator" &&
+      (INFIX_OPERATORS.has(peek(1).text) || DEFINABLE_POSTFIX_OPERATORS.has(peek(1).text));
+    if (isOperatorDeclaration) {
       advance();
       const name = advance().text;
       return { name, arity: accept("_") ? 2 : 1, location };
