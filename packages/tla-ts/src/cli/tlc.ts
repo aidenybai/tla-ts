@@ -281,7 +281,6 @@ const checkSpec = async (
       printError(error, printer);
     }
     const exitCode = getTopLevelExitCode(error);
-    // TLC's System.exit(1) stops it before it prints how long it ran.
     if (exitCode !== EXIT_STATUS.abort) printFinished();
     return exitCode;
   };

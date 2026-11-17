@@ -761,7 +761,6 @@ export const createLiveGraph = <State>(
     }
     // The results of the step to the state itself come first, then those of each successor.
     const stepResults = [selfResults];
-    // TLC's LiveCheck checks the steps of one action before it generates the steps of the next.
     search.forEachActionSuccessors(index, state, (nextStates) => {
       for (const successor of nextStates) {
         const successorRow = createRows(1);

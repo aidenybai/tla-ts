@@ -96,7 +96,6 @@ export const createTraceBuilder = (context: TraceContext) => {
       runtime.getBehavior = searchBehavior;
     }
   };
-  // TLC rebuilds each state as a new TLCState, which seeds the generator of RandomElement again.
   // Deviation from TLC: TLCTrace#printTrace goes on drawing from the generator of the state it found the error in unless another state drew since, so it fails to rebuild the step.
   const rebuildFrom = (state: Value[], level: number) => {
     current.rebuilt = { state, level };
@@ -264,7 +263,6 @@ export const createTraceBuilder = (context: TraceContext) => {
     }
     const step = { action: undefined, label: undefined, state: toRecord(state) };
     const alias = config.alias;
-    // TLC's Worker#doPostCondition still binds CounterExample to the alias of that state.
     if (alias !== undefined) {
       context.tracedSteps.set(step, {
         state: step.state,

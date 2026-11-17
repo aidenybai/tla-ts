@@ -427,7 +427,6 @@ const createSequencesOperators = (version: TlcVersion) =>
       const left = getSequenceOrString(args, 0, getEvaluatingMessage("s \\o t", "sequence"));
       if (typeof left !== "string") {
         const right = getSequenceArgument(args, 1, getEvaluatingMessage("t \\o s", "sequence"));
-        // TLC's Sequences#Concat returns the other tuple itself when one is empty.
         const kept =
           left.length === 0
             ? getValue(args, 1, "\\o")

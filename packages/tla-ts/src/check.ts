@@ -338,7 +338,6 @@ const toUnexpectedError = (error: TlaEvaluationError) =>
     `${isEvalException(error) ? UNEXPECTED_EVAL_EXCEPTION : UNEXPECTED_EXCEPTION}${error.message}`,
   );
 
-// TLC's ModelChecker#printTraceAndStop reports an error it hits as it prints the trace as unexpected.
 const getTraceFailure = (error: TlaEvaluationError) =>
   getFailureMessage(
     isEvalException(error)
@@ -887,7 +886,6 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     liveSuccessors: LiveSuccessor[],
   ) => {
     runtime.generatedStates++;
-    // TLC's Tool#getState generates the successors of each action in turn until it finds the incomplete one, so another branch can fail as it prints the trace.
     const found = captureOutput(() => {
       try {
         const action = nextActions.find((item) =>
@@ -908,7 +906,6 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       options.version,
     );
     const live = captureOutput(() => addFailedLiveState(index, liveSuccessors));
-    // TLC's Worker#doPostCondition fails before it rebuilds the trace again.
     const trace = traces.getStateTrace(index, error.state).trace;
     const failure = createFailureResult(
       error,
@@ -1456,7 +1453,6 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     const replay = captureOutput(() => replayNext(index));
     return { result: replay.result, lines: [...live.lines, ...replay.lines] };
   };
-  // TLC's Worker#doPostCondition rebuilds the trace, which prints its output again, only as it finds the failed state deadlocked.
   const getNextFailureTrace = (index: number, counterExample?: { isConsole: boolean }) => {
     const behavior = traces.getStateTrace(index);
     return counterExample ? behavior : { trace: behavior.trace };
@@ -1512,7 +1508,6 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       ...traces.toTrace(steps, accepted, { known: 0 }),
     });
   };
-  // TLC's Worker adds the state to the behavior graph after it reports a violation, where LiveCheck can report a temporal property that fails too.
   const addReportedLiveState = (
     index: number,
     liveSuccessors: LiveSuccessor[],
@@ -1648,7 +1643,6 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       text: `The stuttering counterexample above may be caused by the absence of a fairness constraint in the behavior specification ${name} defined at ${formatRange(range)}. To rule out such counterexamples, conjoin a suitable fairness constraint to ${name} ${book}`,
     };
   };
-  // TLC's LiveCheck prints the failure of a liveness worker as unexpected and exits with status 1.
   const toLivenessFailure = (error: TlaEvaluationError) =>
     setExitCode(toUnexpectedError(error), EXIT_STATUS.abort);
   const getLassoSteps = (path: number[]) => {
@@ -1681,7 +1675,6 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         ? undefined
         : traces.findSuccessorWithFingerprint(lastState, cycleEnd, cycleStart);
     if (!isStuttering && !loop.result && !back) {
-      // TLC's LiveWorker prints the counterexample before it fails to rebuild the step back to the loop.
       options.onProgress?.({
         kind: "violation",
         status: "property-violation",

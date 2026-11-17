@@ -1076,7 +1076,6 @@ export const createSearch = (
     properties.actionProperties.map((property) => ({ ...property, expression: property.box })),
     false,
   );
-  // TLC evaluates each check once under coverage, so a value it finds decides the check and only a failure is evaluated again.
   const evaluateCovered = (
     covered: Coverage,
     check: CoveredCheck,
@@ -1370,7 +1369,6 @@ export const createSearch = (
       return violated;
     },
     forEachViolatedInvariant: (state, onViolated) => {
-      // Under -continue, TLC's DoInitFunctor checks every invariant of an initial state.
       for (const predicate of invariantPredicates) {
         if (!isPredicateViolated(predicate, state, undefined)) continue;
         violatingStates.add(state);

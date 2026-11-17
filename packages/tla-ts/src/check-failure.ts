@@ -57,7 +57,6 @@ export const getFailureExitCode = (
         getExitCode(error) ?? (error instanceof TlaModuleError ? error.exitCode : EXIT_STATUS.error)
       );
     case "liveness":
-      // TLC's ModelChecker#doNextFailed exits with the status of the code of an EvalException, such as Assert's.
       return error instanceof TlaModuleError ? error.exitCode : getErrorExitCode(error);
     default:
       if (!isReplayed) return getErrorExitCode(error);

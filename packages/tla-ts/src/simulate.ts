@@ -389,7 +389,6 @@ export const simulate = (options: SimulationOptions): number => {
               ),
       };
     });
-  // TLC's SimulationWorker and LiveCheck1 bind CounterExample to the alias of each state.
   const getCounterExample = (
     trace: TraceNode[],
     steps = toTraceSteps(trace),
