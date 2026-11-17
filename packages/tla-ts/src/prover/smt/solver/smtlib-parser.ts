@@ -126,6 +126,7 @@ import {
 } from "./smt-logics";
 import { setRecFunDefinition } from "./recfun-decl-plugin";
 import { DEFAULT_PRINT_OPTIONS, printExpr } from "./smt2-printer";
+import { InvVarShifter } from "./rewriter-tpl";
 import { replaceFreeVars, VarSubst } from "./var-subst";
 import { UpolynomialManager } from "./nlsat/upolynomial";
 
@@ -295,6 +296,20 @@ interface PatternFrame {
   next: number;
 }
 
+// push_match_frame. The stack holds the term, then the pattern and the body of each case, until
+// compile_patterns. A case is (p t), or (case p t) in the form before SMT-LIB 2.6.
+interface MatchFrame {
+  kind: "match";
+  list: SmtList;
+  cases: SExpr[];
+  isCaseForm: boolean;
+  // The binders around the case that is being parsed, -1 between cases.
+  depth: number;
+  isTail: boolean;
+  start: number;
+  next: number;
+}
+
 // smt2parser.cpp's expr_frame.
 type TermFrame =
   | ApplicationFrame
@@ -303,7 +318,8 @@ type TermFrame =
   | LetDeclFrame
   | QuantifierFrame
   | AttributeFrame
-  | PatternFrame;
+  | PatternFrame
+  | MatchFrame;
 
 const QUANTIFIER_KINDS = new Map([
   ["forall", QUANTIFIER_FORALL],
@@ -1352,19 +1368,19 @@ export const createSmtlibReader = (
     shrink(exprs, 0);
   };
 
-  // push_local: var_shifter moves the free variables of a term that was bound under fewer binders.
-  // Its cache holds the terms it makes, which replaceFreeVars rebuilds.
-  const getLocalTerm = (local: Local) => {
-    if (local.level === binders.depth) return local.expr;
-    if (manager.kinds[local.expr] === KIND_VAR)
-      return manager.mkVar(
-        manager.values[local.expr] + binders.depth - local.level,
-        manager.sorts[local.expr],
-      );
-    return replaceFreeVars(manager, local.expr, (variable, index, shift) =>
-      manager.mkVar(index + shift + binders.depth - local.level, manager.sorts[variable]),
-    );
-  };
+  // The parser's var_shifter, whose cache holds the terms it makes, which replaceFreeVars rebuilds.
+  const shiftFreeVars = (expr: number, amount: number) =>
+    manager.kinds[expr] === KIND_VAR
+      ? manager.mkVar(manager.values[expr] + amount, manager.sorts[expr])
+      : replaceFreeVars(manager, expr, (variable, index, shift) =>
+          manager.mkVar(index + shift + amount, manager.sorts[variable]),
+        );
+
+  // push_local: a term that was bound under fewer binders moves its free variables.
+  const getLocalTerm = (local: Local) =>
+    local.level === binders.depth
+      ? local.expr
+      : shiftFreeVars(local.expr, binders.depth - local.level);
 
   // basic_decl_plugin::join.
   const getJoin = (left: number, right: number, at: SExpr) => {
@@ -2401,6 +2417,114 @@ export const createSmtlibReader = (
     return { head: name, indices: [] };
   };
 
+  // parse_match_pattern: a constructor, a constructor applied to variables, or a variable, which _
+  // leaves unnamed. Z3 raises an error found after the pattern at the token after it.
+  const parseMatchPattern = (sexpr: SExpr, sort: number, after: SExpr) => {
+    if (sexpr.kind !== "list" && sexpr.kind !== "symbol")
+      throw new SmtParseError(
+        "expecting a constructor, _, variable or constructor application",
+        sexpr,
+      );
+    const name = sexpr.kind === "list" ? (sexpr.items[0] ?? sexpr.end) : sexpr;
+    if (!isSymbol(name)) throw new SmtParseError("constructor symbol expected", name);
+    const vars: string[] = [];
+    if (sexpr.kind === "list")
+      for (const [index, item] of sexpr.items.slice(1).entries()) {
+        if (!isSymbol(item)) throw new SmtParseError("variable symbol expected", item);
+        if (item.text !== "_" && vars.includes(item.text))
+          throw new SmtParseError(
+            "unexpected repeated variable in pattern expression",
+            sexpr.items[index + 2] ?? sexpr.end,
+          );
+        vars.push(item.text);
+      }
+    // cmd_context::find_func_decl with the arity and the range alone.
+    const decl = funcs
+      .get(name.text)
+      ?.find(
+        (candidate) =>
+          manager.funcDecls[candidate].range === sort &&
+          manager.funcDecls[candidate].domain.length === vars.length,
+      );
+    if (decl === undefined && vars.length > 0)
+      throw new SmtParseError(
+        `invalid function declaration reference, unknown indexed function ${name.text}`,
+        after,
+      );
+    // A builtin name takes the builtin declaration, which is no constructor, or raises its own error.
+    if (decl === undefined && (name.text === "true" || name.text === "false"))
+      throw new SmtParseError("expecting a constructor", after);
+    if (decl === undefined && BUILTIN_NAMES.has(name.text))
+      throw new SmtUnsupportedError("a builtin name as a pattern of match");
+    if (decl === undefined) {
+      binders.depth++;
+      const variable = manager.mkVar(0, sort);
+      if (name.text !== "_") insertLocal(name.text, variable);
+      return variable;
+    }
+    if (manager.funcDecls[decl].op !== OP_DT_CONSTRUCTOR)
+      throw new SmtParseError("expecting a constructor", after);
+    binders.depth += vars.length;
+    const args = vars.map((variable, index) => {
+      const boundVar = manager.mkVar(index, manager.funcDecls[decl].domain[index]);
+      if (variable !== "_") insertLocal(variable, boundVar);
+      return boundVar;
+    });
+    return manager.mkApp(decl, args, sort);
+  };
+
+  // check_patterns and compile_patterns, from the last case to the first, with bind_match. The
+  // condition of the last case goes unused.
+  const compileMatch = (term: number, patterns: number[], bodies: number[], at: SExpr) => {
+    const sort = manager.sorts[term];
+    if (!manager.isDatatypeSort(sort))
+      throw new SmtParseError("pattern matching is only supported for algebraic datatypes", at);
+    const constructors = getDatatypeConstructors(manager, sort);
+    if (!patterns.some((pattern) => manager.kinds[pattern] === KIND_VAR)) {
+      if (patterns.length < constructors.length)
+        throw new SmtParseError("non-exhaustive pattern match", at);
+      const marked = new Set(patterns.map((pattern) => manager.decls[pattern]));
+      if (constructors.some((constructor) => !marked.has(constructor)))
+        throw new SmtParseError("a constructor is missing from pattern match", at);
+    }
+    const subst = new VarSubst(manager, false);
+    let result = -1;
+    for (let index = patterns.length - 1; index >= 0; index--) {
+      const pattern = patterns[index];
+      const isVar = manager.kinds[pattern] === KIND_VAR;
+      const recognizer = isVar ? -1 : getConstructorIs(manager, manager.decls[pattern]);
+      const accessors = isVar ? [] : getConstructorAccessors(manager, manager.decls[pattern]);
+      // bind_match shifts the term past the variables of the pattern.
+      const shifted = shiftFreeVars(term, isVar ? 1 : accessors.length);
+      manager.incRef(shifted);
+      const substitution = isVar
+        ? [shifted]
+        : accessors.map((accessor) =>
+            manager.mkApp(accessor, [shifted], manager.funcDecls[accessor].range),
+          );
+      for (const expr of substitution) manager.incRef(expr);
+      const condition = isVar ? manager.trueExpr : manager.mkApp(recognizer, [term], SORT_BOOL);
+      manager.incRef(condition);
+      manager.decRef(shifted);
+      const substituted = subst.apply(bodies[index], substitution);
+      const shifter = new InvVarShifter(manager);
+      const body = shifter.shift(substituted, substitution.length);
+      manager.decRef(substituted);
+      shifter.release();
+      const args = [condition, body, result];
+      const next =
+        result === -1 ? body : mkApp(OP_ITE, args, at, getDomainSort(OP_ITE, args, at));
+      manager.incRef(next);
+      if (result !== -1) manager.decRef(result);
+      result = next;
+      manager.decRef(body);
+      manager.decRef(condition);
+      for (const expr of substitution) manager.decRef(expr);
+    }
+    subst.release();
+    return result;
+  };
+
   // parse_expr. Z3 leaves the term on its stack until the command ends. A tail term is one whose
   // value is the value of the whole: it stays off the stack, in parsed, so that the caller of
   // parseTerm can have a term that nothing else holds without a reference of the parser's.
@@ -2503,7 +2627,20 @@ export const createSmtlibReader = (
         deliver(parseRootObj(current), isTail, exprStack.length);
         return;
       }
-      if (head.text === "match") throw new SmtUnsupportedError("the expression match");
+      if (head.text === "match") {
+        frames.push({
+          kind: "match",
+          list: current,
+          cases: [],
+          isCaseForm: false,
+          depth: -1,
+          isTail,
+          start: exprStack.length,
+          next: -1,
+        });
+        enter(current.items[1] ?? current.end, false);
+        return;
+      }
       if (head.text === "let") {
         const bindings = current.items[1];
         if (bindings?.kind !== "list")
@@ -2619,6 +2756,63 @@ export const createSmtlibReader = (
         continue;
       }
       const items = frame.list.items;
+      if (frame.kind === "match") {
+        if (frame.next === -1) {
+          const bindings = items[2] ?? frame.list.end;
+          if (bindings.kind !== "list")
+            throw new SmtParseError(
+              `pattern bindings should be enclosed in a parenthesis got ${bindings.lastId}`,
+              bindings,
+            );
+          // curr_id_is_case reads the last identifier, which a '(' leaves as it was.
+          frame.isCaseForm = (bindings.items[0] ?? bindings.end).lastId === "case";
+          frame.cases = frame.isCaseForm ? items.slice(2) : bindings.items;
+          frame.next = 0;
+        } else if (frame.depth !== -1) {
+          binders.depth = frame.depth;
+          frame.depth = -1;
+          endScope();
+          const binding = frame.cases[frame.next - 1];
+          const extra = binding.kind === "list" ? binding.items[frame.isCaseForm ? 3 : 2] : undefined;
+          if (extra !== undefined)
+            throw new SmtParseError(
+              `invalid pattern binding, ')' expected got ${extra.lastId}`,
+              extra,
+            );
+        }
+        const binding = frame.cases[frame.next];
+        if (binding !== undefined) {
+          if (frame.isCaseForm && !(binding.kind === "list" && isSymbol(binding.items[0], "case")))
+            throw new SmtUnsupportedError("the terms after the cases of match");
+          if (binding.kind !== "list")
+            throw new SmtParseError(
+              `invalid pattern binding, '(' expected got ${binding.lastId}`,
+              binding,
+            );
+          frame.next++;
+          beginScope();
+          frame.depth = binders.depth;
+          const offset = frame.isCaseForm ? 1 : 0;
+          const body = binding.items[offset + 1] ?? binding.end;
+          const sort = manager.sorts[exprStack[frame.start]];
+          pushRef(exprStack, parseMatchPattern(binding.items[offset] ?? binding.end, sort, body));
+          enter(body, false);
+          continue;
+        }
+        if (!frame.isCaseForm && items.length > 3)
+          throw new SmtUnsupportedError("the terms after the cases of match");
+        frames.pop();
+        const term = exprStack[frame.start];
+        const cases = exprStack.slice(frame.start + 1);
+        const patterns = cases.filter((_expr, index) => index % 2 === 0);
+        const bodies = cases.filter((_expr, index) => index % 2 === 1);
+        const result = compileMatch(term, patterns, bodies, frame.list.end);
+        // push_match_frame releases the bodies, then the patterns, then the term.
+        exprStack.splice(frame.start, cases.length + 1, ...bodies, ...patterns, term);
+        deliver(result, frame.isTail, frame.start);
+        manager.decRef(result);
+        continue;
+      }
       if (frame.kind === "attribute") {
         // consume_attributes.
         if (exprStack.length === frame.start) {
