@@ -323,6 +323,32 @@ describe("messages of the reader, as Z3 5.3.2 prints them", () => {
     ]);
   });
 
+  it("reports a sort list without a symbol at its head, with the context of the sort", () => {
+    expect(
+      run([
+        "(declare-datatypes ((D 0)) (((mk (f ())))))",
+        "(declare-datatypes ((E 0)) (((mk2 (g (5 Int))))))",
+        "(declare-fun h (()) Int)",
+        "(declare-fun k (Int) ())",
+        "(define-fun m ((x ())) Int 1)",
+        "(simplify (as foo ()))",
+        "(define-sort S () ())",
+        "(declare-const a (Array () Int))",
+        "(declare-const b (Array Int (1)))",
+      ]),
+    ).toEqual([
+      "(error \"line 1 column 38: invalid sort, symbol or '_' expected\")",
+      "(error \"line 2 column 38: invalid sort, symbol or '_' expected\")",
+      "(error \"line 3 column 17: Parsing function declaration. Expecting sort list '(' invalid sort, symbol or '_' expected\")",
+      "(error \"line 4 column 22: Invalid function declaration invalid sort, symbol or '_' expected\")",
+      "(error \"line 5 column 19: invalid sorted variables invalid sort, symbol or '_' expected\")",
+      "(error \"line 6 column 19: Invalid qualified identifier invalid sort, symbol or '_' expected\")",
+      "(error \"line 7 column 19: invalid sort, symbol or '_' expected\")",
+      "(error \"line 8 column 25: Invalid constant declaration invalid sort, symbol or '_' expected\")",
+      "(error \"line 9 column 29: Invalid constant declaration invalid sort, symbol or '_' expected\")",
+    ]);
+  });
+
   it("makes a declaration with a token before its closing parenthesis, and reports the token", () => {
     expect(
       run([

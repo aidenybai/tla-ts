@@ -1104,7 +1104,11 @@ export const createSmtlibReader = (
     bindings: ReadonlyMap<string, number>,
   ): number => {
     const head = sexpr.items[0];
-    if (!isSymbol(head)) throw new SmtParseError("invalid sort, symbol or '_' expected", head);
+    if (!isSymbol(head))
+      throw new SmtParseError(
+        `${context === "" ? "" : `${context} `}invalid sort, symbol or '_' expected`,
+        head ?? sexpr.end,
+      );
     const isArray =
       ARRAY_SORT_NAMES.has(head.text) || (head.text === "Set" && restricted.hasSetSort);
     if (isArray && hasArrays) {
