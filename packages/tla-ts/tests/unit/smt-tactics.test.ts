@@ -508,3 +508,18 @@ describe("hoist_ite, as Z3 5.3.2 simplifies", () => {
     ]);
   });
 });
+
+describe("theory_pb, as Z3 5.3.2 internalizes it", () => {
+  it("gives an argument that another theory owns a proxy", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(assert (= (+ (ite (> x 0) 1 0) (ite (> y 0) 1 0)) 1))",
+        "(assert (> (+ x y) 4))",
+        "(check-sat-using (then lia2card smt))",
+        "(get-model)",
+      ]),
+    ).toEqual(["sat", "(\n  (define-fun y () Int\n    5)\n  (define-fun x () Int\n    0)\n)"]);
+  });
+});

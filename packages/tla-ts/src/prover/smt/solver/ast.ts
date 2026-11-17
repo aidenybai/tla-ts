@@ -315,6 +315,7 @@ export const OP_AT_LEAST_K = PB_OP_BASE + 1;
 export const OP_PB_LE = PB_OP_BASE + 2;
 export const OP_PB_GE = PB_OP_BASE + 3;
 export const OP_PB_EQ = PB_OP_BASE + 4;
+export const OP_PB_AUX_BOOL = PB_OP_BASE + 5;
 const RECFUN_OP_BASE = 900;
 export const OP_FUN_DEFINED = RECFUN_OP_BASE;
 export const OP_FUN_CASE_PRED = RECFUN_OP_BASE + 1;
@@ -610,7 +611,10 @@ const hasOwnDeclHash = (family: number) =>
   family === FAMILY_RECFUN;
 
 // The declarations that Z3 makes once and counts references to, rather than on each use.
-const isDeclaredFamily = (family: number) => family === FAMILY_USER || family === FAMILY_RECFUN;
+const isDeclared = (funcDecl: FuncDecl) =>
+  funcDecl.family === FAMILY_USER ||
+  funcDecl.family === FAMILY_RECFUN ||
+  funcDecl.op === OP_PB_AUX_BOOL;
 
 export class AstManager {
   private numNodes = 0;
@@ -889,7 +893,7 @@ export class AstManager {
 
   private holdDecl(expr: number) {
     const decl = this.decls[expr];
-    if (isDeclaredFamily(this.funcDecls[decl].family)) {
+    if (isDeclared(this.funcDecls[decl])) {
       this.incDeclRef(decl);
       return;
     }
@@ -908,7 +912,7 @@ export class AstManager {
 
   private releaseDecl(expr: number) {
     const decl = this.decls[expr];
-    if (isDeclaredFamily(this.funcDecls[decl].family)) {
+    if (isDeclared(this.funcDecls[decl])) {
       this.declRefCounts[decl]--;
       if (this.declRefCounts[decl] > 0) return -1;
       this.deletedDecls.add(decl);
@@ -1879,6 +1883,21 @@ export class AstManager {
     const decl = this.mkFuncDecl(name, domain, range, isSkolem);
     this.declRefCounts[decl] = 0;
     return decl;
+  }
+
+  // pb_util::mk_fresh_bool, whose declaration goes with its last application.
+  mkPbAuxBool() {
+    const decl = this.addDecl(
+      this.mkFreshVarName("pb"),
+      FAMILY_PB,
+      OP_PB_AUX_BOOL,
+      [],
+      SORT_BOOL,
+      [],
+      getInfoHash(Z3_PB_FAMILY, OP_PB_AUX_BOOL - PB_OP_BASE, []),
+    );
+    this.declRefCounts[decl] = 0;
+    return this.mkApp(decl, [], SORT_BOOL);
   }
 
   mkFreshVarName(prefix: string | null) {
