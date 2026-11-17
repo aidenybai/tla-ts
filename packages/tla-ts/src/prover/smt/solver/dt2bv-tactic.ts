@@ -228,33 +228,49 @@ export const createDt2BvTactic = (manager: AstManager) => {
       else argsCannotBeFd(expr);
     }
     for (const sort of nonFdSorts) fdSorts.delete(sort);
-    if (fdSorts.size > 0) runEnum2Bv(manager, goal, fdSorts);
+    const size = goal.forms.size;
+    if (fdSorts.size > 0)
+      runEnum2Bv(
+        manager,
+        goal,
+        (visit) => {
+          for (let index = 0; index < size && !goal.isInconsistent; index++) visit(index);
+        },
+        fdSorts,
+      );
     goal.depth++;
     return [goal];
   };
 };
 
-export const runEnum2Bv = (manager: AstManager, goal: Goal, fdSorts?: Set<number>) => {
+export const runEnum2Bv = (
+  manager: AstManager,
+  goal: Goal,
+  forEachIndex: (visit: (index: number) => void) => void,
+  fdSorts?: Set<number>,
+) => {
   const rewriter = new Enum2BvRewriter(manager, fdSorts);
   let rewritten = -1;
-  const size = goal.forms.size;
-  for (let index = 0; index < size && !goal.isInconsistent; index++) {
-    const next = rewriter.rewrite(goal.forms.items[index]);
+  try {
+    forEachIndex((index) => {
+      const next = rewriter.rewrite(goal.forms.items[index]);
+      release(manager, rewritten);
+      rewritten = next;
+      goal.update(index, rewritten);
+    });
+    const bounds = new RefVector(manager);
+    for (const bound of rewriter.bounds.items) bounds.push(bound);
+    rewriter.bounds.reset();
+    for (const bound of bounds.items) goal.assert(bound);
+    const definitions: Definition[] = [];
+    for (const entry of rewriter.enumIndexes)
+      definitions.push({ decl: rewriter.enumBvs[entry[1]], def: -1 });
+    for (const entry of rewriter.enumIndexes)
+      definitions.push({ decl: entry[0], def: rewriter.enumDefs.items[entry[1]] });
+    if (definitions.length > 0) goal.addDefinitions(definitions);
+    bounds.reset();
+  } finally {
     release(manager, rewritten);
-    rewritten = next;
-    goal.update(index, rewritten);
+    rewriter.release();
   }
-  const bounds = new RefVector(manager);
-  for (const bound of rewriter.bounds.items) bounds.push(bound);
-  rewriter.bounds.reset();
-  for (const bound of bounds.items) goal.assert(bound);
-  const definitions: Definition[] = [];
-  for (const entry of rewriter.enumIndexes)
-    definitions.push({ decl: rewriter.enumBvs[entry[1]], def: -1 });
-  for (const entry of rewriter.enumIndexes)
-    definitions.push({ decl: entry[0], def: rewriter.enumDefs.items[entry[1]] });
-  if (definitions.length > 0) goal.addDefinitions(definitions);
-  bounds.reset();
-  release(manager, rewritten);
-  rewriter.release();
 };

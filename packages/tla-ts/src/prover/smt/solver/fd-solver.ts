@@ -1,4 +1,4 @@
-import { SmtTacticError } from "../../../errors";
+import { SmtCanceledError, SmtTacticError } from "../../../errors";
 import {
   type AstManager,
   KIND_APP,
@@ -16,7 +16,9 @@ import { BoundManager } from "./bound-manager";
 import { mkBvApp } from "./bv-decl-plugin";
 import { Bv2IntContext, Bv2IntRewriter } from "./bv2int-rewriter";
 import { card2bv } from "./card2bv";
+import { DependentExprState } from "./dependent-expr-state";
 import { runEnum2Bv } from "./dt2bv-tactic";
+import { release } from "./expr-ref";
 import { ExprSafeReplace } from "./expr-safe-replace";
 import { type Definition, Goal } from "./goal";
 import { ObjMap } from "./hashtable";
@@ -50,8 +52,9 @@ const collectBounds = (manager: AstManager, bounds: BoundManager, form: number) 
 // bounded_int2bv_simplifier: an integer constant between two bounds becomes an unsigned
 // bit-vector plus the lower bound.
 const runBoundedInt2Bv = (manager: AstManager, goal: Goal) => {
+  const state = new DependentExprState(manager, goal);
   const bounds = new BoundManager(manager);
-  for (const form of goal.forms.items) collectBounds(manager, bounds, form);
+  state.forEachIndex((index) => collectBounds(manager, bounds, goal.forms.items[index]));
   const substitution = new ObjMap<number>((expr) => manager.hashes[expr]);
   const trail = new RefVector(manager);
   const sideConditions = new RefVector(manager);
@@ -88,34 +91,63 @@ const runBoundedInt2Bv = (manager: AstManager, goal: Goal) => {
       );
     substitution.set(expr, replacement);
   }
-  if (substitution.size > 0) {
-    const replacer = new SubstReplacer(manager, substitution);
-    const context = new Bv2IntContext(manager, UINT_MAX);
-    const rewriter = new Bv2IntRewriter(manager, context);
-    for (let index = 0; index < goal.forms.size; index++) {
-      const form = goal.forms.items[index];
-      const replaced = replacer.rewrite(form);
-      const result = rewriter.rewrite(replaced);
-      manager.decRef(replaced);
-      if (result !== form) goal.update(index, result);
-      manager.decRef(result);
+  try {
+    if (substitution.size > 0) {
+      const replacer = new SubstReplacer(manager, substitution);
+      const context = new Bv2IntContext(manager, UINT_MAX);
+      const rewriter = new Bv2IntRewriter(manager, context);
+      let replaced = -1;
+      let result = -1;
+      try {
+        state.forEachIndex((index) => {
+          const form = goal.forms.items[index];
+          const nextReplaced = replacer.rewrite(form);
+          release(manager, replaced);
+          replaced = nextReplaced;
+          const nextResult = rewriter.rewrite(replaced);
+          release(manager, result);
+          result = nextResult;
+          if (result !== form) goal.update(index, result);
+        });
+      } finally {
+        release(manager, result);
+        release(manager, replaced);
+        rewriter.release();
+        context.release();
+        replacer.release();
+      }
     }
-    rewriter.release();
-    context.release();
-    replacer.release();
+    for (const condition of sideConditions.items) goal.assert(condition);
+    if (definitions.length > 0) goal.addDefinitions(definitions);
+  } finally {
+    sideConditions.reset();
+    trail.reset();
   }
-  for (const condition of sideConditions.items) goal.assert(condition);
-  if (definitions.length > 0) goal.addDefinitions(definitions);
-  sideConditions.reset();
-  trail.reset();
 };
 
+// simplifier_solver runs mk_fd_simplifier, a then_simplifier, as the one simplifier of its own
+// then_simplifier. Each checks the limit before a simplifier and stops at one that the limit
+// stopped, and simplifier_solver::flush then leaves the formulas out of the solver.
 const runFdSimplifier = (manager: AstManager, forms: readonly number[]) => {
   const fmls = new Goal(manager);
   for (const form of forms) fmls.assert(form);
-  runBoundedInt2Bv(manager, fmls);
-  card2bv(manager, fmls, getRewriterOptions(manager, new Map()));
-  runEnum2Bv(manager, fmls);
+  const state = new DependentExprState(manager, fmls);
+  const simplifiers = [
+    () => runBoundedInt2Bv(manager, fmls),
+    () => card2bv(manager, fmls, getRewriterOptions(manager, new Map())),
+    () => runEnum2Bv(manager, fmls, (visit) => state.forEachIndex(visit)),
+  ];
+  if (!fmls.isInconsistent && manager.limit.inc())
+    for (const simplify of simplifiers) {
+      if (fmls.isInconsistent || !manager.limit.inc()) break;
+      try {
+        simplify();
+      } catch (error) {
+        if (!(error instanceof SmtCanceledError)) throw error;
+        break;
+      }
+    }
+  if (!manager.limit.inc()) fmls.reset();
   return fmls;
 };
 

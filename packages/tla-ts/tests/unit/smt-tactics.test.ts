@@ -1042,4 +1042,30 @@ describe("qffd, as Z3 5.3.2 stops its finite-domain solver", () => {
       '(:reason-unknown "canceled")',
     ]);
   });
+
+  it("counts the steps of its simplifiers and leaves the SAT solver empty when the limit stops them", () => {
+    expect(
+      run([
+        ...goal,
+        "(set-option :rlimit 1)",
+        "(check-sat-using qffd)",
+        "(get-info :reason-unknown)",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+        "(set-option :rlimit 166)",
+        "(check-sat-using qffd)",
+        "(get-info :reason-unknown)",
+        "(set-option :rlimit 167)",
+        "(check-sat-using qffd)",
+      ]),
+    ).toEqual([
+      "unknown",
+      '(:reason-unknown "canceled")',
+      "unknown",
+      '(:reason-unknown "canceled")',
+      "unknown",
+      '(:reason-unknown "canceled")',
+      "sat",
+    ]);
+  });
 });
