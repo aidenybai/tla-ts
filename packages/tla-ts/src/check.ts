@@ -931,12 +931,14 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   });
   const getPath = (index: number): Value[][] =>
     index === -1 ? [] : [...getPath(parents[index]), states[index]];
+  // TLC adds a successor's fingerprint to its set before it checks the invariants of the successor.
   runtime.isSeen = (state) => {
     const fingerprintState = getFingerprintState(state);
     const hash = getStateHash(fingerprintState);
     return (
       findStateIndex(seenStates, hash, fingerprintState) !== -1 ||
-      isExplored(hash, fingerprintState)
+      isExplored(hash, fingerprintState) ||
+      (unstoredFingerprint !== undefined && isSameState(unstoredFingerprint, fingerprintState))
     );
   };
   runtime.markExplored = (state) => {

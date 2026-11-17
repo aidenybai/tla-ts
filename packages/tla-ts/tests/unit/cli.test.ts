@@ -660,6 +660,8 @@ describe("the CLI answers PickSuccessor from standard input like TLC", () => {
   };
   const ask = (length: number, line: number) =>
     `Extend behavior of length ${length} with a "Next" step [<Action line ${line}, col 12 to line ${line}, col 45 of module PickAsk>]? (Yes/no/explored/states/diff):`;
+  const askExplored = (length: number, line: number) =>
+    `Extend behavior of length ${length} with a "Next" step [<Action line ${line}, col 12 to line ${line}, col 41 of module PickExplored>]? (Yes/no/explored/states/diff):`;
 
   it("shows the states or their difference and asks again until an answer extends the behavior or not", () => {
     const result = runCliWith("tlc-ext", ["PickAsk.tla"], "s\nd\nzz\nN\ny\n \nno\nYes\n\n");
@@ -686,8 +688,6 @@ describe("the CLI answers PickSuccessor from standard input like TLC", () => {
 
   it("marks a successor explored, which TLC neither checks nor asks about again", () => {
     const result = runCliWith("tlc-ext", ["PickExplored.tla"], "y\ny\ne\n");
-    const askExplored = (length: number, line: number) =>
-      `Extend behavior of length ${length} with a "Next" step [<Action line ${line}, col 12 to line ${line}, col 41 of module PickExplored>]? (Yes/no/explored/states/diff):`;
     expect(result.status).toBe(0);
     expect(getSteadyLines(result.stdout)).toEqual([
       "Starting... (_)",
@@ -708,6 +708,39 @@ describe("the CLI answers PickSuccessor from standard input like TLC", () => {
       "The depth of the complete state graph search is 2.",
       "The average outdegree of the complete state graph is 1 (minimum is 0, the maximum 2 and the 95th percentile is 2).",
       "Finished in _ at (_)",
+      "",
+    ]);
+  });
+
+  it("asks nothing after an invariant violation, as TLC has seen the successor that violates it", () => {
+    const result = runCliWith("tlc-ext", ["PickExplored.tla"], "y\ny\ny\ny\n");
+    expect(result.status).toBe(12);
+    expect(getSteadyLines(result.stdout)).toEqual([
+      "Starting... (_)",
+      "Implied-temporal checking--satisfiability problem has 1 branches.",
+      "Computing initial states...",
+      "Finished computing initial states: 1 distinct state generated at _.",
+      askExplored(1, 10),
+      askExplored(1, 11),
+      askExplored(2, 11),
+      "Error: Invariant Unmarked is violated.",
+      "Error: The behavior up to this point is:",
+      "State 1: <Initial predicate>",
+      "/\\ x = 0",
+      "/\\ y = 0",
+      "",
+      "State 2: <Next line 10, col 12 to line 10, col 41 of module PickExplored>",
+      "/\\ x = 1",
+      "/\\ y = 0",
+      "",
+      "State 3: <Next line 11, col 12 to line 11, col 41 of module PickExplored>",
+      "/\\ x = 1",
+      "/\\ y = 1",
+      "",
+      "4 states generated, 4 distinct states found, 1 states left on queue.",
+      "The depth of the complete state graph search is 3.",
+      "Finished in _ at (_)",
+      "Trace exploration spec path: ./PickExplored_TTrace__.tla",
       "",
     ]);
   });
