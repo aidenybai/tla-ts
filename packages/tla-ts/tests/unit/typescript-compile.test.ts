@@ -50409,4 +50409,18 @@ describe("BigInts", () => {
       );
     });
   });
+
+  it("stops at a name that only a key that the global object inherits binds", async () => {
+    const source = `
+      var box = { seen: 0 };
+      try {
+        toString = Object.prototype.toString;
+      } catch (error) {
+        box.seen = 1;
+      }
+    `;
+    expect(
+      (await check(compile(source, join(import.meta.dirname, "model.js")))).failure?.message,
+    ).toContain("tla-ts can't follow toString, which the global object inherits");
+  });
 });

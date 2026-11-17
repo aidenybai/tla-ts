@@ -14730,7 +14730,14 @@ export const bindOnce = (path: Path, name: string, value: Expression, rest: Form
       )
     : bindValue(name, value, rest);
 
-// Throws the TypeError that JavaScript throws where a change to an object fails.
+// The keys that the global object inherits from Object.prototype.
+const INHERITED_GLOBAL_KEYS = new Set(
+  BUILT_INS["Object.prototype"][3].map((property) => property[0]),
+);
+
+// Throws the TypeError that JavaScript throws where a change to an object fails. A read or a write
+// of a name that no declaration binds reads the global object, which inherits Object.prototype's
+// keys, so tla-ts stops where one names such a key rather than throw a ReferenceError.
 export const throwError = (
   name: "TypeError" | "RangeError" | "ReferenceError" | "SyntaxError" | "URIError",
   path: Path,
@@ -14738,6 +14745,19 @@ export const throwError = (
   context: Context,
   frame: Pick<Frame, "throwTo">,
 ) => {
+  const target = ts.isBinaryExpression(node) ? skipCasts(node.left) : node;
+  if (
+    name === "ReferenceError" &&
+    isUnresolved(target, context) &&
+    INHERITED_GLOBAL_KEYS.has(target.text)
+  ) {
+    return leaf(
+      apply("Assert", [
+        boolean(false),
+        string(`tla-ts can't follow ${target.text}, which the global object inherits`),
+      ]),
+    );
+  }
   const uncaught = apply("Assert", [boolean(false), string(name)]);
   return frame.throwTo === undefined
     ? leaf(uncaught)
