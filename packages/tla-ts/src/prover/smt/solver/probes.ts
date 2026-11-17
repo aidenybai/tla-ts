@@ -57,8 +57,7 @@ const forEachExpr = (goal: Goal, visit: (expr: number) => void) => {
   const manager = goal.manager;
   const visited = new Set<number>();
   const todo = [...goal.forms.items].reverse();
-  while (todo.length > 0) {
-    const expr = todo.pop() as number;
+  for (let expr = todo.pop(); expr !== undefined; expr = todo.pop()) {
     if (visited.has(expr)) continue;
     visited.add(expr);
     visit(expr);

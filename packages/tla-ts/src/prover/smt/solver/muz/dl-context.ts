@@ -368,7 +368,7 @@ export class DatalogContext {
         : mkExists(
             manager,
             [...domain].reverse(),
-            domain.map((_, index) => String(index)).reverse(),
+            domain.map((_value, index) => String(index)).reverse(),
             atom,
           );
     manager.incRef(query);
@@ -401,7 +401,7 @@ export class DatalogContext {
       ...conjs.items.map((conj) => this.ruleManager.ensureApp(conj)),
     ];
     const isNegated = tail.map(
-      (_, index) => index < rule.uninterpretedSize && rule.isNegated[index],
+      (_value, index) => index < rule.uninterpretedSize && rule.isNegated[index],
     );
     const reduced = this.ruleManager.mk(rule.head, tail, isNegated, rule.name);
     conjs.reset();

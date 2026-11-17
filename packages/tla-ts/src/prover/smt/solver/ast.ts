@@ -298,7 +298,6 @@ export const OP_INTERNAL_STRING_STRIDOF = SEQ_OP_BASE + 64;
 export const OP_INTERNAL_STRING_POWER = SEQ_OP_BASE + 65;
 export const OP_INTERNAL_REGEXP_EMPTY = SEQ_OP_BASE + 66;
 export const OP_INTERNAL_REGEXP_FULL_CHAR = SEQ_OP_BASE + 67;
-export const OP_RE_IS_NULLABLE = SEQ_OP_BASE + 68;
 export const OP_SEQ_SKOLEM = SEQ_OP_BASE + 69;
 const CHAR_OP_BASE = 600;
 export const OP_CHAR_CONST = CHAR_OP_BASE;
@@ -1732,7 +1731,7 @@ export class AstManager {
       throw new SmtInvariantError(`the operator ${op} has no Z3 declaration`);
     const argSort = op === OP_ITE ? this.sorts[args[1]] : this.sorts[args[0]];
     const arity = builtin[2] === -1 ? args.length : builtin[2];
-    const domain = Array.from({ length: arity }, (_, index) =>
+    const domain = Array.from({ length: arity }, (_value, index) =>
       op === OP_PATTERN
         ? this.sorts[args[index]]
         : op === OP_ITE && index === 0

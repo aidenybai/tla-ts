@@ -43,7 +43,7 @@ interface Polarized {
   isPositive: boolean;
 }
 
-export const PRECISE = 0;
+const PRECISE = 0;
 export const UNDER = 1;
 export const OVER = 2;
 const UNDER_OVER = 3;

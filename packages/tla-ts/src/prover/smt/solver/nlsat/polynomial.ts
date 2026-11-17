@@ -902,10 +902,6 @@ export class PolynomialManager {
     this.modulus = prime;
   }
 
-  setZ() {
-    this.modulus = null;
-  }
-
   mkPolynomialCore(as: bigint[], ms: Monomial[]) {
     const id = this.freePolynomialIds.pop() ?? this.nextPolynomialId++;
     const polynomial = new Polynomial(id, as, ms);
@@ -1094,12 +1090,6 @@ export class PolynomialManager {
       this.som.addmul(this.mulNumeral(coeff, first.as[index]), first.ms[index], second);
     }
     return this.som.mk();
-  }
-
-  private divConst(polynomial: Polynomial, divisor: bigint) {
-    for (let index = 0; index < polynomial.size; index++)
-      this.cheap.add(this.divNumeral(polynomial.as[index], divisor), polynomial.ms[index]);
-    return this.cheap.mk();
   }
 
   neg(polynomial: Polynomial) {
@@ -1456,8 +1446,7 @@ export class PolynomialManager {
       this.modulus = savedModulus;
       if (isBadPrime) continue;
       if (this.isConst(q.get())) {
-        // Deviation from Z3: when d_a is 1 and q is a constant other than 1, uni_mod_gcd returns q
-        // (polynomial.cpp:4170), so gcd(2x - 3, 2x - 1) is 2 there. This returns 1 and frees q.
+        // Deviation from Z3: when d_a is 1, uni_mod_gcd returns a constant q other than 1, so gcd(2x - 3, 2x - 1) is 2 there.
         r.set(dA === 1n && q.get().as[0] === 1n ? q.get() : this.mkConst(dA));
         release();
         return;
@@ -2268,29 +2257,6 @@ export class PolynomialManager {
         return;
       }
     }
-  }
-
-  discriminant(polynomial: Polynomial, x: number, r: PolynomialRef) {
-    const pPrime = new PolynomialRef(this);
-    const m = this.degree(polynomial, x);
-    if (m === 0) {
-      r.set(this.zero);
-      pPrime.reset();
-      return;
-    }
-    pPrime.set(this.derivative(polynomial, x));
-    this.resultant(polynomial, pPrime.get(), x, r);
-    const isNegated = (m * (m - 1)) % 4 !== 0;
-    const lc = this.getConstCoeff(polynomial, x, m);
-    if (lc !== null) r.set(this.divConst(r.get(), isNegated ? this.negNumeral(lc) : lc));
-    else {
-      if (isNegated) r.set(this.neg(r.get()));
-      const c = new PolynomialRef(this);
-      c.set(this.coeff(polynomial, x, m));
-      r.set(this.exactDiv(r.get(), c.get()));
-      c.reset();
-    }
-    pPrime.reset();
   }
 
   private seLazard(d: number, lcSd: Polynomial, sd1: Polynomial, x: number, se: PolynomialRef) {
@@ -3139,7 +3105,6 @@ export class PolynomialManager {
     return result;
   }
 
-  // Like Z3's t_eval, this stops at the first variable that getValue has no value for.
   private evaluatePartially<T>(
     polynomial: Polynomial,
     ops: ValueOps<T>,

@@ -465,8 +465,7 @@ export class EufSolver implements SatExtension {
     let generation = 0;
     const visited = new Set<number>();
     const todo = [expr];
-    while (todo.length > 0) {
-      const current = todo.pop() as number;
+    for (let current = todo.pop(); current !== undefined; current = todo.pop()) {
       if (visited.has(current)) continue;
       visited.add(current);
       const node = this.egraph.find(current);

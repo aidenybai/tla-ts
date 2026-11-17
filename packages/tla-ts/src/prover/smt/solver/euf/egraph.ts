@@ -23,8 +23,8 @@ export const NULL_THEORY_VAR = -1;
 export const NULL_BOOL_VAR = -1;
 
 const J_AXIOM = 0;
-export const J_CONGRUENCE = 1;
-export const J_EXTERNAL = 2;
+const J_CONGRUENCE = 1;
+const J_EXTERNAL = 2;
 
 export interface Justification {
   readonly kind: number;
@@ -32,7 +32,7 @@ export interface Justification {
   readonly external: number;
 }
 
-export const AXIOM: Justification = {
+const AXIOM: Justification = {
   kind: J_AXIOM,
   isCommutative: false,
   external: 0,
@@ -520,12 +520,6 @@ export class Egraph {
     if (isEnabled === node.isCgcEnabled) return;
     this.toggleCgcEnabled(node, false);
     this.push(U_TOGGLE_CGC, node);
-  }
-
-  setRelevant(node: Enode) {
-    if (node.isRelevant) return;
-    node.isRelevant = true;
-    this.push(U_SET_RELEVANT, node);
   }
 
   private toggleCgcEnabled(node: Enode, isBacktracking: boolean) {

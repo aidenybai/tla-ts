@@ -2973,7 +2973,9 @@ export const createSmtlibReader = (
       subst.release();
     }
     for (const [index, sort] of domain.entries()) manager.incRef(manager.mkVar(index, sort));
-    const reversedVars = domain.map((_, index) => manager.mkVar(index, domain[count - index - 1]));
+    const reversedVars = domain.map((_value, index) =>
+      manager.mkVar(index, domain[count - index - 1]),
+    );
     for (const reversedVar of reversedVars) manager.incRef(reversedVar);
     const decl = manager.mkRecFuncDecl(name, domain, manager.sorts[body]);
     for (const reversedVar of reversedVars) manager.decRef(reversedVar);

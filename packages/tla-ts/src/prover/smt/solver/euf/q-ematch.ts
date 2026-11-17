@@ -493,8 +493,7 @@ export class Ematch {
     const manager = this.ctx.manager;
     const todo = [expr];
     const marked = new Set<number>();
-    while (todo.length > 0) {
-      const term = todo.pop() as number;
+    for (let term = todo.pop(); term !== undefined; term = todo.pop()) {
       if (marked.has(term)) continue;
       marked.add(term);
       if (manager.isGroundApp(term)) {

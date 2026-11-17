@@ -1214,8 +1214,7 @@ export const runSmtlibScript = (
         manager.incRef(term);
         const visited = new Set<number>();
         const todo = [term];
-        while (todo.length > 0) {
-          const expr = todo.pop() as number;
+        for (let expr = todo.pop(); expr !== undefined; expr = todo.pop()) {
           if (visited.has(expr)) continue;
           visited.add(expr);
           const family = manager.kinds[expr] === KIND_APP ? manager.getFamily(expr) : -1;
@@ -1310,8 +1309,7 @@ export const runSmtlibScript = (
           const decls = new Set<number>();
           for (const assertion of assertions) {
             const todo = [assertion];
-            while (todo.length > 0) {
-              const expr = todo.pop() as number;
+            for (let expr = todo.pop(); expr !== undefined; expr = todo.pop()) {
               if (visited.has(expr)) continue;
               visited.add(expr);
               if (manager.kinds[expr] === KIND_QUANTIFIER) {

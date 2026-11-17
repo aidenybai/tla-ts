@@ -213,7 +213,7 @@ export class MkSlice implements RuleTransformerPlugin {
     const manager = this.context.manager;
     let hasOutput = false;
     for (const [predicate, slice] of this.sliceable) {
-      const domain = manager.funcDecls[predicate].domain.filter((_, index) => !slice[index]);
+      const domain = manager.funcDecls[predicate].domain.filter((_value, index) => !slice[index]);
       if (domain.length < slice.length) {
         const sliced = this.context.mkFreshHeadPredicate(
           getSymbolName(manager.funcDecls[predicate].name),
@@ -238,7 +238,7 @@ export class MkSlice implements RuleTransformerPlugin {
     const slice = this.getPredicateSlice(manager.decls[atom]);
     return manager.mkApp(
       sliced,
-      manager.getArgs(atom).filter((_, index) => !slice[index]),
+      manager.getArgs(atom).filter((_value, index) => !slice[index]),
       SORT_BOOL,
     );
   }
@@ -303,7 +303,7 @@ export class MkSlice implements RuleTransformerPlugin {
       const domain = manager.funcDecls[predicate].domain;
       const subst = domain
         .map((sort, index) => manager.mkVar(index, sort))
-        .filter((_, index) => !slice[index]);
+        .filter((_value, index) => !slice[index]);
       const interp = model.funcInterps.get(sliced);
       if (interp === undefined) continue;
       const oldInterp = new FuncInterp(manager, slice.length);

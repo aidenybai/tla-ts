@@ -1,6 +1,5 @@
 import {
   type AstManager,
-  FAMILY_PB,
   OP_AT_LEAST_K,
   OP_AT_MOST_K,
   OP_PB_EQ,
@@ -19,8 +18,6 @@ interface PbArg {
   coeff: Rational;
 }
 
-export const isPb = (manager: AstManager, expr: number) => manager.getFamily(expr) === FAMILY_PB;
-
 export const getPbK = (manager: AstManager, decl: number) => manager.getPbParameters(decl)[0];
 
 export const getPbCoeff = (manager: AstManager, decl: number, index: number) => {
@@ -31,7 +28,7 @@ export const getPbCoeff = (manager: AstManager, decl: number, index: number) => 
 };
 
 export const hasUnitCoefficients = (manager: AstManager, decl: number) =>
-  manager.funcDecls[decl].domain.every((_, index) =>
+  manager.funcDecls[decl].domain.every((_value, index) =>
     getPbCoeff(manager, decl, index).equals(Rational.one),
   );
 

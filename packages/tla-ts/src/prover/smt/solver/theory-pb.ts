@@ -221,7 +221,6 @@ class Card {
   constructor(
     public lit: Literal,
     public k: number,
-    readonly isAux: boolean,
   ) {}
 
   get size() {
@@ -317,7 +316,7 @@ export class TheoryPb extends Theory {
     const args = manager.getArgs(atom);
     const op = manager.getOp(atom);
     if (op === OP_PB_EQ) {
-      const coeffs = args.map((_, index) => getPbCoeff(manager, decl, index));
+      const coeffs = args.map((_value, index) => getPbCoeff(manager, decl, index));
       const sum = coeffs.reduce((total, coeff) => total.add(coeff), Rational.zero);
       const k = getPbK(manager, decl);
       const le = mkPbGe(
@@ -473,7 +472,7 @@ export class TheoryPb extends Theory {
       context.mkThAxiom([negate(lit)]);
       return true;
     }
-    const card = new Card(lit, bound, manager.getOp(atom) === OP_AT_LEAST_K);
+    const card = new Card(lit, bound);
     for (const arg of args) card.addArg(this.compileArg(arg));
     if (bound === card.size) this.card2conjunction(card);
     else if (card.size === 1) this.card2disjunction(card);

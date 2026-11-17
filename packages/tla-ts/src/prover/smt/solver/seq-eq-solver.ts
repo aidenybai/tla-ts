@@ -27,7 +27,7 @@ export interface SeqLength {
   value: Rational;
 }
 
-export interface SeqEqSolverHost {
+interface SeqEqSolverHost {
   addConsequence(isUsingDeps: boolean, clause: number[]): void;
   addSolution(variable: number, term: number): void;
   expr2rep(expr: number): number;
@@ -41,7 +41,7 @@ export interface BinaryEq {
   y: number;
 }
 
-export interface TernaryEq {
+interface TernaryEq {
   x: number;
   xs: number[];
   y1: number;

@@ -138,7 +138,7 @@ class HornTactic {
     );
     if (sorts.length === 0) return formula;
     sorts.reverse();
-    const names = sorts.map((_, index) => String(sorts.length - index - 1));
+    const names = sorts.map((_value, index) => String(sorts.length - index - 1));
     const result = mkForall(manager, sorts, names, formula);
     manager.incRef(result);
     return result;

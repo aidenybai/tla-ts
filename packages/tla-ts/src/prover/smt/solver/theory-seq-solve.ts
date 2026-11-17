@@ -30,7 +30,7 @@ import { getConcat, mkSeqApp } from "./seq-decl-plugin";
 import type { EqPair } from "./seq-rewriter";
 import { type DecomposedEq, type DepEq, type Ne, TheorySeqState } from "./theory-seq-state";
 
-export interface DepState {
+interface DepState {
   dep: Dependency;
   isChanged: boolean;
 }

@@ -129,7 +129,7 @@ const getInstance = (pieces: Piece[], getValue: (piece: Progression) => number) 
 const expandPattern = (count: number, text: string, isReversed: boolean) => {
   const pattern = parsePattern(text);
   if (pattern === undefined) return undefined;
-  const positions = Array.from({ length: count }, (_, position) =>
+  const positions = Array.from({ length: count }, (_value, position) =>
     isReversed ? count - 1 - position : position,
   );
   return positions

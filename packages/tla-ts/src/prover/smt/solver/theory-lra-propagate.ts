@@ -33,7 +33,6 @@ export abstract class TheoryLraPropagate extends TheoryLraBounds {
   private delayIneqsQhead = 0;
   protected explanation = new Explanation();
   protected coreLiterals: Literal[] = [];
-  protected numConflicts = 0;
   private lowerTerms: (TermBound | undefined)[] = [];
   private upperTerms: (TermBound | undefined)[] = [];
   protected isModelInitialized = false;
@@ -382,7 +381,6 @@ export abstract class TheoryLraPropagate extends TheoryLraBounds {
 
   protected setConflict() {
     this.resetEvidence();
-    this.numConflicts++;
     for (const constraint of this.explanation) this.setEvidence(constraint);
     this.context.setConflict(new TheoryJustification(this.id, this.coreLiterals, []), null);
   }

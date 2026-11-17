@@ -296,7 +296,7 @@ const invert = (mode: Mode): Mode => ({
         : "Neither",
 });
 
-export const encodeIdv = (encoder: Encoder, expression: Expr, env: Env | undefined, mode: Mode) =>
+const encodeIdv = (encoder: Encoder, expression: Expr, env: Env | undefined, mode: Mode) =>
   toIdv(encode(encoder, expression, env, clearPolarity(mode)));
 
 export const encodeBool = (encoder: Encoder, expression: Expr, env: Env | undefined, mode: Mode) =>
@@ -917,12 +917,7 @@ const encodeSequent = (
   );
 };
 
-export const encode = (
-  encoder: Encoder,
-  expression: Expr,
-  env: Env | undefined,
-  mode: Mode,
-): Term => {
+const encode = (encoder: Encoder, expression: Expr, env: Env | undefined, mode: Mode): Term => {
   switch (expression.kind) {
     case "Ix":
       return encodeReference(encoder, getBinding(env, expression.index), [], env, mode);

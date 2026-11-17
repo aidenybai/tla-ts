@@ -91,7 +91,7 @@ const pruneParamsTac = (simp: SimpContext): Tactic => {
   const empty = { ...simp, simpset: emptySimpset };
   const context = { ...empty, simpset: addSimps(empty, [trivForallEquality]) };
   return primitive((state) =>
-    Array.from({ length: nprems(state) }, (_, offset) => offset + 1).reduce(
+    Array.from({ length: nprems(state) }, (_value, offset) => offset + 1).reduce(
       (current, index) =>
         gconvRule(
           (term) =>

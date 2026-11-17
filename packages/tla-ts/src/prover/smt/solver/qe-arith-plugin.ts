@@ -175,8 +175,7 @@ class ArithQeUtil {
     const restList: number[] = [];
     const todo = [p];
     let k: Rational | undefined;
-    while (todo.length > 0) {
-      const expr = todo.pop() as number;
+    for (let expr = todo.pop(); expr !== undefined; expr = todo.pop()) {
       if (isAppOf(manager, expr, OP_ADD)) {
         todo.push(...manager.getArgs(expr));
         continue;
@@ -560,8 +559,7 @@ class ArithQeUtil {
       return true;
     };
     const todo = [p];
-    while (todo.length > 0) {
-      const expr = todo.pop() as number;
+    for (let expr = todo.pop(); expr !== undefined; expr = todo.pop()) {
       if (isAppOf(manager, expr, OP_ADD)) {
         todo.push(...manager.getArgs(expr));
         continue;

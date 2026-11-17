@@ -316,7 +316,8 @@ class SearchTree {
   }
 
   consumeVars(vars: number[]) {
-    while (vars.length > 0) this.vars.push(vars.pop() as number);
+    for (let variable = vars.pop(); variable !== undefined; variable = vars.pop())
+      this.vars.push(variable);
   }
 
   isUnit() {
@@ -445,7 +446,7 @@ const partitionVars = (contains: readonly ContainsApp[], args: readonly number[]
   }
   if (nonSharedVars.length === 0) return undefined;
   const root0 = find(0);
-  if (!nonSharedVars.some((_, index) => index > 0 && find(index) !== root0)) return undefined;
+  if (!nonSharedVars.some((_value, index) => index > 0 && find(index) !== root0)) return undefined;
   const roots: number[] = partition.length > 0 ? [-1] : [];
   for (const [index, x] of nonSharedVars.entries()) {
     const root = nonSharedVars[find(index)];

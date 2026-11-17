@@ -230,7 +230,6 @@ export class TheoryLra extends TheoryLraFinalCheck {
   }
 
   initSearchEh() {
-    this.numConflicts = 0;
     this.restartPairs = [];
   }
 }

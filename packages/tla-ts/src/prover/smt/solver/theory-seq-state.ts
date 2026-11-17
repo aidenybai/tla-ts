@@ -1,6 +1,5 @@
 import {
   type AstManager,
-  OP_ADD,
   OP_GE,
   OP_LE,
   OP_SEQ_CONCAT,
@@ -53,7 +52,7 @@ export interface Ne {
   dep: Dependency;
 }
 
-export interface Nc {
+interface Nc {
   contains: number;
   lengthGreater: Literal;
   dep: Dependency;
@@ -64,7 +63,7 @@ interface ExprDep {
   dep: Dependency;
 }
 
-export class ScopedVector<T> {
+class ScopedVector<T> {
   items: T[] = [];
   private undoIndexes: number[] = [];
   private undoValues: T[] = [];
@@ -145,10 +144,6 @@ class SolutionMap {
   private rights: number[] = [];
   private deps: Dependency[] = [];
   private limits: number[] = [];
-
-  get isEmpty() {
-    return this.map.size === 0;
-  }
 
   private reducesTo(input: number, expr: number) {
     let current = input;
@@ -236,10 +231,6 @@ class ExclusionTable {
   private limits: number[] = [];
 
   constructor(private manager: AstManager) {}
-
-  get isEmpty() {
-    return this.table.size === 0;
-  }
 
   private getKey(first: number, second: number) {
     return this.manager.ids[first] > this.manager.ids[second]
@@ -472,10 +463,6 @@ export abstract class TheorySeqState extends Theory {
     return this.rewrite(this.mkArith(OP_SUB, [first, second]));
   }
 
-  protected mkAdd(first: number, second: number) {
-    return this.rewrite(this.mkArith(OP_ADD, [first, second]));
-  }
-
   protected mkLength(seq: number) {
     return mkSeqApp(this.manager, OP_SEQ_LENGTH, [seq]);
   }
@@ -516,12 +503,6 @@ export abstract class TheorySeqState extends Theory {
     let dep = input;
     for (const literal of literals) dep = this.mkJoinLiteral(dep, literal);
     return dep;
-  }
-
-  protected addDependency(dep: Dependency, first: Enode, second: Enode) {
-    return first === second
-      ? dep
-      : mkJoin(dep, this.mkAssumption({ first, second, literal: undefined }));
   }
 
   protected linearizeOf(dep: Dependency, eqs: Enode[], literals: Literal[]) {

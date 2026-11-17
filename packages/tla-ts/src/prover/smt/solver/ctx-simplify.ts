@@ -74,8 +74,7 @@ class CtxSimplifier {
     for (const form of goal.forms.items) {
       this.pinned.push(form);
       visit(form);
-      while (stack.length > 0) {
-        const expr = stack.pop() as number;
+      for (let expr = stack.pop(); expr !== undefined; expr = stack.pop()) {
         if (manager.kinds[expr] !== KIND_APP) continue;
         for (let index = manager.getNumArgs(expr) - 1; index >= 0; index--)
           visit(manager.getArg(expr, index));

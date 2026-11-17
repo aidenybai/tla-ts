@@ -167,7 +167,7 @@ export const separate = (predefined: string[], phrases: Phrase[]) => {
         ...definitions.slice(previous + 1),
       ];
       const dependencyIndex = dependencies.findIndex((candidate) => candidate[0] === symbol);
-      dependencies = dependencies.filter((_, position) => position !== dependencyIndex);
+      dependencies = dependencies.filter((_value, position) => position !== dependencyIndex);
       multiple.unshift(symbol);
       hypotheses.unshift(hypothesis, { formula: removed.origin, goalness: removed.goalness });
     } else {

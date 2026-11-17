@@ -499,8 +499,7 @@ export class SeqRewriter {
       return manager.mkString([...firstChars, ...secondChars]);
     const elements: number[] = [];
     const todo = [second, first];
-    while (todo.length > 0) {
-      const expr = todo.pop()!;
+    for (let expr = todo.pop(); expr !== undefined; expr = todo.pop()) {
       if (this.isConcat2(expr)) {
         todo.push(this.getArg(expr, 1), this.getArg(expr, 0));
         continue;
@@ -510,7 +509,8 @@ export class SeqRewriter {
     if (elements.length === 0) return this.mkEmpty(manager.sorts[first]);
     const coalesced: number[] = [];
     for (const element of elements) {
-      const previous = coalesced.length > 0 ? manager.getString(coalesced.at(-1)!) : undefined;
+      const previous =
+        coalesced.length > 0 ? manager.getString(coalesced[coalesced.length - 1]) : undefined;
       const chars = manager.getString(element);
       if (this.isCoalescingChars && previous !== undefined && chars !== undefined)
         coalesced[coalesced.length - 1] = manager.mkString([...previous, ...chars]);
@@ -518,7 +518,10 @@ export class SeqRewriter {
     }
     return coalesced
       .slice(0, -1)
-      .reduceRight((tail, element) => this.mkConcat(element, tail), coalesced.at(-1)!);
+      .reduceRight(
+        (tail, element) => this.mkConcat(element, tail),
+        coalesced[coalesced.length - 1],
+      );
   }
 
   private mkSeqLength(seq: number): Result {
@@ -765,8 +768,7 @@ export class SeqRewriter {
       let isOtherFactorAtLeastOne = true;
       const todo = [offset];
       const visited = new Set<number>();
-      while (todo.length > 0) {
-        const arg = todo.pop()!;
+      for (let arg = todo.pop(); arg !== undefined; arg = todo.pop()) {
         if (visited.has(arg)) continue;
         visited.add(arg);
         if (this.isOp(arg, OP_MUL)) todo.push(...manager.getArgs(arg));
@@ -956,7 +958,7 @@ export class SeqRewriter {
     let start = 0;
     let end = seqUnits.length;
     const first = otherUnits[0];
-    const last = otherUnits.at(-1)!;
+    const last = otherUnits[otherUnits.length - 1];
     while (start < seqUnits.length && this.isNotContainingPrefix(seqUnits[start], first)) start++;
     while (end > start && this.isNotContainingSuffix(seqUnits[end - 1], last)) end--;
     if (start === end) return rewrite(this.mkIsEmpty(other), BR_REWRITE2);
@@ -1701,7 +1703,7 @@ export class SeqRewriter {
     const seq = this.getArg(value, 0);
     const maxLength = this.getMaxLength(seq);
     if (!maxLength.isBounded || maxLength.length > 1n) return undefined;
-    const eqs = Array.from({ length: 10 }, (_, digit) =>
+    const eqs = Array.from({ length: 10 }, (_value, digit) =>
       this.mkEq(seq, manager.mkString([48 + digit])),
     );
     const isDigitString = manager.mkApp(OP_OR, eqs, SORT_BOOL);
@@ -1738,8 +1740,8 @@ export class SeqRewriter {
     }
     const units = getConcatUnits(manager, seq, []);
     if (units.length === 0) return this.minusOne();
-    if (this.isUnit(units.at(-1)!)) {
-      const tail = this.mkSeq(OP_STRING_STOI, [units.at(-1)!]);
+    if (this.isUnit(units[units.length - 1])) {
+      const tail = this.mkSeq(OP_STRING_STOI, [units[units.length - 1]]);
       const head = this.mkConcatOf(units.slice(0, -1), manager.sorts[seq]);
       const headValue = this.mkSeq(OP_STRING_STOI, [head]);
       const isHeadValid = this.mkGe(headValue, this.zero());
@@ -1789,24 +1791,20 @@ export class SeqRewriter {
         if (isVisited) cache.set(expr, { isBounded: isValid, length: count });
         return isVisited;
       } else if (this.isOp(expr, OP_ITE)) {
-        const size = pending.length;
         const thenLength = cache.get(this.getArg(expr, 1));
         const elseLength = cache.get(this.getArg(expr, 2));
         if (thenLength === undefined) pending.push(this.getArg(expr, 1));
         if (elseLength === undefined) pending.push(this.getArg(expr, 2));
-        if (size !== pending.length) return false;
+        if (thenLength === undefined || elseLength === undefined) return false;
         cache.set(expr, {
           isBounded:
-            thenLength!.isBounded &&
-            elseLength!.isBounded &&
-            thenLength!.length === elseLength!.length,
-          length: Math.min(thenLength!.length, elseLength!.length),
+            thenLength.isBounded && elseLength.isBounded && thenLength.length === elseLength.length,
+          length: Math.min(thenLength.length, elseLength.length),
         });
       } else cache.set(expr, { isBounded: false, length: 0 });
       return true;
     };
-    while (todo.length > 0) {
-      const expr = todo.pop()!;
+    for (let expr = todo.pop(); expr !== undefined; expr = todo.pop()) {
       const chars = manager.getString(expr);
       if (this.isUnit(expr)) length++;
       else if (this.isEmpty(expr)) continue;
@@ -1816,7 +1814,7 @@ export class SeqRewriter {
         const thenExpr = this.getArg(expr, 1);
         const elseExpr = this.getArg(expr, 2);
         pending.push(thenExpr, elseExpr);
-        while (pending.length > 0) if (visit(pending.at(-1)!)) pending.pop();
+        while (pending.length > 0) if (visit(pending[pending.length - 1])) pending.pop();
         const thenLength = cache.get(thenExpr) ?? { isBounded: false, length: 0 };
         const elseLength = cache.get(elseExpr) ?? { isBounded: false, length: 0 };
         if (
@@ -1835,8 +1833,7 @@ export class SeqRewriter {
     const manager = this.manager;
     const todo = [seq];
     let length = 0n;
-    while (todo.length > 0) {
-      const expr = todo.pop()!;
+    for (let expr = todo.pop(); expr !== undefined; expr = todo.pop()) {
       const chars = manager.getString(expr);
       if (this.isUnit(expr) || this.isApp(expr, OP_SEQ_AT, 2)) length += 1n;
       else if (chars !== undefined) length += BigInt(chars.length);
@@ -2036,8 +2033,7 @@ export class SeqRewriter {
     const manager = this.manager;
     const elements: number[] = [];
     const todo = [seq];
-    while (todo.length > 0) {
-      const expr = todo.pop()!;
+    for (let expr = todo.pop(); expr !== undefined; expr = todo.pop()) {
       if (this.isOp(expr, OP_SEQ_CONCAT)) {
         todo.push(...manager.getArgs(expr));
         continue;
@@ -2113,10 +2109,13 @@ export class SeqRewriter {
   private reduceBack(pair: SeqPair, eqs: EqPair[]) {
     const manager = this.manager;
     while (pair.left.length > 0 && pair.right.length > 0) {
-      if (this.isUnit(pair.right.at(-1)!) && manager.getString(pair.left.at(-1)!) !== undefined)
+      if (
+        this.isUnit(pair.right[pair.right.length - 1]) &&
+        manager.getString(pair.left[pair.left.length - 1]) !== undefined
+      )
         this.swap(pair);
-      const left = pair.left.at(-1)!;
-      const right = pair.right.at(-1)!;
+      const left = pair.left[pair.left.length - 1];
+      const right = pair.right[pair.right.length - 1];
       const rightChars = manager.getString(right);
       const leftChars = manager.getString(left);
       if (left === right) {
@@ -2128,7 +2127,10 @@ export class SeqRewriter {
         pair.left.pop();
         pair.right.pop();
       } else if (this.isUnit(left) && rightChars !== undefined) {
-        eqs.push({ left: manager.mkChar(rightChars.at(-1)!), right: this.getArg(left, 0) });
+        eqs.push({
+          left: manager.mkChar(rightChars[rightChars.length - 1]),
+          right: this.getArg(left, 0),
+        });
         pair.left.pop();
         if (rightChars.length === 1) pair.right.pop();
         else pair.right[pair.right.length - 1] = manager.mkString(rightChars.slice(0, -1));
@@ -2229,7 +2231,7 @@ export class SeqRewriter {
     for (const expr of right) {
       const index = remaining.indexOf(expr);
       if (index !== -1) {
-        remaining[index] = remaining.at(-1)!;
+        remaining[index] = remaining[remaining.length - 1];
         remaining.pop();
         continue;
       }

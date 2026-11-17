@@ -286,7 +286,7 @@ export class TheoryBv extends Theory {
     const isRelevant = context.isRelevant(owner);
     const bits = this.bits[thVar];
     bits.length = 0;
-    const bitExprs = Array.from({ length: this.getBvSize(thVar) }, (_, index) =>
+    const bitExprs = Array.from({ length: this.getBvSize(thVar) }, (_value, index) =>
       mkBvApp(this.manager, OP_BIT2BOOL, [owner], [index]),
     );
     context.internalizeAll(bitExprs, true);
@@ -578,7 +578,7 @@ export class TheoryBv extends Theory {
     const numArgs = node.numArgs;
     const parameters = this.manager.funcDecls[this.manager.decls[term]].parameters;
     if (!isAssociative) {
-      const args = Array.from({ length: numArgs }, (_, index) => this.getArgBits(node, index));
+      const args = Array.from({ length: numArgs }, (_value, index) => this.getArgBits(node, index));
       const bits: number[] = [];
       blast(this.blaster, args, parameters[0], bits);
       this.initBits(node, bits);

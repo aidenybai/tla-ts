@@ -1208,7 +1208,6 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         kind: "liveness-started",
         branches: liveness.branches,
         isComplete: true,
-        // The tier stores and expands every successor, so the graph of each branch has every state.
         states: liveness.branches * typed.distinctStates,
         statistics,
       });
@@ -1599,12 +1598,10 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   const startedAt = performance.now();
   const periodic = {
     at: startedAt + PERIODIC_START,
-    // The size of each branch's graph when TLC last checked it, which starts at 1.
-    sizes: liveness?.getStateCounts().map(() => 1) ?? [],
+    checkedCounts: liveness?.getStateCounts().map(() => 1) ?? [],
     time: 0,
     coverageCount: Math.trunc(options.coverage ?? 0),
   };
-  // TLC counts the states of the graphs of all branches, which can differ.
   const getGraphStates = (checker: LivenessChecker) =>
     checker.getStateCounts().reduce((sum, count) => sum + count, 0);
   const findPeriodicViolation = (checker: LivenessChecker) => {
@@ -1612,10 +1609,10 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     const counts = checker.getStateCounts();
     const isGrown = counts.some(
       (count, branch) =>
-        (count - periodic.sizes[branch]) / periodic.sizes[branch] > LIVENESS_GROWTH,
+        (count - periodic.checkedCounts[branch]) / periodic.checkedCounts[branch] > LIVENESS_GROWTH,
     );
     if (!isGrown || periodic.time > (now - startedAt) * LIVENESS_RATIO) return undefined;
-    periodic.sizes = counts;
+    periodic.checkedCounts = counts;
     options.onProgress?.({
       kind: "liveness-started",
       branches: checker.branches,
@@ -1771,7 +1768,6 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       kind: "liveness-started",
       branches: finalLiveness.branches,
       isComplete: true,
-      // The tier that found the lasso stored and expanded every successor, so each graph has every state.
       states: typedLasso
         ? finalLiveness.branches * runtime.distinctStates
         : getGraphStates(finalLiveness),

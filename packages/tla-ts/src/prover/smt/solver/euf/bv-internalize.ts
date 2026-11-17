@@ -71,7 +71,7 @@ import { type Enode, NULL_THEORY_VAR } from "./egraph";
 import type { EufSolver } from "./euf-solver";
 import { ThSolver } from "./th-solver";
 
-export interface ZeroOneBit {
+interface ZeroOneBit {
   readonly owner: number;
   readonly index: number;
   readonly isTrue: boolean;

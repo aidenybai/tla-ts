@@ -100,7 +100,7 @@ export const DEFAULT_BV_OPTIONS: Omit<BvRewriterOptions, "isHiDiv0"> = {
   isSplitConcatEq: false,
 };
 
-export interface BoolRewrites {
+interface BoolRewrites {
   mkEq: (left: number, right: number) => number;
   mkIte: (condition: number, thenExpr: number, elseExpr: number) => number;
 }

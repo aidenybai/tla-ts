@@ -57,7 +57,7 @@ export interface LenAbs {
   residues: bigint;
 }
 
-export interface ReInfo extends LenAbs {
+interface ReInfo extends LenAbs {
   isKnown: boolean;
   isInterpreted: boolean;
   nullable: number;

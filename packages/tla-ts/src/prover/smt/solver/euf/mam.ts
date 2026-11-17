@@ -42,7 +42,7 @@ import { type Egraph, type Enode, getClass } from "./egraph";
 import type { TrailStack } from "./th-solver";
 
 // euf::mam_solver: the solver whose trail undoes the matcher.
-export interface MamSolver {
+interface MamSolver {
   readonly manager: AstManager;
   readonly egraph: Egraph;
   readonly trail: TrailStack;
@@ -588,10 +588,6 @@ export class Mam implements LabelHasher<Enode> {
 
   getGroundEnode(expr: number) {
     return this.ctx.egraph.find(expr) ?? null;
-  }
-
-  canPropagate() {
-    return this.toMatch.length > 0 || this.newPatterns.length > 0;
   }
 
   private setLbls(root: Enode, isParent: boolean, hash: number) {

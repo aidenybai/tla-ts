@@ -6,7 +6,7 @@ export const MC_BCE = 1;
 export const MC_CCE = 2;
 export const MC_ACCE = 3;
 export const MC_ABCE = 4;
-export const MC_ATE = 5;
+const MC_ATE = 5;
 
 export interface McEntry {
   boolVar: number;

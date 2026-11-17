@@ -1443,7 +1443,7 @@ export class PbSolver implements SatExtension, ConstraintHost {
   private convertPbWlits(expr: number): WLits {
     const manager = this.manager;
     const lits = this.convertPbArgs(expr);
-    const coeffs = lits.map((_, index) =>
+    const coeffs = lits.map((_value, index) =>
       this.checkUnsigned(getPbCoeff(manager, manager.decls[expr], index)),
     );
     return { coeffs, lits };

@@ -48,10 +48,6 @@ export class SeqSkolem {
     return this.manager.mkNumeral(BigInt(value));
   }
 
-  mkAlign(args: number[]) {
-    return this.mk("seq.align", args);
-  }
-
   mkAlignL(args: number[]) {
     return this.mk("seq.align.l", args);
   }
@@ -201,12 +197,6 @@ export class SeqSkolem {
     return this.isNamed(expr, TAIL);
   }
 
-  getTailIndex(expr: number) {
-    if (!this.isTail(expr)) return undefined;
-    const index = this.manager.getNumeral(this.manager.getArg(expr, 1));
-    return index !== undefined && index >= 0n && index <= 0xffffffffn ? Number(index) : undefined;
-  }
-
   isSeqFirst(expr: number) {
     return this.isNamed(expr, SEQ_FIRST);
   }
@@ -231,10 +221,6 @@ export class SeqSkolem {
     return this.isNamed(expr, EQ) && this.manager.getNumArgs(expr) === 2;
   }
 
-  isDigit(expr: number) {
-    return this.isNamed(expr, "seq.is_digit");
-  }
-
   isMaxUnfolding(expr: number) {
     return this.isNamed(expr, MAX_UNFOLDING);
   }
@@ -255,15 +241,6 @@ export class SeqSkolem {
 
   isAlignR(expr: number) {
     return this.isNamed(expr, "seq.align.r");
-  }
-
-  isRegexSkolem(expr: number) {
-    return (
-      this.isNamed(expr, ACCEPT) ||
-      this.isNamed(expr, "re.is_empty") ||
-      this.isNamed(expr, "re.is_non_empty") ||
-      this.isNamed(expr, "aut.step")
-    );
   }
 
   decompose(input: number): Decomposition {

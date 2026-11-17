@@ -37,7 +37,7 @@ import { RefVector } from "./ref-vector";
 import { Rewriter, type RewriterOptions } from "./rewriter";
 import { RewriterTpl } from "./rewriter-tpl";
 
-export interface SolveEqsOptions {
+interface SolveEqsOptions {
   isTheorySolver: boolean;
   isIteSolver: boolean;
   isContextSolve: boolean;
@@ -295,7 +295,7 @@ export class SolveEqs {
           )
         )
           continue;
-        const others = factors.filter((_, otherIndex) => otherIndex !== factorIndex);
+        const others = factors.filter((_value, otherIndex) => otherIndex !== factorIndex);
         const term = this.mkSubTerm(x, index, y);
         this.push(
           eqs,
@@ -328,7 +328,7 @@ export class SolveEqs {
         !factors.every((other, otherIndex) => otherIndex === index || this.isNonzeroFactor(other))
       )
         continue;
-      const others = factors.filter((_, otherIndex) => otherIndex !== index);
+      const others = factors.filter((_value, otherIndex) => otherIndex !== index);
       this.push(
         eqs,
         orig,
@@ -436,8 +436,7 @@ export class SolveEqs {
     const manager = this.manager;
     const visited = new Set<number>();
     const todo = [root];
-    while (todo.length > 0) {
-      const expr = todo.pop() as number;
+    for (let expr = todo.pop(); expr !== undefined; expr = todo.pop()) {
       if (visited.has(expr)) continue;
       visited.add(expr);
       if (isMatch(expr)) return true;
@@ -553,8 +552,7 @@ export class SolveEqs {
       initLevel -= size + 1;
       let currLevel = initLevel;
       todo.push(id);
-      while (todo.length > 0) {
-        const next = todo.pop() as number;
+      for (let next = todo.pop(); next !== undefined; next = todo.pop()) {
         if (this.id2level[next] !== Infinity) continue;
         this.id2level[next] = currLevel++;
         for (const eq of this.next[next]) {
@@ -562,8 +560,7 @@ export class SolveEqs {
           let isSafe = true;
           const visited = new Set<number>();
           const stack = [eq.term];
-          while (stack.length > 0) {
-            const expr = stack.pop() as number;
+          for (let expr = stack.pop(); expr !== undefined; expr = stack.pop()) {
             if (visited.has(expr)) continue;
             visited.add(expr);
             if (manager.kinds[expr] === KIND_APP) manager.pushArgs(expr, stack);
@@ -737,8 +734,7 @@ export class SolveEqs {
   private containsConjunctively(form: number, isNegated: boolean, eq: number, conjuncts: Signed[]) {
     const manager = this.manager;
     const todo: Signed[] = [{ isNegated, expr: form }];
-    while (todo.length > 0) {
-      const item = todo.pop() as Signed;
+    for (let item = todo.pop(); item !== undefined; item = todo.pop()) {
       if (!item.isNegated && item.expr === eq) return true;
       const marks = item.isNegated ? this.andNegative : this.andPositive;
       if (marks.has(item.expr)) continue;
@@ -758,8 +754,7 @@ export class SolveEqs {
   private isDisjunctivelySafe(depth: number, root: number, isNegated: boolean, eq: number) {
     const manager = this.manager;
     const todo: Signed[] = [{ isNegated, expr: root }];
-    while (todo.length > 0) {
-      const item = todo.pop() as Signed;
+    for (let item = todo.pop(); item !== undefined; item = todo.pop()) {
       const marks = item.isNegated ? this.orNegative : this.orPositive;
       if (marks.has(item.expr)) continue;
       marks.add(item.expr);
@@ -878,8 +873,7 @@ export class SolveEqs {
       const seen = new Set<number>();
       for (const index of order) {
         const todo = [forms[index]];
-        while (todo.length > 0) {
-          const expr = todo.pop() as number;
+        for (let expr = todo.pop(); expr !== undefined; expr = todo.pop()) {
           if (seen.has(expr)) continue;
           seen.add(expr);
           occurrence.set(expr, index);
@@ -893,11 +887,11 @@ export class SolveEqs {
     };
     record(
       firstOccurrence,
-      forms.map((_, index) => index),
+      forms.map((_value, index) => index),
     );
     record(
       lastOccurrence,
-      forms.map((_, index) => forms.length - 1 - index),
+      forms.map((_value, index) => forms.length - 1 - index),
     );
     const kept: DependentEq[] = [];
     let lastVar = -1;

@@ -262,8 +262,11 @@ export const createIndex = (exprs: Expressions) => {
       const suspect = group[0];
       const count = suspect.records.length;
       const missing = [
-        ...Array.from({ length: count - suspect.cursor }, (_, offset) => suspect.cursor + offset),
-        ...Array.from({ length: suspect.cursor }, (_, offset) => offset),
+        ...Array.from(
+          { length: count - suspect.cursor },
+          (_value, offset) => suspect.cursor + offset,
+        ),
+        ...Array.from({ length: suspect.cursor }, (_value, offset) => offset),
       ].find((index) => !suspect.records[index].isPresent);
       if (missing === undefined) return suspect.proof;
       suspects = [group.slice(1), ...suspects.slice(1)];

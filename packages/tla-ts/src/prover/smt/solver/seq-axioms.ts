@@ -1,4 +1,3 @@
-import { SmtUnsupportedError } from "../../../errors";
 import {
   type AstManager,
   FAMILY_ARITH,
@@ -24,7 +23,6 @@ import {
   OP_SEQ_PREFIX,
   OP_SEQ_UNIT,
   OP_STRING_FROM_CODE,
-  OP_STRING_ITOS,
   OP_STRING_LT,
   OP_STRING_STOI,
   OP_STRING_TO_CODE,
@@ -36,7 +34,7 @@ import { FALSE_LITERAL, type Literal, TRUE_LITERAL, negate } from "./literal";
 import { isBinaryApp, isEmptySeq, mkConcatOf, mkEmptySeq, mkSeqApp } from "./seq-decl-plugin";
 import { SeqSkolem } from "./seq-skolem";
 
-export interface SeqAxiomsHost {
+interface SeqAxiomsHost {
   rewrite(expr: number): number;
   mkEqLiteral(first: number, second: number): Literal;
   ensureEnode(expr: number): void;
@@ -62,7 +60,7 @@ export const getMinLengthOf = (manager: AstManager, seq: number): number => {
 
 const UINT_MAX = 0xffffffff;
 
-export const getMaxLengthOf = (manager: AstManager, seq: number): number => {
+const getMaxLengthOf = (manager: AstManager, seq: number): number => {
   const getLength = (expr: number) => {
     if (isEmptySeq(manager, expr)) return 0;
     const op = manager.getOp(expr);
@@ -180,13 +178,8 @@ export class SeqAxioms {
     return result;
   }
 
-  mkLen(seq: number) {
-    return this.host.rewrite(this.mkSeq(OP_SEQ_LENGTH, [seq]));
-  }
-
-  private purify(expr: number | undefined) {
+  private purify(expr: number) {
     const manager = this.manager;
-    if (expr === undefined) return undefined;
     if (manager.depths[expr] === 1 || manager.isValue(expr)) return expr;
     if (this.host.rewrite(expr) === expr) return expr;
     let result = this.purified.get(expr);
@@ -256,9 +249,9 @@ export class SeqAxioms {
   extractAxiom(expr: number) {
     const manager = this.manager;
     const [seqArg, indexArg, lengthArg] = manager.getArgs(expr);
-    const seq = this.purify(seqArg)!;
-    const index = this.purify(indexArg)!;
-    const length = this.purify(lengthArg)!;
+    const seq = this.purify(seqArg);
+    const index = this.purify(indexArg);
+    const length = this.purify(lengthArg);
     if (this.smallSegmentAxiom(expr, seqArg, indexArg, lengthArg)) return;
     if (this.isTail(seq, indexArg, lengthArg)) {
       this.tailAxiom(expr, seq);
@@ -436,9 +429,9 @@ export class SeqAxioms {
     const args = manager.getArgs(index);
     const minusOne = this.mkInt(-1);
     const zero = this.mkInt(0);
-    const offset = this.purify(args[2]);
-    const pattern = this.purify(args[1])!;
-    const text = this.purify(args[0])!;
+    const offset = args.length > 2 ? this.purify(args[2]) : undefined;
+    const pattern = this.purify(args[1]);
+    const text = this.purify(args[0]);
     const contains = this.mkSeq(OP_SEQ_CONTAINS, [text, pattern]);
     const isMinusOne = this.mkEq(index, minusOne);
     const isZero = this.mkEq(index, zero);
@@ -511,8 +504,8 @@ export class SeqAxioms {
   lastIndexofAxiom(index: number) {
     const manager = this.manager;
     const [textArg, patternArg] = manager.getArgs(index);
-    const text = this.purify(textArg)!;
-    const pattern = this.purify(patternArg)!;
+    const text = this.purify(textArg);
+    const pattern = this.purify(patternArg);
     const minusOne = this.mkInt(-1);
     const zero = this.mkInt(0);
     const skolem = this.skolem;
@@ -539,9 +532,9 @@ export class SeqAxioms {
   replaceAxiom(replace: number) {
     const manager = this.manager;
     const [source, patternArg, targetArg] = manager.getArgs(replace);
-    const text = this.purify(source)!;
-    const pattern = this.purify(patternArg)!;
-    const target = this.purify(targetArg)!;
+    const text = this.purify(source);
+    const pattern = this.purify(patternArg);
+    const target = this.purify(targetArg);
     const skolem = this.skolem;
     const left = skolem.mkIndexofLeft(text, pattern);
     const right = skolem.mkIndexofRight(text, pattern);
@@ -565,8 +558,8 @@ export class SeqAxioms {
   atAxiom(expr: number) {
     const manager = this.manager;
     const [seqArg, indexArg] = manager.getArgs(expr);
-    const seq = this.purify(seqArg)!;
-    const index = this.purify(indexArg)!;
+    const seq = this.purify(seqArg);
+    const index = this.purify(indexArg);
     this.mkInt(0);
     const one = this.mkInt(1);
     const empty = this.mkEmpty(manager.sorts[expr]);
@@ -747,8 +740,8 @@ export class SeqAxioms {
   ltAxiom(expr: number) {
     const manager = this.manager;
     const [firstArg, secondArg] = manager.getArgs(expr);
-    const first = this.purify(firstArg)!;
-    const second = this.purify(secondArg)!;
+    const first = this.purify(firstArg);
+    const second = this.purify(secondArg);
     const charSort = manager.getSeqElementSort(manager.sorts[first]);
     const lt = expr;
     const gt = this.mkSeq(OP_STRING_LT, [second, first]);
@@ -895,8 +888,8 @@ export class SeqAxioms {
   private affixAxiom(expr: number, name: string, isPrefix: boolean) {
     const manager = this.manager;
     const [firstArg, secondArg] = manager.getArgs(expr);
-    const first = this.purify(firstArg)!;
-    const second = this.purify(secondArg)!;
+    const first = this.purify(firstArg);
+    const second = this.purify(secondArg);
     const firstLength = this.mkLenAxiom(first);
     const secondLength = this.mkLenAxiom(second);
     const isLonger = this.mkGe(this.mkSub(firstLength, secondLength), 1);
@@ -998,13 +991,5 @@ export class SeqAxioms {
     const target = manager.getOp(seq) === OP_STRING_STOI ? manager.getArg(seq, 0) : seq;
     this.addClause([this.mkNot(tracker), this.mkLe(this.mkLenAxiom(target), limit)]);
     return tracker;
-  }
-
-  ubvAxiom(): never {
-    throw new SmtUnsupportedError("str.from_ubv in the theory of sequences");
-  }
-
-  isItos(expr: number) {
-    return this.manager.getOp(expr) === OP_STRING_ITOS;
   }
 }

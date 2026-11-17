@@ -76,7 +76,7 @@ export class PddManager {
   private freezeValue = Rational.zero;
 
   constructor(numVars: number) {
-    this.initNodes(Array.from({ length: numVars }, (_, index) => index));
+    this.initNodes(Array.from({ length: numVars }, (_value, index) => index));
   }
 
   reset(level2var: number[]) {
@@ -309,8 +309,7 @@ export class PddManager {
         if (this.level(this.firstLeading(q)) > this.level(p)) return p;
         break;
     }
-    // Z3's op_entry equality compares the cached first operand with the new second one, so
-    // only an operation on two equal operands finds its cached result.
+    // Z3's op_entry equality compares the cached first operand with the new second one, so only equal operands hit.
     // Deviation from Z3: on a hash collision Z3 returns that result for unequal operands too.
     const isCached = p === q;
     if (isCached) {

@@ -33,8 +33,7 @@ export class Mus {
       return L_TRUE;
     }
     let unknown = [...literals];
-    while (unknown.length > 0) {
-      const literal = unknown.pop() as number;
+    for (let literal = unknown.pop(); literal !== undefined; literal = unknown.pop()) {
       const notLiteral = mkNot(this.manager, literal);
       this.trail.push(notLiteral);
       const status = this.solver.checkSat([...mus.items, ...unknown, notLiteral]);

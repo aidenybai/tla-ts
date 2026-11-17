@@ -17,13 +17,13 @@ export const EXIT_STATUS = {
 
 const MESSAGE_EXIT_STATUSES = new Map<number, number>([
   ...[
-    ...Array.from({ length: 24 }, (_, index) => 2222 + index),
+    ...Array.from({ length: 24 }, (_value, index) => 2222 + index),
     2272,
     2273,
     2274,
     2280,
     2281,
-    ...Array.from({ length: 7 }, (_, index) => 5001 + index),
+    ...Array.from({ length: 7 }, (_value, index) => 5001 + index),
   ].map((code): [number, number] => [code, EXIT_STATUS.configParseError]),
   [2253, EXIT_STATUS.livenessEvaluationFailure],
   [2109, EXIT_STATUS.specEvaluationFailure],

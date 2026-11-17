@@ -522,7 +522,7 @@ const getInstanceOperator = (
   arity: number,
   location: SourceLocation,
 ): Expression => {
-  const names = Array.from({ length: arity }, (_, index) => `argument${index}`);
+  const names = Array.from({ length: arity }, (_value, index) => `argument${index}`);
   return {
     kind: "Lambda",
     params: names,

@@ -159,7 +159,7 @@ const selectSubexpression = (
   const location = reference.location;
   const selection: Selection = { params: [], args: [], lets: [], location };
   let selectorIndex = 0;
-  let current = undefined as Expression | undefined;
+  let current: Expression | undefined;
   let isFailed = false;
 
   const report = (range: SourceRange | undefined, message: string) => {

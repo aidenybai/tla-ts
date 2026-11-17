@@ -17,7 +17,7 @@ const UNBOUNDED_CHECK_RLIMIT = 100000;
 const UNBOUNDED_CHECK_ROUNDS = 8;
 const MAX_ONE_SIDED_ROUNDS = 16;
 
-export interface OptsmtHost {
+interface OptsmtHost {
   getBaseModel(): ProtoModel | null;
   setModel(model: ProtoModel | null): void;
 }
