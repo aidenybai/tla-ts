@@ -1,5 +1,4 @@
-// Ported from Z3 (src/opt/maxcore.cpp), MIT license, see z3-license.txt. Only the maxres strategy
-// with Z3's default parameters is ported.
+// Only the maxres strategy with Z3's default parameters is ported.
 import { OP_AND, OP_EQ, OP_IMPLIES, OP_OR, SORT_BOOL } from "./ast";
 import { mkNot } from "./ast-util";
 import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";

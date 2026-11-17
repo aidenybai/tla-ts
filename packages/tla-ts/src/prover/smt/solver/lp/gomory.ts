@@ -1,4 +1,3 @@
-// Ported from Z3 (src/math/lp/gomory.cpp), MIT license, see z3-license.txt.
 import { Rational } from "../rational";
 import { KIND_GE, KIND_LE } from "./constraints";
 import { LP_CANCELLED } from "./core-solver";

@@ -1,5 +1,3 @@
-// Ported from Z3 (src/tactic/fpa/fpa2bv_tactic.cpp, src/tactic/fpa/fpa2bv_model_converter.cpp,
-// src/ast/fpa/bv2fpa_converter.cpp), MIT license, see z3-license.txt.
 import type { AstManager } from "./ast";
 import { TACTIC_ARITH_OPTIONS } from "./arith-rewriter";
 import { convertMinMaxSpecials, convertUf2BvUf } from "./bv2fpa-converter";

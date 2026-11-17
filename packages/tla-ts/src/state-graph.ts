@@ -1,5 +1,3 @@
-// A port of TLC's -dump writers, tlc2.util.StateWriter and tlc2.util.DotStateWriter.
-
 import { getJavaHashCode } from "./java-hash";
 import type { TlcVersion } from "./tlc/version";
 

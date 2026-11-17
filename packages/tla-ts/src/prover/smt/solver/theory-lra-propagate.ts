@@ -1,4 +1,3 @@
-// Ported from Z3 (src/smt/theory_lra.cpp), MIT license, see z3-license.txt.
 import { OP_ITE, OP_SUB, SORT_BOOL } from "./ast";
 import { TheoryJustification } from "./enode";
 import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";

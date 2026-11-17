@@ -1,4 +1,3 @@
-// Ported from Z3 (src/smt/smt_model_finder.cpp), MIT license, see z3-license.txt.
 import { SmtInvariantError } from "../../../errors";
 import { OP_ITE, OP_LT, SORT_BOOL, SORT_INT, isArithSort, type AstManager } from "./ast";
 import { combineHash } from "./hash";

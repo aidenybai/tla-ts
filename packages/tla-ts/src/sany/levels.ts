@@ -27,8 +27,6 @@ import {
   type ThmOrAssumpDefNode,
 } from "./nodes";
 
-// A port of the levelCheck methods of SANY's semantic nodes.
-
 type AnyDefNode = OpDefNode | ThmOrAssumpDefNode;
 
 interface LevelCheck {

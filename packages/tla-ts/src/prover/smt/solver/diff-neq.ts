@@ -1,4 +1,3 @@
-// Ported from Z3 (src/tactic/arith/diff_neq_tactic.cpp), MIT license, see z3-license.txt.
 import { SmtCanceledError, SmtTacticError } from "../../../errors";
 import { type AstManager, OP_ADD, OP_EQ, OP_GE, OP_LE, SORT_INT } from "./ast";
 import type { Goal } from "./goal";

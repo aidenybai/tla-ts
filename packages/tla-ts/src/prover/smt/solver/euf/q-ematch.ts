@@ -1,5 +1,3 @@
-// Ported from Z3 (src/sat/smt/q_clause.h, src/sat/smt/q_eval.cpp, src/sat/smt/q_queue.cpp,
-// src/sat/smt/q_ematch.cpp, src/util/dlist.h), MIT license, see z3-license.txt.
 import { KIND_VAR, OP_DISTINCT, OP_EQ, QUANTIFIER_EXISTS, QUANTIFIER_FORALL } from "../ast";
 import { flattenOrVector, mkNot } from "../ast-util";
 import { PatternInferenceRw } from "../asserted-formulas";

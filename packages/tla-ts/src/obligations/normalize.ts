@@ -1,5 +1,3 @@
-// A port of tlapm's Module.Elab.
-
 import { TlaProofError, TlapmBugError } from "../errors";
 import { lambdify } from "./action";
 import type { Anonymizer } from "./anonymize";

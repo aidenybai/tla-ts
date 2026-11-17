@@ -1,5 +1,3 @@
-// Ported from Z3 (src/tactic/bv/bv_bound_chk_tactic.cpp, src/ast/rewriter/bv_bounds.h,
-// src/ast/rewriter/bv_bounds.cpp), MIT license, see z3-license.txt.
 import { SmtTacticError } from "../../../errors";
 import {
   type AstManager,

@@ -1,4 +1,3 @@
-// Ported from Z3 (src/ast/ast_lt.cpp, src/util/symbol.cpp), MIT license, see z3-license.txt.
 import {
   FAMILY_ARRAY,
   FAMILY_BV,

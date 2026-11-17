@@ -1,7 +1,3 @@
-// Ported from Isabelle2025's Pure/Isar/attrib.ML, Pure/Tools/rule_insts.ML and the rules they use
-// from Pure/drule.ML. Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet
-// Muenchen, and contributors, see LICENSE.
-
 import { TlaIsabelleError } from "../../../errors";
 import { addUnsafeDest, addUnsafeElim, addUnsafeIntro, withClaset } from "../provers/classical";
 import { asmRl, compIncr, genAll, multiResolves, zeroVarIndexes } from "../pure/drule";

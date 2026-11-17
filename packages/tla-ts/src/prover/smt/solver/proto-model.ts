@@ -1,4 +1,3 @@
-// Ported from Z3 (src/smt/proto_model/proto_model.cpp, src/model/func_interp.cpp, src/model/value_factory.cpp, src/model/model_core.cpp, src/model/datatype_factory.cpp), MIT license, see z3-license.txt.
 import { TermEnumeration } from "./term-enumeration";
 import {
   type AstManager,

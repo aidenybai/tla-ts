@@ -1,6 +1,3 @@
-// Ported from Z3 (src/math/lp/hnf.h, src/math/lp/general_matrix.h,
-// src/math/lp/permutation_matrix.h, and the extended gcd of src/util/mpz.cpp), MIT license, see
-// z3-license.txt.
 import { Rational } from "../rational";
 
 export const getRemainder = (first: Rational, second: Rational) =>

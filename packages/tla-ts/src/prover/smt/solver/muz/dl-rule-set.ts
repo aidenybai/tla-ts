@@ -1,4 +1,3 @@
-// Ported from Z3 (src/muz/base/dl_rule_set.cpp), MIT license, see z3-license.txt.
 import { SmtTacticError } from "../../../../errors";
 import { type AstManager, KIND_APP, KIND_QUANTIFIER } from "../ast";
 import type { DatalogContext } from "./dl-context";

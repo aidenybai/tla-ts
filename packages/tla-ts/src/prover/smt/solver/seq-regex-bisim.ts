@@ -1,4 +1,3 @@
-// Ported from Z3 (src/ast/rewriter/seq_regex_bisim.cpp), MIT license, see z3-license.txt.
 import { type AstManager, OP_RE_XOR } from "./ast";
 import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
 import { RefVector } from "./ref-vector";

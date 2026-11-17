@@ -1,4 +1,3 @@
-// Ported from Z3 (src/smt/smt_context.cpp), MIT license, see z3-license.txt.
 import { shrink } from "./array";
 import type { Enode } from "./enode";
 

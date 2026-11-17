@@ -1,5 +1,3 @@
-// Ported from Z3 (src/sat/sat_model_converter.h, src/sat/sat_model_converter.cpp), MIT license,
-// see z3-license.txt.
 import { L_FALSE, L_TRUE, L_UNDEF } from "../lbool";
 import { NULL_BOOL_VAR, NULL_LITERAL } from "./clause";
 

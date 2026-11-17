@@ -1,5 +1,3 @@
-// Ported from Z3 (src/smt/smt_kernel.cpp, src/smt/smt_context.cpp), MIT license, see
-// z3-license.txt.
 import { SmtCanceledError } from "../../../errors";
 import { type AstManager } from "./ast";
 import type { SmtSetup } from "./smt-setup";

@@ -1,4 +1,3 @@
-// Ported from Z3 (src/tactic/core/reduce_args_tactic.cpp), MIT license, see z3-license.txt.
 import { SmtTacticError } from "../../../errors";
 import {
   type AstManager,

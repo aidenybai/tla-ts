@@ -1,5 +1,3 @@
-// Ported from Z3 (src/ackermannization/ackermannize_bv_tactic.cpp,
-// src/tactic/smtlogics/qfufbv_tactic.cpp), MIT license, see z3-license.txt.
 import { SmtTacticError } from "../../../errors";
 import type { AstManager } from "./ast";
 import { convertAckrModel } from "./ackr-model-converter";

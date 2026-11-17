@@ -1,4 +1,3 @@
-// Ported from Z3 (src/smt/smt_relevancy.h, src/smt/smt_relevancy.cpp), MIT license, see z3-license.txt.
 import { type AstManager, KIND_APP, OP_AND, OP_IMPLIES, OP_ITE, OP_OR } from "./ast";
 import type { Enode } from "./enode";
 import { shrink } from "./array";

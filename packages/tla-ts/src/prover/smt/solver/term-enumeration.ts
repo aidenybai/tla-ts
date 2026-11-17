@@ -1,4 +1,3 @@
-// Ported from Z3 (src/ast/rewriter/term_enumeration.cpp), MIT license, see z3-license.txt.
 import type { AstManager } from "./ast";
 
 const STATE_LEAVES = 0;

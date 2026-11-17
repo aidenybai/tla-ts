@@ -1,4 +1,3 @@
-// Ported from Z3 (src/smt/smt_model_generator.cpp), MIT license, see z3-license.txt.
 import { FAMILY_BASIC, FAMILY_USER, SORT_BOOL } from "./ast";
 import type { Context } from "./context";
 import { Enode } from "./enode";

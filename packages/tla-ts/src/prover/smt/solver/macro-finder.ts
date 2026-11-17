@@ -1,6 +1,3 @@
-// Ported from Z3 (src/ast/macros/macro_finder.cpp, src/ast/macros/macro_manager.cpp,
-// src/ast/macros/macro_util.cpp, src/ast/func_decl_dependencies.cpp,
-// src/tactic/ufbv/macro_finder_tactic.cpp), MIT license, see z3-license.txt.
 import {
   FAMILY_USER,
   KIND_APP,

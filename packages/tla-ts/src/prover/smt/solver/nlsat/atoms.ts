@@ -1,5 +1,3 @@
-// Ported from Z3 (src/nlsat/nlsat_solver.cpp, src/nlsat/nlsat_scoped_literal_vector.h,
-// src/util/id_gen.h), MIT license, see z3-license.txt.
 import {
   NULL_VAR,
   type Polynomial,

@@ -1,4 +1,3 @@
-// Ported from Z3 (src/qe/mbp/mbp_arith.cpp), MIT license, see z3-license.txt.
 import { SmtInvariantError, SmtUnsupportedError } from "../../../../errors";
 import {
   type AstManager,

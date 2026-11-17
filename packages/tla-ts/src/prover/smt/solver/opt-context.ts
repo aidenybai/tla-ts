@@ -1,5 +1,4 @@
-// Ported from Z3 (src/opt/opt_context.cpp, src/opt/opt_value.cpp), MIT license, see
-// z3-license.txt. MaxSMT runs on the SMT core.
+// MaxSMT runs on the SMT core.
 import { SmtUnsupportedError } from "../../../errors";
 import {
   type AstManager,

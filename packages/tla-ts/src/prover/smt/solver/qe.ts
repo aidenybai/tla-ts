@@ -1,5 +1,3 @@
-// Ported from Z3 (src/qe/qe.cpp, src/qe/qe_tactic.cpp, src/qe/qe_bool_plugin.cpp,
-// src/qe/qe_bv_plugin.cpp), MIT license, see z3-license.txt.
 import { SmtInvariantError, SmtUnsupportedError } from "../../../errors";
 import {
   type AstManager,

@@ -1,5 +1,3 @@
-// A port of tlapm's Expr.Deref.
-
 import { TlaProofError, TlapmBugError } from "../errors";
 import { consAll, consSubstitution, shift, substituteExpr } from "./substitution";
 import {

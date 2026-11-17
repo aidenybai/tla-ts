@@ -1,6 +1,3 @@
-// Ported from Z3 (src/ast/pb_decl_plugin.h, src/ast/pb_decl_plugin.cpp,
-// src/ast/rewriter/pb_rewriter.cpp, src/ast/rewriter/pb_rewriter_def.h), MIT license, see
-// z3-license.txt.
 import {
   type AstManager,
   FAMILY_PB,

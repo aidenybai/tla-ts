@@ -1,5 +1,3 @@
-// Ported from Zenon's index.ml, as shipped in tlapm. Copyright 2004 INRIA, see LICENSE.
-
 import {
   getStringName,
   isApp,

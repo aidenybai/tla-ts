@@ -1,5 +1,3 @@
-// Ported from Z3 (src/math/grobner/pdd_solver.h, src/math/grobner/pdd_solver.cpp), MIT license, see
-// z3-license.txt.
 import { PddMemoryOutError } from "../../../../errors";
 import { type Dependency, mkJoin } from "./dependency";
 import type { Pdd, PddManager } from "./pdd";

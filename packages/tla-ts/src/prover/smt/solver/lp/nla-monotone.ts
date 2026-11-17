@@ -1,4 +1,3 @@
-// Ported from Z3 (src/math/lp/nla_monotone_lemmas.h, src/math/lp/nla_monotone_lemmas.cpp), MIT license, see z3-license.txt.
 import { Rational } from "../rational";
 import { KIND_GE, KIND_GT, KIND_LE, KIND_LT } from "./constraints";
 import { type NlaCore } from "./nla-core";

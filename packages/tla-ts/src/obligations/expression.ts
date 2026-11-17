@@ -1,5 +1,3 @@
-// A port of tlapm's expression IR (E_t) and its visitors (Visit).
-
 import type { OldMethod, PragmaSetting } from "./pragma";
 
 export interface Locus {

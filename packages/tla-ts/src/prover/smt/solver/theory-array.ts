@@ -1,5 +1,3 @@
-// Ported from Z3 (src/smt/theory_array_base.cpp, theory_array.cpp, theory_array_full.cpp), MIT
-// license, see z3-license.txt.
 import { SmtInvariantError } from "../../../errors";
 import { mkArrayApp, mkArrayDecl, mkAsArray } from "./array-decl-plugin";
 import {

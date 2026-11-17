@@ -1,5 +1,3 @@
-// Ported from Z3 (src/sat/smt/q_solver.h, src/sat/smt/q_solver.cpp), MIT license, see
-// z3-license.txt.
 import {
   KIND_QUANTIFIER,
   OP_AND,

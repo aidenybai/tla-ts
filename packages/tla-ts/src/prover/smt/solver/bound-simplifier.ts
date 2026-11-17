@@ -1,5 +1,3 @@
-// Ported from Z3 (src/ast/simplifiers/bound_simplifier.cpp, src/ast/simplifiers/bound_propagator.cpp),
-// MIT license, see z3-license.txt.
 import {
   type AstManager,
   OP_ADD,

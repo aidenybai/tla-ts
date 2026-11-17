@@ -1,4 +1,3 @@
-// Ported from Z3 (src/tactic/core/ctx_simplify_tactic.cpp, src/ast/num_occurs.cpp, src/tactic/goal_num_occurs.cpp), MIT license, see z3-license.txt.
 import { KIND_APP, OP_AND, OP_EQ, OP_ITE, OP_OR, type AstManager } from "./ast";
 import type { Goal } from "./goal";
 import { RefVector } from "./ref-vector";

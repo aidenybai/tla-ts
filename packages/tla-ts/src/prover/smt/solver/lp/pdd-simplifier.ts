@@ -1,4 +1,3 @@
-// Ported from Z3 (src/math/grobner/pdd_simplifier.h, src/math/grobner/pdd_simplifier.cpp), MIT license, see z3-license.txt.
 import { mkJoin } from "./dependency";
 import { type Equation, type PddSolver, SetUpdate, SOLVED, TO_SIMPLIFY } from "./pdd-solver";
 import { shrink } from "../array";

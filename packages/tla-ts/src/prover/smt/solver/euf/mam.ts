@@ -1,5 +1,3 @@
-// Ported from Z3 (src/ast/euf/euf_mam.h, src/ast/euf/euf_mam.cpp), MIT license, see
-// z3-license.txt.
 import {
   type AstManager,
   FAMILY_ARITH,

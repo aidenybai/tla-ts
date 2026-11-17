@@ -1,4 +1,3 @@
-// Ported from Z3 (src/opt/opt_preprocess.cpp), MIT license, see z3-license.txt.
 import { type AstManager, OP_OR, SORT_BOOL } from "./ast";
 import { mkNot } from "./ast-util";
 import { ObjMap } from "./hashtable";

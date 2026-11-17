@@ -1,5 +1,3 @@
-// Ported from Zenon's lltoisar.ml and the -oisar path of main.ml, as shipped in tlapm. Copyright 2008 INRIA, see LICENSE.
-
 import { TlaZenonError } from "../../errors";
 import { FALSE, GOAL_NAME, TRUE, type BinderExpr, type Expr, type Expressions } from "./expr";
 import type { Relations } from "./eqrel";

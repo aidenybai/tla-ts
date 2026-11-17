@@ -1,5 +1,3 @@
-// Ported from Z3 (src/sat/smt/q_mbi.h, src/sat/smt/q_mbi.cpp,
-// src/ast/for_each_expr.cpp), MIT license, see z3-license.txt.
 import { SmtInvariantError } from "../../../../errors";
 import {
   type AstManager,

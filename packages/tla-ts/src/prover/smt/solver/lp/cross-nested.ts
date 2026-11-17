@@ -1,4 +1,3 @@
-// Ported from Z3 (src/math/lp/cross_nested.h), MIT license, see z3-license.txt.
 // Deviation from Z3: the occurrence map iterates in insertion order where Z3 has an unordered_map,
 // so an extracted common factor may list its variables in another order.
 import { Rational } from "../rational";

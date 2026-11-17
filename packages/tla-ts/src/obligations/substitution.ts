@@ -1,5 +1,3 @@
-// A port of tlapm's E_subst.
-
 import { TlaProofError } from "../errors";
 import {
   at,

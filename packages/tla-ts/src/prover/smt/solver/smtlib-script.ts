@@ -1,5 +1,3 @@
-// Ported from Z3 (src/cmd_context/cmd_context.cpp, src/cmd_context/basic_cmds.cpp), MIT license,
-// see z3-license.txt.
 import { ENCODINGS, UNICODE_ENCODING } from "./seq-decl-plugin";
 import {
   isStackOverflow,

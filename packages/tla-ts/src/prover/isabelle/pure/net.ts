@@ -1,5 +1,3 @@
-// Ported from Isabelle2025's Pure/net.ML. Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
-
 import type { List } from "./list";
 import { boundName } from "./name";
 import {

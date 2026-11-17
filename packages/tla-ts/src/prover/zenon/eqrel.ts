@@ -1,5 +1,3 @@
-// Ported from Zenon's eqrel.ml, as shipped in tlapm. Copyright 2004 INRIA, see LICENSE.
-
 import { TRUE, type Expr, type Expressions } from "./expr";
 
 export type Direction = "left" | "right";

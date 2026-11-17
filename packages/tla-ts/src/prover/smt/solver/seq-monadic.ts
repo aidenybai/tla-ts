@@ -1,5 +1,3 @@
-// Ported from Z3 (src/ast/seq/seq_monadic.cpp, src/ast/seq/seq_monadic.h), MIT license, see
-// z3-license.txt.
 import {
   type AstManager,
   KIND_APP,
