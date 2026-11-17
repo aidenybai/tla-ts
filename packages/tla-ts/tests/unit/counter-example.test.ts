@@ -78,6 +78,28 @@ describe("POSTCONDITION with an ALIAS matches TLC", () => {
   });
 });
 
+const checkFailedNext = async (next: string, config: string) => {
+  const result = await check({
+    source: `---- MODULE M ----\nEXTENDS Naturals, TLC, TLCExt\nVARIABLE x\nPost == PrintT(DOMAIN CounterExample)\nInit == x = 0\nNext == ${next}\n====`,
+    config: `INIT Init\nNEXT Next\nPOSTCONDITION Post\n${config}`,
+    onPrint: () => {},
+  });
+  return result.failure?.traceOutput ?? [];
+};
+
+describe("POSTCONDITION after a next-state failure matches TLC", () => {
+  it("checks the postconditions only as TLC goes on to find the failed state deadlocked", async () => {
+    const failing = "x' = x + 1 /\\ (x < 1 \\/ CHOOSE e \\in {} : TRUE)";
+    expect(
+      await Promise.all([
+        checkFailedNext(failing, ""),
+        checkFailedNext(failing, "CHECK_DEADLOCK FALSE"),
+        checkFailedNext("x' = x + 1 \\/ (x = 1 /\\ CHOOSE e \\in {} : TRUE)", ""),
+      ]),
+    ).toEqual([['{"action", "state", "console"}'], [], []]);
+  });
+});
+
 const checkUnassigned = async (init: string, printed: string) => {
   const result = await check({
     source: `---- MODULE M ----\nEXTENDS Naturals, TLC, TLCExt\nVARIABLES x, y\nInit == ${init}\nNext == x' = 1\nPost == PrintT(${printed}) /\\ FALSE\n====`,

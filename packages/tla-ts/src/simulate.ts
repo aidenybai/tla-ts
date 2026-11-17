@@ -29,8 +29,7 @@ import {
   withUnexpectedException,
 } from "./tlc/messages";
 import { createJavaRandom, nextPrime, type JavaRandom } from "./tlc/random";
-import { createTlcRecord } from "./tlc/tlc-operators";
-import { createCounterExample } from "./tlc/tlcext-operators";
+import { createCounterExample, createTlcRecord } from "./tlc/tlcext-operators";
 import {
   computeLikeTlcOnFailure,
   createModelValue,

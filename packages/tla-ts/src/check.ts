@@ -518,12 +518,14 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     trace: TraceStep[],
     loop: { start: number; action: Value } | undefined,
     getState: (step: TraceStep) => Record<string, Value>,
+    isConsole = true,
   ) => {
     if (hasPostconditions) {
       runtime.counterExample = createCounterExample(
         trace.map(getState),
         trace.slice(1).map(getStepAction),
         loop,
+        isConsole,
       );
     }
     const unwitnessed = search.findUnwitnessedPossible();
@@ -823,13 +825,13 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     failed: unknown,
     behavior: Behavior,
     failureOptions: FailureOptions = {},
+    counterExample?: { isConsole: boolean },
   ) => {
     const error = isStackOverflow(failed) ? new TlaStackOverflowError() : failed;
     if (!(error instanceof TlaEvaluationError)) throw error;
     const checked =
-      behavior.trace.length > 0 && !failureOptions.traceFailure
-        ? checkTracePostconditions(behavior.trace, undefined, getStepAlias)
-        : undefined;
+      counterExample &&
+      checkTracePostconditions(behavior.trace, undefined, getStepAlias, counterExample.isConsole);
     const postcondition = checked?.unwitnessed ?? checked?.postcondition;
     const traceOutput = [...(behavior.traceOutput ?? []), ...(checked?.lines ?? [])];
     return {
@@ -884,6 +886,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       error,
       appendTraceOutput(traces.getStateTrace(index, error.state), live.lines),
       { callStack: live.result },
+      { isConsole: true },
     );
     return withOutDegrees({
       ...failure,
@@ -1421,20 +1424,32 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     const replay = captureOutput(() => replayNext(index));
     return { result: replay.result, lines: [...live.lines, ...replay.lines] };
   };
-  const reportNextStateOverflow = (index: number) =>
-    createFailureResult(createStackOverflowError(), traces.getStateTrace(index), { phase: "next" });
+  const reportNextStateOverflow = (index: number, counterExample?: { isConsole: boolean }) =>
+    createFailureResult(
+      createStackOverflowError(),
+      traces.getStateTrace(index),
+      { phase: "next" },
+      counterExample,
+    );
   // Deviation from TLC: under -continue, TLC goes on after the failure, can report the state deadlocked, and reports the failure again as it replays it.
   const reportNextStateFailure = (
     error: unknown,
     index: number,
     liveSuccessors: LiveSuccessor[],
+    generated: number,
   ) => {
-    if (isStackOverflow(error)) return reportNextStateOverflow(index);
+    // TLC's Worker goes on to find a state without successors deadlocked after it fails, which checks the postconditions.
+    const counterExample =
+      config.checkDeadlock && runtime.generatedStates === generated
+        ? { isConsole: false }
+        : undefined;
+    if (isStackOverflow(error)) return reportNextStateOverflow(index, counterExample);
     const replay = replayFailedNext(index, liveSuccessors);
     return createFailureResult(
       withNextStateExitCode(error),
       appendTraceOutput(traces.getStateTrace(index), replay.lines),
       { phase: "next", ...replay.result },
+      counterExample,
     );
   };
   const expandState = (index: number, liveSuccessors: LiveSuccessor[]) => {
@@ -1766,13 +1781,14 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     runtime.queueSize = states.length - index - 1;
     current.isExpanding = true;
     const liveSuccessors: LiveSuccessor[] = [];
+    const generated = runtime.generatedStates;
     try {
       outcome = expandState(index, liveSuccessors);
     } catch (error) {
       outcome =
         error instanceof TlaIncompleteSuccessorError
           ? reportIncompleteSuccessor(index, error, liveSuccessors)
-          : reportNextStateFailure(error, index, liveSuccessors);
+          : reportNextStateFailure(error, index, liveSuccessors, generated);
     }
     if (outcome) return outcome;
     outDegrees[getOutDegreeBucket()]++;

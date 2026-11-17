@@ -38,11 +38,14 @@ import {
   createRecord,
   createSet,
   createTuple,
+  createWrittenFunction,
   formatState,
   formatValue,
   getFingerprintError,
   getSequenceElements,
   getValueKey,
+  rankString,
+  setFunctionClass,
   toFiniteSet,
   type Value,
 } from "../values";
@@ -64,11 +67,17 @@ export const createActionRecord = (action: string | undefined) =>
 
 const counterExamples = new WeakSet<Value & object>();
 
-const createCounterExampleRecord = (action: Value[], states: Value[]) => {
-  const counterExample = createRecord([
+export const createTlcRecord = (fields: [string, Value][]) =>
+  setFunctionClass(createWrittenFunction(fields), "record");
+
+const createCounterExampleRecord = (action: Value[], states: Value[], isConsole = true) => {
+  // TLC's CounterExample interns its field names as the class loads, which orders them as strings.
+  ["state", "action", "console"].forEach(rankString);
+  const fields: [string, Value][] = [
     ["action", createSet(action)],
     ["state", createSet(states)],
-  ]);
+  ];
+  const counterExample = createTlcRecord(isConsole ? fields : [...fields, ["console", false]]);
   counterExamples.add(counterExample);
   return counterExample;
 };
@@ -77,6 +86,7 @@ export const createCounterExample = (
   stateRecords: Record<string, Value>[],
   actions: Value[],
   loop: { start: number; action: Value } | undefined,
+  isConsole = true,
 ) => {
   const states = stateRecords.map((state, index) =>
     createTuple([index + 1, createRecord(Object.entries(state))]),
@@ -87,7 +97,7 @@ export const createCounterExample = (
   const closing = loop
     ? [createTuple([states[states.length - 1], loop.action, states[loop.start]])]
     : [];
-  return createCounterExampleRecord([...steps, ...closing], states);
+  return createCounterExampleRecord([...steps, ...closing], states, isConsole);
 };
 
 const getRegister = (runtime: CheckerRuntime, key: Value) => {
