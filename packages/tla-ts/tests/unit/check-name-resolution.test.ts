@@ -820,6 +820,39 @@ describe("name resolution matches SANY", () => {
       ],
     ],
     [
+      "CONSTANT c\nRECURSIVE R(_, _), Q(_), P(_, _)\nA == R(c, R)!1!@ /\\ Q(Q)!1 /\\ P(P, LAMBDA p : p)!1\nR(a, b) == a\nQ(a) == Q(a) /\\ Q(Q)!1\nP == c",
+      [
+        ["line 4, col 11 to line 4, col 11", "The operator R requires 2 arguments."],
+        [
+          "line 4, col 6 to line 4, col 6",
+          "Subexpression of  `R' used inside the operator's definition.",
+        ],
+        ["line 4, col 23 to line 4, col 23", "The operator Q requires 1 arguments."],
+        [
+          "line 4, col 21 to line 4, col 21",
+          "Subexpression of  `Q' used inside the operator's definition.",
+        ],
+        ["line 4, col 33 to line 4, col 33", "The operator P requires 2 arguments."],
+        [
+          "line 4, col 36 to line 4, col 47",
+          "LAMBDA expression used where an expression is required.",
+        ],
+        [
+          "line 4, col 31 to line 4, col 31",
+          "Subexpression of  `P' used inside the operator's definition.",
+        ],
+        ["line 6, col 19 to line 6, col 19", "The operator Q requires 1 arguments."],
+        [
+          "line 6, col 17 to line 6, col 17",
+          "Subexpression of  `Q' used inside the operator's definition.",
+        ],
+        [
+          "line 7, col 1 to line 7, col 6",
+          "Definition of P has different arity than its RECURSIVE declaration.",
+        ],
+      ],
+    ],
+    [
       "CONSTANT _ <= _\na =< b == 1",
       [
         ["line 3, col 1 to line 3, col 11", "Operator \\leq already defined or declared."],

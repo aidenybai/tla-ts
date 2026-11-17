@@ -261,13 +261,17 @@ const selectSubexpression = (
       deferToExpression(range, message);
     }
     if (isLast) return { definition, args: found.args };
+    const range = definition.location.range;
+    const isUndefined =
+      declaredArities.has(definition) &&
+      range?.module === location.range?.module &&
+      isBefore(location, definition.location);
     applications.push({
       operator: found.name,
       range: reference.selectorRanges?.[selectorIndex],
       args: found.args,
-      params: getParamArities(definition),
+      params: isUndefined ? Array(arity).fill(0) : getParamArities(definition),
     });
-    const range = definition.location.range;
     if (
       definition.isRecursive &&
       range &&
