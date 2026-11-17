@@ -27,6 +27,7 @@ import {
   type SharedHelper,
   skipCasts,
 } from "./context";
+import { getPosition } from "./program-nodes";
 import { forceHeap } from "./functions";
 import { type Formula, ifThenElse, leaf, letIn, render } from "./formula";
 import { link } from "./regions";
@@ -264,9 +265,66 @@ export const classifySharedHelpers = (reached: readonly ts.Node[], context: Cont
     units.set(node, unit);
     pending.push(...unit.runs);
   }
+  // The units that reach a unit that runs a task or code that isn't its own, which no helper's
+  // operator can run, found once by following the runs backwards from those units over flat arrays
+  // of the units' indexes, by their positions. Where a unit has no position, none is found.
+  const unitNodes = [...units.keys()];
+  const unitIndexes = new Int32Array(context.nodes.nodes.length).fill(-1);
+  const unitPositions = unitNodes.map((node) => getPosition(context.nodes, node));
+  unitPositions.forEach((position, index) => {
+    if (position >= 0) unitIndexes[position] = index;
+  });
+  const getUnitIndex = (node: ts.Node) => {
+    const position = getPosition(context.nodes, node);
+    return position < 0 ? -1 : unitIndexes[position];
+  };
+  const isIndexed = unitPositions.every((position) => position >= 0);
+  const callerStarts = new Int32Array(unitNodes.length + 1);
+  unitNodes.forEach((node) =>
+    units.get(node)?.runs.forEach((run) => {
+      const target = getUnitIndex(run);
+      if (target >= 0) callerStarts[target + 1] += 1;
+    }),
+  );
+  callerStarts.forEach((count, index) => {
+    if (index > 0) callerStarts[index] = callerStarts[index - 1] + count;
+  });
+  const callerEnds = callerStarts.slice(0, -1);
+  const callers = new Int32Array(callerStarts[unitNodes.length]);
+  unitNodes.forEach((node, index) =>
+    units.get(node)?.runs.forEach((run) => {
+      const target = getUnitIndex(run);
+      if (target < 0) return;
+      callers[callerEnds[target]] = index;
+      callerEnds[target] += 1;
+    }),
+  );
+  const isUnshared = new Uint32Array((unitNodes.length + 31) >>> 5);
+  const markUnshared = (index: number): boolean => {
+    if ((isUnshared[index >>> 5] & (1 << (index & 31))) !== 0) return false;
+    isUnshared[index >>> 5] |= 1 << (index & 31);
+    return true;
+  };
+  const unsharedQueue = unitNodes.flatMap((node, index) => {
+    const unit = units.get(node);
+    return isIndexed && unit !== undefined && (unit.isTasked || !unit.isOwn) && markUnshared(index)
+      ? [index]
+      : [];
+  });
+  while (unsharedQueue.length > 0) {
+    const index = unsharedQueue.pop() ?? 0;
+    for (let caller = callerStarts[index]; caller < callerStarts[index + 1]; caller += 1) {
+      if (markUnshared(callers[caller])) unsharedQueue.push(callers[caller]);
+    }
+  }
+  const isReachingUnshared = (callee: ts.Node) => {
+    const index = isIndexed ? getUnitIndex(callee) : -1;
+    return index >= 0 && (isUnshared[index >>> 5] & (1 << (index & 31))) !== 0;
+  };
   // What a function and the functions it runs read from outside it and change, where all of their
   // code runs as an operator's would.
   const getHelper = (callee: ts.Node): SharedHelper | undefined => {
+    if (isReachingUnshared(callee)) return undefined;
     const reach = new Set<ts.Node>([callee]);
     const queued: ts.Node[] = [callee];
     const read = new Map<ts.Symbol, ts.Node>();
