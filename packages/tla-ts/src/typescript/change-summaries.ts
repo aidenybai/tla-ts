@@ -1,6 +1,6 @@
 import ts from "@typescript/typescript6";
 import type { Effects } from "./context";
-import { getLowerBound, getPosition, type ProgramNodes } from "./program-nodes";
+import { getLowerBound, getPosition, hasBit, type ProgramNodes, setBit } from "./program-nodes";
 
 // What each function that the model's code runs changes, with what the functions that it runs
 // change, where no parameter holds a function, found once for the program. The functions that run
@@ -47,9 +47,6 @@ export interface Bits {
   words: number;
   rows: Uint32Array;
 }
-
-const hasBit = (bits: Uint32Array, index: number) =>
-  (bits[index >>> 5] & (1 << (index & 31))) !== 0;
 
 // The bit of a symbol, or -1 where no row has one for it.
 export const getSymbolBit = (bits: Bits, symbol: ts.Symbol) => {
@@ -261,9 +258,6 @@ export const summarizeFunctions = (
     for (let word = 0; word < bits.words; word += 1) {
       bits.rows[to * bits.words + word] |= bits.rows[from * bits.words + word];
     }
-  };
-  const setBit = (bits: Uint32Array, index: number) => {
-    bits[index >>> 5] |= 1 << (index & 31);
   };
   const setRowBit = (bits: Bits, row: number, bit: number) => {
     bits.rows[row * bits.words + (bit >>> 5)] |= 1 << (bit & 31);

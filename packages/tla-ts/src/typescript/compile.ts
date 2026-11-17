@@ -8,7 +8,8 @@ import {
   translateScript,
   writesState,
 } from "./actions";
-import { findSharing, getReached, isMakingObjects, rejectSharing } from "./aliasing";
+import { findSharing, getReached, isMakingNode, isMakingObjects, rejectSharing } from "./aliasing";
+import { findMakers } from "./reach-graph";
 import {
   type Closure,
   type Context,
@@ -323,6 +324,12 @@ export const compile = (
     program.nodes,
   );
   context.resolverHolders = program.files.map((file) => findResolverHolders(file, context));
+  // Only a model that imports files asks which of their declarations make objects before the
+  // heap is known.
+  context.makers =
+    program.files.length > 1
+      ? findMakers(context.nodes, context.reachGraph, (node) => isMakingNode(node, context))
+      : undefined;
   if (isScript(program.sourceFile)) {
     const onceFunctions = findOnceFunctions(program.files, context);
     context.onceFunctions = new Set(onceFunctions);
@@ -910,6 +917,9 @@ export const compile = (
     context.heap = heap;
     context.objectTargets = findObjectTargets(program.files, context);
     findHeapCode(context);
+    context.makers = findMakers(context.nodes, context.reachGraph, (node) =>
+      isMakingNode(node, context),
+    );
     findFileAccessors(context);
     context.variables.set(heap, identifier(context.names.getFresh("heap")));
     context.storedBuiltIns = new Map(

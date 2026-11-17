@@ -1,5 +1,5 @@
 import ts from "@typescript/typescript6";
-import { getPosition, type ProgramNodes, type References } from "./program-nodes";
+import { getPosition, hasBit, type ProgramNodes, type References, setBit } from "./program-nodes";
 
 // What a walk of each declaration that a name of the program's files names reaches by name, which
 // tla-ts finds once for the program: a run of the declarations that the walk of its subtree meets,
@@ -11,13 +11,6 @@ export interface ReachGraph {
   targets: Int32Array;
   elsewhere: ts.Node[];
 }
-
-const hasBit = (bits: Uint32Array, index: number) =>
-  (bits[index >>> 5] & (1 << (index & 31))) !== 0;
-
-const setBit = (bits: Uint32Array, index: number) => {
-  bits[index >>> 5] |= 1 << (index & 31);
-};
 
 // A type runs nothing, though a class's base, which TypeScript parses as one, runs.
 export const isSkippedForReach = (node: ts.Node) =>
@@ -83,4 +76,74 @@ export const createReachGraph = (table: ProgramNodes, references: References): R
     targets: Int32Array.from(targets),
     elsewhere,
   };
+};
+
+// Which declarations may make an object, themselves or through what they reach, by position, and
+// which reach a declaration elsewhere, which only a walk tells about. A prefix count of the nodes
+// that make one tells each subtree.
+export interface Makers {
+  counts: Int32Array;
+  makesObjects: Uint32Array;
+  reachesElsewhere: Uint32Array;
+}
+
+// Whether a subtree of the program's files holds a node that makes an object.
+export const holdsMaker = (table: ProgramNodes, makers: Makers, start: number) =>
+  makers.counts[table.ends[start]] > makers.counts[start];
+
+export const findMakers = (
+  table: ProgramNodes,
+  graph: ReachGraph,
+  isMaker: (node: ts.Node) => boolean,
+): Makers => {
+  const count = table.nodes.length;
+  const counts = new Int32Array(count + 1);
+  table.nodes.forEach((node, position) => {
+    counts[position + 1] = counts[position] + (isMaker(node) ? 1 : 0);
+  });
+  // The runs followed back, from the declarations that make objects themselves and from those that
+  // reach one elsewhere.
+  const callerStarts = new Int32Array(count + 1);
+  for (let start = 0; start < count; start += 1) {
+    for (let index = graph.starts[start]; index < graph.ends[start]; index += 1) {
+      if (graph.targets[index] >= 0) callerStarts[graph.targets[index] + 1] += 1;
+    }
+  }
+  callerStarts.forEach((size, position) => {
+    if (position > 0) callerStarts[position] = callerStarts[position - 1] + size;
+  });
+  const callerEnds = callerStarts.slice(0, -1);
+  const callers = new Int32Array(callerStarts[count]);
+  const makesObjects = new Uint32Array((count + 31) >>> 5);
+  const reachesElsewhere = new Uint32Array((count + 31) >>> 5);
+  for (let start = 0; start < count; start += 1) {
+    if (counts[table.ends[start]] > counts[start]) {
+      setBit(makesObjects, start);
+    }
+    for (let index = graph.starts[start]; index < graph.ends[start]; index += 1) {
+      const target = graph.targets[index];
+      if (target < 0) {
+        setBit(reachesElsewhere, start);
+        continue;
+      }
+      callers[callerEnds[target]] = start;
+      callerEnds[target] += 1;
+    }
+  }
+  const spread = (bits: Uint32Array) => {
+    const pending: number[] = [];
+    for (let position = 0; position < count; position += 1) {
+      if (hasBit(bits, position)) pending.push(position);
+    }
+    while (pending.length > 0) {
+      const position = pending.pop() ?? 0;
+      for (let caller = callerStarts[position]; caller < callerStarts[position + 1]; caller += 1) {
+        if (hasBit(bits, callers[caller])) continue;
+        setBit(bits, callers[caller]);
+        pending.push(callers[caller]);
+      }
+    }
+    return bits;
+  };
+  return { counts, makesObjects: spread(makesObjects), reachesElsewhere: spread(reachesElsewhere) };
 };

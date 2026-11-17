@@ -22,7 +22,7 @@ import { getKeptReads } from "./narrowing";
 import { mayThrow } from "./functions";
 import { findGetterKeys, findWrittenFunctions, getGetterKeys, isProxyOperation } from "./protocols";
 import type { ChangeTable } from "./change-summaries";
-import { createReachGraph, type ReachGraph } from "./reach-graph";
+import { createReachGraph, type Makers, type ReachGraph } from "./reach-graph";
 import type { Namespace } from "./namespaces";
 import {
   createReferences,
@@ -121,6 +121,9 @@ export interface Context {
   references: References;
   // What each declaration that a name names reaches by name.
   reachGraph: ReachGraph;
+  // Which declarations may make objects, as isMakingObjects tells, where the heap is as it is now:
+  // found once as the context is made, and again once the heap is known.
+  makers: Makers | undefined;
   // The assignments of the program's files, by the symbols of the names they write.
   writes: References;
   // The keys that each of the program's files defines getters under, by the file's index.
@@ -309,6 +312,8 @@ export interface Dispatch {
   calleeIds: Int32Array;
   words: number;
   rows: Uint32Array;
+  // The bits that each row tested, which the rest of the bits don't tell.
+  tested: Uint32Array;
   candidateTypes: Int32Array;
 }
 
@@ -659,6 +664,7 @@ export const createContext = (
     nodes,
     references,
     reachGraph: createReachGraph(nodes, references),
+    makers: undefined,
     writes: createWrites(nodes, references),
     getterKeys: files.map(findGetterKeys),
     calledOnce: new Uint8Array(nodes.nodes.length),
@@ -2641,10 +2647,7 @@ export const isMadeOnly = (symbol: ts.Symbol, context: Context) => {
 export const getAssignedValues = (symbol: ts.Symbol, context: Context) => {
   const declaration = symbol.valueDeclaration;
   if (declaration === undefined) return undefined;
-  const written = findNodes(declaration.getSourceFile(), (inner): inner is ts.Node => {
-    const target = getAssignedTarget(inner);
-    return target !== undefined && isWrittenBy(target, symbol, context);
-  }).flatMap((inner) =>
+  const written = findWrites(symbol, declaration.getSourceFile(), context).flatMap((inner) =>
     getWrittenNames(getAssignedTarget(inner) ?? inner).filter(
       (name) => ts.isIdentifier(name) && getSymbol(name, context.checker) === symbol,
     ),
@@ -5700,8 +5703,9 @@ export const getFunctionCandidates = (callee: ts.Expression, context: Context) =
   const isAssignable = (candidate: FunctionNode) => {
     const position = row < 0 ? -1 : getPosition(context.nodes, candidate);
     const bit = position < 0 || dispatch === undefined ? -1 : dispatch.candidateTypes[position] - 1;
-    return dispatch !== undefined && bit >= 0
-      ? (dispatch.rows[row * dispatch.words + (bit >>> 5)] & (1 << (bit & 31))) !== 0
+    const word = row * (dispatch?.words ?? 0) + (bit >>> 5);
+    return dispatch !== undefined && bit >= 0 && (dispatch.tested[word] & (1 << (bit & 31))) !== 0
+      ? (dispatch.rows[word] & (1 << (bit & 31))) !== 0
       : checker.isTypeAssignableTo(checker.getTypeAtLocation(candidate), type);
   };
   return found.filter((candidate) => isAssignable(candidate) && isTyped(candidate));
@@ -5732,13 +5736,37 @@ export const createDispatch = (callees: readonly ts.Expression[], context: Conte
       indexes[position] = getLowerBound(candidateIds, 0, candidateIds.length, id) + 1;
     }
   });
-  const calleeTypes = getDistinctTypes(
-    callees
-      .filter((callee) => !isHeldBuiltInObject(callee, context) && !isSuperAccess(callee))
-      .map((callee) => checker.getTypeAtLocation(callee)),
+  const dispatched = callees.filter(
+    (callee) => !isHeldBuiltInObject(callee, context) && !isSuperAccess(callee),
   );
+  const calleeTypes = getDistinctTypes(
+    dispatched.map((callee) => checker.getTypeAtLocation(callee)),
+  );
+  const calleeIds = Int32Array.from(calleeTypes, (type) => type.id);
   const words = (candidateTypes.length + 31) >>> 5;
   const rows = new Uint32Array(calleeTypes.length * words);
+  // A callee reads the candidates of its own file and those of the other files that read no
+  // locals of a function around them, so each callee type needs only the candidate types of
+  // those: a row of the bits that it tests, from a row of the shared candidates' bits and one of
+  // each file's.
+  const getBit = (candidate: FunctionNode) =>
+    getLowerBound(candidateIds, 0, candidateIds.length, checker.getTypeAtLocation(candidate).id);
+  const sharedBits = new Uint32Array(words);
+  context.sharedFunctionCandidates.forEach((shared) =>
+    shared.forEach((candidate) => {
+      const bit = getBit(candidate);
+      sharedBits[bit >>> 5] |= 1 << (bit & 31);
+    }),
+  );
+  const tested = new Uint32Array(calleeTypes.length * words);
+  calleeTypes.forEach((_, row) => tested.set(sharedBits, row * words));
+  dispatched.forEach((callee) => {
+    const row = getLowerBound(calleeIds, 0, calleeIds.length, checker.getTypeAtLocation(callee).id);
+    context.functionCandidates.get(callee.getSourceFile())?.forEach((candidate) => {
+      const bit = getBit(candidate);
+      tested[row * words + (bit >>> 5)] |= 1 << (bit & 31);
+    });
+  });
   // TypeScript relates a function type to a type of one call signature, no rest parameter, and no
   // properties only through its call signatures, each of which fails where it takes more arguments
   // than the target's parameters: the least count of arguments that each candidate takes, or -1,
@@ -5778,23 +5806,97 @@ export const createDispatch = (callees: readonly ts.Expression[], context: Conte
       checker.getIndexInfosOfType(type).length === 0;
     return isOneSignature ? signatures[0].parameters.length : -1;
   });
-  calleeTypes.forEach((calleeType, row) =>
+  // TypeScript relates a function type of TypeScript's own, not an alias's or an instantiation's,
+  // with call signatures that take no type parameters and nothing else, to another type only
+  // through its signatures' flags, counts of arguments, and the types of its this, parameters,
+  // predicate, and return: candidate types alike in those, by a key that sorting groups, give each
+  // callee type one answer. Each candidate type takes the answer of the first of its group, other
+  // than for a callee type of a candidate's symbol, which TypeScript relates by the symbol's own
+  // signatures.
+  const getKey = (type: ts.Type) => {
+    const signatures = checker.getSignaturesOfType(type, ts.SignatureKind.Call);
+    const isPlainFunctionType =
+      type.flags === ts.TypeFlags.Object &&
+      type.aliasSymbol === undefined &&
+      ((type.objectFlags ?? 0) &
+        (ts.ObjectFlags.Reference | ts.ObjectFlags.Mapped | ts.ObjectFlags.Instantiated)) ===
+        0 &&
+      signatures.length > 0 &&
+      signatures.every(
+        (signature) =>
+          signature.typeParameters === undefined &&
+          signature.target === undefined &&
+          (signature.flags & SIGNATURE_UNTYPED) === 0 &&
+          signature.declaration !== undefined &&
+          !isJavaScriptFile(signature.declaration.getSourceFile().fileName),
+      ) &&
+      checker.getSignaturesOfType(type, ts.SignatureKind.Construct).length === 0 &&
+      checker.getPropertiesOfType(type).length === 0 &&
+      checker.getIndexInfosOfType(type).length === 0;
+    return isPlainFunctionType
+      ? signatures
+          .map((signature) => {
+            const predicate = checker.getTypePredicateOfSignature(signature);
+            return [
+              signature.flags,
+              signature.minArgumentCount,
+              signature.thisParameter === undefined
+                ? -1
+                : checker.getTypeOfSymbol(signature.thisParameter).id,
+              ...signature.parameters.map((parameter) => checker.getTypeOfSymbol(parameter).id),
+              predicate === undefined
+                ? -1
+                : `${predicate.kind}:${predicate.parameterIndex ?? -1}:${predicate.type?.id ?? -1}`,
+              checker.getReturnTypeOfSignature(signature).id,
+            ].join(",");
+          })
+          .join(";")
+      : undefined;
+  };
+  const keys = candidateTypes.map(getKey);
+  const byKey = Int32Array.from(candidateTypes, (_, bit) => bit).sort((left, right) => {
+    const leftKey = keys[left] ?? "";
+    const rightKey = keys[right] ?? "";
+    return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : left - right;
+  });
+  const firsts = Int32Array.from(candidateTypes, (_, bit) => bit);
+  byKey.forEach((bit, index) => {
+    const previous = index > 0 ? byKey[index - 1] : -1;
+    if (previous >= 0 && keys[bit] !== undefined && keys[bit] === keys[previous]) {
+      firsts[bit] = firsts[previous];
+    }
+  });
+  const candidateSymbols = Int32Array.from(
+    candidateTypes.flatMap((type) =>
+      type.symbol === undefined ? [] : [ts.getSymbolId(type.symbol)],
+    ),
+  ).sort();
+  const isCandidateSymbol = (symbol: ts.Symbol | undefined) => {
+    const id = symbol === undefined ? -1 : ts.getSymbolId(symbol);
+    return candidateSymbols[getLowerBound(candidateSymbols, 0, candidateSymbols.length, id)] === id;
+  };
+  // The answer of each group's first candidate type for the callee type being tested, by the
+  // callee type's row plus one: 1 and 2 for no and yes.
+  const answerRows = new Int32Array(candidateTypes.length);
+  const answers = new Uint8Array(candidateTypes.length);
+  calleeTypes.forEach((calleeType, row) => {
+    const isGrouped = !isCandidateSymbol(calleeType.symbol);
     candidateTypes.forEach((candidateType, bit) => {
       const isTooFew =
         parameterCounts[row] >= 0 &&
         leastArguments[bit] > parameterCounts[row] &&
         candidateType.symbol !== calleeType.symbol;
-      if (!isTooFew && checker.isTypeAssignableTo(candidateType, calleeType)) {
-        rows[row * words + (bit >>> 5)] |= 1 << (bit & 31);
+      const isTested = (tested[row * words + (bit >>> 5)] & (1 << (bit & 31))) !== 0;
+      if (!isTested || isTooFew) return;
+      const first = isGrouped ? firsts[bit] : bit;
+      if (answerRows[first] !== row + 1) {
+        answerRows[first] = row + 1;
+        answers[first] = checker.isTypeAssignableTo(candidateType, calleeType) ? 2 : 1;
       }
-    }),
-  );
-  return {
-    calleeIds: Int32Array.from(calleeTypes, (type) => type.id),
-    words,
-    rows,
-    candidateTypes: indexes,
-  };
+      if (answers[first] === 2) rows[row * words + (bit >>> 5)] |= 1 << (bit & 31);
+    });
+  });
+  return { calleeIds, words, rows, tested, candidateTypes: indexes };
 };
 
 // Whether the model reaches a node's code, as no value holds a function that nothing names.
