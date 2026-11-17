@@ -456,15 +456,29 @@ const inPlace = (run: (goal: Goal) => void) => (goal: Goal) => {
   return [goal];
 };
 
+const selectClause = (goal: Goal, isLargest: boolean) => {
+  const manager = goal.manager;
+  let position = -1;
+  let length = 0;
+  for (let index = 0; index < goal.forms.size; index++) {
+    const form = goal.forms.items[index];
+    if (manager.getOp(form) !== OP_OR) continue;
+    const currentLength = manager.getNumArgs(form);
+    if (currentLength < 2) continue;
+    if (!isLargest) return index;
+    if (currentLength > length) {
+      position = index;
+      length = currentLength;
+    }
+  }
+  return position;
+};
+
 // split_clause_tactic: a subgoal for each literal of the first clause, or of the largest.
 const runSplitClause = (isLargest: boolean) => (goal: Goal) => {
   const manager = goal.manager;
   if (goal.isProofsEnabled) throw new SmtUnsupportedError("the proofs of split-clause");
-  const sizes = goal.forms.items.map((form) =>
-    manager.getOp(form) === OP_OR ? manager.getNumArgs(form) : 0,
-  );
-  const largest = sizes.reduce((max, size) => Math.max(max, size), 0);
-  const position = sizes.findIndex((size) => size >= 2 && (!isLargest || size === largest));
+  const position = selectClause(goal, isLargest);
   if (position === -1)
     throw new SmtTacticError("split-clause tactic failed, goal does not contain any clause");
   const dependency = goal.dependencies[position];

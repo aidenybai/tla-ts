@@ -362,55 +362,66 @@ const hasPatterns: Probe = (goal) => {
   );
 };
 
-// The maximum or the average of what arith_degree_probe and arith_bw_probe measure.
-const summarize = (values: number[], isAverage: boolean) =>
-  isAverage
-    ? values.length === 0
-      ? 0
-      : values.reduce((total, value) => total + value, 0) / values.length
-    : values.reduce((maximum, value) => Math.max(maximum, value), 0);
-
 // arith_degree_probe, which measures both sides of every arithmetic comparison.
-const getArithDegrees = (goal: Goal) => {
-  const manager = goal.manager;
-  let variableCount = 0;
-  const expr2poly = new Expr2Polynomial(
-    manager,
-    new PolynomialManager(manager.limit),
-    new Map(),
-    () => variableCount++,
-  );
-  const polynomial = new PolynomialRef(expr2poly.pm);
-  const degrees: number[] = [];
-  forEachExpr(goal, (expr) => {
-    const op = manager.getOp(expr);
-    const isComparison =
-      [OP_LE, OP_LT, OP_GT, OP_GE].includes(op) ||
-      (op === OP_EQ && isArithSort(manager.sorts[manager.getArg(expr, 0)]));
-    if (!isComparison) return;
-    for (const side of [manager.getArg(expr, 0), manager.getArg(expr, 1)]) {
-      expr2poly.toPolynomial(side, polynomial);
-      degrees.push(expr2poly.pm.totalDegree(polynomial.get()));
-    }
-  });
-  polynomial.reset();
-  expr2poly.release();
-  return degrees;
-};
+const mkArithDegreeProbe =
+  (isAverage: boolean): Probe =>
+  (goal) => {
+    const manager = goal.manager;
+    let variableCount = 0;
+    const expr2poly = new Expr2Polynomial(
+      manager,
+      new PolynomialManager(manager.limit),
+      new Map(),
+      () => variableCount++,
+    );
+    let maxDegree = 0;
+    let accDegree = 0;
+    let counter = 0;
+    const updateDegree = (polynomial: PolynomialRef) => {
+      const degree = expr2poly.pm.totalDegree(polynomial.get());
+      if (degree > maxDegree) maxDegree = degree;
+      accDegree += degree;
+      counter++;
+    };
+    const process = (expr: number) => {
+      const first = new PolynomialRef(expr2poly.pm);
+      const second = new PolynomialRef(expr2poly.pm);
+      expr2poly.toPolynomial(manager.getArg(expr, 0), first);
+      expr2poly.toPolynomial(manager.getArg(expr, 1), second);
+      updateDegree(first);
+      updateDegree(second);
+      second.reset();
+      first.reset();
+    };
+    forEachExpr(goal, (expr) => {
+      const op = manager.getOp(expr);
+      if (op === OP_LE || op === OP_LT || op === OP_GT || op === OP_GE) process(expr);
+      if (op === OP_EQ && isArithSort(manager.sorts[manager.getArg(expr, 0)])) process(expr);
+    });
+    expr2poly.release();
+    return isAverage ? (counter === 0 ? 0 : accDegree / counter) : maxDegree;
+  };
 
 const getBitsize = (value: bigint) => (value < 0n ? -value : value).toString(2).length;
 
 // arith_bw_probe, which measures every arithmetic numeral.
-const getArithBitWidths = (goal: Goal) => {
-  const manager = goal.manager;
-  const widths: number[] = [];
-  forEachExpr(goal, (expr) => {
-    if (!manager.isNumeral(expr)) return;
-    const value = manager.getRationalValue(expr);
-    widths.push(getBitsize(value.num) + (value.den === 1n ? 0 : getBitsize(value.den)));
-  });
-  return widths;
-};
+const mkArithBwProbe =
+  (isAverage: boolean): Probe =>
+  (goal) => {
+    const manager = goal.manager;
+    let maxBitWidth = 0;
+    let accBitWidth = 0;
+    let counter = 0;
+    forEachExpr(goal, (expr) => {
+      if (!manager.isNumeral(expr)) return;
+      const value = manager.getRationalValue(expr);
+      const bitWidth = getBitsize(value.num) + (value.den === 1n ? 0 : getBitsize(value.den));
+      if (bitWidth > maxBitWidth) maxBitWidth = bitWidth;
+      accBitWidth += bitWidth;
+      counter++;
+    });
+    return isAverage ? (counter === 0 ? 0 : accBitWidth / counter) : maxBitWidth;
+  };
 
 const NAMED_PROBES = new Map<string, Probe>([
   ["depth", (goal) => goal.depth],
@@ -487,10 +498,10 @@ const NAMED_PROBES = new Map<string, Probe>([
       ),
   ],
   ["ackr-bound-probe", getAckrBound],
-  ["arith-max-deg", (goal) => summarize(getArithDegrees(goal), false)],
-  ["arith-avg-deg", (goal) => summarize(getArithDegrees(goal), true)],
-  ["arith-max-bw", (goal) => summarize(getArithBitWidths(goal), false)],
-  ["arith-avg-bw", (goal) => summarize(getArithBitWidths(goal), true)],
+  ["arith-max-deg", mkArithDegreeProbe(false)],
+  ["arith-avg-deg", mkArithDegreeProbe(true)],
+  ["arith-max-bw", mkArithBwProbe(false)],
+  ["arith-avg-bw", mkArithBwProbe(true)],
 ]);
 
 const UNPORTED_PROBES = new Set(["memory"]);
