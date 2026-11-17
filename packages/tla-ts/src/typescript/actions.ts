@@ -17504,8 +17504,8 @@ const translateLoop = (
   const literal = ts.isForOfStatement(loop) ? getCast(loop.expression) : undefined;
   if (
     ts.isForOfStatement(loop) &&
-    frame.yieldTo !== undefined &&
-    (isYielding || hasYield(loop.initializer)) &&
+    ((frame.yieldTo !== undefined && (isYielding || hasYield(loop.initializer))) ||
+      (path.tasks !== undefined && isFollowingPromises(loop, context))) &&
     literal !== undefined &&
     ts.isArrayLiteralExpression(literal) &&
     literal.elements.every(

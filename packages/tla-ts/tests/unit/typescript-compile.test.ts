@@ -50724,4 +50724,31 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("follows promises through a for-of over an array literal, one element after another", () => {
+    const getSource = (expected: string) => `
+      const seen: string[] = [];
+      const run = async () => {
+        for (const value of [1, 2, 3]) {
+          Promise.resolve(value).then((resolved) => seen.push("then" + resolved));
+          await null;
+          seen.push("after" + value);
+          if (value === 2) break;
+        }
+      };
+      run().then(() => {
+        if (seen.join() !== "${expected}") throw new Error("seen " + seen.join());
+      });
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("then1,after1,then2,after2"))).failure).toBeUndefined();
+    });
+
+    it("rejects another order", async () => {
+      expect((await checkModel(getSource("after1,then1,then2,after2"))).failure?.message).toContain(
+        "A promise rejected with no handler",
+      );
+    });
+  });
 });
