@@ -239,21 +239,30 @@ const getVisibleDefinition = (name: string, unit: Unit) => {
     definition !== undefined &&
     (definition === unit.self
       ? definition.kind === "Function" || definition.isRecursive
-      : definition.isRecursive || isBefore(definition.location, unit.location));
+      : definition.isRecursive
+        ? getModuleBinding(name, unit, undefined) !== undefined
+        : isBefore(definition.location, unit.location));
   return isVisible ? definition : undefined;
 };
 
 const findSymbol = (name: string, unit: Unit): ModuleSymbol | undefined => {
   const definition = getVisibleDefinition(name, unit);
-  return definition
-    ? {
-        key: unit.getKey(definition),
-        arity: getArity(definition),
-        params: getParamArities(definition),
-        kind: "Definition",
-      }
-    : unit.imported.get(name);
+  if (definition) {
+    return {
+      key: unit.getKey(definition),
+      arity: getArity(definition),
+      params: getParamArities(definition),
+      kind: "Definition",
+    };
+  }
+  return getModuleBinding(name, unit, undefined) ? unit.imported.get(name) : undefined;
 };
+
+const isFact = (name: string, unit: Unit) =>
+  unit.facts.has(name) || unit.bindings.get(name)?.kind === "Theorem";
+
+const getGoal = (name: string, unit: Unit) =>
+  unit.bindings.get(name)?.kind === "Theorem" ? unit.goals.get(name) : undefined;
 
 const findBinding = (name: string, scope: LocalName | undefined, unit: Unit): Binding | undefined =>
   lookupLocal(scope, name) ?? findSymbol(name, unit);
@@ -672,7 +681,7 @@ const checkReference = (
   const first = selectors[0];
   const goal =
     selectors.length > 1 && first.kind === "Name"
-      ? (lookupLocal(scope, first.name)?.goal ?? unit.goals.get(first.name))
+      ? (lookupLocal(scope, first.name)?.goal ?? getGoal(first.name, unit))
       : undefined;
   if (goal) checkSelection(expression, selectors, goal, scope, unit, isFact);
   return goal !== undefined;
@@ -721,7 +730,7 @@ const getSymbolArity = (
     );
     return undefined;
   }
-  if (selected || (prefix !== "" && unit.facts.has(prefix))) {
+  if (selected || (prefix !== "" && isFact(prefix, unit))) {
     return expression.kind === "Apply" ? expression.args.length : 0;
   }
   const fixity = getFixity(expression);
@@ -1203,7 +1212,7 @@ const resolveExpression = (
       const range = expression.selectorRanges?.[0];
       if (head.kind !== "Name" || expression.selectors[1].kind === "Name" || !range) return;
       const binding = lookupLocal(scope, head.name) ?? findSymbol(head.name, unit);
-      if ((binding === undefined && !unit.facts.has(head.name)) || binding?.kind === "Instance") {
+      if ((binding === undefined && !isFact(head.name, unit)) || binding?.kind === "Instance") {
         unit.errors.push({
           location: formatRange(range),
           message: `Unknown operator: \`${resolveSynonym(head.name)}'.`,
@@ -1231,7 +1240,7 @@ const checkFacts = (facts: Fact[], scope: LocalName | undefined, unit: Unit) =>
         location: formatRange(getSpelledNameRange(fact, name)),
         message: "Step number of non-fact used as a fact",
       });
-    } else if (!unit.facts.has(name)) resolveExpression(fact, scope, unit);
+    } else if (!isFact(name, unit)) resolveExpression(fact, scope, unit);
   });
 
 const resolveNewSymbol = (symbol: NewSymbol, scope: LocalName | undefined, unit: Unit) => {
@@ -1530,6 +1539,12 @@ export const resolveSubstitutions = (
   unit: ModuleUnit,
 ) => {
   const imported = createSymbols(module, unit.imported);
+  const positions = new Map(
+    [...module.constants, ...module.variables].map((declaration) => [
+      declaration.name,
+      declaration.location,
+    ]),
+  );
   const report: ModuleReport = { location: instance.location, errors: [], warnings: [] };
   unit.reports.push(report);
   return checkSubstitutions(instance, declarations, module.name, undefined, {
@@ -1542,7 +1557,10 @@ export const resolveSubstitutions = (
     facts: new Set(),
     goals: new Map(),
     bindings: new Map(
-      [...imported].map(([name, symbol]) => [name, { ...symbol, position: MODULE_START }]),
+      [...imported].map(([name, symbol]) => [
+        name,
+        { ...symbol, position: positions.get(name) ?? MODULE_START },
+      ]),
     ),
     errors: report.errors,
     warnings: report.warnings,
@@ -1598,10 +1616,6 @@ export const collectSemanticErrors = (units: SemanticUnit[], warnings: SanyError
 
 export const resolveModule = (module: Module, unit: ModuleUnit) => {
   const symbols = createSymbols(module, unit.imported);
-  const facts = new Set([
-    ...unit.facts,
-    ...[...module.theorems, ...module.assumptions].flatMap((fact) => fact.name ?? []),
-  ]);
   const goals = new Map(
     module.theorems.flatMap((theorem): [string, Goal][] =>
       theorem.name !== undefined && theorem.statement.kind === "AssumeProve"
@@ -1632,7 +1646,7 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
         getKey: unit.getKey,
         location,
         self,
-        facts,
+        facts: unit.facts,
         goals,
         bindings,
         errors,

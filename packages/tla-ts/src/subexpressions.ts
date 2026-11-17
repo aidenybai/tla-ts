@@ -23,6 +23,7 @@ import {
   getNameSelectors,
   getOperandIndex,
   getOperands,
+  isBefore,
   LOCAL_RESOLUTION,
   selectionErrors,
   selections,
@@ -429,89 +430,122 @@ export const resolveModuleSubexpressions = (module: Module, available: Definitio
       },
     ];
   });
-  const lookup = createLookup([...available, ...module.definitions]);
+  const own = new Set([...module.definitions, ...clauses]);
+  const recursive = new Map(
+    module.units.flatMap((unit): [string, SourceLocation][] =>
+      unit.kind === "Recursive"
+        ? unit.declarations.map((declaration) => [declaration.name, declaration.location])
+        : [],
+    ),
+  );
+  const isDeclaredBefore = (definition: Definition, location: SourceLocation) => {
+    const declared = recursive.get(definition.name);
+    return (
+      isBefore(definition.location, location) ||
+      (definition.isRecursive && declared !== undefined && isBefore(declared, location))
+    );
+  };
+  const getVisibleLookup =
+    (lookup: Lookup, location: SourceLocation): Lookup =>
+    (name) => {
+      const definition = lookup(name);
+      return definition && (!own.has(definition) || isDeclaredBefore(definition, location))
+        ? definition
+        : undefined;
+    };
+  const proofLookup = createLookup([...available, ...module.definitions]);
   const isGoal = (name: string) => goals.has(name);
   const definitionLookup = createLookup([...available, ...module.definitions, ...clauses]);
-  const resolve = (expression: Expression) =>
+  const resolve = (expression: Expression, location: SourceLocation) =>
     resolveSubexpressions(
       expression,
-      definitionLookup,
+      getVisibleLookup(definitionLookup, location),
       (name) => isGoal(name) && clauses.every((clause) => clause.name !== name),
     );
-  const isProofGoal = (name: string) => isGoal(name) || !lookup(name);
-  const resolveInProof = (expression: Expression) =>
-    resolveSubexpressions(expression, lookup, isProofGoal);
-  const resolveFacts = (facts: Fact[]) =>
-    facts.map((fact) => (fact.kind === "ModuleFact" ? fact : resolveInProof(fact)));
-  const resolveBounds = (bounds: Bound[]) =>
-    bounds.map((bound) => ({ ...bound, set: resolveInProof(bound.set) }));
-  const resolveStatement = (statement: Expression | AssumeProve): Expression | AssumeProve =>
-    statement.kind === "AssumeProve"
-      ? {
-          ...statement,
-          assumptions: statement.assumptions.map((assumption) =>
-            assumption.kind === "NewSymbol"
-              ? { ...assumption, set: assumption.set && resolveInProof(assumption.set) }
-              : resolveStatement(assumption),
-          ),
-          conclusion: resolveInProof(statement.conclusion),
-        }
-      : resolveInProof(statement);
-  const resolveStep = (body: StepBody): StepBody => {
-    switch (body.kind) {
-      case "Use":
-      case "Hide":
-        return { ...body, facts: resolveFacts(body.facts) };
-      case "Instance":
-        return resolveInstance(body, lookup, isProofGoal);
-      case "Define":
-        return {
-          ...body,
-          definitions: body.definitions.map((definition) =>
-            definition.kind === "Instance"
-              ? resolveInstance(definition, lookup, isProofGoal)
-              : mapDefinition(definition, resolveInProof),
-          ),
-        };
-      case "Have":
-      case "Case":
-        return { ...body, expression: resolveInProof(body.expression) };
-      case "Witness":
-        return { ...body, expressions: body.expressions.map(resolveInProof) };
-      case "Take":
-        return { ...body, bounds: resolveBounds(body.bounds) };
-      case "Pick":
-        return { ...body, bounds: resolveBounds(body.bounds), body: resolveInProof(body.body) };
-      case "Assert":
-        return { ...body, statement: resolveStatement(body.statement) };
-      default:
-        return body;
-    }
-  };
-  const resolveProof = (proof: Proof | undefined): Proof | undefined =>
-    proof?.kind === "By"
-      ? { ...proof, facts: resolveFacts(proof.facts) }
-      : proof?.kind === "Steps"
+  const createProofResolver = (location: SourceLocation) => {
+    const lookup = getVisibleLookup(proofLookup, location);
+    const isProofGoal = (name: string) => isGoal(name) || !lookup(name);
+    const resolveInProof = (expression: Expression) =>
+      resolveSubexpressions(expression, lookup, isProofGoal);
+    const resolveFacts = (facts: Fact[]) =>
+      facts.map((fact) => (fact.kind === "ModuleFact" ? fact : resolveInProof(fact)));
+    const resolveBounds = (bounds: Bound[]) =>
+      bounds.map((bound) => ({ ...bound, set: resolveInProof(bound.set) }));
+    const resolveStatement = (statement: Expression | AssumeProve): Expression | AssumeProve =>
+      statement.kind === "AssumeProve"
         ? {
-            ...proof,
-            steps: proof.steps.map((step) => ({
-              ...step,
-              body: resolveStep(step.body),
-              proof: resolveProof(step.proof),
-            })),
+            ...statement,
+            assumptions: statement.assumptions.map((assumption) =>
+              assumption.kind === "NewSymbol"
+                ? { ...assumption, set: assumption.set && resolveInProof(assumption.set) }
+                : resolveStatement(assumption),
+            ),
+            conclusion: resolveInProof(statement.conclusion),
           }
-        : proof;
+        : resolveInProof(statement);
+    const resolveStep = (body: StepBody): StepBody => {
+      switch (body.kind) {
+        case "Use":
+        case "Hide":
+          return { ...body, facts: resolveFacts(body.facts) };
+        case "Instance":
+          return resolveInstance(body, lookup, isProofGoal);
+        case "Define":
+          return {
+            ...body,
+            definitions: body.definitions.map((definition) =>
+              definition.kind === "Instance"
+                ? resolveInstance(definition, lookup, isProofGoal)
+                : mapDefinition(definition, resolveInProof),
+            ),
+          };
+        case "Have":
+        case "Case":
+          return { ...body, expression: resolveInProof(body.expression) };
+        case "Witness":
+          return { ...body, expressions: body.expressions.map(resolveInProof) };
+        case "Take":
+          return { ...body, bounds: resolveBounds(body.bounds) };
+        case "Pick":
+          return { ...body, bounds: resolveBounds(body.bounds), body: resolveInProof(body.body) };
+        case "Assert":
+          return { ...body, statement: resolveStatement(body.statement) };
+        default:
+          return body;
+      }
+    };
+    const resolveProof = (proof: Proof | undefined): Proof | undefined =>
+      proof?.kind === "By"
+        ? { ...proof, facts: resolveFacts(proof.facts) }
+        : proof?.kind === "Steps"
+          ? {
+              ...proof,
+              steps: proof.steps.map((step) => ({
+                ...step,
+                body: resolveStep(step.body),
+                proof: resolveProof(step.proof),
+              })),
+            }
+          : proof;
+    return { resolveFacts, resolveStatement, resolveProof };
+  };
   const resolved = {
     ...module,
-    theorems: module.theorems.map((theorem) => ({
-      ...theorem,
-      statement:
-        theorem.name !== undefined && theorem.statement.kind !== "AssumeProve"
-          ? theorem.statement
-          : resolveStatement(theorem.statement),
-      proof: resolveProof(theorem.proof),
+    theorems: module.theorems.map((theorem) => {
+      const resolver = createProofResolver(theorem.location);
+      return {
+        ...theorem,
+        statement:
+          theorem.name !== undefined && theorem.statement.kind !== "AssumeProve"
+            ? theorem.statement
+            : resolver.resolveStatement(theorem.statement),
+        proof: resolver.resolveProof(theorem.proof),
+      };
+    }),
+    uses: module.uses.map((use) => ({
+      ...use,
+      facts: createProofResolver(use.location).resolveFacts(use.facts),
     })),
-    uses: module.uses.map((use) => ({ ...use, facts: resolveFacts(use.facts) })),
   };
   const hasReferences =
     module.definitions.some((definition) => containsReference(definition.body)) ||
@@ -519,10 +553,12 @@ export const resolveModuleSubexpressions = (module: Module, available: Definitio
   if (!hasReferences) return resolved;
   return {
     ...resolved,
-    definitions: module.definitions.map((definition) => mapDefinition(definition, resolve)),
+    definitions: module.definitions.map((definition) =>
+      mapDefinition(definition, (expression) => resolve(expression, definition.location)),
+    ),
     assumptions: module.assumptions.map((assumption) => ({
       ...assumption,
-      expression: resolve(assumption.expression),
+      expression: resolve(assumption.expression, assumption.location),
     })),
   };
 };

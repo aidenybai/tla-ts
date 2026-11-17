@@ -230,6 +230,25 @@ describe("name resolution matches SANY", () => {
     ],
     ["Ab == 1\nf == Abc", [["line 3, col 6 to line 3, col 8", "Unknown operator: `Abc'."]]],
     [
+      "f == y!1 /\\ c!1 /\\ T!1 /\\ A!1 /\\ g(1) /\\ U!1 /\\ h!1\nVARIABLE y\nCONSTANT c\nTHEOREM T == 1 = 1\nASSUME A == 1 = 1\nRECURSIVE g(_)\ng(n) == n\nTHEOREM U == ASSUME 1 = 1 PROVE 2 = 2\nh == {1}",
+      [
+        ["line 2, col 6 to line 2, col 6", "Unknown operator: `y'."],
+        ["line 2, col 13 to line 2, col 13", "Unknown operator: `c'."],
+        ["line 2, col 20 to line 2, col 20", "Unknown operator: `T'."],
+        ["line 2, col 27 to line 2, col 27", "Unknown operator: `A'."],
+        ["line 2, col 34 to line 2, col 34", "Unknown operator: `g'."],
+        ["line 2, col 42 to line 2, col 42", "Unknown operator: `U'."],
+        ["line 2, col 49 to line 2, col 49", "Unknown operator: `h'."],
+      ],
+    ],
+    [
+      "RECURSIVE g(_)\nf == g!1\ng(n) == {n}\n---- MODULE Inner ----\nCONSTANT k\n====\nI == INSTANCE Inner WITH k <- d\nCONSTANT d\nTHEOREM T == ASSUME 1 = 1 PROVE 2 = 2\nPROOF BY T!1",
+      [
+        ["line 3, col 6 to line 3, col 8", "The operator g requires 1 arguments."],
+        ["line 8, col 31 to line 8, col 31", "Unknown operator: `d'."],
+      ],
+    ],
+    [
       "EXTENDS Naturals\nf == -1",
       [
         [
