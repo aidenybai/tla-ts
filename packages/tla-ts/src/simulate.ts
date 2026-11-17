@@ -97,12 +97,19 @@ const RL_ALPHA = 0.3;
 const RL_GAMMA = 0.7;
 const RL_REWARD = -10;
 
+const isUnequal = () => false;
+
 // TLC's SimulationWorker#getTrace drops a step its TLCState#equals finds stuttering, which sorts the records it compares.
-const isRepeatedState = (state: Value[], predecessor: Value[], order: number[]) =>
-  order.every((index) =>
+const isRepeatedState = (state: Value[], predecessor: Value[], order: number[]) => {
+  for (let position = 0; position < order.length; position++) {
+    const index = order[position];
     // Deviation from TLC: TLCState#equals fails on values it can't compare, which hangs TLC's simulation.
-    computeLikeTlcOnFailure(valuesEqual, () => false, state[index], predecessor[index]),
-  );
+    if (!computeLikeTlcOnFailure(valuesEqual, isUnequal, state[index], predecessor[index])) {
+      return false;
+    }
+  }
+  return true;
+};
 
 const getTrace = (last: TraceNode, order: number[]) => {
   const trace: TraceNode[] = [];
@@ -602,7 +609,9 @@ export const simulate = (options: SimulationOptions): number => {
     if (temporalProperties.length === 0) return undefined;
     const trace = getTrace(last, search.getTlcOrder());
     // TLC's LiveCheck#checkTrace fingerprints each state, which sorts its records.
-    trace.forEach((node) => node.state.forEach(markNormalized));
+    for (let position = 0; position < trace.length; position++) {
+      trace[position].state.forEach(markNormalized);
+    }
     const found = findTemporalViolation(trace, runtime.getFingerprint, createTemporalChecker);
     if (!found) return undefined;
     const back = trace[found.length];

@@ -749,55 +749,49 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
             BigInt.asIntN(32, runtime.getFingerprint(successor.state)),
           )),
         forEachActionSuccessors: (source, state, onSuccessors) => {
-          const getActionSuccessors = (walk: (onState: (successor: Value[]) => void) => void) => {
-            const successors: LiveSuccessor[] = [];
+          let successors: LiveSuccessor[] = [];
+          const addSuccessor = (successor: Value[]) => {
+            canonicalizeState(successor);
+            const isInModel =
+              search.satisfiesConstraints(successor, state) &&
+              search.satisfiesActionConstraints(state, successor);
+            if (!isInModel) return;
+            const fingerprintState = getFingerprintState(successor);
+            const hash = getStateHash(fingerprintState);
+            const index = findStateIndex(seenStates, hash, fingerprintState);
+            successors.push({
+              index: index === -1 ? getPendingIndex(hash, fingerprintState) : index,
+              state: successor,
+            });
+          };
+          const visitSuccessor = (successor: Successor) => {
+            addSuccessor(successor.state);
+            return false;
+          };
+          const actionCount = coverage ? coverageActions.length : nextActions.length;
+          for (let position = 0; position < actionCount; position++) {
+            successors = [];
             const livenessSource = current.livenessSource;
             current.livenessSource = source;
             try {
-              walk((successor) => {
-                canonicalizeState(successor);
-                const isInModel =
-                  search.satisfiesConstraints(successor, state) &&
-                  search.satisfiesActionConstraints(state, successor);
-                if (!isInModel) return;
-                const fingerprintState = getFingerprintState(successor);
-                const hash = getStateHash(fingerprintState);
-                const index = findStateIndex(seenStates, hash, fingerprintState);
-                successors.push({
-                  index: index === -1 ? getPendingIndex(hash, fingerprintState) : index,
-                  state: successor,
-                });
-              });
-            } finally {
-              current.livenessSource = livenessSource;
-            }
-            return successors;
-          };
-          // TLC's coverage counts the successors of each action the graph generates again.
-          if (coverage) {
-            coverageActions.forEach((action) =>
-              onSuccessors(
-                getActionSuccessors((onState) => walkCoveredSuccessors(action, state, onState)),
-              ),
-            );
-            return;
-          }
-          nextActions.forEach((action) =>
-            onSuccessors(
-              getActionSuccessors((onState) =>
+              // TLC's coverage counts the successors of each action the graph generates again.
+              if (coverage) {
+                walkCoveredSuccessors(coverageActions[position], state, addSuccessor);
+              } else {
+                const action = nextActions[position];
                 forEachSuccessor(
                   action.expression,
                   state,
                   environment,
-                  (successor) => {
-                    onState(successor.state);
-                    return false;
-                  },
+                  visitSuccessor,
                   action.scope,
-                ),
-              ),
-            ),
-          );
+                );
+              }
+            } finally {
+              current.livenessSource = livenessSource;
+            }
+            onSuccessors(successors);
+          }
         },
       }),
     ),

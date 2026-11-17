@@ -760,12 +760,15 @@ export const createLiveGraph = <State>(
       if (existing === undefined) expandLate(behavior, tableau, state, index, target, row, offset);
     }
     // The results of the step to the state itself come first, then those of each successor.
-    const stepResults = [selfResults];
+    const actionBatches = [selfResults];
+    let stepCount = 1;
     search.forEachActionSuccessors(index, state, (nextStates) => {
-      for (const successor of nextStates) {
+      const edges = createEdgeRows(nextStates.length);
+      const results = new Uint8Array(nextStates.length * actionCount);
+      actionBatches.push(results);
+      for (let position = 0; position < nextStates.length; position++) {
+        const successor = nextStates[position];
         const successorRow = createRows(1);
-        const results = new Uint8Array(actionCount);
-        stepResults.push(results);
         checkAction(
           behavior,
           index,
@@ -773,10 +776,10 @@ export const createLiveGraph = <State>(
           row,
           offset,
           successor.state,
-          createEdgeRows(1),
-          0,
+          edges,
+          position * actionIds.size,
           results,
-          0,
+          position * actionCount,
         );
         const isDone = behavior.isDone[successor.index] === true;
         for (const next of tableauNode.successors) {
@@ -785,7 +788,7 @@ export const createLiveGraph = <State>(
           if (existing !== undefined && successors.includes(existing)) continue;
           const target = existing ?? recordNode(behavior, successor.index, next);
           successors.push(target);
-          actions.push(stepResults.length - 1);
+          actions.push(stepCount + position);
           if (existing === undefined && isDone) {
             expandLate(
               behavior,
@@ -799,12 +802,14 @@ export const createLiveGraph = <State>(
           }
         }
       }
+      stepCount += nextStates.length;
     });
     if (successors.length > 0) {
-      const actionResults = new Uint8Array(stepResults.length * actionCount);
-      stepResults.forEach((results, position) =>
-        actionResults.set(results, position * actionCount),
-      );
+      const actionResults = new Uint8Array(stepCount * actionCount);
+      for (let batch = 0, resultOffset = 0; batch < actionBatches.length; batch++) {
+        actionResults.set(actionBatches[batch], resultOffset);
+        resultOffset += actionBatches[batch].length;
+      }
       writeNode(behavior, node, successors, actionResults, actions, stateResults);
     }
   };
