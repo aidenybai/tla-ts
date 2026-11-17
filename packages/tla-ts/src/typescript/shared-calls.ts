@@ -500,9 +500,11 @@ const getSharedCall = (
     );
   };
   // The generators that the caller made live in its path, which an operator, compiled once, can't
-  // resume or close.
+  // resume or close, as do the environments of the locals that its closures share, which a closure
+  // that the operator's code makes would share.
   if (
     path.generators.size > 0 ||
+    (path.scope.activations?.size ?? 0) > 0 ||
     !read.every(isReadable) ||
     !changed.every((symbol) => context.variables.has(symbol) || captured.includes(symbol))
   ) {

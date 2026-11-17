@@ -50486,4 +50486,51 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("inlines a helper whose caller holds the environment of a local that closures share", () => {
+    const getSource = (expected: number) => `
+      function expectThrow(f: () => unknown, expected: unknown) {
+        try {
+          f();
+        } catch (error) {
+          if (error !== expected) throw new Error("other");
+          return;
+        }
+        throw new Error("none");
+      }
+      let seen = -1;
+      function test() {
+        var returnCalled = 0;
+        var iterable = {} as unknown as { [key: string | symbol]: unknown } & Iterable<unknown>;
+        // @ts-ignore
+        iterable[Symbol.iterator] = function () {
+          return {
+            next() {
+              return { done: false };
+            },
+            return() {
+              returnCalled++;
+              throw 42;
+            },
+          };
+        };
+        expectThrow(function () {
+          for (var x of iterable) {
+            return;
+          }
+        }, 42);
+        seen = returnCalled;
+      }
+      test();
+      if (seen !== ${expected}) throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(1))).failure).toBeUndefined();
+    });
+
+    it("rejects another count", async () => {
+      expect((await checkModel(getSource(2))).failure?.message).toContain("seen 1");
+    });
+  });
 });
