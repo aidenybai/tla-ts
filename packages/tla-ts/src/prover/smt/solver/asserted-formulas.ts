@@ -100,7 +100,8 @@ class ElimTermIteRw extends RewriterTpl {
   }
 
   pop() {
-    this.definitions.shrink(this.lims.pop() ?? 0);
+    this.definitions.shrink(this.lims[this.lims.length - 1]);
+    this.lims.pop();
   }
 }
 
