@@ -972,14 +972,14 @@ export const runSmtlibScript = (
       if (name.kind === "list")
         throw new SmtUnsupportedError("an indexed function declaration reference");
       throw new SmtParseError(
-        "invalid function declaration reference, symbol or '(' expected got query",
+        `invalid function declaration reference, symbol or '(' expected got ${name.lastId}`,
         name,
       );
     }
     const domain = reference.items[1] ?? reference.end;
     if (domain.kind !== "list")
       throw new SmtParseError(
-        `Invalid function name. Expecting sort list starting with '(' to disambiguate function name got ${domain.kind === "symbol" || domain.kind === "keyword" ? domain.text : name.text}`,
+        `Invalid function name. Expecting sort list starting with '(' to disambiguate function name got ${domain.lastId}`,
         domain,
       );
     const sorts = domain.items.map((sort) => state.reader.parseSort(sort));
@@ -1157,11 +1157,11 @@ export const runSmtlibScript = (
     [
       "check-sat-assuming",
       (list) => {
-        const literals = list.items[1];
-        if (literals?.kind !== "list")
+        const literals = list.items[1] ?? list.end;
+        if (literals.kind !== "list")
           throw new SmtParseError(
-            "invalid check-sat-assuming command, '(' expected",
-            literals ?? list.end,
+            `invalid check-sat-assuming command, '(', expected got ${literals.lastId}`,
+            literals,
           );
         checkSatAssuming(literals.items, literals.end, list.end);
         validateCheck(list.end);
@@ -1175,7 +1175,10 @@ export const runSmtlibScript = (
           if (terms === undefined)
             throw new SmtParseError("invalid command, argument(s) missing", list.end);
           if (terms.kind !== "list")
-            throw new SmtParseError("invalid list of terms, '(' expected", terms);
+            throw new SmtParseError(
+              `invalid list of terms, '(' expected got ${terms.lastId}`,
+              terms,
+            );
           return terms.items.map((item) => state.reader.parseTerm(item));
         });
         if (list.items.length > 3)
@@ -1549,9 +1552,12 @@ export const runSmtlibScript = (
     [
       "get-value",
       (list) => {
-        const terms = list.items[1];
-        if (terms?.kind !== "list")
-          throw new SmtParseError("invalid get-value command, '(' expected", terms ?? list.end);
+        const terms = list.items[1] ?? list.end;
+        if (terms.kind !== "list")
+          throw new SmtParseError(
+            `invalid get-value command, '(' expected got ${terms.lastId}`,
+            terms,
+          );
         const manager = state.manager;
         const exprs = terms.items.map((item) => state.reader.parseTerm(item));
         if (exprs.length === 0)

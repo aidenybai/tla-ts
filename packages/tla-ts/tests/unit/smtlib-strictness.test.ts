@@ -472,6 +472,44 @@ describe("messages of the reader, as Z3 5.3.2 prints them", () => {
     ]);
   });
 
+  it("names the identifier read last where a parenthesis is missing", () => {
+    expect(
+      run([
+        "(declare-const x 5)",
+        '(declare-fun f (Int "s") Bool)',
+        "(declare-const y :k)",
+        "(declare-datatypes ((T1 0)) (((mk (a Int 5)))))",
+        "(declare-datatypes ((T3 0)) ((5)))",
+        "(declare-datatypes ((T5 0)) 5)",
+        "(declare-datatypes ((T7 0)) ((par (A) 5)))",
+        "(declare-datatypes x ())",
+        "(declare-datatypes ((T10 0) 5) ((mk)))",
+        "(define-sort S x Int)",
+        "(declare-const z Real)",
+        "(assert (= (* z z) 2.0))",
+        "(check-sat)",
+        "(get-value z)",
+        "(get-value ((root-obj (+ (^ x 2) (- 2)) 1 4)))",
+        "(check-sat-assuming 5)",
+      ]),
+    ).toEqual([
+      "(error \"line 1 column 18: invalid sort, symbol, '_' or '(' expected got x\")",
+      "(error \"line 2 column 20: invalid sort, symbol, '_' or '(' expected got Int\")",
+      "(error \"line 3 column 17: invalid sort, symbol, '_' or '(' expected got :k\")",
+      "(error \"line 4 column 41: invalid accessor declaration, ')' expected got Int\")",
+      "(error \"line 5 column 30: invalid datatype declaration, '(' or ')' expected got T3\")",
+      "(error \"line 6 column 28: invalid datatype declaration, '(' expected got T5\")",
+      "(error \"line 7 column 38: invalid constructor declaration after par, '(' expected got A\")",
+      '(error "line 8 column 19: invalid sort declaration, parameters missing got x")',
+      "(error \"line 9 column 28: invalid sort declaration, '(' expected got T10\")",
+      '(error "line 10 column 15: invalid sort declaration, parameters missing got x")',
+      "sat",
+      "(error \"line 14 column 11: invalid get-value command, '(' expected got z\")",
+      "(error \"line 15 column 42: invalid root-obj, ')' expected got -\")",
+      "(error \"line 16 column 20: invalid check-sat-assuming command, '(', expected got check-sat-assuming\")",
+    ]);
+  });
+
   it("names the declaration that lacks a symbol, and takes _ and as only for define-const", () => {
     expect(
       run([
