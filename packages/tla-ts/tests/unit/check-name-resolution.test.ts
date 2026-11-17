@@ -942,6 +942,21 @@ describe("name resolution matches SANY", () => {
       ],
     ],
     [
+      "Op1 == {1}\nA == -Op1!1!: /\\ Op1!1^+",
+      [
+        [
+          "line 3, col 6 to line 3, col 6",
+          "Could not find declaration or definition of symbol '-.'.",
+        ],
+        ["line 3, col 6 to line 3, col 13", "Couldn't resolve prefix operator symbol `-.'."],
+        [
+          "line 3, col 23 to line 3, col 24",
+          "Could not find declaration or definition of symbol '^+'.",
+        ],
+        ["line 3, col 18 to line 3, col 24", "Couldn't resolve postfix operator symbol `^+'."],
+      ],
+    ],
+    [
       "---- MODULE Inner ----\nJ(a, Q(_)) == Q(a)\n====\nI0 == INSTANCE Inner\nRECURSIVE Rec1\nRec1(a0) == I0!J(Rec1, LAMBDA y : y)!<<\nVARIABLE z\nOp(a, Q(_)) == lab :: Q(a)\nA == Op(1, LAMBDA z : z)!lab",
       [
         [

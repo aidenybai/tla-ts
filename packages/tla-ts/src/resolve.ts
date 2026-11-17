@@ -340,7 +340,7 @@ const getFixity = (expression: Expression) => {
   if (expression.kind !== "Apply" || expression.argumentsRange) return undefined;
   if (expression.args.length === 2) return "infix";
   if (expression.args.length !== 1) return undefined;
-  return isBefore(expression.location, expression.args[0].location) ? "prefix" : "postfix";
+  return expression.operator === "-." ? "prefix" : "postfix";
 };
 
 const BUILTIN_LOCATION = "In module --TLA+ BUILTINS--";
