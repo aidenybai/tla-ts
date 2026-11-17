@@ -873,12 +873,10 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       nextActions.length,
       options.version,
     );
-    const undefinedValue = createModelValue("null");
-    const partial = error.state.map((value) => value ?? undefinedValue);
     const live = captureOutput(() => addFailedLiveState(index, liveSuccessors));
     const failure = createFailureResult(
       error,
-      appendTraceOutput(traces.getStateTrace(index), live.lines),
+      appendTraceOutput(traces.getStateTrace(index, error.state), live.lines),
       { callStack: live.result },
     );
     return withOutDegrees({
@@ -891,11 +889,10 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         exitCode: EXIT_STATUS.specEvaluationFailure,
         trace: [
           ...failure.failure.trace,
-          {
+          traces.getIncompleteStep(error.state, failure.failure.trace.length + 1, {
             action: error.action,
             label: action && getActionLabel(action, options.version),
-            state: toRecord(partial),
-          },
+          }),
         ],
       },
     });

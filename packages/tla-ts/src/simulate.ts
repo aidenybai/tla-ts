@@ -10,6 +10,7 @@ import {
   UNEXPECTED_EVAL_EXCEPTION,
   UNEXPECTED_EXCEPTION,
 } from "./errors";
+import type { State } from "./evaluate";
 import { EXIT_STATUS, getMessageExitStatus, withLivenessExitCode } from "./exit-codes";
 import { createLivenessChecker, type LivenessChecker } from "./liveness-checker";
 import { getIncompleteSuccessorMessage, prepareSearch, reportAssumptionViolation } from "./search";
@@ -67,6 +68,7 @@ interface TraceNode {
   predecessor: TraceNode | undefined;
   level: number;
   deferred?: (next: Value[]) => void;
+  incomplete?: State;
 }
 
 interface WorkerError {
@@ -351,19 +353,22 @@ export const simulate = (options: SimulationOptions): number => {
   const toRecord = (state: (Value | undefined)[]) =>
     search.toRecord(state.map((value) => value ?? createModelValue("null")));
   const toTraceSteps = (trace: TraceNode[]): TraceStep[] =>
-    trace.map((node, index) => ({
-      action: node.action.name,
-      label: getActionLabel(node.action, options.version, node.level === 1),
-      state:
-        config.alias === undefined || !node.state.every((value) => value !== undefined)
-          ? toRecord(node.state)
-          : search.evaluateAlias(
-              config.alias,
-              node.state,
-              (trace[index + 1] ?? node).state,
-              options.isTool ?? false,
-            ),
-    }));
+    trace.map((node, index) => {
+      const successor = trace[index + 1] ?? node;
+      return {
+        action: node.action.name,
+        label: getActionLabel(node.action, options.version, node.level === 1),
+        state:
+          config.alias === undefined
+            ? toRecord(node.state)
+            : search.evaluateAlias(
+                config.alias,
+                node.incomplete ?? node.state,
+                successor.incomplete ?? successor.state,
+                options.isTool ?? false,
+              ),
+      };
+    });
   const getCounterExample = (trace: TraceNode[]) =>
     createCounterExample(
       trace.map((node) => search.toRecord(node.state)),
@@ -545,6 +550,7 @@ export const simulate = (options: SimulationOptions): number => {
         action,
         current,
       );
+      node.incomplete = error.state;
       const text = getIncompleteSuccessorMessage(
         error.variables,
         action.name,

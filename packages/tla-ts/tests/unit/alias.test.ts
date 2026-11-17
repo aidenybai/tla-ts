@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import { check, formatValue, parseConfig, TlaConfigError, type TraceStep } from "../../src";
+import { simulate } from "../../src/simulate";
 import { checkFixture } from "./check-harness";
 
 const checkAlias = (configName: string) => checkFixture("alias", "Alias", configName);
@@ -108,6 +109,42 @@ describe("ALIAS matches TLC", () => {
       [{ x: 0 }],
     ]);
   });
+
+  it.each(["model checking", "simulation"])(
+    "adds _ALIASEvalError to an incomplete successor and the state before it in %s, as TLC does",
+    async (mode) => {
+      const source = `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLES x, y\nInit == x = 0 /\\ y = 0\nNext == IF x < 2 THEN x' = x + 1 /\\ y' = y ELSE x' = x + 1\nAlias == [x |-> x, lvl |-> TLCGet("level"), nx |-> x', ny |-> y']\n====`;
+      const config = "INIT Init\nNEXT Next\nALIAS Alias";
+      const traces: TraceStep[][] = [];
+      if (mode === "simulation") {
+        simulate({
+          source,
+          config,
+          seed: 0n,
+          traceDepth: 6,
+          traceCount: 1n,
+          aril: 0n,
+          isGenerating: false,
+          scheduler: "random",
+          onSimulation: (output) => {
+            if (output.kind === "behavior") traces.push(output.trace);
+          },
+        });
+      } else {
+        traces.push((await check({ source, config })).failure?.trace ?? []);
+      }
+      const message =
+        '_ALIASEvalError = "In evaluation, the identifier y is either undefined or not an operator.\\nline 6, col 63 to line 6, col 63 of module M"';
+      expect(traces.map(formatTrace)).toEqual([
+        [
+          ["x = 0", "lvl = 1", "nx = 1", "ny = 0"],
+          ["x = 1", "lvl = 2", "nx = 2", "ny = 0"],
+          ["x = 2", "y = 0", message],
+          ["x = 3", "y = null", message],
+        ],
+      ]);
+    },
+  );
 
   it("rejects a second ALIAS", async () => {
     expect(() => parseConfig("ALIAS A\nALIAS B")).toThrow(TlaConfigError);

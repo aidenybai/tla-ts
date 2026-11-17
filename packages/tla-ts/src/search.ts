@@ -52,6 +52,7 @@ import {
   type Context,
   type Environment,
   type Scope,
+  type State,
 } from "./evaluate";
 import { EXIT_STATUS, setExitCode } from "./exit-codes";
 import type { JavaOverride } from "./java-overrides";
@@ -85,6 +86,7 @@ import { createTlcOrder } from "./tlc/order";
 import { getTlcFingerprint, getTlcFingerprints, setFingerprintPolynomial } from "./tlc/fingerprint";
 import type { TlcVersion } from "./tlc/version";
 import {
+  createModelValue,
   formatValue,
   freezeStringOrder,
   getWrittenPairs,
@@ -718,8 +720,8 @@ export interface Search {
   toRecord: (state: Value[]) => Record<string, Value>;
   evaluateAlias: (
     alias: string,
-    state: Value[],
-    next: Value[] | undefined,
+    state: State,
+    next: State | undefined,
     isTool: boolean,
   ) => Record<string, Value>;
   spec: Specification;
@@ -789,8 +791,8 @@ export const getIncompleteSuccessorMessage = (
 
 export const getContext = (
   environment: Environment,
-  state: Value[] | undefined,
-  next: Value[] | undefined,
+  state: State | undefined,
+  next: State | undefined,
   scope?: Scope,
 ) => ({ environment, scope, state, next });
 
@@ -1235,14 +1237,16 @@ export const createSearch = (
     spec,
     toRecord,
     evaluateAlias: (alias, state, next, isTool) => {
+      const getStateRecord = () =>
+        toRecord(state.map((value) => value ?? createModelValue("null")));
       try {
         getConfigDefinition("alias", alias, environment);
         const value = evaluate(createIdentifier(alias), getContext(environment, state, next));
         const record = toAliasRecord(value);
-        return record === undefined ? toRecord(state) : setAliasName(record, alias);
+        return record === undefined ? getStateRecord() : setAliasName(record, alias);
       } catch (error) {
         if (!(error instanceof TlaConfigError || error instanceof TlaEvaluationError)) throw error;
-        return { ...toRecord(state), _ALIASEvalError: formatNestedMessage(error.message, isTool) };
+        return { ...getStateRecord(), _ALIASEvalError: formatNestedMessage(error.message, isTool) };
       }
     },
     isSymmetric: symmetryGroup !== undefined,

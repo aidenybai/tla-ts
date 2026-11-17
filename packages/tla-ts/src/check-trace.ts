@@ -1,12 +1,12 @@
 import type { CheckOptions, OutputLine, TraceStep } from "./check";
 import type { ModelConfig } from "./config";
 import { TlaEvaluationError } from "./errors";
-import { isImpure, type Environment } from "./evaluate";
+import { isImpure, type Environment, type State } from "./evaluate";
 import { isSameState } from "./fingerprints";
 import type { Search } from "./search";
 import { getActionLabel, type SpecAction } from "./spec-description";
 import { getSuccessors, type Successor } from "./successors";
-import type { Value } from "./values";
+import { createModelValue, type Value } from "./values";
 
 export interface Behavior {
   trace: TraceStep[];
@@ -16,6 +16,7 @@ export interface Behavior {
 interface TraceOptions {
   loopStart?: number;
   known?: number;
+  incomplete?: State;
 }
 
 interface RebuiltState {
@@ -78,21 +79,17 @@ export const createTraceBuilder = (context: TraceContext) => {
 
   const getAliasState = (
     alias: string,
-    steps: Successor[],
-    position: number,
-    loopStart: number | undefined,
+    state: State,
+    successor: State,
+    level: number,
+    getBehavior: () => Value[][],
   ) => {
     const searchLevel = runtime.getLevel;
     const searchBehavior = runtime.getBehavior;
-    runtime.getLevel = () => position + 1;
-    runtime.getBehavior = () => steps.slice(0, position + 1).map((step) => step.state);
+    runtime.getLevel = () => level;
+    runtime.getBehavior = getBehavior;
     try {
-      return search.evaluateAlias(
-        alias,
-        steps[position].state,
-        (steps[position + 1] ?? steps[loopStart ?? position]).state,
-        options.isTool ?? false,
-      );
+      return search.evaluateAlias(alias, state, successor, options.isTool ?? false);
     } finally {
       runtime.getLevel = searchLevel;
       runtime.getBehavior = searchBehavior;
@@ -166,7 +163,15 @@ export const createTraceBuilder = (context: TraceContext) => {
           state:
             alias === undefined
               ? toRecord(step.state)
-              : getAliasState(alias, steps, position, loopStart),
+              : getAliasState(
+                  alias,
+                  step.state,
+                  steps[position + 1]?.state ??
+                    traceOptions.incomplete ??
+                    steps[loopStart ?? position].state,
+                  position + 1,
+                  () => steps.slice(0, position + 1).map((inner) => inner.state),
+                ),
           output: position === 0 ? prefixOutput : position < rebuilt ? [] : outputs[position],
         };
         if (alias !== undefined || action) {
@@ -214,7 +219,7 @@ export const createTraceBuilder = (context: TraceContext) => {
     }
     return steps;
   };
-  const getTrace = (index: number, lastSuccessor?: Successor) => {
+  const getTrace = (index: number, lastSuccessor?: Successor, incomplete?: State) => {
     const path: number[] = [];
     for (let position = index; position !== -1; position = context.parents[position]) {
       path.unshift(position);
@@ -226,7 +231,7 @@ export const createTraceBuilder = (context: TraceContext) => {
             state: states[position],
             action: context.actions[position],
           }));
-    if (!lastSuccessor) return toTrace(steps, path);
+    if (!lastSuccessor) return toTrace(steps, path, { incomplete });
     const action = isReducing
       ? findTraceSuccessor(states[index], (successor) =>
           isSameState(successor.state, lastSuccessor.state),
@@ -234,14 +239,31 @@ export const createTraceBuilder = (context: TraceContext) => {
       : lastSuccessor.action;
     return toTrace([...steps, { state: lastSuccessor.state, action }], path, { known: 2 });
   };
-  // TLCTrace#printTrace prints a lone initial state without the alias it applies to every other trace.
-  const getStateTrace = (index: number): Behavior =>
-    context.parents[index] === -1
-      ? {
-          trace: [{ action: undefined, label: undefined, state: toRecord(states[index]) }],
-          traceOutput: is174 ? [] : captureOutput(context.getInitialStates).lines,
-        }
-      : getTrace(index);
+  // TLCTrace#printTrace applies the alias to every state but an initial one it prints without a successor.
+  const getStateTrace = (index: number, incomplete?: State): Behavior => {
+    if (context.parents[index] !== -1) return getTrace(index, undefined, incomplete);
+    const traceOutput = is174 ? [] : captureOutput(context.getInitialStates).lines;
+    const trace =
+      incomplete === undefined
+        ? [{ action: undefined, label: undefined, state: toRecord(states[index]) }]
+        : toTrace([{ state: states[index], action: undefined }], [index], { incomplete }).trace;
+    return { trace, traceOutput };
+  };
+  const getIncompleteStep = (
+    incomplete: State,
+    level: number,
+    step: Omit<TraceStep, "state">,
+  ): TraceStep => {
+    const state = toRecord(incomplete.map((value) => value ?? createModelValue("null")));
+    const alias = config.alias;
+    const traceStep = {
+      ...step,
+      state:
+        alias === undefined ? state : getAliasState(alias, incomplete, incomplete, level, () => []),
+    };
+    context.tracedSteps.set(traceStep, { state, action: undefined });
+    return traceStep;
+  };
   const getFailedTrace = (index: number, successor: Successor): Behavior => ({
     trace: getTrace(index, successor).trace,
   });
@@ -262,6 +284,7 @@ export const createTraceBuilder = (context: TraceContext) => {
     findSuccessorWithFingerprint,
     getTrace,
     getStateTrace,
+    getIncompleteStep,
     getFailedTrace,
     getPathSteps,
   };
