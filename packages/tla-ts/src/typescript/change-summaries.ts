@@ -32,6 +32,20 @@ export interface ChangeTable {
   // of functions to symbols change.
   calledIds: Int32Array;
   calledComponents: Int32Array;
+  // Each function's node, by its index, and its own effects, those of the nodes of its subtree, in
+  // columns that run from each function's start: the symbols that they change and the parameters
+  // that they call or pass, whether they make an error, the indexes of the functions that they
+  // run, and the ids of the symbols that getCalled gives, which tell whether bindings change them.
+  functionNodes: ts.Node[];
+  changedStarts: Int32Array;
+  ownChanged: ts.Symbol[];
+  parameterStarts: Int32Array;
+  ownParameters: ts.Symbol[];
+  ownErrors: Uint32Array;
+  edgeStarts: Int32Array;
+  edges: Int32Array;
+  calledStarts: Int32Array;
+  ownCalled: Int32Array;
   // The mark of each component that a walk of the components that bindings change has reached,
   // with the walk's own generation.
   marks: Int32Array;
@@ -64,19 +78,51 @@ const createBits = (symbols: readonly ts.Symbol[], count: number): Bits => {
   return { ids, symbols: ordered, words, rows: new Uint32Array(count * words) };
 };
 
-// The component of a function whose summary the table has, or -1.
-export const getComponent = (table: ChangeTable, nodes: ProgramNodes, node: ts.Node) => {
+// The index of a function that the table has, or -1.
+const getFunctionIndex = (table: ChangeTable, nodes: ProgramNodes, node: ts.Node) => {
   const position = getPosition(nodes, node);
   const id = position < 0 ? ts.getNodeId(node) : -1;
   const elsewhere =
     position < 0 ? getLowerBound(table.elsewhereIds, 0, table.elsewhereIds.length, id) : -1;
-  const index =
-    position >= 0
-      ? table.functions[position] - 1
-      : table.elsewhereIds[elsewhere] === id
-        ? table.elsewhereIndexes[elsewhere]
-        : -1;
+  return position >= 0
+    ? table.functions[position] - 1
+    : table.elsewhereIds[elsewhere] === id
+      ? table.elsewhereIndexes[elsewhere]
+      : -1;
+};
+
+// The component of a function whose summary the table has, or -1.
+export const getComponent = (table: ChangeTable, nodes: ProgramNodes, node: ts.Node) => {
+  const index = getFunctionIndex(table, nodes, node);
   return index < 0 ? -1 : table.components[index];
+};
+
+// A function's own effects, as one, where none of its nodes names a symbol of the sorted ids that
+// bindings bind, so that they are what the table found, or undefined.
+export const getOwnEffects = (
+  table: ChangeTable,
+  nodes: ProgramNodes,
+  node: ts.Node,
+  boundIds: Int32Array,
+) => {
+  const index = getFunctionIndex(table, nodes, node);
+  if (index < 0) return undefined;
+  for (let own = table.calledStarts[index]; own < table.calledStarts[index + 1]; own += 1) {
+    const id = table.ownCalled[own];
+    if (boundIds[getLowerBound(boundIds, 0, boundIds.length, id)] === id) return undefined;
+  }
+  return {
+    changed: table.ownChanged.slice(table.changedStarts[index], table.changedStarts[index + 1]),
+    isErrorMade: hasBit(table.ownErrors, index),
+    called: Array.from(
+      table.edges.subarray(table.edgeStarts[index], table.edgeStarts[index + 1]),
+      (edge) => table.functionNodes[edge],
+    ),
+    parameters: table.ownParameters.slice(
+      table.parameterStarts[index],
+      table.parameterStarts[index + 1],
+    ),
+  };
 };
 
 // Whether a walk of markBound's generation reached a component.
@@ -375,6 +421,22 @@ export const summarizeFunctions = (
     callers,
     calledIds: Int32Array.from(namedCalls, (call) => call.id),
     calledComponents: Int32Array.from(namedCalls, (call) => call.component),
+    functionNodes: order,
+    changedStarts: Int32Array.from(changedStarts),
+    ownChanged,
+    parameterStarts: Int32Array.from(parameterStarts),
+    ownParameters,
+    ownErrors: ownErrors.reduce(
+      (bits, isErrorMade, index) => {
+        if (isErrorMade) setBit(bits, index);
+        return bits;
+      },
+      new Uint32Array((count + 31) >>> 5),
+    ),
+    edgeStarts: Int32Array.from(edgeStarts),
+    edges: Int32Array.from(edges),
+    calledStarts: Int32Array.from(calledStarts),
+    ownCalled: Int32Array.from(ownCalled),
     marks: new Int32Array(componentCount),
     generation: 0,
   };

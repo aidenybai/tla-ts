@@ -3,6 +3,7 @@ import {
   addChanged,
   getComponent,
   getComponentParameters,
+  getOwnEffects,
   hasChanged,
   isComponentErrorMade,
   isMarked,
@@ -15758,6 +15759,7 @@ const summarize = (
     .sort()
     .join(",");
   const summaries = walked.get(key) ?? new Map<ts.Node, WalkedSummary>();
+  const boundIds = Int32Array.from(bindings.keys(), (symbol) => ts.getSymbolId(symbol)).sort();
   walked.set(key, summaries);
   // The component whose summary a called function takes, or -1.
   const getKept = (called: ts.Node) => {
@@ -15782,7 +15784,11 @@ const summarize = (
       found.push(getNodeEffects(inner, bindings, context));
       ts.forEachChild(inner, visit);
     };
-    visit(node);
+    // A function of the table whose nodes name no bound symbol takes the effects that it found.
+    const tabled =
+      table === undefined ? undefined : getOwnEffects(table, context.nodes, node, boundIds);
+    if (tabled === undefined) visit(node);
+    else found.push(tabled);
     effects.set(node, found);
     found.forEach((effect) =>
       effect.called.forEach((called) => {
