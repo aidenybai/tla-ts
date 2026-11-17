@@ -275,9 +275,10 @@ export const createEnvironment = (
   const dependencies = new Map<string, Set<string>>();
   const loading: Set<string>[] = [];
   const linking: string[] = [];
+  const usedModules = new Set<string>();
 
   const useModule = (name: string, used: Iterable<string>) =>
-    loading.forEach((closure) => {
+    [usedModules, ...loading].forEach((closure) => {
       closure.add(name);
       [...used].forEach((dependency) => closure.add(dependency));
     });
@@ -896,6 +897,14 @@ export const createEnvironment = (
         module.definitions.toReversed().map((definition) => [definition.name, definition]),
       ),
       getKey,
+      // SANY knows the modules it processed before this one, and the inner modules defined so far.
+      isModuleKnown: (name, location) =>
+        name === parsed.name ||
+        usedModules.has(name) ||
+        scope.modules.has(name) ||
+        parsed.modules.some(
+          (nested) => nested.name === name && isBefore(nested.location, location),
+        ),
       instanced,
       facts,
       reports,

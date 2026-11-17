@@ -73,6 +73,7 @@ interface Unit {
   getInstance: (instance: Instance) => InstancedModule;
   definitions: Map<string, Definition>;
   getKey: (definition: Definition) => string;
+  isModuleKnown: (name: string, location: SourceLocation) => boolean;
   location: SourceLocation;
   self: Definition | undefined;
   facts: Set<string>;
@@ -1646,8 +1647,23 @@ const isSubexpressionReported = (
   return selected ? selected.node === undefined : false;
 };
 
+const reportUnknownModule = (fact: Fact & { kind: "ModuleFact" }, unit: Unit) => {
+  const range = fact.location.range;
+  if (unit.isModuleKnown(fact.name, fact.location) || !range) return;
+  unit.errors.push({
+    location: formatRange({
+      ...range,
+      start: { line: range.end.line, column: range.end.column - fact.name.length + 1 },
+    }),
+    message: `Module \`${fact.name}' used without being extended or instantiated.`,
+  });
+};
+
 const checkFact = (fact: Fact, reference: Fact, scope: LocalName | undefined, unit: Unit) => {
-  if (fact.kind === "ModuleFact") return undefined;
+  if (fact.kind === "ModuleFact") {
+    reportUnknownModule(fact, unit);
+    return undefined;
+  }
   if (fact.kind === "ExceptAt" && fact.location.range) {
     unit.errors.push({
       location: formatRange(fact.location.range),
@@ -1681,6 +1697,10 @@ const checkFact = (fact: Fact, reference: Fact, scope: LocalName | undefined, un
 };
 
 const isDefinitionEntry = (def: Fact, scope: LocalName | undefined, unit: Unit) => {
+  if (def.kind === "ModuleFact") {
+    reportUnknownModule(def, unit);
+    return unit.isModuleKnown(def.name, def.location);
+  }
   const range = def.location.range;
   const name =
     def.kind === "Identifier" ? def.name : def.kind === "OperatorReference" ? def.operator : "";
@@ -1748,6 +1768,9 @@ const checkUseOrHide = (
   const hidden = statement.facts.map((fact, index) =>
     checkFact(fact, references[index], scope, unit),
   );
+  const factCount = statement.facts.filter(
+    (fact) => fact.kind !== "ModuleFact" || unit.isModuleKnown(fact.name, fact.location),
+  ).length;
   const defCount = statement.defs.filter((def) => isDefinitionEntry(def, scope, unit)).length;
   hidden.forEach((location) => {
     if (location && statement.kind === "Hide") {
@@ -1759,7 +1782,7 @@ const checkUseOrHide = (
     }
   });
   const range = statement.location.range;
-  if (statement.facts.length + defCount === 0 && range) {
+  if (factCount + defCount === 0 && range) {
     unit.errors.push({
       location: formatRange(range),
       message: statement.kind === "By" ? "Empty BY" : "Empty USE or HIDE statement.",
@@ -2000,6 +2023,7 @@ export interface ModuleUnit {
   bound: Symbols;
   definitions: Map<string, Definition>;
   getKey: (definition: Definition) => string;
+  isModuleKnown: (name: string, location: SourceLocation) => boolean;
   instanced: Map<Instance, Symbols>;
   facts: Set<string>;
   reports: ModuleReport[];
@@ -2181,6 +2205,7 @@ export const resolveSubstitutions = (
     getInstance: unit.getInstance,
     definitions: unit.definitions,
     getKey: unit.getKey,
+    isModuleKnown: unit.isModuleKnown,
     location: instance.location,
     self: undefined,
     facts: new Set(),
@@ -2277,6 +2302,7 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
         getInstance: unit.getInstance,
         definitions: unit.definitions,
         getKey: unit.getKey,
+        isModuleKnown: unit.isModuleKnown,
         location,
         self,
         facts: unit.facts,

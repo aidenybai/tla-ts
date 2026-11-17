@@ -2297,6 +2297,75 @@ describe("name resolution matches SANY", () => {
     );
   });
 
+  it.each<[string, [string, string][]]>([
+    [
+      "CONSTANT c\nHIDE MODULE Naturals DEF Thm9, c",
+      [
+        [
+          "line 3, col 13 to line 3, col 20",
+          "Module `Naturals' used without being extended or instantiated.",
+        ],
+        ["line 3, col 26 to line 3, col 29", "Unknown operator: `Thm9'."],
+        [
+          "line 3, col 26 to line 3, col 29",
+          "DEF clause entry should describe a defined operator.",
+        ],
+        [
+          "line 3, col 32 to line 3, col 32",
+          "DEF clause entry should describe a defined operator.",
+        ],
+        ["line 3, col 1 to line 3, col 32", "Empty USE or HIDE statement."],
+      ],
+    ],
+    [
+      "USE MODULE Inner\n---- MODULE Inner ----\n====",
+      [
+        [
+          "line 2, col 12 to line 2, col 16",
+          "Module `Inner' used without being extended or instantiated.",
+        ],
+        ["line 2, col 1 to line 2, col 16", "Empty USE or HIDE statement."],
+      ],
+    ],
+    [
+      "THEOREM TRUE\nBY MODULE Foo",
+      [
+        [
+          "line 3, col 11 to line 3, col 13",
+          "Module `Foo' used without being extended or instantiated.",
+        ],
+        ["line 3, col 1 to line 3, col 13", "Empty BY"],
+      ],
+    ],
+    [
+      "Op == 1\nUSE MODULE Naturals, Op DEF MODULE TLC, Op",
+      [
+        [
+          "line 3, col 12 to line 3, col 19",
+          "Module `Naturals' used without being extended or instantiated.",
+        ],
+        [
+          "line 3, col 36 to line 3, col 38",
+          "Module `TLC' used without being extended or instantiated.",
+        ],
+      ],
+    ],
+  ])("reports a module fact in %j that SANY has not processed", async (source, errors) => {
+    await expect(checkNames(source)).rejects.toThrow(
+      createSanyError(
+        errors.map((error) => ({ location: `${error[0]} of module M`, message: error[1] })),
+      ),
+    );
+  });
+
+  it("accepts module facts for the modules SANY has processed and the inner modules before them", async () => {
+    await expect(
+      checkNames(
+        "EXTENDS Sequences\n---- MODULE Inner ----\nEXTENDS FiniteSets\nUSE MODULE FiniteSets, MODULE Naturals, MODULE Inner\n====\n---- MODULE Other ----\nLOCAL INSTANCE TLC\n====\nI == INSTANCE Other\nUSE MODULE Naturals, MODULE Inner, MODULE M, MODULE TLC, MODULE FiniteSets DEF MODULE Other",
+      ),
+    ).resolves.toMatchObject({ status: "success" });
+  });
+
   const hidden =
     "The only expression allowed as a fact in a HIDE is \nthe name of a theorem, assumption, or step.";
   it.each<[string, string, [string, string][]]>([
