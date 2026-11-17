@@ -52441,4 +52441,28 @@ describe("BigInts", () => {
       "Give this pattern's value an array type",
     );
   });
+
+  describe("reads a property of a value that a constructor's type types through the heap", () => {
+    const getSource = (expected: string) => `
+      const proto = { label: "Effectable" };
+      const Base: new () => { label: string } = (() => {
+        const Base = function () {};
+        Base.prototype = proto;
+        return Base as any;
+      })();
+      const seen = [Base.prototype === proto, typeof Base.name].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+      export {};
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("true,string"))).failure).toBeUndefined();
+    });
+
+    it("rejects another prototype", async () => {
+      expect((await checkModel(getSource("false,string"))).failure?.message).toContain(
+        "seen true,string",
+      );
+    });
+  });
 });

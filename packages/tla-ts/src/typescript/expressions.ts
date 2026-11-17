@@ -3528,6 +3528,23 @@ const translatePropertyAccess = (
   ) {
     throw new TlaTypeScriptError(`Unsupported property: ${node.getText()}`, node);
   }
+  // A value that a constructor's type types is a function, whose properties the heap holds where
+  // it holds the function.
+  if (context.checker.getTypeAtLocation(receiver).getConstructSignatures().length > 0) {
+    if (context.heap === undefined) {
+      throw new TlaTypeScriptError(`Unsupported property: ${node.getText()}`, node);
+    }
+    return share(translateExpression(receiver, scope, context), "function", context, (value) =>
+      ifExpression(
+        useJavaScript("IsRef", [value], context),
+        useJavaScript("Get", [getHeap(scope, node, context), value, string(name)], context),
+        apply("Assert", [
+          boolean(false),
+          string("tla-ts can't tell which function this value holds"),
+        ]),
+      ),
+    );
+  }
   if (context.heap !== undefined && isCaughtRead(receiver, context)) {
     return useJavaScript(
       "Get",
