@@ -1002,16 +1002,22 @@ const isInstanceArityReported = (
   scope: LocalName | undefined,
   unit: Unit,
 ) => {
-  if (expression.kind !== "Identifier" && expression.kind !== "Apply") return false;
+  if (!isReference(expression)) return false;
+  const selectors = getSelectors(expression);
+  const nameCount = selectors.findIndex((selector) => selector.kind !== "Name");
   const instance = findInstance(
-    expression.kind === "Identifier" ? expression.name : expression.operator,
+    selectors
+      .slice(0, nameCount === -1 ? selectors.length : nameCount)
+      .flatMap((selector) => (selector.kind === "Name" ? [selector.name] : []))
+      .join("!"),
     scope,
     unit,
   );
-  const count = expression.kind === "Apply" ? (expression.argumentCounts?.[0] ?? 0) : 0;
+  const first = selectors[0];
+  const count = first.kind === "Name" ? first.args.length : 0;
   if (!instance || count === instance.arity) return false;
   const range =
-    (expression.kind === "Apply" ? expression.argumentRanges?.[0] : undefined) ??
+    (expression.kind === "Identifier" ? undefined : expression.argumentRanges?.[0]) ??
     expression.location.range;
   if (range) {
     unit.errors.push({
@@ -1406,7 +1412,12 @@ const isSubexpressionReported = (
   scope: LocalName | undefined,
   unit: Unit,
 ) => {
-  if (isSelectionReported(expression, scope, unit)) return true;
+  if (
+    isInstanceArityReported(expression, scope, unit) ||
+    isSelectionReported(expression, scope, unit)
+  ) {
+    return true;
+  }
   expression.selectors
     .flatMap((selector) => ("args" in selector ? selector.args : []))
     .forEach((arg) => resolveArgument(arg, scope, unit));

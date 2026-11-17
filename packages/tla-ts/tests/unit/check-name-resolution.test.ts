@@ -2224,6 +2224,23 @@ describe("name resolution matches SANY", () => {
     );
   });
 
+  it("checks the arguments of a parameterized instance in a selection like SANY", async () => {
+    await expect(
+      checkNames(
+        "EXTENDS Naturals\n---- MODULE Inner ----\nH == lab :: 1 + 2\nG(q) == q + 1\n====\nI0(p) == INSTANCE Inner\nA == I0(1, 2)!H!1\nB == I0(1)!H!1\nC == I0!H!1\nD == I0(1)!G(2)!1\nE == I0(1)!G!1\nF == I0(1, 2)!H!lab",
+      ),
+    ).rejects.toThrow(
+      createSanyError(
+        [
+          ["line 8, col 8 to line 8, col 13", "The operator I0 requires 1 arguments."],
+          ["line 10, col 6 to line 10, col 11", "The operator I0 requires 1 arguments."],
+          ["line 12, col 6 to line 12, col 14", "The operator I0!G requires 1 arguments."],
+          ["line 13, col 8 to line 13, col 13", "The operator I0 requires 1 arguments."],
+        ].map((error) => ({ location: `${error[0]} of module M`, message: error[1] })),
+      ),
+    );
+  });
+
   it("passes an operator whose definition has fewer parameters than its RECURSIVE declaration, where SANY crashes", async () => {
     await expect(
       checkNames("RECURSIVE R(_, _)\nR == 1\nL(P(_, _)) == 1\nA == L(R)"),
