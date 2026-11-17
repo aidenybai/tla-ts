@@ -42,6 +42,7 @@ import {
   type SExpr,
   type SmtList,
   type SmtlibReader,
+  type SmtToken,
 } from "./smtlib-parser";
 import { O_MAXIMIZE, O_MAXSMT, O_MINIMIZE, OptContext, type OptObjective } from "./opt-context";
 import { getLogicStrategy } from "./logic-tactics";
@@ -403,6 +404,8 @@ export const runSmtlibScript = (
     rlimit: 0,
     printOptions: { ...DEFAULT_PRINT_OPTIONS },
     parserOptions: { isIgnoringBadPatterns: true },
+    // The answer (set-info :status ...) announces, which reset keeps.
+    status: L_UNDEF,
   };
   const createState = (): ScriptState => {
     const manager = new AstManager(new ResourceLimit(Infinity, options.signal));
@@ -667,6 +670,12 @@ export const runSmtlibScript = (
   const clearCheck = () => {
     state.check?.model?.decRef();
     state.check = undefined;
+  };
+  // cmd_context::validate_check_sat_result runs after the answer is printed.
+  const validateCheck = (end: SmtToken) => {
+    const status = state.check?.status ?? L_UNDEF;
+    if (status !== L_UNDEF && settings.status !== L_UNDEF && status !== settings.status)
+      throw new SmtParseError(`check annotation that says ${getVerdict(settings.status)}`, end);
   };
   // The check holds a reference to its model until clearCheck.
   const setCheck = (status: number, result: Partial<Omit<CheckResult, "status">> = {}) => {
@@ -966,7 +975,13 @@ export const runSmtlibScript = (
         clearCheck();
       },
     ],
-    ["check-sat", (list) => checkSatAssuming(list.items.slice(1))],
+    [
+      "check-sat",
+      (list) => {
+        checkSatAssuming(list.items.slice(1));
+        validateCheck(list.end);
+      },
+    ],
     [
       "declare-rel",
       (list) => {
@@ -1067,6 +1082,7 @@ export const runSmtlibScript = (
         } finally {
           state.manager.limit.pop();
         }
+        validateCheck(list.end);
       },
     ],
     [
@@ -1079,6 +1095,7 @@ export const runSmtlibScript = (
             literals ?? list.end,
           );
         checkSatAssuming(literals.items);
+        validateCheck(list.end);
       },
     ],
     [
@@ -1718,7 +1735,30 @@ export const runSmtlibScript = (
         if (settings.isPrintingSuccess) print("success");
       },
     ],
-    ["set-info", () => {}],
+    [
+      "set-info",
+      (list) => {
+        const info = list.items[1];
+        if (info === undefined)
+          throw new SmtParseError("invalid command, argument(s) missing", list.end);
+        if (info.kind !== "keyword")
+          throw new SmtParseError("invalid command argument, keyword expected", info);
+        const value = list.items[2];
+        if (value === undefined)
+          throw new SmtParseError("invalid command, argument(s) missing", list.end);
+        if (value.kind === "list" || value.kind === "keyword")
+          throw new SmtParseError("invalid option value", value);
+        if (info.text === ":status" && value.kind === "symbol") {
+          const status = [L_TRUE, L_FALSE, L_UNDEF].find(
+            (innerStatus) => getVerdict(innerStatus) === value.text,
+          );
+          if (status === undefined) throw new SmtParseError("invalid ':status' attribute", value);
+          settings.status = status;
+        }
+        if (list.items[3] !== undefined)
+          throw new SmtParseError("invalid command, too many arguments", list.items[3]);
+      },
+    ],
   ]);
   const run = (list: SmtList) => {
     const head = list.items[0];

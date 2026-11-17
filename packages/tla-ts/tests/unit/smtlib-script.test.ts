@@ -1247,6 +1247,46 @@ describe("runSmtlibScript prints what Z3 prints", () => {
     ]);
   });
 
+  it("reports an answer that differs from the one set-info :status announces, also after reset", () => {
+    expect(
+      run([
+        "(set-info :status unsat)",
+        "(declare-const p Bool)",
+        "(assert p)",
+        "(check-sat)",
+        "(get-model)",
+        "(set-info :status sat)",
+        "(check-sat-assuming ((not p)))",
+        "(check-sat-using smt)",
+        "(set-info :status foo)",
+        "(set-info :status)",
+        "(set-info :status (unsat))",
+        "(set-info status sat)",
+        "(set-info :status unknown :x)",
+        "(check-sat-assuming ((not p)))",
+        "(set-info :status sat)",
+        "(reset)",
+        "(assert false)",
+        "(check-sat-using simplify)",
+      ]),
+    ).toEqual([
+      "sat",
+      '(error "line 4 column 10: check annotation that says unsat")',
+      "(\n  (define-fun p () Bool\n    true)\n)",
+      "unsat",
+      '(error "line 7 column 29: check annotation that says sat")',
+      "sat",
+      "(error \"line 9 column 18: invalid ':status' attribute\")",
+      '(error "line 10 column 17: invalid command, argument(s) missing")',
+      '(error "line 11 column 18: invalid option value")',
+      '(error "line 12 column 10: invalid command argument, keyword expected")',
+      '(error "line 13 column 26: invalid command, too many arguments")',
+      "unsat",
+      "unsat",
+      '(error "line 18 column 25: check annotation that says sat")',
+    ]);
+  });
+
   it("throws at a theory it does not implement", () => {
     expect(() =>
       run(["(declare-const b (_ BitVec 8))", '(assert (= (str.from_ubv b) "12"))', "(check-sat)"]),
