@@ -630,7 +630,7 @@ const resolveSubexpressions = (
   if (generated !== undefined) setGeneratedArguments(generated);
   const parenthesized = parenthesizedRanges.get(expression);
   if (parenthesized && selected !== mapped) parenthesizedRanges.set(selected, parenthesized);
-  if (selected !== mapped) selections.add(selected);
+  if (selected !== mapped) selections.set(selected, mapped);
   return selected;
 };
 

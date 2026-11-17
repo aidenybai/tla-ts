@@ -127,7 +127,7 @@ interface SelectionArgument {
   range: SourceRange | undefined;
 }
 
-export const selections = new WeakSet<Expression>();
+export const selections = new WeakMap<Expression, Expression>();
 export const selectionErrors = new WeakMap<Expression, SelectionError>();
 export const operatorSelectionErrors = new WeakMap<Expression, SanyError>();
 export const factReferences = new WeakMap<Fact[], Fact[]>();
@@ -1189,6 +1189,24 @@ const matchArgument = (
     );
     return false;
   }
+  const reference = selections.get(arg) ?? arg;
+  // SANY reads a reference that ends in arguments as an application, not as a selector's arguments.
+  const selectors =
+    reference.kind === "Subexpression" ||
+    (reference.kind === "Apply" && reference.argumentCounts?.at(-1) === 0)
+      ? getSelectors(reference)
+      : [];
+  const selectorIndex = selectors.findIndex(
+    (selector) => "args" in selector && selector.args.length > 0,
+  );
+  if (selectorIndex !== -1 && isReference(reference)) {
+    const selector = selectors[selectorIndex];
+    report(
+      reference.selectorRanges?.[selectorIndex],
+      `Selector \`${selector.kind === "Name" ? selector.name : "!(...)"}' should not have argument(s).`,
+    );
+    return false;
+  }
   if (arg.kind === "Lambda") {
     if (selections.has(arg)) resolveExpression(arg, scope, unit);
     else resolveLambda(arg, scope, unit);
@@ -1209,12 +1227,12 @@ const matchArgument = (
     resolveExpression(arg, scope, unit);
     return true;
   }
-  if (arg.kind === "Apply" && arg.argumentCounts?.at(-1) === 0) {
-    const selectorIndex = arg.argumentCounts.findIndex((count) => count > 0);
-    report(
-      arg.selectorRanges?.[selectorIndex],
-      `Selector \`${arg.operator.split("!")[selectorIndex]}' should not have argument(s).`,
-    );
+  if (reference !== arg) {
+    const failed = findNullError(nullSelections.get(arg));
+    if (failed) unit.errors.push(failed);
+    if (!failed) {
+      report(reference.location.range, `Expected arity ${expected} but found operator of arity 0.`);
+    }
     return false;
   }
   if (arg.kind !== "Identifier" && arg.kind !== "OperatorReference") {
