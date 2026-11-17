@@ -49178,4 +49178,27 @@ describe("BigInts", () => {
       ).toContain(`seen ${expected}`);
     });
   });
+
+  describe("runs Temporal in the Japanese calendar, whose eras start within a year", () => {
+    const getSource = (expected: string) => `
+      const eras = ["1872-12-31", "1912-07-29", "1912-07-30", "2019-05-01"].map((text) => {
+        const date = Temporal.PlainDate.from(text).withCalendar("japanese");
+        return date.era + " " + date.eraYear;
+      });
+      const lenient = Temporal.PlainDate.from({ calendar: "japanese", era: "heisei", eraYear: 32, month: 6, day: 1 });
+      const seen = [...eras, lenient.era, lenient.eraYear].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+    const expected = "ce 1872,meiji 45,taisho 1,reiwa 1,reiwa,2";
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects an era that starts on the first of the year", async () => {
+      expect(
+        (await checkModel(getSource(expected.replace("meiji 45", "taisho 1")))).failure?.message,
+      ).toContain(`seen ${expected}`);
+    });
+  });
 });

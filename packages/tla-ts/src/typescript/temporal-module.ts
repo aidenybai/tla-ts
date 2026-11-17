@@ -1097,34 +1097,49 @@ LOCAL TParseISO(text, goal) ==
 \* their ASCII-lowercase forms, aliases included.
 LOCAL TOtherCalendars ==
   {"chinese", "coptic", "dangi", "ethioaa", "ethiopic", "ethiopic-amete-alem", "hebrew", "indian",
-   "islamic-civil", "islamic-tbla", "islamic-umalqura", "islamicc", "japanese", "persian"}
+   "islamic-civil", "islamic-tbla", "islamic-umalqura", "islamicc", "persian"}
 
-\* The calendars with eras that tla-ts runs, whose months and days are the ISO 8601 calendar's and
-\* whose eras start at the start of a year: the Gregorian calendar, and two whose years count from
-\* another year.
-LOCAL TEraCalendars == {"gregory", "buddhist", "roc"}
+\* The calendars with eras that tla-ts runs, whose months and days are the ISO 8601 calendar's: the
+\* Gregorian calendar, two whose years count from another year, and the Japanese calendar, whose
+\* eras from 1873 start within a year.
+LOCAL TEraCalendars == {"gregory", "buddhist", "roc", "japanese"}
+
+\* The Japanese calendar's eras from 1873, with the ISO date each starts on.
+LOCAL TJapaneseEras ==
+  <<[name |-> "meiji", start |-> <<1873, 1, 1>>, first |-> 1868],
+    [name |-> "taisho", start |-> <<1912, 7, 30>>, first |-> 1912],
+    [name |-> "showa", start |-> <<1926, 12, 25>>, first |-> 1926],
+    [name |-> "heisei", start |-> <<1989, 1, 8>>, first |-> 1989],
+    [name |-> "reiwa", start |-> <<2019, 5, 1>>, first |-> 2019]>>
 
 \* What a calendar's arithmetic year adds to the ISO year.
 LOCAL TYearOffset(calendar) == CASE calendar = "buddhist" -> 543 [] calendar = "roc" -> -1911 [] OTHER -> 0
 
 \* CanonicalizeEraInCalendar, or "" where the calendar has no such era.
 LOCAL TEraOf(calendar, era) ==
-  CASE calendar = "gregory" /\ era \in {"ce", "ad"} -> "ce"
-    [] calendar = "gregory" /\ era \in {"bce", "bc"} -> "bce"
+  CASE calendar \in {"gregory", "japanese"} /\ era \in {"ce", "ad"} -> "ce"
+    [] calendar \in {"gregory", "japanese"} /\ era \in {"bce", "bc"} -> "bce"
+    [] calendar = "japanese" /\ \E index \in DOMAIN TJapaneseEras : TJapaneseEras[index].name = era -> era
     [] calendar = "buddhist" /\ era = "be" -> "be"
     [] calendar = "roc" /\ era \in {"roc", "broc"} -> era
     [] OTHER -> ""
 
 \* CalendarDateArithmeticYearForEraYear, of BigInts, where an era of the negative kind counts back
-\* from the year before its epoch.
+\* from the year before its epoch, and a Japanese era from 1873 counts from the year it starts in.
 LOCAL TEraArithmeticYear(era, eraYear) ==
-  IF era \in {"bce", "broc"} THEN BigIntSubtract(Big :> 1, eraYear) ELSE eraYear
+  LET japanese == SelectSeq(TJapaneseEras, LAMBDA entry : entry.name = era)
+  IN CASE era \in {"bce", "broc"} -> BigIntSubtract(Big :> 1, eraYear)
+       [] japanese # <<>> -> BigIntAdd(eraYear, TBig(Head(japanese).first - 1))
+       [] OTHER -> eraYear
 
-\* CalendarDateEra and CalendarDateEraYear, of an arithmetic year.
-LOCAL TEraOfYear(calendar, year) ==
-  CASE calendar = "buddhist" -> <<"be", year>>
-    [] year >= 1 -> <<IF calendar = "gregory" THEN "ce" ELSE "roc", year>>
-    [] OTHER -> <<IF calendar = "gregory" THEN "bce" ELSE "broc", 1 - year>>
+\* CalendarDateEra and CalendarDateEraYear, of an ISO date and its arithmetic year.
+LOCAL TEraOfDate(calendar, date, year) ==
+  LET started == SelectSeq(TJapaneseEras, LAMBDA entry : TCompareSequences(date, entry.start) >= 0)
+  IN CASE calendar = "buddhist" -> <<"be", year>>
+       [] calendar = "japanese" /\ started # <<>> ->
+            <<started[Len(started)].name, year - started[Len(started)].first + 1>>
+       [] year >= 1 -> <<IF calendar = "roc" THEN "roc" ELSE "ce", year>>
+       [] OTHER -> <<IF calendar = "roc" THEN "broc" ELSE "bce", 1 - year>>
 
 \* CanonicalizeCalendar, which tla-ts runs for the ISO 8601 calendar and the calendars with eras that
 \* it runs. Another calendar that Node takes stops, as tla-ts holds none of its data, and one that it
@@ -2570,7 +2585,7 @@ LOCAL TTimeGetters(time) ==
 \* The getters of a year and a month in a calendar: its era, era year, and arithmetic year.
 LOCAL TYearGetters(date, calendar) ==
   LET year == date[1] + TYearOffset(calendar)
-      era == TEraOfYear(calendar, year)
+      era == TEraOfDate(calendar, date, year)
       isISO == calendar = "iso8601"
   IN [calendarId |-> calendar, era |-> IF isISO THEN Undefined ELSE era[1],
       eraYear |-> IF isISO THEN Undefined ELSE era[2], year |-> year, month |-> date[2],
