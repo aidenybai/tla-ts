@@ -590,10 +590,6 @@ export class Mam implements LabelHasher<Enode> {
     return this.ctx.egraph.find(expr) ?? null;
   }
 
-  canPropagate() {
-    return this.toMatch.length > 0 || this.newPatterns.length > 0;
-  }
-
   private setLbls(root: Enode, isParent: boolean, hash: number) {
     const low = isParent ? root.plbls : root.lbls;
     const high = isParent ? root.plblsHigh : root.lblsHigh;

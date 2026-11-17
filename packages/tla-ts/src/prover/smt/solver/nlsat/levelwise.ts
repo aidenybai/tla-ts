@@ -92,10 +92,6 @@ export class TodoSet {
     return p;
   }
 
-  contains(polynomial: Polynomial) {
-    return this.inSet[polynomial.id] === true;
-  }
-
   getMaxVar() {
     return this.cache.pm.getMaxVarOfPolys(this.set.items);
   }

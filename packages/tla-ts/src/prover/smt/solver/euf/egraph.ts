@@ -522,12 +522,6 @@ export class Egraph {
     this.push(U_TOGGLE_CGC, node);
   }
 
-  setRelevant(node: Enode) {
-    if (node.isRelevant) return;
-    node.isRelevant = true;
-    this.push(U_SET_RELEVANT, node);
-  }
-
   private toggleCgcEnabled(node: Enode, isBacktracking: boolean) {
     const isEnabled = !node.isCgcEnabled;
     node.isCgcEnabled = isEnabled;

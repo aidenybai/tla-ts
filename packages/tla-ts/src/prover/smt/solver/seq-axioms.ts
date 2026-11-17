@@ -1,4 +1,3 @@
-import { SmtUnsupportedError } from "../../../errors";
 import {
   type AstManager,
   FAMILY_ARITH,
@@ -24,7 +23,6 @@ import {
   OP_SEQ_PREFIX,
   OP_SEQ_UNIT,
   OP_STRING_FROM_CODE,
-  OP_STRING_ITOS,
   OP_STRING_LT,
   OP_STRING_STOI,
   OP_STRING_TO_CODE,
@@ -178,10 +176,6 @@ export class SeqAxioms {
     const result = this.host.rewrite(length);
     if (result !== length) this.addClause([this.mkEq(length, result)]);
     return result;
-  }
-
-  mkLen(seq: number) {
-    return this.host.rewrite(this.mkSeq(OP_SEQ_LENGTH, [seq]));
   }
 
   private purify(expr: number | undefined) {
@@ -998,13 +992,5 @@ export class SeqAxioms {
     const target = manager.getOp(seq) === OP_STRING_STOI ? manager.getArg(seq, 0) : seq;
     this.addClause([this.mkNot(tracker), this.mkLe(this.mkLenAxiom(target), limit)]);
     return tracker;
-  }
-
-  ubvAxiom(): never {
-    throw new SmtUnsupportedError("str.from_ubv in the theory of sequences");
-  }
-
-  isItos(expr: number) {
-    return this.manager.getOp(expr) === OP_STRING_ITOS;
   }
 }

@@ -902,10 +902,6 @@ export class PolynomialManager {
     this.modulus = prime;
   }
 
-  setZ() {
-    this.modulus = null;
-  }
-
   mkPolynomialCore(as: bigint[], ms: Monomial[]) {
     const id = this.freePolynomialIds.pop() ?? this.nextPolynomialId++;
     const polynomial = new Polynomial(id, as, ms);
@@ -1094,12 +1090,6 @@ export class PolynomialManager {
       this.som.addmul(this.mulNumeral(coeff, first.as[index]), first.ms[index], second);
     }
     return this.som.mk();
-  }
-
-  private divConst(polynomial: Polynomial, divisor: bigint) {
-    for (let index = 0; index < polynomial.size; index++)
-      this.cheap.add(this.divNumeral(polynomial.as[index], divisor), polynomial.ms[index]);
-    return this.cheap.mk();
   }
 
   neg(polynomial: Polynomial) {
@@ -2267,29 +2257,6 @@ export class PolynomialManager {
         return;
       }
     }
-  }
-
-  discriminant(polynomial: Polynomial, x: number, r: PolynomialRef) {
-    const pPrime = new PolynomialRef(this);
-    const m = this.degree(polynomial, x);
-    if (m === 0) {
-      r.set(this.zero);
-      pPrime.reset();
-      return;
-    }
-    pPrime.set(this.derivative(polynomial, x));
-    this.resultant(polynomial, pPrime.get(), x, r);
-    const isNegated = (m * (m - 1)) % 4 !== 0;
-    const lc = this.getConstCoeff(polynomial, x, m);
-    if (lc !== null) r.set(this.divConst(r.get(), isNegated ? this.negNumeral(lc) : lc));
-    else {
-      if (isNegated) r.set(this.neg(r.get()));
-      const c = new PolynomialRef(this);
-      c.set(this.coeff(polynomial, x, m));
-      r.set(this.exactDiv(r.get(), c.get()));
-      c.reset();
-    }
-    pPrime.reset();
   }
 
   private seLazard(d: number, lcSd: Polynomial, sd1: Polynomial, x: number, se: PolynomialRef) {

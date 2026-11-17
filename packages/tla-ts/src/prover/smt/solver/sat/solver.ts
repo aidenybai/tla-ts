@@ -1932,16 +1932,6 @@ export class Solver {
     this.activityInc >>>= 14;
   }
 
-  numClauses() {
-    let numClauses = this.trail.length;
-    for (let lit = 0; lit < this.watches.length; lit++) {
-      const wlist = this.watches[lit];
-      for (let index = 0; index < wlist.size; index++)
-        if (wlist.isBinary(index) && (lit ^ 1) < wlist.getLiteral(index)) numClauses++;
-    }
-    return numClauses + this.clauses.length + this.learned.length;
-  }
-
   doCleanup(isForced: boolean) {
     if (this.conflictsSinceInit === 0 && !isForced) return false;
     return this.atBaseLvl() && !this.isInconsistent && this.cleaner.run(isForced);

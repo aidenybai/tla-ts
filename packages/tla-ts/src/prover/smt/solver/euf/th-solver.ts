@@ -25,10 +25,6 @@ export class TrailStack {
     this.scopes.length -= numScopes;
     while (this.undos.length > lim) (this.undos.pop() as () => void)();
   }
-
-  get numScopes() {
-    return this.scopes.length;
-  }
 }
 
 // A th_explain: the literals and equalities that explain a propagation or a conflict.
@@ -108,9 +104,6 @@ export abstract class ThSolver {
   }
   isBetaRedex(_parent: Enode, _node: Enode) {
     return false;
-  }
-  isFixed(_thVar: number, _lits: number[]): number {
-    return -1;
   }
   addValue(_node: Enode, _model: ProtoModel, _values: (number | undefined)[]) {}
   addDep(node: Enode, deps: Dependencies) {
