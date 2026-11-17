@@ -1,5 +1,4 @@
 // Ported from Z3 (src/math/lp/nla_grobner.h, src/math/lp/nla_grobner.cpp), MIT license, see z3-license.txt.
-// Deviation from Z3: its nlsat conflict check (is_nla_conflict) is not ported.
 import { PddMemoryOutError } from "../../../../errors";
 import { getEuclideanMod, getGcd, getLcm, Rational } from "../rational";
 import { KIND_EQ, KIND_GE, KIND_LE, KIND_LT, KIND_NE } from "./constraints";
