@@ -3223,7 +3223,6 @@ export class PolynomialManager {
     return max;
   }
 
-  // The sign of polynomial at values, or null once it needs a variable values lacks.
   getRationalSign(polynomial: Polynomial, values: readonly (Rational | undefined)[]) {
     const value = this.evaluatePartially(
       polynomial,
