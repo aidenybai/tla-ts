@@ -15,7 +15,7 @@ import { EXIT_STATUS, getMessageExitStatus, withLivenessExitCode } from "./exit-
 import { createLivenessChecker } from "./liveness-checker";
 import { getIncompleteSuccessorMessage, prepareSearch, reportAssumptionViolation } from "./search";
 import type { SpecAction } from "./spec-description";
-import { forEachInitialState, forEachSuccessor } from "./successors";
+import { forEachInitialState, forEachSuccessor, getSuccessors } from "./successors";
 import {
   formatNestedMessage,
   formatTlcDate,
@@ -28,7 +28,7 @@ import {
 import { getTlcFingerprint } from "./tlc/fingerprint";
 import { replaySuccessors } from "./tlc/replay";
 import { getOptimisticProbability, getActualProbability } from "./tlc/summary";
-import { createModelValue, formatState, getSetBound, type Value } from "./values";
+import { createModelValue, formatState, getSetBound, isSameValue, type Value } from "./values";
 
 export interface DepthFirstOptions extends CheckOptions {
   maxDepth: number;
@@ -165,6 +165,13 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
   if (assumptionStatus !== undefined) return assumptionStatus;
 
   const nextActions = prepared.getDescription().actions;
+  // Deviation from TLC: TLCExt#pickSuccessor casts the DFID checker to ModelChecker and fails, so tla-ts asks as model checking does.
+  runtime.getSuccessorAction = (state, next) =>
+    nextActions.find((action) =>
+      getSuccessors(action.expression, state, environment, action.scope).some((successor) =>
+        successor.state.every((value, index) => isSameValue(value, next[index])),
+      ),
+    );
   const statuses = new Map<bigint, number>();
   const fingerprintSet = { level: 1, leveled: 0, buckets: INITIAL_BUCKETS };
   const setStatus = (fingerprint: bigint, status: number) => {
