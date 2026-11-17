@@ -5,10 +5,10 @@ import {
   analyzeAssumeProve,
   createLevelAnalyzer,
   getArgumentKey,
-  parseArgumentParamKey,
   putArgConstraint,
   putConstraint,
   TEMPORAL_LEVEL,
+  type ArgumentParam,
   type OperatorLevels,
   type Scope,
 } from "./levels";
@@ -34,7 +34,7 @@ interface ModuleLevels {
   isConstant: boolean;
   constraints: Map<string, number>;
   argConstraints: Map<string, number>;
-  argParams: Set<string>;
+  argParams: Map<string, ArgumentParam>;
 }
 
 interface Substituted {
@@ -78,7 +78,7 @@ export const createInstanceChecker = (getModule: (name: string) => ModuleContext
         module.variables.length === 0 && definitions.every((definition) => definition.level === 0),
       constraints: new Map(),
       argConstraints: new Map(),
-      argParams: new Set(),
+      argParams: new Map(),
     };
     if (!levels.isConstant) {
       module.constants.forEach((constant) => putConstraint(levels.constraints, constant.name, 0));
@@ -87,7 +87,7 @@ export const createInstanceChecker = (getModule: (name: string) => ModuleContext
       data: {
         constraints: Map<string, number> | undefined;
         argConstraints: Map<string, number> | undefined;
-        argParams: Set<string> | undefined;
+        argParams: Map<string, ArgumentParam> | undefined;
       },
       isKept: (operator: string, param: string) => boolean,
     ) => {
@@ -95,9 +95,8 @@ export const createInstanceChecker = (getModule: (name: string) => ModuleContext
       data.argConstraints?.forEach((value, key) =>
         putArgConstraint(levels.argConstraints, key, value),
       );
-      data.argParams?.forEach((key) => {
-        const parameter = parseArgumentParamKey(key);
-        if (isKept(parameter.operator, parameter.param)) levels.argParams.add(key);
+      data.argParams?.forEach((parameter, key) => {
+        if (isKept(parameter.operator, parameter.param)) levels.argParams.set(key, parameter);
       });
     };
     definitions.forEach((definition) =>
@@ -192,8 +191,7 @@ export const createInstanceChecker = (getModule: (name: string) => ModuleContext
         }
       }
     });
-    levels.argParams.forEach((key) => {
-      const parameter = parseArgumentParamKey(key);
+    levels.argParams.forEach((parameter) => {
       const operator = substituted.find((item) => item.name === parameter.operator)?.operator;
       const argument = substituted.find((item) => item.name === parameter.param);
       if (!operator || !argument) return;
