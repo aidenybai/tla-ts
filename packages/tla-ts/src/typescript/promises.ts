@@ -53,6 +53,7 @@ import {
   skipCasts,
   translateString,
 } from "./context";
+import { getFileIndex } from "./program-nodes";
 import { getCallbackReceiver, translateArrayIteratorPrototype } from "./collections";
 import { TlaTypeScriptError } from "../errors";
 import { translateEngineError } from "./exceptions";
@@ -2185,11 +2186,16 @@ const isResolverParameter = (node: ts.Node, context: Context) => {
 };
 
 // The variables that a script assigns an executor's resolve or reject.
-const resolverHolders = new WeakMap<ts.SourceFile, ReadonlySet<ts.Symbol>>();
-
 const getResolverHolders = (sourceFile: ts.SourceFile, context: Context) => {
-  const known = resolverHolders.get(sourceFile);
-  if (known !== undefined) return known;
+  const index = getFileIndex(context.nodes, sourceFile);
+  return index < 0 || index >= context.resolverHolders.length
+    ? findResolverHolders(sourceFile, context)
+    : context.resolverHolders[index];
+};
+
+// The variables of a file that the script assigns an executor's resolve or reject, which tla-ts
+// finds for each of the program's files before it compiles the code.
+export const findResolverHolders = (sourceFile: ts.SourceFile, context: Context) => {
   const holders = new Set<ts.Symbol>();
   const isParameterValue = (node: ts.Expression | undefined) => {
     const declaration =
@@ -2210,7 +2216,6 @@ const getResolverHolders = (sourceFile: ts.SourceFile, context: Context) => {
     ts.forEachChild(node, visit);
   };
   visit(sourceFile);
-  resolverHolders.set(sourceFile, holders);
   return holders;
 };
 

@@ -20,13 +20,14 @@ import { createNames, type Names } from "./names";
 import { getBindingNames, getLexicalNames } from "./early-errors";
 import { getKeptReads } from "./narrowing";
 import { mayThrow } from "./functions";
-import { findGetterKeys, getGetterKeys, isProxyOperation } from "./protocols";
+import { findGetterKeys, findWrittenFunctions, getGetterKeys, isProxyOperation } from "./protocols";
 import type { ChangeTable } from "./change-summaries";
 import type { Namespace } from "./namespaces";
 import {
   createReferences,
   findNames,
   findNodesOfKind,
+  getFileIndex,
   getPosition,
   getReferences,
   type ProgramNodes,
@@ -110,6 +111,17 @@ export interface Context {
   // Whether each class and function of the program's files is a heap class or a heap function, by
   // its position, as isHeapClass and isHeapFunction answer once the heap is known.
   heapCode: Uint8Array;
+  // What each of the program's files writes as descriptors' gets and sets, as setters that tla-ts
+  // inlines, as functions that functions return, and as functions under each key, by the file's
+  // index, which tla-ts finds once the heap is known.
+  fileGetters: readonly (readonly AccessorFunction[])[];
+  fileSetters: readonly (readonly AccessorFunction[])[];
+  fileSetAccessors: readonly (readonly ts.SetAccessorDeclaration[])[];
+  fileReturned: readonly (readonly HeapFunction[])[];
+  fileWritten: readonly ReadonlyMap<string, readonly FunctionNode[]>[];
+  // The variables of each of the program's files that the script assigns an executor's resolve or
+  // reject, by the file's index.
+  resolverHolders: readonly ReadonlySet<ts.Symbol>[];
   names: Names;
   variables: Map<ts.Symbol, Expression>;
   // Helper functions and constants, compiled when first referenced.
@@ -581,6 +593,12 @@ export const createContext = (
     getterKeys: files.map(findGetterKeys),
     calledOnce: new Uint8Array(nodes.nodes.length),
     heapCode: new Uint8Array(nodes.nodes.length),
+    fileGetters: [],
+    fileSetters: [],
+    fileSetAccessors: [],
+    fileReturned: [],
+    fileWritten: [],
+    resolverHolders: [],
     keptReads: reads.keptReads,
     names: createNames(JAVASCRIPT_OPERATORS),
     variables: new Map(),
@@ -4052,14 +4070,24 @@ export const changesState = (
   );
 };
 
-const accessorFunctions = new WeakMap<ts.SourceFile, Map<string, AccessorFunction[]>>();
+// The index of a node's file, where tla-ts has found what each file writes since the heap became
+// known, or -1.
+const getHeapFileIndex = (node: ts.Node, column: readonly unknown[], context: Context) => {
+  const index = context.heap === undefined ? -1 : getFileIndex(context.nodes, node);
+  return index < column.length ? index : -1;
+};
 
 // The functions that a script writes as the get or the set of a property descriptor, which a read
 // or a write of a property that tla-ts can't resolve may run.
 export const getAccessorFunctions = (node: ts.Node, field: "get" | "set", context: Context) => {
-  const file = node.getSourceFile();
-  const known = accessorFunctions.get(file);
-  if (known !== undefined) return known.get(field) ?? [];
+  const column = field === "get" ? context.fileGetters : context.fileSetters;
+  const index = getHeapFileIndex(node, column, context);
+  return index < 0
+    ? (findAccessorFunctions(node.getSourceFile(), context).get(field) ?? [])
+    : column[index];
+};
+
+const findAccessorFunctions = (file: ts.SourceFile, context: Context) => {
   const found = new Map<string, AccessorFunction[]>([
     ["get", []],
     ["set", []],
@@ -4124,8 +4152,7 @@ export const getAccessorFunctions = (node: ts.Node, field: "get" | "set", contex
     ts.forEachChild(child, visit);
   };
   visit(file);
-  accessorFunctions.set(file, found);
-  return found.get(field) ?? [];
+  return found;
 };
 
 // The getters of object literals whose keys computed names give, which no type names, so that a
@@ -4141,24 +4168,25 @@ const getComputedGetters = (node: ts.Node, context: Context) =>
     context,
   );
 
-const setAccessors = new WeakMap<ts.SourceFile, ts.SetAccessorDeclaration[]>();
-
 // The setters that a script writes in object literals and classes under a key it names, of those
 // that tla-ts inlines.
 const getSetAccessors = (node: ts.Node, context: Context) => {
-  const file = node.getSourceFile();
-  const known = setAccessors.get(file);
-  if (known !== undefined) return known;
-  const found = findNodes(
+  const index = getHeapFileIndex(node, context.fileSetAccessors, context);
+  return index < 0
+    ? findSetAccessors(node.getSourceFile(), context)
+    : context.fileSetAccessors[index];
+};
+
+const findSetAccessors = (file: ts.SourceFile, context: Context) =>
+  findNodesOf(
     file,
+    ts.SyntaxKind.SetAccessor,
     (inner): inner is ts.SetAccessorDeclaration =>
       ts.isSetAccessorDeclaration(inner) &&
       (getNameKey(inner.name) !== undefined || ts.isComputedPropertyName(inner.name)) &&
       isInlinedAccessor(inner, context),
+    context,
   );
-  setAccessors.set(file, found);
-  return found;
-};
 
 const getNameKey = (name: ts.Node) =>
   ts.isIdentifier(name) || ts.isStringLiteral(name)
@@ -4254,15 +4282,22 @@ const isMaking = (node: ts.Node): boolean =>
     ts.isNewExpression(node) ||
     (ts.forEachChild(node, (child) => isMaking(child) || undefined) ?? false));
 
-const returnedFunctions = new WeakMap<ts.SourceFile, HeapFunction[]>();
-
 // The function objects that functions return, as a function they make or one a name holds, which a
 // descriptor may give as a getter or a setter.
 export const getReturnedFunctions = (node: ts.Node, context: Context) => {
-  const file = node.getSourceFile();
-  const known = returnedFunctions.get(file);
-  if (known !== undefined) return known;
-  const found = findNodes(file, ts.isReturnStatement).flatMap((statement) => {
+  const index = getHeapFileIndex(node, context.fileReturned, context);
+  return index < 0
+    ? findReturnedFunctions(node.getSourceFile(), context)
+    : context.fileReturned[index];
+};
+
+const findReturnedFunctions = (file: ts.SourceFile, context: Context) => {
+  const found = findNodesOf(
+    file,
+    ts.SyntaxKind.ReturnStatement,
+    ts.isReturnStatement,
+    context,
+  ).flatMap((statement) => {
     const returned = statement.expression;
     const named =
       returned !== undefined && ts.isIdentifier(returned)
@@ -4276,9 +4311,22 @@ export const getReturnedFunctions = (node: ts.Node, context: Context) => {
         ? [named]
         : [];
   });
-  const unique = [...new Set(found)];
-  returnedFunctions.set(file, unique);
-  return unique;
+  return [...new Set(found)];
+};
+
+// Finds what each of the program's files writes that reads, writes, and protocols run, once the
+// heap is known, before tla-ts compiles the code.
+export const findFileAccessors = (context: Context) => {
+  const files = [...context.nodes.fileStarts].flatMap((position) => {
+    const file = context.nodes.nodes[position];
+    return ts.isSourceFile(file) ? [file] : [];
+  });
+  const accessors = files.map((file) => findAccessorFunctions(file, context));
+  context.fileGetters = accessors.map((found) => found.get("get") ?? []);
+  context.fileSetters = accessors.map((found) => found.get("set") ?? []);
+  context.fileSetAccessors = files.map((file) => findSetAccessors(file, context));
+  context.fileReturned = files.map((file) => findReturnedFunctions(file, context));
+  context.fileWritten = files.map((file) => findWrittenFunctions(file, context));
 };
 
 // Whether a value of one type may be used as another, which any may not where the other is a type

@@ -14,6 +14,7 @@ import {
   createContext,
   findNodes,
   findFunctionCandidates,
+  findFileAccessors,
   findHeapCode,
   findSharedFunctionCandidates,
   findOnceFunctions,
@@ -66,6 +67,7 @@ import {
   rejectRunningModules,
 } from "./namespaces";
 import { createProgram, isTypeImport } from "./program";
+import { findResolverHolders } from "./promises";
 import {
   getJsonPath,
   getRequires,
@@ -312,6 +314,7 @@ export const compile = (
     program.defaultLibraries,
     program.nodes,
   );
+  context.resolverHolders = program.files.map((file) => findResolverHolders(file, context));
   if (isScript(program.sourceFile)) {
     const onceFunctions = findOnceFunctions(program.files, context);
     context.onceFunctions = new Set(onceFunctions);
@@ -895,6 +898,7 @@ export const compile = (
   if (heap !== undefined && isHeapFile && (isSharing || changedArrays.length > 0 || isUsingHeap)) {
     context.heap = heap;
     findHeapCode(context);
+    findFileAccessors(context);
     context.variables.set(heap, identifier(context.names.getFresh("heap")));
     context.storedBuiltIns = new Map(
       program.files.map((file) => [

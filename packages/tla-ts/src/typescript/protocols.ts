@@ -106,15 +106,23 @@ export const getFunctionCandidates = (value: ts.Expression, context: Context): F
   return isRunnable(candidate) ? [candidate] : [];
 };
 
-const written = new WeakMap<ts.SourceFile, Map<string, FunctionNode[]>>();
-
 // The functions that a script writes under a key, as methods and as getters, by key. A call of what
 // JavaScript reads under the key, as a protocol such as iteration does, branches on which of them
 // it is.
-export const getWrittenFunctions = (node: ts.Node, key: string, context: Context) => {
-  const file = node.getSourceFile();
-  const known = written.get(file);
-  if (known !== undefined) return known.get(key) ?? [];
+export const getWrittenFunctions = (
+  node: ts.Node,
+  key: string,
+  context: Context,
+): readonly FunctionNode[] => {
+  const index = context.heap === undefined ? -1 : getFileIndex(context.nodes, node);
+  const written =
+    index < 0 || index >= context.fileWritten.length
+      ? findWrittenFunctions(node.getSourceFile(), context)
+      : context.fileWritten[index];
+  return written.get(key) ?? [];
+};
+
+export const findWrittenFunctions = (file: ts.SourceFile, context: Context) => {
   const found = new Map<string, FunctionNode[]>();
   const add = (name: ts.Node, value: ts.Node) => {
     const role = getKey(name);
@@ -137,8 +145,7 @@ export const getWrittenFunctions = (node: ts.Node, key: string, context: Context
     }
     return false;
   });
-  written.set(file, found);
-  return found.get(key) ?? [];
+  return found;
 };
 
 // The methods that a script writes under a key, or that its getters there return, which are async
