@@ -49129,6 +49129,19 @@ describe("BigInts", () => {
       );
     });
 
+    it("agrees with Node where another module's top level calls it", async () => {
+      const path = join(import.meta.dirname, "../fixtures/typescript/imports/registering.ts");
+      const getImporter = (expected: string) => `
+        import { names } from "./registry";
+        const box = { seen: names.join() };
+        if (box.seen !== "${expected}") throw new Error("seen " + box.seen);
+      `;
+      expect((await check(compile(getImporter("first"), path))).failure).toBeUndefined();
+      expect((await check(compile(getImporter(""), path))).failure?.message).toContain(
+        "seen first",
+      );
+    });
+
     it("agrees with Node where an exported action calls it", async () => {
       const result = await checkModel(`
         function next(count: number): number;
