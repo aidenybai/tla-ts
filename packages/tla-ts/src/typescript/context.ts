@@ -103,6 +103,9 @@ export interface Context {
   // The operator that runs whichever of a set of functions a value holds, each through its
   // operator in stateCalls, for each set of functions and count of arguments that calls pass.
   dispatchCalls: Map<string, DispatchCall>;
+  // The names that the code of a function or a class names, which tla-ts finds once before it
+  // compiles the code.
+  functionNames: ReadonlySet<ts.Symbol>;
   // Helpers being compiled or inlined, to detect recursion.
   inProgress: Set<ts.Node>;
   recursive: Set<ts.Declaration>;
@@ -567,6 +570,7 @@ export const createContext = (
     definitions: new Map(),
     stateCalls: new Map(),
     dispatchCalls: new Map(),
+    functionNames: new Set(),
     inProgress: new Set(),
     recursive: new Set(),
     selfCalls: new Map(),

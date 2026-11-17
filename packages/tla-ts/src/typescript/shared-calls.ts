@@ -254,6 +254,7 @@ export const classifySharedHelpers = (reached: readonly ts.Node[], context: Cont
       }),
     ),
   );
+  context.functionNames = namedInside;
   const sharedState = [...context.variables.keys()].filter((symbol) => namedInside.has(symbol));
   // The units that the candidates and the callbacks run, each found once.
   const units = new Map<ts.Node, Unit>();

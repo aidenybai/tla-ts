@@ -49206,4 +49206,39 @@ describe("BigInts", () => {
       expect(getSize(8)).toBeLessThan(getSize(4) * 2.3);
     });
   });
+
+  describe("runs a helper that a function's operator calls by name as an operator too", () => {
+    const getSource = (helpers: number, expected: number) => `
+      const box: { a: number } = { a: 1 };
+      ${Array.from(
+        { length: helpers },
+        (_, position) => `function h${position + 1}(f: any, x: number): number {
+          const value: number = f(x);
+          return value + ${position + 1};
+        }`,
+      ).join("\n")}
+      ${Array.from(
+        { length: helpers - 1 },
+        (_, position) =>
+          `const c${position + 1} = (y: number): number => h${position + 2}(c${position + 2}, y);`,
+      ).join("\n")}
+      const c${helpers} = (y: number): number => y + box.a;
+      const first: any = c1;
+      const result: number = h1(first, 0);
+      if (result !== ${expected}) throw new Error("result " + result);
+    `;
+    const getSize = (helpers: number) => printModule(compile(getSource(helpers, 0)).source).length;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(3, 7))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkModel(getSource(3, 8))).failure?.message).toContain("result 7");
+    });
+
+    it("grows with the helpers rather than with the ways their calls nest", () => {
+      expect(getSize(8)).toBeLessThan(getSize(4) * 2);
+    });
+  });
 });

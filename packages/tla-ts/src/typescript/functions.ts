@@ -21,6 +21,7 @@ import {
   getTopLevelDeclaration,
   getUndefined,
   type HelperDeclaration,
+  isHeapFunction,
   isInlined,
   isLiteral,
   isPlain,
@@ -835,7 +836,11 @@ export const translateHelperCall = (
   }
   const definition = getDefinition(declaration, context);
   if (definition.readsState && isStateModified(scope, context)) {
-    if (helper !== undefined && node !== undefined && context.inProgress.has(helper)) {
+    if (
+      helper !== undefined &&
+      node !== undefined &&
+      (context.inProgress.has(helper) || isOperatorHelperCall(helper, node, scope, context))
+    ) {
       return translateStateCall(declaration, helper, node, scope, context);
     }
     if (helper !== undefined) return inlineCall(helper, argumentNodes, helperScope, context);
@@ -1060,16 +1065,17 @@ const isOperatorFunction = (candidate: FunctionNode, context: Context) =>
   getArgumentsReads(candidate, context).length === 0 &&
   getKeptLocal(candidate, context) === undefined;
 
-// Whether a call may run a function as the function's operator: one that starts with no let or
-// const of the script uninitialized and nothing that catches its throws, that spreads no
-// arguments, and that passes no function that the body would run as it is.
+// Whether a call may run a function as the function's operator: one where no function names a
+// let or a const of the script that's still uninitialized, whose read would throw, and nothing
+// catches the operator's throws, that spreads no arguments, and that passes no function that the
+// body would run as it is, but one that the operator's calls through the value it takes run alike.
 const isOperatorCall = (
   node: ts.CallExpression,
   scope: Scope,
   context: Context,
   isPassed: (callback: FunctionNode) => boolean,
 ) =>
-  scope.uninitialized.size === 0 &&
+  [...scope.uninitialized].every((symbol) => !context.functionNames.has(symbol)) &&
   !scope.isCatching &&
   !node.arguments.some(ts.isSpreadElement) &&
   node.arguments.every((argument) => {
@@ -1086,6 +1092,29 @@ const isOperatorCandidate = (
   scope: Scope,
   context: Context,
 ) => isOperatorFunction(candidate, context) && isOperatorCall(node, scope, context, () => false);
+
+// Whether a helper that a function's operator calls by name runs as its own operator too, rather
+// than as a copy of its body, so that the functions that the helper calls by name don't copy their
+// bodies into the operator of each function that calls them. The functions that the call passes
+// run alike through the values that the helper's operator takes, as calls through values run them.
+const isOperatorHelperCall = (
+  helper: FunctionNode,
+  node: ts.CallExpression,
+  scope: Scope,
+  context: Context,
+) =>
+  [...context.inProgress].some((inner) => context.stateCalls.has(inner)) &&
+  isOperatorFunction(helper, context) &&
+  isOperatorCall(
+    node,
+    scope,
+    context,
+    (callback) =>
+      !isHeapFunction(callback, context) &&
+      getCandidateValue(callback, context) !== undefined &&
+      (context.functionCandidates.get(callback.getSourceFile())?.includes(callback) ?? false) &&
+      isOperatorFunction(callback, context),
+  );
 
 // A call through a value of whichever of a set of functions the value holds, each of which runs
 // as its operator. One operator for the set and the count of arguments branches between them, so
