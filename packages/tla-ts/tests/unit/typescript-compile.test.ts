@@ -50359,4 +50359,34 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("a:h,17"))).failure?.message).toContain("results a:h,16");
     });
   });
+
+  describe("runs a method that super reads in an object literal and that passes its this on as a value", () => {
+    const getSource = (expected: string) => `
+      let seen: unknown;
+      const parent = {
+        getThis: function () {
+          return this;
+        },
+      };
+      const child = {
+        method() {
+          seen = super.getThis();
+        },
+      };
+      Object.setPrototypeOf(child, parent);
+      child.method();
+      const result = [seen === child, seen === parent].join(",");
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("true,false"))).failure).toBeUndefined();
+    });
+
+    it("rejects another this", async () => {
+      expect((await checkModel(getSource("false,true"))).failure?.message).toContain(
+        "result true,false",
+      );
+    });
+  });
 });
