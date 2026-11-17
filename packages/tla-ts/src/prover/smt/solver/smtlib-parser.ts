@@ -2184,10 +2184,15 @@ export const createSmtlibReader = (
     const transcendentalOp = isTranscendental ? TRANSCENDENTAL_OPS.get(builtin) : undefined;
     if (isTranscendental && transcendentalOp === undefined)
       throw new SmtUnsupportedError(`the operator ${name}`);
-    const named =
+    const builtinOp =
       builtin === "~"
         ? OP_UMINUS
         : (CHAINABLE_OPS.get(builtin) ?? BUILTIN_OPS.get(builtin) ?? transcendentalOp);
+    // load_plugin registers the operators of arithmetic only for a logic that has it.
+    const named =
+      builtinOp !== undefined && manager.funcDecls[builtinOp].family === FAMILY_ARITH && !hasArith
+        ? undefined
+        : builtinOp;
     if (
       args.length === 0 &&
       named !== undefined &&

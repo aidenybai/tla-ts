@@ -70,6 +70,34 @@ describe("set-logic after the first declaration, as Z3 5.3.2 prints it", () => {
   });
 });
 
+describe("the operators of a theory the logic lacks, as Z3 5.3.2 reports them", () => {
+  it("reads numerals but not the operators of arithmetic, whose names a declaration may take", () => {
+    expect(
+      run([
+        "(set-logic QF_UF)",
+        "(simplify (- 2))",
+        "(simplify (+ 1 2))",
+        "(simplify (< 1 2))",
+        "(simplify (to_real 2))",
+        "(simplify 2.5)",
+        "(simplify (= 1 2))",
+        "(declare-sort U 0)",
+        "(declare-fun + (U U) U)",
+        "(declare-const u U)",
+        "(simplify (+ u u))",
+      ]),
+    ).toEqual([
+      '(error "line 2 column 14: unknown constant - (Int) ")',
+      '(error "line 3 column 16: unknown constant + (Int Int) ")',
+      '(error "line 4 column 16: unknown constant < (Int Int) ")',
+      '(error "line 5 column 20: unknown constant to_real (Int) ")',
+      "(/ 5.0 2.0)",
+      "false",
+      "(+ u u)",
+    ]);
+  });
+});
+
 describe("terms nested 20,000 deep, which Z3 5.3.2 reads on its own stack", () => {
   const DEPTH = 20000;
 
