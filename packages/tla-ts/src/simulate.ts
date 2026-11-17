@@ -649,6 +649,7 @@ export const simulate = (options: SimulationOptions): number => {
       let successors: TraceNode[] = [];
       for (let attempt = 0; attempt < nextActions.length; attempt++) {
         const result = getSuccessors(currentNode, nextActions[actionIndex]);
+        // Deviation from TLC: TLCSet("exit") interrupts TLC's SimulationWorker, whose BlockingQueue#put then drops a violation found in the same step.
         if (result.error) return result.error;
         successors = result.successors;
         if (successors.length > 0) break;

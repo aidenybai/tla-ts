@@ -36,6 +36,12 @@ it("sorts the records of the initial states, which TLC's simulator normalizes", 
   ]);
 });
 
+it('reports a violation in the step that sets TLCSet("exit"), which TLC\'s simulator drops', () => {
+  const body =
+    'Init == p = 0 /\\ q = 0\nNext == TLCSet("exit", TLCGet("level") > 3) /\\ p\' = p + 1 /\\ q\' = p + 1\nInv == q < 4';
+  expect(getPrintedRecords(body, SAFETY_CONFIG)).toEqual([["0", "1", "2", "3", "4"]]);
+});
+
 it("sorts the records that TLC compares with the previous state as it drops stuttering steps", () => {
   const body =
     "Init == p = 0 /\\ q = [b |-> 0, a |-> 0]\nNext == p' = p /\\ q' = [b |-> q.b + 1, a |-> 6]\nInv == q.b < 2";
