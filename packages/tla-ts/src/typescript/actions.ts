@@ -46,6 +46,7 @@ import {
   holdsArrayIteration,
   ARRAY_ITERATOR_REPLACED,
   getHeapRegExpCall,
+  getStatementRegExpBuiltIns,
   translateRegExpText,
   getStringCall,
   translateRegExpReplacer,
@@ -15058,7 +15059,14 @@ export const bindOnce = (path: Path, name: string, value: Expression, rest: Form
       )
     : bindValue(name, value, rest);
 
-// Throws the TypeError that JavaScript throws where a change to an object fails.
+// The keys that the global object inherits from Object.prototype.
+const INHERITED_GLOBAL_KEYS = new Set(
+  BUILT_INS["Object.prototype"][3].map((property) => property[0]),
+);
+
+// Throws the TypeError that JavaScript throws where a change to an object fails. A read or a write
+// of a name that no declaration binds reads the global object, which inherits Object.prototype's
+// keys, so tla-ts stops where one names such a key rather than throw a ReferenceError.
 export const throwError = (
   name: "TypeError" | "RangeError" | "ReferenceError" | "SyntaxError" | "URIError",
   path: Path,
@@ -15066,6 +15074,19 @@ export const throwError = (
   context: Context,
   frame: Pick<Frame, "throwTo">,
 ) => {
+  const target = ts.isBinaryExpression(node) ? skipCasts(node.left) : node;
+  if (
+    name === "ReferenceError" &&
+    isUnresolved(target, context) &&
+    INHERITED_GLOBAL_KEYS.has(target.text)
+  ) {
+    return leaf(
+      apply("Assert", [
+        boolean(false),
+        string(`tla-ts can't follow ${target.text}, which the global object inherits`),
+      ]),
+    );
+  }
   const uncaught = apply("Assert", [boolean(false), string(name)]);
   return frame.throwTo === undefined
     ? leaf(uncaught)
@@ -20940,6 +20961,14 @@ export const translateStatements = (
       frame,
     );
   }
+  if (path.scope.regExpsChecked !== undefined && path.scope.regExpsChecked !== statements[0]) {
+    return translateStatements(
+      statements,
+      { ...path, scope: { ...path.scope, regExpsChecked: undefined } },
+      context,
+      frame,
+    );
+  }
   if (path.scope.globalChecked !== undefined && path.scope.globalChecked !== statements[0]) {
     return translateStatements(
       statements,
@@ -21009,6 +21038,37 @@ export const translateStatements = (
         apply("Assert", [
           boolean(false),
           string("tla-ts can't read a built-in that the script changed on the global object"),
+        ]),
+      ),
+    );
+  }
+  // A regexp call that runs as an expression gives its value where it's read, which may be after
+  // what follows the statement runs, so the statement checks first that the script hasn't changed
+  // the built-ins that the call reads.
+  const regExpBuiltIns =
+    path.scope.regExpsChecked === statement
+      ? new Set<string>()
+      : getStatementRegExpBuiltIns(statement, context);
+  if (regExpBuiltIns.size > 0) {
+    return ifThenElse(
+      useJavaScript(
+        "RegExpsHold",
+        [
+          getHeap(path.scope, statement, context),
+          set([...regExpBuiltIns].map((name) => string(name))),
+        ],
+        context,
+      ),
+      translateStatements(
+        statements,
+        { ...path, scope: { ...path.scope, regExpsChecked: statement } },
+        context,
+        frame,
+      ),
+      leaf(
+        apply("Assert", [
+          boolean(false),
+          string("tla-ts can't call a regexp's method where a script changed what it reads"),
         ]),
       ),
     );

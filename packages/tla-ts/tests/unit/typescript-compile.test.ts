@@ -52124,4 +52124,321 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("runs JavaScript whose writes break the types that TypeScript infers", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      var box = { seen: "" };
+      var count = 1;
+      count = "one";
+      var first = 0;
+      [first] = ["two"];
+      var later = 0;
+      function setLater() {
+        later = null;
+      }
+      setLater();
+      var total = 1;
+      total += "0";
+      var twice = 2;
+      var twice = "2";
+      var holder = { a: 1 };
+      holder.a = "t";
+      var list = [1];
+      list[0] = "s";
+      list.push("w");
+      box.seen = [
+        typeof count,
+        typeof first,
+        later === null,
+        total,
+        typeof twice,
+        holder.a + 1,
+        list.join(""),
+      ].join();
+      if (box.seen !== "${expected}") throw new Error("seen " + box.seen);
+    `;
+
+    it("agrees with Node", async () => {
+      const source = getSource("string,string,true,10,string,t1,sw");
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects the types that TypeScript infers", async () => {
+      const source = getSource("number,number,false,1,number,2,1w");
+      expect((await check(compile(source, path))).failure?.message).toContain(
+        "seen string,string,true,10,string,t1,sw",
+      );
+    });
+  });
+
+  it("stops at a name that only a key that the global object inherits binds", async () => {
+    const source = `
+      var box = { seen: 0 };
+      try {
+        toString = Object.prototype.toString;
+      } catch (error) {
+        box.seen = 1;
+      }
+    `;
+    expect(
+      (await check(compile(source, join(import.meta.dirname, "model.js")))).failure?.message,
+    ).toContain("tla-ts can't follow toString, which the global object inherits");
+  });
+
+  describe("runs JavaScript whose calls' results, class keys, and computed properties break TypeScript's types", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      var box = { seen: "" };
+      var key = "k";
+      class Keyed {
+        [key] = 1;
+      }
+      var made = new Keyed();
+      var digits = String(Number("12"));
+      var found = [12].includes(String(digits));
+      var holder = { [Symbol.iterator]: 3 };
+      box.seen = [made.k, found, typeof holder[Symbol.iterator]].join();
+      if (box.seen !== "${expected}") throw new Error("seen " + box.seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await check(compile(getSource("1,false,number"), path))).failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      expect((await check(compile(getSource("1,true,number"), path))).failure?.message).toContain(
+        "seen 1,false,number",
+      );
+    });
+  });
+
+  describe("runs JavaScript's regular expressions that only TypeScript's grammar rejects", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      var box = { seen: "" };
+      box.seen = [/\\1/.test("\\x01"), /[\\1]/.test("\\x01"), /\\k<a>/.test("k<a>")].join();
+      if (box.seen !== "${expected}") throw new Error("seen " + box.seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await check(compile(getSource("true,true,true"), path))).failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      expect((await check(compile(getSource("true,false,true"), path))).failure?.message).toContain(
+        "seen true,true,true",
+      );
+    });
+
+    it("rejects a regular expression that Node rejects", () => {
+      expect(() => compile("var pattern = /(?<a>.)\\k<b>/u;", path)).toThrow("SyntaxError");
+    });
+  });
+
+  it("stops at JavaScript whose value TypeScript rejects even once it's cast", () => {
+    const source = `
+      var box = { seen: false };
+      box.seen = [].includes.call([1, 2], 2);
+    `;
+    expect(() => compile(source, join(import.meta.dirname, "model.js"))).toThrow(
+      "tla-ts can't run JavaScript whose types TypeScript rejects",
+    );
+  });
+
+  describe("rejects the early errors of JavaScript that TypeScript reads as names it can't find", () => {
+    const path = join(import.meta.dirname, "model.js");
+
+    it.each([
+      ["await in an arrow's parameters", "async () => { (a = await/r/g) => {}; };", "SyntaxError"],
+      ["await as a rest parameter", "async (a = (...await) => {}) => {};", "SyntaxError"],
+      ["an undeclared private name", "class C { x = this.#foo; }", "TS2339"],
+      ["arguments in a field", "var C = class { x = () => arguments; };", "SyntaxError"],
+      ["arguments in a static block", "class C { static { arguments; } }", "SyntaxError"],
+      ["super's private name", "class C { #x() {} m() { super.#x(); } }", "SyntaxError"],
+      ["a module's repeated function", "function x() {}\nfunction x() {}", "SyntaxError"],
+      ["an export of an undeclared name", "export { missing };", "TS2304"],
+      ["an import of eval", 'import eval from "./missing.js";', "SyntaxError"],
+      ["an import of arguments", 'import { x as arguments } from "./missing.js";', "SyntaxError"],
+      [
+        "an import's repeated attribute",
+        'import x from "./missing.json" with { type: "json", type: "json" };',
+        "SyntaxError",
+      ],
+    ])("rejects %s", (_, statement, message) => {
+      expect(() => compile(`export {};\n${statement}`, path)).toThrow(message);
+    });
+
+    it("runs a property named await", async () => {
+      const source = `
+        export {};
+        var box = { await: 1 };
+        box.await = box.await + 1;
+        if (box.await !== 2) throw new Error("seen " + box.await);
+      `;
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+      expect(
+        (await check(compile(source.replace("!== 2", "!== 3"), path))).failure?.message,
+      ).toContain("seen 2");
+    });
+  });
+
+  describe("runs JavaScript's computed keys of other types, setters that return values, and unused commas' operands", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      var box = { seen: "" };
+      class Keyed {
+        [null]() {
+          return 1;
+        }
+        set x(value) {
+          box.seen += value;
+          return 2;
+        }
+      }
+      var keyed = new Keyed();
+      var written = (keyed.x = 5);
+      box.seen += [keyed[null](), (0, written)].join();
+      if (box.seen !== "${expected}") throw new Error("seen " + box.seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await check(compile(getSource("51,5"), path))).failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      expect((await check(compile(getSource("51,2"), path))).failure?.message).toContain(
+        "seen 51,5",
+      );
+    });
+  });
+
+  describe("writes JSON with a replacer that is a primitive, as it does with none", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      var box = { seen: "" };
+      var value = { key: [1] };
+      var written = [JSON.stringify(value, 0), JSON.stringify(value, true)];
+      box.seen = [written[0] === written[1], written[0].length].join();
+      if (box.seen !== "${expected}") throw new Error("seen " + box.seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await check(compile(getSource("true,11"), path))).failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      expect((await check(compile(getSource("true,2"), path))).failure?.message).toContain(
+        "seen true,11",
+      );
+    });
+  });
+
+  it("stops at a string's regexp method where a script replaced the regexp's before a throw", async () => {
+    const source = `
+      var box = { seen: "" };
+      var called = 0;
+      RegExp.prototype[Symbol.search] = function () {
+        called += 1;
+        return 7;
+      };
+      try {
+        var result = "target".search("source");
+        if (called !== 1) throw new Error("called " + called);
+      } finally {
+        box.seen = "done";
+      }
+    `;
+    expect(
+      (await check(compile(source, join(import.meta.dirname, "model.js")))).failure?.message,
+    ).toContain("tla-ts can't call a regexp's method where a script changed what it reads");
+  });
+
+  it("stops at a typed array's subarray through a script's species before its buffer's detach throws", async () => {
+    const source = `
+      var box = { seen: "" };
+      var buffer = new ArrayBuffer(8);
+      var view = new Int8Array(buffer, 1, 1);
+      var result = new Int8Array(0);
+      view.constructor = {
+        [Symbol.species]: function () {
+          return result;
+        },
+      };
+      var end = {
+        valueOf() {
+          buffer.transfer();
+          return 0;
+        },
+      };
+      box.seen = String(view.subarray(1, end) === result);
+    `;
+    expect(
+      (await check(compile(source, join(import.meta.dirname, "model.js")))).failure?.message,
+    ).toContain("tla-ts can't make a typed array through a constructor that a script gives");
+  });
+
+  it("stops at a JavaScript function's pattern parameter that an argument doesn't fit", () => {
+    const source = `
+      var box = { seen: "" };
+      var iterable = {};
+      iterable[Symbol.iterator] = function () {
+        throw new Error("get");
+      };
+      var take = async function* ([first]) {};
+      try {
+        take(iterable);
+        box.seen = "none";
+      } catch (error) {
+        box.seen = "threw";
+      }
+    `;
+    expect(() => compile(source, join(import.meta.dirname, "model.js"))).toThrow(
+      "Give this pattern's value an array type",
+    );
+  });
+
+  it("stops at a JavaScript key of a value that is only null", async () => {
+    const source = `
+      var box = { seen: "" };
+      function attempt() {
+        var base = null;
+        var key = {
+          toString: function () {
+            throw new Error("key");
+          },
+        };
+        base[key];
+      }
+      try {
+        attempt();
+      } catch (error) {
+        box.seen = error instanceof TypeError ? "type" : "other";
+      }
+    `;
+    expect(
+      (await check(compile(source, join(import.meta.dirname, "model.js")))).failure?.message,
+    ).toContain("tla-ts can't throw the TypeError of reading a property of undefined or null");
+  });
+
+  it("stops at the pattern parameter of a JavaScript function whose calls TypeScript doesn't check", () => {
+    const source = `
+      var box = { seen: "" };
+      var take;
+      take = function ([first]) {
+        return first;
+      };
+      function run() {
+        return take({});
+      }
+      try {
+        run();
+      } catch (error) {
+        box.seen = "threw";
+      }
+    `;
+    expect(() => compile(source, join(import.meta.dirname, "model.js"))).toThrow(
+      "Give this pattern's value an array type",
+    );
+  });
 });

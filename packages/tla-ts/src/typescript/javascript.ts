@@ -5864,8 +5864,10 @@ IsRegExpPrototypeExec(heap, ref) ==
 
 \\* The record of a regexp literal's pattern, where a call can't observe the object that the literal
 \\* makes, while a script hasn't changed the built-in objects in changeable.
+RegExpsHold(heap, changeable) == DOMAIN heap.changed \\cap changeable = {}
+
 RegExpFresh(heap, regexp, changeable) ==
-  IF DOMAIN heap.changed \\cap changeable = {}
+  IF RegExpsHold(heap, changeable)
   THEN regexp
   ELSE Assert(FALSE, "tla-ts can't call a regexp's method where a script changed what it reads")
 
@@ -7019,7 +7021,11 @@ TypedArraySubarray(heap, ref, arguments, length, bufferPrototype, constructors) 
                                bufferPrototype,
                                IF isTracking THEN <<view.viewed, begin>>
                                ELSE <<view.viewed, begin, count>>, TRUE)
-  IN CASE buffer.isDetached -> Thrown(heap, "TypeError")
+      \\* The constructor makes the typed array, which throws for a buffer out of bounds, so a
+      \\* constructor that a script gives runs first.
+      species == TypedArraySpecies(heap, ref, constructors)
+  IN CASE species # species -> FALSE
+       [] buffer.isDetached -> Thrown(heap, "TypeError")
        [] begin + (IF isTracking THEN 0 ELSE count * ElementSize(view.elementType))
             > Len(buffer.bytes) -> Thrown(heap, "RangeError")
        [] OTHER -> Returned(viewing, Allocated(viewing))
@@ -8755,7 +8761,10 @@ SerializeJSON(heap, value, state, stack, indent) ==
 \\* where it writes all of them, as it can't call a replacer function.
 JSONList(heap, replacer, isSequence) ==
   LET isList == IsArray(heap, replacer)
-                  \\/ (isSequence /\\ ~IsRef(replacer) /\\ SubSeq(ToString(replacer), 1, 2) = "<<")
+                  \\/ /\\ isSequence
+                     /\\ ~IsRef(replacer)
+                     /\\ TypeOf(replacer) = "object"
+                     /\\ SubSeq(ToString(replacer), 1, 2) = "<<"
   IN CASE TypeOfIn(heap, replacer) = "function" -> Assert(FALSE, "tla-ts can't call a replacer")
        [] /\\ ~IsRef(replacer)
           /\\ TypeOf(replacer) = "object"

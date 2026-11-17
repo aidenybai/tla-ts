@@ -17,6 +17,7 @@ import {
   typeExportsAsAny,
 } from "./common-js";
 import { rejectEarlyErrors } from "./early-errors";
+import { typeJavaScript } from "./javascript-types";
 import { createProgramNodes, withNameSymbols } from "./program-nodes";
 import { rewriteNameDeletes } from "./name-deletes";
 import { rewriteWithStatements } from "./with-statements";
@@ -55,7 +56,8 @@ const COMPILER_OPTIONS: ts.CompilerOptions = {
   strict: true,
   noEmit: true,
   allowJs: true,
-  checkJs: false,
+  // TypeScript checks JavaScript's types only where tla-ts asks for a file's errors.
+  checkJs: true,
   target: ts.ScriptTarget.ESNext,
   module: ts.ModuleKind.ESNext,
   moduleResolution: ts.ModuleResolutionKind.Bundler,
@@ -318,7 +320,7 @@ const getProjectOptions = (options: ts.CompilerOptions): ts.CompilerOptions => (
   strictNullChecks: true,
   noImplicitAny: true,
   allowJs: true,
-  checkJs: false,
+  checkJs: true,
   moduleDetection: ts.ModuleDetectionKind.Force,
   noEmit: true,
   composite: false,
@@ -401,7 +403,9 @@ export const createProgram = (source: string, path: string, library: Library = D
     text: string,
     globals: ReadonlySet<string>,
     // The files whose imports load as Node loads them, every file's where undefined.
-    valueFiles?: ReadonlySet<string>,
+    valueFiles: ReadonlySet<string> | undefined,
+    // The texts of the JavaScript files whose types tla-ts made any where they may not hold.
+    typedTexts: ReadonlyMap<string, string>,
   ) => {
     const programHost: ts.CompilerHost & SourceRedirectingHost = {
       ...host,
@@ -413,6 +417,8 @@ export const createProgram = (source: string, path: string, library: Library = D
         if (fileName === JSON_DECLARATIONS.path) {
           return ts.createSourceFile(fileName, JSON_DECLARATIONS.text, languageVersion);
         }
+        const typedText = typedTexts.get(fileName);
+        if (typedText !== undefined) return createFile(fileName, typedText, languageVersion);
         if (fileName === path) {
           return createFile(
             path,
@@ -446,7 +452,7 @@ export const createProgram = (source: string, path: string, library: Library = D
     return file;
   };
   const firstText = declareFileVarFunctions(path, assignParameterProperties(path, source));
-  const firstProgram = createTypeScriptProgram([path], firstText, new Set());
+  const firstProgram = createTypeScriptProgram([path], firstText, new Set(), undefined, new Map());
   const firstSourceFile = getModelSourceFile(firstProgram);
   const syntaxErrors = firstProgram.getSyntacticDiagnostics(firstSourceFile);
   if (syntaxErrors.length > 0)
@@ -454,26 +460,58 @@ export const createProgram = (source: string, path: string, library: Library = D
   rejectEarlyErrors(firstSourceFile);
   const withText = rewriteWithStatements(firstSourceFile, firstProgram.getTypeChecker());
   const withProgram =
-    withText === firstText ? firstProgram : createTypeScriptProgram([path], withText, new Set());
+    withText === firstText
+      ? firstProgram
+      : createTypeScriptProgram([path], withText, new Set(), undefined, new Map());
   const text = rewriteNameDeletes(getModelSourceFile(withProgram), withProgram.getTypeChecker());
   const rewrittenProgram =
-    text === withText ? withProgram : createTypeScriptProgram([path], text, new Set());
+    text === withText
+      ? withProgram
+      : createTypeScriptProgram([path], text, new Set(), undefined, new Map());
   const rewrittenChecker = rewrittenProgram.getTypeChecker();
   const globals = getImplicitGlobals(getModelSourceFile(rewrittenProgram), (name) =>
     getSymbol(name, rewrittenChecker),
   );
-  const modelProgram =
-    globals.size === 0 ? rewrittenProgram : createTypeScriptProgram([path], text, globals);
+  // Outside strict mode, a word that only strict mode reserves, arguments, or eval names a binding,
+  // and a delete of a read-only property gives false. JavaScript runs an if whose branch is empty.
+  const isReported = (diagnostic: ts.Diagnostic) =>
+    diagnostic.code !== EMPTY_IF_BRANCH_ERROR &&
+    (!STRICT_MODE_ERRORS.has(diagnostic.code) ||
+      diagnostic.file === undefined ||
+      isStrictCode(getNodeAt(diagnostic.file, diagnostic.start ?? 0)) ||
+      isGeneratorYield(getNodeAt(diagnostic.file, diagnostic.start ?? 0)));
+  const untypedProgram =
+    globals.size === 0
+      ? rewrittenProgram
+      : createTypeScriptProgram([path], text, globals, undefined, new Map());
+  // The program's own JavaScript, rather than a package's, whose types tla-ts makes hold, round by
+  // round, until TypeScript reports no error that changes them.
+  const typeJavaScriptFiles = (
+    program: ts.Program,
+    typedTexts: ReadonlyMap<string, string>,
+  ): { program: ts.Program; typedTexts: ReadonlyMap<string, string> } => {
+    const texts = program
+      .getSourceFiles()
+      .filter(
+        (file) =>
+          isJavaScriptFile(file.fileName) && !file.fileName.split("/").includes("node_modules"),
+      )
+      .flatMap((file) => {
+        const typed = typeJavaScript(file, program, host, isReported);
+        return typed === undefined ? [] : [[file.fileName, typed] as const];
+      });
+    if (texts.length === 0) return { program, typedTexts };
+    const next = new Map([...typedTexts, ...texts]);
+    return typeJavaScriptFiles(
+      createTypeScriptProgram([path], text, globals, undefined, next),
+      next,
+    );
+  };
+  const typed = typeJavaScriptFiles(untypedProgram, new Map());
+  const modelProgram = typed.program;
   const getModelFiles = (program: ts.Program) =>
     modelProgram.getSourceFiles().flatMap((file) => program.getSourceFile(file.fileName) ?? []);
-  // Outside strict mode, a word that only strict mode reserves, arguments, or eval names a binding,
-  // and a delete of a read-only property gives false.
-  const isReported = (diagnostic: ts.Diagnostic) =>
-    !STRICT_MODE_ERRORS.has(diagnostic.code) ||
-    diagnostic.file === undefined ||
-    isStrictCode(getNodeAt(diagnostic.file, diagnostic.start ?? 0)) ||
-    isGeneratorYield(getNodeAt(diagnostic.file, diagnostic.start ?? 0));
-  // TypeScript checks no types of JavaScript, only its syntax.
+  // JavaScript's type errors are those that typeJavaScriptFiles took, so only its syntax's remain.
   const getDiagnostics = (program: ts.Program) =>
     ts
       .sortAndDeduplicateDiagnostics(
@@ -483,7 +521,7 @@ export const createProgram = (source: string, path: string, library: Library = D
             : ts.getPreEmitDiagnostics(program, file),
         ),
       )
-      .filter((diagnostic) => isReported(diagnostic) && diagnostic.code !== EMPTY_IF_BRANCH_ERROR);
+      .filter(isReported);
   // TypeScript reads the code of a package that gives its types in declarations as JavaScript,
   // whose values it doesn't type, so the TypeScript that imports it type checks against the
   // declarations, while tla-ts runs the package's JavaScript.
@@ -495,9 +533,9 @@ export const createProgram = (source: string, path: string, library: Library = D
       ? diagnostics
       : [
           ...diagnostics.filter((diagnostic) => !isTypeScript(diagnostic)),
-          ...getDiagnostics(createTypeScriptProgram(rootNames, text, globals, new Set())).filter(
-            isTypeScript,
-          ),
+          ...getDiagnostics(
+            createTypeScriptProgram(rootNames, text, globals, new Set(), typed.typedTexts),
+          ).filter(isTypeScript),
         ];
   };
   const modelDiagnostics = getTypedDiagnostics(modelProgram, [path]);
@@ -511,6 +549,7 @@ export const createProgram = (source: string, path: string, library: Library = D
           text,
           globals,
           new Set(modelProgram.getSourceFiles().map((file) => file.fileName)),
+          typed.typedTexts,
         );
   const diagnostics =
     program === modelProgram ? modelDiagnostics : getTypedDiagnostics(program, projectRoots);

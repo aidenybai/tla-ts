@@ -2423,24 +2423,46 @@ export const getHeapRegExpCall = (node: ts.Node, context: Context) => {
 // an expression only one that reads a literal and gives no object, so that no one can observe the
 // object that the literal makes. tla-ts then follows the built-in methods only while a script
 // hasn't changed those that the call reads.
-export const translateRegExpCall = (node: ts.CallExpression, scope: Scope, context: Context) => {
+// A regexp call that runs as an expression, of a literal or of a string's regexp, where a script
+// with objects may change the built-ins that it reads.
+const getExpressionRegExpCall = (node: ts.Node, context: Context) => {
   const call = getRegExpCall(node, context);
-  if (
-    call === undefined ||
+  return call === undefined ||
     (context.heap !== undefined &&
       ((!ts.isRegularExpressionLiteral(call.regexp) &&
         getStringRegExp(call.regexp) === undefined) ||
         call.method === "exec" ||
         call.method === "match"))
-  ) {
-    return undefined;
-  }
+    ? undefined
+    : call;
+};
+
+// The built-ins that a regexp call reads, which a script may change.
+const getChangeableBuiltIns = (call: RegExpCall) => [
+  "RegExp.prototype",
+  ...(call.method === "test" ? [] : ["String.prototype"]),
+  ...(call.method === "split" ? ["RegExp"] : []),
+];
+
+// The built-ins that a script with objects may change, which the regexp calls that a statement
+// runs as expressions read, outside the functions and the statements that it holds.
+export const getStatementRegExpBuiltIns = (statement: ts.Statement, context: Context) => {
+  const builtIns = new Set<string>();
+  const visit = (node: ts.Node) => {
+    if (node !== statement && (ts.isStatement(node) || ts.isFunctionLike(node))) return;
+    const call = context.heap === undefined ? undefined : getExpressionRegExpCall(node, context);
+    if (call !== undefined) getChangeableBuiltIns(call).forEach((name) => builtIns.add(name));
+    ts.forEachChild(node, visit);
+  };
+  visit(statement);
+  return builtIns;
+};
+
+export const translateRegExpCall = (node: ts.CallExpression, scope: Scope, context: Context) => {
+  const call = getExpressionRegExpCall(node, context);
+  if (call === undefined) return undefined;
   const translate = (value: ts.Expression) => translateExpression(value, scope, context);
-  const changeable = [
-    "RegExp.prototype",
-    ...(call.method === "test" ? [] : ["String.prototype"]),
-    ...(call.method === "split" ? ["RegExp"] : []),
-  ];
+  const changeable = getChangeableBuiltIns(call);
   const regexp =
     context.heap === undefined
       ? getStringRegExp(call.regexp) === undefined
