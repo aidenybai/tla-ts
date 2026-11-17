@@ -821,6 +821,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   [
     "elim-uncnstr",
     {
+      isTrackingDependencies: true,
       descrs: getDescrs("", [
         ["max_memory", PARAM_UINT, UINT_MAX, true],
         ["max_steps", PARAM_UINT, UINT_MAX],

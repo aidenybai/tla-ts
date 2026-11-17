@@ -225,6 +225,24 @@ describe("tactics keep the dependencies Z3 keeps", () => {
       ]),
     ).toEqual(["unsat", "(a1 a2)"]);
   });
+
+  it("elim-uncnstr keeps the dependency of each formula it rewrites", () => {
+    expect(
+      run([
+        "(set-option :produce-unsat-cores true)",
+        "(set-logic QF_LRA)",
+        "(declare-const y Real)",
+        "(declare-const z Real)",
+        "(assert (<= y (/ 3.25 0.0)))",
+        "(assert (! (<= y 1.0) :named n1))",
+        "(assert (! (<= (+ z 1.0) 3.0) :named n3))",
+        "(check-sat-using (then elim-uncnstr smt))",
+        "(assert (! (> y 2.0) :named n2))",
+        "(check-sat-using (then elim-uncnstr smt))",
+        "(get-unsat-core)",
+      ]),
+    ).toEqual(["sat", "unsat", "(n1 n2)"]);
+  });
 });
 
 describe("tactics where Z3 5.3.2 fails", () => {
