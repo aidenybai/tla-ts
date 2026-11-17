@@ -387,3 +387,120 @@ export const getLocalesOutcome = (
   const outcome = getFirst([...tags.map(getTagOutcome), LOCALE_MATCHER(options)]);
   return outcome === "" && tags.length > 0 ? undefined : outcome;
 };
+
+// The locale that ResolveLocale gives for literal locales that name no locale or English, as Node
+// does under the default locale en-US, or undefined for any other, whose resolution reads locale
+// data.
+const getResolvedLocale = (name: string, locales: LiteralValue | readonly LiteralValue[]) => {
+  const tags = getTags(name, locales);
+  if (tags === undefined || tags.length > 1) return undefined;
+  const tag = tags.length === 0 ? "en-us" : tags[0];
+  return tag === undefined || typeof tag !== "string"
+    ? undefined
+    : tag.toLowerCase() === "en"
+      ? "en"
+      : tag.toLowerCase() === "en-us"
+        ? "en-US"
+        : undefined;
+};
+
+type Resolved = readonly (readonly [string, string | boolean | number])[];
+
+// The resolved options of a constructor, in the order resolvedOptions writes them, with the
+// defaults that English gives, from the options that it reads without locale data.
+const RESOLVED: Record<
+  string,
+  { read: readonly string[]; resolve: (options: Options) => Resolved }
+> = {
+  ListFormat: {
+    read: ["type", "style"],
+    resolve: (options) => [
+      ["type", String(options.get("type") ?? "conjunction")],
+      ["style", String(options.get("style") ?? "long")],
+    ],
+  },
+  RelativeTimeFormat: {
+    read: ["style", "numeric"],
+    resolve: (options) => [
+      ["style", String(options.get("style") ?? "long")],
+      ["numeric", String(options.get("numeric") ?? "always")],
+      ["numberingSystem", "latn"],
+    ],
+  },
+  Segmenter: {
+    read: ["granularity"],
+    resolve: (options) => [["granularity", String(options.get("granularity") ?? "grapheme")]],
+  },
+  Collator: {
+    read: ["usage", "sensitivity", "ignorePunctuation", "numeric", "caseFirst"],
+    resolve: (options) => [
+      ["usage", String(options.get("usage") ?? "sort")],
+      ["sensitivity", String(options.get("sensitivity") ?? "variant")],
+      ["ignorePunctuation", Boolean(options.get("ignorePunctuation") ?? false)],
+      ["collation", "default"],
+      ["numeric", Boolean(options.get("numeric") ?? false)],
+      ["caseFirst", String(options.get("caseFirst") ?? "false")],
+    ],
+  },
+  DisplayNames: {
+    read: ["style", "type", "fallback", "languageDisplay"],
+    resolve: (options) => [
+      ["style", String(options.get("style") ?? "long")],
+      ["type", String(options.get("type"))],
+      ["fallback", String(options.get("fallback") ?? "code")],
+      ...(String(options.get("type")) === "language"
+        ? [["languageDisplay", String(options.get("languageDisplay") ?? "dialect")] as const]
+        : []),
+    ],
+  },
+  NumberFormat: {
+    read: ["style", "signDisplay", "roundingMode", "trailingZeroDisplay"],
+    resolve: (options) => [
+      ["numberingSystem", "latn"],
+      ["style", String(options.get("style") ?? "decimal")],
+      ["minimumIntegerDigits", 1],
+      ["minimumFractionDigits", 0],
+      ["maximumFractionDigits", String(options.get("style")) === "percent" ? 0 : 3],
+      ["useGrouping", "auto"],
+      ["notation", "standard"],
+      ["signDisplay", String(options.get("signDisplay") ?? "auto")],
+      ["roundingIncrement", 1],
+      ["roundingMode", String(options.get("roundingMode") ?? "halfExpand")],
+      ["roundingPriority", "auto"],
+      ["trailingZeroDisplay", String(options.get("trailingZeroDisplay") ?? "auto")],
+    ],
+  },
+  DateTimeFormat: {
+    read: [],
+    resolve: () => [
+      ["calendar", "gregory"],
+      ["numberingSystem", "latn"],
+      ["timeZone", "UTC"],
+      ["year", "numeric"],
+      ["month", "numeric"],
+      ["day", "numeric"],
+    ],
+  },
+};
+
+// What resolvedOptions gives for an object of literal locales and options that new of an Intl
+// constructor accepts, or undefined where that reads locale data that tla-ts doesn't hold, as a
+// NumberFormat's of a currency or a unit does. The time zone of a DateTimeFormat is the one that
+// tla-ts takes local time in.
+export const getResolvedOptions = (
+  name: string,
+  locales: LiteralValue | readonly LiteralValue[],
+  options: Options,
+): Resolved | undefined => {
+  const locale = getResolvedLocale(name, locales);
+  const resolved = RESOLVED[name];
+  const style = options.get("style");
+  return locale === undefined ||
+    resolved === undefined ||
+    [...options.keys()].some((key) => key !== "localeMatcher" && !resolved.read.includes(key)) ||
+    (name === "NumberFormat" &&
+      style !== undefined &&
+      !["decimal", "percent"].includes(String(style)))
+    ? undefined
+    : [["locale", locale], ...resolved.resolve(options)];
+};

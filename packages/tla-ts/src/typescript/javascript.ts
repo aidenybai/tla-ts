@@ -2378,6 +2378,15 @@ LOCAL IntlGet(heap, path, receiver) ==
          Assert(FALSE, "tla-ts can't read locale data")
     [] OTHER -> Assert(FALSE, "tla-ts can't throw the TypeError of a getter on another kind of object")
 
+\\* Whether an Intl object's resolvedOptions gives the options that tla-ts holds, which it does where
+\\* the receiver is of its kind; it throws a TypeError on another value.
+IntlResolves(heap, kind, receiver) ==
+  CASE IntlReceives(heap, kind, receiver) /\\ heap.objects[receiver[Ref]].resolved # Undefined -> TRUE
+    [] IntlReceives(heap, kind, receiver) -> Assert(FALSE, "tla-ts can't read locale data")
+    [] kind \\in {"NumberFormat", "DateTimeFormat"} /\\ IntlMayWalk(heap, kind, receiver) ->
+         Assert(FALSE, "tla-ts can't run a proxy's internal method here")
+    [] OTHER -> FALSE
+
 \\* Whether a method of an Intl prototype throws the TypeError of a receiver that isn't the kind of
 \\* object it reads, which it does before it reads its arguments. NumberFormat's and DateTimeFormat's
 \\* resolvedOptions unwrap their receiver first.
@@ -5731,9 +5740,13 @@ ErrorToString(heap, ref) ==
        [] OTHER -> nameText \\o ": " \\o messageText
 
 \\* An object that an Intl constructor makes, of a kind, which holds the function that its compare
-\\* or format getter gives, bound to it, or Undefined.
-IntlObject(prototype, kind, bound) ==
-  [EmptyObject EXCEPT !.prototype = prototype] @@ [intl |-> kind, bound |-> bound]
+\\* or format getter gives, bound to it, or Undefined, and the pairs of the options that its
+\\* resolvedOptions gives, or Undefined where they read locale data.
+IntlObject(prototype, kind, bound, resolved) ==
+  [EmptyObject EXCEPT !.prototype = prototype] @@ [intl |-> kind, bound |-> bound, resolved |-> resolved]
+
+\\* The object that resolvedOptions makes of the options that an Intl object holds.
+IntlResolvedObject(heap, receiver) == PairsObject(heap.objects[receiver[Ref]].resolved)
 
 DateObject(prototype, time) == [EmptyObject EXCEPT !.prototype = prototype] @@ [time |-> time]
 

@@ -109,7 +109,7 @@ import { isDescriptorsRead, isProxyOperation } from "./protocols";
 import { getReached } from "./aliasing";
 import { isObjectOperand } from "./conversions";
 import { createStateScope, type Scope } from "./scope";
-import { getIntlOutcome, getLocalesOutcome } from "./locales";
+import { getIntlOutcome, getLocalesOutcome, getResolvedOptions } from "./locales";
 import { BUILT_INS } from "./built-ins";
 import {
   apply,
@@ -2065,9 +2065,9 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
   const intl = getNewIntl(node, context);
   if (intl !== undefined) {
     // The function that the object's compare or format getter gives, which the object holds.
-    const boundLength = BOUND_LENGTHS.get(intl);
+    const boundLength = BOUND_LENGTHS.get(intl.name);
     // The constructor, which the prototype's constructor property holds.
-    context.builtIns.add(`Intl.${intl}`);
+    context.builtIns.add(`Intl.${intl.name}`);
     return ifExpression(
       translateIntlKept(node, heap, scope, context),
       useJavaScript(
@@ -2094,11 +2094,25 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
           useJavaScript(
             "IntlObject",
             [
-              translateBuiltInValue(`Intl.${intl}.prototype`, node, context),
-              string(intl),
+              translateBuiltInValue(`Intl.${intl.name}.prototype`, node, context),
+              string(intl.name),
               boundLength === undefined
                 ? getUndefined(context)
                 : useJavaScript("NextRef", [heap, number(1)], context),
+              intl.resolved === undefined
+                ? getUndefined(context)
+                : tuple(
+                    intl.resolved.map(([key, value]) =>
+                      tuple([
+                        string(key),
+                        typeof value === "boolean"
+                          ? boolean(value)
+                          : typeof value === "number"
+                            ? number(value)
+                            : string(value),
+                      ]),
+                    ),
+                  ),
             ],
             context,
           ),
@@ -2107,7 +2121,7 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
       ),
       apply("Assert", [
         boolean(false),
-        string(`tla-ts can't construct Intl.${intl} where a script changed what it reads`),
+        string(`tla-ts can't construct Intl.${intl.name} where a script changed what it reads`),
       ]),
     );
   }
@@ -2714,6 +2728,7 @@ const getIntlConstruction = (node: ts.Node, context: Context) => {
     : {
         name,
         outcome,
+        resolved: localesPath === undefined ? getResolvedOptions(name, tags, read) : undefined,
         options: isOptionsLiteral ? options : undefined,
         locales: localesPath === undefined ? undefined : { path: localesPath, method, isCall },
       };
@@ -2724,7 +2739,7 @@ const getIntlConstruction = (node: ts.Node, context: Context) => {
 export const getNewIntl = (node: ts.Node, context: Context) => {
   const construction = getIntlConstruction(node, context);
   return construction?.outcome === "" && construction.locales === undefined
-    ? construction.name
+    ? { name: construction.name, resolved: construction.resolved }
     : undefined;
 };
 
@@ -3421,6 +3436,27 @@ export const getThisSymbolCall = (node: ts.Node, context: Context) => {
     !isEvery(context.checker.getTypeAtLocation(argument), ts.TypeFlags.ESSymbolLike) &&
     getPrototypeMethod(node.expression.expression, "Symbol", context) === "valueOf"
     ? argument
+    : undefined;
+};
+
+// A call of resolvedOptions on a value that TypeScript types as one of Intl's objects, with the kind
+// of object that it reads.
+export const getResolvedOptionsCall = (node: ts.Node, context: Context) => {
+  if (context.heap === undefined || !isMethodCall(node)) return undefined;
+  const receiver = node.expression.expression;
+  const symbol = context.checker.getTypeAtLocation(receiver).getSymbol();
+  const declarations = symbol?.declarations ?? [];
+  return node.expression.name.text === "resolvedOptions" &&
+    node.arguments.length === 0 &&
+    symbol !== undefined &&
+    declarations.length > 0 &&
+    declarations.every(
+      (declaration) =>
+        declaration.getSourceFile().isDeclarationFile &&
+        ts.findAncestor(declaration, ts.isModuleDeclaration)?.name.getText() === "Intl",
+    ) &&
+    BUILT_INS[`Intl.${symbol.name}.prototype.resolvedOptions`] !== undefined
+    ? { kind: symbol.name, receiver }
     : undefined;
 };
 

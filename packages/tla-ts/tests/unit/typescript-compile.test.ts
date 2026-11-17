@@ -49229,4 +49229,36 @@ describe("BigInts", () => {
       ).toContain(`seen ${expected}`);
     });
   });
+
+  describe("gives the resolved options of Intl's objects of English or the default locale", () => {
+    const getSource = (expected: string) => `
+      const format = new Intl.ListFormat("en-us", { style: "short", type: "unit" });
+      const options = format.resolvedOptions();
+      const again = format.resolvedOptions();
+      const collator = new Intl.Collator("EN", { numeric: true, caseFirst: "upper" });
+      const segmented = new Intl.Segmenter().resolvedOptions().locale;
+      const caseFirst = collator.resolvedOptions().caseFirst;
+      const seen = [
+        Object.keys(options).join(" "),
+        options.style,
+        options === again,
+        Object.getPrototypeOf(options) === Object.prototype,
+        segmented,
+        caseFirst,
+      ].join();
+      if (seen !== \`${expected}\`) throw new Error("seen " + seen);
+    `;
+    const expected = "locale type style,short,false,true,en-US,upper";
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects options that a later call shares", async () => {
+      expect(
+        (await checkModel(getSource(expected.replace("false,true,en-US", "true,true,en-US"))))
+          .failure?.message,
+      ).toContain(`seen ${expected}`);
+    });
+  });
 });

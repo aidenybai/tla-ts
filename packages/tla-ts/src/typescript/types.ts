@@ -195,6 +195,16 @@ const LIBRARY_OBJECTS = new Set([
   "String",
   "Symbol",
   "BigInt",
+  // The objects that the resolvedOptions of Intl's objects give.
+  "ResolvedCollatorOptions",
+  "ResolvedDateTimeFormatOptions",
+  "ResolvedDisplayNamesOptions",
+  "ResolvedDurationFormatOptions",
+  "ResolvedListFormatOptions",
+  "ResolvedNumberFormatOptions",
+  "ResolvedPluralRulesOptions",
+  "ResolvedRelativeTimeFormatOptions",
+  "ResolvedSegmenterOptions",
 ]);
 
 export const isLibraryIterable = (type: ts.Type) =>

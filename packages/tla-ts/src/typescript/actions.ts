@@ -268,6 +268,8 @@ import {
   getViewCall,
   getGetterCall,
   getIntlMethodCall,
+  getResolvedOptionsCall,
+  getNewIntl,
   getThisSymbolCall,
   translateNewBufferOf,
   isRevoke,
@@ -4110,6 +4112,55 @@ const translateCallStatementBody = (
       useJavaScript("ThisSymbolThrows", [heap, value], context),
       throwTypeError(path, expression, context, frame),
       continueWith(path, translateExpression(expression, path.scope, context)),
+    );
+  }
+  const resolvedCall = getResolvedOptionsCall(expression, context);
+  const resolvedAllocations =
+    resolvedCall === undefined
+      ? []
+      : getAllocated(expression, context).filter(
+          (inner) => inner !== expression && !path.scope.allocated.has(inner),
+        );
+  if (resolvedCall !== undefined && resolvedAllocations.length > 0) {
+    return allocateAll(resolvedAllocations, path, context, (allocated) =>
+      translateCallStatement(expression, allocated, context, frame, continueWith),
+    );
+  }
+  if (resolvedCall !== undefined) {
+    const heap = getHeap(path.scope, expression, context);
+    const receiverName = context.names.getFresh("receiver");
+    const receiver = identifier(receiverName);
+    const methodPath = `Intl.${resolvedCall.kind}.prototype.resolvedOptions` as const;
+    const allocated = useJavaScript(
+      "Allocate",
+      [heap, useJavaScript("IntlResolvedObject", [heap, receiver], context)],
+      context,
+    );
+    return bindOnce(
+      path,
+      receiverName,
+      translateExpression(resolvedCall.receiver, path.scope, context),
+      ifThenElse(
+        useJavaScript(
+          "SameValue",
+          [
+            useJavaScript("Get", [heap, receiver, string("resolvedOptions")], context),
+            translateBuiltInValue(methodPath, expression, context),
+          ],
+          context,
+        ),
+        ifThenElse(
+          useJavaScript("IntlResolves", [heap, string(resolvedCall.kind), receiver], context),
+          continueWith(withHeap(allocated, path), useJavaScript("Allocated", [allocated], context)),
+          throwTypeError(path, expression, context, frame),
+        ),
+        leaf(
+          apply("Assert", [
+            boolean(false),
+            string(`tla-ts can't call ${methodPath} where a script replaced it`),
+          ]),
+        ),
+      ),
     );
   }
   const intlMethodCall = getIntlMethodCall(expression, context);
@@ -13776,6 +13827,7 @@ const isStatementResult = (node: ts.CallExpression, path: Path, context: Context
     getTemporalCall(node, context) !== undefined ||
     getGetterCall(node, context) !== undefined ||
     getIntlMethodCall(node, context) !== undefined ||
+    getResolvedOptionsCall(node, context) !== undefined ||
     getThisSymbolCall(node, context) !== undefined ||
     getCalledThrough(node, context) !== undefined ||
     getAppliedCall(node, path, context) !== undefined ||
@@ -19078,7 +19130,8 @@ const findLeadingCall = (
         : undefined;
     // An array literal's method runs its elements first.
     const isListed = receiver !== undefined && ts.isArrayLiteralExpression(receiver);
-    // A collection that new makes without arguments runs no code.
+    // A collection that new makes without arguments runs no code, nor does an Intl object of
+    // literal locales and options.
     const isMadeCollection =
       receiver !== undefined &&
       ts.isNewExpression(receiver) &&
@@ -19086,7 +19139,8 @@ const findLeadingCall = (
         COLLECTIONS.some(
           (collection) => collection === getBuiltIn(receiver.expression, context),
         )) ||
-        getTemporalCall(receiver, context) !== undefined);
+        getTemporalCall(receiver, context) !== undefined ||
+        getNewIntl(receiver, context) !== undefined);
     const fromReceiver =
       receiver !== undefined &&
       (ts.isCallExpression(receiver) ||
