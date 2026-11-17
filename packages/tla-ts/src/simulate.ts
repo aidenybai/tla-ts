@@ -37,6 +37,7 @@ import {
   formatState,
   getSetBound,
   isSameValue,
+  markNormalized,
   type Value,
 } from "./values";
 
@@ -487,6 +488,8 @@ export const simulate = (options: SimulationOptions): number => {
     undefined,
     false,
   );
+  // TLC's Simulator deep-normalizes the initial states, which sorts their records.
+  initialStates.forEach((node) => node.state.forEach(markNormalized));
 
   const toWorkerError = (code: number, text: string, node: TraceNode): WorkerError => ({
     code,
