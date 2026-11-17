@@ -266,8 +266,19 @@ export const getPrintedPairs = (functionValue: FunctionValue): [Value, Value][] 
     ? functionValue.domain.map((key, index) => [key, functionValue.range[index]])
     : getWrittenPairs(functionValue);
 
-export const createWrittenRecord = (names: Value[], range: Value[], writtenNames: Value[]) =>
-  setWrittenOrder(createSortedRecord(names, range), writtenNames);
+export const createWrittenRecord = (
+  names: Value[],
+  writtenIndexes: number[],
+  writtenRange: Value[],
+  writtenNames: Value[],
+) =>
+  setWrittenOrder(
+    createSortedRecord(
+      names,
+      writtenIndexes.map((index) => writtenRange[index]),
+    ),
+    writtenNames,
+  );
 
 const forgetWrittenOrder = (value: Value): void => {
   if (typeof value !== "object" || (value.kind !== "Function" && value.kind !== "Set")) return;

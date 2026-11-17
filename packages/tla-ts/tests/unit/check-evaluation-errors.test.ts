@@ -110,6 +110,24 @@ describe("evaluation errors match TLC", () => {
     expect(result.violation?.message).toBe(message);
   });
 
+  it.each(["[a |-> Len(3), s |-> CASE 1 -> 2]", "[a : Len(3), s : CASE 1 -> 2]"])(
+    "evaluates the fields of %s in the order they're written, like TLC",
+    async (expression) => {
+      const result = await checkModule(`F(s) == s\nASSUME ${expression} = {}`);
+      expect(result.violation?.message).toBe(
+        "The argument of Len should be a sequence, but instead it is:\n3",
+      );
+    },
+  );
+
+  it("evaluates a record's fields in an invariant in the order they're written, like TLC", async () => {
+    const result = await checkSteps(
+      "F(s) == s\nInv == [a |-> 1 \\div x, s |-> CASE x -> 2] = 1",
+      "INIT Init\nNEXT Next\nINVARIANT Inv",
+    );
+    expect(result.failure?.message).toBe("The second argument of \\div is 0.");
+  });
+
   it("compares a value with the elements of a constant definition's set like TLC", async () => {
     const result = await checkModule(
       "S == {<<y>> : y \\in {1, 2, 3, 4}}\nASSUME [<<y>> \\in S |-> y + 1][2] = 3",

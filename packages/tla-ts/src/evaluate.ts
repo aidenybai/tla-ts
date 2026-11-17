@@ -2040,20 +2040,21 @@ export const hasDuplicateFields = (sortedFields: RecordField[]) =>
 
 const compileRecord = (recordFields: RecordField[], environment: Environment): Evaluator => {
   const fields = getSortedFields(recordFields);
-  const hasDuplicates = hasDuplicateFields(fields);
-  const values = fields.map((field) => getEvaluator(field.value, environment));
-  if (hasDuplicates) {
+  const values = recordFields.map((field) => getEvaluator(field.value, environment));
+  if (hasDuplicateFields(fields)) {
     return (context) =>
       createRecord(
-        fields.map((field, index): [string, Value] => [field.name, values[index](context)]),
+        recordFields.map((field, index): [string, Value] => [field.name, values[index](context)]),
       );
   }
   const names = fields.map((field) => field.name);
   const writtenNames = recordFields.map((field) => field.name);
   if (writtenNames.some((name, index) => name !== names[index])) {
+    const writtenIndexes = fields.map((field) => recordFields.indexOf(field));
     return (context) =>
       createWrittenRecord(
         names,
+        writtenIndexes,
         values.map((value) => value(context)),
         writtenNames,
       );
@@ -2207,8 +2208,19 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
     case "RecordSet": {
       const fields = getSortedFields(expression.fields);
       const names = fields.map((field) => field.name);
-      const sets = fields.map((field) => getChildEvaluator(field.value));
-      return (context) => ({ kind: "RecordSet", names, sets: sets.map((set) => set(context)) });
+      const writtenIndexes = fields.map((field) => expression.fields.indexOf(field));
+      const sets = expression.fields.map((field) => getChildEvaluator(field.value));
+      if (writtenIndexes.every((writtenIndex, index) => writtenIndex === index)) {
+        return (context) => ({ kind: "RecordSet", names, sets: sets.map((set) => set(context)) });
+      }
+      return (context) => {
+        const writtenSets = sets.map((set) => set(context));
+        return {
+          kind: "RecordSet",
+          names,
+          sets: writtenIndexes.map((index) => writtenSets[index]),
+        };
+      };
     }
     case "Except":
       return compileExcept(expression, environment);
