@@ -144,6 +144,7 @@ import {
   getOwnFunctionKeys,
   translatePropertyKey,
   getAnyProperty,
+  translateBoundBuiltInCall,
 } from "./heap";
 import {
   getBuiltIn,
@@ -951,6 +952,8 @@ const translateBuiltInCall = (
   isDefined: boolean,
 ) => {
   rejectDeclaredCall(node, context);
+  const boundCall = translateBoundBuiltInCall(node, scope, context);
+  if (boundCall !== undefined) return boundCall;
   const keyFor = node.expression;
   if (
     ts.isPropertyAccessExpression(keyFor) &&

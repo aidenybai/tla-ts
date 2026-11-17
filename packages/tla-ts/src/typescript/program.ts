@@ -306,9 +306,10 @@ export const createProgram = (
   // A module that TypeScript finds no code of, as a package or JavaScript, and any module that
   // JavaScript names, loads as Node loads it, though a package may give its types, and TypeScript
   // reads it as code. A type's import, and any import of a declaration file, loads nothing when the
-  // code runs. A program that type checks reads a package's types from its declarations instead.
+  // code runs. A program that type checks reads a package's types from its declarations instead,
+  // as do the files that the model doesn't load, which only give the project's globals.
   const getModuleResolver =
-    (isTyped: boolean) =>
+    (valueFiles: ReadonlySet<string> | undefined) =>
     (
       literals: readonly ts.StringLiteralLike[],
       containingFile: string,
@@ -317,20 +318,23 @@ export const createProgram = (
       containingSourceFile: ts.SourceFile,
     ) =>
       literals.map((literal): ts.ResolvedModuleWithFailedLookupLocations => {
-        const resolved = isJavaScriptFile(containingFile)
-          ? undefined
-          : ts.resolveModuleName(
-              literal.text,
-              containingFile,
-              resolutionOptions,
-              host,
-              undefined,
-              redirectedReference,
-            );
+        const isValue = valueFiles === undefined || valueFiles.has(containingFile);
+        const resolved =
+          isJavaScriptFile(containingFile) && isValue
+            ? undefined
+            : ts.resolveModuleName(
+                literal.text,
+                containingFile,
+                resolutionOptions,
+                host,
+                undefined,
+                redirectedReference,
+              );
         // tla-ts reads JSON's value as any, which the declaration of JSON's modules gives.
         if (resolved?.resolvedModule?.extension === ts.Extension.Json) {
           return { resolvedModule: undefined };
         }
+        if (resolved !== undefined && !isValue) return resolved;
         if (
           resolved !== undefined &&
           (CODE_EXTENSIONS.has(resolved.resolvedModule?.extension ?? "") ||
@@ -344,10 +348,7 @@ export const createProgram = (
         if (found === undefined || extension === undefined || extension === ts.Extension.Json) {
           return resolved ?? { resolvedModule: undefined };
         }
-        if (resolved?.resolvedModule !== undefined) {
-          isDeclared = true;
-          if (isTyped) return resolved;
-        }
+        if (resolved?.resolvedModule !== undefined) isDeclared = true;
         return {
           resolvedModule: { resolvedFileName: found, extension, isExternalLibraryImport: false },
         };
@@ -359,7 +360,8 @@ export const createProgram = (
     rootNames: string[],
     text: string,
     globals: ReadonlySet<string>,
-    isTyped = false,
+    // The files whose imports load as Node loads them, every file's where undefined.
+    valueFiles?: ReadonlySet<string>,
   ) => {
     const programHost: ts.CompilerHost & SourceRedirectingHost = {
       ...host,
@@ -395,7 +397,8 @@ export const createProgram = (
       },
       fileExists: (fileName) => fileName === path || host.fileExists(fileName),
       readFile: (fileName) => (fileName === path ? source : host.readFile(fileName)),
-      resolveModuleNameLiterals: libraries === undefined ? getModuleResolver(isTyped) : undefined,
+      resolveModuleNameLiterals:
+        libraries === undefined ? getModuleResolver(valueFiles) : undefined,
     };
     return ts.createProgram({
       rootNames: [...rootNames, JSON_DECLARATIONS.path],
@@ -459,7 +462,7 @@ export const createProgram = (
       ? diagnostics
       : [
           ...diagnostics.filter((diagnostic) => !isTypeScript(diagnostic)),
-          ...getDiagnostics(createTypeScriptProgram(rootNames, text, globals, true)).filter(
+          ...getDiagnostics(createTypeScriptProgram(rootNames, text, globals, new Set())).filter(
             isTypeScript,
           ),
         ];
@@ -470,7 +473,12 @@ export const createProgram = (
   const program =
     project === undefined || modelDiagnostics.length === 0
       ? modelProgram
-      : createTypeScriptProgram(projectRoots, text, globals);
+      : createTypeScriptProgram(
+          projectRoots,
+          text,
+          globals,
+          new Set(modelProgram.getSourceFiles().map((file) => file.fileName)),
+        );
   const diagnostics =
     program === modelProgram ? modelDiagnostics : getTypedDiagnostics(program, projectRoots);
   if (diagnostics.length > 0) throw new TlaTypeScriptError(ts.formatDiagnostics(diagnostics, host));

@@ -837,10 +837,14 @@ export const bindValues = (
           ? values.at(position)
           : (restValue ?? tuple(values.slice(position)));
       const initializer = deferred.has(parameter) ? undefined : parameter.initializer;
+      // A name that the call leaves out, with no default, holds undefined itself, which tells that
+      // it holds no function.
       const getDefault = () =>
-        initializer === undefined
-          ? getUndefined(context)
-          : translateExpression(initializer, current.scope, context);
+        initializer !== undefined
+          ? translateExpression(initializer, current.scope, context)
+          : ts.isIdentifier(parameter.name)
+            ? getTakenValue(getUndefined(context))
+            : getUndefined(context);
       // A rest parameter's array is a new one, which the heap holds where it holds every array.
       const heapSymbol = context.heap;
       const heap = heapSymbol === undefined ? undefined : current.scope.bindings.get(heapSymbol);

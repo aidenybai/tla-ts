@@ -49691,6 +49691,149 @@ describe("BigInts", () => {
     });
   });
 
+  describe("runs no function where a call leaves out a parameter that may hold one", () => {
+    const getSource = (expected: string) => `
+      const box = { seen: [] as string[] };
+      const target: Record<string, unknown> = {};
+      const own = target.hasOwnProperty.bind(target);
+      const report = () => {
+        box.seen.push(String(own("x")));
+      };
+      const patch = (onActive?: () => void, onReady?: () => void) => {
+        box.seen.push("patch");
+        if (onActive) box.seen.push("active");
+        onReady?.();
+      };
+      const get = (onActive?: () => void) => {
+        patch(onActive);
+      };
+      patch();
+      patch(undefined, undefined);
+      get(() => {});
+      const seen = box.seen.join();
+      if (seen !== "${expected}") throw new Error("seen " + seen + typeof report);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("patch,patch,patch,active"))).failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      expect((await checkModel(getSource("patch,patch,active"))).failure?.message).toContain(
+        "seen patch,patch,patch,active",
+      );
+    });
+  });
+
+  describe("iterates a map whose keys only code that the loop doesn't run deletes", () => {
+    const getSource = (expected: string) => `
+      const roots = new Map<number, { name: string }>([
+        [1, { name: "a" }],
+        [2, { name: "b" }],
+      ]);
+      const found = new Set<{ name: string }>();
+      const remove = (id: number) => {
+        roots.delete(id);
+      };
+      const find = (name: string) => {
+        for (const [id, root] of roots) {
+          found.add(root);
+          root.name = root.name + "!";
+          if (root.name === name) return id;
+        }
+        return 0;
+      };
+      const first = find("b!");
+      remove(1);
+      const second = find("b!!");
+      const seen = [first, second, found.size, roots.size].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("2,2,2,1"))).failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      expect((await checkModel(getSource("2,2,3,1"))).failure?.message).toContain("seen 2,2,2,1");
+    });
+
+    it("stops where the loop deletes a key", () => {
+      expect(() =>
+        compile(`
+          const roots = new Map<number, { name: string }>([[1, { name: "a" }]]);
+          for (const [id, root] of roots) {
+            root.name = root.name + "!";
+            roots.delete(id + 1);
+          }
+        `),
+      ).toThrow("tla-ts can't iterate a set or a map while the loop changes objects");
+    });
+  });
+
+  describe("calls the own-key check that a bind of a built-in method gives", () => {
+    const getSource = (expected: string) => `
+      const box: { seen: string[] } = { seen: [] };
+      const target: Record<string, unknown> = { own: 1 };
+      const original = target.hasOwnProperty.bind(target);
+      const enumerable = Object.prototype.propertyIsEnumerable.bind(target, "own");
+      Object.defineProperty(target, "hasOwnProperty", { configurable: true, value: () => false });
+      target.added = 2;
+      box.seen.push(String(original("own")), String(original("other")), String(original("added")));
+      box.seen.push(String(enumerable()));
+      const seen = box.seen.join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("true,false,true,true"))).failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      expect((await checkModel(getSource("true,false,false,true"))).failure?.message).toContain(
+        "seen true,false,true,true",
+      );
+    });
+
+    it("stops where the bound receiver may change", async () => {
+      const result = await checkModel(`
+        let target: Record<string, unknown> = { own: 1 };
+        const original = target.hasOwnProperty.bind(target);
+        target = {};
+        if (!original("own")) throw new Error("not own");
+      `);
+      expect(result.failure?.message).toContain(
+        "tla-ts can't call the function that Object.prototype.hasOwnProperty's bind gives here",
+      );
+    });
+  });
+
+  describe("iterates an array while the loop deletes a set's keys", () => {
+    const getSource = (expected: string) => `
+      const listeners = new Set<{ name: string }>([{ name: "a" }, { name: "b" }]);
+      const remove = (listener: { name: string }) => {
+        listeners.delete(listener);
+      };
+      const notify = (pending = [...listeners]) => {
+        for (const listener of pending) {
+          listener.name = listener.name + "!";
+          remove(listener);
+        }
+        return pending.map((listener) => listener.name).join("+");
+      };
+      const seen = [notify(), listeners.size].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("a!+b!,0"))).failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      expect((await checkModel(getSource("a!,1"))).failure?.message).toContain("seen a!+b!,0");
+    });
+  });
+
   describe("forces what a name in a function that an expression calls binds, not a copy of it", () => {
     const getNested = (helpers: number, position = 1): string =>
       position > helpers

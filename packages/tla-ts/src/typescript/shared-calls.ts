@@ -31,6 +31,7 @@ import {
 } from "./context";
 import { getPosition } from "./program-nodes";
 import { forceHeap } from "./functions";
+import { isUndefinedValue } from "./intrinsics";
 import { type Formula, ifThenElse, leaf, letIn, render } from "./formula";
 import { link } from "./regions";
 import { type Bound, bindValues, createStateScope, type Receiver } from "./scope";
@@ -473,6 +474,7 @@ export const isSharedCall = (
 const getSharedCall = (
   callee: FunctionNode,
   callbacks: ReadonlyMap<ts.Symbol, FunctionNode>,
+  absent: ReadonlySet<ts.Symbol>,
   path: Path,
   context: Context,
 ) => {
@@ -517,6 +519,8 @@ const getSharedCall = (
       shared.captured.length === captured.length &&
       shared.captured.every((symbol) => captured.includes(symbol)) &&
       [...callbacks].every((entry) => shared.callbacks.get(entry[0]) === entry[1]) &&
+      shared.absent.size === absent.size &&
+      [...absent].every((symbol) => shared.absent.has(symbol)) &&
       shared.uninitialized.length === uninitialized.length &&
       shared.uninitialized.every((symbol) => uninitialized.includes(symbol)) &&
       shared.held.size === held.size &&
@@ -538,6 +542,7 @@ const getSharedCall = (
       changed: changed.filter((symbol) => !uninitialized.includes(symbol)),
       captured,
       callbacks,
+      absent,
       held,
       state,
       uninitialized,
@@ -558,18 +563,47 @@ export const isEnteredCall = (
   context: Context,
 ) =>
   isSharedCall(node, callee, argumentNodes, context, true) &&
-  getSharedCall(callee, new Map(), path, context) !== undefined;
+  getSharedCall(
+    callee,
+    new Map(),
+    getAbsentFunctions(callee, argumentNodes, context),
+    path,
+    context,
+  ) !== undefined;
 
-// The parameters that take values, not the functions that the operator calls.
+// The parameters that take values, not the functions that the operator calls nor those that hold
+// undefined.
 const getValueParameters = (
   callee: FunctionNode,
-  callbacks: ReadonlyMap<ts.Symbol, FunctionNode>,
+  variant: Pick<SharedCall, "callbacks" | "absent">,
   context: Context,
 ) =>
   getParameters(callee).filter((parameter) => {
     const symbol = getSymbol(parameter.name, context.checker);
-    return symbol === undefined || !callbacks.has(symbol);
+    return symbol === undefined || (!variant.callbacks.has(symbol) && !variant.absent.has(symbol));
   });
+
+// The parameters whose type allows a function, with no default, that a call leaves out or passes
+// undefined.
+const getAbsentFunctions = (
+  callee: FunctionNode,
+  argumentNodes: readonly ts.Expression[],
+  context: Context,
+) =>
+  new Set(
+    getParameters(callee).flatMap((parameter, position) => {
+      const symbol = getSymbol(parameter.name, context.checker);
+      const argument = argumentNodes.at(position);
+      const type = context.checker.getNonNullableType(context.checker.getTypeAtLocation(parameter));
+      return symbol !== undefined &&
+        parameter.initializer === undefined &&
+        parameter.dotDotDotToken === undefined &&
+        type.getCallSignatures().length > 0 &&
+        (argument === undefined || isUndefinedValue(argument, context))
+        ? [symbol]
+        : [];
+    }),
+  );
 
 // The place of a throw that an operator gives its caller, among every operator's.
 const getPlace = (location: SourceLocation, context: Context) => {
@@ -619,14 +653,21 @@ const defineShared = (
   callee: FunctionNode,
   variant: Pick<
     SharedCall,
-    "changed" | "captured" | "callbacks" | "held" | "state" | "uninitialized" | "isCatching"
+    | "changed"
+    | "captured"
+    | "callbacks"
+    | "absent"
+    | "held"
+    | "state"
+    | "uninitialized"
+    | "isCatching"
   >,
   context: Context,
 ) => {
   const parameters = getParameters(callee);
   const changed = variant.changed;
   const named = [
-    ...getValueParameters(callee, variant.callbacks, context).map((parameter) => ({
+    ...getValueParameters(callee, variant, context).map((parameter) => ({
       symbol: getSymbol(parameter.name, context.checker),
       name: context.names.getFresh(parameter.name.getText()),
     })),
@@ -666,11 +707,15 @@ const defineShared = (
         : { value: identifier(entered.receiver), method: callee },
     uninitialized: new Set(variant.uninitialized),
     // A variable that the operator doesn't take has no binding, so its code can't read it stale.
-    bindings: new Map(
-      named.flatMap((item): [ts.Symbol, Expression][] =>
+    bindings: new Map([
+      ...named.flatMap((item): [ts.Symbol, Expression][] =>
         item.symbol === undefined ? [] : [[item.symbol, identifier(item.name)]],
       ),
-    ),
+      ...[...variant.absent].map((symbol): [ts.Symbol, Expression] => [
+        symbol,
+        getUndefined(context),
+      ]),
+    ]),
   };
   // The defaults that the operator evaluates where its call passes undefined, in order, as each
   // may read the parameters before it.
@@ -813,12 +858,13 @@ export const translateSharedCall = (
   const callbacks = new Map(
     entered === undefined ? getPassedCallbacks(parameters, argumentNodes, path, context) : [],
   );
+  const absent = getAbsentFunctions(callee, argumentNodes, context);
   const shared = parameters.every((parameter) => {
     const symbol = getSymbol(parameter.name, context.checker);
     const isFunction = context.checker.getTypeAtLocation(parameter).getCallSignatures().length > 0;
     return symbol !== undefined && (!callbacks.has(symbol) || isFunction);
   })
-    ? getSharedCall(callee, callbacks, path, context)
+    ? getSharedCall(callee, callbacks, absent, path, context)
     : undefined;
   if (shared === undefined) {
     return bindCall(node, callee, argumentNodes, receiver, path, context, outside, inlineCall);
@@ -892,7 +938,7 @@ export const translateSharedCall = (
           )
         : returned;
       const operands = [
-        ...getValueParameters(callee, shared.callbacks, context).map((parameter) => {
+        ...getValueParameters(callee, shared, context).map((parameter) => {
           const symbol = getSymbol(parameter.name, context.checker);
           return (symbol && bound.scope.bindings.get(symbol)) ?? getUndefined(context);
         }),

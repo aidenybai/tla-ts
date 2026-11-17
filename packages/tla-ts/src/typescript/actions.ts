@@ -309,6 +309,7 @@ import {
   getFormatCall,
   translateFunctionValue,
   getAnyProperty,
+  getBoundBuiltIn,
 } from "./heap";
 import {
   COLLECTIONS,
@@ -2414,12 +2415,18 @@ export const translateCallStatement = (
     if (!ts.isIdentifier(expression.expression)) {
       throw new TlaTypeScriptError("Optional calls aren't supported", expression);
     }
+    const callee = translateExpression(expression.expression, path.scope, context);
+    // A parameter that the call leaves out holds undefined, which runs none of the functions that
+    // its type allows.
+    if (callee.kind === "Identifier" && ["Undefined", "Null"].includes(callee.name)) {
+      return continueWith(path, getUndefined(context));
+    }
     const name = context.names.getFresh("callee");
     context.prelude.add("Null");
     return bindOnce(
       path,
       name,
-      translateExpression(expression.expression, path.scope, context),
+      callee,
       translateJoined(expression, path, context, continueWith, (next) =>
         ifThenElse(
           apply("\\in", [identifier(name), set([getUndefined(context), identifier("Null")])]),
@@ -9519,23 +9526,34 @@ const isOrderFree = (body: ts.Node | undefined, element: ts.Node | undefined, co
 
 // Whether a script deletes a key from a set or a map, which leaves a gap in its entries that an
 // iterator that has passed it skips, where a list of its keys closes the gap.
-const isKeyDeleted = (node: ts.Node, visited: ts.Expression | undefined, context: Context) => {
-  // A set's delete can't change a map, nor a map's a set.
+// Whether a node, or a function that it may run, may delete a key of the kind of collection that a
+// loop visits. A set's delete can't change a map, nor a map's a set.
+const isKeyDeleted = (
+  node: ts.Node,
+  visited: ts.Expression | undefined,
+  functions: ReadonlyMap<ts.Symbol, FunctionNode>,
+  context: Context,
+) => {
   const kind = visited === undefined ? undefined : getCollection(visited, context);
   const isVisitedKind = (deleted: string | undefined) =>
     deleted !== undefined &&
     ["Set", "Map"].includes(deleted) &&
     (kind === undefined || !["Set", "Map"].includes(kind) || deleted === kind);
-  return (
-    findNodes(
-      node.getSourceFile(),
-      (inner): inner is ts.PropertyAccessExpression =>
-        ts.isPropertyAccessExpression(inner) &&
-        ["delete", "clear"].includes(inner.name.text) &&
-        (isVisitedKind(getCollection(inner.expression, context)) ||
-          /^(Set|Map)\.prototype$/.test(inner.expression.getText())),
-    ).length > 0
-  );
+  const isDelete = (inner: ts.Node) =>
+    ts.isPropertyAccessExpression(inner) &&
+    ["delete", "clear"].includes(inner.name.text) &&
+    (isVisitedKind(getCollection(inner.expression, context)) ||
+      /^(Set|Map)\.prototype$/.test(inner.expression.getText()));
+  const reached = new Set<ts.Node>();
+  const visit = (inner: ts.Node): boolean =>
+    isDelete(inner) ||
+    getNodeEffects(inner, functions, context).called.some((called) => {
+      if (reached.has(called)) return false;
+      reached.add(called);
+      return visit(called);
+    }) ||
+    (ts.forEachChild(inner, (child) => visit(child) || undefined) ?? false);
+  return visit(node);
 };
 
 // A set's forEach whose callback ends the same in any order.
@@ -9991,7 +10009,7 @@ const translateShortLoopCall = (
   if (
     loop.isOrdered &&
     changed.some((symbol) => symbol === context.heap) &&
-    isKeyDeleted(expression, receiver, context)
+    isKeyDeleted(expression, receiver, path.scope.functions, context)
   ) {
     throw new TlaTypeScriptError(
       "Unsupported call: tla-ts can't call forEach on a set or a map while its callback changes objects and the script deletes keys",
@@ -13718,6 +13736,7 @@ const getCandidates = (
     declarations.some((declaration) => declaration.getSourceFile().isDeclarationFile) ||
     (assigned === undefined ? getCallee(callee, context) !== undefined : isPlain(assigned)) ||
     getCalledMethod(callee, context) !== undefined ||
+    getBoundBuiltIn(callee, context) !== undefined ||
     getFunctionOfKind(callee, context, isAnyGenerator) !== undefined ||
     getFunctionOfKind(callee, context, isAsyncFunction) !== undefined ||
     // A call of a key that may hold a built-in method matches its functions as an expression, or
@@ -17531,7 +17550,11 @@ const translateIterations = (
   // entries, where an entry that the loop adds comes last, which reading its entries again at each
   // step matches while no key leaves it.
   const isLive = isHeapIteration && changesObjects(loop, path, context);
-  if (isLive && isKeyDeleted(loop, iterated?.expression, context)) {
+  if (
+    isLive &&
+    ordered !== undefined &&
+    isKeyDeleted(loop, iterated?.expression, path.scope.functions, context)
+  ) {
     throw new TlaTypeScriptError(
       "Unsupported loop: tla-ts can't iterate a set or a map while the loop changes objects and the script deletes keys",
       iterated?.expression,
