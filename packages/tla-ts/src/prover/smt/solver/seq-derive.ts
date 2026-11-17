@@ -1243,7 +1243,7 @@ export class Derive {
 
   derivativeCofactors(regex: number, result: RefVector) {
     const derivative = this.deriveSymbolic(DERIVATIVE_BRZOZOWSKI, regex);
-    // Like Z3, a cached derivative leaves the element unset here, which stops the interval pruning.
+    // Like Z3, a cached derivative whose lookup reset the op caches leaves the element unset, which stops the interval pruning.
     this.getCofactors(this.element, derivative, result);
   }
 

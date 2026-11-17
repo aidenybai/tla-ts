@@ -69,6 +69,7 @@ import {
   compileTactic,
   getRewriterOptions,
   getSatParams,
+  getSmtTacticFailure,
   type TacticParam,
 } from "./tactic";
 
@@ -278,6 +279,12 @@ interface CheckResult {
   reasonUnknown?: string;
 }
 
+interface SolverAnswer {
+  result: number;
+  context: Context | undefined;
+  reasonUnknown: string | undefined;
+}
+
 interface ScriptState {
   manager: AstManager;
   logic: string | undefined;
@@ -311,6 +318,7 @@ const MANAGERLESS_COMMANDS = new Set([
   "set-logic",
   "get-option",
   "get-info",
+  "get-assertions",
   "echo",
 ]);
 
@@ -483,22 +491,45 @@ export const runSmtlibScript = (
       getLogicStrategy(state.logic, goal.isProofsEnabled);
     try {
       const checked = checkSatUsing(compileInternalTactic(getTacticEnvironment(), strategy), goal);
-      return { result: checked.status, context: undefined, model: checked.model };
+      return {
+        result: checked.status,
+        context: undefined,
+        model: checked.model,
+        reasonUnknown: checked.reasonUnknown,
+      };
     } catch (error) {
       if (!(error instanceof SmtUnsupportedError)) throw error;
       const hasQuantifiers = state.assertions.some(
         (assertion) => state.manager.hasQuantifierFlags[assertion],
       );
+      const solved = solveAssertions(state.manager, state.assertions, {
+        isMbqi: settings.isMbqi || isMbqiByFeatures(getSetup(), hasQuantifiers),
+        mbqiMaxIterations: settings.mbqiMaxIterations,
+        isFindingMacros: settings.isFindingMacros,
+        setup: getSetup(),
+      });
       return {
-        ...solveAssertions(state.manager, state.assertions, {
-          isMbqi: settings.isMbqi || isMbqiByFeatures(getSetup(), hasQuantifiers),
-          mbqiMaxIterations: settings.mbqiMaxIterations,
-          isFindingMacros: settings.isFindingMacros,
-          setup: getSetup(),
-        }),
+        ...solved,
         model: undefined,
+        reasonUnknown:
+          solved.result === L_UNDEF && solved.context !== undefined
+            ? getSmtTacticFailure(solved.context)
+            : "",
       };
     }
+  };
+  // Deviation from Z3: the heap guard and a stack overflow, which Z3 lacks, read as an exhausted rlimit.
+  const getCancelMessage = (deadline: number) =>
+    Date.now() > deadline || options.signal?.aborted === true
+      ? "canceled"
+      : "max. resource limit exceeded";
+  // As in Z3, a timeout leaves "timeout" in the kernel, which reports it while its last search hasn't failed.
+  const getReasonUnknown = (solved: SolverAnswer, deadline: number) => {
+    const isTimedOut = solved.result === L_UNDEF && Date.now() > deadline;
+    const context = state.kernel?.context;
+    if (isTimedOut && context !== undefined) context.reasonUnknown = "timeout";
+    if (context !== undefined && solved.context === context) return context.getLastFailureMessage();
+    return isTimedOut ? "timeout" : (solved.reasonUnknown ?? getCancelMessage(deadline));
   };
   const getKernelParams = () => ({
     isMbqi: settings.isMbqi || isMbqiByLogic(getSetup()),
@@ -512,25 +543,25 @@ export const runSmtlibScript = (
     !settings.isProducingProofs &&
     !settings.parameters.has("tactic.default_tactic");
   const checkSat = (extra: number[]) => {
-    state.manager.limit.restart(Date.now() + options.timeLimitMs);
+    const deadline = Date.now() + options.timeLimitMs;
+    state.manager.limit.restart(deadline);
     // opt::context::optimize answers as the search of the hard constraints does: once they are
     // satisfiable, optsmt and maxsmt only improve the model. The unported parts of optimization
     // only get that answer.
     if (state.objectives.length > 0 && optimize(extra)) return;
     state.manager.limit.push(settings.rlimit);
     const isOptimizing = state.objectives.length > 0;
+    const manager = state.manager;
+    const names = state.names.filter((name) => name !== -1);
+    const isNamed = names.length > 0;
+    const isAssuming = isNamed || extra.length > 0;
+    if (isAssuming) state.isIncremental = true;
+    if (!isOptimizing) state.hasChecked = true;
+    const isKernelChecking =
+      isAssuming || (state.isIncremental && !isOptimizing && !isUsingFdSolver());
     try {
-      const manager = state.manager;
-      const names = state.names.filter((name) => name !== -1);
-      const isNamed = names.length > 0;
-      const isAssuming = isNamed || extra.length > 0;
-      if (isAssuming) state.isIncremental = true;
-      if (!isOptimizing) state.hasChecked = true;
       const assumptions = isNamed ? [...names, ...extra] : extra;
-      const kernel =
-        isAssuming || (state.isIncremental && !isOptimizing && !isUsingFdSolver())
-          ? checkKernel(assumptions)
-          : undefined;
+      const kernel = isKernelChecking ? checkKernel(assumptions) : undefined;
       // Z3 retries a quantifier-free problem with its tactic when the incremental kernel gives up.
       const solved =
         kernel === undefined ||
@@ -545,11 +576,19 @@ export const runSmtlibScript = (
         isOptimizing,
         model: solved.model,
         core: solved.core ?? solved.context?.unsatCore ?? [],
+        reasonUnknown: getReasonUnknown(solved, deadline),
       });
       print(getVerdict(solved.result));
     } catch (error) {
       if (!(error instanceof SmtCanceledError || isStackOverflow(error))) throw error;
-      setCheck(L_UNDEF, { isOptimizing });
+      const context = isKernelChecking ? state.kernel?.context : undefined;
+      setCheck(L_UNDEF, {
+        isOptimizing,
+        reasonUnknown: getReasonUnknown(
+          { result: L_UNDEF, context, reasonUnknown: undefined },
+          deadline,
+        ),
+      });
       print("unknown");
     } finally {
       state.manager.limit.release();
@@ -643,6 +682,7 @@ export const runSmtlibScript = (
         context: undefined,
         model: result === L_TRUE ? (solver.getModel() ?? undefined) : undefined,
         core: result === L_FALSE ? [...solver.getUnsatCore()] : undefined,
+        reasonUnknown: solver.reasonUnknown,
       };
     });
     if (found !== undefined) return found;
@@ -652,11 +692,19 @@ export const runSmtlibScript = (
         context: kernel.context,
         model: undefined,
         core: undefined,
+        reasonUnknown: undefined,
       };
+    const solved = solveAssuming(
+      state.manager,
+      getNamedAssertions(),
+      assumptions,
+      getKernelParams(),
+    );
     return {
-      ...solveAssuming(state.manager, getNamedAssertions(), assumptions, getKernelParams()),
+      ...solved,
       model: undefined,
       core: undefined,
+      reasonUnknown: solved.context.getLastFailureMessage(),
     };
   };
   const printDiagnostic = (line: string) => print(line, !settings.isDiagnosticOnStdout);
@@ -924,15 +972,17 @@ export const runSmtlibScript = (
         for (const assertion of state.assertions) datalog.assertExpr(assertion);
         state.manager.limit.restart(Date.now() + options.timeLimitMs);
         state.manager.limit.push(settings.rlimit);
+        let status = L_UNDEF;
         try {
-          print(getVerdict(datalog.relQuery(relation)));
+          status = datalog.relQuery(relation);
         } catch (error) {
           if (!(error instanceof SmtTacticError)) throw error;
           print(`(error "query failed: ${error.message}")`);
-          print("unknown");
         } finally {
           state.manager.limit.pop();
         }
+        print(status === L_UNDEF && datalog.isBounded ? "bounded" : getVerdict(status));
+        datalog.isBounded = false;
       },
     ],
     [
@@ -944,7 +994,8 @@ export const runSmtlibScript = (
         const builder = getTactic(list.items[1], list.end);
         const tactic = builder.build(params);
         clearCheck();
-        state.manager.limit.restart(Date.now() + options.timeLimitMs);
+        const deadline = Date.now() + options.timeLimitMs;
+        state.manager.limit.restart(deadline);
         state.manager.limit.push(settings.rlimit);
         try {
           const checked = checkSatUsing(tactic, getGoal(builder.isTrackingDependencies));
@@ -954,7 +1005,7 @@ export const runSmtlibScript = (
               builder.isTrackingDependencies || !hasNames()
                 ? getDependencyValues(checked.core)
                 : undefined,
-            reasonUnknown: checked.reasonUnknown,
+            reasonUnknown: checked.reasonUnknown ?? getCancelMessage(deadline),
           });
           print(getVerdict(checked.status));
         } finally {
@@ -1013,7 +1064,11 @@ export const runSmtlibScript = (
           if (state.kernel === undefined)
             for (const assertion of getNamedAssertions()) kernel.assertExpr(assertion);
           const found = getConsequences(kernel, [...names, ...assumptions], vars);
-          setCheck(found.result, { context: kernel.context, core: kernel.context.unsatCore });
+          setCheck(found.result, {
+            context: kernel.context,
+            core: kernel.context.unsatCore,
+            reasonUnknown: kernel.context.getLastFailureMessage(),
+          });
           print(getVerdict(found.result));
           print("");
           for (const consequence of found.consequences.items) display(consequence);
@@ -1453,7 +1508,14 @@ export const runSmtlibScript = (
         if (keyword === ":produce-models") settings.isProducingModels = isTrue;
         if (keyword === ":produce-unsat-cores") settings.isProducingUnsatCores = isTrue;
         if (keyword === ":produce-proofs") settings.isProducingProofs = isTrue;
-        if (keyword === ":interactive-mode") settings.isInteractive = isTrue;
+        if (keyword === ":interactive-mode" || keyword === ":produce-assertions") {
+          if (state.isProofsEnabled !== undefined)
+            throw new SmtParseError(
+              "error setting ':produce-assertions', option value cannot be modified after initialization",
+              value ?? list.end,
+            );
+          settings.isInteractive = isTrue;
+        }
         if (keyword === ":diagnostic-output-channel")
           settings.isDiagnosticOnStdout = value?.kind === "string" && value.text === "stdout";
         if (keyword === ":int-real-coercions" && !isTrue)
@@ -1519,6 +1581,8 @@ export const runSmtlibScript = (
           [":print-success", settings.isPrintingSuccess],
           [":produce-models", settings.isProducingModels],
           [":produce-unsat-cores", settings.isProducingUnsatCores],
+          [":interactive-mode", settings.isInteractive],
+          [":produce-assertions", settings.isInteractive],
           [":int-real-coercions", true],
           [":error-behavior", settings.isExitingOnError ? "immediate-exit" : "continued-execution"],
         ]);
@@ -1590,8 +1654,7 @@ export const runSmtlibScript = (
           state.reader = createSmtlibReader(state.manager, logic.text, settings.parserOptions);
         else {
           state.reader.restrictSorts(logic.text);
-          // Deviation from Z3: its new solver starts without the open scopes, so it ignores their pop
-          // and keeps what they asserted.
+          // Deviation from Z3: its new solver starts without the open scopes, so it ignores their pop and keeps what they asserted.
           resetKernel();
         }
         if (settings.isPrintingSuccess) print("success");

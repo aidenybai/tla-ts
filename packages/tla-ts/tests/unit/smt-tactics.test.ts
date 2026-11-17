@@ -259,7 +259,7 @@ describe("the floating-point conversions round as Z3 does", () => {
     expect([convert(5n), convert(6n), convert(7n)]).toEqual([towardZero, towardZero, towardZero]);
   });
 
-  // Z3 computes a numeral of 2^30 bits here and does not finish; the port leaves the term.
+  // Z3 runs out of memory on a numeral of 2^30 bits here, and the port leaves the term.
   it("leaves the infinity test of an integer conversion with a 31-bit exponent", () => {
     expect(
       run([
@@ -273,6 +273,17 @@ describe("the floating-point conversions round as Z3 does", () => {
       "(fp.isNormal ((_ to_fp 33 8) roundTowardPositive (to_real x)))",
       "(fp.isInfinite ((_ to_fp 34 8) roundNearestTiesToEven (to_real x)))",
     ]);
+  });
+
+  // Z3 runs out of memory here too, and the port answers unknown as at its other limits.
+  it("answers unknown for a symbolic conversion to a 31-bit exponent", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(assert (fp.isInfinite ((_ to_fp 31 3) RTP (to_real x))))",
+        "(check-sat)",
+      ]),
+    ).toEqual(["unknown"]);
   });
 });
 

@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
 import { runSmtlibScript } from "../../src/prover/smt/solver/smtlib-script";
 
-const run = (lines: string[]) => {
+const run = (lines: string[], timeLimitMs = 5000) => {
   const output: string[] = [];
-  runSmtlibScript(lines.join("\n"), { timeLimitMs: 5000 }, (line) => output.push(line));
+  runSmtlibScript(lines.join("\n"), { timeLimitMs }, (line) => output.push(line));
   return output.join("\n").split("\n");
 };
 
@@ -236,8 +236,82 @@ const RESTART_MODEL = [
 
 const getName = (literal: number) => `x${Math.abs(literal) - 1}`;
 
+// One more pigeon than holes, where pI_J puts pigeon I in hole J: unsatisfiable, and too hard for
+// either solver to refute within the limits of these tests.
+const getPigeonholeLines = (holeCount: number) => {
+  const pigeons = [...Array(holeCount + 1).keys()];
+  const holes = [...Array(holeCount).keys()];
+  return [
+    ...pigeons.flatMap((pigeon) => holes.map((hole) => `(declare-const p${pigeon}_${hole} Bool)`)),
+    ...pigeons.map(
+      (pigeon) => `(assert (or ${holes.map((hole) => `p${pigeon}_${hole}`).join(" ")}))`,
+    ),
+    ...holes.flatMap((hole) =>
+      pigeons.flatMap((first) =>
+        pigeons
+          .slice(first + 1)
+          .map((second) => `(assert (or (not p${first}_${hole}) (not p${second}_${hole})))`),
+      ),
+    ),
+  ];
+};
+
 // Each expected value is what z3 5.3.2 prints for the script.
 describe("runSmtlibScript runs its commands as Z3 does", () => {
+  it("prints the assertions under :produce-assertions", () => {
+    expect(
+      run([
+        "(set-option :produce-assertions true)",
+        "(get-option :produce-assertions)",
+        "(get-option :interactive-mode)",
+        "(declare-const p Bool)",
+        "(declare-const q Bool)",
+        "(assert p)",
+        "(assert   (or p",
+        "   q))",
+        "(push)",
+        "(assert (! q :named n))",
+        "(get-assertions)",
+        "(pop)",
+        "(get-assertions)",
+        "(set-option :produce-assertions false)",
+        "(set-option :interactive-mode true)",
+      ]),
+    ).toEqual([
+      "true",
+      "true",
+      "(p",
+      " (or p",
+      "   q)",
+      " (! q :named n))",
+      "(p",
+      " (or p",
+      "   q))",
+      `(error "line 14 column 32: error setting ':produce-assertions', option value cannot be modified after initialization")`,
+      `(error "line 15 column 30: error setting ':produce-assertions', option value cannot be modified after initialization")`,
+    ]);
+  });
+
+  it("gets the assertions without initializing", () => {
+    expect(
+      run([
+        "(get-assertions)",
+        "(set-option :produce-assertions false)",
+        "(get-option :produce-assertions)",
+        "(set-option :interactive-mode true)",
+        "(get-assertions)",
+        "(declare-const p Bool)",
+        "(assert p)",
+        "(get-assertions)",
+      ]),
+    ).toEqual([
+      '(error "line 1 column 16: command is only available in interactive mode, use command (set-option :interactive-mode true)")',
+      "false",
+      "()",
+      "(p)",
+    ]);
+  });
+
   // parse_check_sat shrinks the expression stack, so p is a new term at each check.
   it("releases the literals of a check once it has run", () => {
     expect(
@@ -471,6 +545,134 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
     ]);
   });
 
+  // The tactic answers a fresh check and the incremental smt kernel answers once there are scopes.
+  it("prints the reason of the solver that answered check-sat", () => {
+    expect(
+      run([
+        "(set-option :smt.mbqi.max_iterations 1)",
+        "(declare-const x Int)",
+        "(assert (> x 1))",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+        "(check-sat-using skip)",
+        "(get-info :reason-unknown)",
+        "(push)",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+        "(assert (< x 0))",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+        "(pop)",
+        "(declare-fun f (Int) Int)",
+        "(assert (forall ((y Int)) (> (f y) (f (+ y 1)))))",
+        "(assert (> (f 0) 5))",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+      ]),
+    ).toEqual([
+      "sat",
+      '(:reason-unknown "")',
+      "unknown",
+      '(:reason-unknown "unknown")',
+      "sat",
+      '(:reason-unknown "unknown")',
+      "unsat",
+      '(:reason-unknown "unknown")',
+      "unknown",
+      '(:reason-unknown "(incomplete quantifiers)")',
+    ]);
+  });
+
+  // smt_tactic names the failure of the context it gives up on.
+  it("prints the reason of an incomplete smt tactic", () => {
+    expect(
+      run([
+        "(set-option :smt.mbqi.max_iterations 1)",
+        "(declare-fun f (Int) Int)",
+        "(assert (forall ((y Int)) (> (f y) (f (+ y 1)))))",
+        "(assert (> (f 0) 5))",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+        "(check-sat-using smt)",
+        "(get-info :reason-unknown)",
+        "(push)",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+      ]),
+    ).toEqual([
+      "unknown",
+      '(:reason-unknown "smt tactic failed to show goal to be sat/unsat (incomplete quantifiers)")',
+      "unknown",
+      '(:reason-unknown "smt tactic failed to show goal to be sat/unsat (incomplete quantifiers)")',
+      "unknown",
+      '(:reason-unknown "(incomplete quantifiers)")',
+    ]);
+  });
+
+  // The sat tactic leaves the reason of its solver on the goal. A tactic's checkpoint reports an
+  // exhausted rlimit, where the smt kernel reports a cancel.
+  it("prints the reason of a check stopped at a limit", () => {
+    expect(
+      run([
+        ...getPigeonholeLines(8),
+        "(check-sat-using (using-params sat :max_conflicts 10))",
+        "(get-info :reason-unknown)",
+        "(set-option :rlimit 5000)",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+        "(check-sat-using smt)",
+        "(get-info :reason-unknown)",
+        "(check-sat-assuming (p0_0))",
+        "(get-info :reason-unknown)",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+      ]),
+    ).toEqual([
+      "unknown",
+      '(:reason-unknown "sat.max.conflicts")',
+      "unknown",
+      '(:reason-unknown "max. resource limit exceeded")',
+      "unknown",
+      '(:reason-unknown "canceled")',
+      "unknown",
+      '(:reason-unknown "canceled")',
+      "unknown",
+      '(:reason-unknown "canceled")',
+    ]);
+  });
+
+  // The time limit is Z3's soft timeout: check-sat gives every solver the reason timeout, which
+  // the smt kernel keeps for its later checks and reports while its last search did not fail.
+  it("prints the reason of a check that timed out", () => {
+    expect(
+      run(
+        [
+          ...getPigeonholeLines(11),
+          "(declare-const q Bool)",
+          "(assert (not q))",
+          "(check-sat)",
+          "(get-info :reason-unknown)",
+          "(check-sat-assuming (q))",
+          "(get-info :reason-unknown)",
+          "(check-sat-assuming (p0_0))",
+          "(get-info :reason-unknown)",
+          "(check-sat-using smt)",
+          "(get-info :reason-unknown)",
+        ],
+        200,
+      ),
+    ).toEqual([
+      "unknown",
+      '(:reason-unknown "timeout")',
+      "unsat",
+      '(:reason-unknown "timeout")',
+      "unknown",
+      '(:reason-unknown "canceled")',
+      "unknown",
+      '(:reason-unknown "canceled")',
+    ]);
+  });
+
   // mk_fm_tactic is and_then(simplify, fm), and and_then stops at a decided goal.
   it("skips fm once simplify has decided the goal", () => {
     expect(
@@ -530,8 +732,7 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
     ).toEqual(["sat", "sat", '(error "line 9 column 11: unknown constant x")', "sat", "sat"]);
   });
 
-  // Deviation from Z3: its new solver ignores the pop of a scope opened before set-logic and keeps
-  // p, so it prints sat, unsat, unsat here.
+  // Deviation from Z3: its new solver ignores the pop of a scope opened before set-logic and keeps p, so it prints sat, unsat, unsat here.
   it("pops the assertions of a scope opened before set-logic", () => {
     expect(
       run([

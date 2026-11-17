@@ -82,6 +82,8 @@ export class Goal {
   model: ProtoModel | undefined;
   isProofsEnabled = false;
   isCoresEnabled = false;
+  // As in Z3, it isn't copied with the goal.
+  reasonUnknown = "";
 
   constructor(readonly manager: AstManager) {
     this.forms = new RefVector(manager);

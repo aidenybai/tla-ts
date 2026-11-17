@@ -38,9 +38,13 @@ const ENGINE_NAMES = new Map([
   ["ddnf", ENGINE_DDNF],
 ]);
 
-// The fp module's parameters, which Z3 keeps as global parameters across resets.
+// As in Z3, these are copied when the context is made, so a later fp option doesn't apply.
 export class FpParams {
-  constructor(private parameters: ReadonlyMap<string, string>) {}
+  private parameters: ReadonlyMap<string, string>;
+
+  constructor(parameters: ReadonlyMap<string, string>) {
+    this.parameters = new Map(parameters);
+  }
 
   getBool(name: string, defaultValue: boolean) {
     const value = this.parameters.get(`fp.${name}`);
@@ -117,6 +121,7 @@ export class DatalogContext {
   readonly rewriter: Rewriter;
   // m_mc: the converters since the last query, or undefined before one.
   modelConverters: ModelConverter[] | undefined;
+  isBounded = false;
 
   constructor(
     readonly manager: AstManager,
@@ -328,6 +333,7 @@ export class DatalogContext {
 
   query(query: number) {
     this.modelConverters = [];
+    this.isBounded = false;
     this.getEngine(query);
     this.flushAddRules();
     return this.ensureEngine(query).query(query);
