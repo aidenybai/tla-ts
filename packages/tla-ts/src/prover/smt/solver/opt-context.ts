@@ -225,8 +225,6 @@ export class OptContext {
     return pareto;
   }
 
-  // opt::context::reason_unknown. The message of an unattained lexicographic optimum stands for the
-  // one opt_solver gives its kernel.
   getReasonUnknown() {
     if (this.reasonUnknown !== "") return this.reasonUnknown;
     return (this.satSolver ?? this.optSolver)?.reasonUnknown ?? "unknown";

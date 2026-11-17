@@ -34,7 +34,7 @@ export class DefaultQuantifierManager {
     this.updateParams();
   }
 
-  // default_qm_plugin reads smt.mbqi each time it would use its model finder.
+  // As in Z3, smt.mbqi is read each time the model finder would run.
   updateParams() {
     const context = this.context;
     if (!context.params.isMbqi || this.mbqi !== null) return;

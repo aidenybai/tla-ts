@@ -21,7 +21,7 @@ export class SmtKernel {
     this.setup = params.setup;
   }
 
-  // smt_solver::updt_params. A kernel not yet set up reads auto_config again for its setup.
+  // As in Z3, a kernel not yet set up reads auto_config again.
   updateParams(params: KernelParams) {
     if (!this.isSetUp) this.setup = params.setup;
     this.context.updateParams(params);

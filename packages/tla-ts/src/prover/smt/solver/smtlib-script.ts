@@ -534,8 +534,7 @@ export const runSmtlibScript = (
     if (context !== undefined && solved.context === context) return context.getLastFailureMessage();
     return isTimedOut ? "timeout" : (solved.reasonUnknown ?? getCancelMessage(deadline));
   };
-  // setup_default turns mbqi on for some logics, which a kernel set up loses once it reads the
-  // parameters again.
+  // As in Z3, a kernel loses the mbqi its logic turned on once it reads the parameters again.
   const getKernelParams = (isSetUp = false) => ({
     isMbqi: settings.isMbqi || (!isSetUp && isMbqiByLogic(getSetup())),
     mbqiMaxIterations: settings.mbqiMaxIterations,
@@ -1084,7 +1083,6 @@ export const runSmtlibScript = (
           for (const consequence of found.consequences.items) display(consequence);
           found.consequences.reset();
         } catch (error) {
-          // cmd_context::get_consequences answers unknown when the solver throws, with its message.
           if (!(error instanceof SmtCanceledError || isStackOverflow(error))) throw error;
           const reasonUnknown = getCancelMessage(deadline);
           if (state.kernel !== undefined) state.kernel.context.reasonUnknown = reasonUnknown;
@@ -1564,7 +1562,6 @@ export const runSmtlibScript = (
           settings.mbqiMaxIterations = Number(value.text);
         if (optionName === ":rlimit" && value?.kind === "numeral")
           settings.rlimit = Number(value.text);
-        // cmd_context::global_params_updated hands the parameters to the solver's updt_params.
         const kernel = state.kernel;
         if (isParameter && kernel !== undefined)
           kernel.updateParams(getKernelParams(kernel.isSetUp));

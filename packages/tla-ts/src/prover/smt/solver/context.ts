@@ -210,9 +210,7 @@ export class Context extends Internalizer {
     this.qmanager = new DefaultQuantifierManager(this);
   }
 
-  // smt_solver::updt_params reads every smt parameter again into the smt_params the context shares,
-  // which drops what the setup tuned. The relevancy the setup lowered stays, as relevancy_lvl is the
-  // lower of the two levels.
+  // As in Z3, reading the parameters again drops the setup's tuning, but relevancy keeps the lower level.
   updateParams(params: KernelParams) {
     this.params.isMbqi = params.isMbqi;
     this.params.mbqiMaxIterations = params.mbqiMaxIterations;
