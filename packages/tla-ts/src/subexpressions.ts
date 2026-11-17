@@ -180,6 +180,7 @@ const selectSubexpression = (
     const args: Expression[] = [];
     while (selectorIndex < selectors.length) {
       const selector = selectors[selectorIndex];
+      if (selector.kind !== "Name" && !local) return undefined;
       if (selector.kind !== "Name") throw createError("Expected an operator name", location);
       names.push(selector.name);
       args.push(...selector.args);
@@ -196,6 +197,10 @@ const selectSubexpression = (
 
   const enterDefinition = (local: Definition[] | undefined) => {
     const found = findDefinition(local);
+    if (!found) {
+      isFailed = true;
+      return undefined;
+    }
     const definition = found.definition;
     const arity = getArity(definition);
     const isLast = selectorIndex === selectors.length - 1;

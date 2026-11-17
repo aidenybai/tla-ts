@@ -659,6 +659,14 @@ describe("name resolution matches SANY", () => {
         ["line 4, col 59 to line 4, col 61", "The operator _Track requires 2 arguments."],
       ],
     ],
+    [
+      "M == INSTANCE Naturals\nf == M!+!1 /\\ M!+(1)!1 /\\ M!zz!1",
+      [
+        ["line 3, col 6 to line 3, col 10", "The operator M!+ requires 2 arguments."],
+        ["line 3, col 18 to line 3, col 20", "The operator M!+ requires 2 arguments."],
+        ["line 3, col 27 to line 3, col 30", "Unknown operator: `M!zz'."],
+      ],
+    ],
   ])("reports %j at the range SANY reports", async (source, errors) => {
     await expect(checkNames(source)).rejects.toThrow(
       createSanyError(
