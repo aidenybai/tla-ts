@@ -1603,6 +1603,37 @@ describe("runSmtlibScript prints what Z3 prints", () => {
     ]);
   });
 
+  it("assigns the Boolean macros in the order of cmd_context's dictionary, which a pop does not shrink", () => {
+    expect(
+      run([
+        "(declare-const p Bool)",
+        "(declare-const q Bool)",
+        "(declare-const x Int)",
+        "(define-fun d1 () Bool (> x 2))",
+        "(define-fun d2 () Int x)",
+        "(assert (! (or p q) :named a0))",
+        "(assert (! (> x 5) :named zz))",
+        "(assert (! (not q) :named a1))",
+        "(assert (! (=> q p) :named b))",
+        "(check-sat)",
+        "(get-assignment)",
+        "(push)",
+        "(define-fun d3 () Bool (< x 0))",
+        "(assert (! true :named c9))",
+        "(get-assignment)",
+        "(pop)",
+        "(check-sat)",
+        "(get-assignment)",
+      ]),
+    ).toEqual([
+      "sat",
+      "((a0 true) (d1 true) (a1 true) (zz true) (b true))",
+      '(error "line 15 column 15: model is not available")',
+      "sat",
+      "((b true) (a1 true) (a0 true) (d1 true) (zz true))",
+    ]);
+  });
+
   it("throws at a theory it does not implement", () => {
     expect(() =>
       run(["(declare-const b (_ BitVec 8))", '(assert (= (str.from_ubv b) "12"))', "(check-sat)"]),

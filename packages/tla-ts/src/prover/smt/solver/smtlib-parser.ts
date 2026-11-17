@@ -972,6 +972,9 @@ export const createSmtlibReader = (
   ]);
   const funcs = new Map<string, readonly number[]>();
   const macros = new Map<string, Macro>();
+  // A pop empties the macros of a name but keeps the name in the dictionary.
+  const macroNames: string[] = [];
+  const macroDictionary = new ObjMap<string>((index) => getSymbolHash(macroNames[index]));
   const lastNamed = { name: "", expr: -1 };
   const notifiedSorts = new Set<number>();
   const undo: (() => void)[] = [];
@@ -1006,6 +1009,11 @@ export const createSmtlibReader = (
       else names.set(name, previous);
     });
     names.set(name, value);
+  };
+
+  const insertMacro = (name: string, macro: Macro) => {
+    if (!macroNames.includes(name)) macroDictionary.set(macroNames.push(name) - 1, name);
+    declare(macros, name, macro);
   };
 
   const hasArrays = logic === undefined || logicHasArray(logic);
@@ -2351,7 +2359,7 @@ export const createSmtlibReader = (
     const decl = manager.mkMacro(name, expr);
     declare(funcs, name, [...(funcs.get(name) ?? []), decl]);
     scopedFuncs.push(decl);
-    declare(macros, name, { domain: [], range: manager.sorts[expr], body: expr });
+    insertMacro(name, { domain: [], range: manager.sorts[expr], body: expr });
   };
 
   // push_app_frame's parse_qualified_identifier_core, on a head that is (_ <symbol> <index>*) or
@@ -3397,7 +3405,7 @@ export const createSmtlibReader = (
           extra ?? list.end,
         );
       manager.incRef(body);
-      declare(macros, symbol.text, { domain: bound.varSorts, range, body });
+      insertMacro(symbol.text, { domain: bound.varSorts, range, body });
       defineMacroFunc(symbol.text, bound.varSorts, body);
       expectEnd(
         extra,
@@ -3548,6 +3556,11 @@ export const createSmtlibReader = (
     isUsed,
     isClashing,
     getDeclaredFuncs,
+    getConstantMacros: () =>
+      [...macroDictionary.values()].flatMap((name) => {
+        const macro = macros.get(name);
+        return macro?.domain.length === 0 ? [{ name, body: macro.body }] : [];
+      }),
   };
 };
 

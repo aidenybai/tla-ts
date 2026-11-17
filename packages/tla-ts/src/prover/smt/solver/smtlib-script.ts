@@ -106,7 +106,6 @@ const UNPORTED_COMMANDS = new Set([
   "ff-certify",
   "ff-check-native-proof",
   "ff-integrated-certify",
-  "get-assignment",
   "get-interpolant",
   "get-proof",
   "get-proof-graph",
@@ -1624,6 +1623,23 @@ export const runSmtlibScript = (
           manager.decRef(expr);
         });
         print(")");
+      },
+    ],
+    [
+      "get-assignment",
+      (list) => {
+        checkArgumentCount(list, 0);
+        const manager = state.manager;
+        const model = getModel(list);
+        const assignments = state.reader.getConstantMacros().flatMap((macro) => {
+          if (manager.sorts[macro.body] !== SORT_BOOL) return [];
+          const value = model.eval(macro.body, true);
+          const assignment = `(${getQuotedName(macro.name)} ${manager.isTrue(value)})`;
+          const isDecided = manager.isTrue(value) || manager.isFalse(value);
+          manager.decRef(value);
+          return isDecided ? [assignment] : [];
+        });
+        print(`(${assignments.join(" ")})`);
       },
     ],
     [
