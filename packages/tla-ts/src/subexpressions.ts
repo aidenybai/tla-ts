@@ -312,9 +312,11 @@ const selectSubexpression = (
       selectOperand(selector);
       return;
     }
+    const nonexistent = `Nonexistent operand specified by \`${getSelectorName(selector)}'.`;
     if (current.kind === "Let") {
       if (selector.kind !== "Operand" || getOperandIndex(selector.operand, 1) !== 0) {
-        throw createError("A LET/IN expression has only one operand", location);
+        report(range, "A LET/IN expression has only one operand.");
+        return;
       }
       selection.lets.push(current.definitions);
       current = current.body;
@@ -327,33 +329,54 @@ const selectSubexpression = (
       current = binder.body;
       return;
     }
-    if (current.kind === "Case" && selector.kind === "Operand") {
+    if (current.kind === "Case") {
       const arms = [
         ...current.arms,
         ...(current.other ? [{ condition: undefined, body: current.other }] : []),
       ];
-      const arm = arms[getOperandIndex(selector.operand, arms.length)];
-      const next = selectors[selectorIndex + 1];
-      if (!arm || next?.kind !== "Operand") {
-        throw createError("A subexpression of CASE must have the form !i!j", location);
+      if (selectorIndex === selectors.length - 1) {
+        report(range, "Subexpression of CASE must have form !i!j.");
+        return;
+      }
+      const arm =
+        selector.kind === "Operand"
+          ? arms[getOperandIndex(selector.operand, arms.length)]
+          : undefined;
+      if (!arm) {
+        report(range, nonexistent);
+        return;
       }
       selectorIndex++;
-      const part = getOperandIndex(next.operand, 2);
-      const chosen = part === 0 ? arm.condition : part === 1 ? arm.body : undefined;
-      if (!chosen) throw createError("Nonexistent CASE operand", location);
+      const next = selectors[selectorIndex];
+      const part = next.kind === "Operand" ? getOperandIndex(next.operand, 2) : -1;
+      const nextRange = reference.selectorRanges?.[selectorIndex];
+      if (part === -1) {
+        report(
+          nextRange,
+          "Second selector for CASE subexpression must specify  one of two operands.",
+        );
+        return;
+      }
+      const chosen = part === 0 ? arm.condition : arm.body;
+      if (!chosen) {
+        report(nextRange, "Selecting OTHER in a CASE statement.");
+        return;
+      }
       current = chosen;
       return;
     }
-    if (selector.kind !== "Operand")
-      throw createError("Unexpected subexpression selector", location);
     const operands = binder ? binder.sets : getOperands(current);
     if (!operands && current.kind !== "Identifier") {
       report(range, "Selecting subexpression of expression that has none.");
       return;
     }
+    if (selector.kind !== "Operand") {
+      report(range, nonexistent);
+      return;
+    }
     const operand = operands?.[getOperandIndex(selector.operand, operands.length)];
     if (!operand) {
-      report(range, `Nonexistent operand specified by \`${getSelectorName(selector)}'.`);
+      report(range, nonexistent);
       return;
     }
     current = operand;
@@ -397,6 +420,12 @@ const selectSubexpression = (
   }
   if (isFailed) return reference;
   if (!current) throw createError("Subexpression selection failed", location);
+  const params = selection.params.length;
+  const args = selection.args.length;
+  if (params !== args && (!isOperator || args > 0)) {
+    report(location.range, `Expected ${params} arguments but found ${args}.`);
+    return reference;
+  }
   const selected = createApplication(selection, current);
   nullSelections.set(selected, nulls);
   return selected;

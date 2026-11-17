@@ -311,6 +311,37 @@ describe("subexpression references into theorems match SANY", () => {
         ],
       ],
     ],
+    [
+      "selectors that a LET, a CASE or an expression without bound identifiers lacks",
+      "Op1(a, b) == <<a, b>>\nL == LET q == 1 IN <<q, 1>>\nC == CASE x = 1 -> 2 [] OTHER -> 3\nQ == \\A y \\in {1} : y = 1\nN == 7\nA1 == Op1(1, 2)!@ /\\ L!2 /\\ L!@ /\\ C!1 /\\ C!3!1 /\\ C!1!3 /\\ C!2!1\nA2 == C!@!1 /\\ N!@ /\\ Op1(1, 2)!(3) /\\ C!1!@ /\\ Q!@ /\\ L!1!@",
+      [
+        ["line 8, col 17 to line 8, col 17", "Nonexistent operand specified by `@'."],
+        ["line 8, col 24 to line 8, col 24", "A LET/IN expression has only one operand."],
+        ["line 8, col 31 to line 8, col 31", "A LET/IN expression has only one operand."],
+        ["line 8, col 38 to line 8, col 38", "Subexpression of CASE must have form !i!j."],
+        [
+          "line 8, col 45 to line 8, col 45",
+          "Nonexistent operand specified by `argument selector 3'.",
+        ],
+        [
+          "line 8, col 56 to line 8, col 56",
+          "Second selector for CASE subexpression must specify  one of two operands.",
+        ],
+        ["line 8, col 65 to line 8, col 65", "Selecting OTHER in a CASE statement."],
+        ["line 9, col 9 to line 9, col 9", "Nonexistent operand specified by `@'."],
+        [
+          "line 9, col 18 to line 9, col 18",
+          "Selecting subexpression of expression that has none.",
+        ],
+        ["line 9, col 33 to line 9, col 35", "Nonexistent operand specified by `!(...)'."],
+        [
+          "line 9, col 44 to line 9, col 44",
+          "Second selector for CASE subexpression must specify  one of two operands.",
+        ],
+        ["line 9, col 49 to line 9, col 51", "Expected 1 arguments but found 0."],
+        ["line 9, col 60 to line 9, col 60", "Nonexistent operand specified by `@'."],
+      ],
+    ],
   ])("reports every error SANY reports for %s", async (_name, definitions, errors) => {
     await expect(checkModule(definitions)).rejects.toThrow(getSanyError(errors, "M"));
   });

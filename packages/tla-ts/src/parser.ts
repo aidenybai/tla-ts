@@ -1211,9 +1211,15 @@ const parse = (
     const argumentRanges = [argumentsRange];
     while (isSelectorAhead()) {
       advance();
-      selectorRanges.push(getRange(cursor, cursor));
+      const selectorStart = cursor;
       lastArgumentsRange = undefined;
-      selectors.push(parseSelector());
+      const selector = parseSelector();
+      selectorRanges.push(
+        selector.kind === "Bound"
+          ? getRange(selectorStart)
+          : getRange(selectorStart, selectorStart),
+      );
+      selectors.push(selector);
       argumentRanges.push(lastArgumentsRange);
     }
     const names = selectors.flatMap((selector) =>
