@@ -1125,6 +1125,7 @@ const matchArgument = (
     } else if (selectionError) {
       unit.errors.push(selectionError);
     } else if (arg.kind === "Lambda" && range) {
+      unresolvedExpressions.add(arg);
       report(range, "LAMBDA expression used where an expression is required.");
     } else if (arg.kind === "OperatorReference") {
       const argArity = getSymbolArity(arg, arg.operator, scope, unit);
@@ -1342,6 +1343,7 @@ const resolveExpression = (
     case "Lambda":
       if (selections.has(expression)) resolveLambda(expression, scope, unit);
       else if (expression.location.range) {
+        unresolvedExpressions.add(expression);
         unit.errors.push({
           location: formatRange(expression.location.range),
           message: "LAMBDA expression used where an expression is required.",

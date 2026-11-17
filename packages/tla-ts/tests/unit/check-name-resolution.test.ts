@@ -866,6 +866,23 @@ describe("name resolution matches SANY", () => {
       ],
     ],
     [
+      "CONSTANT c\nOp1(a0) == {a0}\nOp == {c, Op1(LAMBDA p : p)}\nA == Op!2!1!1 /\\ Op!2!1 /\\ Op!2",
+      [
+        [
+          "line 4, col 15 to line 4, col 26",
+          "LAMBDA expression used where an expression is required.",
+        ],
+        [
+          "line 5, col 11 to line 5, col 11",
+          "An unexpected null node specified by 'argument selector 1'.\nThis is probably due to a previous error.",
+        ],
+        [
+          "line 5, col 23 to line 5, col 23",
+          "An unexpected null node specified by 'argument selector 1'.\nThis is probably due to a previous error.",
+        ],
+      ],
+    ],
+    [
       "CONSTANT c\nRECURSIVE R(_, _), Q(_), P(_, _)\nA == R(c, R)!1!@ /\\ Q(Q)!1 /\\ P(P, LAMBDA p : p)!1\nR(a, b) == a\nQ(a) == Q(a) /\\ Q(Q)!1\nP == c",
       [
         ["line 4, col 11 to line 4, col 11", "The operator R requires 2 arguments."],
