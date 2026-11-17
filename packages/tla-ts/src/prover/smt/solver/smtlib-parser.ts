@@ -1877,18 +1877,19 @@ export const createSmtlibReader = (
     const sort = parseQualifierSort(list);
     const target = list.items[1];
     const local = isSymbol(target) ? locals.get(target.text) : undefined;
-    if (isSymbol(target) && local === undefined)
-      return hasArrays && target.text === "const"
-        ? mkArrayTerm(OP_CONST_ARRAY, [], [sort], at)
-        : parseApp(target, [], at, [], sort);
+    if (isSymbol(target) && local === undefined && hasArrays && target.text === "const")
+      return mkArrayTerm(OP_CONST_ARRAY, [], [sort], at);
+    // A macro takes no range, so check_qualifier catches the sort of the term it stands for.
     const term =
-      local === undefined
-        ? parseIndexedTerm(
-            expectList(target, "invalid indexed identifier, '_' expected", list),
-            at,
-            sort,
-          )
-        : getLocalTerm(local);
+      local !== undefined
+        ? getLocalTerm(local)
+        : isSymbol(target)
+          ? parseApp(target, [], at, [], sort)
+          : parseIndexedTerm(
+              expectList(target, "invalid indexed identifier, '_' expected", list),
+              at,
+              sort,
+            );
     if (manager.sorts[term] !== sort)
       throw new SmtParseError(
         `sort mismatch in qualified identifier, expected: ${manager.getSortName(sort)}, got: ${manager.getSortName(manager.sorts[term])}`,

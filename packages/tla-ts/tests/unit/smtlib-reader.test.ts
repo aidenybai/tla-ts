@@ -259,6 +259,27 @@ describe("a qualified constant, as Z3 5.3.2 reports it", () => {
       '(error "line 3 column 23: unknown constant xBool \ndeclared: (declare-fun x () Int) ")',
     ]);
   });
+
+  it("reports a macro of another sort, but not an application of one", () => {
+    expect(
+      run([
+        "(define-const c Bool true)",
+        "(define-fun f ((y Int)) Int (+ y 1))",
+        "(simplify (as c Int))",
+        "(simplify (as c Bool))",
+        "(simplify ((as f Bool) 1))",
+        "(declare-const x Int)",
+        "(simplify (! (> x 2) :named n))",
+        "(simplify (as n Int))",
+      ]),
+    ).toEqual([
+      '(error "line 3 column 20: sort mismatch in qualified identifier, expected: Int, got: Bool")',
+      "true",
+      "2",
+      "(not (<= x 2))",
+      '(error "line 8 column 20: sort mismatch in qualified identifier, expected: Int, got: Bool")',
+    ]);
+  });
 });
 
 describe("a finite-field literal, as Z3 5.3.2 reports it", () => {
