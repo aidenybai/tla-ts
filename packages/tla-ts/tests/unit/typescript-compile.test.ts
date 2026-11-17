@@ -49294,4 +49294,50 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("iterates a map whose keys only code that the loop doesn't run deletes", () => {
+    const getSource = (expected: string) => `
+      const roots = new Map<number, { name: string }>([
+        [1, { name: "a" }],
+        [2, { name: "b" }],
+      ]);
+      const found = new Set<{ name: string }>();
+      const remove = (id: number) => {
+        roots.delete(id);
+      };
+      const find = (name: string) => {
+        for (const [id, root] of roots) {
+          found.add(root);
+          root.name = root.name + "!";
+          if (root.name === name) return id;
+        }
+        return 0;
+      };
+      const first = find("b!");
+      remove(1);
+      const second = find("b!!");
+      const seen = [first, second, found.size, roots.size].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("2,2,2,1"))).failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      expect((await checkModel(getSource("2,2,3,1"))).failure?.message).toContain("seen 2,2,2,1");
+    });
+
+    it("stops where the loop deletes a key", () => {
+      expect(() =>
+        compile(`
+          const roots = new Map<number, { name: string }>([[1, { name: "a" }]]);
+          for (const [id, root] of roots) {
+            root.name = root.name + "!";
+            roots.delete(id + 1);
+          }
+        `),
+      ).toThrow("tla-ts can't iterate a set or a map while the loop changes objects");
+    });
+  });
 });
