@@ -2055,8 +2055,9 @@ const CONVERTED_ARGUMENT_ERRORS = new Set([2345, NO_OVERLOAD_ERROR]);
 // a property that a type lacks.
 const TEMPORAL_ARGUMENT_ERRORS = new Set([2322, 2345, 2353, 2559, 2561, NO_OVERLOAD_ERROR]);
 // A using declaration's value that isn't null, undefined, or an object whose type has the dispose
-// method that the declaration calls, which tla-ts reads as it runs and throws the TypeError of.
-const USING_INITIALIZER_ERRORS = new Set([2850, 2851]);
+// method that the declaration calls, which tla-ts reads as it runs and throws the TypeError of. An
+// await using declaration's isn't, as tla-ts awaits what its method gives by the type it declares.
+const USING_INITIALIZER_ERRORS = new Set([2850]);
 // The array methods that tla-ts runs a reducer for on the values it gets, not its declared types,
 // where a test's reducer returns a type that the method's signatures don't take. Each needs a unit
 // test of such a call, since tla-ts reads a value by its declared type.
