@@ -1747,6 +1747,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       kind: "liveness-started",
       branches: finalLiveness.branches,
       isComplete: true,
+      // Deviation from TLC: LiveCheck#check0 counts behavior graph nodes, which can disagree with its own distinct states.
       states: runtime.distinctStates,
       statistics: createResult("success"),
     });

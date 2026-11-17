@@ -712,6 +712,21 @@ describe("the CLI answers PickSuccessor from standard input like TLC", () => {
     ]);
   });
 
+  it("counts an explored successor for the temporal check, where TLC leaves it out of a graph without a tableau", () => {
+    const result = runCliWith(
+      "tlc-ext",
+      ["PickExplored.tla", "-config", "PickExploredPlain.cfg"],
+      "y\ny\ne\n",
+    );
+    expect(result.status).toBe(0);
+    expect(getSteadyLines(result.stdout)).toEqual(
+      expect.arrayContaining([
+        "Checking temporal properties for the complete state space with 4 total distinct states at (_)",
+        "5 states generated, 4 distinct states found, 0 states left on queue.",
+      ]),
+    );
+  });
+
   it("tells a simulation it can't mark a state explored and asks again", () => {
     const lines = getPickLines(
       runCliWith(
