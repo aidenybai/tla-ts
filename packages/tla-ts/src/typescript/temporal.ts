@@ -11,15 +11,8 @@ import {
 } from "./actions";
 import { getKeyedConversionFunctions, runToPrimitive } from "./conversions";
 import { withHeap } from "./protocols";
-import {
-  type Context,
-  findNodes,
-  getSymbol,
-  getUndefined,
-  skipCasts,
-  getValueDeclaration,
-} from "./context";
-import { translateExpression } from "./expressions";
+import { type Context, getUndefined, skipCasts } from "./context";
+import { concatenate, translateElements, translateExpression } from "./expressions";
 import { type Formula, ifThenElse, leaf } from "./formula";
 import { getAllocated, getHeap, getOrigin } from "./heap";
 import { getBuiltIn, translateBuiltInValue } from "./intrinsics";
@@ -280,42 +273,6 @@ export const getTemporalKind = (type: ts.Type) => {
     : undefined;
 };
 
-// The arguments of a call, with each spread of an array literal, or of a const that holds one and
-// that only spreads read, written out, or undefined where a spread is of anything else.
-const getArguments = (values: readonly ts.Expression[], context: Context) => {
-  const expanded = values.map((value) => {
-    if (!ts.isSpreadElement(value)) return [value];
-    const spread = skipCasts(value.expression);
-    const symbol = ts.isIdentifier(spread) ? getSymbol(spread, context.checker) : undefined;
-    const declaration = getValueDeclaration(symbol, context);
-    const isOnlySpread =
-      symbol !== undefined &&
-      declaration !== undefined &&
-      ts.isVariableDeclaration(declaration) &&
-      (declaration.parent.flags & ts.NodeFlags.Const) !== 0 &&
-      findNodes(
-        value.getSourceFile(),
-        (node): node is ts.Identifier =>
-          ts.isIdentifier(node) &&
-          node !== declaration.name &&
-          getSymbol(node, context.checker) === symbol,
-      ).every((reference) => ts.isSpreadElement(reference.parent));
-    const literal = ts.isArrayLiteralExpression(spread)
-      ? spread
-      : isOnlySpread && declaration.initializer !== undefined
-        ? skipCasts(declaration.initializer)
-        : undefined;
-    return literal !== undefined &&
-      ts.isArrayLiteralExpression(literal) &&
-      !literal.elements.some(
-        (element) => ts.isSpreadElement(element) || ts.isOmittedExpression(element),
-      )
-      ? [...literal.elements]
-      : undefined;
-  });
-  return expanded.every((value) => value !== undefined) ? expanded.flat() : undefined;
-};
-
 // The kind of Temporal class whose constructor a type is, such as Duration for
 // Temporal.DurationConstructor.
 export const getTemporalConstructorKind = (type: ts.Type) => {
@@ -342,15 +299,14 @@ export const getTemporalCall = (node: ts.Node, context: Context): TemporalCall |
   if (ts.isNewExpression(node)) {
     const kind = getTemporalClass(node.expression, context);
     const functions = kind === undefined ? undefined : TEMPORAL_FUNCTIONS.get(kind);
-    const values = getArguments(node.arguments ?? [], context);
-    return kind !== undefined && functions !== undefined && values !== undefined
+    return kind !== undefined && functions !== undefined
       ? {
           kind,
           method: "new",
           isStatic: true,
           made: functions.made,
           callee: node.expression,
-          values,
+          values: node.arguments ?? [],
         }
       : undefined;
   }
@@ -463,7 +419,7 @@ export const translateTemporalCall = (
     );
   }
   const heap = getHeap(path.scope, node, context);
-  const values = tuple(call.values.map((value) => translateExpression(value, path.scope, context)));
+  const values = translateElements(call.values, path.scope, context);
   const prototype =
     call.made === ""
       ? identifier("Undefined")
@@ -493,10 +449,7 @@ export const translateTemporalCall = (
           );
   // The objects that the function reads, which a conversion that it asks for mustn't change, as
   // it reads them again once it has the conversion's primitive.
-  const inputs = tuple([
-    ...(call.receiver === undefined ? [] : [receiver]),
-    ...call.values.map((value) => translateExpression(value, path.scope, context)),
-  ]);
+  const inputs = call.receiver === undefined ? values : concatenate([tuple([receiver]), values]);
   const stop = (message: string) => leaf(apply("Assert", [boolean(false), string(message)]));
   const limit = isConvertingTemporalCall(call, node, context) ? TEMPORAL_CONVERSIONS : 0;
   // A conversion reads the methods that an object holds, or that getters it declares under their

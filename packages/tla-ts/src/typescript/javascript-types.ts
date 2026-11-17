@@ -27,6 +27,11 @@ const IGNORED_ERRORS = new Set([
   7052, 7053, 7055, 7056, 7057,
 ]);
 
+// Errors that a project's options add about code that runs as written: a declaration that nothing
+// reads, unreachable code, an unused label, a case that falls through, and a path that returns
+// nothing.
+const LINT_ERRORS = new Set([6133, 6138, 6192, 6196, 6198, 6199, 6205, 7027, 7028, 7029, 7030]);
+
 // A property that the type lacks, which a private name's class declares.
 const PRIVATE_NAME_ERRORS = new Set([2339, 2551]);
 
@@ -45,11 +50,11 @@ const EXCESS_PROPERTY_ERRORS = new Set([2353, 2561]);
 // A write to a property that the type makes read-only.
 const READ_ONLY_ERROR = 2540;
 
-// A value of a type that an operator, a call, a key, a spread, or an iteration doesn't take, or of
-// type unknown.
+// A value of a type that an operator, a call, a key, a spread, an iteration, or a for-in doesn't
+// take, or of type unknown.
 const OPERAND_ERRORS = new Set([
-  2356, 2358, 2359, 2360, 2361, 2362, 2363, 2464, 2469, 2488, 2490, 2504, 2538, 2547, 2548, 2549,
-  2556, 2571, 2731, 2767, 18046,
+  2356, 2358, 2359, 2360, 2361, 2362, 2363, 2407, 2464, 2469, 2488, 2490, 2504, 2538, 2547, 2548,
+  2549, 2556, 2571, 2731, 2767, 18046,
 ]);
 
 // A binary operator whose operands' types don't go together.
@@ -61,8 +66,12 @@ const CALLEE_ERRORS = new Set([2348, 2349, 2350, 2351, 7009]);
 // A call with more or fewer arguments than its signature declares.
 const ARGUMENT_COUNT_ERRORS = new Set([2554, 2555, 2810]);
 
-// Declarations of a variable with two types, and a read of a variable before a write.
-const DECLARED_ERRORS = new Set([2403, 2454]);
+// A for-in's variable whose type isn't a string's, which the loop writes keys to.
+const FOR_IN_TARGET_ERROR = 2405;
+
+// Declarations of a variable with two types, a read of a variable before a write, and a for-in's
+// variable.
+const DECLARED_ERRORS = new Set([2403, FOR_IN_TARGET_ERROR, 2454]);
 
 // A delete of a property that the type gives.
 const DELETE_ERRORS = new Set([2704, 2790]);
@@ -278,12 +287,14 @@ const widenProperty = (
   return edits.length > 0 && edits.every((edit) => edit !== undefined) ? edits.flat() : undefined;
 };
 
-// The edits that make an array's elements any, where a name's variable holds the array.
+// The edits that make an array's elements any, where a name's variable holds the array, or make
+// the property that holds it any.
 const widenElements = (receiver: ts.Expression, file: ts.SourceFile, checker: ts.TypeChecker) => {
   const inner = skipCasts(receiver);
-  return checker.isArrayType(checker.getTypeAtLocation(inner))
-    ? widenName(inner, file, checker, "any[]")
-    : undefined;
+  if (!checker.isArrayType(checker.getTypeAtLocation(inner))) return undefined;
+  return ts.isPropertyAccessExpression(inner)
+    ? widenProperty(inner, file, checker)
+    : widenName(inner, file, checker, "any[]");
 };
 
 // The edits for a target that a write gives a value of another type: its variable becomes any, or
@@ -627,11 +638,19 @@ export const typeJavaScript = (
     .filter(
       (diagnostic) =>
         diagnostic.category === ts.DiagnosticCategory.Error &&
+        !LINT_ERRORS.has(diagnostic.code) &&
         !isIgnored(diagnostic) &&
         isReported(diagnostic) &&
         !isAcceptedPattern(diagnostic),
     );
-  const rejected = errors.filter((diagnostic) => !FIXED_ERRORS.has(diagnostic.code));
+  // A for-in's target that isn't a name, such as this, is an early error that TypeScript reports as
+  // a type.
+  const rejected = errors.filter(
+    (diagnostic) =>
+      !FIXED_ERRORS.has(diagnostic.code) ||
+      (diagnostic.code === FOR_IN_TARGET_ERROR &&
+        !ts.isIdentifier(getDiagnosedNode(file, diagnostic))),
+  );
   if (rejected.length > 0) throw new TlaTypeScriptError(ts.formatDiagnostics(rejected, host));
   const fixes = errors
     .map((diagnostic) => {
