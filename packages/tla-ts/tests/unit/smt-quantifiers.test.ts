@@ -151,3 +151,29 @@ describe("the model finder, as Z3 5.3.2 cleans up its instantiation sets", () =>
     ]);
   });
 });
+
+describe("the preprocessing setup_AUFLIA turns on, as Z3 5.3.2 runs it", () => {
+  it("lifts the one term if-then-else out of each application with a bound variable", () => {
+    expect(
+      run([
+        "(declare-fun f (Int) Int)",
+        "(declare-fun g (Int) Int)",
+        "(declare-const a Int)",
+        "(assert (forall ((w Int)) (= (g w) (+ (f w) (ite (> a 2) 1 w)))))",
+        "(assert (> a 0))",
+        "(check-sat)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      "(",
+      "  (define-fun a () Int",
+      "    3)",
+      "  (define-fun f ((x!0 Int)) Int",
+      "    (- 1))",
+      "  (define-fun g ((x!0 Int)) Int",
+      "    0)",
+      ")",
+    ]);
+  });
+});

@@ -104,6 +104,7 @@ export interface SmtConfig {
   isEq2Ineq: boolean;
   isFindingMacros: boolean;
   isEliminatingTermIte: boolean;
+  isLiftingNonGroundIte: boolean;
   isArithPropagatingEqs: boolean;
   arithPropagationThreshold: number;
   isArithBoundPropagating: boolean;
@@ -135,6 +136,7 @@ export const DEFAULT_CONFIG: SmtConfig = {
   isEq2Ineq: false,
   isFindingMacros: false,
   isEliminatingTermIte: false,
+  isLiftingNonGroundIte: false,
   isArithPropagatingEqs: true,
   arithPropagationThreshold: Infinity,
   isArithBoundPropagating: true,
@@ -376,6 +378,7 @@ const setupAufLia = (config: SmtConfig) => {
   config.phaseSelection = PS_ALWAYS_FALSE;
   config.restartStrategy = RS_GEOMETRIC;
   config.restartFactor = 1.5;
+  config.isLiftingNonGroundIte = true;
   config.theories.push(FAMILY_ARITH, FAMILY_ARRAY);
 };
 
@@ -390,6 +393,7 @@ const setupAufLiaByFeatures = (config: SmtConfig, features: StaticFeatures) => {
 const setupAufLira = (config: SmtConfig) => {
   config.phaseSelection = PS_ALWAYS_FALSE;
   config.isFindingMacros = true;
+  config.isLiftingNonGroundIte = true;
   config.theories.push(FAMILY_ARITH, FAMILY_ARRAY);
 };
 

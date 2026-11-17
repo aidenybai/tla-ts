@@ -18,6 +18,7 @@ import { DefinedNames, Nnf } from "./nnf";
 import { PatternInference } from "./pattern-inference";
 import { MaxBvSharing } from "./maximize-ac-sharing";
 import { PullQuant } from "./pull-quant";
+import { NgPushAppIteRw } from "./push-app-ite";
 import { RefVector } from "./ref-vector";
 import { KERNEL_REWRITER_OPTIONS, Rewriter } from "./rewriter";
 import { RewriterTpl } from "./rewriter-tpl";
@@ -194,10 +195,12 @@ export class AssertedFormulas {
   private isNnfCnf = true;
   private isEq2Ineq = false;
   private isEliminatingTermIte = false;
+  private isLiftingNonGroundIte = false;
   private names: DefinedNames;
   private termIteElim: ElimTermIteRw;
   private patternInference: PatternInferenceRw;
   private bvSharing: MaxBvSharing;
+  private ngLiftIte: NgPushAppIteRw;
   hasQuantifiers = false;
   readonly macros: MacroManager;
   isInconsistent = false;
@@ -219,6 +222,7 @@ export class AssertedFormulas {
     this.termIteElim = new ElimTermIteRw(manager, this.names);
     this.patternInference = new PatternInferenceRw(manager, new PatternInference(manager));
     this.bvSharing = new MaxBvSharing(manager);
+    this.ngLiftIte = new NgPushAppIteRw(manager);
   }
 
   push() {
@@ -275,6 +279,7 @@ export class AssertedFormulas {
     this.isNnfCnf = config.isNnfCnf;
     this.isEq2Ineq = config.isEq2Ineq;
     this.isEliminatingTermIte = config.isEliminatingTermIte;
+    this.isLiftingNonGroundIte = config.isLiftingNonGroundIte;
     this.isFindingMacros ||= config.isFindingMacros;
   }
 
@@ -282,6 +287,7 @@ export class AssertedFormulas {
     this.isNnfCnf = config.isNnfCnf;
     this.isEq2Ineq = config.isEq2Ineq;
     this.isEliminatingTermIte = config.isEliminatingTermIte;
+    this.isLiftingNonGroundIte = config.isLiftingNonGroundIte;
     this.isFindingMacros = config.isFindingMacros;
     this.isReducePending = true;
   }
@@ -316,6 +322,8 @@ export class AssertedFormulas {
     if (!this.invoke(this.isNnfCnf || this.hasQuantifiers, () => this.nnfCnf())) return;
     this.setEliminateAnd(true);
     if (!this.invoke(true, () => this.reduceAsserted())) return;
+    const liftIte = () => this.simplifyAndReduce((formula) => this.ngLiftIte.rewrite(formula));
+    if (!this.invoke(this.isLiftingNonGroundIte, liftIte)) return;
     if (!this.invoke(this.isEliminatingTermIte, () => this.elimTermIte())) return;
     const refineInjAxiom = (formula: number) => this.refineInjAxiom(formula);
     if (!this.invoke(this.hasQuantifiers, () => this.simplifyFormulas(refineInjAxiom))) return;
@@ -388,6 +396,12 @@ export class AssertedFormulas {
     this.flushCache();
     this.reduceAsserted();
     elim.reset();
+  }
+
+  private simplifyAndReduce(simplify: (formula: number) => number) {
+    if (!this.simplifyFormulas(simplify)) return;
+    this.flushCache();
+    this.reduceAsserted();
   }
 
   private findMacros() {
