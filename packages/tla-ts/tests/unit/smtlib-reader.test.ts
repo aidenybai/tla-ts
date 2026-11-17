@@ -188,6 +188,27 @@ describe("a backslash in a quoted symbol, as Z3 5.3.2 reports it", () => {
   });
 });
 
+describe("a command without a symbol at its head, as Z3 5.3.2 reports it", () => {
+  it("reports the head before the rest of the command, which may never close", () => {
+    expect(run(['(echo "a")', "( (assert true)", '(echo "b")'])).toEqual([
+      "a",
+      '(error "line 2 column 2: invalid command, symbol expected")',
+    ]);
+    expect(run(['(echo "a")', "(1 2", '(echo "b")'])).toEqual([
+      "a",
+      '(error "line 2 column 1: invalid command, symbol expected")',
+    ]);
+    expect(run(['(echo "a")', "("])).toEqual([
+      "a",
+      '(error "line 2 column 1: invalid command, symbol expected")',
+    ]);
+    expect(run(["() )", '(echo "b")'])).toEqual([
+      '(error "line 1 column 2: invalid command, symbol expected")',
+      "b",
+    ]);
+  });
+});
+
 describe("a malformed application or indexed constant, as Z3 5.3.2 reports it", () => {
   it("reports a head that is no symbol where it stands, and goes on", () => {
     expect(

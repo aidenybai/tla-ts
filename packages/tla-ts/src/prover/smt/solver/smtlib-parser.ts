@@ -820,12 +820,28 @@ export const createCommandReader = (text: string) => {
       current = parent;
     }
   };
-  const read = (): SmtList | undefined => {
+  const readOpen = () => {
     const token = take();
     if (token === undefined) return undefined;
     if (token.kind !== "(") throw new SmtParseError("invalid command, '(' expected", token);
     state.depth = 1;
-    return readList(token);
+    return token;
+  };
+  const read = () => {
+    const open = readOpen();
+    return open === undefined ? undefined : readList(open);
+  };
+  // parse_cmd checks the head of a command before it reads the rest.
+  const readCommand = () => {
+    const open = readOpen();
+    if (open === undefined) return undefined;
+    state.lookahead = take();
+    if (!isSymbol(state.lookahead))
+      throw new SmtParseError(
+        "invalid command, symbol expected",
+        state.lookahead ?? scanner.getPosition(),
+      );
+    return readList(open);
   };
   const skip = (report: (error: SmtParseError) => void) => {
     for (;;) {
@@ -844,7 +860,7 @@ export const createCommandReader = (text: string) => {
       }
     }
   };
-  return { read, skip };
+  return { read, readCommand, skip };
 };
 
 export const isSymbol = (sexpr: SExpr | undefined, text?: string): sexpr is SmtToken =>
@@ -3308,7 +3324,7 @@ export const parseSmtlib = (
   };
   for (;;) {
     try {
-      const list = commands.read();
+      const list = commands.readCommand();
       if (list === undefined) return { assertions, hasCheckSat: false, rlimit: state.rlimit };
       if (isSymbol(list.items[0], "check-sat"))
         return { assertions, hasCheckSat: true, rlimit: state.rlimit };

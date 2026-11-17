@@ -1687,7 +1687,7 @@ export const runSmtlibScript = (
   };
   for (;;) {
     try {
-      const list = commands.read();
+      const list = commands.readCommand();
       if (list === undefined || isSymbol(list.items[0], "exit")) break;
       run(list);
     } catch (error) {
