@@ -1341,6 +1341,7 @@ export const hasIncompleteSuccessor = (
     generator: undefined,
     successors: 0,
   };
+  // TLC's Tool#getState generates every successor of the action before it compares them.
   getRunner(expression, environment, false)(
     run,
     scope,
@@ -1348,10 +1349,10 @@ export const hasIncompleteSuccessor = (
     undefined,
     false,
     (partial) => {
-      if (!isComplete(partial)) run.isStopped = true;
+      if (!isComplete(partial)) run.successors++;
     },
   );
-  return run.isStopped;
+  return run.successors > 0;
 };
 
 export const getSuccessors = (

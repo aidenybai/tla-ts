@@ -799,9 +799,10 @@ export const replayEnabled = (
   state: Value[],
   environment: Environment,
 ) => {
-  const replay = createReplay(environment, "enabled", state, () => {
+  const found = () => {
     throw ENABLED_FOUND;
-  });
+  };
+  const replay = createReplay(environment, "enabled", state, found, found);
   const callStack = replay.callStack;
   const depth = callStack?.expressions.length ?? 0;
   try {

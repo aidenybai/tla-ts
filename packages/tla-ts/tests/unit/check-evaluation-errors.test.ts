@@ -634,6 +634,21 @@ describe("evaluation errors match TLC", () => {
     expect(result.failure?.traceOutput).toEqual(['<<"s", 1>>']);
   });
 
+  it.each([
+    ["Fail \\/ Shown", "", ['<<"s", 0>>']],
+    ["Fail \\/ Shown", "CHECK_DEADLOCK FALSE", []],
+    ["Shown \\/ Fail", "", ['<<"s", 1>>']],
+  ])(
+    "prints the output of the trace again after %s fails only as TLC finds the state deadlocked (%s)",
+    async (step, config, expected) => {
+      const result = await checkSteps(
+        `Shown == PrintT(<<"s", x>>) /\\ Next\nFail == x = 1 /\\ x' = 1 /\\ 1\nStep == ${step}`,
+        `INIT Init\nNEXT Step\n${config}`,
+      );
+      expect(result.failure?.traceOutput).toEqual(expected);
+    },
+  );
+
   it("leaves out the state an action property fails on from the behavior graph in TLC 1.7.4", async () => {
     const result = await checkSteps(
       `Step == Next /\\ PrintT(<<"s", x>>)\nSpec == Init /\\ [][Step]_x /\\ WF_x(Step)\nP == [][x' < 2 \\/ 1 \\div 0 = 0]_x\nL == <>(x = 3)`,
@@ -1284,6 +1299,73 @@ describe("evaluation errors match TLC", () => {
     expect([result.status, prints]).toEqual(["success", ["0  TRUE"]]);
   });
 
+  it.each([
+    [
+      "TLCEval(<<5, 6>>)[6]",
+      "Attempted to apply function:\n<<5, 6>>\nto argument 6, which is not in the domain of the function.",
+    ],
+    [
+      "TLCEval([a |-> 1]).b",
+      'Attempted to apply function:\n[a |-> 1]\nto argument "b", which is not in the domain of the function.',
+    ],
+    [
+      'TLCEval(<<5, 6>>)["a"]',
+      'Attempted to apply function with integer domain to the non-integer argument "a"',
+    ],
+  ])("applies %s as the plain function TLCEval makes", async (expression, message) => {
+    expect((await checkModule(`ASSUME PrintT(${expression})`)).violation?.message).toBe(message);
+  });
+
+  it("evaluates a constant TLCEval argument once for every state", async () => {
+    const prints: string[] = [];
+    const result = await check({
+      source:
+        '---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nInit == x = 0\nNext == x < 2 /\\ x\' = x + 1\nInv == x >= 0 /\\ TLCEval(Print("b", TRUE))\n====',
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+      onPrint: (text) => prints.push(text),
+    });
+    expect([result.status, prints]).toEqual(["deadlock", ['"b"  TRUE']]);
+  });
+
+  it("evaluates a constant TLCEval argument again under a bound name", async () => {
+    const prints: string[] = [];
+    await check({
+      source:
+        '---- MODULE M ----\nEXTENDS Integers, TLC\nASSUME \\A i \\in 1..3 : TLCEval(Print("a", 7)) = 7\n====',
+      config: "",
+      onPrint: (text) => prints.push(text),
+    });
+    expect(prints).toEqual(['"a"  7', '"a"  7', '"a"  7']);
+  });
+
+  it("rejects EXCEPT at an argument that is not a tuple of a lazy function of two arguments", async () => {
+    const pairs = [1, 2].flatMap((first) =>
+      [0, 1, 2, 3, 4].map((second) => `<<${first}, ${second}>> :> 100`),
+    );
+    expect(
+      (
+        await checkModule(
+          "ASSUME PrintT([[a \\in {1, 2}, b \\in 0..4 |-> 100] EXCEPT ![5] = 0][<<1, 1>>])",
+        )
+      ).violation?.message,
+    ).toBe(
+      `In applying the function\n( ${pairs.join(" @@\n  ")} ),\nthe argument list is:\n5\nwhich does not match its formal parameter.\n`,
+    );
+  });
+
+  it.each([
+    ['PrintT("a") /\\ PrintT("b") /\\ x + 1', ['"a"', '"b"']],
+    ['Print("p", x + 1)', ['"p"  1']],
+  ])("evaluates the invariant %s once when it is not boolean", async (body, texts) => {
+    const prints: string[] = [];
+    const result = await check({
+      source: `---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nInit == x = 0\nNext == UNCHANGED x\nInv == ${body}\n====`,
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+      onPrint: (text) => prints.push(text),
+    });
+    expect([result.status, prints]).toEqual(["error", texts]);
+  });
+
   it("rejects a mistyped membership outside an assumption", async () => {
     const result = await check({
       source:
@@ -1404,6 +1486,43 @@ describe("evaluation errors match TLC", () => {
       "Successor state is not completely specified by the next-state action. The following variable is not defined: y.\n",
       75,
       2,
+    ]);
+  });
+
+  it("prints what finding the action of an incomplete successor prints, and nothing after the trace, like TLC", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLES x, y\nInit == x = 0 /\\ y = 0\nA == PrintT(<<\"a\", x>>) /\\ x' = x + 1 /\\ (x > 0 \\/ y' = 0)\nNext == A\n====",
+      config: "INIT Init\nNEXT Next",
+      onPrint: () => {},
+    });
+    expect([
+      result.failure?.trace.map((step) => [formatValue(step.state.x), step.output]),
+      result.failure?.traceOutput ?? [],
+    ]).toEqual([
+      [
+        ["0", []],
+        ["1", ['<<"a", 0>>']],
+        ["2", ['<<"a", 1>>']],
+      ],
+      [],
+    ]);
+  });
+
+  it("fails as it prints an incomplete successor when another branch of its action fails, like TLC", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nVARIABLES x, y\nInit == x = 0 /\\ y = 0\nNext == x' = 1 /\\ (x = 0 \\/ <<x>>[2] = 0)\n====",
+      config: "INIT Init\nNEXT Next",
+    });
+    expect([
+      result.failure?.trace.map((step) => formatValue(step.state.x)),
+      result.failure?.traceFailure?.message,
+      result.failure?.exitCode,
+    ]).toEqual([
+      ["0"],
+      `${UNEXPECTED_EXCEPTION}Attempted to access index 2 of tuple\n<<0>>\nwhich is out of bounds.`,
+      75,
     ]);
   });
 

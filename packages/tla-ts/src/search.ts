@@ -52,6 +52,7 @@ import {
   type Context,
   type Environment,
   type Scope,
+  type State,
 } from "./evaluate";
 import { EXIT_STATUS, setExitCode } from "./exit-codes";
 import type { JavaOverride } from "./java-overrides";
@@ -85,11 +86,13 @@ import { createTlcOrder } from "./tlc/order";
 import { getTlcFingerprint, getTlcFingerprints, setFingerprintPolynomial } from "./tlc/fingerprint";
 import type { TlcVersion } from "./tlc/version";
 import {
+  createModelValue,
   formatValue,
   freezeStringOrder,
   getWrittenPairs,
   isFunctionValue,
   isUpdatedElementOf,
+  markNormalized,
   setAliasName,
   setStringOrder,
   setValueOptions,
@@ -656,20 +659,26 @@ const getPredicate = (expression: Expression, environment: Environment) => {
 };
 
 const getStateChecks = (named: NamedExpression[], environment: Environment): StateCheck[] =>
-  named.flatMap((item) =>
-    getConjuncts(item.expression, environment).map((expression) => {
-      const variables =
-        item.scope === undefined ? getReadVariables(expression, environment) : undefined;
-      return {
-        name: item.name,
-        expression,
-        scope: item.scope,
-        variables,
-        membership: getMembership(expression, variables, environment),
-        predicate: getPredicate(item.expression, environment),
-      };
-    }),
-  );
+  named.flatMap((item) => {
+    const predicate = getPredicate(item.expression, environment);
+    const isImpure =
+      item.scope === undefined && getReadVariables(predicate, environment) === undefined;
+    // TLC evaluates an invariant whole, so one that prints isn't split into conjuncts.
+    return (isImpure ? [predicate] : getConjuncts(item.expression, environment)).map(
+      (expression) => {
+        const variables =
+          item.scope === undefined ? getReadVariables(expression, environment) : undefined;
+        return {
+          name: item.name,
+          expression,
+          scope: item.scope,
+          variables,
+          membership: getMembership(expression, variables, environment),
+          predicate,
+        };
+      },
+    );
+  });
 
 const isUnchangedFor = (stateCheck: StateCheck, state: Value[], parent: Value[] | undefined) => {
   const variables = stateCheck.variables;
@@ -712,8 +721,8 @@ export interface Search {
   toRecord: (state: Value[]) => Record<string, Value>;
   evaluateAlias: (
     alias: string,
-    state: Value[],
-    next: Value[] | undefined,
+    state: State,
+    next: State | undefined,
     isTool: boolean,
   ) => Record<string, Value>;
   spec: Specification;
@@ -738,12 +747,13 @@ export interface Search {
       }
     | undefined;
   findViolatedInvariant: (state: Value[], parent?: Value[]) => StateCheck | undefined;
-  getViolatedInvariants: (state: Value[]) => StateCheck[];
+  forEachViolatedInvariant: (state: Value[], onViolated: (invariant: StateCheck) => void) => void;
   checkReplayedInitialState: (
     state: Value[],
     tracing: Environment,
     addFingerprint: () => void,
-  ) => Pick<InitialStateViolation, "status" | "name"> | undefined;
+    onViolated: (violation: Pick<InitialStateViolation, "status" | "name">) => void,
+  ) => void;
   checkReplayedSuccessor: (
     state: Value[],
     next: Value[],
@@ -783,8 +793,8 @@ export const getIncompleteSuccessorMessage = (
 
 export const getContext = (
   environment: Environment,
-  state: Value[] | undefined,
-  next: Value[] | undefined,
+  state: State | undefined,
+  next: State | undefined,
   scope?: Scope,
 ) => ({ environment, scope, state, next });
 
@@ -817,7 +827,7 @@ const getExpectedBoolean = (expression: Expression, environment: Environment) =>
 
 const holdsAsConjunct = (check: StateCheck, context: Context) =>
   holdsLikeTlc(check.expression, context, (expression, environment) => {
-    holdsLikeTlc(check.predicate, context);
+    if (check.predicate !== check.expression) holdsLikeTlc(check.predicate, context);
     return getExpectedBoolean(expression, environment);
   });
 
@@ -1052,6 +1062,12 @@ export const createSearch = (
     ...getCoveredChecks("invariant", configInvariants),
     ...getCoveredChecks("invariant", properties.invariants, false),
   ];
+  const coveredInvariantChecks = new Map(
+    [...configInvariants, ...properties.invariants].map((item, index) => [
+      getPredicate(item.expression, environment),
+      coveredInvariants[index],
+    ]),
+  );
   const coveredActionConstraints = getCoveredChecks("constraint", actionConstraints);
   const coveredConstraints = getCoveredChecks("constraint", namedConstraints);
   const coveredInitialPredicates = getCoveredChecks("implied", properties.initialPredicates, false);
@@ -1074,9 +1090,6 @@ export const createSearch = (
       return undefined;
     }
   };
-  const isCoveredHeld = (checks: CoveredCheck[], state: Value[], next?: Value[]) =>
-    coverage !== undefined &&
-    checks.every((check) => evaluateCovered(coverage, check, state, next) === true);
   const satisfiesCovered = (checks: CoveredCheck[], state: Value[], next?: Value[]) => {
     if (!coverage) return undefined;
     for (const check of checks) {
@@ -1132,9 +1145,15 @@ export const createSearch = (
   };
   const getViewValue = (expression: Expression, state: Value[]) =>
     evaluate(expression, getContext(environment, state, undefined));
+  const getRepresentativeState = (state: Value[]) => {
+    // TLC's TLCStateMut#fingerPrint deep-normalizes a state before it evaluates the view.
+    if (view !== undefined) state.forEach(markNormalized);
+    return symmetryGroup === undefined
+      ? state
+      : getRepresentative(state, symmetryGroup, getTlcOrder());
+  };
   const getTlcStateFingerprint = (state: Value[]) => {
-    const representative =
-      symmetryGroup === undefined ? state : getRepresentative(state, symmetryGroup, getTlcOrder());
+    const representative = getRepresentativeState(state);
     return getTlcFingerprint(
       view === undefined
         ? getTlcOrder().map((index) => representative[index])
@@ -1142,15 +1161,16 @@ export const createSearch = (
     );
   };
   const findFailedInitialPredicate = (state: Value[]) =>
-    isCoveredHeld(coveredInitialPredicates, state)
-      ? undefined
-      : properties.initialPredicates.find(
-          (predicate) =>
-            !holdsLikeTlc(
-              predicate.expression,
-              getContext(environment, state, undefined, predicate.scope),
-            ),
-        );
+    properties.initialPredicates.find((predicate, index) => {
+      const value =
+        coverage && evaluateCovered(coverage, coveredInitialPredicates[index], state, undefined);
+      return typeof value === "boolean"
+        ? !value
+        : !holdsLikeTlc(
+            predicate.expression,
+            getContext(environment, state, undefined, predicate.scope),
+          );
+    });
   const violatingStates = new WeakSet<Value[]>();
   const isViolated = (invariant: StateCheck, state: Value[], parent: Value[] | undefined) => {
     const checkedParent = parent && !violatingStates.has(parent) ? parent : undefined;
@@ -1173,6 +1193,21 @@ export const createSearch = (
         `Evaluating invariant ${invariant.name} failed.`,
       );
     }
+  };
+  const isPredicateViolated = (
+    predicate: StateCheck,
+    state: Value[],
+    parent: Value[] | undefined,
+  ) => {
+    const covered = coveredInvariantChecks.get(predicate.predicate);
+    const value =
+      coverage && covered ? evaluateCovered(coverage, covered, state, undefined) : undefined;
+    return typeof value === "boolean"
+      ? !value
+      : invariants.some(
+          (invariant) =>
+            invariant.predicate === predicate.predicate && isViolated(invariant, state, parent),
+        );
   };
   const isFingerprintedLikeTlc = hasWideString(config, environment);
   runtime.getFingerprint = getTlcStateFingerprint;
@@ -1229,14 +1264,16 @@ export const createSearch = (
     spec,
     toRecord,
     evaluateAlias: (alias, state, next, isTool) => {
+      const getStateRecord = () =>
+        toRecord(state.map((value) => value ?? createModelValue("null")));
       try {
         getConfigDefinition("alias", alias, environment);
         const value = evaluate(createIdentifier(alias), getContext(environment, state, next));
         const record = toAliasRecord(value);
-        return record === undefined ? toRecord(state) : setAliasName(record, alias);
+        return record === undefined ? getStateRecord() : setAliasName(record, alias);
       } catch (error) {
         if (!(error instanceof TlaConfigError || error instanceof TlaEvaluationError)) throw error;
-        return { ...toRecord(state), _ALIASEvalError: formatNestedMessage(error.message, isTool) };
+        return { ...getStateRecord(), _ALIASEvalError: formatNestedMessage(error.message, isTool) };
       }
     },
     isSymmetric: symmetryGroup !== undefined,
@@ -1320,40 +1357,38 @@ export const createSearch = (
     },
     getFingerprintState: (state) => {
       if (isFingerprintedLikeTlc) return [String(getTlcStateFingerprint(state))];
-      const representative =
-        symmetryGroup === undefined
-          ? state
-          : getRepresentative(state, symmetryGroup, getTlcOrder());
+      const representative = getRepresentativeState(state);
       return view === undefined ? representative : [getViewValue(view.expression, representative)];
     },
     findViolatedInvariant: (state, parent) => {
-      const checked = isCoveredHeld(coveredInvariants, state) ? runtimeChecks : invariants;
-      const violated = checked.find((invariant) => isViolated(invariant, state, parent));
+      const violated =
+        coverage === undefined
+          ? invariants.find((invariant) => isViolated(invariant, state, parent))
+          : invariantPredicates.find((predicate) => isPredicateViolated(predicate, state, parent));
       if (violated) violatingStates.add(state);
       return violated;
     },
-    getViolatedInvariants: (state) => {
-      const violated = invariantPredicates.filter((predicate) =>
-        invariants.some(
-          (invariant) =>
-            invariant.predicate === predicate.predicate && isViolated(invariant, state, undefined),
-        ),
-      );
-      if (violated.length > 0) violatingStates.add(state);
-      return violated;
+    forEachViolatedInvariant: (state, onViolated) => {
+      for (const predicate of invariantPredicates) {
+        if (!isPredicateViolated(predicate, state, undefined)) continue;
+        violatingStates.add(state);
+        onViolated(predicate);
+      }
     },
-    checkReplayedInitialState: (state, tracing, addFingerprint) => {
+    checkReplayedInitialState: (state, tracing, addFingerprint, onViolated) => {
       const holdsIn = (expression: Expression, scope: Scope | undefined) =>
         holdsLikeTlc(expression, getContext(tracing, state, undefined, scope));
       if (constraints.every((constraint) => holdsIn(constraint.predicate, constraint.scope))) {
         addFingerprint();
       }
-      const invariant = invariantPredicates.find((check) => !holdsIn(check.predicate, check.scope));
-      if (invariant) return { status: "invariant-violation", name: invariant.name };
+      for (const invariant of invariantPredicates) {
+        if (holdsIn(invariant.predicate, invariant.scope)) continue;
+        onViolated({ status: "invariant-violation", name: invariant.name });
+      }
       const predicate = properties.initialPredicates.find(
         (check) => !holdsIn(check.expression, check.scope),
       );
-      return predicate && { status: "liveness-violation", name: predicate.name };
+      if (predicate) onViolated({ status: "liveness-violation", name: predicate.name });
     },
     checkReplayedSuccessor: (state, next, tracing, addFingerprint) => {
       const isInModel =
@@ -1390,31 +1425,32 @@ export const createSearch = (
       ),
     findFailedInitialPredicate,
     findViolatedActionProperty: (state, next) =>
-      isCoveredHeld(coveredActionProperties, state, next)
-        ? undefined
-        : actionProperties.find((property) => {
-            try {
-              return (
-                !holdsLikeTlc(
-                  property.action,
-                  getContext(environment, state, next, property.scope),
-                  () =>
-                    `Attempted to evaluate an expression of form [A]_e, but A was not a boolean.\n${describeRange(property.box)}`,
-                ) &&
-                !holds(
-                  property.unchanged,
-                  getContext(environment, state, next, property.scope),
-                  "a subscript",
-                )
-              );
-            } catch (error) {
-              throw withHeadline(
-                withNextStateExitCode(error),
-                MESSAGE_CODE.actionPropertyEvaluationFailed,
-                `Evaluating action property ${property.name} failed.`,
-              );
-            }
-          }),
+      actionProperties.find((property, index) => {
+        const value =
+          coverage && evaluateCovered(coverage, coveredActionProperties[index], state, next);
+        if (typeof value === "boolean") return !value;
+        try {
+          return (
+            !holdsLikeTlc(
+              property.action,
+              getContext(environment, state, next, property.scope),
+              () =>
+                `Attempted to evaluate an expression of form [A]_e, but A was not a boolean.\n${describeRange(property.box)}`,
+            ) &&
+            !holds(
+              property.unchanged,
+              getContext(environment, state, next, property.scope),
+              "a subscript",
+            )
+          );
+        } catch (error) {
+          throw withHeadline(
+            withNextStateExitCode(error),
+            MESSAGE_CODE.actionPropertyEvaluationFailed,
+            `Evaluating action property ${property.name} failed.`,
+          );
+        }
+      }),
     satisfiesActionConstraints: (state, next) =>
       satisfiesCovered(coveredActionConstraints, state, next) ??
       actionConstraints.every((constraint) => holdsActionConstraint(constraint, state, next)),

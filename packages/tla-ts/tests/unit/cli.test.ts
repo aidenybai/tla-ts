@@ -379,6 +379,58 @@ const TLC_REPORTS = [
     ],
   ],
   [
+    "UnfingerprintedProduct",
+    75,
+    [
+      "Starting... (_)",
+      "Computing initial states...",
+      "Error: Shouldn't call isEmpty() on value <<3, 1, 2>>",
+      "While working on the initial state:",
+      "x = 0",
+      "",
+      "Error: TLC was unable to fingerprint.",
+      "",
+      "Fingerprint Stack Trace:",
+      "0. Line 3, column 9 to line 3, column 13 in UnfingerprintedProduct",
+      "1. Line 5, column 8 to line 5, column 49 in UnfingerprintedProduct",
+      "2. Line 5, column 24 to line 5, column 41 in UnfingerprintedProduct",
+      "3. Line 5, column 24 to line 5, column 34 in UnfingerprintedProduct",
+      "",
+      "",
+      "Reason:",
+      "Shouldn't call isEmpty() on value <<3, 1, 2>>",
+      "1 states generated, 1 distinct states found, 1 states left on queue.",
+      "The depth of the complete state graph search is 1.",
+      "Finished in _ at (_)",
+    ],
+  ],
+  [
+    "UnfingerprintedConcat",
+    75,
+    [
+      "Starting... (_)",
+      "Computing initial states...",
+      "Error: Shouldn't call isEmpty() on value <<3, 1, 2>>",
+      "While working on the initial state:",
+      "x = 0",
+      "",
+      "Error: TLC was unable to fingerprint.",
+      "",
+      "Fingerprint Stack Trace:",
+      "0. Line 4, column 9 to line 4, column 13 in UnfingerprintedConcat",
+      "1. Line 6, column 8 to line 6, column 59 in UnfingerprintedConcat",
+      "2. Line 6, column 24 to line 6, column 51 in UnfingerprintedConcat",
+      "3. Line 6, column 33 to line 6, column 43 in UnfingerprintedConcat",
+      "",
+      "",
+      "Reason:",
+      "Shouldn't call isEmpty() on value <<3, 1, 2>>",
+      "1 states generated, 1 distinct states found, 1 states left on queue.",
+      "The depth of the complete state graph search is 1.",
+      "Finished in _ at (_)",
+    ],
+  ],
+  [
     "UnfingerprintedState",
     75,
     [
@@ -476,6 +528,41 @@ describe("the CLI reports results like TLC", () => {
     expect(result.stdout).toContain("Error: Temporal properties were violated.\n");
   });
 
+  it("prints the counterexample before it fails to rebuild the step back of a lasso under a VIEW like TLC", () => {
+    const result = runCli("view", "Recover");
+    expect(result.status).toBe(1);
+    expect(getSteadyLines(result.stdout)).toEqual([
+      "Starting... (_)",
+      "Implied-temporal checking--satisfiability problem has 1 branches.",
+      "Computing initial states...",
+      "Finished computing initial states: 1 distinct state generated at _.",
+      "Progress(2) at _: 5 states generated, 3 distinct states found, 0 states left on queue.",
+      "Checking temporal properties for the complete state space with 3 total distinct states at (_)",
+      "Error: Temporal property Never was violated.",
+      "",
+      "Error: The following behavior constitutes a counter-example:",
+      "",
+      "State 1: <Initial predicate>",
+      "/\\ x = 0",
+      "/\\ y = 0",
+      "",
+      "State 2: <A line 6, col 6 to line 6, col 30 of module Recover>",
+      "/\\ x = 1",
+      "/\\ y = 0",
+      "",
+      "State 3: <B line 8, col 6 to line 8, col 30 of module Recover>",
+      "/\\ x = 2",
+      "/\\ y = 0",
+      "",
+      "Error: TLC threw an unexpected exception.",
+      "This was probably caused by an error in the spec or model.",
+      "See the User Output or TLC Console for clues to what happened.",
+      "The exception was a tlc2.tool.EvalException",
+      ": Failed to recover the next state from its fingerprint.",
+      "",
+    ]);
+  });
+
   it("checks liveness on the complete state graph with -lncheck final", () => {
     const [, code, lines] = TLC_REPORTS.find((report) => report[0] === "Lasso") ?? [];
     const result = runCli("cli-output", "Lasso", ["-lncheck", "final"]);
@@ -483,11 +570,25 @@ describe("the CLI reports results like TLC", () => {
     expect(getSteadyLines(result.stdout)).toEqual([...(lines ?? []), ""]);
   });
 
-  it.each(["Continue", "DoInitFunctorInvariantContinue", "ContinueSuccessors", "ContinueAlias"])(
-    "goes on past each violation in %s with -continue like TLC",
+  it.each([
+    "Continue",
+    "DoInitFunctorInvariantContinue",
+    "ContinueSuccessors",
+    "ContinueAlias",
+    "ContinueInitialPrint",
+  ])("goes on past each violation in %s with -continue like TLC", (name) => {
+    const result = runCli("tlc-continue", name, ["-continue"]);
+    expect(result.status).toBe(12);
+    expect(getSteadyLines(result.stdout)).toEqual(
+      readFileSync(join(FIXTURES, "tlc-continue", `${name}.out`), "utf8").split("\n"),
+    );
+  });
+
+  it.each(["ContinueNextFailure", "ContinueNextFailureSuccessors"])(
+    "reports the failure of the next-state relation in %s once with -continue, where TLC reports it twice",
     (name) => {
       const result = runCli("tlc-continue", name, ["-continue"]);
-      expect(result.status).toBe(12);
+      expect(result.status).toBe(75);
       expect(getSteadyLines(result.stdout)).toEqual(
         readFileSync(join(FIXTURES, "tlc-continue", `${name}.out`), "utf8").split("\n"),
       );
@@ -1038,7 +1139,9 @@ describe("the CLI takes several specs and globs", () => {
       "Checking SafetyProperty.tla with SafetyProperty.cfg",
       "Checking Success.tla with Success.cfg",
       "Checking Undefined.tla with Undefined.cfg",
+      "Checking UnfingerprintedConcat.tla with UnfingerprintedConcat.cfg",
       "Checking UnfingerprintedEquality.tla with UnfingerprintedEquality.cfg",
+      "Checking UnfingerprintedProduct.tla with UnfingerprintedProduct.cfg",
       "Checking UnfingerprintedState.tla with UnfingerprintedState.cfg",
       "Checking UnspecifiedFairness.tla with UnspecifiedFairness.cfg",
       "Checking ViewLasso.tla with ViewLasso.cfg",

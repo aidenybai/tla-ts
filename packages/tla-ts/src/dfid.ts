@@ -131,7 +131,7 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
       withUnexpectedException(() =>
         createLivenessChecker(temporalProperties, search.spec.temporals, environment, {
           getFingerprint: () => 0,
-          getSuccessors: () => [],
+          forEachActionSuccessors: () => {},
         }),
       ),
     )?.branches;
@@ -268,16 +268,21 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
         config.alias === undefined
           ? search.toRecord(state)
           : search.evaluateAlias(config.alias, state, state, isTool);
-      const violated = isContinued
-        ? search.getViolatedInvariants(state)
-        : [search.findViolatedInvariant(state)].filter((invariant) => invariant !== undefined);
-      for (const invariant of violated) {
+      const reportInvariant = (name: string) =>
         message(
           MESSAGE_CODE.invariantViolatedInitial,
-          `Invariant ${invariant.name} is violated by the initial state:\n${formatState(alias())}`,
+          `Invariant ${name} is violated by the initial state:\n${formatState(alias())}`,
         );
-        if (!isContinued) return MESSAGE_CODE.invariantViolatedInitial;
-        checker.continuedCode = MESSAGE_CODE.invariantViolatedInitial;
+      if (isContinued) {
+        search.forEachViolatedInvariant(state, (invariant) => {
+          reportInvariant(invariant.name);
+          checker.continuedCode = MESSAGE_CODE.invariantViolatedInitial;
+        });
+      }
+      const violated = isContinued ? undefined : search.findViolatedInvariant(state);
+      if (violated) {
+        reportInvariant(violated.name);
+        return MESSAGE_CODE.invariantViolatedInitial;
       }
       const predicate = search.findFailedInitialPredicate(state);
       if (predicate) {

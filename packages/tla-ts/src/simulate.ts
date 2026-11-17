@@ -10,7 +10,9 @@ import {
   UNEXPECTED_EVAL_EXCEPTION,
   UNEXPECTED_EXCEPTION,
 } from "./errors";
+import type { State } from "./evaluate";
 import { EXIT_STATUS, getMessageExitStatus, withLivenessExitCode } from "./exit-codes";
+import { getHashMapOrder } from "./java-hash";
 import { createLivenessChecker, type LivenessChecker } from "./liveness-checker";
 import { getIncompleteSuccessorMessage, prepareSearch, reportAssumptionViolation } from "./search";
 import { getActionLabel, toActionValue, type SpecAction } from "./spec-description";
@@ -27,13 +29,20 @@ import {
   withUnexpectedException,
 } from "./tlc/messages";
 import { createJavaRandom, nextPrime, type JavaRandom } from "./tlc/random";
-import { createCounterExample } from "./tlc/tlcext-operators";
 import {
+  createActionRecord,
+  createCounterExample,
+  createTlcRecord,
+  type CounterExampleLoop,
+} from "./tlc/tlcext-operators";
+import {
+  computeLikeTlcOnFailure,
   createModelValue,
   createRecord,
   formatState,
   getSetBound,
-  isSameValue,
+  markNormalized,
+  valuesEqual,
   type Value,
 } from "./values";
 
@@ -67,6 +76,7 @@ interface TraceNode {
   predecessor: TraceNode | undefined;
   level: number;
   deferred?: (next: Value[]) => void;
+  incomplete?: State;
 }
 
 interface WorkerError {
@@ -77,6 +87,7 @@ interface WorkerError {
   isException: boolean;
   isSummarized: boolean;
   violation?: Violation;
+  counterExample?: Value;
 }
 
 const FATAL_CODES = new Set<number>([
@@ -91,14 +102,25 @@ const RL_ALPHA = 0.3;
 const RL_GAMMA = 0.7;
 const RL_REWARD = -10;
 
-const isSameState = (left: Value[], right: Value[]) =>
-  left.every((value, index) => isSameValue(value, right[index]));
+const isUnequal = () => false;
 
-const getTrace = (last: TraceNode) => {
+// TLC's SimulationWorker#getTrace drops a step its TLCState#equals finds stuttering, which sorts the records it compares.
+const isRepeatedState = (state: Value[], predecessor: Value[], order: number[]) => {
+  for (let position = 0; position < order.length; position++) {
+    const index = order[position];
+    // Deviation from TLC: TLCState#equals fails on values it can't compare, which hangs TLC's simulation.
+    if (!computeLikeTlcOnFailure(valuesEqual, isUnequal, state[index], predecessor[index])) {
+      return false;
+    }
+  }
+  return true;
+};
+
+const getTrace = (last: TraceNode, order: number[]) => {
   const trace: TraceNode[] = [];
   for (let node: TraceNode | undefined = last; node; node = node.predecessor) {
     const predecessor = node.predecessor;
-    if (predecessor && isSameState(node.state, predecessor.state)) continue;
+    if (predecessor && isRepeatedState(node.state, predecessor.state, order)) continue;
     trace.unshift(node);
   }
   trace.forEach((node, index) => {
@@ -108,6 +130,7 @@ const getTrace = (last: TraceNode) => {
   return trace;
 };
 
+// Deviation from TLC: LiveCheck1 gives the initial state no stuttering step into a tableau node that isn't initial, so it misses a behavior that stutters there.
 const findTemporalViolation = (
   trace: TraceNode[],
   getFingerprint: (state: Value[]) => bigint,
@@ -151,6 +174,7 @@ const findTemporalViolation = (
     fingerprints[length - 1] === getFingerprint(states[path[lasso.prefix.length]]);
   return {
     length,
+    isStuttering,
     loopStart: isStuttering ? length - 1 : cyclePosition - 1,
     properties: checker.getViolatedProperties(
       trace.slice(0, length).map((node) => node.state),
@@ -252,10 +276,6 @@ export const simulate = (options: SimulationOptions): number => {
   let evaluatedAction: SpecAction | undefined;
   runtime.getSuccessorAction = () => evaluatedAction;
   runtime.getLevel = (state) => nodes.get(state)?.level ?? 0;
-  runtime.getBehavior = (state) => {
-    const node = nodes.get(state);
-    return node ? getTrace(node).map((step) => step.state) : [state];
-  };
   runtime.getSimulationValue = (key, state) => {
     const node = state && nodes.get(state);
     switch (key) {
@@ -268,7 +288,7 @@ export const simulate = (options: SimulationOptions): number => {
       case "action":
         return node && toActionValue(node.action);
       case "config":
-        return createRecord([
+        return createTlcRecord([
           ["mode", options.isGenerating ? "generate" : "simulate"],
           ["depth", traceDepth === INFINITE_DEPTH ? -1 : traceDepth],
           ["traces", Number(BigInt.asIntN(32, traceLimit))],
@@ -284,14 +304,19 @@ export const simulate = (options: SimulationOptions): number => {
         for (let step = node; step && step.level > 1; step = step.predecessor) {
           actions.set(step.action.name, (actions.get(step.action.name) ?? 0) + 1);
         }
-        return createRecord([
+        // TLC's SimulationWorker counts the actions of a behavior in a HashMap.
+        const counts = getHashMapOrder([...actions.keys()]).map((name): [string, Value] => [
+          name,
+          actions.get(name) ?? 0,
+        ]);
+        return createTlcRecord([
           ["traces", statistics.traces],
           ["duration", Math.floor((Date.now() - runtime.startedAt) / 1000)],
           ["generated", statistics.generatedStates],
           [
             "behavior",
-            createRecord([
-              ["actions", createRecord([...actions])],
+            createTlcRecord([
+              ["actions", createTlcRecord(counts)],
               ["id", currentTrace],
             ]),
           ],
@@ -311,6 +336,10 @@ export const simulate = (options: SimulationOptions): number => {
   if (!search) {
     throw new TlaUnsupportedError("tla-ts can't simulate a specification without variables");
   }
+  runtime.getBehavior = (state) => {
+    const node = nodes.get(state);
+    return node ? getTrace(node, search.getTlcOrder()).map((step) => step.state) : [state];
+  };
   const reportPostcondition = (isAfterViolation: boolean) => {
     const postcondition = search.findPostconditionViolation(isAfterViolation);
     if (!postcondition) return undefined;
@@ -329,8 +358,13 @@ export const simulate = (options: SimulationOptions): number => {
         createLivenessChecker(temporalProperties, search.spec.temporals, environment, {
           getFingerprint: (successor) =>
             Number(BigInt.asIntN(32, runtime.getFingerprint(successor.state))),
-          getSuccessors: (index) =>
-            successors[index].map((successor) => ({ index: successor, state: states[successor] })),
+          forEachActionSuccessors: (index, _state, onSuccessors) =>
+            onSuccessors(
+              successors[index].map((successor) => ({
+                index: successor,
+                state: states[successor],
+              })),
+            ),
         }),
       ),
     );
@@ -351,25 +385,35 @@ export const simulate = (options: SimulationOptions): number => {
   const toRecord = (state: (Value | undefined)[]) =>
     search.toRecord(state.map((value) => value ?? createModelValue("null")));
   const toTraceSteps = (trace: TraceNode[]): TraceStep[] =>
-    trace.map((node, index) => ({
-      action: node.action.name,
-      label: getActionLabel(node.action, options.version, node.level === 1),
-      state:
-        config.alias === undefined || !node.state.every((value) => value !== undefined)
-          ? toRecord(node.state)
-          : search.evaluateAlias(
-              config.alias,
-              node.state,
-              (trace[index + 1] ?? node).state,
-              options.isTool ?? false,
-            ),
-    }));
-  const getCounterExample = (trace: TraceNode[]) =>
+    trace.map((node, index) => {
+      const successor = trace[index + 1] ?? node;
+      return {
+        action: node.action.name,
+        label: getActionLabel(node.action, options.version, node.level === 1),
+        state:
+          config.alias === undefined
+            ? toRecord(node.state)
+            : search.evaluateAlias(
+                config.alias,
+                node.incomplete ?? node.state,
+                successor.incomplete ?? successor.state,
+                options.isTool ?? false,
+              ),
+      };
+    });
+  const getCounterExample = (
+    trace: TraceNode[],
+    steps = toTraceSteps(trace),
+    loop?: CounterExampleLoop,
+  ) =>
     createCounterExample(
-      trace.map((node) => search.toRecord(node.state)),
+      steps.map((step) => step.state),
       trace.slice(1).map((node) => toActionValue(node.action)),
-      undefined,
+      loop,
     );
+  // TLC's Simulator binds CounterExample to an initial state that violates an invariant, not to its alias.
+  const getInitialCounterExample = (node: TraceNode) =>
+    createCounterExample([toRecord(node.state)], [], undefined);
 
   const initialStates: TraceNode[] = [];
   const isComplete = (state: (Value | undefined)[]): state is Value[] =>
@@ -431,7 +475,7 @@ export const simulate = (options: SimulationOptions): number => {
           MESSAGE_CODE.invariantViolatedInitial,
           `Invariant ${violated.name} is violated by the initial state:\n${formatState(alias)}`,
         );
-        runtime.counterExample = getCounterExample([node]);
+        runtime.counterExample = getInitialCounterExample(node);
         reportPostcondition(true);
         return EXIT_STATUS.safetyViolation;
       }
@@ -443,7 +487,7 @@ export const simulate = (options: SimulationOptions): number => {
           MESSAGE_CODE.propertyViolatedInitial,
           `Property ${predicate.name} is violated by the initial state:\n${formatState(alias)}`,
         );
-        runtime.counterExample = getCounterExample([node]);
+        runtime.counterExample = getInitialCounterExample(node);
         reportPostcondition(true);
         return EXIT_STATUS.livenessViolation;
       }
@@ -475,6 +519,8 @@ export const simulate = (options: SimulationOptions): number => {
     undefined,
     false,
   );
+  // TLC's Simulator deep-normalizes the initial states, which sorts their records.
+  initialStates.forEach((node) => node.state.forEach(markNormalized));
 
   const toWorkerError = (code: number, text: string, node: TraceNode): WorkerError => ({
     code,
@@ -545,6 +591,7 @@ export const simulate = (options: SimulationOptions): number => {
         action,
         current,
       );
+      node.incomplete = error.state;
       const text = getIncompleteSuccessorMessage(
         error.variables,
         action.name,
@@ -563,18 +610,34 @@ export const simulate = (options: SimulationOptions): number => {
     runtime.getFingerprint,
     search.getReward,
   );
-  const getTemporalViolation = (last: TraceNode): Violation | undefined => {
+  const getTemporalViolation = (last: TraceNode): WorkerError | undefined => {
     if (temporalProperties.length === 0) return undefined;
-    const trace = getTrace(last);
+    const trace = getTrace(last, search.getTlcOrder());
+    // TLC's LiveCheck#checkTrace fingerprints each state, which sorts its records.
+    for (let position = 0; position < trace.length; position++) {
+      trace[position].state.forEach(markNormalized);
+    }
     const found = findTemporalViolation(trace, runtime.getFingerprint, createTemporalChecker);
     if (!found) return undefined;
     const back = trace[found.length];
+    const lasso = trace.slice(0, found.length);
+    const steps = toTraceSteps(lasso);
+    const loopAction =
+      found.isStuttering || !back ? createActionRecord(undefined) : toActionValue(back.action);
     return {
-      name: found.properties[0],
-      properties: found.properties,
-      trace: toTraceSteps(trace.slice(0, found.length)),
-      loopStart: found.loopStart,
-      loopLabel: back && getActionLabel(back.action, options.version, back.level === 1),
+      ...toWorkerError(MESSAGE_CODE.temporalPropertyViolated, "", last),
+      isException: true,
+      violation: {
+        name: found.properties[0],
+        properties: found.properties,
+        trace: steps,
+        loopStart: found.loopStart,
+        loopLabel: back && getActionLabel(back.action, options.version, back.level === 1),
+      },
+      counterExample: getCounterExample(lasso, steps, {
+        start: found.loopStart,
+        action: loopAction,
+      }),
     };
   };
   const simulateTrace = (): WorkerError | "stopped" | undefined => {
@@ -603,13 +666,7 @@ export const simulate = (options: SimulationOptions): number => {
     }
     if (runtime.isStopped) return "stopped";
     const violation = getTemporalViolation(currentNode);
-    if (violation) {
-      return {
-        ...toWorkerError(MESSAGE_CODE.temporalPropertyViolated, "", currentNode),
-        isException: true,
-        violation,
-      };
-    }
+    if (violation) return violation;
     const length = Math.min(traceDepth, currentNode.level);
     const delta = length - statistics.levelMean;
     statistics.levelMean += Math.trunc(delta / Math.max(statistics.traces, 1));
@@ -684,14 +741,17 @@ export const simulate = (options: SimulationOptions): number => {
     reportMessage(error.code, error.message, error.toolMessage);
     output({
       kind: "behavior",
-      trace: toTraceSteps(getTrace(error.node)),
+      trace: toTraceSteps(getTrace(error.node, search.getTlcOrder())),
       isLastStateOnly: traceDepth === INFINITE_DEPTH,
     });
     if (error.isSummarized) printSummary();
   });
   const last = reported[reported.length - 1];
   const errorStatus = last ? getMessageExitStatus(last.code) : EXIT_STATUS.success;
-  if (last) runtime.counterExample = getCounterExample(getTrace(last.node));
+  if (last) {
+    runtime.counterExample =
+      last.counterExample ?? getCounterExample(getTrace(last.node, search.getTlcOrder()));
+  }
   const postcondition = reportPostcondition(last !== undefined);
   const postconditionStatus = postcondition
     ? getMessageExitStatus(postcondition.code)

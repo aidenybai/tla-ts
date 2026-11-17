@@ -11,6 +11,7 @@ import {
 } from "./builtins";
 import { TlaEvaluationError, TlaModuleError } from "./errors";
 import type { Builtin, BuiltinArgument } from "./evaluate";
+import { prettyPrint } from "./pretty-print";
 import {
   createEnumeratedSet,
   createFunction,
@@ -30,7 +31,7 @@ import {
 
 const createWrongValueError = (name: string, expected: string, value: Value) =>
   new TlaModuleError(
-    `Applying ${name} to the following value,\nwhich is not ${expected}:\n${formatValue(value)}`,
+    `Applying ${name} to the following value,\nwhich is not ${expected}:\n${prettyPrint(formatValue(value))}`,
   );
 
 const toFunction = (value: Value) => (isFunctionValue(value) ? toFiniteFunction(value) : undefined);
@@ -44,6 +45,7 @@ const getFunction = (args: BuiltinArgument[], index: number, name: string) => {
   return functionValue;
 };
 
+// Deviation from TLC: Bags#BagIn and Bags#CopiesIn read the null that toFcnRcd gives for a value that isn't a function and leak a NullPointerException, where tla-ts reports the argument as not a bag.
 const getCount = (args: BuiltinArgument[], name: string) => {
   const bag = getValue(args, 1, name);
   const functionValue = toFunction(bag);
@@ -54,6 +56,7 @@ const getCount = (args: BuiltinArgument[], name: string) => {
   return count;
 };
 
+// Deviation from TLC: Bags#BagCup passes the null that toFcnRcd gives for a value that isn't a function to IsABag and leaks a NullPointerException, where tla-ts reports the argument as not a bag.
 const getAddedBag = (
   args: BuiltinArgument[],
   functions: (FunctionValue | undefined)[],
@@ -186,7 +189,7 @@ export const createBagsOperators = (builtins: ReadonlyMap<string, Builtin>): Bui
     if (elements.length < 2) return elements[0] ?? EMPTY_BAG;
     const createUnionError = () =>
       new TlaModuleError(
-        `Attempted to apply BagUnion to the following set, whose\nelement is not a bag:\n${formatValue(set)}`,
+        `Attempted to apply BagUnion to the following set, whose\nelement is not a bag:\n${prettyPrint(formatValue(set))}`,
       );
     const getBag = (element: Value) => {
       const functionValue = toFunction(element);

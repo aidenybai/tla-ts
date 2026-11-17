@@ -15,6 +15,7 @@ import {
   TlaUnsupportedError,
 } from "../errors";
 import { getTlcFingerprint } from "./fingerprint";
+import { prettyPrint } from "../pretty-print";
 import { formatMessage, formatNestedMessage, MESSAGE_CODE, MESSAGE_LEVEL } from "./messages";
 import {
   describeRange,
@@ -37,11 +38,14 @@ import {
   createRecord,
   createSet,
   createTuple,
+  createWrittenFunction,
   formatState,
   formatValue,
   getFingerprintError,
   getSequenceElements,
   getValueKey,
+  rankString,
+  setFunctionClass,
   toFiniteSet,
   type Value,
 } from "../values";
@@ -63,19 +67,31 @@ export const createActionRecord = (action: string | undefined) =>
 
 const counterExamples = new WeakSet<Value & object>();
 
-const createCounterExampleRecord = (action: Value[], states: Value[]) => {
-  const counterExample = createRecord([
+export const createTlcRecord = (fields: [string, Value][]) =>
+  setFunctionClass(createWrittenFunction(fields), "record");
+
+const createCounterExampleRecord = (action: Value[], states: Value[], isConsole = true) => {
+  // TLC's CounterExample interns its field names as the class loads, which orders them as strings.
+  ["state", "action", "console"].forEach(rankString);
+  const fields: [string, Value][] = [
     ["action", createSet(action)],
     ["state", createSet(states)],
-  ]);
+  ];
+  const counterExample = createTlcRecord(isConsole ? fields : [...fields, ["console", false]]);
   counterExamples.add(counterExample);
   return counterExample;
 };
 
+export interface CounterExampleLoop {
+  start: number;
+  action: Value;
+}
+
 export const createCounterExample = (
   stateRecords: Record<string, Value>[],
   actions: Value[],
-  loop: { start: number; action: Value } | undefined,
+  loop: CounterExampleLoop | undefined,
+  isConsole = true,
 ) => {
   const states = stateRecords.map((state, index) =>
     createTuple([index + 1, createRecord(Object.entries(state))]),
@@ -86,7 +102,7 @@ export const createCounterExample = (
   const closing = loop
     ? [createTuple([states[states.length - 1], loop.action, states[loop.start]])]
     : [];
-  return createCounterExampleRecord([...steps, ...closing], states);
+  return createCounterExampleRecord([...steps, ...closing], states, isConsole);
 };
 
 const getRegister = (runtime: CheckerRuntime, key: Value) => {
@@ -126,7 +142,7 @@ export const setTlcValue = (
     return;
   }
   throw new TlaModuleError(
-    `The first argument of TLCSet should be a nonnegative integer, but instead it is:\n${formatValue(key)}`,
+    `The first argument of TLCSet should be a nonnegative integer, but instead it is:\n${prettyPrint(formatValue(key))}`,
   );
 };
 
@@ -232,7 +248,7 @@ export const createTlcExtOperators = (
       const counterExample = getValue(args, 0, "ToTrace");
       if (typeof counterExample !== "object" || !counterExamples.has(counterExample)) {
         throw new TlaModuleError(
-          `The argument of ToTrace should be a CounterExample, but instead it is:\n${formatValue(counterExample)}`,
+          `The argument of ToTrace should be a CounterExample, but instead it is:\n${prettyPrint(formatValue(counterExample))}`,
         );
       }
       const states = toFiniteSet(applyFunction(counterExample, "state")).elements.map(
@@ -246,7 +262,7 @@ export const createTlcExtOperators = (
       const name = getValue(args, 0, "TLCModelValue");
       if (typeof name !== "string") {
         throw new TlaModuleError(
-          `The argument of ModelValue should be a string, but instead it is:\n${formatValue(name)}`,
+          `The argument of ModelValue should be a string, but instead it is:\n${prettyPrint(formatValue(name))}`,
         );
       }
       return createModelValue(name);
@@ -361,7 +377,7 @@ export const createTlcExtOperators = (
       const name = getThunk(args, 0, "TLCEvalDefinition")();
       if (typeof name !== "string") {
         throw new TlaModuleError(
-          `The argument of TLCEvalDefinition should be a string, but instead it is:\n${formatValue(name)}`,
+          `The argument of TLCEvalDefinition should be a string, but instead it is:\n${prettyPrint(formatValue(name))}`,
         );
       }
       const definition = context ? getDefinition(name, context.environment) : undefined;
@@ -369,7 +385,7 @@ export const createTlcExtOperators = (
       if (builtin?.arity === 0) return builtin.evaluate([], context);
       if (!definition || !context) {
         throw new TlaModuleError(
-          `The argument of TLCEvalDefinition should be a name of a definition reachable from the root module, but instead it is:\n${formatValue(name)}`,
+          `The argument of TLCEvalDefinition should be a name of a definition reachable from the root module, but instead it is:\n${prettyPrint(formatValue(name))}`,
         );
       }
       if (definition.kind === "Operator" && definition.params.length > 0) {
