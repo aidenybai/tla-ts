@@ -2054,6 +2054,9 @@ const CONVERTED_ARGUMENT_ERRORS = new Set([2345, NO_OVERLOAD_ERROR]);
 // A value of another type than a parameter, a property of a type, or a member of a type takes, or
 // a property that a type lacks.
 const TEMPORAL_ARGUMENT_ERRORS = new Set([2322, 2345, 2353, 2559, 2561, NO_OVERLOAD_ERROR]);
+// A using declaration's value that isn't null, undefined, or an object whose type has the dispose
+// method that the declaration calls, which tla-ts reads as it runs and throws the TypeError of.
+const USING_INITIALIZER_ERRORS = new Set([2850, 2851]);
 // The array methods that tla-ts runs a reducer for on the values it gets, not its declared types,
 // where a test's reducer returns a type that the method's signatures don't take. Each needs a unit
 // test of such a call, since tla-ts reads a value by its declared type.
@@ -3826,6 +3829,7 @@ const ignoreSoundErrors = () => {
           isNullishBuiltInCall(diagnostic))) ||
       (diagnostic.code === NO_OVERLOAD_ERROR && isIteratedEntriesCall(diagnostic)) ||
       (TEMPORAL_ARGUMENT_ERRORS.has(diagnostic.code) && isTemporalArgument(diagnostic)) ||
+      USING_INITIALIZER_ERRORS.has(diagnostic.code) ||
       ((CONVERTED_ARGUMENT_ERRORS.has(diagnostic.code) || diagnostic.code === 2322) &&
         isRawTemplate(diagnostic)) ||
       (diagnostic.code === UNKNOWN_CALLEE_ERROR && isStoredStringCall(node)) ||
