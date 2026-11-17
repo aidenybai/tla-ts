@@ -379,6 +379,28 @@ describe("evaluation errors match TLC", () => {
   });
 
   it.each([
+    ["[k \\in {1}, j \\in {2} |-> k + j]", "<<1, 2, 3>>", "(<<1, 2>> :> 3)"],
+    [
+      "[<<a, b>> \\in {<<1, 2>>}, c \\in {3} |-> a + b + c]",
+      "<<<<1, 2>>>>",
+      "(<<<<1, 2>>, 3>> :> 6)",
+    ],
+    [
+      "[<<a, b>> \\in {<<1, 2>>}, c \\in {3} |-> a + b + c]",
+      "<<<<1, 2>>, 3, 4>>",
+      "(<<<<1, 2>>, 3>> :> 6)",
+    ],
+  ])(
+    "rejects applying %s to the argument list %s of the wrong length",
+    async (fcn, argument, shown) => {
+      const result = await checkModule(`ASSUME PrintT(${fcn}[${argument}])`);
+      expect(result.violation?.message).toBe(
+        `In applying the function\n${shown},\nthe argument list is:\n${argument}\nwhich does not match its formal parameter.\n`,
+      );
+    },
+  );
+
+  it.each([
     [
       "Step == <<1>>[1] /\\ UNCHANGED x",
       "INIT Init\nNEXT Step",
