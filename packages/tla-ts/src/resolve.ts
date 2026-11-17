@@ -115,6 +115,7 @@ export interface NullSelection {
 
 export const selections = new WeakSet<Expression>();
 export const selectionErrors = new WeakMap<Expression, SelectionError>();
+export const factReferences = new WeakMap<Fact[], Fact[]>();
 export const nullSelections = new WeakMap<Expression, NullSelection[]>();
 const unresolvedExpressions = new WeakSet<Expression>();
 
@@ -507,6 +508,7 @@ const checkSelection = (
       (index === undefined ? undefined : reference.selectorRanges?.[index]) ??
       reference.location.range;
     if (range) unit.errors.push({ location: formatRange(range), message });
+    return undefined;
   };
   const isOutOfScope = goal.isSuffices === goal.isInProof;
   const statement = goal.statement;
@@ -524,9 +526,7 @@ const checkSelection = (
           node.kind !== "NewSymbol" &&
           node.kind !== "AssumeProve" &&
           getLabelBody(node).kind === "Let";
-        return isLet
-          ? undefined
-          : report(index - 1, "A name selector here must be from a LET clause.");
+        return isLet ? node : report(index - 1, "A name selector here must be from a LET clause.");
       }
       const clauses =
         statement.kind === "AssumeProve"
@@ -564,7 +564,7 @@ const checkSelection = (
       state.isSufficesOpen = false;
       continue;
     }
-    if (selector.kind === "Colon") return;
+    if (selector.kind === "Colon") return node;
     const operand =
       selector.kind === "Operand"
         ? getOperandName(selector.operand)
@@ -585,7 +585,7 @@ const checkSelection = (
       state.isSufficesOpen = false;
       continue;
     }
-    if (node.kind === "NewSymbol") return;
+    if (node.kind === "NewSymbol") return node;
     if (node.kind !== "AssumeProve") {
       const expression = getLabelBody(node);
       if (["Number", "Decimal", "String"].includes(expression.kind)) {
@@ -599,7 +599,7 @@ const checkSelection = (
         return report(index, `Choosing operand \`${operand}' of subexpression with no operands.`);
       }
       const sets = getBinder(expression)?.sets;
-      if (sets && selector.kind !== "Operand") return;
+      if (sets && selector.kind !== "Operand") return node;
       const operands =
         expression.kind === "Identifier"
           ? []
@@ -610,7 +610,7 @@ const checkSelection = (
             : expression.kind === "Except"
               ? undefined
               : getOperands(expression);
-      if (!operands) return;
+      if (!operands) return node;
       const position = getPosition(operands.length);
       if (position === -1) return report(index, `Nonexistent operand specified by \`${operand}'.`);
       state.node = operands[position];
@@ -630,13 +630,14 @@ const checkSelection = (
     state.node = clause;
     state.isGoal = false;
   }
-  if (isFact) return;
+  if (isFact) return state.node;
   if (state.node.kind === "AssumeProve") {
-    report(undefined, "Selected ASSUME/PROVE instead of expression.");
+    return report(undefined, "Selected ASSUME/PROVE instead of expression.");
   }
   if (state.node.kind === "NewSymbol") {
-    report(undefined, "Selected a NEW declaration as an expression or operator.");
+    return report(undefined, "Selected a NEW declaration as an expression or operator.");
   }
+  return state.node;
 };
 
 const isLabelReported = (label: LabelExpression, unit: Unit) => {
@@ -714,8 +715,7 @@ const checkReference = (
     selectors.length > 1 && first.kind === "Name"
       ? (lookupLocal(scope, first.name)?.goal ?? getGoal(first.name, unit))
       : undefined;
-  if (goal) checkSelection(expression, selectors, goal, scope, unit, isFact);
-  return goal !== undefined;
+  return goal && { node: checkSelection(expression, selectors, goal, scope, unit, isFact) };
 };
 
 const getSymbolArity = (
@@ -1443,31 +1443,34 @@ const resolveExpression = (
   }
 };
 
-const checkFacts = (facts: Fact[], scope: LocalName | undefined, unit: Unit) =>
-  facts.forEach((fact) => {
-    if (fact.kind === "ExceptAt" && fact.location.range) {
-      unit.errors.push({
-        location: formatRange(fact.location.range),
-        message: "Unknown operator: `@'.",
-      });
-      return;
-    }
-    if (
-      fact.kind === "ModuleFact" ||
-      isInstanceArityReported(fact, scope, unit) ||
-      checkReference(fact, scope, unit, true)
-    ) {
-      return;
-    }
-    const name =
-      fact.kind === "Identifier" ? fact.name : fact.kind === "Apply" ? fact.operator : "";
-    if (fact.kind === "Identifier" && lookupLocal(scope, name)?.isNonFact) {
-      unit.errors.push({
-        location: formatRange(getSpelledNameRange(fact, name)),
-        message: "Step number of non-fact used as a fact",
-      });
-    } else if (!isFact(name, unit)) resolveExpression(fact, scope, unit);
-  });
+const checkFact = (fact: Fact, reference: Fact, scope: LocalName | undefined, unit: Unit) => {
+  if (fact.kind === "ModuleFact") return undefined;
+  if (fact.kind === "ExceptAt" && fact.location.range) {
+    unit.errors.push({
+      location: formatRange(fact.location.range),
+      message: "Unknown operator: `@'.",
+    });
+    return BUILTIN_LOCATION;
+  }
+  const hidden = getHiddenExpressionLocation(fact, reference, scope, unit);
+  if (isInstanceArityReported(fact, scope, unit)) return hidden;
+  const selected = checkReference(fact, scope, unit, true);
+  if (selected) {
+    const kind = selected.node?.kind;
+    if (kind === undefined) return BUILTIN_LOCATION;
+    return kind === "AssumeProve" || kind === "NewSymbol"
+      ? undefined
+      : fact.location.range && formatRange(fact.location.range);
+  }
+  const name = fact.kind === "Identifier" ? fact.name : fact.kind === "Apply" ? fact.operator : "";
+  if (fact.kind === "Identifier" && lookupLocal(scope, name)?.isNonFact) {
+    unit.errors.push({
+      location: formatRange(getSpelledNameRange(fact, name)),
+      message: "Step number of non-fact used as a fact",
+    });
+  } else if (!isFact(name, unit)) resolveExpression(fact, scope, unit);
+  return hidden;
+};
 
 const isDefinitionEntry = (def: Fact, scope: LocalName | undefined, unit: Unit) => {
   const range = def.location.range;
@@ -1491,9 +1494,16 @@ const isDefinitionEntry = (def: Fact, scope: LocalName | undefined, unit: Unit) 
   return false;
 };
 
-const getHiddenExpressionLocation = (fact: Fact, scope: LocalName | undefined, unit: Unit) => {
+const getHiddenExpressionLocation = (
+  fact: Expression,
+  reference: Fact,
+  scope: LocalName | undefined,
+  unit: Unit,
+) => {
   const range = fact.location.range && formatRange(fact.location.range);
-  if (fact.kind === "ModuleFact" || selections.has(fact)) return undefined;
+  if (selections.has(fact)) {
+    return reference.location.range && formatRange(reference.location.range);
+  }
   if (selectionErrors.has(fact) || fact.kind === "ExceptAt") return BUILTIN_LOCATION;
   switch (fact.kind) {
     case "Number":
@@ -1526,14 +1536,13 @@ const checkUseOrHide = (
   scope: LocalName | undefined,
   unit: Unit,
 ) => {
-  const hidden =
-    statement.kind === "Hide"
-      ? statement.facts.map((fact) => getHiddenExpressionLocation(fact, scope, unit))
-      : [];
-  checkFacts(statement.facts, scope, unit);
+  const references = factReferences.get(statement.facts) ?? statement.facts;
+  const hidden = statement.facts.map((fact, index) =>
+    checkFact(fact, references[index], scope, unit),
+  );
   const defCount = statement.defs.filter((def) => isDefinitionEntry(def, scope, unit)).length;
   hidden.forEach((location) => {
-    if (location) {
+    if (location && statement.kind === "Hide") {
       unit.errors.push({
         location,
         message:

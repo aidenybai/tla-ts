@@ -1954,6 +1954,100 @@ describe("name resolution matches SANY", () => {
     );
   });
 
+  const hidden =
+    "The only expression allowed as a fact in a HIDE is \nthe name of a theorem, assumption, or step.";
+  it.each<[string, string, [string, string][]]>([
+    [
+      "a definition or a theorem",
+      "EXTENDS Naturals\nCONSTANT c\nOp == 1 + 2\nPar(p) == p + 1\nLab == lab :: 1 + 2\nTHEOREM T == 1 = 1\nHIDE Op!1\nHIDE Par!1\nHIDE Par(2)!1\nHIDE Lab!lab\nHIDE Lab!lab!1\nHIDE T!1, T!<<\nHIDE T!1, T!1\nHIDE T!:\nHIDE Op!3",
+      [
+        ["line 8, col 6 to line 8, col 9", hidden],
+        ["line 9, col 6 to line 9, col 10", "The operator Par requires 1 arguments."],
+        ["In module --TLA+ BUILTINS--", hidden],
+        ["line 10, col 6 to line 10, col 13", hidden],
+        ["line 11, col 6 to line 11, col 12", hidden],
+        ["line 12, col 6 to line 12, col 14", hidden],
+        ["line 13, col 6 to line 13, col 8", hidden],
+        ["line 13, col 11 to line 13, col 14", hidden],
+        ["line 14, col 6 to line 14, col 8", hidden],
+        ["line 14, col 11 to line 14, col 13", hidden],
+        ["line 15, col 6 to line 15, col 8", hidden],
+        [
+          "line 16, col 9 to line 16, col 9",
+          "Nonexistent operand specified by `argument selector 3'.",
+        ],
+      ],
+    ],
+    [
+      "an ASSUME/PROVE theorem",
+      "EXTENDS Naturals\nTHEOREM U == ASSUME NEW c, c = 1, ASSUME TRUE PROVE TRUE PROVE c = 1\nHIDE U!1\nHIDE U!2\nHIDE U!3\nHIDE U!4\nHIDE U!2!1\nHIDE U!:\nHIDE U!5",
+      [
+        [
+          "line 5, col 8 to line 5, col 8",
+          "Accessing ASSUME/PROVE clause within the scope of a declaration\n from outside that declaration's scope.",
+        ],
+        ["In module --TLA+ BUILTINS--", hidden],
+        [
+          "line 6, col 8 to line 6, col 8",
+          "Accessing ASSUME/PROVE clause within the scope of a declaration\n from outside that declaration's scope.",
+        ],
+        [
+          "line 7, col 8 to line 7, col 8",
+          "Accessing ASSUME/PROVE clause within the scope of a declaration\n from outside that declaration's scope.",
+        ],
+        [
+          "line 8, col 8 to line 8, col 8",
+          "Accessing ASSUME/PROVE clause within the scope of a declaration\n from outside that declaration's scope.",
+        ],
+        [
+          "line 10, col 8 to line 10, col 8",
+          "Nonexistent operand specified by `argument selector 5'.",
+        ],
+      ],
+    ],
+    [
+      "a proof step",
+      "EXTENDS Naturals\nTHEOREM T == 1 = 1\n<1>1. 2 = 2\n  OBVIOUS\n<1>2. ASSUME NEW d PROVE d = d\n  OBVIOUS\n<1>3. 3 = 3\n  <2>1. HIDE <1>1!1\n  <2>2. HIDE <1>2!1\n  <2>3. HIDE <1>2!2\n  <2>4. HIDE <1>1\n  <2>5. HIDE <1>1!:\n  <2>6. HIDE <1>1!9\n  <2>7. QED\n<1>4. QED",
+      [
+        ["line 9, col 14 to line 9, col 19", hidden],
+        [
+          "line 11, col 19 to line 11, col 19",
+          "Accessing ASSUME/PROVE clause within the scope of a declaration\n from outside that declaration's scope.",
+        ],
+        ["In module --TLA+ BUILTINS--", hidden],
+        ["line 13, col 14 to line 13, col 19", hidden],
+        [
+          "line 14, col 19 to line 14, col 19",
+          "Nonexistent operand specified by `argument selector 9'.",
+        ],
+      ],
+    ],
+    [
+      "a LET or a quantifier",
+      "EXTENDS Naturals\nOp == LET L == 1 + 2 IN L\nF == \\A x \\in {1} : x = 1\nHIDE Op!L\nHIDE Op!1\nHIDE F!1\nHIDE F!@\nHIDE F!(1)",
+      [
+        ["line 5, col 9 to line 5, col 9", "Cannot find label `L'."],
+        ["In module --TLA+ BUILTINS--", hidden],
+        ["line 6, col 6 to line 6, col 9", hidden],
+        ["line 7, col 6 to line 7, col 8", hidden],
+        ["line 8, col 6 to line 8, col 8", "Expected 1 arguments but found 0."],
+        ["line 9, col 6 to line 9, col 10", hidden],
+      ],
+    ],
+  ])(
+    "reports HIDE facts that select a subexpression of %s like SANY",
+    async (_name, source, errors) => {
+      await expect(checkNames(source)).rejects.toThrow(
+        createSanyError(
+          errors.map((error) => ({
+            location: error[0].startsWith("In module") ? error[0] : `${error[0]} of module M`,
+            message: error[1],
+          })),
+        ),
+      );
+    },
+  );
+
   it("passes an operator whose definition has fewer parameters than its RECURSIVE declaration, where SANY crashes", async () => {
     await expect(
       checkNames("RECURSIVE R(_, _)\nR == 1\nL(P(_, _)) == 1\nA == L(R)"),

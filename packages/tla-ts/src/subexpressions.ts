@@ -29,6 +29,7 @@ import {
   nullSelections,
   selectionErrors,
   selections,
+  factReferences,
   type NullSelection,
   type SelectionArguments,
 } from "./resolve";
@@ -600,8 +601,13 @@ export const resolveModuleSubexpressions = (module: Module, available: Definitio
     const isProofGoal = (name: string) => isGoal(name) || !lookup(name);
     const resolveInProof = (expression: Expression) =>
       resolveSubexpressions(expression, lookup, isProofGoal);
-    const resolveFacts = (facts: Fact[]) =>
-      facts.map((fact) => (fact.kind === "ModuleFact" ? fact : resolveInProof(fact)));
+    const resolveFacts = (facts: Fact[]) => {
+      const resolved = facts.map((fact) =>
+        fact.kind === "ModuleFact" ? fact : resolveInProof(fact),
+      );
+      factReferences.set(resolved, facts);
+      return resolved;
+    };
     const resolveBounds = (bounds: Bound[]) =>
       bounds.map((bound) => ({ ...bound, set: resolveInProof(bound.set) }));
     const resolveStatement = (statement: Expression | AssumeProve): Expression | AssumeProve =>
