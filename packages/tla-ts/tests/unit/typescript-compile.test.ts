@@ -50885,4 +50885,26 @@ describe("BigInts", () => {
       "tla-ts can't check an exported function that changes state and returns a value as an action",
     );
   });
+
+  describe("returns what a call that makes an object gives through a cast", () => {
+    const getSource = (expected: string) => `
+      const base = { kind: "effect" };
+      const make = (op: string): unknown => ({ ...base, identifier: op }) as any;
+      const wrap = (label: string) => make(label) as any;
+      const first = wrap("E");
+      const second = wrap("F");
+      const seen = [first.kind, first.identifier, second.identifier, first === second].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("effect,E,F,false"))).failure).toBeUndefined();
+    });
+
+    it("rejects another object", async () => {
+      expect((await checkModel(getSource("effect,E,E,false"))).failure?.message).toContain(
+        "seen effect,E,F,false",
+      );
+    });
+  });
 });

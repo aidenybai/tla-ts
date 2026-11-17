@@ -21255,18 +21255,20 @@ export const translateStatements = (
       if (constructor !== undefined && ts.isNewExpression(returned)) {
         return translateConstruction(returned, constructor, inner, context, statementFrame, exit);
       }
-      // A call that makes an object, such as Object(1), made it as the return allocated it.
+      // A call that makes an object, such as Object(1), made it as the return allocated it. A cast
+      // of a call returns what the call gives.
+      const called = skipCasts(returned);
       if (
-        ts.isCallExpression(returned) &&
-        !inner.scope.allocated.has(returned) &&
-        (!isLibraryCall(returned, context) ||
-          isPromiseCall(returned, context) ||
-          getLoopCall(returned, inner, context) !== undefined ||
-          isObjectChange(returned, context) ||
-          isStatementResult(returned, inner, context) ||
-          isRemoving(returned, context))
+        ts.isCallExpression(called) &&
+        !inner.scope.allocated.has(called) &&
+        (!isLibraryCall(called, context) ||
+          isPromiseCall(called, context) ||
+          getLoopCall(called, inner, context) !== undefined ||
+          isObjectChange(called, context) ||
+          isStatementResult(called, inner, context) ||
+          isRemoving(called, context))
       ) {
-        return translateCallStatement(returned, inner, context, statementFrame, exit);
+        return translateCallStatement(called, inner, context, statementFrame, exit);
       }
       return throwReadError(
         returned,
