@@ -677,6 +677,7 @@ export class AstManager {
   private charSort = -1;
   private stringSort = -1;
   private reglanSort = -1;
+  private isSeqPluginInitialized = false;
   private seqSorts = new Map<string, number>();
   private seqDecls = new Map<string, number>();
   private stringValues: number[][] = [];
@@ -1302,7 +1303,7 @@ export class AstManager {
     return this.sortNames.length - 1;
   }
 
-  // Z3 makes the Char, String and RegLan sorts at startup, so they take no small id.
+  // Z3 makes the Char and String sorts at startup, so they take no small id.
   mkCharSort() {
     if (this.charSort === -1)
       this.charSort = this.addSort(
@@ -1327,8 +1328,19 @@ export class AstManager {
     return this.stringSort;
   }
 
+  // seq_decl_plugin::init, which makes the sorts of the signatures of the sequence operators.
+  initSeqPlugin() {
+    if (this.isSeqPluginInitialized) return;
+    this.isSeqPluginInitialized = true;
+    const element = this.mkTypeParameter(0);
+    this.mkReSort(this.mkSeqSort(element));
+    this.mkReSort(this.mkStringSort());
+    this.mkArraySort([element, SORT_BOOL]);
+  }
+
   mkSeqSort(element: number) {
     if (element === this.mkCharSort()) return this.mkStringSort();
+    this.initSeqPlugin();
     const key = `s${element}`;
     const existing = this.seqSorts.get(key);
     if (existing !== undefined) return existing;
@@ -1347,6 +1359,7 @@ export class AstManager {
   }
 
   mkReSort(seq: number) {
+    this.initSeqPlugin();
     const isReglan = seq === this.mkStringSort();
     if (isReglan && this.reglanSort !== -1) return this.reglanSort;
     const key = `r${seq}`;
@@ -1361,11 +1374,9 @@ export class AstManager {
         getInfoHash(Z3_SEQ_FAMILY, Z3_RE_SORT, [this.sortHashes[seq]]),
       ),
     );
+    this.mkSmallId();
     if (isReglan) this.reglanSort = sort;
-    else {
-      this.mkSmallId();
-      this.seqSorts.set(key, sort);
-    }
+    else this.seqSorts.set(key, sort);
     return sort;
   }
 

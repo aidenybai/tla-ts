@@ -1091,38 +1091,41 @@ export const createSmtlibReader = (
           ? decl.parameters.length
           : decl.arity;
 
+  // cmd_context::register_plist, which declares List when no logic is set.
+  const registerList = () => {
+    const element = manager.mkTypeParameter(0);
+    mkDatatypes(manager, [
+      mkDatatypeDef(
+        manager,
+        "List",
+        [element],
+        [
+          { name: "nil", recognizer: "is-nil", accessors: [] },
+          {
+            name: "insert",
+            recognizer: "is-insert",
+            accessors: [
+              { name: "head", range: element },
+              { name: "tail", range: -1 },
+            ],
+          },
+        ],
+      ),
+    ]);
+    const list: DatatypeSortDecl = {
+      kind: "datatype",
+      name: "List",
+      arity: 1,
+      siblings: [],
+      instances: new Map(),
+    };
+    sortDecls.set("List", list);
+    return list;
+  };
+
   const instantiateSort = (decl: SortDecl, parameters: number[], at: SExpr): number => {
     if (decl.kind === "sort") return decl.sort;
-    if (decl.kind === "list") {
-      const element = manager.mkTypeParameter(0);
-      mkDatatypes(manager, [
-        mkDatatypeDef(
-          manager,
-          "List",
-          [element],
-          [
-            { name: "nil", recognizer: "is-nil", accessors: [] },
-            {
-              name: "insert",
-              recognizer: "is-insert",
-              accessors: [
-                { name: "head", range: element },
-                { name: "tail", range: -1 },
-              ],
-            },
-          ],
-        ),
-      ]);
-      const list: DatatypeSortDecl = {
-        kind: "datatype",
-        name: "List",
-        arity: 1,
-        siblings: [],
-        instances: new Map(),
-      };
-      sortDecls.set("List", list);
-      return instantiateSort(list, parameters, at);
-    }
+    if (decl.kind === "list") return instantiateSort(registerList(), parameters, at);
     if (decl.kind === "user") return manager.mkUninterpretedSort(decl.name, parameters);
     if (decl.kind === "datatype") return instantiateDatatype(decl, parameters, at);
     return parseSort(
@@ -3357,6 +3360,7 @@ export const createSmtlibReader = (
     pop,
     reset,
     restrictSorts,
+    registerList,
     isUsed,
     isClashing,
     getDeclaredFuncs,

@@ -1067,4 +1067,25 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
       ")",
     ]);
   });
+
+  it("numbers a datatype after the sorts of the sequence plugin and List, as its first constructor depends on it", () => {
+    const color = [
+      "(declare-datatypes ((Color 0)) (((red) (green) (blue))))",
+      "(declare-const c Color)",
+      "(check-sat)",
+      "(get-model)",
+    ];
+    expect(run([...color, "(reset)", "(set-logic ALL)", ...color])).toEqual([
+      "sat",
+      "(",
+      "  (define-fun c () Color",
+      "    red)",
+      ")",
+      "sat",
+      "(",
+      "  (define-fun c () Color",
+      "    blue)",
+      ")",
+    ]);
+  });
 });

@@ -50,7 +50,7 @@ import {
 import { O_MAXIMIZE, O_MAXSMT, O_MINIMIZE, OptContext, type OptObjective } from "./opt-context";
 import { getLogicStrategy } from "./logic-tactics";
 import { isMbqiByFeatures, isMbqiByLogic } from "./smt-setup";
-import { isSupportedLogic } from "./smt-logics";
+import { isSupportedLogic, logicHasSeq } from "./smt-logics";
 import { getVerdict, solveAssertions, solveAssuming } from "./solver";
 import { getConsequences } from "./smt-consequences";
 import { getFdConsequences } from "./fd-solver";
@@ -1902,6 +1902,10 @@ export const runSmtlibScript = (
     state.manager.limit.restart(Infinity);
     if (!MANAGERLESS_COMMANDS.has(head.text) && state.isProofsEnabled === undefined) {
       state.isProofsEnabled = settings.parameters.get("proof") === "true";
+      // cmd_context::init_manager_core installs the names of the sequence plugin, which makes its sorts, and
+      // declares List without a logic.
+      if (state.logic === undefined || logicHasSeq(state.logic)) state.manager.initSeqPlugin();
+      if (state.logic === undefined) state.reader.registerList();
       resetKernel();
     }
     try {
