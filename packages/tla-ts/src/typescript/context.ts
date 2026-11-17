@@ -2616,10 +2616,7 @@ export const isMadeOnly = (symbol: ts.Symbol, context: Context) => {
 export const getAssignedValues = (symbol: ts.Symbol, context: Context) => {
   const declaration = symbol.valueDeclaration;
   if (declaration === undefined) return undefined;
-  const written = findNodes(declaration.getSourceFile(), (inner): inner is ts.Node => {
-    const target = getAssignedTarget(inner);
-    return target !== undefined && isWrittenBy(target, symbol, context);
-  }).flatMap((inner) =>
+  const written = findWrites(symbol, declaration.getSourceFile(), context).flatMap((inner) =>
     getWrittenNames(getAssignedTarget(inner) ?? inner).filter(
       (name) => ts.isIdentifier(name) && getSymbol(name, context.checker) === symbol,
     ),
