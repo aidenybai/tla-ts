@@ -75,6 +75,7 @@ import {
   rejectDeclaredCall,
   isDeclarationOnly,
   getClassStop,
+  getValueDeclaration,
 } from "./context";
 import {
   getImportedCommonJs,
@@ -1010,8 +1011,8 @@ const translateBuiltInCall = (
       ]),
     );
   }
-  const symbol = getNamedSymbol(node.expression, context.checker);
-  const helper = getTopLevelDeclaration(symbol);
+  const symbol = getNamedSymbol(node.expression, context);
+  const helper = getTopLevelDeclaration(symbol, context);
   if (helper?.getSourceFile().isDeclarationFile) {
     return translateUnknown(node, `Unsupported call: ${node.expression.getText()}`, context);
   }
@@ -1039,7 +1040,7 @@ const translateBuiltInCall = (
   }
   // A call of a function that a field holds, or that an object other than a module's namespace
   // object holds under the name of the module's export.
-  const field = symbol?.valueDeclaration;
+  const field = getValueDeclaration(symbol, context);
   if (
     isMethodCall(node) &&
     context.heap !== undefined &&
@@ -1049,13 +1050,13 @@ const translateBuiltInCall = (
         ts.isParameter(field) ||
         ts.isPropertySignature(field))) ||
       (symbol === undefined &&
-        getTopLevelDeclaration(getSymbol(node.expression, context.checker)) !== undefined))
+        getTopLevelDeclaration(getSymbol(node.expression, context.checker), context) !== undefined))
   ) {
     return translateLocalCall(node, scope, context);
   }
   if (!isMethodCall(node)) {
     const operator = symbol === undefined ? undefined : scope.bindings.get(symbol);
-    const declaration = symbol?.valueDeclaration;
+    const declaration = getValueDeclaration(symbol, context);
     const isOperator =
       operator?.kind === "Identifier" && isOperatorParameter(operator.name, context);
     if (
@@ -1466,7 +1467,7 @@ const translateBuiltInCall = (
     // seal, and preventExtensions of objects on the heap make an object inextensible. A built-in
     // function, which a variable may hold, may be frozen.
     const declaration = ts.isIdentifier(argument)
-      ? getSymbol(argument, context.checker)?.valueDeclaration
+      ? getValueDeclaration(getSymbol(argument, context.checker), context)
       : undefined;
     const isFunction =
       ts.isArrowFunction(argument) ||
@@ -2537,7 +2538,7 @@ const getPreviousVariable = (name: string, node: ts.Node, context: Context) => {
 };
 
 const translateEnumMember = (node: ts.Node, symbol: ts.Symbol, context: Context) => {
-  const declaration = symbol.valueDeclaration;
+  const declaration = getValueDeclaration(symbol, context);
   const value =
     declaration !== undefined && ts.isEnumMember(declaration)
       ? context.checker.getConstantValue(declaration)
@@ -2560,12 +2561,12 @@ const translateDeclared = (
 ) => {
   // A member of an enum whose object code may write reads the object.
   if (symbol !== undefined && symbol.flags & ts.SymbolFlags.EnumMember) {
-    const owner = symbol.valueDeclaration?.parent;
+    const owner = getValueDeclaration(symbol, context)?.parent;
     return owner !== undefined && isHeapEnum(owner, context) && context.valueEnums.get(owner)
       ? undefined
       : translateEnumMember(node, symbol, context);
   }
-  const declaration = getTopLevelDeclaration(symbol);
+  const declaration = getTopLevelDeclaration(symbol, context);
   if (declaration === undefined) return undefined;
   if (ts.isVariableDeclaration(declaration) && getFactoryCall(declaration.initializer, context)) {
     throw new TlaTypeScriptError(
@@ -2960,7 +2961,8 @@ const translateIdentifier = (node: ts.Identifier, scope: Scope, context: Context
   }
   const functionValue = getFunctionValue(node, context);
   if (functionValue !== undefined) return translateFunctionValue(functionValue, context);
-  if (symbol?.valueDeclaration !== undefined && ts.isFunctionExpression(symbol.valueDeclaration)) {
+  const declaration = getValueDeclaration(symbol, context);
+  if (declaration !== undefined && ts.isFunctionExpression(declaration)) {
     throw new TlaTypeScriptError(
       `tla-ts can't read ${node.text}, the name that this function gives itself`,
       node,
@@ -3025,7 +3027,27 @@ const translateIdentifier = (node: ts.Identifier, scope: Scope, context: Context
       ),
     ]);
   }
-  throw new TlaTypeScriptError(`Unknown name: ${node.text}`, node);
+  // Only a heap holds objects, such as a function's arguments object or a built-in object.
+  if (getArgumentsOwner(node, context.checker) !== undefined) {
+    throw new TlaTypeScriptError(
+      context.heap === undefined
+        ? "tla-ts can't read a function's arguments object where no heap holds objects"
+        : "tla-ts can't read an arguments object that no call it follows makes, as of a function that the model runs as an action",
+      node,
+    );
+  }
+  if (context.heap === undefined && Object.hasOwn(BUILT_INS, node.text)) {
+    throw new TlaTypeScriptError(
+      `tla-ts can't use the built-in ${node.text} as a value where no heap holds objects`,
+      node,
+    );
+  }
+  throw new TlaTypeScriptError(
+    symbol === undefined
+      ? `tla-ts can't throw the ReferenceError of reading ${node.text}, which nothing declares`
+      : `tla-ts can't tell what ${node.text} holds here`,
+    node,
+  );
 };
 
 // A read of a property that a getter of a heap class or object literal computes, which inlines
@@ -3266,7 +3288,7 @@ const translatePropertyAccess = (
       context,
     );
   }
-  const property = getNamedSymbol(node, context.checker);
+  const property = getNamedSymbol(node, context);
   // A module's namespace object holds what the module's bindings hold, which a read before the
   // module declares them finds uninitialized.
   if (
@@ -3290,14 +3312,26 @@ const translatePropertyAccess = (
   const receiver = node.expression;
   const name = node.name.text;
   // A class of errors that makes plain errors isn't an object that holds its static members.
-  const member = getSymbol(node.name, context.checker)?.valueDeclaration;
+  const member = getValueDeclaration(getSymbol(node.name, context.checker), context);
   if (
     member !== undefined &&
     isStatic(member) &&
-    getErrorClass(getSymbol(receiver, context.checker), context)?.[0].valueDeclaration ===
-      member.parent
+    getValueDeclaration(
+      getErrorClass(getSymbol(receiver, context.checker), context)?.[0],
+      context,
+    ) === member.parent
   ) {
     throw new TlaTypeScriptError("tla-ts can't read a static member of a class of errors", node);
+  }
+  // Where no heap holds objects, a class of errors is a model value, which has no properties.
+  if (
+    context.heap === undefined &&
+    getErrorClass(getSymbol(skipCasts(receiver), context.checker), context) !== undefined
+  ) {
+    throw new TlaTypeScriptError(
+      `tla-ts can't read ${name} of a class of errors where no heap holds objects`,
+      node,
+    );
   }
   const getterRead = translateGetterRead(node, scope, context);
   if (getterRead !== undefined) return getterRead;
@@ -3692,7 +3726,7 @@ const holdsComputedNumber = (
   seen = new Set<ts.Symbol>(),
 ): boolean => {
   const symbol = getSymbol(name, context.checker);
-  const declaration = symbol?.valueDeclaration;
+  const declaration = getValueDeclaration(symbol, context);
   if (symbol === undefined || declaration === undefined) return false;
   if (seen.has(symbol) || declaration.getSourceFile().isDeclarationFile) return true;
   seen.add(symbol);
@@ -4566,6 +4600,18 @@ export const translateNode = (
   if (variable !== undefined) {
     const value = typeof process === "undefined" ? undefined : process.env[variable];
     return value === undefined ? getUndefined(context) : string(value);
+  }
+  // Node's process object holds functions and the host's values, which tla-ts doesn't model, but
+  // for the environment that process.env reads.
+  if (
+    ts.isPropertyAccessExpression(node) &&
+    node.name.text !== "env" &&
+    isProcess(skipCasts(node.expression), context)
+  ) {
+    return apply("Assert", [
+      boolean(false),
+      string(`tla-ts can't read process.${node.name.text}, which Node's process object holds`),
+    ]);
   }
   if (ts.isPropertyAccessExpression(node)) {
     const read = translatePropertyAccess(node, scope, context);

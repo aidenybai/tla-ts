@@ -1,6 +1,6 @@
 import ts from "@typescript/typescript6";
 import type { Expression } from "../ast";
-import { type Context, getUndefined } from "./context";
+import { type Context, getUndefined, getValueDeclaration } from "./context";
 import { functionFrom, identifier, string } from "./tla";
 
 const TYPE_MODIFIERS = new Set([
@@ -178,7 +178,7 @@ export const translateSourceTexts = (context: Context) =>
     [...(context.isSourceTextRead ? context.constructors : [])].flatMap(
       (entry): [Expression, Expression][] => {
         const key = entry[0];
-        const declaration = "kind" in key ? key : key.valueDeclaration;
+        const declaration = "kind" in key ? key : getValueDeclaration(key, context);
         if (declaration === undefined || declaration.getSourceFile().isDeclarationFile) return [];
         const text =
           ts.isFunctionLike(declaration) || ts.isClassLike(declaration)

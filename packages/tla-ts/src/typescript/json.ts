@@ -12,6 +12,7 @@ import {
   share,
   skipCasts,
   translateString,
+  getValueDeclaration,
 } from "./context";
 import { TlaTypeScriptError } from "../errors";
 import { getNumberValue, translateExpression } from "./expressions";
@@ -75,7 +76,7 @@ const getLiteralText = (node: ts.Expression, context: Context): string | undefin
     return String(-Number(node.operand.text));
   }
   const symbol = ts.isIdentifier(node) ? getSymbol(node, context.checker) : undefined;
-  const declaration = symbol?.valueDeclaration;
+  const declaration = getValueDeclaration(symbol, context);
   return symbol !== undefined &&
     declaration !== undefined &&
     ts.isVariableDeclaration(declaration) &&

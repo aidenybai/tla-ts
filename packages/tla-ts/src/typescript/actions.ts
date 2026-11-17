@@ -64,6 +64,7 @@ import {
   translateSortArguments,
   flattenReturned,
   translateLongRead,
+  getValueKinds,
 } from "./collections";
 import {
   findNodes,
@@ -164,6 +165,7 @@ import {
   rejectDeclaredCall,
   getAssignedTarget,
   getClassStop,
+  getValueDeclaration,
 } from "./context";
 import { TlaTypeScriptError } from "../errors";
 import { UNSETTLED_AWAIT_WARNING } from "../exit-codes";
@@ -939,7 +941,7 @@ const getNameError = (node: ts.Expression, context: Context) => {
 // declaration's binding throws a TypeError, and so does a function expression's own name in strict
 // code, which outside it ignores the write.
 const getImmutable = (name: ts.Identifier, context: Context) => {
-  const declaration = getSymbol(name, context.checker)?.valueDeclaration;
+  const declaration = getValueDeclaration(getSymbol(name, context.checker), context);
   if (declaration === undefined) return undefined;
   if (
     (ts.isVariableDeclaration(declaration) || ts.isBindingElement(declaration)) &&
@@ -972,6 +974,17 @@ const getTarget = (node: ts.Expression, path: Path, context: Context): Target =>
     return getTarget(node.expression, path, context);
   }
   if (isChainedChange(node, context)) return getTarget(node.expression.expression, path, context);
+  // TypeScript makes a namespace's exported variable a property of the namespace's object, which
+  // tla-ts makes no object for.
+  const namespace = ts.isPropertyAccessExpression(node)
+    ? getValueDeclaration(getSymbol(skipCasts(node.expression), context.checker), context)
+    : undefined;
+  if (namespace !== undefined && ts.isModuleDeclaration(namespace)) {
+    throw new TlaTypeScriptError(
+      `tla-ts can't write ${node.getText()}, which a namespace exports, outside the namespace`,
+      node,
+    );
+  }
   if (ts.isIdentifier(node)) {
     rejectBeforeDeclaration(node, path.scope, context);
     const mapped = getMappedTarget(node, path, context);
@@ -1029,10 +1042,11 @@ const getTarget = (node: ts.Expression, path: Path, context: Context): Target =>
     if (!isReceiver && getImmutable(node, context) !== undefined) {
       throw new TlaTypeScriptError(`tla-ts can't follow this write to ${node.text}`, node);
     }
+    const declaration = getValueDeclaration(symbol, context);
     const isChangedInPlace =
-      symbol?.valueDeclaration !== undefined &&
-      ts.isParameter(symbol.valueDeclaration) &&
-      symbol.valueDeclaration.dotDotDotToken === undefined &&
+      declaration !== undefined &&
+      ts.isParameter(declaration) &&
+      declaration.dotDotDotToken === undefined &&
       isReceiver;
     if (
       symbol === undefined ||
@@ -5588,7 +5602,7 @@ const getCalledThrough = (node: ts.CallExpression, context: Context) => {
 // A name of a rest parameter, which holds an array that the call made, as its type may not tell.
 const isRestParameter = (node: ts.Expression, context: Context) => {
   const declaration = ts.isIdentifier(node)
-    ? getSymbol(node, context.checker)?.valueDeclaration
+    ? getValueDeclaration(getSymbol(node, context.checker), context)
     : undefined;
   return (
     declaration !== undefined &&
@@ -5643,7 +5657,7 @@ const isFunctionThroughCall = (node: ts.CallExpression, context: Context): node 
 // several: a parameter, or what a for-of takes.
 const isDispatchedName = (node: ts.Expression, context: Context) => {
   const declaration = ts.isIdentifier(node)
-    ? getSymbol(node, context.checker)?.valueDeclaration
+    ? getValueDeclaration(getSymbol(node, context.checker), context)
     : undefined;
   return (
     declaration !== undefined &&
@@ -6148,7 +6162,7 @@ export const bindCall = (
   const firstDefault = first?.initializer === undefined ? undefined : skipCasts(first.initializer);
   const named =
     firstDefault !== undefined && ts.isIdentifier(firstDefault)
-      ? getSymbol(firstDefault, context.checker)?.valueDeclaration
+      ? getValueDeclaration(getSymbol(firstDefault, context.checker), context)
       : undefined;
   const defaultObject =
     argumentNodes.length === 0 &&
@@ -6237,7 +6251,7 @@ export const bindCall = (
   const valueParameters = parameters.filter((_, position) => isValue(position));
   const parameterScope = ts.isCallExpression(node)
     ? bindFactory(
-        getSymbol(node.expression, context.checker)?.valueDeclaration,
+        getValueDeclaration(getSymbol(node.expression, context.checker), context),
         made.scope,
         context,
       )
@@ -7406,7 +7420,7 @@ export const makeGenerator = (
     const shared = new Set(
       findNodes(callee, ts.isIdentifier).flatMap((identifier) => {
         const symbol = getSymbol(identifier, context.checker);
-        const declaration = symbol?.valueDeclaration;
+        const declaration = getValueDeclaration(symbol, context);
         return symbol !== undefined &&
           declaration !== undefined &&
           isOuter(symbol) &&
@@ -12214,7 +12228,7 @@ const getMisreceivedCall = (node: ts.CallExpression, context: Context) => {
   // A const may hold the method, as const union = Set.prototype.union does.
   const held =
     ts.isPropertyAccessExpression(callee) && ts.isIdentifier(callee.expression)
-      ? getSymbol(callee.expression, context.checker)?.valueDeclaration
+      ? getValueDeclaration(getSymbol(callee.expression, context.checker), context)
       : undefined;
   const method =
     held !== undefined &&
@@ -13168,7 +13182,7 @@ export const getImmutableWrite = (
   const name = target === undefined ? undefined : skipCasts(target);
   if (name === undefined || !ts.isIdentifier(name)) return undefined;
   const immutable = getImmutable(name, context);
-  const declaration = getSymbol(name, context.checker)?.valueDeclaration;
+  const declaration = getValueDeclaration(getSymbol(name, context.checker), context);
   return immutable === undefined ||
     declaration === undefined ||
     !(ts.isBinaryExpression(expression) || isIncrement(expression))
@@ -13648,7 +13662,10 @@ const usesHeap = (node: ts.Node, context: Context, visited: Set<ts.Node>): boole
     }
     // A call through a variable that holds one of several functions branches between them, which
     // only statements can do.
-    const declaration = getSymbol(getCast(node.expression), context.checker)?.valueDeclaration;
+    const declaration = getValueDeclaration(
+      getSymbol(getCast(node.expression), context.checker),
+      context,
+    );
     if (
       callee === undefined &&
       declaration !== undefined &&
@@ -15624,7 +15641,7 @@ const getEffects = (
     parameters: [...callees, ...callees.slice(0, 1).map((callee) => getCast(callee))].flatMap(
       (callee) => {
         const symbol = getSymbol(callee, context.checker);
-        const declaration = symbol?.valueDeclaration;
+        const declaration = getValueDeclaration(symbol, context);
         return symbol !== undefined && declaration !== undefined && ts.isParameter(declaration)
           ? [symbol]
           : [];
@@ -15724,7 +15741,7 @@ const summarize = (
   const table = context.changes;
   const key = [...bindings]
     .map((entry) => {
-      const declaration = entry[0].valueDeclaration;
+      const declaration = getValueDeclaration(entry[0], context);
       return `${declaration === undefined ? entry[0].name : getNodeKey(declaration)}=${getNodeKey(entry[1])}`;
     })
     .sort()
@@ -15944,7 +15961,7 @@ export const translateJoined = (
   // A var that the statement declares outlives it, as does any binding it declares that a function
   // in it captures, such as a catch's error.
   const isVarInside = (symbol: ts.Symbol) => {
-    const declaration = symbol.valueDeclaration;
+    const declaration = getValueDeclaration(symbol, context);
     return (
       declaration !== undefined &&
       ts.isVariableDeclaration(declaration) &&
@@ -15993,7 +16010,7 @@ export const translateJoined = (
   // that code after the statement can read. That leaves out the names that the statement declares
   // and that don't outlive it, and those of the functions it called.
   const isReadAfter = (symbol: ts.Symbol) => {
-    const declaration = symbol.valueDeclaration;
+    const declaration = getValueDeclaration(symbol, context);
     if (declaration === undefined) return true;
     if (ts.findAncestor(declaration, (ancestor) => ancestor === node) !== undefined) {
       return isVarInside(symbol);
@@ -16686,7 +16703,7 @@ const isTakingFromGenerators = (loop: ts.ForOfStatement, context: Context) => {
     const symbol = ts.isIdentifier(node) ? getSymbol(node, context.checker) : undefined;
     return (
       symbol !== undefined &&
-      symbol.valueDeclaration !== undefined &&
+      getValueDeclaration(symbol, context) !== undefined &&
       !isAssigned(symbol, node.getSourceFile(), context)
     );
   };
@@ -16910,7 +16927,7 @@ const translateForAwait = (
   // An array that a variable holds, which the script never changes, holds the elements that its
   // declaration wrote, other than generators, which taking from would make again.
   const declaration = ts.isIdentifier(iterated)
-    ? getSymbol(iterated, context.checker)?.valueDeclaration
+    ? getValueDeclaration(getSymbol(iterated, context.checker), context)
     : undefined;
   const initializer =
     declaration !== undefined && ts.isVariableDeclaration(declaration) && declaration.initializer
@@ -17562,7 +17579,7 @@ const translateIterations = (
     iterated !== undefined && ts.isIdentifier(iterated.expression)
       ? getSymbol(iterated.expression, context.checker)
       : undefined;
-  const heldDeclaration = heldSymbol?.valueDeclaration;
+  const heldDeclaration = getValueDeclaration(heldSymbol, context);
   const isHeldBuiltIn =
     heldSymbol !== undefined &&
     heldDeclaration !== undefined &&
@@ -17575,7 +17592,12 @@ const translateIterations = (
     ts.isForInStatement(iterated) &&
     (getKind(iterated.expression, context) === "object" ||
       (context.heap !== undefined &&
-        (isBuiltInObject(iterated.expression, context) || isHeldBuiltIn)) ||
+        (isBuiltInObject(iterated.expression, context) ||
+          isHeldBuiltIn ||
+          ((context.checker.getTypeAtLocation(iterated.expression).flags &
+            (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !==
+            0 &&
+            getValueKinds(iterated.expression, context, [])?.join() === "object"))) ||
       ownFunctionKeys !== undefined);
   // A for-in over a list visits its indices, as strings in order.
   const isListKeys =
@@ -20049,7 +20071,7 @@ const getHoistedVars = (statements: readonly ts.Statement[], context: Context) =
   };
   const getEarlyRead = (node: ts.Node): ts.Identifier | undefined => {
     const symbol = ts.isIdentifier(node) ? getSymbol(node, context.checker) : undefined;
-    const declaration = symbol?.valueDeclaration;
+    const declaration = getValueDeclaration(symbol, context);
     return ts.isIdentifier(node) &&
       symbol !== undefined &&
       declaration !== undefined &&
@@ -20557,7 +20579,7 @@ export const translateStatements = (
   };
   const isThrowing = (name: ts.Identifier) => {
     const symbol = getSymbol(name, context.checker);
-    const declaration = symbol?.valueDeclaration;
+    const declaration = getValueDeclaration(symbol, context);
     return (
       isGlobalRead(name) ||
       isUnresolved(name, context) ||
@@ -21817,7 +21839,7 @@ export const translateScript = (
   // A script's vars hold undefined until their declarations run, as do the parameters of a
   // function that runs once until it runs.
   const hoisted = [...context.variables.keys()].filter((symbol) => {
-    const declaration = symbol.valueDeclaration;
+    const declaration = getValueDeclaration(symbol, context);
     return (
       isLast &&
       declaration !== undefined &&
@@ -22089,7 +22111,7 @@ export const writesState = (
     return true;
   }
   if (ts.isCallExpression(node)) {
-    const helper = getTopLevelDeclaration(getSymbol(node.expression, context.checker));
+    const helper = getTopLevelDeclaration(getSymbol(node.expression, context.checker), context);
     if (helper !== undefined && !visited.has(helper)) {
       visited.add(helper);
       if (writesState(helper, context, visited)) return true;

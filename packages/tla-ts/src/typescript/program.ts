@@ -516,26 +516,6 @@ export const createProgram = (source: string, path: string, library: Library = D
     program === modelProgram ? modelDiagnostics : getTypedDiagnostics(program, projectRoots);
   if (diagnostics.length > 0) throw new TlaTypeScriptError(ts.formatDiagnostics(diagnostics, host));
   const sourceFile = getModelSourceFile(program);
-  // HACK: TypeScript gives an overloaded function's symbol its first signature as its value
-  // declaration, but only the implementation runs, so the symbol takes the implementation.
-  getModelFiles(program).forEach((file) =>
-    findNodes(
-      file,
-      (node): node is ts.FunctionDeclaration | ts.MethodDeclaration =>
-        (ts.isFunctionDeclaration(node) || ts.isMethodDeclaration(node)) && node.body !== undefined,
-    ).forEach((implementation) => {
-      const symbol =
-        implementation.name === undefined
-          ? undefined
-          : program.getTypeChecker().getSymbolAtLocation(implementation.name);
-      const isOverloaded = (symbol?.declarations ?? []).some(
-        (declaration) =>
-          (ts.isFunctionDeclaration(declaration) || ts.isMethodDeclaration(declaration)) &&
-          declaration.body === undefined,
-      );
-      if (symbol !== undefined && isOverloaded) symbol.valueDeclaration = implementation;
-    }),
-  );
   const files = getModelFiles(program).filter((file) => !file.isDeclarationFile);
   const nodes = createProgramNodes(program.getTypeChecker(), files);
   const checker = typeExportsAsAny(withNameSymbols(program.getTypeChecker(), nodes));

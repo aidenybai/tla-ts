@@ -28,6 +28,7 @@ import {
   type SharedCall,
   type SharedHelper,
   skipCasts,
+  getValueDeclaration,
 } from "./context";
 import { getPosition } from "./program-nodes";
 import { forceHeap } from "./functions";
@@ -161,7 +162,7 @@ const getUnit = (unit: ts.Node, context: Context, owner?: ts.Node): Unit => {
       named !== undefined && (named.flags & ts.SymbolFlags.Alias) !== 0
         ? context.checker.getAliasedSymbol(named)
         : named;
-    const declaration = symbol?.valueDeclaration;
+    const declaration = getValueDeclaration(symbol, context);
     if (symbol === undefined || declaration === undefined) return;
     if (declaration.getSourceFile().isDeclarationFile) {
       if (TASK_NAMES.has(symbol.name)) isTaskNamed.value = true;
@@ -225,14 +226,17 @@ export const classifySharedHelpers = (reached: readonly ts.Node[], context: Cont
     ...new Set(
       reached.flatMap((node) =>
         findNodes(node, ts.isCallExpression).flatMap((call) => {
-          const declaration = getSymbol(call.expression, context.checker)?.valueDeclaration;
+          const declaration = getValueDeclaration(
+            getSymbol(call.expression, context.checker),
+            context,
+          );
           const callee = declaration === undefined ? undefined : getFixedFunction(declaration);
           return callee === undefined || !isCandidate.has(callee)
             ? []
             : call.arguments.flatMap((argument) => {
                 const passed = skipCasts(argument);
                 const named = ts.isIdentifier(passed)
-                  ? getSymbol(passed, context.checker)?.valueDeclaration
+                  ? getValueDeclaration(getSymbol(passed, context.checker), context)
                   : undefined;
                 const callback =
                   ts.isArrowFunction(passed) || ts.isFunctionExpression(passed)
@@ -490,7 +494,7 @@ const getSharedCall = (
     (symbol) => !context.variables.has(symbol) && path.scope.bindings.has(symbol),
   );
   const isReadable = (symbol: ts.Symbol) => {
-    const declaration = symbol.valueDeclaration;
+    const declaration = getValueDeclaration(symbol, context);
     return (
       declaration !== undefined &&
       !path.scope.uninitialized.has(symbol) &&

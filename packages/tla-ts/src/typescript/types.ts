@@ -24,6 +24,7 @@ import {
   isStatic,
   skipCasts,
   PRIMITIVE_FLAGS,
+  getValueDeclaration,
 } from "./context";
 import { getTemporalConstructorKind, getTemporalKind } from "./temporal";
 import {
@@ -233,7 +234,7 @@ const isPlainObject = (type: ts.Type, context: Context): boolean => {
   if (symbol?.name === "globalThis" && (symbol.flags & ts.SymbolFlags.ValueModule) !== 0) {
     return true;
   }
-  const declaration = symbol?.valueDeclaration;
+  const declaration = getValueDeclaration(symbol, context);
   if (
     declaration !== undefined &&
     ((ts.isClassLike(declaration) &&
@@ -524,7 +525,7 @@ export const isNewArrayOfElements = (
 // The array literal, or the new Array of holes, that an expression or the variable it names holds.
 export const getArraySource = (node: ts.Expression, context: Context) => {
   const declaration = ts.isIdentifier(node)
-    ? getSymbol(node, context.checker)?.valueDeclaration
+    ? getValueDeclaration(getSymbol(node, context.checker), context)
     : undefined;
   const initializer =
     declaration !== undefined && ts.isVariableDeclaration(declaration)
@@ -540,7 +541,7 @@ export const getArraySource = (node: ts.Expression, context: Context) => {
 export const getArrayLiteral = (node: ts.Expression, context: Context) => {
   if (ts.isArrayLiteralExpression(node)) return node;
   const declaration = ts.isIdentifier(node)
-    ? getSymbol(node, context.checker)?.valueDeclaration
+    ? getValueDeclaration(getSymbol(node, context.checker), context)
     : undefined;
   return declaration !== undefined &&
     ts.isVariableDeclaration(declaration) &&
@@ -571,9 +572,9 @@ export const getAccessedFields = (node: ts.Node, checker: ts.TypeChecker) => {
 
 // The function that a call names, where a script declares it or binds it to a constant, and that
 // gives what it returns as it is.
-export const getCalledFunction = (node: ts.CallExpression, checker: ts.TypeChecker) => {
+export const getCalledFunction = (node: ts.CallExpression, context: Context) => {
   const declaration = ts.isIdentifier(node.expression)
-    ? getSymbol(node.expression, checker)?.valueDeclaration
+    ? getValueDeclaration(getSymbol(node.expression, context.checker), context)
     : undefined;
   const owner =
     declaration !== undefined &&
@@ -652,7 +653,7 @@ const isCollectionProxy = (node: ts.Expression, context: Context): boolean => {
     return isCollectionProxy(node.expression, context);
   }
   const declaration = ts.isIdentifier(node)
-    ? getSymbol(node, context.checker)?.valueDeclaration
+    ? getValueDeclaration(getSymbol(node, context.checker), context)
     : undefined;
   return (
     context.collectionProxies.has(node) ||
@@ -681,7 +682,7 @@ export const REORDER_METHODS = new Set(["sort", "reverse", "fill", "copyWithin"]
 // const sorted = list.sort() names list.
 export const getReorderedArray = (node: ts.Expression, context: Context) => {
   const declaration = ts.isIdentifier(node)
-    ? getSymbol(node, context.checker)?.valueDeclaration
+    ? getValueDeclaration(getSymbol(node, context.checker), context)
     : undefined;
   const call =
     declaration !== undefined &&
@@ -751,7 +752,7 @@ const isHeld = (node: ts.Expression, context: Context): boolean => {
     return isHeld(node.left, context) && isHeld(node.right, context);
   }
   if (ts.isCallExpression(node)) {
-    const called = getCalledFunction(node, context.checker);
+    const called = getCalledFunction(node, context);
     // A call through a field whose functions give what the heap holds, which the names of the
     // field's declarations mark.
     const fields = getAccessedFields(node.expression, context.checker);
@@ -794,7 +795,7 @@ const isHeld = (node: ts.Expression, context: Context): boolean => {
   }
   const literal = getArraySource(node, context);
   const symbol = ts.isIdentifier(node) ? getSymbol(node, context.checker) : undefined;
-  const declaration = symbol?.valueDeclaration;
+  const declaration = getValueDeclaration(symbol, context);
   // A variable that a declaration without a type or a value types by what it's assigned holds what
   // the heap holds where each assignment gives it an array literal that the heap holds.
   const assigned =
@@ -812,7 +813,7 @@ const isHeld = (node: ts.Expression, context: Context): boolean => {
   }
   const fields = getAccessedFields(node, context.checker);
   const called = ts.isCallExpression(node)
-    ? getSymbol(node.expression, context.checker)?.valueDeclaration
+    ? getValueDeclaration(getSymbol(node.expression, context.checker), context)
     : undefined;
   const returning =
     called !== undefined && ts.isVariableDeclaration(called) ? called.initializer : called;
@@ -941,7 +942,7 @@ const isRegExpIndicesPair = (node: ts.Expression, context: Context): boolean => 
     return owner === "groups" || (owner === "indices" && ts.isElementAccessExpression(node));
   }
   const declaration = ts.isIdentifier(node)
-    ? getSymbol(node, context.checker)?.valueDeclaration
+    ? getValueDeclaration(getSymbol(node, context.checker), context)
     : undefined;
   return (
     declaration !== undefined &&
@@ -1201,7 +1202,7 @@ export const isSymbolIndexCall = (node: ts.CallExpression, context: Context) => 
   }
   const isFilled = kind === "TypedArray" && callee.name.text === "fill";
   const symbol = ts.isIdentifier(receiver) ? getSymbol(receiver, checker) : undefined;
-  const declaration = symbol?.valueDeclaration;
+  const declaration = getValueDeclaration(symbol, context);
   return (
     node.arguments.every(
       (argument) =>
@@ -1246,7 +1247,7 @@ export const isSizelessSetLikeCall = (node: ts.CallExpression, context: Context)
     argument !== undefined && ts.isIdentifier(argument)
       ? getSymbol(argument, context.checker)
       : undefined;
-  const declaration = symbol?.valueDeclaration;
+  const declaration = getValueDeclaration(symbol, context);
   // Any size but a read of one, as set.size reads.
   const isGiven = (inner: ts.Node): inner is ts.Node => {
     const access = inner.parent;
@@ -1362,7 +1363,7 @@ const isCalledArrayParameter = (parameter: ts.ParameterDeclaration, context: Con
 export const isCreatedObject = (node: ts.Expression, context: Context) => {
   const value = skipCasts(node);
   const declaration = ts.isIdentifier(value)
-    ? getSymbol(value, context.checker)?.valueDeclaration
+    ? getValueDeclaration(getSymbol(value, context.checker), context)
     : undefined;
   const made = skipCasts(
     declaration !== undefined &&
@@ -1389,7 +1390,7 @@ export const getKind = (node: ts.Expression, context: Context): Kind => {
   // An object stays one where TypeScript narrows its type, as instanceof Object narrows it to the
   // library's Object.
   const symbol = ts.isIdentifier(node) ? getSymbol(node, checker) : undefined;
-  const parameter = symbol?.valueDeclaration;
+  const parameter = getValueDeclaration(symbol, context);
   if (parameter !== undefined && ts.isParameter(parameter) && isSetSource(parameter, context)) {
     return "set";
   }
@@ -1421,9 +1422,10 @@ export const getKind = (node: ts.Expression, context: Context): Kind => {
     return "object";
   }
   // A variable that holds the prototype of an array iterator, which getPrototypeOf types as any.
+  const declaration = getValueDeclaration(symbol, context);
   const initializer =
-    symbol?.valueDeclaration !== undefined && ts.isVariableDeclaration(symbol.valueDeclaration)
-      ? symbol.valueDeclaration.initializer
+    declaration !== undefined && ts.isVariableDeclaration(declaration)
+      ? declaration.initializer
       : undefined;
   if (
     context.heap !== undefined &&
@@ -1489,7 +1491,7 @@ export const isBuiltInIteratorType = (node: ts.Node, context: Context) =>
 export const isScriptIteratorType = (node: ts.Node, context: Context) =>
   context.heap !== undefined &&
   getMembers(node, context).every((type) => {
-    const declaration = type.getSymbol()?.valueDeclaration;
+    const declaration = getValueDeclaration(type.getSymbol(), context);
     return (
       declaration !== undefined &&
       ts.isClassLike(declaration) &&
@@ -1532,7 +1534,7 @@ const isAsyncDelegated = (node: ts.ArrayLiteralExpression) => {
 // A variable that a declaration without a type or a value gives a type that follows what it's
 // assigned.
 const isAutoTyped = (node: ts.Identifier, context: Context) => {
-  const declaration = getSymbol(node, context.checker)?.valueDeclaration;
+  const declaration = getValueDeclaration(getSymbol(node, context.checker), context);
   return (
     declaration !== undefined &&
     ts.isVariableDeclaration(declaration) &&

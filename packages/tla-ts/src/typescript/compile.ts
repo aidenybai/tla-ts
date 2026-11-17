@@ -38,6 +38,7 @@ import {
   rejectArgumentsVarReads,
   rejectSloppyGlobalWrites,
   isVarFunction,
+  getValueDeclaration,
 } from "./context";
 import { type CompiledSpec, createSections, emit, type Sections } from "./emit";
 import { getBinary, getNumberValue, isRawTemplate, MATH_OPERATORS } from "./expressions";
@@ -202,7 +203,7 @@ const getCounted = (statement: ts.Statement, context: Context) => {
     target !== undefined && ts.isIdentifier(target)
       ? getSymbol(target, context.checker)
       : undefined;
-  const declaration = symbol?.valueDeclaration;
+  const declaration = getValueDeclaration(symbol, context);
   const initializer =
     declaration !== undefined && ts.isVariableDeclaration(declaration)
       ? declaration.initializer
@@ -445,8 +446,10 @@ export const compile = (
     const symbol = program.checker.getSymbolAtLocation(node);
     return symbol === undefined
       ? undefined
-      : (symbol.flags & ts.SymbolFlags.Alias ? program.checker.getAliasedSymbol(symbol) : symbol)
-          .valueDeclaration;
+      : getValueDeclaration(
+          symbol.flags & ts.SymbolFlags.Alias ? program.checker.getAliasedSymbol(symbol) : symbol,
+          context,
+        );
   };
   context.namespaces = findNamespaces(sourceFile, files, context);
   context.valueEnums = findValueEnums(order, program.checker);
@@ -768,7 +771,7 @@ export const compile = (
         node.name.text === "hasOwnProperty")) ||
     (ts.isPropertyAccessExpression(node) &&
       node.name.text === "prototype" &&
-      isScriptClass(getSymbol(node.expression, context.checker)?.valueDeclaration)) ||
+      isScriptClass(getValueDeclaration(getSymbol(node.expression, context.checker), context))) ||
     // A class with members that extends a native error, whose errors only objects can be.
     (ts.isClassLike(node) &&
       hasObjectMembers(node) &&
@@ -821,7 +824,8 @@ export const compile = (
         ts.isSatisfiesExpression(node.parent) ||
         (ts.isVariableDeclaration(node.parent) && node.parent.initializer === node) ||
         isBuiltInValueArgument(node, context.checker)) &&
-      getFunction(getTopLevelDeclaration(getSymbol(node, context.checker))) !== undefined) ||
+      getFunction(getTopLevelDeclaration(getSymbol(node, context.checker), context)) !==
+        undefined) ||
     // A function that a block declares outside strict mode, which its var holds as a value.
     isVarFunction(node) ||
     isPrototypeArray(node, context) ||

@@ -11,6 +11,9 @@ import {
   isDeclarationOnly,
   isHeldError,
   isMethodCall,
+  getUnmodelledHostName,
+  getValueDeclaration,
+  skipCasts,
 } from "./context";
 import { TlaTypeScriptError } from "../errors";
 import { isAllocation } from "./heap";
@@ -328,7 +331,7 @@ const isRunByOwner = (
 
 const isOnlyName = (node: ts.Identifier, statement: ts.ReturnStatement, context: Context) => {
   const symbol = getSymbol(node, context.checker);
-  const declaration = symbol?.valueDeclaration;
+  const declaration = getValueDeclaration(symbol, context);
   const owner = getOwner(statement);
   if (
     symbol === undefined ||
@@ -652,7 +655,7 @@ export const findSharing = (reached: readonly ts.Node[], context: Context) => {
   // Whether a reference to a function's own variable is the last that runs, so that nothing
   // changes the variable's array after the reference shares it.
   const isLastUse = (node: ts.Node, symbol: ts.Symbol) => {
-    const declaration = symbol.valueDeclaration;
+    const declaration = getValueDeclaration(symbol, context);
     if (
       declaration === undefined ||
       !ts.isVariableDeclaration(declaration) ||
@@ -859,6 +862,25 @@ export const rejectSharing = (reached: readonly ts.Node[], context: Context) => 
     throw new TlaTypeScriptError(
       `tla-ts can't run ${text}, which only a declaration gives`,
       sharing.node,
+    );
+  }
+  // An object that a host's constructor or function makes, which no built-in tla-ts models gives,
+  // such as the DOM's MessageChannel, has no code to run either.
+  const declaration = getValueDeclaration(sharing.symbol, context);
+  const made =
+    declaration !== undefined &&
+    ts.isVariableDeclaration(declaration) &&
+    declaration.initializer !== undefined
+      ? skipCasts(declaration.initializer)
+      : undefined;
+  const host =
+    made !== undefined && (ts.isNewExpression(made) || ts.isCallExpression(made))
+      ? getUnmodelledHostName(made.expression, context)
+      : undefined;
+  if (made !== undefined && host !== undefined) {
+    throw new TlaTypeScriptError(
+      `tla-ts can't run ${host}, which the host gives and tla-ts doesn't model`,
+      made,
     );
   }
   throw new TlaTypeScriptError(

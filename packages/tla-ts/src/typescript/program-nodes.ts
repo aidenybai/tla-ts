@@ -46,6 +46,9 @@ export interface ProgramNodes {
   nameTexts: string[];
   marks: Int32Array;
   generation: number;
+  // The position of the implementation of an overloaded function or method, by the position of each
+  // of its signatures, which runs nothing, or -1.
+  implementations: Int32Array;
 }
 
 // tla-ts's own symbol of each identifier of the program's files, by its position, and the positions
@@ -112,6 +115,33 @@ export const createProgramNodes = (
     kindPositions[kindEnds[node.kind]] = position;
     kindEnds[node.kind] += 1;
   });
+  const endColumn = Int32Array.from(ends);
+  // TypeScript requires a function's or a method's signatures to come right before its
+  // implementation, in the same block, class, or file, so each is a sibling that the walk reaches
+  // past the subtree of the one before.
+  const isSignature = (node: ts.Node) =>
+    (ts.isFunctionDeclaration(node) || ts.isMethodDeclaration(node)) && node.body === undefined;
+  const getName = (node: ts.Node) =>
+    (ts.isFunctionDeclaration(node) || ts.isMethodDeclaration(node)) && node.name !== undefined
+      ? node.name.getText()
+      : undefined;
+  const getImplementation = (position: number): number => {
+    const next = endColumn[position];
+    const node = nodes[position];
+    const sibling = nodes[next];
+    if (
+      next >= nodes.length ||
+      sibling.parent !== node.parent ||
+      sibling.kind !== node.kind ||
+      getName(sibling) !== getName(node)
+    ) {
+      return -1;
+    }
+    return isSignature(sibling) ? getImplementation(next) : next;
+  };
+  const implementations = Int32Array.from(nodes, (node, position) =>
+    isSignature(node) && getName(node) !== undefined ? getImplementation(position) : -1,
+  );
   // The identifiers' positions and texts, in order of position, and then of text.
   const texts: string[] = [];
   const named: number[] = [];
@@ -127,7 +157,7 @@ export const createProgramNodes = (
     first,
     positions,
     nodes,
-    ends: Int32Array.from(ends),
+    ends: endColumn,
     files: Int32Array.from(fileStarts),
     fileStarts: Int32Array.from(new Set(fileStarts)),
     symbols: nodes.map((node) =>
@@ -139,6 +169,7 @@ export const createProgramNodes = (
     nameTexts: Array.from(byText, (index) => texts[index]),
     marks: new Int32Array(nodes.length),
     generation: 0,
+    implementations,
   };
 };
 

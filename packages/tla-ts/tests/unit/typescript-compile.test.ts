@@ -17995,7 +17995,7 @@ describe("errors", () => {
           }
           if (caught !== "ReferenceError") throw new Error(caught);
         `),
-      ).toThrow("Unknown name: missing");
+      ).toThrow("tla-ts can't throw the ReferenceError of reading missing, which nothing declares");
     });
   });
 
@@ -46056,7 +46056,9 @@ describe("BigInts", () => {
         // @ts-ignore
         const version = process.version;
       `);
-      expect(result.failure?.message).toContain("tla-ts can't follow Node's process object");
+      expect(result.failure?.message).toContain(
+        "tla-ts can't read process.version, which Node's process object holds",
+      );
     });
   });
 
@@ -50144,6 +50146,24 @@ describe("BigInts", () => {
       expect((await checkModel(getShapes(2))).failure?.message).toContain("side 1");
     });
 
+    it("stops where code outside a namespace writes a variable that it exports", () => {
+      expect(() =>
+        compile(`
+          namespace Tally {
+            export let total = 0;
+            export function add() {
+              total += 1;
+              return total;
+            }
+          }
+          Tally.add();
+          Tally.total += 5;
+        `),
+      ).toThrow(
+        "spec.ts:10:11 tla-ts can't write Tally.total, which a namespace exports, outside the namespace",
+      );
+    });
+
     it("agrees with TypeScript's output run in Node for another file's namespace", async () => {
       const path = join(import.meta.dirname, "../fixtures/typescript/imports/countering.ts");
       const getImporter = (expected: string) => `
@@ -50246,7 +50266,9 @@ describe("BigInts", () => {
         `,
           path,
         ),
-      ).toThrow("tla-ts can't make a module's namespace object outside a script");
+      ).toThrow(
+        /area-picker\.ts:3:32 tla-ts can't make a module's namespace object outside a script/,
+      );
     });
   });
 
@@ -50421,6 +50443,122 @@ describe("BigInts", () => {
 
     it("grows by a statement for each closure that it composes", () => {
       expect(getSize(8)).toBeLessThan(getSize(4) * 1.4);
+    });
+  });
+
+  describe("stops at an object that only a heap could hold where none does", () => {
+    it("stops at a built-in read as a value", () => {
+      expect(() =>
+        compile(`
+          export const Pattern = globalThis.RegExp;
+          export const isSame = (value: 1 | 2): boolean => Pattern === Pattern && value === value;
+        `),
+      ).toThrow(
+        "spec.ts:2:34 tla-ts can't use the built-in globalThis as a value where no heap holds objects",
+      );
+    });
+
+    it("stops at a function's arguments object", () => {
+      expect(() =>
+        compile(`
+          let count = 0;
+          export function step(): void {
+            if (count < 2) count += arguments.length + 1;
+          }
+        `),
+      ).toThrow("tla-ts can't read a function's arguments object where no heap holds objects");
+    });
+
+    it("stops at a property of a class of errors, which TLC can't read from a model value", () => {
+      expect(() =>
+        compile(`
+          export const getLimit = (): number | undefined =>
+            (Error as { stackTraceLimit?: number }).stackTraceLimit;
+          export const isSet = (): boolean => getLimit() !== undefined;
+        `),
+      ).toThrow(
+        "tla-ts can't read stackTraceLimit of a class of errors where no heap holds objects",
+      );
+    });
+  });
+
+  describe("keys a Map by what the calls pass a parameter of type any", () => {
+    const getSource = (expected: string, size = "Size") => `
+      enum Color {
+        Red,
+        Green,
+      }
+      enum Size {
+        Small,
+        Large,
+      }
+      const shapes = { Color, Size };
+      const cache = new Map<any, string[]>();
+      function getMembers(enumObject: any) {
+        const existing = cache.get(enumObject);
+        if (existing) return existing;
+        const result: string[] = [];
+        for (const name in enumObject) {
+          if (typeof enumObject[name] === "number") result.push(name);
+        }
+        cache.set(enumObject, result);
+        return result;
+      }
+      function format(value: number, enumObject: any) {
+        return getMembers(enumObject)[value];
+      }
+      const seen = [format(1, (shapes as any).Color), format(0, ${size}), format(0, Size), cache.size].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with TypeScript's output run in Node", async () => {
+      expect((await checkModel(getSource("Green,Small,Small,2"))).failure).toBeUndefined();
+    });
+
+    it("rejects another size", async () => {
+      expect((await checkModel(getSource("Green,Small,Small,3"))).failure?.message).toContain(
+        "seen Green,Small,Small,2",
+      );
+    });
+
+    it("stops where a call passes a key of another kind", () => {
+      expect(() => compile(getSource("Green,Small,Small,2", '"Size"'))).toThrow(
+        "Give a Map keys of one kind, as TLC can't compare a number with a string",
+      );
+    });
+  });
+
+  describe("stops at a member of Node's process object, which tla-ts doesn't model", () => {
+    const path = join(import.meta.dirname, "../fixtures/typescript/common-js/typing.ts");
+
+    it("stops where a script reads process.nextTick, as TypeScript's isNodeLikeSystem does", async () => {
+      const source = `/// <reference types="node" />
+        const box = { isNode: false };
+        box.isNode = typeof process !== "undefined" && !!process.nextTick;
+      `;
+      expect((await check(compile(source, path))).failure?.message).toContain(
+        "tla-ts can't read process.nextTick, which Node's process object holds",
+      );
+    });
+  });
+
+  describe("stops at a host's constructor that no built-in tla-ts models gives", () => {
+    it("names the constructor, as the DOM's MessageChannel", () => {
+      expect(() =>
+        compile(`/// <reference lib="scripthost" />
+          let count = 0;
+          const setup = () => {
+            const host = new ActiveXObject("Scripting.Dictionary");
+            host.count = 2;
+            return host;
+          };
+          export const step = () => {
+            if (count === 0) count = setup().count;
+          };
+        `),
+      ).toThrow(
+        "spec.ts:4:26 tla-ts can't run ActiveXObject, which the host gives and tla-ts doesn't model",
+      );
     });
   });
 });

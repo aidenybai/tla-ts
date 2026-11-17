@@ -15,6 +15,9 @@ import {
   type MethodCall,
   share,
   skipCasts,
+  getValueDeclaration,
+  findReferences,
+  getUnmodelledHostName,
 } from "./context";
 import type { Expression } from "../ast";
 import { TlaTypeScriptError } from "../errors";
@@ -2554,7 +2557,7 @@ const getPrimitiveCall = (node: MethodCall, kind: Kind, context: Context) => {
   // primitive the method reads.
   const symbol =
     kind === "object" ? context.checker.getTypeAtLocation(receiver).getSymbol() : undefined;
-  const declaration = symbol?.valueDeclaration;
+  const declaration = getValueDeclaration(symbol, context);
   const wrapper =
     declaration !== undefined && ts.isClassLike(declaration)
       ? getBuiltInBase(declaration, context)
@@ -3722,6 +3725,65 @@ const getComparedKinds = (type: ts.Type, checker: ts.TypeChecker) =>
     ?.filter((name) => !["undefined", "null", "symbol"].includes(name))
     .map((name) => (name === "function" ? "object" : name));
 
+// The kinds of the values that an expression gives, where its type tells them. A cast to any
+// changes no value, so the type of what the cast reads tells, and the type of a property that a
+// read through such a cast reads. A parameter of type any holds what the calls of its function
+// pass it, where each reference to the function calls it.
+export const getValueKinds = (
+  node: ts.Expression,
+  context: Context,
+  parameters: readonly ts.Symbol[],
+): string[] | undefined => {
+  const checker = context.checker;
+  const typed = getComparedKinds(checker.getTypeAtLocation(node), checker);
+  if (typed !== undefined) return typed;
+  const inner = skipCasts(node);
+  if (inner !== node) return getValueKinds(inner, context, parameters);
+  if (ts.isPropertyAccessExpression(inner) && skipCasts(inner.expression) !== inner.expression) {
+    const property = checker
+      .getTypeAtLocation(skipCasts(inner.expression))
+      .getProperty(inner.name.text);
+    return property === undefined
+      ? undefined
+      : getComparedKinds(checker.getTypeOfSymbol(property), checker);
+  }
+  const symbol = ts.isIdentifier(inner) ? getSymbol(inner, checker) : undefined;
+  const parameter = getValueDeclaration(symbol, context);
+  const owner = parameter !== undefined && ts.isParameter(parameter) ? parameter.parent : undefined;
+  if (
+    symbol === undefined ||
+    parameters.includes(symbol) ||
+    parameter === undefined ||
+    !ts.isParameter(parameter) ||
+    parameter.dotDotDotToken !== undefined ||
+    owner === undefined ||
+    !ts.isFunctionDeclaration(owner) ||
+    owner.name === undefined
+  ) {
+    return undefined;
+  }
+  const position = owner.parameters.indexOf(parameter);
+  const name = owner.name;
+  const callee = getSymbol(name, checker);
+  if (callee === undefined) return undefined;
+  const files = Array.from(context.nodes.fileStarts, (start) => context.nodes.nodes[start]);
+  const calls = files
+    .flatMap((file) => findReferences(callee, file, context))
+    .filter((reference) => reference !== name);
+  const kinds = calls.map((reference) => {
+    const read =
+      ts.isPropertyAccessExpression(reference.parent) && reference.parent.name === reference
+        ? reference.parent
+        : reference;
+    const call = read.parent;
+    if (!ts.isCallExpression(call) || call.expression !== read) return undefined;
+    if (call.arguments.slice(0, position + 1).some(ts.isSpreadElement)) return undefined;
+    const argument = call.arguments.at(position);
+    return argument === undefined ? [] : getValueKinds(argument, context, [...parameters, symbol]);
+  });
+  return kinds.every((kind) => kind !== undefined) ? [...new Set(kinds.flat())] : undefined;
+};
+
 // The kinds of the keys that the type of a Set or a Map gives it.
 const getDeclaredKeyKinds = (node: ts.Expression, checker: ts.TypeChecker) => {
   const type = getCollectionType(checker.getTypeAtLocation(node));
@@ -3791,10 +3853,14 @@ const getKeyKinds = (node: ts.NewExpression, context: Context) => {
   if (isUntyped) return undefined;
   // A Set or Map that no variable holds has only the keys it starts with.
   const keys = [...initial, ...(symbol === undefined ? [] : getUses(node.getSourceFile()))];
+  // A Set or Map whose type tells its keys' kinds checks a key of another kind as it runs, so only
+  // one whose type doesn't looks at what the key's value may be.
   const kinds = keys.map((key) =>
     key === undefined || ts.isSpreadElement(key)
       ? undefined
-      : getComparedKinds(checker.getTypeAtLocation(key), checker),
+      : declared === undefined
+        ? getValueKinds(key, context, [])
+        : getComparedKinds(checker.getTypeAtLocation(key), checker),
   );
   if (declared !== undefined) {
     return new Set([...declared, ...kinds.flatMap((kind) => kind ?? [])]);
@@ -4020,6 +4086,13 @@ const translateNewCollection = (
       return set(argument.elements.map((element) => translateSetKey(element, scope, context)));
     }
     return translateSet(argument, scope, context);
+  }
+  const host = getUnmodelledHostName(node.expression, context);
+  if (host !== undefined) {
+    throw new TlaTypeScriptError(
+      `tla-ts can't run ${host}, which the host gives and tla-ts doesn't model`,
+      node,
+    );
   }
   if (kind !== "Map") {
     return translateUnknown(node, `Unsupported constructor: new ${constructor}`, context);
