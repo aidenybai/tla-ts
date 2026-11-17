@@ -2438,6 +2438,24 @@ const findKeyIndexLikeTlc = (
 };
 
 // Deviation from TLC: FcnLambdaValue#apply indexes past an argument tuple shorter than the bounds and ignores a longer one, where this rejects the list.
+const describeBoundArgument = (
+  functionValue: LazyFunctionValue,
+  position: string,
+  shown: Value,
+  problem: string,
+) =>
+  `In applying the function\n${prettyPrint(formatValue(functionValue))},\nthe ${position} is:\n${prettyPrint(formatValue(shown))}\nwhich ${problem}.\n`;
+
+const createArgumentListError = (functionValue: LazyFunctionValue, argument: Value) =>
+  new TlaEvaluationError(
+    describeBoundArgument(
+      functionValue,
+      "argument list",
+      argument,
+      "does not match its formal parameter",
+    ),
+  );
+
 const checkBoundArguments = (
   functionValue: LazyFunctionValue,
   tupleLengths: (number | undefined)[],
@@ -2446,11 +2464,8 @@ const checkBoundArguments = (
   const domain = functionValue.domain;
   const elements = getSequenceElements(argument);
   const describe = (position: string, shown: Value, problem: string) =>
-    `In applying the function\n${prettyPrint(formatValue(functionValue))},\nthe ${position} is:\n${prettyPrint(formatValue(shown))}\nwhich ${problem}.\n`;
-  const createListError = () =>
-    new TlaEvaluationError(
-      describe("argument list", argument, "does not match its formal parameter"),
-    );
+    describeBoundArgument(functionValue, position, shown, problem);
+  const createListError = () => createArgumentListError(functionValue, argument);
   if (elements === undefined) throw createListError();
   if (typeof domain !== "object" || domain.kind !== "ProductSet") {
     throw new TlaEvaluationError(
@@ -2556,6 +2571,12 @@ export const updateFunction = (
     functionValue.kind === "LazyFunction" &&
     (isKeptLazy || functionValue.enumerated === undefined);
   if (isLazy) {
+    if (
+      functionValue.boundTupleLengths !== undefined &&
+      getSequenceElements(argument) === undefined
+    ) {
+      throw createArgumentListError(functionValue, argument);
+    }
     if (!isElementOf(argument, functionValue.domain)) return functionValue;
     const updated = update(functionValue.apply(argument));
     return setFunctionClass<LazyFunctionValue>(

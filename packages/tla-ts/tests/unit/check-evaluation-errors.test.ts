@@ -1323,6 +1323,21 @@ describe("evaluation errors match TLC", () => {
     expect(prints).toEqual(['"a"  7', '"a"  7', '"a"  7']);
   });
 
+  it("rejects EXCEPT at an argument that is not a tuple of a lazy function of two arguments", async () => {
+    const pairs = [1, 2].flatMap((first) =>
+      [0, 1, 2, 3, 4].map((second) => `<<${first}, ${second}>> :> 100`),
+    );
+    expect(
+      (
+        await checkModule(
+          "ASSUME PrintT([[a \\in {1, 2}, b \\in 0..4 |-> 100] EXCEPT ![5] = 0][<<1, 1>>])",
+        )
+      ).violation?.message,
+    ).toBe(
+      `In applying the function\n( ${pairs.join(" @@\n  ")} ),\nthe argument list is:\n5\nwhich does not match its formal parameter.\n`,
+    );
+  });
+
   it.each([
     ['PrintT("a") /\\ PrintT("b") /\\ x + 1', ['"a"', '"b"']],
     ['Print("p", x + 1)', ['"p"  1']],
