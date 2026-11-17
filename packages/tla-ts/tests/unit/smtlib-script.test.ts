@@ -424,6 +424,23 @@ describe("runSmtlibScript prints what Z3 prints", () => {
     ]);
   });
 
+  it("expands the same select again in a later eval", () => {
+    expect(
+      run([
+        "(declare-const i0 Int)",
+        "(declare-const i2 Int)",
+        "(declare-const a2 (Array Int Int))",
+        "(check-sat)",
+        "(eval (+ 1 (select (store a2 i0 3) i2)))",
+        "(eval (+ 1 (select (store a2 i0 3) i2)))",
+      ]),
+    ).toEqual([
+      "sat",
+      "(+ 1 (ite (= i0 i2) 3 (select a2 i2)))",
+      "(+ 1 (ite (= i0 i2) 3 (select a2 i2)))",
+    ]);
+  });
+
   // z3test's regressions/smt2/fp-rem-1.smt2, with what Z3 prints for it.
   it("decides floating-point terms with the smt core and with the fpa2bv tactic", () => {
     expect(

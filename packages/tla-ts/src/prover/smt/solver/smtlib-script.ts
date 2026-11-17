@@ -66,6 +66,7 @@ import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
 import type { DatalogContext } from "./muz/dl-context";
 import { createDatalogContext } from "./muz/horn-tactic";
 import { printModel } from "./model-printer";
+import { ModelEvaluator } from "./model-evaluator";
 import { FuncInterp, getManagerSomeValue, ProtoModel } from "./proto-model";
 import {
   applyTactic,
@@ -1569,9 +1570,11 @@ export const runSmtlibScript = (
         if (term === -1) throw new SmtParseError("no arguments passed to eval", list.end);
         const manager = state.manager;
         manager.incRef(term);
-        const value = model.eval(term, false);
+        const evaluator = new ModelEvaluator(manager, model);
+        const value = evaluator.rewrite(term);
         display(value);
         manager.decRef(value);
+        evaluator.release();
         manager.decRef(term);
       },
     ],
