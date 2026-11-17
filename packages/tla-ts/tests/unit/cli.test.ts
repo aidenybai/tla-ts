@@ -528,6 +528,41 @@ describe("the CLI reports results like TLC", () => {
     expect(result.stdout).toContain("Error: Temporal properties were violated.\n");
   });
 
+  it("prints the counterexample before it fails to rebuild the step back of a lasso under a VIEW like TLC", () => {
+    const result = runCli("view", "Recover");
+    expect(result.status).toBe(1);
+    expect(getSteadyLines(result.stdout)).toEqual([
+      "Starting... (_)",
+      "Implied-temporal checking--satisfiability problem has 1 branches.",
+      "Computing initial states...",
+      "Finished computing initial states: 1 distinct state generated at _.",
+      "Progress(2) at _: 5 states generated, 3 distinct states found, 0 states left on queue.",
+      "Checking temporal properties for the complete state space with 3 total distinct states at (_)",
+      "Error: Temporal property Never was violated.",
+      "",
+      "Error: The following behavior constitutes a counter-example:",
+      "",
+      "State 1: <Initial predicate>",
+      "/\\ x = 0",
+      "/\\ y = 0",
+      "",
+      "State 2: <A line 6, col 6 to line 6, col 30 of module Recover>",
+      "/\\ x = 1",
+      "/\\ y = 0",
+      "",
+      "State 3: <B line 8, col 6 to line 8, col 30 of module Recover>",
+      "/\\ x = 2",
+      "/\\ y = 0",
+      "",
+      "Error: TLC threw an unexpected exception.",
+      "This was probably caused by an error in the spec or model.",
+      "See the User Output or TLC Console for clues to what happened.",
+      "The exception was a tlc2.tool.EvalException",
+      ": Failed to recover the next state from its fingerprint.",
+      "",
+    ]);
+  });
+
   it("checks liveness on the complete state graph with -lncheck final", () => {
     const [, code, lines] = TLC_REPORTS.find((report) => report[0] === "Lasso") ?? [];
     const result = runCli("cli-output", "Lasso", ["-lncheck", "final"]);

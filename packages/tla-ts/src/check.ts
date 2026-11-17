@@ -37,6 +37,7 @@ import {
 } from "./check-failure";
 import {
   createTraceBuilder,
+  NEXT_RECOVERY_FAILURE,
   type Behavior,
   type SearchPosition,
   type TracedStep,
@@ -331,6 +332,11 @@ const appendTraceOutput = <Traced extends Behavior>(behavior: Traced, lines: Out
   ...behavior,
   traceOutput: [...(behavior.traceOutput ?? []), ...lines],
 });
+
+const toUnexpectedError = (error: TlaEvaluationError) =>
+  new TlaEvaluationError(
+    `${isEvalException(error) ? UNEXPECTED_EVAL_EXCEPTION : UNEXPECTED_EXCEPTION}${error.message}`,
+  );
 
 const STOP_REPLAY = new Error("The replay stopped");
 const STOP_WALK = new Error("The walk stopped");
@@ -1564,11 +1570,8 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       return addLiveState();
     } catch (error) {
       if (is174 && error instanceof TlaEvaluationError) {
-        const unexpected = new TlaEvaluationError(
-          `${isEvalException(error) ? UNEXPECTED_EVAL_EXCEPTION : UNEXPECTED_EXCEPTION}${error.message}`,
-        );
         return createFailureResult(
-          setExitCode(unexpected, EXIT_STATUS.error),
+          setExitCode(toUnexpectedError(error), EXIT_STATUS.error),
           { trace: [] },
           { outDegrees: getFailureOutDegrees() },
         );
@@ -1600,10 +1603,21 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       text: `The stuttering counterexample above may be caused by the absence of a fairness constraint in the behavior specification ${name} defined at ${formatRange(range)}. To rule out such counterexamples, conjoin a suitable fairness constraint to ${name} ${book}`,
     };
   };
+  // TLC's LiveCheck prints the failure of a liveness worker as unexpected and exits with status 1.
+  const toLivenessFailure = (error: TlaEvaluationError) =>
+    setExitCode(toUnexpectedError(error), EXIT_STATUS.abort);
+  const getLassoSteps = (path: number[]) => {
+    try {
+      return traces.getPathSteps(path);
+    } catch (error) {
+      if (!(error instanceof TlaEvaluationError)) throw error;
+      throw toLivenessFailure(error);
+    }
+  };
   const reportLasso = (checker: LivenessChecker, lasso: Lasso) => {
     const path = [...lasso.prefix, ...lasso.cycle];
     const loopStart = lasso.prefix.length;
-    const steps = traces.getPathSteps(path, loopStart);
+    const steps = getLassoSteps(path);
     const trace = traces.toTrace(steps, path, { loopStart, known: 0 }).trace;
     const properties = getViolatedProperties(
       checker,
@@ -1613,13 +1627,29 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     const cycleStart = path[loopStart];
     const cycleEnd = path[path.length - 1];
     const lastState = steps[steps.length - 1].state;
-    const loop =
-      cycleStart === cycleEnd
-        ? { result: undefined, lines: [] }
-        : captureOutput(() =>
-            traces.findStepAction(cycleEnd, lastState, states[cycleStart], false),
-          );
-    const isStutteringWarned = cycleStart === cycleEnd && lasso.isCycleConstrained;
+    const isStuttering = cycleStart === cycleEnd;
+    const loop = isStuttering
+      ? { result: undefined, lines: [] }
+      : captureOutput(() => traces.findStepAction(cycleEnd, lastState, states[cycleStart], false));
+    const back =
+      isStuttering || loop.result
+        ? undefined
+        : traces.findSuccessorWithFingerprint(lastState, cycleStart);
+    if (!isStuttering && !loop.result && !back) {
+      // TLC's LiveWorker prints the counterexample before it fails to rebuild the step back to the loop.
+      options.onProgress?.({
+        kind: "violation",
+        status: "property-violation",
+        violation: {
+          name: properties[0],
+          properties,
+          trace,
+          traceOutput: loop.lines,
+          loopStart: undefined,
+        },
+      });
+      throw toLivenessFailure(new TlaEvaluationError(NEXT_RECOVERY_FAILURE));
+    }
     return reportViolation(
       "liveness-violation",
       {
@@ -1629,17 +1659,15 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         traceOutput: loop.lines,
         loopStart,
         loopLabel: loop.result && getActionLabel(loop.result, options.version),
-        warning: isStutteringWarned ? getStutteringWarning() : undefined,
+        warning: isStuttering && lasso.isCycleConstrained ? getStutteringWarning() : undefined,
       },
       getStepState,
       () =>
-        cycleStart === cycleEnd
+        isStuttering
           ? getStepAction(trace[trace.length - 1])
           : loop.result
             ? toActionValue(loop.result)
-            : createActionRecord(
-                traces.findSuccessorWithFingerprint(lastState, cycleStart)?.action,
-              ),
+            : createActionRecord(back?.action),
     );
   };
   const isPeriodic = liveness !== undefined && (options.livenessCheck ?? "default") === "default";

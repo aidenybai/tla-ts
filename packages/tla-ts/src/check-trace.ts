@@ -61,7 +61,7 @@ interface TraceContext {
 }
 
 const INITIAL_RECOVERY_FAILURE = "Failed to recover the initial state from its fingerprint.";
-const NEXT_RECOVERY_FAILURE = "Failed to recover the next state from its fingerprint.";
+export const NEXT_RECOVERY_FAILURE = "Failed to recover the next state from its fingerprint.";
 
 export const createTraceBuilder = (context: TraceContext) => {
   const config = context.config;
@@ -286,17 +286,7 @@ export const createTraceBuilder = (context: TraceContext) => {
   const getFailedTrace = (index: number, successor: Successor): Behavior => ({
     trace: getTrace(index, successor).trace,
   });
-  const getPathSteps = (path: number[], loopStart?: number) => {
-    const steps = getPathStates(path, NEXT_RECOVERY_FAILURE);
-    const lastState = steps[steps.length - 1].state;
-    const isClosed =
-      !isReducing ||
-      loopStart === undefined ||
-      loopStart === path.length - 1 ||
-      findSuccessorWithFingerprint(lastState, path[loopStart]) !== undefined;
-    if (!isClosed) throw new TlaEvaluationError(NEXT_RECOVERY_FAILURE);
-    return steps;
-  };
+  const getPathSteps = (path: number[]) => getPathStates(path, NEXT_RECOVERY_FAILURE);
   return {
     toTrace,
     findStepAction,

@@ -280,8 +280,10 @@ const checkSpec = async (
     } else {
       printError(error, printer);
     }
-    printFinished();
-    return getTopLevelExitCode(error);
+    const exitCode = getTopLevelExitCode(error);
+    // TLC's System.exit(1) stops it before it prints how long it ran.
+    if (exitCode !== EXIT_STATUS.abort) printFinished();
+    return exitCode;
   };
   const config = (() => {
     try {

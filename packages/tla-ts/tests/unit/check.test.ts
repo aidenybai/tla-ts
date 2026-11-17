@@ -12,7 +12,7 @@ import {
   TlaEvaluationError,
   TlaSyntaxError,
 } from "../../src";
-import { UNEXPECTED_EXCEPTION } from "../../src/errors";
+import { UNEXPECTED_EVAL_EXCEPTION, UNEXPECTED_EXCEPTION } from "../../src/errors";
 import type { TlcVersion } from "../../src/tlc/version";
 import { formatState } from "../../src/values";
 import { checkFixture, checkModule, checkSteps, FIXTURES } from "./check-harness";
@@ -645,7 +645,9 @@ ASSUME TLCFP(a) = -887695703
 
   it("fails like TLC when a lasso under VIEW cannot be rebuilt from fingerprints", async () => {
     await expect(checkFixture("view", "Recover")).rejects.toThrow(
-      new TlaEvaluationError("Failed to recover the next state from its fingerprint."),
+      new TlaEvaluationError(
+        `${UNEXPECTED_EVAL_EXCEPTION}Failed to recover the next state from its fingerprint.`,
+      ),
     );
   });
 
