@@ -52512,4 +52512,41 @@ describe("BigInts", () => {
       expect((await checkModel(getThrown("range,29"))).failure?.message).toContain("range,30");
     });
   });
+
+  describe("spreads and destructures every value that a script's iterator gives", () => {
+    const getSource = (expected: string) => `
+      interface Counter {
+        index: number;
+        next: (this: Counter) => IteratorResult<number>;
+        [Symbol.iterator]: (this: Counter) => Counter;
+      }
+      let calls = 0;
+      const getCounter = (count: number): Counter => ({
+        index: 0,
+        next() {
+          calls += 1;
+          if (this.index >= count) return { value: undefined, done: true };
+          this.index += 1;
+          return { value: this.index * 2, done: false };
+        },
+        [Symbol.iterator]() {
+          return this;
+        },
+      });
+      const spread = [0, ...getCounter(30)];
+      const [first, second, ...rest] = getCounter(25);
+      const result = [spread.length, spread[30], first, second, rest.length, rest[22], calls].join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("31,60,2,4,23,50,57"))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation", async () => {
+      expect((await checkModel(getSource("31,60,2,4,23,50,56"))).failure?.message).toContain(
+        "31,60,2,4,23,50,57",
+      );
+    });
+  });
 });

@@ -57,7 +57,7 @@ export const getTakenValue = (value: Expression) => {
 
 export const getTaken = (values: Expression[]) => getTakenValue(tuple(values));
 
-// The values that a rest element or a spread takes from an iterator before tla-ts stops following
+// The values that a rest element or a spread takes from a generator before tla-ts stops following
 // it.
 const TAKE_LIMIT = 3;
 
@@ -856,12 +856,17 @@ const takeAll = (
         finish(closed, values),
       );
     }
-    if (values.length >= count + TAKE_LIMIT) {
-      return leaf(
-        apply("Assert", [
-          boolean(false),
-          string(`tla-ts can't take more than ${TAKE_LIMIT} values into a rest element`),
-        ]),
+    if (values.length === count) {
+      return takeRest(
+        pattern,
+        iterator,
+        next,
+        tuple(values),
+        TAKE_LIMIT,
+        current,
+        context,
+        frame,
+        continueWith,
       );
     }
     return stepIterator(
@@ -928,44 +933,6 @@ export const getIteratedSpreads = (node: ts.Expression, context: Context) => {
     )
     ? spreads
     : undefined;
-};
-
-// Steps an iterator to its end, as a spread does, reading each value it gives.
-const stepAll = (
-  site: ts.Node,
-  iterator: Expression,
-  next: Expression,
-  path: Path,
-  context: Context,
-  frame: Frame,
-  throwWith: (path: Path) => Formula,
-  continueWith: (path: Path, values: Expression[]) => Formula,
-) => {
-  const step = (current: Path, values: Expression[]): Formula =>
-    values.length > TAKE_LIMIT
-      ? leaf(
-          apply("Assert", [
-            boolean(false),
-            string(`tla-ts can't spread more than ${TAKE_LIMIT} values`),
-          ]),
-        )
-      : stepIterator(
-          site,
-          iterator,
-          "next",
-          next,
-          [],
-          current,
-          context,
-          frame,
-          throwWith,
-          (done) => continueWith(done, values),
-          (stepped, result) =>
-            readValue(site, result, stepped, context, frame, (taken, value) =>
-              step(taken, [...values, value]),
-            ),
-        );
-  return step(path, []);
 };
 
 interface LoopStep {
@@ -1092,8 +1059,16 @@ export const takeSpreads = (
                   frame,
                   throwWith,
                   (opened, iterator, next) =>
-                    stepAll(site, iterator, next, opened, context, frame, throwWith, (done) =>
-                      spread(done, rest.slice(1)),
+                    takeRest(
+                      site,
+                      iterator,
+                      next,
+                      tuple([]),
+                      TAKE_LIMIT,
+                      opened,
+                      context,
+                      frame,
+                      (done) => spread(done, rest.slice(1)),
                     ),
                 );
           return spread(path, iterables);
@@ -1144,9 +1119,7 @@ export const takeEvery = (
               apply("~", [useJavaScript("IsArray", [heap, value], context)]),
             ]),
             open(site, value, path, context, frame, throwWith, (opened, iterator, next) =>
-              stepAll(site, iterator, next, opened, context, frame, throwWith, (done, values) =>
-                rejoin(done, tuple(values)),
-              ),
+              takeRest(site, iterator, next, tuple([]), TAKE_LIMIT, opened, context, frame, rejoin),
             ),
             ifThenElse(
               isNullish(value, context),
