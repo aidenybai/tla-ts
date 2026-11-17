@@ -1068,4 +1068,21 @@ describe("qffd, as Z3 5.3.2 stops its finite-domain solver", () => {
       "sat",
     ]);
   });
+
+  it("converts the model of its SAT solver within the limit of the tactic", () => {
+    expect(
+      run([
+        "(declare-datatypes ((C 0)) (((red) (green) (blue))))",
+        "(declare-const c C)",
+        "(declare-const d C)",
+        "(declare-const p Bool)",
+        "(assert (distinct c d))",
+        "(assert (or p (not (= c red))))",
+        "(assert (=> p (= d green)))",
+        "(set-option :rlimit 280)",
+        "(check-sat-using qffd)",
+        "(get-info :reason-unknown)",
+      ]),
+    ).toEqual(["unknown", '(:reason-unknown "max. resource limit exceeded")']);
+  });
 });

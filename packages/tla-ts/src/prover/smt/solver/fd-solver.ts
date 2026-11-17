@@ -280,11 +280,10 @@ export const createFdTactic = (manager: AstManager, params: SatParams) => (goal:
     goal.reset();
     if (result === L_TRUE) {
       const model = solver.getModel();
-      model?.incRef();
-      if (model !== null) {
-        goal.converters = [...goal.converters, ...fmls.converters];
-        goal.model = model;
-      }
+      // simplifier_solver::get_model_core converts the model of its solver within the tactic.
+      const converted = model === null ? null : convertModel(fmls, model);
+      converted?.incRef();
+      if (converted !== null) goal.model = converted;
     } else if (result === L_FALSE) goal.assert(manager.falseExpr);
     else {
       if (!manager.limit.inc()) throw new SmtTacticError("canceled");
