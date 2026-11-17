@@ -30,6 +30,7 @@ import {
   type Context,
   type FunctionNode,
   findNodes,
+  findNodesOf,
   findReferences,
   getAssignedTarget,
   getLocalCaptures,
@@ -625,8 +626,6 @@ const isThenFunction = (node: ts.Node): node is FunctionNode =>
     ts.isObjectLiteralExpression(node.parent) &&
     isThenName(node.name));
 
-const thenFunctions = new WeakMap<ts.SourceFile, readonly FunctionNode[]>();
-
 // The thens that a value may have: those of the object literals that its type names, or else any
 // in the file.
 const getThenFunctions = (
@@ -634,9 +633,16 @@ const getThenFunctions = (
   valueNode: ts.Expression | undefined,
   context: Context,
 ) => {
-  const sourceFile = node.getSourceFile();
-  const all = thenFunctions.get(sourceFile) ?? findNodes(sourceFile, isThenFunction);
-  thenFunctions.set(sourceFile, all);
+  const all = findNodesOf(
+    node.getSourceFile(),
+    [
+      ts.SyntaxKind.FunctionExpression,
+      ts.SyntaxKind.ArrowFunction,
+      ts.SyntaxKind.MethodDeclaration,
+    ],
+    isThenFunction,
+    context,
+  );
   if (valueNode === undefined) return all;
   const type = context.checker.getTypeAtLocation(valueNode);
   const literals = (type.isUnion() ? type.types : [type]).map(

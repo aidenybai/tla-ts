@@ -19,9 +19,13 @@ export interface ProgramNodes {
   nodes: ts.Node[];
   ends: Int32Array;
   files: Int32Array;
+  fileStarts: Int32Array;
   symbols: (ts.Symbol | undefined)[];
   kindStarts: Int32Array;
   kindPositions: Int32Array;
+  // The positions of the identifiers by their text, and then in order, with the texts.
+  namePositions: Int32Array;
+  nameTexts: string[];
   marks: Int32Array;
   generation: number;
 }
@@ -38,6 +42,14 @@ export interface References {
 export const getPosition = (table: ProgramNodes, node: ts.Node) => {
   const slot = ts.getNodeId(node) - table.first;
   return slot >= 0 && slot < table.positions.length ? table.positions[slot] - 1 : -1;
+};
+
+// The index of a node's file among the program's files, or -1 for a node of no file.
+export const getFileIndex = (table: ProgramNodes, node: ts.Node) => {
+  const position = getPosition(table, node);
+  return position < 0
+    ? -1
+    : getLowerBound(table.fileStarts, 0, table.fileStarts.length, table.files[position]);
 };
 
 // Walks the files once. TypeScript resolves a name's symbol again on each query, walking the
@@ -82,17 +94,26 @@ export const createProgramNodes = (
     kindPositions[kindEnds[node.kind]] = position;
     kindEnds[node.kind] += 1;
   });
+  const names = nodes.flatMap((node, position) =>
+    ts.isIdentifier(node) ? [{ text: node.text, position }] : [],
+  );
+  names.sort((left, right) =>
+    left.text < right.text ? -1 : left.text > right.text ? 1 : left.position - right.position,
+  );
   return {
     first,
     positions,
     nodes,
     ends: Int32Array.from(ends),
     files: Int32Array.from(fileStarts),
+    fileStarts: Int32Array.from(new Set(fileStarts)),
     symbols: nodes.map((node) =>
       ts.isIdentifier(node) ? checker.getSymbolAtLocation(node) : undefined,
     ),
     kindStarts,
     kindPositions,
+    namePositions: Int32Array.from(names, (name) => name.position),
+    nameTexts: names.map((name) => name.text),
     marks: new Int32Array(nodes.length),
     generation: 0,
   };
@@ -118,30 +139,80 @@ const walkNodes = <T extends ts.Node>(root: ts.Node, test: (node: ts.Node) => no
   return found;
 };
 
-// The nodes of a kind under a root, itself too, in the order that a walk visits them, that pass a
-// test. Under a root of the program's files, only the nodes of the kind are tested.
+// The nodes of some kinds under a root, itself too, in the order that a walk visits them, that pass
+// a test. Under a root of the program's files, only the nodes of the kinds are tested.
 export const findNodesOfKind = <T extends ts.Node>(
   table: ProgramNodes,
   root: ts.Node,
-  kind: ts.SyntaxKind,
+  kinds: ts.SyntaxKind | readonly ts.SyntaxKind[],
   test: (node: ts.Node) => node is T,
 ): T[] => {
+  const all = typeof kinds === "number" ? [kinds] : kinds;
   const start = getPosition(table, root);
   if (start < 0) {
-    return walkNodes(root, (node): node is T => node.kind === kind && test(node));
+    return walkNodes(root, (node): node is T => all.includes(node.kind) && test(node));
   }
   const end = table.ends[start];
-  const last = table.kindStarts[kind + 1];
-  const found: T[] = [];
-  for (
-    let index = getLowerBound(table.kindPositions, table.kindStarts[kind], last, start);
-    index < last && table.kindPositions[index] < end;
-    index += 1
-  ) {
-    const node = table.nodes[table.kindPositions[index]];
-    if (test(node)) found.push(node);
+  const positions = all.flatMap((kind) => {
+    const last = table.kindStarts[kind + 1];
+    const first = getLowerBound(table.kindPositions, table.kindStarts[kind], last, start);
+    return [
+      ...table.kindPositions.subarray(first, getLowerBound(table.kindPositions, first, last, end)),
+    ];
+  });
+  if (all.length > 1) positions.sort((left, right) => left - right);
+  return positions.flatMap((position) => {
+    const node = table.nodes[position];
+    return test(node) ? [node] : [];
+  });
+};
+
+// The index of the first of the sorted texts at or past a text.
+const getTextBound = (
+  texts: readonly string[],
+  start: number,
+  end: number,
+  text: string,
+): number => {
+  if (start >= end) return start;
+  const middle = (start + end) >>> 1;
+  return texts[middle] < text
+    ? getTextBound(texts, middle + 1, end, text)
+    : getTextBound(texts, start, middle, text);
+};
+
+// The identifiers under a root, itself too, that have one of some texts, in the order that a walk
+// visits them.
+export const findNames = (
+  table: ProgramNodes,
+  root: ts.Node,
+  texts: readonly string[],
+): ts.Identifier[] => {
+  const start = getPosition(table, root);
+  if (start < 0) {
+    return walkNodes(
+      root,
+      (node): node is ts.Identifier => ts.isIdentifier(node) && texts.includes(node.text),
+    );
   }
-  return found;
+  const end = table.ends[start];
+  const positions = [...new Set(texts)].flatMap((text) => {
+    const count = table.nameTexts.length;
+    // Every text past this one, but those that start with it, sorts past it with a 0 after it.
+    const last = getTextBound(table.nameTexts, 0, count, `${text}\0`);
+    const first = getTextBound(table.nameTexts, 0, last, text);
+    return [
+      ...table.namePositions.subarray(
+        getLowerBound(table.namePositions, first, last, start),
+        getLowerBound(table.namePositions, first, last, end),
+      ),
+    ];
+  });
+  if (texts.length > 1) positions.sort((left, right) => left - right);
+  return positions.flatMap((position) => {
+    const node = table.nodes[position];
+    return ts.isIdentifier(node) ? [node] : [];
+  });
 };
 
 export const createReferences = (

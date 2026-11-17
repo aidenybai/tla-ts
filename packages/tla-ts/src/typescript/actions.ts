@@ -1605,7 +1605,7 @@ const assignPattern = <Result>(
             next,
           );
         };
-        const getterKeys = isHeapObject ? getRestGetterKeys(target) : [];
+        const getterKeys = isHeapObject ? getRestGetterKeys(target, context) : [];
         return statements === undefined || getterKeys.length === 0
           ? copy(current, tuple([]))
           : statements.readRest(property, getterKeys, value, current, copy);
@@ -12876,7 +12876,7 @@ const translateExpressionStatement = (
       (property) => getPropertySetters(property, context).length > 0,
     ) ||
       (ts.isObjectLiteralExpression(expression.left) &&
-        getRestGetterKeys(expression.left).length > 0))
+        getRestGetterKeys(expression.left, context).length > 0))
   ) {
     return assignPatternWith(
       expression,
@@ -18148,14 +18148,14 @@ const isPlainIncrement = (node: Increment, context: Context): boolean => {
   const isPlainKey = (element: ts.ElementAccessExpression) => {
     const key = getAccessKey(element);
     return ts.isIdentifier(element.argumentExpression)
-      ? getGetterKeys(element).size === 0
-      : key !== undefined && !getGetterKeys(element).has(key);
+      ? getGetterKeys(element, context).size === 0
+      : key !== undefined && !getGetterKeys(element, context).has(key);
   };
   const isPlainObject = (object: ts.Expression): boolean =>
     ts.isIdentifier(object) ||
     object.kind === ts.SyntaxKind.ThisKeyword ||
     (ts.isPropertyAccessExpression(object) &&
-      !getGetterKeys(object).has(object.name.text) &&
+      !getGetterKeys(object, context).has(object.name.text) &&
       isPlainObject(object.expression));
   return (
     isNumeric &&
@@ -18163,7 +18163,7 @@ const isPlainIncrement = (node: Increment, context: Context): boolean => {
     (ts.isIdentifier(operand) ||
       (ts.isPropertyAccessExpression(operand) &&
         operand.questionDotToken === undefined &&
-        !getGetterKeys(operand).has(operand.name.text) &&
+        !getGetterKeys(operand, context).has(operand.name.text) &&
         isPlainObject(operand.expression)) ||
       (ts.isElementAccessExpression(operand) &&
         operand.questionDotToken === undefined &&
@@ -18182,7 +18182,7 @@ const isUnaffected = (node: ts.Expression, operand: ts.Expression, context: Cont
         getSymbol(node, context.checker) !== getSymbol(operand, context.checker)
       : ts.isPropertyAccessExpression(node)
         ? node.questionDotToken === undefined &&
-          !getGetterKeys(node).has(node.name.text) &&
+          !getGetterKeys(node, context).has(node.name.text) &&
           (!ts.isPropertyAccessExpression(operand) || node.name.text !== operand.name.text) &&
           isUnaffected(node.expression, operand, context)
         : ts.isStringLiteral(node) ||

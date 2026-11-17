@@ -20,12 +20,14 @@ import { createNames, type Names } from "./names";
 import { getBindingNames, getLexicalNames } from "./early-errors";
 import { getKeptReads } from "./narrowing";
 import { mayThrow } from "./functions";
-import { getGetterKeys, isProxyOperation } from "./protocols";
+import { findGetterKeys, getGetterKeys, isProxyOperation } from "./protocols";
 import type { ChangeTable } from "./change-summaries";
 import type { Namespace } from "./namespaces";
 import {
   createReferences,
+  findNames,
   findNodesOfKind,
+  getPosition,
   getReferences,
   type ProgramNodes,
   type References,
@@ -100,6 +102,11 @@ export interface Context {
   // The nodes of the program's files, which tla-ts walks once, and the names of each symbol.
   nodes: ProgramNodes;
   references: References;
+  // The keys that each of the program's files defines getters under, by the file's index.
+  getterKeys: readonly ReadonlySet<string>[];
+  // Whether each function of the program's files is called once, by its position, as
+  // isCalledOnce answers.
+  calledOnce: Uint8Array;
   names: Names;
   variables: Map<ts.Symbol, Expression>;
   // Helper functions and constants, compiled when first referenced.
@@ -564,10 +571,12 @@ export const createContext = (
   nodes: ProgramNodes,
 ): Context => {
   const reads = getDeclaredReads(checker, files);
-  return {
+  const context: Context = {
     checker: withNodeTypes(withDeclaredReads(checker, reads), nodes),
     nodes,
     references: createReferences(nodes, (name) => getSymbol(name, checker)),
+    getterKeys: files.map(findGetterKeys),
+    calledOnce: new Uint8Array(nodes.nodes.length),
     keptReads: reads.keptReads,
     names: createNames(JAVASCRIPT_OPERATORS),
     variables: new Map(),
@@ -672,6 +681,8 @@ export const createContext = (
       ]),
     ),
   };
+  findCalledOnce(context);
+  return context;
 };
 
 // Whether a node writes an object or a regexp literal, each of which makes an object.
@@ -1221,7 +1232,7 @@ export const getUnresolvedRead = (
       : undefined;
     if (ts.isPropertyAccessExpression(callee) && ts.isIdentifier(callee.expression)) {
       if (isThrowing(callee.expression)) return callee.expression;
-      return getGetterKeys(node).has(callee.name.text) || isProxyOperation(callee, context)
+      return getGetterKeys(node, context).has(callee.name.text) || isProxyOperation(callee, context)
         ? undefined
         : readInOrder(node.arguments ?? []);
     }
@@ -1842,15 +1853,15 @@ const findGuardedStatements = (files: readonly ts.SourceFile[]): ReadonlySet<ts.
     }),
   );
 
-const calledOnce = new WeakMap<ts.Node, boolean>();
-
 // A named function or method that its file calls at one place, which runs once, and names nowhere
-// else, so that its body runs at most once.
+// else, so that its body runs at most once. tla-ts answers for each function of the program's files
+// once, in order, before it compiles the code: findCalledOnce marks each function it is answering
+// for, and answers no for one that calls itself through others while it answers for it.
 const isCalledOnce = (node: ts.SignatureDeclaration, context: Context): boolean => {
-  const known = calledOnce.get(node);
-  if (known !== undefined) return known;
-  // Functions that call each other answer no.
-  calledOnce.set(node, false);
+  const position = getPosition(context.nodes, node);
+  const known = position < 0 ? CALLED_UNKNOWN : context.calledOnce[position];
+  if (known !== CALLED_UNKNOWN) return known === CALLED_ONCE;
+  if (position >= 0) context.calledOnce[position] = CALLED_NOT_ONCE;
   const name =
     ts.isFunctionDeclaration(node) || ts.isMethodDeclaration(node)
       ? node.name
@@ -1861,10 +1872,8 @@ const isCalledOnce = (node: ts.SignatureDeclaration, context: Context): boolean 
         : undefined;
   const uses =
     name !== undefined && ts.isIdentifier(name)
-      ? findNodes(
-          node.getSourceFile(),
-          (inner): inner is ts.Identifier =>
-            ts.isIdentifier(inner) && inner.text === name.text && inner !== name,
+      ? findNames(context.nodes, node.getSourceFile(), [name.text]).filter(
+          (inner) => inner !== name,
         )
       : [];
   const use = uses.length === 1 ? uses[0] : undefined;
@@ -1881,18 +1890,26 @@ const isCalledOnce = (node: ts.SignatureDeclaration, context: Context): boolean 
     ts.findAncestor(call, (ancestor) => ancestor === node) === undefined &&
     isOnce(node.parent, context) &&
     isOnce(call, context);
-  calledOnce.set(node, isOnceCalled);
+  if (position >= 0) context.calledOnce[position] = isOnceCalled ? CALLED_ONCE : CALLED_NOT_ONCE;
   return isOnceCalled;
+};
+
+const CALLED_UNKNOWN = 0;
+const CALLED_NOT_ONCE = 1;
+const CALLED_ONCE = 2;
+
+// Answers isCalledOnce for each function of the program's files, in order.
+const findCalledOnce = (context: Context) => {
+  context.nodes.nodes.forEach((node) => {
+    if (ts.isFunctionLike(node)) isCalledOnce(node, context);
+  });
 };
 
 // The one function that a name or a namespace's member names in its file, where nothing else
 // declares that name.
-const getPassedTo = (callee: ts.Expression) => {
+const getPassedTo = (callee: ts.Expression, context: Context) => {
   const getDeclarations = (root: ts.Node, name: string) =>
-    findNodes(
-      root,
-      (inner): inner is ts.Identifier => ts.isIdentifier(inner) && inner.text === name,
-    ).flatMap((inner) => {
+    findNames(context.nodes, root, [name]).flatMap((inner) => {
       const parent = inner.parent;
       return (ts.isVariableDeclaration(parent) ||
         ts.isFunctionDeclaration(parent) ||
@@ -1951,7 +1968,7 @@ const isPassedOnce = (node: ts.SignatureDeclaration, context: Context) => {
   ) {
     return false;
   }
-  const callee = getPassedTo(call.expression);
+  const callee = getPassedTo(call.expression, context);
   const parameter = callee?.parameters.at(call.arguments.indexOf(node));
   if (
     callee === undefined ||
@@ -1963,11 +1980,9 @@ const isPassedOnce = (node: ts.SignatureDeclaration, context: Context) => {
   }
   const name = parameter.name.text;
   // The arguments object would alias the parameter.
-  const uses = findNodes(
-    callee,
-    (inner): inner is ts.Identifier =>
-      ts.isIdentifier(inner) && (inner.text === name || inner.text === "arguments"),
-  ).filter((use) => use !== parameter.name);
+  const uses = findNames(context.nodes, callee, [name, "arguments"]).filter(
+    (use) => use !== parameter.name,
+  );
   const use = uses.length === 1 ? uses[0] : undefined;
   return (
     use !== undefined &&
@@ -4097,24 +4112,18 @@ export const getAccessorFunctions = (node: ts.Node, field: "get" | "set", contex
   return found.get(field) ?? [];
 };
 
-const computedGetters = new WeakMap<ts.SourceFile, ts.GetAccessorDeclaration[]>();
-
 // The getters of object literals whose keys computed names give, which no type names, so that a
 // read runs the one it finds.
-const getComputedGetters = (node: ts.Node) => {
-  const file = node.getSourceFile();
-  const known = computedGetters.get(file);
-  if (known !== undefined) return known;
-  const found = findNodes(
-    file,
+const getComputedGetters = (node: ts.Node, context: Context) =>
+  findNodesOf(
+    node.getSourceFile(),
+    ts.SyntaxKind.GetAccessor,
     (inner): inner is ts.GetAccessorDeclaration =>
       ts.isGetAccessorDeclaration(inner) &&
       ts.isObjectLiteralExpression(inner.parent) &&
       ts.isComputedPropertyName(inner.name),
+    context,
   );
-  computedGetters.set(file, found);
-  return found;
-};
 
 const setAccessors = new WeakMap<ts.SourceFile, ts.SetAccessorDeclaration[]>();
 
@@ -4272,7 +4281,7 @@ export const getGetters = (node: ts.Node, context: Context) =>
   [
     ...getAccessorFunctions(node, "get", context),
     ...getReturnedFunctions(node, context),
-    ...getComputedGetters(node),
+    ...getComputedGetters(node, context),
     ...(isSuperAccess(node) ? getSuperGetters(node, context) : []),
   ].filter(
     (getter) =>
@@ -5292,7 +5301,7 @@ export const findReferences = (symbol: ts.Symbol, root: ts.Node, context: Contex
 // The nodes of a kind under a root that pass a test, in the order that a walk visits them.
 export const findNodesOf = <T extends ts.Node>(
   root: ts.Node,
-  kind: ts.SyntaxKind,
+  kind: ts.SyntaxKind | readonly ts.SyntaxKind[],
   test: (node: ts.Node) => node is T,
   context: Context,
 ) => findNodesOfKind(context.nodes, root, kind, test);
