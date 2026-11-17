@@ -274,6 +274,17 @@ describe("the floating-point conversions round as Z3 does", () => {
       "(fp.isInfinite ((_ to_fp 34 8) roundNearestTiesToEven (to_real x)))",
     ]);
   });
+
+  // Z3 runs out of memory here too, and the port answers unknown as at its other limits.
+  it("answers unknown for a symbolic conversion to a 31-bit exponent", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(assert (fp.isInfinite ((_ to_fp 31 3) RTP (to_real x))))",
+        "(check-sat)",
+      ]),
+    ).toEqual(["unknown"]);
+  });
 });
 
 describe("the optimizer releases what Z3 releases", () => {
