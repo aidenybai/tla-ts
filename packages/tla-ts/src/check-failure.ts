@@ -57,7 +57,7 @@ export const getFailureExitCode = (
         getExitCode(error) ?? (error instanceof TlaModuleError ? error.exitCode : EXIT_STATUS.error)
       );
     case "liveness":
-      return getErrorExitCode(error);
+      return error instanceof TlaModuleError ? error.exitCode : getErrorExitCode(error);
     default:
       if (!isReplayed) return getErrorExitCode(error);
       return failureOptions.fingerprint

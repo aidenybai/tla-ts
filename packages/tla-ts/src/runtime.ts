@@ -14,6 +14,7 @@ export interface CheckerRuntime {
   getCurrentState: () => Value[] | undefined;
   getFingerprint: (state: Value[]) => bigint;
   getRandom: () => JavaRandom;
+  reseedRandom: () => void;
   getSimulationValue:
     | ((key: string, state: (Value | undefined)[] | undefined) => Value | undefined)
     | undefined;
@@ -71,6 +72,9 @@ export const createRuntime = (checkDeadlock: boolean, seed = 0n): CheckerRuntime
         seededState = state;
       }
       return workerRandom;
+    },
+    reseedRandom: () => {
+      seededState = undefined;
     },
     evaluateAtStartup: (evaluate) => {
       const wasStartup = isStartup;

@@ -51,6 +51,19 @@ describe("liveness matches TLC", () => {
     expect(printed).toEqual(Array(9).fill('"a"'));
   });
 
+  it("checks the steps of each action before it generates the next action's steps for a state it reaches again in the tableau, as TLC does", async () => {
+    const printed: string[] = [];
+    await check({
+      source:
+        '---- MODULE M ----\nEXTENDS TLC\nVARIABLE x\nA0 == PrintT(<<"A0", x>>) /\\ x\' = ~x\nA1 == PrintT(<<"A1", x>>) /\\ UNCHANGED x\nSpec == x = FALSE /\\ [][A0 \\/ A1]_x /\\ WF_<<x>>(A0) /\\ WF_x(A1)\nProp == x ~> ~x\n====',
+      config: "SPECIFICATION Spec\nPROPERTY Prop",
+      onPrint: (text) => printed.push(String(text).replace(/<<"(A\d)", (\w)\w*>>/, "$1$2")),
+    });
+    expect(printed.join(" ")).toBe(
+      "A0F A1F A0F A1F A0F A0F A1F A0T A1T A0T A0T A1T A0T A1T A0T A1T A0T A0T A0T A1T A1T A0T A1T",
+    );
+  });
+
   it("finds a lasso in the part of the graph that TLC's periodic check sees", async () => {
     const result = await check({
       source:
@@ -154,6 +167,36 @@ describe("liveness matches TLC", () => {
       "NeverThree",
       [0, 1, 2, 3],
     ]);
+  });
+
+  it("reports a temporal property that fails as TLC adds the state that violates an action property to the behavior graph", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nVARIABLE x\nSpec == x \\in {0, 1} /\\ [][x' = IF x = 0 THEN 1 ELSE 0]_x\nAct == [][x' = 1]_x\nProp == [](x = 1 => [](x = 1))\n====",
+      config: "SPECIFICATION Spec\nPROPERTY Act\nPROPERTY Prop",
+    });
+    expect([
+      result.violation?.name,
+      result.violation?.trace.map((step) => step.state.x),
+      result.additionalViolation?.name,
+      result.additionalViolation?.trace.map((step) => step.state.x),
+    ]).toEqual(["Act", [1, 0], "Prop", [1, 0]]);
+  });
+
+  // Deviation from TLC: under -continue, TLC also reports an InvariantViolatedException and exits with 255.
+  it("stops at a temporal property that fails as its state joins the behavior graph under -continue", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nVARIABLE x\nSpec == x \\in {0, 1} /\\ [][x' = IF x = 0 THEN 1 ELSE 0]_x\nProp == [](x = 1 => [](x = 1))\n====",
+      config: "SPECIFICATION Spec\nPROPERTY Prop",
+      isContinued: true,
+    });
+    expect([
+      result.status,
+      result.violation?.name,
+      result.violation?.trace.map((step) => step.state.x),
+      result.failure,
+    ]).toEqual(["property-violation", "Prop", [1, 0], undefined]);
   });
 
   it("finds a violation of a safety-like property early unless TLC is 1.7.4", async () => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { check } from "../../src";
+import { check, formatValue } from "../../src";
 import type { Expression } from "../../src/ast";
 import type { TlcVersion } from "../../src/tlc/version";
 
@@ -96,6 +96,27 @@ describe("the call stack of a replayed failure matches TLC", () => {
     ).toEqual({ callStack: ["8.9-8.13", "10.8-10.28", "10.22-10.28"], exitCode: 75 });
   });
 
+  it("finds an action enabled that leaves a variable unassigned", async () => {
+    expect(
+      await getFailure(
+        "VARIABLE y\nInit == x \\in 0..1 /\\ y = TRUE\nA0 == x' = IF x < 1 THEN x + 1 ELSE x /\\ UNCHANGED y\nNext == A0\nInv == ENABLED A0",
+        "INIT Init\nNEXT Next\nINVARIANT Inv",
+      ),
+    ).toEqual({
+      callStack: [
+        "9.9-9.30",
+        "9.9-9.18",
+        "9.23-9.30",
+        "12.8-12.17",
+        "12.16-12.17",
+        "10.7-10.52",
+        "10.12-10.52",
+        "10.37-10.52",
+      ],
+      exitCode: 75,
+    });
+  });
+
   it("checks the constraints of a successor after the action", async () => {
     expect(
       await getFailure(
@@ -103,6 +124,20 @@ describe("the call stack of a replayed failure matches TLC", () => {
         "INIT Init\nNEXT Next\nCONSTRAINT Small",
       ),
     ).toEqual({ callStack: ["10.10-10.26", "10.10-10.20"], exitCode: 75 });
+  });
+
+  it("stops at a failure of the next-state relation under -continue, where TLC goes on to report a deadlock", async () => {
+    const result = await check({
+      source: `---- MODULE M ----\n${HEADER}\nInit == x = 0\nNext == x' = (x /\\ TRUE)\n====`,
+      config: "INIT Init\nNEXT Next",
+      isContinued: true,
+      onPrint: () => {},
+    });
+    expect([
+      result.status,
+      result.failure?.exitCode,
+      formatCallStack(result.failure?.callStack),
+    ]).toEqual(["error", 75, ["9.9-9.24", "9.15-9.23"]]);
   });
 
   it("exits with the code of a standard module's failure in an action property", async () => {
@@ -166,6 +201,44 @@ describe("the call stack of a replayed failure matches TLC", () => {
     },
   );
 
+  it("enters the prefix of a chain of conjuncts below the temporal level as one formula, as TLC does", async () => {
+    expect(
+      await getFailure(
+        'Init == x \\in [{1, 2} -> 0..1]\nNext == UNCHANGED x\nProp == <>(x[1] = 0 /\\ (x[2] > 5 \\/ Assert(x[2] > 5, "bound")) /\\ [](x[1] = 0))',
+        "INIT Init\nNEXT Next\nPROPERTY Prop",
+      ),
+    ).toEqual({
+      callStack: ["8.9-8.30", "10.12-10.62", "10.25-10.61", "10.37-10.61"],
+      exitCode: 75,
+    });
+  });
+
+  const BAD = "x = 1 /\\ CHOOSE y \\in {} : y = x";
+
+  it.each([
+    ["<>(x = 2)", `[]<>(${BAD})`, "1 - x", "Safe\nPROPERTY Bad", undefined],
+    ["<>(x = 2)", `[]<>(${BAD})`, "1 - x", "Bad\nPROPERTY Safe", ["11.13-11.44", "11.22-11.44"]],
+    ["<>(x < 2)", `[]<>(${BAD})`, "1 - x", "Safe\nPROPERTY Bad", ["11.13-11.44", "11.22-11.44"]],
+    ["[]<>(x = 0)", `<>(x = 2) \\/ []<>(${BAD})`, "1 - x", "Safe\nPROPERTY Bad", undefined],
+    [
+      "[]<>(x = 0)",
+      `<>(x = 2) \\/ []<>(${BAD})`,
+      "(x + 1) % 3",
+      "Safe\nPROPERTY Bad",
+      ["11.26-11.57", "11.35-11.57"],
+    ],
+  ])(
+    "prints no call stack where TLC's rerun first fails on a branch that already holds the state (Safe == %s, Bad == %s, Next == x' = %s)",
+    async (safe, bad, next, properties, callStack) => {
+      expect(
+        await getFailure(
+          `Init == x = 0\nNext == x' = ${next}\nSafe == ${safe}\nBad == ${bad}`,
+          `INIT Init\nNEXT Next\nPROPERTY ${properties}`,
+        ),
+      ).toEqual({ callStack, exitCode: 255 });
+    },
+  );
+
   it.each([
     [undefined, [1, 1]],
     ["1.7.4" as const, [0, 1]],
@@ -200,6 +273,37 @@ describe("the replay of a failed initial state matches TLC", () => {
     ]);
   });
 
+  it("counts an illegal initial state before it reports it", async () => {
+    const counts: number[] = [];
+    await check({
+      source: `---- MODULE M ----\n${HEADER}\nInit == \\E i \\in 1..3 : i < 3 => x = i\nNext == x' = x\n====`,
+      config: "INIT Init\nNEXT Next",
+      onPrint: () => {},
+      onProgress: (event) => {
+        if (event.kind === "initial-states-progress") counts.push(event.count);
+      },
+    });
+    expect(counts).toEqual([2]);
+  });
+
+  it("reports each violated invariant again under -continue until it fails", async () => {
+    const result = await check({
+      source: `---- MODULE M ----\n${HEADER}\nInit == x \\in 1..3\nNext == x' = x\nInv0 == x > 5\nInv1 == x # 2 \\/ CHOOSE e \\in {} : TRUE\n====`,
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv0\nINVARIANT Inv1",
+      isContinued: true,
+      onPrint: () => {},
+    });
+    expect([
+      result.generatedStates,
+      result.failure?.traceOutput?.map((line) =>
+        typeof line !== "string" && line.kind === "initial-state-violation"
+          ? `${line.name} ${formatValue(line.state.x)}`
+          : line,
+      ),
+      formatCallStack(result.failure?.callStack),
+    ]).toEqual([2, ["Inv0 1", "Inv0 2"], ["8.9-8.18", "11.9-11.39", "11.18-11.39"]]);
+  });
+
   it("counts every initial state after it fails to fingerprint one", async () => {
     expect(await replayInit("x \\in [a : 0..1, b : BOOLEAN]", "3 \\notin (1 \\cup {1})")).toEqual([
       4,
@@ -225,4 +329,20 @@ describe("the replay of an initial state that fails to join the behavior graph m
       ]).toEqual([["8.9-8.20", "11.9-11.17", "11.17-11.17", "9.6-9.21", "9.11-9.21"], 2, 2, 2]);
     },
   );
+});
+
+it("reports a failure of a temporal property where TLC's rerun loses it to a FingerprintException", async () => {
+  const result = await checkSpec(
+    "Deep(a) == LET t == <<a>> IN t[a + 2]\nInit == x = 2\nNext == UNCHANGED x\nLive == []<>(Deep(x) > 0)",
+    "INIT Init\nNEXT Next\nPROPERTY Live",
+  );
+  expect([
+    result.failure?.message,
+    formatCallStack(result.failure?.callStack),
+    result.failure?.exitCode,
+  ]).toEqual([
+    "TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: Attempted to access index 4 of tuple\n<<2>>\nwhich is out of bounds.",
+    ["11.14-11.24", "11.14-11.20", "8.12-8.37", "8.30-8.37", "8.21-8.25"],
+    255,
+  ]);
 });

@@ -119,6 +119,77 @@ describe("random choices match TLC run with -fp 0 and the same -seed", () => {
     ]);
   });
 
+  it("draws again at each reference to a LET definition of an initial predicate that TLC takes from the spec", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLES x, y\nInit == LET r == RandomElement(1..1000) IN x = r /\\ y = r\nSpec == Init /\\ [][UNCHANGED <<x, y>>]_<<x, y>>\nInv == x = 0\n====",
+      config: "SPECIFICATION Spec\nINVARIANT Inv",
+      seed: 4n,
+    });
+    expect(result.violation?.trace.map((step) => [step.state.x, step.state.y])).toEqual([
+      [731, 919],
+    ]);
+  });
+
+  it("draws again at each reference to a LET definition of an action as it rebuilds a trace", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLES x, n\nInit == x = 0 /\\ n = 0\nA == LET r == RandomElement(1..1000) IN n' = n + 1 /\\ x' = r + r\nNext == A\nInv == n < 2\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+      seed: 4n,
+    });
+    expect(result.violation?.trace.map((step) => [step.label, step.state.x])).toEqual([
+      [undefined, 0],
+      ["A line 5, col 41 to line 5, col 64 of module M", 1655],
+      ["A line 5, col 41 to line 5, col 64 of module M", 763],
+    ]);
+  });
+
+  // Deviation from TLC: TLC draws on from where the search stopped, finds no step and throws a NullPointerException.
+  it("draws again from the seed of the state it found the error in as it rebuilds the step", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nInit == x = 0\nA == x' = RandomElement(1..1000)\nB == x' = RandomElement(1..1000)\nNext == A \\/ B\nInv == x = 0\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+      seed: 4n,
+    });
+    expect(result.violation?.trace.map((step) => [step.label, step.state.x])).toEqual([
+      [undefined, 0],
+      ["A line 5, col 6 to line 5, col 32 of module M", 773],
+    ]);
+  });
+
+  it("draws once for a constant TLCEval in the next-state relation", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x, n\nInit == x = 0 /\\ n = 0\nNext == n < 3 /\\ n' = n + 1 /\\ x' = TLCEval(RandomElement(1..1000))\n====",
+      config: "INIT Init\nNEXT Next",
+      seed: 4n,
+    });
+    expect(result.violation?.trace.map((step) => step.state.x)).toEqual([0, 794, 794, 794]);
+  });
+
+  it("draws again from the seed of each state it rebuilds for a lasso, as TLC does", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers, TLC\nCONSTANTS Proc\nVARIABLES y\nA0(p) == y' = RandomElement(0..2)\nNext == \\E p \\in Proc : A0(p)\nSpec == y = 0 /\\ [][Next]_y\nProp == <>(y = 5)\n====",
+      config: "CONSTANT Proc = {p1, p2}\nSPECIFICATION Spec\nPROPERTY Prop",
+      seed: 4n,
+    });
+    expect([
+      result.status,
+      result.violation?.trace.map((step) => [step.label, step.state.y]),
+      result.violation?.loopStart,
+    ]).toEqual([
+      "liveness-violation",
+      [
+        [undefined, 0],
+        ["A0(p2) line 5, col 10 to line 5, col 33 of module M", 1],
+      ],
+      1,
+    ]);
+  });
+
   it('reports the seed in TLCGet("config")', async () => {
     const result = await check({
       source:

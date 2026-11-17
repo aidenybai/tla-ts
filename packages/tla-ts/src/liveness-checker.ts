@@ -59,6 +59,7 @@ export interface LiveGraph<State> {
     index: number,
     state: State,
     successors: LiveSuccessor<State>[],
+    isRerun?: boolean,
   ) => number[] | undefined;
   storeState: (pending: number, index: number) => void;
   getStateCounts: () => number[];
@@ -67,7 +68,11 @@ export interface LiveGraph<State> {
 
 export interface SearchGraph<State> {
   getFingerprint: (successor: LiveSuccessor<State>) => number;
-  getSuccessors: (index: number, state: State) => LiveSuccessor<State>[];
+  forEachActionSuccessors: (
+    index: number,
+    state: State,
+    onSuccessors: (successors: LiveSuccessor<State>[]) => void,
+  ) => void;
 }
 
 export interface LiveEvaluation<State> {
@@ -370,7 +375,7 @@ export const createLivenessChecker = (
     addInitialState: (index, state, replay) =>
       traceWith(replay, () => graph.addInitialState(index, state)),
     addState: (index, state, successors, replay) =>
-      traceWith(replay, () => graph.addState(index, state, successors)),
+      traceWith(replay, () => graph.addState(index, state, successors, replay !== undefined)),
     storeState: graph.storeState,
     getStateCounts: graph.getStateCounts,
     findViolation: graph.findViolation,
@@ -754,39 +759,57 @@ export const createLiveGraph = <State>(
       actions.push(0);
       if (existing === undefined) expandLate(behavior, tableau, state, index, target, row, offset);
     }
-    const nextStates = search.getSuccessors(index, state);
     // The results of the step to the state itself come first, then those of each successor.
-    const actionResults = new Uint8Array((nextStates.length + 1) * actionCount);
-    actionResults.set(selfResults);
-    const edges = createEdgeRows(nextStates.length);
-    nextStates.forEach((successor, position) => {
-      const successorRow = createRows(1);
-      checkAction(
-        behavior,
-        index,
-        state,
-        row,
-        offset,
-        successor.state,
-        edges,
-        position * actionIds.size,
-        actionResults,
-        (position + 1) * actionCount,
-      );
-      const isDone = behavior.isDone[successor.index] === true;
-      for (const next of tableauNode.successors) {
-        if (!isConsistent(behavior, next, index, successor.state, successorRow, 0)) continue;
-        const existing = getNodeId(behavior, successor.index, next);
-        if (existing !== undefined && successors.includes(existing)) continue;
-        const target = existing ?? recordNode(behavior, successor.index, next);
-        successors.push(target);
-        actions.push(position + 1);
-        if (existing === undefined && isDone) {
-          expandLate(behavior, tableau, successor.state, successor.index, target, successorRow, 0);
+    const actionBatches = [selfResults];
+    let stepCount = 1;
+    search.forEachActionSuccessors(index, state, (nextStates) => {
+      const edges = createEdgeRows(nextStates.length);
+      const results = new Uint8Array(nextStates.length * actionCount);
+      actionBatches.push(results);
+      for (let position = 0; position < nextStates.length; position++) {
+        const successor = nextStates[position];
+        const successorRow = createRows(1);
+        checkAction(
+          behavior,
+          index,
+          state,
+          row,
+          offset,
+          successor.state,
+          edges,
+          position * actionIds.size,
+          results,
+          position * actionCount,
+        );
+        const isDone = behavior.isDone[successor.index] === true;
+        for (const next of tableauNode.successors) {
+          if (!isConsistent(behavior, next, index, successor.state, successorRow, 0)) continue;
+          const existing = getNodeId(behavior, successor.index, next);
+          if (existing !== undefined && successors.includes(existing)) continue;
+          const target = existing ?? recordNode(behavior, successor.index, next);
+          successors.push(target);
+          actions.push(stepCount + position);
+          if (existing === undefined && isDone) {
+            expandLate(
+              behavior,
+              tableau,
+              successor.state,
+              successor.index,
+              target,
+              successorRow,
+              0,
+            );
+          }
         }
       }
+      stepCount += nextStates.length;
     });
     if (successors.length > 0) {
+      const actionResults = new Uint8Array(stepCount * actionCount);
+      for (let batch = 0, resultOffset = 0; batch < actionBatches.length; batch++) {
+        actionResults.set(actionBatches[batch], resultOffset);
+        resultOffset += actionBatches[batch].length;
+      }
       writeNode(behavior, node, successors, actionResults, actions, stateResults);
     }
   };
@@ -1141,7 +1164,7 @@ export const createLiveGraph = <State>(
         }
       }
     },
-    addState: (index, state, successors) => {
+    addState: (index, state, successors, isRerun) => {
       const set = getSuccessorSet(index, state, successors);
       const rows = createRows(set.length);
       // The set holds the state itself, as a successor of the same index.
@@ -1166,6 +1189,15 @@ export const createLiveGraph = <State>(
         );
         const stateResults = checkState(behavior, index, state, rows, offset);
         const tableau = behavior.solution.tableau;
+        // TLC's rerun for a call stack fails an assertion, without a call stack, on a branch that has every edge of the state.
+        if (
+          isRerun &&
+          (tableau
+            ? getStateNodes(behavior, index).some((node) => behavior.edgeCounts[node] > 0)
+            : set.every((successor) => isWritten(behavior, successor.index)))
+        ) {
+          throw new TlaEvaluationError("The behavior graph holds every edge of the state already.");
+        }
         if (!tableau) {
           addPlainState(behavior, set, actionResults, stateResults, index);
           continue;

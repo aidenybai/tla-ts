@@ -16,12 +16,13 @@ import {
   toEnumeratedSet,
 } from "../builtins";
 import { getNamedRegisters, NAMED_REGISTER_PREFIX, type CheckerRuntime } from "../runtime";
-import { createActionRecord, setTlcValue } from "./tlcext-operators";
+import { createActionRecord, createTlcRecord, setTlcValue } from "./tlcext-operators";
 import { getRandomElement } from "./random";
 import {
   ANY_SET,
   createFunction,
   createSet,
+  createSortedFunction,
   createTuple,
   createWrittenFunction,
   formatNormalizedCopies,
@@ -34,7 +35,6 @@ import {
   toFiniteSet,
   type Value,
   rankString,
-  setFunctionClass,
 } from "../values";
 import { getFingerprintPolynomial } from "./fingerprint";
 import { zeroPad } from "./messages";
@@ -46,9 +46,6 @@ const getRegisterFunction = <Key extends Value>(registers: Map<Key, Value>) =>
   createFunction(
     [...registers].map((entry): [Value, Value] => [entry[0], createTuple([entry[1]])]),
   );
-
-const createTlcRecord = (fields: [string, Value][]) =>
-  setFunctionClass(createWrittenFunction(fields), "record");
 
 const CHECKER_KEYS = new Set(["diameter", "generated", "distinct", "queue", "stats", "config"]);
 const TLC_174_KEYS = new Set(["diameter", "distinct", "queue", "duration", "level"]);
@@ -135,7 +132,7 @@ const getTlcValue = (runtime: CheckerRuntime, key: Value, context: Context | und
   }
   if (typeof key !== "string") {
     throw new TlaModuleError(
-      `The argument of TLCGet should be a nonnegative integer, but instead it is:\n${formatValue(key)}`,
+      `The argument of TLCGet should be a nonnegative integer, but instead it is:\n${prettyPrint(formatValue(key))}`,
     );
   }
   return getRuntimeValue(runtime, key, context?.state);
@@ -162,8 +159,11 @@ const normalizeDeeply = (value: Value): void => {
 const convertLikeTlcEval = (value: Value): Value => {
   if (typeof value !== "object") return value;
   switch (value.kind) {
-    case "ModelValue":
     case "Function":
+      return value.functionClass === undefined
+        ? value
+        : createSortedFunction(value.domain, value.range);
+    case "ModelValue":
     case "MixedSet":
     case "InfiniteSet":
     case "SequenceSet":

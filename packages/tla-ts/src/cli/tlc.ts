@@ -280,8 +280,9 @@ const checkSpec = async (
     } else {
       printError(error, printer);
     }
-    printFinished();
-    return getTopLevelExitCode(error);
+    const exitCode = getTopLevelExitCode(error);
+    if (exitCode !== EXIT_STATUS.abort) printFinished();
+    return exitCode;
   };
   const config = (() => {
     try {

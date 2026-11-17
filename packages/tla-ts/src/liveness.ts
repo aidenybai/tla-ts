@@ -16,6 +16,7 @@ import {
   forEachBoundElement,
   getBoundElements,
   getDefinition,
+  getReevaluatedDefinitions,
   getStartupValue,
   lookupScope,
   resolveApplyOperator,
@@ -323,12 +324,17 @@ export const expandTemporal = (
   return [{ expression, scope, name: expansion.name, path: expansion.path }];
 };
 
-const bindLetDefinitions = (
+// TLC takes a formula apart through a LET without binding its definitions, so it evaluates an impure one again at each reference.
+export const bindLetDefinitions = (
   expression: Expression & { kind: "Let" },
   scope: Scope | undefined,
   environment: Environment,
 ) => {
-  const bound = bindDefinitions(expression.definitions, getConstantContext(environment, scope));
+  const bound = bindDefinitions(
+    expression.definitions,
+    getConstantContext(environment, scope),
+    getReevaluatedDefinitions(expression.definitions, environment),
+  );
   for (let current = bound; current && current !== scope; current = current.parent) {
     if (current.binding.kind === "Thunk") definitionThunks.add(current.binding);
   }
@@ -488,6 +494,45 @@ export const toLiveExpression = (
     return level > ACTION_LEVEL ? parts : toAtom(expression, scope, level);
   };
 
+  // SANY parses `a /\ b /\ c` as `(a /\ b) /\ c`, so TLC takes a prefix below the temporal level as one formula.
+  const convertJunction = (
+    expression: Expression & { kind: "And" | "Or" },
+    scope: Scope | undefined,
+  ) => {
+    const operands = expression.operands;
+    const range = expression.location.range;
+    const prefixEnds = expression.prefixEnds;
+    if (expression.isBulleted || !range || !prefixEnds) {
+      return toWhole(
+        expression,
+        scope,
+        createJunction(
+          expression.kind,
+          operands.map((operand) => convert(operand, scope)),
+        ),
+      );
+    }
+    return operands.slice(1).reduce(
+      (prefix, operand, index) => {
+        const node =
+          index === operands.length - 2
+            ? expression
+            : {
+                ...expression,
+                operands: operands.slice(0, index + 2),
+                prefixEnds: prefixEnds.slice(0, index + 1),
+                location: { ...expression.location, range: { ...range, end: prefixEnds[index] } },
+              };
+        return toWhole(
+          node,
+          scope,
+          createJunction(expression.kind, [prefix, convert(operand, scope)]),
+        );
+      },
+      convert(operands[0], scope),
+    );
+  };
+
   // These forms are translated part by part at every level; any other form below the temporal level is an atom.
   const convert = (expression: Expression, scope: Scope | undefined): LiveExpression => {
     const level = getLevel(expression, scope, environment);
@@ -512,14 +557,7 @@ export const toLiveExpression = (
       }
       case "And":
       case "Or":
-        return toWhole(
-          expression,
-          scope,
-          createJunction(
-            expression.kind,
-            expression.operands.map((operand) => convert(operand, scope)),
-          ),
-        );
+        return convertJunction(expression, scope);
       case "Forall":
       case "Exists":
         return convertQuantifier(expression, scope);

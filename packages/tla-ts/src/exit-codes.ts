@@ -2,6 +2,7 @@ import type { LivenessChecker } from "./liveness-checker";
 
 export const EXIT_STATUS = {
   success: 0,
+  abort: 1,
   assumptionViolation: 10,
   deadlock: 11,
   safetyViolation: 12,

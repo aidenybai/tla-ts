@@ -1131,6 +1131,7 @@ export const createEnvironment = (
     variableIndex,
     facts,
     startupValues: Array.from({ length: facts.ids.size }, (): Value | undefined => undefined),
+    tlcEvalValues: new WeakMap(),
     substitutedDefinitions,
     instanceParams,
     evaluators: new WeakMap(),

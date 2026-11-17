@@ -72,6 +72,26 @@ describe("printing matches TLC", () => {
     expect(formatValue(result.violation?.trace[0].state.b ?? false)).toBe(text);
   });
 
+  it.each([
+    [
+      "(Print(0, [x \\in {0, 2} |-> -x]))[6] = 0",
+      "In applying the function\n(0 :> 0 @@ 2 :> -2),\nthe first argument is:\n6\nwhich is not in its domain.\n",
+    ],
+    [
+      "LET f == [x \\in {0, 2} |-> -x] IN PrintT({f}) /\\ f[6] = 0",
+      "Attempted to apply function:\n(0 :> 0 @@ 2 :> -2)\nto argument 6, which is not in the domain of the function.",
+    ],
+  ])("prints a copy of a lazy function, but not of a set, in %s", async (expression, message) => {
+    expect((await checkPrinting(`ASSUME ${expression}`)).result.violation?.message).toBe(message);
+  });
+
+  it("evaluates each bound set of a function constructor once", async () => {
+    expect(
+      (await checkPrinting("ASSUME PrintT([m \\in {}, n \\in Print(SUBSET {1, 2}, {1}) |-> 0])"))
+        .printed,
+    ).toEqual(["{{}, {1}, {2}, {1, 2}}  {1}", "<<>>"]);
+  });
+
   it("expands small sets in error messages", async () => {
     expect((await checkPrinting("ASSUME 1 \\in SUBSET {1}")).result.violation?.message).toContain(
       "{{}, {1}}",
@@ -84,6 +104,14 @@ describe("printing matches TLC", () => {
     expect(result.violation?.message).toBe(
       "Attempted to apply the operator overridden by the Java method\npublic static tlc2.value.impl.Value tlc2.module.TLC.PrintT(tlc2.value.impl.Value),\nbut it produced the following error:\nAttempted to compare integer 3 with non-integer:\n[s |-> 2, a |-> 1]",
     );
+  });
+
+  it("sorts the records of a constant definition, which TLC normalizes at startup", async () => {
+    const body =
+      "F(a) == a\nR == [b |-> 1, a |-> 2]\nASSUME PrintT(<<ToString(R), ToString(F(R)), ToString([b |-> 1, a |-> 2])>>)";
+    expect((await checkPrinting(body)).printed).toEqual([
+      '<<"[a |-> 2, b |-> 1]", "[a |-> 2, b |-> 1]", "[b |-> 1, a |-> 2]">>',
+    ]);
   });
 });
 
@@ -114,6 +142,29 @@ describe("line breaking matches TLC's pretty printer", () => {
     ],
   ])("prints %s across lines", async (expression, text) => {
     expect((await checkPrinting(`ASSUME PrintT(${expression})`)).printed).toEqual([text]);
+  });
+
+  const FUNCTION_LINES = Array.from(
+    { length: 9 },
+    (_value, index) => `${index + 1} :> ${index + 1}000`,
+  );
+  const FUNCTION_TEXT = `( 0 :> 0 @@\n  ${FUNCTION_LINES.join(" @@\n  ")} )`;
+
+  it.each([
+    [
+      "SortSeq([a : {1, 2}, b : BOOLEAN], LAMBDA u, w : TRUE) = <<>>",
+      "The first argument of SortSeq should be a natural number, but instead it is:\n{ [a |-> 1, b |-> FALSE],\n  [a |-> 1, b |-> TRUE],\n  [a |-> 2, b |-> FALSE],\n  [a |-> 2, b |-> TRUE] }",
+    ],
+    [
+      "[n \\in 0..9 |-> n * 1000] = {}",
+      `Attempted to check equality of the function ${FUNCTION_TEXT} with the value:\n{}`,
+    ],
+    [
+      "1 \\in [n \\in 0..9 |-> n * 1000]",
+      `Attempted to check if the value:\n1\nis an element of the function ${FUNCTION_TEXT}`,
+    ],
+  ])("breaks the value in the error of %s", async (expression, message) => {
+    expect((await checkPrinting(`ASSUME ${expression}`)).result.violation?.message).toBe(message);
   });
 
   it("breaks the value in a failed Assert", async () => {

@@ -1,0 +1,28 @@
+Starting... (_)
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at _.
+Error: TLC threw an unexpected exception.
+This was probably caused by an error in the spec or model.
+See the User Output or TLC Console for clues to what happened.
+The exception was a java.lang.RuntimeException
+: Attempted to evaluate an expression of form P /\ Q when P was
+an integer.
+line 9, col 27 to line 9, col 35 of module ContinueNextFailureSuccessors
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+x = 0
+
+State 2: <Next line 8, col 12 to line 8, col 21 of module ContinueNextFailureSuccessors>
+x = 1
+
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 9, column 12 to line 9, column 36 in ContinueNextFailureSuccessors
+1. Line 9, column 12 to line 9, column 16 in ContinueNextFailureSuccessors
+2. Line 9, column 21 to line 9, column 36 in ContinueNextFailureSuccessors
+3. Line 9, column 27 to line 9, column 35 in ContinueNextFailureSuccessors
+
+
+3 states generated, 2 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 2.
+Finished in _ at (_)
