@@ -113,12 +113,12 @@ export const loadFingerprints = (table: FingerprintTable, path: string, isSafe: 
   table.clear();
   (buckets !== undefined && isBlock(buckets) ? buckets.fields : [])
     .flatMap((bucket) => readBucket(bucket).toReversed())
-    .forEach(([key, record]) => {
-      if (typeof key !== "string" || !isBlock(record))
+    .forEach((entry) => {
+      if (typeof entry[0] !== "string" || !isBlock(entry[1]))
         throw new TlaProofError("corrupted fingerprint file");
       table.set(
-        key,
-        record.fields.map((result, field) => (isTrusted(result, field) ? result : 0)),
+        entry[0],
+        entry[1].fields.map((result, field) => (isTrusted(result, field) ? result : 0)),
       );
     });
 };
@@ -226,18 +226,18 @@ export const getKnownResults = (table: FingerprintTable) => {
   const storedResults = new Map<ProofAttempt, OcamlValue>();
   const storedRecords = new Map<Map<string, ProofAttempt>, OcamlValue[]>();
   const results = new Map(
-    [...table].map(([fingerprint, record]) => {
+    [...table].map((entry) => {
       const attempts = new Map(
         STORED_PROVERS.flatMap((prover) => {
-          const stored = record[PROVERS[prover].field];
+          const stored = entry[1][PROVERS[prover].field];
           const result = decodeResult(prover, getField(stored, 0));
           if (!result) return [];
           storedResults.set(result, stored);
           return [[prover, result]];
         }),
       );
-      storedRecords.set(attempts, record);
-      return [fingerprint, attempts];
+      storedRecords.set(attempts, entry[1]);
+      return [entry[0], attempts];
     }),
   );
   const save = (path: string) => {

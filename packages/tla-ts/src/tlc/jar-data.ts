@@ -144,9 +144,7 @@ export const SANY_OPERATOR_SYNONYMS = [
 ];
 
 const SYNONYMS = new Map(
-  SANY_OPERATOR_SYNONYMS.flatMap(([canonical, ...synonyms]) =>
-    synonyms.map((synonym) => [synonym, canonical]),
-  ),
+  SANY_OPERATOR_SYNONYMS.flatMap((names) => names.slice(1).map((synonym) => [synonym, names[0]])),
 );
 
 export const resolveSynonym = (name: string) =>

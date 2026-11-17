@@ -20,35 +20,32 @@ export const getMd5 = (text: string): string => {
     const words = Array.from({ length: 16 }, (_value, index) =>
       view.getUint32(offset + index * 4, true),
     );
-    const mixedState = Array.from({ length: 64 }).reduce<number[]>(
-      ([innerA, innerB, innerC, innerD], _value, index) => {
-        const round = Math.floor(index / 16);
-        const mixed =
-          round === 0
-            ? (innerB & innerC) | (~innerB & innerD)
-            : round === 1
-              ? (innerD & innerB) | (~innerD & innerC)
-              : round === 2
-                ? innerB ^ innerC ^ innerD
-                : innerC ^ (innerB | ~innerD);
-        const word =
-          round === 0
-            ? index
-            : round === 1
-              ? (5 * index + 1) % 16
-              : round === 2
-                ? (3 * index + 5) % 16
-                : (7 * index) % 16;
-        const sum = (innerA + mixed + CONSTANTS[index] + words[word]) | 0;
-        return [
-          innerD,
-          (innerB + rotate(sum, SHIFTS[round * 4 + (index % 4)])) | 0,
-          innerB,
-          innerC,
-        ];
-      },
-      state,
-    );
+    const mixedState = Array.from({ length: 64 }).reduce<number[]>((state, _value, index) => {
+      const round = Math.floor(index / 16);
+      const mixed =
+        round === 0
+          ? (state[1] & state[2]) | (~state[1] & state[3])
+          : round === 1
+            ? (state[3] & state[1]) | (~state[3] & state[2])
+            : round === 2
+              ? state[1] ^ state[2] ^ state[3]
+              : state[2] ^ (state[1] | ~state[3]);
+      const word =
+        round === 0
+          ? index
+          : round === 1
+            ? (5 * index + 1) % 16
+            : round === 2
+              ? (3 * index + 5) % 16
+              : (7 * index) % 16;
+      const sum = (state[0] + mixed + CONSTANTS[index] + words[word]) | 0;
+      return [
+        state[3],
+        (state[1] + rotate(sum, SHIFTS[round * 4 + (index % 4)])) | 0,
+        state[1],
+        state[2],
+      ];
+    }, state);
     state.splice(0, 4, ...state.map((word, index) => (word + mixedState[index]) | 0));
   }
   return state

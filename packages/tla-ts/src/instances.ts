@@ -744,14 +744,14 @@ const copyDefinition = (rewrite: Rewrite, key: string): string => {
         ? mapped.body
         : {
             kind: "Let",
-            definitions: [...bindings].map(([name, replacement]): Definition => ({
+            definitions: [...bindings].map((entry): Definition => ({
               kind: "Operator",
-              name,
+              name: entry[0],
               params: [],
-              body: replacement,
+              body: entry[1],
               isLocal: true,
               isRecursive: false,
-              location: replacement.location,
+              location: entry[1].location,
             })),
             body: mapped.body,
             // TLC has no such LET, so the call stack it prints has no position for it.

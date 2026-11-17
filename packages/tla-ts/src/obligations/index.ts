@@ -179,7 +179,7 @@ const loadMule = (
 
 const schedule = (modules: Map<string, Mule>) => {
   const dependencies = new Map(
-    [...modules].map(([name, module]) => [name, getDependencies(module).dependencies]),
+    [...modules].map((entry) => [entry[0], getDependencies(entry[1]).dependencies]),
   );
   const seen = new Set<string>();
   const order: Mule[] = [];
