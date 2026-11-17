@@ -504,6 +504,32 @@ describe("the models check-sat-using leaves, as Z3 5.3.2 makes them", () => {
       "(\n  (define-fun a2 () Bool\n    (> y 2))\n  (define-fun a1 () Bool\n    (= x (+ y 1)))\n  (define-fun y () Int\n    3)\n  (define-fun x () Int\n    4)\n)",
     ]);
   });
+
+  it("completes the models of nlsat and nlqsat with false, as a model rather than a proto_model does", () => {
+    const bools = ["(declare-const b0 Bool)", "(declare-const b1 Bool)", "(declare-const b2 Bool)"];
+    const bindings =
+      "  (define-fun b0 () Bool\n    false)\n  (define-fun b1 () Bool\n    false)\n  (define-fun b2 () Bool\n    false)\n";
+    expect(
+      run([
+        "(declare-const x Real)",
+        ...bools,
+        "(assert (= (* x x) 4.0))",
+        "(check-sat-using nlsat)",
+        "(get-model)",
+        "(reset)",
+        "(declare-const x Real)",
+        ...bools,
+        "(assert (exists ((z Real)) (and (> z 0.0) (= (* z x) 1.0))))",
+        "(check-sat-using nlqsat)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      `(\n  (define-fun x () Real\n    (- 2.0))\n${bindings})`,
+      "sat",
+      `(\n  (define-fun x () Real\n    1.0)\n${bindings})`,
+    ]);
+  });
 });
 
 describe("hoist_ite, as Z3 5.3.2 simplifies", () => {
