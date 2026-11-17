@@ -609,9 +609,9 @@ export const printCommandLineError = (isTool: boolean, version: TlcVersion, mess
   return 1;
 };
 
-// Deviation from TLC: tla-ts keeps its fingerprints and its queue of states in memory.
+// TLC prints the JVM's default direct memory limit and its default fingerprint set and state queue.
 export const printStartupBanner = (printer: MessagePrinter, args: TlcArguments) => {
-  const workers = `${args.workers} worker${args.workers === 1 ? "" : "s"} on ${availableParallelism()} cores with ${Math.floor(getHeapStatistics().heap_size_limit / 1024 / 1024)}MB heap and 0MB offheap memory [pid: ${process.pid}] (${type()} ${release()} ${arch()}, Node.js ${process.versions.node} ${process.arch.endsWith("64") ? 64 : 32}bit`;
+  const workers = `${args.workers} worker${args.workers === 1 ? "" : "s"} on ${availableParallelism()} cores with ${Math.floor(getHeapStatistics().heap_size_limit / 1024 / 1024)}MB heap and 64MB offheap memory [pid: ${process.pid}] (${type()} ${release()} ${arch()}, Node.js ${process.versions.node} ${process.arch.endsWith("64") ? 64 : 32}bit`;
   if (args.mode === "model-check" && args.dfidDepth !== undefined) {
     printer.print(
       MESSAGE_CODE.depthFirstModelChecking,
@@ -624,7 +624,7 @@ export const printStartupBanner = (printer: MessagePrinter, args: TlcArguments) 
     printer.print(
       MESSAGE_CODE.modelChecking,
       MESSAGE_LEVEL.none,
-      `Running breadth-first search Model-Checking with fp ${args.fingerprintIndex} and seed ${args.seed} with ${workers}, MemFPSet, MemStateQueue).`,
+      `Running breadth-first search Model-Checking with fp ${args.fingerprintIndex} and seed ${args.seed} with ${workers}, MSBDiskFPSet, DiskStateQueue).`,
     );
     return;
   }

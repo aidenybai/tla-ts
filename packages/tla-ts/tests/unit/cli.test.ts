@@ -596,7 +596,7 @@ describe("the CLI reports results like TLC", () => {
     const lines = result.stdout.split("\n");
     expect(lines[0]).toMatch(/^TLC2 Version \d+\.\d+\.\d+ \(rev: tla-ts\)$/);
     expect(lines[1]).toMatch(
-      /^Running breadth-first search Model-Checking with fp 0 and seed 7 with 2 workers on \d+ cores with \d+MB heap and 0MB offheap memory \[pid: \d+\] \(.+, Node\.js .+, MemFPSet, MemStateQueue\)\.$/,
+      /^Running breadth-first search Model-Checking with fp 0 and seed 7 with 2 workers on \d+ cores with \d+MB heap and 64MB offheap memory \[pid: \d+\] \(.+, Node\.js .+, MSBDiskFPSet, DiskStateQueue\)\.$/,
     );
     expect(lines[2]).toBe(`Parsing file ${realpathSync(join(directory, "Success.tla"))}`);
     const standardModules = ["Naturals", "_TLCTrace", "TLC", "TLCExt", "Sequences", "FiniteSets"];
@@ -633,6 +633,19 @@ describe("the CLI reports results like TLC", () => {
       "Semantic processing of module Success",
       "Linting of module Success",
     ]);
+  });
+
+  it("reports the JVM's default offheap memory when it simulates or searches depth first", () => {
+    expect(
+      runCliWith("cli-output", ["-simulate", "num=1", "-seed", "7", "Success"]).stdout.split(
+        "\n",
+      )[1],
+    ).toMatch(
+      /^Running Random Simulation with seed 7 with 1 worker on \d+ cores with \d+MB heap and 64MB offheap memory \[pid: \d+\] \(.+, Node\.js .+\)\.$/,
+    );
+    expect(runCliWith("cli-output", ["-dfid", "3", "Success"]).stdout.split("\n")[1]).toMatch(
+      /^Running depth-first search Model-Checking with fp 0 and seed 0 with 1 worker on \d+ cores with \d+MB heap and 64MB offheap memory \[pid: \d+\] \(.+, Node\.js .+\)\.$/,
+    );
   });
 });
 
