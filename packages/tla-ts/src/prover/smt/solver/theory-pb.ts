@@ -221,7 +221,6 @@ class Card {
   constructor(
     public lit: Literal,
     public k: number,
-    readonly isAux: boolean,
   ) {}
 
   get size() {
@@ -473,7 +472,7 @@ export class TheoryPb extends Theory {
       context.mkThAxiom([negate(lit)]);
       return true;
     }
-    const card = new Card(lit, bound, manager.getOp(atom) === OP_AT_LEAST_K);
+    const card = new Card(lit, bound);
     for (const arg of args) card.addArg(this.compileArg(arg));
     if (bound === card.size) this.card2conjunction(card);
     else if (card.size === 1) this.card2disjunction(card);
