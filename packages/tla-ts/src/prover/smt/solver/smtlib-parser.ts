@@ -72,7 +72,7 @@ import {
   QUANTIFIER_LAMBDA,
 } from "./ast";
 import { getArraySignature, getMapSignature, mkAsArray } from "./array-decl-plugin";
-import { BV_OP_NAMES, getBvSignature } from "./bv-decl-plugin";
+import { BV_OP_NAMES, getBvSignature, getMismatchedArgument } from "./bv-decl-plugin";
 import {
   type ConstructorDef,
   type DatatypeDef,
@@ -1598,13 +1598,15 @@ export const createSmtlibReader = (
 
   const mkBvApp = (name: string, args: number[], indices: number[], at: SExpr) => {
     const op = BV_OP_NAMES.get(name) ?? -1;
-    const signature = getBvSignature(
-      manager,
-      op,
-      args.map((arg) => manager.sorts[arg]),
-      indices,
-    );
+    const argSorts = args.map((arg) => manager.sorts[arg]);
+    const signature = getBvSignature(manager, op, argSorts, indices);
     if (typeof signature === "string") throw new SmtParseError(signature, at);
+    const mismatched = getMismatchedArgument(signature, argSorts);
+    if (mismatched !== -1)
+      throw new SmtParseError(
+        `Argument ${printExpr(manager, { options: DEFAULT_PRINT_OPTIONS, isUsed, isClashing }, args[mismatched])} at position ${mismatched} has sort ${manager.getSortName(argSorts[mismatched])} it does not match declaration (declare-fun ${signature.name} (${signature.domain.map((sort) => manager.getSortName(sort)).join(" ")}) ${manager.getSortName(signature.range)})`,
+        at,
+      );
     const decl = manager.mkBvDecl(op, signature.name, indices, signature.domain, signature.range);
     return manager.mkApp(decl, args, signature.range);
   };

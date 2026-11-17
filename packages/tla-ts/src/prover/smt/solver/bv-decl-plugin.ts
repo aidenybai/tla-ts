@@ -254,13 +254,12 @@ export const getBvSignature = (
               : op === OP_BCOMP
                 ? { name: "bvcomp", domain: [sort, sort], range: manager.mkBvSort(1) }
                 : undefined;
-  if (fixed !== undefined) {
-    if (argSorts.length !== fixed.domain.length && binary?.[1] !== true)
-      return "declared arity mismatches supplied arity";
+  if (fixed !== undefined && argSorts.length !== fixed.domain.length) {
+    if (binary?.[1] !== true) return "declared arity mismatches supplied arity";
     if (argSorts.some((argSort) => argSort !== sort))
       return "declared sorts do not match supplied sorts";
-    return fixed;
   }
+  if (fixed !== undefined) return fixed;
   const isUnaryWithInt = argSorts.length === 1 && parameters.length === 1;
   switch (op) {
     case OP_BIT2BOOL:
@@ -320,19 +319,23 @@ export const getBvSignature = (
   }
 };
 
+// mk_func_decl checks each argument against the declaration whose size the first one gives.
+export const getMismatchedArgument = (signature: BvSignature, argSorts: number[]) =>
+  argSorts.length === signature.domain.length
+    ? argSorts.findIndex((sort, index) => sort !== signature.domain[index])
+    : -1;
+
 export const mkBvApp = (
   manager: AstManager,
   op: number,
   args: number[],
   parameters: number[] = [],
 ) => {
-  const signature = getBvSignature(
-    manager,
-    op,
-    args.map((arg) => manager.sorts[arg]),
-    parameters,
-  );
+  const argSorts = args.map((arg) => manager.sorts[arg]);
+  const signature = getBvSignature(manager, op, argSorts, parameters);
   if (typeof signature === "string") throw new SmtInvariantError(signature);
+  if (getMismatchedArgument(signature, argSorts) !== -1)
+    throw new SmtInvariantError("an argument does not match the declaration");
   const decl = manager.mkBvDecl(op, signature.name, parameters, signature.domain, signature.range);
   return manager.mkApp(decl, args, signature.range);
 };

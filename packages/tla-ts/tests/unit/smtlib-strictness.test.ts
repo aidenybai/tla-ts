@@ -128,6 +128,28 @@ describe("applications of the builtin operators, as Z3 5.3.2 makes them", () => 
       '(error "line 14 column 22: invalid parameter to datatype function arity == 1 && num_parameters == 1 && parameters[0].is_ast() && is_func_decl(parameters[0].get_ast())")',
     ]);
   });
+
+  it("reports the bit-vector argument whose size differs from the first one's", () => {
+    expect(
+      run([
+        "(declare-const x (_ BitVec 8))",
+        "(declare-const y (_ BitVec 6))",
+        "(simplify (bvshl x y))",
+        "(simplify (bvadd x y x))",
+        "(simplify (bvneg x y))",
+        "(simplify (bvadd x (bvmul y y)))",
+        "(simplify (bvule (bvadd y y) x))",
+        "(assert (forall ((z (_ BitVec 4))) (= (bvadd x z) x)))",
+      ]),
+    ).toEqual([
+      '(error "line 3 column 20: Argument y at position 1 has sort (_ BitVec 6) it does not match declaration (declare-fun bvshl ((_ BitVec 8) (_ BitVec 8)) (_ BitVec 8))")',
+      '(error "line 4 column 22: declared sorts do not match supplied sorts")',
+      '(error "line 5 column 20: declared arity mismatches supplied arity")',
+      '(error "line 6 column 30: Argument (bvmul y y) at position 1 has sort (_ BitVec 6) it does not match declaration (declare-fun bvadd ((_ BitVec 8) (_ BitVec 8)) (_ BitVec 8))")',
+      '(error "line 7 column 30: Argument x at position 1 has sort (_ BitVec 8) it does not match declaration (declare-fun bvule ((_ BitVec 6) (_ BitVec 6)) Bool)")',
+      '(error "line 8 column 48: Argument (:var 0) at position 1 has sort (_ BitVec 4) it does not match declaration (declare-fun bvadd ((_ BitVec 8) (_ BitVec 8)) (_ BitVec 8))")',
+    ]);
+  });
 });
 
 describe("terms that Z3 5.3.2 rejects", () => {
