@@ -257,23 +257,18 @@ export const findNamespaces = (
 ): ReadonlyMap<ts.SourceFile, Namespace> => {
   const checker = context.checker;
   const loaded = new Set(getDynamicImports(sourceFile, checker));
-  // A module, which holds no objects on a heap, needs a namespace object only where code that may
-  // run reads one.
+  // A module needs a namespace object only where code that may run reads one.
   const scanned = isScript(sourceFile) ? [sourceFile, ...files] : getReached([sourceFile], context);
-  // The modules whose namespace objects code reads, each with the node that reads it.
-  const reads = [
+  const roots = [
     ...findNodes(sourceFile, isImportCall).flatMap((call) => {
       const specifier = call.arguments.at(0);
       const module = specifier && getModule(checker.getSymbolAtLocation(specifier), checker);
       return module !== undefined && (loaded.has(module.file) || module.file === sourceFile)
-        ? [{ module, node: call }]
+        ? [module]
         : [];
     }),
     ...scanned.flatMap((node) =>
-      findNodes(node, ts.isIdentifier).flatMap((inner) => {
-        const module = getNamespaceRead(inner, checker);
-        return module === undefined ? [] : [{ module, node: inner }];
-      }),
+      findNodes(node, ts.isIdentifier).flatMap((inner) => getNamespaceRead(inner, checker) ?? []),
     ),
     ...scanned
       .flatMap((node) => findNodes(node, ts.isPropertyAccessExpression))
@@ -289,7 +284,7 @@ export const findNamespaces = (
           context,
         );
         return module !== undefined && declaration !== undefined && ts.isSourceFile(declaration)
-          ? [{ module, node }]
+          ? [module]
           : [];
       }),
   ];
@@ -302,14 +297,7 @@ export const findNamespaces = (
       if (nested !== undefined) add(nested);
     });
   };
-  reads.forEach((read) => add(read.module));
-  // Only a script, which runs as JavaScript does, holds objects on a heap.
-  if (reads.length > 0 && !isScript(sourceFile)) {
-    throw new TlaTypeScriptError(
-      "tla-ts can't make a module's namespace object outside a script",
-      reads[0].node,
-    );
-  }
+  roots.forEach(add);
   // The module whose namespace object a node reads: a namespace import as a value or to read an
   // export, or an import() of a string.
   const getRead = (node: ts.Node) => {

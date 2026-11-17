@@ -42400,17 +42400,20 @@ describe("BigInts", () => {
       );
     });
 
-    it("stops at a namespace object outside a script", () => {
+    it("makes a namespace object outside a script, which the heap holds", async () => {
       const model = [
         'import * as first from "./first";',
         "let count = 0;",
         "export const step = () => {",
-        "  count += Object.keys(first).length;",
+        "  if (count < 3) count += Object.keys(first).length + 1;",
         "};",
+        "export const isUnder = () => count < 4;",
       ].join("\n");
-      expect(() => compile(model, path)).toThrow(
-        "tla-ts can't make a module's namespace object outside a script",
-      );
+      const result = await check(compile(model, path));
+      expect([result.status, getTrace(result)?.map((state) => state.count)]).toEqual([
+        "invariant-violation",
+        ["0", "2", "4"],
+      ]);
     });
 
     it("follows the script's own namespace object as its exports change", async () => {
@@ -50231,7 +50234,7 @@ describe("BigInts", () => {
     });
   });
 
-  describe("makes no namespace object for a module where no code that may run reads one", () => {
+  describe("makes a module's namespace object only where code that may run reads it", () => {
     const path = join(import.meta.dirname, "../fixtures/typescript/imports/picking.ts");
 
     it("agrees with Node where only a function that never runs reads it", async () => {
@@ -50254,21 +50257,23 @@ describe("BigInts", () => {
       ]);
     });
 
-    it("stops where code that may run reads it", () => {
-      expect(() =>
-        compile(
-          `
-          import { pickAreas } from "./area-picker";
-          export let count = 0;
-          export const step = () => {
-            if (count < 4) count = pickAreas().getArea(count + 1);
-          };
-        `,
-          path,
-        ),
-      ).toThrow(
-        /area-picker\.ts:3:32 tla-ts can't make a module's namespace object outside a script/,
-      );
+    it("agrees with Node where code that runs reads it, holding it on the heap", async () => {
+      const getSource = (limit: number) => `
+        import { pickAreas } from "./area-picker";
+        const keys = Object.keys(pickAreas()).join();
+        export let count = 0;
+        export const step = () => {
+          if (count < ${limit}) count = pickAreas().getArea(count + 1);
+        };
+        export const isSame = (): boolean => keys === "getArea" && pickAreas() === pickAreas();
+      `;
+      const result = await check(compile(getSource(4), path));
+      expect([result.status, getTrace(result)?.map((state) => state.count)]).toEqual([
+        "deadlock",
+        ["0", "1", "4"],
+      ]);
+      const longer = await check(compile(getSource(5), path));
+      expect(getTrace(longer)?.map((state) => state.count)).toEqual(["0", "1", "4", "25"]);
     });
   });
 

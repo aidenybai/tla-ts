@@ -903,7 +903,8 @@ export const compile = (
     heap !== undefined &&
     !(isScript(sourceFile) && isUsingHeap) &&
     findSharing(shareable, context) !== undefined;
-  const isHeapFile = isScript(sourceFile) || isSharing;
+  // A module whose code reads a module's namespace object holds it on the heap, as a script does.
+  const isHeapFile = isScript(sourceFile) || isSharing || context.namespaces.size > 0;
   context.hasOrderedCollections = isHeapFile && reached.some(usesOrder);
   const changedArrays = isHeapFile ? findChangedArrays(reached, context) : [];
   if (heap !== undefined && isHeapFile && (isSharing || changedArrays.length > 0 || isUsingHeap)) {
