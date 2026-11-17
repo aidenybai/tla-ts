@@ -51,6 +51,29 @@ describe("level checking matches SANY", () => {
     );
   });
 
+  it("checks the levels of _Possible's operators like SANY", async () => {
+    await expect(
+      check({
+        source:
+          "---- MODULE M ----\nEXTENDS _Possible\nVARIABLE x\nF == _CheckName([](x = 1))\nG == _Track(TRUE, []x)\nH == [](_Track(x' = 1, \"n\"))\nInit == x = 0\nNext == x' = x\n====",
+        config: "INIT Init\nNEXT Next",
+      }),
+    ).rejects.toThrow(
+      createSanyError([
+        {
+          location: "line 4, col 6 to line 4, col 26 of module M",
+          message:
+            "Level error in applying operator _CheckName:\nThe level of argument 1 exceeds the maximum level allowed by the operator.",
+        },
+        {
+          location: "line 5, col 6 to line 5, col 22 of module M",
+          message:
+            "Level error in applying operator _Track:\nThe level of argument 2 exceeds the maximum level allowed by the operator.",
+        },
+      ]),
+    );
+  });
+
   it("rejects an argument above the level an instantiated operator allows, naming it like SANY", async () => {
     await expect(
       check({

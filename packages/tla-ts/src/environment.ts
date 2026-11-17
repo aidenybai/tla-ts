@@ -586,8 +586,11 @@ export const createEnvironment = (
     );
   };
 
-  const createArgumentParams = (arity: number) =>
-    Array.from({ length: arity }, (_value, index) => ({ name: `argument${index}`, arity: 0 }));
+  const createArgumentParams = (arity: number, params: number[] | undefined) =>
+    Array.from({ length: arity }, (_value, index) => ({
+      name: `argument${index}`,
+      arity: params?.[index] ?? 0,
+    }));
 
   const getSubstitutionBody = (
     replacement: Expression,
@@ -601,7 +604,7 @@ export const createEnvironment = (
         body: replacement.body,
       };
     }
-    const params = createArgumentParams(declaration.arity);
+    const params = createArgumentParams(declaration.arity, undefined);
     const operator =
       replacement.kind === "Identifier"
         ? replacement.name
@@ -625,7 +628,7 @@ export const createEnvironment = (
     if (standardSymbols) {
       if (instance.name === undefined) return [];
       return [...standardSymbols].map(([name, symbol]) => {
-        const forwarded = createArgumentParams(symbol.arity);
+        const forwarded = createArgumentParams(symbol.arity, symbol.params);
         return createLocalAlias(
           `${instance.name}!${name}`,
           symbol.key,
@@ -712,7 +715,7 @@ export const createEnvironment = (
       .filter(([name]) => !declared.has(name))
       .map(([name, symbol]) => {
         const key = instantiation.getKey(symbol.key);
-        const ownParams = createArgumentParams(symbol.arity);
+        const ownParams = createArgumentParams(symbol.arity, symbol.params);
         const params = [...instance.params, ...ownParams];
         return createLocalAlias(
           instance.name === undefined ? name : `${instance.name}!${name}`,
