@@ -307,6 +307,7 @@ export const emit = (
                 "  Doubles <- UsedDoubles",
                 "  Characters <- UsedCharacters",
                 "  Searches <- UsedSearches",
+                "  TimeZones <- UsedTimeZones",
                 "  Cases <- UsedCases",
                 "  Normals <- UsedNormals",
                 "  SourceTexts <- UsedSourceTexts",

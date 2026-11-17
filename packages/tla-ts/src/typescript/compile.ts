@@ -93,8 +93,10 @@ import { translateSourceTexts } from "./source-text";
 import { classifySharedHelpers } from "./shared-calls";
 import { TlaTypeScriptError } from "../errors";
 import { translateStep } from "./steps";
+import { TIME_ZONES } from "./time-zones";
 import {
   apply,
+  boolean,
   define,
   getLocation,
   getModuleName,
@@ -594,6 +596,22 @@ export const compile = (
     ? [sourceFile, ...files].flatMap(getLiterals)
     : [];
   const normals = [...new Set([...literals, ...literals.flatMap(getForms)])];
+  // The named time zones whose tables the module reads: those that a string literal names, itself
+  // or in an ISO string's annotation, in any case.
+  const getZoneNames = (node: ts.Node): string[] => [
+    ...(ts.isStringLiteralLike(node) && node.text.length <= LONG_LITERAL
+      ? [node.text, ...[...node.text.matchAll(/\[!?([^\]=]+)\]/g)].map((match) => match[1])]
+      : []),
+    ...node.getChildren().flatMap(getZoneNames),
+  ];
+  const timeZones = [
+    ...new Set(
+      [sourceFile, ...files]
+        .flatMap(getZoneNames)
+        .map((name) => name.toLowerCase())
+        .filter((name) => Object.hasOwn(TIME_ZONES, name)),
+    ),
+  ].sort();
   texts.push(...normals.flatMap(getForms));
   const getCodes = (text: string) =>
     Array.from({ length: text.length }, (_, position) => text.charCodeAt(position)).filter(
@@ -1316,6 +1334,30 @@ export const compile = (
         ),
       ),
       define("UsedSearches", [], translateSearches(context)),
+      define(
+        "UsedTimeZones",
+        [],
+        tuple(
+          timeZones.map((key) => {
+            const table = TIME_ZONES[key];
+            const days = table.times.map((time) => Math.floor(time / 86400));
+            return record("Record", [
+              { name: "key", value: string(key) },
+              { name: "id", value: string(table.id) },
+              { name: "primary", value: string(table.primary) },
+              { name: "offsets", value: tuple(table.offsets.map(number)) },
+              { name: "days", value: tuple(days.map(number)) },
+              {
+                name: "seconds",
+                value: tuple(
+                  table.times.map((time, position) => number(time - days[position] * 86400)),
+                ),
+              },
+              { name: "isFinal", value: boolean(table.isFinal) },
+            ]);
+          }),
+        ),
+      ),
       define(
         "UsedCharacters",
         [],

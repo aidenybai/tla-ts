@@ -223,7 +223,7 @@ const TEMPORAL_FUNCTIONS = new Map<string, TemporalFunctions>([
         ["toJSON", ""],
         ["valueOf", ""],
         ["startOfDay", "ZonedDateTime"],
-        ["getTimeZoneTransition", ""],
+        ["getTimeZoneTransition", "ZonedDateTime"],
         ["toInstant", "Instant"],
         ["toPlainDate", "PlainDate"],
         ["toPlainTime", "PlainTime"],

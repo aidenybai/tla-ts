@@ -46797,12 +46797,12 @@ describe("BigInts", () => {
       );
     });
 
-    it("stops at a named time zone", async () => {
+    it("stops at a named time zone that it has no table of", async () => {
       const result = await checkModel(`
-        const zoned = new Temporal.ZonedDateTime(0n, "Europe/Paris");
-        if (zoned.hour !== 1) throw new Error("hour " + zoned.hour);
+        const zoned = new Temporal.ZonedDateTime(0n, "Asia/Taipei");
+        if (zoned.hour !== 8) throw new Error("hour " + zoned.hour);
       `);
-      expect(result.failure?.message).toContain("tla-ts can't use the time zone Europe/Paris");
+      expect(result.failure?.message).toContain("tla-ts can't use the time zone Asia/Taipei");
     });
   });
 
@@ -52521,5 +52521,33 @@ describe("BigInts", () => {
     expect(() => compile(source, join(import.meta.dirname, "model.js"))).toThrow(
       "Give this pattern's value an array type",
     );
+  });
+
+  describe("runs Temporal in a named time zone, whose offsets its transitions change", () => {
+    const getSource = (expected: string) => `
+      const zoned = Temporal.ZonedDateTime.from("2020-03-08T01:30-08:00[America/Vancouver]");
+      const seen = zoned.add({ hours: 1 }).toString() + " " + zoned.withTimeZone("Asia/Kolkata").offset;
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+    const expected = "2020-03-08T03:30:00-07:00[America/Vancouver] +05:30";
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects a fixed offset's answer", async () => {
+      expect(
+        (await checkModel(getSource(expected.replace("T03:30:00-07:00", "T02:30:00-08:00"))))
+          .failure?.message,
+      ).toContain(`seen ${expected}`);
+    });
+
+    it("stops past the end of a table that isn't final", async () => {
+      const source =
+        'const zoned = Temporal.ZonedDateTime.from("2040-01-01T00:00[America/Los_Angeles]");';
+      expect((await checkModel(source)).failure?.message).toContain(
+        "tla-ts can't tell the offsets of the time zone America/Los_Angeles after 2037",
+      );
+    });
   });
 });
