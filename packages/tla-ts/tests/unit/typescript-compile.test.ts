@@ -50576,4 +50576,46 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("throws the error of an element that a typed array can't convert", () => {
+    const getSource = (expected: string) => `
+      const results: string[] = [];
+      const attempt = (run: () => unknown) => {
+        try {
+          results.push(String(run()));
+        } catch (error) {
+          results.push(
+            error instanceof TypeError
+              ? "TypeError"
+              : error instanceof SyntaxError
+                ? "SyntaxError"
+                : "other",
+          );
+        }
+      };
+      attempt(() => {
+        new BigInt64Array([null] as any);
+      });
+      attempt(() => {
+        new BigInt64Array(["1.1"] as any);
+      });
+      attempt(() => {
+        new Int8Array([1, Symbol() as any]);
+      });
+      attempt(() => new BigInt64Array(["", "1"] as any).join());
+      if (results.join() !== "${expected}") throw new Error("results " + results.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("TypeError,SyntaxError,TypeError,0,1"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects other results", async () => {
+      expect(
+        (await checkModel(getSource("TypeError,TypeError,TypeError,0,1"))).failure?.message,
+      ).toContain("results TypeError,SyntaxError,TypeError,0,1");
+    });
+  });
 });

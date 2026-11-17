@@ -6376,6 +6376,25 @@ ToElement(type, value) ==
          Assert(FALSE, "tla-ts can't throw the TypeError of converting a number to a BigInt")
     [] OTHER -> Assert(FALSE, "tla-ts can't convert this value to a BigInt")
 
+\\* The error that ToElement throws for a primitive, or "" where it throws none or the value is an
+\\* object, which converts through its methods first.
+LOCAL ElementError(type, value) ==
+  CASE IsRef(value) \\/ IsSequenceValue(value) -> ""
+    [] ~IsBigIntType(type) -> IF IsSymbol(value) \\/ IsBigInt(value) THEN "TypeError" ELSE ""
+    [] IsBigInt(value) \\/ TypeOf(value) = "boolean" -> ""
+    [] TypeOf(value) = "string" -> IF StringToBigInt(value) = Undefined THEN "SyntaxError" ELSE ""
+    [] OTHER -> "TypeError"
+
+\\* The error that converting values in order for a typed array throws first, or "" where none
+\\* does, or an object before the first that does converts through its methods.
+LOCAL ElementsError(type, values) ==
+  LET failing == {position \\in DOMAIN values : ElementError(type, values[position]) # ""}
+      first == CHOOSE position \\in failing : \\A other \\in failing : position <= other
+  IN IF \\/ failing = {}
+        \\/ \\E position \\in 1..(first - 1) : IsRef(values[position]) \\/ IsSequenceValue(values[position])
+     THEN ""
+     ELSE ElementError(type, values[first])
+
 \\* What a typed array holds for a value that a script writes.
 ToElementOf(heap, ref, value) == ToElement(heap.objects[ref[Ref]].elementType, value)
 
@@ -6586,15 +6605,21 @@ LOCAL TypedArrayMade(heap, type, prototype, bufferPrototype, arguments, isIterat
             THEN Failed("TypeError")
             ELSE withBytes(NumbersBytes(type, [position \\in 1..ViewLength(heap, object) |->
                                                  TypedElement(heap, first, position - 1)]))
+       [] IsSequenceValue(first) /\\ isIterating /\\ ElementsError(type, first) # "" ->
+            Failed(ElementsError(type, first))
        [] IsSequenceValue(first) ->
             iterated(NumbersBytes(type, [position \\in DOMAIN first |-> ToElement(type, first[position])]))
        [] ~IsBuffer(heap, first) /\\ IsHeap(first) ->
             LET method == Get(heap, first, WellKnownSymbol("iterator"))
                 count == ToLength(Get(heap, first, "length"))
-                bytes == NumbersBytes(type, [position \\in 1..count |->
-                                               ToElement(type, Get(heap, first, ToString(position - 1)))])
-            IN CASE method \\in {Undefined, Null} -> withBytes(bytes)
-                 [] IsArray(heap, first) /\\ method = Ref :> "Array.prototype.values" -> iterated(bytes)
+                elements == [position \\in 1..count |-> Get(heap, first, ToString(position - 1))]
+                error == ElementsError(type, elements)
+                bytes == NumbersBytes(type, [position \\in 1..count |-> ToElement(type, elements[position])])
+                isArrayValues == IsArray(heap, first) /\\ method = Ref :> "Array.prototype.values"
+            IN CASE error # "" /\\ (method \\in {Undefined, Null} \\/ (isArrayValues /\\ isIterating)) ->
+                      Failed(error)
+                 [] method \\in {Undefined, Null} -> withBytes(bytes)
+                 [] isArrayValues -> iterated(bytes)
                  [] OTHER -> Assert(FALSE, "tla-ts can't make a typed array of this object")
        [] ~IsBuffer(heap, first) -> Assert(FALSE, "tla-ts can't make a typed array of this object")
        [] offset = -1 \\/ offset % size # 0 -> Failed("RangeError")

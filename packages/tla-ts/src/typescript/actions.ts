@@ -14255,7 +14255,12 @@ const translateNewBufferStatement = (
           ifThenElse(
             apply("=", [error, string("RangeError")]),
             throwError("RangeError", current, node, context, frame),
-            throwTypeError(current, node, context, frame),
+            // A typed array of BigInts throws the SyntaxError of a string that holds no integer.
+            ifThenElse(
+              apply("=", [error, string("SyntaxError")]),
+              throwError("SyntaxError", current, node, context, frame),
+              throwTypeError(current, node, context, frame),
+            ),
           ),
         );
       const makeWith = (
