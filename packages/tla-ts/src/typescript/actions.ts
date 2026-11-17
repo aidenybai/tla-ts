@@ -17543,6 +17543,85 @@ const translatePromiseLoop = (
   });
 };
 
+// Runs a for-in over an object that follows promises as its iterations, one after another. It
+// visits the keys that the object and its prototypes enumerate as it starts, skipping one that an
+// iteration deletes before the loop reaches it, as Node does. Past PROMISE_LOOP_LIMIT keys it stops.
+const translatePromiseForIn = (
+  loop: ts.ForInStatement,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path) => Formula,
+): Formula => {
+  const keys = context.names.getFresh("keys");
+  const object = context.names.getFresh("object");
+  // A list that no heap holds has its indices as keys, which nothing deletes.
+  const isList = getKind(loop.expression, context) === "sequence";
+  return allocate(loop.expression, path, context, (inner) =>
+    letIn(
+      [
+        define(object, [], translateObjectValue(loop.expression, inner.scope, context)),
+        define(
+          keys,
+          [],
+          isList
+            ? functionOf(
+                [bound("index", apply("DOMAIN", [identifier(object)]))],
+                apply("ToString", [apply("-", [identifier("index"), number(1)])]),
+              )
+            : useJavaScript(
+                "ForInKeys",
+                [getHeap(inner.scope, loop.expression, context), identifier(object)],
+                context,
+              ),
+        ),
+      ],
+      translateJoined(loop, inner, context, continueWith, (leave) => {
+        const iterate = (current: Path, position: number): Formula => {
+          const key = index(identifier(keys), [number(position + 1)]);
+          const next = (after: Path) => iterate(after, position + 1);
+          const run =
+            position >= PROMISE_LOOP_LIMIT
+              ? leaf(
+                  apply("Assert", [
+                    boolean(false),
+                    string(
+                      `tla-ts can't follow promises through more than ${PROMISE_LOOP_LIMIT} iterations of a loop`,
+                    ),
+                  ]),
+                )
+              : ifThenElse(
+                  isList
+                    ? boolean(true)
+                    : useJavaScript(
+                        "Has",
+                        [getHeap(current.scope, loop.expression, context), identifier(object), key],
+                        context,
+                      ),
+                  bindIteration(
+                    loop.initializer,
+                    key,
+                    undefined,
+                    startIteration(loop, current),
+                    context,
+                    { ...frame, next, continueTo: next, breakTo: (after) => leave(after) },
+                    (bound, innerFrame) =>
+                      translateStatements([loop.statement], bound, context, innerFrame),
+                  ),
+                  next(current),
+                );
+          return ifThenElse(
+            apply("<=", [number(position + 1), apply("Len", [identifier(keys)])]),
+            run,
+            leave(current),
+          );
+        };
+        return iterate(inner, 0);
+      }),
+    ),
+  );
+};
+
 // Runs a generator's loop that yields as its iterations, one after another: a counted loop's with
 // the counter each one reads, or a loop that runs until something leaves it, which tla-ts follows
 // as far as the generator's caller steps it.
@@ -17774,6 +17853,15 @@ const translateLoop = (
         runLoop(inner),
       );
     });
+  }
+  if (
+    ts.isForInStatement(loop) &&
+    path.tasks !== undefined &&
+    context.heap !== undefined &&
+    ["object", "sequence"].includes(getKind(loop.expression, context)) &&
+    isFollowingPromises(loop, context)
+  ) {
+    return translatePromiseForIn(loop, path, context, frame, continueWith);
   }
   // A for-of or a for-in evaluates what it iterates once, before its first iteration.
   if (ts.isForOfStatement(loop) || ts.isForInStatement(loop)) {
@@ -19872,7 +19960,7 @@ const getEvaluated = (statement: ts.Statement) =>
         ? statement.expression
         : ts.isReturnStatement(statement) || ts.isThrowStatement(statement)
           ? statement.expression
-          : ts.isForOfStatement(statement)
+          : ts.isForOfStatement(statement) || ts.isForInStatement(statement)
             ? statement.expression
             : undefined;
 
@@ -19885,13 +19973,14 @@ const getHoistedCall = (statement: ts.Statement, path: Path, context: Context) =
   return getLeadingCall(
     evaluated,
     (call) =>
-      // An if, a switch, or a throw statement evaluates its expression, and a for-of what it
-      // iterates, and runs no call of it.
+      // An if, a switch, or a throw statement evaluates its expression, and a for-of or a for-in
+      // what it iterates, and runs no call of it.
       (call !== outer ||
         ts.isIfStatement(statement) ||
         ts.isSwitchStatement(statement) ||
         ts.isThrowStatement(statement) ||
-        ts.isForOfStatement(statement)) &&
+        ts.isForOfStatement(statement) ||
+        ts.isForInStatement(statement)) &&
       !(
         ts.isBinaryExpression(outer) &&
         outer.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
