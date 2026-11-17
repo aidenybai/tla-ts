@@ -14486,13 +14486,30 @@ const isIndexConvertingNew = (node: ts.Node, context: Context) => {
   const buffers = getNewBuffer(node, context) ?? [];
   const construction = getBufferConstruction(node, context);
   return (
-    (buffers.every((buffer) => TYPED_ARRAYS.has(buffer)) ||
+    ((buffers.every((buffer) => TYPED_ARRAYS.has(buffer)) ||
       (buffers.length === 1 &&
         buffers[0] === "DataView" &&
         construction?.newTarget === construction?.callee)) &&
-    (construction?.arguments ?? [])
-      .slice(1, 3)
-      .some((value) => !isPrimitiveIndex(getCast(value), context))
+      (construction?.arguments ?? [])
+        .slice(1, 3)
+        .some((value) => !isPrimitiveIndex(getCast(value), context))) ||
+    isLengthConvertingBuffer(node, context)
+  );
+};
+
+// new of an ArrayBuffer or a SharedArrayBuffer whose length is an object, which it converts with
+// ToIndex before it reads its options.
+const isLengthConvertingBuffer = (node: ts.Expression, context: Context) => {
+  const buffers = getNewBuffer(node, context) ?? [];
+  const construction = getBufferConstruction(node, context);
+  const length = construction?.arguments.at(0);
+  return (
+    buffers.length === 1 &&
+    (buffers[0] === "ArrayBuffer" || buffers[0] === "SharedArrayBuffer") &&
+    construction?.newTarget === construction?.callee &&
+    length !== undefined &&
+    !ts.isSpreadElement(length) &&
+    !isPrimitiveIndex(getCast(length), context)
   );
 };
 
@@ -14813,70 +14830,77 @@ const translateNewBufferStatement = (
       ) =>
         !isConverted
           ? make(current, madeArguments, finish)
-          : ifThenElse(
-              useJavaScript(
-                "IsBuffer",
-                [getHeap(current.scope, node, context), madeArguments[0]],
-                context,
-              ),
-              readsPrototypeAfter(
-                current,
-                toIndex(current, madeArguments[1] ?? getUndefined(context), (offsetPath, offset) =>
-                  bind(
-                    offsetPath,
-                    "error",
-                    translateNewBufferOf(
-                      node,
-                      construction,
-                      getHeap(offsetPath.scope, node, context),
-                      tuple([madeArguments[0], offset]),
-                      offsetPath.scope,
-                      context,
-                      "offset error",
-                    ),
-                    context,
-                    (errorPath, error) =>
-                      throwUnless(
-                        errorPath,
-                        error,
-                        madeArguments[2] === undefined
-                          ? make(errorPath, [madeArguments[0], offset], finish)
-                          : toIndex(errorPath, madeArguments[2], (lengthPath, length) => {
-                              const viewed = [madeArguments[0], offset, length];
-                              // A DataView throws the RangeError of a length past its buffer's
-                              // end, as the buffer was before it converted the length.
-                              return buffers.includes("DataView")
-                                ? bind(
-                                    lengthPath,
-                                    "error",
-                                    translateNewBufferOf(
-                                      node,
-                                      construction,
-                                      getHeap(errorPath.scope, node, context),
-                                      tuple(viewed),
-                                      errorPath.scope,
-                                      context,
-                                      "error",
-                                      prototypeGetters.length === 0
-                                        ? undefined
-                                        : getUndefined(context),
-                                    ),
-                                    context,
-                                    (checkedPath, lengthError) =>
-                                      throwUnless(
-                                        checkedPath,
-                                        lengthError,
-                                        make(checkedPath, viewed, finish),
-                                      ),
-                                  )
-                                : make(lengthPath, viewed, finish);
-                            }),
+          : isLengthConvertingBuffer(node, context)
+            ? toIndex(current, madeArguments[0], (after, length) =>
+                make(after, [length, ...madeArguments.slice(1)], finish),
+              )
+            : ifThenElse(
+                useJavaScript(
+                  "IsBuffer",
+                  [getHeap(current.scope, node, context), madeArguments[0]],
+                  context,
+                ),
+                readsPrototypeAfter(
+                  current,
+                  toIndex(
+                    current,
+                    madeArguments[1] ?? getUndefined(context),
+                    (offsetPath, offset) =>
+                      bind(
+                        offsetPath,
+                        "error",
+                        translateNewBufferOf(
+                          node,
+                          construction,
+                          getHeap(offsetPath.scope, node, context),
+                          tuple([madeArguments[0], offset]),
+                          offsetPath.scope,
+                          context,
+                          "offset error",
+                        ),
+                        context,
+                        (errorPath, error) =>
+                          throwUnless(
+                            errorPath,
+                            error,
+                            madeArguments[2] === undefined
+                              ? make(errorPath, [madeArguments[0], offset], finish)
+                              : toIndex(errorPath, madeArguments[2], (lengthPath, length) => {
+                                  const viewed = [madeArguments[0], offset, length];
+                                  // A DataView throws the RangeError of a length past its buffer's
+                                  // end, as the buffer was before it converted the length.
+                                  return buffers.includes("DataView")
+                                    ? bind(
+                                        lengthPath,
+                                        "error",
+                                        translateNewBufferOf(
+                                          node,
+                                          construction,
+                                          getHeap(errorPath.scope, node, context),
+                                          tuple(viewed),
+                                          errorPath.scope,
+                                          context,
+                                          "error",
+                                          prototypeGetters.length === 0
+                                            ? undefined
+                                            : getUndefined(context),
+                                        ),
+                                        context,
+                                        (checkedPath, lengthError) =>
+                                          throwUnless(
+                                            checkedPath,
+                                            lengthError,
+                                            make(checkedPath, viewed, finish),
+                                          ),
+                                      )
+                                    : make(lengthPath, viewed, finish);
+                                }),
+                          ),
                       ),
                   ),
                 ),
-              ),
-              make(current, madeArguments, finish),
-            );
+                make(current, madeArguments, finish),
+              );
       const throwWith = (after: Path) => throwTypeError(after, node, context, frame);
       const step = (
         current: Path,

@@ -52539,4 +52539,34 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("converts the object length of new of an ArrayBuffer or a SharedArrayBuffer with ToIndex", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      var log = [];
+      var length = { valueOf() { log.push("length"); return 3; } };
+      var buffer = new ArrayBuffer(length);
+      var shared = new SharedArrayBuffer({ toString() { return "2"; } });
+      var thrown = "none";
+      try {
+        new ArrayBuffer({ valueOf() { return -1; } });
+      } catch (error) {
+        thrown = error instanceof RangeError ? "RangeError" : "other";
+      }
+      var result = [buffer.byteLength, shared.byteLength, log.join(), thrown].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      const source = getSource("3,2,length,RangeError");
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const source = getSource("3,0,length,RangeError");
+      expect((await check(compile(source, path))).failure?.message).toContain(
+        "result 3,2,length,RangeError",
+      );
+    });
+  });
 });
