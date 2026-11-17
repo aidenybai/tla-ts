@@ -835,6 +835,17 @@ export const runSmtlibScript = (
       );
     return goal;
   };
+  const getCommandGoal = (isTrackingDependencies: boolean, end: SmtToken) => {
+    if (
+      settings.isProducingUnsatCores &&
+      (settings.isProducingProofs || state.isProofsEnabled === true)
+    )
+      throw new SmtParseError(
+        "Frontend does not support simultaneous generation of proofs and unsat cores",
+        end,
+      );
+    return getGoal(isTrackingDependencies);
+  };
   const hasNames = () => state.names.some((name) => name !== -1);
   // parse_check_sat shrinks the expression stack once the check has run.
   const checkSatAssuming = (items: SmtList["items"], end: SmtToken) => {
@@ -1081,12 +1092,13 @@ export const runSmtlibScript = (
           throw new SmtParseError("check-sat-using needs a tactic argument", list.end);
         const builder = compileTactic(getTacticEnvironment(), list.items[1]);
         const tactic = builder.build(params);
+        const goal = getCommandGoal(builder.isTrackingDependencies, list.end);
         clearCheck();
         const deadline = Date.now() + options.timeLimitMs;
         state.manager.limit.restart(deadline);
         state.manager.limit.push(settings.rlimit);
         try {
-          const checked = checkSatUsing(tactic, getGoal(builder.isTrackingDependencies));
+          const checked = checkSatUsing(tactic, goal);
           setCheck(checked.status, {
             model: checked.model,
             core:
@@ -1329,11 +1341,11 @@ export const runSmtlibScript = (
           list.items[1],
         );
         const tactic = builder.build(params);
+        const input = getCommandGoal(builder.isTrackingDependencies, list.end);
         const isPrintingDependencies = params.get("print_dependencies") === true;
         if (isPrintingDependencies && !builder.isTrackingDependencies && hasNames())
           throw new SmtUnsupportedError("the dependencies of a tactic that drops dependencies");
         state.manager.limit.restart(Date.now() + options.timeLimitMs);
-        const input = getGoal(builder.isTrackingDependencies);
         const goals = (() => {
           try {
             return applyTactic(tactic, input);

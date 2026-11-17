@@ -1361,6 +1361,29 @@ describe("runSmtlibScript prints what Z3 prints", () => {
     ]);
   });
 
+  it("rejects apply and check-sat-using under both proofs and unsat cores, and keeps the last check", () => {
+    const error = "Frontend does not support simultaneous generation of proofs and unsat cores";
+    expect(
+      run([
+        "(set-option :produce-proofs true)",
+        "(set-option :produce-unsat-cores true)",
+        "(declare-const x Int)",
+        "(assert (> x 2))",
+        "(check-sat)",
+        "(apply simplify)",
+        "(check-sat-using smt)",
+        "(get-info :reason-unknown)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      `(error "line 6 column 15: ${error}")`,
+      `(error "line 7 column 20: ${error}")`,
+      '(:reason-unknown "")',
+      "(\n  (define-fun x () Int\n    3)\n)",
+    ]);
+  });
+
   it("keeps the answer of the last check across reset-assertions", () => {
     expect(
       run([
