@@ -166,6 +166,32 @@ describe("the call stack of a replayed failure matches TLC", () => {
     },
   );
 
+  const BAD = "x = 1 /\\ CHOOSE y \\in {} : y = x";
+
+  it.each([
+    ["<>(x = 2)", `[]<>(${BAD})`, "1 - x", "Safe\nPROPERTY Bad", undefined],
+    ["<>(x = 2)", `[]<>(${BAD})`, "1 - x", "Bad\nPROPERTY Safe", ["11.13-11.44", "11.22-11.44"]],
+    ["<>(x < 2)", `[]<>(${BAD})`, "1 - x", "Safe\nPROPERTY Bad", ["11.13-11.44", "11.22-11.44"]],
+    ["[]<>(x = 0)", `<>(x = 2) \\/ []<>(${BAD})`, "1 - x", "Safe\nPROPERTY Bad", undefined],
+    [
+      "[]<>(x = 0)",
+      `<>(x = 2) \\/ []<>(${BAD})`,
+      "(x + 1) % 3",
+      "Safe\nPROPERTY Bad",
+      ["11.26-11.57", "11.35-11.57"],
+    ],
+  ])(
+    "prints no call stack where TLC's rerun first fails on a branch that already holds the state (Safe == %s, Bad == %s, Next == x' = %s)",
+    async (safe, bad, next, properties, callStack) => {
+      expect(
+        await getFailure(
+          `Init == x = 0\nNext == x' = ${next}\nSafe == ${safe}\nBad == ${bad}`,
+          `INIT Init\nNEXT Next\nPROPERTY ${properties}`,
+        ),
+      ).toEqual({ callStack, exitCode: 255 });
+    },
+  );
+
   it.each([
     [undefined, [1, 1]],
     ["1.7.4" as const, [0, 1]],

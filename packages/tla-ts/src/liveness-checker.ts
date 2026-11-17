@@ -59,6 +59,7 @@ export interface LiveGraph<State> {
     index: number,
     state: State,
     successors: LiveSuccessor<State>[],
+    isRerun?: boolean,
   ) => number[] | undefined;
   storeState: (pending: number, index: number) => void;
   getStateCounts: () => number[];
@@ -370,7 +371,7 @@ export const createLivenessChecker = (
     addInitialState: (index, state, replay) =>
       traceWith(replay, () => graph.addInitialState(index, state)),
     addState: (index, state, successors, replay) =>
-      traceWith(replay, () => graph.addState(index, state, successors)),
+      traceWith(replay, () => graph.addState(index, state, successors, replay !== undefined)),
     storeState: graph.storeState,
     getStateCounts: graph.getStateCounts,
     findViolation: graph.findViolation,
@@ -1141,7 +1142,7 @@ export const createLiveGraph = <State>(
         }
       }
     },
-    addState: (index, state, successors) => {
+    addState: (index, state, successors, isRerun) => {
       const set = getSuccessorSet(index, state, successors);
       const rows = createRows(set.length);
       // The set holds the state itself, as a successor of the same index.
@@ -1166,6 +1167,15 @@ export const createLiveGraph = <State>(
         );
         const stateResults = checkState(behavior, index, state, rows, offset);
         const tableau = behavior.solution.tableau;
+        // TLC's rerun for a call stack fails an assertion, without a call stack, on a branch that has every edge of the state.
+        if (
+          isRerun &&
+          (tableau
+            ? getStateNodes(behavior, index).some((node) => behavior.edgeCounts[node] > 0)
+            : set.every((successor) => isWritten(behavior, successor.index)))
+        ) {
+          throw new TlaEvaluationError("The behavior graph holds every edge of the state already.");
+        }
         if (!tableau) {
           addPlainState(behavior, set, actionResults, stateResults, index);
           continue;
