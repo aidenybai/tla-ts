@@ -123,6 +123,7 @@ export const processOperator = (
     const params = getParams(generation, definition, paramsSpan, true);
     const existing = resolveSymbol(generation.contexts, name);
     if (existing?.kind === "OpDef" && existing.inRecursive && !existing.isDefined) {
+      // Deviation from SANY: Generator#processOperator compares only the last parameter's arity with the RECURSIVE declaration's.
       const isMatching =
         existing.params?.length === params.length && params.every((param) => param.arity === 0);
       if (existing.letInLevel !== generation.curLevel) {

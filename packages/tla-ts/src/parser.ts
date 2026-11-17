@@ -1,7 +1,6 @@
 import type {
   AssumeProve,
   Assumption,
-  Bound,
   BoundPattern,
   CaseArm,
   Declaration,
@@ -22,7 +21,7 @@ import type {
   StepBody,
   UseOrHide,
 } from "./ast";
-import { createSanyError, formatRange, TlaSyntaxError } from "./errors";
+import { TlaSyntaxError } from "./errors";
 import { getNumeralValue, readAtAsIdentifier, tokenize, type Token } from "./lexer";
 import { getSanyParseError } from "./sany/parse-error";
 
@@ -501,8 +500,6 @@ const parse = (
   let lastOperator: Precedence | undefined;
   let precedingOperator: Precedence | undefined;
   const recursiveScopes: Set<string>[] = [];
-  const factNames = new Set<string>();
-  const proofScopes: Set<string>[] = [];
   const openModules: Module[] = [];
   // Pco's backtracking: a failure not past a commit rewinds to its attempt's frame.
   let attemptFrame: number | undefined;
@@ -1214,9 +1211,15 @@ const parse = (
     const argumentRanges = [argumentsRange];
     while (isSelectorAhead()) {
       advance();
-      selectorRanges.push(getRange(cursor, cursor));
+      const selectorStart = cursor;
       lastArgumentsRange = undefined;
-      selectors.push(parseSelector());
+      const selector = parseSelector();
+      selectorRanges.push(
+        selector.kind === "Bound"
+          ? getRange(selectorStart)
+          : getRange(selectorStart, selectorStart),
+      );
+      selectors.push(selector);
       argumentRanges.push(lastArgumentsRange);
     }
     const names = selectors.flatMap((selector) =>
@@ -1367,11 +1370,12 @@ const parse = (
       case "LET": {
         const definitions: Definition[] = [];
         const instances: Instance[] = [];
+        const recursive: Declaration[] = [];
         recursiveScopes.push(new Set());
         while (!accept("IN")) {
           if (isTlapm && isAt("RECURSIVE")) throw createUnexpected("Unexpected keyword RECURSIVE");
           if (accept("RECURSIVE")) {
-            declareRecursive();
+            recursive.push(...declareRecursive());
             continue;
           }
           const unit = parseDefinition(!isTlapm && accept("LOCAL"));
@@ -1379,10 +1383,14 @@ const parse = (
           else definitions.push(unit);
         }
         recursiveScopes.pop();
-        const body = parseExpression();
-        return instances.length === 0
-          ? { kind: "Let", definitions, body, location }
-          : { kind: "Let", definitions, instances, body, location };
+        return {
+          kind: "Let",
+          definitions,
+          ...(instances.length > 0 && { instances }),
+          ...(recursive.length > 0 && { recursive }),
+          body: parseExpression(),
+          location,
+        };
       }
       case "CHOOSE": {
         const pattern = parsePattern();
@@ -2061,23 +2069,6 @@ const parse = (
     return isFirst ? level > outer : proofLevels[top] === level;
   };
 
-  const isDeclared = (name: string) =>
-    !factNames.has(name) &&
-    openModules.some(
-      (module) =>
-        module.constants.some((constant) => constant.name === name) ||
-        module.variables.some((variable) => variable.name === name) ||
-        module.definitions.some((definition) => definition.name === name),
-    );
-
-  const isHideFact = (fact: Fact) => {
-    if (fact.kind === "ModuleFact" || fact.kind === "Subexpression") return true;
-    if (fact.kind === "Apply") return fact.operator.includes("!");
-    if (fact.kind !== "Identifier") return false;
-    if (fact.name.startsWith("<") || fact.name.includes("!")) return true;
-    return !BUILTIN_CONSTANTS.has(fact.name) && !isDeclared(fact.name);
-  };
-
   const isFactAhead = () => {
     const token = peek();
     if (token.kind === "Step") return isStepReference(token);
@@ -2114,23 +2105,6 @@ const parse = (
     );
   };
 
-  const declareProofSymbol = (name: string) => proofScopes[proofScopes.length - 1]?.add(name);
-
-  const withProofScope = <Result>(parse: () => Result) => {
-    proofScopes.push(new Set());
-    const result = parse();
-    proofScopes.pop();
-    return result;
-  };
-
-  const isDeclaredSymbol = (name: string) =>
-    proofScopes.some((scope) => scope.has(name)) ||
-    openModules.some(
-      (module) =>
-        module.constants.some((constant) => constant.name === name) ||
-        module.variables.some((variable) => variable.name === name),
-    );
-
   const parseDefinable = (): Fact => {
     const start = cursor;
     const token = peek();
@@ -2152,18 +2126,7 @@ const parse = (
     );
   };
 
-  const parseDefs = () => {
-    if (isTlapm) return parseSeparated(parseDefinable);
-    const defs = parseSeparated(parseFact);
-    const invalid =
-      mode === "tlc"
-        ? defs.find((def) => def.kind === "Identifier" && isDeclaredSymbol(def.name))
-        : undefined;
-    if (invalid) {
-      throw createError("DEF clause entry should describe a defined operator", invalid.location);
-    }
-    return defs;
-  };
+  const parseDefs = () => parseSeparated(isTlapm ? parseDefinable : parseFact);
 
   // tlapm's usebody reads facts while an expression starts after the comma.
   const parseTlapmFacts = (): Fact[] => {
@@ -2195,25 +2158,16 @@ const parse = (
     const keyword = advance();
     const isOnly = keyword.text === "USE" && accept("ONLY");
     const keywordRange = getRange(start);
-    const use: UseOrHide = {
-      kind: keyword.text === "USE" ? "Use" : "Hide",
-      isOnly,
-      ...parseFacts(),
-      keyword: keywordRange,
-      location: getLocation(keyword),
-    };
-    const invalid =
-      use.kind === "Hide" && mode === "tlc" ? use.facts.filter((fact) => !isHideFact(fact)) : [];
-    if (invalid.length > 0) {
-      throw createSanyError(
-        invalid.map((fact) => ({
-          location: formatRange(fact.location.range ?? getRange(start)),
-          message:
-            "The only expression allowed as a fact in a HIDE is \nthe name of a theorem, assumption, or step.",
-        })),
-      );
-    }
-    return withRange(use, start);
+    return withRange(
+      {
+        kind: keyword.text === "USE" ? "Use" : "Hide",
+        isOnly,
+        ...parseFacts(),
+        keyword: keywordRange,
+        location: getLocation(keyword),
+      },
+      start,
+    );
   };
 
   const parseNewSymbol = (): NewSymbol => {
@@ -2229,7 +2183,6 @@ const parse = (
     if (level !== undefined) advance();
     if (level === "Variable") {
       const named = expectName();
-      declareProofSymbol(named.name);
       return withRange(
         {
           kind: "NewSymbol",
@@ -2244,7 +2197,6 @@ const parse = (
       );
     }
     const declaration = parseDeclaration();
-    declareProofSymbol(declaration.name);
     const isBounded = (level ?? "Constant") === "Constant" && isAt("\\in");
     if (isBounded && declaration.arity > 0) {
       throw createError("declared symbol with arguments before \\in");
@@ -2269,7 +2221,7 @@ const parse = (
       advance();
       advance();
     }
-    if (isAt("ASSUME")) return withProofScope(parseAssumeProve);
+    if (isAt("ASSUME")) return parseAssumeProve();
     if (peek().kind === "Keyword" && NEW_SYMBOL_STARTS.has(peek().text))
       return isTlapm ? commit(parseNewSymbol) : parseNewSymbol();
     if (!isTlapm) return parseExpression();
@@ -2318,15 +2270,6 @@ const parse = (
     return peek(offset).kind === "Identifier" && isAt(terminator, offset + 1);
   };
 
-  const declareProofSymbols = (names: string[], bounds: Bound[]) => {
-    names.forEach(declareProofSymbol);
-    bounds.forEach((bound) =>
-      (bound.pattern.kind === "Name" ? [bound.pattern.name] : bound.pattern.names).forEach(
-        declareProofSymbol,
-      ),
-    );
-  };
-
   const parseStepBody = (): StepBody => {
     const token = peek();
     if (isAt("USE") || isAt("HIDE")) return parseUseOrHide();
@@ -2347,7 +2290,6 @@ const parse = (
       const isBounded = isBoundAhead();
       const names = getNames(isBounded ? [] : parseSeparated(expectName));
       const bounds = isBounded ? parseBounds() : [];
-      declareProofSymbols(names.names, bounds);
       return { kind: "Take", names: names.names, nameRanges: names.ranges, bounds };
     }
     if (accept("WITNESS")) {
@@ -2357,7 +2299,6 @@ const parse = (
       const isNames = isNameListAhead(":");
       const names = getNames(isNames ? parseSeparated(expectName) : []);
       const bounds = isNames ? [] : parseBounds();
-      declareProofSymbols(names.names, bounds);
       expect(":");
       return {
         kind: "Pick",
@@ -2394,8 +2335,6 @@ const parse = (
     const start = cursor;
     const step = parseStepStart(isAt("QED", 1));
     const statementStart = cursor;
-    const scope = new Set<string>();
-    proofScopes.push(scope);
     const body: StepBody = accept("QED") ? { kind: "Qed" } : parseStepBody();
     const head = getRange(start);
     const statement = getRange(statementStart);
@@ -2404,8 +2343,6 @@ const parse = (
       throw createError("Proof of a step that does not take a proof");
     }
     const proof = hasProof ? parseProof() : undefined;
-    proofScopes.pop();
-    if (body.kind !== "Assert" || body.isSuffices) scope.forEach(declareProofSymbol);
     return withRange({ ...step, body, head, statement, proof }, start);
   };
 
@@ -2437,7 +2374,7 @@ const parse = (
   const parseProof = (): Proof => {
     const start = cursor;
     proofLevels.push(-1);
-    const proof = withProofScope(parseProofBody);
+    const proof = parseProofBody();
     proofLevels.pop();
     return withRange(proof, start);
   };
@@ -2621,7 +2558,6 @@ const parse = (
   const parseFactName = () => {
     if (peek().kind !== "Identifier" || !isAt("==", 1)) return undefined;
     const name = expectIdentifier();
-    factNames.add(name);
     advance();
     return name;
   };
@@ -2639,16 +2575,9 @@ const parse = (
     const start = cursor;
     const keyword = advance();
     const name = parseFactName();
-    const parsed = withProofScope(() => {
-      const statement = isAt("ASSUME") ? parseAssumeProve() : parseTheoremExpression();
-      if (isTlapm) return { statement, proof: parseTlapmProof() };
-      return { statement, proof: isProofStart(peek()) ? parseProof() : undefined };
-    });
-    const statement = parsed.statement;
-    const theorem = withRange(
-      { name, statement, proof: parsed.proof, location: getLocation(keyword) },
-      start,
-    );
+    const statement = isAt("ASSUME") ? parseAssumeProve() : parseTheoremExpression();
+    const proof = isTlapm ? parseTlapmProof() : isProofStart(peek()) ? parseProof() : undefined;
+    const theorem = withRange({ name, statement, proof, location: getLocation(keyword) }, start);
     module.theorems.push(theorem);
     module.units.push({ kind: "Theorem", theorem });
     if (name === undefined || statement.kind === "AssumeProve") return;

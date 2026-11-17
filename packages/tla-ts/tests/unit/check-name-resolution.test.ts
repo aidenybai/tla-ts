@@ -194,6 +194,149 @@ describe("name resolution matches SANY", () => {
       ],
     ],
     [
+      "f[a \\in f] == 1\nG == LET h[b \\in h] == 1 IN h\nRECURSIVE k\nk[c \\in k] == 1",
+      [
+        ["line 2, col 9 to line 2, col 9", "Unknown operator: `f'."],
+        ["line 3, col 18 to line 3, col 18", "Unknown operator: `h'."],
+      ],
+    ],
+    [
+      "RECURSIVE Map(_), f(_, _)\nMap(a, b) == 1\nf(a) == a",
+      [
+        [
+          "line 3, col 1 to line 3, col 14",
+          "Definition of Map has different arity than its RECURSIVE declaration.",
+        ],
+        [
+          "line 4, col 1 to line 4, col 9",
+          "Definition of f has different arity than its RECURSIVE declaration.",
+        ],
+      ],
+    ],
+    [
+      "G == LET RECURSIVE F(_), h(_), K\n         F == 1\n         h[a \\in {1}] == 1\n     IN <<F, h>>",
+      [
+        [
+          "line 3, col 10 to line 3, col 15",
+          "Definition of F has different arity than its RECURSIVE declaration.",
+        ],
+        [
+          "line 4, col 10 to line 4, col 26",
+          "Function h has operator arguments in its RECURSIVE declaration.",
+        ],
+        [
+          "line 2, col 26 to line 2, col 29",
+          "Symbol h declared in RECURSIVE statement but not defined.",
+        ],
+        [
+          "line 2, col 32 to line 2, col 32",
+          "Symbol K declared in RECURSIVE statement but not defined.",
+        ],
+        ["line 5, col 11 to line 5, col 11", "The operator F requires 1 arguments."],
+        ["line 5, col 14 to line 5, col 14", "The operator h requires 1 arguments."],
+      ],
+    ],
+    [
+      "EXTENDS Naturals\nRECURSIVE A, B(_), F\nG == F\nA(p) == A\nB == B(1)\nC == A + B(2)\nD == LET RECURSIVE E\n         E(q) == E\n     IN E + E(1)\nF(r) == 1",
+      [
+        [
+          "line 5, col 1 to line 5, col 9",
+          "Definition of A has different arity than its RECURSIVE declaration.",
+        ],
+        [
+          "line 5, col 9 to line 5, col 9",
+          "Wrong number of arguments (0) given to operator 'A', \nwhich requires 1 arguments.",
+        ],
+        [
+          "line 6, col 1 to line 6, col 9",
+          "Definition of B has different arity than its RECURSIVE declaration.",
+        ],
+        [
+          "line 6, col 6 to line 6, col 9",
+          "Wrong number of arguments (1) given to operator 'B', \nwhich requires 0 arguments.",
+        ],
+        [
+          "line 7, col 6 to line 7, col 6",
+          "Wrong number of arguments (0) given to operator 'A', \nwhich requires 1 arguments.",
+        ],
+        [
+          "line 7, col 10 to line 7, col 13",
+          "Wrong number of arguments (1) given to operator 'B', \nwhich requires 0 arguments.",
+        ],
+        [
+          "line 9, col 10 to line 9, col 18",
+          "Definition of E has different arity than its RECURSIVE declaration.",
+        ],
+        [
+          "line 9, col 18 to line 9, col 18",
+          "Wrong number of arguments (0) given to operator 'E', \nwhich requires 1 arguments.",
+        ],
+        [
+          "line 10, col 9 to line 10, col 9",
+          "Wrong number of arguments (0) given to operator 'E', \nwhich requires 1 arguments.",
+        ],
+        ["line 10, col 14 to line 10, col 16", "The operator E requires 0 arguments."],
+        [
+          "line 11, col 1 to line 11, col 9",
+          "Definition of F has different arity than its RECURSIVE declaration.",
+        ],
+      ],
+    ],
+    [
+      "EXTENDS Naturals\nRECURSIVE F(_), G\nA == F(1)!1 + G!1\nF(n) == IF n = 0 THEN 0 ELSE F(n - 1)!1\nG == LET RECURSIVE H(_)\n         H(k) == H(k)!1\n     IN G!1\nB == F(2)!1 + G!1",
+      [
+        [
+          "line 4, col 6 to line 4, col 6",
+          "Subexpression of  `F' used inside the operator's definition.",
+        ],
+        [
+          "line 4, col 15 to line 4, col 15",
+          "Subexpression of  `G' used inside the operator's definition.",
+        ],
+        [
+          "line 5, col 30 to line 5, col 30",
+          "Subexpression of  `F' used inside the operator's definition.",
+        ],
+        [
+          "line 7, col 18 to line 7, col 18",
+          "Subexpression of  `H' used inside the operator's definition.",
+        ],
+        [
+          "line 8, col 9 to line 8, col 9",
+          "Subexpression of  `G' used inside the operator's definition.",
+        ],
+      ],
+    ],
+    [
+      "CONSTANT C(_)\nVARIABLE v\n---- MODULE In ----\nCONSTANT k, F(_)\n====\nOp(P(_)) == P(1)\nA == WF_v(LAMBDA p : lab:: p)\nD == Op(LAMBDA r : r) /\\ Op(LAMBDA r, s : r)\nI == INSTANCE In WITH k <- LAMBDA a : a, F <- LAMBDA a : a\nG(a) == a\nH == G(LAMBDA z : z) /\\ C(LAMBDA z : z)",
+      [
+        [
+          "line 8, col 11 to line 8, col 28",
+          "LAMBDA expression used where an expression is required.",
+        ],
+        [
+          "line 9, col 26 to line 9, col 27",
+          "Lambda expression with arity 2 used as argument 1 of operator `Op', \nbut an operator of arity 1 is required.",
+        ],
+        [
+          "line 9, col 26 to line 9, col 44",
+          "Argument number 1 to operator 'Op' \nshould be a 1-parameter operator.",
+        ],
+        [
+          "line 10, col 28 to line 10, col 39",
+          "LAMBDA expression used where an expression is required.",
+        ],
+        [
+          "line 12, col 8 to line 12, col 19",
+          "LAMBDA expression used where an expression is required.",
+        ],
+        [
+          "line 12, col 27 to line 12, col 38",
+          "LAMBDA expression used where an expression is required.",
+        ],
+      ],
+    ],
+    [
       "f == 1 + 1",
       [
         [
@@ -1627,5 +1770,211 @@ describe("name resolution matches SANY", () => {
         ],
       },
     });
+  });
+
+  it("reports a LET RECURSIVE declaration after the definition like SANY", async () => {
+    await expect(
+      checkNames("G == LET H == 1\n         RECURSIVE H, K\n     IN H"),
+    ).rejects.toMatchObject({
+      sany: {
+        errors: [
+          {
+            location: "line 3, col 20 to line 3, col 20 of module M",
+            message: "Symbol H declared in RECURSIVE statement but not defined.",
+          },
+          {
+            location: "line 3, col 23 to line 3, col 23 of module M",
+            message: "Symbol K declared in RECURSIVE statement but not defined.",
+          },
+        ],
+        warnings: [
+          {
+            location: "line 3, col 20 to line 3, col 20 of module M",
+            message:
+              "Multiple declarations or definitions for symbol H.  \nThis duplicates the one at line 2, col 10 to line 2, col 15 of module M.",
+          },
+        ],
+      },
+    });
+  });
+
+  it("resolves a name that RECURSIVE declares but nothing defines like SANY", async () => {
+    await expect(
+      checkNames("RECURSIVE F(_)\nG == F\nH == LET F(a) == 1 IN F(1)"),
+    ).rejects.toMatchObject({
+      sany: {
+        errors: [
+          {
+            location: "line 3, col 6 to line 3, col 6 of module M",
+            message: "The operator F requires 1 arguments.",
+          },
+          {
+            location: "line 4, col 10 to line 4, col 18 of module M",
+            message: "Recursive operator F defined at wrong LET/IN level.",
+          },
+          {
+            location: "line 5, col 1 to line 5, col 10 of module M",
+            message: "A VARIABLE declaration may not appear within a recursive definition section.",
+          },
+          {
+            location: "line 2, col 11 to line 2, col 14 of module M",
+            message: "Symbol F declared in RECURSIVE statement but not defined.",
+          },
+        ],
+        warnings: [
+          {
+            location: "line 4, col 10 to line 4, col 18 of module M",
+            message:
+              "Multiple declarations or definitions for symbol F.  \nThis duplicates the one at line 2, col 11 to line 2, col 14 of module M.",
+          },
+        ],
+      },
+    });
+  });
+
+  it("reports DEF clause entries that name no definition like SANY", async () => {
+    await expect(
+      check({
+        source:
+          "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nCONSTANT c\nF == 1\nUSE DEF Later\nLater == 1\n---- MODULE Inner ----\nG == 1\n====\nI == INSTANCE Inner\nTHEOREM TRUE BY DEF x, c, F, Nope, I, I!G, I!H\nTHEOREM ASSUME NEW xx PROVE TRUE\n  BY DEF xx\nTHEOREM TRUE\n<1> PICK p : p = 1 OBVIOUS\n<1> QED BY DEF p\nHIDE DEF -., \\cup, +, Nat\n====",
+        config: "",
+      }),
+    ).rejects.toThrow(
+      createSanyError(
+        [
+          ["line 6, col 9 to line 6, col 13", "Unknown operator: `Later'."],
+          [
+            "line 6, col 9 to line 6, col 13",
+            "DEF clause entry should describe a defined operator.",
+          ],
+          ["line 6, col 1 to line 6, col 13", "Empty USE or HIDE statement."],
+          [
+            "line 12, col 21 to line 12, col 21",
+            "DEF clause entry should describe a defined operator.",
+          ],
+          [
+            "line 12, col 24 to line 12, col 24",
+            "DEF clause entry should describe a defined operator.",
+          ],
+          ["line 12, col 30 to line 12, col 33", "Unknown operator: `Nope'."],
+          [
+            "line 12, col 30 to line 12, col 33",
+            "DEF clause entry should describe a defined operator.",
+          ],
+          ["line 12, col 44 to line 12, col 46", "Unknown operator: `I!H'."],
+          [
+            "line 12, col 44 to line 12, col 46",
+            "DEF clause entry should describe a defined operator.",
+          ],
+          [
+            "line 14, col 10 to line 14, col 11",
+            "DEF clause entry should describe a defined operator.",
+          ],
+          ["line 14, col 3 to line 14, col 11", "Empty BY"],
+          [
+            "line 17, col 16 to line 17, col 16",
+            "DEF clause entry should describe a defined operator.",
+          ],
+          ["line 17, col 9 to line 17, col 16", "Empty BY"],
+          ["line 18, col 10 to line 18, col 11", "Unknown operator: `-.'."],
+          [
+            "line 18, col 10 to line 18, col 11",
+            "DEF clause entry should describe a defined operator.",
+          ],
+          [
+            "line 18, col 14 to line 18, col 17",
+            "DEF clause entry should describe a defined operator.",
+          ],
+        ].map((entry) => ({ location: `${entry[0]} of module M`, message: entry[1] })),
+      ),
+    );
+  });
+
+  it("reports an @ fact as an unknown operator like SANY", async () => {
+    await expect(checkNames("USE @\nTHEOREM TRUE\nBY @\nHIDE @")).rejects.toThrow(
+      createSanyError([
+        {
+          location: "line 2, col 5 to line 2, col 5 of module M",
+          message: "Unknown operator: `@'.",
+        },
+        {
+          location: "line 4, col 4 to line 4, col 4 of module M",
+          message: "Unknown operator: `@'.",
+        },
+        {
+          location: "line 5, col 6 to line 5, col 6 of module M",
+          message: "Unknown operator: `@'.",
+        },
+        {
+          location: "In module --TLA+ BUILTINS--",
+          message:
+            "The only expression allowed as a fact in a HIDE is \nthe name of a theorem, assumption, or step.",
+        },
+      ]),
+    );
+  });
+
+  it("reports HIDE facts that name no theorem, assumption or step like SANY", async () => {
+    const message =
+      "The only expression allowed as a fact in a HIDE is \nthe name of a theorem, assumption, or step.";
+    await expect(
+      checkNames(
+        'EXTENDS Naturals\nCONSTANT c\nVARIABLE y\nD == 1\nE(a) == a\nTHEOREM T == TRUE\nAXIOM A == TRUE\nHIDE 1, "s", TRUE, y, c, D, Unk, 1 + 1, E(1), T, A, LET q == 1 IN q, MODULE Naturals, {1}, l :: 1, 1.5\nHIDE T DEF D\nTHEOREM ASSUME NEW n PROVE TRUE\n<1>1. TRUE\n<1>2. ASSUME NEW m PROVE TRUE\n  <2> HIDE <1>1, <1>2, n, m, T, Q, c\n  <2>1. QED\n<1> HIDE <1>1, 1\n<1>3. QED',
+      ),
+    ).rejects.toThrow(
+      createSanyError([
+        {
+          location: "line 9, col 29 to line 9, col 31 of module M",
+          message: "Unknown operator: `Unk'.",
+        },
+        {
+          location: "line 9, col 92 to line 9, col 97 of module M",
+          message: "Label not in definition or proof step.",
+        },
+        ...[
+          "line 9, col 14 to line 9, col 17 of module M",
+          "line 9, col 20 to line 9, col 20 of module M",
+          "line 9, col 23 to line 9, col 23 of module M",
+          "line 9, col 26 to line 9, col 26 of module M",
+          "In module --TLA+ BUILTINS--",
+          "line 9, col 34 to line 9, col 38 of module M",
+          "line 9, col 41 to line 9, col 44 of module M",
+          "line 9, col 87 to line 9, col 89 of module M",
+        ].map((location) => ({ location, message })),
+        {
+          location: "line 14, col 33 to line 14, col 33 of module M",
+          message: "Unknown operator: `Q'.",
+        },
+        ...[
+          "line 14, col 24 to line 14, col 24 of module M",
+          "line 14, col 27 to line 14, col 27 of module M",
+          "line 14, col 36 to line 14, col 36 of module M",
+        ].map((location) => ({ location, message })),
+      ]),
+    );
+  });
+
+  it("passes an operator whose definition has fewer parameters than its RECURSIVE declaration, where SANY crashes", async () => {
+    await expect(
+      checkNames("RECURSIVE R(_, _)\nR == 1\nL(P(_, _)) == 1\nA == L(R)"),
+    ).rejects.toThrow(
+      createSanyError([
+        {
+          location: "line 3, col 1 to line 3, col 6 of module M",
+          message: "Definition of R has different arity than its RECURSIVE declaration.",
+        },
+      ]),
+    );
+  });
+
+  it("reports an operator parameter where a RECURSIVE declaration has _, which SANY accepts", async () => {
+    await expect(checkNames("RECURSIVE Map(_, _)\nMap(f(_), s) == 1")).rejects.toThrow(
+      createSanyError([
+        {
+          location: "line 3, col 1 to line 3, col 17 of module M",
+          message: "Definition of Map has different arity than its RECURSIVE declaration.",
+        },
+      ]),
+    );
   });
 });
