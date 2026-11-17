@@ -469,3 +469,22 @@ describe("if-no-models, as Z3 5.3.2 runs it", () => {
     ]);
   });
 });
+
+describe("the models check-sat-using leaves, as Z3 5.3.2 makes them", () => {
+  it("converts a model for an undecided goal that has a model converter", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(declare-const b Bool)",
+        "(assert (= x (+ y 1)))",
+        "(assert (or b (> (* y y) 2)))",
+        "(check-sat-using solve-eqs)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "unknown",
+      "(\n  (define-fun x () Int\n    0)\n  (define-fun y () Int\n    (- 1))\n  (define-fun b () Bool\n    false)\n)",
+    ]);
+  });
+});

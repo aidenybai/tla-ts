@@ -1972,6 +1972,9 @@ export const convertModel = (goal: Goal, model: ProtoModel) =>
     return converted;
   }, model);
 
+const getConvertedModel = (goal: Goal) =>
+  convertModel(goal, goal.model ?? new ProtoModel(goal.manager).mkModel());
+
 export const checkSatUsing = (tactic: Tactic, goal: Goal): TacticCheck => {
   const undecided = { status: L_UNDEF, model: undefined, core: undefined };
   const goals = (() => {
@@ -1986,7 +1989,7 @@ export const checkSatUsing = (tactic: Tactic, goal: Goal): TacticCheck => {
   if (goals === undefined) return { ...undecided, reasonUnknown: undefined };
   if (typeof goals === "string") return { ...undecided, reasonUnknown: goals };
   if (isDecidedSat(goals)) {
-    const model = convertModel(goals[0], goals[0].model ?? new ProtoModel(goal.manager).mkModel());
+    const model = getConvertedModel(goals[0]);
     return goal.manager.limit.inc()
       ? { status: L_TRUE, model, core: undefined, reasonUnknown: "" }
       : { ...undecided, model, reasonUnknown: "canceled" };
@@ -2000,6 +2003,12 @@ export const checkSatUsing = (tactic: Tactic, goal: Goal): TacticCheck => {
     };
   return {
     ...undecided,
+    model:
+      goal.isModelsEnabled &&
+      goals.length > 0 &&
+      (goals[0].model !== undefined || goals[0].converters.length > 0)
+        ? getConvertedModel(goals[0])
+        : undefined,
     reasonUnknown:
       goals.length === 1 && goals[0].reasonUnknown !== "" ? goals[0].reasonUnknown : "unknown",
   };
