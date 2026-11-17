@@ -1,6 +1,6 @@
 import ts from "@typescript/typescript6";
 import { TlaTypeScriptError } from "../errors";
-import { isStrictCode } from "./context";
+import { isModuleFile, isStrictCode } from "./context";
 
 const reject = (message: string, node: ts.Node): never => {
   throw new TlaTypeScriptError(`SyntaxError: ${message}`, node);
@@ -194,6 +194,25 @@ export const getRegularExpressionError = (node: ts.RegularExpressionLiteral) => 
   }
 };
 
+// Whether a name is a property's or a module's export, which any word may be, rather than a
+// binding's or a reference's.
+const isPropertyName = (node: ts.Identifier) => {
+  const parent = node.parent;
+  return (
+    (ts.isPropertyAccessExpression(parent) && parent.name === node) ||
+    ((ts.isPropertyAssignment(parent) ||
+      ts.isMethodDeclaration(parent) ||
+      ts.isPropertyDeclaration(parent) ||
+      ts.isAccessor(parent) ||
+      ts.isPropertySignature(parent) ||
+      ts.isMethodSignature(parent)) &&
+      parent.name === node) ||
+    ((ts.isBindingElement(parent) || ts.isImportSpecifier(parent)) &&
+      parent.propertyName === node) ||
+    (ts.isExportSpecifier(parent) && parent.name === node && parent.propertyName !== undefined)
+  );
+};
+
 // Rejects programs that JavaScript rejects as it parses, where TypeScript accepts them, and stops at
 // those that it accepts only outside strict mode, where tla-ts doesn't follow them.
 export const rejectEarlyErrors = (sourceFile: ts.SourceFile) => {
@@ -266,6 +285,16 @@ export const rejectEarlyErrors = (sourceFile: ts.SourceFile) => {
       !node.text.isWellFormed()
     ) {
       reject("A module's export names can't have lone surrogates", node);
+    }
+    // A module reserves await, which TypeScript reads as a name inside a function that isn't
+    // async, as in an arrow's parameters.
+    if (
+      ts.isIdentifier(node) &&
+      node.text === "await" &&
+      isModuleFile(sourceFile) &&
+      !isPropertyName(node)
+    ) {
+      reject("Unexpected reserved word", node);
     }
     if (ts.isMetaProperty(node) && node.name.getText() !== node.name.text) {
       reject("Keywords can't contain escapes", node.name);

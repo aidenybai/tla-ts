@@ -456,6 +456,16 @@ export const typeJavaScript = (
   isReported: (diagnostic: ts.Diagnostic) => boolean,
 ) => {
   const checker = program.getTypeChecker();
+  // A private name that no class declares, and arguments where no function binds it, as in a
+  // field's initializer, are early errors that TypeScript reports as names it can't find.
+  const isIgnored = (diagnostic: ts.Diagnostic) => {
+    const node = getDiagnosedNode(file, diagnostic);
+    return (
+      IGNORED_ERRORS.has(diagnostic.code) &&
+      !ts.isPrivateIdentifier(node) &&
+      !(ts.isIdentifier(node) && node.text === "arguments")
+    );
+  };
   // TypeScript's grammar of regular expressions is stricter than Node's, which tla-ts follows.
   const isAcceptedPattern = (diagnostic: ts.Diagnostic) => {
     const literal = ts.findAncestor(
@@ -469,7 +479,7 @@ export const typeJavaScript = (
     .filter(
       (diagnostic) =>
         diagnostic.category === ts.DiagnosticCategory.Error &&
-        !IGNORED_ERRORS.has(diagnostic.code) &&
+        !isIgnored(diagnostic) &&
         isReported(diagnostic) &&
         !isAcceptedPattern(diagnostic),
     );

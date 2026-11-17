@@ -50483,4 +50483,30 @@ describe("BigInts", () => {
       "tla-ts can't run JavaScript whose types TypeScript rejects",
     );
   });
+
+  describe("rejects the early errors of JavaScript that TypeScript reads as names it can't find", () => {
+    const path = join(import.meta.dirname, "model.js");
+
+    it.each([
+      ["await in an arrow's parameters", "async () => { (a = await/r/g) => {}; };", "SyntaxError"],
+      ["await as a rest parameter", "async (a = (...await) => {}) => {};", "SyntaxError"],
+      ["an undeclared private name", "class C { x = this.#foo; }", "TS2339"],
+      ["arguments in a field", "var C = class { x = () => arguments; };", "TS2662"],
+    ])("rejects %s", (_, statement, message) => {
+      expect(() => compile(`export {};\n${statement}`, path)).toThrow(message);
+    });
+
+    it("runs a property named await", async () => {
+      const source = `
+        export {};
+        var box = { await: 1 };
+        box.await = box.await + 1;
+        if (box.await !== 2) throw new Error("seen " + box.await);
+      `;
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+      expect(
+        (await check(compile(source.replace("!== 2", "!== 3"), path))).failure?.message,
+      ).toContain("seen 2");
+    });
+  });
 });
