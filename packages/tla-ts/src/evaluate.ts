@@ -1870,12 +1870,11 @@ export const getLazyFilter = (
 ) => {
   const predicate = getEvaluator(expression.predicate, environment);
   const pattern = expression.bound.pattern;
-  const range = expression.predicate.location.range;
-  const source = range && {
-    names: pattern.kind === "Name" ? pattern.name : pattern.names.join(", "),
-    predicate: describeNode(expression.predicate),
-  };
   const predicateNode = describeNode(expression.predicate);
+  const source = expression.predicate.location.range && {
+    names: pattern.kind === "Name" ? pattern.name : pattern.names.join(", "),
+    predicate: predicateNode,
+  };
   const coverage = environment.coverage;
   const testCovered = (node: number, isMember: boolean, test: () => Value) => {
     if (!coverage || node === -1) return test();
