@@ -30,7 +30,9 @@ import {
   nullSelections,
   operatorSelectionErrors,
   selectionErrors,
+  selectionArguments,
   selections,
+  SELECTION_NAME,
   factReferences,
   type NullSelection,
   type SelectionArguments,
@@ -55,8 +57,6 @@ interface SelectingName {
   selectorRanges?: SourceRange[];
   argumentRanges?: (SourceRange | undefined)[];
 }
-
-const SELECTION_NAME = "$subexpression";
 
 const declaredArities = new WeakMap<Definition, number>();
 
@@ -260,6 +260,13 @@ const selectSubexpression = (
       if (!isOperator || found.args.length !== 0) return report(range, message);
       deferToExpression(range, message);
     }
+    found.args.forEach((arg, index) =>
+      selectionArguments.set(arg, {
+        operator: found.name,
+        index,
+        range: reference.selectorRanges?.[selectorIndex],
+      }),
+    );
     if (isLast) return { definition, args: found.args };
     const range = definition.location.range;
     const isUndefined =

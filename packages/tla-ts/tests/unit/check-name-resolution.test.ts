@@ -831,6 +831,41 @@ describe("name resolution matches SANY", () => {
       ],
     ],
     [
+      "CONSTANT c\nOp0(a0, P1(_, _)) == l1:: a0\nOp3(P(_, _)) == {LET L(G(_)) == lab:: G(1) IN L(P)}\nA == Op0(c, 1)!l1 /\\ Op3(LAMBDA p : p)!1!1 /\\ Op3(Op0)!<<!L(c)!lab",
+      [
+        ["line 4, col 49 to line 4, col 49", "Expected arity 1 but found operator of arity 2."],
+        [
+          "line 4, col 47 to line 4, col 50",
+          "Argument number 1 to operator 'L' \nshould be a 1-parameter operator.",
+        ],
+        [
+          "line 5, col 13 to line 5, col 13",
+          "An expression appears as argument number 2 (counting from 1) to operator 'Op0', in a position an operator is required.",
+        ],
+        [
+          "line 5, col 6 to line 5, col 17",
+          "Argument number 2 to operator 'LAMBDA' \nshould be a 2-parameter operator.",
+        ],
+        [
+          "line 5, col 22 to line 5, col 24",
+          "Lambda expression with arity 1 used as argument 1 of operator `Op3', \nbut an operator of arity 2 is required.",
+        ],
+        [
+          "line 5, col 22 to line 5, col 42",
+          "Argument number 1 to operator 'LAMBDA' \nshould be a 2-parameter operator.",
+        ],
+        ["line 5, col 61 to line 5, col 61", "Expected arity 1 but found operator of arity 0."],
+        [
+          "line 5, col 47 to line 5, col 66",
+          "Argument number 1 to operator 'LAMBDA' \nshould be a 2-parameter operator.",
+        ],
+        [
+          "line 5, col 47 to line 5, col 66",
+          "Argument number 2 to operator 'LAMBDA' \nshould be a 1-parameter operator.",
+        ],
+      ],
+    ],
+    [
       "CONSTANT c\nRECURSIVE R(_, _), Q(_), P(_, _)\nA == R(c, R)!1!@ /\\ Q(Q)!1 /\\ P(P, LAMBDA p : p)!1\nR(a, b) == a\nQ(a) == Q(a) /\\ Q(Q)!1\nP == c",
       [
         ["line 4, col 11 to line 4, col 11", "The operator R requires 2 arguments."],

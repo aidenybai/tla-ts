@@ -111,15 +111,24 @@ type Reference = Expression & { kind: "Identifier" | "Apply" | "Subexpression" }
 
 export const LOCAL_RESOLUTION = { kind: "Local" } as const;
 
+export const SELECTION_NAME = "$subexpression";
+
 export interface NullSelection {
   node: Expression;
   error: SanyError;
+}
+
+interface SelectionArgument {
+  operator: string;
+  index: number;
+  range: SourceRange | undefined;
 }
 
 export const selections = new WeakSet<Expression>();
 export const selectionErrors = new WeakMap<Expression, SelectionError>();
 export const operatorSelectionErrors = new WeakMap<Expression, SanyError>();
 export const factReferences = new WeakMap<Fact[], Fact[]>();
+export const selectionArguments = new WeakMap<Expression, SelectionArgument>();
 export const nullSelections = new WeakMap<Expression, NullSelection[]>();
 const unresolvedExpressions = new WeakSet<Expression>();
 
@@ -1199,11 +1208,19 @@ const resolveApply = (
   }
   const operatorRange =
     expression.selectorRanges?.at(-1) ?? getSpelledNameRange(expression, operator);
-  const matches = expression.args
-    .slice(0, params.length)
-    .map((arg, index) =>
-      matchArgument(arg, params[index], index, operator, operatorRange, scope, unit),
+  const isSelection = operator === SELECTION_NAME;
+  const matches = expression.args.slice(0, params.length).map((arg, index) => {
+    const source = isSelection ? selectionArguments.get(arg) : undefined;
+    return matchArgument(
+      arg,
+      params[index],
+      source?.index ?? index,
+      source?.operator ?? operator,
+      source?.range ?? operatorRange,
+      scope,
+      unit,
     );
+  });
   if (
     isArgumentCountReported(
       callee,
@@ -1219,7 +1236,7 @@ const resolveApply = (
     if (!isMatched && expression.location.range) {
       unit.errors.push({
         location: formatRange(expression.location.range),
-        message: `Argument number ${index + 1} to operator '${operator}' \nshould be a ${params[index]}-parameter operator.`,
+        message: `Argument number ${index + 1} to operator '${isSelection ? "LAMBDA" : operator}' \nshould be a ${params[index]}-parameter operator.`,
       });
     }
   });
