@@ -644,11 +644,14 @@ export const createContext = (
   defaultLibraries: ReadonlySet<ts.SourceFile>,
   nodes: ProgramNodes,
 ): Context => {
-  const reads = getDeclaredReads(checker, files);
+  // TypeScript checks an expression again on each query of its type, so the walk of what each read
+  // keeps and the checker that narrows by it read the types of one column.
+  const typed = withNodeTypes(checker, nodes);
+  const reads = getDeclaredReads(typed, files);
   const references = createReferences(nodes, (name) => getSymbol(name, checker));
   const context: Context = {
     checker: {
-      ...withNodeTypes(withDeclaredReads(checker, reads), nodes),
+      ...withNodeTypes(withDeclaredReads(typed, reads), nodes),
       getNameSymbol: (node) => {
         const position = ts.isIdentifier(node) ? getPosition(nodes, node) : -1;
         return position < 0 ? null : references.symbols[position];
