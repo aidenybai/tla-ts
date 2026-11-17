@@ -103,6 +103,7 @@ export interface SmtConfig {
   isEq2Ineq: boolean;
   isFindingMacros: boolean;
   isEliminatingTermIte: boolean;
+  isArithPropagatingEqs: boolean;
 }
 
 const UNKNOWN_THEORIES = [
@@ -131,6 +132,7 @@ export const DEFAULT_CONFIG: SmtConfig = {
   isEq2Ineq: false,
   isFindingMacros: false,
   isEliminatingTermIte: false,
+  isArithPropagatingEqs: true,
 };
 
 // setup_unknown(), which closes with setup_relevancy.
@@ -160,10 +162,11 @@ const setupQfDt = (config: SmtConfig) => {
   config.theories.push(FAMILY_DATATYPE, FAMILY_RECFUN);
 };
 
-// The parameters smt_params::setup_QF_IDL, setup_QF_RDL and setup_QF_LIA share.
+// The parameters smt_params::setup_QF_IDL, setup_QF_RDL, setup_QF_LIA and setup_QF_LRA share.
 const setupDiffLogicParams = (config: SmtConfig) => {
   config.relevancyLevel = 0;
   config.isEq2Ineq = true;
+  config.isArithPropagatingEqs = false;
   config.isNnfCnf = false;
 };
 
@@ -184,6 +187,7 @@ const setupQfLiaByFeatures = (config: SmtConfig, features: StaticFeatures) => {
   setupDiffLogicParams(config);
   if (features.maxIteTreeDepth > 50) {
     config.isEq2Ineq = false;
+    config.isArithPropagatingEqs = true;
     config.relevancyLevel = 2;
   } else if (features.numClauses === features.numUnits) {
     config.relevancyLevel = 2;
@@ -254,7 +258,9 @@ const setupQfIdlByFeatures = (config: SmtConfig, features: StaticFeatures, setup
 };
 
 const setupQfUfIdl = (config: SmtConfig) => {
-  setupDiffLogicParams(config);
+  config.relevancyLevel = 0;
+  config.isNnfCnf = false;
+  config.isEq2Ineq = true;
   config.restartStrategy = RS_GEOMETRIC;
   config.restartFactor = 1.5;
   config.isRestartAdaptive = false;
@@ -270,6 +276,7 @@ const setupQfUfIdlByFeatures = (config: SmtConfig, features: StaticFeatures) => 
   config.isNnfCnf = false;
   if (features.numUninterpretedFunctions === 0) {
     config.isEq2Ineq = true;
+    config.isArithPropagatingEqs = false;
     if (isDense(features)) {
       config.restartStrategy = RS_GEOMETRIC;
       config.theories.push(FAMILY_ARITH);
@@ -373,6 +380,7 @@ const setupAufLira = (config: SmtConfig) => {
 
 const setupLra = (config: SmtConfig) => {
   config.relevancyLevel = 0;
+  config.isArithPropagatingEqs = false;
   config.isEliminatingTermIte = true;
   config.theories.push(FAMILY_ARITH);
 };

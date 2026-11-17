@@ -1047,4 +1047,24 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
       ")",
     ]);
   });
+
+  it("propagates no equalities from the bounds of an integer problem", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(assert (> (+ (ite (> x y) x y) (abs y)) 10))",
+        "(check-sat)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      "(",
+      "  (define-fun x () Int",
+      "    11)",
+      "  (define-fun y () Int",
+      "    0)",
+      ")",
+    ]);
+  });
 });

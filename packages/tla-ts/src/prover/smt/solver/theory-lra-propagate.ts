@@ -130,9 +130,13 @@ export abstract class TheoryLraPropagate extends TheoryLraBounds {
       : bound.isLower
         ? bound.value.sub(Rational.one)
         : bound.value.add(Rational.one);
-    if (isTrue ? bound.eps.isZero() : bound.isInt)
+    if (this.isPropagatingEqs() && (isTrue ? bound.eps.isZero() : bound.isInt))
       this.propagateEqs(bound.column, constraint, kind, bound, value);
     return true;
+  }
+
+  protected isPropagatingEqs() {
+    return this.context.config.isArithPropagatingEqs;
   }
 
   private propagateEqs(
@@ -255,7 +259,7 @@ export abstract class TheoryLraPropagate extends TheoryLraBounds {
   }
 
   protected addEq(first: number, second: number, explanation: Explanation, isFixed: boolean) {
-    if (this.context.isInconsistent()) return false;
+    if (this.context.isInconsistent() || !this.isPropagatingEqs()) return false;
     const v1 = this.solver.getExternal(first);
     const v2 = this.solver.getExternal(second);
     if (v1 === NULL_THEORY_VAR || v2 === NULL_THEORY_VAR) return false;
