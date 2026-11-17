@@ -343,14 +343,6 @@ export interface FunctionObject {
   prototype: { key: string; object: Expression } | undefined;
 }
 
-export interface ChangeSummary {
-  changed: Set<ts.Symbol>;
-  // Whether it makes an error, which changes the heap unless the caller ignores its identity.
-  isErrorMade: boolean;
-  // The parameters that it calls or passes, which a path may bind to functions.
-  parameters: Set<ts.Symbol>;
-}
-
 export interface Unknown {
   name: string;
   domain: Expression;
