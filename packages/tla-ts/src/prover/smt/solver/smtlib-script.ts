@@ -458,7 +458,11 @@ export const runSmtlibScript = (
           !hasAssumptions &&
           settings.parameters.get("opt.incremental") !== "true",
       });
-      setCheck(status, { isOptimizing: true, model: optimizer.model ?? undefined });
+      setCheck(status, {
+        isOptimizing: true,
+        model: optimizer.model ?? undefined,
+        reasonUnknown: optimizer.getReasonUnknown(),
+      });
       print(getVerdict(status));
       return true;
     } catch (error) {
@@ -468,8 +472,9 @@ export const runSmtlibScript = (
         return false;
       }
       if (!(error instanceof SmtCanceledError || isStackOverflow(error))) throw error;
+      const reasonUnknown = optimizer.getReasonUnknown();
       optimizer.release();
-      setCheck(L_UNDEF, { isOptimizing: true });
+      setCheck(L_UNDEF, { isOptimizing: true, reasonUnknown });
       print("unknown");
       return true;
     } finally {
@@ -1605,17 +1610,7 @@ export const runSmtlibScript = (
         const info = list.items[1];
         if (info?.kind !== "keyword")
           throw new SmtParseError("invalid command argument, keyword expected", info ?? list.end);
-        const optimizer = state.optimizer;
         const check = state.check;
-        if (
-          info.text === ":reason-unknown" &&
-          check?.status === L_UNDEF &&
-          optimizer !== undefined &&
-          optimizer.reasonUnknown !== ""
-        ) {
-          print(`(:reason-unknown "${optimizer.reasonUnknown}")`);
-          return;
-        }
         const reasonUnknown =
           check === undefined
             ? "state of the most recent check-sat command is not known"

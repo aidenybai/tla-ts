@@ -673,6 +673,50 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
     ]);
   });
 
+  // opt::context::reason_unknown asks the solver that optimized: opt_solver's kernel, or the sat
+  // solver of a finite-domain maxsat problem.
+  it("prints the reason of the solver that optimized", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(assert (> x 3))",
+        "(minimize x)",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+        "(assert (< x 2))",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+      ]),
+    ).toEqual(["sat", '(:reason-unknown "unknown")', "unsat", '(:reason-unknown "unknown")']);
+    expect(
+      run([
+        "(declare-const a Bool)",
+        "(declare-const b Bool)",
+        "(assert (or a b))",
+        "(assert-soft (not a))",
+        "(assert-soft (not b))",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+      ]),
+    ).toEqual(["sat", '(:reason-unknown "no reason given")']);
+  });
+
+  it("prints the reason of an optimization that timed out", () => {
+    expect(
+      run(
+        [
+          ...getPigeonholeLines(11),
+          "(declare-const k Int)",
+          "(assert (>= k 0))",
+          "(minimize k)",
+          "(check-sat)",
+          "(get-info :reason-unknown)",
+        ],
+        200,
+      ),
+    ).toEqual(["unknown", '(:reason-unknown "canceled")']);
+  });
+
   it("runs the commands after a check that timed out", () => {
     expect(
       run(
