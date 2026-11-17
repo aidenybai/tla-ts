@@ -1279,6 +1279,9 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       }
     } catch (error) {
       if (error instanceof TlaIllegalStateError) {
+        reportInitialStatesProgress(runtime.initialStates, options.onProgress);
+        runtime.generatedStates++;
+        runtime.initialStates++;
         const illegal = createFailureResult(
           error,
           { trace: [] },

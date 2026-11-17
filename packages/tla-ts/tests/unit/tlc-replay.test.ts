@@ -226,6 +226,19 @@ describe("the replay of a failed initial state matches TLC", () => {
     ]);
   });
 
+  it("counts an illegal initial state before it reports it", async () => {
+    const counts: number[] = [];
+    await check({
+      source: `---- MODULE M ----\n${HEADER}\nInit == \\E i \\in 1..3 : i < 3 => x = i\nNext == x' = x\n====`,
+      config: "INIT Init\nNEXT Next",
+      onPrint: () => {},
+      onProgress: (event) => {
+        if (event.kind === "initial-states-progress") counts.push(event.count);
+      },
+    });
+    expect(counts).toEqual([2]);
+  });
+
   it("counts every initial state after it fails to fingerprint one", async () => {
     expect(await replayInit("x \\in [a : 0..1, b : BOOLEAN]", "3 \\notin (1 \\cup {1})")).toEqual([
       4,
