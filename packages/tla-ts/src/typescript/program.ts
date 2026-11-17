@@ -537,9 +537,13 @@ export const createProgram = (source: string, path: string, library: Library = D
   };
   const modelDiagnostics = getTypedDiagnostics(modelProgram, [path]);
   // A model that type checks by itself keeps the program of its own files, which loads faster.
+  // Where the model reads a package's types from its declarations, only the program that reads
+  // them type checks it, with the project's globals, and the model's own program, whose package
+  // values are any, compiles it.
   const projectRoots = [path, ...(project?.fileNames ?? [])];
+  const isProjectChecked = project !== undefined && modelDiagnostics.length > 0;
   const program =
-    project === undefined || modelDiagnostics.length === 0
+    !isProjectChecked || isDeclared
       ? modelProgram
       : createTypeScriptProgram(
           projectRoots,
@@ -548,8 +552,22 @@ export const createProgram = (source: string, path: string, library: Library = D
           new Set(modelProgram.getSourceFiles().map((file) => file.fileName)),
           typed.typedTexts,
         );
-  const diagnostics =
-    program === modelProgram ? modelDiagnostics : getTypedDiagnostics(program, projectRoots);
+  const diagnostics = !isProjectChecked
+    ? modelDiagnostics
+    : program !== modelProgram
+      ? getDiagnostics(program)
+      : [
+          ...getDiagnostics(modelProgram).filter(
+            (diagnostic) =>
+              diagnostic.file !== undefined && isJavaScriptFile(diagnostic.file.fileName),
+          ),
+          ...getDiagnostics(
+            createTypeScriptProgram(projectRoots, text, globals, new Set(), typed.typedTexts),
+          ).filter(
+            (diagnostic) =>
+              diagnostic.file === undefined || !isJavaScriptFile(diagnostic.file.fileName),
+          ),
+        ];
   if (diagnostics.length > 0) throw new TlaTypeScriptError(ts.formatDiagnostics(diagnostics, host));
   const sourceFile = getModelSourceFile(program);
   const files = getModelFiles(program).filter((file) => !file.isDeclarationFile);

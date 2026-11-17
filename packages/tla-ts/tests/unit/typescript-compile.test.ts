@@ -52559,4 +52559,22 @@ describe("BigInts", () => {
     expect(text).not.toContain("TUmalquraMonths");
     expect(text).not.toMatch(/^\s*<<\s*$/m);
   });
+
+  describe("type checks a model with its project's globals and a package's declarations", () => {
+    const path = join(import.meta.dirname, "../fixtures/typescript/projects/globals/main.ts");
+    const source = readFileSync(path, "utf8");
+
+    it("agrees with Node", async () => {
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects a type error that the project's globals show", () => {
+      expect(() =>
+        compile(
+          source.replace("const kind: string = typeof label;", "const kind: number = label;"),
+          path,
+        ),
+      ).toThrow("Type 'string' is not assignable to type 'number'");
+    });
+  });
 });
