@@ -529,7 +529,6 @@ const checkSelection = (
   reference: Reference,
   selectors: Selector[],
   goal: Goal,
-  scope: LocalName | undefined,
   unit: Unit,
   isFact: boolean,
 ) => {
@@ -628,11 +627,7 @@ const checkSelection = (
       if (["Number", "Decimal", "String"].includes(expression.kind)) {
         return report(index, "Selecting subexpression of expression that has none.");
       }
-      const kind =
-        expression.kind === "Identifier"
-          ? findBinding(expression.name, scope, unit)?.kind
-          : undefined;
-      if (isEmptyExpression(expression) || kind === "Variable" || kind?.startsWith("New")) {
+      if (isEmptyExpression(expression)) {
         return report(index, `Choosing operand \`${operand}' of subexpression with no operands.`);
       }
       const sets = getBinder(expression)?.sets;
@@ -762,7 +757,7 @@ const checkReference = (
     selectors.length > 1 && first.kind === "Name"
       ? (lookupLocal(scope, first.name)?.goal ?? getGoal(first.name, unit))
       : undefined;
-  return goal && { node: checkSelection(expression, selectors, goal, scope, unit, isFact) };
+  return goal && { node: checkSelection(expression, selectors, goal, unit, isFact) };
 };
 
 const getSymbolArity = (
@@ -1367,13 +1362,18 @@ const resolveExpression = (
         ? undefined
         : getSymbolArity(expression, name, scope, unit);
       if (arity === 0) {
-        isArgumentCountReported(
-          findBinding(name, scope, unit),
-          name,
-          0,
-          getSpelledNameRange(expression, name),
-          unit,
-        );
+        const binding = findBinding(name, scope, unit);
+        const kind = binding?.kind;
+        // SANY's selector chooses no operand of a variable, theorem, step or NEW symbol, unlike of a constant or definition.
+        if (
+          kind === "Variable" ||
+          kind === "Theorem" ||
+          kind?.startsWith("New") ||
+          isFact(name, unit)
+        ) {
+          emptyExpressions.add(expression);
+        }
+        isArgumentCountReported(binding, name, 0, getSpelledNameRange(expression, name), unit);
         return;
       }
       if (arity !== undefined) {

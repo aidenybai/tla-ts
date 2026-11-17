@@ -942,6 +942,15 @@ describe("name resolution matches SANY", () => {
       ],
     ],
     [
+      "VARIABLE y\nASSUME AS == TRUE\nOp == {y, y', AS}\nA == Op!1!1 /\\ Op!2!1!1 /\\ Op!3!1\nTHEOREM T == TRUE\n<1>1. TRUE OBVIOUS\n<1>2. {<1>1, 1} OBVIOUS\n<1>3. <1>2!1!1 OBVIOUS\n<1>4. QED",
+      [
+        ["line 5, col 11 to line 5, col 11", noOperands],
+        ["line 5, col 23 to line 5, col 23", noOperands],
+        ["line 5, col 33 to line 5, col 33", noOperands],
+        ["line 9, col 14 to line 9, col 14", noOperands],
+      ],
+    ],
+    [
       "CONSTANT c, F(_, _)\nOp1(a0) == {a0}\nOp == {Undef, F(1), Op1(LAMBDA p : p), c!1, @}\nA == Op!1!1 /\\ Op!2!1 /\\ Op!3!1!1 /\\ Op!4!1 /\\ Op!5!1\nB == Op!1 /\\ Op!2 /\\ Op!3!1 /\\ Op!4 /\\ Op!5\nTHEOREM U == ASSUME c PROVE {Undef, F(2)}\nC == U!2!1!1 /\\ U!2!2!1",
       [
         ["line 4, col 8 to line 4, col 12", "Unknown operator: `Undef'."],
