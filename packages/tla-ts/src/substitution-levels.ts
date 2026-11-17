@@ -84,14 +84,18 @@ export const createInstanceChecker = (getModule: (name: string) => ModuleContext
       module.constants.forEach((constant) => putConstraint(levels.constraints, constant.name, 0));
     }
     const addLevels = (
-      data: Omit<ModuleLevels, "isConstant">,
+      data: {
+        constraints: Map<string, number> | undefined;
+        argConstraints: Map<string, number> | undefined;
+        argParams: Set<string> | undefined;
+      },
       isKept: (operator: string, param: string) => boolean,
     ) => {
-      data.constraints.forEach((value, key) => putConstraint(levels.constraints, key, value));
-      data.argConstraints.forEach((value, key) =>
+      data.constraints?.forEach((value, key) => putConstraint(levels.constraints, key, value));
+      data.argConstraints?.forEach((value, key) =>
         putArgConstraint(levels.argConstraints, key, value),
       );
-      data.argParams.forEach((key) => {
+      data.argParams?.forEach((key) => {
         const parameter = parseArgumentParamKey(key);
         if (isKept(parameter.operator, parameter.param)) levels.argParams.add(key);
       });
@@ -104,7 +108,7 @@ export const createInstanceChecker = (getModule: (name: string) => ModuleContext
     const addAssumedLevels = (data: ReturnType<typeof analyzeAssumeProve>) => {
       addLevels(data, () => true);
       module.constants.forEach((constant) => {
-        if (data.params.has(constant.name)) {
+        if (data.params?.has(constant.name)) {
           putConstraint(levels.constraints, constant.name, ACTION_LEVEL);
         }
       });

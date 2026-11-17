@@ -280,7 +280,7 @@ const getInvariants = (names: string[], environment: Environment) => {
     const levels = analyzer.analyzeDefinition(definition, new Map());
     if (levels.level >= ACTION_LEVEL) {
       const note =
-        levels.params.size === 0
+        (levels.params?.size ?? 0) === 0
           ? ""
           : "\nNote that a bug can cause TLC to incorrectly report this error.\nIf you believe your TLA+ or PlusCal specification to be correct,\nplease check if this bug described in LevelNode.java starting at line 590ff affects you.";
       throw setExitCode(
