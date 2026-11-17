@@ -216,6 +216,27 @@ describe("runSmtlibScript prints what Z3 prints", () => {
     ]);
   });
 
+  it("prints a named term's definition in the model as the script spells it", () => {
+    expect(
+      run([
+        "(declare-fun x () Int)",
+        "(assert (! (> (abs x) 2) :named a0))",
+        "(check-sat)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      [
+        "(",
+        "  (define-fun x () Int",
+        "    3)",
+        "  (define-fun a0 () Bool",
+        "    (> (abs x) 2))",
+        ")",
+      ].join("\n"),
+    ]);
+  });
+
   it("prints the names of an unsat core, as in z3test's t10.smt2", () => {
     expect(
       run([
