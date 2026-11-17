@@ -123,6 +123,16 @@ describe("the Bags module matches TLC", () => {
   });
 
   it.each([
+    ["3 (+) EmptyBag", "The first argument of (+) should be a bag, but instead it is:\n3"],
+    ["EmptyBag (+) 3", "The second argument of (+) should be a bag, but instead it is:\n3"],
+    ["BagIn(1, 3)", "The second argument of BagIn should be a bag, but instead it is:\n3"],
+    ["CopiesIn(1, 3)", "The second argument of CopiesIn should be a bag, but instead it is:\n3"],
+  ])("reports a value that isn't a function in %s as not a bag", async (expression, message) => {
+    const result = await checkBags(`ASSUME PrintT(${expression})`);
+    expect(result.violation?.message).toBe(message);
+  });
+
+  it.each([
     '<<"a">> (-) EmptyBag',
     '<<"a">> \\sqsubseteq EmptyBag',
     'BagOfAll(LAMBDA e : TRUE, <<"a", 1>>)',

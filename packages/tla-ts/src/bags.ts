@@ -45,6 +45,7 @@ const getFunction = (args: BuiltinArgument[], index: number, name: string) => {
   return functionValue;
 };
 
+// Deviation from TLC: Bags#BagIn and Bags#CopiesIn read the null that toFcnRcd gives for a value that isn't a function and leak a NullPointerException, where tla-ts reports the argument as not a bag.
 const getCount = (args: BuiltinArgument[], name: string) => {
   const bag = getValue(args, 1, name);
   const functionValue = toFunction(bag);
@@ -55,6 +56,7 @@ const getCount = (args: BuiltinArgument[], name: string) => {
   return count;
 };
 
+// Deviation from TLC: Bags#BagCup passes the null that toFcnRcd gives for a value that isn't a function to IsABag and leaks a NullPointerException, where tla-ts reports the argument as not a bag.
 const getAddedBag = (
   args: BuiltinArgument[],
   functions: (FunctionValue | undefined)[],
