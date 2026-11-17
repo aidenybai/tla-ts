@@ -1102,6 +1102,7 @@ const matchArgument = (
       `Expected arity ${expected} but found operator of arity ${argArity}.`,
     );
   }
+  // Deviation from SANY: OpDefNode#matchingOpArgOperand reads as many parameters as a RECURSIVE declaration gives and crashes when the definition has fewer.
   return argArity === expected && argParams.every((param) => param === 0);
 };
 

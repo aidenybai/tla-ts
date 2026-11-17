@@ -186,6 +186,25 @@ Spec == Init /\\ [][Next]_x
     );
   });
 
+  it("passes an operator whose definition has fewer parameters than its RECURSIVE declaration, where SANY crashes", () => {
+    const report = getReport({
+      M: "---- MODULE M ----\nRECURSIVE R(_, _)\nR == 1\nL(P(_, _)) == 1\nA == L(R)\n====\n",
+    });
+    expect(report.text).toBe(
+      joinLines([
+        "Semantic errors:",
+        "",
+        "*** Errors: 1",
+        "",
+        "line 3, col 1 to line 3, col 6 of module M",
+        "",
+        "Definition of R has different arity than its RECURSIVE declaration.",
+        "",
+        "",
+      ]),
+    );
+  });
+
   it("parses a module once the module that names it reaches it, though another loaded it", () => {
     const report = getReport(
       {

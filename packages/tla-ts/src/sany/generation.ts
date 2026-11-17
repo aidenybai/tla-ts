@@ -370,6 +370,7 @@ export const matchArguments = (
       getSymbolArity(operand.op) === param.arity &&
       !(
         operand.op.kind === "OpDef" &&
+        // Deviation from SANY: OpDefNode#matchingOpArgOperand reads as many parameters as a RECURSIVE declaration gives and crashes when the definition has fewer.
         (operand.op.params ?? []).some((parameter) => parameter.arity > 0)
       );
     if (param.arity > 0 && !isMatching) {

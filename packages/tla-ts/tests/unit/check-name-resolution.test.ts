@@ -1925,6 +1925,19 @@ describe("name resolution matches SANY", () => {
     );
   });
 
+  it("passes an operator whose definition has fewer parameters than its RECURSIVE declaration, where SANY crashes", async () => {
+    await expect(
+      checkNames("RECURSIVE R(_, _)\nR == 1\nL(P(_, _)) == 1\nA == L(R)"),
+    ).rejects.toThrow(
+      createSanyError([
+        {
+          location: "line 3, col 1 to line 3, col 6 of module M",
+          message: "Definition of R has different arity than its RECURSIVE declaration.",
+        },
+      ]),
+    );
+  });
+
   it("reports an operator parameter where a RECURSIVE declaration has _, which SANY accepts", async () => {
     await expect(checkNames("RECURSIVE Map(_, _)\nMap(f(_), s) == 1")).rejects.toThrow(
       createSanyError([
