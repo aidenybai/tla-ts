@@ -743,6 +743,17 @@ export class AstManager {
         smallId: Z3_SMALL_IDS.get(builtin[2]) ?? -1,
         parameters: [],
       });
+    // Each has one signature in Z3, and a model's tables hash its declaration as a user's.
+    for (const entry of Z3_BUILTINS)
+      if (entry[0] === OP_DIV0 || entry[0] === OP_IDIV0 || entry[0] === OP_MOD0) {
+        const range = this.funcDecls[entry[0]].range;
+        this.declHashes[entry[0]] = this.getFuncDeclHash(
+          entry[1][0],
+          [range, range],
+          range,
+          getInfoHash(Z3_ARITH_FAMILY, entry[1][1], []),
+        );
+      }
     this.trueExpr = this.mkApp(OP_TRUE, [], SORT_BOOL);
     this.falseExpr = this.mkApp(OP_FALSE, [], SORT_BOOL);
     this.incRef(this.trueExpr);

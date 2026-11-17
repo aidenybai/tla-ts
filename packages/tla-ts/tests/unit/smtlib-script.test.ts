@@ -1583,6 +1583,26 @@ describe("runSmtlibScript prints what Z3 prints", () => {
     ]);
   });
 
+  it("orders div0 and mod0 in a model by the hashes of their declarations", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(assert (distinct 5 (div x 0)))",
+        "(check-sat)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      [
+        "(",
+        "  (define-fun x () Int\n    21238)",
+        "  (define-fun mod0 ((x!0 Int) (x!1 Int)) Int\n    0)",
+        "  (define-fun div0 ((x!0 Int) (x!1 Int)) Int\n    0)",
+        ")",
+      ].join("\n"),
+    ]);
+  });
+
   it("throws at a theory it does not implement", () => {
     expect(() =>
       run(["(declare-const b (_ BitVec 8))", '(assert (= (str.from_ubv b) "12"))', "(check-sat)"]),
