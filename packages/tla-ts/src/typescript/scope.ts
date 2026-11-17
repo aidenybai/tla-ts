@@ -212,7 +212,10 @@ export const declareParameter = (
     parameter.initializer !== undefined ||
     parameter.dotDotDotToken !== undefined
   ) {
-    throw new TlaTypeScriptError(`Use a plain parameter here: ${parameter.getText()}`, parameter);
+    throw new TlaTypeScriptError(
+      `tla-ts can't bind a default, a rest, or a pattern here: ${parameter.getText()}. Use a plain parameter, or call the function from a script instead`,
+      parameter,
+    );
   }
   return {
     node: parameter,

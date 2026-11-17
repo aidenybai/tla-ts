@@ -2049,10 +2049,22 @@ export const findDomain = (type: ts.Type, context: Context): Expression | Infini
   );
 };
 
+// The values that a parameter of an exported function, or a variable with no initializer, ranges
+// over, which TLC lists.
 export const getDomain = (type: ts.Type, node: ts.Node, context: Context) => {
   const domain = findDomain(type, context);
-  if (isInfinite(domain)) throw new TlaTypeScriptError(domain.message, node);
-  return domain;
+  if (!isInfinite(domain)) return domain;
+  const name =
+    (ts.isParameter(node) || ts.isVariableDeclaration(node)) && ts.isIdentifier(node.name)
+      ? node.name.text
+      : undefined;
+  if (name === undefined) throw new TlaTypeScriptError(domain.message, node);
+  throw new TlaTypeScriptError(
+    ts.isParameter(node)
+      ? `tla-ts can't choose every value of the parameter ${name}: ${domain.message}. Give ${name} a finite type, such as a union of literals, or records and tuples of them, or call the function from a script instead`
+      : `tla-ts can't start ${name} at every value of its type: ${domain.message}. Give ${name} an initializer`,
+    node,
+  );
 };
 
 // A call that tla-ts can't compile, such as to a package or Math.random(), as any value of its type.

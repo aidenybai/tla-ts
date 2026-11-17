@@ -8909,7 +8909,9 @@ describe("errors", () => {
   it("rejects a parameter without a finite type", () => {
     expect(() =>
       compile(`let count = 0;\nexport const run = (step: () => number) => { count += step(); };`),
-    ).toThrow("spec.ts:2:21 () => number isn't finite");
+    ).toThrow(
+      "spec.ts:2:21 tla-ts can't choose every value of the parameter step: () => number isn't finite",
+    );
   });
 
   it("fails the check where an action writes past the end of an array", async () => {
@@ -50184,7 +50186,7 @@ describe("BigInts", () => {
       expect(() =>
         compile(`export const isSame = (value: 1 | "a"): boolean => value === value;`),
       ).toThrow(
-        `spec.ts:1:24 1 | "a" mixes values that TLC can't compare, such as a string and a number`,
+        `spec.ts:1:24 tla-ts can't choose every value of the parameter value: 1 | "a" mixes values that TLC can't compare, such as a string and a number`,
       );
     });
 
@@ -50390,6 +50392,32 @@ describe("BigInts", () => {
       expect((await checkModel(getSource(true, 1))).failure?.message).toContain(
         "tla-ts can't read Node's global console",
       );
+    });
+  });
+
+  describe("names what to do where an exported function's parameter has no finite model", () => {
+    it("stops at a type with no end", () => {
+      expect(() =>
+        compile(`
+          let count = 0;
+          export const add = (options: { amount?: 1 | 2 }) => {
+            count += options.amount ?? 0;
+          };
+        `),
+      ).toThrow(
+        "tla-ts can't choose every value of the parameter options: { amount?: 1 | 2 | undefined; } isn't finite: the optional field amount may be missing. Give options a finite type",
+      );
+    });
+
+    it("stops at a default", () => {
+      expect(() =>
+        compile(`
+          let count = 0;
+          export const add = (amount: 1 | 2 = 1) => {
+            count += amount;
+          };
+        `),
+      ).toThrow("tla-ts can't bind a default, a rest, or a pattern here: amount: 1 | 2 = 1");
     });
   });
 });
