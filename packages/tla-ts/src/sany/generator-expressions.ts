@@ -93,18 +93,6 @@ const isOperatorArgument = (argument: Expression) => {
   return OPERATOR_ARGUMENT_KINDS.has(argument.kind) || (items !== undefined && isGeneralId(items));
 };
 
-const POSTFIX_OPERATOR_TEXTS = new Set(["'", "^+", "^*", "^#"]);
-
-const getOperatorNodeKind = (
-  expression: Expression & { kind: "OperatorReference" | "Lambda" },
-  text: string,
-) => {
-  if (POSTFIX_OPERATOR_TEXTS.has(text)) return "N_GenPostfixOp";
-  return expression.kind === "Lambda" || text === "~" || text === "-."
-    ? "N_GenNonExpPrefixOp"
-    : "N_GenInfixOp";
-};
-
 const locateSelectorItems = (file: SourceFile, items: SelectorItem[], span: TokenSpan) => {
   let cursor = span.start;
   return items.map((item): SelectorItem => {
@@ -724,11 +712,16 @@ export const generateExpression = (
     case "Lambda": {
       const text =
         generation.file.tokens[getExpressionSpan(generation.file, expression).start].text;
+      const name = expression.operator ?? text;
+      // Deviation from SANY: Generator#generateExpression names its internal node kind here, where tla-ts words it as for a name.
+      const symbol = resolveSymbol(generation.contexts, resolveSynonym(name));
       generation.addError(
         location,
         text === "LAMBDA"
           ? "LAMBDA expression used where an expression is required."
-          : `Unsupported expression type \`${getOperatorNodeKind(expression, text)}'.`,
+          : symbol === undefined
+            ? `Could not find declaration or definition of symbol '${name}'.`
+            : `The operator ${name} requires ${getSymbolArity(symbol)} arguments.`,
       );
       return { ...createNullNode(generation), nullKind: "absent" };
     }
