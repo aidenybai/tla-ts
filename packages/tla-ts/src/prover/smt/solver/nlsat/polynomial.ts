@@ -1456,8 +1456,7 @@ export class PolynomialManager {
       this.modulus = savedModulus;
       if (isBadPrime) continue;
       if (this.isConst(q.get())) {
-        // Deviation from Z3: when d_a is 1 and q is a constant other than 1, uni_mod_gcd returns q
-        // (polynomial.cpp:4170), so gcd(2x - 3, 2x - 1) is 2 there. This returns 1 and frees q.
+        // Deviation from Z3: when d_a is 1, uni_mod_gcd returns a constant q other than 1, so gcd(2x - 3, 2x - 1) is 2 there.
         r.set(dA === 1n && q.get().as[0] === 1n ? q.get() : this.mkConst(dA));
         release();
         return;
@@ -3139,7 +3138,6 @@ export class PolynomialManager {
     return result;
   }
 
-  // Like Z3's t_eval, this stops at the first variable that getValue has no value for.
   private evaluatePartially<T>(
     polynomial: Polynomial,
     ops: ValueOps<T>,

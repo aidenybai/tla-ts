@@ -1010,7 +1010,6 @@ export class AlgebraicManager {
     return (refined.isInterval ? refined.upper : refined.lower).toDecimal(precision);
   }
 
-  // Releases first.
   private getResultantCoeffs(first: PolynomialRef, p: Upolynomial) {
     const q = new PolynomialRef(this.pm);
     const r = new PolynomialRef(this.pm);
