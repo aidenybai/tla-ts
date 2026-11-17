@@ -43,6 +43,19 @@ export class ResourceLimit {
     this.isCanceled = false;
   }
 
+  pushChild(child: ResourceLimit) {
+    child.limit = Math.min(child.limit, this.limit - Math.min(this.limit, this.count));
+    child.count = 0;
+    child.deadline = this.deadline;
+    child.signal = this.signal;
+  }
+
+  popChild(child: ResourceLimit) {
+    this.count += child.count;
+    child.count = 0;
+    child.release();
+  }
+
   restart(deadline: number) {
     this.deadline = deadline;
     this.isCanceled = false;

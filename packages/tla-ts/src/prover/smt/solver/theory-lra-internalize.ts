@@ -240,8 +240,16 @@ export abstract class TheoryLraInternalize extends TheoryLraAxioms {
     nla.isRelevant = (lpVar) =>
       this.context.isRelevant(this.getExpr(this.solver.getExternal(lpVar)));
     nla.grobner.updateParams();
+    nla.addMulDefHook = (vars) => this.addMulDef(vars);
     this.nla = nla;
     return nla;
+  }
+
+  private addMulDef(vars: readonly number[]) {
+    const isInt = vars.every((lpVar) => this.isIntVar(this.solver.getExternal(lpVar)));
+    const product = this.manager.mkFreshConst("mul!", isInt ? SORT_INT : SORT_REAL);
+    this.mkEnode(product);
+    return this.registerVar(this.mkVar(product));
   }
 
   private registerDivision(quotient: number, remainder: number): Division {
