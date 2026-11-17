@@ -2624,14 +2624,16 @@ export const getStringCall = (node: ts.Node, context: Context) => {
     : { method, primitive, callee, owner, values, kinds, isCall };
 };
 
-// The String.prototype method that a key whose type doesn't tell which function it holds may hold,
-// where the script stores the method as a value, as obj.charAt = String.prototype.charAt does, and
-// writes no function of its own under the key.
+// The String.prototype method that a key of an object, or a key whose type doesn't tell which
+// function it holds, may hold, where the script stores the method as a value, as obj.charAt =
+// String.prototype.charAt does, and writes no function of its own under the key. The call checks
+// that the key holds the method.
 const getStoredStringMethod = (callee: ts.PropertyAccessExpression, context: Context) => {
   const name = callee.name.text;
-  return (context.checker.getTypeAtLocation(callee).flags &
+  return ((context.checker.getTypeAtLocation(callee).flags &
     (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !==
-    0 &&
+    0 ||
+    getKind(callee.expression, context) === "object") &&
     getWrittenFunctions(callee, name, context).length === 0 &&
     context.storedBuiltIns.get(callee.getSourceFile())?.has(`String.prototype.${name}`) === true
     ? name

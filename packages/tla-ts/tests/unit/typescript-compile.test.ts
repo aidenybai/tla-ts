@@ -50450,4 +50450,40 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("2,true", replaced))).failure).toBeUndefined();
     });
   });
+
+  describe("runs a String.prototype method that an object holds under its key", () => {
+    const getSource = (expected: string) => `
+      const word = {
+        toString: function () {
+          return "tla";
+        },
+        charAt: String.prototype.charAt,
+      };
+      const broken = {
+        toString: function (): string {
+          throw "intostring";
+        },
+        charAt: String.prototype.charAt,
+      };
+      const first = word.charAt(1);
+      let caught: unknown;
+      try {
+        broken.charAt(0);
+      } catch (error) {
+        caught = error;
+      }
+      const results = [first, caught].join(",");
+      if (results !== "${expected}") throw new Error("results " + results);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("l,intostring"))).failure).toBeUndefined();
+    });
+
+    it("rejects other results", async () => {
+      expect((await checkModel(getSource("t,intostring"))).failure?.message).toContain(
+        "results l,intostring",
+      );
+    });
+  });
 });
