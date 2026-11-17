@@ -1345,7 +1345,6 @@ const resolveExpression = (
       return;
     }
     const source = selectionSources.get(expression);
-    // The selection copied its source before resolving the source renamed symbols to keys that resolve from any module.
     if (source) {
       Object.assign(expression, source);
       const arity = renamedArities.get(source);

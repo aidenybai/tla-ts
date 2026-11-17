@@ -124,7 +124,6 @@ const createApplication = (selection: Selection, body: Expression): Expression =
   const wrapped = wrapLets(body, selection.lets, location);
   if (selection.params.length === 0 && wrapped !== body) return wrapped;
   if (selection.params.length === 0) {
-    // Each selection gets its own node, so its null checks don't overwrite another's.
     const copy = { ...body };
     selectionSources.set(copy, selectionSources.get(body) ?? body);
     return copy;
@@ -576,7 +575,6 @@ const resolveSubexpressions = (
         }
       : mapChildren(expression, (child) => resolveSubexpressions(child, lookup, isGoal));
   const children = getChildren(expression);
-  // Keeping an unchanged node lets resolve.ts's marks on it reach selections that pass through it.
   const mapped = getChildren(rebuilt).every((child, index) => child === children[index])
     ? expression
     : rebuilt;
