@@ -795,7 +795,7 @@ export class NlaCore {
       this.limit.popChild(this.nraLimit);
       stats.nraCalls++;
     }
-    if (result === L_UNDEF && !hasNoEffect()) result = L_FALSE;
+    if (result === L_UNDEF && !hasNoEffect() && this.limit.inc()) result = L_FALSE;
     stats.nlaLemmas += this.lemmas.length;
     return result;
   }

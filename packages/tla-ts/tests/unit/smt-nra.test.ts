@@ -160,3 +160,20 @@ describe("nra check_assignment on a transcendental identity", () => {
     expect(result.core.emons.get(3).vars).toEqual([result.firstVariable, result.secondVariable]);
   });
 });
+
+describe("nla check", () => {
+  // Z3's nla::core::check turns its lemmas into l_false only while the resource limit has budget.
+  it("stays undecided after a lemma once the resource limit runs out", () => {
+    const lra = new LarSolver(() => false);
+    const xVariable = lra.addVar(0, false);
+    const yVariable = lra.addVar(1, false);
+    const monicVariable = lra.addVar(2, false);
+    const core = new NlaCore(lra, new ResourceLimit(Infinity));
+    core.addMonic(monicVariable, [xVariable, yVariable]);
+    lra.activate(lra.mkVarBound(monicVariable, KIND_LE, Rational.of(-1n)));
+    lra.findFeasibleSolution();
+    core.limit.push(1);
+    expect(core.check(2)).toBe(L_UNDEF);
+    expect(core.lemmas).toHaveLength(1);
+  });
+});
