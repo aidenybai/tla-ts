@@ -9,6 +9,11 @@ declare module "@typescript/typescript6" {
   interface Type {
     readonly id: number;
   }
+  // A context's checker reads tla-ts's own symbol of each name of the program's files from the
+  // program's reference index: undefined where the name has none, and null for another node.
+  interface TypeChecker {
+    readonly getNameSymbol?: (node: Node) => Symbol | undefined | null;
+  }
 }
 
 // The nodes of a program's files, in the order that a walk of each file's children visits them,

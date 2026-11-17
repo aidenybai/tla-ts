@@ -627,7 +627,13 @@ export const createContext = (
   const reads = getDeclaredReads(checker, files);
   const references = createReferences(nodes, (name) => getSymbol(name, checker));
   const context: Context = {
-    checker: withNodeTypes(withDeclaredReads(checker, reads), nodes),
+    checker: {
+      ...withNodeTypes(withDeclaredReads(checker, reads), nodes),
+      getNameSymbol: (node) => {
+        const position = ts.isIdentifier(node) ? getPosition(nodes, node) : -1;
+        return position < 0 ? null : references.symbols[position];
+      },
+    },
     nodes,
     references,
     reachGraph: createReachGraph(nodes, references),
@@ -1455,6 +1461,8 @@ export const getRedeclaredCatchParameter = (declaration: ts.VariableDeclaration)
 // The symbol that a name binds or reads, where a var that declares a catch parameter again binds
 // the parameter.
 export const getSymbol = (node: ts.Node, checker: ts.TypeChecker) => {
+  const known = checker.getNameSymbol === undefined ? null : checker.getNameSymbol(node);
+  if (known !== null) return known;
   const redeclared =
     ts.isIdentifier(node) && ts.isVariableDeclaration(node.parent) && node.parent.name === node
       ? getRedeclaredCatchParameter(node.parent)
