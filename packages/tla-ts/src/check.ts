@@ -1598,7 +1598,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   const startedAt = performance.now();
   const periodic = {
     at: startedAt + PERIODIC_START,
-    sizes: liveness?.getStateCounts().map(() => 1) ?? [],
+    checkedCounts: liveness?.getStateCounts().map(() => 1) ?? [],
     time: 0,
     coverageCount: Math.trunc(options.coverage ?? 0),
   };
@@ -1609,10 +1609,10 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     const counts = checker.getStateCounts();
     const isGrown = counts.some(
       (count, branch) =>
-        (count - periodic.sizes[branch]) / periodic.sizes[branch] > LIVENESS_GROWTH,
+        (count - periodic.checkedCounts[branch]) / periodic.checkedCounts[branch] > LIVENESS_GROWTH,
     );
     if (!isGrown || periodic.time > (now - startedAt) * LIVENESS_RATIO) return undefined;
-    periodic.sizes = counts;
+    periodic.checkedCounts = counts;
     options.onProgress?.({
       kind: "liveness-started",
       branches: checker.branches,
