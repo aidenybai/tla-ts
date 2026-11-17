@@ -50144,4 +50144,29 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("runs Temporal in the Umm al-Qura calendar, whose months Node's table gives", () => {
+    const getSource = (expected: string) => `
+      const seen: string[] = [];
+      for (const iso of ["1882-11-11", "1900-03-01", "2077-11-17"]) {
+        const date = Temporal.PlainDate.from(iso).withCalendar("islamic-umalqura");
+        seen.push(date.year + "-" + date.monthCode + "-" + date.day + "/" + date.daysInMonth);
+      }
+      const later = Temporal.PlainDate.from({ calendar: "islamic-umalqura", year: 1400, month: 1, day: 30 });
+      seen.push(later.add({ months: 7, days: 3 }).withCalendar("iso8601").toString());
+      if (seen.join(" ") !== "${expected}") throw new Error("seen " + seen.join(" "));
+    `;
+    const expected = "1299-M12-29/29 1317-M10-29/30 1501-M01-1/30 1980-07-16";
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects the civil calendar's day", async () => {
+      expect(
+        (await checkModel(getSource(expected.replace("1317-M10-29/30", "1317-M10-28/29")))).failure
+          ?.message,
+      ).toContain(`seen ${expected}`);
+    });
+  });
 });
