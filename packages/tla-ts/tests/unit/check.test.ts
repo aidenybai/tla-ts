@@ -550,6 +550,17 @@ describe("check matches TLC", () => {
     ]);
   });
 
+  it("filters a set by a predicate that calls a constant substituted with PrintT for every element like TLC", async () => {
+    const prints: string[] = [];
+    await check({
+      source:
+        '---- MODULE M ----\nEXTENDS Integers, TLC\nCONSTANT G(_)\nVARIABLE x\nASSUME PrintT({e \\in 1..3 : ~G("g")})\nInit == x = 0\nNext == UNCHANGED x\n====',
+      config: "CONSTANT G <- PrintT\nINIT Init\nNEXT Next",
+      onPrint: (text) => prints.push(text),
+    });
+    expect(prints).toEqual(['"g"', '"g"', '"g"', "{}"]);
+  });
+
   it("bundles the Reals module, whose Real is not a set TLC can check", async () => {
     const result = await check({
       source:

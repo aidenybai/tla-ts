@@ -156,11 +156,11 @@ const collectLocalFacts = (
               definition.params.length > 0),
         });
       } else {
-        if (isImpureBuiltin(name, environment)) {
-          row[0] |= IMPURE | (name === "Assert" ? 0 : REPEATED_EFFECT);
+        if (isImpureBuiltin(target, environment)) {
+          row[0] |= IMPURE | (target === "Assert" ? 0 : REPEATED_EFFECT);
         }
-        if (STREAMED_BUILTINS.has(name)) row[0] |= STREAMED;
-        if (RANDOM_BUILTINS.has(name)) row[0] |= RANDOM;
+        if (STREAMED_BUILTINS.has(target)) row[0] |= STREAMED;
+        if (RANDOM_BUILTINS.has(target)) row[0] |= RANDOM;
         if (!isOverridden && isImpureBuiltin(target, environment)) row[0] |= READS_IMPURE;
         const builtin = environment.builtins.get(target);
         if (
