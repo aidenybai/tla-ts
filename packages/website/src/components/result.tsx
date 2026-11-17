@@ -1,12 +1,7 @@
 import { X } from "@phosphor-icons/react";
-import { useVirtualizer } from "@tanstack/react-virtual";
-import { Fragment, useRef, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import { cn } from "cn";
-import type { SearchState } from "../search";
-import { ValueText } from "./search-cell";
 import { Button } from "./ui/button";
-
-const ROW_HEIGHT_PX = 52;
 
 interface ResultRootProps {
   isOpen: boolean;
@@ -63,9 +58,8 @@ interface ResultSectionProps {
 
 export const ResultSection = (props: ResultSectionProps) => (
   <section className={cn("grid shrink-0 gap-2", props.className)}>
-    <header className="flex items-center gap-3">
+    <header className="flex items-center justify-between gap-3">
       <h3 className="font-medium text-foreground">{props.title}</h3>
-      <span className="h-px flex-1 bg-border" />
       {props.count !== undefined && (
         <span className="text-muted-foreground tabular-nums">{props.count.toLocaleString()}</span>
       )}
@@ -73,77 +67,3 @@ export const ResultSection = (props: ResultSectionProps) => (
     {props.children}
   </section>
 );
-
-interface ResultStatesProps {
-  states: SearchState[];
-  hoveredState: SearchState | undefined;
-  onHover: (stateId: string | undefined) => void;
-  onSelect: (state: SearchState) => void;
-}
-
-export const ResultStates = (props: ResultStatesProps) => {
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const virtualizer = useVirtualizer({
-    count: props.states.length,
-    getScrollElement: () => scrollRef.current,
-    estimateSize: () => ROW_HEIGHT_PX,
-    getItemKey: (index) => props.states[index].id,
-    overscan: 8,
-  });
-  return (
-    <div ref={scrollRef} className="-mx-2 overflow-auto overscroll-none">
-      <ol style={{ height: virtualizer.getTotalSize() }} className="relative">
-        {virtualizer
-          .getVirtualItems()
-          .map((item) => ({ item, state: props.states[item.index] }))
-          .map((row) => (
-            <li
-              key={row.item.key}
-              ref={virtualizer.measureElement}
-              data-index={row.item.index}
-              onPointerEnter={() => props.onHover(row.state.id)}
-              onPointerLeave={() => props.onHover(undefined)}
-              style={{ translate: `0 ${row.item.start}px` }}
-              className="absolute inset-x-0 top-0"
-            >
-              <button
-                type="button"
-                onClick={() => props.onSelect(row.state)}
-                onFocus={() => props.onHover(row.state.id)}
-                onBlur={() => props.onHover(undefined)}
-                className={cn(
-                  "grid w-full cursor-pointer gap-1 rounded-md px-2 py-1.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset active:bg-foreground/12",
-                  props.hoveredState === row.state && "bg-foreground/8",
-                )}
-              >
-                <span
-                  className={cn(
-                    "flex items-center gap-1",
-                    row.state.isFailing ? "text-destructive" : "text-muted-foreground",
-                  )}
-                >
-                  {row.state.isFailing && <X weight="bold" />}
-                  {row.state.call ?? "Start"}
-                </span>
-                <span className="grid grid-cols-[fit-content(45%)_minmax(0,1fr)] gap-x-3 font-mono">
-                  {row.state.variables.map((variable) => (
-                    <Fragment key={variable.name}>
-                      <span className="truncate text-faint">{variable.name}</span>
-                      <span
-                        className={cn(
-                          "wrap-anywhere text-foreground",
-                          !variable.isChanged && "opacity-60",
-                        )}
-                      >
-                        <ValueText text={variable.value} />
-                      </span>
-                    </Fragment>
-                  ))}
-                </span>
-              </button>
-            </li>
-          ))}
-      </ol>
-    </div>
-  );
-};

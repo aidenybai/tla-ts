@@ -1,5 +1,5 @@
 import { X } from "@phosphor-icons/react";
-import { memo, useState } from "react";
+import { memo, useMemo, useState } from "react";
 import { cn } from "cn";
 import { getPath, type Search, type SearchState } from "../search";
 
@@ -16,10 +16,12 @@ interface SearchCellProps {
 
 export const useSearchPath = (search: Search | undefined) => {
   const [hoveredStateId, setHoveredStateId] = useState<string>();
-  return {
-    states: search ? getPath(search.listedStates, hoveredStateId) : [],
-    hover: setHoveredStateId,
-  };
+  const statesById = useMemo(
+    () => new Map(search?.listedStates.map((state) => [state.id, state])),
+    [search],
+  );
+  const states = useMemo(() => getPath(statesById, hoveredStateId), [statesById, hoveredStateId]);
+  return { states, hover: setHoveredStateId };
 };
 
 interface ValueTextProps {

@@ -4,7 +4,7 @@ import { cn } from "cn";
 import { createPartsContext } from "@/lib/utils";
 import type { Compilation } from "../compile-worker";
 import { getHighlightColors } from "../highlight-colors";
-import { getLineMarks } from "../line-marks";
+import { getLineHoveredName, getLineMarks } from "../line-marks";
 import { createHighlighter } from "../highlighter";
 import { PLAYGROUND_EXAMPLES } from "../playground-examples";
 import type { RunResult } from "../run-worker";
@@ -21,7 +21,8 @@ import { RunIcon } from "./run-icon";
 import { Result } from "./parts";
 import { Spinner } from "./spinner";
 import { getStateNames } from "../search";
-import { SearchCell, useSearchPath } from "./search-cell";
+import { useSearchPath } from "./search-cell";
+import { StateGraph } from "./state-graph";
 import { useTheme } from "./theme-switcher";
 import { Verdict } from "./verdict";
 import { Button } from "./ui/button";
@@ -267,12 +268,12 @@ export const PlaygroundPanes = () => {
   const isHydrated = useIsHydrated();
   const search = state.result?.search;
   const path = useSearchPath(search);
+  const focusedNames = useMemo(() => path.states.flatMap(getStateNames), [path.states]);
   const outputRef = useRef<HTMLElement>(null);
   useEffect(() => {
-    const output = outputRef.current;
-    (
-      output?.querySelector('[data-state="failing"]') ?? output?.querySelector("[data-state]")
-    )?.scrollIntoView({ block: "center" });
+    outputRef.current
+      ?.querySelector(`[data-line="${search?.states.find((found) => found.isFailing)?.line}"]`)
+      ?.scrollIntoView({ block: "center" });
   }, [search]);
   const source = (
     <Pane name="source">
@@ -283,7 +284,7 @@ export const PlaygroundPanes = () => {
         marks={state.sourceMarks}
         hoveredName={state.hoveredName}
         isHighlighted={state.isArrowsShown && isWide}
-        focusedNames={path.states.flatMap(getStateNames)}
+        focusedNames={focusedNames}
         colors={state.colors}
         onHover={state.setHoveredName}
       />
@@ -326,7 +327,10 @@ export const PlaygroundPanes = () => {
               number={line.number}
               tokens={line.tokens}
               marks={state.outputLineMarks[line.number - 1]}
-              hoveredName={state.hoveredName}
+              hoveredName={getLineHoveredName(
+                state.outputLineMarks[line.number - 1],
+                state.hoveredName,
+              )}
               isHighlighted={state.isArrowsShown && isWide}
               colors={state.colors}
               note={state.result?.notes.find((note) => note.line === line.number)}
@@ -335,17 +339,6 @@ export const PlaygroundPanes = () => {
                 path.states.length > 0 &&
                 path.states.every((innerState) => innerState.line !== line.number)
               }
-              aside={
-                search && (
-                  <SearchCell
-                    search={search}
-                    line={line.number}
-                    path={path.states}
-                    onHover={path.hover}
-                    className="max-sm:pl-10"
-                  />
-                )
-              }
               className="-mr-4 -ml-4 pr-4 pl-4"
             />
           ))}
@@ -353,7 +346,10 @@ export const PlaygroundPanes = () => {
     </Pane>
   );
   return (
-    <main className="relative min-h-0 flex-1 overflow-hidden">
+    <main
+      data-hovering-name={state.hoveredName === undefined ? undefined : ""}
+      className="relative min-h-0 flex-1 overflow-hidden"
+    >
       <Result.Root isOpen={state.isResultShown && (state.isRunning || state.result !== undefined)}>
         <Result.Header
           onClose={() => {
@@ -379,9 +375,10 @@ export const PlaygroundPanes = () => {
                     count={search.listedStates.length}
                     className="min-h-0 flex-1 grid-rows-[auto_minmax(0,1fr)]"
                   >
-                    <Result.States
-                      states={search.listedStates}
-                      hoveredState={path.states.at(0)}
+                    <StateGraph
+                      search={search}
+                      className="-mx-2 px-2 pb-2"
+                      path={path.states}
                       onHover={path.hover}
                       onSelect={(selected) => {
                         const main = outputRef.current?.closest("main");

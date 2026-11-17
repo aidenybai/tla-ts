@@ -1,7 +1,13 @@
 import { CodeActions, CodeContent, CodeCopy, CodeFooter, CodeRoot, CodeRun } from "./code";
-import { ExampleDescription, ExampleHint, ExampleRoot, ExampleSource } from "./example";
+import {
+  ExampleDescription,
+  ExampleGraph,
+  ExampleHint,
+  ExampleRoot,
+  ExampleSource,
+} from "./example";
 import { HeroBody, HeroRoot, HeroTitle } from "./hero";
-import { ResultBody, ResultHeader, ResultRoot, ResultSection, ResultStates } from "./result";
+import { ResultBody, ResultHeader, ResultRoot, ResultSection } from "./result";
 import { SectionRoot, SectionTitle } from "./section";
 
 export const Code = {
@@ -17,6 +23,7 @@ export const Example = {
   Root: ExampleRoot,
   Description: ExampleDescription,
   Source: ExampleSource,
+  Graph: ExampleGraph,
   Hint: ExampleHint,
 };
 
@@ -31,7 +38,6 @@ export const Result = {
   Header: ResultHeader,
   Body: ResultBody,
   Section: ResultSection,
-  States: ResultStates,
 };
 
 export const Section = {

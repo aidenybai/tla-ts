@@ -141,6 +141,13 @@
   a {
     touch-action: manipulation;
   }
+  [data-tint] {
+    --tint-fill: color-mix(in srgb, var(--tint) 16%, transparent);
+    background-color: var(--tint-fill);
+  }
+  [data-hovering-name] [data-tint] {
+    --tint-fill: color-mix(in srgb, var(--tint) 8%, transparent);
+  }
   code {
     @apply font-mono;
   }
