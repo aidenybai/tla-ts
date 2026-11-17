@@ -1031,7 +1031,7 @@ const isArgumentCountReported = (
 ) => {
   const params = callee?.kind === "Definition" ? callee.params : undefined;
   if (!callee || !params || params.length === callee.arity) return false;
-  if (range) {
+  if (range && !unit.isGenerated) {
     unit.errors.push({
       location: formatRange(range),
       message: `Wrong number of arguments (${count}) given to operator '${resolveSynonym(name)}', \nwhich requires ${params.length} arguments.`,

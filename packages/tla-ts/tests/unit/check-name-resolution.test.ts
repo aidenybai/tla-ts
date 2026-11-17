@@ -2204,6 +2204,26 @@ describe("name resolution matches SANY", () => {
     );
   });
 
+  it("checks an application of a RECURSIVE operator once, where it is written, like SANY", async () => {
+    await expect(
+      checkNames(
+        "EXTENDS Naturals\nRECURSIVE R(_, _)\nOp1 == lab :: R(0, 1)\nR(a) == a\nA == Op1!lab\nB == R(0, 1)",
+      ),
+    ).rejects.toThrow(
+      createSanyError([
+        {
+          location: "line 5, col 1 to line 5, col 9 of module M",
+          message: "Definition of R has different arity than its RECURSIVE declaration.",
+        },
+        {
+          location: "line 7, col 6 to line 7, col 12 of module M",
+          message:
+            "Wrong number of arguments (2) given to operator 'R', \nwhich requires 1 arguments.",
+        },
+      ]),
+    );
+  });
+
   it("passes an operator whose definition has fewer parameters than its RECURSIVE declaration, where SANY crashes", async () => {
     await expect(
       checkNames("RECURSIVE R(_, _)\nR == 1\nL(P(_, _)) == 1\nA == L(R)"),
