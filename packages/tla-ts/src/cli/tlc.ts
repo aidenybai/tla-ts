@@ -586,7 +586,7 @@ export const checkSpecs = async (args: string[], java: JavaProperties) => {
     exitCodes.push(
       await reportErrors(async () => {
         const specPath = path.endsWith(".ts") ? await writeTypeScriptSpec(path) : path;
-        // Deviation from TLC: TLC checks one spec, so tla-ts names each of several it checks.
+        // An extension: TLC refuses more than one spec, and tla-ts checks each one under its name.
         if (paths.length > 1) {
           console.log(`Checking ${basename(specPath)} with ${basename(specPath, ".tla")}.cfg`);
         }
