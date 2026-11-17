@@ -18,7 +18,6 @@ const getVars = (manager: PddManager, count: number) =>
 
 const getPolys = (solver: PddSolver) => solver.equations().map((equation) => `${equation.poly}`);
 
-// Ported from Z3's src/test/pdd.cpp.
 describe("pdd", () => {
   it("canonizes sums and products", () => {
     const manager = new PddManager(3);
@@ -266,7 +265,6 @@ describe("pdd", () => {
   });
 });
 
-// Ported from Z3's src/test/pdd_solver.cpp.
 describe("pdd solver", () => {
   const solve = (polys: (vars: Pdd[]) => Pdd[]) => {
     const manager = new PddManager(4);

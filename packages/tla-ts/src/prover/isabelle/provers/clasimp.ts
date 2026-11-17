@@ -1,5 +1,3 @@
-// Ported from Isabelle2025's Provers/clasimp.ML and Pure/tactic.ML. Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
-
 import { trivForallEquality } from "../pure/drule";
 import { selectGoal } from "../pure/goal";
 import { addSimps, emptySimpset, type SimpContext } from "../pure/raw-simplifier";

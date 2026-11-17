@@ -1,6 +1,3 @@
-// Ported from Z3 (src/ast/rewriter/bit_blaster/bit_blaster_tpl_def.h,
-// src/ast/rewriter/bit_blaster/bit_blaster.cpp,
-// src/ast/rewriter/bit_blaster/bit_blaster_rewriter.cpp), MIT license, see z3-license.txt.
 import { SmtCanceledError } from "../../../errors";
 import { OP_EQ, SORT_BOOL, type AstManager } from "./ast";
 import { TACTIC_ARITH_OPTIONS } from "./arith-rewriter";

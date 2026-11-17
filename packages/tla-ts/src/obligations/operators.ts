@@ -1,5 +1,3 @@
-// A port of tlapm's Optable.
-
 import type { Builtin } from "./expression";
 
 export type Fixity = "Nonfix" | "Prefix" | "Postfix" | "InfixLeft" | "InfixNon" | "InfixRight";

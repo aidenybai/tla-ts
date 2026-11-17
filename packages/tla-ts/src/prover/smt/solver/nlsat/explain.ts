@@ -1,4 +1,3 @@
-// Ported from Z3 (src/nlsat/nlsat_explain.cpp), MIT license, see z3-license.txt.
 import type { AlgebraicManager, Anum } from "./algebraic";
 import {
   type AtomTable,

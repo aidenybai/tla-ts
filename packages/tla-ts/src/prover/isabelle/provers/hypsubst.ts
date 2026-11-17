@@ -1,5 +1,3 @@
-// Ported from Isabelle2025's Provers/hypsubst.ML. Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
-
 import { isIsabelleError, TlaIsabelleError } from "../../../errors";
 import { asmRl, compIncr, revcutRl, thinRl, zeroVarIndexes } from "../pure/drule";
 import { aeconv, etaContract } from "../pure/envir";

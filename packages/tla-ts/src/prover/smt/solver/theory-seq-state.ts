@@ -1,5 +1,3 @@
-// Ported from Z3 (src/smt/theory_seq.cpp, src/smt/theory_seq.h, src/smt/smt_arith_value.cpp,
-// src/util/scoped_vector.h), MIT license, see z3-license.txt.
 import {
   type AstManager,
   OP_ADD,

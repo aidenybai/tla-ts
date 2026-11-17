@@ -1,5 +1,3 @@
-// Ported from Z3 (src/sat/tactic/sat2goal.h, src/sat/tactic/sat2goal.cpp,
-// src/sat/smt/atom2bool_var.cpp), MIT license, see z3-license.txt.
 import { SmtCanceledError } from "../../../../errors";
 import { type AstManager, SORT_BOOL } from "../ast";
 import type { Definition, Goal } from "../goal";

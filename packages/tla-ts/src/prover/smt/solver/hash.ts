@@ -1,4 +1,3 @@
-// Ported from Z3 (src/util/hash.h, src/util/hash.cpp), MIT license, see z3-license.txt.
 const GOLDEN_RATIO = 0x9e3779b9;
 
 const mix = (state: Uint32Array) => {

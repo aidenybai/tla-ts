@@ -1,4 +1,3 @@
-// Ported from Z3 (src/math/simplex/model_based_opt.cpp), MIT license, see z3-license.txt.
 import { SmtInvariantError } from "../../../errors";
 import { getEuclideanDiv, getEuclideanMod, getGcd, getLcm, Rational } from "./rational";
 

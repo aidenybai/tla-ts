@@ -1,4 +1,3 @@
-// Ported from Z3 (src/smt/theory_lra.cpp, src/math/lp/lp_api.h), MIT license, see z3-license.txt.
 import { OP_GE, OP_IS_INT, OP_LE } from "./ast";
 import { BoolVar, Literal, mkLiteral, negate } from "./literal";
 import { Rational } from "./rational";

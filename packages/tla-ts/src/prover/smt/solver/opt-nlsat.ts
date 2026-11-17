@@ -1,4 +1,3 @@
-// Ported from Z3 (src/opt/opt_nlsat.cpp), MIT license, see z3-license.txt.
 import { SmtCanceledError, SmtTacticError } from "../../../errors";
 import {
   type AstManager,

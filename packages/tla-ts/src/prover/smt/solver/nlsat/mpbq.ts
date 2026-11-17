@@ -1,4 +1,3 @@
-// Ported from Z3 (src/util/mpbq.{h,cpp}), MIT license, see z3-license.txt.
 import { Rational } from "../rational";
 
 const getPowerOfTwoMultiple = (value: bigint) => {

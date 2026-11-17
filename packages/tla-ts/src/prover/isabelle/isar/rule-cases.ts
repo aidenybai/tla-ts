@@ -1,5 +1,3 @@
-// Ported from Isabelle2025's Pure/Isar/rule_cases.ML. Copyright (c) 1986-2025 University of
-// Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
 // The cases here are common ones: no rule structure outlines nested cases.
 
 import { TlaIsabelleError } from "../../../errors";

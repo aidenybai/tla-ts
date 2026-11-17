@@ -1,4 +1,3 @@
-// Ported from Z3 (src/muz/base/hnf.cpp), MIT license, see z3-license.txt.
 import {
   type AstManager,
   FAMILY_USER,

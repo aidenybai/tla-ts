@@ -1,4 +1,3 @@
-// Ported from Z3 (src/ackermannization/ackr_model_converter.cpp), MIT license, see z3-license.txt.
 import { type AstManager, OP_CONST_ARRAY, OP_SELECT, OP_STORE } from "./ast";
 import type { AckrInfo } from "./ackr-helper";
 import { mkArrayApp } from "./array-decl-plugin";

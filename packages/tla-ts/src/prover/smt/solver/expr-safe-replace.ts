@@ -1,4 +1,3 @@
-// Ported from Z3 (src/ast/rewriter/expr_safe_replace.cpp), MIT license, see z3-license.txt.
 import { SmtInvariantError } from "../../../errors";
 import { KIND_APP, KIND_VAR, type AstManager } from "./ast";
 import { RefVector } from "./ref-vector";

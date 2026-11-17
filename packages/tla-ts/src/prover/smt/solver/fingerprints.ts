@@ -1,4 +1,3 @@
-// Ported from Z3 (src/smt/fingerprints.cpp), MIT license, see z3-license.txt.
 import type { AstManager } from "./ast";
 import type { Enode } from "./enode";
 import { getCompositeHash } from "./hash";

@@ -596,7 +596,7 @@ describe("the CLI reports results like TLC", () => {
     const lines = result.stdout.split("\n");
     expect(lines[0]).toMatch(/^TLC2 Version \d+\.\d+\.\d+ \(rev: tla-ts\)$/);
     expect(lines[1]).toMatch(
-      /^Running breadth-first search Model-Checking with fp 0 and seed 7 with 2 workers on \d+ cores with \d+MB heap and 0MB offheap memory \[pid: \d+\] \(.+, Node\.js .+, MemFPSet, MemStateQueue\)\.$/,
+      /^Running breadth-first search Model-Checking with fp 0 and seed 7 with 2 workers on \d+ cores with \d+MB heap and 64MB offheap memory \[pid: \d+\] \(.+, Node\.js .+, MSBDiskFPSet, DiskStateQueue\)\.$/,
     );
     expect(lines[2]).toBe(`Parsing file ${realpathSync(join(directory, "Success.tla"))}`);
     const standardModules = ["Naturals", "_TLCTrace", "TLC", "TLCExt", "Sequences", "FiniteSets"];
@@ -633,6 +633,68 @@ describe("the CLI reports results like TLC", () => {
       "Semantic processing of module Success",
       "Linting of module Success",
     ]);
+  });
+
+  it("reports the JVM's default offheap memory when it simulates or searches depth first", () => {
+    expect(
+      runCliWith("cli-output", ["-simulate", "num=1", "-seed", "7", "Success"]).stdout.split(
+        "\n",
+      )[1],
+    ).toMatch(
+      /^Running Random Simulation with seed 7 with 1 worker on \d+ cores with \d+MB heap and 64MB offheap memory \[pid: \d+\] \(.+, Node\.js .+\)\.$/,
+    );
+    expect(runCliWith("cli-output", ["-dfid", "3", "Success"]).stdout.split("\n")[1]).toMatch(
+      /^Running depth-first search Model-Checking with fp 0 and seed 0 with 1 worker on \d+ cores with \d+MB heap and 64MB offheap memory \[pid: \d+\] \(.+, Node\.js .+\)\.$/,
+    );
+  });
+});
+
+describe("the CLI answers PickSuccessor from standard input like TLC", () => {
+  const getPickLines = (output: string) => {
+    const lines = output.split("\n");
+    return lines.slice(
+      lines.findIndex((line) => line.startsWith("Finished computing initial states")) + 1,
+      lines.findIndex((line) => /^(Model checking completed|Progress:)/.test(line)),
+    );
+  };
+  const ask = (length: number, line: number) =>
+    `Extend behavior of length ${length} with a "Next" step [<Action line ${line}, col 12 to line ${line}, col 45 of module PickAsk>]? (Yes/no/explored/states/diff):`;
+
+  it("shows the states or their difference and asks again until an answer extends the behavior or not", () => {
+    const result = runCliWith("tlc-ext", ["PickAsk.tla"], "s\nd\nzz\nN\ny\n \nno\nYes\n\n");
+    expect(result.status).toBe(0);
+    expect(getPickLines(result.stdout)).toEqual([
+      ask(1, 8),
+      "/\\ x = 0",
+      "/\\ y = 0",
+      "~>",
+      "/\\ x = 1",
+      "/\\ y = 0",
+      ask(1, 8),
+      "/\\ x = 1",
+      "",
+      ask(1, 8),
+      ask(1, 8),
+      ask(1, 8),
+      ask(1, 9),
+      ask(2, 8),
+      ask(2, 9),
+      ask(3, 8),
+    ]);
+  });
+
+  it("tells a simulation it can't mark a state explored and asks again", () => {
+    const lines = getPickLines(
+      runCliWith(
+        "tlc-ext",
+        ["-simulate", "num=1", "-seed", "1", "-depth", "2", "PickAsk.tla"],
+        "e\ny\nn\n",
+      ).stdout,
+    );
+    expect(lines[1]).toBe(
+      "Marking a state explored is unsupported by the current TLC mode. Is TLC running in simulation mode?",
+    );
+    expect(lines).toHaveLength(4);
   });
 });
 

@@ -1,4 +1,3 @@
-// Ported from Z3 (src/smt/theory_lra.cpp), MIT license, see z3-license.txt.
 import { FAMILY_ARITH } from "./ast";
 import type { Context } from "./context";
 import { LarSolver } from "./lp/lar-solver";

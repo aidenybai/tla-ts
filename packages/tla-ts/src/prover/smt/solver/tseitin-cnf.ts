@@ -1,5 +1,3 @@
-// Ported from Z3 (src/tactic/core/tseitin_cnf_tactic.cpp, src/ast/shared_occs.cpp), MIT license,
-// see z3-license.txt.
 import { SmtTacticError } from "../../../errors";
 import {
   type AstManager,

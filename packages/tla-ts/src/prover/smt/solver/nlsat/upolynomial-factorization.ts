@@ -1,6 +1,3 @@
-// Ported from Z3 (src/math/polynomial/upolynomial_factorization{.cpp,_int.h}, the factorization
-// in src/math/polynomial/upolynomial.cpp, src/util/prime_generator.cpp and mpz_manager::root),
-// MIT license, see z3-license.txt.
 import { type Upolynomial, UpolynomialManager } from "./upolynomial";
 
 const UINT_MAX = 4294967295;

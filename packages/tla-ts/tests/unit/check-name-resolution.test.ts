@@ -127,6 +127,10 @@ describe("name resolution matches SANY", () => {
       "operator arguments of the arity a parameter takes",
       "D(Op(_)) == Op(42)\nG(a) == a\nF == D(G) = D(LAMBDA a : a)",
     ],
+    [
+      "an operator argument to an operator of a standard module a LET instantiates",
+      "ASSUME LET S == INSTANCE Sequences IN S!SelectSeq(<<1, 2>>, LAMBDA a : a = 2) = <<2>>",
+    ],
   ])("accepts %s", async (_title, source) => {
     expect((await checkNames(source)).status).toBe("success");
   });
@@ -515,12 +519,83 @@ describe("name resolution matches SANY", () => {
         ["line 9, col 12 to line 9, col 15", "Step number of non-fact used as a fact"],
       ],
     ],
+    [
+      'EXTENDS _Possible\nOp(a) == a\nf == _CheckName(Op) /\\ _Track(LAMBDA a : a, "n") /\\ _Track(1)',
+      [
+        ["line 4, col 17 to line 4, col 18", "The operator Op requires 1 arguments."],
+        [
+          "line 4, col 31 to line 4, col 42",
+          "LAMBDA expression used where an expression is required.",
+        ],
+        ["line 4, col 59 to line 4, col 61", "The operator _Track requires 2 arguments."],
+      ],
+    ],
   ])("reports %j at the range SANY reports", async (source, errors) => {
     await expect(checkNames(source)).rejects.toThrow(
       createSanyError(
         errors.map(([location, message]) => ({ location: `${location} of module M`, message })),
       ),
     );
+  });
+
+  it("checks the arguments of an operator a LET instantiates against its parameters like SANY", async () => {
+    await expect(
+      check({
+        source: [
+          "---- MODULE M ----",
+          "Inc(a) == a",
+          "f == LET I == INSTANCE Inner IN I!Op(3) /\\ I!Two(LAMBDA a : a, Inc)",
+          "g == LET S == INSTANCE Sequences IN S!SelectSeq(<<>>, 3)",
+          "h == LET I == INSTANCE Inner S == INSTANCE Sequences IN I!Op(LAMBDA a : a) = S!SelectSeq(<<1>>, LAMBDA a : a = 1)",
+          "VARIABLE x",
+          "Init == x = 0",
+          "Next == x' = x",
+          "====",
+        ].join("\n"),
+        config: "INIT Init\nNEXT Next",
+        loadModule: (name) =>
+          name === "Inner"
+            ? "---- MODULE Inner ----\nOp(F(_)) == F(1)\nTwo(a, b) == a\n===="
+            : undefined,
+      }),
+    ).rejects.toThrow(
+      createSanyError(
+        [
+          [
+            "line 3, col 38 to line 3, col 38",
+            "An expression appears as argument number 1 (counting from 1) to operator 'I!Op', in a position an operator is required.",
+          ],
+          [
+            "line 3, col 33 to line 3, col 39",
+            "Argument number 1 to operator 'I!Op' \nshould be a 1-parameter operator.",
+          ],
+          [
+            "line 3, col 50 to line 3, col 61",
+            "LAMBDA expression used where an expression is required.",
+          ],
+          ["line 3, col 64 to line 3, col 66", "The operator Inc requires 1 arguments."],
+          [
+            "line 4, col 55 to line 4, col 55",
+            "An expression appears as argument number 2 (counting from 1) to operator 'S!SelectSeq', in a position an operator is required.",
+          ],
+          [
+            "line 4, col 37 to line 4, col 56",
+            "Argument number 2 to operator 'S!SelectSeq' \nshould be a 1-parameter operator.",
+          ],
+        ].map(([location, message]) => ({ location: `${location} of module M`, message })),
+      ),
+    );
+  });
+
+  it("passes an operator argument through an operator a LET instantiates", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nASSUME LET I == INSTANCE Inner IN I!Op(LAMBDA a : a + 1) = 2\nVARIABLE x\nInit == x = 0\nNext == x' = x\n====",
+      config: "INIT Init\nNEXT Next",
+      loadModule: (name) =>
+        name === "Inner" ? "---- MODULE Inner ----\nOp(F(_)) == F(1)\n====" : undefined,
+    });
+    expect(result.status).toBe("success");
   });
 
   it.each([

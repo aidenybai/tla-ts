@@ -1,5 +1,3 @@
-// A port of tlapm's obligation printer (E_fmt, Fmtutil and Ctx).
-
 import { TlaProofError } from "../errors";
 import {
   getHypName,

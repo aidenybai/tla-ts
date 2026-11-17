@@ -1,5 +1,3 @@
-// Ported from Z3 (src/math/lp/random_updater_def.h, and shift_var and
-// get_freedom_interval_for_column in src/math/lp/int_solver.cpp), MIT license, see z3-license.txt.
 import { getLcm, Rational } from "../rational";
 import { IndexedUintSet } from "./containers";
 import type { LarSolver } from "./lar-solver";

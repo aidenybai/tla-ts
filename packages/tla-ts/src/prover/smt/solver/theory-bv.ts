@@ -1,5 +1,3 @@
-// Ported from Z3 (src/smt/theory_bv.h, src/smt/theory_bv.cpp, src/util/union_find.h), MIT license,
-// see z3-license.txt.
 import { SmtInvariantError, SmtUnsupportedError } from "../../../errors";
 import {
   FAMILY_BV,

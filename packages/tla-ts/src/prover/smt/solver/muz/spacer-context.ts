@@ -1,4 +1,3 @@
-// Ported from Z3 (src/muz/spacer/spacer_context.cpp), MIT license, see z3-license.txt.
 import { SmtTacticError, SmtUnsupportedError } from "../../../../errors";
 import { type AstManager, getSymbolName, KIND_VAR, OP_AND, OP_IMPLIES, SORT_BOOL } from "../ast";
 import { flattenOrVector, pushNotOwned } from "../ast-util";

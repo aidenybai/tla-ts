@@ -1,5 +1,3 @@
-// Ported from Z3 (src/math/polynomial/polynomial.{h,cpp}, src/math/polynomial/polynomial_cache.cpp),
-// MIT license, see z3-license.txt.
 import { SmtInvariantError } from "../../../../errors";
 import { getGcd, Rational } from "../rational";
 import { floorDiv, UpolynomialManager } from "./upolynomial";

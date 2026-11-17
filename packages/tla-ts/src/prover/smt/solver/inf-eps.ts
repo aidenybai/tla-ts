@@ -1,5 +1,4 @@
-// Ported from Z3 (src/util/inf_eps_rational.h), MIT license, see z3-license.txt. A value
-// infinity * oo + value + epsilon * ε, ordered lexicographically.
+// A value infinity * oo + value + epsilon * ε, ordered lexicographically.
 import { Rational } from "./rational";
 
 export class InfEps {

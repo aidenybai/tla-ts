@@ -1,5 +1,3 @@
-// Ported from Z3 (src/util/max_cliques.h), MIT license, see z3-license.txt.
-
 const getSortedSet = (set: Set<number>) => [...set].sort((left, right) => left - right);
 
 export class MaxCliques {

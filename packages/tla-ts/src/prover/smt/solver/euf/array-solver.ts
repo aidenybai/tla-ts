@@ -1,5 +1,3 @@
-// Ported from Z3 (src/sat/smt/array_solver.cpp, src/sat/smt/array_model.cpp), MIT license, see
-// z3-license.txt.
 import { mkArrayApp, mkAsArray } from "../array-decl-plugin";
 import {
   type AstManager,

@@ -1,6 +1,3 @@
-// Ported from Z3 (src/math/interval/interval.h, src/math/interval/interval_def.h,
-// src/math/interval/dep_intervals.h, src/math/interval/dep_intervals.cpp), MIT license, see
-// z3-license.txt.
 import { Rational } from "../rational";
 import { type Dependency, linearize, mkJoin } from "./dependency";
 

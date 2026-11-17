@@ -1,4 +1,3 @@
-// Ported from Z3 (src/tactic/core/propagate_values_tactic.cpp, src/ast/shared_occs.cpp), MIT license, see z3-license.txt.
 import { KIND_APP, KIND_QUANTIFIER, OP_EQ, type AstManager } from "./ast";
 import { type Dependency, type Goal, joinDependencies } from "./goal";
 import { Rewriter, TACTIC_REWRITER_OPTIONS } from "./rewriter";

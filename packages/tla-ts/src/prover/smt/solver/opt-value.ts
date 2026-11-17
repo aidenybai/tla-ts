@@ -1,4 +1,3 @@
-// Ported from Z3 (src/opt/opt_value.h, src/opt/opt_value.cpp), MIT license, see z3-license.txt.
 import { InfEps } from "./inf-eps";
 import type { AlgebraicManager, Anum } from "./nlsat/algebraic";
 

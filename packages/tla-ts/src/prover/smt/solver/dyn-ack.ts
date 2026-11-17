@@ -1,4 +1,3 @@
-// Ported from Z3 (src/smt/dyn_ack.cpp), MIT license, see z3-license.txt.
 import { OP_EQ } from "./ast";
 import { CLS_TH_LEMMA } from "./clause";
 import type { Context } from "./context";

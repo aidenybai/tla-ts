@@ -1,5 +1,3 @@
-// Ported from Z3 (src/ast/simplifiers/solve_eqs.cpp, src/ast/simplifiers/extract_eqs.cpp,
-// src/ast/simplifiers/solve_context_eqs.cpp), MIT license, see z3-license.txt.
 import { SmtUnsupportedError } from "../../../errors";
 import {
   type AstManager,

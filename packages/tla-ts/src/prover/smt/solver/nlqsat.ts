@@ -1,5 +1,5 @@
-// Ported from Z3 (src/qe/nlqsat.cpp), MIT license, see z3-license.txt. Z3 registers only the
-// satisfiability mode as a tactic, so the elimination mode of mk_nlqe_tactic is not ported.
+// Z3 registers only the satisfiability mode as a tactic, so the elimination mode of mk_nlqe_tactic
+// is not ported.
 import { SmtTacticError } from "../../../errors";
 import {
   type AstManager,

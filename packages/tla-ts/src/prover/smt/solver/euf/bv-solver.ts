@@ -1,5 +1,3 @@
-// Ported from Z3 (src/sat/smt/bv_solver.h, src/sat/smt/bv_solver.cpp), MIT license, see
-// z3-license.txt.
 import { OP_INT2BV, OP_UBV2INT } from "../ast";
 import { L_FALSE, L_TRUE, L_UNDEF } from "../lbool";
 import type { ProtoModel } from "../proto-model";

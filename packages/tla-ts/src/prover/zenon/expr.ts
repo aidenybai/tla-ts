@@ -1,5 +1,3 @@
-// Ported from Zenon's expr.ml, as shipped in tlapm. Copyright 2002 INRIA, see LICENSE.
-
 import { TlaZenonError } from "../../errors";
 import { combine, createHasher, toInt63, type Int63 } from "./ocaml";
 

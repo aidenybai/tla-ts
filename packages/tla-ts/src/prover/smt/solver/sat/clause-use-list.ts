@@ -1,5 +1,3 @@
-// Ported from Z3 (src/sat/sat_clause_use_list.h, src/sat/sat_clause_use_list.cpp,
-// src/sat/sat_simplifier.h, src/sat/sat_simplifier.cpp), MIT license, see z3-license.txt.
 import { type ClauseArena, NULL_LITERAL } from "./clause";
 
 export class UseList {

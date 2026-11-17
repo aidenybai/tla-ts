@@ -1,5 +1,3 @@
-// Ported from Z3 (src/ast/seq/seq_view_witness.cpp, src/ast/seq/seq_view_witness.h,
-// src/ast/seq/seq_view.h), MIT license, see z3-license.txt.
 import { type AstManager, OP_SEQ_UNIT } from "./ast";
 import { GuardSet, GuardSetCache } from "./guard-set";
 import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";

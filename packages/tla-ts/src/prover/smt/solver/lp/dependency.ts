@@ -1,5 +1,3 @@
-// Ported from Z3 (src/util/dependency.h), MIT license, see z3-license.txt.
-
 export interface DependencyLeaf {
   readonly isLeaf: true;
   readonly value: number;

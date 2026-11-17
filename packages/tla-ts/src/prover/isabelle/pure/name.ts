@@ -1,5 +1,3 @@
-// Ported from Isabelle2025's Pure/name.ML and Pure/General/symbol.ML. Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
-
 const explodeSymbols = (text: string): string[] => text.match(/\\<\^?[A-Za-z0-9_']*>|[^]/gu) ?? [];
 
 const isRawSymbolic = (symbol: string) => symbol.startsWith("\\<") && !symbol.startsWith("\\<^");

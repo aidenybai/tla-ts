@@ -1,5 +1,3 @@
-// Ported from Z3 (src/tactic/core/cofactor_elim_term_ite.cpp,
-// src/tactic/core/cofactor_term_ite_tactic.h), MIT license, see z3-license.txt.
 import {
   type AstManager,
   FAMILY_ARITH,

@@ -1,4 +1,3 @@
-// Ported from Z3 (src/math/lp/lar_term.h), MIT license, see z3-license.txt.
 import { getIdentityHash, ObjMap } from "../hashtable";
 import { Rational } from "../rational";
 import { Impq } from "./numeric-pair";

@@ -1,5 +1,3 @@
-// Ported from Zenon's phrase.ml, as shipped in tlapm. Copyright 2004 INRIA, see LICENSE.
-
 import type { Expr } from "./expr";
 import type { Definition, Phrase } from "./parse";
 

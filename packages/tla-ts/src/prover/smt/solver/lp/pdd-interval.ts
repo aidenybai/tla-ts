@@ -1,4 +1,3 @@
-// Ported from Z3 (src/math/dd/pdd_interval.h), MIT license, see z3-license.txt.
 import {
   add,
   type DepInterval,

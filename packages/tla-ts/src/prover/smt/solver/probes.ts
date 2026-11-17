@@ -1,5 +1,3 @@
-// Ported from Z3 (src/tactic/probe.cpp, src/tactic/arith/probe_arith.cpp), MIT license, see
-// z3-license.txt.
 import { SmtParseError, SmtUnsupportedError } from "../../../errors";
 import {
   type AstManager,
@@ -154,8 +152,8 @@ const mkNonQffp = (isLra: boolean) => (manager: AstManager, expr: number) => {
   return isLra ? sort !== SORT_REAL : !(sort === SORT_REAL && manager.isNumeral(expr));
 };
 
-// Ported from Z3 (src/tactic/fpa/qffp_tactic.cpp). Z3 rejects every application of the basic family
-// before it would accept one, so the goal must not have a Boolean connective.
+// Z3 rejects every application of the basic family before it would accept one, so the goal must not
+// have a Boolean connective.
 const isNonFpQfnra = (manager: AstManager, expr: number) => {
   if (!isApp(manager, expr)) return true;
   const family = manager.getFamily(expr);

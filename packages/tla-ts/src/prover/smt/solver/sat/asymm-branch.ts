@@ -1,5 +1,3 @@
-// Ported from Z3 (src/sat/sat_asymm_branch.h, src/sat/sat_asymm_branch.cpp,
-// src/sat/sat_asymm_branch_params.pyg), MIT license, see z3-license.txt.
 import { L_FALSE, L_TRUE, L_UNDEF } from "../lbool";
 import { RandomGen } from "../random-gen";
 import { Big } from "./big";

@@ -1,4 +1,3 @@
-// Ported from Z3 (src/smt/qi_queue.cpp, src/smt/smt_checker.cpp), MIT license, see z3-license.txt.
 import { KIND_APP, KIND_VAR, OP_AND, OP_EQ, OP_FALSE, OP_ITE, OP_NOT, OP_OR, OP_TRUE } from "./ast";
 import type { Context } from "./context";
 import type { Enode } from "./enode";

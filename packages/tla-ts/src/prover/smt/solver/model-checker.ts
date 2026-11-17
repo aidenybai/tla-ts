@@ -1,4 +1,3 @@
-// Ported from Z3 (src/smt/smt_model_checker.cpp), MIT license, see z3-license.txt.
 import { SmtInvariantError } from "../../../errors";
 import { KIND_APP, OP_NOT, OP_OR, SORT_BOOL } from "./ast";
 import { AssertedFormulas } from "./asserted-formulas";

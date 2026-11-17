@@ -1,4 +1,3 @@
-// Ported from Z3 (src/sat/sat_solver/inc_sat_solver.cpp), MIT license, see z3-license.txt.
 import { SmtTacticError, SmtUnsupportedError } from "../../../../errors";
 import { type AstManager, OP_AND, OP_EQ, OP_IMPLIES, OP_NOT, OP_OR, SORT_BOOL } from "../ast";
 import { BitBlasterRewriter } from "../bit-blast-tactic";

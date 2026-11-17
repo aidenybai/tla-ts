@@ -1,6 +1,3 @@
-// Ported from Z3 (src/tactic/dependent_expr_state_tactic.h,
-// src/ast/simplifiers/dependent_expr_state.h, src/ast/simplifiers/dependent_expr_state.cpp), MIT
-// license, see z3-license.txt.
 import type { AstManager } from "./ast";
 import type { Goal } from "./goal";
 

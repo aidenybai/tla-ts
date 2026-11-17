@@ -1,5 +1,3 @@
-// Ported from Z3 (src/muz/base/dl_rule_transformer.cpp, src/muz/transforms/dl_transforms.cpp), MIT
-// license, see z3-license.txt.
 import { SmtUnsupportedError } from "../../../../errors";
 import type { DatalogContext } from "./dl-context";
 import { MkBitBlast } from "./dl-mk-bit-blast";

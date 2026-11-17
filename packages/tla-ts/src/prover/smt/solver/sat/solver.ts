@@ -1,5 +1,3 @@
-// Ported from Z3 (src/sat/sat_solver.h, src/sat/sat_solver.cpp, src/sat/sat_gc.cpp,
-// src/sat/sat_justification.h, src/util/ema.h), MIT license, see z3-license.txt.
 import { SmtCanceledError } from "../../../../errors";
 import { L_FALSE, L_TRUE, L_UNDEF } from "../lbool";
 import { RandomGen } from "../random-gen";

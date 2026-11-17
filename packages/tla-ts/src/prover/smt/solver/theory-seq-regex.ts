@@ -1,4 +1,3 @@
-// Ported from Z3 (src/smt/seq_regex.cpp, src/smt/seq_regex.h), MIT license, see z3-license.txt.
 import {
   KIND_APP,
   OP_ITE,

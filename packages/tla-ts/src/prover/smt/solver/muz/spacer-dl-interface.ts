@@ -1,4 +1,3 @@
-// Ported from Z3 (src/muz/spacer/spacer_dl_interface.cpp), MIT license, see z3-license.txt.
 import { SmtUnsupportedError } from "../../../../errors";
 import { L_FALSE } from "../lbool";
 import { ProtoModel } from "../proto-model";

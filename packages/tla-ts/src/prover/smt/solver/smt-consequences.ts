@@ -1,5 +1,3 @@
-// Ported from Z3 (src/smt/smt_consequences.cpp, src/smt/smt_solver.cpp), MIT license, see
-// z3-license.txt.
 import { SmtUnsupportedError } from "../../../errors";
 import { KIND_APP, OP_DT_IS, OP_DT_RECOGNISER, OP_EQ, OP_IMPLIES, OP_NOT, SORT_BOOL } from "./ast";
 import { BinJustification, CLS_AUX } from "./clause";

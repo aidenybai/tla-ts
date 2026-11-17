@@ -1,4 +1,3 @@
-// Ported from Z3 (src/qe/lite/qe_lite_tactic.cpp, src/qe/mbp/mbp_solve_plugin.cpp), MIT license, see z3-license.txt.
 import {
   KIND_QUANTIFIER,
   KIND_VAR,

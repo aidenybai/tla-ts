@@ -1,5 +1,3 @@
-// Ported from Z3 (src/ast/euf/euf_egraph.h, src/ast/euf/euf_egraph.cpp, src/ast/euf/euf_enode.h,
-// src/ast/euf/euf_enode.cpp, src/ast/euf/euf_justification.h), MIT license, see z3-license.txt.
 import {
   type AstManager,
   OP_ADD,

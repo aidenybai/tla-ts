@@ -1,4 +1,3 @@
-// Ported from Z3 (src/math/lp/nex_creator.h, src/math/lp/nex_creator.cpp), MIT license, see z3-license.txt.
 import { Rational } from "../rational";
 import { UnorderedUintMap } from "./containers";
 import {

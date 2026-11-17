@@ -1,4 +1,4 @@
-// A port of TLC's tlc2.pprint package. TLC prints the original text whenever the parse fails.
+// TLC prints the original text whenever the parse fails.
 
 import { skipWhile } from "./lexer";
 

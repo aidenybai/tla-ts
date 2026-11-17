@@ -1,5 +1,5 @@
-// Ported from Z3 (src/math/dd/dd_pdd.h, src/math/dd/dd_pdd.cpp, src/math/dd/pdd_eval.h), MIT license, see z3-license.txt.
-// Deviation from Z3: nodes are never freed, so node indices match Z3 only until its first collection.
+// Deviation from Z3: nodes are never freed, so node indices match Z3 only until its first
+// collection.
 import { PddMemoryOutError } from "../../../../errors";
 import { getGcd, Rational } from "../rational";
 import { shrink } from "../array";

@@ -850,7 +850,7 @@ const resolveDefinitions = (
       range: definition.location.range,
       parent: current,
     };
-    if (isInstantiated(definition)) return local;
+    if (isInstantiated(definition)) return { ...local, params: getParamArities(definition) };
     const isInstanced = instances.some((instance) => instance.location === definition.location);
     const isGenerated = unit.isGenerated || definition.isLocal || isKey(definition.name);
     const inner = isInstanced
@@ -899,7 +899,6 @@ const isInstanceArityReported = (
   return true;
 };
 
-// Deviation from SANY: an operator whose parameters tla-ts does not know takes any argument.
 const resolveApply = (
   expression: Expression & { kind: "Apply" },
   scope: LocalName | undefined,

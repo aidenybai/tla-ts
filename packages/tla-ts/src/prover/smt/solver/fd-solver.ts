@@ -1,6 +1,3 @@
-// Ported from Z3 (src/tactic/fd_solver/fd_solver.cpp, src/tactic/fd_solver/fd_simplifier.cpp,
-// src/solver/simplifier_solver.cpp, src/solver/solver2tactic.cpp), MIT license, see
-// z3-license.txt.
 import { SmtCanceledError } from "../../../errors";
 import {
   type AstManager,

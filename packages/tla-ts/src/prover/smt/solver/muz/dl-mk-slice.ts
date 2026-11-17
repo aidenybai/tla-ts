@@ -1,4 +1,3 @@
-// Ported from Z3 (src/muz/transforms/dl_mk_slice.cpp), MIT license, see z3-license.txt.
 import { getSymbolName, KIND_VAR, OP_EQ, OP_ITE, SORT_BOOL } from "../ast";
 import { flattenAndVector } from "../ast-util";
 import { ObjMap } from "../hashtable";
