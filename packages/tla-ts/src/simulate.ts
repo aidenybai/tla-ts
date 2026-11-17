@@ -381,12 +381,16 @@ export const simulate = (options: SimulationOptions): number => {
               ),
       };
     });
+  // TLC's SimulationWorker binds CounterExample to the alias of each state.
   const getCounterExample = (trace: TraceNode[]) =>
     createCounterExample(
-      trace.map((node) => search.toRecord(node.state)),
+      toTraceSteps(trace).map((step) => step.state),
       trace.slice(1).map((node) => toActionValue(node.action)),
       undefined,
     );
+  // TLC's Simulator binds CounterExample to an initial state that violates an invariant, not to its alias.
+  const getInitialCounterExample = (node: TraceNode) =>
+    createCounterExample([toRecord(node.state)], [], undefined);
 
   const initialStates: TraceNode[] = [];
   const isComplete = (state: (Value | undefined)[]): state is Value[] =>
@@ -448,7 +452,7 @@ export const simulate = (options: SimulationOptions): number => {
           MESSAGE_CODE.invariantViolatedInitial,
           `Invariant ${violated.name} is violated by the initial state:\n${formatState(alias)}`,
         );
-        runtime.counterExample = getCounterExample([node]);
+        runtime.counterExample = getInitialCounterExample(node);
         reportPostcondition(true);
         return EXIT_STATUS.safetyViolation;
       }
@@ -460,7 +464,7 @@ export const simulate = (options: SimulationOptions): number => {
           MESSAGE_CODE.propertyViolatedInitial,
           `Property ${predicate.name} is violated by the initial state:\n${formatState(alias)}`,
         );
-        runtime.counterExample = getCounterExample([node]);
+        runtime.counterExample = getInitialCounterExample(node);
         reportPostcondition(true);
         return EXIT_STATUS.livenessViolation;
       }

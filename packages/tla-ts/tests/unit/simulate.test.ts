@@ -59,3 +59,27 @@ it("sorts the records of a behavior TLC checks for liveness, as it fingerprints 
     getPrintedRecords(body, "SPECIFICATION Spec\nPROPERTY Live\nCHECK_DEADLOCK FALSE"),
   ).toEqual([["[a |-> 0, b |-> 0]", "[a |-> 0, b |-> 5]", "[a |-> 1, b |-> 5]"]]);
 });
+
+const getCounterExample = (body: string, config: string) => {
+  const printed: string[] = [];
+  simulate({
+    source: `---- MODULE M ----\nEXTENDS Naturals, TLC, TLCExt\nVARIABLE x\nPost == PrintT(<<CounterExample.state, {<<e[1][1], e[2].name, e[3][1]>> : e \\in CounterExample.action}>>)\nInit == x = 0\n${body}\n====`,
+    config: `${config}\nPOSTCONDITION Post`,
+    seed: 4n,
+    traceDepth: 10,
+    traceCount: 1n,
+    aril: 0n,
+    isGenerating: false,
+    scheduler: "random",
+    onSimulation: () => {},
+    onPrint: (text) => printed.push(text),
+  });
+  return printed;
+};
+
+it("binds CounterExample to the alias of each state of a behavior that violates an invariant", () => {
+  const body = "Alias == [a |-> x, n |-> x']\nNext == x' = x + 1\nInv == x < 2";
+  expect(getCounterExample(body, "INIT Init\nNEXT Next\nINVARIANT Inv\nALIAS Alias")).toEqual([
+    '<< { <<1, [a |-> 0, n |-> 1]>>,\n     <<2, [a |-> 1, n |-> 2]>>,\n     <<3, [a |-> 2, n |-> 2]>> },\n   {<<1, "Next", 2>>, <<2, "Next", 3>>} >>',
+  ]);
+});
