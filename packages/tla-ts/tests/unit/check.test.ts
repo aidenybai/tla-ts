@@ -1243,6 +1243,21 @@ ASSUME TLCFP(a) = -887695703
       new TlaConfigError("The configuration file substitutes constant C with non-constant Foo"),
     );
   });
+
+  it("counts the coverage of each invariant it checks in an initial state under -continue", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nVARIABLE x\nInit == x = FALSE\nNext == UNCHANGED x\nInv == ~x\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+      isContinued: true,
+      coverage: 1,
+    });
+    expect(
+      result.coverage?.relations
+        .find((relation) => relation.kind === "invariant")
+        ?.expressions.map((expression) => [expression.location, expression.count]),
+    ).toEqual([["line 5, col 8 to line 5, col 9 of module M", 1]]);
+  });
 });
 
 describe("formatValue matches TLC", () => {

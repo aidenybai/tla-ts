@@ -1348,8 +1348,15 @@ export const createSearch = (
       return violated;
     },
     forEachViolatedInvariant: (state, onViolated) => {
+      // Under -continue, TLC's DoInitFunctor checks every invariant of an initial state.
+      const isHeld =
+        coverage !== undefined &&
+        coveredInvariants
+          .map((check) => evaluateCovered(coverage, check, state, undefined) === true)
+          .every(Boolean);
+      const checked = isHeld ? runtimeChecks : invariants;
       for (const predicate of invariantPredicates) {
-        const isPredicateViolated = invariants.some(
+        const isPredicateViolated = checked.some(
           (invariant) =>
             invariant.predicate === predicate.predicate && isViolated(invariant, state, undefined),
         );
