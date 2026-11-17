@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 import { check } from "../../src";
+import { runCliWith } from "./cli-harness";
 
 const DIRECTORY = join(import.meta.dirname, "../fixtures/tlc-ext");
 
@@ -68,6 +69,16 @@ describe("TLCExt operators match TLC", () => {
     expect(printed[0]).toBe(
       'Extend behavior of length 1 with a "Next" step [<Action line 5, col 9 to line 5, col 24 of module M>]? (Yes/no/explored/states/diff):',
     );
+  });
+
+  it("names the action of each successor it asks about in a depth-first search", () => {
+    const ask = (line: number) =>
+      `Extend behavior of length 1 with a "Next" step [<Action line ${line}, col 12 to line ${line}, col 45 of module PickAsk>]? (Yes/no/explored/states/diff):`;
+    const result = runCliWith("tlc-ext", ["-dfid", "2", "PickAsk.tla"], "y\nn\n");
+    expect(result.stdout.split("\n").filter((line) => line.startsWith("Extend"))).toEqual([
+      ask(8),
+      ask(9),
+    ]);
   });
 
   it("requires a string literal as the message of AssertError", async () => {
