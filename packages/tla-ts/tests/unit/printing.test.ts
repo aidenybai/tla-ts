@@ -107,7 +107,8 @@ describe("printing matches TLC", () => {
   });
 
   it("sorts the records of a constant definition, which TLC normalizes at startup", async () => {
-    const body = "F(a) == a\nR == [b |-> 1, a |-> 2]\nASSUME PrintT(<<ToString(R), ToString(F(R)), ToString([b |-> 1, a |-> 2])>>)";
+    const body =
+      "F(a) == a\nR == [b |-> 1, a |-> 2]\nASSUME PrintT(<<ToString(R), ToString(F(R)), ToString([b |-> 1, a |-> 2])>>)";
     expect((await checkPrinting(body)).printed).toEqual([
       '<<"[a |-> 2, b |-> 1]", "[a |-> 2, b |-> 1]", "[b |-> 1, a |-> 2]">>',
     ]);
