@@ -656,20 +656,26 @@ const getPredicate = (expression: Expression, environment: Environment) => {
 };
 
 const getStateChecks = (named: NamedExpression[], environment: Environment): StateCheck[] =>
-  named.flatMap((item) =>
-    getConjuncts(item.expression, environment).map((expression) => {
-      const variables =
-        item.scope === undefined ? getReadVariables(expression, environment) : undefined;
-      return {
-        name: item.name,
-        expression,
-        scope: item.scope,
-        variables,
-        membership: getMembership(expression, variables, environment),
-        predicate: getPredicate(item.expression, environment),
-      };
-    }),
-  );
+  named.flatMap((item) => {
+    const predicate = getPredicate(item.expression, environment);
+    const isImpure =
+      item.scope === undefined && getReadVariables(predicate, environment) === undefined;
+    // TLC evaluates an invariant whole, so one that prints isn't split into conjuncts.
+    return (isImpure ? [predicate] : getConjuncts(item.expression, environment)).map(
+      (expression) => {
+        const variables =
+          item.scope === undefined ? getReadVariables(expression, environment) : undefined;
+        return {
+          name: item.name,
+          expression,
+          scope: item.scope,
+          variables,
+          membership: getMembership(expression, variables, environment),
+          predicate,
+        };
+      },
+    );
+  });
 
 const isUnchangedFor = (stateCheck: StateCheck, state: Value[], parent: Value[] | undefined) => {
   const variables = stateCheck.variables;
@@ -817,7 +823,7 @@ const getExpectedBoolean = (expression: Expression, environment: Environment) =>
 
 const holdsAsConjunct = (check: StateCheck, context: Context) =>
   holdsLikeTlc(check.expression, context, (expression, environment) => {
-    holdsLikeTlc(check.predicate, context);
+    if (check.predicate !== check.expression) holdsLikeTlc(check.predicate, context);
     return getExpectedBoolean(expression, environment);
   });
 

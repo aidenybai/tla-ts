@@ -1323,6 +1323,19 @@ describe("evaluation errors match TLC", () => {
     expect(prints).toEqual(['"a"  7', '"a"  7', '"a"  7']);
   });
 
+  it.each([
+    ['PrintT("a") /\\ PrintT("b") /\\ x + 1', ['"a"', '"b"']],
+    ['Print("p", x + 1)', ['"p"  1']],
+  ])("evaluates the invariant %s once when it is not boolean", async (body, texts) => {
+    const prints: string[] = [];
+    const result = await check({
+      source: `---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nInit == x = 0\nNext == UNCHANGED x\nInv == ${body}\n====`,
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+      onPrint: (text) => prints.push(text),
+    });
+    expect([result.status, prints]).toEqual(["error", texts]);
+  });
+
   it("rejects a mistyped membership outside an assumption", async () => {
     const result = await check({
       source:
