@@ -640,6 +640,10 @@ namespace TemporalHelpers {
     resultAssertions(result);
   }
 
+  // The error of a getter that a check defines and that a method must not call. A getter that read a
+  // function of the check's own would be a closure, which tla-ts can't tell the call of.
+  function CustomError() {}
+
   // A getter of the subclass's constructor property that throws isn't called.
   export function checkSubclassConstructorThrows(
     construct: TemporalConstructor,
@@ -648,7 +652,6 @@ namespace TemporalHelpers {
     methodArgs: unknown[],
     resultAssertions: (result: any) => void,
   ) {
-    function CustomError() {}
     class MySubclass extends construct {}
     const instance = new MySubclass(...constructArgs);
     Object.defineProperty(instance, "constructor", {
@@ -794,7 +797,6 @@ namespace TemporalHelpers {
     methodArgs: unknown[],
     resultAssertions: (result: any) => void,
   ) {
-    function CustomError() {}
     class MySubclass extends construct {
       constructor(...args: unknown[]) {
         super(...args);
