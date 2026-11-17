@@ -93,6 +93,7 @@ import {
   isClosure,
   getBuiltInBase,
   isNestedFunction,
+  isOnlyCalled,
   type Closure,
   getFactoryCall,
   isAsyncFunction,
@@ -14048,7 +14049,10 @@ const getDispatched = (
   called: ts.Expression = node.expression,
 ) => {
   const dispatched = getCandidates(node, functions, context, called);
-  return dispatched !== undefined && dispatched.length > 0 ? dispatched : undefined;
+  // A function that the program only calls by name is none that the callee's value may hold.
+  return dispatched !== undefined && dispatched.length > 0
+    ? dispatched.filter((candidate) => !isOnlyCalled(candidate, context))
+    : undefined;
 };
 
 // RegExp.prototype.exec and test, where a script stores them as values, which throw a TypeError
