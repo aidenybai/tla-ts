@@ -659,12 +659,6 @@ export const createContext = (
   };
 };
 
-// Whether a node writes an object or a regexp literal, each of which makes an object.
-export const hasObjectLiteral = (node: ts.Node): boolean =>
-  ts.isObjectLiteralExpression(node) ||
-  ts.isRegularExpressionLiteral(node) ||
-  (ts.forEachChild(node, hasObjectLiteral) ?? false);
-
 // The function whose arguments object a reference to arguments names. tla-ts follows only a
 // reference that no arrow function holds, since an arrow function names the arguments of the
 // function around it, which a later call may have replaced.

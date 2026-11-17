@@ -7,12 +7,12 @@ import {
   findNodes,
   getCallee,
   getSymbol,
-  hasObjectLiteral,
   isDeclarationOnly,
   isHeldError,
   isMethodCall,
 } from "./context";
 import { TlaTypeScriptError } from "../errors";
+import { isAllocation } from "./heap";
 import { type Scope } from "./scope";
 import {
   getKind,
@@ -569,10 +569,16 @@ export const readsUninitialized = (roots: readonly ts.Node[], scope: Scope, cont
     }),
   );
 
-// Whether a node may make an object or a regexp literal, itself or through a function that it
-// names.
-export const isMakingObjects = (node: ts.Node, context: Context) =>
-  getReached([node], context).some(hasObjectLiteral);
+// Whether a node may make an object, as an object or a regexp literal or a built-in that makes
+// one does, itself or through a function that it names.
+export const isMakingObjects = (node: ts.Node, context: Context) => {
+  const isMaking = (inner: ts.Node): boolean =>
+    ts.isObjectLiteralExpression(inner) ||
+    ts.isRegularExpressionLiteral(inner) ||
+    isAllocation(inner, context) ||
+    (ts.forEachChild(inner, isMaking) ?? false);
+  return getReached([node], context).some(isMaking);
+};
 
 // Whether a call gives a new object each time: Array(...), or a callee that returns only object
 // literals, which nothing else can name, though the objects inside them may still be shared.

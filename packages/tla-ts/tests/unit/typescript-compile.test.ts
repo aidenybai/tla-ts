@@ -49214,4 +49214,27 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("runs where its module does a constant that a call making an object gives", () => {
+    const path = join(import.meta.dirname, "../fixtures/typescript/imports/limiting.ts");
+    const getSource = (expected: string) => `
+      import { getLimit, setLimit } from "./limits";
+      const saved = { limit: getLimit() };
+      setLimit(0);
+      const during = getLimit();
+      setLimit(saved.limit);
+      const seen = [saved.limit, during, getLimit()].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await check(compile(getSource("10,0,10"), path))).failure).toBeUndefined();
+    });
+
+    it("rejects a limit that the write leaves alone", async () => {
+      expect((await check(compile(getSource("10,10,10"), path))).failure?.message).toContain(
+        "seen 10,0,10",
+      );
+    });
+  });
 });
