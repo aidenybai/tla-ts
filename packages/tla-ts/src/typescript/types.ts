@@ -2080,10 +2080,15 @@ export const translateUnknown = (
 ) => {
   const unknowns = context.unknowns;
   const domain = findDomain(context.checker.getTypeAtLocation(node), context);
+  // The program's own code may run, but for a function that the exported function takes, which
+  // tla-ts rejects as it chooses the parameter.
   const declaration = context.checker.getResolvedSignature(node)?.getDeclaration();
+  const parameter = getValueDeclaration(getSymbol(node.expression, context.checker), context);
+  const isLibrary =
+    (declaration !== undefined && declaration.getSourceFile().isDeclarationFile) ||
+    (parameter !== undefined && ts.isParameter(parameter) && parameter.parent === unknowns?.owner);
   if (
-    declaration === undefined ||
-    !declaration.getSourceFile().isDeclarationFile ||
+    !isLibrary ||
     unknowns === undefined ||
     ts.findAncestor(node.parent, ts.isFunctionLike) !== unknowns.owner ||
     isInfinite(domain)

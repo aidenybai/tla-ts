@@ -5638,11 +5638,13 @@ const getReadOnlyObject = (
     : undefined;
 };
 
-// The function that a read of an object's property gives, where the object is one that only reads
-// of its properties reach, and the literal writes the function under the name, which reads no this.
+// The function that a read of an object's property gives, in a script without a heap, where the
+// object is one that only reads of its properties reach, and the literal writes the function under
+// the name, which reads no this.
 export const getObjectFunction = (node: ts.Expression, context: Context) => {
   const inner = skipCasts(node);
-  if (!ts.isPropertyAccessExpression(inner)) return undefined;
+  // A script whose heap holds its objects reads the function from the heap.
+  if (context.heap !== undefined || !ts.isPropertyAccessExpression(inner)) return undefined;
   const object = getReadOnlyObject(inner.expression, context);
   const properties = (object?.properties ?? []).filter(
     (property) =>

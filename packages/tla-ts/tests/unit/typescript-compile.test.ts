@@ -51862,6 +51862,22 @@ describe("BigInts", () => {
       expect([result.status, result.distinctStates]).toEqual(["deadlock", 3]);
     });
 
+    it("steps through the function's values where the heap holds objects, as Node does", async () => {
+      const result = await checkModel(`
+        const shapes = { area: (side: number) => side * side };
+        const pick = () => shapes;
+        const box = { size: 0 };
+        export let count = 0;
+        export const step = () => {
+          if (count < 4) {
+            count = pick().area(count + 1);
+            box.size = count;
+          }
+        };
+      `);
+      expect([result.status, result.distinctStates]).toEqual(["deadlock", 3]);
+    });
+
     it("stops where the object escapes, rather than choose the call's value", () => {
       expect(() =>
         compile(`
