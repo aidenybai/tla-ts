@@ -96,6 +96,27 @@ describe("the call stack of a replayed failure matches TLC", () => {
     ).toEqual({ callStack: ["8.9-8.13", "10.8-10.28", "10.22-10.28"], exitCode: 75 });
   });
 
+  it("finds an action enabled that leaves a variable unassigned", async () => {
+    expect(
+      await getFailure(
+        "VARIABLE y\nInit == x \\in 0..1 /\\ y = TRUE\nA0 == x' = IF x < 1 THEN x + 1 ELSE x /\\ UNCHANGED y\nNext == A0\nInv == ENABLED A0",
+        "INIT Init\nNEXT Next\nINVARIANT Inv",
+      ),
+    ).toEqual({
+      callStack: [
+        "9.9-9.30",
+        "9.9-9.18",
+        "9.23-9.30",
+        "12.8-12.17",
+        "12.16-12.17",
+        "10.7-10.52",
+        "10.12-10.52",
+        "10.37-10.52",
+      ],
+      exitCode: 75,
+    });
+  });
+
   it("checks the constraints of a successor after the action", async () => {
     expect(
       await getFailure(
