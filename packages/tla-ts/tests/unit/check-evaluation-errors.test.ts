@@ -340,6 +340,44 @@ describe("evaluation errors match TLC", () => {
     },
   );
 
+  it.each(["5", "[a |-> 1]"])(
+    "applies a function of two arguments to %s in an action as TLC does",
+    async (argument) => {
+      const result = await checkSteps(
+        `Step == [k \\in {1}, j \\in {2} |-> x' = k][${argument}]`,
+        "INIT Init\nNEXT Step",
+      );
+      expect([
+        result.failure?.message,
+        new Set(
+          result.failure?.callStack?.map((expression) => expression.location.range?.end.column),
+        ),
+      ]).toEqual([
+        `${UNEXPECTED_EXCEPTION}Attempted to apply a function to an argument not in its domain.\nline 6, col 9 to line 6, col 41 of module M`,
+        new Set([43 + argument.length]),
+      ]);
+    },
+  );
+
+  it.each([
+    [
+      "<<1>>",
+      "[k \\in {1}, j \\in {2} |-> <expression line 6, col 35 to line 6, col 40 of module M>],\nthe argument list is:\n<<1>>\nwhich does not match its formal parameter.\n",
+    ],
+    [
+      "<<1, 2, 3>>",
+      "[k \\in {1}, j \\in {2} |-> <expression line 6, col 35 to line 6, col 40 of module M>],\nthe argument list is:\n<<1, 2, 3>>\nwhich does not match its formal parameter.\n",
+    ],
+  ])("rejects %s for a function of two arguments in an action", async (argument, message) => {
+    const result = await checkSteps(
+      `Step == [k \\in {1}, j \\in {2} |-> x' = k][${argument}]`,
+      "INIT Init\nNEXT Step",
+    );
+    expect(result.failure?.message).toBe(
+      `${UNEXPECTED_EXCEPTION}In applying the function\n${message}`,
+    );
+  });
+
   it.each([
     [
       "Step == <<1>>[1] /\\ UNCHANGED x",
