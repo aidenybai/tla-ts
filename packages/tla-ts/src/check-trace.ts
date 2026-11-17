@@ -96,14 +96,15 @@ export const createTraceBuilder = (context: TraceContext) => {
       runtime.getBehavior = searchBehavior;
     }
   };
+  // TLC rebuilds each state as a new TLCState, which seeds the generator of RandomElement again.
+  const rebuildFrom = (state: Value[], level: number) => {
+    current.rebuilt = { state, level };
+    runtime.reseedRandom();
+  };
   const findStepAction = (index: number, previous: Value[], state: Value[], isHeld: boolean) => {
     const expanding = { ...current };
-    Object.assign(current, {
-      index,
-      isExpanding: true,
-      candidate: undefined,
-      rebuilt: { state: previous, level: depths[index] },
-    });
+    Object.assign(current, { index, isExpanding: true, candidate: undefined });
+    rebuildFrom(previous, depths[index]);
     const getKey = isHeld ? (values: Value[]) => values : getFingerprintState;
     const key = getKey(state);
     try {
@@ -202,8 +203,15 @@ export const createTraceBuilder = (context: TraceContext) => {
       isSameState(fingerprintState, stored)
     );
   };
-  const findSuccessorWithFingerprint = (state: Value[], index: number) =>
-    findTraceSuccessor(state, (successor) => hasFingerprint(successor.state, index));
+  const findSuccessorWithFingerprint = (state: Value[], source: number, target: number) => {
+    const rebuilt = current.rebuilt;
+    rebuildFrom(state, depths[source]);
+    const successor = findTraceSuccessor(state, (candidate) =>
+      hasFingerprint(candidate.state, target),
+    );
+    current.rebuilt = rebuilt;
+    return successor;
+  };
   const getPathStates = (path: number[], nextFailure: string) => {
     const initial = captureOutput(() =>
       isReducing || isImpure(environment)
@@ -218,10 +226,7 @@ export const createTraceBuilder = (context: TraceContext) => {
         steps.push({ state: previous, action: "Stuttering" });
         continue;
       }
-      const rebuilt = current.rebuilt;
-      current.rebuilt = { state: previous, level: depths[path[position - 1]] };
-      const successor = findSuccessorWithFingerprint(previous, path[position]);
-      current.rebuilt = rebuilt;
+      const successor = findSuccessorWithFingerprint(previous, path[position - 1], path[position]);
       if (!successor) throw new TlaEvaluationError(nextFailure);
       steps.push(successor);
     }

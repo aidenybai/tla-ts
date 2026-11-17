@@ -987,7 +987,8 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     const index = state === current.candidate ? -1 : states.indexOf(state);
     return index === -1 ? [...getPath(current.index), state] : getPath(index);
   };
-  runtime.getCurrentState = () => (current.index === -1 ? undefined : states[current.index]);
+  runtime.getCurrentState = () =>
+    current.rebuilt?.state ?? (current.index === -1 ? undefined : states[current.index]);
   runtime.setLivenessSource = (index) => {
     current.livenessSource = index ?? -1;
   };
@@ -1634,7 +1635,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     const back =
       isStuttering || loop.result
         ? undefined
-        : traces.findSuccessorWithFingerprint(lastState, cycleStart);
+        : traces.findSuccessorWithFingerprint(lastState, cycleEnd, cycleStart);
     if (!isStuttering && !loop.result && !back) {
       // TLC's LiveWorker prints the counterexample before it fails to rebuild the step back to the loop.
       options.onProgress?.({

@@ -129,6 +129,27 @@ describe("random choices match TLC run with -fp 0 and the same -seed", () => {
     expect(result.violation?.trace.map((step) => step.state.x)).toEqual([0, 794, 794, 794]);
   });
 
+  it("draws again from the seed of each state it rebuilds for a lasso, as TLC does", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers, TLC\nCONSTANTS Proc\nVARIABLES y\nA0(p) == y' = RandomElement(0..2)\nNext == \\E p \\in Proc : A0(p)\nSpec == y = 0 /\\ [][Next]_y\nProp == <>(y = 5)\n====",
+      config: "CONSTANT Proc = {p1, p2}\nSPECIFICATION Spec\nPROPERTY Prop",
+      seed: 4n,
+    });
+    expect([
+      result.status,
+      result.violation?.trace.map((step) => [step.label, step.state.y]),
+      result.violation?.loopStart,
+    ]).toEqual([
+      "liveness-violation",
+      [
+        [undefined, 0],
+        ["A0(p2) line 5, col 10 to line 5, col 33 of module M", 1],
+      ],
+      1,
+    ]);
+  });
+
   it('reports the seed in TLCGet("config")', async () => {
     const result = await check({
       source:
