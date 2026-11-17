@@ -584,6 +584,17 @@ describe("the CLI reports results like TLC", () => {
     );
   });
 
+  it.each(["ContinueNextFailure", "ContinueNextFailureSuccessors"])(
+    "reports the failure of the next-state relation in %s once with -continue, where TLC reports it twice",
+    (name) => {
+      const result = runCli("tlc-continue", name, ["-continue"]);
+      expect(result.status).toBe(75);
+      expect(getSteadyLines(result.stdout)).toEqual(
+        readFileSync(join(FIXTURES, "tlc-continue", `${name}.out`), "utf8").split("\n"),
+      );
+    },
+  );
+
   it("rejects a spec whose file name differs from its module name like TLC", () => {
     const result = runCli("cli-module-name", "Renamed");
     const reason =

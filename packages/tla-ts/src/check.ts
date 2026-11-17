@@ -1468,7 +1468,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       { phase: "next" },
       counterExample,
     );
-  // Deviation from TLC: under -continue, TLC's Worker reports a state whose next-state relation failed as deadlocked and exits with the deadlock status.
+  // Deviation from TLC: under -continue, TLC's Worker reports a state whose next-state relation failed as deadlocked, or else reports the failure twice as its replay fails again.
   const reportNextStateFailure = (
     error: unknown,
     index: number,
