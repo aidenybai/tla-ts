@@ -15625,7 +15625,8 @@ export const findChanged = (
   };
   const addSummary = (root: ts.Node) => {
     const bindings = new Map<ts.Symbol, FunctionNode>();
-    const pending = [root];
+    // Where no parameter holds a function, nothing binds one.
+    const pending = functions.size === 0 ? [] : [root];
     const seen = new Set<ts.Node>();
     while (pending.length > 0) {
       const current = pending.pop() ?? root;

@@ -107,8 +107,14 @@ export const hasChanged = (table: ChangeTable, row: Uint32Array, symbol: ts.Symb
 // The parameters that a component calls or passes.
 export const getComponentParameters = (table: ChangeTable, component: number) => {
   const words = table.parameters.words;
-  const row = table.parameters.rows.subarray(component * words, (component + 1) * words);
-  return table.parameters.symbols.filter((_, bit) => hasBit(row, bit));
+  const found: ts.Symbol[] = [];
+  for (let word = 0; word < words; word += 1) {
+    const bits = table.parameters.rows[component * words + word];
+    for (let bit = 0; bits !== 0 && bit < 32; bit += 1) {
+      if ((bits & (1 << bit)) !== 0) found.push(table.parameters.symbols[word * 32 + bit]);
+    }
+  }
+  return found;
 };
 
 // Summarizes the functions that the roots run, and those that they run in turn. Each function's
