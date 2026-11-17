@@ -1156,6 +1156,11 @@ export const runSmtlibScript = (
             reasonUnknown: checked.reasonUnknown ?? getCancelMessage(deadline),
           });
           print(getVerdict(checked.status));
+        } catch (error) {
+          if (!(error instanceof SmtCanceledError)) throw error;
+          const message = getCancelMessage(deadline);
+          setCheck(L_UNDEF, { isFromTactic: true, reasonUnknown: message });
+          print(`(error "tactic failed: ${message}")`);
         } finally {
           state.manager.limit.pop();
         }
