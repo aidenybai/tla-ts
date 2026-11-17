@@ -68,6 +68,7 @@ import { TheoryPolymorphism } from "./theory-polymorphism";
 import { TheoryLra } from "./theory-lra";
 import { shrink } from "./array";
 import {
+  DEFAULT_CONFIG,
   getSmtConfig,
   PS_ALWAYS_FALSE,
   PS_CACHING_CONSERVATIVE,
@@ -77,6 +78,7 @@ import {
   RS_LUBY,
   type SmtSetup,
 } from "./smt-setup";
+import type { KernelParams } from "./solver";
 
 const ACTIVITY_LIMIT = 1e100;
 const INV_ACTIVITY_LIMIT = 1e-100;
@@ -205,7 +207,21 @@ export class Context extends Internalizer {
     readonly params: SmtParams,
   ) {
     super(manager, params.relevancyLevel > 0);
-    this.qmanager = new DefaultQuantifierManager(this, params.isMbqi);
+    this.qmanager = new DefaultQuantifierManager(this);
+  }
+
+  // smt_solver::updt_params reads every smt parameter again into the smt_params the context shares,
+  // which drops what the setup tuned. The relevancy the setup lowered stays, as relevancy_lvl is the
+  // lower of the two levels.
+  updateParams(params: KernelParams) {
+    this.params.isMbqi = params.isMbqi;
+    this.params.mbqiMaxIterations = params.mbqiMaxIterations;
+    this.config = {
+      ...DEFAULT_CONFIG,
+      theories: this.config.theories,
+      isFindingMacros: params.isFindingMacros,
+    };
+    this.qmanager.updateParams();
   }
 
   // setup_context and setup_components. The setup's theories come in its order, then setup_card's.

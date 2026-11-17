@@ -235,6 +235,13 @@ export class AssertedFormulas {
     this.isFindingMacros ||= config.isFindingMacros;
   }
 
+  updateParams(config: SmtConfig) {
+    this.isNnfCnf = config.isNnfCnf;
+    this.isEq2Ineq = config.isEq2Ineq;
+    this.isFindingMacros = config.isFindingMacros;
+    this.isReducePending = true;
+  }
+
   getNumFormulas() {
     return this.formulas.size;
   }
@@ -249,7 +256,7 @@ export class AssertedFormulas {
     if (!this.isInconsistent && (this.hasQuantifiers || this.isPreprocessing)) this.reduceCore();
     if (this.isInconsistent) return [];
     const result = this.formulas.items.slice(this.qhead);
-    if (this.isFindingMacros) this.macros.markForbidden(result);
+    this.macros.markForbidden(result);
     for (const formula of result) this.substitution.update(formula);
     this.qhead = this.formulas.size;
     return result;

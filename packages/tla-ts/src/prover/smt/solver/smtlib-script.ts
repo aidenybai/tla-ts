@@ -529,8 +529,10 @@ export const runSmtlibScript = (
     if (context !== undefined && solved.context === context) return context.getLastFailureMessage();
     return isTimedOut ? "timeout" : (solved.reasonUnknown ?? getCancelMessage(deadline));
   };
-  const getKernelParams = () => ({
-    isMbqi: settings.isMbqi || isMbqiByLogic(getSetup()),
+  // setup_default turns mbqi on for some logics, which a kernel set up loses once it reads the
+  // parameters again.
+  const getKernelParams = (isSetUp = false) => ({
+    isMbqi: settings.isMbqi || (!isSetUp && isMbqiByLogic(getSetup())),
     mbqiMaxIterations: settings.mbqiMaxIterations,
     isFindingMacros: settings.isFindingMacros,
     setup: getSetup(),
@@ -1526,13 +1528,12 @@ export const runSmtlibScript = (
             );
           settings.isExitingOnError = isSymbol(value, "immediate-exit");
         }
-        if (
+        const isParameter =
           keyword !== "" &&
           !BUILTIN_OPTIONS.has(keyword) &&
           value !== undefined &&
-          value.kind !== "list"
-        )
-          settings.parameters.set(getParameterName(keyword), value.text);
+          value.kind !== "list";
+        if (isParameter) settings.parameters.set(getParameterName(keyword), value.text);
         if (optionName === ":print_success") settings.isPrintingSuccess = isTrue;
         if (
           !BUILTIN_OPTIONS.has(keyword) &&
@@ -1545,6 +1546,10 @@ export const runSmtlibScript = (
           settings.mbqiMaxIterations = Number(value.text);
         if (optionName === ":rlimit" && value?.kind === "numeral")
           settings.rlimit = Number(value.text);
+        // cmd_context::global_params_updated hands the parameters to the solver's updt_params.
+        const kernel = state.kernel;
+        if (isParameter && kernel !== undefined)
+          kernel.updateParams(getKernelParams(kernel.isSetUp));
         if (optionName === ":rewriter.hi_div0") {
           settings.isHiDiv0 = isTrue;
           state.manager.isHiDiv0 = isTrue;

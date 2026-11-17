@@ -25,17 +25,21 @@ export class DefaultQuantifierManager {
   private lazyMatchingIndex = 0;
   private mbqi: Mbqi | null = null;
 
-  constructor(
-    private context: Context,
-    isMbqi: boolean,
-  ) {
+  constructor(private context: Context) {
     this.qiQueue = new QiQueue(context);
     const onMatch = (quantifier: number, bindings: Enode[], maxGeneration: number) =>
       this.addInstance(quantifier, bindings, maxGeneration);
     this.mam = new Mam(context, onMatch);
     this.lazyMam = new Mam(context, onMatch);
-    if (!isMbqi) return;
+    this.updateParams();
+  }
+
+  // default_qm_plugin reads smt.mbqi each time it would use its model finder.
+  updateParams() {
+    const context = this.context;
+    if (!context.params.isMbqi || this.mbqi !== null) return;
     const finder = new ModelFinder(context);
+    for (let level = 0; level < context.scopeLevel; level++) finder.pushScope();
     this.mbqi = { finder, checker: new ModelChecker(context, finder, this) };
   }
 
@@ -46,7 +50,7 @@ export class DefaultQuantifierManager {
   add(quantifier: number, generation: number) {
     this.quantifiers.push(quantifier);
     this.generations.set(quantifier, generation);
-    this.mbqi?.finder.registerQuantifier(quantifier);
+    if (this.context.params.isMbqi) this.mbqi?.finder.registerQuantifier(quantifier);
   }
 
   del(quantifier: number) {
@@ -149,20 +153,21 @@ export class DefaultQuantifierManager {
   }
 
   restartEh() {
+    if (!this.context.params.isMbqi) return;
     this.mbqi?.finder.restartEh();
     this.mbqi?.checker.restartEh();
   }
 
   isModelBased() {
-    return this.mbqi !== null;
+    return this.context.params.isMbqi;
   }
 
   adjustModel(model: ProtoModel) {
-    this.mbqi?.finder.fixModel(model);
+    if (this.context.params.isMbqi) this.mbqi?.finder.fixModel(model);
   }
 
   checkModel(model: ProtoModel, root2value: Map<Enode, number>) {
-    const checker = this.mbqi?.checker;
+    const checker = this.context.params.isMbqi ? this.mbqi?.checker : undefined;
     if (this.quantifiers.length === 0) return CHECK_MODEL_SAT;
     if (checker === undefined) return CHECK_MODEL_UNKNOWN;
     if (checker.check(model, root2value)) return CHECK_MODEL_SAT;
