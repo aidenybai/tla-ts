@@ -784,7 +784,8 @@ const createReplay = (
 ): Replay => ({
   environment,
   callStack: environment.callStack,
-  coverage: environment.coverage,
+  coverage:
+    kind === "enabled" && environment.coverage?.current === -1 ? undefined : environment.coverage,
   isInit: kind === "init",
   isEnabled: kind === "enabled",
   current,
@@ -804,10 +805,7 @@ export const replayEnabled = (
     throw ENABLED_FOUND;
   };
   const node = environment.coverage?.current ?? -1;
-  const replay = {
-    ...createReplay(environment, "enabled", state, found, found),
-    coverage: node === -1 ? undefined : environment.coverage,
-  };
+  const replay = createReplay(environment, "enabled", state, found, found);
   const callStack = replay.callStack;
   const depth = callStack?.expressions.length ?? 0;
   try {
