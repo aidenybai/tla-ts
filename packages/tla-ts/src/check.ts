@@ -508,6 +508,8 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     specification.moduleOperators.some((operator) => operator.kind === "postcondition");
   const tracedSteps = new WeakMap<TraceStep, TracedStep>();
   const getStepState = (step: TraceStep) => tracedSteps.get(step)?.state ?? step.state;
+  // TLC's Worker#doPostCondition and LiveCheck bind CounterExample to the alias of each state, while its initial states and lassos keep the states.
+  const getStepAlias = (step: TraceStep) => tracedSteps.get(step)?.alias ?? step.state;
   const getStepAction = (step: TraceStep) => {
     const action = tracedSteps.get(step)?.action;
     return action ? toActionValue(action) : createActionRecord(step.action);
@@ -515,10 +517,11 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   const checkTracePostconditions = (
     trace: TraceStep[],
     loop: { start: number; action: Value } | undefined,
+    getState: (step: TraceStep) => Record<string, Value>,
   ) => {
     if (hasPostconditions) {
       runtime.counterExample = createCounterExample(
-        trace.map(getStepState),
+        trace.map(getState),
         trace.slice(1).map(getStepAction),
         loop,
       );
@@ -532,12 +535,14 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   const reportViolation = (
     status: CheckStatus,
     violation: ReportedViolation,
+    getState = getStepAlias,
     getLoopAction?: () => Value,
   ) => {
     const start = violation.loopStart;
     const checked = checkTracePostconditions(
       violation.trace,
       start === undefined || !getLoopAction ? undefined : { start, action: getLoopAction() },
+      getState,
     );
     return createResult(status, {
       ...violation,
@@ -823,7 +828,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     if (!(error instanceof TlaEvaluationError)) throw error;
     const checked =
       behavior.trace.length > 0 && !failureOptions.traceFailure
-        ? checkTracePostconditions(behavior.trace, undefined)
+        ? checkTracePostconditions(behavior.trace, undefined, getStepAlias)
         : undefined;
     const postcondition = checked?.unwitnessed ?? checked?.postcondition;
     const traceOutput = [...(behavior.traceOutput ?? []), ...(checked?.lines ?? [])];
@@ -1041,17 +1046,19 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     }
     const violated = options.isContinued ? undefined : search.findViolatedInvariant(state);
     if (violated) {
-      return reportViolation("invariant-violation", {
-        name: violated.name,
-        ...traces.toTrace([{ action: undefined, state }], []),
-      });
+      return reportViolation(
+        "invariant-violation",
+        { name: violated.name, ...traces.toTrace([{ action: undefined, state }], []) },
+        getStepState,
+      );
     }
     const failedPredicate = search.findFailedInitialPredicate(state);
     if (failedPredicate) {
-      return reportViolation("liveness-violation", {
-        name: failedPredicate.name,
-        ...traces.toTrace([{ action: undefined, state }], []),
-      });
+      return reportViolation(
+        "liveness-violation",
+        { name: failedPredicate.name, ...traces.toTrace([{ action: undefined, state }], []) },
+        getStepState,
+      );
     }
     if (!isInModel) return undefined;
     markSeenState(seenStates, hash, states.length);
@@ -1288,6 +1295,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         const checked = checkTracePostconditions(
           [{ action: undefined, label: undefined, state: toRecord(state) }],
           undefined,
+          getStepState,
         );
         const postcondition = checked.unwitnessed ?? checked.postcondition;
         const illegal = createFailureResult(
@@ -1608,6 +1616,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         loopLabel: loop.result && getActionLabel(loop.result, options.version),
         warning: isStutteringWarned ? getStutteringWarning() : undefined,
       },
+      getStepState,
       () =>
         cycleStart === cycleEnd
           ? getStepAction(trace[trace.length - 1])

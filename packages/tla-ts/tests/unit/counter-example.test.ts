@@ -48,6 +48,36 @@ describe("POSTCONDITION after a violation matches TLC", () => {
   });
 });
 
+const checkAliased = async (body: string, config: string) => {
+  const printed: string[] = [];
+  const result = await check({
+    source: `---- MODULE M ----\nEXTENDS Naturals, TLC, TLCExt\nVARIABLE x\nAlias == [a |-> x, n |-> x']\nPost == PrintT(CounterExample.state)\nInit == x = 0\n${body}\n====`,
+    config: `INIT Init\nNEXT Next\n${config}\nALIAS Alias\nPOSTCONDITION Post`,
+    onPrint: (text) => printed.push(text),
+  });
+  return [...printed, ...(result.violation?.postconditionOutput ?? [])];
+};
+
+describe("POSTCONDITION with an ALIAS matches TLC", () => {
+  it("binds CounterExample to the alias of each state of a safety violation", async () => {
+    expect(
+      await Promise.all([
+        checkAliased("Next == x' = x + 1\nInv == x < 2", "INVARIANT Inv"),
+        checkAliased("Next == FALSE /\\ x' = x", ""),
+      ]),
+    ).toEqual([
+      ["{ <<1, [a |-> 0, n |-> 1]>>,\n  <<2, [a |-> 1, n |-> 2]>>,\n  <<3, [a |-> 2, n |-> 2]>> }"],
+      ["{<<1, [a |-> 0, n |-> 0]>>}"],
+    ]);
+  });
+
+  it("binds CounterExample to the states of an initial state that violates an invariant", async () => {
+    expect(await checkAliased("Next == x' = x + 1\nInv == x > 0", "INVARIANT Inv")).toEqual([
+      "{<<1, [x |-> 0]>>}",
+    ]);
+  });
+});
+
 const checkUnassigned = async (init: string, printed: string) => {
   const result = await check({
     source: `---- MODULE M ----\nEXTENDS Naturals, TLC, TLCExt\nVARIABLES x, y\nInit == ${init}\nNext == x' = 1\nPost == PrintT(${printed}) /\\ FALSE\n====`,

@@ -36,6 +36,7 @@ export interface SearchPosition {
 export interface TracedStep {
   state: Record<string, Value>;
   action: SpecAction | undefined;
+  alias?: Record<string, Value>;
 }
 
 interface TraceContext {
@@ -250,11 +251,22 @@ export const createTraceBuilder = (context: TraceContext) => {
   const getStateTrace = (index: number, incomplete?: State): Behavior => {
     if (context.parents[index] !== -1) return getTrace(index, undefined, incomplete);
     const traceOutput = is174 ? [] : captureOutput(context.getInitialStates).lines;
-    const trace =
-      incomplete === undefined
-        ? [{ action: undefined, label: undefined, state: toRecord(states[index]) }]
-        : toTrace([{ state: states[index], action: undefined }], [index], { incomplete }).trace;
-    return { trace, traceOutput };
+    const state = states[index];
+    if (incomplete !== undefined) {
+      const trace = toTrace([{ state, action: undefined }], [index], { incomplete }).trace;
+      return { trace, traceOutput };
+    }
+    const step = { action: undefined, label: undefined, state: toRecord(state) };
+    const alias = config.alias;
+    // TLC's Worker#doPostCondition still binds CounterExample to the alias of that state.
+    if (alias !== undefined) {
+      context.tracedSteps.set(step, {
+        state: step.state,
+        action: undefined,
+        alias: getAliasState(alias, state, state, 1, () => [state]),
+      });
+    }
+    return { trace: [step], traceOutput };
   };
   const getIncompleteStep = (
     incomplete: State,
