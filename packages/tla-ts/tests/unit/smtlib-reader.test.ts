@@ -431,7 +431,7 @@ describe("match, as Z3 5.3.2 compiles it", () => {
       "1",
       '(error "line 11 column 47: Sorts Lst and Int are incompatible")',
       '(error "line 12 column 19: pattern bindings should be enclosed in a parenthesis got red")',
-      '(error "line 13 column 27: invalid pattern binding, \')\' expected got red")',
+      "(error \"line 13 column 27: invalid pattern binding, ')' expected got red\")",
       '(error "line 14 column 27: variable symbol expected")',
     ]);
   });

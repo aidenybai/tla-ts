@@ -22,8 +22,7 @@ class ElimTermIteRw extends RewriterTpl {
     const named = this.names.mkName(ite);
     if (named.definition !== -1) {
       this.goal.assert(named.definition);
-      if (this.goal.isModelsEnabled)
-        this.hidden.push({ decl: manager.decls[named.name], def: -1 });
+      if (this.goal.isModelsEnabled) this.hidden.push({ decl: manager.decls[named.name], def: -1 });
     }
     manager.incRef(named.name);
     if (named.definition !== -1) manager.decRef(named.definition);

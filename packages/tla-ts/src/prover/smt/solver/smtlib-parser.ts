@@ -2499,8 +2499,7 @@ export const createSmtlibReader = (
       manager.decRef(substituted);
       shifter.release();
       const args = [condition, body, result];
-      const next =
-        result === -1 ? body : mkApp(OP_ITE, args, at, getDomainSort(OP_ITE, args, at));
+      const next = result === -1 ? body : mkApp(OP_ITE, args, at, getDomainSort(OP_ITE, args, at));
       manager.incRef(next);
       if (result !== -1) manager.decRef(result);
       result = next;
@@ -2760,7 +2759,8 @@ export const createSmtlibReader = (
           frame.depth = -1;
           endScope();
           const binding = frame.cases[frame.next - 1];
-          const extra = binding.kind === "list" ? binding.items[frame.isCaseForm ? 3 : 2] : undefined;
+          const extra =
+            binding.kind === "list" ? binding.items[frame.isCaseForm ? 3 : 2] : undefined;
           if (extra !== undefined)
             throw new SmtParseError(
               `invalid pattern binding, ')' expected got ${extra.lastId}`,
