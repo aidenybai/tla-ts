@@ -2040,15 +2040,6 @@ LOCAL Value(object, key) ==
 
 Own(heap, ref) == Lookup(heap, ref).values
 
-\\* The keys a for-in visits: each enumerable key once, own keys first, and none that an object
-\\* nearer the start of the prototype chain has.
-RECURSIVE ForInKeys(_, _)
-ForInKeys(heap, ref) ==
-  LET object == Lookup(heap, ref)
-      inherited == IF object.prototype = Null THEN <<>> ELSE ForInKeys(heap, object.prototype)
-  IN SelectSeq(OwnKeys(object), LAMBDA key : object.attributes[key].enumerable)
-       \\o SelectSeq(inherited, LAMBDA key : key \\notin DOMAIN object.values)
-
 RECURSIVE PutAll(_, _, _)
 PutAll(object, values, keys) ==
   IF keys = <<>>
@@ -2089,12 +2080,6 @@ DescribeAll(heap, object) ==
                 Ref :> (first + CHOOSE position \\in DOMAIN keys : keys[position] = key)]
   IN Allocate(described, PutAll(EmptyObject, refs, keys))
 
-LOCAL IsEnumerableOwnOf(heap, ref, key) ==
-  LET object == LookupKey(heap, ref, key)
-  IN key \\in DOMAIN object.values /\\ object.attributes[key].enumerable
-
-IsEnumerableOwn(heap, ref, key) == IsEnumerableOwnOf(heap, Forward(heap, ref, {"getOwnPropertyDescriptor"}), key)
-
 IsBigIntType(type) == type \\in {"BigInt64", "BigUint64"}
 
 ElementSize(type) ==
@@ -2131,6 +2116,11 @@ LOCAL OrdinaryOf(heap, ref) ==
   THEN heap.objects[ref[Ref]]
   ELSE Lookup(heap, ref)
 
+\\* An object's own properties, where a typed array holds those apart from its elements as an
+\\* ordinary object does.
+LOCAL HeldPropertiesOf(heap, ref) ==
+  IF IsTypedArray(heap, ref) THEN heap.objects[ref[Ref]] ELSE Lookup(heap, ref)
+
 \\* A typed array's element keys, which come before its other own keys.
 LOCAL ElementKeys(heap, ref) ==
   IF IsTypedArray(heap, ref)
@@ -2138,6 +2128,17 @@ LOCAL ElementKeys(heap, ref) ==
   ELSE <<>>
 
 LOCAL OwnPropertyNamesOf(heap, ref) == ElementKeys(heap, ref) \\o OwnKeys(OrdinaryOf(heap, ref))
+
+\\* The keys a for-in visits: each enumerable key once, own keys first, a typed array's elements
+\\* before its other keys, and none that an object nearer the start of the prototype chain has.
+RECURSIVE ForInKeys(_, _)
+ForInKeys(heap, ref) ==
+  LET object == HeldPropertiesOf(heap, ref)
+      elements == ElementKeys(heap, ref)
+      inherited == IF object.prototype = Null THEN <<>> ELSE ForInKeys(heap, object.prototype)
+  IN elements \\o SelectSeq(OwnKeys(object), LAMBDA key : object.attributes[key].enumerable)
+       \\o SelectSeq(inherited, LAMBDA key :
+                     key \\notin DOMAIN object.values /\\ \\A position \\in DOMAIN elements : elements[position] # key)
 
 OwnPropertyNames(heap, ref) == OwnPropertyNamesOf(heap, Forward(heap, ref, {"ownKeys", "getOwnPropertyDescriptor"}))
 
@@ -2333,6 +2334,16 @@ Prototype(heap, ref) ==
 \\* Whether a typed array has an element at a key that is a number, which is an index before its end.
 LOCAL HasElement(heap, ref, key) ==
   TypedKey(key) = "index" /\\ ToIndex(key) < ViewLength(heap, heap.objects[ref[Ref]])
+
+\\* Whether an object has an own enumerable property at a key, where a typed array's elements before
+\\* its end are enumerable, and it has no other property at a key that is a number.
+LOCAL IsEnumerableOwnOf(heap, ref, key) ==
+  IF IsTypedArray(heap, ref) /\\ TypedKey(key) # "property"
+  THEN HasElement(heap, ref, key)
+  ELSE LET object == PropertiesOf(heap, ref, key)
+       IN key \\in DOMAIN object.values /\\ object.attributes[key].enumerable
+
+IsEnumerableOwn(heap, ref, key) == IsEnumerableOwnOf(heap, Forward(heap, ref, {"getOwnPropertyDescriptor"}), key)
 
 \\* The description of an object's own property, where a typed array describes an element before its
 \\* end as a writable, enumerable, configurable data property.
@@ -7934,7 +7945,7 @@ LOCAL ReceiverSet(heap, key, value, receiver) ==
        \\/ IsTypedArray(heap, receiver) /\\ TypedKey(key) # "property" ->
          Assert(FALSE, "tla-ts can't set a property on this receiver")
     [] OTHER ->
-         LET object == Lookup(heap, receiver)
+         LET object == HeldPropertiesOf(heap, receiver)
              defined == DefineOwn(object, key, WriteDescriptor(object, key, value))
          IN CASE /\\ key \\in DOMAIN object.values
                  /\\ \\/ object.attributes[key].kind = "accessor"
@@ -8114,12 +8125,12 @@ RECURSIVE ChainHas(_, _, _)
 ChainHas(heap, prototype, ref) ==
   /\\ prototype # Null
   /\\ \\/ SameValue(prototype, ref)
-     \\/ ~IsProxy(heap, prototype) /\\ ChainHas(heap, Lookup(heap, prototype).prototype, ref)
+     \\/ ~IsProxy(heap, prototype) /\\ ChainHas(heap, HeldPropertiesOf(heap, prototype).prototype, ref)
 
 \\* Object.setPrototypeOf, which fails where the object isn't extensible or the chain would loop.
 \\* Object.prototype keeps the prototype it has, and a primitive stays as it is.
 SetPrototypeOf(heap, ref, prototype) ==
-  LET object == Lookup(heap, ref)
+  LET object == HeldPropertiesOf(heap, ref)
       result(isDone, isChanged) ==
         [heap |-> IF isChanged THEN Update(heap, ref, [object EXCEPT !.prototype = prototype]) ELSE heap,
          isDone |-> isDone, isRangeError |-> FALSE]

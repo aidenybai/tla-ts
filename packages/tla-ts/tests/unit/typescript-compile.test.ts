@@ -50618,4 +50618,38 @@ describe("BigInts", () => {
       ).toContain("results TypeError,SyntaxError,TypeError,0,1");
     });
   });
+
+  describe("reads and writes the properties of a typed array apart from its elements", () => {
+    const getSource = (expected: string) => `
+      const s1 = Symbol("1");
+      const sample = new Int8Array([42, 43]);
+      const results: unknown[] = [];
+      results.push(Reflect.set(sample, s1, "ecma262"), (sample as any)[s1]);
+      results.push(Reflect.set(sample, "foo", 1), (sample as any).foo);
+      const keys: string[] = [];
+      for (const key in sample) keys.push(key);
+      results.push(keys.join("|"));
+      const proto = Object.create(Int8Array.prototype);
+      results.push(Object.setPrototypeOf(sample, proto) === sample);
+      const enumerable = ["0", "2", "-0", "foo"].map((key) =>
+        Object.prototype.propertyIsEnumerable.call(sample, key),
+      );
+      results.push(enumerable.join());
+      if (results.join() !== "${expected}") throw new Error("results " + results.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("true,ecma262,true,1,0|1|foo,true,true,false,false,true")))
+          .failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects other results", async () => {
+      expect(
+        (await checkModel(getSource("true,ecma262,true,1,0|1|foo,true,true,true,false,true")))
+          .failure?.message,
+      ).toContain("results true,ecma262,true,1,0|1|foo,true,true,false,false,true");
+    });
+  });
 });
