@@ -50488,4 +50488,33 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("runs the generic array methods on a typed array, which holds an element at each index below its length", () => {
+    const getSource = (expected: string) => `
+      const sample = new Int8Array([3, 1, 4, 1]);
+      const results = [
+        Array.prototype.at.call(sample, -1),
+        Array.prototype.includes.call(sample, 4),
+        Array.prototype.indexOf.call(sample, 1),
+        Array.prototype.lastIndexOf.call(sample, 1),
+        Array.prototype.join.call(sample, "-"),
+        Array.prototype.every.call(sample, (value: number) => value > 0),
+        Array.prototype.find.call(sample, (value: number) => value > 3),
+        Array.isArray(sample),
+      ];
+      if (results.join() !== "${expected}") throw new Error("results " + results.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("1,true,1,3,3-1-4-1,true,4,false"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects other results", async () => {
+      expect(
+        (await checkModel(getSource("1,true,1,3,3-1-4-1,true,4,true"))).failure?.message,
+      ).toContain("results 1,true,1,3,3-1-4-1,true,4,false");
+    });
+  });
 });

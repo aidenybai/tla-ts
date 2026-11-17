@@ -3289,8 +3289,10 @@ LengthOf(heap, ref) ==
 
 RECURSIVE KeyCount(_, _)
 KeyCount(heap, ref) ==
-  LET object == Lookup(heap, ref)
-  IN Len(object.keys) + IF object.prototype = Null THEN 0 ELSE KeyCount(heap, object.prototype)
+  LET isTyped == IsTypedArray(heap, ref)
+      object == IF isTyped THEN heap.objects[ref[Ref]] ELSE Lookup(heap, ref)
+  IN (IF isTyped THEN ViewLength(heap, object) ELSE 0)
+       + Len(object.keys) + IF object.prototype = Null THEN 0 ELSE KeyCount(heap, object.prototype)
 
 \\* The elements of an array-like object, which has an element at each index below its length.
 ArrayLike(heap, ref) ==
@@ -3348,11 +3350,18 @@ ArrayLikeValues(heap, ref) ==
      THEN Assert(FALSE, "tla-ts can't read an array-like object this long")
      ELSE Read([position \\in 1..length |-> Get(heap, ref, ToString(position - 1))])
 
+\\* The keys of a typed array's elements, which are all the indices that it holds, as it reads no
+\\* index from its prototypes.
+LOCAL TypedIndexKeys(heap, ref) ==
+  {ToString(index) : index \\in 0..(ViewLength(heap, heap.objects[ref[Ref]]) - 1)}
+
 RECURSIVE IndexKeys(_, _)
 IndexKeys(heap, ref) ==
-  LET object == Lookup(heap, ref)
-  IN {key \\in DOMAIN object.values : IsIndex(key)}
-       \\cup IF object.prototype = Null THEN {} ELSE IndexKeys(heap, object.prototype)
+  IF IsTypedArray(heap, ref)
+  THEN TypedIndexKeys(heap, ref)
+  ELSE LET object == Lookup(heap, ref)
+       IN {key \\in DOMAIN object.values : IsIndex(key)}
+            \\cup IF object.prototype = Null THEN {} ELSE IndexKeys(heap, object.prototype)
 
 \\* Whether a key is an index below 2^31 - 1, which TLC's integers hold with the length past it.
 LOCAL IsShortIndex(key) == IsIndex(key) /\\ (Len(key) < 10 \\/ DigitsBelow(key, "2147483647"))
@@ -3401,9 +3410,11 @@ LOCAL IsLongKey(key) ==
 \\* The keys below 2^53 that an object or its prototypes hold.
 RECURSIVE LongKeys(_, _)
 LongKeys(heap, ref) ==
-  LET object == Lookup(heap, ref)
-  IN {key \\in DOMAIN object.values : IsLongKey(key)}
-       \\cup IF object.prototype = Null THEN {} ELSE LongKeys(heap, object.prototype)
+  IF IsTypedArray(heap, ref)
+  THEN TypedIndexKeys(heap, ref)
+  ELSE LET object == Lookup(heap, ref)
+       IN {key \\in DOMAIN object.values : IsLongKey(key)}
+            \\cup IF object.prototype = Null THEN {} ELSE LongKeys(heap, object.prototype)
 
 \\* The length that a loop over an array-like object visits, past which a length beyond 2^31 holds
 \\* only holes: one more than the greatest index that the object or its prototypes hold.
@@ -4939,6 +4950,7 @@ IsArray(heap, value) ==
          ELSE LET target == ProxyTarget(heap, value)
               IN \\/ ~IsRef(target) /\\ TypeOf(target) = "object" /\\ SubSeq(ToString(target), 1, 2) = "<<"
                  \\/ IsArray(heap, target)
+    [] IsTypedArray(heap, value) -> FALSE
     [] OTHER -> IsRef(value) /\\ IsArrayObject(Lookup(heap, value))
 
 \\* IsArray of a value whose type doesn't tell what it is. An array off the heap is a sequence, which
