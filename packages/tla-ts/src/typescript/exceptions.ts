@@ -1,4 +1,3 @@
-import { pathToFileURL } from "node:url";
 import ts from "@typescript/typescript6";
 import type { Expression } from "../ast";
 import {
@@ -124,7 +123,7 @@ export const getNodeLocation = (node: ts.Node, isUrl: boolean) => {
     .slice(lineStarts[start.line], lineStarts[start.line + 1])
     .replace(/\r?\n$/, "");
   const path = ts.sys.realpath?.(ts.sys.resolvePath(sourceFile.fileName)) ?? sourceFile.fileName;
-  return `${isUrl ? pathToFileURL(path).href : path}:${start.line + 1}\n${line}\n${" ".repeat(start.character)}^`;
+  return `${isUrl ? process.getBuiltinModule("node:url").pathToFileURL(path).href : path}:${start.line + 1}\n${line}\n${" ".repeat(start.character)}^`;
 };
 
 const PRIMITIVE_TYPES = new Set(["string", "number", "boolean", "bigint", "undefined", "null"]);
