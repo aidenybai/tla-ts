@@ -1733,6 +1733,8 @@ const compile = (
               return tactic(goal);
             } catch (error) {
               if (error instanceof SmtDefaultError) throw new SmtTacticError(error.message);
+              if (error instanceof SmtCanceledError)
+                throw new SmtTacticError(goal.manager.limit.getCancelMessage());
               throw error;
             }
           };

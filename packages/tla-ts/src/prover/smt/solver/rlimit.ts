@@ -31,6 +31,10 @@ export class ResourceLimit {
     return !this.isSuspended && (this.isCanceled || this.count > this.limit);
   }
 
+  getCancelMessage() {
+    return this.isCanceled ? "canceled" : "max. resource limit exceeded";
+  }
+
   push(delta: number) {
     this.limits.push(this.limit);
     this.limit = Math.min(delta === 0 ? Infinity : this.count + delta, this.limit);

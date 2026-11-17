@@ -646,6 +646,25 @@ describe("try-for, as Z3 5.3.2 runs it", () => {
       '(:reason-unknown "Benchmark contains uninterpreted function symbols, but specified logic does not support them.")',
     ]);
   });
+
+  it("turns a resource limit inside its tactic into a tactic failure, which or-else catches", () => {
+    expect(
+      run([
+        "(set-option :rlimit 1)",
+        "(declare-const x (_ BitVec 4))",
+        "(assert (= (bvmul x x) #x4))",
+        "(check-sat-using (or-else (try-for (then bit-blast sat) 100) skip))",
+        "(get-info :reason-unknown)",
+        "(check-sat-using (try-for (then bit-blast sat) 100))",
+        "(get-info :reason-unknown)",
+      ]),
+    ).toEqual([
+      "unknown",
+      '(:reason-unknown "unknown")',
+      "unknown",
+      '(:reason-unknown "max. resource limit exceeded")',
+    ]);
+  });
 });
 
 describe("purify-arith, as Z3 5.3.2 composes it", () => {
