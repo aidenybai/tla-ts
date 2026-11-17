@@ -28,6 +28,15 @@ const build = spawnSync(
   { cwd: PACKAGE_DIRECTORY, stdio: ["ignore", "ignore", "inherit"] },
 );
 if (build.status !== 0) process.exit(build.status ?? 1);
+const graph = spawnSync(
+  process.execPath,
+  ["scripts/prelude-graph.ts", OUT_DIRECTORY, "--if-present"],
+  {
+    cwd: PACKAGE_DIRECTORY,
+    stdio: ["ignore", "ignore", "inherit"],
+  },
+);
+if (graph.status !== 0) process.exit(graph.status ?? 1);
 
 const run = spawnSync("node", [join(OUT_DIRECTORY, `${name}.js`), ...process.argv.slice(3)], {
   stdio: "inherit",

@@ -2,6 +2,7 @@ import ts from "@typescript/typescript6";
 import type { Expression, Module, ModuleUnit, SourceLocation } from "../ast";
 import { getPreparedModuleLevels } from "../environment";
 import { tokenize } from "../lexer";
+import { decodeGraph, encodeGraph, type EncodedGraph } from "../graph-codec";
 import { parseModuleTokens } from "../parser";
 import type { PreparedModule } from "../tlc/order";
 import {
@@ -8927,17 +8928,39 @@ const ROOT_READS = MODULE_UNITS.filter((unit) => unit.names.length === 0).flatMa
   (unit) => unit.reads,
 );
 
-// The JavaScript module read once into its tokens and syntax tree, and checked once by SANY's
-// checks, of which each spec's module is a view.
-const PRELUDE_TOKENS = tokenize(JAVASCRIPT_MODULE);
-const PRELUDE: PreparedModule = {
-  name: "JavaScript",
-  text: JAVASCRIPT_MODULE,
-  tokens: PRELUDE_TOKENS,
-  module: parseModuleTokens(JAVASCRIPT_MODULE, PRELUDE_TOKENS),
-  levels: undefined,
+// The JavaScript module read into its tokens and syntax tree and checked by SANY's checks, of which
+// each spec's module is a view.
+export const prepareJavaScriptModule = (): PreparedModule => {
+  const tokens = tokenize(JAVASCRIPT_MODULE);
+  const prepared: PreparedModule = {
+    name: "JavaScript",
+    text: JAVASCRIPT_MODULE,
+    tokens,
+    module: parseModuleTokens(JAVASCRIPT_MODULE, tokens),
+    levels: undefined,
+  };
+  prepared.levels = getPreparedModuleLevels(prepared);
+  return prepared;
 };
-PRELUDE.levels = getPreparedModuleLevels(PRELUDE);
+
+// The tokens, syntax tree, and levels of the prepared JavaScript module, as encodeGraph writes them.
+export const getPreludeGraph = (prepared: PreparedModule) =>
+  encodeGraph({ tokens: prepared.tokens, module: prepared.module, levels: prepared.levels });
+
+// The build writes the prepared module's graph as JSON in place of this string, so that a process
+// reads the module rather than prepares it again. Unbuilt, it is JSON for a string.
+const PRELUDE_GRAPH = '"tla-ts:prelude-graph"';
+const encodedPrelude: unknown = JSON.parse(PRELUDE_GRAPH);
+const PRELUDE: PreparedModule = Array.isArray(encodedPrelude)
+  ? {
+      name: "JavaScript",
+      text: JAVASCRIPT_MODULE,
+      ...(decodeGraph(encodedPrelude as EncodedGraph) as Pick<
+        PreparedModule,
+        "tokens" | "module" | "levels"
+      >),
+    }
+  : prepareJavaScriptModule();
 
 const getUnitLocation = (unit: ModuleUnit): SourceLocation => {
   switch (unit.kind) {
