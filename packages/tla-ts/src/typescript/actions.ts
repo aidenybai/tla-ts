@@ -15458,7 +15458,7 @@ const getFoundEffects = (node: ts.Node, effects: NodeEffects, context: Context) 
 
 // What each node of the model's code changes where no parameter holds a function.
 export const findEffects = (reached: readonly ts.Node[], context: Context): NodeEffects => {
-  const positions = new Array<Effects | undefined>(context.nodes.nodes.length).fill(undefined);
+  const positions = Array.from<Effects | undefined>({ length: context.nodes.nodes.length });
   const elsewhere = new Map<ts.Node, Effects>();
   const found: Effects[] = [];
   const effects = { positions, elsewhere, found };

@@ -60,7 +60,7 @@ export const getSymbolBit = (bits: Bits, symbol: ts.Symbol) => {
 
 const createBits = (symbols: readonly ts.Symbol[], count: number): Bits => {
   const ids = Int32Array.from(new Set(symbols.map((symbol) => ts.getSymbolId(symbol)))).sort();
-  const ordered = new Array<ts.Symbol>(ids.length);
+  const ordered: ts.Symbol[] = [];
   symbols.forEach((symbol) => {
     ordered[getLowerBound(ids, 0, ids.length, ts.getSymbolId(symbol))] = symbol;
   });
