@@ -49072,6 +49072,431 @@ describe("BigInts", () => {
     });
   });
 
+  describe("writes a Date's time value as text", () => {
+    const getSource = (expected: string) => `
+      const holder: { [key: string]: unknown } = {};
+      const dates = [new Date(0), new Date(-62198755200000), new Date(8.64e15), new Date(NaN)];
+      const result = dates
+        .map((date) =>
+          [date.toString(), date.toDateString(), date.toTimeString(), date.toUTCString()].join("|"),
+        )
+        .join(";");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    const expected = [
+      "Thu Jan 01 1970 00:00:00 GMT+0000 (Coordinated Universal Time)|Thu Jan 01 1970|00:00:00 GMT+0000 (Coordinated Universal Time)|Thu, 01 Jan 1970 00:00:00 GMT",
+      "Fri Jan 01 -0001 00:00:00 GMT+0000 (Coordinated Universal Time)|Fri Jan 01 -0001|00:00:00 GMT+0000 (Coordinated Universal Time)|Fri, 01 Jan -0001 00:00:00 GMT",
+      "Sat Sep 13 275760 00:00:00 GMT+0000 (Coordinated Universal Time)|Sat Sep 13 275760|00:00:00 GMT+0000 (Coordinated Universal Time)|Sat, 13 Sep 275760 00:00:00 GMT",
+      "Invalid Date|Invalid Date|Invalid Date|Invalid Date",
+    ].join(";");
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects another text", async () => {
+      expect(
+        (await checkModel(getSource(expected.replace("Fri Jan 01 -0001", "Fri Jan 01 -001"))))
+          .failure?.message,
+      ).toContain("Fri Jan 01 -0001");
+    });
+  });
+
+  describe("reads a Date from a string in the formats that it writes", () => {
+    const getSource = (expected: string) => `
+      const holder: { [key: string]: unknown } = {};
+      const texts = [
+        "-271821-04-20T00:00:00.000Z",
+        "+275760-09-13T00:00:00.001Z",
+        "2000-02-31",
+        "2000-01-01T24:00",
+        "2000-01-01T00:00:00.9999Z",
+        "2000-01-01T23:59:59.999-23:59",
+        "2000-07",
+        "-000000-03-31T00:45Z",
+        "Mon Feb 30 2000 13:14:15 GMT-0130 (Coordinated Universal Time)",
+        "Wed, 31 Dec 0100 23:59:59 GMT",
+      ];
+      const result = texts.map((text) => Date.parse(text) + "/" + new Date(text).getTime()).join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    const expected = [
+      "-8640000000000000/-8640000000000000",
+      "NaN/NaN",
+      "951955200000/951955200000",
+      "946771200000/946771200000",
+      "946684800999/946684800999",
+      "946857539999/946857539999",
+      "962409600000/962409600000",
+      "NaN/NaN",
+      "951921855000/951921855000",
+      "-58979923201000/-58979923201000",
+    ].join();
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects another time value", async () => {
+      expect(
+        (await checkModel(getSource(expected.replace("NaN/NaN", "8640000000000001/NaN")))).failure
+          ?.message,
+      ).toContain(expected);
+    });
+
+    it("stops at a string that V8 reads with its legacy parser", async () => {
+      const result = await checkModel(`
+        const holder: { [key: string]: unknown } = {};
+        if (Date.parse("Thu, 01 Jan 0099 00:00:00 GMT") !== 915148800000) throw new Error("year");
+      `);
+      expect(result.failure?.message).toContain("tla-ts can't parse the date");
+    });
+  });
+
+  describe("runs Temporal in the Gregorian, Buddhist, and Republic of China calendars", () => {
+    const getSource = (expected: string) => `
+      const thrown = (run: () => unknown) => {
+        try {
+          return String(run());
+        } catch (error) {
+          return (error as Error).name;
+        }
+      };
+      const buddhist = Temporal.PlainDate.from({ calendar: "buddhist", year: 2543, monthCode: "M02", day: 29 });
+      const gregory = Temporal.PlainDate.from({ calendar: "gregory", era: "bc", eraYear: 5, month: 2, day: 29 });
+      const seen = [
+        buddhist.toString(),
+        buddhist.era,
+        gregory.year,
+        thrown(() => gregory.with({ eraYear: 5 })),
+        Temporal.PlainYearMonth.from({ calendar: "roc", era: "broc", eraYear: 2, month: 2 }).toString(),
+      ].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+    const expected = "2000-02-29[u-ca=buddhist],be,-4,TypeError,1910-02-01[u-ca=roc]";
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects a year of the era before the epoch that counts from 0", async () => {
+      expect(
+        (await checkModel(getSource(expected.replace(",-4,", ",-5,")))).failure?.message,
+      ).toContain(`seen ${expected}`);
+    });
+  });
+
+  describe("runs Temporal in the Japanese calendar, whose eras start within a year", () => {
+    const getSource = (expected: string) => `
+      const eras = ["1872-12-31", "1912-07-29", "1912-07-30", "2019-05-01"].map((text) => {
+        const date = Temporal.PlainDate.from(text).withCalendar("japanese");
+        return date.era + " " + date.eraYear;
+      });
+      const lenient = Temporal.PlainDate.from({ calendar: "japanese", era: "heisei", eraYear: 32, month: 6, day: 1 });
+      const seen = [...eras, lenient.era, lenient.eraYear].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+    const expected = "ce 1872,meiji 45,taisho 1,reiwa 1,reiwa,2";
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects an era that starts on the first of the year", async () => {
+      expect(
+        (await checkModel(getSource(expected.replace("meiji 45", "taisho 1")))).failure?.message,
+      ).toContain(`seen ${expected}`);
+    });
+  });
+
+  describe("runs Temporal in the Coptic, Ethiopian, Indian, and tabular Islamic calendars", () => {
+    const getSource = (expected: string) => `
+      const coptic = Temporal.PlainDate.from("2000-01-01").withCalendar("coptic");
+      const islamic = Temporal.PlainDate.from({ calendar: "islamic-civil", era: "bh", eraYear: 5, month: 12, day: 30 });
+      const seen = [
+        coptic.monthCode,
+        coptic.add({ months: 10 }).toString(),
+        Temporal.PlainMonthDay.from({ calendar: "coptic", monthCode: "M13", day: 6 }).toString(),
+        islamic.toString(),
+        Temporal.PlainDate.from("2000-01-01").withCalendar("indian").until("2001-03-21[u-ca=indian]", { largestUnit: "years" }).toString(),
+      ].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+    const expected =
+      "M04,2000-10-02[u-ca=coptic],1971-09-11[u-ca=coptic],0618-08-31[u-ca=islamic-civil],P1Y2M19D";
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects a thirteenth month that starts the next year", async () => {
+      expect(
+        (await checkModel(getSource(expected.replace("2000-10-02", "2000-10-07")))).failure
+          ?.message,
+      ).toContain(`seen ${expected}`);
+    });
+  });
+
+  describe("runs Temporal in the Hebrew calendar, whose leap years add a month", () => {
+    const getSource = (expected: string) => `
+      const thrown = (run: () => unknown) => {
+        try {
+          return String(run());
+        } catch (error) {
+          return (error as Error).name;
+        }
+      };
+      const adar = Temporal.PlainDate.from({ calendar: "hebrew", year: 5784, monthCode: "M05L", day: 30 });
+      const seen = [
+        adar.month,
+        adar.add({ years: 1 }).monthCode,
+        thrown(() => adar.add({ years: 1 }, { overflow: "reject" })),
+        Temporal.PlainMonthDay.from({ calendar: "hebrew", monthCode: "M05L", day: 1 }).toString(),
+        adar.until("2025-09-23[u-ca=hebrew]", { largestUnit: "years" }).toString(),
+      ].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+    const expected = "6,M06,RangeError,1970-02-07[u-ca=hebrew],P1Y6M1D";
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects a leap month that a common year keeps", async () => {
+      expect(
+        (await checkModel(getSource(expected.replace("6,M06,", "6,M05L,")))).failure?.message,
+      ).toContain(`seen ${expected}`);
+    });
+  });
+
+  describe("runs Temporal in the Persian calendar, whose 33-year rule Node corrects", () => {
+    const getSource = (expected: string) => `
+      const nowruz = Temporal.PlainDate.from("2124-03-20").withCalendar("persian");
+      const seen = [
+        nowruz.year,
+        nowruz.monthCode,
+        nowruz.inLeapYear,
+        Temporal.PlainDate.from({ calendar: "persian", year: 1502, monthCode: "M12", day: 30 }).toString(),
+        Temporal.PlainMonthDay.from({ calendar: "persian", monthCode: "M12", day: 30 }).toString(),
+      ].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+    const expected = "1503,M01,true,2124-03-19[u-ca=persian],1972-03-20[u-ca=persian]";
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects the leap day that the 33-year rule gives", async () => {
+      expect(
+        (await checkModel(getSource(expected.replace("2124-03-19", "2124-03-20")))).failure
+          ?.message,
+      ).toContain(`seen ${expected}`);
+    });
+  });
+
+  describe("reads a time value in a script without objects only where it fits a TLC integer", () => {
+    it("agrees with Node on a time value that fits", async () => {
+      const result = await checkModel(`
+        const parsed = Date.parse("1970-01-01T00:00:00.005Z");
+        if (parsed + Date.UTC(1970, 0) !== 5) throw new Error("parsed " + parsed);
+      `);
+      expect(result.failure).toBeUndefined();
+    });
+
+    it("rejects another time value", async () => {
+      await expect(
+        checkModel(`
+          const parsed = Date.parse("1970-01-01T00:00:00.005Z");
+          if (parsed !== 6) throw new Error("parsed " + parsed);
+        `),
+      ).rejects.toThrow("parsed 5");
+    });
+
+    it("stops at a time value past 32 bits", async () => {
+      await expect(
+        checkModel(`
+          if (Date.UTC(2000, 0) < 0) throw new Error("negative");
+        `),
+      ).rejects.toThrow("tla-ts can't represent");
+    });
+  });
+
+  describe("runs a loop before a later let that a dispose method in the program pushes to", () => {
+    const getSource = (expected: string) => `
+      const holder: { [key: string]: unknown } = {};
+      let first: unknown[] = [];
+      (function () {
+        for (let i = 0; i < 2; i++) {
+          using x = {
+            value: i,
+            [Symbol.dispose]() {
+              first.push(this.value);
+            },
+          };
+        }
+      })();
+      let second: unknown[] = [];
+      (function () {
+        for (const i in [0, 1]) {
+          using x = {
+            value: i,
+            [Symbol.dispose]() {
+              second.push(this.value);
+            },
+          };
+        }
+      })();
+      const seen = [...first, ...second].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("0,1,0,1"))).failure).toBeUndefined();
+    });
+
+    it("rejects the values in another order", async () => {
+      expect((await checkModel(getSource("1,0,0,1"))).failure?.message).toContain("seen 0,1,0,1");
+    });
+  });
+
+  describe("reads an array that a variable declared without a type or a value holds", () => {
+    const getSource = (expected: string) => `
+      const holder: { [key: string]: unknown } = {};
+      function run() {
+        var list;
+        list = [0, 1, 2, 3];
+        list.length = 2;
+        return [5 in list, 1 in list, list.length, list[1]].join();
+      }
+      const seen = run();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("false,true,2,1"))).failure).toBeUndefined();
+    });
+
+    it("rejects an element that the truncation removed", async () => {
+      expect((await checkModel(getSource("true,true,2,1"))).failure?.message).toContain(
+        "seen false,true,2,1",
+      );
+    });
+  });
+
+  describe("gives the resolved options of Intl's objects of English or the default locale", () => {
+    const getSource = (expected: string) => `
+      const format = new Intl.ListFormat("en-us", { style: "short", type: "unit" });
+      const options = format.resolvedOptions();
+      const again = format.resolvedOptions();
+      const collator = new Intl.Collator("EN", { numeric: true, caseFirst: "upper" });
+      const segmented = new Intl.Segmenter().resolvedOptions().locale;
+      const caseFirst = collator.resolvedOptions().caseFirst;
+      const seen = [
+        Object.keys(options).join(" "),
+        options.style,
+        options === again,
+        Object.getPrototypeOf(options) === Object.prototype,
+        segmented,
+        caseFirst,
+      ].join();
+      if (seen !== \`${expected}\`) throw new Error("seen " + seen);
+    `;
+    const expected = "locale type style,short,false,true,en-US,upper";
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects options that a later call shares", async () => {
+      expect(
+        (await checkModel(getSource(expected.replace("false,true,en-US", "true,true,en-US"))))
+          .failure?.message,
+      ).toContain(`seen ${expected}`);
+    });
+  });
+
+  describe("stops where a function named arguments that a block declares meets the arguments object", () => {
+    const getSource = (parameter: string, expected: string) => `
+      const seen: string[] = [];
+      // @ts-ignore
+      (function (${parameter}) {
+        {
+          // @ts-ignore
+          function arguments() {}
+        }
+        seen.push(typeof arguments);
+      })(1);
+      if (seen.join() !== "${expected}") throw new Error("seen " + seen.join());
+    `;
+
+    it("agrees with Node where a parameter takes the name", async () => {
+      expect((await checkModel(getSource("arguments: unknown", "number"))).failure).toBeUndefined();
+    });
+
+    it("rejects the block's function where a parameter takes the name", async () => {
+      expect(
+        (await checkModel(getSource("arguments: unknown", "function"))).failure?.message,
+      ).toContain("seen number");
+    });
+
+    it("stops where the arguments object takes the name", () => {
+      expect(() => compile(getSource("", "function"))).toThrow(
+        "tla-ts can't tell whether a function named arguments that a block declares replaces the arguments object",
+      );
+    });
+  });
+
+  describe("makes a global outside strict mode only where Object.prototype lacks its name", () => {
+    const getSource = (defined: string, expected: string) => `
+      const seen: string[] = [];
+      // @ts-ignore
+      seen.push(typeof made);
+      function make() {
+        // @ts-ignore
+        made = 5;
+      }
+      make();
+      // @ts-ignore
+      seen.push(typeof made, String(made));
+      Object.defineProperty(Object.prototype, "${defined}", { value: 3 });
+      // @ts-ignore
+      made = 6;
+      // @ts-ignore
+      seen.push(String(made));
+      if (seen.join() !== "${expected}") throw new Error("seen " + seen.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("other", "undefined,number,5,6"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects a write that the global object's own property doesn't take", async () => {
+      expect(
+        (await checkModel(getSource("other", "undefined,number,5,5"))).failure?.message,
+      ).toContain("seen undefined,number,5,6");
+    });
+
+    it("stops where Object.prototype changed before the global exists", async () => {
+      const source = `
+        Object.defineProperty(Object.prototype, "made", { value: 3 });
+        // @ts-ignore
+        made = 6;
+      `;
+      expect((await checkModel(source)).failure?.message).toContain(
+        "tla-ts can't make a global outside strict mode once Object.prototype changed",
+      );
+    });
+
+    it("stops where Object.prototype names the global", () => {
+      expect(() => compile("// @ts-ignore\ntoString = 5;")).toThrow(
+        "tla-ts can't make a global outside strict mode that Object.prototype names",
+      );
+    });
+  });
+
   describe("type checks a package's JavaScript against its declarations", () => {
     const path = join(import.meta.dirname, "../fixtures/typescript/es-modules/declared.ts");
     const source = readFileSync(path, "utf8");

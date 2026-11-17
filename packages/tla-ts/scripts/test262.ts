@@ -117,6 +117,22 @@ const PORTED_INCLUDES = new Map([
     "temporalHelpers.js",
     readFileSync(join(CONFORMANCE_DIRECTORY, "test262-temporal-helpers.ts"), "utf8"),
   ],
+  [
+    "sm/assertThrowsValue.js",
+    readFileSync(join(CONFORMANCE_DIRECTORY, "test262-sm-assert-throws-value.ts"), "utf8"),
+  ],
+  [
+    "sm/non262-Reflect-shell.js",
+    readFileSync(join(CONFORMANCE_DIRECTORY, "test262-sm-reflect-shell.ts"), "utf8"),
+  ],
+  [
+    "sm/non262-generators-shell.js",
+    readFileSync(join(CONFORMANCE_DIRECTORY, "test262-sm-generators-shell.ts"), "utf8"),
+  ],
+  [
+    "sm/non262-JSON-shell.js",
+    readFileSync(join(CONFORMANCE_DIRECTORY, "test262-sm-json-shell.ts"), "utf8"),
+  ],
 ]);
 
 // An async test's harness defines $DONE, as doneprintHandle.js does.
@@ -2035,6 +2051,13 @@ const MISSING_ELEMENT_ERROR = 2493;
 // method or RegExp takes a primitive or an object.
 const NO_OVERLOAD_ERROR = 2769;
 const CONVERTED_ARGUMENT_ERRORS = new Set([2345, NO_OVERLOAD_ERROR]);
+// A value of another type than a parameter, a property of a type, or a member of a type takes, or
+// a property that a type lacks.
+const TEMPORAL_ARGUMENT_ERRORS = new Set([2322, 2345, 2353, 2559, 2561, NO_OVERLOAD_ERROR]);
+// A using declaration's value that isn't null, undefined, or an object whose type has the dispose
+// method that the declaration calls, which tla-ts reads as it runs and throws the TypeError of. An
+// await using declaration's isn't, as tla-ts awaits what its method gives by the type it declares.
+const USING_INITIALIZER_ERRORS = new Set([2850]);
 // The array methods that tla-ts runs a reducer for on the values it gets, not its declared types,
 // where a test's reducer returns a type that the method's signatures don't take. Each needs a unit
 // test of such a call, since tla-ts reads a value by its declared type.
@@ -2905,6 +2928,44 @@ const ignoreSoundErrors = () => {
           )),
     );
   };
+  // A value inside an argument of a call or a new of a Temporal function, outside the functions
+  // that the argument makes, as an options object whose strings TypeScript widens past the types it
+  // declares. tla-ts's Temporal reads each argument as the function does, whatever its type.
+  const isTemporalArgument = (diagnostic: ts.Diagnostic) => {
+    const node = getNode(diagnostic.start ?? 0);
+    const call = ts.findAncestor(
+      node,
+      (ancestor): ancestor is ts.CallExpression | ts.NewExpression =>
+        (ts.isCallExpression(ancestor) || ts.isNewExpression(ancestor)) &&
+        (ancestor.arguments ?? []).some(
+          (value) => value.getStart() <= node.getStart() && node.getEnd() <= value.getEnd(),
+        ),
+    );
+    const callee = call === undefined ? undefined : skipParentheses(call.expression);
+    const isInFunction =
+      ts.findAncestor(node, (ancestor) => ancestor === call || ts.isFunctionLike(ancestor)) !==
+      call;
+    const symbol =
+      callee === undefined
+        ? undefined
+        : checker.getSymbolAtLocation(ts.isPropertyAccessExpression(callee) ? callee.name : callee);
+    const declarations = symbol?.declarations ?? [];
+    return (
+      call !== undefined &&
+      !isInFunction &&
+      !(call.arguments ?? []).some(ts.isSpreadElement) &&
+      declarations.length > 0 &&
+      declarations.every(
+        (declaration) =>
+          declaration.getSourceFile().isDeclarationFile &&
+          ts.findAncestor(
+            declaration,
+            (ancestor) =>
+              ts.isModuleDeclaration(ancestor) && ancestor.name.getText() === "Temporal",
+          ) !== undefined,
+      )
+    );
+  };
   // A null or an undefined that a call passes to a built-in that NULLISH_TAKING_BUILT_INS lists,
   // which the error is at.
   const isNullishBuiltInCall = (diagnostic: ts.Diagnostic) => {
@@ -3768,6 +3829,8 @@ const ignoreSoundErrors = () => {
           isTypedArrayNew(diagnostic) ||
           isNullishBuiltInCall(diagnostic))) ||
       (diagnostic.code === NO_OVERLOAD_ERROR && isIteratedEntriesCall(diagnostic)) ||
+      (TEMPORAL_ARGUMENT_ERRORS.has(diagnostic.code) && isTemporalArgument(diagnostic)) ||
+      USING_INITIALIZER_ERRORS.has(diagnostic.code) ||
       ((CONVERTED_ARGUMENT_ERRORS.has(diagnostic.code) || diagnostic.code === 2322) &&
         isRawTemplate(diagnostic)) ||
       (diagnostic.code === UNKNOWN_CALLEE_ERROR && isStoredStringCall(node)) ||

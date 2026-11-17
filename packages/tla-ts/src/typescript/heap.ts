@@ -113,7 +113,7 @@ import { isDescriptorsRead, isProxyOperation } from "./protocols";
 import { getReached } from "./aliasing";
 import { isObjectOperand } from "./conversions";
 import { createStateScope, type Scope } from "./scope";
-import { getIntlOutcome, getLocalesOutcome } from "./locales";
+import { getIntlOutcome, getLocalesOutcome, getResolvedOptions } from "./locales";
 import { BUILT_INS } from "./built-ins";
 import {
   apply,
@@ -2109,20 +2109,22 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
               [heap, translateExpression(values[0], scope, context)],
               context,
             )
-          : (getLiteralTime(values[0]) ??
-            useJavaScript(
-              "TimeFromNumber",
-              [
-                translateConverted(
-                  values[0],
-                  translateToNumber(values[0], node, scope, context),
-                  "number",
-                  scope,
-                  context,
-                ),
-              ],
-              context,
-            ));
+          : isDateText(values[0], context)
+            ? useJavaScript("DateParse", [translateExpression(values[0], scope, context)], context)
+            : (getLiteralTime(values[0]) ??
+              useJavaScript(
+                "TimeFromNumber",
+                [
+                  translateConverted(
+                    values[0],
+                    translateToNumber(values[0], node, scope, context),
+                    "number",
+                    scope,
+                    context,
+                  ),
+                ],
+                context,
+              ));
     // The constructor, which the prototype's constructor property holds.
     context.builtIns.add("Date");
     // A class that extends Date gives its instance the class's prototype.
@@ -2143,9 +2145,9 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
   const intl = getNewIntl(node, context);
   if (intl !== undefined) {
     // The function that the object's compare or format getter gives, which the object holds.
-    const boundLength = BOUND_LENGTHS.get(intl);
+    const boundLength = BOUND_LENGTHS.get(intl.name);
     // The constructor, which the prototype's constructor property holds.
-    context.builtIns.add(`Intl.${intl}`);
+    context.builtIns.add(`Intl.${intl.name}`);
     return ifExpression(
       translateIntlKept(node, heap, scope, context),
       useJavaScript(
@@ -2172,11 +2174,25 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
           useJavaScript(
             "IntlObject",
             [
-              translateBuiltInValue(`Intl.${intl}.prototype`, node, context),
-              string(intl),
+              translateBuiltInValue(`Intl.${intl.name}.prototype`, node, context),
+              string(intl.name),
               boundLength === undefined
                 ? getUndefined(context)
                 : useJavaScript("NextRef", [heap, number(1)], context),
+              intl.resolved === undefined
+                ? getUndefined(context)
+                : tuple(
+                    intl.resolved.map(([key, value]) =>
+                      tuple([
+                        string(key),
+                        typeof value === "boolean"
+                          ? boolean(value)
+                          : typeof value === "number"
+                            ? number(value)
+                            : string(value),
+                      ]),
+                    ),
+                  ),
             ],
             context,
           ),
@@ -2185,7 +2201,7 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
       ),
       apply("Assert", [
         boolean(false),
-        string(`tla-ts can't construct Intl.${intl} where a script changed what it reads`),
+        string(`tla-ts can't construct Intl.${intl.name} where a script changed what it reads`),
       ]),
     );
   }
@@ -2684,9 +2700,8 @@ export const getNewWrapper = (node: ts.Node, context: Context) => {
 export const isDateType = (node: ts.Expression, context: Context) =>
   context.checker.getTypeAtLocation(node).getSymbol()?.name === "Date";
 
-// new Date of a time value, of another Date, or of a year and a month and the rest, whose
-// arguments convert to numbers without running code. tla-ts doesn't read the clock or parse
-// dates.
+// new Date of a time value, of another Date, of a string, or of a year and a month and the rest,
+// whose arguments convert to numbers without running code. tla-ts doesn't read the clock.
 export const isNewDate = (node: ts.Node, context: Context): node is ts.NewExpression => {
   const construction = getConstruction(node, context);
   if (
@@ -2699,7 +2714,9 @@ export const isNewDate = (node: ts.Node, context: Context): node is ts.NewExpres
   }
   const values = node.arguments ?? [];
   return values.length === 1
-    ? isNumeric(values[0], context) || isDateType(values[0], context)
+    ? isNumeric(values[0], context) ||
+        isDateType(values[0], context) ||
+        isDateText(values[0], context)
     : values.length !== 1 && areDateFields(values, context);
 };
 
@@ -2807,6 +2824,7 @@ const getIntlConstruction = (node: ts.Node, context: Context) => {
     : {
         name,
         outcome,
+        resolved: localesPath === undefined ? getResolvedOptions(name, tags, read) : undefined,
         options: isOptionsLiteral ? options : undefined,
         locales: localesPath === undefined ? undefined : { path: localesPath, method, isCall },
       };
@@ -2817,7 +2835,7 @@ const getIntlConstruction = (node: ts.Node, context: Context) => {
 export const getNewIntl = (node: ts.Node, context: Context) => {
   const construction = getIntlConstruction(node, context);
   return construction?.outcome === "" && construction.locales === undefined
-    ? construction.name
+    ? { name: construction.name, resolved: construction.resolved }
     : undefined;
 };
 
@@ -2934,6 +2952,14 @@ export const DATE_FIELDS = new Map<string, string>([
 // The methods that give a Date's time value.
 export const TIME_METHODS = new Set(["getTime", "valueOf"]);
 
+// The methods that give a Date's time value as text, which DateText writes.
+export const DATE_TEXT_METHODS = new Set([
+  "toString",
+  "toDateString",
+  "toTimeString",
+  "toUTCString",
+]);
+
 // The Date setters, by the position of the first field each sets, the year at 1 and the
 // milliseconds at 7, or 0 for setTime and setYear, and how many numbers each takes.
 const DATE_SETTERS = new Map<string, { position: number; arity: number }>([
@@ -2966,7 +2992,8 @@ export const getDateCall = (node: ts.Node, context: Context) => {
     method !== undefined &&
     (DATE_SETTERS.has(method) ||
       method === "toISOString" ||
-      (isCall && (DATE_FIELDS.has(method) || TIME_METHODS.has(method))));
+      (isCall &&
+        (DATE_FIELDS.has(method) || TIME_METHODS.has(method) || DATE_TEXT_METHODS.has(method))));
   if (!isKnown || (!isCall && !isDateType(callee, context))) return undefined;
   if (isCall && !ts.isExpressionStatement(node.parent)) return undefined;
   return {
@@ -3028,6 +3055,12 @@ const isNumeric = (argument: ts.Expression, context: Context) => {
     names.length > 0 &&
     names.every((name) => ["number", "boolean", "null", "undefined"].includes(name))
   );
+};
+
+// Whether a value is a string, which Date.parse and new Date read as a date.
+export const isDateText = (argument: ts.Expression, context: Context) => {
+  const names = getTypeNames(context.checker.getTypeAtLocation(argument), context.checker);
+  return names !== undefined && names.length > 0 && names.every((name) => name === "string");
 };
 
 // Whether the arguments of Date.UTC, or of new Date with a year and a month, convert to numbers
@@ -3499,6 +3532,27 @@ export const getThisSymbolCall = (node: ts.Node, context: Context) => {
     !isEvery(context.checker.getTypeAtLocation(argument), ts.TypeFlags.ESSymbolLike) &&
     getPrototypeMethod(node.expression.expression, "Symbol", context) === "valueOf"
     ? argument
+    : undefined;
+};
+
+// A call of resolvedOptions on a value that TypeScript types as one of Intl's objects, with the kind
+// of object that it reads.
+export const getResolvedOptionsCall = (node: ts.Node, context: Context) => {
+  if (context.heap === undefined || !isMethodCall(node)) return undefined;
+  const receiver = node.expression.expression;
+  const symbol = context.checker.getTypeAtLocation(receiver).getSymbol();
+  const declarations = symbol?.declarations ?? [];
+  return node.expression.name.text === "resolvedOptions" &&
+    node.arguments.length === 0 &&
+    symbol !== undefined &&
+    declarations.length > 0 &&
+    declarations.every(
+      (declaration) =>
+        declaration.getSourceFile().isDeclarationFile &&
+        ts.findAncestor(declaration, ts.isModuleDeclaration)?.name.getText() === "Intl",
+    ) &&
+    BUILT_INS[`Intl.${symbol.name}.prototype.resolvedOptions`] !== undefined
+    ? { kind: symbol.name, receiver }
     : undefined;
 };
 

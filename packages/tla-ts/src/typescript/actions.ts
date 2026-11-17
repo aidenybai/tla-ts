@@ -280,6 +280,8 @@ import {
   getViewCall,
   getGetterCall,
   getIntlMethodCall,
+  getResolvedOptionsCall,
+  getNewIntl,
   getThisSymbolCall,
   translateNewBufferOf,
   isRevoke,
@@ -1041,8 +1043,28 @@ const getTarget = (node: ts.Expression, path: Path, context: Context): Target =>
         node,
       );
     }
-    const read = isImplicitGlobal(node, context) ? readGlobal(node, current, context) : current;
-    return { symbol, current: read, update: (getValue) => getValue(read) };
+    const isGlobal = isImplicitGlobal(node, context);
+    const read = isGlobal ? readGlobal(node, current, context) : current;
+    // A write that makes a global sets the global object's property, which a property of
+    // Object.prototype that a script changed can refuse or take with a setter.
+    const heap = context.heap === undefined ? undefined : path.scope.bindings.get(context.heap);
+    const guardGlobal = (value: Expression) =>
+      isGlobal && heap !== undefined
+        ? ifExpression(
+            apply("/\\", [
+              isUnresolvable(current, context),
+              apply("~", [useJavaScript("IsKept", [heap, string("Object.prototype")], context)]),
+            ]),
+            apply("Assert", [
+              boolean(false),
+              string(
+                "tla-ts can't make a global outside strict mode once Object.prototype changed",
+              ),
+            ]),
+            value,
+          )
+        : value;
+    return { symbol, current: read, update: (getValue) => guardGlobal(getValue(read)) };
   }
   const privateMember =
     ts.isPropertyAccessExpression(node) && ts.isPrivateIdentifier(node.name)
@@ -4155,6 +4177,55 @@ const translateCallStatementBody = (
       useJavaScript("ThisSymbolThrows", [heap, value], context),
       throwTypeError(path, expression, context, frame),
       continueWith(path, translateExpression(expression, path.scope, context)),
+    );
+  }
+  const resolvedCall = getResolvedOptionsCall(expression, context);
+  const resolvedAllocations =
+    resolvedCall === undefined
+      ? []
+      : getAllocated(expression, context).filter(
+          (inner) => inner !== expression && !path.scope.allocated.has(inner),
+        );
+  if (resolvedCall !== undefined && resolvedAllocations.length > 0) {
+    return allocateAll(resolvedAllocations, path, context, (allocated) =>
+      translateCallStatement(expression, allocated, context, frame, continueWith),
+    );
+  }
+  if (resolvedCall !== undefined) {
+    const heap = getHeap(path.scope, expression, context);
+    const receiverName = context.names.getFresh("receiver");
+    const receiver = identifier(receiverName);
+    const methodPath = `Intl.${resolvedCall.kind}.prototype.resolvedOptions` as const;
+    const allocated = useJavaScript(
+      "Allocate",
+      [heap, useJavaScript("IntlResolvedObject", [heap, receiver], context)],
+      context,
+    );
+    return bindOnce(
+      path,
+      receiverName,
+      translateExpression(resolvedCall.receiver, path.scope, context),
+      ifThenElse(
+        useJavaScript(
+          "SameValue",
+          [
+            useJavaScript("Get", [heap, receiver, string("resolvedOptions")], context),
+            translateBuiltInValue(methodPath, expression, context),
+          ],
+          context,
+        ),
+        ifThenElse(
+          useJavaScript("IntlResolves", [heap, string(resolvedCall.kind), receiver], context),
+          continueWith(withHeap(allocated, path), useJavaScript("Allocated", [allocated], context)),
+          throwTypeError(path, expression, context, frame),
+        ),
+        leaf(
+          apply("Assert", [
+            boolean(false),
+            string(`tla-ts can't call ${methodPath} where a script replaced it`),
+          ]),
+        ),
+      ),
     );
   }
   const intlMethodCall = getIntlMethodCall(expression, context);
@@ -13821,6 +13892,7 @@ const isStatementResult = (node: ts.CallExpression, path: Path, context: Context
     getTemporalCall(node, context) !== undefined ||
     getGetterCall(node, context) !== undefined ||
     getIntlMethodCall(node, context) !== undefined ||
+    getResolvedOptionsCall(node, context) !== undefined ||
     getThisSymbolCall(node, context) !== undefined ||
     getCalledThrough(node, context) !== undefined ||
     getAppliedCall(node, path, context) !== undefined ||
@@ -17424,7 +17496,11 @@ const translateIterations = (
   ) {
     throw new TlaTypeScriptError("Only arrays have an order to iterate in", iterated.expression);
   }
-  const changed = getChanged(loop, path, context);
+  // A let or a const whose declaration hasn't run yet has no value to pass to the loop, which only
+  // a function that stops instead of reading it before its declaration could change.
+  const changed = getChanged(loop, path, context).filter(
+    (symbol) => !path.scope.uninitialized.has(symbol),
+  );
   // The iterator reads each element as the loop reaches it, which a copy of the elements matches
   // only while the body changes no object. Where it may, each step reads the array's length and
   // elements again, as an array iterator does. A set's or a map's iterator steps through its
@@ -19197,7 +19273,8 @@ const findLeadingCall = (
         : undefined;
     // An array literal's method runs its elements first.
     const isListed = receiver !== undefined && ts.isArrayLiteralExpression(receiver);
-    // A collection that new makes without arguments runs no code.
+    // A collection that new makes without arguments runs no code, nor does an Intl object of
+    // literal locales and options.
     const isMadeCollection =
       receiver !== undefined &&
       ts.isNewExpression(receiver) &&
@@ -19205,7 +19282,8 @@ const findLeadingCall = (
         COLLECTIONS.some(
           (collection) => collection === getBuiltIn(receiver.expression, context),
         )) ||
-        getTemporalCall(receiver, context) !== undefined);
+        getTemporalCall(receiver, context) !== undefined ||
+        getNewIntl(receiver, context) !== undefined);
     const fromReceiver =
       receiver !== undefined &&
       (ts.isCallExpression(receiver) ||

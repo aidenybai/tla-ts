@@ -41,6 +41,7 @@ import {
   isConcatParts,
   isDateType,
   TIME_METHODS,
+  DATE_TEXT_METHODS,
   isDescriptionOfAll,
 } from "./heap";
 import {
@@ -2154,7 +2155,11 @@ export const translateMethod = (
   if (context.heap !== undefined && kind === "object" && isDateType(receiver, context)) {
     const method = node.expression.name.text;
     const field = DATE_FIELDS.get(method);
-    const isKnown = field !== undefined || TIME_METHODS.has(method) || method === "toISOString";
+    const isKnown =
+      field !== undefined ||
+      TIME_METHODS.has(method) ||
+      DATE_TEXT_METHODS.has(method) ||
+      method === "toISOString";
     if (!isKnown || node.arguments.length > 0) {
       return translateUnknown(node, `Unsupported call: ${node.expression.getText()}`, context);
     }
@@ -2178,6 +2183,9 @@ export const translateMethod = (
           useJavaScript("ISOString", [shared], context),
         ),
       );
+    }
+    if (DATE_TEXT_METHODS.has(method)) {
+      return useJavaScript("DateText", [time, string(method)], context);
     }
     return field === undefined
       ? useJavaScript("TimeNumber", [time], context)

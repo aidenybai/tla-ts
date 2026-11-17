@@ -862,8 +862,10 @@ const isVarConflict = (node: ts.Node, name: string) => {
 
 // A function that a block, a case, or an if's branch declares outside strict mode, which as Annex
 // B.3.2 and B.3.3 add also assigns a var of its name in its function or its script, unless such a
-// var in its place would be an early error or names a parameter. A function's arguments object takes the name arguments as a
-// parameter does, but in an arrow or beside a function declaration of that name.
+// var in its place would be an early error or names a parameter. Where a function's arguments
+// object takes the name arguments, the spec skips such a function as it skips a parameter's name but
+// Node assigns it, so tla-ts stops there. An arrow or a function declaration of that name leaves no
+// arguments object.
 export const isVarFunction = (
   node: ts.Node,
 ): node is ts.FunctionDeclaration & { name: ts.Identifier } => {
@@ -902,10 +904,16 @@ export const isVarFunction = (
     !scope.statements.some(
       (statement) => ts.isFunctionDeclaration(statement) && statement.name?.text === "arguments",
     );
-  return (
-    !owner.parameters.some((parameter) => getBindingNames(parameter.name).includes(name)) &&
-    !(name === "arguments" && isArgumentsObject)
+  const isParameter = owner.parameters.some((parameter) =>
+    getBindingNames(parameter.name).includes(name),
   );
+  if (!isParameter && name === "arguments" && isArgumentsObject) {
+    throw new TlaTypeScriptError(
+      "tla-ts can't tell whether a function named arguments that a block declares replaces the arguments object",
+      node.name,
+    );
+  }
+  return !isParameter;
 };
 
 // The name of the var that a function that isVarFunction finds assigns: one that a var declaration
@@ -1074,6 +1082,19 @@ export const rejectSloppyGlobalWrites = (file: ts.SourceFile, context: Context) 
     throw new TlaTypeScriptError(
       "tla-ts can't write in strict mode a global that a write outside it makes",
       strictWrite,
+    );
+  }
+  // The global object inherits Object.prototype's properties, which a write to their names sets or
+  // shadows and which typeof finds before the write.
+  const inherited = writes.find(
+    (name) =>
+      isImplicitGlobal(name, context) &&
+      BUILT_INS["Object.prototype"][3].some((property) => property[0] === name.text),
+  );
+  if (inherited !== undefined) {
+    throw new TlaTypeScriptError(
+      "tla-ts can't make a global outside strict mode that Object.prototype names",
+      inherited,
     );
   }
 };
@@ -2509,6 +2530,31 @@ export const isMadeOnly = (symbol: ts.Symbol, context: Context) => {
     ),
   );
   return written.length > 0 && written.every(isMadeWrite);
+};
+
+// The values that the assignments of a variable give it, where each write of it is a plain =
+// outside a pattern, or undefined where another write writes it.
+export const getAssignedValues = (symbol: ts.Symbol, context: Context) => {
+  const declaration = symbol.valueDeclaration;
+  if (declaration === undefined) return undefined;
+  const written = findNodes(declaration.getSourceFile(), (inner): inner is ts.Node => {
+    const target = getAssignedTarget(inner);
+    return target !== undefined && isWrittenBy(target, symbol, context);
+  }).flatMap((inner) =>
+    getWrittenNames(getAssignedTarget(inner) ?? inner).filter(
+      (name) => ts.isIdentifier(name) && getSymbol(name, context.checker) === symbol,
+    ),
+  );
+  const values = written.map((name) => {
+    const parent = name.parent;
+    return ts.isBinaryExpression(parent) &&
+      parent.left === name &&
+      parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      !isPatternPart(parent)
+      ? skipCasts(parent.right)
+      : undefined;
+  });
+  return values.every((value) => value !== undefined) ? values : undefined;
 };
 
 // The names that a function reads from the functions around it, through the functions it names,
