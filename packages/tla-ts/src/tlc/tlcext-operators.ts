@@ -7,7 +7,13 @@ import {
   getThunk,
   getValue,
 } from "../builtins";
-import { formatRange, TlaEndOfInputError, TlaEvaluationError, TlaModuleError } from "../errors";
+import {
+  formatRange,
+  TlaEndOfInputError,
+  TlaEvaluationError,
+  TlaModuleError,
+  TlaUnsupportedError,
+} from "../errors";
 import { getTlcFingerprint } from "./fingerprint";
 import { formatMessage, formatNestedMessage, MESSAGE_CODE, MESSAGE_LEVEL } from "./messages";
 import {
@@ -31,6 +37,7 @@ import {
   createRecord,
   createSet,
   createTuple,
+  formatState,
   formatValue,
   getFingerprintError,
   getSequenceElements,
@@ -270,17 +277,42 @@ export const createTlcExtOperators = (
         if (isPicked || !context?.next || !context.state || !isCompleteState(context.state)) {
           return true;
         }
-        const action = runtime.getSuccessorAction(context.state, next);
-        print(
-          formatMessage(
-            runtime.isTool,
-            MESSAGE_CODE.moduleOverrideStdout,
-            MESSAGE_LEVEL.none,
-            `Extend behavior of length ${runtime.getLevel(context.state)} with a "${action?.name}" step [<Action ${action?.location.range && formatRange(action.location.range)}>]? (Yes/no/explored/states/diff):`,
-          ),
-        );
-        // Deviation from TLC: PickSuccessor has no standard input to read an answer from.
-        throw new TlaEndOfInputError();
+        const state = context.state;
+        const action = runtime.getSuccessorAction(state, next);
+        const printOverride = (text: string) =>
+          print(
+            formatMessage(
+              runtime.isTool,
+              MESSAGE_CODE.moduleOverrideStdout,
+              MESSAGE_LEVEL.none,
+              text,
+            ),
+          );
+        while (true) {
+          printOverride(
+            `Extend behavior of length ${runtime.getLevel(state)} with a "${action?.name}" step [<Action ${action?.location.range && formatRange(action.location.range)}>]? (Yes/no/explored/states/diff):`,
+          );
+          const answer = runtime.readLine?.();
+          // Deviation from TLC: at the end of standard input, TLC's Scanner leaks a NoSuchElementException.
+          if (answer === undefined) throw new TlaEndOfInputError();
+          if (/^[\0-\x20]*$/.test(answer) || answer.toLowerCase().startsWith("y")) return true;
+          if (answer[0] === "s") {
+            printOverride(
+              `${formatState(runtime.toRecord(state)).trimEnd()}\n~>\n${formatState(runtime.toRecord(next)).trimEnd()}`,
+            );
+          } else if (answer[0] === "d") {
+            printOverride(formatState(runtime.toRecord(next), runtime.toRecord(state)));
+          } else if (answer[0] === "e") {
+            if (runtime.getSimulationValue === undefined) {
+              throw new TlaUnsupportedError(
+                "tla-ts can't mark a state explored while it checks a model.",
+              );
+            }
+            printOverride(
+              "Marking a state explored is unsupported by the current TLC mode. Is TLC running in simulation mode?",
+            );
+          } else if (answer[0] === "n") return false;
+        }
       }),
       isActionLevel: true,
     },

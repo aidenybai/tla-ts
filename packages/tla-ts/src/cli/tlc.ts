@@ -29,6 +29,7 @@ import { EXIT_STATUS } from "../exit-codes";
 import { check } from "../parallel";
 import { extractModule, parseModule } from "../parser";
 import { simulate } from "../simulate";
+import type { StandardInput } from "../search";
 import type { StateDump } from "../state-graph";
 import {
   getSanyStandardModules,
@@ -385,7 +386,7 @@ const checkSpec = async (
       version,
     );
     config.invariants.push(...invariants.names);
-    const options: CheckOptions = {
+    const options: CheckOptions & StandardInput = {
       workers: args.workers,
       livenessCheck:
         livenessCheck === "off"
@@ -412,6 +413,7 @@ const checkSpec = async (
       source: invariants.source,
       config,
       onPause: () => readSync(0, Buffer.alloc(1)),
+      readLine: readStandardInputLine,
       loadModule,
       loadClass: (name) => {
         const classPath = getClassPath(directory, name);
@@ -476,6 +478,18 @@ const checkSpec = async (
     if (!timing.isParsed) printCheckProgress(printer, { kind: "parsed" }, timing, directory);
     return printFailure(error);
   }
+};
+
+const readStandardInputLine = () => {
+  const bytes: number[] = [];
+  const byte = Buffer.alloc(1);
+  let isRead = false;
+  while (readSync(0, byte) === 1) {
+    isRead = true;
+    if (byte[0] === 0x0a) break;
+    bytes.push(byte[0]);
+  }
+  return isRead ? Buffer.from(bytes).toString().replace(/\r$/, "") : undefined;
 };
 
 const formatSanyErrors = (error: TlaSyntaxError, specName: string) => {
