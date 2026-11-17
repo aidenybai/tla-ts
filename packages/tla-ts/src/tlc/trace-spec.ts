@@ -180,9 +180,8 @@ ${lassoStep}${variables
     \\*         IN J!JsonSerialize("${input.module}.json", _TETrace)
 
 `;
-  const isViewed =
-    isLasso && new Set(states.map((state) => JSON.stringify(state))).size < states.length;
-  const view = isViewed
+  // MCError#isLassoWithDuplicates counts the state a lasso goes back to, so TLC views every lasso.
+  const view = isLasso
     ? {
         config: "\nVIEW\n    _view\n",
         definition: `\n_view ==\n${INDENT}<<${variables.join(", ")}, IF TLCGet("level") = ${LASSO_END} + 1 THEN ${LASSO_START} ELSE TLCGet("level")>>\n`,

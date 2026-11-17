@@ -25,7 +25,6 @@ const checkFixture = async (name: string, module: string, traceFile?: string) =>
 };
 
 describe("trace exploration spec", () => {
-  // Deviation from TLC: it adds a view to every lasso, which only one with a repeated state needs.
   it.each([
     ["Safety", "te_out"],
     ["Stuttering", "te"],
