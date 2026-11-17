@@ -51698,4 +51698,41 @@ describe("BigInts", () => {
       ).toContain("seen 9,18,4,constructor+area");
     });
   });
+
+  describe("leaves a function that the program only calls by name out of a call through a value", () => {
+    const getSource = (expected: string) => `
+      const seen: string[] = [];
+      const listeners = new Set<() => void>();
+      const callListener = (listener: (...values: unknown[]) => unknown) => {
+        try {
+          listener.apply(undefined, []);
+        } catch (error) {
+          seen.push("caught");
+        }
+      };
+      const getSize = (onActive?: () => void) => {
+        if (onActive !== undefined) listeners.add(onActive);
+        for (const listener of [...listeners]) callListener(listener);
+        return listeners.size;
+      };
+      const clear = () => {
+        seen.push("clear " + getSize(undefined));
+      };
+      getSize(() => seen.push("listener"));
+      clear();
+      const result = seen.join();
+      if (result !== "${expected}") throw new Error("seen " + result);
+      export {};
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("listener,listener,clear 1"))).failure).toBeUndefined();
+    });
+
+    it("rejects other calls", async () => {
+      expect((await checkModel(getSource("listener,clear 1"))).failure?.message).toContain(
+        "seen listener,listener,clear 1",
+      );
+    });
+  });
 });

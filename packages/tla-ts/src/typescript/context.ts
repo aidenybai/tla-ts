@@ -5626,6 +5626,44 @@ export const getEnclosingFunction = (node: ts.Node, context: Context) =>
     (ancestor) => ts.isFunctionLike(ancestor) && !context.onceFunctions.has(ancestor),
   );
 
+// A function that no value holds, as the program names it only to call it: a function or a
+// variable that no other module may import, no global object property holds, and no block holds
+// outside strict mode, whose name every file calls wherever it writes it, and that reads no
+// arguments object, whose callee would hold it.
+const isOnlyCalled = (candidate: FunctionNode, context: Context) => {
+  const declaration = ts.isFunctionDeclaration(candidate)
+    ? candidate
+    : (ts.isArrowFunction(candidate) ||
+          (ts.isFunctionExpression(candidate) && candidate.name === undefined)) &&
+        ts.isVariableDeclaration(candidate.parent) &&
+        candidate.parent.initializer === candidate
+      ? candidate.parent
+      : undefined;
+  const name = declaration?.name;
+  const parent = declaration?.parent;
+  const table = context.nodes;
+  return (
+    declaration !== undefined &&
+    name !== undefined &&
+    ts.isIdentifier(name) &&
+    parent !== undefined &&
+    (!ts.isFunctionDeclaration(declaration) ||
+      ts.isSourceFile(parent) ||
+      ts.isModuleBlock(parent) ||
+      (ts.isBlock(parent) && ts.isFunctionLike(parent.parent))) &&
+    (ts.getCombinedModifierFlags(declaration) & ts.ModifierFlags.ExportDefault) === 0 &&
+    (ts.isExternalModule(candidate.getSourceFile()) ||
+      ts.findAncestor(candidate.parent, ts.isFunctionLike) !== undefined) &&
+    (ts.isArrowFunction(candidate) || findNames(table, candidate, ["arguments"]).length === 0) &&
+    [...table.fileStarts].every((start) =>
+      findNames(table, table.nodes[start], [name.text]).every(
+        (use) =>
+          use === name || (ts.isCallExpression(use.parent) && use.parent.expression === use),
+      ),
+    )
+  );
+};
+
 // The functions of a file that a value may hold where tla-ts can't tell which: those that no other
 // function encloses, or that a function makes each time it runs or as its var holds them outside
 // strict mode and that read none of its locals.
@@ -5644,6 +5682,7 @@ export const findFunctionCandidates = (sourceFile: ts.SourceFile, context: Conte
       getFunctionValue(candidate, context) === candidate;
     return (
       candidate?.body !== undefined &&
+      !isOnlyCalled(candidate, context) &&
       (getEnclosingFunction(candidate, context) === undefined ||
         ((isNestedFunction(candidate, context) || isVarFunction(candidate) || isOnceMade()) &&
           getOuterLocals(candidate, context).length === 0))
