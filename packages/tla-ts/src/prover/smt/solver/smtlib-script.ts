@@ -39,6 +39,7 @@ import {
   createCommandReader,
   createSmtlibReader,
   DECLARATIONS,
+  expectClosed,
   isSymbol,
   isUnsigned,
   type SExpr,
@@ -1128,6 +1129,7 @@ export const runSmtlibScript = (
         const params = getCommandParams(list.items, CHECK_SAT_USING_PARAMETERS);
         if (list.items[1] === undefined)
           throw new SmtParseError("check-sat-using needs a tactic argument", list.end);
+        expectClosed(list.items[1]);
         const builder = compileTactic(getTacticEnvironment(), list.items[1]);
         const tactic = builder.build(params);
         const goal = getCommandGoal(builder.isTrackingDependencies, list.end);
@@ -1382,6 +1384,7 @@ export const runSmtlibScript = (
         const params = getCommandParams(list.items, APPLY_PARAMETERS);
         if (list.items[1] === undefined)
           throw new SmtParseError("apply needs a tactic argument", list.end);
+        expectClosed(list.items[1]);
         // apply_tactic_cmd, unlike check-sat-using, gives the tactic no logic.
         const builder = compileTactic(
           { ...getTacticEnvironment(), setup: { ...getSetup(), logic: undefined } },
@@ -1847,7 +1850,7 @@ export const runSmtlibScript = (
         const value = list.items[2];
         if (value === undefined)
           throw new SmtParseError("invalid command, argument(s) missing", list.end);
-        if (value.kind === "list" || value.kind === "keyword")
+        if (value.kind === "list" || value.kind === "keyword" || value.kind === "eof")
           throw new SmtParseError("invalid option value", value);
         if (info.text === ":status" && value.kind === "symbol") {
           const status = [L_TRUE, L_FALSE, L_UNDEF].find(
@@ -1871,6 +1874,7 @@ export const runSmtlibScript = (
     if (command === undefined && UNPORTED_COMMANDS.has(head.text))
       throw new SmtUnsupportedError(`the command ${head.text}`);
     if (command === undefined) {
+      expectClosed(list);
       print("unsupported");
       printDiagnostic(`; ${head.text} line: ${list.end.line} position: ${list.end.column}`);
       return;

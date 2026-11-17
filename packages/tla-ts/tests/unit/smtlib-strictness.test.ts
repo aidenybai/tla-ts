@@ -471,6 +471,40 @@ describe("messages of the reader, as Z3 5.3.2 prints them", () => {
       '(error "line 11 column 39: invalid parameter value, unsigned integer expected")',
     ]);
   });
+
+  it("reports what a command expects where the file ends", () => {
+    expect(
+      [
+        "(assert true",
+        "(assert (and true",
+        "(check-sat",
+        "(declare-const x Int",
+        "(exit",
+        "(push",
+        "(foo a b",
+        "(check-sat-using (then",
+        "(assert (_ bv1",
+        '(echo "a"',
+        '(echo "a" ',
+        "(assert #b1",
+      ].map((script) => run([script])),
+    ).toEqual([
+      ["(error \"line 1 column 13: invalid assert command, ')' expected\")"],
+      ['(error "line 1 column 18: invalid expression, unexpected input")'],
+      ['(error "line 1 column 11: invalid expression, unexpected input")'],
+      ["(error \"line 1 column 21: invalid constant declaration, ')' expected\")"],
+      ['(error "line 1 column 6: invalid command, too many arguments")'],
+      ['(error "line 1 column 6: invalid push command, integer expected")'],
+      ['(error "line 1 column 9: invalid s-expression, unexpected end of file")'],
+      ['(error "line 1 column 23: invalid s-expression, unexpected end of file")'],
+      [
+        "(error \"line 1 column 15: invalid indexed identifier, integer, identifier or '(' expected\")",
+      ],
+      ['(error "line 1 column 7: unexpected end of file")'],
+      ["a", '(error "line 1 column 11: invalid command, too many arguments")'],
+      ['(error "line 1 column 9: unexpected end of file")'],
+    ]);
+  });
 });
 
 describe("the terms the reader makes and frees, in Z3's order", () => {

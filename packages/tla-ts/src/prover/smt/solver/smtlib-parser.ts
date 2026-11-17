@@ -136,7 +136,7 @@ const DEFAULT_PARSER_OPTIONS: ParserOptions = { isIgnoringBadPatterns: true };
 
 // Z3 counts the columns of the first line from 1 and of the others from 0.
 export interface SmtToken {
-  kind: "(" | ")" | "symbol" | "keyword" | "string" | "numeral" | "decimal" | "bitvector";
+  kind: "(" | ")" | "symbol" | "keyword" | "string" | "numeral" | "decimal" | "bitvector" | "eof";
   text: string;
   line: number;
   column: number;
@@ -715,6 +715,9 @@ const createScanner = (text: string) => {
           // string, so the columns of the rest of the line count one more.
           if (current === "\n") state.lineStart--;
           if (current !== character) continue;
+          // Z3's scanner rereads the last character at the end of the file, as if the quote were doubled.
+          if (character === '"' && state.index === text.length)
+            throw new SmtParseError("unexpected end of file", position);
           if (character !== '"' || text[state.index] !== '"') break;
           advance();
         }
@@ -745,25 +748,23 @@ const createScanner = (text: string) => {
           }
           continue;
         }
-        if (radix === "f") {
-          advance();
-          readWhile(/[0-9m-]/);
-          return getToken("symbol");
-        }
-        if (radix !== "x" && radix !== "b")
+        if (radix !== "f" && radix !== "x" && radix !== "b")
           throw new SmtParseError("invalid bit-vector literal, expecting 'x' or 'b'", {
             line: state.line,
             column: getColumn(),
           });
         advance();
         const digitsStart = state.index;
-        readWhile(radix === "x" ? /[0-9a-fA-F]/ : /[01]/);
-        if (state.index === digitsStart)
+        readWhile(radix === "f" ? /[0-9m-]/ : radix === "x" ? /[0-9a-fA-F]/ : /[01]/);
+        if (state.index === digitsStart && radix !== "f")
           throw new SmtParseError("invalid empty bit-vector literal", {
             line: state.line,
             column: getColumn(),
           });
-        return getToken("bitvector");
+        // Z3's scanner rereads the last digit at the end of the file.
+        if (state.index === text.length && state.index !== digitsStart)
+          throw new SmtParseError("unexpected end of file", position);
+        return getToken(radix === "f" ? "symbol" : "bitvector");
       }
       if (character === ":" || SYMBOL_CHARACTER.test(character)) {
         advance();
@@ -801,8 +802,22 @@ export const createCommandReader = (text: string) => {
     let followed: SmtList | undefined;
     for (let current = root; ;) {
       const token = take();
-      if (token === undefined)
-        throw new SmtParseError("unexpected end of file", scanner.getPosition());
+      if (token === undefined) {
+        // Z3 parses a command as it reads it, and sees the end of the file where it wants a token.
+        const eof: SmtToken = {
+          kind: "eof",
+          text: "",
+          ...scanner.getPosition(),
+          offset: text.length,
+          endOffset: text.length,
+        };
+        if (followed !== undefined) followed.follower = eof;
+        current.items.push(eof);
+        const end = { ...eof };
+        current.end = end;
+        for (const list of stack) list.end = end;
+        return root;
+      }
       if (followed !== undefined) followed.follower = token;
       followed = undefined;
       if (token.kind === "(") {
@@ -875,6 +890,12 @@ export const createCommandReader = (text: string) => {
     }
   };
   return { read, readCommand, skip };
+};
+
+export const expectClosed = (sexpr: SExpr) => {
+  const end = sexpr.kind === "list" ? sexpr.end : sexpr;
+  if (end.kind === "eof")
+    throw new SmtParseError("invalid s-expression, unexpected end of file", end);
 };
 
 export const isSymbol = (sexpr: SExpr | undefined, text?: string): sexpr is SmtToken =>
@@ -1793,7 +1814,7 @@ export const createSmtlibReader = (
     if (!isSymbol(name))
       throw new SmtParseError("invalid indexed identifier, symbol expected", name ?? list.end);
     for (const index of list.items.slice(2)) {
-      if (index.kind === "string")
+      if (index.kind === "string" || index.kind === "eof")
         throw new SmtParseError(
           "invalid indexed identifier, integer, identifier or '(' expected",
           index,
@@ -2278,7 +2299,9 @@ export const createSmtlibReader = (
     throw new SmtParseError(
       sexpr.kind === "keyword"
         ? "invalid expression, unexpected keyword"
-        : "invalid expression, unexpected ')'",
+        : sexpr.kind === "eof"
+          ? "invalid expression, unexpected input"
+          : "invalid expression, unexpected ')'",
       sexpr,
     );
   };
@@ -2393,6 +2416,7 @@ export const createSmtlibReader = (
         // Z3 skips a bad pattern as an s-expression, which cannot start with ')'.
         if (value.kind === ")")
           throw new SmtParseError("invalid s-expression, unexpected ')'", value);
+        expectClosed(value);
         frame.next++;
         exprStack.push(-1);
         return;
@@ -2638,6 +2662,7 @@ export const createSmtlibReader = (
             // Z3 warns of an unknown attribute and skips its value as an s-expression.
             if (value.kind === ")")
               throw new SmtParseError("invalid s-expression, unexpected ')'", value);
+            expectClosed(value);
             frame.next += 2;
           } else if (quantifier === undefined)
             throw new SmtParseError("invalid attribute, not in the scope of a quantifier", keyword);
