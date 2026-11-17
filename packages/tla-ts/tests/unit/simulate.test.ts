@@ -60,6 +60,30 @@ it("sorts the records of a behavior TLC checks for liveness, as it fingerprints 
   ).toEqual([["[a |-> 0, b |-> 0]", "[a |-> 0, b |-> 5]", "[a |-> 1, b |-> 5]"]]);
 });
 
+it("reports a behavior that stutters at its initial state, which TLC's LiveCheck1 misses", () => {
+  const violations: { states: string[]; loopStart: number | undefined }[] = [];
+  const status = simulate({
+    source:
+      "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x < 2 /\\ x' = x + 1\nSpec == Init /\\ [][Next]_x\nProp == (x = 0) ~> (x = 1)\n====",
+    config: "SPECIFICATION Spec\nPROPERTY Prop\nCHECK_DEADLOCK FALSE",
+    seed: 4n,
+    traceDepth: 3,
+    traceCount: 1n,
+    aril: 0n,
+    isGenerating: false,
+    scheduler: "random",
+    onSimulation: () => {},
+    onProgress: (progress) => {
+      if (progress.kind !== "violation") return;
+      violations.push({
+        states: progress.violation.trace.map((step) => formatValue(step.state.x)),
+        loopStart: progress.violation.loopStart,
+      });
+    },
+  });
+  expect([status, violations]).toEqual([13, [{ states: ["0"], loopStart: 0 }]]);
+});
+
 const getCounterExample = (body: string, config: string) => {
   const printed: string[] = [];
   simulate({

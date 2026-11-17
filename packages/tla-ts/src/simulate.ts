@@ -118,6 +118,7 @@ const getTrace = (last: TraceNode, order: number[]) => {
   return trace;
 };
 
+// Deviation from TLC: LiveCheck1 gives the initial state no stuttering step into a tableau node that isn't initial, so it misses a behavior that stutters there.
 const findTemporalViolation = (
   trace: TraceNode[],
   getFingerprint: (state: Value[]) => bigint,
