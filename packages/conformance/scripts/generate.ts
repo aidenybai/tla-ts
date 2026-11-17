@@ -426,6 +426,8 @@ const UNARY_TEMPLATES: Template[] = [
     name: "bag_minus",
     ref: "tlc2/module/Bags.java#BagDiff",
     render: (value) => `${value} (-) SetToBag({1})`,
+    // Deviation from TLC: Bags#BagDiff casts a count that isn't an integer and leaks the ClassCastException.
+    tlcBugValues: ["function_strings", "record_nested", "tuple_mixed"],
   },
   {
     name: "bag_union",

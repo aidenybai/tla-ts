@@ -93,14 +93,33 @@ describe("the Bags module matches TLC", () => {
   });
 
   it.each([
-    ['<<"a">> (-) EmptyBag', "tlc2.value.impl.Value tlc2.module.Bags.BagDiff"],
-    ['<<"a">> \\sqsubseteq EmptyBag', "tlc2.value.IBoolValue tlc2.module.Bags.SqSubseteq"],
-    ['BagOfAll(LAMBDA e : TRUE, <<"a", 1>>)', "tlc2.value.impl.Value tlc2.module.Bags.BagOfAll"],
-  ])("fails to cast a count that isn't an integer in %s", async (expression, method) => {
+    [
+      '<<"a">> (-) EmptyBag',
+      'The first argument of (-) should be a bag, but instead it is:\n<<"a">>',
+    ],
+    [
+      '<<1>> (-) <<"a">>',
+      'The second argument of (-) should be a bag, but instead it is:\n<<"a">>',
+    ],
+    [
+      '<<"a">> \\sqsubseteq EmptyBag',
+      'Applying \\sqsubseteq to the following value,\nwhich is not a bag:\n<<"a">>',
+    ],
+    [
+      '<<1>> \\sqsubseteq <<"a">>',
+      'Applying \\sqsubseteq to the following value,\nwhich is not a bag:\n<<"a">>',
+    ],
+    [
+      'BagUnion({1 :> "a", 1 :> "b"})',
+      'Attempted to apply BagUnion to the following set, whose\nelement is not a bag:\n{<<"a">>, <<"b">>}',
+    ],
+    [
+      'BagOfAll(LAMBDA e : TRUE, <<"a", 1>>)',
+      'The second argument of BagOfAll should be a bag, but instead it is:\n<<"a", 1>>',
+    ],
+  ])("reports a count that isn't an integer in %s as not a bag", async (expression, message) => {
     const result = await checkBags(`ASSUME PrintT(${expression})`);
-    expect(result.violation?.message).toBe(
-      `Attempted to apply the operator overridden by the Java method\npublic static ${method}(tlc2.value.impl.Value,tlc2.value.impl.Value),\nbut it produced the following error:\nclass tlc2.value.impl.StringValue cannot be cast to class tlc2.value.impl.IntValue (tlc2.value.impl.StringValue and tlc2.value.impl.IntValue are in unnamed module of loader 'app')`,
-    );
+    expect(result.violation?.message).toBe(message);
   });
 
   it.each([
