@@ -129,6 +129,27 @@ it.each([
   },
 );
 
+it("checks a behavior against one solution after another up to the first it violates, as TLC's LiveCheck1 does", () => {
+  const printed: string[] = [];
+  const status = simulate({
+    source:
+      '---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nA == PrintT(<<"a", x>>) /\\ x < 1 /\\ x\' = x + 1\nSpec == Init /\\ [][A]_x /\\ WF_x(A)\nProp0 == <>(x = 2)\nProp1 == <>(x = 3)\n====',
+    config: "SPECIFICATION Spec\nPROPERTY Prop0\nPROPERTY Prop1\nCHECK_DEADLOCK FALSE",
+    seed: 4n,
+    traceDepth: 3,
+    traceCount: 1n,
+    aril: 0n,
+    isGenerating: false,
+    scheduler: "random",
+    onSimulation: () => {},
+    onPrint: (text) => printed.push(text),
+  });
+  expect([status, printed]).toEqual([
+    13,
+    ['<<"a", 0>>', '<<"a", 1>>', '<<"a", 0>>', '<<"a", 0>>', '<<"a", 0>>', '<<"a", 1>>'],
+  ]);
+});
+
 const getCounterExample = (body: string, config: string) => {
   const printed: string[] = [];
   simulate({
