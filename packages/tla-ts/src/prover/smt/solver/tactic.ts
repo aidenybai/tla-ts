@@ -1726,8 +1726,11 @@ const compile = (
         );
       const child = compile(environment, sexpr.items[1], isInternal);
       const isSkipping = (goal: Goal) =>
-        head.text === "if-no-models" ||
-        (head.text === "if-no-proofs" ? goal.isProofsEnabled : goal.isCoresEnabled);
+        head.text === "if-no-models"
+          ? goal.isModelsEnabled
+          : head.text === "if-no-proofs"
+            ? goal.isProofsEnabled
+            : goal.isCoresEnabled;
       return {
         ...mergeDescrs([child]),
         build: (params) => {

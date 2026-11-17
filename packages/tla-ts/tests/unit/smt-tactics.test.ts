@@ -450,3 +450,22 @@ describe("tseitin-cnf, as Z3 5.3.2 composes it", () => {
     ]);
   });
 });
+
+describe("if-no-models, as Z3 5.3.2 runs it", () => {
+  it("runs its tactic when the goal produces no models", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(assert (> x 0))",
+        "(apply (if-no-models fail))",
+        "(set-option :produce-models false)",
+        "(apply (if-no-models fail))",
+        "(check-sat-using (if-no-models fail))",
+      ]),
+    ).toEqual([
+      "(goals\n(goal\n  (> x 0)\n  :precision precise :depth 0)\n)",
+      '(error "tactic failed: fail tactic")',
+      "unknown",
+    ]);
+  });
+});

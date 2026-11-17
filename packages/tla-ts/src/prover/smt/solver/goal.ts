@@ -81,6 +81,7 @@ export class Goal {
   converters: (HiddenDecl | Definitions | ModelConversion)[] = [];
   model: ProtoModel | undefined;
   isProofsEnabled = false;
+  isModelsEnabled = true;
   isCoresEnabled = false;
   // As in Z3, it isn't copied with the goal.
   reasonUnknown = "";
@@ -105,6 +106,7 @@ export class Goal {
     this.precision = getPrecisionUnion(source.precision, this.precision);
     this.converters = source.converters;
     this.isProofsEnabled = source.isProofsEnabled;
+    this.isModelsEnabled = source.isModelsEnabled;
     this.isCoresEnabled = source.isCoresEnabled;
   }
 

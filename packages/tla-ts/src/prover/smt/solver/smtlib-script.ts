@@ -846,6 +846,7 @@ export const runSmtlibScript = (
   const getGoal = (isTrackingDependencies = false) => {
     const goal = new Goal(state.manager);
     goal.isProofsEnabled = settings.isProducingProofs || state.isProofsEnabled === true;
+    goal.isModelsEnabled = settings.isProducingModels;
     goal.isCoresEnabled = settings.isProducingUnsatCores;
     for (const [index, assertion] of state.assertions.entries())
       goal.assert(
