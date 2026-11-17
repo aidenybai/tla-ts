@@ -117,6 +117,18 @@ const PORTED_INCLUDES = new Map([
     "temporalHelpers.js",
     readFileSync(join(CONFORMANCE_DIRECTORY, "test262-temporal-helpers.ts"), "utf8"),
   ],
+  [
+    "sm/assertThrowsValue.js",
+    readFileSync(join(CONFORMANCE_DIRECTORY, "test262-sm-assert-throws-value.ts"), "utf8"),
+  ],
+  [
+    "sm/non262-Reflect-shell.js",
+    readFileSync(join(CONFORMANCE_DIRECTORY, "test262-sm-reflect-shell.ts"), "utf8"),
+  ],
+  [
+    "sm/non262-generators-shell.js",
+    readFileSync(join(CONFORMANCE_DIRECTORY, "test262-sm-generators-shell.ts"), "utf8"),
+  ],
 ]);
 
 // An async test's harness defines $DONE, as doneprintHandle.js does.
