@@ -848,7 +848,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       outDegrees: failureOptions.outDegrees,
     };
   };
-  // Deviation from TLC: under -continue, TLC goes on past an incomplete successor and leaks an ArrayIndexOutOfBoundsException.
+  // Deviation from TLC: TLC's Worker leaks an ArrayIndexOutOfBoundsException at an incomplete successor, so it skips the postconditions and, under -continue, goes on.
   const reportIncompleteSuccessor = (
     index: number,
     error: TlaIncompleteSuccessorError,

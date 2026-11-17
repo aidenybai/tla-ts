@@ -71,4 +71,11 @@ describe("POSTCONDITION after a state that leaves a variable unassigned", () => 
       "Postcondition Post at line 6, col 9 to line 6, col 39 of module M is false.",
     ]);
   });
+
+  it("checks the postconditions after an incomplete successor, which TLC skips as it fails", async () => {
+    expect(await checkUnassigned("x = 0 /\\ y = 0", "CounterExample")).toEqual([
+      ["[action |-> {}, state |-> {<<1, [x |-> 0, y |-> 0]>>}]"],
+      "Postcondition Post at line 6, col 9 to line 6, col 39 of module M is false.",
+    ]);
+  });
 });
