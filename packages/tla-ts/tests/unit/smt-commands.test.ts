@@ -830,6 +830,34 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
     ).toEqual(["unknown", '(:reason-unknown "max. resource limit exceeded")']);
   });
 
+  it("stops solve-eqs without failing once the limit is spent", () => {
+    expect(
+      run([
+        "(set-option :rlimit 1)",
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(assert (= x (+ y 1)))",
+        "(assert (> x 0))",
+        "(check-sat-using solve-eqs)",
+        "(get-info :reason-unknown)",
+      ]),
+    ).toEqual(["unknown", '(:reason-unknown "unknown")']);
+  });
+
+  it("counts a step of the limit for each formula that each pass of solve-eqs visits", () => {
+    expect(
+      run([
+        "(set-option :rlimit 1)",
+        "(declare-const a (_ BitVec 4))",
+        "(declare-const b (_ BitVec 4))",
+        "(assert (bvult (bvadd a b) #x7))",
+        "(assert (or (= a b) (bvugt (bvmul a #x3) b)))",
+        "(check-sat-using (then solve-eqs tseitin-cnf))",
+        "(get-info :reason-unknown)",
+      ]),
+    ).toEqual(["unknown", '(:reason-unknown "max. resource limit exceeded")']);
+  });
+
   // The time limit is Z3's soft timeout: check-sat gives every solver the reason timeout, which
   // the smt kernel keeps for its later checks and reports while its last search did not fail.
   it("prints the reason of a check that timed out", () => {

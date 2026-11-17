@@ -36,7 +36,7 @@ import { getSubterms } from "./recfun-decl-plugin";
 import { RefVector } from "./ref-vector";
 import { Rewriter, type RewriterOptions } from "./rewriter";
 import { RewriterTpl } from "./rewriter-tpl";
-import { finishSimplifier } from "./dependent-expr-state";
+import { DependentExprState, finishSimplifier } from "./dependent-expr-state";
 
 interface SolveEqsOptions {
   isTheorySolver: boolean;
@@ -108,6 +108,7 @@ export class SolveEqs {
   private orPositive = new Set<number>();
   private orNegative = new Set<number>();
   private rewriter: Rewriter;
+  private state: DependentExprState;
 
   constructor(
     private manager: AstManager,
@@ -119,6 +120,7 @@ export class SolveEqs {
     this.bounds = new BoundManager(manager);
     this.substitution = new ObjMap((expr) => manager.hashes[expr]);
     this.rewriter = new Rewriter(manager, options.rewriter);
+    this.state = new DependentExprState(manager, goal);
   }
 
   private pin(expr: number) {
@@ -516,12 +518,15 @@ export class SolveEqs {
 
   private getEqs() {
     const eqs: DependentEq[] = [];
-    const forms = this.goal.forms.items;
-    if (!this.goal.isProofsEnabled) for (const form of forms) this.getArithEqs(form, eqs);
-    for (const form of forms) this.getBasicEqs(form, eqs);
+    const state = this.state;
+    if (!this.goal.isProofsEnabled)
+      state.forEachIndex((index) => this.getArithEqs(state.get(index), eqs));
+    state.forEachIndex((index) => this.getBasicEqs(state.get(index), eqs));
     if (!this.goal.isProofsEnabled) {
-      for (const form of forms) this.getBvEqs(form, eqs);
-      for (const form of forms) this.checkArrayEqs(form);
+      state.forEachIndex((index) => this.getBvEqs(state.get(index), eqs));
+      state.forEachIndex((index) => this.checkArrayEqs(state.get(index)));
+      // ff_extract_eq finds no equations without finite fields, but its pass still counts steps.
+      state.forEachIndex(() => {});
     }
     return eqs;
   }
@@ -593,7 +598,7 @@ export class SolveEqs {
     const replacer = new SubstReplacer(manager, this.substitution);
     this.substIds.sort((first, second) => this.id2level[second] - this.id2level[first]);
     for (const id of this.substIds) {
-      manager.limit.checkpoint();
+      if (!manager.limit.inc()) break;
       const eq = this.next[id][0];
       const definition = replacer.rewrite(eq.term);
       this.pinned.pushOwned(definition);
@@ -605,19 +610,19 @@ export class SolveEqs {
   }
 
   private applySubst() {
-    if (this.substIds.length === 0) return;
     const manager = this.manager;
+    if (!manager.limit.inc() || this.substIds.length === 0) return;
     const replacer = new SubstReplacer(manager, this.substitution);
     const goal = this.goal;
-    const size = goal.forms.size;
-    for (let index = 0; index < size && !goal.isInconsistent; index++) {
-      const form = goal.forms.items[index];
+    const state = this.state;
+    state.forEachIndex((index) => {
+      const form = state.get(index);
       const replaced = replacer.rewrite(form);
       const simplified = this.rewriter.rewrite(replaced);
       manager.decRef(replaced);
       if (simplified !== form) goal.update(index, simplified);
       manager.decRef(simplified);
-    }
+    });
     replacer.release();
   }
 
@@ -655,12 +660,13 @@ export class SolveEqs {
         this.markPositive(form);
         this.bounds.add(form);
       }
-    for (let count = 0; count < 20; count++) {
+    const limit = this.manager.limit;
+    let count = 0;
+    do {
       this.runRound(() => this.getEqs());
-      if (this.substIds.length === 0) break;
-      this.manager.limit.checkpoint();
-    }
-    if (this.options.isContextSolve && !goal.isProofsEnabled)
+      count++;
+    } while (this.substIds.length > 0 && count < 20 && limit.inc());
+    if (limit.inc() && this.options.isContextSolve && !goal.isProofsEnabled)
       this.runRound(() => this.collectNestedEqualities());
     this.eqTerms.reset();
     finishSimplifier(goal, this.definitions);
@@ -914,6 +920,7 @@ export class SolveEqs {
   }
 
   release() {
+    this.state.release();
     this.rewriter.release();
     this.pinned.reset();
     this.eqTerms.reset();
