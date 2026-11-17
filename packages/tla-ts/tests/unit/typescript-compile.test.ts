@@ -37166,18 +37166,26 @@ describe("buffers", () => {
         "const value: any = 1; let thrown = ''; try { new BigInt64Array(1)[0] = value; } catch (error) { thrown = 'thrown'; } if (thrown === '') throw new Error('number');",
         "tla-ts can't throw the TypeError of converting a number to a BigInt",
       ],
+    ])("stops where a script %s", async (_, source, message) => {
+      expect((await checkModel(source)).failure?.message).toContain(message);
+    });
+
+    it.each([
       [
         "converts a string that isn't decimal digits",
         "const texts: any = ['1e3']; let thrown = ''; try { new BigInt64Array(texts); } catch (error) { thrown = 'thrown'; } if (thrown === '') throw new Error('syntax');",
-        "tla-ts can't convert this value to a BigInt",
+        "const texts: any = ['1e3']; let thrown = ''; try { new BigInt64Array(texts); } catch (error) { thrown = 'thrown'; } if (thrown !== '') throw new Error('syntax');",
+        "syntax",
       ],
       [
         "keeps undefined through filter",
         "const buffer = new ArrayBuffer(16, { maxByteLength: 16 }); const sample = new BigInt64Array(buffer); let calls = 0; try { sample.filter(() => { if (calls === 0) buffer.resize(8); calls++; return true; }); } catch (error) { calls = -1; } if (calls !== -1) throw new Error('kept');",
-        "tla-ts can't convert this value to a BigInt",
+        "const buffer = new ArrayBuffer(16, { maxByteLength: 16 }); const sample = new BigInt64Array(buffer); let calls = 0; try { sample.filter(() => { if (calls === 0) buffer.resize(8); calls++; return true; }); } catch (error) { calls = -1; } if (calls === -1) throw new Error('kept');",
+        "kept",
       ],
-    ])("stops where a script %s", async (_, source, message) => {
-      expect((await checkModel(source)).failure?.message).toContain(message);
+    ])("throws as Node does where a script %s", async (_, source, wrong, message) => {
+      expect((await checkModel(source)).failure).toBeUndefined();
+      expect((await checkModel(wrong)).failure?.message).toContain(message);
     });
   });
 
