@@ -32,6 +32,35 @@ describe("runSmtlibScript prints what Z3 prints", () => {
     ).toEqual(["sat", "unsat", '(error "line 15 column 8: unknown constant p")']);
   });
 
+  it("drops the last check at a pop past the stack, but not at one it cannot read", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(assert (> x 2))",
+        "(check-sat)",
+        "(pop 1)",
+        "(get-model)",
+        "(get-info :reason-unknown)",
+        "(check-sat)",
+        "(pop 0)",
+        "(get-value (x))",
+        "(check-sat)",
+        "(pop -1)",
+        "(get-value (x))",
+      ]),
+    ).toEqual([
+      "sat",
+      '(error "line 4 column 6: invalid pop command, argument is greater than the current stack depth")',
+      '(error "line 5 column 10: model is not available")',
+      '(:reason-unknown "state of the most recent check-sat command is not known")',
+      "sat",
+      '(error "line 9 column 14: model is not available")',
+      "sat",
+      '(error "line 11 column 5: invalid push command, value is negative.")',
+      "((x 3))",
+    ]);
+  });
+
   it("counts the columns of the first line from 1", () => {
     expect(run(["(assert q)"])).toEqual(['(error "line 1 column 9: unknown constant q")']);
   });

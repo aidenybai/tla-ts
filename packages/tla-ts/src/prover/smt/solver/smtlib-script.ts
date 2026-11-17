@@ -1218,13 +1218,13 @@ export const runSmtlibScript = (
       "pop",
       (list) => {
         const count = getScopeCount(list);
+        clearCheck();
+        if (count === 0) return;
         if (count > state.scopes.length)
           throw new SmtParseError(
             "invalid pop command, argument is greater than the current stack depth",
             list.end,
           );
-        clearCheck();
-        if (count === 0) return;
         state.isIncremental = true;
         const scope = state.scopes[state.scopes.length - count];
         state.kernel?.pop(count);
