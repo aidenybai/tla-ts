@@ -132,6 +132,34 @@ describe("runSmtlibScript prints what Z3 prints", () => {
     ).toEqual(["sat", "unsat"]);
   });
 
+  it("walks the pareto front of objectives that elim01 turns into soft constraints", () => {
+    expect(
+      run([
+        "(set-option :opt.priority pareto)",
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(assert (<= 0 x 2))",
+        "(assert (<= 0 y 2))",
+        "(assert (<= (+ x y) 3))",
+        "(maximize x)",
+        "(maximize y)",
+        "(check-sat)",
+        "(get-objectives)",
+        "(check-sat)",
+        "(get-objectives)",
+        "(check-sat)",
+        "(check-sat)",
+      ]),
+    ).toEqual([
+      "sat",
+      "(objectives\n (x 1)\n (y 2)\n)",
+      "sat",
+      "(objectives\n (x 2)\n (y 1)\n)",
+      "unsat",
+      "sat",
+    ]);
+  });
+
   it("gives the objectives 0 when the hard constraints are false", () => {
     expect(
       run([
