@@ -2040,15 +2040,6 @@ LOCAL Value(object, key) ==
 
 Own(heap, ref) == Lookup(heap, ref).values
 
-\\* The keys a for-in visits: each enumerable key once, own keys first, and none that an object
-\\* nearer the start of the prototype chain has.
-RECURSIVE ForInKeys(_, _)
-ForInKeys(heap, ref) ==
-  LET object == Lookup(heap, ref)
-      inherited == IF object.prototype = Null THEN <<>> ELSE ForInKeys(heap, object.prototype)
-  IN SelectSeq(OwnKeys(object), LAMBDA key : object.attributes[key].enumerable)
-       \\o SelectSeq(inherited, LAMBDA key : key \\notin DOMAIN object.values)
-
 RECURSIVE PutAll(_, _, _)
 PutAll(object, values, keys) ==
   IF keys = <<>>
@@ -2089,12 +2080,6 @@ DescribeAll(heap, object) ==
                 Ref :> (first + CHOOSE position \\in DOMAIN keys : keys[position] = key)]
   IN Allocate(described, PutAll(EmptyObject, refs, keys))
 
-LOCAL IsEnumerableOwnOf(heap, ref, key) ==
-  LET object == LookupKey(heap, ref, key)
-  IN key \\in DOMAIN object.values /\\ object.attributes[key].enumerable
-
-IsEnumerableOwn(heap, ref, key) == IsEnumerableOwnOf(heap, Forward(heap, ref, {"getOwnPropertyDescriptor"}), key)
-
 IsBigIntType(type) == type \\in {"BigInt64", "BigUint64"}
 
 ElementSize(type) ==
@@ -2131,6 +2116,11 @@ LOCAL OrdinaryOf(heap, ref) ==
   THEN heap.objects[ref[Ref]]
   ELSE Lookup(heap, ref)
 
+\\* An object's own properties, where a typed array holds those apart from its elements as an
+\\* ordinary object does.
+LOCAL HeldPropertiesOf(heap, ref) ==
+  IF IsTypedArray(heap, ref) THEN heap.objects[ref[Ref]] ELSE Lookup(heap, ref)
+
 \\* A typed array's element keys, which come before its other own keys.
 LOCAL ElementKeys(heap, ref) ==
   IF IsTypedArray(heap, ref)
@@ -2138,6 +2128,17 @@ LOCAL ElementKeys(heap, ref) ==
   ELSE <<>>
 
 LOCAL OwnPropertyNamesOf(heap, ref) == ElementKeys(heap, ref) \\o OwnKeys(OrdinaryOf(heap, ref))
+
+\\* The keys a for-in visits: each enumerable key once, own keys first, a typed array's elements
+\\* before its other keys, and none that an object nearer the start of the prototype chain has.
+RECURSIVE ForInKeys(_, _)
+ForInKeys(heap, ref) ==
+  LET object == HeldPropertiesOf(heap, ref)
+      elements == ElementKeys(heap, ref)
+      inherited == IF object.prototype = Null THEN <<>> ELSE ForInKeys(heap, object.prototype)
+  IN elements \\o SelectSeq(OwnKeys(object), LAMBDA key : object.attributes[key].enumerable)
+       \\o SelectSeq(inherited, LAMBDA key :
+                     key \\notin DOMAIN object.values /\\ \\A position \\in DOMAIN elements : elements[position] # key)
 
 OwnPropertyNames(heap, ref) == OwnPropertyNamesOf(heap, Forward(heap, ref, {"ownKeys", "getOwnPropertyDescriptor"}))
 
@@ -2333,6 +2334,16 @@ Prototype(heap, ref) ==
 \\* Whether a typed array has an element at a key that is a number, which is an index before its end.
 LOCAL HasElement(heap, ref, key) ==
   TypedKey(key) = "index" /\\ ToIndex(key) < ViewLength(heap, heap.objects[ref[Ref]])
+
+\\* Whether an object has an own enumerable property at a key, where a typed array's elements before
+\\* its end are enumerable, and it has no other property at a key that is a number.
+LOCAL IsEnumerableOwnOf(heap, ref, key) ==
+  IF IsTypedArray(heap, ref) /\\ TypedKey(key) # "property"
+  THEN HasElement(heap, ref, key)
+  ELSE LET object == PropertiesOf(heap, ref, key)
+       IN key \\in DOMAIN object.values /\\ object.attributes[key].enumerable
+
+IsEnumerableOwn(heap, ref, key) == IsEnumerableOwnOf(heap, Forward(heap, ref, {"getOwnPropertyDescriptor"}), key)
 
 \\* The description of an object's own property, where a typed array describes an element before its
 \\* end as a writable, enumerable, configurable data property.
@@ -3289,8 +3300,10 @@ LengthOf(heap, ref) ==
 
 RECURSIVE KeyCount(_, _)
 KeyCount(heap, ref) ==
-  LET object == Lookup(heap, ref)
-  IN Len(object.keys) + IF object.prototype = Null THEN 0 ELSE KeyCount(heap, object.prototype)
+  LET isTyped == IsTypedArray(heap, ref)
+      object == IF isTyped THEN heap.objects[ref[Ref]] ELSE Lookup(heap, ref)
+  IN (IF isTyped THEN ViewLength(heap, object) ELSE 0)
+       + Len(object.keys) + IF object.prototype = Null THEN 0 ELSE KeyCount(heap, object.prototype)
 
 \\* The elements of an array-like object, which has an element at each index below its length.
 ArrayLike(heap, ref) ==
@@ -3348,11 +3361,18 @@ ArrayLikeValues(heap, ref) ==
      THEN Assert(FALSE, "tla-ts can't read an array-like object this long")
      ELSE Read([position \\in 1..length |-> Get(heap, ref, ToString(position - 1))])
 
+\\* The keys of a typed array's elements, which are all the indices that it holds, as it reads no
+\\* index from its prototypes.
+LOCAL TypedIndexKeys(heap, ref) ==
+  {ToString(index) : index \\in 0..(ViewLength(heap, heap.objects[ref[Ref]]) - 1)}
+
 RECURSIVE IndexKeys(_, _)
 IndexKeys(heap, ref) ==
-  LET object == Lookup(heap, ref)
-  IN {key \\in DOMAIN object.values : IsIndex(key)}
-       \\cup IF object.prototype = Null THEN {} ELSE IndexKeys(heap, object.prototype)
+  IF IsTypedArray(heap, ref)
+  THEN TypedIndexKeys(heap, ref)
+  ELSE LET object == Lookup(heap, ref)
+       IN {key \\in DOMAIN object.values : IsIndex(key)}
+            \\cup IF object.prototype = Null THEN {} ELSE IndexKeys(heap, object.prototype)
 
 \\* Whether a key is an index below 2^31 - 1, which TLC's integers hold with the length past it.
 LOCAL IsShortIndex(key) == IsIndex(key) /\\ (Len(key) < 10 \\/ DigitsBelow(key, "2147483647"))
@@ -3401,9 +3421,11 @@ LOCAL IsLongKey(key) ==
 \\* The keys below 2^53 that an object or its prototypes hold.
 RECURSIVE LongKeys(_, _)
 LongKeys(heap, ref) ==
-  LET object == Lookup(heap, ref)
-  IN {key \\in DOMAIN object.values : IsLongKey(key)}
-       \\cup IF object.prototype = Null THEN {} ELSE LongKeys(heap, object.prototype)
+  IF IsTypedArray(heap, ref)
+  THEN TypedIndexKeys(heap, ref)
+  ELSE LET object == Lookup(heap, ref)
+       IN {key \\in DOMAIN object.values : IsLongKey(key)}
+            \\cup IF object.prototype = Null THEN {} ELSE LongKeys(heap, object.prototype)
 
 \\* The length that a loop over an array-like object visits, past which a length beyond 2^31 holds
 \\* only holes: one more than the greatest index that the object or its prototypes hold.
@@ -4939,6 +4961,7 @@ IsArray(heap, value) ==
          ELSE LET target == ProxyTarget(heap, value)
               IN \\/ ~IsRef(target) /\\ TypeOf(target) = "object" /\\ SubSeq(ToString(target), 1, 2) = "<<"
                  \\/ IsArray(heap, target)
+    [] IsTypedArray(heap, value) -> FALSE
     [] OTHER -> IsRef(value) /\\ IsArrayObject(Lookup(heap, value))
 
 \\* IsArray of a value whose type doesn't tell what it is. An array off the heap is a sequence, which
@@ -6364,6 +6387,28 @@ ToElement(type, value) ==
          Assert(FALSE, "tla-ts can't throw the TypeError of converting a number to a BigInt")
     [] OTHER -> Assert(FALSE, "tla-ts can't convert this value to a BigInt")
 
+\\* The error that ToElement throws for a primitive, or "" where it throws none or the value is an
+\\* object, which converts through its methods first.
+LOCAL ElementError(type, value) ==
+  CASE IsRef(value) \\/ IsSequenceValue(value) -> ""
+    [] ~IsBigIntType(type) -> IF IsSymbol(value) \\/ IsBigInt(value) THEN "TypeError" ELSE ""
+    [] IsBigInt(value) \\/ TypeOf(value) = "boolean" -> ""
+    [] TypeOf(value) = "string" -> IF StringToBigInt(value) = Undefined THEN "SyntaxError" ELSE ""
+    [] OTHER -> "TypeError"
+
+\\* The error that converting values in order for a typed array throws first, or "" where none
+\\* does, or an object before the first that does converts through its methods.
+LOCAL ElementsError(type, values) ==
+  LET failing == {position \\in DOMAIN values : ElementError(type, values[position]) # ""}
+      first == CHOOSE position \\in failing : \\A other \\in failing : position <= other
+  IN IF \\/ failing = {}
+        \\/ \\E position \\in 1..(first - 1) : IsRef(values[position]) \\/ IsSequenceValue(values[position])
+     THEN ""
+     ELSE ElementError(type, values[first])
+
+\\* The error that writing values in order to a typed array's elements throws first, or "".
+TypedArrayElementsError(heap, ref, values) == ElementsError(heap.objects[ref[Ref]].elementType, values)
+
 \\* What a typed array holds for a value that a script writes.
 ToElementOf(heap, ref, value) == ToElement(heap.objects[ref[Ref]].elementType, value)
 
@@ -6563,7 +6608,8 @@ LOCAL TypedArrayMade(heap, type, prototype, bufferPrototype, arguments, isIterat
       offset == IndexOfArgument(argument(2))
       length == IF argument(3) = Undefined THEN Undefined ELSE IndexOfArgument(argument(3))
       byteLength == Len(object.bytes)
-  IN CASE ~IsObjectIn(heap, first) ->
+  IN CASE ~IsObjectIn(heap, first) /\\ (IsSymbol(first) \\/ IsBigInt(first)) -> Failed("TypeError")
+       [] ~IsObjectIn(heap, first) ->
             LET count == IndexOfArgument(first)
             IN CASE count = -1 -> Failed("RangeError")
                  [] count * size > MaxBytes -> Assert(FALSE, "tla-ts can't make a buffer this big")
@@ -6573,15 +6619,21 @@ LOCAL TypedArrayMade(heap, type, prototype, bufferPrototype, arguments, isIterat
             THEN Failed("TypeError")
             ELSE withBytes(NumbersBytes(type, [position \\in 1..ViewLength(heap, object) |->
                                                  TypedElement(heap, first, position - 1)]))
+       [] IsSequenceValue(first) /\\ isIterating /\\ ElementsError(type, first) # "" ->
+            Failed(ElementsError(type, first))
        [] IsSequenceValue(first) ->
             iterated(NumbersBytes(type, [position \\in DOMAIN first |-> ToElement(type, first[position])]))
        [] ~IsBuffer(heap, first) /\\ IsHeap(first) ->
             LET method == Get(heap, first, WellKnownSymbol("iterator"))
                 count == ToLength(Get(heap, first, "length"))
-                bytes == NumbersBytes(type, [position \\in 1..count |->
-                                               ToElement(type, Get(heap, first, ToString(position - 1)))])
-            IN CASE method \\in {Undefined, Null} -> withBytes(bytes)
-                 [] IsArray(heap, first) /\\ method = Ref :> "Array.prototype.values" -> iterated(bytes)
+                elements == [position \\in 1..count |-> Get(heap, first, ToString(position - 1))]
+                error == ElementsError(type, elements)
+                bytes == NumbersBytes(type, [position \\in 1..count |-> ToElement(type, elements[position])])
+                isArrayValues == IsArray(heap, first) /\\ method = Ref :> "Array.prototype.values"
+            IN CASE error # "" /\\ (method \\in {Undefined, Null} \\/ (isArrayValues /\\ isIterating)) ->
+                      Failed(error)
+                 [] method \\in {Undefined, Null} -> withBytes(bytes)
+                 [] isArrayValues -> iterated(bytes)
                  [] OTHER -> Assert(FALSE, "tla-ts can't make a typed array of this object")
        [] ~IsBuffer(heap, first) -> Assert(FALSE, "tla-ts can't make a typed array of this object")
        [] offset = -1 \\/ offset % size # 0 -> Failed("RangeError")
@@ -6724,6 +6776,7 @@ DataViewSet(heap, ref, type, request, value, littleEndian) ==
       isLittle == ToBoolean(littleEndian)
       bytes == NumberBytes(type, number)
   IN CASE index = -1 -> Thrown(heap, "RangeError")
+       [] ElementError(type, value) # "" -> Thrown(heap, ElementError(type, value))
        [] number = number /\\ isLittle = isLittle /\\ IsOutOfBounds(heap, view) -> Thrown(heap, "TypeError")
        [] index + ElementSize(type) > ViewLength(heap, view) -> Thrown(heap, "RangeError")
        [] OTHER ->
@@ -6963,6 +7016,35 @@ TypedArraySubarray(heap, ref, arguments, length, bufferPrototype, constructors) 
             > Len(buffer.bytes) -> Thrown(heap, "RangeError")
        [] OTHER -> Returned(viewing, Allocated(viewing))
 
+\\* includes, indexOf, or lastIndexOf of a typed array once it converted its fromIndex to a primitive,
+\\* which searches below the length that it read before, where an element that the conversion left
+\\* past the end reads as undefined, and indexOf and lastIndexOf skip it.
+TypedArraySearch(heap, ref, method, value, fromIndex, length) ==
+  LET index == ToIntegerOrInfinity(ToNumber(fromIndex))
+      current == IF IsOutOfBounds(heap, heap.objects[ref[Ref]]) THEN 0
+                 ELSE ViewLength(heap, heap.objects[ref[Ref]])
+      element(position) == IF position < current THEN TypedElement(heap, ref, position) ELSE Undefined
+      from == CASE index = NegativeInfinity -> 0
+                [] index = Infinity -> length
+                [] index < 0 -> IF length + index < 0 THEN 0 ELSE length + index
+                [] OTHER -> index
+      last == CASE index = NegativeInfinity -> -1
+                [] index = Infinity -> length - 1
+                [] index < 0 -> length + index
+                [] index >= length -> length - 1
+                [] OTHER -> index
+      found == {position \\in from..(length - 1) :
+                  position < current /\\ StrictEquals(element(position), value)}
+      foundLast == {position \\in 0..last : position < current /\\ StrictEquals(element(position), value)}
+  IN CASE method = "includes" ->
+            Returned(heap, \\E position \\in from..(length - 1) : SameValueZero(element(position), value))
+       [] method = "indexOf" ->
+            Returned(heap, IF found = {} THEN -1
+                           ELSE CHOOSE position \\in found : \\A other \\in found : position <= other)
+       [] OTHER ->
+            Returned(heap, IF foundLast = {} THEN -1
+                           ELSE CHOOSE position \\in foundLast : \\A other \\in foundLast : position >= other)
+
 \\* %TypedArray%.prototype's methods that read and write a typed array's elements, which give the
 \\* heap after them, their value, and the error they throw, if any. slice and subarray make their
 \\* typed array through the receiver's constructor, of those that constructors holds by their element
@@ -7001,6 +7083,12 @@ TypedArrayMethod(heap, ref, method, arguments, bufferPrototype, constructors) ==
         ELSE WithBytes(current, view, view.byteOffset + first * ElementSize(view.elementType),
                        NumbersBytes(view.elementType, values))
       species == TypedArraySpecies(heap, ref, constructors)
+      \\* Whether converting the arguments at positions to integers throws the TypeError of a symbol
+      \\* or a BigInt, where none is an object, whose conversion would run its methods first.
+      throwsAt(positions) ==
+        /\\ \\A position \\in positions :
+             ~IsRef(argument(position)) /\\ ~IsSequenceValue(argument(position))
+        /\\ \\E position \\in positions : IsSymbol(argument(position)) \\/ IsBigInt(argument(position))
   IN CASE ~IsTypedArray(heap, ref) -> Thrown(heap, "TypeError")
        [] method \\notin {"at", "includes", "indexOf", "lastIndexOf", "join", "fill", "reverse", "slice",
                          "subarray", "set", "copyWithin"} ->
@@ -7030,6 +7118,11 @@ TypedArrayMethod(heap, ref, method, arguments, bufferPrototype, constructors) ==
                       Thrown(heap, "TypeError")
                  [] OTHER -> Returned(write(heap, offset, values), Undefined)
        [] IsOutOfBounds(heap, view) -> Thrown(heap, "TypeError")
+       [] \\/ method = "at" /\\ throwsAt({1})
+          \\/ method \\in {"includes", "indexOf", "lastIndexOf"} /\\ length > 0 /\\ throwsAt({2})
+          \\/ method = "copyWithin" /\\ throwsAt({1, 2, 3})
+          \\/ method = "slice" /\\ throwsAt({1, 2}) ->
+            Thrown(heap, "TypeError")
        [] method = "at" ->
             Returned(heap, IF at \\in 0..(length - 1) THEN elements[at + 1] ELSE Undefined)
        [] method = "includes" ->
@@ -7210,10 +7303,14 @@ ArrayCopyWithin(heap, ref, target, start, end) ==
 
 \\* A write of an element or the length of an array that the heap holds, where a write that fails
 \\* throws a TypeError: the heap after, and whether it throws.
+\\* A typed array writes an element at a key that is a number, which never throws once the value
+\\* converts.
 LOCAL ArraySet(heap, ref, key, value) ==
   LET object == Lookup(heap, ref)
       written == DefineOwn(object, key, WriteDescriptor(object, key, value))
-  IN CASE ~CanPut(heap, ref, key) -> [heap |-> heap, isThrown |-> TRUE]
+  IN CASE IsTypedArray(heap, ref) /\\ TypedKey(key) # "property" ->
+            [heap |-> TypedSet(heap, ref, key, value), isThrown |-> FALSE]
+       [] ~CanPut(heap, ref, key) -> [heap |-> heap, isThrown |-> TRUE]
        [] AccessorOf(heap, ref, key) # Undefined ->
             [heap |-> SetProperty(heap, ref, key, value), isThrown |-> FALSE]
        [] written.isDone -> [heap |-> Update(heap, ref, written.object), isThrown |-> FALSE]
@@ -7885,7 +7982,7 @@ LOCAL ReceiverSet(heap, key, value, receiver) ==
        \\/ IsTypedArray(heap, receiver) /\\ TypedKey(key) # "property" ->
          Assert(FALSE, "tla-ts can't set a property on this receiver")
     [] OTHER ->
-         LET object == Lookup(heap, receiver)
+         LET object == HeldPropertiesOf(heap, receiver)
              defined == DefineOwn(object, key, WriteDescriptor(object, key, value))
          IN CASE /\\ key \\in DOMAIN object.values
                  /\\ \\/ object.attributes[key].kind = "accessor"
@@ -8065,12 +8162,12 @@ RECURSIVE ChainHas(_, _, _)
 ChainHas(heap, prototype, ref) ==
   /\\ prototype # Null
   /\\ \\/ SameValue(prototype, ref)
-     \\/ ~IsProxy(heap, prototype) /\\ ChainHas(heap, Lookup(heap, prototype).prototype, ref)
+     \\/ ~IsProxy(heap, prototype) /\\ ChainHas(heap, HeldPropertiesOf(heap, prototype).prototype, ref)
 
 \\* Object.setPrototypeOf, which fails where the object isn't extensible or the chain would loop.
 \\* Object.prototype keeps the prototype it has, and a primitive stays as it is.
 SetPrototypeOf(heap, ref, prototype) ==
-  LET object == Lookup(heap, ref)
+  LET object == HeldPropertiesOf(heap, ref)
       result(isDone, isChanged) ==
         [heap |-> IF isChanged THEN Update(heap, ref, [object EXCEPT !.prototype = prototype]) ELSE heap,
          isDone |-> isDone, isRangeError |-> FALSE]

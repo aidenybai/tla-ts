@@ -3214,21 +3214,39 @@ export const translateNewBufferOf = (
     construction.newTarget === construction.callee
       ? undefined
       : translateExpression(construction.newTarget, scope, context);
+  // A class that the script declares, extending one of the typed arrays without a constructor or
+  // instance fields, makes the typed array that its base makes, with its own prototype.
+  const subclasses = findNodes(node.getSourceFile(), ts.isClassDeclaration).flatMap(
+    (declaration) => {
+      const base = getBuiltInBase(declaration, context);
+      const buffer = buffers.find((inner) => inner === base && TYPED_ARRAYS.has(inner));
+      const symbol = declaration.name && getSymbol(declaration.name, context.checker);
+      return declaration.name !== undefined &&
+        symbol !== undefined &&
+        buffer !== undefined &&
+        !isAssigned(symbol, node.getSourceFile(), context)
+        ? [{ buffer, value: translateExpression(declaration.name, scope, context) }]
+        : [];
+    },
+  );
   const made =
     getBuiltIn(construction.callee, context) === undefined
-      ? buffers.reduceRight<Expression>(
-          (rest, buffer) =>
+      ? [
+          ...buffers.map((buffer) => ({
+            buffer,
+            value: translateBuiltInValue(buffer, node, context),
+            target: newTarget,
+          })),
+          ...subclasses.map((subclass) => ({ ...subclass, target: newTarget ?? callee })),
+        ].reduceRight<Expression>(
+          (rest, candidate) =>
             ifExpression(
-              useJavaScript(
-                "SameValue",
-                [callee, translateBuiltInValue(buffer, node, context)],
-                context,
-              ),
+              useJavaScript("SameValue", [callee, candidate.value], context),
               translateNewBuffer(
-                buffer,
+                candidate.buffer,
                 heap,
                 values,
-                newTarget,
+                candidate.target,
                 node,
                 context,
                 result,

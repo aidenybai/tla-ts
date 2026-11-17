@@ -20,7 +20,7 @@ import { useJavaScript } from "./javascript";
 import { runToPrimitive } from "./conversions";
 import { dispatchFollowed } from "./promises";
 import { bind, callMethod, getWrittenFunctions, isNullish, read, withHeap } from "./protocols";
-import { apply, boolean, identifier, string, tuple } from "./tla";
+import { apply, boolean, identifier, junction, string, tuple } from "./tla";
 import { getCaughtElements } from "./scope";
 import { getCollectionType, isLibraryIterable } from "./types";
 
@@ -325,16 +325,53 @@ export const takeFromIterable = (
           taken.add(held);
           return continueWith(after, held);
         },
-        (rejoin) =>
-          ifThenElse(
+        (rejoin) => {
+          // An array whose Symbol.iterator, which a script may delete from Array.prototype, isn't a
+          // function throws the TypeError of GetIterator.
+          const lacksIterator = (receiver: Expression) =>
+            apply("#", [
+              useJavaScript(
+                "TypeOfIn",
+                [
+                  heap,
+                  useJavaScript(
+                    "Get",
+                    [
+                      heap,
+                      receiver,
+                      useJavaScript("WellKnownSymbol", [string("iterator")], context),
+                    ],
+                    context,
+                  ),
+                ],
+                context,
+              ),
+              string("function"),
+            ]);
+          return ifThenElse(
             apply("/\\", [
               useJavaScript("IsRef", [value], context),
               apply("~", [useJavaScript("IsProxy", [heap, value], context)]),
               apply("~", [useJavaScript("IsArray", [heap, value], context)]),
             ]),
             takeAll(pattern, value, path, context, frame, throwWith, rejoin),
-            rejoin(path, getCaughtElements(value, heap, pattern, context)),
-          ),
+            ifThenElse(
+              junction("Or", [
+                apply("/\\", [
+                  useJavaScript("IsRef", [value], context),
+                  apply("~", [useJavaScript("IsProxy", [heap, value], context)]),
+                  lacksIterator(value),
+                ]),
+                apply("/\\", [
+                  useJavaScript("IsSequenceValue", [value], context),
+                  lacksIterator(translateBuiltInValue("Array.prototype", pattern, context)),
+                ]),
+              ]),
+              throwWith(path),
+              rejoin(path, getCaughtElements(value, heap, pattern, context)),
+            ),
+          );
+        },
       ),
   );
 };

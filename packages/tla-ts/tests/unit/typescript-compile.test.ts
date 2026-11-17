@@ -28553,7 +28553,7 @@ describe("errors", () => {
   it("stops where a script makes more symbols than it has calls of Symbol", async () => {
     const result = await checkModel(`
       let count = 0;
-      for (let index = 0; index < 10; index++) {
+      for (let index = 0; index < 130; index++) {
         const made: symbol = Symbol();
         count++;
       }
@@ -50884,5 +50884,470 @@ describe("BigInts", () => {
     ).toThrow(
       "tla-ts can't check an exported function that changes state and returns a value as an action",
     );
+  });
+
+  describe("makes a typed array through a value that holds a class extending a typed array", () => {
+    const getSource = (expected: string) => `
+      class MyUint8Array extends Uint8Array {}
+      const buffer = new ArrayBuffer(4, { maxByteLength: 8 });
+      const makers: Uint8ArrayConstructor[] = [Uint8Array, MyUint8Array];
+      const make = (maker: Uint8ArrayConstructor) => new maker(buffer, 1, 2);
+      const lengths: number[] = [];
+      for (const maker of makers) {
+        const made = new maker(buffer);
+        if (Object.getPrototypeOf(made) !== maker.prototype) throw new Error("prototype");
+        lengths.push(made.length);
+      }
+      const view = make(MyUint8Array);
+      lengths.push(view.length, view instanceof MyUint8Array ? 1 : 0);
+      if (lengths.join() !== "${expected}") throw new Error("lengths " + lengths.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("4,4,2,1"))).failure).toBeUndefined();
+    });
+
+    it("rejects other lengths", async () => {
+      expect((await checkModel(getSource("4,4,2,0"))).failure?.message).toContain(
+        "lengths 4,4,2,1",
+      );
+    });
+  });
+
+  describe("makes a symbol each time a call of Symbol in a loop runs", () => {
+    const getSource = (expected: string) => `
+      const make = (index: number) => Symbol(String(index));
+      const made: symbol[] = [];
+      for (let index = 0; index < 12; index++) made.push(make(index));
+      const first = made[0];
+      const descriptions = made.map((symbol) => symbol.description).join();
+      const isDistinct = made.every((symbol, index) => index === 0 || symbol !== first);
+      if (descriptions !== "${expected}" || !isDistinct) {
+        throw new Error("made " + descriptions + " " + isDistinct);
+      }
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("0,1,2,3,4,5,6,7,8,9,10,11"))).failure).toBeUndefined();
+    });
+
+    it("rejects other descriptions", async () => {
+      expect((await checkModel(getSource("0,1,2,3,4,5,6,7,8,9,10"))).failure?.message).toContain(
+        "made 0,1,2,3,4,5,6,7,8,9,10,11 true",
+      );
+    });
+  });
+
+  describe("throws the TypeError of a write that Object.assign can't make", () => {
+    const getSource = (expected: string) => `
+      const sealed = Object.seal({ foo: 1 });
+      const log: string[] = [];
+      let isSealedThrown = false;
+      try {
+        Object.assign(sealed, {
+          foo: 2,
+          get bar() {
+            log.push("bar");
+            return 1;
+          },
+        });
+      } catch (error) {
+        isSealedThrown = error instanceof TypeError;
+      }
+      const empty = {};
+      Object.seal(empty);
+      let isEmptyThrown = false;
+      try {
+        Object.assign(empty, { [Symbol()]: 1 });
+      } catch (error) {
+        isEmptyThrown = error instanceof TypeError;
+      }
+      const result = [isSealedThrown, isEmptyThrown, sealed.foo, log.join()].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("true,true,2,bar"))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkModel(getSource("true,true,1,bar"))).failure?.message).toContain(
+        "result true,true,2,bar",
+      );
+    });
+  });
+
+  describe("throws the TypeError of a typed array method that converts a symbol or a BigInt to an integer", () => {
+    const getSource = (expected: string) => `
+      const symbol = Symbol("1");
+      const sample = new Int8Array([7, 8]);
+      const empty = new Int8Array(0);
+      const results: string[] = [];
+      const attempt = (run: () => unknown) => {
+        try {
+          results.push(String(run()));
+        } catch (error) {
+          results.push(error instanceof TypeError ? "TypeError" : "other");
+        }
+      };
+      attempt(() => sample.includes(7, symbol as any));
+      attempt(() => sample.indexOf(7, 1n as any));
+      attempt(() => empty.includes(7, symbol as any));
+      attempt(() => sample.at(symbol as any));
+      attempt(() => sample.copyWithin(0, 0, symbol as any));
+      attempt(() => sample.slice(symbol as any).length);
+      if (results.join() !== "${expected}") throw new Error("results " + results.join());
+    `;
+
+    it("agrees with Node", async () => {
+      const expected = "TypeError,TypeError,false,TypeError,TypeError,TypeError";
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects other results", async () => {
+      const expected = "TypeError,TypeError,TypeError,TypeError,TypeError,TypeError";
+      expect((await checkModel(getSource(expected))).failure?.message).toContain(
+        "results TypeError,TypeError,false,TypeError,TypeError,TypeError",
+      );
+    });
+  });
+
+  describe("runs the generic array methods on a typed array, which holds an element at each index below its length", () => {
+    const getSource = (expected: string) => `
+      const sample = new Int8Array([3, 1, 4, 1]);
+      const results = [
+        Array.prototype.at.call(sample, -1),
+        Array.prototype.includes.call(sample, 4),
+        Array.prototype.indexOf.call(sample, 1),
+        Array.prototype.lastIndexOf.call(sample, 1),
+        Array.prototype.join.call(sample, "-"),
+        Array.prototype.every.call(sample, (value: number) => value > 0),
+        Array.prototype.find.call(sample, (value: number) => value > 3),
+        Array.isArray(sample),
+      ];
+      if (results.join() !== "${expected}") throw new Error("results " + results.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("1,true,1,3,3-1-4-1,true,4,false"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects other results", async () => {
+      expect(
+        (await checkModel(getSource("1,true,1,3,3-1-4-1,true,4,true"))).failure?.message,
+      ).toContain("results 1,true,1,3,3-1-4-1,true,4,false");
+    });
+  });
+
+  describe("throws the TypeError of an Atomics function that converts a symbol", () => {
+    const getSource = (expected: string) => `
+      const i32a = new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT * 4));
+      const results: string[] = [];
+      const attempt = (run: () => unknown) => {
+        try {
+          results.push(String(run()));
+        } catch (error) {
+          results.push(error instanceof TypeError ? "TypeError" : "other");
+        }
+      };
+      attempt(() => Atomics.notify(i32a, 0, Symbol() as any));
+      attempt(() => Atomics.store(i32a, Symbol() as any, 1));
+      if (results.join() !== "${expected}") throw new Error("results " + results.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("TypeError,TypeError"))).failure).toBeUndefined();
+    });
+
+    it("rejects other results", async () => {
+      expect((await checkModel(getSource("TypeError,0"))).failure?.message).toContain(
+        "results TypeError,TypeError",
+      );
+    });
+  });
+
+  describe("throws the TypeError of a typed array whose length is a symbol or a BigInt", () => {
+    const getSource = (expected: string) => `
+      const symbol = Symbol("1");
+      const results: string[] = [];
+      const attempt = (run: () => unknown) => {
+        try {
+          results.push(String(run()));
+        } catch (error) {
+          results.push(error instanceof TypeError ? "TypeError" : "other");
+        }
+      };
+      attempt(() => {
+        new Int8Array(symbol as any);
+      });
+      attempt(() => {
+        new BigInt64Array(2n as any);
+      });
+      attempt(() => new Int8Array(2).length);
+      if (results.join() !== "${expected}") throw new Error("results " + results.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("TypeError,TypeError,2"))).failure).toBeUndefined();
+    });
+
+    it("rejects other results", async () => {
+      expect((await checkModel(getSource("TypeError,undefined,2"))).failure?.message).toContain(
+        "results TypeError,TypeError,2",
+      );
+    });
+  });
+
+  describe("throws the error of an element that a typed array can't convert", () => {
+    const getSource = (expected: string) => `
+      const results: string[] = [];
+      const attempt = (run: () => unknown) => {
+        try {
+          results.push(String(run()));
+        } catch (error) {
+          results.push(
+            error instanceof TypeError
+              ? "TypeError"
+              : error instanceof SyntaxError
+                ? "SyntaxError"
+                : "other",
+          );
+        }
+      };
+      attempt(() => {
+        new BigInt64Array([null] as any);
+      });
+      attempt(() => {
+        new BigInt64Array(["1.1"] as any);
+      });
+      attempt(() => {
+        new Int8Array([1, Symbol() as any]);
+      });
+      attempt(() => new BigInt64Array(["", "1"] as any).join());
+      if (results.join() !== "${expected}") throw new Error("results " + results.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("TypeError,SyntaxError,TypeError,0,1"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects other results", async () => {
+      expect(
+        (await checkModel(getSource("TypeError,TypeError,TypeError,0,1"))).failure?.message,
+      ).toContain("results TypeError,SyntaxError,TypeError,0,1");
+    });
+  });
+
+  describe("reads and writes the properties of a typed array apart from its elements", () => {
+    const getSource = (expected: string) => `
+      const s1 = Symbol("1");
+      const sample = new Int8Array([42, 43]);
+      const results: unknown[] = [];
+      results.push(Reflect.set(sample, s1, "ecma262"), (sample as any)[s1]);
+      results.push(Reflect.set(sample, "foo", 1), (sample as any).foo);
+      const keys: string[] = [];
+      for (const key in sample) keys.push(key);
+      results.push(keys.join("|"));
+      const proto = Object.create(Int8Array.prototype);
+      results.push(Object.setPrototypeOf(sample, proto) === sample);
+      const enumerable = ["0", "2", "-0", "foo"].map((key) =>
+        Object.prototype.propertyIsEnumerable.call(sample, key),
+      );
+      results.push(enumerable.join());
+      if (results.join() !== "${expected}") throw new Error("results " + results.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("true,ecma262,true,1,0|1|foo,true,true,false,false,true")))
+          .failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects other results", async () => {
+      expect(
+        (await checkModel(getSource("true,ecma262,true,1,0|1|foo,true,true,true,false,true")))
+          .failure?.message,
+      ).toContain("results true,ecma262,true,1,0|1|foo,true,true,false,false,true");
+    });
+  });
+
+  describe("converts the fromIndex of a typed array's search after it reads the length", () => {
+    const getSource = (expected: string) => `
+      const rab = new ArrayBuffer(4, { maxByteLength: 20 });
+      const ta = new Int8Array(rab);
+      ta[1] = 5;
+      const log: string[] = [];
+      const shrink = {
+        valueOf() {
+          log.push("shrink");
+          rab.resize(1);
+          return 0;
+        },
+      };
+      const results: unknown[] = [];
+      results.push(ta.includes(undefined as any, shrink as any));
+      rab.resize(4);
+      ta[1] = 5;
+      results.push(ta.indexOf(5, { valueOf: () => 1 } as any));
+      results.push(ta.lastIndexOf(5, { valueOf: () => 0 } as any));
+      const empty = new Int8Array(0);
+      const emptyIndex = {
+        valueOf() {
+          log.push("empty");
+          return 0;
+        },
+      };
+      results.push(empty.includes(0, emptyIndex as any), log.join("|"));
+      if (results.join() !== "${expected}") throw new Error("results " + results.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("true,1,-1,false,shrink"))).failure).toBeUndefined();
+    });
+
+    it("rejects other results", async () => {
+      expect((await checkModel(getSource("false,1,-1,false,shrink"))).failure?.message).toContain(
+        "results true,1,-1,false,shrink",
+      );
+    });
+  });
+
+  describe("throws the TypeError of iterating an array once a script deletes Array.prototype's iterator", () => {
+    const getSource = (expected: string) => `
+      const results: string[] = [];
+      const run = (body: () => void) => {
+        try {
+          body();
+          results.push("ok");
+        } catch (error) {
+          results.push(error instanceof TypeError ? "TypeError" : "other");
+        }
+      };
+      const held = [1, 2];
+      run(() => {
+        for (const value of held) results.push(String(value));
+      });
+      delete (Array.prototype as any)[Symbol.iterator];
+      run(() => {
+        for (const [x, y] of [[1, 2]]) results.push(String(x + y));
+      });
+      run(() => {
+        for (const value of held) results.push(String(value));
+      });
+      run(() => {
+        try {
+          throw [1, 2, 3];
+        } catch ([x, y, z]: any) {
+          results.push(String(x + y + z));
+        }
+      });
+      if (results.join() !== "${expected}") throw new Error("results " + results.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("1,2,ok,TypeError,TypeError,TypeError"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects other results", async () => {
+      expect(
+        (await checkModel(getSource("1,2,ok,TypeError,TypeError,6,ok"))).failure?.message,
+      ).toContain("results 1,2,ok,TypeError,TypeError,TypeError");
+    });
+  });
+
+  describe("throws the error of a value that a DataView's set can't convert", () => {
+    const getSource = (expected: string) => `
+      const sample = new DataView(new ArrayBuffer(8), 0);
+      const results: string[] = [];
+      const attempt = (run: () => unknown) => {
+        try {
+          results.push(String(run()));
+        } catch (error) {
+          results.push(
+            error instanceof TypeError
+              ? "TypeError"
+              : error instanceof SyntaxError
+                ? "SyntaxError"
+                : "other",
+          );
+        }
+      };
+      // @ts-ignore
+      attempt(() => sample.setBigInt64(0));
+      attempt(() => sample.setBigInt64(0, "x" as any));
+      attempt(() => sample.setInt8(0, Symbol() as any));
+      attempt(() => sample.setBigInt64(0, 5n));
+      if (results.join() !== "${expected}") throw new Error("results " + results.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("TypeError,SyntaxError,TypeError,undefined"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects other results", async () => {
+      expect(
+        (await checkModel(getSource("TypeError,TypeError,TypeError,undefined"))).failure?.message,
+      ).toContain("results TypeError,SyntaxError,TypeError,undefined");
+    });
+  });
+
+  describe("throws the TypeError of a value that a typed array's filter kept and can't convert", () => {
+    const getSource = (expected: string) => `
+      const rab = new ArrayBuffer(24, { maxByteLength: 24 });
+      const sample = new BigInt64Array(rab);
+      sample[0] = 1n;
+      let calls = 0;
+      let result = "none";
+      try {
+        sample.filter(() => {
+          if (calls === 0) rab.resize(8);
+          calls++;
+          return true;
+        });
+        result = "made";
+      } catch (error) {
+        result = error instanceof TypeError ? "TypeError" : "other";
+      }
+      const numbers = new Float64Array(new ArrayBuffer(16, { maxByteLength: 16 }));
+      const kept = numbers.filter(() => true).length;
+      const outcome = [result, calls, kept].join();
+      if (outcome !== "${expected}") throw new Error("outcome " + outcome);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("TypeError,3,2"))).failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      expect((await checkModel(getSource("made,3,2"))).failure?.message).toContain(
+        "outcome TypeError,3,2",
+      );
+    });
+  });
+
+  describe("writes a typed array's elements in the generic array methods", () => {
+    const getSource = (expected: string) => `
+      const sample = new Int8Array([1, 2, 3]);
+      Array.prototype.reverse.call(sample);
+      const joined = Array.prototype.join.call(sample, ",");
+      if (joined !== "${expected}") throw new Error("joined " + joined);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("3,2,1"))).failure).toBeUndefined();
+    });
+
+    it("rejects another order", async () => {
+      expect((await checkModel(getSource("1,2,3"))).failure?.message).toContain("joined 3,2,1");
+    });
   });
 });

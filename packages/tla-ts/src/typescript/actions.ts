@@ -3895,7 +3895,11 @@ const translateCallStatementBody = (
           ifThenElse(
             apply("=", [field(change, "error"), string("RangeError")]),
             throwError("RangeError", current, expression, context, frame),
-            throwTypeError(current, expression, context, frame),
+            ifThenElse(
+              apply("=", [field(change, "error"), string("SyntaxError")]),
+              throwError("SyntaxError", current, expression, context, frame),
+              throwTypeError(current, expression, context, frame),
+            ),
           ),
         ),
       );
@@ -4113,6 +4117,61 @@ const translateCallStatementBody = (
         throwTypeError(path, expression, context, frame),
       );
     };
+    // includes, indexOf, and lastIndexOf read the typed array's length before they convert their
+    // fromIndex, and give false or -1 without converting it where the length is 0.
+    const convertedSearchValues = getConvertedSearchValues(expression, context);
+    const runConvertedSearch = (converted: readonly ts.Expression[]) => {
+      const lengthName = context.names.getFresh("length");
+      const length = identifier(lengthName);
+      return translateJoined(
+        expression,
+        path,
+        context,
+        (after, value) => continueWith(after, value ?? getUndefined(context)),
+        (next) =>
+          bindOnce(
+            path,
+            lengthName,
+            useJavaScript("TypedArrayLength", [heap, ref], context),
+            ifThenElse(
+              apply("=", [length, number(-1)]),
+              throwTypeError(path, expression, context, frame),
+              ifThenElse(
+                apply("=", [length, number(0)]),
+                next(path, method === "includes" ? boolean(false) : number(-1)),
+                runConversion(
+                  expression,
+                  {
+                    operands: converted,
+                    hints: ["number"],
+                    combine: (primitives) => primitives[0],
+                  },
+                  path,
+                  context,
+                  frame,
+                  (after, fromIndex) =>
+                    runChange(
+                      after,
+                      useJavaScript(
+                        "TypedArraySearch",
+                        [
+                          getHeap(after.scope, expression, context),
+                          ref,
+                          string(method),
+                          typedValues[0],
+                          fromIndex,
+                          length,
+                        ],
+                        context,
+                      ),
+                      next,
+                    ),
+                ),
+              ),
+            ),
+          ),
+      );
+    };
     // set of an array-like source writes each element in order, so the first that a getter which
     // only throws answers throws once set wrote those before it, where nothing before runs code.
     const setGetter = useJavaScript(
@@ -4127,22 +4186,24 @@ const translateCallStatementBody = (
           ? runConvertedAtomics(convertedAtomicsValues)
           : convertedSubarrayValues !== undefined
             ? runConvertedSubarray(convertedSubarrayValues)
-            : viewCall.owner === "TypedArray" &&
-                method === "set" &&
-                getThrowingGetters(expression, context).length > 0
-              ? throwFirstGetter(
-                  expression,
-                  apply("#", [setGetter, getUndefined(context)]),
-                  setGetter,
-                  typedValues[0] ?? getUndefined(context),
-                  withHeap(
-                    useJavaScript("TypedArraySetBefore", [heap, ref, typedArguments], context),
-                  ),
-                  context,
-                  frame,
-                  runOperation(),
-                )
-              : runOperation();
+            : convertedSearchValues !== undefined
+              ? runConvertedSearch(convertedSearchValues)
+              : viewCall.owner === "TypedArray" &&
+                  method === "set" &&
+                  getThrowingGetters(expression, context).length > 0
+                ? throwFirstGetter(
+                    expression,
+                    apply("#", [setGetter, getUndefined(context)]),
+                    setGetter,
+                    typedValues[0] ?? getUndefined(context),
+                    withHeap(
+                      useJavaScript("TypedArraySetBefore", [heap, ref, typedArguments], context),
+                    ),
+                    context,
+                    frame,
+                    runOperation(),
+                  )
+                : runOperation();
     return bindOnce(
       path,
       receiver,
@@ -10680,8 +10741,25 @@ const translateShortLoopCall = (
     };
     // A typed array's filter makes its typed array through the receiver's constructor once it
     // visited the elements, reading it through a getter that the script may write.
+    // filter writes the values that it kept to its typed array, which throws the TypeError of one
+    // that it can't convert, as undefined where a callback shrank the buffer.
     const finish = (): Formula =>
-      loop.isTyped && method === "filter" ? readSpecies(after, finishFrom) : finishFrom(after);
+      loop.isTyped && method === "filter"
+        ? readSpecies(after, (read) =>
+            ifThenElse(
+              apply("=", [
+                useJavaScript(
+                  "TypedArrayElementsError",
+                  [getHeap(read.scope, expression, context), owner, value],
+                  context,
+                ),
+                string(""),
+              ]),
+              finishFrom(read),
+              throwTypeError(read, expression, context, frame),
+            ),
+          )
+        : finishFrom(after);
     const completed = isUnseeded
       ? ifThenElse(
           index(identifier(result), [number(changed.length + 2)]),
@@ -14283,7 +14361,13 @@ const getConvertedAtomicsValues = (node: ts.Node, context: Context) => {
     return undefined;
   }
   const converted = call.values.slice(1);
-  return converted.some((value) => isObjectOperand(value, context) || isAnyOperand(value, context))
+  // A symbol throws the TypeError of its conversion in turn.
+  return converted.some(
+    (value) =>
+      isObjectOperand(value, context) ||
+      isAnyOperand(value, context) ||
+      (context.checker.getTypeAtLocation(skipCasts(value)).flags & ts.TypeFlags.ESSymbolLike) !== 0,
+  )
     ? converted
     : undefined;
 };
@@ -14297,6 +14381,19 @@ const getConvertedSubarrayValues = (node: ts.Node, context: Context) => {
     call.values.length <= 2 &&
     call.values.some((value) => isObjectOperand(value, context) || isAnyOperand(value, context))
     ? call.values
+    : undefined;
+};
+
+// The fromIndex of includes, indexOf, or lastIndexOf of a typed array where it's an object, which
+// the call converts after it reads the typed array's length.
+const getConvertedSearchValues = (node: ts.Node, context: Context) => {
+  const call = getViewCall(node, context);
+  return call?.owner === "TypedArray" &&
+    ["includes", "indexOf", "lastIndexOf"].includes(call.method) &&
+    call.values.length === 2 &&
+    !call.values.some(ts.isSpreadElement) &&
+    (isObjectOperand(call.values[1], context) || isAnyOperand(call.values[1], context))
+    ? call.values.slice(1)
     : undefined;
 };
 
@@ -14352,7 +14449,12 @@ const translateNewBufferStatement = (
           ifThenElse(
             apply("=", [error, string("RangeError")]),
             throwError("RangeError", current, node, context, frame),
-            throwTypeError(current, node, context, frame),
+            // A typed array of BigInts throws the SyntaxError of a string that holds no integer.
+            ifThenElse(
+              apply("=", [error, string("SyntaxError")]),
+              throwError("SyntaxError", current, node, context, frame),
+              throwTypeError(current, node, context, frame),
+            ),
           ),
         );
       const makeWith = (
@@ -15548,7 +15650,8 @@ const getEffects = (
     isObjectDateCall(node, context) ||
     getConvertedViewValues(node, context) !== undefined ||
     getConvertedAtomicsValues(node, context) !== undefined ||
-    getConvertedSubarrayValues(node, context) !== undefined
+    getConvertedSubarrayValues(node, context) !== undefined ||
+    getConvertedSearchValues(node, context) !== undefined
       ? getConversionFunctions(node, context)
       : undefined;
   // A definition that reads its descriptor's fields, a read of a key with getters, or an
@@ -18227,6 +18330,32 @@ const translateIterations = (
       ),
     );
   };
+  // A for-of of an array throws the TypeError of GetIterator before its first iteration where the
+  // array's Symbol.iterator, which a script may delete from Array.prototype, isn't a function.
+  if (
+    iterated !== undefined &&
+    ts.isForOfStatement(iterated) &&
+    iterated.awaitModifier === undefined &&
+    context.heap !== undefined &&
+    (getKind(iterated.expression, context) === "sequence" ||
+      isHeapArray(iterated.expression, context))
+  ) {
+    const heap = getHeap(path.scope, iterated.expression, context);
+    const receiver =
+      getKind(iterated.expression, context) === "sequence"
+        ? translateBuiltInValue("Array.prototype", iterated.expression, context)
+        : translateExpression(iterated.expression, path.scope, context);
+    const method = useJavaScript(
+      "Get",
+      [heap, receiver, useJavaScript("WellKnownSymbol", [string("iterator")], context)],
+      context,
+    );
+    return ifThenElse(
+      apply("#", [useJavaScript("TypeOfIn", [heap, method], context), string("function")]),
+      throwTypeError(path, iterated.expression, context, frame),
+      translateFrom(path),
+    );
+  }
   if (!isIterator || iterated === undefined) return translateFrom(path);
   const iteratedExpression = iterated.expression;
   return translateJoined(
