@@ -51408,4 +51408,27 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("converts an object that a Temporal function reads through its methods", () => {
+    const getSource = (expected: string) => `
+      const calls: string[] = [];
+      const years = {
+        valueOf() {
+          calls.push("years");
+          return 2;
+        },
+      };
+      const duration = new Temporal.Duration(years as any, 3);
+      const outcome = [duration.years, duration.months, calls.join("|")].join();
+      if (outcome !== "${expected}") throw new Error("outcome " + outcome);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("2,3,years"))).failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      expect((await checkModel(getSource("2,3,"))).failure?.message).toContain("outcome 2,3,years");
+    });
+  });
 });

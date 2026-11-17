@@ -173,6 +173,7 @@ import { UNSETTLED_AWAIT_WARNING } from "../exit-codes";
 import {
   getConversion,
   getConversionFunctions,
+  getKeyedConversionFunctions,
   isAnyOperand,
   isCompoundAssignment,
   isObjectOperand,
@@ -454,7 +455,12 @@ import {
   tuple,
   unchanged,
 } from "./tla";
-import { getTemporalCall, type TemporalCall, translateTemporalCall } from "./temporal";
+import {
+  getTemporalCall,
+  isConvertingTemporalCall,
+  type TemporalCall,
+  translateTemporalCall,
+} from "./temporal";
 import {
   getCollection,
   isBooleanLike,
@@ -15677,6 +15683,7 @@ const getEffects = (
       : [];
   const isObjectMade = isMade(node, context);
   const isErrorMade = isObjectMade && isNewError(node, context);
+  const temporalCall = getTemporalCall(node, context);
   // An operation that converts an object runs its valueOf and toString methods, as does a definition
   // of an array's length.
   const conversions =
@@ -15689,7 +15696,9 @@ const getEffects = (
     getConvertedSubarrayValues(node, context) !== undefined ||
     getConvertedSearchValues(node, context) !== undefined
       ? getConversionFunctions(node, context)
-      : undefined;
+      : temporalCall !== undefined && isConvertingTemporalCall(temporalCall, node, context)
+        ? getKeyedConversionFunctions(node, context)
+        : undefined;
   // A definition that reads its descriptor's fields, a read of a key with getters, or an
   // operation on a proxy, which runs its traps, runs them.
   const getters = [

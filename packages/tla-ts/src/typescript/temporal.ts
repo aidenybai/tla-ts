@@ -7,14 +7,27 @@ import {
   type Path,
   throwError,
   throwTypeError,
+  translateJoined,
 } from "./actions";
-import { type Context, findNodes, getSymbol, skipCasts, getValueDeclaration } from "./context";
+import { getKeyedConversionFunctions, runToPrimitive } from "./conversions";
+import { withHeap } from "./protocols";
+import {
+  type Context,
+  findNodes,
+  getSymbol,
+  getUndefined,
+  skipCasts,
+  getValueDeclaration,
+} from "./context";
 import { translateExpression } from "./expressions";
 import { type Formula, ifThenElse, leaf } from "./formula";
 import { getAllocated, getHeap, getOrigin } from "./heap";
 import { getBuiltIn, translateBuiltInValue } from "./intrinsics";
 import { useJavaScript } from "./javascript";
-import { apply, boolean, field, identifier, string, tuple } from "./tla";
+import { apply, boolean, field, functionFrom, identifier, string, tuple } from "./tla";
+
+// The conversions that a Temporal function may ask a script's methods for, one after another.
+const TEMPORAL_CONVERSIONS = 3;
 
 const TEMPORAL_KINDS = new Set([
   "Duration",
@@ -397,6 +410,40 @@ export const getTemporalCall = (node: ts.Node, context: Context): TemporalCall |
     : undefined;
 };
 
+// Whether an argument of a type may be an object that a Temporal function converts through its
+// methods, or may hold one as a property that the function reads: any object but a Temporal one
+// converts, and an object that an argument passes may be an options bag or a property bag.
+const mayHoldConverted = (type: ts.Type, context: Context, isProperty: boolean): boolean => {
+  if ((type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown | ts.TypeFlags.NonPrimitive)) !== 0) {
+    return true;
+  }
+  if (type.isUnion() || type.isIntersection()) {
+    return type.types.some((inner) => mayHoldConverted(inner, context, isProperty));
+  }
+  if ((type.flags & ts.TypeFlags.Object) === 0 || getTemporalKind(type) !== undefined) return false;
+  return (
+    isProperty ||
+    type.getCallSignatures().length > 0 ||
+    context.checker.getIndexInfosOfType(type).length > 0 ||
+    type
+      .getProperties()
+      .some((property) =>
+        mayHoldConverted(context.checker.getTypeOfSymbol(property), context, true),
+      )
+  );
+};
+
+// A Temporal call that converts an object through a script's methods: one whose arguments' types
+// may hold an object other than a Temporal one, where each conversion method that the script gives
+// is a function that no other function holds, whose call doesn't read another's locals.
+export const isConvertingTemporalCall = (call: TemporalCall, node: ts.Node, context: Context) =>
+  call.values.some((value) =>
+    mayHoldConverted(context.checker.getTypeAtLocation(value), context, false),
+  ) &&
+  getKeyedConversionFunctions(node, context).every(
+    (method) => ts.findAncestor(method.parent, ts.isFunctionLike) === undefined,
+  );
+
 // Runs a Temporal call, which throws the error that it gives, where the script still holds the
 // built-in function that it names.
 export const translateTemporalCall = (
@@ -429,48 +476,130 @@ export const translateTemporalCall = (
         : `Temporal.${call.kind}.prototype.${call.method}`;
   const receiverName = context.names.getFresh("receiver");
   const receiver = identifier(receiverName);
-  const changeName = context.names.getFresh("change");
-  const change = identifier(changeName);
   const kind = string(call.kind);
-  const operation =
+  const getOperation = (read: Expression) =>
     call.method === "new"
-      ? useJavaScript("TemporalNew", [heap, kind, values, prototype], context)
+      ? useJavaScript("TemporalNew", [read, kind, values, prototype], context)
       : call.isStatic
         ? useJavaScript(
             "TemporalStatic",
-            [heap, kind, string(call.method), values, prototype],
+            [read, kind, string(call.method), values, prototype],
             context,
           )
         : useJavaScript(
             "TemporalMethod",
-            [heap, kind, string(call.method), receiver, values, prototype],
+            [read, kind, string(call.method), receiver, values, prototype],
             context,
           );
-  const heapSymbol = context.heap;
-  const run = bindOnce(
-    path,
-    changeName,
-    operation,
-    ifThenElse(
-      apply("=", [field(change, "error"), string("")]),
-      continueWith(
-        heapSymbol === undefined
-          ? path
-          : {
-              ...path,
-              scope: {
-                ...path.scope,
-                bindings: new Map([...path.scope.bindings, [heapSymbol, field(change, "heap")]]),
-              },
-            },
-        field(change, "value"),
-      ),
+  // The objects that the function reads, which a conversion that it asks for mustn't change, as
+  // it reads them again once it has the conversion's primitive.
+  const inputs = tuple([
+    ...(call.receiver === undefined ? [] : [receiver]),
+    ...call.values.map((value) => translateExpression(value, path.scope, context)),
+  ]);
+  const stop = (message: string) => leaf(apply("Assert", [boolean(false), string(message)]));
+  const limit = isConvertingTemporalCall(call, node, context) ? TEMPORAL_CONVERSIONS : 0;
+  // A conversion reads the methods that an object holds, or that getters it declares under their
+  // keys give, and stops at a getter that a descriptor gives.
+  // Each round runs the function with the answers to the conversions it asked for so far, and runs
+  // the conversion that it asks for next through the object's methods, in the order the function
+  // asks for them.
+  const runRound = (
+    current: Path,
+    answers: Expression,
+    count: number,
+    next: (path: Path, value?: Expression) => Formula,
+  ): Formula => {
+    const roundName = context.names.getFresh("change");
+    const round = identifier(roundName);
+    const request = field(round, "request");
+    const currentHeap = getHeap(current.scope, node, context);
+    return bindOnce(
+      current,
+      roundName,
+      getOperation(useJavaScript("TemporalHeap", [currentHeap, answers], context)),
       ifThenElse(
-        apply("=", [field(change, "error"), string("RangeError")]),
-        throwError("RangeError", path, node, context, frame),
-        throwTypeError(path, node, context, frame),
+        apply("=", [field(round, "error"), string("")]),
+        next(withHeap(current, field(round, "heap"), context), field(round, "value")),
+        ifThenElse(
+          apply("=", [field(round, "error"), string("pending")]),
+          count >= limit
+            ? stop(
+                limit === 0
+                  ? "tla-ts can't convert an object that a Temporal function reads here"
+                  : `tla-ts can't run more than ${limit} conversions in a Temporal function`,
+              )
+            : translateJoined(
+                node,
+                current,
+                context,
+                (after, primitive) =>
+                  ifThenElse(
+                    useJavaScript(
+                      "TemporalInputsKept",
+                      [heap, getHeap(after.scope, node, context), inputs],
+                      context,
+                    ),
+                    runRound(
+                      after,
+                      apply("@@", [
+                        apply(":>", [
+                          tuple([
+                            field(request, "kind"),
+                            field(request, "label"),
+                            field(request, "value"),
+                          ]),
+                          primitive ?? getUndefined(context),
+                        ]),
+                        answers,
+                      ]),
+                      count + 1,
+                      next,
+                    ),
+                    stop(
+                      "tla-ts can't follow a Temporal function whose inputs a conversion changed",
+                    ),
+                  ),
+                (converted) =>
+                  ifThenElse(
+                    apply("=", [field(request, "kind"), string("string")]),
+                    runToPrimitive(
+                      node,
+                      field(request, "value"),
+                      "string",
+                      current,
+                      context,
+                      frame,
+                      converted,
+                      true,
+                    ),
+                    runToPrimitive(
+                      node,
+                      field(request, "value"),
+                      "number",
+                      current,
+                      context,
+                      frame,
+                      converted,
+                      true,
+                    ),
+                  ),
+              ),
+          ifThenElse(
+            apply("=", [field(round, "error"), string("RangeError")]),
+            throwError("RangeError", current, node, context, frame),
+            throwTypeError(current, node, context, frame),
+          ),
+        ),
       ),
-    ),
+    );
+  };
+  const run = translateJoined(
+    node,
+    path,
+    context,
+    (after, value) => continueWith(after, value ?? getUndefined(context)),
+    (next) => runRound(path, functionFrom([]), 0, next),
   );
   const builtIn = useJavaScript(":>", [identifier("Ref"), string(functionPath)], context);
   const isHeld =
