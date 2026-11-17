@@ -914,7 +914,7 @@ const resolveDefinitions = (
       recursive.add(local);
       return local;
     }, scope);
-  const declaredLocals: { declaration: Declaration; local: LocalName | undefined }[] = [];
+  const declaredLocals = new Map<Declaration, LocalName | undefined>();
   const bindDeclaration = (parent: LocalName | undefined, declaration: Declaration) => {
     const binding: Binding = {
       kind: "Definition",
@@ -932,7 +932,7 @@ const resolveDefinitions = (
       ? { ...binding, name: declaration.name, parent, isPending: true }
       : undefined;
     if (local) recursive.add(local);
-    declaredLocals.push({ declaration, local });
+    declaredLocals.set(declaration, local);
     return local ?? parent;
   };
   const pending = [...(unit.isGenerated ? [] : instances), ...declarations].toSorted(
@@ -975,12 +975,12 @@ const resolveDefinitions = (
       : current;
   }, declared);
   const resolvedScope = resolvePending(resolved, () => true);
-  declaredLocals.forEach((item) => {
-    const range = item.declaration.location.range;
-    if (range && !unit.isGenerated && (!item.local || item.local.isPending)) {
+  declaredLocals.forEach((local, declaration) => {
+    const range = declaration.location.range;
+    if (range && !unit.isGenerated && (!local || local.isPending)) {
       unit.errors.push({
         location: formatRange(range),
-        message: `Symbol ${resolveSynonym(item.declaration.name)} declared in RECURSIVE statement but not defined.`,
+        message: `Symbol ${resolveSynonym(declaration.name)} declared in RECURSIVE statement but not defined.`,
       });
     }
   });
