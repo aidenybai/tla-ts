@@ -1087,14 +1087,15 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   });
 
   const visitInitialState = (state: Value[]) => {
-    canonicalizeState(state);
     runtime.generatedStates++;
     runtime.initialStates++;
     current.candidate = state;
     current.candidateLevel = 1;
-    const fingerprintState = getFingerprintState(state);
-    const hash = getStateHash(fingerprintState);
     const isInModel = search.satisfiesConstraints(state);
+    // TLC fingerprints only a state in the model, which sorts its records in place.
+    if (isInModel) canonicalizeState(state);
+    const fingerprintState = isInModel ? getFingerprintState(state) : state;
+    const hash = isInModel ? getStateHash(fingerprintState) : 0;
     if (isInModel) {
       search.trackStatePossible(state);
       fingerprintModelState(fingerprintState);
@@ -1141,18 +1142,17 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   // Looks a successor up, where the constraints keep it in the model, as the search does before it
   // checks the successor.
   const lookUpSuccessor = (state: Value[], successor: Successor) => {
-    const fingerprintState = getFingerprintState(successor.state);
-    const hash = getStateHash(fingerprintState);
-    const foundIndex = findStateIndex(seenStates, hash, fingerprintState);
     const isStateInModel = search.satisfiesConstraints(successor.state, state);
     if (isStateInModel) search.trackStatePossible(successor.state);
     const isInModel = isStateInModel && search.satisfiesActionConstraints(state, successor.state);
+    const fingerprintState = isInModel ? getFingerprintState(successor.state) : successor.state;
+    const hash = isInModel ? getStateHash(fingerprintState) : 0;
     if (isInModel) {
       search.trackActionPossible(state, successor.state);
       fingerprintModelState(fingerprintState);
       successor.state.forEach(markFingerprinted);
     }
-    const existing = isInModel ? foundIndex : -1;
+    const existing = isInModel ? findStateIndex(seenStates, hash, fingerprintState) : -1;
     return {
       fingerprintState,
       hash,

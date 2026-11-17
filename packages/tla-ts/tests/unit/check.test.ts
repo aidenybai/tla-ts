@@ -547,6 +547,30 @@ describe("check matches TLC", () => {
     ]);
   });
 
+  it("evaluates the VIEW only of a state the constraints keep in the model, as TLC fingerprints it", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers\nVARIABLE x\nInit == x \\in 0..2\nNext == x < 3 /\\ x' = x + 1\nC == x < 2\nView == IF x < 2 THEN x ELSE <<x>>[5]\n====",
+      config: "INIT Init\nNEXT Next\nCONSTRAINT C\nVIEW View",
+    });
+    expect([result.status, result.generatedStates, result.distinctStates]).toEqual([
+      "success",
+      5,
+      2,
+    ]);
+  });
+
+  it("prints the records of an initial state outside the model as written, as TLC doesn't fingerprint it", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers\nVARIABLE x\nRecord == [a |-> 0, b |-> 0]\nInit == x = [b |-> TRUE, a |-> 1]\nNext == UNCHANGED x\nC == x.a > 5\nInv == x.a = 0\n====",
+      config: "INIT Init\nNEXT Next\nCONSTRAINT C\nINVARIANT Inv",
+    });
+    expect(result.violation?.trace.map((step) => formatValue(step.state.x))).toEqual([
+      "[b |-> TRUE, a |-> 1]",
+    ]);
+  });
+
   it.each([
     ["<<x, y>>", "/\\ x = 0\n/\\ y = 5\n"],
     ["<<y, x>>", "/\\ x = 0\n/\\ y = 5\n"],
