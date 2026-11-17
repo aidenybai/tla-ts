@@ -8,11 +8,17 @@ import {
   getParameters,
   getSymbol,
   getUndefined,
+  isInertValue,
   isMethodCall,
   skipCasts,
 } from "./context";
 import { getPrimitiveArgument, STRING_METHODS, translatePrimitiveMethod } from "./collections";
-import { BITWISE_OPERATORS, concatenate, translateExpression } from "./expressions";
+import {
+  BITWISE_OPERATORS,
+  concatenate,
+  translateBigInt,
+  translateExpression,
+} from "./expressions";
 import { type Formula, ifThenElse, leaf } from "./formula";
 import { getHeap } from "./heap";
 import { getBuiltIn } from "./intrinsics";
@@ -27,7 +33,17 @@ import {
   read,
   readWith,
 } from "./protocols";
-import { apply, boolean, junction, not, string, tuple } from "./tla";
+import {
+  apply,
+  boolean,
+  identifier,
+  ifExpression,
+  junction,
+  not,
+  number,
+  string,
+  tuple,
+} from "./tla";
 import { getKind, hasHeapType, isEvery, isHeapType, mayBeSequenceType } from "./types";
 
 // The hint that ToPrimitive takes, which decides whether it calls valueOf or toString first.
@@ -191,9 +207,57 @@ const isConvertedPrimitive = (node: ts.Expression, context: Context) =>
     context,
   ) && !hasFlags(node, ts.TypeFlags.NumberLike, context);
 
+// An object that a call converts to a property key, which runs its toString and valueOf: a name's,
+// or a wrapper's that new makes, as the key
+// of Object.defineProperty, Object.getOwnPropertyDescriptor, or Object.hasOwn of an object, which
+// they convert once they check the object, and the key of hasOwnProperty or propertyIsEnumerable,
+// which they convert first.
+export const isConvertedPropertyKey = (node: ts.Node, context: Context): node is ts.Expression => {
+  const call = node.parent;
+  if (
+    context.heap === undefined ||
+    !ts.isExpression(node) ||
+    call === undefined ||
+    !ts.isCallExpression(call) ||
+    !ts.isPropertyAccessExpression(call.expression) ||
+    call.arguments.some(ts.isSpreadElement) ||
+    !(isObjectOperand(node, context) || isAnyOperand(node, context))
+  ) {
+    return false;
+  }
+  const key = skipCasts(node);
+  if (
+    !(
+      ts.isIdentifier(key) ||
+      (ts.isNewExpression(key) &&
+        ts.isIdentifier(key.expression) &&
+        WRAPPERS.has(key.expression.text) &&
+        (key.arguments ?? []).every(isInertValue))
+    )
+  ) {
+    return false;
+  }
+  const name = call.expression.name.text;
+  return getBuiltIn(call.expression.expression, context) === "Object"
+    ? ["defineProperty", "getOwnPropertyDescriptor", "hasOwn"].includes(name) &&
+        call.arguments[1] === node &&
+        call.arguments[0] !== undefined &&
+        getKind(call.arguments[0], context) === "object"
+    : ["hasOwnProperty", "propertyIsEnumerable"].includes(name) && call.arguments[0] === node;
+};
+
 // The conversion that a node makes, where one of its operands is an object.
 export const getConversion = (node: ts.Node, context: Context): Conversion | undefined => {
   if (context.heap === undefined) return undefined;
+  // A property key converts to a primitive, which the call converts as ToPropertyKey does.
+  if (isConvertedPropertyKey(node, context)) {
+    return {
+      operands: [node],
+      hints: ["string"],
+      thrownSymbols: "none",
+      combine: (primitives) => primitives[0],
+    };
+  }
   const plain = (value: Expression) =>
     context.hasSpecialNumbers ? value : useJavaScript("PlainNumber", [value], context);
   const toNumber = (value: Expression) => plain(useJavaScript("ToNumber", [value], context));
@@ -332,6 +396,43 @@ export const getConversion = (node: ts.Node, context: Context): Conversion | und
         true,
       );
     }
+    // isNaN and isFinite convert their value to a number.
+    if (
+      (node.expression.text === "isNaN" || node.expression.text === "isFinite") &&
+      node.arguments.length === 1
+    ) {
+      const isNaN = node.expression.text === "isNaN";
+      return make(
+        [argument],
+        "number",
+        (primitives) => {
+          const converted = useJavaScript("ToNumber", [primitives[0]], context);
+          return isNaN
+            ? apply("=", [converted, identifier("NaN")])
+            : useJavaScript("IsFinite", [converted], context);
+        },
+        false,
+        true,
+      );
+    }
+    // parseInt converts its string, and then its radix.
+    if (
+      node.expression.text === "parseInt" &&
+      node.arguments.length <= 2 &&
+      !node.arguments.some(ts.isSpreadElement)
+    ) {
+      const conversion = make(node.arguments, "string", (primitives) =>
+        plain(
+          useJavaScript(
+            "ParseInt",
+            [primitives[0], primitives[1] ?? getUndefined(context)],
+            context,
+          ),
+        ),
+      );
+      const hints: Hint[] = ["string", "number"];
+      return conversion && { ...conversion, hints: hints.slice(0, node.arguments.length) };
+    }
     if (node.expression.text === "String") {
       const conversion = make([argument], "string", (primitives) =>
         useJavaScript("StringOf", [primitives[0]], context),
@@ -339,6 +440,41 @@ export const getConversion = (node: ts.Node, context: Context): Conversion | und
       return conversion && { ...conversion, thrownSymbols: "converted" };
     }
     return undefined;
+  }
+  // An increment or a decrement of a name that holds an object converts it to a number, or keeps
+  // a BigInt, and gives a pair of what it assigns and what it evaluates to: the new value, or the
+  // old one where it's postfix.
+  if (
+    (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
+    (node.operator === ts.SyntaxKind.PlusPlusToken ||
+      node.operator === ts.SyntaxKind.MinusMinusToken) &&
+    ts.isIdentifier(skipCasts(node.operand))
+  ) {
+    const operation = node.operator === ts.SyntaxKind.PlusPlusToken ? "Add" : "Subtract";
+    const operand = skipCasts(node.operand);
+    const isConverted =
+      isObjectOperand(operand, context) ||
+      isMixedOperand(operand, context) ||
+      isAnyOperand(operand, context);
+    if (!isConverted) return undefined;
+    return {
+      operands: [operand],
+      hints: ["number"],
+      combine: ([primitive]) => {
+        const isBig = useJavaScript("IsBigInt", [primitive], context);
+        const old = ifExpression(isBig, primitive, toNumber(primitive));
+        const changed = ifExpression(
+          isBig,
+          useJavaScript(
+            operation === "Add" ? "BigIntAdd" : "BigIntSubtract",
+            [primitive, translateBigInt(1n, context)],
+            context,
+          ),
+          plain(useJavaScript(operation, [toNumber(primitive), number(1)], context)),
+        );
+        return tuple([changed, ts.isPrefixUnaryExpression(node) ? changed : old]);
+      },
+    };
   }
   if (ts.isPrefixUnaryExpression(node)) {
     if (node.operator === ts.SyntaxKind.PlusToken) {

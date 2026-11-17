@@ -18361,17 +18361,16 @@ describe("errors", () => {
       ).toContain("tla-ts can't tell which properties the global object has");
     });
 
-    it("stops where a name that nothing declares may read the key", async () => {
-      expect(
-        (
-          await checkModel(`
-            const holder = { seen: 0 };
-            (globalThis as unknown as Record<string, unknown>).missing = 1;
-            // @ts-ignore
-            holder.seen = typeof missing === "undefined" ? 1 : 2;
-          `)
-        ).failure?.message,
-      ).toContain("tla-ts can't tell which properties the global object has");
+    it("makes the global that a name that nothing declares reads", async () => {
+      const getSource = (expected: number) => `
+        const holder = { seen: 0 };
+        (globalThis as unknown as Record<string, unknown>).missing = 1;
+        // @ts-ignore
+        holder.seen = typeof missing === "undefined" ? 1 : 2;
+        if (holder.seen !== ${expected}) throw new Error("seen " + holder.seen);
+      `;
+      expect((await checkModel(getSource(2))).failure).toBeUndefined();
+      expect((await checkModel(getSource(1))).failure?.message).toContain("seen 2");
     });
 
     it("reads the value of a var that declares the key", async () => {
@@ -37034,10 +37033,10 @@ describe("buffers", () => {
     });
 
     it.each([
-      ["fill", "new Int8Array(0).fill(value);", "tla-ts can't convert this object to a number"],
-      ["join", "new Int8Array(0).join(value);", "tla-ts can't convert objects to strings"],
-    ])("stops where %s converts an object", async (_, call, message) => {
-      const result = await checkModel(`
+      ["fill", "new Int8Array(0).fill(value);"],
+      ["join", "new Int8Array(0).join(value);"],
+    ])("converts the object that %s takes once", async (_, call) => {
+      const getSource = (expected: number) => `
         let calls = 0;
         const value: any = {
           valueOf() {
@@ -37050,9 +37049,10 @@ describe("buffers", () => {
           },
         };
         ${call}
-        if (calls !== 1) throw new Error("converted");
-      `);
-      expect(result.failure?.message).toContain(message);
+        if (calls !== ${expected}) throw new Error("converted " + calls);
+      `;
+      expect((await checkModel(getSource(1))).failure).toBeUndefined();
+      expect((await checkModel(getSource(2))).failure?.message).toContain("converted 1");
     });
   });
 
@@ -52549,6 +52549,250 @@ describe("BigInts", () => {
     it("rejects the type that TypeScript infers", async () => {
       await expect(check(compile(source.replace('"string"', '"number"'), path))).rejects.toThrow(
         "seen string",
+      );
+    });
+  });
+
+  describe("increments and decrements a name that holds an object through its conversion", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      var log = [];
+      var object = {
+        valueOf() {
+          log.push("valueOf");
+          return 1;
+        },
+      };
+      var first = ++object;
+      var other = { valueOf: () => 5 };
+      var second = other--;
+      var big = { valueOf: () => 1n };
+      big++;
+      var thrown = "none";
+      var bad = { valueOf: () => ({}), toString: () => ({}) };
+      try {
+        bad++;
+      } catch (error) {
+        thrown = error instanceof TypeError ? "TypeError" : "other";
+      }
+      var result = [first, object, second, other, String(big), log.join(), thrown].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      const source = getSource("2,2,5,4,2,valueOf,TypeError");
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const source = getSource("2,2,4,4,2,valueOf,TypeError");
+      expect((await check(compile(source, path))).failure?.message).toContain(
+        "result 2,2,5,4,2,valueOf,TypeError",
+      );
+    });
+  });
+
+  describe("makes a global where a script writes the global object's property that a name reads", () => {
+    const getSource = (expected: string) => `
+      const box = { seen: "" };
+      const before = (globalThis as any).y;
+      (globalThis as any).y++;
+      // @ts-ignore
+      const afterIncrement = y;
+      (globalThis as any).count = 0;
+      (globalThis as any).count += 2;
+      // @ts-ignore
+      box.seen = [String(before), String(afterIncrement), count, typeof missing].join();
+      if (box.seen !== "${expected}") throw new Error("seen " + box.seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("undefined,NaN,2,undefined"))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkModel(getSource("undefined,1,2,undefined"))).failure?.message).toContain(
+        "seen undefined,NaN,2,undefined",
+      );
+    });
+  });
+
+  describe("converts the object arguments of a typed array's fill, slice, copyWithin, and at in turn", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      var sample = new Int8Array(4);
+      var log = [];
+      var value = { valueOf() { log.push("value"); return 7; } };
+      var start = { valueOf() { log.push("start"); return 1; } };
+      sample.fill(value, start);
+      var copied = sample.slice({ valueOf() { log.push("slice"); return 2; } });
+      var at = sample.at({ valueOf() { return -1; } });
+      sample.copyWithin({ valueOf() { return 0; } }, 2);
+      var thrown = "none";
+      try {
+        sample.fill(1, { valueOf() { throw new RangeError("boom"); } });
+      } catch (error) {
+        thrown = error.message;
+      }
+      var result = [sample.join(""), copied.join(""), at, log.join(), thrown].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      const source = getSource("7777,77,7,value,start,slice,boom");
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const source = getSource("0777,77,7,value,start,slice,boom");
+      expect((await check(compile(source, path))).failure?.message).toContain(
+        "result 7777,77,7,value,start,slice,boom",
+      );
+    });
+  });
+
+  describe("converts the object length of new of an ArrayBuffer or a SharedArrayBuffer with ToIndex", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      var log = [];
+      var length = { valueOf() { log.push("length"); return 3; } };
+      var buffer = new ArrayBuffer(length);
+      var shared = new SharedArrayBuffer({ toString() { return "2"; } });
+      var thrown = "none";
+      try {
+        new ArrayBuffer({ valueOf() { return -1; } });
+      } catch (error) {
+        thrown = error instanceof RangeError ? "RangeError" : "other";
+      }
+      var result = [buffer.byteLength, shared.byteLength, log.join(), thrown].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      const source = getSource("3,2,length,RangeError");
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const source = getSource("3,0,length,RangeError");
+      expect((await check(compile(source, path))).failure?.message).toContain(
+        "result 3,2,length,RangeError",
+      );
+    });
+  });
+
+  describe("converts the objects that parseInt takes, its string and then its radix", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      var log = [];
+      var text = { toString() { log.push("text"); return "11"; } };
+      var radix = { valueOf() { log.push("radix"); return 2; } };
+      var result = [parseInt(text, radix), parseInt("11", new Boolean(false)), parseInt("11", new Boolean(true)), log.join()].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      const source = getSource("3,11,NaN,text,radix");
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const source = getSource("3,11,NaN,radix,text");
+      expect((await check(compile(source, path))).failure?.message).toContain(
+        "result 3,11,NaN,text,radix",
+      );
+    });
+  });
+
+  describe("converts an object key of Object.defineProperty, hasOwn, and hasOwnProperty with ToPropertyKey", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      var obj = {};
+      var log = [];
+      var key = { toString() { log.push("toString"); return "abc"; }, valueOf() { log.push("valueOf"); return "x"; } };
+      Object.defineProperty(obj, key, { value: 1, enumerable: true });
+      Object.defineProperty(obj, new String("Hello"), {});
+      var sym = Symbol();
+      obj[sym] = 0;
+      var wrapper = { toString() { log.push("sym"); return sym; } };
+      var result = [
+        obj.hasOwnProperty("abc"),
+        obj.hasOwnProperty("Hello"),
+        Object.hasOwn(obj, wrapper),
+        obj.propertyIsEnumerable(key),
+        Object.getOwnPropertyDescriptor(obj, key).value,
+        log.join(),
+      ].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      const source = getSource("true,true,true,true,1,toString,sym,toString,toString");
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const source = getSource("true,true,true,true,1,valueOf,sym,toString,toString");
+      expect((await check(compile(source, path))).failure?.message).toContain(
+        "result true,true,true,true,1,toString,sym,toString,toString",
+      );
+    });
+  });
+
+  describe("converts the object offset of a typed array's set before it reads its source", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      var sample = new Int8Array([1, 2, 3]);
+      var log = [];
+      sample.set([7], { valueOf() { log.push("offset"); return 1; } });
+      var thrown = "none";
+      try {
+        sample.set([9], { valueOf() { return -1; } });
+      } catch (error) {
+        thrown = error instanceof RangeError ? "RangeError" : "other";
+      }
+      var result = [sample.join(""), log.join(), thrown].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      const source = getSource("173,offset,RangeError");
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const source = getSource("713,offset,RangeError");
+      expect((await check(compile(source, path))).failure?.message).toContain(
+        "result 173,offset,RangeError",
+      );
+    });
+  });
+
+  describe("converts the object that isNaN and isFinite take to a number", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      var called = 0;
+      var obj = {
+        valueOf: function () { called = NaN; return Infinity; },
+      };
+      obj[Symbol.toPrimitive] = function () { called += 1; return 42; };
+      var first = isNaN(obj);
+      var second = isFinite(obj);
+      obj[Symbol.toPrimitive] = function () { called += 1; return "text"; };
+      var third = isNaN(obj);
+      var result = [first, second, third, called].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      const source = getSource("false,true,true,3");
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const source = getSource("false,true,false,3");
+      expect((await check(compile(source, path))).failure?.message).toContain(
+        "result false,true,true,3",
       );
     });
   });

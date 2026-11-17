@@ -178,6 +178,7 @@ import {
   getConversion,
   getConversionFunctions,
   getKeyedConversionFunctions,
+  isConvertedPropertyKey,
   isAnyOperand,
   isCompoundAssignment,
   isObjectOperand,
@@ -2503,6 +2504,33 @@ export const translateCallStatement = (
       ),
     );
   }
+  // A key that the call converts to a property key runs its methods once the call's object is
+  // checked, which the call reads from its result.
+  const convertedKey = expression.arguments.find(
+    (argument) => isConvertedPropertyKey(argument, context) && !path.scope.results.has(argument),
+  );
+  const keyConversion = convertedKey && getConversion(convertedKey, context);
+  if (convertedKey !== undefined && keyConversion !== undefined) {
+    return runConversion(convertedKey, keyConversion, path, context, frame, (after, key) =>
+      translateCallStatement(
+        expression,
+        {
+          ...after,
+          scope: {
+            ...after.scope,
+            results: new Map([
+              ...after.scope.results,
+              [convertedKey, key],
+              [skipCasts(convertedKey), key],
+            ]),
+          },
+        },
+        context,
+        frame,
+        continueWith,
+      ),
+    );
+  }
   const withStop = getWithStop(expression, context);
   if (withStop !== undefined) return leaf(apply("Assert", [boolean(false), string(withStop)]));
   const formatCall = getFormatCall(expression, context);
@@ -4225,6 +4253,64 @@ const translateCallStatementBody = (
           ),
       );
     };
+    // fill, slice, copyWithin, at, and join convert their arguments in order once they read the
+    // typed array's length, and run as they would with the primitives where the conversions left
+    // the typed array and its buffer as they were.
+    const convertedTypedValues = getConvertedTypedValues(expression, context);
+    const runConvertedTyped = (converted: readonly ts.Expression[]) => {
+      const lengthName = context.names.getFresh("length");
+      return bindOnce(
+        path,
+        lengthName,
+        useJavaScript("TypedArrayLength", [heap, ref], context),
+        ifThenElse(
+          apply("=", [identifier(lengthName), number(-1)]),
+          throwTypeError(path, expression, context, frame),
+          runConversion(
+            expression,
+            {
+              operands: converted,
+              hints: converted.map(() => (method === "join" ? "string" : "number")),
+              combine: (primitives) => tuple([...primitives]),
+            },
+            path,
+            context,
+            frame,
+            (after, primitives) => {
+              const afterHeap = getHeap(after.scope, expression, context);
+              return ifThenElse(
+                useJavaScript("TypedArrayKept", [heap, afterHeap, ref], context),
+                runChange(
+                  after,
+                  useJavaScript(
+                    "TypedArrayMethod",
+                    [
+                      afterHeap,
+                      ref,
+                      string(method),
+                      method === "set"
+                        ? apply("\\o", [tuple([typedValues[0]]), primitives])
+                        : primitives,
+                      translateBuiltInValue("ArrayBuffer.prototype", expression, context),
+                      translateTypedConstructors(expression, context),
+                    ],
+                    context,
+                  ),
+                ),
+                leaf(
+                  apply("Assert", [
+                    boolean(false),
+                    string(
+                      "tla-ts can't follow a typed array method whose argument's conversion changed the typed array",
+                    ),
+                  ]),
+                ),
+              );
+            },
+          ),
+        ),
+      );
+    };
     // set of an array-like source writes each element in order, so the first that a getter which
     // only throws answers throws once set wrote those before it, where nothing before runs code.
     const setGetter = useJavaScript(
@@ -4241,22 +4327,24 @@ const translateCallStatementBody = (
             ? runConvertedSubarray(convertedSubarrayValues)
             : convertedSearchValues !== undefined
               ? runConvertedSearch(convertedSearchValues)
-              : viewCall.owner === "TypedArray" &&
-                  method === "set" &&
-                  getThrowingGetters(expression, context).length > 0
-                ? throwFirstGetter(
-                    expression,
-                    apply("#", [setGetter, getUndefined(context)]),
-                    setGetter,
-                    typedValues[0] ?? getUndefined(context),
-                    withHeap(
-                      useJavaScript("TypedArraySetBefore", [heap, ref, typedArguments], context),
-                    ),
-                    context,
-                    frame,
-                    runOperation(),
-                  )
-                : runOperation();
+              : convertedTypedValues !== undefined
+                ? runConvertedTyped(convertedTypedValues)
+                : viewCall.owner === "TypedArray" &&
+                    method === "set" &&
+                    getThrowingGetters(expression, context).length > 0
+                  ? throwFirstGetter(
+                      expression,
+                      apply("#", [setGetter, getUndefined(context)]),
+                      setGetter,
+                      typedValues[0] ?? getUndefined(context),
+                      withHeap(
+                        useJavaScript("TypedArraySetBefore", [heap, ref, typedArguments], context),
+                      ),
+                      context,
+                      frame,
+                      runOperation(),
+                    )
+                  : runOperation();
     return bindOnce(
       path,
       receiver,
@@ -14428,13 +14516,30 @@ const isIndexConvertingNew = (node: ts.Node, context: Context) => {
   const buffers = getNewBuffer(node, context) ?? [];
   const construction = getBufferConstruction(node, context);
   return (
-    (buffers.every((buffer) => TYPED_ARRAYS.has(buffer)) ||
+    ((buffers.every((buffer) => TYPED_ARRAYS.has(buffer)) ||
       (buffers.length === 1 &&
         buffers[0] === "DataView" &&
         construction?.newTarget === construction?.callee)) &&
-    (construction?.arguments ?? [])
-      .slice(1, 3)
-      .some((value) => !isPrimitiveIndex(getCast(value), context))
+      (construction?.arguments ?? [])
+        .slice(1, 3)
+        .some((value) => !isPrimitiveIndex(getCast(value), context))) ||
+    isLengthConvertingBuffer(node, context)
+  );
+};
+
+// new of an ArrayBuffer or a SharedArrayBuffer whose length is an object, which it converts with
+// ToIndex before it reads its options.
+const isLengthConvertingBuffer = (node: ts.Expression, context: Context) => {
+  const buffers = getNewBuffer(node, context) ?? [];
+  const construction = getBufferConstruction(node, context);
+  const length = construction?.arguments.at(0);
+  return (
+    buffers.length === 1 &&
+    (buffers[0] === "ArrayBuffer" || buffers[0] === "SharedArrayBuffer") &&
+    construction?.newTarget === construction?.callee &&
+    length !== undefined &&
+    !ts.isSpreadElement(length) &&
+    !isPrimitiveIndex(getCast(length), context)
   );
 };
 
@@ -14518,6 +14623,24 @@ const getConvertedSearchValues = (node: ts.Node, context: Context) => {
     !call.values.some(ts.isSpreadElement) &&
     (isObjectOperand(call.values[1], context) || isAnyOperand(call.values[1], context))
     ? call.values.slice(1)
+    : undefined;
+};
+
+// The arguments of a typed array's fill, slice, copyWithin, at, join, or set where one is an
+// object, which the method converts in turn after it reads the typed array's length: join its
+// separator to a string, set its offset to a number, and the others theirs to numbers.
+const getConvertedTypedValues = (node: ts.Node, context: Context) => {
+  const call = getViewCall(node, context);
+  // set converts only its offset, before it reads its source.
+  const converted =
+    call?.method === "set" && call.values.length === 2 ? call.values.slice(1) : call?.values;
+  return call?.owner === "TypedArray" &&
+    converted !== undefined &&
+    ["fill", "slice", "copyWithin", "at", "join", "set"].includes(call.method) &&
+    !call.values.some(ts.isSpreadElement) &&
+    (call.method !== "set" || call.values.length === 2) &&
+    converted.some((value) => isObjectOperand(value, context) || isAnyOperand(value, context))
+    ? converted
     : undefined;
 };
 
@@ -14742,70 +14865,77 @@ const translateNewBufferStatement = (
       ) =>
         !isConverted
           ? make(current, madeArguments, finish)
-          : ifThenElse(
-              useJavaScript(
-                "IsBuffer",
-                [getHeap(current.scope, node, context), madeArguments[0]],
-                context,
-              ),
-              readsPrototypeAfter(
-                current,
-                toIndex(current, madeArguments[1] ?? getUndefined(context), (offsetPath, offset) =>
-                  bind(
-                    offsetPath,
-                    "error",
-                    translateNewBufferOf(
-                      node,
-                      construction,
-                      getHeap(offsetPath.scope, node, context),
-                      tuple([madeArguments[0], offset]),
-                      offsetPath.scope,
-                      context,
-                      "offset error",
-                    ),
-                    context,
-                    (errorPath, error) =>
-                      throwUnless(
-                        errorPath,
-                        error,
-                        madeArguments[2] === undefined
-                          ? make(errorPath, [madeArguments[0], offset], finish)
-                          : toIndex(errorPath, madeArguments[2], (lengthPath, length) => {
-                              const viewed = [madeArguments[0], offset, length];
-                              // A DataView throws the RangeError of a length past its buffer's
-                              // end, as the buffer was before it converted the length.
-                              return buffers.includes("DataView")
-                                ? bind(
-                                    lengthPath,
-                                    "error",
-                                    translateNewBufferOf(
-                                      node,
-                                      construction,
-                                      getHeap(errorPath.scope, node, context),
-                                      tuple(viewed),
-                                      errorPath.scope,
-                                      context,
-                                      "error",
-                                      prototypeGetters.length === 0
-                                        ? undefined
-                                        : getUndefined(context),
-                                    ),
-                                    context,
-                                    (checkedPath, lengthError) =>
-                                      throwUnless(
-                                        checkedPath,
-                                        lengthError,
-                                        make(checkedPath, viewed, finish),
-                                      ),
-                                  )
-                                : make(lengthPath, viewed, finish);
-                            }),
+          : isLengthConvertingBuffer(node, context)
+            ? toIndex(current, madeArguments[0], (after, length) =>
+                make(after, [length, ...madeArguments.slice(1)], finish),
+              )
+            : ifThenElse(
+                useJavaScript(
+                  "IsBuffer",
+                  [getHeap(current.scope, node, context), madeArguments[0]],
+                  context,
+                ),
+                readsPrototypeAfter(
+                  current,
+                  toIndex(
+                    current,
+                    madeArguments[1] ?? getUndefined(context),
+                    (offsetPath, offset) =>
+                      bind(
+                        offsetPath,
+                        "error",
+                        translateNewBufferOf(
+                          node,
+                          construction,
+                          getHeap(offsetPath.scope, node, context),
+                          tuple([madeArguments[0], offset]),
+                          offsetPath.scope,
+                          context,
+                          "offset error",
+                        ),
+                        context,
+                        (errorPath, error) =>
+                          throwUnless(
+                            errorPath,
+                            error,
+                            madeArguments[2] === undefined
+                              ? make(errorPath, [madeArguments[0], offset], finish)
+                              : toIndex(errorPath, madeArguments[2], (lengthPath, length) => {
+                                  const viewed = [madeArguments[0], offset, length];
+                                  // A DataView throws the RangeError of a length past its buffer's
+                                  // end, as the buffer was before it converted the length.
+                                  return buffers.includes("DataView")
+                                    ? bind(
+                                        lengthPath,
+                                        "error",
+                                        translateNewBufferOf(
+                                          node,
+                                          construction,
+                                          getHeap(errorPath.scope, node, context),
+                                          tuple(viewed),
+                                          errorPath.scope,
+                                          context,
+                                          "error",
+                                          prototypeGetters.length === 0
+                                            ? undefined
+                                            : getUndefined(context),
+                                        ),
+                                        context,
+                                        (checkedPath, lengthError) =>
+                                          throwUnless(
+                                            checkedPath,
+                                            lengthError,
+                                            make(checkedPath, viewed, finish),
+                                          ),
+                                      )
+                                    : make(lengthPath, viewed, finish);
+                                }),
+                          ),
                       ),
                   ),
                 ),
-              ),
-              make(current, madeArguments, finish),
-            );
+                make(current, madeArguments, finish),
+              );
       const throwWith = (after: Path) => throwTypeError(after, node, context, frame);
       const step = (
         current: Path,
@@ -15796,7 +15926,8 @@ const getEffects = (
     getConvertedViewValues(node, context) !== undefined ||
     getConvertedAtomicsValues(node, context) !== undefined ||
     getConvertedSubarrayValues(node, context) !== undefined ||
-    getConvertedSearchValues(node, context) !== undefined
+    getConvertedSearchValues(node, context) !== undefined ||
+    getConvertedTypedValues(node, context) !== undefined
       ? getConversionFunctions(node, context)
       : temporalCall !== undefined && isConvertingTemporalCall(temporalCall, node, context)
         ? getKeyedConversionFunctions(node, context)
@@ -19287,7 +19418,11 @@ const getLeadingAssignment = (
   context: Context,
 ): ts.BinaryExpression | Increment | undefined => {
   if (results.has(node)) return undefined;
-  if (isIncrement(node)) return isPlainIncrement(node, context) ? node : undefined;
+  if (isIncrement(node)) {
+    return isPlainIncrement(node, context) && getConversion(node, context) === undefined
+      ? node
+      : undefined;
+  }
   // A unary operator evaluates its operand before it converts it.
   if (ts.isPrefixUnaryExpression(node)) return getLeadingAssignment(node.operand, results, context);
   if (
@@ -19801,6 +19936,7 @@ const findLeadingCall = (
   if ((ts.isExpression(node) || ts.isSpreadElement(node)) && path.scope.results.has(node)) {
     return none;
   }
+  if (isConvertedPropertyKey(node, context)) return { ...blocked, conversion: node };
   // An object that spreads a proxy runs its traps.
   if (ts.isObjectLiteralExpression(node) && isProxyOperation(node, context)) {
     return { call: undefined, isBlocked: true, read: node };
@@ -19844,7 +19980,11 @@ const findLeadingCall = (
       : evaluate(node);
   }
   if (isIncrement(node)) {
-    return isPlainIncrement(node, context) ? { ...blocked, increment: node } : blocked;
+    return getConversion(node, context) !== undefined
+      ? { ...blocked, conversion: node }
+      : isPlainIncrement(node, context)
+        ? { ...blocked, increment: node }
+        : blocked;
   }
   if (ts.isPrefixUnaryExpression(node)) {
     return thenConverted(findLeadingCall(node.operand, before, path, context));
@@ -21703,16 +21843,20 @@ export const translateStatements = (
       context,
       statementFrame,
       (after, value) => {
+        // An increment's conversion gives what it assigns and what it evaluates to.
         const assigned = isCompoundAssignment(node)
           ? assign(node.left, after, context, () => value)
-          : after;
+          : isIncrement(node)
+            ? assign(node.operand, after, context, () => index(value, [number(1)]))
+            : after;
+        const result = isIncrement(node) ? index(value, [number(2)]) : value;
         return translateStatements(
           statements,
           {
             ...assigned,
             scope: {
               ...assigned.scope,
-              results: new Map([...assigned.scope.results, [node, value]]),
+              results: new Map([...assigned.scope.results, [node, result]]),
             },
           },
           context,
