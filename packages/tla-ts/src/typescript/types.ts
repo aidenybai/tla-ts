@@ -1788,6 +1788,102 @@ const findDomains = (types: readonly ts.Type[], context: Context) =>
     return isInfinite(domain) ? domain : [...domains, domain];
   }, []);
 
+// What TLC compares in a value of a finite type: a primitive's kind, or a set's elements, or a
+// function's keys and values, as a tuple, an array, a record, or a map is a function. Undefined and
+// null are model values, which TLC compares with any value.
+interface Shape {
+  kind: "model" | "boolean" | "number" | "string" | "set" | "function";
+  keys?: Shape;
+  values?: ReadonlyMap<string, Shape>;
+  rest?: Shape;
+}
+
+const getShape = (type: ts.Type, context: Context): Shape | undefined => {
+  const checker = context.checker;
+  if (type.isUnion()) {
+    return type.types
+      .map((member) => getShape(member, context))
+      .reduce((left, right) => left && right && unifyShapes(left, right));
+  }
+  if (type.flags & (ts.TypeFlags.Undefined | ts.TypeFlags.Void | ts.TypeFlags.Null)) {
+    return { kind: "model" };
+  }
+  if (type.flags & ts.TypeFlags.BooleanLike) return { kind: "boolean" };
+  if (type.flags & ts.TypeFlags.NumberLike) return { kind: "number" };
+  if (type.flags & ts.TypeFlags.StringLike) return { kind: "string" };
+  const typeArguments = isTypeReference(type) ? checker.getTypeArguments(type) : [];
+  const getShapes = (types: readonly ts.Type[]) => types.map((inner) => getShape(inner, context));
+  if (isSetType(type)) {
+    const rest = getShape(typeArguments[0], context);
+    return rest && { kind: "set", rest };
+  }
+  if (isMapType(type)) {
+    const [keys, rest] = getShapes(typeArguments);
+    return keys && rest && { kind: "function", keys, rest };
+  }
+  if (checker.isArrayType(type)) {
+    const rest = getShape(typeArguments[0], context);
+    return rest && { kind: "function", keys: { kind: "number" }, rest };
+  }
+  const properties = checker.isTupleType(type)
+    ? typeArguments.map((inner, position) => ({ key: String(position), type: inner }))
+    : type.getProperties().map((property) => ({
+        key: property.name,
+        type: checker.getTypeOfSymbol(property),
+      }));
+  const shapes = getShapes(properties.map((property) => property.type));
+  if (shapes.some((shape) => shape === undefined)) return undefined;
+  return {
+    kind: "function",
+    keys: {
+      kind:
+        checker.isTupleType(type) || properties.every((property) => isNumericKey(property.key))
+          ? "number"
+          : "string",
+    },
+    values: new Map(
+      properties.flatMap((property, position) => {
+        const shape = shapes[position];
+        return shape === undefined ? [] : [[property.key, shape]];
+      }),
+    ),
+  };
+};
+
+// The shape of the values of two shapes, or undefined where TLC would compare values of
+// different kinds, such as a string with a number, which it can't.
+const unifyShapes = (left: Shape, right: Shape): Shape | undefined => {
+  if (left.kind === "model") return right;
+  if (right.kind === "model") return left;
+  if (left.kind !== right.kind) return undefined;
+  if (left.kind !== "set" && left.kind !== "function") return left;
+  const unifyPart = (leftPart: Shape | undefined, rightPart: Shape | undefined) =>
+    leftPart === undefined || rightPart === undefined
+      ? { shape: leftPart ?? rightPart }
+      : { shape: unifyShapes(leftPart, rightPart), isConflict: true };
+  const keys = unifyPart(left.keys, right.keys);
+  const rest = unifyPart(left.rest, right.rest);
+  const names = [...new Set([...(left.values?.keys() ?? []), ...(right.values?.keys() ?? [])])];
+  const values = names.map((name) => ({
+    name,
+    ...unifyPart(left.values?.get(name) ?? left.rest, right.values?.get(name) ?? right.rest),
+  }));
+  return [keys, rest, ...values].some(
+    (part) => part.isConflict === true && part.shape === undefined,
+  )
+    ? undefined
+    : {
+        kind: left.kind,
+        keys: keys.shape,
+        rest: rest.shape,
+        values: new Map(
+          values.flatMap((value): [string, Shape][] =>
+            value.shape === undefined ? [] : [[value.name, value.shape]],
+          ),
+        ),
+      };
+};
+
 // The set of every value that a finite type allows, which TLC enumerates.
 export const findDomain = (type: ts.Type, context: Context): Expression | Infinite => {
   const checker = context.checker;
@@ -1803,6 +1899,11 @@ export const findDomain = (type: ts.Type, context: Context): Expression | Infini
       context,
     );
     if (!Array.isArray(others)) return others;
+    if (getShape(type, context) === undefined) {
+      return {
+        message: `${checker.typeToString(type)} mixes values that TLC can't compare, such as a string and a number`,
+      };
+    }
     const enumerated = literalTypes.flatMap((member) => getLiteral(member, context) ?? []);
     return [...(enumerated.length > 0 ? [set(enumerated)] : []), ...others].reduce((left, right) =>
       apply("\\cup", [left, right]),

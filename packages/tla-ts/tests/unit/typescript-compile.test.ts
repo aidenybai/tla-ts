@@ -49237,4 +49237,33 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("lists only values that TLC can compare in a parameter's domain", () => {
+    it("stops at a union of a string and a number", () => {
+      expect(() =>
+        compile(`export const isSame = (value: 1 | "a"): boolean => value === value;`),
+      ).toThrow(
+        `spec.ts:1:24 1 | "a" mixes values that TLC can't compare, such as a string and a number`,
+      );
+    });
+
+    it("stops at records whose same field holds a string and a number", () => {
+      expect(() =>
+        compile(
+          `export const isSame = (value: { kind: "a" } | { kind: 1 }): boolean => value === value;`,
+        ),
+      ).toThrow("mixes values that TLC can't compare");
+    });
+
+    it("agrees with Node for records whose fields differ", async () => {
+      const result = await checkModel(`
+        type Shape = { kind: "circle"; radius: 1 | 2 } | { kind: "label"; text: "a" | "b" };
+        export let seen = 0;
+        export const record = (shape: Shape) => {
+          if (seen < 4) seen += shape.kind === "circle" ? shape.radius : 1;
+        };
+      `);
+      expect([result.status, result.failure]).toEqual(["deadlock", undefined]);
+    });
+  });
 });
