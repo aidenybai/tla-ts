@@ -177,6 +177,7 @@ export abstract class TheoryLraFinalCheck extends TheoryLraModel {
     const literals = lemma.ineqs.map((ineq) => negate(this.mkNlaLiteral(ineq)));
     this.resetEvidence();
     this.coreLiterals.push(...literals);
+    this.numConflicts++;
     for (const constraint of lemma.expl) this.setEvidence(constraint);
     const clause: Literal[] = [];
     for (const literal of this.coreLiterals) {

@@ -37,6 +37,7 @@ export abstract class TheoryLraPropagate extends TheoryLraBounds {
   private upperTerms: (TermBound | undefined)[] = [];
   protected isModelInitialized = false;
   private activeInfEpsConstraints: number[] = [];
+  protected numConflicts = 0;
 
   canPropagate() {
     return (
@@ -136,7 +137,8 @@ export abstract class TheoryLraPropagate extends TheoryLraBounds {
   }
 
   protected isPropagatingEqs() {
-    return this.context.config.isArithPropagatingEqs;
+    const config = this.context.config;
+    return config.isArithPropagatingEqs && this.numConflicts < config.arithPropagationThreshold;
   }
 
   private propagateEqs(
@@ -302,6 +304,9 @@ export abstract class TheoryLraPropagate extends TheoryLraBounds {
   }
 
   private propagateBoundsWithLpSolver() {
+    const config = this.context.config;
+    if (!config.isArithBoundPropagating || this.numConflicts >= config.arithPropagationThreshold)
+      return;
     this.bp.init();
     this.bp.propagateBoundsForTouchedRows();
     if (this.context.checkCanceled()) return;
@@ -385,6 +390,7 @@ export abstract class TheoryLraPropagate extends TheoryLraBounds {
 
   protected setConflict() {
     this.resetEvidence();
+    this.numConflicts++;
     for (const constraint of this.explanation) this.setEvidence(constraint);
     this.context.setConflict(new TheoryJustification(this.id, this.coreLiterals, []), null);
   }

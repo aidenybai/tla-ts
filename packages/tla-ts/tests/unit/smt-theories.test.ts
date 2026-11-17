@@ -148,6 +148,45 @@ describe("the setup of the smt kernel", () => {
       ].join("\n"),
     );
   });
+
+  it("turns off bound propagation for QF_LIA clauses of at most two literals with large coefficients", () => {
+    expect(
+      run([
+        "(set-logic QF_LIA)",
+        "(declare-const x0 Int)",
+        "(declare-const x1 Int)",
+        "(declare-const x2 Int)",
+        "(declare-const x3 Int)",
+        "(declare-const x4 Int)",
+        "(assert (> (+ (* -85063 x4) (* -20559 x0) (* -48732 x1)) -70725))",
+        "(assert (>= (* -1719 x4) 13988))",
+        "(assert (>= (+ (* -80993 x1) (* 16607 x0)) -199070))",
+        "(assert (or (>= (* -21740 x1) -48321) (<= (+ (* -25806 x1) (* 39163 x4)) -10633)))",
+        "(assert (< (* -43497 x2) 116203))",
+        "(assert (or (> (+ (* 40117 x2) (* 41392 x0) (* -63075 x1)) 169449) (< (* 2998 x0) 11966)))",
+        "(assert (>= (+ (* -59353 x2) (* -23714 x3)) -137599))",
+        "(assert (or (< (+ (* 60667 x2) (* -77302 x4)) -44883) (< (* -27327 x3) 68896)))",
+        "(check-sat)",
+        "(get-model)",
+      ]).join("\n"),
+    ).toBe(
+      [
+        "sat",
+        "(",
+        "  (define-fun x4 () Int",
+        "    (- 9))",
+        "  (define-fun x1 () Int",
+        "    3)",
+        "  (define-fun x2 () Int",
+        "    3)",
+        "  (define-fun x0 () Int",
+        "    6)",
+        "  (define-fun x3 () Int",
+        "    (- 2))",
+        ")",
+      ].join("\n"),
+    );
+  });
 });
 
 describe("regular expressions", () => {

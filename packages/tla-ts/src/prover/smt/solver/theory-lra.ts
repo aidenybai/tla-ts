@@ -231,5 +231,6 @@ export class TheoryLra extends TheoryLraFinalCheck {
 
   initSearchEh() {
     this.restartPairs = [];
+    this.numConflicts = 0;
   }
 }
