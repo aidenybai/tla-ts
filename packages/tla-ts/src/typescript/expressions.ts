@@ -4557,6 +4557,18 @@ export const translateNode = (
     const value = typeof process === "undefined" ? undefined : process.env[variable];
     return value === undefined ? getUndefined(context) : string(value);
   }
+  // Node's process object holds functions and the host's values, which tla-ts doesn't model, but
+  // for the environment that process.env reads.
+  if (
+    ts.isPropertyAccessExpression(node) &&
+    node.name.text !== "env" &&
+    isProcess(skipCasts(node.expression), context)
+  ) {
+    return apply("Assert", [
+      boolean(false),
+      string(`tla-ts can't read process.${node.name.text}, which Node's process object holds`),
+    ]);
+  }
   if (ts.isPropertyAccessExpression(node)) {
     const read = translatePropertyAccess(node, scope, context);
     // A property that the type doesn't declare comes from an index signature, which may lack it.

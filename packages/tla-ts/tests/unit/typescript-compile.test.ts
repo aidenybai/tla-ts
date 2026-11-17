@@ -46053,7 +46053,9 @@ describe("BigInts", () => {
         // @ts-ignore
         const version = process.version;
       `);
-      expect(result.failure?.message).toContain("tla-ts can't follow Node's process object");
+      expect(result.failure?.message).toContain(
+        "tla-ts can't read process.version, which Node's process object holds",
+      );
     });
   });
 
@@ -49771,6 +49773,20 @@ describe("BigInts", () => {
     it("stops where a call passes a key of another kind", () => {
       expect(() => compile(getSource("Green,Small,Small,2", '"Size"'))).toThrow(
         "Give a Map keys of one kind, as TLC can't compare a number with a string",
+      );
+    });
+  });
+
+  describe("stops at a member of Node's process object, which tla-ts doesn't model", () => {
+    const path = join(import.meta.dirname, "../fixtures/typescript/common-js/typing.ts");
+
+    it("stops where a script reads process.nextTick, as TypeScript's isNodeLikeSystem does", async () => {
+      const source = `/// <reference types="node" />
+        const box = { isNode: false };
+        box.isNode = typeof process !== "undefined" && !!process.nextTick;
+      `;
+      expect((await check(compile(source, path))).failure?.message).toContain(
+        "tla-ts can't read process.nextTick, which Node's process object holds",
       );
     });
   });
