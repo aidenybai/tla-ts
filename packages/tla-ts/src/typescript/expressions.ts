@@ -87,6 +87,7 @@ import {
   isCommonJsFile,
   isModuleRequire,
   isNodeModule,
+  isJavaScriptFile,
 } from "./common-js";
 import { TlaTypeScriptError } from "../errors";
 import { translateJsonCall } from "./json";
@@ -2716,6 +2717,42 @@ export const getThisValue = (owner: ts.Node, value: Expression, context: Context
   return useJavaScript("SloppyThis", [value], context);
 };
 
+// The binding that a read or a write of the global object's property names, where the key is a
+// var's at the top level of a script, or a global's that a write outside strict mode makes, which
+// the global object holds as its property and tla-ts holds as a variable.
+export const getGlobalBinding = (node: ts.Node, context: Context) => {
+  if (!ts.isPropertyAccessExpression(node) && !ts.isElementAccessExpression(node)) return undefined;
+  if (!isGlobalObject(skipCasts(node.expression), context)) return undefined;
+  const key = ts.isPropertyAccessExpression(node)
+    ? node.name.text
+    : ts.isStringLiteralLike(node.argumentExpression)
+      ? node.argumentExpression.text
+      : undefined;
+  if (key === undefined) return undefined;
+  const implicit = [...context.implicitGlobals].find((symbol) => symbol.name === key);
+  if (implicit !== undefined) return implicit;
+  const vars = findNodes(
+    node.getSourceFile(),
+    (inner): inner is ts.VariableDeclaration =>
+      ts.isVariableDeclaration(inner) && ts.isIdentifier(inner.name) && inner.name.text === key,
+  );
+  const symbol = vars[0] && getSymbol(vars[0].name, context.checker);
+  const declarations = symbol?.declarations ?? [];
+  return symbol !== undefined &&
+    !isModuleFile(node.getSourceFile()) &&
+    !isJavaScriptFile(node.getSourceFile().fileName) &&
+    declarations.length > 0 &&
+    declarations.every(
+      (declaration) =>
+        ts.isVariableDeclaration(declaration) &&
+        !isAmbientCode(declaration) &&
+        (ts.getCombinedNodeFlags(declaration) & ts.NodeFlags.BlockScoped) === 0 &&
+        ts.findAncestor(declaration, ts.isFunctionLike) === undefined,
+    )
+    ? symbol
+    : undefined;
+};
+
 export const isGlobalObject = (node: ts.Expression, context: Context) => {
   const symbol = getSymbol(node, context.checker);
   return (
@@ -4620,6 +4657,15 @@ export const translateNode = (
       boolean(false),
       string(`tla-ts can't read process.${node.name.text}, which Node's process object holds`),
     ]);
+  }
+  // The global object's property that a var or a global holds reads the binding, which an absent
+  // global leaves undefined.
+  const globalBinding = getGlobalBinding(node, context);
+  const globalValue = globalBinding && scope.bindings.get(globalBinding);
+  if (globalBinding !== undefined && globalValue !== undefined) {
+    return context.implicitGlobals.has(globalBinding)
+      ? ifExpression(isUnresolvable(globalValue, context), getUndefined(context), globalValue)
+      : globalValue;
   }
   if (ts.isPropertyAccessExpression(node)) {
     const read = translatePropertyAccess(node, scope, context);

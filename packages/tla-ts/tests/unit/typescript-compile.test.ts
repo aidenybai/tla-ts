@@ -15140,8 +15140,6 @@ describe("errors", () => {
     `;
 
     it.each([
-      "globalThis.parseInt",
-      'globalThis["parseInt"]',
       '"parseInt" in globalThis',
       'Object.hasOwn(globalThis, "parseInt")',
       'Object.getOwnPropertyDescriptor(globalThis, "parseInt")',
@@ -15157,6 +15155,16 @@ describe("errors", () => {
       const result = await checkModel(getSource("parseInt"));
       expect(result.failure).toBeUndefined();
     });
+
+    it.each(["globalThis.parseInt", 'globalThis["parseInt"]'])(
+      "reads the var's value at %s",
+      async (read) => {
+        const source = `${getSource(read)}\nif (holder.value !== 1) throw new Error("value");`;
+        expect((await checkModel(source)).failure).toBeUndefined();
+        const wrong = source.replace("holder.value !== 1", "holder.value !== 2");
+        expect((await checkModel(wrong)).failure?.message).toContain("value");
+      },
+    );
 
     it("rejects another value of another key", async () => {
       const source = getSource("parseInt").replace("=== parseFloat", "!== parseFloat");
@@ -18366,16 +18374,15 @@ describe("errors", () => {
       ).toContain("tla-ts can't tell which properties the global object has");
     });
 
-    it("stops where a var declares the key", async () => {
-      expect(
-        (
-          await checkModel(`
-            var declared = 1;
-            const holder = { seen: 0 };
-            holder.seen = (globalThis as unknown as Record<string, unknown>).declared === 1 ? 1 : 2;
-          `)
-        ).failure?.message,
-      ).toContain("tla-ts can't tell which properties the global object has");
+    it("reads the value of a var that declares the key", async () => {
+      const getSource = (expected: number) => `
+        var declared = 1;
+        const holder = { seen: 0 };
+        holder.seen = (globalThis as unknown as Record<string, unknown>).declared === 1 ? 1 : 2;
+        if (holder.seen !== ${expected}) throw new Error("seen " + holder.seen);
+      `;
+      expect((await checkModel(getSource(1))).failure).toBeUndefined();
+      expect((await checkModel(getSource(2))).failure?.message).toContain("seen 1");
     });
   });
 
@@ -51890,6 +51897,80 @@ describe("BigInts", () => {
           };
         `),
       ).toThrow("Unsupported call: pick().area");
+    });
+  });
+
+  describe("keeps what a write of an array's length deleted before it failed outside strict mode", () => {
+    const getSource = (expected: string) => `
+      var arr: any[] = [0, 1, 2, 3];
+      Object.defineProperty(arr, "2", { value: "kept", configurable: false });
+      arr.length = 1;
+      var other: any[] = [0, 1];
+      Object.defineProperty(other, "length", { writable: false });
+      other[5] = 1;
+      var result = [arr.length, arr[2], 3 in arr, other.length, 5 in other].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("3,kept,false,2,false"))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkModel(getSource("3,kept,true,2,false"))).failure?.message).toContain(
+        "result 3,kept,false,2,false",
+      );
+    });
+  });
+
+  describe("reads and writes a var or a global outside strict mode through the global object's property", () => {
+    const getSource = (expected: string) => `
+      var counter: number = 1;
+      (globalThis as any).counter = 5;
+      (globalThis as any).counter++;
+      function setLater() {
+        // @ts-ignore
+        later = "x";
+      }
+      var before = (globalThis as any).later;
+      (globalThis as any).later = "y";
+      // @ts-ignore
+      var read = later;
+      var result = [counter, String(before), read, typeof setLater].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("6,undefined,y,function"))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkModel(getSource("5,undefined,y,function"))).failure?.message).toContain(
+        "result 6,undefined,y,function",
+      );
+    });
+  });
+
+  describe("converts an object that a Temporal function reads through its methods", () => {
+    const getSource = (expected: string) => `
+      const calls: string[] = [];
+      const years = {
+        valueOf() {
+          calls.push("years");
+          return 2;
+        },
+      };
+      const duration = new Temporal.Duration(years as any, 3);
+      const outcome = [duration.years, duration.months, calls.join("|")].join();
+      if (outcome !== "${expected}") throw new Error("outcome " + outcome);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("2,3,years"))).failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      expect((await checkModel(getSource("2,3,"))).failure?.message).toContain("outcome 2,3,years");
     });
   });
 });

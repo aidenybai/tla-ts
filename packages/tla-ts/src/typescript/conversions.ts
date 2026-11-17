@@ -17,7 +17,16 @@ import { type Formula, ifThenElse, leaf } from "./formula";
 import { getHeap } from "./heap";
 import { getBuiltIn } from "./intrinsics";
 import { translateNumberOf, useJavaScript } from "./javascript";
-import { bind, callValue, getMethods, getWrittenFunctions, isNullish, read } from "./protocols";
+import {
+  bind,
+  callValue,
+  getKeyGetters,
+  getMethods,
+  getWrittenFunctions,
+  isNullish,
+  read,
+  readWith,
+} from "./protocols";
 import { apply, boolean, junction, not, string, tuple } from "./tla";
 import { getKind, hasHeapType, isEvery, isHeapType, mayBeSequenceType } from "./types";
 
@@ -482,6 +491,11 @@ export const getConversionFunctions = (node: ts.Node, context: Context) => [
   ...getAccessorFunctions(node, "get", context),
 ];
 
+// The functions that converting an object may run where it reads only the getters that an object
+// declares under the keys of its conversion methods, as a Temporal function's conversion does.
+export const getKeyedConversionFunctions = (node: ts.Node, context: Context) =>
+  CONVERSION_KEYS.flatMap((key) => getWrittenFunctions(node, key, context));
+
 // The Symbol.toPrimitive methods that tla-ts calls, which can't see the hint that it doesn't pass.
 const getExoticMethods = (node: ts.Node, context: Context) =>
   getMethods(node, "@@toPrimitive", context).filter(
@@ -503,14 +517,41 @@ const toPrimitive = (
   frame: Frame,
   throwWith: (path: Path) => Formula,
   continueWith: (path: Path, primitive: Expression) => Formula,
+  isKeyed: boolean,
 ): Formula => {
+  // A method that an object holds under its key, which a getter that the object's class or literal
+  // declares under the key may give, and else a getter that a descriptor gives, where isKeyed
+  // doesn't leave those out.
+  const readKey = (
+    readSite: ts.Node,
+    object: Expression,
+    key: string,
+    current: Path,
+    readContext: Context,
+    readFrame: Frame,
+    next: (path: Path, value: Expression) => Formula,
+  ) =>
+    readWith(
+      readSite,
+      object,
+      key.startsWith("@@")
+        ? useJavaScript("WellKnownSymbol", [string(key.slice(2))], readContext)
+        : string(key),
+      isKeyed
+        ? getWrittenFunctions(readSite, key, readContext).filter(ts.isGetAccessorDeclaration)
+        : getKeyGetters(readSite, key, readContext),
+      current,
+      readContext,
+      readFrame,
+      next,
+    );
   const isObject = (current: Path, inner: Expression) =>
     useJavaScript("IsObjectIn", [getHeap(current.scope, site, context), inner], context);
   const ordinary = (current: Path, names: readonly string[]): Formula => {
     const name = names[0];
     if (name === undefined) return throwWith(current);
     const rest = names.slice(1);
-    return read(site, value, name, current, context, frame, (found, method) =>
+    return readKey(site, value, name, current, context, frame, (found, method) =>
       ifThenElse(
         apply("=", [
           useJavaScript("TypeOfIn", [getHeap(found.scope, site, context), method], context),
@@ -545,7 +586,7 @@ const toPrimitive = (
   };
   return ifThenElse(
     isObject(path, value),
-    read(site, value, "@@toPrimitive", path, context, frame, (found, exotic) =>
+    readKey(site, value, "@@toPrimitive", path, context, frame, (found, exotic) =>
       ifThenElse(
         isNullish(exotic, context),
         ordinary(found, hint === "string" ? ["toString", "valueOf"] : ["valueOf", "toString"]),
@@ -593,6 +634,7 @@ export const runToPrimitive = (
   context: Context,
   frame: Frame,
   continueWith: (path: Path, primitive: Expression) => Formula,
+  isKeyed = false,
 ) =>
   translateJoined(
     site,
@@ -605,7 +647,8 @@ export const runToPrimitive = (
         path,
         context,
         (after) => throwTypeError(after, site, context, frame),
-        (throwWith) => toPrimitive(site, value, hint, path, context, frame, throwWith, next),
+        (throwWith) =>
+          toPrimitive(site, value, hint, path, context, frame, throwWith, next, isKeyed),
       ),
   );
 
