@@ -342,6 +342,34 @@ describe("subexpression references into theorems match SANY", () => {
         ["line 9, col 60 to line 9, col 60", "Nonexistent operand specified by `@'."],
       ],
     ],
+    [
+      "the arguments of a selection that fails, against the parameters they fill",
+      "Op1(a0, P1(_)) == TRUE\nOp0(P0(_, _)) == 1\nA == Op1(LAMBDA p : p, {zz})!@\nB == Op0(LAMBDA p : p)!1\nC == Op1(Op0, Op0)!2",
+      [
+        [
+          "line 5, col 10 to line 5, col 21",
+          "LAMBDA expression used where an expression is required.",
+        ],
+        [
+          "line 5, col 24 to line 5, col 27",
+          "An expression appears as argument number 2 (counting from 1) to operator 'Op1', in a position an operator is required.",
+        ],
+        ["line 5, col 30 to line 5, col 30", "Nonexistent operand specified by `@'."],
+        [
+          "line 6, col 6 to line 6, col 8",
+          "Lambda expression with arity 1 used as argument 1 of operator `Op0', \nbut an operator of arity 2 is required.",
+        ],
+        [
+          "line 6, col 24 to line 6, col 24",
+          "Selecting subexpression of expression that has none.",
+        ],
+        ["line 7, col 10 to line 7, col 12", "The operator Op0 requires 1 arguments."],
+        [
+          "line 7, col 20 to line 7, col 20",
+          "Nonexistent operand specified by `argument selector 2'.",
+        ],
+      ],
+    ],
   ])("reports every error SANY reports for %s", async (_name, definitions, errors) => {
     await expect(checkModule(definitions)).rejects.toThrow(getSanyError(errors, "M"));
   });

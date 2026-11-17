@@ -23,12 +23,14 @@ import {
   getNameSelectors,
   getOperandIndex,
   getOperands,
+  getParamArities,
   isBefore,
   LOCAL_RESOLUTION,
   nullSelections,
   selectionErrors,
   selections,
   type NullSelection,
+  type SelectionArguments,
 } from "./resolve";
 
 type Lookup = (name: string) => Definition | undefined;
@@ -69,6 +71,12 @@ const getSelectorName = (selector: Selector) => {
       return ":";
   }
 };
+
+const getExpressionArguments = (
+  operator: string,
+  range: SourceRange | undefined,
+  args: Expression[],
+): SelectionArguments => ({ operator, range, args, params: args.map(() => 0) });
 
 const createError = (message: string, location: SourceLocation) =>
   new TlaSyntaxError(`${message} at line ${location.line}, column ${location.column}`);
@@ -183,17 +191,16 @@ const selectSubexpression = (
   let current: Expression | undefined;
   let isFailed = false;
   const nulls: NullSelection[] = [];
+  const applications: SelectionArguments[] = [];
   const checkNull = (node: Expression | undefined, message: string) => {
     const range = reference.selectorRanges?.[selectorIndex];
     if (node && range) nulls.push({ node, error: { location: formatRange(range), message } });
   };
 
-  const report = (range: SourceRange | undefined, message: string, argumentEnd = selectorIndex) => {
+  const report = (range: SourceRange | undefined, message: string) => {
     if (!range) throw createError(message, location);
     selectionErrors.set(reference, {
-      args: selectors
-        .slice(0, argumentEnd)
-        .flatMap((selector) => ("args" in selector ? selector.args : [])),
+      applications,
       error: { location: formatRange(range), message },
     });
     isFailed = true;
@@ -236,6 +243,12 @@ const selectSubexpression = (
       );
     }
     if (isLast) return { definition, args: found.args };
+    applications.push({
+      operator: found.name,
+      range: reference.selectorRanges?.[selectorIndex],
+      args: found.args,
+      params: getParamArities(definition),
+    });
     const range = definition.location.range;
     if (
       definition.isRecursive &&
@@ -246,7 +259,6 @@ const selectSubexpression = (
       return report(
         reference.selectorRanges?.[selectorIndex],
         `Subexpression of  \`${found.name}' used inside the operator's definition.`,
-        selectorIndex + 1,
       );
     }
     if (definition.kind !== "Operator") {
@@ -273,6 +285,7 @@ const selectSubexpression = (
       selection.lets.push(...found.lets);
       selection.params.push(...params.map((name) => ({ name, arity: 0 })));
       selection.args.push(...selector.args);
+      applications.push(getExpressionArguments(selector.name, range, selector.args));
       current = found.label.body;
       selectorIndex++;
     }
@@ -325,7 +338,10 @@ const selectSubexpression = (
     const binder = getBinder(current);
     if (binder && (selector.kind === "Bound" || selector.kind === "At")) {
       selection.params.push(...binder.names.map((name) => ({ name, arity: 0 })));
-      if (selector.kind === "Bound") selection.args.push(...selector.args);
+      if (selector.kind === "Bound") {
+        selection.args.push(...selector.args);
+        applications.push(getExpressionArguments("", range, selector.args));
+      }
       current = binder.body;
       return;
     }
