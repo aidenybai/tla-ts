@@ -49260,4 +49260,38 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("runs no function where a call leaves out a parameter that may hold one", () => {
+    const getSource = (expected: string) => `
+      const box = { seen: [] as string[] };
+      const target: Record<string, unknown> = {};
+      const own = target.hasOwnProperty.bind(target);
+      const report = () => {
+        box.seen.push(String(own("x")));
+      };
+      const patch = (onActive?: () => void, onReady?: () => void) => {
+        box.seen.push("patch");
+        if (onActive) box.seen.push("active");
+        onReady?.();
+      };
+      const get = (onActive?: () => void) => {
+        patch(onActive);
+      };
+      patch();
+      patch(undefined, undefined);
+      get(() => {});
+      const seen = box.seen.join();
+      if (seen !== "${expected}") throw new Error("seen " + seen + typeof report);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("patch,patch,patch,active"))).failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      expect((await checkModel(getSource("patch,patch,active"))).failure?.message).toContain(
+        "seen patch,patch,patch,active",
+      );
+    });
+  });
 });

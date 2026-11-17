@@ -48,6 +48,9 @@ export interface SharedCall {
   captured: ts.Symbol[];
   // The function that each parameter takes, which the operator calls where the body calls it.
   callbacks: ReadonlyMap<ts.Symbol, FunctionNode>;
+  // The parameters whose type allows a function that its call leaves out or passes undefined, which
+  // hold undefined in the operator rather than any function.
+  absent: ReadonlySet<ts.Symbol>;
   // The function that each name it reads holds where its caller calls it, which no value carries.
   held: ReadonlyMap<ts.Symbol, FunctionNode>;
   // The state and the names from outside that it changes, which it gives back in that order.

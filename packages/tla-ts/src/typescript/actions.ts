@@ -2380,12 +2380,18 @@ export const translateCallStatement = (
     if (!ts.isIdentifier(expression.expression)) {
       throw new TlaTypeScriptError("Optional calls aren't supported", expression);
     }
+    const callee = translateExpression(expression.expression, path.scope, context);
+    // A parameter that the call leaves out holds undefined, which runs none of the functions that
+    // its type allows.
+    if (callee.kind === "Identifier" && ["Undefined", "Null"].includes(callee.name)) {
+      return continueWith(path, getUndefined(context));
+    }
     const name = context.names.getFresh("callee");
     context.prelude.add("Null");
     return bindOnce(
       path,
       name,
-      translateExpression(expression.expression, path.scope, context),
+      callee,
       translateJoined(expression, path, context, continueWith, (next) =>
         ifThenElse(
           apply("\\in", [identifier(name), set([getUndefined(context), identifier("Null")])]),
