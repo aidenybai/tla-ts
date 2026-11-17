@@ -51350,4 +51350,114 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("1,2,3"))).failure?.message).toContain("joined 3,2,1");
     });
   });
+
+  describe("runs a built-in that a const holds where the const still holds it", () => {
+    const getSource = (expected: string, replaced = "") => `
+      const objectDefineProperty = Object.defineProperty;
+      const objectFreeze = Object.freeze;
+      const target: { x?: number } = {};
+      ${replaced}
+      objectDefineProperty(target, "x", { value: 2, enumerable: true });
+      objectFreeze(target);
+      const results = [target.x, Object.isFrozen(target)].join(",");
+      if (results !== "${expected}") throw new Error("results " + results);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("2,true"))).failure).toBeUndefined();
+    });
+
+    it("rejects other results", async () => {
+      expect((await checkModel(getSource("2,false"))).failure?.message).toContain("results 2,true");
+    });
+
+    it("runs the built-in that the const read where a script replaces it later", async () => {
+      const replaced =
+        "Object.defineProperty = ((object: object) => object) as typeof Object.defineProperty;";
+      expect((await checkModel(getSource("2,true", replaced))).failure).toBeUndefined();
+    });
+  });
+
+  describe("runs a String.prototype method that an object holds under its key", () => {
+    const getSource = (expected: string) => `
+      const word = {
+        toString: function () {
+          return "tla";
+        },
+        charAt: String.prototype.charAt,
+      };
+      const broken = {
+        toString: function (): string {
+          throw "intostring";
+        },
+        charAt: String.prototype.charAt,
+      };
+      const first = word.charAt(1);
+      let caught: unknown;
+      try {
+        broken.charAt(0);
+      } catch (error) {
+        caught = error;
+      }
+      const results = [first, caught].join(",");
+      if (results !== "${expected}") throw new Error("results " + results);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("l,intostring"))).failure).toBeUndefined();
+    });
+
+    it("rejects other results", async () => {
+      expect((await checkModel(getSource("t,intostring"))).failure?.message).toContain(
+        "results l,intostring",
+      );
+    });
+  });
+
+  describe("inlines a helper whose caller holds the environment of a local that closures share", () => {
+    const getSource = (expected: number) => `
+      function expectThrow(f: () => unknown, expected: unknown) {
+        try {
+          f();
+        } catch (error) {
+          if (error !== expected) throw new Error("other");
+          return;
+        }
+        throw new Error("none");
+      }
+      let seen = -1;
+      function test() {
+        var returnCalled = 0;
+        var iterable = {} as unknown as { [key: string | symbol]: unknown } & Iterable<unknown>;
+        // @ts-ignore
+        iterable[Symbol.iterator] = function () {
+          return {
+            next() {
+              return { done: false };
+            },
+            return() {
+              returnCalled++;
+              throw 42;
+            },
+          };
+        };
+        expectThrow(function () {
+          for (var x of iterable) {
+            return;
+          }
+        }, 42);
+        seen = returnCalled;
+      }
+      test();
+      if (seen !== ${expected}) throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(1))).failure).toBeUndefined();
+    });
+
+    it("rejects another count", async () => {
+      expect((await checkModel(getSource(2))).failure?.message).toContain("seen 1");
+    });
+  });
 });

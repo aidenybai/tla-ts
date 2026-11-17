@@ -291,6 +291,7 @@ import {
   isRevoke,
   getPrimitiveObjectCall,
   isObjectChange,
+  getObjectChangeKey,
   isReflectChange,
   isReflectSet,
   isUnreachableChange,
@@ -318,6 +319,8 @@ import {
 import {
   COLLECTIONS,
   getBuiltIn,
+  getBuiltInPath,
+  isBuiltInRead,
   getMissingMethod,
   isBuiltInObject,
   translateMissingMethod,
@@ -1807,7 +1810,7 @@ const assignPatternWith = (
 // Reflect.set, which runs a setter that the script writes with the receiver as this, and gives
 // true, or sets the key as OrdinarySet does and gives whether it did.
 const translateReflectSet = (
-  expression: MethodCall,
+  expression: ts.CallExpression,
   path: Path,
   context: Context,
   frame: Frame,
@@ -2578,6 +2581,8 @@ const translateCallStatementBody = (
   context: Context,
   frame: Frame,
   continueWith: (path: Path, value?: Expression) => Formula,
+  // Whether the call already checked that a const it runs through holds the built-in it denotes.
+  isHeld = false,
 ): Formula => {
   const loop = getLoopCall(expression, path, context);
   // A receiver or a later argument that only statements can run runs first, where what evaluates
@@ -4590,7 +4595,36 @@ const translateCallStatementBody = (
   if (isOwnValuesRead(expression, context)) {
     return readOwnValues(expression, path, context, frame, continueWith);
   }
-  if (isObjectChange(expression, context) && isReflectSet(expression) && heapSymbol !== undefined) {
+  // A const that holds the built-in runs it where it still holds it, as it read it as it started.
+  const builtInPath = getBuiltInPath(expression.expression, context);
+  if (
+    isObjectChange(expression, context) &&
+    heapSymbol !== undefined &&
+    builtInPath !== undefined &&
+    !isHeld &&
+    !isBuiltInRead(expression.expression, context)
+  ) {
+    const held = translateExpression(expression.expression, path.scope, context);
+    return ifThenElse(
+      useJavaScript(
+        "SameValue",
+        [held, useJavaScript(":>", [identifier("Ref"), string(builtInPath)], context)],
+        context,
+      ),
+      translateCallStatementBody(expression, path, context, frame, continueWith, true),
+      leaf(
+        apply("Assert", [
+          boolean(false),
+          string(`tla-ts can't call ${builtInPath} where a script replaced it`),
+        ]),
+      ),
+    );
+  }
+  if (
+    isObjectChange(expression, context) &&
+    isReflectSet(expression, context) &&
+    heapSymbol !== undefined
+  ) {
     return translateReflectSet(expression, path, context, frame, continueWith);
   }
   if (isObjectChange(expression, context) && heapSymbol !== undefined) {
@@ -4600,9 +4634,9 @@ const translateCallStatementBody = (
     // whether they made the change.
     const target = expression.arguments.at(0);
     const value =
-      expression.expression.name.text === "construct" || target === undefined
+      getObjectChangeKey(expression, context) === "construct" || target === undefined
         ? undefined
-        : isReflectChange(expression)
+        : isReflectChange(expression, context)
           ? field(identifier(name), "value")
           : translateObjectValue(target, path.scope, context);
     if (isDescriptorRead(expression, context) && "values" in translated) {
@@ -4660,7 +4694,7 @@ const translateCallStatementBody = (
         bind(
           path,
           "descriptor",
-          expression.expression.name.text === "defineProperties"
+          getObjectChangeKey(expression, context) === "defineProperties"
             ? useJavaScript(
                 "PropertiesLengthDescriptor",
                 [getHeap(path.scope, expression, context), values[0], values[1]],
@@ -4695,7 +4729,9 @@ const translateCallStatementBody = (
                       next(
                         again,
                         useJavaScript(
-                          isReflectChange(expression) ? "ReflectDefineLength" : "DefineLength",
+                          isReflectChange(expression, context)
+                            ? "ReflectDefineLength"
+                            : "DefineLength",
                           [
                             getHeap(again.scope, expression, context),
                             values[0],
@@ -9917,7 +9953,7 @@ const isObjectLength = (receiver: ts.Node, context: Context) => {
 
 // Whether Object.defineProperty, Reflect.defineProperty, or Object.defineProperties may define an
 // array's length with an object as its value.
-const mayDefineObjectLength = (node: MethodCall, context: Context) => {
+const mayDefineObjectLength = (node: ts.CallExpression, context: Context) => {
   const checker = context.checker;
   const isOpen = (type: ts.Type) => (type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;
   const getMember = (type: ts.Type | undefined, key: string) => {
@@ -9939,14 +9975,14 @@ const mayDefineObjectLength = (node: MethodCall, context: Context) => {
     );
   const key = node.arguments.at(1);
   const descriptor = node.arguments.at(2);
-  if (node.expression.name.text === "defineProperties") {
+  if (getObjectChangeKey(node, context) === "defineProperties") {
     return (
       key !== undefined &&
       mayBeObject(getMember(getMember(checker.getTypeAtLocation(key), "length"), "value"))
     );
   }
   return (
-    node.expression.name.text === "defineProperty" &&
+    getObjectChangeKey(node, context) === "defineProperty" &&
     key !== undefined &&
     ts.isStringLiteralLike(key) &&
     key.text === "length" &&
@@ -14187,9 +14223,9 @@ const isStatementResult = (node: ts.CallExpression, path: Path, context: Context
     isOwnValuesRead(node, context) ||
     isRevoke(node, context) ||
     (isObjectChange(node, context) &&
-      node.expression.name.text !== "construct" &&
-      (isReflectChange(node) ||
-        isReflectSet(node) ||
+      getObjectChangeKey(node, context) !== "construct" &&
+      (isReflectChange(node, context) ||
+        isReflectSet(node, context) ||
         isHeapType(context.checker.getTypeAtLocation(node), context) ||
         // An array that the heap holds, which a variable that it holds takes.
         context.heapCollections.has(node.parent) ||
@@ -15790,7 +15826,9 @@ const getEffects = (
           )
         : []),
       ...(isStackCall || isUsing ? getStackFunctions(node, context) : []),
-      ...(isObjectChange(node, context) && isReflectSet(node) ? getSetters(node, context) : []),
+      ...(isObjectChange(node, context) && isReflectSet(node, context)
+        ? getSetters(node, context)
+        : []),
       ...(isIteratorDispose ? getWrittenFunctions(node, "return", context) : []),
       ...(isIteratorDispose ? getMethods(node, "return", context, true) : []),
       ...callees.flatMap((callee) => getFunctionNode(callee) ?? []),
