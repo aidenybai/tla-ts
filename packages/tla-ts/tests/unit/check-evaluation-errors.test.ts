@@ -1284,6 +1284,23 @@ describe("evaluation errors match TLC", () => {
     expect([result.status, prints]).toEqual(["success", ["0  TRUE"]]);
   });
 
+  it.each([
+    [
+      "TLCEval(<<5, 6>>)[6]",
+      "Attempted to apply function:\n<<5, 6>>\nto argument 6, which is not in the domain of the function.",
+    ],
+    [
+      "TLCEval([a |-> 1]).b",
+      'Attempted to apply function:\n[a |-> 1]\nto argument "b", which is not in the domain of the function.',
+    ],
+    [
+      'TLCEval(<<5, 6>>)["a"]',
+      'Attempted to apply function with integer domain to the non-integer argument "a"',
+    ],
+  ])("applies %s as the plain function TLCEval makes", async (expression, message) => {
+    expect((await checkModule(`ASSUME PrintT(${expression})`)).violation?.message).toBe(message);
+  });
+
   it("evaluates a constant TLCEval argument once for every state", async () => {
     const prints: string[] = [];
     const result = await check({

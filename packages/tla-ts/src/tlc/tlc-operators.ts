@@ -22,6 +22,7 @@ import {
   ANY_SET,
   createFunction,
   createSet,
+  createSortedFunction,
   createTuple,
   createWrittenFunction,
   formatNormalizedCopies,
@@ -162,8 +163,11 @@ const normalizeDeeply = (value: Value): void => {
 const convertLikeTlcEval = (value: Value): Value => {
   if (typeof value !== "object") return value;
   switch (value.kind) {
-    case "ModelValue":
     case "Function":
+      return value.functionClass === undefined
+        ? value
+        : createSortedFunction(value.domain, value.range);
+    case "ModelValue":
     case "MixedSet":
     case "InfiniteSet":
     case "SequenceSet":
