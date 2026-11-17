@@ -110,6 +110,31 @@ describe("evaluation errors match TLC", () => {
     expect(result.violation?.message).toBe(message);
   });
 
+  it.each(["[a |-> Len(3), s |-> CASE 1 -> 2]", "[a : Len(3), s : CASE 1 -> 2]"])(
+    "evaluates the fields of %s in the order they're written, like TLC",
+    async (expression) => {
+      const result = await checkModule(`F(s) == s\nASSUME ${expression} = {}`);
+      expect(result.violation?.message).toBe(
+        "The argument of Len should be a sequence, but instead it is:\n3",
+      );
+    },
+  );
+
+  it("passes an operator whose body is a literal to a Java override as an operator, which TLC passes as the literal", async () => {
+    const result = await checkModule("One(a, b) == 1\nASSUME SortSeq(<<2, 1>>, One) = <<>>");
+    expect(result.violation?.message).toBe(
+      "The second argument of SortSeq should be a boolean function, but instead it is:\n1",
+    );
+  });
+
+  it("evaluates a record's fields in an invariant in the order they're written, like TLC", async () => {
+    const result = await checkSteps(
+      "F(s) == s\nInv == [a |-> 1 \\div x, s |-> CASE x -> 2] = 1",
+      "INIT Init\nNEXT Next\nINVARIANT Inv",
+    );
+    expect(result.failure?.message).toBe("The second argument of \\div is 0.");
+  });
+
   it("compares a value with the elements of a constant definition's set like TLC", async () => {
     const result = await checkModule(
       "S == {<<y>> : y \\in {1, 2, 3, 4}}\nASSUME [<<y>> \\in S |-> y + 1][2] = 3",
@@ -271,6 +296,19 @@ describe("evaluation errors match TLC", () => {
     });
     expect(new Set(ranges)).toEqual(new Set(["9-57", "9-46", "51-57", "34-45", "34-41"]));
     expect(ranges?.at(-1)).toBe("34-41");
+  });
+
+  it("records each prefix of a chain of infix conjunctions as TLC nests them", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers\nVARIABLES x, y\nInit == x = 0 /\\ y = 0\nNext == x' = 1 /\\ y' = (TRUE /\\ 2 /\\ TRUE /\\ TRUE)\n====",
+      config: "INIT Init\nNEXT Next",
+    });
+    const ranges = result.failure?.callStack?.map((expression) => {
+      const range = expression.location.range;
+      return range && `${range.start.column}-${range.end.column}`;
+    });
+    expect([...new Set(ranges)]).toEqual(["9-50", "9-14", "19-50", "25-49", "25-41", "25-33"]);
   });
 
   it("records the variables of an UNCHANGED tuple in order", async () => {
@@ -507,6 +545,13 @@ describe("evaluation errors match TLC", () => {
     const result = await checkSteps("Start == x = {n \\in Nat : n > 1}", "INIT Start\nNEXT Next");
     expect(result.failure?.initialState?.x && formatValue(result.failure.initialState.x)).toBe(
       "{n \\in Nat : <expression line 6, col 27 to line 6, col 31 of module M> }",
+    );
+  });
+
+  it("prints a set filter whose predicate is a numeral as the numeral, like TLC", async () => {
+    const result = await checkSteps("Start == x = {n \\in Nat : 1}", "INIT Start\nNEXT Next");
+    expect(result.failure?.initialState?.x && formatValue(result.failure.initialState.x)).toBe(
+      "{n \\in Nat : <expression 1> }",
     );
   });
 
@@ -1228,6 +1273,17 @@ describe("evaluation errors match TLC", () => {
     );
   });
 
+  it("evaluates a TLCEval argument that reads a variable SANY ignores in the state", async () => {
+    const prints: string[] = [];
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS TLC\nVARIABLE v\nInit == v = 0\nNext == UNCHANGED v\nInv == TLCEval(Print(v, TRUE))\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+      onPrint: (text) => prints.push(text),
+    });
+    expect([result.status, prints]).toEqual(["success", ["0  TRUE"]]);
+  });
+
   it("rejects a mistyped membership outside an assumption", async () => {
     const result = await check({
       source:
@@ -1338,6 +1394,33 @@ describe("evaluation errors match TLC", () => {
     ]);
   });
 
+  it("stops at a successor the next-state relation leaves incomplete under -continue", async () => {
+    const result = await check({
+      source: "---- MODULE M ----\nVARIABLES x, y\nInit == x = 0 /\\ y = 0\nNext == x' = 1\n====",
+      config: "INIT Init\nNEXT Next",
+      isContinued: true,
+    });
+    expect([result.failure?.message, result.failure?.exitCode, result.generatedStates]).toEqual([
+      "Successor state is not completely specified by the next-state action. The following variable is not defined: y.\n",
+      75,
+      2,
+    ]);
+  });
+
+  it("records where the liveness check of a state fails after a successor of it is left incomplete, like TLC", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nVARIABLES x, z\nInit == x = 0 /\\ z = FALSE\nA0 == x' = 0\nA1 == x' = 0\nNext == A0 \\/ A1\nSpec == Init /\\ [][Next]_<<x, z>> /\\ WF_<<x, z>>(A1)\nProp == []<>z\n====",
+      config: "SPECIFICATION Spec\nPROPERTY Prop",
+    });
+    const ranges = result.failure?.callStack?.map((expression) => {
+      const range = expression.location.range;
+      return range && `${range.start.line}:${range.start.column}-${range.end.column}`;
+    });
+    expect(result.failure?.code).toBe(2109);
+    expect([...new Set(ranges)]).toEqual(["7:50-51", "5:7-12", "7:41-48", "7:46-46"]);
+  });
+
   it("reports a value where the initial or next-state relation expects a formula like TLC", async () => {
     const getFailure = async (init: string, next: string) => {
       const result = await check({
@@ -1420,6 +1503,17 @@ describe("evaluation errors match TLC", () => {
     });
     expect([result.failure?.message, result.failure?.exitCode]).toEqual([
       "In evaluation, the identifier x is either undefined or not an operator.\nline 3, col 13 to line 3, col 13 of module M",
+      75,
+    ]);
+  });
+
+  it("reports an unassigned variable taken as a conjunct of the initial predicate as read before it is assigned", async () => {
+    const result = await check({
+      source: "---- MODULE M ----\nVARIABLE x\nInit == x /\\ x = FALSE\nNext == UNCHANGED x\n====",
+      config: "INIT Init\nNEXT Next",
+    });
+    expect([result.failure?.message, result.failure?.exitCode]).toEqual([
+      "In evaluation, the identifier x is either undefined or not an operator.\nline 3, col 9 to line 3, col 9 of module M",
       75,
     ]);
   });
@@ -1633,6 +1727,17 @@ describe("evaluation errors match TLC", () => {
       cases.map(async (item) => (await checkModule(`ASSUME ${item[0]} = 0`)).violation?.message),
     );
     expect(messages).toEqual(cases.map((item) => item[1]));
+  });
+
+  it("applies a recursive function as its table once an error message has printed it, like TLC", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers\nfib[n \\in 0..3] == IF n < 2 THEN n ELSE fib[n - 1] + fib[n - 2]\nFoo == fib[7] = 1\nASSUME Foo\n====",
+      config: "",
+    });
+    expect(result.violation?.message).toBe(
+      "Attempted to apply function:\n(0 :> 0 @@ 1 :> 1 @@ 2 :> 1 @@ 3 :> 2)\nto argument 7, which is not in the domain of the function.",
+    );
   });
 
   it("evaluates a function over a domain TLC keeps lazy only where it is applied", async () => {

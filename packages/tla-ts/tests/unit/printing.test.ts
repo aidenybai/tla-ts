@@ -77,6 +77,14 @@ describe("printing matches TLC", () => {
       "{{}, {1}}",
     );
   });
+
+  it("orders a record's fields before PrintT fails to compare it", async () => {
+    const result = (await checkPrinting("F(s) == s\nASSUME PrintT({[a |-> 1, s |-> 2], 3})"))
+      .result;
+    expect(result.violation?.message).toBe(
+      "Attempted to apply the operator overridden by the Java method\npublic static tlc2.value.impl.Value tlc2.module.TLC.PrintT(tlc2.value.impl.Value),\nbut it produced the following error:\nAttempted to compare integer 3 with non-integer:\n[s |-> 2, a |-> 1]",
+    );
+  });
 });
 
 const NESTED_TUPLE_LINES = Array.from({ length: 10 }, () => "<<1, 2, 3, 4, 5, 6, 7, 8, 9, 10>>");
@@ -148,6 +156,8 @@ describe("functions over infinite domains print like TLC", () => {
       "f[n \\in Nat] == IF n = 0 THEN 0 ELSE f[n - 1]\nASSUME PrintT(f)",
       "[n \\in Nat |-> <expression line 3, col 17 to line 3, col 45 of module M>]",
     ],
+    ["ASSUME PrintT([n \\in Nat |-> 100])", "[n \\in Nat |-> <expression 100>]"],
+    ["ASSUME PrintT([n \\in Nat |-> \\h1F])", "[n \\in Nat |-> <expression \\h1F>]"],
     [
       "ASSUME PrintT(ToString([n \\in Nat \\ {1} |-> n]))",
       '"[n \\\\in Nat \\\\ {1} |-> <expression line 3, col 45 to line 3, col 45 of module M>]"',

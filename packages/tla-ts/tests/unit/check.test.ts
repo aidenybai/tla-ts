@@ -1059,6 +1059,17 @@ ASSUME TLCFP(a) = -887695703
     );
   });
 
+  it.each(["x = FALSE /\\ x", "x = 0 /\\ FALSE", "x = 0 /\\ C"])(
+    "takes a state-level Init of the specification whole, as TLC does: %s",
+    async (init) => {
+      const result = await check({
+        source: `---- MODULE M ----\nCONSTANT C\nVARIABLE x\nInit == ${init}\nNext == x' = x\nSpec == Init /\\ [][Next]_x\n====`,
+        config: "CONSTANT C = FALSE\nSPECIFICATION Spec",
+      });
+      expect([result.status, result.distinctStates]).toEqual(["success", 0]);
+    },
+  );
+
   it.each([
     "Prop == LET E == {x} IN [](\\A e \\in E : e < 1)",
     "Holds(S) == [](\\A e \\in S : e < 1)\nProp == Holds({x})",
@@ -1447,6 +1458,44 @@ describe("initial predicate and next-state relation match TLC", () => {
         "INIT Init\nNEXT Next\nCONSTRAINT C",
       ),
     ).rejects.toThrow(new TlaConfigError("The constraint of C is equal to FALSE"));
+  });
+
+  it("reads a constant invariant that failed at startup as TLC does, without evaluating it again", async () => {
+    const prints: string[] = [];
+    const result = await check({
+      source:
+        '---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nInit == x = 0\nNext == UNCHANGED x\nInv == PrintT("p") /\\ (1 :> 2)[3] = 0\n====',
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+      onPrint: (text) => prints.push(text),
+    });
+    expect(result.failure?.message).toContain("Attempted to apply function:\n<<2>>\nto argument 3");
+    expect(prints).toEqual(['"p"', '"p"']);
+  });
+
+  it("checks a constant invariant on each state when it calls an operator whose parameter is named like a variable, as TLC does", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers\nIsEven(v) == v % 2 = 0\nVARIABLE v\nInit == v = 0\nNext == UNCHANGED v\nInv == IsEven(3)\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+    });
+    expect([result.status, result.violation?.name, result.generatedStates]).toEqual([
+      "invariant-violation",
+      "Inv",
+      1,
+    ]);
+  });
+
+  it("evaluates a constant invariant once as it starts when it passes such an operator as an argument, as TLC does", async () => {
+    const prints: string[] = [];
+    await expect(
+      check({
+        source:
+          "---- MODULE M ----\nEXTENDS Integers, TLC\nIsEven(v) == v % 2 = 0\nApply(Op(_), w) == Op(w)\nVARIABLE v\nInit == v = 0\nNext == UNCHANGED v\nInv == PrintT(1) /\\ Apply(IsEven, 1)\n====",
+        config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+        onPrint: (text) => prints.push(text),
+      }),
+    ).rejects.toThrow(new TlaConfigError("The invariant of Inv is equal to FALSE"));
+    expect(prints).toEqual(["1"]);
   });
 
   it("warns about a state-level property before it reads the constraints", async () => {

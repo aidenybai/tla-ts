@@ -34,7 +34,6 @@ import {
   type RuntimeInvariant,
 } from "./environment";
 import {
-  isStackOverflow,
   TlaConfigError,
   TlaEvaluationError,
   TlaModuleError,
@@ -212,14 +211,7 @@ const isLiteralDefinition = (definition: Definition) =>
 
 const getConstantValue = (name: string, definition: Definition, environment: Environment) => {
   if (environment.constants.has(name)) return environment.constants.get(name);
-  if (!isConstantLevel(definition, environment) || isLiteralDefinition(definition))
-    return undefined;
-  try {
-    return evaluate(createIdentifier(name), getContext(environment, undefined, undefined));
-  } catch (error) {
-    if (error instanceof TlaEvaluationError || isStackOverflow(error)) return undefined;
-    throw error;
-  }
+  return isLiteralDefinition(definition) ? undefined : getStartupValue(definition, environment);
 };
 
 const getConfigDefinition = (kind: string, name: string, environment: Environment) => {
@@ -386,12 +378,20 @@ const getSpecification = (
   let isUntaggedFound = false;
   expandTemporal(definition.body, undefined, environment, false).forEach((item) => {
     const conjunct = item.expression;
-    if (isConstantTrue(item, environment, "spec")) return;
+    // TLC takes a state-level definition of the spec whole as an initial predicate.
+    const isInitial = item.path.some((name) => {
+      const expanded = getDefinition(name, environment);
+      return (
+        expanded?.kind === "Operator" &&
+        getLevel(expanded.body, undefined, environment) === VARIABLE_LEVEL
+      );
+    });
+    if (!isInitial && isConstantTrue(item, environment, "spec")) return;
     const variableIndex =
       conjunct.kind === "Identifier" && !isLocallyResolved(conjunct)
         ? environment.variableIndex.get(conjunct.name)
         : undefined;
-    if (conjunct.kind === "Identifier" && variableIndex !== undefined) {
+    if (!isInitial && conjunct.kind === "Identifier" && variableIndex !== undefined) {
       const range = variableLocations[variableIndex].range;
       throw new TlaConfigError(
         `The operator ${conjunct.name}, which equals ${range ? formatRange(range) : conjunct.name},\ncannot be used as a spec`,

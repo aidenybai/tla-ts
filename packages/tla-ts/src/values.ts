@@ -266,8 +266,19 @@ export const getPrintedPairs = (functionValue: FunctionValue): [Value, Value][] 
     ? functionValue.domain.map((key, index) => [key, functionValue.range[index]])
     : getWrittenPairs(functionValue);
 
-export const createWrittenRecord = (names: Value[], range: Value[], writtenNames: Value[]) =>
-  setWrittenOrder(createSortedRecord(names, range), writtenNames);
+export const createWrittenRecord = (
+  names: Value[],
+  writtenIndexes: number[],
+  writtenRange: Value[],
+  writtenNames: Value[],
+) =>
+  setWrittenOrder(
+    createSortedRecord(
+      names,
+      writtenIndexes.map((index) => writtenRange[index]),
+    ),
+    writtenNames,
+  );
 
 const forgetWrittenOrder = (value: Value): void => {
   if (typeof value !== "object" || (value.kind !== "Function" && value.kind !== "Set")) return;
@@ -2311,12 +2322,9 @@ export const toFiniteFunction = (value: Value): FunctionValue => {
       throw new TlaEvaluationError("The domains of formal parameters must be enumerable.");
     }
     const domain = getFunctionDomain(value.domain);
-    value.enumerated = setFunctionClass(
-      createSortedFunction(
-        domain,
-        domain.map((key) => value.apply(key)),
-      ),
-      getFunctionClass(value),
+    value.enumerated = createSortedFunction(
+      domain,
+      domain.map((key) => value.apply(key)),
     );
     return value.enumerated;
   }
@@ -2897,55 +2905,66 @@ const toPrintedFunction = (value: LazyFunctionValue) => {
 
 export const formatNormalizedCopies = (values: Value[]) => {
   const markedSets: SetValue[] = [];
-  const normalize = (value: Value): void => {
+  const writtenFunctions: [FunctionValue, Value[]][] = [];
+  const normalize = (value: Value, isWrittenOrderKept: boolean): void => {
     if (typeof value !== "object") return;
+    const normalizeInner = (inner: Value) => normalize(inner, isWrittenOrderKept);
     switch (value.kind) {
       case "Set":
-        value.elements.forEach(normalize);
+        value.elements.forEach(normalizeInner);
         if (value.isNormalized) return;
         value.isNormalized = true;
         markedSets.push(value);
         return;
       case "MixedSet":
-        value.elements.forEach(normalize);
+        value.elements.forEach(normalizeInner);
         toFiniteSet(value);
         return;
-      case "Function":
-        value.range.forEach(normalize);
+      case "Function": {
+        const isRangeWrittenOrderKept = isWrittenOrderKept || getFunctionClass(value) === "lambda";
+        value.range.forEach((inner) => normalize(inner, isRangeWrittenOrderKept));
+        if (isWrittenOrderKept || value.writtenKeys === undefined) return;
+        writtenFunctions.push([value, value.writtenKeys]);
+        value.writtenKeys = undefined;
         return;
+      }
       case "LazyFunction":
-        normalize(value.enumerated ?? value.domain);
+        if (value.enumerated) normalize(value.enumerated, true);
+        else normalizeInner(value.domain);
         return;
       case "SetOperation":
-        normalize(value.left);
-        normalize(value.right);
+        normalizeInner(value.left);
+        normalizeInner(value.right);
         return;
       case "FunctionSet":
-        normalize(value.domain);
-        normalize(value.range);
+        normalizeInner(value.domain);
+        normalizeInner(value.range);
         return;
       case "RecordSet":
-        value.sets.forEach(normalize);
+        value.sets.forEach(normalizeInner);
         return;
       case "ProductSet":
-        value.factors.forEach(normalize);
+        value.factors.forEach(normalizeInner);
         return;
       case "Subset":
       case "Union":
       case "FilteredSet":
       case "SequenceSet":
-        normalize(value.base);
+        normalizeInner(value.base);
         return;
       default:
         return;
     }
   };
   try {
-    values.forEach(normalize);
+    values.forEach((value) => normalize(value, false));
     return values.map((value) => formatValue(value, true, true));
   } finally {
     markedSets.forEach((set) => {
       set.isNormalized = false;
+    });
+    writtenFunctions.forEach((entry) => {
+      entry[0].writtenKeys = entry[1];
     });
   }
 };

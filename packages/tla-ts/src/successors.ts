@@ -723,6 +723,7 @@ const compileIdentifier = (
       !definition ||
       (expression.location.range && getStartupValue(definition, environment) !== undefined)
     ) {
+      // Deviation from TLC: Tool#getInitStates prints an unassigned variable's declaration as the non-boolean value it found.
       guard(run, scope, partial, action, isFixed, onComplete);
       return;
     }

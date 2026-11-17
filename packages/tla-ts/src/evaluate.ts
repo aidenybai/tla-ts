@@ -26,7 +26,7 @@ import { countCoverage, getCoverageNode, runAtCoverageNode, type Coverage } from
 import { MESSAGE_CODE } from "./tlc/messages";
 import type { CheckerRuntime } from "./runtime";
 import {
-  isConstantLevel,
+  isEvaluatedAtStartup,
   isImpureDefinition,
   isNonconstant,
   type DefinitionFacts,
@@ -673,7 +673,7 @@ const getLazyFunctionTemplate = (bounds: Bound[], body: Expression) => {
             },
           ],
     ),
-    body: formatRange(range),
+    body: describeNode(body),
   };
 };
 
@@ -821,7 +821,7 @@ export const evaluateStartupDefinitions = (definitions: Definition[], environmen
     if (definition.kind === "Operator" && definition.params.length > 0) return;
     const name = definition.name;
     if (environment.constants.has(name) || environment.substitutions.has(name)) return;
-    if (!isConstantLevel(definition, environment)) return;
+    if (!isEvaluatedAtStartup(definition, environment)) return;
     const definitionId = environment.facts.ids.get(definition);
     if (definitionId === undefined || environment.startupValues[definitionId] !== undefined) return;
     const context = { environment, scope: undefined, state: undefined, next: undefined };
@@ -973,6 +973,7 @@ const isOperatorArgument = (expression: Expression, context: Context) => {
   return operator !== undefined && getArity(operator) > 0;
 };
 
+// Deviation from TLC: SymbolNodeValueLookupProvider#lookup takes an operator whose body is a literal for that literal, so a Java override rejects it as an argument.
 const evaluateBuiltinArguments = (args: Expression[], context: Context) =>
   args.map((arg) =>
     isOperatorArgument(arg, context)
@@ -1335,6 +1336,41 @@ export const createTracingEnvironment = (environment: Environment): Environment 
   },
 });
 
+// TLC evaluates `a /\ b /\ c` as `(a /\ b) /\ c`, so its call stack holds each prefix.
+const compileTracedJunction = (
+  expression: Expression & { kind: "And" | "Or" },
+  operands: Evaluator[],
+  callStack: CallStack | undefined,
+): Evaluator | undefined => {
+  const range = expression.location.range;
+  const prefixEnds = expression.prefixEnds;
+  if (!callStack || expression.isBulleted || !range || !prefixEnds || operands.length < 3) {
+    return undefined;
+  }
+  const prefixes = prefixEnds
+    .slice(0, operands.length - 2)
+    .map((end) => ({
+      ...expression,
+      location: { ...expression.location, range: { ...range, end } },
+    }))
+    .reverse();
+  const isAnd = expression.kind === "And";
+  return (context) => {
+    callStack.expressions.push(...prefixes);
+    for (let index = 0; index < operands.length; index++) {
+      if (index >= 2 && !callStack.isFrozen) callStack.expressions.pop();
+      const value = operands[index](context);
+      if (typeof value !== "boolean") throw createJunctionError(expression, index, value);
+      if (value !== isAnd) {
+        if (!callStack.isFrozen)
+          callStack.expressions.length -= prefixes.length - Math.max(index - 1, 0);
+        return value;
+      }
+    }
+    return isAnd;
+  };
+};
+
 const traceFrames =
   (
     expression: Expression,
@@ -1553,6 +1589,7 @@ const compileApply = (
     return (context) => domain(operand(context));
   }
   if (global?.kind === "Builtin" && global.name === "TLCEval" && args.length === 1) {
+    // Deviation from TLC: TLCEval#tlcEval evaluates an argument SANY takes for constant, such as Print(v, TRUE), in an empty state.
     const isCached =
       !contextualApplications.has(expression) && !isNonconstant(args[0], environment);
     return (context) =>
@@ -1870,12 +1907,11 @@ export const getLazyFilter = (
 ) => {
   const predicate = getEvaluator(expression.predicate, environment);
   const pattern = expression.bound.pattern;
-  const range = expression.predicate.location.range;
-  const source = range && {
-    names: pattern.kind === "Name" ? pattern.name : pattern.names.join(", "),
-    predicate: formatRange(range),
-  };
   const predicateNode = describeNode(expression.predicate);
+  const source = expression.predicate.location.range && {
+    names: pattern.kind === "Name" ? pattern.name : pattern.names.join(", "),
+    predicate: predicateNode,
+  };
   const coverage = environment.coverage;
   const testCovered = (node: number, isMember: boolean, test: () => Value) => {
     if (!coverage || node === -1) return test();
@@ -2041,20 +2077,21 @@ export const hasDuplicateFields = (sortedFields: RecordField[]) =>
 
 const compileRecord = (recordFields: RecordField[], environment: Environment): Evaluator => {
   const fields = getSortedFields(recordFields);
-  const hasDuplicates = hasDuplicateFields(fields);
-  const values = fields.map((field) => getEvaluator(field.value, environment));
-  if (hasDuplicates) {
+  const values = recordFields.map((field) => getEvaluator(field.value, environment));
+  if (hasDuplicateFields(fields)) {
     return (context) =>
       createRecord(
-        fields.map((field, index): [string, Value] => [field.name, values[index](context)]),
+        recordFields.map((field, index): [string, Value] => [field.name, values[index](context)]),
       );
   }
   const names = fields.map((field) => field.name);
   const writtenNames = recordFields.map((field) => field.name);
   if (writtenNames.some((name, index) => name !== names[index])) {
+    const writtenIndexes = fields.map((field) => recordFields.indexOf(field));
     return (context) =>
       createWrittenRecord(
         names,
+        writtenIndexes,
         values.map((value) => value(context)),
         writtenNames,
       );
@@ -2104,25 +2141,31 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
       };
     case "And": {
       const operands = expression.operands.map(getChildEvaluator);
-      return (context) => {
-        for (let index = 0; index < operands.length; index++) {
-          const value = operands[index](context);
-          if (typeof value !== "boolean") throw createJunctionError(expression, index, value);
-          if (!value) return false;
-        }
-        return true;
-      };
+      return (
+        compileTracedJunction(expression, operands, environment.callStack) ??
+        ((context) => {
+          for (let index = 0; index < operands.length; index++) {
+            const value = operands[index](context);
+            if (typeof value !== "boolean") throw createJunctionError(expression, index, value);
+            if (!value) return false;
+          }
+          return true;
+        })
+      );
     }
     case "Or": {
       const operands = expression.operands.map(getChildEvaluator);
-      return (context) => {
-        for (let index = 0; index < operands.length; index++) {
-          const value = operands[index](context);
-          if (typeof value !== "boolean") throw createJunctionError(expression, index, value);
-          if (value) return true;
-        }
-        return false;
-      };
+      return (
+        compileTracedJunction(expression, operands, environment.callStack) ??
+        ((context) => {
+          for (let index = 0; index < operands.length; index++) {
+            const value = operands[index](context);
+            if (typeof value !== "boolean") throw createJunctionError(expression, index, value);
+            if (value) return true;
+          }
+          return false;
+        })
+      );
     }
     case "Prime": {
       const inner = getChildEvaluator(expression.expression);
@@ -2208,8 +2251,19 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
     case "RecordSet": {
       const fields = getSortedFields(expression.fields);
       const names = fields.map((field) => field.name);
-      const sets = fields.map((field) => getChildEvaluator(field.value));
-      return (context) => ({ kind: "RecordSet", names, sets: sets.map((set) => set(context)) });
+      const writtenIndexes = fields.map((field) => expression.fields.indexOf(field));
+      const sets = expression.fields.map((field) => getChildEvaluator(field.value));
+      if (writtenIndexes.every((writtenIndex, index) => writtenIndex === index)) {
+        return (context) => ({ kind: "RecordSet", names, sets: sets.map((set) => set(context)) });
+      }
+      return (context) => {
+        const writtenSets = sets.map((set) => set(context));
+        return {
+          kind: "RecordSet",
+          names,
+          sets: writtenIndexes.map((index) => writtenSets[index]),
+        };
+      };
     }
     case "Except":
       return compileExcept(expression, environment);
