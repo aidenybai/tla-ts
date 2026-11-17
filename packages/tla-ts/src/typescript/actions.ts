@@ -15712,7 +15712,17 @@ export const summarizeEffects = (context: Context) =>
     context.nodes,
     (node) => getFoundEffects(node, context.effects, context),
     (node) => getEffects(node, NO_FUNCTIONS, context),
-    (node) => getCalledSymbols(node, context),
+    // A call's effects that findEffects didn't find, which a path's bindings make anew, read the
+    // binding of the function that a call through call or apply runs too.
+    (node, isFound) =>
+      !isFound && ts.isCallExpression(node) && isFunctionThroughCall(node, context)
+        ? [
+            ...getCalledSymbols(node, context),
+            ...[node.expression.expression, skipCasts(getCast(node.expression.expression))].flatMap(
+              (inner) => getSymbol(inner, context.checker) ?? [],
+            ),
+          ]
+        : getCalledSymbols(node, context),
   );
 
 // A node's place in its file, which tells it apart from every other node.
