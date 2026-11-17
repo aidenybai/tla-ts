@@ -925,15 +925,17 @@ export const runSmtlibScript = (
         for (const assertion of state.assertions) datalog.assertExpr(assertion);
         state.manager.limit.restart(Date.now() + options.timeLimitMs);
         state.manager.limit.push(settings.rlimit);
+        let status = L_UNDEF;
         try {
-          print(getVerdict(datalog.relQuery(relation)));
+          status = datalog.relQuery(relation);
         } catch (error) {
           if (!(error instanceof SmtTacticError)) throw error;
           print(`(error "query failed: ${error.message}")`);
-          print("unknown");
         } finally {
           state.manager.limit.pop();
         }
+        print(status === L_UNDEF && datalog.isBounded ? "bounded" : getVerdict(status));
+        datalog.isBounded = false;
       },
     ],
     [

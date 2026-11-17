@@ -210,6 +210,7 @@ export const gpdrSolveCore = (context: SpacerContext) => {
     if (reachable !== L_FALSE) return reachable;
     if (level > 0 && context.propagate(context.expandedLevel, level)) return L_FALSE;
   }
+  context.datalogContext.isBounded = true;
   return L_UNDEF;
 };
 

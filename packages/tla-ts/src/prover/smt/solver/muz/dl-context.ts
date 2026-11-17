@@ -121,6 +121,8 @@ export class DatalogContext {
   readonly rewriter: Rewriter;
   // m_mc: the converters since the last query, or undefined before one.
   modelConverters: ModelConverter[] | undefined;
+  // m_last_status is BOUNDED: spacer stopped at fp.spacer.max_level.
+  isBounded = false;
 
   constructor(
     readonly manager: AstManager,
@@ -332,6 +334,7 @@ export class DatalogContext {
 
   query(query: number) {
     this.modelConverters = [];
+    this.isBounded = false;
     this.getEngine(query);
     this.flushAddRules();
     return this.ensureEngine(query).query(query);
