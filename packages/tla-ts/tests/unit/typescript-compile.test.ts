@@ -51973,4 +51973,31 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("2,3,"))).failure?.message).toContain("outcome 2,3,years");
     });
   });
+
+  describe("follows promises through a for-in, one key after another", () => {
+    const getSource = (expected: string) => `
+      const seen: string[] = [];
+      const run = async () => {
+        const object: Record<string, number> = { a: 1, b: 2, c: 3 };
+        for (const key in await Promise.resolve(object)) {
+          await null;
+          seen.push(key);
+          if (key === "a") delete object.b;
+        }
+      };
+      run().then(() => {
+        if (seen.join() !== "${expected}") throw new Error("seen " + seen.join());
+      });
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("a,c"))).failure).toBeUndefined();
+    });
+
+    it("rejects the key that the loop deleted", async () => {
+      expect((await checkModel(getSource("a,b,c"))).failure?.message).toContain(
+        "A promise rejected with no handler",
+      );
+    });
+  });
 });
