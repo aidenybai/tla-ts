@@ -18,10 +18,8 @@ export interface ChangeTable {
   components: Int32Array;
   changed: Bits;
   parameters: Bits;
-  // A bit per component: whether it makes an error, and whether a call of its own has effects that
-  // findEffects didn't find, which a path's bindings may change.
+  // A bit per component: whether it makes an error.
   errors: Uint32Array;
-  unfound: Uint32Array;
   // The components that each component runs, from each one's start, and the components that run
   // each one.
   calleeStarts: Int32Array;
@@ -29,10 +27,25 @@ export interface ChangeTable {
   callerStarts: Int32Array;
   callers: Int32Array;
   // The ids of the symbols that the calls of each component's own nodes name as their callees and
-  // arguments, in order, with each one's component, which tell the components whose effects a
-  // path's bindings of functions to symbols change.
+  // arguments, and that a call whose effects findEffects didn't find names through call or apply,
+  // in order, with each one's component, which tell the components whose effects a path's bindings
+  // of functions to symbols change.
   calledIds: Int32Array;
   calledComponents: Int32Array;
+  // Each function's node, by its index, and its own effects, those of the nodes of its subtree, in
+  // columns that run from each function's start: the symbols that they change and the parameters
+  // that they call or pass, whether they make an error, the indexes of the functions that they
+  // run, and the ids of the symbols that getCalled gives, which tell whether bindings change them.
+  functionNodes: ts.Node[];
+  changedStarts: Int32Array;
+  ownChanged: ts.Symbol[];
+  parameterStarts: Int32Array;
+  ownParameters: ts.Symbol[];
+  ownErrors: Uint32Array;
+  edgeStarts: Int32Array;
+  edges: Int32Array;
+  calledStarts: Int32Array;
+  ownCalled: Int32Array;
   // The mark of each component that a walk of the components that bindings change has reached,
   // with the walk's own generation.
   marks: Int32Array;
@@ -65,19 +78,54 @@ const createBits = (symbols: readonly ts.Symbol[], count: number): Bits => {
   return { ids, symbols: ordered, words, rows: new Uint32Array(count * words) };
 };
 
-// The component of a function whose summary the table has, or -1.
-export const getComponent = (table: ChangeTable, nodes: ProgramNodes, node: ts.Node) => {
+// The index of a function that the table has, or -1.
+const getFunctionIndex = (table: ChangeTable, nodes: ProgramNodes, node: ts.Node) => {
   const position = getPosition(nodes, node);
   const id = position < 0 ? ts.getNodeId(node) : -1;
   const elsewhere =
     position < 0 ? getLowerBound(table.elsewhereIds, 0, table.elsewhereIds.length, id) : -1;
-  const index =
-    position >= 0
-      ? table.functions[position] - 1
-      : table.elsewhereIds[elsewhere] === id
-        ? table.elsewhereIndexes[elsewhere]
-        : -1;
+  return position >= 0
+    ? table.functions[position] - 1
+    : table.elsewhereIds[elsewhere] === id
+      ? table.elsewhereIndexes[elsewhere]
+      : -1;
+};
+
+// The component of a function whose summary the table has, or -1.
+export const getComponent = (table: ChangeTable, nodes: ProgramNodes, node: ts.Node) => {
+  const index = getFunctionIndex(table, nodes, node);
   return index < 0 ? -1 : table.components[index];
+};
+
+// A function's own effects, as one, where none of its nodes names a symbol of the sorted ids that
+// bindings bind, so that they are what the table found, or undefined.
+export const getOwnEffects = (
+  table: ChangeTable,
+  nodes: ProgramNodes,
+  node: ts.Node,
+  boundIds: Int32Array,
+) => {
+  const index = getFunctionIndex(table, nodes, node);
+  if (index < 0) return undefined;
+  const start = table.calledStarts[index];
+  const end = table.calledStarts[index + 1];
+  const isNamed = boundIds.some((id) => {
+    const at = getLowerBound(table.ownCalled, start, end, id);
+    return at < end && table.ownCalled[at] === id;
+  });
+  if (isNamed) return undefined;
+  return {
+    changed: table.ownChanged.slice(table.changedStarts[index], table.changedStarts[index + 1]),
+    isErrorMade: hasBit(table.ownErrors, index),
+    called: Array.from(
+      table.edges.subarray(table.edgeStarts[index], table.edgeStarts[index + 1]),
+      (edge) => table.functionNodes[edge],
+    ),
+    parameters: table.ownParameters.slice(
+      table.parameterStarts[index],
+      table.parameterStarts[index + 1],
+    ),
+  };
 };
 
 // Whether a walk of markBound's generation reached a component.
@@ -127,11 +175,6 @@ export const markBound = (table: ChangeTable, bound: readonly ts.Symbol[]) => {
     table.marks[component] = generation;
     pending.push(component);
   };
-  if (bound.length > 0) {
-    table.marks.forEach((_, component) => {
-      if (hasBit(table.unfound, component)) mark(component);
-    });
-  }
   bound.forEach((symbol) => {
     const id = ts.getSymbolId(symbol);
     const last = getLowerBound(table.calledIds, 0, table.calledIds.length, id + 1);
@@ -154,14 +197,15 @@ export const markBound = (table: ChangeTable, bound: readonly ts.Symbol[]) => {
 
 // Summarizes the functions that the roots run, and those that they run in turn. Each function's
 // own effects are those of the nodes of its subtree, which getEffects gives, or undefined where
-// findEffects found none, and getCalled gives the symbols that a node's call names as its callee
-// and arguments.
+// findEffects found none, and getCalled gives the symbols whose bindings a node's effects read:
+// those that its call names as its callee and arguments, and for a call whose effects findEffects
+// didn't find, the function that it runs through call or apply.
 export const summarizeFunctions = (
   roots: readonly ts.Node[],
   nodes: ProgramNodes,
   getFound: (node: ts.Node) => Effects | undefined,
   getEffects: (node: ts.Node) => Effects,
-  getCalled: (node: ts.Node) => readonly ts.Symbol[],
+  getCalled: (node: ts.Node, isFound: boolean) => readonly ts.Symbol[],
 ): ChangeTable => {
   const functions = new Int32Array(nodes.nodes.length);
   const order: ts.Node[] = [];
@@ -201,7 +245,6 @@ export const summarizeFunctions = (
   const edgeStarts: number[] = [];
   const edges: number[] = [];
   const ownErrors: boolean[] = [];
-  const ownUnfound: boolean[] = [];
   const calledStarts: number[] = [];
   const ownCalled: number[] = [];
   for (let index = 0; index < order.length; index += 1) {
@@ -210,25 +253,18 @@ export const summarizeFunctions = (
     parameterStarts.push(ownParameters.length);
     edgeStarts.push(edges.length);
     const isErrorMade = { value: false };
-    const isUnfound = { value: false };
     forEachInSubtree(order[index], (node) => {
       const found = getFound(node);
-      // Only a call's effects take the functions that a path binds.
-      if (
-        found === undefined &&
-        (ts.isCallExpression(node) || ts.isTaggedTemplateExpression(node))
-      ) {
-        isUnfound.value = true;
-      }
       const effects = found ?? getEffects(node);
-      getCalled(node).forEach((symbol) => ownCalled.push(ts.getSymbolId(symbol)));
+      getCalled(node, found !== undefined).forEach((symbol) =>
+        ownCalled.push(ts.getSymbolId(symbol)),
+      );
       ownChanged.push(...effects.changed);
       ownParameters.push(...effects.parameters);
       if (effects.isErrorMade) isErrorMade.value = true;
       effects.called.forEach((called) => edges.push(getIndex(called)));
     });
     ownErrors.push(isErrorMade.value);
-    ownUnfound.push(isUnfound.value);
   }
   changedStarts.push(ownChanged.length);
   parameterStarts.push(ownParameters.length);
@@ -247,7 +283,6 @@ export const summarizeFunctions = (
   const components = new Int32Array(count).fill(-1);
   const isOnStack = new Uint32Array((count + 31) >>> 5);
   const errors = new Uint32Array((count + 31) >>> 5);
-  const unfound = new Uint32Array((count + 31) >>> 5);
   // The component that last added each component's rows to its own.
   const lastAdder = new Int32Array(count).fill(-1);
   const stack: number[] = [];
@@ -280,7 +315,6 @@ export const summarizeFunctions = (
         setRowBit(parameters, component, parameterBits[own]);
       }
       if (ownErrors[member]) setBit(errors, component);
-      if (ownUnfound[member]) setBit(unfound, component);
       for (let edge = edgeStarts[member]; edge < edgeStarts[member + 1]; edge += 1) {
         const callee = components[edges[edge]];
         if (callee === component || lastAdder[callee] === component) continue;
@@ -384,13 +418,32 @@ export const summarizeFunctions = (
     changed,
     parameters,
     errors,
-    unfound,
     calleeStarts,
     callees: Int32Array.from(callees),
     callerStarts,
     callers,
     calledIds: Int32Array.from(namedCalls, (call) => call.id),
     calledComponents: Int32Array.from(namedCalls, (call) => call.component),
+    functionNodes: order,
+    changedStarts: Int32Array.from(changedStarts),
+    ownChanged,
+    parameterStarts: Int32Array.from(parameterStarts),
+    ownParameters,
+    ownErrors: ownErrors.reduce(
+      (bits, isErrorMade, index) => {
+        if (isErrorMade) setBit(bits, index);
+        return bits;
+      },
+      new Uint32Array((count + 31) >>> 5),
+    ),
+    edgeStarts: Int32Array.from(edgeStarts),
+    edges: Int32Array.from(edges),
+    calledStarts: Int32Array.from(calledStarts),
+    // Each function's run of ids in order, which a search for a bound symbol's id reads.
+    ownCalled: calledStarts.reduce((sorted, start, index) => {
+      sorted.subarray(start, calledStarts[index + 1]).sort();
+      return sorted;
+    }, Int32Array.from(ownCalled)),
     marks: new Int32Array(componentCount),
     generation: 0,
   };

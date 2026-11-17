@@ -524,6 +524,8 @@ export const createProgram = (source: string, path: string, library: Library = D
     checker,
     files,
     nodes,
+    // Whether TypeScript compares a function type's parameters one way only, as its own options tell.
+    isStrictFunctionTypes: options.strictFunctionTypes ?? options.strict ?? false,
     defaultLibraries: new Set(
       program.getSourceFiles().filter((file) => program.isSourceFileDefaultLibrary(file)),
     ),

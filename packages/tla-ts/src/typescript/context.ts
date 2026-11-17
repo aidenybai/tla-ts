@@ -5942,7 +5942,11 @@ const getDistinctTypes = (types: readonly ts.Type[]) =>
 
 // Tests each callee type that findEffects dispatches against each distinct type of the function
 // candidates once, before findEffects runs, rather than each candidate at each call.
-export const createDispatch = (callees: readonly ts.Expression[], context: Context): Dispatch => {
+export const createDispatch = (
+  callees: readonly ts.Expression[],
+  context: Context,
+  isStrictFunctionTypes: boolean,
+): Dispatch => {
   const checker = context.checker;
   const candidates = [...new Set([...context.functionCandidates.values()].flat())];
   const candidateTypes = getDistinctTypes(
@@ -6034,9 +6038,9 @@ export const createDispatch = (callees: readonly ts.Expression[], context: Conte
   // callee type one answer. Each candidate type takes the answer of the first of its group, other
   // than for a callee type of a candidate's symbol, which TypeScript relates by the symbol's own
   // signatures.
-  const getKey = (type: ts.Type) => {
+  const isPlainFunctionType = (type: ts.Type) => {
     const signatures = checker.getSignaturesOfType(type, ts.SignatureKind.Call);
-    const isPlainFunctionType =
+    return (
       type.flags === ts.TypeFlags.Object &&
       type.aliasSymbol === undefined &&
       ((type.objectFlags ?? 0) &
@@ -6053,9 +6057,13 @@ export const createDispatch = (callees: readonly ts.Expression[], context: Conte
       ) &&
       checker.getSignaturesOfType(type, ts.SignatureKind.Construct).length === 0 &&
       checker.getPropertiesOfType(type).length === 0 &&
-      checker.getIndexInfosOfType(type).length === 0;
-    return isPlainFunctionType
-      ? signatures
+      checker.getIndexInfosOfType(type).length === 0
+    );
+  };
+  const getKey = (type: ts.Type) =>
+    isPlainFunctionType(type)
+      ? checker
+          .getSignaturesOfType(type, ts.SignatureKind.Call)
           .map((signature) => {
             const predicate = checker.getTypePredicateOfSignature(signature);
             return [
@@ -6073,7 +6081,6 @@ export const createDispatch = (callees: readonly ts.Expression[], context: Conte
           })
           .join(";")
       : undefined;
-  };
   const keys = candidateTypes.map(getKey);
   const byKey = Int32Array.from(candidateTypes, (_, bit) => bit).sort((left, right) => {
     const leftKey = keys[left] ?? "";
@@ -6096,6 +6103,129 @@ export const createDispatch = (callees: readonly ts.Expression[], context: Conte
     const id = symbol === undefined ? -1 : ts.getSymbolId(symbol);
     return candidateSymbols[getLowerBound(candidateSymbols, 0, candidateSymbols.length, id)] === id;
   };
+  // Where both are function types of one call signature with no rest parameter, the candidate
+  // type a plain one with no this, and the callee type's signature has no type parameter or type
+  // predicate, TypeScript's compareSignaturesRelated relates them by the count of arguments, then
+  // each pair of parameter types, then the return types, unless the parameters at a position are
+  // both function types, which it compares as callbacks. The pairs of those types take far fewer
+  // tests than the pairs of function types: the candidate types' parameter and return types, and
+  // the callee types', each by an index, with a table each way of the answers that the tests find,
+  // 1 and 2 for no and yes.
+  const sources = candidateTypes.map((type) => {
+    const signatures = checker.getSignaturesOfType(type, ts.SignatureKind.Call);
+    return isPlainFunctionType(type) &&
+      signatures.length === 1 &&
+      (signatures[0].flags & SIGNATURE_REST) === 0 &&
+      signatures[0].thisParameter === undefined
+      ? signatures[0]
+      : undefined;
+  });
+  // A callee type may be an alias's or an instantiation's, and its signature may take a this,
+  // which TypeScript compares only to a candidate's own this, and come from a generic one, which
+  // changes only how it compares callbacks.
+  const targets = calleeTypes.map((type) => {
+    const signatures = checker.getSignaturesOfType(type, ts.SignatureKind.Call);
+    const signature = signatures.length === 1 ? signatures[0] : undefined;
+    return type.flags === ts.TypeFlags.Object &&
+      ((type.objectFlags ?? 0) & (ts.ObjectFlags.Reference | ts.ObjectFlags.Mapped)) === 0 &&
+      signature !== undefined &&
+      signature.typeParameters === undefined &&
+      (signature.flags & (SIGNATURE_REST | SIGNATURE_UNTYPED)) === 0 &&
+      signature.declaration !== undefined &&
+      !isJavaScriptFile(signature.declaration.getSourceFile().fileName) &&
+      checker.getTypePredicateOfSignature(signature) === undefined &&
+      checker.getSignaturesOfType(type, ts.SignatureKind.Construct).length === 0 &&
+      checker.getPropertiesOfType(type).length === 0 &&
+      checker.getIndexInfosOfType(type).length === 0
+      ? signature
+      : undefined;
+  });
+  const getParts = (signature: ts.Signature | undefined) =>
+    signature === undefined
+      ? []
+      : [
+          ...signature.parameters.map((_, position) =>
+            checker.getParameterType(signature, position),
+          ),
+          checker.getReturnTypeOfSignature(signature),
+        ];
+  const sourceParts = sources.map(getParts);
+  const targetParts = targets.map(getParts);
+  const sourcePartTypes = getDistinctTypes(sourceParts.flat());
+  const targetPartTypes = getDistinctTypes(targetParts.flat());
+  const sourcePartIds = Int32Array.from(sourcePartTypes, (type) => type.id);
+  const targetPartIds = Int32Array.from(targetPartTypes, (type) => type.id);
+  const getPartIndexes = (parts: readonly ts.Type[], ids: Int32Array) =>
+    Int32Array.from(parts, (part) => getLowerBound(ids, 0, ids.length, part.id));
+  const sourceIndexes = sourceParts.map((parts) => getPartIndexes(parts, sourcePartIds));
+  const targetIndexes = targetParts.map((parts) => getPartIndexes(parts, targetPartIds));
+  // A parameter type that TypeScript may compare as a callback: an object type of call signatures.
+  const isCallable = (type: ts.Type) => {
+    const value = checker.getNonNullableType(type);
+    return (
+      (value.flags & ts.TypeFlags.Object) !== 0 &&
+      checker.getSignaturesOfType(value, ts.SignatureKind.Call).length > 0
+    );
+  };
+  const isSourceCallable = sourcePartTypes.map(isCallable);
+  const isTargetCallable = targetPartTypes.map(isCallable);
+  const sourceToTarget = new Uint8Array(sourcePartTypes.length * targetPartTypes.length);
+  const targetToSource = new Uint8Array(targetPartTypes.length * sourcePartTypes.length);
+  const isSourceRelated = (source: number, target: number) => {
+    const at = source * targetPartTypes.length + target;
+    if (sourceToTarget[at] === 0) {
+      const isRelated = checker.isTypeAssignableTo(
+        sourcePartTypes[source],
+        targetPartTypes[target],
+      );
+      sourceToTarget[at] = isRelated ? 2 : 1;
+    }
+    return sourceToTarget[at] === 2;
+  };
+  const isTargetRelated = (target: number, source: number) => {
+    const at = target * sourcePartTypes.length + source;
+    if (targetToSource[at] === 0) {
+      const isRelated = checker.isTypeAssignableTo(
+        targetPartTypes[target],
+        sourcePartTypes[source],
+      );
+      targetToSource[at] = isRelated ? 2 : 1;
+    }
+    return targetToSource[at] === 2;
+  };
+  // The answer through the parts, 1 and 2 for no and yes, or 0 where only the whole relation tells.
+  const getPartsAnswer = (bit: number, row: number) => {
+    const source = sources[bit];
+    const target = targets[row];
+    if (source === undefined || target === undefined) return 0;
+    if (source === target) return 2;
+    const sourceCount = source.parameters.length;
+    const targetCount = target.parameters.length;
+    if (leastArguments[bit] > targetCount) return 1;
+    const kind = target.declaration?.kind;
+    const isStrictVariance =
+      isStrictFunctionTypes &&
+      kind !== ts.SyntaxKind.MethodDeclaration &&
+      kind !== ts.SyntaxKind.MethodSignature &&
+      kind !== ts.SyntaxKind.Constructor;
+    const sourceIndex = sourceIndexes[bit];
+    const targetIndex = targetIndexes[row];
+    for (let position = 0; position < Math.min(sourceCount, targetCount); position += 1) {
+      const sourcePart = sourceIndex[position];
+      const targetPart = targetIndex[position];
+      if (sourcePartTypes[sourcePart] === targetPartTypes[targetPart]) continue;
+      if (isSourceCallable[sourcePart] && isTargetCallable[targetPart]) return 0;
+      const isRelated =
+        (!isStrictVariance && isSourceRelated(sourcePart, targetPart)) ||
+        isTargetRelated(targetPart, sourcePart);
+      if (!isRelated) return 1;
+    }
+    const targetReturn = targetIndex[targetCount];
+    if ((targetPartTypes[targetReturn].flags & (ts.TypeFlags.Void | ts.TypeFlags.Any)) !== 0) {
+      return 2;
+    }
+    return isSourceRelated(sourceIndex[sourceCount], targetReturn) ? 2 : 1;
+  };
   // The answer of each group's first candidate type for the callee type being tested, by the
   // callee type's row plus one: 1 and 2 for no and yes.
   const answerRows = new Int32Array(candidateTypes.length);
@@ -6112,7 +6242,13 @@ export const createDispatch = (callees: readonly ts.Expression[], context: Conte
       const first = isGrouped ? firsts[bit] : bit;
       if (answerRows[first] !== row + 1) {
         answerRows[first] = row + 1;
-        answers[first] = checker.isTypeAssignableTo(candidateType, calleeType) ? 2 : 1;
+        const partsAnswer = getPartsAnswer(bit, row);
+        answers[first] =
+          partsAnswer !== 0
+            ? partsAnswer
+            : checker.isTypeAssignableTo(candidateType, calleeType)
+              ? 2
+              : 1;
       }
       if (answers[first] === 2) rows[row * words + (bit >>> 5)] |= 1 << (bit & 31);
     });
