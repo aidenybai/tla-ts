@@ -2,6 +2,7 @@ import ts from "@typescript/typescript6";
 import { TlaTypeScriptError } from "../errors";
 import { isJavaScriptFile } from "./common-js";
 import { skipCasts } from "./context";
+import { getRegularExpressionError } from "./early-errors";
 
 // TypeScript infers JavaScript's types without checking them, so a JavaScript value may hold
 // another type than TypeScript gives it. The errors that TypeScript reports where it checks the
@@ -455,13 +456,22 @@ export const typeJavaScript = (
   isReported: (diagnostic: ts.Diagnostic) => boolean,
 ) => {
   const checker = program.getTypeChecker();
+  // TypeScript's grammar of regular expressions is stricter than Node's, which tla-ts follows.
+  const isAcceptedPattern = (diagnostic: ts.Diagnostic) => {
+    const literal = ts.findAncestor(
+      getDiagnosedNode(file, diagnostic),
+      ts.isRegularExpressionLiteral,
+    );
+    return literal !== undefined && getRegularExpressionError(literal) === undefined;
+  };
   const errors = program
     .getSemanticDiagnostics(file)
     .filter(
       (diagnostic) =>
         diagnostic.category === ts.DiagnosticCategory.Error &&
         !IGNORED_ERRORS.has(diagnostic.code) &&
-        isReported(diagnostic),
+        isReported(diagnostic) &&
+        !isAcceptedPattern(diagnostic),
     );
   const rejected = errors.filter((diagnostic) => !FIXED_ERRORS.has(diagnostic.code));
   if (rejected.length > 0) throw new TlaTypeScriptError(ts.formatDiagnostics(rejected, host));

@@ -50450,4 +50450,27 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("runs JavaScript's regular expressions that only TypeScript's grammar rejects", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      var box = { seen: "" };
+      box.seen = [/\\1/.test("\\x01"), /[\\1]/.test("\\x01"), /\\k<a>/.test("k<a>")].join();
+      if (box.seen !== "${expected}") throw new Error("seen " + box.seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await check(compile(getSource("true,true,true"), path))).failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      expect((await check(compile(getSource("true,false,true"), path))).failure?.message).toContain(
+        "seen true,true,true",
+      );
+    });
+
+    it("rejects a regular expression that Node rejects", () => {
+      expect(() => compile("var pattern = /(?<a>.)\\k<b>/u;", path)).toThrow("SyntaxError");
+    });
+  });
 });

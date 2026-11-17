@@ -181,18 +181,26 @@ const isSloppyFunctionBody = (node: ts.Statement) => {
   );
 };
 
+// The SyntaxError of a regular expression literal that JavaScript rejects, as Node reads its
+// grammar, or undefined where JavaScript accepts it.
+export const getRegularExpressionError = (node: ts.RegularExpressionLiteral) => {
+  const text = node.text;
+  const end = text.lastIndexOf("/");
+  try {
+    new RegExp(text.slice(1, end), text.slice(end + 1));
+    return undefined;
+  } catch (error) {
+    return String(error).replace(/^SyntaxError: /, "");
+  }
+};
+
 // Rejects programs that JavaScript rejects as it parses, where TypeScript accepts them, and stops at
 // those that it accepts only outside strict mode, where tla-ts doesn't follow them.
 export const rejectEarlyErrors = (sourceFile: ts.SourceFile) => {
   const visit = (node: ts.Node) => {
     if (ts.isRegularExpressionLiteral(node)) {
-      const text = node.text;
-      const end = text.lastIndexOf("/");
-      try {
-        new RegExp(text.slice(1, end), text.slice(end + 1));
-      } catch (error) {
-        reject(String(error).replace(/^SyntaxError: /, ""), node);
-      }
+      const error = getRegularExpressionError(node);
+      if (error !== undefined) reject(error, node);
     }
     if (ts.isBlock(node) || ts.isCaseBlock(node)) {
       const statements = ts.isBlock(node)
