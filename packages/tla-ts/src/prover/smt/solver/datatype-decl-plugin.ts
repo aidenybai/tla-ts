@@ -327,7 +327,6 @@ const computeSizeFunctions = (manager: AstManager, names: string[]) => {
   }
 };
 
-// plugin::reset, which drops the declarations the plugin made for each datatype.
 export const resetDatatypePlugin = (manager: AstManager) => {
   manager.datatypeConstructors = [];
   manager.constructorAccessors = [];

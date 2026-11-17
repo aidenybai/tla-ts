@@ -369,7 +369,6 @@ export class PolyRewriter {
     return isChanged ? this.mkAddApp(adds) : undefined;
   }
 
-  // The summands that every branch of an if-then-else shares leave it.
   private hoistIte(sum: number) {
     if (this.options.isHoistIte !== true) return undefined;
     const manager = this.manager;

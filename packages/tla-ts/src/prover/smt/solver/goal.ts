@@ -20,8 +20,6 @@ export const joinDependencies = (
       ? first
       : { value: -1, children: [first, second] };
 
-// ast_manager::linearize: breadth first and once per node, then once per value, as
-// remove_duplicates keeps the first.
 export const getDependencyValues = (dependency: Dependency | undefined) => {
   if (dependency === undefined) return [];
   const todo = [dependency];

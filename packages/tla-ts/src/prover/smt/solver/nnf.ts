@@ -28,7 +28,6 @@ export class DefinedNames {
   private nameRefs: RefVector;
   private lims: number[] = [];
 
-  // Without a prefix, the names are numbered symbols.
   constructor(
     private manager: AstManager,
     private prefix: SmtSymbol | null = "z3name",

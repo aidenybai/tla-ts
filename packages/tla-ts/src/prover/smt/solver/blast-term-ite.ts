@@ -3,8 +3,6 @@ import { runSimplifier } from "./dependent-expr-state";
 import type { Goal } from "./goal";
 import { RewriterTpl } from "./rewriter-tpl";
 
-// blast_term_ite_simplifier::rw_cfg, without the max_inflation and max_steps that no parameter of
-// the tactic sets.
 class BlastTermIteRewriter extends RewriterTpl {
   isRewritingPatterns() {
     return false;

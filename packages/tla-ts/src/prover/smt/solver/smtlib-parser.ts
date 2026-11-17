@@ -296,14 +296,11 @@ interface PatternFrame {
   next: number;
 }
 
-// push_match_frame. The stack holds the term, then the pattern and the body of each case, until
-// compile_patterns. A case is (p t), or (case p t) in the form before SMT-LIB 2.6.
 interface MatchFrame {
   kind: "match";
   list: SmtList;
   cases: SExpr[];
   isCaseForm: boolean;
-  // The binders around the case that is being parsed, -1 between cases.
   depth: number;
   isTail: boolean;
   start: number;
@@ -999,7 +996,6 @@ export const createSmtlibReader = (
   const unrooted: number[] = [];
   const pending: number[] = [];
 
-  // A pop erases the definitions of the functions its scopes declared, in the order of declaration.
   const scopedFuncs: number[] = [];
   const scopedFuncStarts: number[] = [];
 
@@ -1108,7 +1104,6 @@ export const createSmtlibReader = (
           ? decl.parameters.length
           : decl.arity;
 
-  // cmd_context::register_plist, which declares List when no logic is set.
   const registerList = () => {
     const element = manager.mkTypeParameter(0);
     mkDatatypes(manager, [
@@ -1376,7 +1371,6 @@ export const createSmtlibReader = (
           manager.mkVar(index + shift + amount, manager.sorts[variable]),
         );
 
-  // push_local: a term that was bound under fewer binders moves its free variables.
   const getLocalTerm = (local: Local) =>
     local.level === binders.depth
       ? local.expr
@@ -2417,8 +2411,6 @@ export const createSmtlibReader = (
     return { head: name, indices: [] };
   };
 
-  // parse_match_pattern: a constructor, a constructor applied to variables, or a variable, which _
-  // leaves unnamed. Z3 raises an error found after the pattern at the token after it.
   const parseMatchPattern = (sexpr: SExpr, sort: number, after: SExpr) => {
     if (sexpr.kind !== "list" && sexpr.kind !== "symbol")
       throw new SmtParseError(
@@ -2438,7 +2430,6 @@ export const createSmtlibReader = (
           );
         vars.push(item.text);
       }
-    // cmd_context::find_func_decl with the arity and the range alone.
     const decl = funcs
       .get(name.text)
       ?.find(
@@ -2451,7 +2442,6 @@ export const createSmtlibReader = (
         `invalid function declaration reference, unknown indexed function ${name.text}`,
         after,
       );
-    // A builtin name takes the builtin declaration, which is no constructor, or raises its own error.
     if (decl === undefined && (name.text === "true" || name.text === "false"))
       throw new SmtParseError("expecting a constructor", after);
     if (decl === undefined && BUILTIN_NAMES.has(name.text))
@@ -2473,8 +2463,6 @@ export const createSmtlibReader = (
     return manager.mkApp(decl, args, sort);
   };
 
-  // check_patterns and compile_patterns, from the last case to the first, with bind_match. The
-  // condition of the last case goes unused.
   const compileMatch = (term: number, patterns: number[], bodies: number[], at: SExpr) => {
     const sort = manager.sorts[term];
     if (!manager.isDatatypeSort(sort))
@@ -2494,7 +2482,6 @@ export const createSmtlibReader = (
       const isVar = manager.kinds[pattern] === KIND_VAR;
       const recognizer = isVar ? -1 : getConstructorIs(manager, manager.decls[pattern]);
       const accessors = isVar ? [] : getConstructorAccessors(manager, manager.decls[pattern]);
-      // bind_match shifts the term past the variables of the pattern.
       const shifted = shiftFreeVars(term, isVar ? 1 : accessors.length);
       manager.incRef(shifted);
       const substitution = isVar

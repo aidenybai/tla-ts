@@ -60,8 +60,6 @@ export class DependentExprState {
   }
 }
 
-// The end of dependent_expr_state_tactic, which adds the converter of its model trail, even an empty one,
-// while models are enabled.
 export const finishSimplifier = (goal: Goal, definitions: Definition[] = []) => {
   goal.elimTrue();
   goal.elimRedundancies();

@@ -256,7 +256,6 @@ export const QFUFBV_ACKR_PREAMBLE =
   ":pull_cheap_ite true :push_ite_bv false :local_ctx true :local_ctx_limit 10000000 " +
   ":ite_extra_rules true :mul2concat true :flat_and_or false))";
 
-// mk_qfufbv_tactic.
 const QFUFBV =
   "(using-params (and-then (and-then (using-params simplify :flat_and_or false) (using-params " +
   "propagate-values :flat_and_or false) solve-eqs elim-uncnstr (if-no-proofs (if-no-unsat-cores " +

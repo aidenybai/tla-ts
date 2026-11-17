@@ -1339,7 +1339,6 @@ export class AstManager {
     return this.stringSort;
   }
 
-  // seq_decl_plugin::init, which makes the sorts of the signatures of the sequence operators.
   initSeqPlugin() {
     if (this.isSeqPluginInitialized) return;
     this.isSeqPluginInitialized = true;
@@ -1907,7 +1906,6 @@ export class AstManager {
     return decl;
   }
 
-  // pb_util::mk_fresh_bool, whose declaration goes with its last application.
   mkPbAuxBool() {
     const decl = this.addDecl(
       this.mkFreshVarName("pb"),

@@ -210,8 +210,7 @@ export class Context extends Internalizer {
     this.qmanager = new DefaultQuantifierManager(this);
   }
 
-  // As in Z3, reading the parameters again drops the setup's values for them, but relevancy keeps the
-  // lower level, and eliminate_term_ite, which is no parameter, keeps the setup's value.
+  // As in Z3, rereading the parameters drops the setup's tuning but for eliminate_term_ite and relevancy.
   updateParams(params: KernelParams) {
     this.params.isMbqi = params.isMbqi;
     this.params.mbqiMaxIterations = params.mbqiMaxIterations;
@@ -225,8 +224,6 @@ export class Context extends Internalizer {
   }
 
   // setup_context and setup_components. The setup's theories come in its order, then setup_card's.
-  // An inconsistent context stays unconfigured, so its setup rejects nothing, and a later check
-  // sets it up.
   setupContext(
     setup: SmtSetup | undefined,
     isUsingStaticFeatures: boolean,

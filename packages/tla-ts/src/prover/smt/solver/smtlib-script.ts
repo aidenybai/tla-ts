@@ -350,7 +350,6 @@ interface CheckResult {
   status: number;
   context: Context | undefined;
   isOptimizing: boolean;
-  // A tactic answered, so a missing model is one its model converter did not make.
   isFromTactic: boolean;
   model: ProtoModel | undefined;
   core: number[] | undefined;
@@ -385,8 +384,6 @@ interface ScriptState {
   // combined_solver's incremental smt kernel, which keeps one context across the checks, or
   // undefined while Z3 has made no such kernel.
   kernel: SmtKernel | undefined;
-  // The incremental inc_sat_solver that a sat solver logic or parameter picks, or undefined once it
-  // reached an unported part and the smt kernel answers in its place.
   satSolver: IncSatSolver | undefined;
 }
 
@@ -734,10 +731,6 @@ export const runSmtlibScript = (
       ...result,
     };
   };
-  // cmd_context::mk_solver: mk_solver_for_logic makes the incremental solver the smt kernel unless
-  // the logic, the default tactic or the sat parameters pick a sat solver. That solver is
-  // inc_sat_solver, in euf mode under sat.euf; the finite-domain solver and sat.smt only store
-  // their assertions.
   const resetKernel = () => {
     const logic = state.logic;
     const parameters = settings.parameters;
@@ -762,8 +755,7 @@ export const runSmtlibScript = (
       useSatSolver((solver) => solver.push());
     }
   };
-  // The parts of inc_sat_solver that are not ported, such as its scopes outside sat.euf, leave its
-  // answers to the smt kernel.
+  // The parts of inc_sat_solver that are not ported leave its answers to the smt kernel.
   const useSatSolver = <Result>(action: (solver: IncSatSolver) => Result) => {
     const solver = state.satSolver;
     if (solver === undefined) return undefined;
@@ -776,8 +768,7 @@ export const runSmtlibScript = (
       return undefined;
     }
   };
-  // solver_na2as asserts a named assertion as an implication from its name, which every check
-  // assumes first; inc_sat_solver keeps the names apart and assumes them last.
+  // solver_na2as asserts a named assertion as an implication from its name.
   const assertInKernel = (formula: number, name: number) => {
     const manager = state.manager;
     useSatSolver((solver) =>
@@ -1563,8 +1554,6 @@ export const runSmtlibScript = (
           print(`(${check.core.map(format).join(" ")})`);
           return;
         }
-        // smt_solver::get_unsat_core minimizes the core that the last check of its context left,
-        // with checks of that context.
         const mus = new Mus(state.manager, {
           checkSat: (assumptions) => kernel.check(assumptions),
           getUnsatCore: () => kernel.context.unsatCore,
@@ -1950,8 +1939,6 @@ export const runSmtlibScript = (
     state.manager.limit.restart(Infinity);
     if (!MANAGERLESS_COMMANDS.has(head.text) && state.isProofsEnabled === undefined) {
       state.isProofsEnabled = settings.parameters.get("proof") === "true";
-      // cmd_context::init_manager_core installs the names of the sequence plugin, which makes its sorts, and
-      // declares List without a logic.
       if (state.logic === undefined || logicHasSeq(state.logic)) state.manager.initSeqPlugin();
       if (state.logic === undefined) state.reader.registerList();
       resetKernel();

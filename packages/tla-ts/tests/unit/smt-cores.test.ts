@@ -181,8 +181,6 @@ describe("runSmtlibScript orders cores and terms as Z3 does", () => {
     ]);
   });
 
-  // smt_solver::get_unsat_core runs mus on the core its context's last check left, so a second
-  // get-unsat-core minimizes the empty core of the last satisfiable check of mus.
   it("minimizes the core with checks of the kernel under smt.core.minimize", () => {
     expect(
       run([
@@ -202,8 +200,6 @@ describe("runSmtlibScript orders cores and terms as Z3 does", () => {
     ).toEqual(["unsat", "((not b0) b0)", "()", "unsat", "((< x 0) n1)"]);
   });
 
-  // mk_solver_for_logic gives QF_BV inc_sat_solver, which asserts a named assertion as a clause on
-  // its name.
   it("answers the incremental checks of QF_BV with the SAT solver", () => {
     expect(
       run([

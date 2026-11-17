@@ -362,7 +362,6 @@ const hasPatterns: Probe = (goal) => {
   );
 };
 
-// arith_degree_probe, which measures both sides of every arithmetic comparison.
 const mkArithDegreeProbe =
   (isAverage: boolean): Probe =>
   (goal) => {
@@ -404,7 +403,6 @@ const mkArithDegreeProbe =
 
 const getBitsize = (value: bigint) => (value < 0n ? -value : value).toString(2).length;
 
-// arith_bw_probe, which measures every arithmetic numeral.
 const mkArithBwProbe =
   (isAverage: boolean): Probe =>
   (goal) => {
@@ -569,8 +567,7 @@ export const compileProbe = (sexpr: SExpr, isInternal = false): Probe => {
   if (children.length === 0)
     throw new SmtParseError("invalid probe, at least one argument expected", sexpr.end);
   const probes = children.map((child) => compileProbe(child, isInternal));
-  // Deviation from Z3: MK_NARY_PROBE applies the operator to its first argument twice, so (+ 2 3)
-  // is 7 and (* 2 3) is 12 there.
+  // Deviation from Z3: MK_NARY_PROBE applies the operator to its first argument twice.
   return (goal) => probes.map((probe) => probe(goal)).reduce(nary);
 };
 

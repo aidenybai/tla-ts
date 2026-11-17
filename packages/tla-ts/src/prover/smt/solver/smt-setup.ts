@@ -162,7 +162,6 @@ const setupQfDt = (config: SmtConfig) => {
   config.theories.push(FAMILY_DATATYPE, FAMILY_RECFUN);
 };
 
-// The parameters smt_params::setup_QF_IDL, setup_QF_RDL, setup_QF_LIA and setup_QF_LRA share.
 const setupDiffLogicParams = (config: SmtConfig) => {
   config.relevancyLevel = 0;
   config.isEq2Ineq = true;

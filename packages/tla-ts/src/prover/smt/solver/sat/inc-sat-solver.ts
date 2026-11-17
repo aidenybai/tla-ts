@@ -33,7 +33,6 @@ export class IncSatSolver {
   private readonly goal2sat: Goal2Sat;
   private readonly fmls: RefVector;
   private fmlsHead = 0;
-  // m_asmsf, the names of the named assertions, which every check assumes.
   private readonly names: RefVector;
   private isCnf = true;
   private readonly core: RefVector;
@@ -92,7 +91,6 @@ export class IncSatSolver {
     this.fmls.push(expr);
   }
 
-  // assert_expr_core2, which keeps a clause a clause.
   assertNamed(expr: number, name: number) {
     const manager = this.manager;
     this.names.push(name);

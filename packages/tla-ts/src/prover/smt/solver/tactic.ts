@@ -474,7 +474,6 @@ const selectClause = (goal: Goal, isLargest: boolean) => {
   return position;
 };
 
-// split_clause_tactic: a subgoal for each literal of the first clause, or of the largest.
 const runSplitClause = (isLargest: boolean) => (goal: Goal) => {
   const manager = goal.manager;
   if (goal.isProofsEnabled) throw new SmtUnsupportedError("the proofs of split-clause");
@@ -722,7 +721,6 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
           ["elim_inverses", PARAM_BOOL, true, true],
         ]),
       ]),
-      // mk_purify_arith_tactic: an and_then, so a goal its simplify decides goes no further.
       build: (environment, params) => {
         const manager = environment.manager;
         const elimRemParams = new Map([...params, ["elim_rem", true]]);
@@ -1546,10 +1544,7 @@ const isDecidedSat = (goals: Goal[]) => goals.length === 1 && goals[0].isDecided
 
 const isDecidedUnsat = (goals: Goal[]) => goals.length === 1 && goals[0].isDecidedUnsat();
 
-// par_and_then joins the cores of the subgoals it shows unsat, each before those of the earlier.
-// Deviation from Z3: and_then and repeat do too. Z3 takes their core from the goal's dependency
-// converter, which split-clause makes from the subgoals' converters, not from their cores, so it
-// answers an empty core.
+// Deviation from Z3: and_then and repeat join the subgoals' cores, where Z3 answers an empty core.
 const assertUnsat = (goal: Goal, unsatGoals: Goal[]) => {
   goal.resetAll();
   goal.assert(
@@ -1719,8 +1714,7 @@ const compile = (
             }),
       };
     }
-    // The timeout is not ported, so the child runs to the end. try_for turns Z3's other
-    // exceptions into tactic exceptions, which or-else catches.
+    // The timeout is not ported, so the child runs to the end.
     case "try-for": {
       if (sexpr.items.length !== 3)
         throw new SmtParseError("invalid try-for combinator, two arguments expected", sexpr.end);
@@ -2027,7 +2021,6 @@ export const convertModel = (goal: Goal, model: ProtoModel) =>
     return converted;
   }, model);
 
-// model_converter2model: the model of the tactic that decided the goal is copied into a new model.
 const getConvertedModel = (goal: Goal) =>
   convertModel(goal, goal.model?.copy() ?? new ProtoModel(goal.manager).mkModel());
 
