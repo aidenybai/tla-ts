@@ -605,6 +605,22 @@ describe("qfufbv, as Z3 5.3.2 answers QF_UFBV", () => {
   });
 });
 
+describe("purify-arith, as Z3 5.3.2 composes it", () => {
+  it("stops at a goal that one of its steps decides", () => {
+    expect(
+      run([
+        "(apply purify-arith)",
+        "(declare-const x Int)",
+        "(assert (or (> x 2) (distinct (* x 0) (mod (- 1) 5))))",
+        "(apply purify-arith)",
+      ]),
+    ).toEqual([
+      "(goals\n(goal\n  :precision precise :depth 1)\n)",
+      "(goals\n(goal\n  :precision precise :depth 2)\n)",
+    ]);
+  });
+});
+
 describe("split-clause, as Z3 5.3.2 splits a goal", () => {
   it("splits the first clause, or the largest, into a subgoal for each literal", () => {
     expect(

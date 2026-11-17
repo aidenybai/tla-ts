@@ -709,21 +709,24 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
           ["elim_inverses", PARAM_BOOL, true, true],
         ]),
       ]),
+      // mk_purify_arith_tactic: an and_then, so a goal its simplify decides goes no further.
       build: (environment, params) => {
         const manager = environment.manager;
-        const snf = runNnf(manager, new Map());
         const elimRemParams = new Map([...params, ["elim_rem", true]]);
-        return (goal) => {
-          snf(goal);
-          simplifyGoal(manager, goal, getRewriterOptions(manager, elimRemParams));
-          purifyArith(manager, goal, {
-            isComplete: getBool(params, "complete", true),
-            isElimRootObjects: getBool(params, "elim_root_objects", true),
-            isElimInverses: getBool(params, "elim_inverses", true),
-          });
-          simplifyGoal(manager, goal, getRewriterOptions(manager, params));
-          return [goal];
-        };
+        return [
+          runNnf(manager, new Map()),
+          inPlace((goal) =>
+            simplifyGoal(manager, goal, getRewriterOptions(manager, elimRemParams)),
+          ),
+          inPlace((goal) =>
+            purifyArith(manager, goal, {
+              isComplete: getBool(params, "complete", true),
+              isElimRootObjects: getBool(params, "elim_root_objects", true),
+              isElimInverses: getBool(params, "elim_inverses", true),
+            }),
+          ),
+          inPlace((goal) => simplifyGoal(manager, goal, getRewriterOptions(manager, params))),
+        ].reduceRight((second, first) => runAndThen(first, second));
       },
     },
   ],
