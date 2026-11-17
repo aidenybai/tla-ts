@@ -154,11 +154,11 @@ const CORE_SIGNATURES = new Map(
       ["BOOLEAN", 0, [], []],
       ["STRING", 0, [], []],
     ] as const
-  ).map((signature): [string, OperatorLevels] => [
-    signature[0],
+  ).map(([name, level, maxLevels, weights]): [string, OperatorLevels] => [
+    name,
     {
-      ...createSignature(signature[0], signature[1], [...signature[2]], [...signature[3]]),
-      nonLeibniz: new Set(signature[1] > 1 ? [0, 1] : []),
+      ...createSignature(name, level, [...maxLevels], [...weights]),
+      nonLeibniz: new Set(level > 1 ? [0, 1] : []),
     },
   ]),
 );

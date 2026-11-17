@@ -37,7 +37,9 @@ import {
 import { SANY_OPERATOR_SYNONYMS } from "../tlc/jar-data";
 
 const SYNONYMS = new Map(
-  SANY_OPERATOR_SYNONYMS.flatMap((names) => names.slice(1).map((synonym) => [synonym, names[0]])),
+  SANY_OPERATOR_SYNONYMS.flatMap(([canonical, ...synonyms]) =>
+    synonyms.map((synonym) => [synonym, canonical]),
+  ),
 );
 
 export const resolveSynonym = (name: string) =>

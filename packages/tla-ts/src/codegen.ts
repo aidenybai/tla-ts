@@ -167,13 +167,13 @@ const getFreeNames = (expression: Expression, names = new Set<string>()) => {
 
 const getDelegateContext = (generator: Generator, expression: Expression, frame: Frame) => {
   const freeNames = getFreeNames(expression);
-  const captured = [...frame.locals].filter((entry) => freeNames.has(entry[0]));
+  const captured = [...frame.locals].filter(([name]) => freeNames.has(name));
   if (captured.length === 0) return frame.context;
   const names = addReference(
     generator,
-    captured.map((entry) => entry[0]),
+    captured.map(([name]) => name),
   );
-  return `extend(${frame.context}, ${names}, [${captured.map((entry) => entry[1]).join(", ")}])`;
+  return `extend(${frame.context}, ${names}, [${captured.map(([, local]) => local).join(", ")}])`;
 };
 
 const generateDelegate = (generator: Generator, expression: Expression, frame: Frame) =>

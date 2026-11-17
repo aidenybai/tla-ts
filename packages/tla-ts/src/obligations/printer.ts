@@ -430,26 +430,26 @@ const createPrinter = (hyps: Hyp[] = [], options: PrinterOptions = {}) => {
         );
       case "Choose": {
         const domainDoc = expression.domain && printExpr(expression.domain);
-        return withNames(context, [expression.name], (names) =>
+        return withNames(context, [expression.name], ([name]) =>
           createBig(
             domainDoc
               ? format(
                   "@[<b2>CHOOSE @[<b2>%s \\in@ %a@] :@ %a@]",
-                  names[0],
+                  name,
                   domainDoc,
                   printExpr(expression.body),
                 )
-              : format("@[<b2>CHOOSE %s :@ %a@]", names[0], printExpr(expression.body)),
+              : format("@[<b2>CHOOSE %s :@ %a@]", name, printExpr(expression.body)),
           ),
         );
       }
       case "SetSt": {
         const domainDoc = printExpr(expression.domain);
-        return withNames(context, [expression.name], (names) =>
+        return withNames(context, [expression.name], ([name]) =>
           createAtom(
             format(
               "@[<b3>{@[<b2>%s \\in@ %a@] :@ %a}@]",
-              names[0],
+              name,
               domainDoc,
               printExpr(expression.body),
             ),

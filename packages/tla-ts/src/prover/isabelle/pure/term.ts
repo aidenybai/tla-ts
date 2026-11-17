@@ -636,10 +636,10 @@ const mapAbsVars = (rename: (name: string) => string, term: Term): Term => {
 
 export const renameAbs = (pattern: Term, object: Term, term: Term): Term | undefined => {
   const renaming = new Map<string, string>();
-  matchBvs(pattern, object, []).forEach((pair) => {
-    if (!renaming.has(pair[0])) renaming.set(pair[0], pair[1]);
+  matchBvs(pattern, object, []).forEach(([from, to]) => {
+    if (!renaming.has(from)) renaming.set(from, to);
   });
-  if ([...renaming].every((pair) => pair[0] === pair[1])) return undefined;
+  if ([...renaming].every(([from, to]) => from === to)) return undefined;
   const renamed = mapAbsVars((name) => renaming.get(name) ?? name, term);
   return renamed === term ? undefined : renamed;
 };

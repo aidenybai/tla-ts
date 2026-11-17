@@ -57,7 +57,7 @@ const getConjunction = (state: [string, string][], prefix?: string) =>
   indent(
     [
       ...(prefix === undefined ? [] : [prefix]),
-      ...state.map((assignment) => `${assignment[0]} = (${assignment[1]})`),
+      ...state.map(([name, value]) => `${name} = (${value})`),
     ].join("\n/\\\n"),
     2,
   );
@@ -190,8 +190,7 @@ ${lassoStep}${variables
   const deserializedTrace = `\n${getPrimer(traceModule, getHashOrder(["IOUtils", ...constantModules, specName]))}trace == IODeserialize("${input.module}.bin", TRUE)\n\n${CLOSING_TAG}`;
   const traceFunction = `${INDENT}<<\n${states
     .map(
-      (state) =>
-        `${INDENT}([${state.map((assignment) => `${assignment[0]} |-> ${assignment[1]}`).join(",")}])`,
+      (state) => `${INDENT}([${state.map(([name, value]) => `${name} |-> ${value}`).join(",")}])`,
     )
     .join(",\n")}\n${INDENT}>>${SEPARATOR}\n`;
 

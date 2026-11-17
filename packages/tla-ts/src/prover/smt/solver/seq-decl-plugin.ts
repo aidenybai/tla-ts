@@ -271,7 +271,7 @@ const SEQ_VARIANTS = new Map([
   [OP_INTERNAL_STRING_SUBSTR, OP_SEQ_EXTRACT],
 ]);
 
-const STRING_VARIANTS = new Map([...SEQ_VARIANTS].map((entry) => [entry[1], entry[0]]));
+const STRING_VARIANTS = new Map([...SEQ_VARIANTS].map(([variant, op]) => [op, variant]));
 
 const getPsig = (op: number) => {
   const sig = SIGS.get(op);

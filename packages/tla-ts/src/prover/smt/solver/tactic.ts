@@ -145,9 +145,9 @@ interface NamedTactic {
 
 const getDescrs = (module: string, entries: [string, number, TacticParam, boolean?][]) =>
   new Map(
-    entries.map((entry) => [
-      entry[0],
-      { kind: entry[1], module, defaultValue: entry[2], isPorted: entry[3] ?? false },
+    entries.map(([name, kind, defaultValue, isPorted]) => [
+      name,
+      { kind, module, defaultValue, isPorted: isPorted ?? false },
     ]),
   );
 
@@ -903,7 +903,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     "pb2bv",
     {
       descrs: new Map([
-        ...[...REWRITER_DESCRS].filter((entry) => BOOL_REWRITER_PARAMS.includes(entry[0])),
+        ...[...REWRITER_DESCRS].filter(([name]) => BOOL_REWRITER_PARAMS.includes(name)),
         ...getDescrs("", [
           ["max_memory", PARAM_UINT, UINT_MAX, true],
           ["pb2bv_all_clauses_limit", PARAM_UINT, 8, true],

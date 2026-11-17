@@ -184,8 +184,8 @@ const readClassFile = (bytes: Uint8Array) => {
           getJavaClassName(pool, thrown.readUint16()),
         )
       : [];
-    const modifiers = METHOD_MODIFIERS.filter((entry) => (access & entry[0]) !== 0).map(
-      (entry) => entry[1],
+    const modifiers = METHOD_MODIFIERS.filter(([flag]) => (access & flag) !== 0).map(
+      ([, modifier]) => modifier,
     );
     const returnType = getTypeNames(descriptor.slice(parametersEnd + 1))[0];
     const throwsClause = exceptions.length === 0 ? "" : ` throws ${exceptions.join(",")}`;

@@ -98,28 +98,28 @@ export const createLevelFields = (id: number): LevelFields => ({
 
 // SANY's order: OpDefNode's constructor numbers each builtin, then its phony parameters.
 export const createBuiltins = (getId: () => number) =>
-  BUILTIN_OPERATORS.map((operator): OpDefNode => {
+  BUILTIN_OPERATORS.map(([name, arity, level, maxLevels, weights]): OpDefNode => {
     const id = getId();
     const params =
-      operator[1] < 0
+      arity < 0
         ? undefined
-        : Array.from({ length: operator[1] }, (_value, index): FormalParamNode => ({
+        : Array.from({ length: arity }, (_value, index): FormalParamNode => ({
             ...createLevelFields(getId()),
             kind: "FormalParam",
             name: `Formal_${index}`,
             arity: 0,
             location: undefined,
           }));
-    const isLevelSet = operator[3] !== undefined && operator[4] !== undefined;
-    const isLeibnizArg = operator[4]?.map((weight) => weight > 0);
+    const isLevelSet = maxLevels !== undefined && weights !== undefined;
+    const isLeibnizArg = weights?.map((weight) => weight > 0);
     return {
       ...createLevelFields(id),
       levelChecked: isLevelSet ? 99 : 0,
-      level: operator[2],
+      level,
       kind: "OpDef",
       defKind: "BuiltIn",
-      name: operator[0],
-      arity: operator[1],
+      name,
+      arity,
       params,
       body: undefined,
       isLocal: false,
@@ -132,11 +132,11 @@ export const createBuiltins = (getId: () => number) =>
       inRecursiveSection: false,
       recursiveSection: -1,
       letInLevel: 0,
-      weights: operator[1] < 0 ? (operator[4] ?? []).slice(0, 1) : (operator[4] ?? []),
+      weights: arity < 0 ? (weights ?? []).slice(0, 1) : (weights ?? []),
       isLeibnizArg: isLevelSet ? isLeibnizArg : undefined,
       isLeibniz: isLeibnizArg?.every(Boolean) ?? true,
       opLevelCond: undefined,
-      maxLevels: operator[1] < 0 ? (operator[3] ?? []).slice(0, 1) : (operator[3] ?? []),
+      maxLevels: arity < 0 ? (maxLevels ?? []).slice(0, 1) : (maxLevels ?? []),
       minMaxLevel: undefined,
       labels: new Map(),
       step: undefined,

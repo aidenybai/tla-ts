@@ -81,8 +81,8 @@ const getQfnraSolver = (solver: QfnraSolver) =>
       `${solver.simpleCheck})`,
     ...(solver.heuristic === undefined ? [] : [`(try-for ${QFNRA_NLSAT} ${solver.heuristic})`]),
     ...solver.orders.map(
-      (order) =>
-        `(try-for (using-params ${QFNRA_NLSAT} :variable_ordering_strategy ${order[0]}) ${order[1]})`,
+      ([strategy, limit]) =>
+        `(try-for (using-params ${QFNRA_NLSAT} :variable_ordering_strategy ${strategy}) ${limit})`,
     ),
     `(using-params smt :use_ls true :ls_time ${solver.ls})`,
     `(and-then (try-for (using-params smt :arith.greatest_error_pivot true) ${solver.smt}) ` +

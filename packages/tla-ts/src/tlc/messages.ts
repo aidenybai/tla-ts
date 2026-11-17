@@ -345,14 +345,14 @@ interface CodedMessage {
 let codedMessagePatterns: { pattern: RegExp; message: CodedMessage }[] | undefined;
 
 const getCodedMessagePatterns = () =>
-  (codedMessagePatterns ??= CODED_MESSAGES.map((codedMessage) => ({
+  (codedMessagePatterns ??= CODED_MESSAGES.map(([code, template, isEvalException]) => ({
     pattern: new RegExp(
-      `^${codedMessage[1]
+      `^${template
         .split(/%\d+%/)
         .map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
         .join("[\\s\\S]*")}$`,
     ),
-    message: { code: codedMessage[0], isEvalException: codedMessage[2] },
+    message: { code, isEvalException },
   })));
 
 const UNCODED_MESSAGE_PATTERN =

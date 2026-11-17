@@ -43,9 +43,7 @@ const formatCalendarVersion = (date: Date) =>
   `${date.getUTCFullYear()}.${zeroPad(date.getUTCMonth() + 1)}.${zeroPad(date.getUTCDate())}.${zeroPad(date.getUTCHours())}${zeroPad(date.getUTCMinutes())}${zeroPad(date.getUTCSeconds())}`;
 
 const getRegisterFunction = <Key extends Value>(registers: Map<Key, Value>) =>
-  createFunction(
-    [...registers].map((entry): [Value, Value] => [entry[0], createTuple([entry[1]])]),
-  );
+  createFunction([...registers].map(([key, value]): [Value, Value] => [key, createTuple([value])]));
 
 const createTlcRecord = (fields: [string, Value][]) =>
   setFunctionClass(createWrittenFunction(fields), "record");

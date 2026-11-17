@@ -351,7 +351,10 @@ const instantiate = (
     substitutes.set(name, at({ kind: "Opaque", name }, { location }));
   }
   const anonymized = new Map(
-    [...substitutes].map((entry) => [entry[0], pipeline.anonymizer.expr(instanceScope, entry[1])]),
+    [...substitutes].map(([name, expression]) => [
+      name,
+      pipeline.anonymizer.expr(instanceScope, expression),
+    ]),
   );
   const body = substituteUnits(
     shift((instanceScope?.size ?? 0) - (module.depth ?? 0)),

@@ -226,12 +226,12 @@ export const applyAttributes = (
   thms: readonly Thm[],
 ): [IsarContext, Thm[]] =>
   thms.reduce<[IsarContext, Thm[]]>(
-    (accumulated, thm) => {
+    ([current, results], thm) => {
       const [declared, result] = attributes.reduce<[IsarContext, Thm]>(
-        (state, attribute) => applyAttribute(state[0], attribute, state[1]),
-        [accumulated[0], thm],
+        ([inner, changed], attribute) => applyAttribute(inner, attribute, changed),
+        [current, thm],
       );
-      return [declared, [...accumulated[1], result]];
+      return [declared, [...results, result]];
     },
     [context, []],
   );

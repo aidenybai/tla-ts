@@ -505,7 +505,7 @@ export const createEnvironment = (
     const instantiation = createInstantiation({
       params,
       substitutions: new Map(
-        [...substitutions].map((entry) => [entry[0], renameLocals(entry[1], renamed)]),
+        [...substitutions].map(([name, expression]) => [name, renameLocals(expression, renamed)]),
       ),
       variables: new Set(linked.variables),
       getDefinition: (key) => definitions.get(key),
@@ -548,14 +548,9 @@ export const createEnvironment = (
     instance.name === undefined
       ? standardSymbols
       : new Map(
-          [...standardSymbols].map((entry) => [
-            `${instance.name}!${entry[0]}`,
-            {
-              key: entry[1].key,
-              arity: entry[1].arity,
-              params: entry[1].params,
-              kind: entry[1].kind,
-            },
+          [...standardSymbols].map(([name, symbol]) => [
+            `${instance.name}!${name}`,
+            { key: symbol.key, arity: symbol.arity, params: symbol.params, kind: symbol.kind },
           ]),
         );
 
@@ -568,34 +563,32 @@ export const createEnvironment = (
     const declared = new Set(declarations.map((declaration) => declaration.name));
     return new Map(
       [...exported]
-        .filter((entry) => !declared.has(entry[0]))
-        .map((entry): [string, ModuleSymbol] => {
+        .filter(([name]) => !declared.has(name))
+        .map(([name, symbol]): [string, ModuleSymbol] => {
           if (instance.name === undefined) {
             return [
-              entry[0],
+              name,
               {
-                key: getKey(entry[1].key, entry[0]),
-                arity: entry[1].arity,
-                params: entry[1].params,
-                kind: entry[1].kind,
+                key: getKey(symbol.key, name),
+                arity: symbol.arity,
+                params: symbol.params,
+                kind: symbol.kind,
                 range:
-                  parameterized.get(entry[1].key) === true
-                    ? instance.location.range
-                    : entry[1].range,
+                  parameterized.get(symbol.key) === true ? instance.location.range : symbol.range,
               },
             ];
           }
-          const qualified = `${instance.name}!${entry[0]}`;
+          const qualified = `${instance.name}!${name}`;
           return [
             qualified,
             {
-              key: getKey(entry[1].key, qualified),
-              arity: entry[1].arity + instance.params.length,
-              params: entry[1].params && [
+              key: getKey(symbol.key, qualified),
+              arity: symbol.arity + instance.params.length,
+              params: symbol.params && [
                 ...instance.params.map((param) => param.arity),
-                ...entry[1].params,
+                ...symbol.params,
               ],
-              kind: entry[1].kind,
+              kind: symbol.kind,
             },
           ];
         }),
@@ -643,11 +636,11 @@ export const createEnvironment = (
     const standardSymbols = nested ? undefined : getStandardSymbols(instance.module);
     if (standardSymbols) {
       if (instance.name === undefined) return [];
-      return [...standardSymbols].map((entry) => {
-        const forwarded = createArgumentParams(entry[1].arity, entry[1].params);
+      return [...standardSymbols].map(([name, symbol]) => {
+        const forwarded = createArgumentParams(symbol.arity, symbol.params);
         return createLocalAlias(
-          `${instance.name}!${entry[0]}`,
-          entry[1].key,
+          `${instance.name}!${name}`,
+          symbol.key,
           [...instance.params, ...forwarded],
           forwarded,
           location,
@@ -728,16 +721,16 @@ export const createEnvironment = (
     });
     const declared = new Set(declarations.map((declaration) => declaration.name));
     const aliases = [...linked.exported]
-      .filter((entry) => !declared.has(entry[0]))
-      .map((entry) => {
-        const key = instantiation.getKey(entry[1].key);
-        const ownParams = createArgumentParams(entry[1].arity, entry[1].params);
+      .filter(([name]) => !declared.has(name))
+      .map(([name, symbol]) => {
+        const key = instantiation.getKey(symbol.key);
+        const ownParams = createArgumentParams(symbol.arity, symbol.params);
         const params = [...instance.params, ...ownParams];
         return createLocalAlias(
-          instance.name === undefined ? entry[0] : `${instance.name}!${entry[0]}`,
+          instance.name === undefined ? name : `${instance.name}!${name}`,
           key,
           params,
-          key === entry[1].key ? ownParams : params,
+          key === symbol.key ? ownParams : params,
           location,
         );
       });
@@ -745,9 +738,9 @@ export const createEnvironment = (
   };
 
   const getAvailableDefinitions = (visible: Symbols) =>
-    [...visible].flatMap((entry) => {
-      const definition = definitions.get(entry[1].key);
-      return definition ? [{ ...definition, name: entry[0] }] : [];
+    [...visible].flatMap(([name, symbol]) => {
+      const definition = definitions.get(symbol.key);
+      return definition ? [{ ...definition, name }] : [];
     });
 
   const javaOverrides = new Map<string, JavaOverride[]>();
@@ -916,7 +909,7 @@ export const createEnvironment = (
             getDefinitionSymbol(definition),
           ]),
       ].reduce(
-        (symbols, entry) => (symbols.has(entry[0]) ? symbols : symbols.set(entry[0], entry[1])),
+        (symbols, [name, symbol]) => (symbols.has(name) ? symbols : symbols.set(name, symbol)),
         new Map(visible),
       );
     const linkNested = (nested: Module) => {
@@ -1080,7 +1073,7 @@ export const createEnvironment = (
     root: linkedRoot,
     moduleSymbols: new Map([
       ...standardExports,
-      ...[...linkedModules].map((entry): [string, Symbols] => [entry[0], entry[1].visible]),
+      ...[...linkedModules].map(([name, linked]): [string, Symbols] => [name, linked.visible]),
       [root.name, linkedRoot.visible],
     ]),
     definitions,

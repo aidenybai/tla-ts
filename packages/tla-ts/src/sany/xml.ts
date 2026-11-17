@@ -894,9 +894,10 @@ const exportSpecification = (
     "context",
     [...entries.entries()]
       .toSorted(
-        (left, right) => getHashMapBucket(left[0], capacity) - getHashMapBucket(right[0], capacity),
+        ([first], [second]) =>
+          getHashMapBucket(first, capacity) - getHashMapBucket(second, capacity),
       )
-      .map((pair) => createElement("entry", [createText("UID", pair[0]), pair[1]])),
+      .map(([id, element]) => createElement("entry", [createText("UID", id), element])),
   );
   return createElement("modules", [
     createText("RootModule", root.name),

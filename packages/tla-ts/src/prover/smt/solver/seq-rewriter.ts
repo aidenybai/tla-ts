@@ -182,7 +182,7 @@ const isDigit = (code: number) => code >= 48 && code <= 57;
 const getCount = (bag: Map<number, number>, key: number) => bag.get(key) ?? 0;
 
 const isSameBag = (first: Map<number, number>, second: Map<number, number>) =>
-  first.size === second.size && [...first].every((entry) => second.get(entry[0]) === entry[1]);
+  first.size === second.size && [...first].every(([key, count]) => second.get(key) === count);
 
 export class SeqRewriter {
   readonly re: ReRewriter;

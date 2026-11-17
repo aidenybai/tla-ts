@@ -1485,7 +1485,7 @@ const resolveInstance = (instance: Instance, scope: LocalName | undefined, unit:
   const instanced = unit.getInstance(instance);
   checkSubstitutions(instance, instanced.declarations, instanced.instancer, scope, unit);
   return [...instanced.symbols].reduce(
-    (parent, entry) => bindName(parent, entry[0], entry[1], unit),
+    (parent, [name, symbol]) => bindName(parent, name, symbol, unit),
     scope,
   );
 };
@@ -1509,7 +1509,7 @@ export const resolveSubstitutions = (
     facts: new Set(),
     goals: new Map(),
     bindings: new Map(
-      [...imported].map((entry) => [entry[0], { ...entry[1], position: MODULE_START }]),
+      [...imported].map(([name, symbol]) => [name, { ...symbol, position: MODULE_START }]),
     ),
     errors: report.errors,
     warnings: report.warnings,
@@ -1577,9 +1577,9 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
     ),
   );
   const bindings = new Map<string, ModuleBinding>(
-    [...CORE_SYMBOLS, ...unit.bound].map((entry) => [
-      entry[0],
-      { ...entry[1], position: MODULE_START },
+    [...CORE_SYMBOLS, ...unit.bound].map(([name, symbol]) => [
+      name,
+      { ...symbol, position: MODULE_START },
     ]),
   );
   const recursive = new Set<Binding>();
