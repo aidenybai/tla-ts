@@ -3,6 +3,7 @@ import {
   isStackOverflow,
   SmtCanceledError,
   SmtParseError,
+  SmtSetupError,
   SmtTacticError,
   SmtUnsupportedError,
 } from "../../../errors";
@@ -476,7 +477,7 @@ export const runSmtlibScript = (
       paretoMaxLemmas: Number(parameters.get("opt.pareto_nlsat_max_lemmas") ?? 128),
     };
   };
-  const optimize = (extra: number[]) => {
+  const optimize = (extra: number[], end: SmtToken) => {
     const manager = state.manager;
     const objectives = state.objectives;
     const hard = [...getNamedAssertions(), ...state.names.filter((name) => name !== -1), ...extra];
@@ -531,6 +532,11 @@ export const runSmtlibScript = (
       if (error instanceof SmtUnsupportedError) {
         resetOptimizer();
         return false;
+      }
+      if (error instanceof SmtSetupError) {
+        optimizer.release();
+        setCheck(L_UNDEF, { isOptimizing: true, reasonUnknown: "unknown" });
+        throw new SmtParseError(error.message, end);
       }
       if (!(error instanceof SmtCanceledError || isStackOverflow(error))) throw error;
       const reasonUnknown = optimizer.getReasonUnknown();
@@ -607,13 +613,13 @@ export const runSmtlibScript = (
     (state.logic === "QF_FD" || state.logic === "SAT") &&
     !settings.isProducingProofs &&
     !settings.parameters.has("tactic.default_tactic");
-  const checkSat = (extra: number[]) => {
+  const checkSat = (extra: number[], end: SmtToken) => {
     const deadline = Date.now() + options.timeLimitMs;
     state.manager.limit.restart(deadline);
     // opt::context::optimize answers as the search of the hard constraints does: once they are
     // satisfiable, optsmt and maxsmt only improve the model. The unported parts of optimization
     // only get that answer.
-    if (state.objectives.length > 0 && optimize(extra)) return;
+    if (state.objectives.length > 0 && optimize(extra, end)) return;
     state.manager.limit.push(settings.rlimit);
     const isOptimizing = state.objectives.length > 0;
     const manager = state.manager;
@@ -645,14 +651,21 @@ export const runSmtlibScript = (
       });
       print(getVerdict(solved.result));
     } catch (error) {
-      if (!(error instanceof SmtCanceledError || isStackOverflow(error))) throw error;
+      if (
+        !(
+          error instanceof SmtCanceledError ||
+          error instanceof SmtSetupError ||
+          isStackOverflow(error)
+        )
+      )
+        throw error;
       const context = isKernelChecking ? state.kernel?.context : undefined;
       setCheck(L_UNDEF, {
         isOptimizing,
-        reasonUnknown: getReasonUnknown(
-          { result: L_UNDEF, context, reasonUnknown: undefined },
-          deadline,
-        ),
+        reasonUnknown:
+          error instanceof SmtSetupError
+            ? error.message
+            : getReasonUnknown({ result: L_UNDEF, context, reasonUnknown: undefined }, deadline),
       });
       print("unknown");
     } finally {
@@ -809,7 +822,6 @@ export const runSmtlibScript = (
     );
     return state.datalog;
   };
-  const getTactic = (sexpr: SExpr) => compileTactic(getTacticEnvironment(), sexpr);
   const getGoal = (isTrackingDependencies = false) => {
     const goal = new Goal(state.manager);
     goal.isProofsEnabled = settings.isProducingProofs || state.isProofsEnabled === true;
@@ -825,11 +837,11 @@ export const runSmtlibScript = (
   };
   const hasNames = () => state.names.some((name) => name !== -1);
   // parse_check_sat shrinks the expression stack once the check has run.
-  const checkSatAssuming = (items: SmtList["items"]) => {
+  const checkSatAssuming = (items: SmtList["items"], end: SmtToken) => {
     const literals: number[] = [];
     try {
       for (const item of items) literals.push(state.reader.parseFormula(item));
-      checkSat(literals);
+      checkSat(literals, end);
     } finally {
       for (const literal of literals) state.manager.decRef(literal);
     }
@@ -983,7 +995,7 @@ export const runSmtlibScript = (
     [
       "check-sat",
       (list) => {
-        checkSatAssuming(list.items.slice(1));
+        checkSatAssuming(list.items.slice(1), list.end);
         validateCheck(list.end);
       },
     ],
@@ -1067,7 +1079,7 @@ export const runSmtlibScript = (
         const params = getCommandParams(list.items, CHECK_SAT_USING_PARAMETERS);
         if (list.items[1] === undefined)
           throw new SmtParseError("check-sat-using needs a tactic argument", list.end);
-        const builder = getTactic(list.items[1]);
+        const builder = compileTactic(getTacticEnvironment(), list.items[1]);
         const tactic = builder.build(params);
         clearCheck();
         const deadline = Date.now() + options.timeLimitMs;
@@ -1099,7 +1111,7 @@ export const runSmtlibScript = (
             "invalid check-sat-assuming command, '(' expected",
             literals ?? list.end,
           );
-        checkSatAssuming(literals.items);
+        checkSatAssuming(literals.items, list.end);
         validateCheck(list.end);
       },
     ],
@@ -1312,7 +1324,11 @@ export const runSmtlibScript = (
         const params = getCommandParams(list.items, APPLY_PARAMETERS);
         if (list.items[1] === undefined)
           throw new SmtParseError("apply needs a tactic argument", list.end);
-        const builder = getTactic(list.items[1]);
+        // apply_tactic_cmd, unlike check-sat-using, gives the tactic no logic.
+        const builder = compileTactic(
+          { ...getTacticEnvironment(), setup: { ...getSetup(), logic: undefined } },
+          list.items[1],
+        );
         const tactic = builder.build(params);
         const isPrintingDependencies = params.get("print_dependencies") === true;
         if (isPrintingDependencies && !builder.isTrackingDependencies && hasNames())

@@ -1361,6 +1361,45 @@ describe("runSmtlibScript prints what Z3 prints", () => {
     ]);
   });
 
+  it("answers unknown for formulas outside the logic that the smt setup rejects", () => {
+    const reason =
+      "Benchmark contains uninterpreted function symbols, but specified logic does not support them.";
+    expect(
+      run([
+        "(set-logic QF_LIA)",
+        "(declare-const x Int)",
+        "(assert (>= (div x 0) 1))",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+        "(check-sat-using (or-else smt skip))",
+        "(get-info :reason-unknown)",
+        "(apply smt)",
+        "(minimize x)",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+        "(reset)",
+        "(set-logic QF_LRA)",
+        "(declare-const r Real)",
+        "(assert (> (/ r 0.0) 2.5))",
+        "(check-sat-using qflra)",
+        "(get-info :reason-unknown)",
+        "(push)",
+        "(check-sat)",
+      ]),
+    ).toEqual([
+      "unknown",
+      `(:reason-unknown "${reason}")`,
+      "unknown",
+      `(:reason-unknown "${reason}")`,
+      "(goals\n(goal\n  :precision precise :depth 0)\n)",
+      `(error "line 10 column 10: ${reason}")`,
+      '(:reason-unknown "unknown")',
+      "unknown",
+      `(:reason-unknown "${reason}")`,
+      "sat",
+    ]);
+  });
+
   it("throws at a theory it does not implement", () => {
     expect(() =>
       run(["(declare-const b (_ BitVec 8))", '(assert (= (str.from_ubv b) "12"))', "(check-sat)"]),

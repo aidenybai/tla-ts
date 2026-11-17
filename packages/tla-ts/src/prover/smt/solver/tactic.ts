@@ -1,6 +1,7 @@
 import {
   SmtCanceledError,
   SmtParseError,
+  SmtSetupError,
   SmtTacticError,
   SmtUnsupportedError,
 } from "../../../errors";
@@ -1974,7 +1975,7 @@ export const checkSatUsing = (tactic: Tactic, goal: Goal): TacticCheck => {
     try {
       return tactic(goal);
     } catch (error) {
-      if (error instanceof SmtTacticError) return error.message;
+      if (error instanceof SmtTacticError || error instanceof SmtSetupError) return error.message;
       if (error instanceof SmtCanceledError) return undefined;
       throw error;
     }
