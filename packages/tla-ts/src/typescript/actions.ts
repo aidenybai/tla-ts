@@ -45,6 +45,7 @@ import {
   holdsArrayIteration,
   ARRAY_ITERATOR_REPLACED,
   getHeapRegExpCall,
+  getStatementRegExpBuiltIns,
   translateRegExpText,
   getStringCall,
   translateRegExpReplacer,
@@ -20285,6 +20286,14 @@ export const translateStatements = (
       frame,
     );
   }
+  if (path.scope.regExpsChecked !== undefined && path.scope.regExpsChecked !== statements[0]) {
+    return translateStatements(
+      statements,
+      { ...path, scope: { ...path.scope, regExpsChecked: undefined } },
+      context,
+      frame,
+    );
+  }
   if (path.scope.globalChecked !== undefined && path.scope.globalChecked !== statements[0]) {
     return translateStatements(
       statements,
@@ -20354,6 +20363,37 @@ export const translateStatements = (
         apply("Assert", [
           boolean(false),
           string("tla-ts can't read a built-in that the script changed on the global object"),
+        ]),
+      ),
+    );
+  }
+  // A regexp call that runs as an expression gives its value where it's read, which may be after
+  // what follows the statement runs, so the statement checks first that the script hasn't changed
+  // the built-ins that the call reads.
+  const regExpBuiltIns =
+    path.scope.regExpsChecked === statement
+      ? new Set<string>()
+      : getStatementRegExpBuiltIns(statement, context);
+  if (regExpBuiltIns.size > 0) {
+    return ifThenElse(
+      useJavaScript(
+        "RegExpsHold",
+        [
+          getHeap(path.scope, statement, context),
+          set([...regExpBuiltIns].map((name) => string(name))),
+        ],
+        context,
+      ),
+      translateStatements(
+        statements,
+        { ...path, scope: { ...path.scope, regExpsChecked: statement } },
+        context,
+        frame,
+      ),
+      leaf(
+        apply("Assert", [
+          boolean(false),
+          string("tla-ts can't call a regexp's method where a script changed what it reads"),
         ]),
       ),
     );

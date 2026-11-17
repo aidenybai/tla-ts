@@ -5833,8 +5833,10 @@ IsRegExpPrototypeExec(heap, ref) ==
 
 \\* The record of a regexp literal's pattern, where a call can't observe the object that the literal
 \\* makes, while a script hasn't changed the built-in objects in changeable.
+RegExpsHold(heap, changeable) == DOMAIN heap.changed \\cap changeable = {}
+
 RegExpFresh(heap, regexp, changeable) ==
-  IF DOMAIN heap.changed \\cap changeable = {}
+  IF RegExpsHold(heap, changeable)
   THEN regexp
   ELSE Assert(FALSE, "tla-ts can't call a regexp's method where a script changed what it reads")
 

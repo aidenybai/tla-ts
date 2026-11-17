@@ -90,6 +90,9 @@ export interface Scope {
   brandChecked?: ts.Statement;
   // The statement that runs where the global object holds the built-ins it reads.
   globalsChecked?: ts.Statement;
+  // The statement that runs where the script hasn't changed the built-ins that the regexp calls
+  // that it runs as expressions read.
+  regExpsChecked?: ts.Statement;
   // The statement that runs where the global that a write outside strict mode makes, which it
   // reads first, exists.
   globalChecked?: ts.Statement;

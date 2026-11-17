@@ -50560,4 +50560,24 @@ describe("BigInts", () => {
       );
     });
   });
+
+  it("stops at a string's regexp method where a script replaced the regexp's before a throw", async () => {
+    const source = `
+      var box = { seen: "" };
+      var called = 0;
+      RegExp.prototype[Symbol.search] = function () {
+        called += 1;
+        return 7;
+      };
+      try {
+        var result = "target".search("source");
+        if (called !== 1) throw new Error("called " + called);
+      } finally {
+        box.seen = "done";
+      }
+    `;
+    expect(
+      (await check(compile(source, join(import.meta.dirname, "model.js")))).failure?.message,
+    ).toContain("tla-ts can't call a regexp's method where a script changed what it reads");
+  });
 });
