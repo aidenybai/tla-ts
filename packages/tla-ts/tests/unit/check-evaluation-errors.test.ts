@@ -1040,7 +1040,7 @@ describe("evaluation errors match TLC", () => {
     },
   );
 
-  // Deviation from TLC: tlc2.module.Naturals#Divide rounds some negative quotients toward 0 and reports no overflow; tla-ts floors and reports it, as Integers#Divide does.
+  // Deviation from TLC: Naturals#Divide rounds some negative quotients toward 0 and wraps on overflow, where tla-ts floors and reports the overflow as Integers#Divide does.
   it.each([
     [false, "Naturals", ["<<-1, -1, -2>>"]],
     [true, "Naturals", ["<<-1, -1, -2>>"]],
@@ -1049,13 +1049,16 @@ describe("evaluation errors match TLC", () => {
     "divides negative integers as TLC does when it records a trace (%s) for a spec of %s",
     async (isTraceRecorded, module, quotients) => {
       const printed: string[] = [];
-      await check({
+      const result = await check({
         source: `---- MODULE M ----\nEXTENDS ${module}, TLC\nASSUME PrintT(<<1 \\div (0 - 2), (0 - 1) \\div 2, (0 - 3) \\div 2>>)\nASSUME PrintT((0 - 2147483647 - 1) \\div (0 - 1))\n====`,
         config: "",
         traceSpec: isTraceRecorded ? { module: "M_TTrace", traceFile: "M_TTrace.bin" } : undefined,
         onPrint: (text) => printed.push(text),
       });
-      expect(printed).toEqual(quotients);
+      expect([printed, result.violation?.message]).toEqual([
+        quotients,
+        "Overflow when computing -2147483648 \\div -1",
+      ]);
     },
   );
 
