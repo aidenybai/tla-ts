@@ -18187,6 +18187,32 @@ const translateIterations = (
       ),
     );
   };
+  // A for-of of an array throws the TypeError of GetIterator before its first iteration where the
+  // array's Symbol.iterator, which a script may delete from Array.prototype, isn't a function.
+  if (
+    iterated !== undefined &&
+    ts.isForOfStatement(iterated) &&
+    iterated.awaitModifier === undefined &&
+    context.heap !== undefined &&
+    (getKind(iterated.expression, context) === "sequence" ||
+      isHeapArray(iterated.expression, context))
+  ) {
+    const heap = getHeap(path.scope, iterated.expression, context);
+    const receiver =
+      getKind(iterated.expression, context) === "sequence"
+        ? translateBuiltInValue("Array.prototype", iterated.expression, context)
+        : translateExpression(iterated.expression, path.scope, context);
+    const method = useJavaScript(
+      "Get",
+      [heap, receiver, useJavaScript("WellKnownSymbol", [string("iterator")], context)],
+      context,
+    );
+    return ifThenElse(
+      apply("#", [useJavaScript("TypeOfIn", [heap, method], context), string("function")]),
+      throwTypeError(path, iterated.expression, context, frame),
+      translateFrom(path),
+    );
+  }
   if (!isIterator || iterated === undefined) return translateFrom(path);
   const iteratedExpression = iterated.expression;
   return translateJoined(

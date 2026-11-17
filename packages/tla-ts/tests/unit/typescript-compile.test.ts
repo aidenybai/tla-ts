@@ -50694,4 +50694,48 @@ describe("BigInts", () => {
     });
   });
 
+  describe("throws the TypeError of iterating an array once a script deletes Array.prototype's iterator", () => {
+    const getSource = (expected: string) => `
+      const results: string[] = [];
+      const run = (body: () => void) => {
+        try {
+          body();
+          results.push("ok");
+        } catch (error) {
+          results.push(error instanceof TypeError ? "TypeError" : "other");
+        }
+      };
+      const held = [1, 2];
+      run(() => {
+        for (const value of held) results.push(String(value));
+      });
+      delete (Array.prototype as any)[Symbol.iterator];
+      run(() => {
+        for (const [x, y] of [[1, 2]]) results.push(String(x + y));
+      });
+      run(() => {
+        for (const value of held) results.push(String(value));
+      });
+      run(() => {
+        try {
+          throw [1, 2, 3];
+        } catch ([x, y, z]: any) {
+          results.push(String(x + y + z));
+        }
+      });
+      if (results.join() !== "${expected}") throw new Error("results " + results.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("1,2,ok,TypeError,TypeError,TypeError"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects other results", async () => {
+      expect(
+        (await checkModel(getSource("1,2,ok,TypeError,TypeError,6,ok"))).failure?.message,
+      ).toContain("results 1,2,ok,TypeError,TypeError,TypeError");
+    });
+  });
 });
