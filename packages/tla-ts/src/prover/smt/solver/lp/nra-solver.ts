@@ -1,4 +1,4 @@
-import { NlsatUnsupportedError, SmtCanceledError, SmtInvariantError } from "../../../../errors";
+import { SmtCanceledError, SmtInvariantError } from "../../../../errors";
 import { L_FALSE, L_TRUE, L_UNDEF } from "../lbool";
 import { Rational, getLcm } from "../rational";
 import { Anum } from "../nlsat/algebraic";
@@ -362,7 +362,7 @@ export class NraSolver {
     for (let index = 0; index < polynomial.size; index++) {
       const monomial = polynomial.ms[index];
       const coeff = Rational.of(polynomial.as[index]);
-      // A linear cell leaves every new lemma polynomial linear, so like Z3 this ignores degrees.
+      // Like Z3, this drops degrees: only an axiom's ¬best can be nonlinear, and ¬cell is valid alone.
       if (monomial.size === 0) bound = bound.sub(coeff);
       else if (monomial.size === 1) term.addMonomial(coeff, nl2lp[monomial.vars[0]]);
       else {
@@ -383,8 +383,6 @@ export class NraSolver {
     try {
       return this.checkAssignmentCore();
     } catch (error) {
-      // Deviation from Z3: a linear cell around an irrational section answers unknown, where Z3 exits.
-      if (error instanceof NlsatUnsupportedError) return L_UNDEF;
       if (error instanceof SmtCanceledError && this.core.nraLimit.isExhausted()) return L_UNDEF;
       throw error;
     }
