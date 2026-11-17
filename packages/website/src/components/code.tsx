@@ -2,7 +2,7 @@ import { useRef, type ReactNode } from "react";
 import { cn } from "cn";
 import { createPartsContext } from "@/lib/utils";
 import type { LineNote } from "../run-worker";
-import type { Search } from "../search";
+import type { Search, SearchState } from "../search";
 import type { Source } from "../site-data";
 import { useCopy } from "../use-copy";
 import { useIsHydrated } from "../use-is-hydrated";
@@ -10,10 +10,11 @@ import { useTokenMorph } from "../use-token-morph";
 import { CodeLine } from "./code-line";
 import { CopyIcon } from "./copy-icon";
 import { RunIcon } from "./run-icon";
-import { SearchCell, useSearchPath } from "./search-cell";
+import { SearchCell } from "./search-cell";
 import { Button } from "./ui/button";
 
 const NO_HIGHLIGHTS = {};
+const NO_PATH: SearchState[] = [];
 
 interface CodeState {
   source: Source;
@@ -21,6 +22,8 @@ interface CodeState {
   activeLine: number | undefined;
   notes: LineNote[];
   search: Search | undefined;
+  path: SearchState[];
+  onHoverState: (stateId: string | undefined) => void;
   highlights: Record<string, string>;
   onMorphEnd: (() => void) | undefined;
 }
@@ -32,6 +35,8 @@ interface RootProps {
   activeLine?: number;
   notes?: LineNote[];
   search?: Search;
+  path?: SearchState[];
+  onHoverState?: (stateId: string | undefined) => void;
   highlights?: Record<string, string>;
   onMorphEnd?: () => void;
   children: ReactNode;
@@ -47,6 +52,8 @@ export const CodeRoot = (props: RootProps) => {
         activeLine: props.activeLine,
         notes: props.notes ?? [],
         search: props.search,
+        path: props.path ?? NO_PATH,
+        onHoverState: props.onHoverState ?? (() => {}),
         highlights: props.highlights ?? NO_HIGHLIGHTS,
         onMorphEnd: props.onMorphEnd,
       }}
@@ -66,8 +73,7 @@ export const CodeRoot = (props: RootProps) => {
 export const CodeContent = () => {
   const code = codeContext.useParts();
   const contentRef = useRef<HTMLElement>(null);
-  const path = useSearchPath(code.search);
-  const activeLine = path.states.at(0)?.line ?? code.activeLine;
+  const activeLine = code.path.at(0)?.line ?? code.activeLine;
   useTokenMorph(contentRef, code.source.code, code.highlights, code.onMorphEnd);
   if (!code.isMultiline)
     return (
@@ -89,15 +95,16 @@ export const CodeContent = () => {
             note={code.notes.find((note) => note.line === line.number)}
             isActive={activeLine === line.number}
             isDimmed={
-              path.states.length > 0 && path.states.every((state) => state.line !== line.number)
+              code.path.length > 0 && code.path.every((state) => state.line !== line.number)
             }
             aside={
               code.search && (
                 <SearchCell
                   search={code.search}
                   line={line.number}
-                  path={path.states}
-                  onHover={path.hover}
+                  path={code.path}
+                  onHover={code.onHoverState}
+                  className="xl:hidden"
                 />
               )
             }
