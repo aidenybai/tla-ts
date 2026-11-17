@@ -50652,4 +50652,46 @@ describe("BigInts", () => {
       ).toContain("results true,ecma262,true,1,0|1|foo,true,true,false,false,true");
     });
   });
+
+  describe("converts the fromIndex of a typed array's search after it reads the length", () => {
+    const getSource = (expected: string) => `
+      const rab = new ArrayBuffer(4, { maxByteLength: 20 });
+      const ta = new Int8Array(rab);
+      ta[1] = 5;
+      const log: string[] = [];
+      const shrink = {
+        valueOf() {
+          log.push("shrink");
+          rab.resize(1);
+          return 0;
+        },
+      };
+      const results: unknown[] = [];
+      results.push(ta.includes(undefined as any, shrink as any));
+      rab.resize(4);
+      ta[1] = 5;
+      results.push(ta.indexOf(5, { valueOf: () => 1 } as any));
+      results.push(ta.lastIndexOf(5, { valueOf: () => 0 } as any));
+      const empty = new Int8Array(0);
+      const emptyIndex = {
+        valueOf() {
+          log.push("empty");
+          return 0;
+        },
+      };
+      results.push(empty.includes(0, emptyIndex as any), log.join("|"));
+      if (results.join() !== "${expected}") throw new Error("results " + results.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("true,1,-1,false,shrink"))).failure).toBeUndefined();
+    });
+
+    it("rejects other results", async () => {
+      expect((await checkModel(getSource("false,1,-1,false,shrink"))).failure?.message).toContain(
+        "results true,1,-1,false,shrink",
+      );
+    });
+  });
+
 });

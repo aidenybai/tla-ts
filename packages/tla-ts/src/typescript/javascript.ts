@@ -7012,6 +7012,35 @@ TypedArraySubarray(heap, ref, arguments, length, bufferPrototype, constructors) 
             > Len(buffer.bytes) -> Thrown(heap, "RangeError")
        [] OTHER -> Returned(viewing, Allocated(viewing))
 
+\\* includes, indexOf, or lastIndexOf of a typed array once it converted its fromIndex to a primitive,
+\\* which searches below the length that it read before, where an element that the conversion left
+\\* past the end reads as undefined, and indexOf and lastIndexOf skip it.
+TypedArraySearch(heap, ref, method, value, fromIndex, length) ==
+  LET index == ToIntegerOrInfinity(ToNumber(fromIndex))
+      current == IF IsOutOfBounds(heap, heap.objects[ref[Ref]]) THEN 0
+                 ELSE ViewLength(heap, heap.objects[ref[Ref]])
+      element(position) == IF position < current THEN TypedElement(heap, ref, position) ELSE Undefined
+      from == CASE index = NegativeInfinity -> 0
+                [] index = Infinity -> length
+                [] index < 0 -> IF length + index < 0 THEN 0 ELSE length + index
+                [] OTHER -> index
+      last == CASE index = NegativeInfinity -> -1
+                [] index = Infinity -> length - 1
+                [] index < 0 -> length + index
+                [] index >= length -> length - 1
+                [] OTHER -> index
+      found == {position \\in from..(length - 1) :
+                  position < current /\\ StrictEquals(element(position), value)}
+      foundLast == {position \\in 0..last : position < current /\\ StrictEquals(element(position), value)}
+  IN CASE method = "includes" ->
+            Returned(heap, \\E position \\in from..(length - 1) : SameValueZero(element(position), value))
+       [] method = "indexOf" ->
+            Returned(heap, IF found = {} THEN -1
+                           ELSE CHOOSE position \\in found : \\A other \\in found : position <= other)
+       [] OTHER ->
+            Returned(heap, IF foundLast = {} THEN -1
+                           ELSE CHOOSE position \\in foundLast : \\A other \\in foundLast : position >= other)
+
 \\* %TypedArray%.prototype's methods that read and write a typed array's elements, which give the
 \\* heap after them, their value, and the error they throw, if any. slice and subarray make their
 \\* typed array through the receiver's constructor, of those that constructors holds by their element
