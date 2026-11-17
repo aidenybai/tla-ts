@@ -1535,19 +1535,33 @@ const isDecidedSat = (goals: Goal[]) => goals.length === 1 && goals[0].isDecided
 
 const isDecidedUnsat = (goals: Goal[]) => goals.length === 1 && goals[0].isDecidedUnsat();
 
+// par_and_then joins the cores of the subgoals it shows unsat, each before those of the earlier.
+// Deviation from Z3: and_then and repeat do too. Z3 takes their core from the goal's dependency
+// converter, which split-clause makes from the subgoals' converters, not from their cores, so it
+// answers an empty core.
+const assertUnsat = (goal: Goal, unsatGoals: Goal[]) => {
+  goal.resetAll();
+  goal.assert(
+    goal.manager.falseExpr,
+    unsatGoals.reduce<Dependency | undefined>(
+      (core, unsatGoal) => joinDependencies(unsatGoal.getDependency(0), core),
+      undefined,
+    ),
+  );
+  return [goal];
+};
+
 const runAndThen = (first: Tactic, second: Tactic) => (goal: Goal) => {
   const goals = first(goal);
   if (goals.length === 1) return goals[0].isDecided() ? goals : second(goals[0]);
   const results: Goal[] = [];
+  const unsatGoals: Goal[] = [];
   for (const subgoal of goals) {
     const subresults = second(subgoal);
     if (isDecidedSat(subresults)) return subresults;
-    if (!isDecidedUnsat(subresults)) results.push(...subresults);
+    (isDecidedUnsat(subresults) ? unsatGoals : results).push(...subresults);
   }
-  if (results.length > 0) return results;
-  goal.resetAll();
-  goal.assert(goal.manager.falseExpr);
-  return [goal];
+  return results.length > 0 ? results : assertUnsat(goal, unsatGoals);
 };
 
 const runOrElse = (tactics: Tactic[]) => (goal: Goal) => {
@@ -1581,15 +1595,13 @@ const runRepeat = (tactic: Tactic, maxDepth: number) => {
     if (goals.length === 1 && isEqualGoal(original, goals[0])) return goals;
     if (goals.length === 1) return goals[0].isDecided() ? goals : run(depth + 1, goals[0]);
     const results: Goal[] = [];
+    const unsatGoals: Goal[] = [];
     for (const subgoal of goals) {
       const subresults = run(depth + 1, subgoal);
       if (isDecidedSat(subresults)) return subresults;
-      if (!isDecidedUnsat(subresults)) results.push(...subresults);
+      (isDecidedUnsat(subresults) ? unsatGoals : results).push(...subresults);
     }
-    if (results.length > 0) return results;
-    goal.resetAll();
-    goal.assert(goal.manager.falseExpr);
-    return [goal];
+    return results.length > 0 ? results : assertUnsat(goal, unsatGoals);
   };
   return (goal: Goal) => run(0, goal);
 };

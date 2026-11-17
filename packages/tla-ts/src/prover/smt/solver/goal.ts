@@ -20,7 +20,8 @@ export const joinDependencies = (
       ? first
       : { value: -1, children: [first, second] };
 
-// Breadth first and once per node, so a value that two leaves hold is listed twice.
+// ast_manager::linearize: breadth first and once per node, then once per value, as
+// remove_duplicates keeps the first.
 export const getDependencyValues = (dependency: Dependency | undefined) => {
   if (dependency === undefined) return [];
   const todo = [dependency];
@@ -35,7 +36,7 @@ export const getDependencyValues = (dependency: Dependency | undefined) => {
         todo.push(child);
       }
   }
-  return values;
+  return [...new Set(values)];
 };
 
 interface Polarized {

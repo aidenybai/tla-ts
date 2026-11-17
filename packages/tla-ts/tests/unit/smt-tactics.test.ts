@@ -668,6 +668,27 @@ describe("split-clause, as Z3 5.3.2 splits a goal", () => {
       ].join("\n"),
     ]);
   });
+
+  // Z3 answers () after then and repeat, whose core it loses.
+  it("joins the cores of the subgoals a combinator shows unsat, as par-then does", () => {
+    expect(
+      run([
+        "(set-option :produce-unsat-cores true)",
+        "(declare-const a Bool)",
+        "(declare-const x Int)",
+        "(assert (! (or a (> x 5)) :named n1))",
+        "(assert (! (not a) :named n2))",
+        "(assert (! (< x 0) :named n3))",
+        "(assert (> x (- 9)))",
+        "(check-sat-using (par-then split-clause smt))",
+        "(get-unsat-core)",
+        "(check-sat-using (then split-clause smt))",
+        "(get-unsat-core)",
+        "(check-sat-using (repeat (or-else split-clause smt)))",
+        "(get-unsat-core)",
+      ]),
+    ).toEqual(["unsat", "(n1 n3 n2)", "unsat", "(n1 n3 n2)", "unsat", "(n1 n3 n2)"]);
+  });
 });
 
 describe("if-no-models, as Z3 5.3.2 runs it", () => {
