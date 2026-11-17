@@ -1341,6 +1341,21 @@ ASSUME TLCFP(a) = -887695703
     ).toEqual(["2:2 2", "2:4 4"]);
   });
 
+  it.each([
+    [
+      "as TLC prints the trace",
+      "VARIABLE y\nInit == x = 0 /\\ y = 0\nNext == x' = x + 1 /\\ (x < 1 => y' = y)",
+      ["2:2 2", "1:4 3 4 1 4 2"],
+    ],
+    [
+      "as another branch of its action fails to print the trace",
+      "VARIABLE y\nInit == x = 0 /\\ y = 0\nNext == x' = 1 /\\ (x = 0 \\/ <<x>>[2] = 0)",
+      ["1:1 1", "0:1 0 3 2 1"],
+    ],
+  ])("counts the coverage of an incomplete successor %s", async (_name, definitions, expected) => {
+    expect(await getCoverageCounts(definitions, "INIT Init\nNEXT Next")).toEqual(expected);
+  });
+
   it("counts the coverage of the step TLC fails to rebuild as it can't fingerprint the successor", async () => {
     expect(
       await getCoverageCounts(

@@ -630,6 +630,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         onState(successor);
       },
       (partial) => {
+        if (coverage) coverage.primary[action.node]++;
         const missing = environment.variables.filter(
           (_variable, index) => partial[index] === undefined,
         );
@@ -641,6 +642,23 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         );
       },
     );
+  const hasCoveredIncompleteSuccessor = (action: CoveredAction, state: Value[]) => {
+    let complete = 0;
+    let incomplete = 0;
+    walkSuccessors(
+      action,
+      action.node,
+      state,
+      environment,
+      () => complete++,
+      () => {
+        incomplete++;
+        return true;
+      },
+    );
+    if (coverage) coverage.primary[action.node] += complete + incomplete;
+    return incomplete > 0;
+  };
   const getCoveredSuccessors = (action: CoveredAction, state: Value[]) => {
     const successors: Successor[] = [];
     walkCoveredSuccessors(action, state, (successor) =>
@@ -898,9 +916,11 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     const found = captureOutput(() => {
       try {
         return {
-          action: nextActions.find((item) =>
-            hasIncompleteSuccessor(item.expression, states[index], environment, item.scope),
-          ),
+          action: coverage
+            ? coverageActions.find((item) => hasCoveredIncompleteSuccessor(item, states[index]))
+            : nextActions.find((item) =>
+                hasIncompleteSuccessor(item.expression, states[index], environment, item.scope),
+              ),
           failed: undefined,
         };
       } catch (failed) {
@@ -917,7 +937,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       options.version,
     );
     const live = captureOutput(() => addFailedLiveState(index, liveSuccessors));
-    const trace = traces.getStateTrace(index, { incomplete: error.state }).trace;
+    const trace = traces.getStateTrace(index, { incomplete: error.state, isFailed: true }).trace;
     const failure = createFailureResult(
       error,
       appendTraceOutput(

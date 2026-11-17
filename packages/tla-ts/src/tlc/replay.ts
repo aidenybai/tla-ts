@@ -61,7 +61,8 @@ interface Replay {
   isEnabled: boolean;
   current: Value[] | undefined;
   onState: (state: Value[]) => void;
-  onIncomplete: ((state: State) => void) | undefined;
+  /** Whether the replay keeps an incomplete successor, as TLC's StateVec does. */
+  onIncomplete: ((state: State) => boolean) | undefined;
 }
 
 const withFrame = <Result>(replay: Replay, expression: Expression, run: () => Result): Result => {
@@ -216,8 +217,7 @@ const proceedItems = (
 ): boolean => {
   if (items === undefined) {
     if (isComplete(partial)) return addState(replay, partial, node);
-    replay.onIncomplete?.(partial);
-    return false;
+    return replay.onIncomplete?.(partial) ?? false;
   }
   if (isComplete(partial) && isAssignedShortcut(replay)) {
     return proceedAssigned(replay, items, partial, node);
@@ -780,7 +780,7 @@ const createReplay = (
   kind: "init" | "next" | "enabled",
   current: Value[] | undefined,
   onState: (state: Value[]) => void,
-  onIncomplete?: (state: State) => void,
+  onIncomplete?: (state: State) => boolean,
 ): Replay => ({
   environment,
   callStack: environment.callStack,
@@ -832,7 +832,7 @@ export const replayInitialStates = (
   inits: (ReplayAction & { node?: number })[],
   environment: Environment,
   onState: (state: Value[]) => void,
-  onIncomplete?: (state: State) => void,
+  onIncomplete?: (state: State) => boolean,
 ) => {
   const [first, ...others] = inits;
   if (first === undefined) return;
@@ -869,7 +869,7 @@ export const walkSuccessors = (
   state: Value[],
   environment: Environment,
   onState: (state: Value[]) => void,
-  onIncomplete?: (state: State) => void,
+  onIncomplete?: (state: State) => boolean,
 ) => {
   const replay = createReplay(environment, "next", state, onState, onIncomplete);
   visit(replay, action.expression, undefined, action.scope, getEmptyState(environment), node);
