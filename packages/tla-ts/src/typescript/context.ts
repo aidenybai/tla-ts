@@ -22,7 +22,7 @@ import { getKeptReads } from "./narrowing";
 import { mayThrow } from "./functions";
 import { getGetterKeys, isProxyOperation } from "./protocols";
 import type { Namespace } from "./namespaces";
-import type { ProgramNodes } from "./program-nodes";
+import { type ProgramNodes, withNodeTypes } from "./program-nodes";
 import type { Link } from "./regions";
 import { apply, define, identifier, ifExpression, index, letExpression, string } from "./tla";
 
@@ -556,7 +556,7 @@ export const createContext = (
 ): Context => {
   const reads = getDeclaredReads(checker, files);
   return {
-    checker: withDeclaredReads(checker, reads),
+    checker: withNodeTypes(withDeclaredReads(checker, reads), nodes),
     nodes,
     keptReads: reads.keptReads,
     names: createNames(JAVASCRIPT_OPERATORS),

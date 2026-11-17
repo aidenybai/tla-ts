@@ -73,3 +73,18 @@ export const withNameSymbols = (checker: ts.TypeChecker, table: ProgramNodes): t
     return position < 0 ? checker.getSymbolAtLocation(node) : table.symbols[position];
   },
 });
+
+// TypeScript checks an expression again on each query of its type, so a checker reads the type of
+// each expression of the program's files from a column that one pass fills.
+export const withNodeTypes = (checker: ts.TypeChecker, table: ProgramNodes): ts.TypeChecker => {
+  const types = table.nodes.map((node) =>
+    ts.isExpression(node) ? checker.getTypeAtLocation(node) : undefined,
+  );
+  return {
+    ...checker,
+    getTypeAtLocation: (node) => {
+      const position = getPosition(table, node);
+      return (position < 0 ? undefined : types[position]) ?? checker.getTypeAtLocation(node);
+    },
+  };
+};
