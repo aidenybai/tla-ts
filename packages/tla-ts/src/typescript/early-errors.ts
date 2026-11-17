@@ -286,6 +286,13 @@ export const rejectEarlyErrors = (sourceFile: ts.SourceFile) => {
     ) {
       reject("A module's export names can't have lone surrogates", node);
     }
+    if (
+      ts.isPropertyAccessExpression(node) &&
+      node.expression.kind === ts.SyntaxKind.SuperKeyword &&
+      ts.isPrivateIdentifier(node.name)
+    ) {
+      reject("Unexpected private name after super", node.name);
+    }
     // A module reserves await, which TypeScript reads as a name inside a function that isn't
     // async, as in an arrow's parameters.
     if (

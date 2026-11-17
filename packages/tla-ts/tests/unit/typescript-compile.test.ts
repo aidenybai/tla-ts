@@ -50492,6 +50492,7 @@ describe("BigInts", () => {
       ["await as a rest parameter", "async (a = (...await) => {}) => {};", "SyntaxError"],
       ["an undeclared private name", "class C { x = this.#foo; }", "TS2339"],
       ["arguments in a field", "var C = class { x = () => arguments; };", "TS2662"],
+      ["super's private name", "class C { #x() {} m() { super.#x(); } }", "SyntaxError"],
     ])("rejects %s", (_, statement, message) => {
       expect(() => compile(`export {};\n${statement}`, path)).toThrow(message);
     });
