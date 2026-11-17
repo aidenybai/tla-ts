@@ -1600,9 +1600,21 @@ export const runSmtlibScript = (
     [
       "get-model",
       (list) => {
-        if (list.items.length > 1) throw new SmtUnsupportedError("the index of get-model");
+        for (const index of list.items.slice(1)) {
+          if (index.kind !== "numeral")
+            throw new SmtParseError("invalid command argument, unsigned integer expected", index);
+          if (!isUnsigned(index.text))
+            throw new SmtParseError(
+              "invalid indexed identifier, index is too big to fit in an unsigned machine integer",
+              index,
+            );
+        }
         const manager = state.manager;
         const model = getModel(list);
+        const last = list.items[list.items.length - 1];
+        // get_model_cmd takes any number of indices and keeps the last.
+        if (last.kind === "numeral" && BigInt(last.text) > 0n)
+          throw new SmtUnsupportedError("the index of get-model");
         model.compact();
         for (const decl of state.reader.getDeclaredFuncs()) {
           const funcDecl = manager.funcDecls[decl];

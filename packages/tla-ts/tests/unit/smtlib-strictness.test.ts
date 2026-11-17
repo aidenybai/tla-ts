@@ -510,6 +510,37 @@ describe("messages of the reader, as Z3 5.3.2 prints them", () => {
     ]);
   });
 
+  it("takes unsigned integers for get-model and prints the model for the index 0", () => {
+    const model = "(\n  (define-fun x () Int\n    3)\n)";
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(get-model x)",
+        "(get-model 0)",
+        "(assert (> x 2))",
+        "(check-sat)",
+        "(get-model 0)",
+        "(get-model 0 0)",
+        "(get-model 4294967296)",
+        '(get-model "a")',
+        "(get-model 1.5)",
+        "(get-model 3 0)",
+        "(get-model",
+      ]),
+    ).toEqual([
+      '(error "line 2 column 11: invalid command argument, unsigned integer expected")',
+      '(error "line 3 column 12: model is not available")',
+      "sat",
+      model,
+      model,
+      '(error "line 8 column 11: invalid indexed identifier, index is too big to fit in an unsigned machine integer")',
+      '(error "line 9 column 11: invalid command argument, unsigned integer expected")',
+      '(error "line 10 column 11: invalid command argument, unsigned integer expected")',
+      model,
+      '(error "line 12 column 10: invalid command argument, unsigned integer expected")',
+    ]);
+  });
+
   it("reports a datatype sort that is already defined at the token where Z3 declares it", () => {
     expect(
       run([
