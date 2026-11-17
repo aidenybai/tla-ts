@@ -52569,4 +52569,27 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("converts the objects that parseInt takes, its string and then its radix", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      var log = [];
+      var text = { toString() { log.push("text"); return "11"; } };
+      var radix = { valueOf() { log.push("radix"); return 2; } };
+      var result = [parseInt(text, radix), parseInt("11", new Boolean(false)), parseInt("11", new Boolean(true)), log.join()].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      const source = getSource("3,11,NaN,text,radix");
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const source = getSource("3,11,NaN,radix,text");
+      expect((await check(compile(source, path))).failure?.message).toContain(
+        "result 3,11,NaN,text,radix",
+      );
+    });
+  });
 });

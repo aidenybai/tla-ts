@@ -337,6 +337,24 @@ export const getConversion = (node: ts.Node, context: Context): Conversion | und
         true,
       );
     }
+    // parseInt converts its string, and then its radix.
+    if (
+      node.expression.text === "parseInt" &&
+      node.arguments.length <= 2 &&
+      !node.arguments.some(ts.isSpreadElement)
+    ) {
+      const conversion = make(node.arguments, "string", (primitives) =>
+        plain(
+          useJavaScript(
+            "ParseInt",
+            [primitives[0], primitives[1] ?? getUndefined(context)],
+            context,
+          ),
+        ),
+      );
+      const hints: Hint[] = ["string", "number"];
+      return conversion && { ...conversion, hints: hints.slice(0, node.arguments.length) };
+    }
     if (node.expression.text === "String") {
       const conversion = make([argument], "string", (primitives) =>
         useJavaScript("StringOf", [primitives[0]], context),
