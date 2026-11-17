@@ -17357,7 +17357,11 @@ const translateIterations = (
   ) {
     throw new TlaTypeScriptError("Only arrays have an order to iterate in", iterated.expression);
   }
-  const changed = getChanged(loop, path, context);
+  // A let or a const whose declaration hasn't run yet has no value to pass to the loop, which only
+  // a function that stops instead of reading it before its declaration could change.
+  const changed = getChanged(loop, path, context).filter(
+    (symbol) => !path.scope.uninitialized.has(symbol),
+  );
   // The iterator reads each element as the loop reaches it, which a copy of the elements matches
   // only while the body changes no object. Where it may, each step reads the array's length and
   // elements again, as an array iterator does. A set's or a map's iterator steps through its

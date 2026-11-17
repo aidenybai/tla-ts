@@ -49315,6 +49315,44 @@ describe("BigInts", () => {
     });
   });
 
+  describe("runs a loop before a later let that a dispose method in the program pushes to", () => {
+    const getSource = (expected: string) => `
+      const holder: { [key: string]: unknown } = {};
+      let first: unknown[] = [];
+      (function () {
+        for (let i = 0; i < 2; i++) {
+          using x = {
+            value: i,
+            [Symbol.dispose]() {
+              first.push(this.value);
+            },
+          };
+        }
+      })();
+      let second: unknown[] = [];
+      (function () {
+        for (const i in [0, 1]) {
+          using x = {
+            value: i,
+            [Symbol.dispose]() {
+              second.push(this.value);
+            },
+          };
+        }
+      })();
+      const seen = [...first, ...second].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("0,1,0,1"))).failure).toBeUndefined();
+    });
+
+    it("rejects the values in another order", async () => {
+      expect((await checkModel(getSource("1,0,0,1"))).failure?.message).toContain("seen 0,1,0,1");
+    });
+  });
+
   describe("gives the resolved options of Intl's objects of English or the default locale", () => {
     const getSource = (expected: string) => `
       const format = new Intl.ListFormat("en-us", { style: "short", type: "unit" });
