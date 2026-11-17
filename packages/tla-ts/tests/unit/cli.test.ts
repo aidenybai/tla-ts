@@ -766,6 +766,36 @@ describe("the CLI answers PickSuccessor from standard input like TLC", () => {
     },
   );
 
+  it("counts the successors TLC generates again to find the action of a step in the coverage", () => {
+    const result = runCliWith("tlc-ext", ["PickAsk.tla", "-coverage", "1"], "y\n".repeat(7));
+    expect(result.status).toBe(0);
+    const lines = result.stdout.split("\n");
+    expect(
+      lines.slice(
+        lines.findIndex((line) => line.startsWith("The coverage statistics")) + 1,
+        lines.indexOf("End of statistics."),
+      ),
+    ).toEqual([
+      "<x line 4, col 11 to line 4, col 11 of module PickAsk>: 3",
+      "<y line 4, col 14 to line 4, col 14 of module PickAsk>: 2",
+      "<Init line 6, col 1 to line 6, col 4 of module PickAsk>: 1:1",
+      "  line 6, col 9 to line 6, col 22 of module PickAsk: 1",
+      "<Next line 8, col 1 to line 8, col 4 of module PickAsk (8 12 8 45)>: 2:8",
+      "  line 8, col 12 to line 8, col 16 of module PickAsk: 8",
+      "  |line 8, col 12 to line 8, col 12 of module PickAsk: 11",
+      "  line 8, col 21 to line 8, col 30 of module PickAsk: 8",
+      "  line 8, col 35 to line 8, col 45 of module PickAsk: 8",
+      "<Next line 8, col 1 to line 8, col 4 of module PickAsk (9 12 9 45)>: 3:6",
+      "  line 9, col 12 to line 9, col 16 of module PickAsk: 6",
+      "  |line 9, col 12 to line 9, col 12 of module PickAsk: 9",
+      "  line 9, col 21 to line 9, col 30 of module PickAsk: 6",
+      "  line 9, col 35 to line 9, col 45 of module PickAsk: 6",
+      "<Ask line 11, col 1 to line 11, col 3 of module PickAsk>: 7:7",
+      "  line 11, col 8 to line 11, col 27 of module PickAsk: 7",
+      "  |line 11, col 22 to line 11, col 26 of module PickAsk: 5",
+    ]);
+  });
+
   it("tells a simulation it can't mark a state explored and asks again", () => {
     const lines = getPickLines(
       runCliWith(

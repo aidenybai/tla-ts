@@ -561,12 +561,6 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   const getFingerprintState = search.getFingerprintState;
   // Tool's constructor splits the next-state relation into actions before TLC checks anything.
   const nextActions = getDescription().actions;
-  runtime.getSuccessorAction = (state, next) =>
-    nextActions.find((action) =>
-      getSuccessors(action.expression, state, environment, action.scope).some((successor) =>
-        successor.state.every((value, index) => isSameValue(value, next[index])),
-      ),
-    );
   const addCoverageRelations = (kind: "init" | "next", actions: SpecAction[]) =>
     actions.map((action): CoveredAction => ({
       ...action,
@@ -616,6 +610,17 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     );
     return successors;
   };
+  // TLC generates the successors of each action again, which its coverage counts.
+  const findSuccessorAction = (state: Value[], isMatch: (successor: Successor) => boolean) =>
+    coverage
+      ? coverageActions.find((item) => getCoveredSuccessors(item, state).some(isMatch))
+      : nextActions.find((item) =>
+          getSuccessors(item.expression, state, environment, item.scope).some(isMatch),
+        );
+  runtime.getSuccessorAction = (state, next) =>
+    findSuccessorAction(state, (successor) =>
+      successor.state.every((value, index) => isSameValue(value, next[index])),
+    );
   const rejectIncompleteInitialState = (partial: (Value | undefined)[]) => {
     throw setExitCode(new TlaIllegalStateError([...partial]), EXIT_STATUS.error);
   };
@@ -922,12 +927,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     tracedSteps,
     captureOutput,
     getInitialStates: getSpecInitialStates,
-    findSuccessorAction: (state, isMatch) =>
-      coverage
-        ? coverageActions.find((item) => getCoveredSuccessors(item, state).some(isMatch))
-        : nextActions.find((item) =>
-            getSuccessors(item.expression, state, environment, item.scope).some(isMatch),
-          ),
+    findSuccessorAction,
   });
   const getPath = (index: number): Value[][] =>
     index === -1 ? [] : [...getPath(parents[index]), states[index]];
