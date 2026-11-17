@@ -1070,6 +1070,7 @@ export const markNormalized = (value: Value): void => {
     value.elements.forEach(markNormalized);
   }
   if (value.kind === "Function") {
+    value.writtenKeys = undefined;
     value.domain.forEach(markNormalized);
     value.range.forEach(markNormalized);
   }

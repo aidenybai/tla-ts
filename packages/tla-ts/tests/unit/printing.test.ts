@@ -105,6 +105,13 @@ describe("printing matches TLC", () => {
       "Attempted to apply the operator overridden by the Java method\npublic static tlc2.value.impl.Value tlc2.module.TLC.PrintT(tlc2.value.impl.Value),\nbut it produced the following error:\nAttempted to compare integer 3 with non-integer:\n[s |-> 2, a |-> 1]",
     );
   });
+
+  it("sorts the records of a constant definition, which TLC normalizes at startup", async () => {
+    const body = "F(a) == a\nR == [b |-> 1, a |-> 2]\nASSUME PrintT(<<ToString(R), ToString(F(R)), ToString([b |-> 1, a |-> 2])>>)";
+    expect((await checkPrinting(body)).printed).toEqual([
+      '<<"[a |-> 2, b |-> 1]", "[a |-> 2, b |-> 1]", "[b |-> 1, a |-> 2]">>',
+    ]);
+  });
 });
 
 const NESTED_TUPLE_LINES = Array.from({ length: 10 }, () => "<<1, 2, 3, 4, 5, 6, 7, 8, 9, 10>>");
