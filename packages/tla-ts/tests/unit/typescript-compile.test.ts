@@ -48441,6 +48441,7 @@ describe("BigInts", () => {
       "typed.ts",
       "for-in-key.cjs",
       "chained-prototype.cjs",
+      "for-in-comma.cjs",
     ])("agrees with Node on %s", async (name) => {
       const fixture = getFixture(name);
       expect((await check(compile(fixture.source, fixture.path))).failure).toBeUndefined();
@@ -48453,6 +48454,7 @@ describe("BigInts", () => {
       ["typed.ts", "4,sides", "3,sides"],
       ["for-in-key.cjs", "a=1+b=2;children", "a=1+b=3;children"],
       ["chained-prototype.cjs", "3,true,true,true", "3,false,true,true"],
+      ["for-in-comma.cjs", "a+b,__self+c,2,true,warn", "a+b,__self+c,2,false,warn"],
     ])("rejects another outcome of %s", async (name, expected, wrong) => {
       const fixture = getFixture(name);
       const result = await check(compile(fixture.source.replace(expected, wrong), fixture.path));

@@ -14362,6 +14362,14 @@ const isThrowingCall = (node: ts.CallExpression, path: Path, context: Context) =
   return callee !== undefined && mayThrow(callee, context);
 };
 
+// The operand whose value a comma, or commas in turn, give, which the operands before it ran first.
+const getCommaValue = (node: ts.Expression): ts.Expression => {
+  const inner = skipCasts(node);
+  return ts.isBinaryExpression(inner) && inner.operatorToken.kind === ts.SyntaxKind.CommaToken
+    ? getCommaValue(inner.right)
+    : node;
+};
+
 // The expression that parentheses and casts wrap.
 export const getCast = (node: ts.Expression): ts.Expression =>
   ts.isParenthesizedExpression(node) || ts.isAsExpression(node) ? getCast(node.expression) : node;
@@ -18245,7 +18253,7 @@ const translateIterations = (
     !isLive &&
     !isListChanged &&
     !isObjectChanged &&
-    isIteratedChanged(iterated.expression)
+    isIteratedChanged(getCommaValue(iterated.expression))
   ) {
     throw new TlaTypeScriptError(
       "Don't change an array while a for-of iterates it",

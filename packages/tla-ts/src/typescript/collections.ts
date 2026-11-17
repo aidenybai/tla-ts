@@ -3764,6 +3764,10 @@ export const getValueKinds = (
   if (typed !== undefined) return typed;
   const inner = skipCasts(node);
   if (inner !== node) return getValueKinds(inner, context, parameters);
+  // A comma gives what its last operand gives.
+  if (ts.isBinaryExpression(inner) && inner.operatorToken.kind === ts.SyntaxKind.CommaToken) {
+    return getValueKinds(inner.right, context, parameters);
+  }
   if (ts.isPropertyAccessExpression(inner) && skipCasts(inner.expression) !== inner.expression) {
     const property = checker
       .getTypeAtLocation(skipCasts(inner.expression))
