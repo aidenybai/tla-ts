@@ -135,7 +135,7 @@ const getTlcValue = (runtime: CheckerRuntime, key: Value, context: Context | und
   }
   if (typeof key !== "string") {
     throw new TlaModuleError(
-      `The argument of TLCGet should be a nonnegative integer, but instead it is:\n${formatValue(key)}`,
+      `The argument of TLCGet should be a nonnegative integer, but instead it is:\n${prettyPrint(formatValue(key))}`,
     );
   }
   return getRuntimeValue(runtime, key, context?.state);

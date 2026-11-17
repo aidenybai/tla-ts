@@ -350,16 +350,16 @@ const checkModelValueTypes = (left: Value, right: Value, isEquality: boolean) =>
   if (isModelValue(left) && isModelValue(right)) {
     if (leftType === undefined || rightType === undefined || leftType === rightType) return;
     throw new TlaEvaluationError(
-      `Attempted to ${action} the differently-typed model values ${formatValue(left)} and ${formatValue(right)}`,
+      `Attempted to ${action} the differently-typed model values ${prettyPrint(formatValue(left))} and ${prettyPrint(formatValue(right))}`,
     );
   }
   if (leftType !== undefined) {
     throw new TlaEvaluationError(
-      `Attempted to ${action}${isEquality ? "" : " the"} typed model value ${formatValue(left)} and non-model value\n${formatValue(right)}`,
+      `Attempted to ${action}${isEquality ? "" : " the"} typed model value ${prettyPrint(formatValue(left))} and non-model value\n${prettyPrint(formatValue(right))}`,
     );
   }
   throw new TlaEvaluationError(
-    `Attempted to ${action} the typed model value ${formatValue(right)} and the non-model value\n${formatValue(left)}`,
+    `Attempted to ${action} the typed model value ${prettyPrint(formatValue(right))} and the non-model value\n${prettyPrint(formatValue(left))}`,
   );
 };
 
@@ -464,7 +464,7 @@ const isOverriddenComparison = (left: Value, right: Value) =>
 const createComparisonError = (left: Value, right: Value) =>
   new TlaEvaluationError(
     isOverriddenSet(left)
-      ? `Attempted to compare overridden value ${formatValue(left, true)} with non-overridden value:\n${formatValue(right)}`
+      ? `Attempted to compare overridden value ${prettyPrint(formatValue(left, true))} with non-overridden value:\n${prettyPrint(formatValue(right))}`
       : `Attempted to compare ${describeKind(left)} ${formatValue(left)} with ${describeKind(right)} ${formatValue(right)}`,
   );
 
@@ -475,7 +475,7 @@ const compareOverriddenSets = (
 ) => {
   if (!isOverriddenSet(left)) {
     throw new TlaEvaluationError(
-      `Attempted to ${verb} the set ${formatValue(isEnumerable(left) ? toFiniteSet(left) : left, true)} with the value:\n${formatValue(right, true)}`,
+      `Attempted to ${verb} the set ${prettyPrint(formatValue(isEnumerable(left) ? toFiniteSet(left) : left, true))} with the value:\n${prettyPrint(formatValue(right, true))}`,
     );
   }
   if (!isOverriddenSet(right)) throw createComparisonError(left, right);
@@ -486,14 +486,16 @@ const compareOverriddenSets = (
     return leftName === "Nat" ? -1 : 1;
   }
   throw new TlaModuleError(
-    `Attempted to compare ${formatValue(left, true)} with the value\n${formatValue(right, true)}`,
+    `Attempted to compare ${prettyPrint(formatValue(left, true))} with the value\n${prettyPrint(formatValue(right, true))}`,
   );
 };
 
 export const ANY_SET: InfiniteSetValue = { kind: "InfiniteSet", name: "Any" };
 
 const compareAny = (other: Value): never => {
-  throw new TlaModuleError(`Attempted to compare ANY with the value\n${formatValue(other)}`);
+  throw new TlaModuleError(
+    `Attempted to compare ANY with the value\n${prettyPrint(formatValue(other))}`,
+  );
 };
 
 const compareWithItself = (value: Value) => {
@@ -874,7 +876,7 @@ const describeScalarMismatch = (
     SCALAR_KINDS[
       typeof left === "number" ? "number" : typeof left === "string" ? "string" : "boolean"
     ];
-  return `Attempted to ${isEquality ? kind.equality : "compare"} ${kind.name} ${formatValue(left)} with ${kind.other}:\n${formatValue(right)}`;
+  return `Attempted to ${isEquality ? kind.equality : "compare"} ${kind.name} ${prettyPrint(formatValue(left))} with ${kind.other}:\n${prettyPrint(formatValue(right))}`;
 };
 
 const getComparisonVerb = (isEquality: boolean) => (isEquality ? "check equality of" : "compare");
@@ -889,7 +891,7 @@ const compareTlcFunctions = (
   if (!other) {
     if (isModelValue(right)) return compareModelValueWith(right, left, isEquality);
     throw new TlaEvaluationError(
-      `Attempted to ${getComparisonVerb(isEquality)} the function ${formatValue(left)} with the value:\n${formatValue(right)}`,
+      `Attempted to ${getComparisonVerb(isEquality)} the function ${prettyPrint(formatValue(left))} with the value:\n${prettyPrint(formatValue(right))}`,
     );
   }
   if (functionValue.range.length !== other.range.length)
@@ -910,7 +912,7 @@ const compareTlcFunctions = (
     const key = keys[index];
     if (typeof key !== "number") {
       throw new TlaEvaluationError(
-        `Attempted to compare ${isEquality ? "an " : ""}integer with non-integer${isEquality || functionValue.low !== undefined ? ":" : ""}\n${formatValue(key)}.`,
+        `Attempted to compare ${isEquality ? "an " : ""}integer with non-integer${isEquality || functionValue.low !== undefined ? ":" : ""}\n${prettyPrint(formatValue(key))}.`,
       );
     }
     const difference =
@@ -947,7 +949,7 @@ const compareFunctionLikeTlc = (
     if (!record) {
       if (isModelValue(right)) return compareModelValueWith(right, left, isEquality);
       throw new TlaEvaluationError(
-        `Attempted to ${getComparisonVerb(isEquality)} record:\n${formatValue(left)}\nwith non-record\n${formatValue(right)}`,
+        `Attempted to ${getComparisonVerb(isEquality)} record:\n${prettyPrint(formatValue(left))}\nwith non-record\n${prettyPrint(formatValue(right))}`,
       );
     }
     return (
@@ -989,7 +991,7 @@ const compareSetLikeTlc = (left: ObjectValue, right: Value, isEquality: boolean)
   if (!isSetValue(right)) {
     if (isModelValue(right)) return compareModelValueWith(right, left, isEquality);
     throw new TlaEvaluationError(
-      `Attempted to ${getComparisonVerb(isEquality)} the set ${formatValue(left)} with the value:\n${formatValue(right)}`,
+      `Attempted to ${getComparisonVerb(isEquality)} the set ${prettyPrint(formatValue(left))} with the value:\n${prettyPrint(formatValue(right))}`,
     );
   }
   const sets = getSetElementsLikeTlc(left, right);
@@ -1341,7 +1343,7 @@ const getUnionSet = (set: Value, index: number, union: UnionValue) => {
   throw new TlaEvaluationError(
     index === 0
       ? "Attempted to enumerate UNION(s), but some element of s is nonenumerable."
-      : `Attempted to enumerate the nonenumerable set:\n${formatValue(set)}\nwhen enumerating:\n${formatUnion(union)}`,
+      : `Attempted to enumerate the nonenumerable set:\n${prettyPrint(formatValue(set))}\nwhen enumerating:\n${prettyPrint(formatUnion(union))}`,
   );
 };
 
@@ -1541,13 +1543,13 @@ const enumerateSet = (
       if (!isVersion174 && isEmptySet(value)) return [];
       if (isOverriddenSet(value.domain)) {
         throw new TlaEvaluationError(
-          `Attempted to enumerate a set of the form [D -> R],but the domain D:\n${formatValue(value.domain)}\ncannot be enumerated.`,
+          `Attempted to enumerate a set of the form [D -> R],but the domain D:\n${prettyPrint(formatValue(value.domain))}\ncannot be enumerated.`,
         );
       }
       const domain = getFunctionDomain(value.domain);
       if ((domain.length > 0 || isVersion174) && isOverriddenSet(value.range)) {
         throw new TlaEvaluationError(
-          `Attempted to enumerate a set of the form [D -> R],but the range R:\n${formatValue(value.range)}\ncannot be enumerated.`,
+          `Attempted to enumerate a set of the form [D -> R],but the range R:\n${prettyPrint(formatValue(value.range))}\ncannot be enumerated.`,
         );
       }
       const range = domain.length === 0 ? [] : getElements(value.range);
@@ -1561,7 +1563,7 @@ const enumerateSet = (
         value.sets,
         getElements,
         (set, index) =>
-          `Attempted to enumerate a set of the form [l1 : v1, ..., ln : vn],\nbut can't enumerate the value of the \`${value.names[index]}' field:\n${formatValue(set)}`,
+          `Attempted to enumerate a set of the form [l1 : v1, ..., ln : vn],\nbut can't enumerate the value of the \`${value.names[index]}' field:\n${prettyPrint(formatValue(set))}`,
       );
       return getCartesianProduct(fields).map((combination) =>
         createRecord(value.names.map((name, index): [string, Value] => [name, combination[index]])),
@@ -1573,14 +1575,14 @@ const enumerateSet = (
         value.factors,
         getElements,
         (factor, index) =>
-          `Attempted to enumerate a set of the form s1 \\X s2 ... \\X sn,\nbut can't enumerate s${index}:\n${formatValue(factor)}`,
+          `Attempted to enumerate a set of the form s1 \\X s2 ... \\X sn,\nbut can't enumerate s${index}:\n${prettyPrint(formatValue(factor))}`,
       );
       return getCartesianProduct(factors).map(createTuple);
     }
     case "FilteredSet":
       if (!isSetValue(value.base) || isOverriddenSet(value.base)) {
         throw new TlaEvaluationError(
-          `Attempted to enumerate { x \\in S : p(x) } when S:\n${formatValue(value.base)}\nis not enumerable`,
+          `Attempted to enumerate { x \\in S : p(x) } when S:\n${prettyPrint(formatValue(value.base))}\nis not enumerable`,
         );
       }
       return toFiniteSet(
@@ -1604,12 +1606,12 @@ const enumerateSet = (
         !isTlcEnumerable(value.right)
       ) {
         throw new TlaEvaluationError(
-          `Attempted to enumerate S \\cap T when neither S:\n${formatValue(value.left)}\nnor T:\n${formatValue(value.right)}\nis enumerable`,
+          `Attempted to enumerate S \\cap T when neither S:\n${prettyPrint(formatValue(value.left))}\nnor T:\n${prettyPrint(formatValue(value.right))}\nis enumerable`,
         );
       }
       if (value.operator === "\\" && !isTlcEnumerable(value.left)) {
         throw new TlaEvaluationError(
-          `Attempted to enumerate S \\ T when S:\n${formatValue(value.left)}\nis not enumerable.`,
+          `Attempted to enumerate S \\ T when S:\n${prettyPrint(formatValue(value.left))}\nis not enumerable.`,
         );
       }
       if (value.operator === "\\cup") {
@@ -1700,7 +1702,7 @@ const openStream = (value: Value): void => {
 const listUnionLikeTlc = (union: SetOperationValue) => {
   if (!isTlcEnumerable(union.left) || !isTlcEnumerable(union.right)) {
     throw new TlaEvaluationError(
-      `Attempted to enumerate S \\cup T when S:\n${formatValue(union.left)}\nand T:\n${formatValue(union.right)}\nare not both enumerable`,
+      `Attempted to enumerate S \\cup T when S:\n${prettyPrint(formatValue(union.left))}\nand T:\n${prettyPrint(formatValue(union.right))}\nare not both enumerable`,
     );
   }
   openStream(union.left);
@@ -1879,18 +1881,18 @@ const getProductCardinality = (
   }, 1);
 
 const describeOverflow = (value: Value) =>
-  `Overflow when computing the number of elements in:\n${formatValue(value)}`;
+  `Overflow when computing the number of elements in:\n${prettyPrint(formatValue(value))}`;
 
 export const getCardinality = (value: Value, version?: TlcVersion): number => {
   if (typeof value !== "object") {
     throw new TlaEvaluationError(
-      `Attempted to compute the number of elements in the ${describeKind(value)} ${formatValue(value)}.`,
+      `Attempted to compute the number of elements in the ${describeKind(value)} ${prettyPrint(formatValue(value))}.`,
     );
   }
   switch (value.kind) {
     case "ModelValue":
       throw new TlaEvaluationError(
-        `Attempted to compute the number of elements in the model value ${formatValue(value)}.`,
+        `Attempted to compute the number of elements in the model value ${prettyPrint(formatValue(value))}.`,
       );
     case "Function":
       return value.domain.length;
@@ -1908,7 +1910,7 @@ export const getCardinality = (value: Value, version?: TlcVersion): number => {
     case "InfiniteSet":
     case "SequenceSet":
       throw new TlaEvaluationError(
-        `Attempted to compute the number of elements in the overridden value ${formatValue(value)}.`,
+        `Attempted to compute the number of elements in the overridden value ${prettyPrint(formatValue(value))}.`,
       );
     case "Subset": {
       const size = getCardinality(value.base, version);
@@ -1939,7 +1941,8 @@ export const getCardinality = (value: Value, version?: TlcVersion): number => {
       return getProductCardinality(
         value.factors,
         version,
-        () => `Overflow when computing the number of elements in ${formatValue(value)}`,
+        () =>
+          `Overflow when computing the number of elements in ${prettyPrint(formatValue(value))}`,
       );
     default:
       cacheSet(value);
@@ -1948,12 +1951,12 @@ export const getCardinality = (value: Value, version?: TlcVersion): number => {
 };
 
 const describeInfiniteCheck = (value: Value) =>
-  `Attempted to check if the set ${formatValue(value)}is finite.`;
+  `Attempted to check if the set ${prettyPrint(formatValue(value))}is finite.`;
 
 export const isFiniteSet = (value: Value): boolean => {
   if (typeof value !== "object" || value.kind === "ModelValue") {
     throw new TlaEvaluationError(
-      `Attempted to check if the ${describeKind(value)} ${formatValue(value)} is a finite set.`,
+      `Attempted to check if the ${describeKind(value)} ${prettyPrint(formatValue(value))} is a finite set.`,
     );
   }
   switch (value.kind) {
@@ -1964,7 +1967,7 @@ export const isFiniteSet = (value: Value): boolean => {
       return true;
     case "LazyFunction":
       throw new TlaEvaluationError(
-        `Attempted to check if the function:\n${formatValue(value)}\nis a finite set.`,
+        `Attempted to check if the function:\n${prettyPrint(formatValue(value))}\nis a finite set.`,
       );
     case "InfiniteSet":
       return false;
@@ -2010,7 +2013,7 @@ export const isFiniteSet = (value: Value): boolean => {
     case "FilteredSet":
       if (!isFiniteSet(value.base)) {
         throw new TlaEvaluationError(
-          `Attempted to check if expression of form {x \\in S : p(x)} is a finite set, but cannot check if S:\n${formatValue(value.base)}\nis finite.`,
+          `Attempted to check if expression of form {x \\in S : p(x)} is a finite set, but cannot check if S:\n${prettyPrint(formatValue(value.base))}\nis finite.`,
         );
       }
       return true;
@@ -2064,14 +2067,15 @@ export const getSequenceElements = (value: Value): Value[] | undefined => {
 };
 
 const describeNonSetMembership = (element: Value, value: Value) => {
-  const prefix = `Attempted to check if the value:\n${formatValue(element)}\nis an element of the`;
-  if (!isFunctionValue(value)) return `${prefix} ${describeKind(value)} ${formatValue(value)}`;
+  const prefix = `Attempted to check if the value:\n${prettyPrint(formatValue(element))}\nis an element of the`;
+  if (!isFunctionValue(value))
+    return `${prefix} ${describeKind(value)} ${prettyPrint(formatValue(value))}`;
   const functionClass = getFunctionClass(value);
   if (functionClass === "record") {
-    return `Attempted to check if element:\n${formatValue(element)}\nis in the record:\n${formatValue(value)}`;
+    return `Attempted to check if element:\n${prettyPrint(formatValue(element))}\nis in the record:\n${prettyPrint(formatValue(value))}`;
   }
   if (functionClass === "tuple") return "Attempted to check set membership in a tuple value.";
-  return `${prefix} function ${formatValue(value)}`;
+  return `${prefix} function ${prettyPrint(formatValue(value))}`;
 };
 
 interface TracedCallStack {
@@ -2177,7 +2181,7 @@ const isElementOfAnySet = (element: Value, set: Value): boolean => {
       if (typeof element === "number") return element >= set.low && element <= set.high;
       if (set.low <= set.high && (!isModelValue(element) || element.type !== undefined)) {
         throw new TlaEvaluationError(
-          `Attempted to check if the value:\n${formatValue(element)}\nis in the integer interval ${formatValue(set)}`,
+          `Attempted to check if the value:\n${prettyPrint(formatValue(element))}\nis in the integer interval ${prettyPrint(formatValue(set))}`,
         );
       }
       return false;
@@ -2188,7 +2192,7 @@ const isElementOfAnySet = (element: Value, set: Value): boolean => {
         set.name === "STRING" ? typeof element === "string" : typeof element === "number";
       if (!isMemberType) {
         throw new TlaModuleError(
-          `Attempted to check if the value:\n${formatValue(element)}\nis an element of ${set.name}.`,
+          `Attempted to check if the value:\n${prettyPrint(formatValue(element))}\nis an element of ${set.name}.`,
         );
       }
       return set.name !== "Nat" || (typeof element === "number" && element >= 0);
@@ -2223,7 +2227,7 @@ const isElementOfAnySet = (element: Value, set: Value): boolean => {
       if (!functionValue || !isRecordDomain(functionValue.domain)) {
         if (isModelValue(element)) return isModelValueMember(element, set);
         throw new TlaEvaluationError(
-          `Attempted to check if non-record\n${formatValue(element)}\nis in the set of records:\n${formatValue(set)}`,
+          `Attempted to check if non-record\n${formatValue(element)}\nis in the set of records:\n${prettyPrint(formatValue(set))}`,
         );
       }
       return (
@@ -2243,7 +2247,7 @@ const isElementOfAnySet = (element: Value, set: Value): boolean => {
         if (isModelValue(element)) return isModelValueMember(element, set);
         if (isFunction) return false;
         throw new TlaEvaluationError(
-          `Attempted to check if non-tuple\n${formatValue(element)}\nis in the set of tuples:\n${formatValue(set)}`,
+          `Attempted to check if non-tuple\n${prettyPrint(formatValue(element))}\nis in the set of tuples:\n${prettyPrint(formatValue(set))}`,
         );
       }
       return (
@@ -2263,7 +2267,7 @@ const isElementOfAnySet = (element: Value, set: Value): boolean => {
     case "Union": {
       if (!isTlcEnumerable(set.base)) {
         throw new TlaEvaluationError(
-          `Attempted to check if:\n ${formatValue(element)}\nis an element of the non-enumerable set:\n ${formatUnion(set)}`,
+          `Attempted to check if:\n ${prettyPrint(formatValue(element))}\nis an element of the non-enumerable set:\n ${prettyPrint(formatUnion(set))}`,
         );
       }
       const sets = toFiniteSet(set.base).elements;
@@ -2665,7 +2669,7 @@ const fingerprintValue = (value: Value): void => {
   if (typeof value !== "object" || value.kind === "ModelValue") return;
   if (value.kind === "InfiniteSet" || value.kind === "SequenceSet") {
     throw new TlaEvaluationError(
-      `TLC has found a state in which the value of a variable contains ${formatValue(value)}`,
+      `TLC has found a state in which the value of a variable contains ${prettyPrint(formatValue(value))}`,
     );
   }
   if (isSetValue(value)) {

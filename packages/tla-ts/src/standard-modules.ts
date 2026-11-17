@@ -18,6 +18,7 @@ import {
   overrideWithJava,
 } from "./builtins";
 import type { Builtin, BuiltinArgument, Context } from "./evaluate";
+import { prettyPrint } from "./pretty-print";
 import type { CheckerRuntime } from "./runtime";
 import { createBagsOperators } from "./bags";
 import { createIoUtilsOperators, createJsonOperators, type FileSystem } from "./json";
@@ -376,7 +377,7 @@ const INTEGERS_OPERATORS = [
 const getSequenceArgument = (args: BuiltinArgument[], index: number, message: string) => {
   const value = getValue(args, index, message);
   const elements = getSequenceElements(value);
-  if (!elements) throw new TlaModuleError(`${message}\n${formatValue(value)}`);
+  if (!elements) throw new TlaModuleError(`${message}\n${prettyPrint(formatValue(value))}`);
   return elements;
 };
 
@@ -430,7 +431,7 @@ const createSequencesOperators = (version: TlcVersion) =>
       const right = getValue(args, 1, "\\o");
       if (typeof right !== "string") {
         throw new TlaModuleError(
-          `${getEvaluatingMessage("t \\o s", "string")}\n${formatValue(right)}`,
+          `${getEvaluatingMessage("t \\o s", "string")}\n${prettyPrint(formatValue(right))}`,
         );
       }
       return rankString(left + right);
@@ -470,7 +471,7 @@ const createSequencesOperators = (version: TlcVersion) =>
             : undefined;
       if (outOfDomain) {
         throw new TlaModuleError(
-          `The ${outOfDomain.position} argument of SubSeq must be in the domain of its first argument:\n${formatValue(getValue(args, 0, "SubSeq"))}\n, but instead it is\n${outOfDomain.value}`,
+          `The ${outOfDomain.position} argument of SubSeq must be in the domain of its first argument:\n${prettyPrint(formatValue(getValue(args, 0, "SubSeq")))}\n, but instead it is\n${outOfDomain.value}`,
         );
       }
       return sliceSequence(sequence, start - 1, end);
@@ -503,7 +504,7 @@ const createFiniteSetsOperators = (version: TlcVersion) =>
         (typeof set === "object" && (set.kind === "InfiniteSet" || set.kind === "SequenceSet"))
       ) {
         throw new TlaModuleError(
-          `Attempted to compute cardinality of the value\n${formatValue(set)}`,
+          `Attempted to compute cardinality of the value\n${prettyPrint(formatValue(set))}`,
         );
       }
       return getCardinality(set, version);
@@ -516,7 +517,7 @@ const TRANSITIVE_CLOSURE_OPERATORS = [
       const relation = getValue(args, 0, "Warshall");
       if (!isSetValue(relation) || isOverriddenSet(relation)) {
         throw new TlaModuleError(
-          `Applying TransitiveClosure to the following value,\nwhich is not an enumerable set:\n${formatValue(relation)}`,
+          `Applying TransitiveClosure to the following value,\nwhich is not an enumerable set:\n${prettyPrint(formatValue(relation))}`,
         );
       }
       // TLC sizes the relation, which normalizes it.
@@ -536,7 +537,7 @@ const TRANSITIVE_CLOSURE_OPERATORS = [
         const ends = getSequenceElements(edge);
         if (ends?.length !== 2) {
           throw new TlaModuleError(
-            `Attempted to apply TransitiveClosure to a set containing\nthe following value:\n${formatValue(edge)}`,
+            `Attempted to apply TransitiveClosure to a set containing\nthe following value:\n${prettyPrint(formatValue(edge))}`,
           );
         }
         return [getNodeIndex(ends[0]), getNodeIndex(ends[1])];

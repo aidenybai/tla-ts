@@ -1,5 +1,6 @@
 import { TlaEndOfInputError, TlaEvaluationError, TlaModuleError } from "./errors";
 import type { Builtin, BuiltinArgument, Context, OperatorValue } from "./evaluate";
+import { prettyPrint } from "./pretty-print";
 import {
   formatValue,
   getFunctionClass,
@@ -51,13 +52,13 @@ export const createModuleArgumentError = (
   value: Value,
 ) =>
   new TlaModuleError(
-    `The ${position} argument of ${name} should be a ${expected}, but instead it is:\n${formatValue(value)}`,
+    `The ${position} argument of ${name} should be a ${expected}, but instead it is:\n${prettyPrint(formatValue(value))}`,
   );
 
 export const toEnumeratedSet = (value: Value, name: string, reported = value) => {
   if (!isSetValue(value) || isOverriddenSet(value)) {
     throw new TlaModuleError(
-      `Applying ${name} to the following value,\nwhich is not a finite set:\n${formatValue(reported)}`,
+      `Applying ${name} to the following value,\nwhich is not a finite set:\n${prettyPrint(formatValue(reported))}`,
     );
   }
   return toFiniteSet(value);
@@ -290,7 +291,7 @@ export const defineArithmetic = (
 const getIntegerArgument = (value: Value, position: string, name: string) => {
   if (typeof value !== "number") {
     throw new TlaModuleError(
-      `The ${position} argument of ${name} should be an integer, but instead it is:\n${formatValue(value)}`,
+      `The ${position} argument of ${name} should be an integer, but instead it is:\n${prettyPrint(formatValue(value))}`,
     );
   }
   return value;

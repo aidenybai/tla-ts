@@ -116,6 +116,29 @@ describe("line breaking matches TLC's pretty printer", () => {
     expect((await checkPrinting(`ASSUME PrintT(${expression})`)).printed).toEqual([text]);
   });
 
+  const FUNCTION_LINES = Array.from(
+    { length: 9 },
+    (_value, index) => `${index + 1} :> ${index + 1}000`,
+  );
+  const FUNCTION_TEXT = `( 0 :> 0 @@\n  ${FUNCTION_LINES.join(" @@\n  ")} )`;
+
+  it.each([
+    [
+      "SortSeq([a : {1, 2}, b : BOOLEAN], LAMBDA u, w : TRUE) = <<>>",
+      "The first argument of SortSeq should be a natural number, but instead it is:\n{ [a |-> 1, b |-> FALSE],\n  [a |-> 1, b |-> TRUE],\n  [a |-> 2, b |-> FALSE],\n  [a |-> 2, b |-> TRUE] }",
+    ],
+    [
+      "[n \\in 0..9 |-> n * 1000] = {}",
+      `Attempted to check equality of the function ${FUNCTION_TEXT} with the value:\n{}`,
+    ],
+    [
+      "1 \\in [n \\in 0..9 |-> n * 1000]",
+      `Attempted to check if the value:\n1\nis an element of the function ${FUNCTION_TEXT}`,
+    ],
+  ])("breaks the value in the error of %s", async (expression, message) => {
+    expect((await checkPrinting(`ASSUME ${expression}`)).result.violation?.message).toBe(message);
+  });
+
   it("breaks the value in a failed Assert", async () => {
     expect(
       (await checkPrinting("ASSUME Assert(FALSE, [x \\in 1..10 |-> [y \\in 1..10 |-> y]])")).result

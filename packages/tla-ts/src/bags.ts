@@ -11,6 +11,7 @@ import {
 } from "./builtins";
 import { TlaEvaluationError, TlaModuleError } from "./errors";
 import type { Builtin, BuiltinArgument } from "./evaluate";
+import { prettyPrint } from "./pretty-print";
 import {
   createEnumeratedSet,
   createFunction,
@@ -30,7 +31,7 @@ import {
 
 const createWrongValueError = (name: string, expected: string, value: Value) =>
   new TlaModuleError(
-    `Applying ${name} to the following value,\nwhich is not ${expected}:\n${formatValue(value)}`,
+    `Applying ${name} to the following value,\nwhich is not ${expected}:\n${prettyPrint(formatValue(value))}`,
   );
 
 const toFunction = (value: Value) => (isFunctionValue(value) ? toFiniteFunction(value) : undefined);
@@ -186,7 +187,7 @@ export const createBagsOperators = (builtins: ReadonlyMap<string, Builtin>): Bui
     if (elements.length < 2) return elements[0] ?? EMPTY_BAG;
     const createUnionError = () =>
       new TlaModuleError(
-        `Attempted to apply BagUnion to the following set, whose\nelement is not a bag:\n${formatValue(set)}`,
+        `Attempted to apply BagUnion to the following set, whose\nelement is not a bag:\n${prettyPrint(formatValue(set))}`,
       );
     const getBag = (element: Value) => {
       const functionValue = toFunction(element);
