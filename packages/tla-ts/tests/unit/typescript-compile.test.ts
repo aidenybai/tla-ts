@@ -50169,4 +50169,33 @@ describe("BigInts", () => {
       ).toContain(`seen ${expected}`);
     });
   });
+
+  describe("spreads the arguments of new of a Temporal class through the array iterator", () => {
+    const getSource = (expected: string) => `
+      const [args]: string[][] = [["gregory"]];
+      const seen = new Temporal.PlainDate(2000, 5, 2, ...args).calendarId;
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("gregory"))).failure).toBeUndefined();
+    });
+
+    it("rejects another calendar", async () => {
+      expect((await checkModel(getSource("iso8601"))).failure?.message).toContain("seen gregory");
+    });
+
+    it("stops where a script replaced the iterator", async () => {
+      const source = `
+        const args = ["gregory"];
+        Array.prototype[Symbol.iterator] = function* (): Generator<any> {
+          yield "japanese";
+        } as any;
+        const date = new Temporal.PlainDate(2000, 5, 2, ...args);
+      `;
+      expect((await checkModel(source)).failure?.message).toContain(
+        "tla-ts can't iterate an array whose iterator a script replaced",
+      );
+    });
+  });
 });

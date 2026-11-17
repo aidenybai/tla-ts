@@ -2091,7 +2091,7 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
         heap,
         string(temporal.kind),
         translateExpression(node.expression, scope, context),
-        tuple(temporal.values.map((value) => translateExpression(value, scope, context))),
+        translateElements(temporal.values, scope, context),
         translateBuiltInValue(`Temporal.${temporal.made}.prototype`, node, context),
       ],
       context,
