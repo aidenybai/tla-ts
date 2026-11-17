@@ -1184,7 +1184,9 @@ const evaluateLocalIdentifier = (name: string, expression: Expression, context: 
   if (global?.kind === "Definition") {
     return getDefinitionEvaluator(global.definition, context.environment)(context);
   }
-  const builtin = context.environment.builtins.get(name);
+  const builtin = context.environment.builtins.get(
+    context.environment.substitutions.get(name) ?? name,
+  );
   if (builtin?.arity === 0) return builtin.evaluate([], context);
   throw new TlaEvaluationError(
     `In evaluation, the identifier ${name} is either undefined or not an operator.\n${describeRange(expression)}`,
