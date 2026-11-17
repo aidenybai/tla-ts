@@ -5593,21 +5593,21 @@ const getSignatureCode = (
       return `{ const ${record} = ${code}; switch (${record}[0]) { ${cases.join(" ")} } }`;
     }
     case "Fn": {
-      const fn = getName(program, "f");
+      const functionValue = getName(program, "f");
       const weight = getWeight();
       const keys = resolved.domain.flatMap((key, position) => {
         const id =
           typeof key === "object" && key.kind === "ModelValue"
             ? program.plains.ids.get(key)
             : undefined;
-        const value = getScalarCode(resolved.range, `${fn}[${position}]`);
+        const value = getScalarCode(resolved.range, `${functionValue}[${position}]`);
         return id === undefined || value === undefined
           ? []
           : [`Z[${id}] += Math.imul(Math.imul(${weight}, ${scale}), ${value});`];
       });
-      const values = getLoop(resolved.range, fn);
+      const values = getLoop(resolved.range, functionValue);
       if (keys.length === 0 && values === undefined) return undefined;
-      return `{ const ${fn} = ${code}; ${keys.join(" ")} ${values ?? ""} }`;
+      return `{ const ${functionValue} = ${code}; ${keys.join(" ")} ${values ?? ""} }`;
     }
     case "Map": {
       const parts = [
