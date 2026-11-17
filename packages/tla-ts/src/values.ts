@@ -1293,18 +1293,32 @@ export const createWrittenFunction = (pairs: [Value, Value][]) => {
       );
 };
 
+// The elements of an interval, which keep it: a function whose domain they are has the interval as
+// its domain, as TLC's functions over an interval keep it. An array made from them is a plain array.
+class IntervalElements extends Array<Value> {
+  static override get [Symbol.species]() {
+    return Array;
+  }
+
+  readonly interval: IntervalValue;
+
+  constructor(interval: IntervalValue) {
+    super();
+    this.interval = interval;
+    for (let element = interval.low; element <= interval.high; element++) this.push(element);
+  }
+}
+
 const MAX_SHARED_INTERVAL_LENGTH = 1024;
-const intervalDomains: Value[][] = [];
-const longIntervalDomains = new Map<number, WeakRef<Value[]>>();
-const intervalValues: IntervalValue[] = [];
-const intervalArrays = new WeakMap<Value[], IntervalValue>();
+// The elements of 1..length for each length up to MAX_SHARED_INTERVAL_LENGTH, which every function
+// over one of them shares.
+const intervalDomains: IntervalElements[] = [];
 
 const getIntervalDomain = (length: number): Value[] => {
-  const cached = intervalDomains[length] ?? longIntervalDomains.get(length)?.deref();
-  if (cached) return cached;
-  const domain = Array.from({ length }, (_value, index) => index + 1);
-  if (length > MAX_SHARED_INTERVAL_LENGTH) longIntervalDomains.set(length, new WeakRef(domain));
-  else intervalDomains[length] = domain;
+  const shared = intervalDomains[length];
+  if (shared) return shared;
+  const domain = new IntervalElements({ kind: "Interval", low: 1, high: length });
+  if (length <= MAX_SHARED_INTERVAL_LENGTH) intervalDomains[length] = domain;
   return domain;
 };
 
@@ -1316,25 +1330,13 @@ export const getIntervalElements = (value: IntervalValue): Value[] => {
   return elements;
 };
 
-const isIntervalDomain = (domain: Value[]) =>
-  (domain.length > 0 &&
-    (domain === intervalDomains[domain.length] ||
-      domain === longIntervalDomains.get(domain.length)?.deref())) ||
-  intervalArrays.has(domain);
+const isIntervalDomain = (domain: Value[]) => domain instanceof IntervalElements;
 
 export const getFunctionDomain = (set: Value): Value[] => {
   const elements = toFiniteSet(set).elements;
   return isIntervalDomain(elements) && !(typeof set === "object" && set.kind === "Interval")
     ? [...elements]
     : elements;
-};
-
-const getIntervalValue = (high: number): IntervalValue => {
-  const cached = intervalValues[high];
-  if (cached) return cached;
-  const interval: IntervalValue = { kind: "Interval", low: 1, high };
-  intervalValues[high] = interval;
-  return interval;
 };
 
 export const createTuple = (elements: Value[]): FunctionValue =>
@@ -1546,11 +1548,11 @@ const enumerateSet = (
       return value.elements;
     case "MixedSet":
       return sortLikeTlc(value.elements);
-    case "Interval": {
-      const elements = getIntervalElements(value);
-      if (elements !== intervalDomains[elements.length]) intervalArrays.set(elements, value);
-      return elements;
-    }
+    case "Interval":
+      getCardinality(value);
+      return value.low === 1 && value.high >= 1
+        ? getIntervalDomain(value.high)
+        : new IntervalElements(value);
     case "Subset": {
       if (getCardinality(value.base) === 0) return getSortedSubsets([]);
       if (!isSetValue(value.base)) {
@@ -2551,9 +2553,7 @@ export const applyFunction = (
 };
 
 export const getDomainInterval = (domain: Value[]) =>
-  isIntervalDomain(domain)
-    ? (intervalArrays.get(domain) ?? getIntervalValue(domain.length))
-    : undefined;
+  domain instanceof IntervalElements ? domain.interval : undefined;
 
 export const getDomain = (functionValue: Value): Value => {
   if (typeof functionValue === "object" && functionValue.kind === "LazyFunction")
