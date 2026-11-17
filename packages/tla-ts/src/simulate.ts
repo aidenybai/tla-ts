@@ -12,6 +12,7 @@ import {
 } from "./errors";
 import type { State } from "./evaluate";
 import { EXIT_STATUS, getMessageExitStatus, withLivenessExitCode } from "./exit-codes";
+import { getHashMapOrder } from "./java-hash";
 import { createLivenessChecker, type LivenessChecker } from "./liveness-checker";
 import { getIncompleteSuccessorMessage, prepareSearch, reportAssumptionViolation } from "./search";
 import { getActionLabel, toActionValue, type SpecAction } from "./spec-description";
@@ -28,6 +29,7 @@ import {
   withUnexpectedException,
 } from "./tlc/messages";
 import { createJavaRandom, nextPrime, type JavaRandom } from "./tlc/random";
+import { createTlcRecord } from "./tlc/tlc-operators";
 import { createCounterExample } from "./tlc/tlcext-operators";
 import {
   createModelValue,
@@ -270,7 +272,7 @@ export const simulate = (options: SimulationOptions): number => {
       case "action":
         return node && toActionValue(node.action);
       case "config":
-        return createRecord([
+        return createTlcRecord([
           ["mode", options.isGenerating ? "generate" : "simulate"],
           ["depth", traceDepth === INFINITE_DEPTH ? -1 : traceDepth],
           ["traces", Number(BigInt.asIntN(32, traceLimit))],
@@ -286,14 +288,19 @@ export const simulate = (options: SimulationOptions): number => {
         for (let step = node; step && step.level > 1; step = step.predecessor) {
           actions.set(step.action.name, (actions.get(step.action.name) ?? 0) + 1);
         }
-        return createRecord([
+        // TLC's SimulationWorker counts the actions of a behavior in a HashMap.
+        const counts = getHashMapOrder([...actions.keys()]).map((name): [string, Value] => [
+          name,
+          actions.get(name) ?? 0,
+        ]);
+        return createTlcRecord([
           ["traces", statistics.traces],
           ["duration", Math.floor((Date.now() - runtime.startedAt) / 1000)],
           ["generated", statistics.generatedStates],
           [
             "behavior",
-            createRecord([
-              ["actions", createRecord([...actions])],
+            createTlcRecord([
+              ["actions", createTlcRecord(counts)],
               ["id", currentTrace],
             ]),
           ],

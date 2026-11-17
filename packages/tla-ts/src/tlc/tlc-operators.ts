@@ -48,7 +48,7 @@ const getRegisterFunction = <Key extends Value>(registers: Map<Key, Value>) =>
     [...registers].map((entry): [Value, Value] => [entry[0], createTuple([entry[1]])]),
   );
 
-const createTlcRecord = (fields: [string, Value][]) =>
+export const createTlcRecord = (fields: [string, Value][]) =>
   setFunctionClass(createWrittenFunction(fields), "record");
 
 const CHECKER_KEYS = new Set(["diameter", "generated", "distinct", "queue", "stats", "config"]);

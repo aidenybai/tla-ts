@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, it } from "vite-plus/test";
 import { check } from "../../src";
+import { simulate } from "../../src/simulate";
 import { checkFixture } from "./check-harness";
 
 const DIRECTORY = join(import.meta.dirname, "../fixtures/tlc-statistics");
@@ -29,4 +30,25 @@ it("stops generating successors at the first violation", async () => {
   expect(result.status).toBe("invariant-violation");
   expect(printed).toEqual(["<<1, 1>>", "<<2, 2>>"]);
   expect([result.generatedStates, result.distinctStates]).toEqual([3, 3]);
+});
+
+it("prints the statistics of a simulation in the order TLC writes them", () => {
+  const messages: string[] = [];
+  simulate({
+    source:
+      "---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nAlpha == x' = x + 1\nBeta == x' = x + 2\nZed == x' = x + 3\nGamma == x' = x + 4\nNext == Alpha \\/ Beta \\/ Zed \\/ Gamma\nInv == x < 12 \\/ TLCGet(\"stats\").diameter = 0\n====",
+    config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+    seed: 4n,
+    traceDepth: 20,
+    traceCount: 1n,
+    aril: 0n,
+    isGenerating: false,
+    scheduler: "random",
+    onSimulation: (output) => {
+      if (output.kind === "message" && output.isError) messages.push(output.message);
+    },
+  });
+  expect(messages[0]).toBe(
+    'Evaluating invariant Inv failed.\nAttempted to select nonexistent field "diameter" from the record\n[ traces |-> 1,\n  duration |-> 0,\n  generated |-> 6,\n  behavior |-> [actions |-> [Gamma |-> 2, Alpha |-> 2, Beta |-> 1], id |-> 1],\n  worker |-> 0,\n  distinct |-> -1,\n  distinctvalues |-> -1,\n  retries |-> -1,\n  actions |-> [],\n  levelmean |-> 0,\n  levelvariance |-> 0 ]\nline 10, col 18 to line 10, col 41 of module M',
+  );
 });
