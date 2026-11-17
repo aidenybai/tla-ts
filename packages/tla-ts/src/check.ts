@@ -502,16 +502,9 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     config.postconditions.length > 0 ||
     config.possible.length > 0 ||
     specification.moduleOperators.some((operator) => operator.kind === "postcondition");
-  // The trace file that TLC writes by default holds a counterexample, which a search that the typed
-  // tier decides never has, so that postcondition alone leaves the tier to run.
-  const isTypedSearchable =
-    config.postconditions.length === 0 &&
-    config.possible.length === 0 &&
-    specification.moduleOperators.every(
-      (operator) =>
-        operator.kind !== "postcondition" ||
-        (operator.module === "_TLCTrace" && operator.operator === "_TLCTraceSilent"),
-    );
+  // A postcondition reads the statistics and the counterexample once the search ends, which the
+  // tier's search gives as the interpreter's would, but the possible states need every state seen.
+  const isTypedSearchable = config.possible.length === 0;
   const tracedSteps = new WeakMap<TraceStep, TracedStep>();
   const getStepState = (step: TraceStep) => tracedSteps.get(step)?.state ?? step.state;
   const getStepAction = (step: TraceStep) => {
@@ -1190,6 +1183,12 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       });
       options.onProgress?.({ kind: "liveness-finished" });
     }
+    runtime.generatedStates = typed.generatedStates;
+    runtime.distinctStates = typed.distinctStates;
+    runtime.initialStates = typed.initialStates.generated;
+    runtime.queueSize = 0;
+    runtime.diameter = typed.depth;
+    searchDepth = typed.depth;
     const finalPostcondition = checkFinalPostconditions();
     if (finalPostcondition) return finalPostcondition;
     return {

@@ -161,8 +161,15 @@ const collectLocalFacts = (
           owner,
         });
       } else {
+        // Reading the level of the state being checked shows nothing and reads the same again.
+        const isLevelRead =
+          name === "TLCGet" &&
+          node.kind === "Apply" &&
+          node.args.length === 1 &&
+          node.args[0].kind === "String" &&
+          node.args[0].value === "level";
         if (isImpureBuiltin(name, environment)) {
-          addEffects(IMPURE | (name === "Assert" ? 0 : REPEATED_EFFECT));
+          addEffects(IMPURE | (name === "Assert" || isLevelRead ? 0 : REPEATED_EFFECT));
         }
         if (STREAMED_BUILTINS.has(name)) addEffects(STREAMED);
         if (RANDOM_BUILTINS.has(name)) addEffects(RANDOM);
