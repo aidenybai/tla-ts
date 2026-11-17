@@ -2,6 +2,7 @@ import { type Expression, getChildren, type Module, type SourceLocation } from "
 import type { ConfigValue, ModelConfig } from "../config";
 import { createMissingModuleError } from "../errors";
 import { getJavaHashCode } from "../java-hash";
+import type { OperatorLevels } from "../levels";
 import { tokenize, type Token } from "../lexer";
 import { extractModule, parseModule, parseModuleTokens } from "../parser";
 import { isBefore } from "../resolve";
@@ -48,14 +49,15 @@ interface ModuleFile extends ParsedModule {
 
 type ModuleLoader = ((name: string) => string | undefined) | undefined;
 
-// A module that a compiler hands a check already read into its tokens and syntax tree, whose names
-// and levels SANY's checks accepted when isChecked, so that a check links it as it is.
+// A module that a compiler hands a check already read into its tokens and syntax tree. When SANY's
+// checks accepted its names and levels, levels holds the levels they found for each of its
+// definitions, so that a check links it as it is.
 export interface PreparedModule {
   name: string;
   text: string;
   tokens: Token[];
   module: Module;
-  isChecked: boolean;
+  levels: readonly (OperatorLevels | undefined)[] | undefined;
 }
 
 interface ModuleUnit {

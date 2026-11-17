@@ -1,6 +1,6 @@
 import ts from "@typescript/typescript6";
 import type { Expression, Module, ModuleUnit, SourceLocation } from "../ast";
-import { isPreparedModuleAccepted } from "../environment";
+import { getPreparedModuleLevels } from "../environment";
 import { tokenize } from "../lexer";
 import { parseModuleTokens } from "../parser";
 import type { PreparedModule } from "../tlc/order";
@@ -8913,9 +8913,9 @@ const PRELUDE: PreparedModule = {
   text: JAVASCRIPT_MODULE,
   tokens: PRELUDE_TOKENS,
   module: parseModuleTokens(JAVASCRIPT_MODULE, PRELUDE_TOKENS),
-  isChecked: false,
+  levels: undefined,
 };
-PRELUDE.isChecked = isPreparedModuleAccepted(PRELUDE);
+PRELUDE.levels = getPreparedModuleLevels(PRELUDE);
 
 const getUnitLocation = (unit: ModuleUnit): SourceLocation => {
   switch (unit.kind) {
@@ -8976,7 +8976,10 @@ export const getJavaScriptModule = (text: string): PreparedModule => {
     text: MODULE_LINES.map((line, index) => (keptLines[index] === 1 ? line : "")).join("\n"),
     tokens: PRELUDE.tokens.filter((token) => keptLines[token.line - 1] === 1),
     module: getModuleView(PRELUDE.module, keptLines),
-    isChecked: PRELUDE.isChecked,
+    levels: PRELUDE.levels?.filter(
+      (_levels, position) =>
+        keptLines[PRELUDE.module.definitions[position].location.line - 1] === 1,
+    ),
   };
 };
 

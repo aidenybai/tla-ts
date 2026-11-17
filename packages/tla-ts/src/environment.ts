@@ -78,7 +78,7 @@ import {
 } from "./standard-modules";
 import { getStandardRange, STANDARD_LEVELS } from "./standard-definitions";
 import { resolveInstanceSubexpressions, resolveModuleSubexpressions } from "./subexpressions";
-import { checkModuleLevels, createLevelAnalyzer } from "./levels";
+import { checkModuleLevels, createLevelAnalyzer, type OperatorLevels } from "./levels";
 import { createInstanceChecker, type InstanceCheck } from "./substitution-levels";
 import { isEvalException } from "./tlc/messages";
 import { createDefinitionFacts } from "./dependencies";
@@ -90,6 +90,8 @@ interface EnvironmentOptions {
   source: string | Module;
   loadModule: ((name: string) => string | undefined) | undefined;
   preparedModules?: readonly PreparedModule[];
+  // Receives the levels SANY's checks found for the definitions of each module they checked.
+  onModuleLevels?: (module: Module, levels: (OperatorLevels | undefined)[]) => void;
   order?: TlcOrder;
   loadClass?: (name: string) => Uint8Array | undefined;
   print: (text: string) => void;
@@ -254,6 +256,8 @@ export const createEnvironment = (
       ? order.getModule(undefined, options.source)
       : options.source;
   const definitions = new Map<string, Definition>();
+  // The levels of the definitions of the prepared modules that SANY's checks accepted, by key.
+  const preparedLevels = new Map<string, OperatorLevels>();
   const parameterized = new Map<string, boolean>();
   const copySources = new Map<string, CopySource>();
   const substitutedDefinitions = new Set<Definition>();
@@ -359,7 +363,7 @@ export const createEnvironment = (
   const acceptedModules = new Set<Module>();
   const loadModule = (name: string, importer: string) => {
     const prepared = order.getPreparedModule(name);
-    if (prepared?.isChecked && runtime.version === "master") {
+    if (prepared?.levels && runtime.version === "master") {
       acceptedModules.add(prepared.module);
       return prepared.module;
     }
@@ -969,9 +973,12 @@ export const createEnvironment = (
     );
     const isAccepted = acceptedModules.has(unlinked) && module === unlinked;
     if (!isAccepted) scope.errors.push(...resolveModule(module, getUnit(module)));
-    module.definitions.forEach((definition) => {
+    const acceptedLevels = isAccepted ? order.getPreparedModule(parsed.name)?.levels : undefined;
+    module.definitions.forEach((definition, position) => {
       const key = getKey(definition);
       definitions.set(key, definition);
+      const levels = acceptedLevels?.[position];
+      if (levels) preparedLevels.set(key, levels);
       parameterized.set(key, !isParameterFree);
       const symbol = getDefinitionSymbol(definition);
       const importedLocation = importedAt.get(definition.name);
@@ -1007,19 +1014,21 @@ export const createEnvironment = (
       linkOrder.push(linked);
       return linked;
     }
-    scope.levelChecks.push(() =>
-      checkModuleLevels(
+    scope.levelChecks.push(() => {
+      const levels = checkModuleLevels(
         module,
         {
           constants: new Set(constants.map((constant) => constant.name)),
           variables: new Set(variables),
           getDefinition: (symbol) => definitions.get(visible.get(symbol)?.key ?? symbol),
           getQualifiedName: (symbol) => qualifiedNames.get(visible.get(symbol)?.key ?? symbol),
+          getPreparedLevels: (symbol) => preparedLevels.get(visible.get(symbol)?.key ?? symbol),
         },
         checks,
         warnings,
-      ),
-    );
+      );
+      options.onModuleLevels?.(module, levels);
+    });
     linkOrder.push(linked);
     return linked;
   };
@@ -1191,11 +1200,12 @@ export const createEnvironment = (
   };
 };
 
-// Whether SANY's checks accept a prepared module as a module that another extends, with no error or
-// warning, so that every check that links it can skip them. Its expressions keep the names that
-// the checks resolve.
-export const isPreparedModuleAccepted = (prepared: PreparedModule) => {
+// The levels of each definition of a prepared module, if SANY's checks accept it as a module that
+// another extends with no error or warning, so that every check that links it can skip them. Its
+// expressions keep the names that the checks resolve.
+export const getPreparedModuleLevels = (prepared: PreparedModule) => {
   let isPrinted = false;
+  let levels: (OperatorLevels | undefined)[] | undefined;
   try {
     const constants = prepared.module.constants.map((constant) => constant.name);
     createEnvironment(
@@ -1204,15 +1214,18 @@ export const isPreparedModuleAccepted = (prepared: PreparedModule) => {
         source: `---- MODULE ${prepared.name}Check ----\nEXTENDS ${prepared.name}\n====`,
         loadModule: undefined,
         preparedModules: [prepared],
+        onModuleLevels: (module, moduleLevels) => {
+          if (module === prepared.module) levels = moduleLevels;
+        },
         print: () => {
           isPrinted = true;
         },
         files: { readFile: undefined, writeFile: undefined, makeDirectory: undefined },
       },
     );
-    return !isPrinted;
+    return isPrinted ? undefined : levels;
   } catch (error) {
-    if (error instanceof TlaError) return false;
+    if (error instanceof TlaError) return undefined;
     throw error;
   }
 };
