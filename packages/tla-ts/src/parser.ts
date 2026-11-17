@@ -1201,6 +1201,49 @@ const parse = (
     return { kind: "Name", name: token.text, args: isAt("(") ? parseArguments() : [] };
   };
 
+  const parseSelections = (
+    name: string,
+    args: Expression[],
+    argumentsRange: SourceRange | undefined,
+    start: number,
+    location: SourceLocation,
+  ): Expression => {
+    const selectors: Selector[] = [{ kind: "Name", name, args }];
+    const selectorRanges = [getRange(start, start)];
+    const argumentRanges = [argumentsRange];
+    while (isSelectorAhead()) {
+      advance();
+      selectorRanges.push(getRange(cursor, cursor));
+      lastArgumentsRange = undefined;
+      selectors.push(parseSelector());
+      argumentRanges.push(lastArgumentsRange);
+    }
+    const names = selectors.flatMap((selector) =>
+      selector.kind === "Name" ? [selector.name] : [],
+    );
+    const operator = names.join("!");
+    const qualifiedArgs = selectors.flatMap((selector) =>
+      "args" in selector ? selector.args : [],
+    );
+    const argumentCounts = selectors.map((selector) =>
+      "args" in selector ? selector.args.length : 0,
+    );
+    return names.length < selectors.length
+      ? { kind: "Subexpression", selectors, selectorRanges, argumentRanges, location }
+      : qualifiedArgs.length === 0
+        ? { kind: "Identifier", name: operator, selectorRanges, location }
+        : {
+            kind: "Apply",
+            operator,
+            args: qualifiedArgs,
+            ...(argumentCounts.slice(0, -1).some((count) => count > 0) && { argumentCounts }),
+            argumentsRange: argumentRanges.at(-1) ?? getRange(start),
+            selectorRanges,
+            argumentRanges,
+            location,
+          };
+  };
+
   const parsePrimary = (preceding?: Precedence): Expression => {
     const start = cursor;
     const token = advance();
@@ -1252,51 +1295,26 @@ const parse = (
       if (name === "@" && !hasArguments && !isSelectorAhead())
         return { kind: "ExceptAt", location };
       const args = hasArguments ? parseArguments() : [];
-      const argumentRanges = [hasArguments ? lastArgumentsRange : undefined];
       if (!isSelectorAhead()) {
         return hasArguments
           ? { kind: "Apply", operator: name, args, argumentsRange: lastArgumentsRange, location }
           : { kind: "Identifier", name, location };
       }
-      const selectors: Selector[] = [{ kind: "Name", name, args }];
-      const selectorRanges = [getRange(start, start)];
-      while (isSelectorAhead()) {
-        advance();
-        selectorRanges.push(getRange(cursor, cursor));
-        lastArgumentsRange = undefined;
-        selectors.push(parseSelector());
-        argumentRanges.push(lastArgumentsRange);
-      }
-      const names = selectors.flatMap((selector) =>
-        selector.kind === "Name" ? [selector.name] : [],
+      return parseSelections(
+        name,
+        args,
+        hasArguments ? lastArgumentsRange : undefined,
+        start,
+        location,
       );
-      const operator = names.join("!");
-      const qualifiedArgs = selectors.flatMap((selector) =>
-        "args" in selector ? selector.args : [],
-      );
-      const argumentCounts = selectors.map((selector) =>
-        "args" in selector ? selector.args.length : 0,
-      );
-      const argumentsRange = argumentRanges.at(-1) ?? getRange(start);
-      return names.length < selectors.length
-        ? { kind: "Subexpression", selectors, selectorRanges, argumentRanges, location }
-        : qualifiedArgs.length === 0
-          ? { kind: "Identifier", name: operator, selectorRanges, location }
-          : {
-              kind: "Apply",
-              operator,
-              args: qualifiedArgs,
-              ...(argumentCounts.slice(0, -1).some((count) => count > 0) && { argumentCounts }),
-              argumentsRange,
-              selectorRanges,
-              argumentRanges,
-              location,
-            };
     }
     const isOperatorNamed =
       token.kind === "Operator" && (isOperatorName(token.text) || (token.text === "'" && !isTlapm));
     if (isOperatorNamed && isAt("(")) {
       const args = parseArguments();
+      if (!isTlapm && isSelectorAhead()) {
+        return parseSelections(token.text, args, lastArgumentsRange, start, location);
+      }
       // Deviation from TLC: SANY's built-in \X has no definition for TLC to evaluate, a TLC bug.
       if (mode === "tlc" && token.text === "\\X" && args.length === 2) {
         return { kind: "Product", factors: args, location };
@@ -1313,7 +1331,9 @@ const parse = (
           };
     }
     if (isOperatorNamed && !isTlapm) {
-      return { kind: "Identifier", name: token.text, spelling: token.spelling, location };
+      return isSelectorAhead()
+        ? parseSelections(token.text, [], undefined, start, location)
+        : { kind: "Identifier", name: token.text, spelling: token.spelling, location };
     }
     switch (token.text) {
       case "(": {

@@ -16,6 +16,7 @@ import {
 } from "./ast";
 import { formatRange, TlaSyntaxError } from "./errors";
 import { getSourceName, mapChildren, mapDefinition } from "./instances";
+import { resolveSynonym } from "./tlc/jar-data";
 import {
   getArity,
   getBinder,
@@ -200,7 +201,7 @@ const selectSubexpression = (
     if (found.args.length !== arity && (!isOperator || found.args.length !== 0)) {
       return report(
         reference.argumentRanges?.[selectorIndex] ?? location.range,
-        `The operator ${found.name} requires ${arity - found.earlier} arguments.`,
+        `The operator ${resolveSynonym(found.name)} requires ${arity - found.earlier} arguments.`,
       );
     }
     if (isLast) return { definition, args: found.args };
@@ -373,6 +374,7 @@ const resolveSubexpressions = (
           : undefined;
   const first = selectors?.[0];
   if (!selectors || (first?.kind === "Name" && isGoal(first.name))) return mapped;
+  if (first?.kind === "Name" && selectors[1].kind !== "Name" && !lookup(first.name)) return mapped;
   const selected = selectSubexpression(selectors, lookup, mapped, isOperator);
   if (selected !== mapped) selections.add(selected);
   return selected;

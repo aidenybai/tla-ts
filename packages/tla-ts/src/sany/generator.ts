@@ -51,8 +51,8 @@ import {
   type ModuleGeneration,
   resolveModule,
   resolveSymbol,
-  resolveSynonym,
 } from "./generation";
+import { resolveSynonym } from "../tlc/jar-data";
 import {
   checkForUndefinedRecursiveOps,
   checkRecursiveSection,

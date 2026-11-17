@@ -143,6 +143,18 @@ export const SANY_OPERATOR_SYNONYMS = [
   ["^+", "⁺"],
 ];
 
+const SYNONYMS = new Map(
+  SANY_OPERATOR_SYNONYMS.flatMap(([canonical, ...synonyms]) =>
+    synonyms.map((synonym) => [synonym, canonical]),
+  ),
+);
+
+export const resolveSynonym = (name: string) =>
+  name
+    .split("!")
+    .map((part) => SYNONYMS.get(part) ?? (part === "~" ? "\\lnot" : part))
+    .join("!");
+
 export const TLC_STARTUP_STRINGS = [
   "STRING",
   "FALSE",

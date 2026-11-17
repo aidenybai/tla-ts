@@ -66,6 +66,31 @@ Spec == Init /\\ [][Next]_x
     );
   });
 
+  it("reports a selector after an operator symbol as SANY does", () => {
+    const report = getReport({
+      M: "---- MODULE M ----\nf == '!x /\\ ^#!x /\\ \\cup!x /\\ -.!x /\\ ^+!x /\\ ^#(1)!x /\\ \\union!1 /\\ '(1)!1 /\\ \\X!1\n====\n",
+    });
+    expect(report.text).toBe(
+      joinLines([
+        "Semantic errors:",
+        "",
+        "*** Errors: 9",
+        "",
+        ...[
+          ["line 2, col 6 to line 2, col 6", "Cannot take subexpression of `''."],
+          ["line 2, col 13 to line 2, col 16", "Unknown operator: `^#!x'."],
+          ["line 2, col 21 to line 2, col 24", "Cannot take subexpression of `\\union'."],
+          ["line 2, col 31 to line 2, col 34", "Unknown operator: `-.!x'."],
+          ["line 2, col 39 to line 2, col 42", "Unknown operator: `^+!x'."],
+          ["line 2, col 47 to line 2, col 53", "Unknown operator: `^#!x'."],
+          ["line 2, col 58 to line 2, col 63", "Cannot take subexpression of `\\union'."],
+          ["line 2, col 70 to line 2, col 70", "Cannot take subexpression of `''."],
+          ["line 2, col 80 to line 2, col 81", "Cannot take subexpression of `\\times'."],
+        ].flatMap((error) => [`${error[0]} of module M`, "", error[1], "", ""]),
+      ]),
+    );
+  });
+
   it("parses a module once the module that names it reaches it, though another loaded it", () => {
     const report = getReport(
       {
@@ -179,7 +204,7 @@ Spec == Init /\\ [][Next]_x
     [
       "F(a) == a\nx == F(\\cup)",
       "line 3, col 8 to line 3, col 11",
-      "The operator \\cup requires 2 arguments.",
+      "The operator \\union requires 2 arguments.",
     ],
     [
       "F(a) == a\nx == F(SUBSET)",
@@ -189,7 +214,7 @@ Spec == Init /\\ [][Next]_x
     [
       "F(a) == a\nx == F(\\lnot)",
       "line 3, col 8 to line 3, col 12",
-      "The operator ~ requires 1 arguments.",
+      "The operator \\lnot requires 1 arguments.",
     ],
     [
       "F(a) == a\nx == F(')",
@@ -200,6 +225,11 @@ Spec == Init /\\ [][Next]_x
       "F(a) == a\nx == F(^#)",
       "line 3, col 8 to line 3, col 9",
       "Could not find declaration or definition of symbol '^#'.",
+    ],
+    [
+      "F(a) == a\nx == F(=<)",
+      "line 3, col 8 to line 3, col 9",
+      "Could not find declaration or definition of symbol '=<'.",
     ],
     [
       "F(a) == a\nx == F(LAMBDA y : y)",

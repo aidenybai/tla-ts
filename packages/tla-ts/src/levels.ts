@@ -18,6 +18,7 @@ import {
 } from "./errors";
 import { forEachChild } from "./instances";
 import { collectSemanticErrors, getBoundNames, getPatternNames } from "./resolve";
+import { resolveSynonym } from "./tlc/jar-data";
 import { STANDARD_LEVELS } from "./standard-definitions";
 
 interface LevelData {
@@ -253,13 +254,13 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       if (operand.kind !== "Value") return;
       if (operand.data.level > getMaxLevel(operator, index)) {
         throw new TlaSyntaxError(
-          `Level error in applying operator ${operator.name}:\nThe level of argument ${index + 1} exceeds the maximum level allowed by the operator`,
+          `Level error in applying operator ${resolveSynonym(operator.name)}:\nThe level of argument ${index + 1} exceeds the maximum level allowed by the operator`,
         );
       }
     });
     if (ranges.some((range) => range.level > ACTION_LEVEL)) {
       throw new TlaSyntaxError(
-        `Level error in applying operator ${operator.name}:\nThe level of the range for a bounded variable exceeds the maximum level allowed by the operator`,
+        `Level error in applying operator ${resolveSynonym(operator.name)}:\nThe level of the range for a bounded variable exceeds the maximum level allowed by the operator`,
       );
     }
     const getOperand = (formal: string) => {

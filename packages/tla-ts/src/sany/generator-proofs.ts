@@ -66,9 +66,9 @@ import {
   pushLabelScope,
   resolveModule,
   resolveName,
-  resolveSynonym,
   withContext,
 } from "./generation";
+import { resolveSynonym } from "../tlc/jar-data";
 import { getOperandSpan, reportDefEntry } from "./generator-def-entries";
 import {
   generateInstance,

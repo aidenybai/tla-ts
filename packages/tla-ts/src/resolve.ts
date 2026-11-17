@@ -21,6 +21,7 @@ import {
   type Theorem,
 } from "./ast";
 import { formatRange, TlaSyntaxError, type SanyError } from "./errors";
+import { resolveSynonym } from "./tlc/jar-data";
 
 export type SymbolKind =
   | "Builtin"
@@ -112,7 +113,7 @@ const isKey = (name: string) => {
 };
 
 const CORE_SYMBOLS: Symbols = new Map([
-  ...["~>", "-+->", "\\cdot"].map((name): [string, ModuleSymbol] => [
+  ...["~>", "-+->", "\\cdot", "\\X"].map((name): [string, ModuleSymbol] => [
     name,
     { key: name, arity: 2, kind: "Builtin" },
   ]),
@@ -161,7 +162,7 @@ const isBindable = (name: string, current: Binding | undefined, added: Binding, 
   if (current.kind === "Builtin") {
     unit.errors.push({
       location,
-      message: `Symbol ${name} is a built-in operator, and cannot be redefined.`,
+      message: `Symbol ${resolveSynonym(name)} is a built-in operator, and cannot be redefined.`,
     });
   } else if (
     added.kind === "Parameter" ||
@@ -170,12 +171,12 @@ const isBindable = (name: string, current: Binding | undefined, added: Binding, 
   ) {
     unit.errors.push({
       location,
-      message: `Multiply-defined symbol '${name}': this definition or declaration conflicts \nwith the one at ${existing}.`,
+      message: `Multiply-defined symbol '${resolveSynonym(name)}': this definition or declaration conflicts \nwith the one at ${existing}.`,
     });
   } else {
     unit.warnings.push({
       location,
-      message: `Multiple declarations or definitions for symbol ${name}.  \nThis duplicates the one at ${existing}.`,
+      message: `Multiple declarations or definitions for symbol ${resolveSynonym(name)}.  \nThis duplicates the one at ${existing}.`,
     });
   }
   return false;
@@ -275,11 +276,19 @@ const getSpelledNameRange = (
 };
 
 const getFixity = (expression: Expression) => {
-  if (expression.kind !== "Apply") return undefined;
+  if (expression.kind !== "Apply" || expression.argumentsRange) return undefined;
   if (expression.args.length === 2) return "infix";
   if (expression.args.length !== 1) return undefined;
   return isBefore(expression.location, expression.args[0].location) ? "prefix" : "postfix";
 };
+
+const SELECTABLE_KINDS = new Set<SymbolKind>(["Definition", "Instance", "Theorem"]);
+
+const reportUnselectable = (name: string, range: SourceRange, unit: Unit) =>
+  unit.errors.push({
+    location: formatRange(range),
+    message: `Cannot take subexpression of \`${resolveSynonym(name)}'.`,
+  });
 
 const isOperatorSymbol = (name: string) => !/^[\p{L}\d_]/u.test(name);
 
@@ -701,29 +710,38 @@ const getSymbolArity = (
     return symbol.arity;
   }
   const prefix = name.includes("!") ? name.slice(0, name.indexOf("!")) : "";
-  const isSelected =
-    prefix !== "" &&
-    (lookupLocal(scope, prefix) !== undefined ||
-      findSymbol(prefix, unit) !== undefined ||
-      unit.facts.has(prefix));
-  if (isSelected) {
-    return expression.kind === "Apply" ? expression.args.length : 0;
-  }
-  const spelling = (expression.kind === "Identifier" ? undefined : expression.spelling) ?? name;
-  const range = formatRange(
-    expression.kind === "Apply" && spelling === "-."
-      ? getNameRange(location, "-")
-      : getSpelledNameRange(expression, name),
-  );
-  if (!isOperatorSymbol(name) || isStepName(name)) {
-    unit.errors.push({ location: range, message: `Unknown operator: \`${name}'.` });
+  const selected =
+    prefix === "" ? undefined : (lookupLocal(scope, prefix) ?? findSymbol(prefix, unit));
+  if (selected && !SELECTABLE_KINDS.has(selected.kind)) {
+    reportUnselectable(
+      prefix,
+      (expression.kind !== "OperatorReference" && expression.selectorRanges?.[0]) ||
+        getSpelledNameRange(expression, name),
+      unit,
+    );
     return undefined;
   }
+  if (selected || (prefix !== "" && unit.facts.has(prefix))) {
+    return expression.kind === "Apply" ? expression.args.length : 0;
+  }
+  const fixity = getFixity(expression);
+  const isOperatorApplication = expression.kind === "OperatorReference" || fixity !== undefined;
+  if (!isOperatorSymbol(name) || isStepName(name) || !isOperatorApplication) {
+    unit.errors.push({
+      location: formatRange(getSpelledNameRange(expression, name)),
+      message: `Unknown operator: \`${resolveSynonym(name)}'.`,
+    });
+    return undefined;
+  }
+  const spelling = expression.spelling ?? name;
   unit.errors.push({
-    location: range,
+    location: formatRange(
+      fixity === "prefix" && spelling === "-."
+        ? getNameRange(location, "-")
+        : getSpelledNameRange(expression, name),
+    ),
     message: `Could not find declaration or definition of symbol '${spelling}'.`,
   });
-  const fixity = getFixity(expression);
   if (fixity && location.range) {
     unit.errors.push({
       location: formatRange(location.range),
@@ -778,13 +796,13 @@ const resolveDefinition = (
   const isDeclared = current?.isPending === true && recursive.has(current);
   if (current?.isPending && !isDeclared) {
     report(
-      `Recursive ${definition.kind === "Function" ? "function" : "operator"} ${name} defined at wrong LET/IN level.`,
+      `Recursive ${definition.kind === "Function" ? "function" : "operator"} ${resolveSynonym(name)} defined at wrong LET/IN level.`,
     );
   } else if (current && !isDeclared) {
     report(
       definition.kind === "Function"
         ? `Function name \`${name}' already defined or declared.`
-        : `Operator ${name} already defined or declared.`,
+        : `Operator ${resolveSynonym(name)} already defined or declared.`,
     );
   }
   if (definition.kind === "Function") {
@@ -916,7 +934,7 @@ const resolveApply = (
   if (arity !== expression.args.length) {
     unit.errors.push({
       location: formatRange(expression.argumentsRange ?? getSpelledNameRange(expression, operator)),
-      message: `The operator ${operator} requires ${arity - (findInstance(operator, scope, unit)?.arity ?? 0)} arguments.`,
+      message: `The operator ${resolveSynonym(operator)} requires ${arity - (findInstance(operator, scope, unit)?.arity ?? 0)} arguments.`,
     });
     return;
   }
@@ -935,13 +953,16 @@ const resolveApply = (
       if (expected === 0) {
         // Deviation from SANY: SANY names its internal node kind here, where tla-ts words it as for a name.
         if (arg.kind === "Lambda" && arg.operator !== undefined) {
-          report(range, `The operator ${arg.operator} requires 1 arguments.`);
+          report(range, `The operator ${resolveSynonym(arg.operator)} requires 1 arguments.`);
         } else if (arg.kind === "Lambda" && range) {
           report(range, "LAMBDA expression used where an expression is required.");
         } else if (arg.kind === "OperatorReference") {
           const argArity = getSymbolArity(arg, arg.operator, scope, unit);
           if (argArity !== undefined) {
-            report(range, `The operator ${arg.operator} requires ${argArity} arguments.`);
+            report(
+              range,
+              `The operator ${resolveSynonym(arg.operator)} requires ${argArity} arguments.`,
+            );
           }
         } else resolveExpression(arg, scope, unit);
         return true;
@@ -1043,7 +1064,7 @@ const resolveExpression = (
       if (arity !== undefined && arity > 0) {
         unit.errors.push({
           location: formatRange(getSpelledNameRange(expression, name)),
-          message: `The operator ${name} requires ${arity} arguments.`,
+          message: `The operator ${resolveSynonym(name)} requires ${arity} arguments.`,
         });
       }
       return;
@@ -1177,7 +1198,19 @@ const resolveExpression = (
       expression.selectors
         .flatMap((selector) => ("args" in selector ? selector.args : []))
         .forEach((arg) => resolveArgument(arg, scope, unit));
-      checkReference(expression, scope, unit, false);
+      if (checkReference(expression, scope, unit, false)) return;
+      const head = expression.selectors[0];
+      const range = expression.selectorRanges?.[0];
+      if (head.kind !== "Name" || expression.selectors[1].kind === "Name" || !range) return;
+      const binding = lookupLocal(scope, head.name) ?? findSymbol(head.name, unit);
+      if ((binding === undefined && !unit.facts.has(head.name)) || binding?.kind === "Instance") {
+        unit.errors.push({
+          location: formatRange(range),
+          message: `Unknown operator: \`${resolveSynonym(head.name)}'.`,
+        });
+      } else if (binding && !SELECTABLE_KINDS.has(binding.kind)) {
+        reportUnselectable(head.name, range, unit);
+      }
     }
   }
 };
@@ -1428,7 +1461,7 @@ const checkSubstitutions = (
     const arity = getSymbolArity(expression, expression.name, scope, unit);
     if (arity !== undefined && arity !== declaration.arity) {
       throw new TlaSyntaxError(
-        `An operator must be substituted for symbol '${declaration.name}', and it must have arity ${declaration.arity} in the instance of ${instance.module} at line ${instance.location.line}, column ${instance.location.column}`,
+        `An operator must be substituted for symbol '${resolveSynonym(declaration.name)}', and it must have arity ${declaration.arity} in the instance of ${instance.module} at line ${instance.location.line}, column ${instance.location.column}`,
       );
     }
   };
@@ -1474,7 +1507,7 @@ const checkSubstitutions = (
     if (range && declared) {
       unit.errors.push({
         location: formatRange(range),
-        message: `Substitution missing for symbol ${declaration.name} declared at ${formatRange(declared)} \nand instantiated in module ${instancer}.`,
+        message: `Substitution missing for symbol ${resolveSynonym(declaration.name)} declared at ${formatRange(declared)} \nand instantiated in module ${instancer}.`,
       });
     }
   });
@@ -1716,7 +1749,7 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
             if (range && (!item.binding || item.binding.isPending)) {
               errors.push({
                 location: formatRange(range),
-                message: `Symbol ${item.declaration.name} declared in RECURSIVE statement but not defined.`,
+                message: `Symbol ${resolveSynonym(item.declaration.name)} declared in RECURSIVE statement but not defined.`,
               });
             }
           }),
