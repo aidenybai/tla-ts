@@ -50473,4 +50473,14 @@ describe("BigInts", () => {
       expect(() => compile("var pattern = /(?<a>.)\\k<b>/u;", path)).toThrow("SyntaxError");
     });
   });
+
+  it("stops at JavaScript whose value TypeScript rejects even once it's cast", () => {
+    const source = `
+      var box = { seen: false };
+      box.seen = [].includes.call([1, 2], 2);
+    `;
+    expect(() => compile(source, join(import.meta.dirname, "model.js"))).toThrow(
+      "tla-ts can't run JavaScript whose types TypeScript rejects",
+    );
+  });
 });

@@ -79,10 +79,10 @@ interface Edit {
   text: string;
 }
 
-// Whether an edit of an earlier round cast a node or typed a declaration as any there, so that an
-// error that stays is one that tla-ts can't fix.
+// Whether an edit of an earlier round cast a node, or the parentheses around it, or typed a
+// declaration as any there, so that an error that stays is one that tla-ts can't fix.
 const isCast = (position: number, file: ts.SourceFile) =>
-  /\/\*\* @type \{[^}]*\} \*\/ \($/.test(file.text.slice(Math.max(0, position - 40), position));
+  /\/\*\* @type \{[^}]*\} \*\/ \(?$/.test(file.text.slice(Math.max(0, position - 40), position));
 const isTyped = (position: number, file: ts.SourceFile) =>
   file.text.slice(position - ANY.length, position) === ANY;
 
