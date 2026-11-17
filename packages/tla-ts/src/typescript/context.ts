@@ -312,6 +312,8 @@ export interface Dispatch {
   calleeIds: Int32Array;
   words: number;
   rows: Uint32Array;
+  // The bits that each row tested, which the rest of the bits don't tell.
+  tested: Uint32Array;
   candidateTypes: Int32Array;
 }
 
@@ -5661,8 +5663,9 @@ export const getFunctionCandidates = (callee: ts.Expression, context: Context) =
   const isAssignable = (candidate: FunctionNode) => {
     const position = row < 0 ? -1 : getPosition(context.nodes, candidate);
     const bit = position < 0 || dispatch === undefined ? -1 : dispatch.candidateTypes[position] - 1;
-    return dispatch !== undefined && bit >= 0
-      ? (dispatch.rows[row * dispatch.words + (bit >>> 5)] & (1 << (bit & 31))) !== 0
+    const word = row * (dispatch?.words ?? 0) + (bit >>> 5);
+    return dispatch !== undefined && bit >= 0 && (dispatch.tested[word] & (1 << (bit & 31))) !== 0
+      ? (dispatch.rows[word] & (1 << (bit & 31))) !== 0
       : checker.isTypeAssignableTo(checker.getTypeAtLocation(candidate), type);
   };
   return found.filter((candidate) => isAssignable(candidate) && isTyped(candidate));
@@ -5693,13 +5696,37 @@ export const createDispatch = (callees: readonly ts.Expression[], context: Conte
       indexes[position] = getLowerBound(candidateIds, 0, candidateIds.length, id) + 1;
     }
   });
-  const calleeTypes = getDistinctTypes(
-    callees
-      .filter((callee) => !isHeldBuiltInObject(callee, context) && !isSuperAccess(callee))
-      .map((callee) => checker.getTypeAtLocation(callee)),
+  const dispatched = callees.filter(
+    (callee) => !isHeldBuiltInObject(callee, context) && !isSuperAccess(callee),
   );
+  const calleeTypes = getDistinctTypes(
+    dispatched.map((callee) => checker.getTypeAtLocation(callee)),
+  );
+  const calleeIds = Int32Array.from(calleeTypes, (type) => type.id);
   const words = (candidateTypes.length + 31) >>> 5;
   const rows = new Uint32Array(calleeTypes.length * words);
+  // A callee reads the candidates of its own file and those of the other files that read no
+  // locals of a function around them, so each callee type needs only the candidate types of
+  // those: a row of the bits that it tests, from a row of the shared candidates' bits and one of
+  // each file's.
+  const getBit = (candidate: FunctionNode) =>
+    getLowerBound(candidateIds, 0, candidateIds.length, checker.getTypeAtLocation(candidate).id);
+  const sharedBits = new Uint32Array(words);
+  context.sharedFunctionCandidates.forEach((shared) =>
+    shared.forEach((candidate) => {
+      const bit = getBit(candidate);
+      sharedBits[bit >>> 5] |= 1 << (bit & 31);
+    }),
+  );
+  const tested = new Uint32Array(calleeTypes.length * words);
+  calleeTypes.forEach((_, row) => tested.set(sharedBits, row * words));
+  dispatched.forEach((callee) => {
+    const row = getLowerBound(calleeIds, 0, calleeIds.length, checker.getTypeAtLocation(callee).id);
+    context.functionCandidates.get(callee.getSourceFile())?.forEach((candidate) => {
+      const bit = getBit(candidate);
+      tested[row * words + (bit >>> 5)] |= 1 << (bit & 31);
+    });
+  });
   // TypeScript relates a function type to a type of one call signature, no rest parameter, and no
   // properties only through its call signatures, each of which fails where it takes more arguments
   // than the target's parameters: the least count of arguments that each candidate takes, or -1,
@@ -5745,17 +5772,13 @@ export const createDispatch = (callees: readonly ts.Expression[], context: Conte
         parameterCounts[row] >= 0 &&
         leastArguments[bit] > parameterCounts[row] &&
         candidateType.symbol !== calleeType.symbol;
-      if (!isTooFew && checker.isTypeAssignableTo(candidateType, calleeType)) {
+      const isTested = (tested[row * words + (bit >>> 5)] & (1 << (bit & 31))) !== 0;
+      if (isTested && !isTooFew && checker.isTypeAssignableTo(candidateType, calleeType)) {
         rows[row * words + (bit >>> 5)] |= 1 << (bit & 31);
       }
     }),
   );
-  return {
-    calleeIds: Int32Array.from(calleeTypes, (type) => type.id),
-    words,
-    rows,
-    candidateTypes: indexes,
-  };
+  return { calleeIds, words, rows, tested, candidateTypes: indexes };
 };
 
 // Whether the model reaches a node's code, as no value holds a function that nothing names.
