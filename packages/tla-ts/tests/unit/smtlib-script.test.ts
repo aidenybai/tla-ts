@@ -132,6 +132,31 @@ describe("runSmtlibScript prints what Z3 prints", () => {
     ).toEqual(["sat", "unsat"]);
   });
 
+  it("gives the objectives 0 when the hard constraints are false", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(declare-const p Bool)",
+        "(assert (< x 10))",
+        "(assert-soft p :weight 3 :id g)",
+        "(assert-soft (not p) :weight 2 :id g)",
+        "(maximize x)",
+        "(minimize (+ x 1))",
+        "(check-sat)",
+        "(get-objectives)",
+        "(push)",
+        "(assert false)",
+        "(check-sat)",
+        "(get-objectives)",
+      ]),
+    ).toEqual([
+      "sat",
+      "(objectives\n (g 2)\n (x 9)\n ((+ x 1) 10)\n)",
+      "unsat",
+      "(objectives\n (g 0)\n (x 0)\n ((+ x 1) 0)\n)",
+    ]);
+  });
+
   it("prints the simplified term, as in z3test's t27.smt2 and abs.smt2", () => {
     expect(
       run([

@@ -709,13 +709,14 @@ export class OptContext {
     const maxsmt = objective?.maxsmt;
     if (maxsmt !== null && maxsmt !== undefined)
       return new ObjectiveValue(InfEps.of(isLower ? maxsmt.getLower() : maxsmt.getUpper()));
+    // Z3 reads the bounds of a solver it never set up, as when the hard constraints are false, as 0.
+    if (objective?.type === O_MAXSMT)
+      return new ObjectiveValue(InfEps.of(this.adjust(index, Rational.zero)));
     const isMax = this.objectives[index].type === O_MAXIMIZE;
     const optsmt = this.optsmt;
     const value =
       optsmt === null || objective === undefined
-        ? isLower === isMax
-          ? ObjectiveValue.minusInfinity
-          : ObjectiveValue.infinity
+        ? new ObjectiveValue(InfEps.of(Rational.zero))
         : (isLower === isMax ? optsmt.lower : optsmt.upper)[objective.index];
     return isMax ? value : value.negated(this.manager.am);
   }
