@@ -131,7 +131,7 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
       withUnexpectedException(() =>
         createLivenessChecker(temporalProperties, search.spec.temporals, environment, {
           getFingerprint: () => 0,
-          getSuccessors: () => [],
+          forEachActionSuccessors: () => {},
         }),
       ),
     )?.branches;

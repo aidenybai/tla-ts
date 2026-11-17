@@ -346,8 +346,13 @@ export const simulate = (options: SimulationOptions): number => {
         createLivenessChecker(temporalProperties, search.spec.temporals, environment, {
           getFingerprint: (successor) =>
             Number(BigInt.asIntN(32, runtime.getFingerprint(successor.state))),
-          getSuccessors: (index) =>
-            successors[index].map((successor) => ({ index: successor, state: states[successor] })),
+          forEachActionSuccessors: (index, _state, onSuccessors) =>
+            onSuccessors(
+              successors[index].map((successor) => ({
+                index: successor,
+                state: states[successor],
+              })),
+            ),
         }),
       ),
     );

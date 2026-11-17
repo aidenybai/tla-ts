@@ -740,47 +740,56 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
           (tlcFingerprints[successor.index] ??= Number(
             BigInt.asIntN(32, runtime.getFingerprint(successor.state)),
           )),
-        getSuccessors: (source, state) => {
-          const successors: LiveSuccessor[] = [];
-          if (spec.next === undefined) return successors;
-          const livenessSource = current.livenessSource;
-          current.livenessSource = source;
-          const addSuccessor = (successor: Value[]) => {
-            canonicalizeState(successor);
-            const isInModel =
-              search.satisfiesConstraints(successor, state) &&
-              search.satisfiesActionConstraints(state, successor);
-            if (!isInModel) return;
-            const fingerprintState = getFingerprintState(successor);
-            const hash = getStateHash(fingerprintState);
-            const index = findStateIndex(seenStates, hash, fingerprintState);
-            successors.push({
-              index: index === -1 ? getPendingIndex(hash, fingerprintState) : index,
-              state: successor,
-            });
-          };
-          try {
-            // TLC's coverage counts the successors of each action the graph generates again.
-            if (coverage) {
-              coverageActions.forEach((action) =>
-                walkCoveredSuccessors(action, state, addSuccessor),
-              );
-            } else {
-              forEachSuccessor(
-                spec.next,
-                state,
-                environment,
-                (successor) => {
-                  addSuccessor(successor.state);
-                  return false;
-                },
-                spec.scope,
-              );
+        forEachActionSuccessors: (source, state, onSuccessors) => {
+          const getActionSuccessors = (walk: (onState: (successor: Value[]) => void) => void) => {
+            const successors: LiveSuccessor[] = [];
+            const livenessSource = current.livenessSource;
+            current.livenessSource = source;
+            try {
+              walk((successor) => {
+                canonicalizeState(successor);
+                const isInModel =
+                  search.satisfiesConstraints(successor, state) &&
+                  search.satisfiesActionConstraints(state, successor);
+                if (!isInModel) return;
+                const fingerprintState = getFingerprintState(successor);
+                const hash = getStateHash(fingerprintState);
+                const index = findStateIndex(seenStates, hash, fingerprintState);
+                successors.push({
+                  index: index === -1 ? getPendingIndex(hash, fingerprintState) : index,
+                  state: successor,
+                });
+              });
+            } finally {
+              current.livenessSource = livenessSource;
             }
-          } finally {
-            current.livenessSource = livenessSource;
+            return successors;
+          };
+          // TLC's coverage counts the successors of each action the graph generates again.
+          if (coverage) {
+            coverageActions.forEach((action) =>
+              onSuccessors(
+                getActionSuccessors((onState) => walkCoveredSuccessors(action, state, onState)),
+              ),
+            );
+            return;
           }
-          return successors;
+          nextActions.forEach((action) =>
+            onSuccessors(
+              getActionSuccessors((onState) =>
+                forEachSuccessor(
+                  action.expression,
+                  state,
+                  environment,
+                  (successor) => {
+                    onState(successor.state);
+                    return false;
+                  },
+                  action.scope,
+                ),
+              ),
+            ),
+          );
         },
       }),
     ),

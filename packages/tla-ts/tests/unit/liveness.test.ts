@@ -51,6 +51,19 @@ describe("liveness matches TLC", () => {
     expect(printed).toEqual(Array(9).fill('"a"'));
   });
 
+  it("checks the steps of each action before it generates the next action's steps for a state it reaches again in the tableau, as TLC does", async () => {
+    const printed: string[] = [];
+    await check({
+      source:
+        '---- MODULE M ----\nEXTENDS TLC\nVARIABLE x\nA0 == PrintT(<<"A0", x>>) /\\ x\' = ~x\nA1 == PrintT(<<"A1", x>>) /\\ UNCHANGED x\nSpec == x = FALSE /\\ [][A0 \\/ A1]_x /\\ WF_<<x>>(A0) /\\ WF_x(A1)\nProp == x ~> ~x\n====',
+      config: "SPECIFICATION Spec\nPROPERTY Prop",
+      onPrint: (text) => printed.push(String(text).replace(/<<"(A\d)", (\w)\w*>>/, "$1$2")),
+    });
+    expect(printed.join(" ")).toBe(
+      "A0F A1F A0F A1F A0F A0F A1F A0T A1T A0T A0T A1T A0T A1T A0T A1T A0T A0T A0T A1T A1T A0T A1T",
+    );
+  });
+
   it("finds a lasso in the part of the graph that TLC's periodic check sees", async () => {
     const result = await check({
       source:

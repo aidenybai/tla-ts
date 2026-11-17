@@ -6374,7 +6374,7 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
             return fingerprinter.words[0];
           })()),
         // The successors of a state the search expanded are all stored.
-        getSuccessors: (_index, state) => {
+        forEachActionSuccessors: (_index, state, onSuccessors) => {
           const successors: LiveSuccessor<Plain[]>[] = [];
           compiled.next(state, (successor) => {
             if (!isInModel(successor)) return;
@@ -6382,7 +6382,7 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
             const index = findState(false);
             successors.push({ index: index === -1 ? deopt() : index, state: successor });
           });
-          return successors;
+          onSuccessors(successors);
         },
       },
       environment.runtime.version !== "1.7.4",

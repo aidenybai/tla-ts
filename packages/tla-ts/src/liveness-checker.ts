@@ -68,7 +68,11 @@ export interface LiveGraph<State> {
 
 export interface SearchGraph<State> {
   getFingerprint: (successor: LiveSuccessor<State>) => number;
-  getSuccessors: (index: number, state: State) => LiveSuccessor<State>[];
+  forEachActionSuccessors: (
+    index: number,
+    state: State,
+    onSuccessors: (successors: LiveSuccessor<State>[]) => void,
+  ) => void;
 }
 
 export interface LiveEvaluation<State> {
@@ -755,39 +759,53 @@ export const createLiveGraph = <State>(
       actions.push(0);
       if (existing === undefined) expandLate(behavior, tableau, state, index, target, row, offset);
     }
-    const nextStates = search.getSuccessors(index, state);
     // The results of the step to the state itself come first, then those of each successor.
-    const actionResults = new Uint8Array((nextStates.length + 1) * actionCount);
-    actionResults.set(selfResults);
-    const edges = createEdgeRows(nextStates.length);
-    nextStates.forEach((successor, position) => {
-      const successorRow = createRows(1);
-      checkAction(
-        behavior,
-        index,
-        state,
-        row,
-        offset,
-        successor.state,
-        edges,
-        position * actionIds.size,
-        actionResults,
-        (position + 1) * actionCount,
-      );
-      const isDone = behavior.isDone[successor.index] === true;
-      for (const next of tableauNode.successors) {
-        if (!isConsistent(behavior, next, index, successor.state, successorRow, 0)) continue;
-        const existing = getNodeId(behavior, successor.index, next);
-        if (existing !== undefined && successors.includes(existing)) continue;
-        const target = existing ?? recordNode(behavior, successor.index, next);
-        successors.push(target);
-        actions.push(position + 1);
-        if (existing === undefined && isDone) {
-          expandLate(behavior, tableau, successor.state, successor.index, target, successorRow, 0);
+    const stepResults = [selfResults];
+    // TLC's LiveCheck checks the steps of one action before it generates the steps of the next.
+    search.forEachActionSuccessors(index, state, (nextStates) => {
+      for (const successor of nextStates) {
+        const successorRow = createRows(1);
+        const results = new Uint8Array(actionCount);
+        stepResults.push(results);
+        checkAction(
+          behavior,
+          index,
+          state,
+          row,
+          offset,
+          successor.state,
+          createEdgeRows(1),
+          0,
+          results,
+          0,
+        );
+        const isDone = behavior.isDone[successor.index] === true;
+        for (const next of tableauNode.successors) {
+          if (!isConsistent(behavior, next, index, successor.state, successorRow, 0)) continue;
+          const existing = getNodeId(behavior, successor.index, next);
+          if (existing !== undefined && successors.includes(existing)) continue;
+          const target = existing ?? recordNode(behavior, successor.index, next);
+          successors.push(target);
+          actions.push(stepResults.length - 1);
+          if (existing === undefined && isDone) {
+            expandLate(
+              behavior,
+              tableau,
+              successor.state,
+              successor.index,
+              target,
+              successorRow,
+              0,
+            );
+          }
         }
       }
     });
     if (successors.length > 0) {
+      const actionResults = new Uint8Array(stepResults.length * actionCount);
+      stepResults.forEach((results, position) =>
+        actionResults.set(results, position * actionCount),
+      );
       writeNode(behavior, node, successors, actionResults, actions, stateResults);
     }
   };
