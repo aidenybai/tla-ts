@@ -87,6 +87,7 @@ import { LOGIC_TACTICS, QFAUFBV, QFUFBV_ACKR_PREAMBLE } from "./logic-tactics";
 import {
   createCommandReader,
   isSymbol,
+  isUnsigned,
   type SExpr,
   type SmtList,
   type SmtToken,
@@ -1398,8 +1399,8 @@ const UNPORTED_TACTICS = new Set(
   ).split(" "),
 );
 
-const isUnsigned = (sexpr: SExpr | undefined): sexpr is SmtToken =>
-  sexpr?.kind === "numeral" && BigInt(sexpr.text) <= BigInt(UINT_MAX);
+const isUnsignedNumeral = (sexpr: SExpr | undefined): sexpr is SmtToken =>
+  sexpr?.kind === "numeral" && isUnsigned(sexpr.text);
 
 const getParamName = (keyword: string) =>
   keyword.replace(/^:/, "").toLowerCase().replaceAll("-", "_");
@@ -1420,7 +1421,7 @@ const parseParamValue = (kind: number, value: SExpr) =>
   kind === PARAM_BOOL
     ? isSymbol(value, "true") || (isSymbol(value, "false") ? false : undefined)
     : kind === PARAM_UINT
-      ? isUnsigned(value)
+      ? isUnsignedNumeral(value)
         ? Number(value.text)
         : undefined
       : kind === PARAM_NUMERAL
@@ -1681,7 +1682,7 @@ const compile = (
     case "try-for": {
       if (sexpr.items.length !== 3)
         throw new SmtParseError("invalid try-for combinator, two arguments expected", sexpr.end);
-      if (!isUnsigned(sexpr.items[2]))
+      if (!isUnsignedNumeral(sexpr.items[2]))
         throw new SmtParseError(
           "invalid try-for combinator, second argument must be an unsigned integer",
           sexpr.end,
@@ -1695,7 +1696,7 @@ const compile = (
           sexpr.end,
         );
       const bound = sexpr.items[2];
-      if (bound !== undefined && !isUnsigned(bound))
+      if (bound !== undefined && !isUnsignedNumeral(bound))
         throw new SmtParseError(
           "invalid fail-if-branching combinator, second argument must be an unsigned integer",
           sexpr.end,
@@ -1741,7 +1742,7 @@ const compile = (
           sexpr.end,
         );
       const bound = sexpr.items[2];
-      if (bound !== undefined && !isUnsigned(bound))
+      if (bound !== undefined && !isUnsignedNumeral(bound))
         throw new SmtParseError(
           "invalid repeat combinator, second argument must be an unsigned integer",
           sexpr.end,

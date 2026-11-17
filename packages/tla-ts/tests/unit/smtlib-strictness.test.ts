@@ -330,7 +330,7 @@ describe("messages of the reader, as Z3 5.3.2 prints them", () => {
       "(error \"line 7 column 18: invalid sort declaration, ')' expected\")",
       "(error \"line 8 column 32: invalid end of datatype declaration, ')' expected\")",
       "(error \"line 9 column 41: invalid function/constant definition, ')' expected\")",
-      "(error \"line 10 column 28: invalid function/constant definition, sort mismatch\")",
+      '(error "line 10 column 28: invalid function/constant definition, sort mismatch")',
       "(error \"line 11 column 23: invalid declaration, constant 'a' (with the given signature) already declared\")",
       "(+ 3 a (f 5))",
     ]);
@@ -393,6 +393,34 @@ describe("messages of the reader, as Z3 5.3.2 prints them", () => {
       '(error "line 25 column 25: invalid fail-if-branching combinator, one or two arguments expected")',
       '(error "line 26 column 61: invalid tactic, unknown tactic solve-eqs2")',
       '(error "line 27 column 19: invalid tactic, unknown tactic foo")',
+    ]);
+  });
+
+  it("takes no negative numeral for an unsigned value of a tactic or a command", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(assert (> x 0))",
+        "(apply (! simplify :max_steps -1) )",
+        "(apply (repeat simplify -1) )",
+        "(apply (try-for simplify -1) )",
+        "(apply (fail-if-branching simplify -1) )",
+        "(check-sat-using smt :timeout -1)",
+        "(apply simplify :timeout -1)",
+        "(apply (if (> 5 -1) skip fail) )",
+        "(apply (! simplify :max_steps 4294967296) )",
+        "(apply (! propagate-values :max_rounds -2) )",
+      ]),
+    ).toEqual([
+      '(error "line 3 column 30: invalid parameter value, unsigned integer expected")',
+      '(error "line 4 column 26: invalid repeat combinator, second argument must be an unsigned integer")',
+      '(error "line 5 column 27: invalid try-for combinator, second argument must be an unsigned integer")',
+      '(error "line 6 column 37: invalid fail-if-branching combinator, second argument must be an unsigned integer")',
+      '(error "line 7 column 30: invalid indexed identifier, index is too big to fit in an unsigned machine integer")',
+      '(error "line 8 column 25: invalid indexed identifier, index is too big to fit in an unsigned machine integer")',
+      "(goals\n(goal\n  (> x 0)\n  :precision precise :depth 0)\n)",
+      '(error "line 10 column 30: invalid parameter value, unsigned integer expected")',
+      '(error "line 11 column 39: invalid parameter value, unsigned integer expected")',
     ]);
   });
 });

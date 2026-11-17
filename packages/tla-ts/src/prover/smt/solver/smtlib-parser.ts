@@ -648,7 +648,8 @@ const FF_LITERAL = /^#f-?[0-9]+m[0-9]+$/;
 const FF_LOGICS = new Set(["QF_FF", "QF_FFA", "ALL", "HO_ALL"]);
 
 // rational::is_unsigned of a numeral token.
-const isUnsigned = (numeral: string) => BigInt(numeral) >= 0n && BigInt(numeral) <= 0xffffffffn;
+export const isUnsigned = (numeral: string) =>
+  BigInt(numeral) >= 0n && BigInt(numeral) <= 0xffffffffn;
 
 const SYMBOL_CHARACTER = /[A-Za-z0-9~!@$%^&*_\-+=<>.?/,]/;
 

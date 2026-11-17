@@ -39,6 +39,7 @@ import {
   createSmtlibReader,
   DECLARATIONS,
   isSymbol,
+  isUnsigned,
   type SExpr,
   type SmtList,
   type SmtlibReader,
@@ -298,6 +299,11 @@ const getCommandParams = (items: SExpr[], isBooleans: ReadonlyMap<string, boolea
         throw new SmtParseError(
           "invalid command argument, unsigned integer expected",
           value ?? keyword,
+        );
+      if (!isUnsigned(value.text))
+        throw new SmtParseError(
+          "invalid indexed identifier, index is too big to fit in an unsigned machine integer",
+          value,
         );
       params.set(name, Number(value.text));
     }
