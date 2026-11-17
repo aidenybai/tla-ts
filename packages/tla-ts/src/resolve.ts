@@ -1118,6 +1118,28 @@ const isArgumentCountReported = (
   return true;
 };
 
+const resolveExpressionArgument = (arg: Expression, scope: LocalName | undefined, unit: Unit) => {
+  const range = arg.location.range;
+  const report = (message: string) => {
+    if (range) unit.errors.push({ location: formatRange(range), message });
+  };
+  const selectionError = operatorSelectionErrors.get(arg);
+  // Deviation from SANY: SANY names its internal node kind here, where tla-ts words it as for a name.
+  if (arg.kind === "Lambda" && arg.operator !== undefined) {
+    report(`The operator ${resolveSynonym(arg.operator)} requires 1 arguments.`);
+  } else if (selectionError) {
+    unit.errors.push(selectionError);
+  } else if (arg.kind === "Lambda" && range) {
+    unresolvedExpressions.add(arg);
+    report("LAMBDA expression used where an expression is required.");
+  } else if (arg.kind === "OperatorReference") {
+    const argArity = getSymbolArity(arg, arg.operator, scope, unit);
+    if (argArity !== undefined) {
+      report(`The operator ${resolveSynonym(arg.operator)} requires ${argArity} arguments.`);
+    }
+  } else resolveExpression(arg, scope, unit);
+};
+
 const matchArgument = (
   arg: Expression,
   expected: number,
@@ -1141,24 +1163,7 @@ const matchArgument = (
   };
   const range = arg.location.range;
   if (expected === 0) {
-    const selectionError = operatorSelectionErrors.get(arg);
-    // Deviation from SANY: SANY names its internal node kind here, where tla-ts words it as for a name.
-    if (arg.kind === "Lambda" && arg.operator !== undefined) {
-      report(range, `The operator ${resolveSynonym(arg.operator)} requires 1 arguments.`);
-    } else if (selectionError) {
-      unit.errors.push(selectionError);
-    } else if (arg.kind === "Lambda" && range) {
-      unresolvedExpressions.add(arg);
-      report(range, "LAMBDA expression used where an expression is required.");
-    } else if (arg.kind === "OperatorReference") {
-      const argArity = getSymbolArity(arg, arg.operator, scope, unit);
-      if (argArity !== undefined) {
-        report(
-          range,
-          `The operator ${resolveSynonym(arg.operator)} requires ${argArity} arguments.`,
-        );
-      }
-    } else resolveExpression(arg, scope, unit);
+    resolveExpressionArgument(arg, scope, unit);
     return true;
   }
   if (arg.kind === "Lambda") {
@@ -2024,7 +2029,7 @@ const checkSubstitutions = (
   const resolveSubstitute = (declaration: Declaration, expression: Expression) => {
     const range = expression.location.range;
     if (declaration.arity === 0) {
-      resolveExpression(expression, scope, unit);
+      resolveExpressionArgument(expression, scope, unit);
       return;
     }
     if (expression.kind === "Lambda") {

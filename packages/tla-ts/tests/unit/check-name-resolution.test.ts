@@ -670,6 +670,15 @@ describe("name resolution matches SANY", () => {
       ],
     ],
     [
+      "EXTENDS Integers\n---- MODULE Inner ----\nCONSTANT e, f, g, h\n====\nI == INSTANCE Inner WITH e <- +, f <- SUBSET, g <- ', h <- -.",
+      [
+        ["line 6, col 31 to line 6, col 31", "The operator + requires 2 arguments."],
+        ["line 6, col 39 to line 6, col 44", "The operator SUBSET requires 1 arguments."],
+        ["line 6, col 52 to line 6, col 52", "The operator ' requires 1 arguments."],
+        ["line 6, col 60 to line 6, col 61", "The operator -. requires 1 arguments."],
+      ],
+    ],
+    [
       "EXTENDS Naturals\nf == {'} /\\ <<', 1>> /\\ 1 + ' = 2 /\\ '(1, 2) /\\ ''",
       [
         ["line 3, col 7 to line 3, col 7", "The operator ' requires 1 arguments."],
