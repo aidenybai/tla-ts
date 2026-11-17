@@ -978,6 +978,7 @@ export const createSmtlibReader = (
   const macros = new Map<string, Macro>();
   // A pop empties the macros of a name but keeps the name in the dictionary.
   const macroNames: string[] = [];
+  const dictionaryNames = new Set<string>();
   const macroDictionary = new ObjMap<string>((index) => getSymbolHash(macroNames[index]));
   const lastNamed = { name: "", expr: -1 };
   const notifiedSorts = new Set<number>();
@@ -1016,7 +1017,10 @@ export const createSmtlibReader = (
   };
 
   const insertMacro = (name: string, macro: Macro) => {
-    if (!macroNames.includes(name)) macroDictionary.set(macroNames.push(name) - 1, name);
+    if (!dictionaryNames.has(name)) {
+      dictionaryNames.add(name);
+      macroDictionary.set(macroNames.push(name) - 1, name);
+    }
     declare(macros, name, macro);
   };
 
