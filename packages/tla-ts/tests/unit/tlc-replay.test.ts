@@ -126,6 +126,20 @@ describe("the call stack of a replayed failure matches TLC", () => {
     ).toEqual({ callStack: ["10.10-10.26", "10.10-10.20"], exitCode: 75 });
   });
 
+  it("stops at a failure of the next-state relation under -continue, where TLC goes on to report a deadlock", async () => {
+    const result = await check({
+      source: `---- MODULE M ----\n${HEADER}\nInit == x = 0\nNext == x' = (x /\\ TRUE)\n====`,
+      config: "INIT Init\nNEXT Next",
+      isContinued: true,
+      onPrint: () => {},
+    });
+    expect([
+      result.status,
+      result.failure?.exitCode,
+      formatCallStack(result.failure?.callStack),
+    ]).toEqual(["error", 75, ["9.9-9.24", "9.15-9.23"]]);
+  });
+
   it("exits with the code of a standard module's failure in an action property", async () => {
     const failure = await getFailure(
       "Init == x = 0\nNext == x < 3 /\\ x' = x + 1\nSpec == Init /\\ [][Next]_x\nProp == [][1 \\div (1 - x) = 1]_x",
@@ -270,7 +284,9 @@ describe("the replay of a failed initial state matches TLC", () => {
     expect([
       result.generatedStates,
       result.failure?.traceOutput?.map((line) =>
-        line.kind === "initial-state-violation" ? `${line.name} ${formatValue(line.state.x)}` : line.kind,
+        line.kind === "initial-state-violation"
+          ? `${line.name} ${formatValue(line.state.x)}`
+          : line.kind,
       ),
       formatCallStack(result.failure?.callStack),
     ]).toEqual([2, ["Inv0 1", "Inv0 2"], ["8.9-8.18", "11.9-11.39", "11.18-11.39"]]);

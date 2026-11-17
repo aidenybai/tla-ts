@@ -1414,6 +1414,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   };
   const reportNextStateOverflow = (index: number) =>
     createFailureResult(createStackOverflowError(), traces.getStateTrace(index), { phase: "next" });
+  // Deviation from TLC: under -continue, TLC goes on after the failure, can report the state deadlocked, and reports the failure again as it replays it.
   const reportNextStateFailure = (
     error: unknown,
     index: number,
