@@ -50414,4 +50414,43 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("throws the TypeError of a write that Object.assign can't make", () => {
+    const getSource = (expected: string) => `
+      const sealed = Object.seal({ foo: 1 });
+      const log: string[] = [];
+      let isSealedThrown = false;
+      try {
+        Object.assign(sealed, {
+          foo: 2,
+          get bar() {
+            log.push("bar");
+            return 1;
+          },
+        });
+      } catch (error) {
+        isSealedThrown = error instanceof TypeError;
+      }
+      const empty = {};
+      Object.seal(empty);
+      let isEmptyThrown = false;
+      try {
+        Object.assign(empty, { [Symbol()]: 1 });
+      } catch (error) {
+        isEmptyThrown = error instanceof TypeError;
+      }
+      const result = [isSealedThrown, isEmptyThrown, sealed.foo, log.join()].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("true,true,2,bar"))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkModel(getSource("true,true,1,bar"))).failure?.message).toContain(
+        "result true,true,2,bar",
+      );
+    });
+  });
 });

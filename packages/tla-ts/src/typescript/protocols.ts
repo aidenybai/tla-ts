@@ -1196,16 +1196,21 @@ export const readOwnValues = (
       next: (inner: Path, read: Expression) => Formula,
     ) =>
       method === "assign"
-        ? writeWith(
-            site,
-            target,
-            key,
-            value,
-            getSetters(site, context),
-            after,
-            context,
-            frame,
-            (written) => next(written, read),
+        ? // Object.assign writes as a strict-mode assignment, which throws where the write fails.
+          ifThenElse(
+            useJavaScript("CanPut", [getHeap(after.scope, site, context), target, key], context),
+            writeWith(
+              site,
+              target,
+              key,
+              value,
+              getSetters(site, context),
+              after,
+              context,
+              frame,
+              (written) => next(written, read),
+            ),
+            throwTypeError(after, site, context, frame),
           )
         : next(after, apply("Append", [read, method === "entries" ? tuple([key, value]) : value]));
     return translateJoined(
