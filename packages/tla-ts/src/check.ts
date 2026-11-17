@@ -848,7 +848,11 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       outDegrees: failureOptions.outDegrees,
     };
   };
-  const reportIncompleteSuccessor = (index: number, error: TlaIncompleteSuccessorError) => {
+  const reportIncompleteSuccessor = (
+    index: number,
+    error: TlaIncompleteSuccessorError,
+    liveSuccessors: LiveSuccessor[],
+  ) => {
     runtime.generatedStates++;
     const named =
       nextActions.length === 1
@@ -870,7 +874,12 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     );
     const undefinedValue = createModelValue("null");
     const partial = error.state.map((value) => value ?? undefinedValue);
-    const failure = createFailureResult(error, traces.getStateTrace(index));
+    const live = captureOutput(() => addFailedLiveState(index, liveSuccessors));
+    const failure = createFailureResult(
+      error,
+      appendTraceOutput(traces.getStateTrace(index), live.lines),
+      { callStack: live.result },
+    );
     return withOutDegrees({
       ...failure,
       failure: failure.failure && {
@@ -1738,7 +1747,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     } catch (error) {
       outcome =
         error instanceof TlaIncompleteSuccessorError
-          ? reportIncompleteSuccessor(index, error)
+          ? reportIncompleteSuccessor(index, error, liveSuccessors)
           : reportNextStateFailure(error, index, liveSuccessors);
     }
     if (outcome) return outcome;
