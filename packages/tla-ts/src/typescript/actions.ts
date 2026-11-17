@@ -5769,9 +5769,28 @@ export const getPassedCallbacks = (
           ? undefined
           : (getCallback(argument, path, context) ?? getAsyncCallee(argument, path, context));
     const symbol = getSymbol(parameter.name, context.checker);
+    // A function object that a parameter's body reads as a value, which no model value stands for,
+    // is the value that the argument gives.
+    const isValueRead =
+      callback !== undefined &&
+      getFunctionValue(callback, context) === undefined &&
+      (isHeapFunction(callback, context) ||
+        isClosure(callback, context) ||
+        isNestedFunction(callback, context)) &&
+      findNodes(
+        parameter.parent,
+        (inner): inner is ts.Identifier =>
+          ts.isIdentifier(inner) &&
+          inner !== parameter.name &&
+          getSymbol(inner, context.checker) === symbol &&
+          !(ts.isCallExpression(inner.parent) && inner.parent.expression === inner),
+      ).length > 0;
     // A parameter of a function that runs once holds its function in the state, where the
     // functions that it makes read it after it returns.
-    return callback?.body !== undefined && symbol !== undefined && !context.onceLocals.has(symbol)
+    return callback?.body !== undefined &&
+      symbol !== undefined &&
+      !context.onceLocals.has(symbol) &&
+      !isValueRead
       ? [[symbol, callback]]
       : [];
   });

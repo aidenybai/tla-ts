@@ -49269,4 +49269,29 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("passes a closure to a parameter that its function reads as a value", () => {
+    const getSource = (expected: number) => `
+      const held: { value?: unknown } = {};
+      function keep(value: unknown) {
+        held.value = value;
+      }
+      function make(start: number) {
+        const read = () => start;
+        keep(read);
+        return read;
+      }
+      const first = make(4);
+      const kept = held.value as () => number;
+      if (kept() !== ${expected} || kept !== first) throw new Error("kept " + kept());
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(4))).failure).toBeUndefined();
+    });
+
+    it("rejects another value", async () => {
+      expect((await checkModel(getSource(5))).failure?.message).toContain("kept 4");
+    });
+  });
 });
