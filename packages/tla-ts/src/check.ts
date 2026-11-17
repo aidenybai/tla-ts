@@ -415,6 +415,15 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
           key.startsWith(`${name}${KEY_SEPARATOR}`),
         ),
     });
+  const getCoverage = () =>
+    coverage?.relations.some((relation) => relation.kind === "next")
+      ? getCoverageReport(
+          coverage,
+          environment,
+          specification.variableLocations,
+          search?.getTlcOrder() ?? [],
+        )
+      : undefined;
   const createResult = (
     status: CheckStatus,
     violation?: ReportedViolation,
@@ -435,14 +444,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       initialStates: computedInitialStates,
       outDegrees: undefined,
       fingerprintDistance: undefined,
-      coverage: coverage?.relations.some((relation) => relation.kind === "next")
-        ? getCoverageReport(
-            coverage,
-            environment,
-            specification.variableLocations,
-            search?.getTlcOrder() ?? [],
-          )
-        : undefined,
+      coverage: getCoverage(),
       ...(traceSpec !== undefined && { traceSpec }),
     };
   };
@@ -729,28 +731,38 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
           if (spec.next === undefined) return successors;
           const livenessSource = current.livenessSource;
           current.livenessSource = source;
+          const addSuccessor = (successor: Value[]) => {
+            canonicalizeState(successor);
+            const isInModel =
+              search.satisfiesConstraints(successor, state) &&
+              search.satisfiesActionConstraints(state, successor);
+            if (!isInModel) return;
+            const fingerprintState = getFingerprintState(successor);
+            const hash = getStateHash(fingerprintState);
+            const index = findStateIndex(seenStates, hash, fingerprintState);
+            successors.push({
+              index: index === -1 ? getPendingIndex(hash, fingerprintState) : index,
+              state: successor,
+            });
+          };
           try {
-            forEachSuccessor(
-              spec.next,
-              state,
-              environment,
-              (successor) => {
-                canonicalizeState(successor.state);
-                const isInModel =
-                  search.satisfiesConstraints(successor.state, state) &&
-                  search.satisfiesActionConstraints(state, successor.state);
-                if (!isInModel) return false;
-                const fingerprintState = getFingerprintState(successor.state);
-                const hash = getStateHash(fingerprintState);
-                const index = findStateIndex(seenStates, hash, fingerprintState);
-                successors.push({
-                  index: index === -1 ? getPendingIndex(hash, fingerprintState) : index,
-                  state: successor.state,
-                });
-                return false;
-              },
-              spec.scope,
-            );
+            // TLC's coverage counts the successors of each action the graph generates again.
+            if (coverage) {
+              coverageActions.forEach((action) =>
+                walkCoveredSuccessors(action, state, addSuccessor),
+              );
+            } else {
+              forEachSuccessor(
+                spec.next,
+                state,
+                environment,
+                (successor) => {
+                  addSuccessor(successor.state);
+                  return false;
+                },
+                spec.scope,
+              );
+            }
           } finally {
             current.livenessSource = livenessSource;
           }
@@ -1454,6 +1466,8 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       return {
         ...result,
         violation: appendTraceOutput(result.violation, live.lines),
+        // TLC adds the state to the behavior graph before it reports the coverage.
+        coverage: getCoverage(),
         ...(live.result && { liveCallStack: live.result }),
       };
     }

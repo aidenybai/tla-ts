@@ -660,6 +660,13 @@ describe("the CLI answers PickSuccessor from standard input like TLC", () => {
   };
   const ask = (length: number, line: number) =>
     `Extend behavior of length ${length} with a "Next" step [<Action line ${line}, col 12 to line ${line}, col 45 of module PickAsk>]? (Yes/no/explored/states/diff):`;
+  const getCoverageLines = (output: string) => {
+    const lines = output.split("\n");
+    return lines.slice(
+      lines.findIndex((line) => line.startsWith("The coverage statistics")) + 1,
+      lines.indexOf("End of statistics."),
+    );
+  };
   const askExplored = (length: number, line: number) =>
     `Extend behavior of length ${length} with a "Next" step [<Action line ${line}, col 12 to line ${line}, col 41 of module PickExplored>]? (Yes/no/explored/states/diff):`;
 
@@ -769,13 +776,7 @@ describe("the CLI answers PickSuccessor from standard input like TLC", () => {
   it("counts the successors TLC generates again to find the action of a step in the coverage", () => {
     const result = runCliWith("tlc-ext", ["PickAsk.tla", "-coverage", "1"], "y\n".repeat(7));
     expect(result.status).toBe(0);
-    const lines = result.stdout.split("\n");
-    expect(
-      lines.slice(
-        lines.findIndex((line) => line.startsWith("The coverage statistics")) + 1,
-        lines.indexOf("End of statistics."),
-      ),
-    ).toEqual([
+    expect(getCoverageLines(result.stdout)).toEqual([
       "<x line 4, col 11 to line 4, col 11 of module PickAsk>: 3",
       "<y line 4, col 14 to line 4, col 14 of module PickAsk>: 2",
       "<Init line 6, col 1 to line 6, col 4 of module PickAsk>: 1:1",
@@ -793,6 +794,32 @@ describe("the CLI answers PickSuccessor from standard input like TLC", () => {
       "<Ask line 11, col 1 to line 11, col 3 of module PickAsk>: 7:7",
       "  line 11, col 8 to line 11, col 27 of module PickAsk: 7",
       "  |line 11, col 22 to line 11, col 26 of module PickAsk: 5",
+    ]);
+  });
+
+  it("counts the successors the behavior graph generates again in the coverage, also after a violation", () => {
+    const result = runCliWith("tlc-ext", ["PickExplored.tla", "-coverage", "1"], "y\ny\ny\n");
+    expect(result.status).toBe(12);
+    expect(getCoverageLines(result.stdout)).toEqual([
+      "<x line 4, col 11 to line 4, col 11 of module PickExplored>: 2",
+      "<y line 4, col 14 to line 4, col 14 of module PickExplored>: 2",
+      "<Init line 8, col 1 to line 8, col 4 of module PickExplored>: 3:3",
+      "  line 8, col 9 to line 8, col 22 of module PickExplored: 3",
+      "<Next line 10, col 1 to line 10, col 4 of module PickExplored (10 12 10 41)>: 1:5",
+      "  line 10, col 12 to line 10, col 16 of module PickExplored: 15",
+      "  |line 10, col 12 to line 10, col 12 of module PickExplored: 10",
+      "  line 10, col 21 to line 10, col 26 of module PickExplored: 5",
+      "  line 10, col 31 to line 10, col 41 of module PickExplored: 5",
+      "<Next line 10, col 1 to line 10, col 4 of module PickExplored (11 12 11 41)>: 2:7",
+      "  line 11, col 12 to line 11, col 16 of module PickExplored: 13",
+      "  |line 11, col 12 to line 11, col 12 of module PickExplored: 7",
+      "  line 11, col 21 to line 11, col 26 of module PickExplored: 6",
+      "  line 11, col 31 to line 11, col 41 of module PickExplored: 6",
+      "<Unmarked line 17, col 1 to line 17, col 8 of module PickExplored>",
+      "  line 17, col 13 to line 17, col 21 of module PickExplored: 4",
+      "<Ask line 15, col 1 to line 15, col 3 of module PickExplored>: 4:4",
+      "  line 15, col 8 to line 15, col 27 of module PickExplored: 4",
+      "  |line 15, col 22 to line 15, col 26 of module PickExplored: 3",
     ]);
   });
 
