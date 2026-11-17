@@ -60,8 +60,9 @@ const CALLEE_ERRORS = new Set([2348, 2349, 2350, 2351, 7009]);
 // A call with more or fewer arguments than its signature declares.
 const ARGUMENT_COUNT_ERRORS = new Set([2554, 2555, 2810]);
 
-// Declarations of a variable with two types, and a read of a variable before a write.
-const DECLARED_ERRORS = new Set([2403, 2454]);
+// Declarations of a variable with two types, a read of a variable before a write, and a for-in
+// that writes its keys to a variable that a declaration types as something else.
+const DECLARED_ERRORS = new Set([2403, 2405, 2454]);
 
 // A delete of a property that the type gives.
 const DELETE_ERRORS = new Set([2704, 2790]);
