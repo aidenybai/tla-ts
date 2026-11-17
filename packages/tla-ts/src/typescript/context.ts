@@ -5588,6 +5588,10 @@ export const getFunctionCandidates = (callee: ts.Expression, context: Context) =
   return found.filter((candidate) => isAssignable(candidate) && isTyped(candidate));
 };
 
+// TypeScript's flags of a signature with a rest parameter, and of an untyped one of JavaScript.
+const SIGNATURE_REST = 1;
+const SIGNATURE_UNTYPED = 32;
+
 // The distinct types of some nodes or values, in the order of their ids.
 const getDistinctTypes = (types: readonly ts.Type[]) =>
   [...new Set(types)].toSorted((left, right) => left.id - right.id);
@@ -5616,9 +5620,52 @@ export const createDispatch = (callees: readonly ts.Expression[], context: Conte
   );
   const words = (candidateTypes.length + 31) >>> 5;
   const rows = new Uint32Array(calleeTypes.length * words);
+  // TypeScript relates a function type to a type of one call signature, no rest parameter, and no
+  // properties only through its call signatures, each of which fails where it takes more arguments
+  // than the target's parameters: the least count of arguments that each candidate takes, or -1,
+  // and the count of parameters that each callee type takes, or -1.
+  const isVoidAccepting = (type: ts.Type) =>
+    (type.isUnion() ? type.types : [type]).some(
+      (member) => (member.flags & ts.TypeFlags.Void) !== 0,
+    );
+  const getLeastArguments = (signature: ts.Signature) => {
+    const count = { value: signature.minArgumentCount };
+    for (let position = signature.minArgumentCount - 1; position >= 0; position -= 1) {
+      if (!isVoidAccepting(checker.getParameterType(signature, position))) break;
+      count.value = position;
+    }
+    return count.value;
+  };
+  const leastArguments = Int32Array.from(candidateTypes, (type) => {
+    const signatures = checker.getSignaturesOfType(type, ts.SignatureKind.Call);
+    const isFunctionType =
+      (type.flags & ts.TypeFlags.Object) !== 0 &&
+      ((type.objectFlags ?? 0) & ts.ObjectFlags.Reference) === 0 &&
+      signatures.length > 0 &&
+      signatures.every(
+        (signature) => (signature.flags & (SIGNATURE_REST | SIGNATURE_UNTYPED)) === 0,
+      );
+    return isFunctionType ? Math.min(...signatures.map(getLeastArguments)) : -1;
+  });
+  const parameterCounts = Int32Array.from(calleeTypes, (type) => {
+    const signatures = checker.getSignaturesOfType(type, ts.SignatureKind.Call);
+    const isOneSignature =
+      type.flags === ts.TypeFlags.Object &&
+      ((type.objectFlags ?? 0) & ts.ObjectFlags.Mapped) === 0 &&
+      signatures.length === 1 &&
+      (signatures[0].flags & SIGNATURE_REST) === 0 &&
+      checker.getSignaturesOfType(type, ts.SignatureKind.Construct).length === 0 &&
+      checker.getPropertiesOfType(type).length === 0 &&
+      checker.getIndexInfosOfType(type).length === 0;
+    return isOneSignature ? signatures[0].parameters.length : -1;
+  });
   calleeTypes.forEach((calleeType, row) =>
     candidateTypes.forEach((candidateType, bit) => {
-      if (checker.isTypeAssignableTo(candidateType, calleeType)) {
+      const isTooFew =
+        parameterCounts[row] >= 0 &&
+        leastArguments[bit] > parameterCounts[row] &&
+        candidateType.symbol !== calleeType.symbol;
+      if (!isTooFew && checker.isTypeAssignableTo(candidateType, calleeType)) {
         rows[row * words + (bit >>> 5)] |= 1 << (bit & 31);
       }
     }),

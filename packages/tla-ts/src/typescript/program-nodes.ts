@@ -8,11 +8,20 @@ declare module "@typescript/typescript6" {
   // A type's id, which TypeScript gives each type as it makes it.
   interface Type {
     readonly id: number;
+    readonly objectFlags?: ts.ObjectFlags;
+  }
+  // A signature's flags, which tell a rest parameter and an untyped signature of JavaScript, and its
+  // count of the parameters before the first optional one.
+  interface Signature {
+    readonly flags: number;
+    readonly minArgumentCount: number;
   }
   // A context's checker reads tla-ts's own symbol of each name of the program's files from the
   // program's reference index: undefined where the name has none, and null for another node.
   interface TypeChecker {
-    readonly getNameSymbol?: (node: Node) => Symbol | undefined | null;
+    readonly getNameSymbol?: (node: ts.Node) => ts.Symbol | undefined | null;
+    // The type of a signature's parameter at a position.
+    getParameterType(signature: ts.Signature, position: number): ts.Type;
   }
 }
 
