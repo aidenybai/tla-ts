@@ -1,3 +1,4 @@
+import type { PreparedModule } from "../tlc/order";
 import ts from "@typescript/typescript6";
 import type {
   Assumption,
@@ -59,6 +60,8 @@ export interface CompiledSpec {
   source: Module;
   config: string;
   loadModule: (name: string) => string | undefined;
+  // The modules of the spec that the compiler read itself, which a check links as they are.
+  preparedModules: PreparedModule[];
   regions: Region[];
   variables: StateVariable[];
   // A script without exported actions ends where Node's process would exit, so its last states
@@ -322,14 +325,15 @@ export const emit = (
       ? []
       : ["CHECK_DEADLOCK FALSE"]),
   ].join("\n");
+  const preparedModules = isJavaScript
+    ? [getJavaScriptModule(`${printModule(source)}\n${config}`)]
+    : [];
   return {
     name: moduleName,
     source,
     config,
-    loadModule: (name) =>
-      isJavaScript && name === "JavaScript"
-        ? getJavaScriptModule(`${printModule(source)}\n${config}`)
-        : undefined,
+    loadModule: (name) => preparedModules.find((prepared) => prepared.name === name)?.text,
+    preparedModules,
     regions: getRegions(source, sourceFile, model, context),
     isScript: model.exported.length === 0,
     variables: model.variables.map((variable) => {

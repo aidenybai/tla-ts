@@ -111,6 +111,7 @@ import {
 import { getFingerprintDistance, OUT_DEGREE_BUCKETS } from "./tlc/summary";
 import { createActionRecord, createCounterExample } from "./tlc/tlcext-operators";
 import type { TlcVersion } from "./tlc/version";
+import type { PreparedModule } from "./tlc/order";
 import { runTypedSearch, type TypedResult } from "./typed-tier";
 import {
   createCanonicalizer,
@@ -127,6 +128,8 @@ export interface CheckOptions {
   source: string | Module;
   config: string | ModelConfig;
   loadModule?: (name: string) => string | undefined;
+  /** Modules a compiler already read, such as the JavaScript module of a spec compiled from TypeScript. */
+  preparedModules?: readonly PreparedModule[];
   loadClass?: (name: string) => Uint8Array | undefined;
   onPrint?: (text: string) => void;
   onPause?: () => void;

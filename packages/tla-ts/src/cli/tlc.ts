@@ -429,6 +429,7 @@ const checkSpec = async (
       seed: args.seed,
       fingerprintPolynomial: args.fingerprintIndex,
       maxSetSize: args.maxSetSize,
+      preparedModules: compiled?.preparedModules,
       isLazyValueExpanded: args.isLazyValueExpanded,
       isViewPrinted: args.isViewPrinted,
       dump,
