@@ -129,6 +129,10 @@ const PORTED_INCLUDES = new Map([
     "sm/non262-generators-shell.js",
     readFileSync(join(CONFORMANCE_DIRECTORY, "test262-sm-generators-shell.ts"), "utf8"),
   ],
+  [
+    "sm/non262-JSON-shell.js",
+    readFileSync(join(CONFORMANCE_DIRECTORY, "test262-sm-json-shell.ts"), "utf8"),
+  ],
 ]);
 
 // An async test's harness defines $DONE, as doneprintHandle.js does.
