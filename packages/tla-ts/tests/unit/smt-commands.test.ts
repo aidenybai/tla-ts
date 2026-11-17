@@ -717,6 +717,48 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
     ).toEqual(["unknown", '(:reason-unknown "canceled")']);
   });
 
+  it("prints the reason and the core of get-consequences on the finite-domain solver", () => {
+    expect(
+      run([
+        "(set-option :produce-unsat-cores true)",
+        "(set-logic QF_FD)",
+        "(declare-const a Bool)",
+        "(declare-const b Bool)",
+        "(declare-const c Bool)",
+        "(assert (=> a b))",
+        "(get-consequences (a) (a b c))",
+        "(get-info :reason-unknown)",
+        "(assert (not b))",
+        "(get-consequences (a c) (a b c))",
+        "(get-unsat-core)",
+        "(get-info :reason-unknown)",
+      ]),
+    ).toEqual([
+      "sat",
+      "",
+      "(=> a a)",
+      "(=> a b)",
+      '(:reason-unknown "no reason given")',
+      "unsat",
+      "",
+      "(a)",
+      '(:reason-unknown "no reason given")',
+    ]);
+  });
+
+  // The reason is left out: Z3 gives canceled when the sat solver throws at a checkpoint, and no
+  // reason when its search stops first.
+  it("answers unknown when the finite-domain solver stops in get-consequences", () => {
+    expect(
+      run([
+        "(set-option :rlimit 20000)",
+        "(set-logic QF_FD)",
+        ...getPigeonholeLines(11),
+        "(get-consequences () (p0_0))",
+      ]),
+    ).toEqual(["unknown", ""]);
+  });
+
   it("runs the commands after a check that timed out", () => {
     expect(
       run(

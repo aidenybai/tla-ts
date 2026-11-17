@@ -1044,7 +1044,8 @@ export const runSmtlibScript = (
         if (list.items.length > 3)
           throw new SmtParseError("invalid command, too many arguments", list.items[3]);
         clearCheck();
-        manager.limit.restart(Date.now() + options.timeLimitMs);
+        const deadline = Date.now() + options.timeLimitMs;
+        manager.limit.restart(deadline);
         manager.limit.push(settings.rlimit);
         const names = state.names.filter((name) => name !== -1);
         try {
@@ -1058,7 +1059,11 @@ export const runSmtlibScript = (
               assumptions,
               vars,
             );
-            setCheck(found.result, { model: found.model });
+            setCheck(found.result, {
+              model: found.model,
+              core: found.core,
+              reasonUnknown: found.reasonUnknown,
+            });
             print(getVerdict(found.result));
             print("");
             for (const consequence of found.consequences.items) display(consequence);
@@ -1078,6 +1083,14 @@ export const runSmtlibScript = (
           print("");
           for (const consequence of found.consequences.items) display(consequence);
           found.consequences.reset();
+        } catch (error) {
+          // cmd_context::get_consequences answers unknown when the solver throws, with its message.
+          if (!(error instanceof SmtCanceledError || isStackOverflow(error))) throw error;
+          const reasonUnknown = getCancelMessage(deadline);
+          if (state.kernel !== undefined) state.kernel.context.reasonUnknown = reasonUnknown;
+          setCheck(L_UNDEF, { reasonUnknown });
+          print("unknown");
+          print("");
         } finally {
           manager.limit.pop();
         }

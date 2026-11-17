@@ -227,6 +227,8 @@ export const getFdConsequences = (
       result: found.result,
       consequences,
       model: model === null ? undefined : convertModel(fmls, model),
+      core: solver.getUnsatCore().map((dep) => assumptions[asms1.indexOf(dep)] ?? dep),
+      reasonUnknown: solver.reasonUnknown,
     };
   } finally {
     solver.release();
