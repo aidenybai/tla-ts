@@ -2338,25 +2338,28 @@ export const isAssigned = (symbol: ts.Symbol, node: ts.Node, context: Context): 
 // The assignments of the program's files, by the symbols of the names that each writes, alone or in
 // a pattern, as isWrittenBy tells, and then in the order that a walk meets them.
 const createWrites = (table: ProgramNodes, references: References): References => {
-  const pairs = table.nodes.flatMap((node, position) => {
+  // Each assignment's symbols once, in flat columns that a sort of their indexes orders.
+  const ids: number[] = [];
+  const positions: number[] = [];
+  table.nodes.forEach((node, position) => {
     const target = getAssignedTarget(node);
-    return target === undefined
-      ? []
-      : [
-          ...new Set(
-            getWrittenNames(target).flatMap((name) => {
-              const at = ts.isIdentifier(name) ? getPosition(table, name) : -1;
-              const symbol = at < 0 ? undefined : references.symbols[at];
-              return symbol === undefined ? [] : [ts.getSymbolId(symbol)];
-            }),
-          ),
-        ].map((id) => ({ id, position }));
+    const first = ids.length;
+    (target === undefined ? [] : getWrittenNames(target)).forEach((name) => {
+      const at = ts.isIdentifier(name) ? getPosition(table, name) : -1;
+      const symbol = at < 0 ? undefined : references.symbols[at];
+      const id = symbol === undefined ? -1 : ts.getSymbolId(symbol);
+      if (id < 0 || ids.indexOf(id, first) >= 0) return;
+      ids.push(id);
+      positions.push(position);
+    });
   });
-  pairs.sort((left, right) => left.id - right.id || left.position - right.position);
+  const order = Int32Array.from(ids, (_, index) => index).sort(
+    (left, right) => ids[left] - ids[right] || positions[left] - positions[right],
+  );
   return {
     symbols: [],
-    symbolIds: Int32Array.from(pairs, (pair) => pair.id),
-    positions: Int32Array.from(pairs, (pair) => pair.position),
+    symbolIds: order.map((index) => ids[index]),
+    positions: order.map((index) => positions[index]),
   };
 };
 

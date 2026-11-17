@@ -112,11 +112,16 @@ export const createProgramNodes = (
     kindPositions[kindEnds[node.kind]] = position;
     kindEnds[node.kind] += 1;
   });
-  const names = nodes.flatMap((node, position) =>
-    ts.isIdentifier(node) ? [{ text: node.text, position }] : [],
-  );
-  names.sort((left, right) =>
-    left.text < right.text ? -1 : left.text > right.text ? 1 : left.position - right.position,
+  // The identifiers' positions and texts, in order of position, and then of text.
+  const texts: string[] = [];
+  const named: number[] = [];
+  nodes.forEach((node, position) => {
+    if (!ts.isIdentifier(node)) return;
+    texts.push(node.text);
+    named.push(position);
+  });
+  const byText = Int32Array.from(named, (_, index) => index).sort((left, right) =>
+    texts[left] < texts[right] ? -1 : texts[left] > texts[right] ? 1 : left - right,
   );
   return {
     first,
@@ -130,8 +135,8 @@ export const createProgramNodes = (
     ),
     kindStarts,
     kindPositions,
-    namePositions: Int32Array.from(names, (name) => name.position),
-    nameTexts: names.map((name) => name.text),
+    namePositions: byText.map((index) => named[index]),
+    nameTexts: Array.from(byText, (index) => texts[index]),
     marks: new Int32Array(nodes.length),
     generation: 0,
   };
@@ -246,9 +251,13 @@ export const createReferences = (
   const ids = Int32Array.from(symbols, (symbol) =>
     symbol === undefined ? -1 : ts.getSymbolId(symbol),
   );
-  const positions = Int32Array.from(
-    symbols.flatMap((symbol, position) => (symbol === undefined ? [] : [position])),
-  ).sort((left, right) => ids[left] - ids[right] || left - right);
+  const named: number[] = [];
+  ids.forEach((id, position) => {
+    if (id >= 0) named.push(position);
+  });
+  const positions = Int32Array.from(named).sort(
+    (left, right) => ids[left] - ids[right] || left - right,
+  );
   return { symbols, symbolIds: positions.map((position) => ids[position]), positions };
 };
 
