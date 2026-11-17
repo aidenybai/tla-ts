@@ -52456,4 +52456,19 @@ describe("BigInts", () => {
       ).toContain("seen a,b,1");
     });
   });
+
+  describe("makes hold the types of a package's JavaScript that a model loads", () => {
+    const path = join(import.meta.dirname, "../fixtures/typescript/es-modules/loose.ts");
+    const source = readFileSync(path, "utf8");
+
+    it("agrees with Node", async () => {
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects the type that TypeScript infers", async () => {
+      await expect(check(compile(source.replace('"string"', '"number"'), path))).rejects.toThrow(
+        "seen string",
+      );
+    });
+  });
 });
