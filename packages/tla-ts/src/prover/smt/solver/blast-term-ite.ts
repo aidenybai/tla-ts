@@ -13,20 +13,29 @@ class BlastTermIteRewriter extends RewriterTpl {
   reduceApp(decl: number, args: number[], sort: number) {
     const manager = this.manager;
     if (decl === OP_ITE) return -1;
-    const index = args.findIndex(
-      (arg) => manager.sorts[arg] !== SORT_BOOL && manager.getOp(arg) === OP_ITE,
-    );
-    if (index === -1) return -1;
-    const [condition, thenBranch, elseBranch] = manager.getArgs(args[index]);
-    const thenApp = manager.mkApp(decl, args.with(index, thenBranch), sort);
-    if (thenBranch === elseBranch) {
-      manager.incRef(thenApp);
-      return { expr: thenApp, depth: 1 };
+    for (let index = 0; index < args.length; index++) {
+      const arg = args[index];
+      if (manager.sorts[arg] === SORT_BOOL || manager.getOp(arg) !== OP_ITE) continue;
+      const thenBranch = manager.getArg(arg, 1);
+      const elseBranch = manager.getArg(arg, 2);
+      const newArgs = [...args];
+      newArgs[index] = thenBranch;
+      const thenApp = manager.mkApp(decl, newArgs, sort);
+      if (thenBranch === elseBranch) {
+        manager.incRef(thenApp);
+        return { expr: thenApp, depth: 1 };
+      }
+      newArgs[index] = elseBranch;
+      const elseApp = manager.mkApp(decl, newArgs, sort);
+      const result = manager.mkApp(
+        OP_ITE,
+        [manager.getArg(arg, 0), thenApp, elseApp],
+        manager.sorts[thenApp],
+      );
+      manager.incRef(result);
+      return { expr: result, depth: 3 };
     }
-    const elseApp = manager.mkApp(decl, args.with(index, elseBranch), sort);
-    const result = manager.mkApp(OP_ITE, [condition, thenApp, elseApp], manager.sorts[thenApp]);
-    manager.incRef(result);
-    return { expr: result, depth: 3 };
+    return -1;
   }
 }
 

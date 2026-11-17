@@ -373,47 +373,63 @@ export class PolyRewriter {
   private hoistIte(sum: number) {
     if (this.options.isHoistIte !== true) return undefined;
     const manager = this.manager;
-    const isAdd = (expr: number) => this.isAdd(expr);
     const shared = new ObjHashtable((expr) => manager.hashes[expr]);
-    let isFirst = true;
-    const isHoistable = (expr: number): boolean => {
-      if (manager.getOp(expr) === OP_ITE)
-        return isHoistable(manager.getArg(expr, 1)) && isHoistable(manager.getArg(expr, 2));
-      if (this.isNumeral(expr) && this.getValue(expr).isInt()) return false;
-      const summands = this.getFlatArgs(expr, isAdd);
-      if (isFirst) for (const summand of summands) shared.add(summand);
-      else
-        for (const summand of [...shared].filter((item) => !summands.includes(item)).reverse())
-          shared.delete(summand);
-      if (shared.size === 0 || new Set(summands).size < summands.length) return false;
-      isFirst = false;
-      return true;
-    };
-    const applyHoist = (expr: number): number =>
-      manager.getOp(expr) === OP_ITE
-        ? manager.mkApp(
-            OP_ITE,
-            [
-              manager.getArg(expr, 0),
-              applyHoist(manager.getArg(expr, 1)),
-              applyHoist(manager.getArg(expr, 2)),
-            ],
-            manager.sorts[expr],
-          )
-        : this.mkAddApp(this.getFlatArgs(expr, isAdd).filter((summand) => !shared.has(summand)));
-    const adds = this.getFlatArgs(sum, isAdd);
+    const adds = this.getFlatArgs(sum, (expr) => this.isAdd(expr));
     let isChanged = false;
-    for (const [index, add] of adds.entries()) {
+    for (let index = 0; index < adds.length; index++) {
+      const add = adds[index];
       if (manager.getOp(add) !== OP_ITE) continue;
       shared.clear();
-      isFirst = true;
-      if (!isHoistable(add)) continue;
-      const hoisted = this.mkAddApp([applyHoist(add), ...shared]);
+      if (!this.collectSharedSummands(add, shared)) continue;
+      const summands = [this.applyHoist(add, shared)];
+      for (const summand of shared) summands.push(summand);
+      const hoisted = this.mkAddApp(summands);
       if (hoisted === add) continue;
       adds[index] = hoisted;
       isChanged = true;
     }
     return isChanged ? this.mkAddApp(adds) : undefined;
+  }
+
+  private collectSharedSummands(expr: number, shared: ObjHashtable): boolean {
+    const manager = this.manager;
+    if (manager.getOp(expr) === OP_ITE)
+      return (
+        this.collectSharedSummands(manager.getArg(expr, 1), shared) &&
+        this.collectSharedSummands(manager.getArg(expr, 2), shared)
+      );
+    if (this.isNumeral(expr) && this.getValue(expr).isInt()) return false;
+    const summands = this.getFlatArgs(expr, (summand) => this.isAdd(summand));
+    if (shared.size === 0)
+      for (let index = 0; index < summands.length; index++) shared.add(summands[index]);
+    else {
+      const removed: number[] = [];
+      for (const summand of shared) if (!summands.includes(summand)) removed.push(summand);
+      for (let index = removed.length - 1; index >= 0; index--) shared.delete(removed[index]);
+    }
+    if (shared.size === 0) return false;
+    for (let index = 1; index < summands.length; index++)
+      if (summands.lastIndexOf(summands[index], index - 1) !== -1) return false;
+    return true;
+  }
+
+  private applyHoist(expr: number, shared: ObjHashtable): number {
+    const manager = this.manager;
+    if (manager.getOp(expr) === OP_ITE) {
+      const thenExpr = this.applyHoist(manager.getArg(expr, 1), shared);
+      const elseExpr = this.applyHoist(manager.getArg(expr, 2), shared);
+      return manager.mkApp(
+        OP_ITE,
+        [manager.getArg(expr, 0), thenExpr, elseExpr],
+        manager.sorts[expr],
+      );
+    }
+    const summands = this.getFlatArgs(expr, (summand) => this.isAdd(summand));
+    let size = 0;
+    for (let index = 0; index < summands.length; index++)
+      if (!shared.has(summands[index])) summands[size++] = summands[index];
+    summands.length = size;
+    return this.mkAddApp(summands);
   }
 
   private growStamps(expr: number) {
