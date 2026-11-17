@@ -1268,7 +1268,7 @@ const resolveApply = (
       source?.operator ?? operator,
       source?.range ?? operatorRange,
       scope,
-      unit,
+      isSelection ? { ...unit, isGenerated: false } : unit,
     );
   });
   if (

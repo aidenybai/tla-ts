@@ -942,6 +942,23 @@ describe("name resolution matches SANY", () => {
       ],
     ],
     [
+      "---- MODULE Inner ----\nJ(a, Q(_)) == Q(a)\n====\nI0 == INSTANCE Inner\nRECURSIVE Rec1\nRec1(a0) == I0!J(Rec1, LAMBDA y : y)!<<\nVARIABLE z\nOp(a, Q(_)) == lab :: Q(a)\nA == Op(1, LAMBDA z : z)!lab",
+      [
+        [
+          "line 7, col 1 to line 7, col 39",
+          "Definition of Rec1 has different arity than its RECURSIVE declaration.",
+        ],
+        [
+          "line 7, col 18 to line 7, col 21",
+          "Wrong number of arguments (0) given to operator 'Rec1', \nwhich requires 1 arguments.",
+        ],
+        [
+          "line 10, col 19 to line 10, col 19",
+          "Multiply-defined symbol 'z': this definition or declaration conflicts \nwith the one at line 8, col 10 to line 8, col 10 of module M.",
+        ],
+      ],
+    ],
+    [
       "THEOREM T == \\A a \\in {1} : \\E b \\in {2} : a = b\nUSE T!@\nA == T!(1)!(2) /\\ T!@!@ /\\ T!(1)!@ /\\ T!(1)!(2, 3)\nOp == \\A a \\in {1}, b \\in {2} : a = b\nB == Op!(1) /\\ Op!(1, 2)!1",
       [
         ["line 3, col 5 to line 3, col 7", "Expected 1 arguments but found 0."],
