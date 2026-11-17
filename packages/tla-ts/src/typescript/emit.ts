@@ -139,6 +139,13 @@ const disjoin = (items: Expression[]) =>
 const formatConfigSection = (keyword: string, values: string[]) =>
   values.length > 0 ? [`${keyword} ${values.join(" ")}`] : [];
 
+// The loader of the JavaScript module that a spec extends. It holds only the spec, so that the
+// program and the context that compiled it are free once the compile ends.
+const getModuleLoader = (isJavaScript: boolean, source: Module, config: string) => (name: string) =>
+  isJavaScript && name === "JavaScript"
+    ? getJavaScriptModule(`${printModule(source)}\n${config}`)
+    : undefined;
+
 export const emit = (
   moduleName: string,
   sourceFile: ts.SourceFile,
@@ -327,10 +334,7 @@ export const emit = (
     name: moduleName,
     source,
     config,
-    loadModule: (name) =>
-      isJavaScript && name === "JavaScript"
-        ? getJavaScriptModule(`${printModule(source)}\n${config}`)
-        : undefined,
+    loadModule: getModuleLoader(isJavaScript, source, config),
     regions: getRegions(source, sourceFile, model, context),
     isScript: model.exported.length === 0,
     variables: model.variables.map((variable) => {
