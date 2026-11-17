@@ -586,6 +586,25 @@ describe("the arithmetic probes, as Z3 5.3.2 measures a goal", () => {
   });
 });
 
+describe("qfufbv, as Z3 5.3.2 answers QF_UFBV", () => {
+  it("ackermannizes the functions and bit-blasts the goal", () => {
+    expect(
+      run([
+        "(set-logic QF_UFBV)",
+        "(declare-const v (_ BitVec 4))",
+        "(declare-fun f ((_ BitVec 4)) (_ BitVec 4))",
+        "(assert (distinct v #b1101))",
+        "(assert (bvult (f v) (f #x1)))",
+        "(check-sat)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      "(\n  (define-fun v () (_ BitVec 4)\n    #x0)\n  (define-fun f ((x!0 (_ BitVec 4))) (_ BitVec 4)\n    (ite (= x!0 #x1) #xf\n      #x0))\n)",
+    ]);
+  });
+});
+
 describe("if-no-models, as Z3 5.3.2 runs it", () => {
   it("runs its tactic when the goal produces no models", () => {
     expect(

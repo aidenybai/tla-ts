@@ -1382,7 +1382,7 @@ const UNPORTED_TACTICS = new Set(
     "elim-predicates elim-uncnstr2 " +
     "euf-completion ff-sat ff-simplify ff-solve ff-unique ff2bv fold-unfold fpa2bv " +
     "horn-simplify injectivity pb-preprocess pqffd propagate-bv-bounds " +
-    "propagate-bv-bounds2 propagate-values2 qfbv-sls qfufbv recover-01 reduce-args2 " +
+    "propagate-bv-bounds2 propagate-values2 qfbv-sls recover-01 reduce-args2 " +
     "sat-preprocess sls-smt smtfd solver-subsumption special-relations " +
     "split-clause subpaving symmetry-reduce"
   ).split(" "),
