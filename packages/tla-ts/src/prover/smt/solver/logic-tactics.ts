@@ -256,6 +256,12 @@ export const QFUFBV_ACKR_PREAMBLE =
   ":pull_cheap_ite true :push_ite_bv false :local_ctx true :local_ctx_limit 10000000 " +
   ":ite_extra_rules true :mul2concat true :flat_and_or false))";
 
+const QFUFBV =
+  "(using-params (and-then (and-then (using-params simplify :flat_and_or false) (using-params " +
+  "propagate-values :flat_and_or false) solve-eqs elim-uncnstr (if-no-proofs (if-no-unsat-cores " +
+  "reduce-args)) (if-no-proofs (if-no-unsat-cores reduce-bv-size)) max-bv-sharing (if-no-proofs " +
+  "(if-no-unsat-cores ackermannize_bv))) (if is-qfbv qfbv smt)) :elim_and true :blast_distinct true)";
+
 const QFAUFLIA =
   "(and-then (using-params (and-then simplify propagate-values solve-eqs elim-uncnstr simplify) " +
   ":elim_and true :som true :sort_store true) (using-params smt :array.simplify false))";
@@ -302,6 +308,7 @@ export const LOGIC_TACTICS: ReadonlyMap<string, string> = new Map([
   ["bv", UFBV],
   ["qfbv", QFBV],
   ["qfaufbv", QFAUFBV],
+  ["qfufbv", QFUFBV],
   ["qfauflia", QFAUFLIA],
   ["qfuf", QFUF],
   ["qffp", QFFP],

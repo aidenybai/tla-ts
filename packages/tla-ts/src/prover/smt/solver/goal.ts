@@ -20,7 +20,6 @@ export const joinDependencies = (
       ? first
       : { value: -1, children: [first, second] };
 
-// Breadth first and once per node, so a value that two leaves hold is listed twice.
 export const getDependencyValues = (dependency: Dependency | undefined) => {
   if (dependency === undefined) return [];
   const todo = [dependency];
@@ -35,7 +34,7 @@ export const getDependencyValues = (dependency: Dependency | undefined) => {
         todo.push(child);
       }
   }
-  return values;
+  return [...new Set(values)];
 };
 
 interface Polarized {
@@ -81,6 +80,7 @@ export class Goal {
   converters: (HiddenDecl | Definitions | ModelConversion)[] = [];
   model: ProtoModel | undefined;
   isProofsEnabled = false;
+  isModelsEnabled = true;
   isCoresEnabled = false;
   // As in Z3, it isn't copied with the goal.
   reasonUnknown = "";
@@ -105,6 +105,7 @@ export class Goal {
     this.precision = getPrecisionUnion(source.precision, this.precision);
     this.converters = source.converters;
     this.isProofsEnabled = source.isProofsEnabled;
+    this.isModelsEnabled = source.isModelsEnabled;
     this.isCoresEnabled = source.isCoresEnabled;
   }
 

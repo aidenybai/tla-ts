@@ -30,7 +30,7 @@ const mkModel = (
   t2x: ReadonlyMap<number, number>,
   a2b: ReadonlyMap<number, number>,
 ) => {
-  const model = new ProtoModel(manager);
+  const model = new ProtoModel(manager).mkModel();
   for (const [term, variable] of t2x) {
     if (!manager.isUninterpretedConst(term)) continue;
     const value = solver.getValue(variable);

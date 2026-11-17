@@ -429,7 +429,7 @@ class Nlqsat {
 
   private mkModel() {
     const manager = this.manager;
-    const model = new ProtoModel(manager);
+    const model = new ProtoModel(manager).mkModel();
     for (const [term, variable] of this.t2x) {
       if (!manager.isUninterpretedConst(term) || !this.freeVars.has(term)) continue;
       const value = this.rmodel0[variable] ?? new Anum(Rational.zero);

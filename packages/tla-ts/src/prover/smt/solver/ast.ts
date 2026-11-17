@@ -315,6 +315,7 @@ export const OP_AT_LEAST_K = PB_OP_BASE + 1;
 export const OP_PB_LE = PB_OP_BASE + 2;
 export const OP_PB_GE = PB_OP_BASE + 3;
 export const OP_PB_EQ = PB_OP_BASE + 4;
+export const OP_PB_AUX_BOOL = PB_OP_BASE + 5;
 const RECFUN_OP_BASE = 900;
 export const OP_FUN_DEFINED = RECFUN_OP_BASE;
 export const OP_FUN_CASE_PRED = RECFUN_OP_BASE + 1;
@@ -610,7 +611,10 @@ const hasOwnDeclHash = (family: number) =>
   family === FAMILY_RECFUN;
 
 // The declarations that Z3 makes once and counts references to, rather than on each use.
-const isDeclaredFamily = (family: number) => family === FAMILY_USER || family === FAMILY_RECFUN;
+const isDeclared = (funcDecl: FuncDecl) =>
+  funcDecl.family === FAMILY_USER ||
+  funcDecl.family === FAMILY_RECFUN ||
+  funcDecl.op === OP_PB_AUX_BOOL;
 
 export class AstManager {
   private numNodes = 0;
@@ -673,6 +677,7 @@ export class AstManager {
   private charSort = -1;
   private stringSort = -1;
   private reglanSort = -1;
+  private isSeqPluginInitialized = false;
   private seqSorts = new Map<string, number>();
   private seqDecls = new Map<string, number>();
   private stringValues: number[][] = [];
@@ -738,6 +743,17 @@ export class AstManager {
         smallId: Z3_SMALL_IDS.get(builtin[2]) ?? -1,
         parameters: [],
       });
+    // Each has one signature in Z3, and a model's tables hash its declaration as a user's.
+    for (const entry of Z3_BUILTINS)
+      if (entry[0] === OP_DIV0 || entry[0] === OP_IDIV0 || entry[0] === OP_MOD0) {
+        const range = this.funcDecls[entry[0]].range;
+        this.declHashes[entry[0]] = this.getFuncDeclHash(
+          entry[1][0],
+          [range, range],
+          range,
+          getInfoHash(Z3_ARITH_FAMILY, entry[1][1], []),
+        );
+      }
     this.trueExpr = this.mkApp(OP_TRUE, [], SORT_BOOL);
     this.falseExpr = this.mkApp(OP_FALSE, [], SORT_BOOL);
     this.incRef(this.trueExpr);
@@ -799,6 +815,14 @@ export class AstManager {
     this.mkSmallId();
     this.macros.set(decl, expr);
     return decl;
+  }
+
+  eraseRecFunDef(decl: number) {
+    this.macros.delete(decl);
+    const def = this.recFunDefs.get(decl);
+    if (def === undefined) return;
+    for (const recFunCase of def.cases) this.recFunCases.delete(recFunCase.pred);
+    this.recFunDefs.delete(decl);
   }
 
   // recfun::def: the declaration of a defined function, which the definition holds.
@@ -881,7 +905,7 @@ export class AstManager {
 
   private holdDecl(expr: number) {
     const decl = this.decls[expr];
-    if (isDeclaredFamily(this.funcDecls[decl].family)) {
+    if (isDeclared(this.funcDecls[decl])) {
       this.incDeclRef(decl);
       return;
     }
@@ -900,7 +924,7 @@ export class AstManager {
 
   private releaseDecl(expr: number) {
     const decl = this.decls[expr];
-    if (isDeclaredFamily(this.funcDecls[decl].family)) {
+    if (isDeclared(this.funcDecls[decl])) {
       this.declRefCounts[decl]--;
       if (this.declRefCounts[decl] > 0) return -1;
       this.deletedDecls.add(decl);
@@ -1290,7 +1314,7 @@ export class AstManager {
     return this.sortNames.length - 1;
   }
 
-  // Z3 makes the Char, String and RegLan sorts at startup, so they take no small id.
+  // Z3 makes the Char and String sorts at startup, so they take no small id.
   mkCharSort() {
     if (this.charSort === -1)
       this.charSort = this.addSort(
@@ -1315,8 +1339,18 @@ export class AstManager {
     return this.stringSort;
   }
 
+  initSeqPlugin() {
+    if (this.isSeqPluginInitialized) return;
+    this.isSeqPluginInitialized = true;
+    const element = this.mkTypeParameter(0);
+    this.mkReSort(this.mkSeqSort(element));
+    this.mkReSort(this.mkStringSort());
+    this.mkArraySort([element, SORT_BOOL]);
+  }
+
   mkSeqSort(element: number) {
     if (element === this.mkCharSort()) return this.mkStringSort();
+    this.initSeqPlugin();
     const key = `s${element}`;
     const existing = this.seqSorts.get(key);
     if (existing !== undefined) return existing;
@@ -1335,6 +1369,7 @@ export class AstManager {
   }
 
   mkReSort(seq: number) {
+    this.initSeqPlugin();
     const isReglan = seq === this.mkStringSort();
     if (isReglan && this.reglanSort !== -1) return this.reglanSort;
     const key = `r${seq}`;
@@ -1349,11 +1384,9 @@ export class AstManager {
         getInfoHash(Z3_SEQ_FAMILY, Z3_RE_SORT, [this.sortHashes[seq]]),
       ),
     );
+    this.mkSmallId();
     if (isReglan) this.reglanSort = sort;
-    else {
-      this.mkSmallId();
-      this.seqSorts.set(key, sort);
-    }
+    else this.seqSorts.set(key, sort);
     return sort;
   }
 
@@ -1871,6 +1904,20 @@ export class AstManager {
     const decl = this.mkFuncDecl(name, domain, range, isSkolem);
     this.declRefCounts[decl] = 0;
     return decl;
+  }
+
+  mkPbAuxBool() {
+    const decl = this.addDecl(
+      this.mkFreshVarName("pb"),
+      FAMILY_PB,
+      OP_PB_AUX_BOOL,
+      [],
+      SORT_BOOL,
+      [],
+      getInfoHash(Z3_PB_FAMILY, OP_PB_AUX_BOOL - PB_OP_BASE, []),
+    );
+    this.declRefCounts[decl] = 0;
+    return this.mkApp(decl, [], SORT_BOOL);
   }
 
   mkFreshVarName(prefix: string | null) {

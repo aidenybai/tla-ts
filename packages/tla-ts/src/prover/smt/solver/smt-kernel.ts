@@ -30,8 +30,7 @@ export class SmtKernel {
 
   private setupContext(isUsingStaticFeatures: boolean) {
     if (this.isSetUp) return;
-    this.isSetUp = true;
-    this.context.setupContext(this.setup, isUsingStaticFeatures, this.asserted);
+    this.isSetUp = this.context.setupContext(this.setup, isUsingStaticFeatures, this.asserted);
   }
 
   // context::copy sets up and internalizes a copy as soon as it makes it.

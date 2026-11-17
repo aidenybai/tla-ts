@@ -10,7 +10,7 @@ export class Mus {
 
   constructor(
     private manager: AstManager,
-    private solver: MaxsatSolver,
+    private solver: Pick<MaxsatSolver, "checkSat" | "getUnsatCore">,
   ) {
     this.lit2expr = new RefVector(manager);
     this.trail = new RefVector(manager);

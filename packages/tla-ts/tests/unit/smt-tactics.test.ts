@@ -427,3 +427,514 @@ describe("rationals", () => {
     ]);
   });
 });
+
+describe("tseitin-cnf, as Z3 5.3.2 composes it", () => {
+  it("leaves the core tactic out once the simplifier decides the goal", () => {
+    expect(
+      run([
+        "(declare-const b0 Bool)",
+        "(declare-const b1 Bool)",
+        "(push)",
+        "(assert (not (and false b0 true)))",
+        "(apply tseitin-cnf)",
+        "(pop)",
+        "(assert (and true b0 (not (and false b1))))",
+        "(apply tseitin-cnf)",
+        "(assert (or (and false b1) false))",
+        "(apply tseitin-cnf)",
+      ]),
+    ).toEqual([
+      "(goals\n(goal\n  :precision precise :depth 1)\n)",
+      "(goals\n(goal\n  b0\n  :precision precise :depth 2)\n)",
+      "(goals\n(goal\n  false\n  :precision precise :depth 1)\n)",
+    ]);
+  });
+});
+
+describe("elim-term-ite, as Z3 5.3.2 names the term if-then-elses", () => {
+  it("defines a numbered name for each and hides the names from the model", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(declare-const b Bool)",
+        "(assert (> (+ (ite b x y) (ite (> x y) x 2)) (ite b x y)))",
+        "(apply elim-term-ite)",
+        "(check-sat-using (then elim-term-ite smt))",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "(goals\n(goal\n  (> (+ k!0 k!1) k!0)\n  (or (not b) (= k!0 x))\n  (or b (= k!0 y))\n  (or (not (> x y)) (= k!1 x))\n  (or (> x y) (= k!1 2))\n  :precision precise :depth 1)\n)",
+      "sat",
+      "(\n  (define-fun b () Bool\n    false)\n  (define-fun x () Int\n    2)\n  (define-fun y () Int\n    3)\n)",
+    ]);
+  });
+
+  it("names the terms of each subgoal afresh", () => {
+    expect(
+      run([
+        "(declare-const a Int)",
+        "(declare-const b Int)",
+        "(declare-const c Bool)",
+        "(declare-const d Bool)",
+        "(assert (or c d))",
+        "(assert (> (ite c a b) 0))",
+        "(apply (then split-clause elim-term-ite))",
+        "(assert (not c))",
+        "(assert (< a 0))",
+        "(check-sat-using (then split-clause elim-term-ite smt))",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "(goals\n(goal\n  c\n  (> k!0 0)\n  (or (not c) (= k!0 a))\n  (or c (= k!0 b))\n  :precision precise :depth 2)\n(goal\n  d\n  (> k!1 0)\n  (or (not c) (= k!1 a))\n  (or c (= k!1 b))\n  :precision precise :depth 2)\n)",
+      "sat",
+      "(\n  (define-fun c () Bool\n    false)\n  (define-fun d () Bool\n    true)\n  (define-fun b () Int\n    1)\n  (define-fun a () Int\n    (- 1))\n)",
+    ]);
+  });
+
+  it("names a term under a quantifier by its bound variables", () => {
+    expect(
+      run([
+        "(declare-fun f (Int) Int)",
+        "(declare-const x Int)",
+        "(assert (forall ((z Int)) (> (f (ite (> z 0) z x)) 0)))",
+        "(apply elim-term-ite)",
+      ]),
+    ).toEqual([
+      "(goals\n(goal\n  (forall ((z Int)) (> (f (k!0 z)) 0))\n  (forall ((x!1 Int))\n    (! (or (not (> x!1 0)) (= (k!0 x!1) x!1)) :pattern ((k!0 x!1))))\n  (forall ((x!1 Int)) (! (or (> x!1 0) (= (k!0 x!1) x)) :pattern ((k!0 x!1))))\n  :precision precise :depth 1)\n)",
+    ]);
+  });
+
+  it("asserts the definitions without dependencies", () => {
+    expect(
+      run([
+        "(set-option :produce-unsat-cores true)",
+        "(declare-const x Int)",
+        "(declare-const b Bool)",
+        "(assert (! (> (ite b x 3) 5) :named a1))",
+        "(assert (! (< x 0) :named a2))",
+        "(assert (! b :named a3))",
+        "(check-sat-using (then elim-term-ite smt))",
+        "(get-unsat-core)",
+        "(apply (then elim-term-ite elim-term-ite))",
+      ]),
+    ).toEqual([
+      "unsat",
+      "(a3 a1 a2)",
+      "(goals\n(goal\n  (> k!1 5)\n  (< x 0)\n  b\n  (or (not b) (= k!1 x))\n  (or b (= k!1 3))\n  :precision precise :depth 2)\n)",
+    ]);
+  });
+
+  it("lets nlsat decide a nonlinear problem with term if-then-elses", () => {
+    expect(
+      run([
+        "(set-logic QF_NRA)",
+        "(declare-const x Real)",
+        "(declare-const y Real)",
+        "(declare-const b Bool)",
+        "(assert (= (* (ite b x 3.0) x) 2.0))",
+        "(assert (> (* y y) (ite (> x 0.0) x 1.0)))",
+        "(check-sat)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      "(\n  (define-fun y () Real\n    (- 1.0))\n  (define-fun b () Bool\n    false)\n  (define-fun x () Real\n    (/ 2.0 3.0))\n)",
+    ]);
+  });
+});
+
+describe("blast-term-ite, as Z3 5.3.2 lifts the term if-then-elses", () => {
+  it("lifts each one out of its parent, under a quantifier too but not into a pattern", () => {
+    expect(
+      run([
+        "(declare-fun f (Int) Int)",
+        "(declare-fun p (Int) Bool)",
+        "(declare-const c1 Bool)",
+        "(declare-const c2 Bool)",
+        "(declare-const c3 Bool)",
+        "(declare-const e1 Int)",
+        "(declare-const e2 Int)",
+        "(declare-const e3 Int)",
+        "(declare-const e4 Int)",
+        "(assert (p (f (ite c1 (ite c2 e1 (ite c3 e2 e3)) e4))))",
+        "(assert (forall ((x Int)) (! (> (f (ite c1 x e1)) (+ (ite c2 x e2) 1)) :pattern ((f x)))))",
+        "(assert (= (f (ite c3 e1 e1)) e2))",
+        "(apply blast-term-ite)",
+      ]),
+    ).toEqual([
+      "(goals\n(goal\n  (let ((a!1 (ite c2 (p (f e1)) (ite c3 (p (f e2)) (p (f e3))))))\n    (ite c1 a!1 (p (f e4))))\n  (forall ((x Int))\n    (! (ite c1\n            (ite c2 (> (f x) (+ x 1)) (> (f x) (+ e2 1)))\n            (ite c2 (> (f e1) (+ x 1)) (> (f e1) (+ e2 1))))\n       :pattern ((f x))))\n  (= (f e1) e2)\n  :precision precise :depth 1)\n)",
+    ]);
+  });
+
+  it("keeps the dependencies of the formulas it rewrites", () => {
+    expect(
+      run([
+        "(set-option :produce-unsat-cores true)",
+        "(declare-fun f (Int) Int)",
+        "(declare-const c1 Bool)",
+        "(declare-const e1 Int)",
+        "(declare-const e2 Int)",
+        "(assert (! (> (f (ite c1 e1 e2)) 3) :named a1))",
+        "(assert (! (= e1 e2) :named a2))",
+        "(assert (! (< (f e2) 2) :named a3))",
+        "(check-sat-using (then blast-term-ite smt))",
+        "(get-unsat-core)",
+      ]),
+    ).toEqual(["unsat", "(a3 a1 a2)"]);
+  });
+});
+
+describe("the arithmetic probes, as Z3 5.3.2 measures a goal", () => {
+  it("measure both sides of each comparison and each numeral", () => {
+    expect(
+      run([
+        '(set-option :diagnostic-output-channel "stdout")',
+        "(declare-const x Int)",
+        "(declare-const y Real)",
+        "(declare-fun f (Int) Int)",
+        "(declare-const b Bool)",
+        "(assert (> (* x x (f x)) 3))",
+        "(assert (= (* 2.5 y y y) (/ 7.0 3.0)))",
+        "(assert (forall ((z Int)) (<= (* z x) (- 300))))",
+        "(assert (= b (> x 1000000)))",
+        '(apply (and-then (echo "max-deg " arith-max-deg " avg-deg " arith-avg-deg) (echo "max-bw " arith-max-bw " avg-bw " arith-avg-bw) (fail-if (> arith-avg-deg 1))))',
+      ]),
+    ).toEqual([
+      "max-deg 3 avg-deg 1.25",
+      "max-bw 20 avg-bw 6.83333",
+      '(error "tactic failed: fail-if tactic")',
+    ]);
+  });
+});
+
+describe("qfufbv, as Z3 5.3.2 answers QF_UFBV", () => {
+  it("ackermannizes the functions and bit-blasts the goal", () => {
+    expect(
+      run([
+        "(set-logic QF_UFBV)",
+        "(declare-const v (_ BitVec 4))",
+        "(declare-fun f ((_ BitVec 4)) (_ BitVec 4))",
+        "(assert (distinct v #b1101))",
+        "(assert (bvult (f v) (f #x1)))",
+        "(check-sat)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      "(\n  (define-fun v () (_ BitVec 4)\n    #x0)\n  (define-fun f ((x!0 (_ BitVec 4))) (_ BitVec 4)\n    (ite (= x!0 #x1) #xf\n      #x0))\n)",
+    ]);
+  });
+});
+
+describe("try-for, as Z3 5.3.2 runs it", () => {
+  it("turns an error of its tactic into a tactic failure, which or-else catches", () => {
+    expect(
+      run([
+        "(set-logic QF_LRA)",
+        "(declare-const y Real)",
+        "(assert (> (/ y 0.0) 1.0))",
+        "(check-sat-using (or-else (try-for smt 100) skip))",
+        "(get-info :reason-unknown)",
+        "(check-sat-using (or-else smt skip))",
+        "(get-info :reason-unknown)",
+      ]),
+    ).toEqual([
+      "unknown",
+      '(:reason-unknown "unknown")',
+      "unknown",
+      '(:reason-unknown "Benchmark contains uninterpreted function symbols, but specified logic does not support them.")',
+    ]);
+  });
+
+  it("turns a resource limit inside its tactic into a tactic failure, which or-else catches", () => {
+    expect(
+      run([
+        "(set-option :rlimit 1)",
+        "(declare-const x (_ BitVec 4))",
+        "(assert (= (bvmul x x) #x4))",
+        "(check-sat-using (or-else (try-for (then bit-blast sat) 100) skip))",
+        "(get-info :reason-unknown)",
+        "(check-sat-using (try-for (then bit-blast sat) 100))",
+        "(get-info :reason-unknown)",
+      ]),
+    ).toEqual([
+      "unknown",
+      '(:reason-unknown "unknown")',
+      "unknown",
+      '(:reason-unknown "max. resource limit exceeded")',
+    ]);
+  });
+});
+
+describe("purify-arith, as Z3 5.3.2 composes it", () => {
+  it("stops at a goal that one of its steps decides", () => {
+    expect(
+      run([
+        "(apply purify-arith)",
+        "(declare-const x Int)",
+        "(assert (or (> x 2) (distinct (* x 0) (mod (- 1) 5))))",
+        "(apply purify-arith)",
+      ]),
+    ).toEqual([
+      "(goals\n(goal\n  :precision precise :depth 1)\n)",
+      "(goals\n(goal\n  :precision precise :depth 2)\n)",
+    ]);
+  });
+});
+
+describe("split-clause, as Z3 5.3.2 splits a goal", () => {
+  it("splits the first clause, or the largest, into a subgoal for each literal", () => {
+    expect(
+      run([
+        "(declare-const a Bool)",
+        "(declare-const b Bool)",
+        "(declare-const c Bool)",
+        "(declare-const x Int)",
+        "(assert (> x 0))",
+        "(assert (or a (> x 5)))",
+        "(assert (or a b c))",
+        "(apply split-clause)",
+        "(apply (using-params split-clause :split_largest_clause true))",
+        "(reset)",
+        "(declare-const x Int)",
+        "(assert (> x 0))",
+        "(apply split-clause)",
+      ]),
+    ).toEqual([
+      [
+        "(goals",
+        "(goal\n  (> x 0)\n  a\n  (or a b c)\n  :precision precise :depth 1)",
+        "(goal\n  (> x 0)\n  (> x 5)\n  (or a b c)\n  :precision precise :depth 1)",
+        ")",
+      ].join("\n"),
+      [
+        "(goals",
+        "(goal\n  (> x 0)\n  (or a (> x 5))\n  a\n  :precision precise :depth 1)",
+        "(goal\n  (> x 0)\n  (or a (> x 5))\n  b\n  :precision precise :depth 1)",
+        "(goal\n  (> x 0)\n  (or a (> x 5))\n  c\n  :precision precise :depth 1)",
+        ")",
+      ].join("\n"),
+      '(error "tactic failed: split-clause tactic failed, goal does not contain any clause")',
+    ]);
+  });
+
+  it("looks for a clause before it checks for proofs", () => {
+    expect(
+      run([
+        "(set-option :produce-proofs true)",
+        "(declare-const a Bool)",
+        "(declare-const b Bool)",
+        "(assert a)",
+        "(assert (not b))",
+        "(apply split-clause)",
+        "(check-sat-using split-clause)",
+        "(get-info :reason-unknown)",
+      ]),
+    ).toEqual([
+      '(error "tactic failed: split-clause tactic failed, goal does not contain any clause")',
+      "unknown",
+      '(:reason-unknown "split-clause tactic failed, goal does not contain any clause")',
+    ]);
+  });
+
+  it("keeps the dependencies of the goal, so the smt tactic assumes each name", () => {
+    expect(
+      run([
+        "(set-option :produce-unsat-cores true)",
+        "(declare-const a Bool)",
+        "(declare-const b Bool)",
+        "(declare-const c Bool)",
+        "(declare-const x Int)",
+        "(assert (> x 0))",
+        "(assert (or a (> x 5)))",
+        "(assert (! (or a b c) :named n1))",
+        "(check-sat-using (then split-clause smt))",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      [
+        "(",
+        "  (define-fun n1 () Bool\n    (or a b c))",
+        "  (define-fun x () Int\n    1)",
+        "  (define-fun a () Bool\n    true)",
+        "  (define-fun b () Bool\n    false)",
+        "  (define-fun c () Bool\n    false)",
+        ")",
+      ].join("\n"),
+    ]);
+  });
+
+  // Z3 answers () after then and repeat, whose core it loses.
+  it("joins the cores of the subgoals a combinator shows unsat, as par-then does", () => {
+    expect(
+      run([
+        "(set-option :produce-unsat-cores true)",
+        "(declare-const a Bool)",
+        "(declare-const x Int)",
+        "(assert (! (or a (> x 5)) :named n1))",
+        "(assert (! (not a) :named n2))",
+        "(assert (! (< x 0) :named n3))",
+        "(assert (> x (- 9)))",
+        "(check-sat-using (par-then split-clause smt))",
+        "(get-unsat-core)",
+        "(check-sat-using (then split-clause smt))",
+        "(get-unsat-core)",
+        "(check-sat-using (repeat (or-else split-clause smt)))",
+        "(get-unsat-core)",
+      ]),
+    ).toEqual(["unsat", "(n1 n3 n2)", "unsat", "(n1 n3 n2)", "unsat", "(n1 n3 n2)"]);
+  });
+});
+
+describe("if-no-models, as Z3 5.3.2 runs it", () => {
+  it("runs its tactic when the goal produces no models", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(assert (> x 0))",
+        "(apply (if-no-models fail))",
+        "(set-option :produce-models false)",
+        "(apply (if-no-models fail))",
+        "(check-sat-using (if-no-models fail))",
+      ]),
+    ).toEqual([
+      "(goals\n(goal\n  (> x 0)\n  :precision precise :depth 0)\n)",
+      '(error "tactic failed: fail tactic")',
+      "unknown",
+    ]);
+  });
+});
+
+describe("the models check-sat-using leaves, as Z3 5.3.2 makes them", () => {
+  it("converts a model for an undecided goal that has a model converter", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(declare-const b Bool)",
+        "(assert (= x (+ y 1)))",
+        "(assert (or b (> (* y y) 2)))",
+        "(check-sat-using solve-eqs)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "unknown",
+      "(\n  (define-fun x () Int\n    0)\n  (define-fun y () Int\n    (- 1))\n  (define-fun b () Bool\n    false)\n)",
+    ]);
+  });
+
+  it("converts a model for an undecided goal through the empty model trail of a simplifier", () => {
+    const problem = [
+      "(declare-const x Int)",
+      "(declare-const b Bool)",
+      "(assert (or b (> (* x x) 2)))",
+    ];
+    const model = "(\n  (define-fun b () Bool\n    false)\n  (define-fun x () Int\n    0)\n)";
+    expect(
+      run([
+        ...problem,
+        "(check-sat-using solve-eqs)",
+        "(get-model)",
+        "(reset)",
+        ...problem,
+        "(check-sat-using dom-simplify)",
+        "(get-model)",
+      ]),
+    ).toEqual(["unknown", model, "unknown", model]);
+  });
+
+  it("converts a model for an undecided goal through the empty model trail of der and qe-light", () => {
+    const model = "(\n  (define-fun b () Bool\n    false)\n  (define-fun x () Int\n    0)\n)";
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(declare-const b Bool)",
+        "(assert (or b (> (* x x) 2)))",
+        "(check-sat-using der)",
+        "(get-model)",
+        "(check-sat-using qe-light)",
+        "(get-model)",
+      ]),
+    ).toEqual(["unknown", model, "unknown", model]);
+  });
+
+  it("copies the model of the tactic that decided the goal in the order of its table", () => {
+    expect(
+      run([
+        "(set-option :produce-unsat-cores true)",
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(assert (! (= x (+ y 1)) :named a1))",
+        "(assert (! (> y 2) :named a2))",
+        "(check-sat-using smt)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      "(\n  (define-fun a2 () Bool\n    (> y 2))\n  (define-fun a1 () Bool\n    (= x (+ y 1)))\n  (define-fun y () Int\n    3)\n  (define-fun x () Int\n    4)\n)",
+    ]);
+  });
+
+  it("completes the models of nlsat and nlqsat with false, as a model rather than a proto_model does", () => {
+    const bools = ["(declare-const b0 Bool)", "(declare-const b1 Bool)", "(declare-const b2 Bool)"];
+    const bindings =
+      "  (define-fun b0 () Bool\n    false)\n  (define-fun b1 () Bool\n    false)\n  (define-fun b2 () Bool\n    false)\n";
+    expect(
+      run([
+        "(declare-const x Real)",
+        ...bools,
+        "(assert (= (* x x) 4.0))",
+        "(check-sat-using nlsat)",
+        "(get-model)",
+        "(reset)",
+        "(declare-const x Real)",
+        ...bools,
+        "(assert (exists ((z Real)) (and (> z 0.0) (= (* z x) 1.0))))",
+        "(check-sat-using nlqsat)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      `(\n  (define-fun x () Real\n    (- 2.0))\n${bindings})`,
+      "sat",
+      `(\n  (define-fun x () Real\n    1.0)\n${bindings})`,
+    ]);
+  });
+});
+
+describe("hoist_ite, as Z3 5.3.2 simplifies", () => {
+  it("moves the summands every branch shares out of an if-then-else", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(declare-const z Int)",
+        "(declare-const w Int)",
+        "(declare-const c Bool)",
+        "(declare-const d Bool)",
+        "(assert (= w (+ (ite c (+ x y w) (ite d (+ y x z) (+ w y x 3))) 1)))",
+        "(assert (> (+ (ite c (+ x y z w) (+ z w y x 1)) (ite d (+ x 2) (+ x 4)) w) 0))",
+        "(apply (using-params simplify :hoist_ite true))",
+      ]),
+    ).toEqual([
+      "(goals\n(goal\n  (let ((a!1 (+ 1 (ite c w (ite d z (+ 3 w))) y x)))\n    (= w a!1))\n  (not (<= (+ (ite c 0 1) z y (* 2 w) (* 2 x) (ite d 2 4)) 0))\n  :precision precise :depth 1)\n)",
+    ]);
+  });
+});
+
+describe("theory_pb, as Z3 5.3.2 internalizes it", () => {
+  it("gives an argument that another theory owns a proxy", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(assert (= (+ (ite (> x 0) 1 0) (ite (> y 0) 1 0)) 1))",
+        "(assert (> (+ x y) 4))",
+        "(check-sat-using (then lia2card smt))",
+        "(get-model)",
+      ]),
+    ).toEqual(["sat", "(\n  (define-fun y () Int\n    5)\n  (define-fun x () Int\n    0)\n)"]);
+  });
+});

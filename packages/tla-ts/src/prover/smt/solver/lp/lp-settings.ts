@@ -54,7 +54,7 @@ export class LpSettings {
     nraCalls: 0,
   };
   readonly maxRowLengthForBoundPropagation = 300;
-  readonly isPropagatingEqs = true;
+  isPropagatingEqs = true;
   readonly intFindCubePeriod = 4;
   readonly lcubeFlips = 16;
   readonly hnfCutPeriod = 4;

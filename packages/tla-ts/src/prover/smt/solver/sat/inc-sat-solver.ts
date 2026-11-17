@@ -1,5 +1,6 @@
 import { SmtTacticError, SmtUnsupportedError } from "../../../../errors";
 import { type AstManager, OP_AND, OP_EQ, OP_IMPLIES, OP_NOT, OP_OR, SORT_BOOL } from "../ast";
+import { mkNot } from "../ast-util";
 import { BitBlasterRewriter } from "../bit-blast-tactic";
 import { Goal } from "../goal";
 import { L_FALSE, L_TRUE, L_UNDEF } from "../lbool";
@@ -24,6 +25,7 @@ interface Scope {
   readonly converters: Goal["converters"];
   readonly fmlsSize: number;
   readonly fmlsHead: number;
+  readonly namesSize: number;
 }
 
 export class IncSatSolver {
@@ -31,6 +33,7 @@ export class IncSatSolver {
   private readonly goal2sat: Goal2Sat;
   private readonly fmls: RefVector;
   private fmlsHead = 0;
+  private readonly names: RefVector;
   private isCnf = true;
   private readonly core: RefVector;
   private dep2asm = new Map<number, number>();
@@ -62,6 +65,7 @@ export class IncSatSolver {
     );
     if (mkThSolver !== null) this.goal2sat.ensureEuf();
     this.fmls = new RefVector(manager);
+    this.names = new RefVector(manager);
     this.core = new RefVector(manager);
     this.converters = new Goal(manager);
     this.internalized = new RefVector(manager);
@@ -87,6 +91,24 @@ export class IncSatSolver {
     this.fmls.push(expr);
   }
 
+  assertNamed(expr: number, name: number) {
+    const manager = this.manager;
+    this.names.push(name);
+    if (this.isCnf && isLiteral(manager, expr) && isLiteral(manager, name))
+      return this.assertExpr(manager.mkApp(OP_OR, [mkNot(manager, name), expr], SORT_BOOL));
+    if (
+      this.isCnf &&
+      manager.getOp(expr) === OP_OR &&
+      this.isClause(expr) &&
+      isLiteral(manager, name)
+    )
+      return this.assertExpr(
+        manager.mkApp(OP_OR, [mkNot(manager, name), ...manager.getArgs(expr)], SORT_BOOL),
+      );
+    this.isCnf = false;
+    this.assertExpr(manager.mkApp(OP_IMPLIES, [name, expr], SORT_BOOL));
+  }
+
   // Outside sat.euf, a scope would also need the scopes of the bit-blaster.
   push() {
     if (this.goal2sat.euf === null) throw new SmtUnsupportedError("push on the SAT solver");
@@ -97,6 +119,7 @@ export class IncSatSolver {
       converters: this.converters.converters,
       fmlsSize: this.fmls.size,
       fmlsHead: this.fmlsHead,
+      namesSize: this.names.size,
     });
   }
 
@@ -109,6 +132,7 @@ export class IncSatSolver {
       this.converters.converters = scope.converters;
       this.fmlsHead = scope.fmlsHead;
       this.fmls.shrink(scope.fmlsSize);
+      this.names.shrink(scope.namesSize);
     }
   }
 
@@ -203,7 +227,7 @@ export class IncSatSolver {
     this.dep2asm = new Map();
     const internalized = this.internalizeFormulas();
     if (internalized !== L_TRUE) return internalized;
-    this.internalizeAssumptions(literals);
+    this.internalizeAssumptions([...literals, ...this.names.items]);
     this.reasonUnknown = "no reason given";
     this.isInternalizedConverted = false;
     const result = this.solver.check(this.asms);
@@ -365,6 +389,7 @@ export class IncSatSolver {
     for (const model of this.models) model.decRef();
     this.models = [];
     this.fmls.reset();
+    this.names.reset();
     this.core.reset();
     this.internalized.reset();
     this.releaseBitBlaster();

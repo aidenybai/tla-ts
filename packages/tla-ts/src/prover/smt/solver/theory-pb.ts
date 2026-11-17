@@ -1,5 +1,13 @@
-import { SmtInvariantError, SmtUnsupportedError } from "../../../errors";
-import { FAMILY_PB, OP_AT_LEAST_K, OP_AT_MOST_K, OP_PB_EQ, OP_PB_GE, OP_PB_LE } from "./ast";
+import { SmtInvariantError } from "../../../errors";
+import {
+  FAMILY_PB,
+  OP_AT_LEAST_K,
+  OP_AT_MOST_K,
+  OP_PB_AUX_BOOL,
+  OP_PB_EQ,
+  OP_PB_GE,
+  OP_PB_LE,
+} from "./ast";
 import { mkNot } from "./ast-util";
 import { BinJustification, CLS_TH_LEMMA } from "./clause";
 import type { Context } from "./context";
@@ -308,6 +316,10 @@ export class TheoryPb extends Theory {
     const context = this.context;
     const manager = this.manager;
     if (context.isBInternalized(atom)) return true;
+    if (manager.getOp(atom) === OP_PB_AUX_BOOL) {
+      context.setVarTheory(context.mkBoolVar(atom), this.id);
+      return true;
+    }
     if (this.internalizeCard(atom)) return true;
     const boolVar = context.mkBoolVar(atom);
     context.setVarTheory(boolVar, this.id);
@@ -394,8 +406,14 @@ export class TheoryPb extends Theory {
       hasBoolVar = true;
       isNot = !isNot;
     }
-    if (!hasBoolVar)
-      throw new SmtUnsupportedError("pseudo-Boolean arguments that another theory owns");
+    if (!hasBoolVar) {
+      const proxy = manager.mkPbAuxBool();
+      const definition = manager.mkEq(proxy, arg);
+      context.internalize(definition, false);
+      boolVar = context.getBoolVar(proxy);
+      context.mkThAxiom([mkLiteral(context.getBoolVar(definition))]);
+      context.markAsRelevant(proxy);
+    }
     return mkLiteral(boolVar, isNot);
   }
 

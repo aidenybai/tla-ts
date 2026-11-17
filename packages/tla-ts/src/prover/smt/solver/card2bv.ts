@@ -17,6 +17,7 @@ import {
 import type { Goal } from "./goal";
 import { Rational } from "./rational";
 import { Rewriter, type RewriterOptions } from "./rewriter";
+import { finishSimplifier } from "./dependent-expr-state";
 
 interface Bound {
   value: Rational;
@@ -103,7 +104,5 @@ export const card2bv = (manager: AstManager, goal: Goal, options: RewriterOption
     }
     rewriter.release();
   }
-  goal.elimTrue();
-  goal.elimRedundancies();
-  goal.depth++;
+  finishSimplifier(goal);
 };

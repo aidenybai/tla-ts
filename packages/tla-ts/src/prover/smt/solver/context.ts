@@ -210,7 +210,7 @@ export class Context extends Internalizer {
     this.qmanager = new DefaultQuantifierManager(this);
   }
 
-  // As in Z3, reading the parameters again drops the setup's tuning, but relevancy keeps the lower level.
+  // As in Z3, rereading the parameters drops the setup's tuning but for eliminate_term_ite and relevancy.
   updateParams(params: KernelParams) {
     this.params.isMbqi = params.isMbqi;
     this.params.mbqiMaxIterations = params.mbqiMaxIterations;
@@ -218,6 +218,7 @@ export class Context extends Internalizer {
       ...DEFAULT_CONFIG,
       theories: this.config.theories,
       isFindingMacros: params.isFindingMacros,
+      isEliminatingTermIte: this.config.isEliminatingTermIte,
     };
     this.qmanager.updateParams();
   }
@@ -228,6 +229,7 @@ export class Context extends Internalizer {
     isUsingStaticFeatures: boolean,
     asserted: AssertedFormulas,
   ) {
+    if (this.isInconsistent() || asserted.isInconsistent) return false;
     const config = getSmtConfig(
       this.manager,
       setup,
@@ -242,6 +244,7 @@ export class Context extends Internalizer {
       if (family !== FAMILY_POLY || this.manager.hasTypeVars) this.registerFamily(family);
     this.registerFamily(FAMILY_PB);
     asserted.setup(config);
+    return true;
   }
 
   // register_plugin keeps the theory a family already has.

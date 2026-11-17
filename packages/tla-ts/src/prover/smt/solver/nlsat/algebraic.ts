@@ -1,4 +1,4 @@
-import { SmtCanceledError, SmtInvariantError } from "../../../../errors";
+import { SmtCanceledError, SmtDefaultError, SmtInvariantError } from "../../../../errors";
 import { Rational } from "../rational";
 import type { ResourceLimit } from "../rlimit";
 import { getLog2, Mpbq } from "./mpbq";
@@ -930,7 +930,7 @@ export class AlgebraicManager {
 
   power(anum: Anum, exponent: number): Anum {
     if (exponent === 0) {
-      if (this.isZero(anum)) throw new SmtInvariantError("0^0 is indeterminate");
+      if (this.isZero(anum)) throw new SmtDefaultError("0^0 is indeterminate");
       return new Anum(Rational.one);
     }
     if (exponent === 1) return this.copy(anum);
@@ -939,10 +939,10 @@ export class AlgebraicManager {
   }
 
   root(anum: Anum, k: number): Anum {
-    if (k === 0) throw new SmtInvariantError("0-th root is indeterminate");
+    if (k === 0) throw new SmtDefaultError("0-th root is indeterminate");
     if (k === 1 || this.isZero(anum)) return this.copy(anum);
     if (this.isNeg(anum) && k % 2 === 0)
-      throw new SmtInvariantError("even root of negative number is not real");
+      throw new SmtDefaultError("even root of negative number is not real");
     if (anum.value instanceof Rational) return this.rootRational(anum.value, k);
     return this.mkRoot(anum, k);
   }

@@ -18,6 +18,7 @@ import { ObjMap } from "./hashtable";
 import { RefVector } from "./ref-vector";
 import { Rewriter, type RewriterOptions } from "./rewriter";
 import { RewriterTpl } from "./rewriter-tpl";
+import { finishSimplifier } from "./dependent-expr-state";
 
 const SIMPLIFIED_FAMILIES = [
   FAMILY_BASIC,
@@ -272,7 +273,5 @@ export const cofactorTermIte = (
       eliminator.release();
     }
   }
-  goal.elimTrue();
-  goal.elimRedundancies();
-  goal.depth++;
+  finishSimplifier(goal);
 };

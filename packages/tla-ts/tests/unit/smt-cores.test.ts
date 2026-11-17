@@ -180,4 +180,62 @@ describe("runSmtlibScript orders cores and terms as Z3 does", () => {
       ")",
     ]);
   });
+
+  it("minimizes the core with checks of the kernel under smt.core.minimize", () => {
+    expect(
+      run([
+        "(set-option :produce-unsat-cores true)",
+        "(set-option :smt.core.minimize true)",
+        "(set-logic QF_LIA)",
+        "(declare-const b0 Bool)",
+        "(declare-const b1 Bool)",
+        "(declare-const x Int)",
+        "(assert (! (> x 2) :named n1))",
+        "(check-sat-assuming ((not b0) b1 (< x 0) b0))",
+        "(get-unsat-core)",
+        "(get-unsat-core)",
+        "(check-sat-assuming ((< x 0) b1))",
+        "(get-unsat-core)",
+      ]),
+    ).toEqual(["unsat", "((not b0) b0)", "()", "unsat", "((< x 0) n1)"]);
+  });
+
+  it("answers the incremental checks of QF_BV with the SAT solver", () => {
+    expect(
+      run([
+        "(set-option :produce-unsat-cores true)",
+        "(set-logic QF_BV)",
+        "(declare-const b0 Bool)",
+        "(declare-const b1 Bool)",
+        "(assert (not b0))",
+        "(assert (! b0 :named n2))",
+        "(check-sat-assuming (n2))",
+        "(get-unsat-core)",
+        "(check-sat-assuming ((not b1) b1))",
+        "(get-unsat-core)",
+        "(reset)",
+        "(set-logic QF_BV)",
+        "(declare-const v (_ BitVec 4))",
+        "(declare-const w (_ BitVec 4))",
+        "(assert (bvult v w))",
+        "(check-sat)",
+        "(assert (bvugt (bvmul v v) #x3))",
+        "(check-sat)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "unsat",
+      "(b0)",
+      "unsat",
+      "((not b1) b1)",
+      "sat",
+      "sat",
+      "(",
+      "  (define-fun w () (_ BitVec 4)",
+      "    #xc)",
+      "  (define-fun v () (_ BitVec 4)",
+      "    #xb)",
+      ")",
+    ]);
+  });
 });

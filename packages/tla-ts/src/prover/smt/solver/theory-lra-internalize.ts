@@ -86,6 +86,7 @@ export abstract class TheoryLraInternalize extends TheoryLraAxioms {
 
   init() {
     const manager = this.manager;
+    this.solver.settings.isPropagatingEqs = this.context.config.isArithPropagatingEqs;
     this.oneVar = this.addConst(manager.mkNumeral(1n));
     this.realOneVar = this.addConst(manager.mkRealNumeral(Rational.one));
     this.zeroVar = this.addConst(manager.mkNumeral(0n));

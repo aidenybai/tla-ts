@@ -1,5 +1,5 @@
 import type { AstManager } from "./ast";
-import type { Goal } from "./goal";
+import type { Definition, Goal } from "./goal";
 
 // The formula read last stays referenced, as m_dep, until the next read or the end of the tactic.
 export class DependentExprState {
@@ -60,6 +60,13 @@ export class DependentExprState {
   }
 }
 
+export const finishSimplifier = (goal: Goal, definitions: Definition[] = []) => {
+  goal.elimTrue();
+  goal.elimRedundancies();
+  goal.depth++;
+  if (definitions.length > 0 || goal.isModelsEnabled) goal.addDefinitions(definitions);
+};
+
 interface Simplifier {
   reduce(): void;
   release(): void;
@@ -73,9 +80,7 @@ export const runSimplifier = (
   const state = new DependentExprState(goal.manager, goal);
   const simplifier = create(state);
   if (!goal.isProofsEnabled || isSupportingProofs) simplifier.reduce();
-  goal.elimTrue();
-  goal.elimRedundancies();
-  goal.depth++;
+  finishSimplifier(goal);
   simplifier.release();
   state.release();
 };

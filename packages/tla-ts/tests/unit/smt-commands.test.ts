@@ -355,6 +355,25 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
     ).toEqual(["unsat", "(+ 7 x)", "(* 2 x)", "((not p) (not q))", "unsat", "((not p) (not q))"]);
   });
 
+  it("reports an even root of a negative number as an error of the command", () => {
+    const message = "even root of negative number is not real";
+    expect(
+      run([
+        "(simplify (+ 1.0 (^ (- 2.0 (^ 6.0 0.5)) 0.5)))",
+        "(declare-const x Real)",
+        "(assert (= x (^ (- 2.0 (^ 6.0 0.5)) 0.5)))",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+      ]),
+    ).toEqual([
+      `(error "simplifier failed: ${message}")`,
+      "(+ 1.0 (^ (- 2.0 (^ 6.0 (/ 1.0 2.0))) (/ 1.0 2.0)))",
+      `(error "line 3 column 41: ${message}")`,
+      "unknown",
+      `(:reason-unknown "${message}")`,
+    ]);
+  });
+
   // sat_params reads the sat module's global parameters where using-params sets none.
   it("searches with the global sat parameters in the sat tactic", () => {
     expect(
@@ -996,6 +1015,118 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
       "(objectives",
       " (x  (interval (/ 3339217363285192246361.0 2361183241434822606848.0) (/ 6678434726570484986977.0 4722366482869645213696.0)))",
       ")",
+    ]);
+  });
+
+  it("leaves the definitions of a popped scope out of the model", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(declare-const b Bool)",
+        "(assert (! (> x 0) :named a1))",
+        "(push)",
+        "(define-fun c () Int 5)",
+        "(assert (! (not b) :named a2))",
+        "(assert (> x c))",
+        "(check-sat)",
+        "(pop)",
+        "(check-sat)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      "sat",
+      "(",
+      "  (define-fun x () Int",
+      "    6)",
+      "  (define-fun a1 () Bool",
+      "    (> x 0))",
+      "  (define-fun b () Bool",
+      "    false)",
+      ")",
+    ]);
+  });
+
+  it("names the if-then-else terms of an integer problem before the search", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(assert (> (* 2 (ite (< x 0) (- x) x)) (ite (> y x) y 5)))",
+        "(check-sat)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      "(",
+      "  (define-fun x () Int",
+      "    (- 3))",
+      "  (define-fun y () Int",
+      "    (- 3))",
+      ")",
+    ]);
+  });
+
+  it("propagates no equalities from the bounds of an integer problem", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(assert (> (+ (ite (> x y) x y) (abs y)) 10))",
+        "(check-sat)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      "(",
+      "  (define-fun x () Int",
+      "    11)",
+      "  (define-fun y () Int",
+      "    0)",
+      ")",
+    ]);
+  });
+
+  it("numbers a datatype after the sorts of the sequence plugin and List, as its first constructor depends on it", () => {
+    const color = [
+      "(declare-datatypes ((Color 0)) (((red) (green) (blue))))",
+      "(declare-const c Color)",
+      "(check-sat)",
+      "(get-model)",
+    ];
+    expect(run([...color, "(reset)", "(set-logic ALL)", ...color])).toEqual([
+      "sat",
+      "(",
+      "  (define-fun c () Color",
+      "    red)",
+      ")",
+      "sat",
+      "(",
+      "  (define-fun c () Color",
+      "    blue)",
+      ")",
+    ]);
+  });
+
+  it("has no model after a tactic leaves its goal undecided without a model converter", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(assert (> (* x x) 2))",
+        "(check-sat-using simplify)",
+        "(get-model)",
+        "(reset)",
+        "(set-logic QF_SLIA)",
+        "(declare-const s String)",
+        '(assert (= (str.replace_re (str.++ s s) (str.to_re "a") s) (str.replace_all "" s "ba")))',
+        "(check-sat)",
+        "(get-value (s))",
+      ]),
+    ).toEqual([
+      "unknown",
+      '(error "line 4 column 10: model is not available")',
+      "unknown",
+      '(error "line 10 column 14: model is not available")',
     ]);
   });
 });

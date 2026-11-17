@@ -372,3 +372,67 @@ describe("a finite-field literal, as Z3 5.3.2 reports it", () => {
     ]);
   });
 });
+
+describe("match, as Z3 5.3.2 compiles it", () => {
+  const declarations = [
+    "(declare-datatypes ((Lst 0)) (((nil) (cons (hd Int) (tl Lst)))))",
+    "(declare-datatype Color ((red) (green) (blue)))",
+    "(declare-const l Lst)",
+    "(declare-const c Color)",
+  ];
+
+  it("tests the cases from the first, binds the accessors, and ignores the last test", () => {
+    expect(
+      run([
+        ...declarations,
+        "(simplify (match c ((red 1) (green 2.5) (blue 3))))",
+        "(simplify (match c (case red 1) (case _ 2)))",
+        "(simplify (match l ((x (hd x)))))",
+        "(simplify (forall ((y Lst) (z Int)) (= (match y ((nil z) ((cons h t) (+ h z)))) z)))",
+        "(simplify (exists ((y Lst)) (match y ((nil true) ((cons h t) (match t ((nil (> h 0)) ((cons h2 t2) (> h h2)))))))))",
+        "(assert (> (match l ((nil 0) ((cons h t) (match t ((nil h) ((cons h2 _) (+ h h2))))))) 7))",
+        "(check-sat)",
+        "(get-model)",
+        "(get-value ((match l ((nil 0) ((cons h t) h)))))",
+      ]),
+    ).toEqual([
+      "(ite ((_ is red) c) 1.0 (ite ((_ is green) c) (/ 5.0 2.0) 3.0))",
+      "(ite ((_ is red) c) 1 2)",
+      "(hd l)",
+      "(forall ((y Lst) (z Int)) (= (ite ((_ is nil) y) z (+ (hd y) z)) z))",
+      "(exists ((y Lst))\n  (let ((a!1 (not (<= (hd y) (hd (tl y))))))\n  (let ((a!2 (ite ((_ is nil) (tl y)) (not (<= (hd y) 0)) a!1)))\n    (or ((_ is nil) y) a!2))))",
+      "sat",
+      "(\n  (define-fun l () Lst\n    (cons 8 (cons 0 nil)))\n  (define-fun c () Color\n    blue)\n)",
+      "(((match l ((nil 0) ((cons h t) h))) 8))",
+    ]);
+  });
+
+  it("reports a malformed or incomplete match where Z3 does", () => {
+    expect(
+      run([
+        ...declarations,
+        "(simplify (match c ((red 1) (green 2))))",
+        "(simplify (match c ((red 1) (green 2) (red 3))))",
+        "(simplify (match 1 ((y 1))))",
+        "(simplify (match l ((nil 0) ((cons h h) h))))",
+        "(simplify (match l ((nil 0) ((cons h) h))))",
+        "(simplify (match c ((l 1))))",
+        "(simplify (match c ((red 1) (green l) (blue 2))))",
+        "(simplify (match c red))",
+        "(simplify (match c ((red 1 2))))",
+        "(simplify (match l (((cons 1 t) 1))))",
+      ]),
+    ).toEqual([
+      '(error "line 5 column 38: non-exhaustive pattern match")',
+      '(error "line 6 column 46: a constructor is missing from pattern match")',
+      '(error "line 7 column 26: pattern matching is only supported for algebraic datatypes")',
+      '(error "line 8 column 38: unexpected repeated variable in pattern expression")',
+      '(error "line 9 column 38: invalid function declaration reference, unknown indexed function cons")',
+      "1",
+      '(error "line 11 column 47: Sorts Lst and Int are incompatible")',
+      '(error "line 12 column 19: pattern bindings should be enclosed in a parenthesis got red")',
+      "(error \"line 13 column 27: invalid pattern binding, ')' expected got red\")",
+      '(error "line 14 column 27: variable symbol expected")',
+    ]);
+  });
+});

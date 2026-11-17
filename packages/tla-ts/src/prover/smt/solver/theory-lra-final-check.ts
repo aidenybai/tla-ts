@@ -125,6 +125,7 @@ export abstract class TheoryLraFinalCheck extends TheoryLraModel {
       this.context.setTrueFirstFlag(getVar(literal));
     }
     for (const lemma of nla.lemmas) this.falseCaseOfCheckNla(lemma);
+    if (!this.isPropagatingEqs()) return;
     for (const equality of nla.fixedEqualities)
       this.addEquality(equality.lpVar, equality.value, equality.explanation);
     for (const equality of nla.equalities)

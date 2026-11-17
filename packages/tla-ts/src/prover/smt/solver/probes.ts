@@ -45,6 +45,8 @@ import {
 } from "./ast";
 import { getAckrBound } from "./ackr-helper";
 import { BoundManager } from "./bound-manager";
+import { Expr2Polynomial } from "./expr2polynomial";
+import { PolynomialManager, PolynomialRef } from "./nlsat/polynomial";
 import { findNonPb } from "./pb2bv-tactic";
 import type { Goal } from "./goal";
 import { isSymbol, type SExpr } from "./smtlib-parser";
@@ -360,6 +362,65 @@ const hasPatterns: Probe = (goal) => {
   );
 };
 
+const mkArithDegreeProbe =
+  (isAverage: boolean): Probe =>
+  (goal) => {
+    const manager = goal.manager;
+    let variableCount = 0;
+    const expr2poly = new Expr2Polynomial(
+      manager,
+      new PolynomialManager(manager.limit),
+      new Map(),
+      () => variableCount++,
+    );
+    let maxDegree = 0;
+    let accDegree = 0;
+    let counter = 0;
+    const updateDegree = (polynomial: PolynomialRef) => {
+      const degree = expr2poly.pm.totalDegree(polynomial.get());
+      if (degree > maxDegree) maxDegree = degree;
+      accDegree += degree;
+      counter++;
+    };
+    const process = (expr: number) => {
+      const first = new PolynomialRef(expr2poly.pm);
+      const second = new PolynomialRef(expr2poly.pm);
+      expr2poly.toPolynomial(manager.getArg(expr, 0), first);
+      expr2poly.toPolynomial(manager.getArg(expr, 1), second);
+      updateDegree(first);
+      updateDegree(second);
+      second.reset();
+      first.reset();
+    };
+    forEachExpr(goal, (expr) => {
+      const op = manager.getOp(expr);
+      if (op === OP_LE || op === OP_LT || op === OP_GT || op === OP_GE) process(expr);
+      if (op === OP_EQ && isArithSort(manager.sorts[manager.getArg(expr, 0)])) process(expr);
+    });
+    expr2poly.release();
+    return isAverage ? (counter === 0 ? 0 : accDegree / counter) : maxDegree;
+  };
+
+const getBitsize = (value: bigint) => (value < 0n ? -value : value).toString(2).length;
+
+const mkArithBwProbe =
+  (isAverage: boolean): Probe =>
+  (goal) => {
+    const manager = goal.manager;
+    let maxBitWidth = 0;
+    let accBitWidth = 0;
+    let counter = 0;
+    forEachExpr(goal, (expr) => {
+      if (!manager.isNumeral(expr)) return;
+      const value = manager.getRationalValue(expr);
+      const bitWidth = getBitsize(value.num) + (value.den === 1n ? 0 : getBitsize(value.den));
+      if (bitWidth > maxBitWidth) maxBitWidth = bitWidth;
+      accBitWidth += bitWidth;
+      counter++;
+    });
+    return isAverage ? (counter === 0 ? 0 : accBitWidth / counter) : maxBitWidth;
+  };
+
 const NAMED_PROBES = new Map<string, Probe>([
   ["depth", (goal) => goal.depth],
   ["size", (goal) => goal.forms.size],
@@ -435,11 +496,13 @@ const NAMED_PROBES = new Map<string, Probe>([
       ),
   ],
   ["ackr-bound-probe", getAckrBound],
+  ["arith-max-deg", mkArithDegreeProbe(false)],
+  ["arith-avg-deg", mkArithDegreeProbe(true)],
+  ["arith-max-bw", mkArithBwProbe(false)],
+  ["arith-avg-bw", mkArithBwProbe(true)],
 ]);
 
-const UNPORTED_PROBES = new Set(
-  "memory arith-max-deg arith-avg-deg arith-max-bw arith-avg-bw".split(" "),
-);
+const UNPORTED_PROBES = new Set(["memory"]);
 
 const BINARY_PROBES = new Map<string, (first: number, second: number) => number>([
   ["=", (first, second) => Number(first === second)],
@@ -461,9 +524,11 @@ const NARY_PROBES = new Map<string, (first: number, second: number) => number>([
 ]);
 
 export const compileProbe = (sexpr: SExpr, isInternal = false): Probe => {
-  if (sexpr.kind === "numeral") {
-    const value = Number(sexpr.text);
-    if (value > 2 ** 31 - 1)
+  // A decimal is a numeral of the s-expression, which is_int32 rejects unless it is whole.
+  if (sexpr.kind === "numeral" || sexpr.kind === "decimal") {
+    const [whole, fraction = ""] = sexpr.text.split(".");
+    const value = Number(whole);
+    if (!/^0*$/.test(fraction) || value > 2 ** 31 - 1)
       throw new SmtParseError(
         "invalid probe, constant is too big to fit in a fixed size integer",
         sexpr,
@@ -502,6 +567,7 @@ export const compileProbe = (sexpr: SExpr, isInternal = false): Probe => {
   if (children.length === 0)
     throw new SmtParseError("invalid probe, at least one argument expected", sexpr.end);
   const probes = children.map((child) => compileProbe(child, isInternal));
+  // Deviation from Z3: MK_NARY_PROBE applies the operator to its first argument twice.
   return (goal) => probes.map((probe) => probe(goal)).reduce(nary);
 };
 

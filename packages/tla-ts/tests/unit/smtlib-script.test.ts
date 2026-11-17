@@ -79,6 +79,13 @@ describe("runSmtlibScript prints what Z3 prints", () => {
     ).toEqual(["success", "success", "success"]);
   });
 
+  it("prints success at exit", () => {
+    expect(run(["(set-option :print-success true)", "(exit)", "(check-sat)"])).toEqual([
+      "success",
+      "success",
+    ]);
+  });
+
   it("expands define-fun and takes check-sat's assumptions", () => {
     expect(
       run([
@@ -123,6 +130,31 @@ describe("runSmtlibScript prints what Z3 prints", () => {
         "(check-sat)",
       ]),
     ).toEqual(["sat", "unsat"]);
+  });
+
+  it("gives the objectives 0 when the hard constraints are false", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(declare-const p Bool)",
+        "(assert (< x 10))",
+        "(assert-soft p :weight 3 :id g)",
+        "(assert-soft (not p) :weight 2 :id g)",
+        "(maximize x)",
+        "(minimize (+ x 1))",
+        "(check-sat)",
+        "(get-objectives)",
+        "(push)",
+        "(assert false)",
+        "(check-sat)",
+        "(get-objectives)",
+      ]),
+    ).toEqual([
+      "sat",
+      "(objectives\n (g 2)\n (x 9)\n ((+ x 1) 10)\n)",
+      "unsat",
+      "(objectives\n (g 0)\n (x 0)\n ((+ x 1) 0)\n)",
+    ]);
   });
 
   it("prints the simplified term, as in z3test's t27.smt2 and abs.smt2", () => {
@@ -1414,6 +1446,38 @@ describe("runSmtlibScript prints what Z3 prints", () => {
     ]);
   });
 
+  it("gives the reason of inc_sat_solver after an answer of the finite-domain or bit-vector solver", () => {
+    expect(
+      run([
+        "(set-logic QF_FD)",
+        "(declare-const b Bool)",
+        "(assert b)",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+        "(check-sat-assuming ((not b)))",
+        "(get-info :reason-unknown)",
+        "(reset)",
+        "(set-option :produce-unsat-cores true)",
+        "(set-logic QF_BV)",
+        "(declare-const v (_ BitVec 4))",
+        "(assert (! (= v #x1) :named a0))",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+        "(check-sat-using smt)",
+        "(get-info :reason-unknown)",
+      ]),
+    ).toEqual([
+      "sat",
+      '(:reason-unknown "no reason given")',
+      "unsat",
+      '(:reason-unknown "no reason given")',
+      "sat",
+      '(:reason-unknown "no reason given")',
+      "sat",
+      '(:reason-unknown "")',
+    ]);
+  });
+
   it("answers unknown for formulas outside the logic that the smt setup rejects", () => {
     const reason =
       "Benchmark contains uninterpreted function symbols, but specified logic does not support them.";
@@ -1450,6 +1514,92 @@ describe("runSmtlibScript prints what Z3 prints", () => {
       "unknown",
       `(:reason-unknown "${reason}")`,
       "sat",
+    ]);
+  });
+
+  it("sets up no context whose formulas are inconsistent, so its setup rejects nothing", () => {
+    expect(
+      run([
+        "(set-logic QF_LRA)",
+        "(declare-const y Real)",
+        "(assert (>= y (/ 3.1 0.0)))",
+        "(assert (>= y (+ 3.0 y)))",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+      ]),
+    ).toEqual(["unsat", '(:reason-unknown "")']);
+  });
+
+  it("reports where Z3 raises on a datatype whose declaration failed", () => {
+    expect(
+      run([
+        "(declare-datatype Opt ((none) (some (the X))))",
+        "(declare-const o Opt)",
+        "(declare-const p Opt)",
+        "(check-sat)",
+        "(get-value (o))",
+        "(get-model)",
+        "(reset)",
+        "(declare-datatype Opt ((none) (some (the X))))",
+        "(declare-const o Opt)",
+        "(assert (not ((_ is none) o)))",
+        "(declare-const p Opt)",
+        "(assert (distinct o p))",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+      ]),
+    ).toEqual([
+      `(error "line 1 column 19: invalid datatype declaration, unknown sort 'X'")`,
+      "sat",
+      '((error "line 5 column 14: datatype constructors have not been created")',
+      '(error "line 6 column 10: constructor not available")',
+      `(error "line 8 column 18: invalid datatype declaration, unknown sort 'X'")`,
+      '(error "line 10 column 27: datatype constructors have not been created")',
+      "unknown",
+      '(:reason-unknown "constructor not available")',
+    ]);
+  });
+
+  it("forgets the constructors of a datatype at a pop, as the datatype plugin does", () => {
+    expect(
+      run([
+        "(declare-datatype Opt ((none) (some (the X))))",
+        "(declare-const o Opt)",
+        "(push)",
+        "(check-sat)",
+        "(get-model)",
+        "(pop)",
+        "(check-sat)",
+        "(get-model)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      `(error "line 1 column 19: invalid datatype declaration, unknown sort 'X'")`,
+      "sat",
+      '(error "line 5 column 10: datatype constructors have not been created")',
+      "sat",
+      '(error "line 8 column 10: datatype constructors have not been created")',
+      '(error "line 9 column 10: constructor not available")',
+    ]);
+  });
+
+  it("orders div0 and mod0 in a model by the hashes of their declarations", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(assert (distinct 5 (div x 0)))",
+        "(check-sat)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      [
+        "(",
+        "  (define-fun x () Int\n    21238)",
+        "  (define-fun mod0 ((x!0 Int) (x!1 Int)) Int\n    0)",
+        "  (define-fun div0 ((x!0 Int) (x!1 Int)) Int\n    0)",
+        ")",
+      ].join("\n"),
     ]);
   });
 

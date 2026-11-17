@@ -14,7 +14,7 @@ import {
   FAMILY_RECFUN,
   FAMILY_SEQ,
 } from "./ast";
-import { SmtSetupError } from "../../../errors";
+import { SmtDefaultError } from "../../../errors";
 import { collectStaticFeatures, isDense, type StaticFeatures } from "./static-features";
 
 const AUFLIA_LOGICS = new Set([
@@ -102,6 +102,8 @@ export interface SmtConfig {
   isNnfCnf: boolean;
   isEq2Ineq: boolean;
   isFindingMacros: boolean;
+  isEliminatingTermIte: boolean;
+  isArithPropagatingEqs: boolean;
 }
 
 const UNKNOWN_THEORIES = [
@@ -129,6 +131,8 @@ export const DEFAULT_CONFIG: SmtConfig = {
   isNnfCnf: true,
   isEq2Ineq: false,
   isFindingMacros: false,
+  isEliminatingTermIte: false,
+  isArithPropagatingEqs: true,
 };
 
 // setup_unknown(), which closes with setup_relevancy.
@@ -147,7 +151,7 @@ const setupQfUf = (config: SmtConfig) => {
 
 const setupQfUfByFeatures = (config: SmtConfig, features: StaticFeatures) => {
   if (isArith(features))
-    throw new SmtSetupError(
+    throw new SmtDefaultError(
       "Benchmark constrains arithmetic, but specified logic does not support it.",
     );
   setupQfUf(config);
@@ -158,10 +162,10 @@ const setupQfDt = (config: SmtConfig) => {
   config.theories.push(FAMILY_DATATYPE, FAMILY_RECFUN);
 };
 
-// The parameters smt_params::setup_QF_IDL, setup_QF_RDL and setup_QF_LIA share.
 const setupDiffLogicParams = (config: SmtConfig) => {
   config.relevancyLevel = 0;
   config.isEq2Ineq = true;
+  config.isArithPropagatingEqs = false;
   config.isNnfCnf = false;
 };
 
@@ -172,7 +176,7 @@ const setupQfLia = (config: SmtConfig) => {
 
 const checkNoUninterpretedFunctions = (features: StaticFeatures) => {
   if (features.numUninterpretedFunctions !== 0)
-    throw new SmtSetupError(
+    throw new SmtDefaultError(
       "Benchmark contains uninterpreted function symbols, but specified logic does not support them.",
     );
 };
@@ -182,9 +186,13 @@ const setupQfLiaByFeatures = (config: SmtConfig, features: StaticFeatures) => {
   setupDiffLogicParams(config);
   if (features.maxIteTreeDepth > 50) {
     config.isEq2Ineq = false;
+    config.isArithPropagatingEqs = true;
     config.relevancyLevel = 2;
-  } else if (features.numClauses === features.numUnits) config.relevancyLevel = 2;
-  else {
+  } else if (features.numClauses === features.numUnits) {
+    config.relevancyLevel = 2;
+    config.isEliminatingTermIte = true;
+  } else {
+    config.isEliminatingTermIte = true;
     config.isRestartAdaptive = false;
     config.restartStrategy = RS_GEOMETRIC;
     config.restartFactor = 1.5;
@@ -194,6 +202,7 @@ const setupQfLiaByFeatures = (config: SmtConfig, features: StaticFeatures) => {
 
 const setupQfLra = (config: SmtConfig) => {
   setupDiffLogicParams(config);
+  config.isEliminatingTermIte = true;
   config.phaseSelection = PS_THEORY;
   config.theories.push(FAMILY_ARITH);
 };
@@ -209,9 +218,9 @@ const setupQfLraByFeatures = (config: SmtConfig, features: StaticFeatures) => {
 
 const setupQfRdlByFeatures = (config: SmtConfig, features: StaticFeatures) => {
   if (!isInDiffLogic(features))
-    throw new SmtSetupError("Benchmark is not in QF_RDL (real difference logic).");
+    throw new SmtDefaultError("Benchmark is not in QF_RDL (real difference logic).");
   if (features.hasInt)
-    throw new SmtSetupError(
+    throw new SmtDefaultError(
       "Benchmark has integer variables but it is marked as QF_RDL (real difference logic).",
     );
   checkNoUninterpretedFunctions(features);
@@ -226,9 +235,9 @@ const setupQfRdlByFeatures = (config: SmtConfig, features: StaticFeatures) => {
 
 const setupQfIdlByFeatures = (config: SmtConfig, features: StaticFeatures, setup: SmtSetup) => {
   if (!isInDiffLogic(features))
-    throw new SmtSetupError("Benchmark is not in QF_IDL (integer difference logic).");
+    throw new SmtDefaultError("Benchmark is not in QF_IDL (integer difference logic).");
   if (features.hasReal)
-    throw new SmtSetupError(
+    throw new SmtDefaultError(
       "Benchmark has real variables but it is marked as QF_IDL (integer difference logic).",
     );
   checkNoUninterpretedFunctions(features);
@@ -248,7 +257,9 @@ const setupQfIdlByFeatures = (config: SmtConfig, features: StaticFeatures, setup
 };
 
 const setupQfUfIdl = (config: SmtConfig) => {
-  setupDiffLogicParams(config);
+  config.relevancyLevel = 0;
+  config.isNnfCnf = false;
+  config.isEq2Ineq = true;
   config.restartStrategy = RS_GEOMETRIC;
   config.restartFactor = 1.5;
   config.isRestartAdaptive = false;
@@ -257,13 +268,14 @@ const setupQfUfIdl = (config: SmtConfig) => {
 
 const setupQfUfIdlByFeatures = (config: SmtConfig, features: StaticFeatures) => {
   if (features.hasReal)
-    throw new SmtSetupError(
+    throw new SmtDefaultError(
       "Benchmark has real variables but it is marked as QF_UFIDL (uninterpreted functions and difference logic).",
     );
   config.relevancyLevel = 0;
   config.isNnfCnf = false;
   if (features.numUninterpretedFunctions === 0) {
     config.isEq2Ineq = true;
+    config.isArithPropagatingEqs = false;
     if (isDense(features)) {
       config.restartStrategy = RS_GEOMETRIC;
       config.theories.push(FAMILY_ARITH);
@@ -290,7 +302,7 @@ const setupQfBv = (config: SmtConfig) => {
 
 const setupQfUfLiaByFeatures = (config: SmtConfig, features: StaticFeatures) => {
   if (features.hasReal)
-    throw new SmtSetupError(
+    throw new SmtDefaultError(
       "Benchmark has real variables but it is marked as QF_UFLIA (uninterpreted functions and linear integer arithmetic).",
     );
   setupQfUfLia(config);
@@ -353,7 +365,7 @@ const setupAufLia = (config: SmtConfig) => {
 
 const setupAufLiaByFeatures = (config: SmtConfig, features: StaticFeatures) => {
   if (features.hasReal)
-    throw new SmtSetupError(
+    throw new SmtDefaultError(
       "Benchmark has real variables but it is marked as AUFLIA (arrays, uninterpreted functions and linear integer arithmetic).",
     );
   setupAufLia(config);
@@ -367,6 +379,8 @@ const setupAufLira = (config: SmtConfig) => {
 
 const setupLra = (config: SmtConfig) => {
   config.relevancyLevel = 0;
+  config.isArithPropagatingEqs = false;
+  config.isEliminatingTermIte = true;
   config.theories.push(FAMILY_ARITH);
 };
 

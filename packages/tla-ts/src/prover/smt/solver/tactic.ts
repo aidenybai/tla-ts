@@ -1,23 +1,15 @@
 import {
   SmtCanceledError,
   SmtParseError,
-  SmtSetupError,
+  SmtDefaultError,
   SmtTacticError,
   SmtUnsupportedError,
 } from "../../../errors";
-import {
-  type AstManager,
-  KIND_APP,
-  OP_DIV0,
-  OP_IDIV0,
-  OP_ITE,
-  OP_MOD0,
-  OP_POWER0,
-  SORT_BOOL,
-} from "./ast";
+import { type AstManager, OP_DIV0, OP_IDIV0, OP_MOD0, OP_OR, OP_POWER0, SORT_BOOL } from "./ast";
 import { createQfufbvAckrTactic, runAckermannizeBv } from "./ackermannize-bv-tactic";
 import { AssertedFormulas } from "./asserted-formulas";
 import { createAigTactic } from "./aig-tactic";
+import { blastTermIte } from "./blast-term-ite";
 import { card2bv } from "./card2bv";
 import { Context, MBQI_MAX_ITERATIONS } from "./context";
 import { ctxSimplify } from "./ctx-simplify";
@@ -33,6 +25,7 @@ import {
 import type { AckrSolver } from "./lackr";
 import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
 import { DerRewriter } from "./der";
+import { finishSimplifier } from "./dependent-expr-state";
 import { fixDlVar } from "./fix-dl-var";
 import { runFpa2Bv } from "./fpa2bv-tactic";
 import { type BitBlasterRewriter, runBitBlast } from "./bit-blast-tactic";
@@ -45,6 +38,7 @@ import { createSatTactic } from "./sat/sat-tactic";
 import { mkThSolver } from "./euf/th-solvers";
 import { createFdTactic } from "./fd-solver";
 import { elimUncnstr } from "./elim-uncnstr";
+import { runElimTermIte } from "./elim-term-ite-tactic";
 import { rewriteUfbv } from "./demodulator";
 import { distributeForall } from "./distribute-forall";
 import { createDt2BvTactic } from "./dt2bv-tactic";
@@ -462,6 +456,39 @@ const inPlace = (run: (goal: Goal) => void) => (goal: Goal) => {
   return [goal];
 };
 
+const selectClause = (goal: Goal, isLargest: boolean) => {
+  const manager = goal.manager;
+  let position = -1;
+  let length = 0;
+  for (let index = 0; index < goal.forms.size; index++) {
+    const form = goal.forms.items[index];
+    if (manager.getOp(form) !== OP_OR) continue;
+    const currentLength = manager.getNumArgs(form);
+    if (currentLength < 2) continue;
+    if (!isLargest) return index;
+    if (currentLength > length) {
+      position = index;
+      length = currentLength;
+    }
+  }
+  return position;
+};
+
+const runSplitClause = (isLargest: boolean) => (goal: Goal) => {
+  const manager = goal.manager;
+  const position = selectClause(goal, isLargest);
+  if (position === -1)
+    throw new SmtTacticError("split-clause tactic failed, goal does not contain any clause");
+  if (goal.isProofsEnabled) throw new SmtUnsupportedError("the proofs of split-clause");
+  const dependency = goal.dependencies[position];
+  return manager.getArgs(goal.forms.items[position]).map((literal) => {
+    const subgoal = goal.copy();
+    subgoal.update(position, literal, dependency);
+    subgoal.depth++;
+    return subgoal;
+  });
+};
+
 const runDer = (manager: AstManager) => (goal: Goal) => {
   const rewriter = new DerRewriter(manager);
   const size = goal.forms.size;
@@ -470,9 +497,7 @@ const runDer = (manager: AstManager) => (goal: Goal) => {
     goal.update(index, result);
     manager.decRef(result);
   }
-  goal.elimTrue();
-  goal.elimRedundancies();
-  goal.depth++;
+  finishSimplifier(goal);
   rewriter.der.release();
   rewriter.release();
   return [goal];
@@ -698,40 +723,30 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
       ]),
       build: (environment, params) => {
         const manager = environment.manager;
-        const snf = runNnf(manager, new Map());
         const elimRemParams = new Map([...params, ["elim_rem", true]]);
-        return (goal) => {
-          snf(goal);
-          simplifyGoal(manager, goal, getRewriterOptions(manager, elimRemParams));
-          purifyArith(manager, goal, {
-            isComplete: getBool(params, "complete", true),
-            isElimRootObjects: getBool(params, "elim_root_objects", true),
-            isElimInverses: getBool(params, "elim_inverses", true),
-          });
-          simplifyGoal(manager, goal, getRewriterOptions(manager, params));
-          return [goal];
-        };
+        return [
+          runNnf(manager, new Map()),
+          inPlace((goal) =>
+            simplifyGoal(manager, goal, getRewriterOptions(manager, elimRemParams)),
+          ),
+          inPlace((goal) =>
+            purifyArith(manager, goal, {
+              isComplete: getBool(params, "complete", true),
+              isElimRootObjects: getBool(params, "elim_root_objects", true),
+              isElimInverses: getBool(params, "elim_inverses", true),
+            }),
+          ),
+          inPlace((goal) => simplifyGoal(manager, goal, getRewriterOptions(manager, params))),
+        ].reduceRight((second, first) => runAndThen(first, second));
       },
     },
   ],
   [
     "elim-term-ite",
     {
+      isTrackingDependencies: true,
       descrs: getDescrs("", [["max_memory", PARAM_UINT, UINT_MAX, true]]),
-      build: (environment) =>
-        inPlace((goal) => {
-          const manager = environment.manager;
-          const seen = new Set<number>();
-          const todo = [...goal.forms.items];
-          for (let expr = todo.pop(); expr !== undefined; expr = todo.pop()) {
-            if (seen.has(expr) || manager.kinds[expr] !== KIND_APP) continue;
-            seen.add(expr);
-            if (manager.getOp(expr) === OP_ITE && manager.sorts[expr] !== SORT_BOOL)
-              throw new SmtUnsupportedError("elim-term-ite on a goal it changes");
-            manager.pushArgs(expr, todo);
-          }
-          goal.depth++;
-        }),
+      build: (environment) => runElimTermIte(environment.manager),
     },
   ],
   [
@@ -759,7 +774,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
               isEliminatingAnd: true,
               isKeepingDistinct: false,
             });
-            tseitinCnf(manager, goal);
+            if (!goal.isDecided()) tseitinCnf(manager, goal);
           } finally {
             original.reset();
           }
@@ -771,14 +786,9 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     {
       descrs: new Map(),
       build: (environment) =>
-        inPlace((goal) => {
-          if (!goal.isProofsEnabled) applyQeLite(environment.manager, goal);
-          else {
-            goal.elimTrue();
-            goal.elimRedundancies();
-          }
-          goal.depth++;
-        }),
+        inPlace((goal) =>
+          goal.isProofsEnabled ? finishSimplifier(goal) : applyQeLite(environment.manager, goal),
+        ),
     },
   ],
   [
@@ -1051,6 +1061,14 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   ],
   ["der", { descrs: new Map(), build: (environment) => runDer(environment.manager) }],
   [
+    "blast-term-ite",
+    {
+      isTrackingDependencies: true,
+      descrs: new Map(),
+      build: (environment) => inPlace((goal) => blastTermIte(environment.manager, goal)),
+    },
+  ],
+  [
     "distribute-forall",
     {
       descrs: new Map(),
@@ -1109,6 +1127,15 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     {
       descrs: new Map(),
       build: (environment) => inPlace((goal) => domSimplify(environment.manager, goal)),
+    },
+  ],
+  [
+    "split-clause",
+    {
+      descrs: getDescrs("", [["split_largest_clause", PARAM_BOOL, false, true]]),
+      isTrackingDependencies: true,
+      build: (_environment, params) =>
+        runSplitClause(getBool(params, "split_largest_clause", false)),
     },
   ],
   [
@@ -1388,15 +1415,14 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
 
 const UNPORTED_TACTICS = new Set(
   (
-    "blast-term-ite " +
     "bv-slice bvarray2uf collect-statistics " +
     "degree-shift demodulator " +
     "elim-predicates elim-uncnstr2 " +
     "euf-completion ff-sat ff-simplify ff-solve ff-unique ff2bv fold-unfold fpa2bv " +
     "horn-simplify injectivity pb-preprocess pqffd propagate-bv-bounds " +
-    "propagate-bv-bounds2 propagate-values2 qfbv-sls qfufbv recover-01 reduce-args2 " +
+    "propagate-bv-bounds2 propagate-values2 qfbv-sls recover-01 reduce-args2 " +
     "sat-preprocess sls-smt smtfd solver-subsumption special-relations " +
-    "split-clause subpaving symmetry-reduce"
+    "subpaving symmetry-reduce"
   ).split(" "),
 );
 
@@ -1518,19 +1544,30 @@ const isDecidedSat = (goals: Goal[]) => goals.length === 1 && goals[0].isDecided
 
 const isDecidedUnsat = (goals: Goal[]) => goals.length === 1 && goals[0].isDecidedUnsat();
 
+// Deviation from Z3: and_then and repeat join the subgoals' cores, where Z3 answers an empty core.
+const assertUnsat = (goal: Goal, unsatGoals: Goal[]) => {
+  goal.resetAll();
+  goal.assert(
+    goal.manager.falseExpr,
+    unsatGoals.reduce<Dependency | undefined>(
+      (core, unsatGoal) => joinDependencies(unsatGoal.getDependency(0), core),
+      undefined,
+    ),
+  );
+  return [goal];
+};
+
 const runAndThen = (first: Tactic, second: Tactic) => (goal: Goal) => {
   const goals = first(goal);
   if (goals.length === 1) return goals[0].isDecided() ? goals : second(goals[0]);
   const results: Goal[] = [];
+  const unsatGoals: Goal[] = [];
   for (const subgoal of goals) {
     const subresults = second(subgoal);
     if (isDecidedSat(subresults)) return subresults;
-    if (!isDecidedUnsat(subresults)) results.push(...subresults);
+    (isDecidedUnsat(subresults) ? unsatGoals : results).push(...subresults);
   }
-  if (results.length > 0) return results;
-  goal.resetAll();
-  goal.assert(goal.manager.falseExpr);
-  return [goal];
+  return results.length > 0 ? results : assertUnsat(goal, unsatGoals);
 };
 
 const runOrElse = (tactics: Tactic[]) => (goal: Goal) => {
@@ -1564,15 +1601,13 @@ const runRepeat = (tactic: Tactic, maxDepth: number) => {
     if (goals.length === 1 && isEqualGoal(original, goals[0])) return goals;
     if (goals.length === 1) return goals[0].isDecided() ? goals : run(depth + 1, goals[0]);
     const results: Goal[] = [];
+    const unsatGoals: Goal[] = [];
     for (const subgoal of goals) {
       const subresults = run(depth + 1, subgoal);
       if (isDecidedSat(subresults)) return subresults;
-      if (!isDecidedUnsat(subresults)) results.push(...subresults);
+      (isDecidedUnsat(subresults) ? unsatGoals : results).push(...subresults);
     }
-    if (results.length > 0) return results;
-    goal.resetAll();
-    goal.assert(goal.manager.falseExpr);
-    return [goal];
+    return results.length > 0 ? results : assertUnsat(goal, unsatGoals);
   };
   return (goal: Goal) => run(0, goal);
 };
@@ -1688,7 +1723,23 @@ const compile = (
           "invalid try-for combinator, second argument must be an unsigned integer",
           sexpr.end,
         );
-      return compile(environment, sexpr.items[1], isInternal);
+      const child = compile(environment, sexpr.items[1], isInternal);
+      return {
+        ...child,
+        build: (params) => {
+          const tactic = child.build(params);
+          return (goal) => {
+            try {
+              return tactic(goal);
+            } catch (error) {
+              if (error instanceof SmtDefaultError) throw new SmtTacticError(error.message);
+              if (error instanceof SmtCanceledError)
+                throw new SmtTacticError(goal.manager.limit.getCancelMessage());
+              throw error;
+            }
+          };
+        },
+      };
     }
     case "fail-if-branching": {
       if (sexpr.items.length !== 3 && sexpr.items.length !== 2)
@@ -1726,8 +1777,11 @@ const compile = (
         );
       const child = compile(environment, sexpr.items[1], isInternal);
       const isSkipping = (goal: Goal) =>
-        head.text === "if-no-models" ||
-        (head.text === "if-no-proofs" ? goal.isProofsEnabled : goal.isCoresEnabled);
+        head.text === "if-no-models"
+          ? goal.isModelsEnabled
+          : head.text === "if-no-proofs"
+            ? goal.isProofsEnabled
+            : goal.isCoresEnabled;
       return {
         ...mergeDescrs([child]),
         build: (params) => {
@@ -1969,13 +2023,16 @@ export const convertModel = (goal: Goal, model: ProtoModel) =>
     return converted;
   }, model);
 
+const getConvertedModel = (goal: Goal) =>
+  convertModel(goal, goal.model?.copy() ?? new ProtoModel(goal.manager).mkModel());
+
 export const checkSatUsing = (tactic: Tactic, goal: Goal): TacticCheck => {
   const undecided = { status: L_UNDEF, model: undefined, core: undefined };
   const goals = (() => {
     try {
       return tactic(goal);
     } catch (error) {
-      if (error instanceof SmtTacticError || error instanceof SmtSetupError) return error.message;
+      if (error instanceof SmtTacticError || error instanceof SmtDefaultError) return error.message;
       if (error instanceof SmtCanceledError) return undefined;
       throw error;
     }
@@ -1983,7 +2040,7 @@ export const checkSatUsing = (tactic: Tactic, goal: Goal): TacticCheck => {
   if (goals === undefined) return { ...undecided, reasonUnknown: undefined };
   if (typeof goals === "string") return { ...undecided, reasonUnknown: goals };
   if (isDecidedSat(goals)) {
-    const model = convertModel(goals[0], goals[0].model ?? new ProtoModel(goal.manager).mkModel());
+    const model = getConvertedModel(goals[0]);
     return goal.manager.limit.inc()
       ? { status: L_TRUE, model, core: undefined, reasonUnknown: "" }
       : { ...undecided, model, reasonUnknown: "canceled" };
@@ -1997,6 +2054,12 @@ export const checkSatUsing = (tactic: Tactic, goal: Goal): TacticCheck => {
     };
   return {
     ...undecided,
+    model:
+      goal.isModelsEnabled &&
+      goals.length > 0 &&
+      (goals[0].model !== undefined || goals[0].converters.length > 0)
+        ? getConvertedModel(goals[0])
+        : undefined,
     reasonUnknown:
       goals.length === 1 && goals[0].reasonUnknown !== "" ? goals[0].reasonUnknown : "unknown",
   };
