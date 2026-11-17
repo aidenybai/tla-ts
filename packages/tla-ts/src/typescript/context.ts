@@ -22,6 +22,7 @@ import { getKeptReads } from "./narrowing";
 import { mayThrow } from "./functions";
 import { getGetterKeys, isProxyOperation } from "./protocols";
 import type { Namespace } from "./namespaces";
+import type { ProgramNodes } from "./program-nodes";
 import type { Link } from "./regions";
 import { apply, define, identifier, ifExpression, index, letExpression, string } from "./tla";
 
@@ -88,6 +89,8 @@ export interface MadeRegExp {
 
 export interface Context {
   checker: ts.TypeChecker;
+  // The nodes of the program's files, which tla-ts walks once.
+  nodes: ProgramNodes;
   names: Names;
   variables: Map<ts.Symbol, Expression>;
   // Helper functions and constants, compiled when first referenced.
@@ -549,10 +552,12 @@ export const createContext = (
   files: readonly ts.SourceFile[],
   implicitGlobals: ReadonlySet<ts.Symbol>,
   defaultLibraries: ReadonlySet<ts.SourceFile>,
+  nodes: ProgramNodes,
 ): Context => {
   const reads = getDeclaredReads(checker, files);
   return {
     checker: withDeclaredReads(checker, reads),
+    nodes,
     keptReads: reads.keptReads,
     names: createNames(JAVASCRIPT_OPERATORS),
     variables: new Map(),

@@ -302,6 +302,7 @@ export const compile = (
     program.files,
     program.implicitGlobals,
     program.defaultLibraries,
+    program.nodes,
   );
   if (isScript(program.sourceFile)) {
     const onceFunctions = findOnceFunctions(program.files, context);

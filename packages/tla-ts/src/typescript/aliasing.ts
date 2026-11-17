@@ -13,6 +13,7 @@ import {
   isMethodCall,
 } from "./context";
 import { TlaTypeScriptError } from "../errors";
+import { getPosition } from "./program-nodes";
 import { type Scope } from "./scope";
 import {
   getKind,
@@ -529,29 +530,64 @@ const getEscapes = (
 // The model's file, with the declarations in other files that it names and that they name in turn,
 // which hold every function of another file that the model may run.
 export const getReached = (roots: readonly ts.Node[], context: Context) => {
+  const table = context.nodes;
   const reached = [...roots];
-  const seen = new Set<ts.Node>(reached);
-  const visit = (node: ts.Node): void => {
-    // A type runs nothing, though a class's base, which TypeScript parses as one, runs.
-    if (ts.isTypeNode(node) && !ts.isExpressionWithTypeArguments(node)) return;
-    if (
-      (ts.isImportDeclaration(node) && node.importClause?.isTypeOnly === true) ||
-      (ts.isImportSpecifier(node) && node.isTypeOnly)
-    ) {
-      return;
-    }
-    const declarations = ts.isIdentifier(node)
-      ? (getSymbol(node, context.checker)?.declarations ?? [])
-      : [];
-    // A module's namespace object reaches only the exports that a script reads through it.
-    for (const declaration of declarations.filter((inner) => !ts.isSourceFile(inner))) {
+  // A bit for each node of the program's files that the walk has seen, and the few nodes that no
+  // file walks to, such as JSDoc's.
+  const isSeen = new Uint32Array((table.nodes.length + 31) >>> 5);
+  const seenElsewhere = new Set<ts.Node>();
+  const hasSeen = (node: ts.Node, position: number) =>
+    position < 0
+      ? seenElsewhere.has(node)
+      : (isSeen[position >>> 5] & (1 << (position & 31))) !== 0;
+  const see = (node: ts.Node, position: number) => {
+    if (position < 0) seenElsewhere.add(node);
+    else isSeen[position >>> 5] |= 1 << (position & 31);
+  };
+  roots.forEach((root) => see(root, getPosition(table, root)));
+  // A type runs nothing, though a class's base, which TypeScript parses as one, runs.
+  const isSkipped = (node: ts.Node) =>
+    (ts.isTypeNode(node) && !ts.isExpressionWithTypeArguments(node)) ||
+    (ts.isImportDeclaration(node) && node.importClause?.isTypeOnly === true) ||
+    (ts.isImportSpecifier(node) && node.isTypeOnly);
+  // A module's namespace object reaches only the exports that a script reads through it.
+  const reach = (name: ts.Identifier) => {
+    for (const declaration of getSymbol(name, context.checker)?.declarations ?? []) {
+      if (ts.isSourceFile(declaration)) continue;
+      const position = getPosition(table, declaration);
       const file = declaration.getSourceFile();
-      if (seen.has(file) || file.isDeclarationFile || seen.has(declaration)) continue;
-      seen.add(declaration);
+      if (
+        hasSeen(file, position < 0 ? getPosition(table, file) : table.files[position]) ||
+        file.isDeclarationFile ||
+        hasSeen(declaration, position)
+      ) {
+        continue;
+      }
+      see(declaration, position);
       reached.push(declaration);
       visit(declaration);
     }
-    ts.forEachChild(node, visit);
+  };
+  // A walk of a file's node scans the node's subtree in the table, past the subtrees it skips.
+  const visit = (node: ts.Node): void => {
+    const start = getPosition(table, node);
+    if (start < 0) {
+      if (isSkipped(node)) return;
+      if (ts.isIdentifier(node)) reach(node);
+      ts.forEachChild(node, visit);
+      return;
+    }
+    const end = table.ends[start];
+    let position = start;
+    while (position < end) {
+      const inner = table.nodes[position];
+      if (isSkipped(inner)) {
+        position = table.ends[position];
+        continue;
+      }
+      if (ts.isIdentifier(inner)) reach(inner);
+      position += 1;
+    }
   };
   roots.forEach(visit);
   return reached;
