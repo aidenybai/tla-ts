@@ -32,10 +32,12 @@ import {
   OP_GT,
   OP_IDIV,
   OP_IMPLIES,
+  OP_INT2BV,
   OP_IS_INT,
   OP_ITE,
   OP_LE,
   OP_LT,
+  OP_MKBV,
   OP_MOD,
   OP_REM,
   OP_MUL,
@@ -1661,6 +1663,9 @@ export const createSmtlibReader = (
   const mkBvApp = (name: string, args: number[], indices: number[], at: SExpr) => {
     const op = BV_OP_NAMES.get(name) ?? -1;
     const argSorts = args.map((arg) => manager.sorts[arg]);
+    // Z3 checks an application's first argument before the signature, with a message of its own.
+    if (op !== OP_INT2BV && op !== OP_MKBV && (args.length === 0 || !manager.isBvSort(argSorts[0])))
+      throw new SmtParseError("operator is applied to arguments of the wrong sort", at);
     const signature = getBvSignature(manager, op, argSorts, indices);
     if (typeof signature === "string") throw new SmtParseError(signature, at);
     const mismatched = getMismatchedArgument(signature, argSorts);

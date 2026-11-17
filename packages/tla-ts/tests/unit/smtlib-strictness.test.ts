@@ -150,6 +150,31 @@ describe("applications of the builtin operators, as Z3 5.3.2 makes them", () => 
       '(error "line 8 column 48: Argument (:var 0) at position 1 has sort (_ BitVec 4) it does not match declaration (declare-fun bvadd ((_ BitVec 8) (_ BitVec 8)) (_ BitVec 8))")',
     ]);
   });
+
+  it("reports a bit-vector operator whose first argument is no bit-vector as applied to the wrong sort", () => {
+    expect(
+      run([
+        "(declare-const v (_ BitVec 4))",
+        "(declare-const b Bool)",
+        "(declare-const x Int)",
+        "(simplify (bvuge true v))",
+        "(simplify (concat b #b1))",
+        "(simplify ((_ extract 1 0) b))",
+        "(simplify ((_ zero_extend 1) x))",
+        "(simplify (bvnot 1))",
+        "(simplify (bv2nat b))",
+        "(simplify ((_ int2bv 3) b))",
+      ]),
+    ).toEqual([
+      '(error "line 4 column 23: operator is applied to arguments of the wrong sort")',
+      '(error "line 5 column 23: operator is applied to arguments of the wrong sort")',
+      '(error "line 6 column 28: operator is applied to arguments of the wrong sort")',
+      '(error "line 7 column 30: operator is applied to arguments of the wrong sort")',
+      '(error "line 8 column 18: operator is applied to arguments of the wrong sort")',
+      '(error "line 9 column 19: operator is applied to arguments of the wrong sort")',
+      "((_ int_to_bv 3) b)",
+    ]);
+  });
 });
 
 describe("terms that Z3 5.3.2 rejects", () => {
