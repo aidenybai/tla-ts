@@ -8,6 +8,7 @@ import {
 } from "../../src";
 import { STACK_OVERFLOW_MESSAGE, UNEXPECTED_EXCEPTION } from "../../src/errors";
 import { getExitCode } from "../../src/exit-codes";
+import { getOutDegreeSummary } from "../../src/tlc/summary";
 import type { TlcVersion } from "../../src/tlc/version";
 import { checkModule, checkSteps } from "./check-harness";
 
@@ -611,6 +612,28 @@ describe("evaluation errors match TLC", () => {
       expect(result.failure?.message).toContain(
         "A non-boolean expression (an integer) was used as a formula in a conjunction.\nline 7, col 9 to line 7, col 33 of module M",
       );
+    },
+  );
+
+  it.each([
+    ["x /\\ TRUE", 255],
+    ['Assert(FALSE, "a")', 14],
+  ])(
+    "reports a success to the summary and exits with the status of %s when the replay of the next state doesn't fail again",
+    async (failing, exitCode) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0 /\\ TLCSet(1, 0)\nNext == TLCSet(1, TLCGet(1) + 1) /\\ x' = IF TLCGet(1) = 1 THEN ${failing} ELSE x\n====`,
+        config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+      });
+      expect([
+        result.failure?.callStack,
+        result.outDegrees && getOutDegreeSummary(result.outDegrees),
+        result.failure?.exitCode,
+      ]).toEqual([
+        undefined,
+        "The average outdegree of the complete state graph is 0 (minimum is 0, the maximum 0 and the 95th percentile is 0).",
+        exitCode,
+      ]);
     },
   );
 

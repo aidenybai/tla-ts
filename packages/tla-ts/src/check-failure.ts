@@ -43,6 +43,9 @@ const getReplayExitCode = (error: TlaEvaluationError): number => {
   return error instanceof TlaModuleError ? error.exitCode : EXIT_STATUS.specEvaluationFailure;
 };
 
+const getCodeExitCode = (error: TlaEvaluationError) =>
+  getExitCode(error) ?? (error instanceof TlaModuleError ? error.exitCode : EXIT_STATUS.error);
+
 export const getFailureExitCode = (
   error: TlaEvaluationError,
   failureOptions: FailureOptions,
@@ -54,12 +57,12 @@ export const getFailureExitCode = (
       if (isReplayed) return EXIT_STATUS.specEvaluationFailure;
       return is174 ? EXIT_STATUS.success : getInitialExitCode(error);
     case "behavior-graph":
-      return (
-        getExitCode(error) ?? (error instanceof TlaModuleError ? error.exitCode : EXIT_STATUS.error)
-      );
+      return getCodeExitCode(error);
     case "liveness":
       return error instanceof TlaModuleError ? error.exitCode : getErrorExitCode(error);
     default:
+      // TLC's ModelChecker exits with the status of the failure's own code when its replay doesn't fail again.
+      if (!isReplayed && failureOptions.phase === "next" && !is174) return getCodeExitCode(error);
       if (!isReplayed) return getErrorExitCode(error);
       return failureOptions.fingerprint
         ? EXIT_STATUS.specEvaluationFailure

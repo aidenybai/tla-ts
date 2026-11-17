@@ -1492,7 +1492,9 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       return { result, lines: live.lines };
     }
     const replay = captureOutput(() => replayNext(index));
-    return { result: replay.result, lines: [...live.lines, ...replay.lines] };
+    const result: FailureOptions =
+      replay.result ?? (is174 ? {} : { outDegrees: getFailureOutDegrees() });
+    return { result, lines: [...live.lines, ...replay.lines] };
   };
   const getNextFailureTrace = (index: number, counterExample?: CounterExampleOptions) =>
     traces.getStateTrace(index, { isFailed: !counterExample });
