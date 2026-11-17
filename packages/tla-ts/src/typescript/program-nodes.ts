@@ -5,6 +5,10 @@ declare module "@typescript/typescript6" {
   function getNodeId(node: ts.Node): number;
   // And of a symbol.
   function getSymbolId(symbol: ts.Symbol): number;
+  // A type's id, which TypeScript gives each type as it makes it.
+  interface Type {
+    readonly id: number;
+  }
 }
 
 // The nodes of a program's files, in the order that a walk of each file's children visits them,

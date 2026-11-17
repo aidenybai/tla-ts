@@ -28,6 +28,7 @@ import {
   findNames,
   findNodesOfKind,
   getFileIndex,
+  getLowerBound,
   getPosition,
   getReferences,
   type ProgramNodes,
@@ -283,6 +284,18 @@ export interface Context {
   // What running each node of the model's code changes where no parameter holds a function, which
   // tla-ts finds once before it compiles the code.
   effects: NodeEffects;
+  // Which function candidates the callees of the model's calls through values may hold.
+  dispatch: Dispatch | undefined;
+}
+
+// The types of the callees that findEffects dispatches among the function candidates, by type id in
+// order, each with a row of bits over the candidates' distinct types, of those that TypeScript lets
+// it hold, and the index of each candidate's type plus one by the candidate's position.
+export interface Dispatch {
+  calleeIds: Int32Array;
+  words: number;
+  rows: Uint32Array;
+  candidateTypes: Int32Array;
 }
 
 // The effects of the nodes of the program's files by their positions, and of the few nodes that no
@@ -681,6 +694,7 @@ export const createContext = (
     passed: new Map(),
     changes: undefined,
     effects: { positions: [], elsewhere: new Map(), found: [] },
+    dispatch: undefined,
     assignedNames: new Map(
       files.map((file) => [
         file,
@@ -5512,10 +5526,67 @@ export const getFunctionCandidates = (callee: ts.Expression, context: Context) =
       )
     );
   };
-  return found.filter(
-    (candidate) =>
-      checker.isTypeAssignableTo(checker.getTypeAtLocation(candidate), type) && isTyped(candidate),
+  // A callee whose type createDispatch tested reads its row.
+  const dispatch = context.dispatch;
+  const rowIndex =
+    dispatch === undefined || isSuperAccess(callee)
+      ? -1
+      : getLowerBound(dispatch.calleeIds, 0, dispatch.calleeIds.length, type.id);
+  const row =
+    dispatch !== undefined && rowIndex >= 0 && dispatch.calleeIds[rowIndex] === type.id
+      ? rowIndex
+      : -1;
+  const isAssignable = (candidate: FunctionNode) => {
+    const position = row < 0 ? -1 : getPosition(context.nodes, candidate);
+    const bit = position < 0 || dispatch === undefined ? -1 : dispatch.candidateTypes[position] - 1;
+    return dispatch !== undefined && bit >= 0
+      ? (dispatch.rows[row * dispatch.words + (bit >>> 5)] & (1 << (bit & 31))) !== 0
+      : checker.isTypeAssignableTo(checker.getTypeAtLocation(candidate), type);
+  };
+  return found.filter((candidate) => isAssignable(candidate) && isTyped(candidate));
+};
+
+// The distinct types of some nodes or values, in the order of their ids.
+const getDistinctTypes = (types: readonly ts.Type[]) =>
+  [...new Set(types)].toSorted((left, right) => left.id - right.id);
+
+// Tests each callee type that findEffects dispatches against each distinct type of the function
+// candidates once, before findEffects runs, rather than each candidate at each call.
+export const createDispatch = (callees: readonly ts.Expression[], context: Context): Dispatch => {
+  const checker = context.checker;
+  const candidates = [...new Set([...context.functionCandidates.values()].flat())];
+  const candidateTypes = getDistinctTypes(
+    candidates.map((candidate) => checker.getTypeAtLocation(candidate)),
   );
+  const candidateIds = Int32Array.from(candidateTypes, (type) => type.id);
+  const indexes = new Int32Array(context.nodes.nodes.length);
+  candidates.forEach((candidate) => {
+    const position = getPosition(context.nodes, candidate);
+    const id = checker.getTypeAtLocation(candidate).id;
+    if (position >= 0) {
+      indexes[position] = getLowerBound(candidateIds, 0, candidateIds.length, id) + 1;
+    }
+  });
+  const calleeTypes = getDistinctTypes(
+    callees
+      .filter((callee) => !isHeldBuiltInObject(callee, context) && !isSuperAccess(callee))
+      .map((callee) => checker.getTypeAtLocation(callee)),
+  );
+  const words = (candidateTypes.length + 31) >>> 5;
+  const rows = new Uint32Array(calleeTypes.length * words);
+  calleeTypes.forEach((calleeType, row) =>
+    candidateTypes.forEach((candidateType, bit) => {
+      if (checker.isTypeAssignableTo(candidateType, calleeType)) {
+        rows[row * words + (bit >>> 5)] |= 1 << (bit & 31);
+      }
+    }),
+  );
+  return {
+    calleeIds: Int32Array.from(calleeTypes, (type) => type.id),
+    words,
+    rows,
+    candidateTypes: indexes,
+  };
 };
 
 // Whether the model reaches a node's code, as no value holds a function that nothing names.

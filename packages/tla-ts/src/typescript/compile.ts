@@ -1,5 +1,6 @@
 import ts from "@typescript/typescript6";
 import {
+  findDispatchedCallees,
   findEffects,
   getWritten,
   getWrittenRoots,
@@ -12,6 +13,7 @@ import {
   type Closure,
   type Context,
   createContext,
+  createDispatch,
   findNodes,
   findFunctionCandidates,
   findFileAccessors,
@@ -1122,6 +1124,7 @@ export const compile = (
   if (context.isEveryCollectionHeld) rejectSharing(shareable, context);
   rejectRegExpIndicesUses(roots, context);
   if (context.heap !== undefined) {
+    context.dispatch = createDispatch(findDispatchedCallees(reached, context), context);
     context.effects = findEffects(reached, context);
     context.changes = summarizeEffects(context);
   }
