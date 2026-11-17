@@ -101,12 +101,13 @@ const subtractCounts = (
   functionValue: FunctionValue,
   index: number,
   other: FunctionValue,
-  createErrors: (() => TlaModuleError)[],
+  createLeftError: () => TlaModuleError,
+  createRightError: () => TlaModuleError,
 ) => {
-  const count = toCount(functionValue.range[index], createErrors[0]);
+  const count = toCount(functionValue.range[index], createLeftError);
   const removed = findCount(other, functionValue.domain[index]);
   if (removed === undefined) return count;
-  const difference = count - toCount(removed, createErrors[1]);
+  const difference = count - toCount(removed, createRightError);
   if (isOutOfRange(difference)) throw createOverflowError(`${count}-${removed}`);
   return difference;
 };
@@ -168,13 +169,11 @@ export const createBagsOperators = (builtins: ReadonlyMap<string, Builtin>): Bui
     const right = toFunction(rightValue);
     if (!left) throw createModuleArgumentError("first", "(-)", "bag", leftValue);
     if (!right) throw createModuleArgumentError("second", "(-)", "bag", rightValue);
-    const createErrors = [
-      () => createModuleArgumentError("first", "(-)", "bag", leftValue),
-      () => createModuleArgumentError("second", "(-)", "bag", rightValue),
-    ];
+    const createLeftError = () => createModuleArgumentError("first", "(-)", "bag", leftValue);
+    const createRightError = () => createModuleArgumentError("second", "(-)", "bag", rightValue);
     return createFunction(
       left.domain.flatMap((key, index): [Value, Value][] => {
-        const count = subtractCounts(left, index, right, createErrors);
+        const count = subtractCounts(left, index, right, createLeftError, createRightError);
         return count > 0 ? [[key, count]] : [];
       }),
     );
