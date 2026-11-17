@@ -3845,8 +3845,14 @@ const getKeyKinds = (node: ts.NewExpression, context: Context) => {
   if (isUntyped) return undefined;
   // A Set or Map that no variable holds has only the keys it starts with.
   const keys = [...initial, ...(symbol === undefined ? [] : getUses(node.getSourceFile()))];
+  // A Set or Map whose type tells its keys' kinds checks a key of another kind as it runs, so only
+  // one whose type doesn't looks at what the key's value may be.
   const kinds = keys.map((key) =>
-    key === undefined || ts.isSpreadElement(key) ? undefined : getValueKinds(key, context, []),
+    key === undefined || ts.isSpreadElement(key)
+      ? undefined
+      : declared === undefined
+        ? getValueKinds(key, context, [])
+        : getComparedKinds(checker.getTypeAtLocation(key), checker),
   );
   if (declared !== undefined) {
     return new Set([...declared, ...kinds.flatMap((kind) => kind ?? [])]);
