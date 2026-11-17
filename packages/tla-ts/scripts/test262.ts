@@ -4285,26 +4285,47 @@ const getJavaScriptModules = (harness: string, source: string, harnessPath: stri
   };
 };
 
-// Runs a test as JavaScript in Node and with tla-ts.
+// Runs a test as JavaScript in Node and with tla-ts, each from a tree of its own that holds the
+// harness, the test at its path, and the fixtures that it imports, as they are.
 const runJavaScriptTest = async (
   id: string,
   source: string,
   metadata: Metadata,
+  fixtures: ReadonlyMap<string, string>,
 ): Promise<TestRun> => {
   const harness = getHarness(metadata, source);
-  const modules = getJavaScriptModules(harness, source, "./harness.ts");
-  const nodeModules = getJavaScriptModules(harness, source, "./harness.js");
-  writeFileSync(join(JAVASCRIPT_DIRECTORY, "harness.ts"), modules.harness);
-  writeFileSync(join(JAVASCRIPT_DIRECTORY, "harness.js"), transpileModule(nodeModules.harness));
-  const nodePath = join(JAVASCRIPT_DIRECTORY, "node.js");
-  writeFileSync(nodePath, nodeModules.test);
-  const run = spawnSync(process.execPath, [nodePath], { encoding: "utf8" });
+  const writeTree = (root: string, harnessName: string) => {
+    const testPath = join(root, id);
+    const specifier = relative(dirname(testPath), join(root, harnessName));
+    const modules = getJavaScriptModules(
+      harness,
+      source,
+      specifier.startsWith(".") ? specifier : `./${specifier}`,
+    );
+    fixtures.forEach((text, fixture) => {
+      const fixturePath = join(root, relative(TEST262_DIRECTORY, fixture));
+      mkdirSync(dirname(fixturePath), { recursive: true });
+      writeFileSync(fixturePath, text);
+    });
+    mkdirSync(dirname(testPath), { recursive: true });
+    writeFileSync(testPath, modules.test);
+    return { testPath, harness: modules.harness, test: modules.test };
+  };
+  const tla = writeTree(join(JAVASCRIPT_DIRECTORY, "tla"), "harness.ts");
+  writeFileSync(join(JAVASCRIPT_DIRECTORY, "tla", "harness.ts"), tla.harness);
+  const node = writeTree(join(JAVASCRIPT_DIRECTORY, "node"), "harness.js");
+  writeFileSync(join(JAVASCRIPT_DIRECTORY, "node", "harness.js"), transpileModule(node.harness));
+  const run = spawnSync(
+    process.execPath,
+    hasImportCall(source) ? ["--require", TIMERS_PATH, node.testPath] : [node.testPath],
+    { encoding: "utf8" },
+  );
   if (run.status !== 0) {
     const nodeError =
       run.stderr.split("\n").find((line) => /^\w*Error\b/.test(line)) ?? `exit ${run.status}`;
     return { id, outcome: "skipped", reason: `Node fails as JavaScript: ${nodeError}` };
   }
-  return checkProgram(id, modules.test, JAVASCRIPT_PATH, (reason) => ({
+  return checkProgram(id, tla.test, tla.testPath, (reason) => ({
     id,
     outcome: "skipped",
     reason: `type error as JavaScript: ${reason}`,
@@ -4383,11 +4404,16 @@ const runTest = async (path: string): Promise<TestRun> => {
   // A linked test's own file is on disk, as its fixtures are, so that TypeScript resolves an
   // import of the test's .js path to the test's code rather than to the .js that Node runs.
   if (isLinked) writeFileSync(programPath, program);
-  // A test outside strict mode, or that imports fixtures, can't run as an ES module of its own.
+  // A test outside strict mode can't run as an ES module.
   return checkProgram(id, program, isLinked ? programPath : "test262.ts", (reason) =>
-    isSloppy || isLinked
+    isSloppy
       ? { id, outcome: "skipped", reason: `type error: ${reason}` }
-      : runJavaScriptTest(id, metadata.isModule ? source : nameGlobalObject(source), metadata),
+      : runJavaScriptTest(
+          id,
+          metadata.isModule ? source : nameGlobalObject(source),
+          metadata,
+          fixtures,
+        ),
   );
 };
 
