@@ -1259,7 +1259,6 @@ export const runSmtlibScript = (
     [
       "reset-assertions",
       () => {
-        clearCheck();
         restoreAssertions(0);
         resetOptimizer();
         releaseObjectives(0, 0);

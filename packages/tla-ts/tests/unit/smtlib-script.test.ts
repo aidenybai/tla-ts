@@ -1361,6 +1361,36 @@ describe("runSmtlibScript prints what Z3 prints", () => {
     ]);
   });
 
+  it("keeps the answer of the last check across reset-assertions", () => {
+    expect(
+      run([
+        "(set-option :produce-unsat-cores true)",
+        "(declare-const x Int)",
+        "(declare-const b Bool)",
+        "(assert (! (> x 2) :named a1))",
+        "(check-sat)",
+        "(reset-assertions)",
+        "(get-info :reason-unknown)",
+        "(get-model)",
+        "(get-value (x))",
+        "(assert (! (< x 0) :named a2))",
+        "(assert (! (> x 0) :named a3))",
+        "(check-sat)",
+        "(reset-assertions)",
+        "(get-unsat-core)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      '(:reason-unknown "unknown")',
+      "(\n  (define-fun a1 () Bool\n    (> x 2))\n  (define-fun x () Int\n    3)\n  (define-fun b () Bool\n    false)\n)",
+      "((x 3))",
+      "unsat",
+      "(a2 a3)",
+      '(error "line 15 column 10: model is not available")',
+    ]);
+  });
+
   it("answers unknown for formulas outside the logic that the smt setup rejects", () => {
     const reason =
       "Benchmark contains uninterpreted function symbols, but specified logic does not support them.";
