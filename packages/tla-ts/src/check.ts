@@ -47,6 +47,7 @@ import {
   getStateHash,
   isSameState,
   markSeenState,
+  type StateTable,
 } from "./fingerprints";
 import type { JavaOverride } from "./java-overrides";
 import {
@@ -727,12 +728,12 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
                   search.satisfiesActionConstraints(state, successor.state);
                 if (!isInModel) return false;
                 const fingerprintState = getFingerprintState(successor.state);
-                const index = findStateIndex(
-                  seenStates,
-                  getStateHash(fingerprintState),
-                  fingerprintState,
-                );
-                successors.push({ index, state: successor.state });
+                const hash = getStateHash(fingerprintState);
+                const index = findStateIndex(seenStates, hash, fingerprintState);
+                successors.push({
+                  index: index === -1 ? getPendingIndex(hash, fingerprintState) : index,
+                  state: successor.state,
+                });
                 return false;
               },
               spec.scope,
@@ -755,6 +756,18 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   const actions: (string | undefined)[] = [];
   const depths: number[] = [];
   const seenStates = createStateTable(fingerprintStates);
+  const pendingFingerprintStates: Value[][] = [];
+  let pendingStates: StateTable | undefined;
+  const getPendingIndex = (hash: number, fingerprintState: Value[]) => {
+    pendingStates ??= createStateTable(pendingFingerprintStates);
+    const found = findStateIndex(pendingStates, hash, fingerprintState);
+    const position = found === -1 ? pendingFingerprintStates.length : found;
+    if (found === -1) {
+      markSeenState(pendingStates, hash, position);
+      pendingFingerprintStates.push(fingerprintState);
+    }
+    return -2 - position;
+  };
   const canonicalizeState = createCanonicalizer();
 
   const toRecord = search.toRecord;
@@ -1092,6 +1105,10 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     if (coverage) countCoverageVariables(coverage, successor.state);
     if (!isCanonicalizedFirst) canonicalizeState(successor.state);
     markSeenState(seenStates, found.hash, states.length);
+    if (pendingStates) {
+      const pending = findStateIndex(pendingStates, found.hash, found.fingerprintState);
+      if (pending !== -1) liveness?.storeState(-2 - pending, states.length);
+    }
     addState(successor.state, found.fingerprintState, index, successor.action);
     runtime.queueSize++;
     return undefined;
