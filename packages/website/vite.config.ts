@@ -183,7 +183,19 @@ const pages = (): Plugin => ({
       const content = context.filename.endsWith("/playground.html")
         ? prerender.getPlaygroundHtml()
         : prerender.getAppHtml();
-      return html.replace(EMPTY_ROOT, `<div id="root">${content}</div>`);
+      // The playground cannot compile until its worker loads, so the page asks for it at once
+      // and not after the main script has run.
+      const worker = Object.keys(context.bundle ?? {}).find((fileName) =>
+        /compile-worker-.*\.js$/.test(fileName),
+      );
+      return html
+        .replace(EMPTY_ROOT, `<div id="root">${content}</div>`)
+        .replace(
+          "</head>",
+          worker && context.filename.endsWith("/playground.html")
+            ? `<link rel="modulepreload" href="/${worker}" /></head>`
+            : "</head>",
+        );
     },
   },
 });
