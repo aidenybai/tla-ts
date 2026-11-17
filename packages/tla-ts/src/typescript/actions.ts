@@ -1114,7 +1114,7 @@ const getTarget = (node: ts.Expression, path: Path, context: Context): Target =>
       current,
       update: (getValue) =>
         useJavaScript(
-          "SetProperty",
+          isStrictCode(node) ? "SetProperty" : "LooseSetProperty",
           [write.heap, write.ref, write.key, getValue(current)],
           context,
         ),

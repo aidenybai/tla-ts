@@ -7161,7 +7161,7 @@ TypedArrayMethod(heap, ref, method, arguments, bufferPrototype, constructors) ==
                                                      ELSE <<>>, bufferPrototype, constructors)
             IN Returned(made, Allocated(made))
 
-LOCAL SetPropertyOf(heap, ref, key, value) ==
+LOCAL SetPropertyOf(heap, ref, key, value, isLoose) ==
   LET accessor == AccessorOf(heap, ref, key)
       object == PropertiesOf(heap, ref, key)
       written == DefineOwn(object, key, WriteDescriptor(object, key, value))
@@ -7172,12 +7172,17 @@ LOCAL SetPropertyOf(heap, ref, key, value) ==
             CASE written.isDone -> Update(heap, ref, written.object)
               [] written.isRangeError ->
                    Assert(FALSE, "tla-ts can't throw the RangeError of an invalid array length")
+              [] isLoose -> Update(heap, ref, written.object)
               [] OTHER -> failed
        [] accessor = Undefined -> Update(heap, ref, Put(object, key, value))
        [] accessor.set \\in DOMAIN ConstantFunctions -> heap
        [] OTHER -> Assert(FALSE, "tla-ts can't call setters")
 
-SetProperty(heap, ref, key, value) == SetPropertyOf(heap, Forward(heap, ref, {"set", "getOwnPropertyDescriptor", "defineProperty"}), key, value)
+SetProperty(heap, ref, key, value) == SetPropertyOf(heap, Forward(heap, ref, {"set", "getOwnPropertyDescriptor", "defineProperty"}), key, value, FALSE)
+
+\\* A write outside strict mode, which keeps what a write of an array's length did before it failed,
+\\* as it deleted the elements down to the first that it can't delete.
+LooseSetProperty(heap, ref, key, value) == SetPropertyOf(heap, Forward(heap, ref, {"set", "getOwnPropertyDescriptor", "defineProperty"}), key, value, TRUE)
 
 \\* The elements of an array that the heap holds, which splice reads and writes whole: each index
 \\* below its length is its own plain data property.

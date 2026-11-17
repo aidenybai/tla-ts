@@ -51350,4 +51350,27 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("1,2,3"))).failure?.message).toContain("joined 3,2,1");
     });
   });
+
+  describe("keeps what a write of an array's length deleted before it failed outside strict mode", () => {
+    const getSource = (expected: string) => `
+      var arr: any[] = [0, 1, 2, 3];
+      Object.defineProperty(arr, "2", { value: "kept", configurable: false });
+      arr.length = 1;
+      var other: any[] = [0, 1];
+      Object.defineProperty(other, "length", { writable: false });
+      other[5] = 1;
+      var result = [arr.length, arr[2], 3 in arr, other.length, 5 in other].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("3,kept,false,2,false"))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkModel(getSource("3,kept,true,2,false"))).failure?.message).toContain(
+        "result 3,kept,false,2,false",
+      );
+    });
+  });
 });
