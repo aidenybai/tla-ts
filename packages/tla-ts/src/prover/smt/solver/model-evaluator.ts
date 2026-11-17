@@ -1,4 +1,3 @@
-// Ported from Z3 (src/model/model_evaluator.cpp), MIT license, see z3-license.txt.
 import { mkArrayApp } from "./array-decl-plugin";
 import {
   FAMILY_ARITH,

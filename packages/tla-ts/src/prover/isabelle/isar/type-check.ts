@@ -1,5 +1,3 @@
-// Ported from Isabelle2025's Pure/type_infer_context.ML, Pure/type_infer.ML and Pure/consts.ML. Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
-
 import { TlaIsabelleError } from "../../../errors";
 import { bumpString } from "../pure/name";
 import {

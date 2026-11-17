@@ -1,5 +1,3 @@
-// Ported from Z3 (src/muz/fp/horn_tactic.cpp, src/muz/fp/dl_register_engine.cpp), MIT license,
-// see z3-license.txt.
 import { SmtTacticError, SmtUnsupportedError } from "../../../../errors";
 import {
   type AstManager,

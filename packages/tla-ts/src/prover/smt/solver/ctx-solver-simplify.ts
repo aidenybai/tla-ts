@@ -1,5 +1,3 @@
-// Ported from Z3 (src/smt/tactic/ctx_solver_simplify_tactic.cpp,
-// src/ast/rewriter/mk_simplified_app.cpp), MIT license, see z3-license.txt.
 import { type AstManager, SORT_BOOL, SORT_INT } from "./ast";
 import type { Goal } from "./goal";
 import { L_FALSE } from "./lbool";

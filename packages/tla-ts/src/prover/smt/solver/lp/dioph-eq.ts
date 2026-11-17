@@ -1,5 +1,3 @@
-// Ported from Z3 (src/math/lp/dioph_eq.cpp, src/math/lp/var_register.h), MIT license, see
-// z3-license.txt.
 import { SmtInvariantError } from "../../../../errors";
 import { getGcd, getLcm, Rational } from "../rational";
 import { IndexedUintSet, UnorderedUintMap } from "./containers";

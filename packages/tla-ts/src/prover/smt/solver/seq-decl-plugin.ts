@@ -1,4 +1,3 @@
-// Ported from Z3 (src/ast/seq_decl_plugin.cpp, src/ast/char_decl_plugin.cpp), MIT license, see z3-license.txt.
 import { SmtInvariantError } from "../../../errors";
 import {
   type AstManager,

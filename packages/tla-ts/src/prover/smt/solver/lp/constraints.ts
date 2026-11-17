@@ -1,4 +1,3 @@
-// Ported from Z3 (src/math/lp/lar_constraints.h), MIT license, see z3-license.txt.
 import { type Dependency, mkLeaf } from "./dependency";
 import { Impq } from "./numeric-pair";
 import { shrink } from "../array";

@@ -1,5 +1,3 @@
-// Ported from Z3 (src/ast/seq/seq_regex_live.cpp, src/ast/seq/seq_regex_live.h), MIT license, see
-// z3-license.txt.
 import type { AstManager } from "./ast";
 import { L_FALSE, L_TRUE } from "./lbool";
 import { RefVector } from "./ref-vector";

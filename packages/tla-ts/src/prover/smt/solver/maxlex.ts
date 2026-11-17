@@ -1,4 +1,3 @@
-// Ported from Z3 (src/opt/maxlex.cpp), MIT license, see z3-license.txt.
 import { OP_NOT, SORT_BOOL } from "./ast";
 import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
 import { type MaxsatContext, MaxsmtSolverBase, type Soft } from "./maxsmt-base";

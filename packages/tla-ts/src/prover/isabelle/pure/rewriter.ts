@@ -1,5 +1,3 @@
-// Ported from Isabelle2025's Pure/raw_simplifier.ML and Pure/conv.ML. Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
-
 import { isIsabelleError, TlaIsabelleError } from "../../../errors";
 import { gconvRule, impCongRule } from "./conv";
 import { betaEtaConversion, impCong, swapPremsEq } from "./drule";

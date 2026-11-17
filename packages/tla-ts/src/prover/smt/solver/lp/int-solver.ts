@@ -1,5 +1,3 @@
-// Ported from Z3 (src/math/lp/int_solver.cpp, src/math/lp/int_gcd_test.cpp,
-// src/math/lp/int_branch.cpp), MIT license, see z3-license.txt.
 import { getGcd, getLcm, Rational } from "../rational";
 import { COLUMN_BOXED, COLUMN_FIXED, COLUMN_FREE, COLUMN_LOWER, COLUMN_UPPER } from "./core-solver";
 import { DiophantineSolver } from "./dioph-eq";

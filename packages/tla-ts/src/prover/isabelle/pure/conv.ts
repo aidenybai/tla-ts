@@ -1,5 +1,3 @@
-// Ported from Isabelle2025's Pure/conv.ML. Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
-
 import { TlaIsabelleError } from "../../../errors";
 import { destEquals, destImplies, implies, isAllAbs, isImplies } from "./logic";
 import { declareName, makeNameContext, variantName, type NameContext } from "./name";

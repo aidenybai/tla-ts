@@ -1,5 +1,3 @@
-// Ported from Z3 (src/math/polynomial/upolynomial.{h,cpp}, src/util/mpzzp.h,
-// src/math/polynomial/polynomial_primes.h), MIT license, see z3-license.txt.
 import { SmtInvariantError } from "../../../../errors";
 import { getGcd, Rational } from "../rational";
 import { getLog2, Mpbq, refineLower, refineUpper } from "./mpbq";

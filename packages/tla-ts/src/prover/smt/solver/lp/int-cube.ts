@@ -1,4 +1,3 @@
-// Ported from Z3 (src/math/lp/int_cube.cpp, and tighten_term_bounds_by_delta and round_to_integer_solution in src/math/lp/lar_solver.cpp), MIT license, see z3-license.txt.
 import { Rational } from "../rational";
 import { type ConstraintKind, KIND_GE, KIND_GT, KIND_LE, KIND_LT } from "./constraints";
 import { LP_FEASIBLE, LP_OPTIMAL, LP_UNBOUNDED } from "./core-solver";

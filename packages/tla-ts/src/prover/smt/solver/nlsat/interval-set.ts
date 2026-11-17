@@ -1,4 +1,3 @@
-// Ported from Z3 (src/nlsat/nlsat_interval_set.cpp), MIT license, see z3-license.txt.
 import { RandomGen } from "../random-gen";
 import { Rational } from "../rational";
 import { Anum, type AlgebraicManager } from "./algebraic";

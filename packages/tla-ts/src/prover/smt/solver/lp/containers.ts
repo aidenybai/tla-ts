@@ -1,4 +1,3 @@
-// Ported from Z3 (src/util/uint_set.h, src/util/heap.h, src/math/lp/stacked_vector.h), MIT license, see z3-license.txt.
 import { shrink } from "../array";
 
 export class IndexedUintSet {

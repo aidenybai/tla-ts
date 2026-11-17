@@ -1,5 +1,3 @@
-// Ported from Z3 (src/math/lp/nla_types.h, src/math/lp/nla_defs.h, src/math/lp/nla_common.h, and
-// lemma_builder of src/math/lp/nla_core.cpp), MIT license, see z3-license.txt.
 import { Rational } from "../rational";
 import { KIND_EQ, KIND_GE, KIND_GT, KIND_LE, KIND_LT, KIND_NE } from "./constraints";
 import { Explanation } from "./explanation";

@@ -1,5 +1,3 @@
-// Ported from Z3 (src/sat/smt/dt_solver.h, src/sat/smt/dt_solver.cpp), MIT license, see
-// z3-license.txt.
 import { SmtUnsupportedError } from "../../../../errors";
 import { mkArrayApp } from "../array-decl-plugin";
 import {

@@ -1,4 +1,3 @@
-// Ported from Z3 (src/smt/smt_quantifier.cpp), MIT license, see z3-license.txt.
 import { CHECK_MODEL_RESTART, CHECK_MODEL_SAT, CHECK_MODEL_UNKNOWN, type Context } from "./context";
 import { FC_CONTINUE, FC_DONE } from "./theory";
 import { Mam } from "./e-matching";

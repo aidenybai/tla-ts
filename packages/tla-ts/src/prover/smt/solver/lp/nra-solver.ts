@@ -1,5 +1,3 @@
-// Ported from Z3 (src/math/lp/nra_solver.cpp, src/math/lp/nla_coi.cpp), MIT license, see
-// z3-license.txt.
 // Deviations from Z3: unsupported nlsat input answers unknown where Z3 exits (levelwise.cpp,
 // add_linear_approximations), check_assignment has no satisfied branch and no add_mul_def, the
 // budget counts only nlsat's own steps, and transcendental functions are not supported.

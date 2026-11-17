@@ -1,4 +1,3 @@
-// Ported from Z3 (src/ast/fpa/fpa2bv_converter.cpp), MIT license, see z3-license.txt.
 // A statement that discards its result builds a term that upstream builds and never uses, so the
 // terms after it get the ids Z3 gives them.
 import { SmtUnsupportedError } from "../../../errors";

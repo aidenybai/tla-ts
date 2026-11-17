@@ -1,8 +1,6 @@
-// Ported from Z3 (src/smt/smt_setup.cpp, src/params/smt_params.cpp), MIT license, see
-// z3-license.txt. Of the parameters a setup picks, the port takes those in SmtConfig and the MBQI
-// that setup_AUFLIA and setup_AUFLIRA turn on. The port has one arithmetic solver, so it stands in
-// for the legacy ones the setups for difference logic pick, and one array solver, which is
-// theory_array_full.
+// Of the parameters a setup picks, the port takes those in SmtConfig and the MBQI that setup_AUFLIA
+// and setup_AUFLIRA turn on. The port has one arithmetic solver, so it stands in for the legacy
+// ones the setups for difference logic pick, and one array solver, which is theory_array_full.
 import {
   type AstManager,
   FAMILY_ARITH,

@@ -1,7 +1,3 @@
-// Ported from Z3 (src/tactic/smtlogics/*.cpp, src/tactic/portfolio/default_tactic.cpp,
-// src/tactic/ufbv/ufbv_tactic.cpp, src/nlsat/tactic/qfnra_nlsat_tactic.cpp), MIT license, see
-// z3-license.txt.
-
 interface QfnraSolver {
   simpleCheck: number;
   heuristic?: number;

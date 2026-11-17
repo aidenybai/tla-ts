@@ -1,6 +1,5 @@
-// Ported from Z3 (src/tactic/aig/aig.cpp, src/tactic/aig/aig.h), MIT license, see z3-license.txt.
-// A node is 2 * id for a variable and 2 * (id - FIRST_NODE_ID) + 1 for an and, and a literal is
-// 2 * node, plus 1 when inverted.
+// A node is 2 * id for a variable and 2 * (id - FIRST_NODE_ID) + 1 for an and, and a literal is 2 *
+// node, plus 1 when inverted.
 import { SmtTacticError } from "../../../errors";
 import {
   type AstManager,

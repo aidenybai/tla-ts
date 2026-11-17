@@ -1,7 +1,3 @@
-// Ported from Isabelle2025's Tools/induct.ML: the cases method, as PredicateLogic.thy instantiates
-// Induct. Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and
-// contributors, see LICENSE.
-
 import { TlaIsabelleError } from "../../../errors";
 import { fconvRule, premsConv } from "../pure/conv";
 import { asmRl, compIncr, normHhfEq } from "../pure/drule";

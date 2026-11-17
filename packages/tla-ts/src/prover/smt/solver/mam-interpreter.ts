@@ -1,4 +1,3 @@
-// Ported from Z3 (src/smt/mam.cpp), MIT license, see z3-license.txt.
 import type { Context } from "./context";
 import type { Enode } from "./enode";
 import {

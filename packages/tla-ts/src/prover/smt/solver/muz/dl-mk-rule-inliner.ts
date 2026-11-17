@@ -1,4 +1,3 @@
-// Ported from Z3 (src/muz/transforms/dl_mk_rule_inliner.cpp), MIT license, see z3-license.txt.
 import { SmtUnsupportedError } from "../../../../errors";
 import { L_FALSE, L_UNDEF } from "../lbool";
 import type { DatalogContext } from "./dl-context";

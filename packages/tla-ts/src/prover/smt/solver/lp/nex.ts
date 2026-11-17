@@ -1,4 +1,3 @@
-// Ported from Z3 (src/math/lp/nex.h), MIT license, see z3-license.txt.
 import { Rational } from "../rational";
 
 interface NexScalar {

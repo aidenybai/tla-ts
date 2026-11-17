@@ -1,5 +1,3 @@
-// Ported from Z3 (src/cmd_context/tactic_cmds.cpp, src/tactic/tactical.cpp, src/tactic/tactic.cpp),
-// MIT license, see z3-license.txt.
 import {
   SmtCanceledError,
   SmtParseError,

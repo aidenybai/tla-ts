@@ -1,5 +1,3 @@
-// Ported from Z3 (src/nlsat/nlsat_transcendentals.h, src/nlsat/nlsat_transcendentals.cpp), MIT
-// license, see z3-license.txt.
 import { getLcm, Rational } from "../rational";
 import { Anum } from "./algebraic";
 import { NULL_VAR } from "./polynomial";

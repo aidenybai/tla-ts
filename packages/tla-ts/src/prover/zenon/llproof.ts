@@ -1,5 +1,3 @@
-// Ported from Zenon's llproof.ml, as shipped in tlapm. Copyright 2004 INRIA, see LICENSE.
-
 import { TlaZenonError } from "../../errors";
 import { FALSE, TRUE, type Expr, type Expressions } from "./expr";
 

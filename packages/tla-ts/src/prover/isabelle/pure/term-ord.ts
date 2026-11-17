@@ -1,5 +1,3 @@
-// Ported from Isabelle2025's Pure/term_ord.ML. Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
-
 import { fastIndexnameOrd, fastStringOrd, indexnameOrd } from "./table";
 import { dummyT, sizeOfTerm, type Term, type Typ } from "./term";
 

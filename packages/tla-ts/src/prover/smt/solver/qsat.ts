@@ -1,4 +1,3 @@
-// Ported from Z3 (src/qe/qsat.cpp), MIT license, see z3-license.txt.
 import { SmtInvariantError, SmtTacticError, SmtUnsupportedError } from "../../../errors";
 import {
   type AstManager,

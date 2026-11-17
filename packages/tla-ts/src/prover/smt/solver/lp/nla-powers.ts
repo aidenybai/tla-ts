@@ -1,4 +1,3 @@
-// Ported from Z3 (src/math/lp/nla_powers.cpp), MIT license, see z3-license.txt.
 import { L_FALSE, L_TRUE, L_UNDEF } from "../lbool";
 import { Anum } from "../nlsat/algebraic";
 import { Rational } from "../rational";

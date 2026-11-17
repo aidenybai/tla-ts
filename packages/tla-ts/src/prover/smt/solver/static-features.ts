@@ -1,5 +1,3 @@
-// Ported from Z3 (src/ast/static_features.cpp), MIT license, see z3-license.txt. It collects the
-// features the setups read.
 import {
   type AstManager,
   FAMILY_ARITH,

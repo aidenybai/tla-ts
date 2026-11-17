@@ -1,5 +1,3 @@
-// Ported from Z3 (src/math/lp/nla_transcendentals.h, src/math/lp/nla_transcendentals.cpp), MIT
-// license, see z3-license.txt.
 import { Rational } from "../rational";
 import {
   evalTranscendental,

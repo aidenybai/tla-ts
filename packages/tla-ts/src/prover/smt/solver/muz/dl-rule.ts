@@ -1,5 +1,3 @@
-// Ported from Z3 (src/muz/base/dl_rule.cpp, src/muz/base/bind_variables.cpp), MIT license, see
-// z3-license.txt.
 import { SmtTacticError, SmtUnsupportedError } from "../../../../errors";
 import {
   type AstManager,

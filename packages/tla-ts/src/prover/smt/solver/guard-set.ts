@@ -1,4 +1,3 @@
-// Ported from Z3 (src/ast/rewriter/guard_set.cpp), MIT license, see z3-license.txt.
 import {
   type AstManager,
   OP_AND,

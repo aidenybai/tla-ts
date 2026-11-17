@@ -1,4 +1,3 @@
-// Ported from Z3 (src/smt/smt_model_finder.cpp, src/ast/macros/quantifier_macro_info.cpp), MIT license, see z3-license.txt.
 import {
   KIND_APP,
   KIND_VAR,

@@ -1,5 +1,3 @@
-// Ported from Z3 (src/ast/rewriter/seq_rewriter.cpp, src/ast/rewriter/char_rewriter.cpp), MIT
-// license, see z3-license.txt.
 import { mkArrayApp } from "./array-decl-plugin";
 import {
   type AstManager,

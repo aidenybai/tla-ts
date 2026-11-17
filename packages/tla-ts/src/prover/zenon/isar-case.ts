@@ -1,5 +1,3 @@
-// Ported from Zenon's isar_case.ml and enum.ml, as shipped in tlapm. Copyright 2009 INRIA, see LICENSE.
-
 import { TlaZenonError } from "../../errors";
 
 interface Lexeme {

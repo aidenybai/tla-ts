@@ -1,5 +1,3 @@
-// Ported from Isabelle2025's Pure/Isar/object_logic.ML and Pure/tactic.ML. Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
-
 import { TlaIsabelleError } from "../../../errors";
 import { fconvRule, gconvRule, paramsConv, premsConv } from "./conv";
 import { hasMetaPrems } from "./logic";

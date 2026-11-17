@@ -1,4 +1,3 @@
-// Ported from Z3 (src/smt/smt_theory.h, src/smt/smt_theory.cpp), MIT license, see z3-license.txt.
 import { shrink } from "./array";
 import { type AstManager, OP_ITE } from "./ast";
 import type { Context } from "./context";

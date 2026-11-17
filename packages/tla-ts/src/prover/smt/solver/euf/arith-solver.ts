@@ -1,4 +1,3 @@
-// Ported from Z3 (src/sat/smt/arith_solver.cpp), MIT license, see z3-license.txt.
 import { mkBoundAtom, mkTermEqSides } from "../arith-terms";
 import {
   FAMILY_ARITH,

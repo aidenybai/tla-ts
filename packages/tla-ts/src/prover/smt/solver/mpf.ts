@@ -1,4 +1,3 @@
-// Ported from Z3 (src/util/mpf.h, src/util/mpf.cpp), MIT license, see z3-license.txt.
 import { Rational } from "./rational";
 
 export const MPF_ROUND_NEAREST_TEVEN = 0;
