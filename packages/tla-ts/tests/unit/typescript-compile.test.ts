@@ -50907,4 +50907,34 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("throws from a closure's getter that a built-in reads first, in the closure's environment", () => {
+    const getSource = (expected: string) => `
+      const make = (label: string) => ({
+        get raw(): string[] {
+          throw new Error(label + " raw");
+        },
+      });
+      const read = (label: string) => {
+        try {
+          const text = String.raw(make(label));
+          return text;
+        } catch (error) {
+          return (error as Error).message;
+        }
+      };
+      const seen = read("first") + "," + read("second");
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("first raw,second raw"))).failure).toBeUndefined();
+    });
+
+    it("rejects the message of another call", async () => {
+      expect((await checkModel(getSource("first raw,first raw"))).failure?.message).toContain(
+        "seen first raw,second raw",
+      );
+    });
+  });
 });

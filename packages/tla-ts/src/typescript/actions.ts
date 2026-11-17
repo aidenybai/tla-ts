@@ -17442,12 +17442,12 @@ const getThrowingGetters = (node: ts.Node, context: Context) =>
       getCandidateValue(getter, context) !== undefined,
   );
 
-// Runs the getter whose code a built-in reads first, where it reads one and it only throws, which
-// throws from there; otherwise runs the built-in.
+// Runs the getter that a built-in reads first, where it reads one and it only throws, which throws
+// from there; otherwise runs the built-in. A closure runs in the environment that the getter holds.
 export const throwFirstGetter = (
   node: ts.Node,
   isRead: Expression,
-  code: Expression,
+  getter: Expression,
   receiver: Expression,
   path: Path,
   context: Context,
@@ -17456,28 +17456,35 @@ export const throwFirstGetter = (
   held?: ts.Expression,
 ) =>
   getThrowingGetters(node, context)
-    .filter((getter) => isReachedGetter(getter, held))
-    .reduceRight<Formula>(
-      (rest, getter) =>
-        ifThenElse(
-          apply("/\\", [
-            isRead,
-            apply("=", [code, getCandidateValue(getter, context) ?? getUndefined(context)]),
+    .filter((candidate) => isReachedGetter(candidate, held))
+    .reduceRight<Formula>((rest, candidate) => {
+      const run = (inner: Path, innerFrame: Frame) =>
+        inlineBody(
+          node,
+          candidate,
+          [],
+          { value: receiver, method: candidate },
+          inner,
+          context,
+          innerFrame,
+          () => otherwise,
+        );
+      return ifThenElse(
+        apply("/\\", [
+          isRead,
+          apply("=", [
+            useJavaScript("CodeOf", [getHeap(path.scope, node, context), getter], context),
+            getCandidateValue(candidate, context) ?? getUndefined(context),
           ]),
-          inlineBody(
-            node,
-            getter,
-            [],
-            { value: receiver, method: getter },
-            path,
-            context,
-            frame,
-            () => otherwise,
-          ),
-          rest,
-        ),
-      otherwise,
-    );
+        ]),
+        isClosure(candidate, context)
+          ? enterClosure(candidate, getter, path, context, frame, (inner, innerFrame) =>
+              run(inner, innerFrame),
+            )
+          : run(path, frame),
+        rest,
+      );
+    }, otherwise);
 
 const translateLoop = (
   loop: ts.IterationStatement,

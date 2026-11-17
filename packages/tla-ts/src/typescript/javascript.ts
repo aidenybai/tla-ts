@@ -2815,7 +2815,7 @@ AccessorFieldOf(heap, ref, key, field) ==
 
 GetterOf(heap, ref, key) == AccessorFieldOf(heap, ref, key, "get")
 
-\\* The code of the first getter that RegExp.prototype's flags getter reads of an object that isn't
+\\* The first getter that RegExp.prototype's flags getter reads of an object that isn't
 \\* a regexp, as it reads the flags in order, or Undefined.
 FlagsFirstGetter(heap, receiver) ==
   LET keys == <<"hasIndices", "global", "ignoreCase", "multiline", "dotAll", "unicode",
@@ -2823,20 +2823,20 @@ FlagsFirstGetter(heap, receiver) ==
       read == {position \\in DOMAIN keys : GetterOf(heap, receiver, keys[position]) # Undefined}
       first == CHOOSE position \\in read : \\A other \\in read : position <= other
   IN IF IsHeap(receiver) /\\ ~IsProxy(heap, receiver) /\\ read # {}
-     THEN CodeOf(heap, GetterOf(heap, receiver, keys[first]))
+     THEN GetterOf(heap, receiver, keys[first])
      ELSE Undefined
 
-\\* The code of the getter that a read of a key of an object runs, or Undefined.
+\\* The getter that a read of a key of an object runs, or Undefined.
 KeyGetter(heap, ref, key) ==
   IF IsHeap(ref) /\\ ~IsProxy(heap, ref) /\\ GetterOf(heap, ref, key) # Undefined
-  THEN CodeOf(heap, GetterOf(heap, ref, key))
+  THEN GetterOf(heap, ref, key)
   ELSE Undefined
 
-\\* The code of the getter that an array-like object's first element reads, where its length isn't
+\\* The getter that an array-like object's first element reads, where its length isn't
 \\* 0, or Undefined.
 FirstElementGetter(heap, ref) ==
   IF ToLength(Get(heap, ref, "length")) > 0 /\\ GetterOf(heap, ref, "0") # Undefined
-  THEN CodeOf(heap, GetterOf(heap, ref, "0"))
+  THEN GetterOf(heap, ref, "0")
   ELSE Undefined
 
 SetterOf(heap, ref, key) == AccessorFieldOf(heap, ref, key, "set")
@@ -6501,21 +6501,21 @@ LOCAL NumbersFirstGetter(heap, ref, isBig) ==
      THEN first
      ELSE -1
 
-\\* The code of the getter that new of a typed array of numbers, or of BigInts where isBig holds,
+\\* The getter that new of a typed array of numbers, or of BigInts where isBig holds,
 \\* runs first as it reads an object: its @@iterator's, and else, where it has none, its length's or
 \\* that of the first element that NumbersFirstGetter gives, or Undefined.
 TypedArrayFirstGetter(heap, ref, isBig) ==
   LET getter(key) == GetterOf(heap, ref, key)
       iterator == WellKnownSymbol("iterator")
   IN CASE ~IsHeap(ref) \\/ IsProxy(heap, ref) -> Undefined
-       [] getter(iterator) # Undefined -> CodeOf(heap, getter(iterator))
+       [] getter(iterator) # Undefined -> getter(iterator)
        [] Get(heap, ref, iterator) \\notin {Undefined, Null} -> Undefined
-       [] getter("length") # Undefined -> CodeOf(heap, getter("length"))
+       [] getter("length") # Undefined -> getter("length")
        [] NumbersFirstGetter(heap, ref, isBig) # -1 ->
-            CodeOf(heap, getter(ToString(NumbersFirstGetter(heap, ref, isBig))))
+            getter(ToString(NumbersFirstGetter(heap, ref, isBig)))
        [] OTHER -> Undefined
 
-\\* The code of the getter that String.raw runs first as it reads a template object: its raw's, and
+\\* The getter that String.raw runs first as it reads a template object: its raw's, and
 \\* else its raw's length's, or that of the first segment that a getter answers, where the length, the
 \\* segments before, and the substitutions between them convert to strings without running code or
 \\* throwing, or Undefined.
@@ -6528,15 +6528,15 @@ StringRawFirstGetter(heap, template, substitutions) ==
       read == {index \\in 0..(count - 1) : GetterOf(heap, raw, ToString(index)) # Undefined}
       first == CHOOSE index \\in read : \\A other \\in read : index <= other
   IN CASE ~isReadable(template) -> Undefined
-       [] GetterOf(heap, template, "raw") # Undefined -> CodeOf(heap, GetterOf(heap, template, "raw"))
+       [] GetterOf(heap, template, "raw") # Undefined -> GetterOf(heap, template, "raw")
        [] ~isReadable(raw) -> Undefined
-       [] GetterOf(heap, raw, "length") # Undefined -> CodeOf(heap, GetterOf(heap, raw, "length"))
+       [] GetterOf(heap, raw, "length") # Undefined -> GetterOf(heap, raw, "length")
        [] ~IsPlainNumeric(length) \\/ IsBig(length) \\/ length = Infinity \\/ count > MaxBytes -> Undefined
        [] /\\ read # {}
           /\\ \\A index \\in 0..(first - 1) :
                /\\ isPlain(Get(heap, raw, ToString(index)))
                /\\ index < Len(substitutions) => isPlain(substitutions[index + 1]) ->
-            CodeOf(heap, GetterOf(heap, raw, ToString(first)))
+            GetterOf(heap, raw, ToString(first))
        [] OTHER -> Undefined
 
 \\* The object whose getter StringRawFirstGetter gives, which the getter runs with as this.
@@ -6913,12 +6913,12 @@ LOCAL SetFirstGetter(heap, ref, arguments) ==
      THEN first
      ELSE -1
 
-\\* The code of the getter that %TypedArray%.prototype.set runs first as it reads an array-like
+\\* The getter that %TypedArray%.prototype.set runs first as it reads an array-like
 \\* source, which SetFirstGetter gives, or Undefined.
 TypedArraySetFirstGetter(heap, ref, arguments) ==
   IF SetFirstGetter(heap, ref, arguments) = -1
   THEN Undefined
-  ELSE CodeOf(heap, GetterOf(heap, arguments[1], ToString(SetFirstGetter(heap, ref, arguments))))
+  ELSE GetterOf(heap, arguments[1], ToString(SetFirstGetter(heap, ref, arguments)))
 
 \\* The heap once set wrote the elements before the one that TypedArraySetFirstGetter reads.
 TypedArraySetBefore(heap, ref, arguments) ==
@@ -7520,7 +7520,7 @@ LOCAL LongCopyWithin(heap, ref, target, start, end) ==
        [] ~LessThan(0, count) -> [heap |-> heap, value |-> ref, isThrown |-> FALSE]
        [] OTHER -> [heap |-> state.heap, value |-> ref, isThrown |-> state.isThrown]
 
-\\* The code of the getter that copyWithin reads first, at the index it copies from first, where it
+\\* The getter that copyWithin reads first, at the index it copies from first, where it
 \\* copies any, or Undefined.
 \\* An object whose length is past 2^31 reads its elements as copyWithin moves them.
 CopyWithinFirstGetter(heap, ref, target, start, end) ==
@@ -7535,7 +7535,7 @@ CopyWithinFirstGetter(heap, ref, target, start, end) ==
         /\\ ~IsProxy(heap, ref)
         /\\ count > 0
         /\\ GetterOf(heap, ref, ToString(first)) # Undefined
-     THEN CodeOf(heap, GetterOf(heap, ref, ToString(first)))
+     THEN GetterOf(heap, ref, ToString(first))
      ELSE Undefined
 
 \\* copyWithin() on an array-like object that the heap holds, as the spec runs it index by index,
