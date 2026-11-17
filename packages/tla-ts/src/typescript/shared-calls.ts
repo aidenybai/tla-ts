@@ -18,7 +18,6 @@ import {
   findNodes,
   type FunctionNode,
   getAnyFunction,
-  getCallee,
   getParameters,
   getSymbol,
   getUndefined,
@@ -332,23 +331,16 @@ export const classifySharedHelpers = (reached: readonly ts.Node[], context: Cont
   });
 };
 
-// Whether a call runs a function other than the one that its callee names, as a call through a
-// value does.
-const isThroughValue = (node: ts.Node, callee: FunctionNode, context: Context) =>
-  ts.isCallExpression(node) && getCallee(node.expression, context) !== callee;
-
-// Whether a statement's call of a helper may run as the helper's operator: a call by name with no
-// more arguments than the helper takes, but where a rest parameter takes them, none of which
-// spreads. A helper reads no this, so a call through a value may run it with any receiver.
+// Whether a statement's call of a helper may run as the helper's operator: a call with no more
+// arguments than the helper takes, but where a rest parameter takes them, none of which spreads. A
+// helper reads no this, so a call may run it with any receiver.
 export const isSharedCall = (
   node: ts.Node,
   callee: FunctionNode,
   argumentNodes: readonly ts.Expression[],
-  receiver: Receiver | undefined,
   context: Context,
 ) =>
   context.sharedHelpers.has(callee) &&
-  (receiver === undefined || isThroughValue(node, callee, context)) &&
   ts.isCallExpression(node) &&
   argumentNodes === node.arguments &&
   !argumentNodes.some(ts.isSpreadElement) &&
@@ -408,7 +400,8 @@ const getSharedCall = (
       shared.uninitialized.length === uninitialized.length &&
       shared.uninitialized.every((symbol) => uninitialized.includes(symbol)) &&
       shared.held.size === held.size &&
-      [...held].every((entry) => shared.held.get(entry[0]) === entry[1]),
+      [...held].every((entry) => shared.held.get(entry[0]) === entry[1]) &&
+      shared.isCatching === path.scope.isCatching,
   );
   if (defined !== undefined && context.inProgress.has(callee)) defined.isRecursive = true;
   if (defined !== undefined) return defined;
@@ -428,6 +421,7 @@ const getSharedCall = (
       held,
       state,
       uninitialized,
+      isCatching: path.scope.isCatching,
     },
     context,
   );
@@ -492,7 +486,7 @@ const defineShared = (
   callee: FunctionNode,
   variant: Pick<
     SharedCall,
-    "changed" | "captured" | "callbacks" | "held" | "state" | "uninitialized"
+    "changed" | "captured" | "callbacks" | "held" | "state" | "uninitialized" | "isCatching"
   >,
   context: Context,
 ) => {
@@ -523,8 +517,8 @@ const defineShared = (
   const base = createStateScope(context);
   const scope = {
     ...base,
-    // The body runs as inside a try, so that each caller catches or stops at what it throws.
-    isCatching: true,
+    // The body runs as inside a try where its caller catches what it throws.
+    isCatching: variant.isCatching,
     functions: new Map([...base.functions, ...variant.held, ...variant.callbacks]),
     uninitialized: new Set(variant.uninitialized),
     // A variable that the operator doesn't take has no binding, so its code can't read it stale.
@@ -652,16 +646,13 @@ export const translateSharedCall = (
   };
   const parameters = getParameters(callee);
   // A parameter whose type is a function takes the function that the call passes it, which the
-  // operator runs as the inlined body would. A call through a value, which may run any of several
-  // functions, may instead pass the value, which the body's calls through it branch on.
+  // operator runs as the inlined body would, or else the value that the call passes, which the
+  // body's calls through it branch on, as the inlined body's would.
   const callbacks = new Map(getPassedCallbacks(parameters, argumentNodes, path, context));
   const shared = parameters.every((parameter) => {
     const symbol = getSymbol(parameter.name, context.checker);
     const isFunction = context.checker.getTypeAtLocation(parameter).getCallSignatures().length > 0;
-    return (
-      symbol !== undefined &&
-      (callbacks.has(symbol) ? isFunction : !isFunction || isThroughValue(node, callee, context))
-    );
+    return symbol !== undefined && (!callbacks.has(symbol) || isFunction);
   })
     ? getSharedCall(callee, callbacks, path, context)
     : undefined;

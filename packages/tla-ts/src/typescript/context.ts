@@ -63,6 +63,9 @@ export interface SharedCall {
   // nor gives back, and whose reads throw.
   uninitialized: ts.Symbol[];
   parameters: OperatorParam[];
+  // Whether its caller catches what its body throws, so that the body runs as inside a try. A
+  // caller that doesn't stops where an expression of the body throws, as the body inlined would.
+  isCatching: boolean;
   // Whether a call inside its own body, or a body that it runs, calls it.
   isRecursive: boolean;
   // Whether its body can end but by a throw, as a call inside its own body takes it to.

@@ -7137,7 +7137,7 @@ export const inlineBody = (
     argumentNodes === node.arguments &&
     isLiftable(callee, context)
     ? continueWith(path, translateLiftedCall(callee, node, path.scope, context))
-    : isSharedCall(node, callee, argumentNodes, receiver, context)
+    : isSharedCall(node, callee, argumentNodes, context)
       ? translateSharedCall(
           node,
           callee,

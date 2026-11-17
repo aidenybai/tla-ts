@@ -49437,4 +49437,47 @@ describe("BigInts", () => {
       expect(getSize(8)).toBeLessThan(getSize(4) * 2);
     });
   });
+
+  describe("runs a helper that a statement calls by name as its operator, catching only where its caller catches", () => {
+    const getSource = (calls: number, expected: number) => `
+      const log: { n: number } = { n: 0 };
+      function half(value: number): number {
+        if (value % 2 !== 0) throw new RangeError("odd " + value);
+        return value / 2;
+      }
+      function check(value: number): number {
+        try {
+          log.n += 1;
+          return half(value) + 1;
+        } catch (error) {
+          return -1;
+        }
+      }
+      let total = 0;
+      ${Array.from({ length: calls }, (_, position) => `const r${position}: number = check(${position});\ntotal += r${position};`).join("\n")}
+      let caught = "";
+      try {
+        check(2);
+        half(3);
+      } catch (error) {
+        caught = (error as RangeError).message;
+      }
+      if (total !== ${expected} || log.n !== ${calls + 1} || caught !== "odd 3") {
+        throw new Error("total " + total + " " + caught);
+      }
+    `;
+    const getSize = (calls: number) => printModule(compile(getSource(calls, 0)).source).length;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(2, 0))).failure).toBeUndefined();
+    });
+
+    it("rejects another total", async () => {
+      expect((await checkModel(getSource(2, 1))).failure?.message).toContain("total 0 odd 3");
+    });
+
+    it("grows by a call for each call rather than by a copy of the helper", () => {
+      expect(getSize(8)).toBeLessThan(getSize(4) * 1.3);
+    });
+  });
 });
