@@ -19310,25 +19310,24 @@ const findLeadingCall = (
   }
   if (ts.isArrayLiteralExpression(node)) return inOrder(node.elements);
   if (ts.isOmittedExpression(node)) return none;
+  // A method or an accessor evaluates only its computed key, as it makes a function that nothing
+  // can call before the literal is made.
   if (ts.isObjectLiteralExpression(node)) {
-    return node.properties.every(
-      (property) =>
-        ts.isPropertyAssignment(property) ||
-        ts.isShorthandPropertyAssignment(property) ||
-        ts.isSpreadAssignment(property),
-    )
-      ? inOrder(
-          node.properties.flatMap((property): ts.Node[] =>
-            ts.isPropertyAssignment(property)
-              ? ts.isComputedPropertyName(property.name)
-                ? [property.name.expression, property.initializer]
-                : [property.initializer]
-              : ts.isShorthandPropertyAssignment(property)
-                ? [property.name]
-                : [property],
-          ),
-        )
-      : blocked;
+    return inOrder(
+      node.properties.flatMap((property): ts.Node[] =>
+        ts.isPropertyAssignment(property)
+          ? ts.isComputedPropertyName(property.name)
+            ? [property.name.expression, property.initializer]
+            : [property.initializer]
+          : ts.isShorthandPropertyAssignment(property)
+            ? [property.name]
+            : ts.isSpreadAssignment(property)
+              ? [property]
+              : ts.isComputedPropertyName(property.name)
+                ? [property.name.expression]
+                : [],
+      ),
+    );
   }
   if (ts.isTemplateExpression(node)) {
     return thenConverted(inOrder(node.templateSpans.map((span) => span.expression)));

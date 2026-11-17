@@ -50937,4 +50937,45 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("runs a call that an object literal with methods spreads before it makes the literal", () => {
+    const getSource = (expected: string) => `
+      interface Primitive {
+        readonly kind: string;
+        readonly identifier: string;
+      }
+      const base = { kind: "effect" };
+      const make = (options: { op: string }): Primitive =>
+        ({ ...base, identifier: options.op }) as any;
+      const makeExit = (options: { op: string }) => {
+        const Proto = {
+          _tag: options.op,
+          ...make(options),
+          describe() {
+            return options.op + "!";
+          },
+        };
+        return (value: number) => {
+          const self = Object.create(Proto);
+          self.value = value;
+          return self;
+        };
+      };
+      const done = makeExit({ op: "Success" })(3);
+      const seen = [done._tag, done.kind, done.identifier, done.value, typeof done.describe].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("Success,effect,Success,3,function"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects another spread", async () => {
+      expect(
+        (await checkModel(getSource("Success,effect,Failure,3,function"))).failure?.message,
+      ).toContain("seen Success,effect,Success,3,function");
+    });
+  });
 });
