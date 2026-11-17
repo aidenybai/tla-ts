@@ -300,6 +300,9 @@ export const translatePropertyKey = (node: ts.Expression, scope: Scope, context:
   if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
     return string(node.text);
   }
+  // An object key that a statement converted first gives the primitive it converted to.
+  const converted = scope.results.get(node) ?? scope.results.get(skipCasts(node));
+  if (converted !== undefined) return useJavaScript("PropertyKey", [converted], context);
   if (ts.isNumericLiteral(node)) return getNumericKey(node);
   const value = translateExpression(node, scope, context);
   if (getKind(node, context) === "string") return value;

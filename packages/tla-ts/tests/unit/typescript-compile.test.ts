@@ -52592,4 +52592,39 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("converts an object key of Object.defineProperty, hasOwn, and hasOwnProperty with ToPropertyKey", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      var obj = {};
+      var log = [];
+      var key = { toString() { log.push("toString"); return "abc"; }, valueOf() { log.push("valueOf"); return "x"; } };
+      Object.defineProperty(obj, key, { value: 1, enumerable: true });
+      Object.defineProperty(obj, new String("Hello"), {});
+      var sym = Symbol();
+      obj[sym] = 0;
+      var wrapper = { toString() { log.push("sym"); return sym; } };
+      var result = [
+        obj.hasOwnProperty("abc"),
+        obj.hasOwnProperty("Hello"),
+        Object.hasOwn(obj, wrapper),
+        obj.propertyIsEnumerable(key),
+        Object.getOwnPropertyDescriptor(obj, key).value,
+        log.join(),
+      ].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      const source = getSource("true,true,true,true,1,toString,sym,toString,toString");
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const source = getSource("true,true,true,true,1,valueOf,sym,toString,toString");
+      expect((await check(compile(source, path))).failure?.message).toContain(
+        "result true,true,true,true,1,toString,sym,toString,toString",
+      );
+    });
+  });
 });

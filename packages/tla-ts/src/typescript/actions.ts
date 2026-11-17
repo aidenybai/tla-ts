@@ -178,6 +178,7 @@ import {
   getConversion,
   getConversionFunctions,
   getKeyedConversionFunctions,
+  isConvertedPropertyKey,
   isAnyOperand,
   isCompoundAssignment,
   isObjectOperand,
@@ -2500,6 +2501,33 @@ export const translateCallStatement = (
           next(path, getUndefined(context)),
           translateCallStatement(expression, checked, context, frame, next),
         ),
+      ),
+    );
+  }
+  // A key that the call converts to a property key runs its methods once the call's object is
+  // checked, which the call reads from its result.
+  const convertedKey = expression.arguments.find(
+    (argument) => isConvertedPropertyKey(argument, context) && !path.scope.results.has(argument),
+  );
+  const keyConversion = convertedKey && getConversion(convertedKey, context);
+  if (convertedKey !== undefined && keyConversion !== undefined) {
+    return runConversion(convertedKey, keyConversion, path, context, frame, (after, key) =>
+      translateCallStatement(
+        expression,
+        {
+          ...after,
+          scope: {
+            ...after.scope,
+            results: new Map([
+              ...after.scope.results,
+              [convertedKey, key],
+              [skipCasts(convertedKey), key],
+            ]),
+          },
+        },
+        context,
+        frame,
+        continueWith,
       ),
     );
   }
@@ -19901,6 +19929,7 @@ const findLeadingCall = (
   if ((ts.isExpression(node) || ts.isSpreadElement(node)) && path.scope.results.has(node)) {
     return none;
   }
+  if (isConvertedPropertyKey(node, context)) return { ...blocked, conversion: node };
   // An object that spreads a proxy runs its traps.
   if (ts.isObjectLiteralExpression(node) && isProxyOperation(node, context)) {
     return { call: undefined, isBlocked: true, read: node };

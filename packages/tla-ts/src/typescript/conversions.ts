@@ -8,6 +8,7 @@ import {
   getParameters,
   getSymbol,
   getUndefined,
+  isInertValue,
   isMethodCall,
   skipCasts,
 } from "./context";
@@ -196,9 +197,57 @@ const isConvertedPrimitive = (node: ts.Expression, context: Context) =>
     context,
   ) && !hasFlags(node, ts.TypeFlags.NumberLike, context);
 
+// An object that a call converts to a property key, which runs its toString and valueOf: a name's,
+// or a wrapper's that new makes, as the key
+// of Object.defineProperty, Object.getOwnPropertyDescriptor, or Object.hasOwn of an object, which
+// they convert once they check the object, and the key of hasOwnProperty or propertyIsEnumerable,
+// which they convert first.
+export const isConvertedPropertyKey = (node: ts.Node, context: Context): node is ts.Expression => {
+  const call = node.parent;
+  if (
+    context.heap === undefined ||
+    !ts.isExpression(node) ||
+    call === undefined ||
+    !ts.isCallExpression(call) ||
+    !ts.isPropertyAccessExpression(call.expression) ||
+    call.arguments.some(ts.isSpreadElement) ||
+    !(isObjectOperand(node, context) || isAnyOperand(node, context))
+  ) {
+    return false;
+  }
+  const key = skipCasts(node);
+  if (
+    !(
+      ts.isIdentifier(key) ||
+      (ts.isNewExpression(key) &&
+        ts.isIdentifier(key.expression) &&
+        WRAPPERS.has(key.expression.text) &&
+        (key.arguments ?? []).every(isInertValue))
+    )
+  ) {
+    return false;
+  }
+  const name = call.expression.name.text;
+  return getBuiltIn(call.expression.expression, context) === "Object"
+    ? ["defineProperty", "getOwnPropertyDescriptor", "hasOwn"].includes(name) &&
+        call.arguments[1] === node &&
+        call.arguments[0] !== undefined &&
+        getKind(call.arguments[0], context) === "object"
+    : ["hasOwnProperty", "propertyIsEnumerable"].includes(name) && call.arguments[0] === node;
+};
+
 // The conversion that a node makes, where one of its operands is an object.
 export const getConversion = (node: ts.Node, context: Context): Conversion | undefined => {
   if (context.heap === undefined) return undefined;
+  // A property key converts to a primitive, which the call converts as ToPropertyKey does.
+  if (isConvertedPropertyKey(node, context)) {
+    return {
+      operands: [node],
+      hints: ["string"],
+      thrownSymbols: "none",
+      combine: (primitives) => primitives[0],
+    };
+  }
   const plain = (value: Expression) =>
     context.hasSpecialNumbers ? value : useJavaScript("PlainNumber", [value], context);
   const toNumber = (value: Expression) => plain(useJavaScript("ToNumber", [value], context));
