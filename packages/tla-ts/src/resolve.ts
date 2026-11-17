@@ -621,12 +621,14 @@ const checkSelection = (
             ? sets.length > 0
               ? sets
               : undefined
-            : expression.kind === "Except"
-              ? undefined
-              : getOperands(expression);
+            : getOperands(expression);
       if (!operands) return node;
-      const position = getPosition(operands.length);
+      const isExcept = expression.kind === "Except";
+      const position = getPosition(isExcept ? expression.updates.length + 1 : operands.length);
       if (position === -1) return report(index, `Nonexistent operand specified by \`${operand}'.`);
+      if (isExcept && position > 0) {
+        return report(index, "Selecting subexpression of an EXCEPT not yet implemented.");
+      }
       state.node = operands[position];
       state.isGoal = false;
       if (unresolvedExpressions.has(state.node)) return report(index, unexpectedNull);

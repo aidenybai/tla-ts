@@ -184,6 +184,7 @@ describe("name resolution matches SANY", () => {
     ).rejects.toThrow(TlaSyntaxError);
   });
 
+  const exceptSelection = "Selecting subexpression of an EXCEPT not yet implemented.";
   it.each([
     ["f == g", [["line 2, col 6 to line 2, col 6", "Unknown operator: `g'."]]],
     [
@@ -725,6 +726,35 @@ describe("name resolution matches SANY", () => {
         ["line 4, col 57 to line 4, col 58", "Unknown operator: `zz'."],
         ["line 4, col 69 to line 4, col 69", "Cannot take subexpression of `c'."],
         ["line 4, col 80 to line 4, col 85", "Unknown operator: `I!Nope'."],
+      ],
+    ],
+    [
+      "CONSTANT c, f\nOp == [f EXCEPT ![1] = 2, ![2] = 3]\nOp2 == [f EXCEPT ![1] = 2]\nA == Op!1 /\\ Op!2 /\\ Op!3 /\\ Op!4 /\\ Op!>> /\\ Op2!>> /\\ Op!<< /\\ Op!@\nTHEOREM T == [f EXCEPT ![1] = 2] = f\nB == T!1!1 /\\ T!1!2 /\\ T!1!3 /\\ T!1!>> /\\ T!1!@\nTHEOREM U == ASSUME c PROVE [f EXCEPT ![1] = 2, ![2] = 3] = f\nC == U!2!1!1 /\\ U!2!1!2 /\\ U!2!1!4 /\\ U!2!1!>> /\\ U!2!1!@\nUSE U!2!1!2",
+      [
+        ["line 5, col 17 to line 5, col 17", exceptSelection],
+        ["line 5, col 25 to line 5, col 25", exceptSelection],
+        [
+          "line 5, col 33 to line 5, col 33",
+          "Nonexistent operand specified by `argument selector 4'.",
+        ],
+        ["line 5, col 41 to line 5, col 42", "Nonexistent operand specified by `>>'."],
+        ["line 5, col 51 to line 5, col 52", exceptSelection],
+        ["line 5, col 69 to line 5, col 69", "Nonexistent operand specified by `@'."],
+        ["line 7, col 19 to line 7, col 19", exceptSelection],
+        [
+          "line 7, col 28 to line 7, col 28",
+          "Nonexistent operand specified by `argument selector 3'.",
+        ],
+        ["line 7, col 37 to line 7, col 38", exceptSelection],
+        ["line 7, col 47 to line 7, col 47", "Nonexistent operand specified by `@'."],
+        ["line 9, col 23 to line 9, col 23", exceptSelection],
+        [
+          "line 9, col 34 to line 9, col 34",
+          "Nonexistent operand specified by `argument selector 4'.",
+        ],
+        ["line 9, col 45 to line 9, col 46", "Nonexistent operand specified by `>>'."],
+        ["line 9, col 57 to line 9, col 57", "Nonexistent operand specified by `@'."],
+        ["line 10, col 11 to line 10, col 11", exceptSelection],
       ],
     ],
     [

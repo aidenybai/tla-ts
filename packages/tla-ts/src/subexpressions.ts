@@ -401,6 +401,14 @@ const selectSubexpression = (
       current = chosen;
       return;
     }
+    if (
+      current.kind === "Except" &&
+      selector.kind === "Operand" &&
+      getOperandIndex(selector.operand, current.updates.length + 1) > 0
+    ) {
+      report(range, "Selecting subexpression of an EXCEPT not yet implemented.");
+      return;
+    }
     const operands = binder ? binder.sets : getOperands(current);
     if (!operands && current.kind !== "Identifier") {
       report(range, "Selecting subexpression of expression that has none.");
