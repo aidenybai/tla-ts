@@ -673,7 +673,7 @@ const getLazyFunctionTemplate = (bounds: Bound[], body: Expression) => {
             },
           ],
     ),
-    body: formatRange(range),
+    body: describeNode(body),
   };
 };
 
@@ -1873,7 +1873,7 @@ export const getLazyFilter = (
   const range = expression.predicate.location.range;
   const source = range && {
     names: pattern.kind === "Name" ? pattern.name : pattern.names.join(", "),
-    predicate: formatRange(range),
+    predicate: describeNode(expression.predicate),
   };
   const predicateNode = describeNode(expression.predicate);
   const coverage = environment.coverage;

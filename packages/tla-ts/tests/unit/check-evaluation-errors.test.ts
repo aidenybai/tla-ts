@@ -510,6 +510,13 @@ describe("evaluation errors match TLC", () => {
     );
   });
 
+  it("prints a set filter whose predicate is a numeral as the numeral, like TLC", async () => {
+    const result = await checkSteps("Start == x = {n \\in Nat : 1}", "INIT Start\nNEXT Next");
+    expect(result.failure?.initialState?.x && formatValue(result.failure.initialState.x)).toBe(
+      "{n \\in Nat : <expression 1> }",
+    );
+  });
+
   it("fingerprints only the states in the model like TLC", async () => {
     const result = await checkSteps(
       "Start == x = SUBSET Nat\nC == x \\in {}",

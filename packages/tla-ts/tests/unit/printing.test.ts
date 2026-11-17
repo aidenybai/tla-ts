@@ -148,6 +148,8 @@ describe("functions over infinite domains print like TLC", () => {
       "f[n \\in Nat] == IF n = 0 THEN 0 ELSE f[n - 1]\nASSUME PrintT(f)",
       "[n \\in Nat |-> <expression line 3, col 17 to line 3, col 45 of module M>]",
     ],
+    ["ASSUME PrintT([n \\in Nat |-> 100])", "[n \\in Nat |-> <expression 100>]"],
+    ["ASSUME PrintT([n \\in Nat |-> \\h1F])", "[n \\in Nat |-> <expression \\h1F>]"],
     [
       "ASSUME PrintT(ToString([n \\in Nat \\ {1} |-> n]))",
       '"[n \\\\in Nat \\\\ {1} |-> <expression line 3, col 45 to line 3, col 45 of module M>]"',
