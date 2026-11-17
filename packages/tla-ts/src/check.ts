@@ -310,7 +310,7 @@ export interface CheckResult {
   outDegrees: number[] | undefined;
   /** The smallest distance between two fingerprints, when TLC estimates a collision from them. */
   fingerprintDistance: bigint | undefined;
-  /** A temporal property TLC finds violated as it adds a deadlocked state, reported after. */
+  /** A temporal property TLC finds violated as it adds the state it stopped at to the behavior graph, reported after. */
   additionalViolation?: Violation;
   /** Where TLC's worker fails to add the state to the behavior graph after it reports a violation. */
   liveCallStack?: Expression[];
@@ -1537,17 +1537,6 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     });
     current.isExpanding = false;
     const result = outcome;
-    if (result?.violation && !is174) {
-      const live = captureOutput(() => addFailedLiveState(index, liveSuccessors));
-      return {
-        ...result,
-        violation: appendTraceOutput(result.violation, live.lines),
-        // TLC adds the state to the behavior graph before it reports the coverage.
-        coverage: getCoverage(),
-        ...(live.result && { liveCallStack: live.result }),
-      };
-    }
-    if (result) return result;
     const addLiveState = () => {
       if (liveness && source && (is174 || options.dump?.stuttering)) {
         stateWriter?.writeStuttering(source);
@@ -1566,19 +1555,38 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         ...traces.toTrace(steps, accepted, { known: 0 }),
       });
     };
+    // TLC's Worker adds the state to the behavior graph after it reports a violation, where LiveCheck can report a temporal property that fails too.
+    const addReportedLiveState = () =>
+      captureOutput(() => {
+        try {
+          return { additional: addLiveState()?.violation, isFailed: false, callStack: undefined };
+        } catch (error) {
+          if (!(error instanceof TlaEvaluationError)) throw error;
+          return {
+            additional: undefined,
+            isFailed: true,
+            callStack: getLiveCallStack(index, liveSuccessors),
+          };
+        }
+      });
+    if (result?.violation && !is174) {
+      const live = addReportedLiveState();
+      return {
+        ...result,
+        violation: appendTraceOutput(result.violation, live.lines),
+        // TLC adds the state to the behavior graph before it reports the coverage.
+        coverage: getCoverage(),
+        ...(live.result.additional && { additionalViolation: live.result.additional }),
+        ...(live.result.callStack && { liveCallStack: live.result.callStack }),
+      };
+    }
+    if (result) return result;
     if (successorCount === 0 && config.checkDeadlock) {
       const deadlock = reportViolation("deadlock", {
         name: "deadlock",
         ...traces.getStateTrace(index),
       });
-      const live = captureOutput(() => {
-        try {
-          return { additional: addLiveState()?.violation };
-        } catch (error) {
-          if (!(error instanceof TlaEvaluationError)) throw error;
-          return { isFailed: true, callStack: getLiveCallStack(index, liveSuccessors) };
-        }
-      });
+      const live = addReportedLiveState();
       const reported = deadlock.violation
         ? { ...deadlock, violation: appendTraceOutput(deadlock.violation, live.lines) }
         : deadlock;

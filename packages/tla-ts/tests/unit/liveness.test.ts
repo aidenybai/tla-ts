@@ -169,6 +169,20 @@ describe("liveness matches TLC", () => {
     ]);
   });
 
+  it("reports a temporal property that fails as TLC adds the state that violates an action property to the behavior graph", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nVARIABLE x\nSpec == x \\in {0, 1} /\\ [][x' = IF x = 0 THEN 1 ELSE 0]_x\nAct == [][x' = 1]_x\nProp == [](x = 1 => [](x = 1))\n====",
+      config: "SPECIFICATION Spec\nPROPERTY Act\nPROPERTY Prop",
+    });
+    expect([
+      result.violation?.name,
+      result.violation?.trace.map((step) => step.state.x),
+      result.additionalViolation?.name,
+      result.additionalViolation?.trace.map((step) => step.state.x),
+    ]).toEqual(["Act", [1, 0], "Prop", [1, 0]]);
+  });
+
   it("finds a violation of a safety-like property early unless TLC is 1.7.4", async () => {
     const master = await checkGithub710("Github710d", "master");
     expect(master.additionalViolation?.name).toBe("NeverThree");
