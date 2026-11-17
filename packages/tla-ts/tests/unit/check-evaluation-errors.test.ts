@@ -634,6 +634,21 @@ describe("evaluation errors match TLC", () => {
     expect(result.failure?.traceOutput).toEqual(['<<"s", 1>>']);
   });
 
+  it.each([
+    ["Fail \\/ Shown", "", ['<<"s", 0>>']],
+    ["Fail \\/ Shown", "CHECK_DEADLOCK FALSE", []],
+    ["Shown \\/ Fail", "", ['<<"s", 1>>']],
+  ])(
+    "prints the output of the trace again after %s fails only as TLC finds the state deadlocked (%s)",
+    async (step, config, expected) => {
+      const result = await checkSteps(
+        `Shown == PrintT(<<"s", x>>) /\\ Next\nFail == x = 1 /\\ x' = 1 /\\ 1\nStep == ${step}`,
+        `INIT Init\nNEXT Step\n${config}`,
+      );
+      expect(result.failure?.traceOutput).toEqual(expected);
+    },
+  );
+
   it("leaves out the state an action property fails on from the behavior graph in TLC 1.7.4", async () => {
     const result = await checkSteps(
       `Step == Next /\\ PrintT(<<"s", x>>)\nSpec == Init /\\ [][Step]_x /\\ WF_x(Step)\nP == [][x' < 2 \\/ 1 \\div 0 = 0]_x\nL == <>(x = 3)`,

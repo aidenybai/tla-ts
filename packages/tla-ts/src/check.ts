@@ -1431,10 +1431,15 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     const replay = captureOutput(() => replayNext(index));
     return { result: replay.result, lines: [...live.lines, ...replay.lines] };
   };
+  // TLC's Worker#doPostCondition rebuilds the trace, which prints its output again, only as it finds the failed state deadlocked.
+  const getNextFailureTrace = (index: number, counterExample?: { isConsole: boolean }) => {
+    const behavior = traces.getStateTrace(index);
+    return counterExample ? behavior : { trace: behavior.trace };
+  };
   const reportNextStateOverflow = (index: number, counterExample?: { isConsole: boolean }) =>
     createFailureResult(
       createStackOverflowError(),
-      traces.getStateTrace(index),
+      getNextFailureTrace(index, counterExample),
       { phase: "next" },
       counterExample,
     );
@@ -1454,7 +1459,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     const replay = replayFailedNext(index, liveSuccessors);
     return createFailureResult(
       withNextStateExitCode(error),
-      appendTraceOutput(traces.getStateTrace(index), replay.lines),
+      appendTraceOutput(getNextFailureTrace(index, counterExample), replay.lines),
       { phase: "next", ...replay.result },
       counterExample,
     );
