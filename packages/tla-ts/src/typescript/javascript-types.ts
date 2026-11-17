@@ -14,16 +14,16 @@ const getCast = (type: string) => `/** @type {${type}} */ (`;
 
 const ANY = "/** @type {any} */ ";
 
-// Errors about types that hold: a setter's return of a value, which the write drops, an implicit
-// any, a module that TypeScript can't find, or a name that no declaration binds, which tla-ts
-// resolves as Node does, a property that the type lacks, which TypeScript reads as any, as it does
-// a class field's computed key that it leaves out of the type, and a read before a declaration,
-// which throws as tla-ts follows.
+// Errors about types that hold: a comma's operand that gives nothing it uses, which still runs, a
+// setter's return of a value, which the write drops, an implicit any, a module that TypeScript
+// can't find, or a name that no declaration binds, which tla-ts resolves as Node does, a property
+// that the type lacks, which TypeScript reads as any, as it does a class field's computed key that
+// it leaves out of the type, and a read before a declaration, which throws as tla-ts follows.
 const IGNORED_ERRORS = new Set([
-  1166, 1170, 2304, 2307, 2792, 2408, 2339, 2448, 2449, 2450, 2550, 2551, 2552, 2580, 2581, 2582,
-  2583, 2584, 2591, 2592, 2593, 2662, 2663, 2683, 2867, 2868, 7005, 7006, 7008, 7010, 7011, 7015,
-  7016, 7017, 7018, 7019, 7022, 7023, 7024, 7025, 7031, 7032, 7033, 7034, 7041, 7052, 7053, 7055,
-  7056, 7057,
+  1166, 1170, 2695, 2304, 2307, 2792, 2408, 2339, 2448, 2449, 2450, 2550, 2551, 2552, 2580, 2581,
+  2582, 2583, 2584, 2591, 2592, 2593, 2662, 2663, 2683, 2867, 2868, 7005, 7006, 7008, 7010, 7011,
+  7015, 7016, 7017, 7018, 7019, 7022, 7023, 7024, 7025, 7031, 7032, 7033, 7034, 7041, 7052, 7053,
+  7055, 7056, 7057,
 ]);
 
 // A property that the type lacks, which a private name's class declares.

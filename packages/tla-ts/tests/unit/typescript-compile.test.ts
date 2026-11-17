@@ -50514,7 +50514,7 @@ describe("BigInts", () => {
     });
   });
 
-  describe("runs JavaScript's computed keys of other types and setters that return values", () => {
+  describe("runs JavaScript's computed keys of other types, setters that return values, and unused commas' operands", () => {
     const path = join(import.meta.dirname, "model.js");
     const getSource = (expected: string) => `
       var box = { seen: "" };
@@ -50529,7 +50529,7 @@ describe("BigInts", () => {
       }
       var keyed = new Keyed();
       var written = (keyed.x = 5);
-      box.seen += [keyed[null](), written].join();
+      box.seen += [keyed[null](), (0, written)].join();
       if (box.seen !== "${expected}") throw new Error("seen " + box.seen);
     `;
 
