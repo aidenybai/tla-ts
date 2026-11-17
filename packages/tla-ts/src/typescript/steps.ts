@@ -137,11 +137,10 @@ export const getUnlistedParameter = (definition: Exported, isStep: boolean, cont
       : findGuarded(position + 1, new Set([...guarded, guard.parameter]));
   };
   const guarded = findGuarded(0, new Set());
-  return parameters.find(
-    (parameter) =>
-      !guarded.has(parameter) &&
-      isInfinite(findDomain(context.checker.getTypeAtLocation(parameter.node.name), context)),
-  )?.node;
+  return parameters.find((parameter) => {
+    const domain = findDomain(context.checker.getTypeAtLocation(parameter.node.name), context);
+    return !guarded.has(parameter) && isInfinite(domain) && domain.isIncomparable !== true;
+  })?.node;
 };
 
 // An exported function that changes state, as an action and its disjunct of Next. Each parameter

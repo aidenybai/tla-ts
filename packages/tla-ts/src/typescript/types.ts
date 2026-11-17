@@ -69,6 +69,8 @@ const MAX_ARRAY_LENGTH = 3;
 // Why a type has no finite set of values.
 interface Infinite {
   message: string;
+  // Whether TLC can't compare the values, which tla-ts could list.
+  isIncomparable?: boolean;
 }
 
 // The checker only gives type arguments of type references, which the public API can't detect.
@@ -1934,6 +1936,7 @@ export const findDomain = (type: ts.Type, context: Context): Expression | Infini
     if (getShape(type, context) === undefined) {
       return {
         message: `${checker.typeToString(type)} mixes values that TLC can't compare, such as a string and a number`,
+        isIncomparable: true,
       };
     }
     const enumerated = literalTypes.flatMap((member) => getLiteral(member, context) ?? []);
