@@ -36,6 +36,7 @@ import { getSubterms } from "./recfun-decl-plugin";
 import { RefVector } from "./ref-vector";
 import { Rewriter, type RewriterOptions } from "./rewriter";
 import { RewriterTpl } from "./rewriter-tpl";
+import { finishSimplifier } from "./dependent-expr-state";
 
 interface SolveEqsOptions {
   isTheorySolver: boolean;
@@ -662,10 +663,7 @@ export class SolveEqs {
     if (this.options.isContextSolve && !goal.isProofsEnabled)
       this.runRound(() => this.collectNestedEqualities());
     this.eqTerms.reset();
-    goal.elimTrue();
-    goal.elimRedundancies();
-    goal.depth++;
-    if (this.definitions.length > 0) goal.addDefinitions(this.definitions);
+    finishSimplifier(goal, this.definitions);
   }
 
   private markPositive(form: number) {

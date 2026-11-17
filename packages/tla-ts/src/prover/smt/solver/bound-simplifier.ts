@@ -29,6 +29,7 @@ import { Rational } from "./rational";
 import { RefVector } from "./ref-vector";
 import { Rewriter, TACTIC_REWRITER_OPTIONS } from "./rewriter";
 import { RewriterTpl } from "./rewriter-tpl";
+import { finishSimplifier } from "./dependent-expr-state";
 
 interface Bound {
   value: Rational;
@@ -594,7 +595,5 @@ export const propagateIneqs = (manager: AstManager, goal: Goal) => {
     simplifier.reduce();
     simplifier.release();
   }
-  goal.elimTrue();
-  goal.elimRedundancies();
-  goal.depth++;
+  finishSimplifier(goal);
 };
