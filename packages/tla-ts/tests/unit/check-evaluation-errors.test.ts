@@ -1266,6 +1266,17 @@ describe("evaluation errors match TLC", () => {
     );
   });
 
+  it("evaluates a TLCEval argument that reads a variable SANY ignores in the state", async () => {
+    const prints: string[] = [];
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS TLC\nVARIABLE v\nInit == v = 0\nNext == UNCHANGED v\nInv == TLCEval(Print(v, TRUE))\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+      onPrint: (text) => prints.push(text),
+    });
+    expect([result.status, prints]).toEqual(["success", ["0  TRUE"]]);
+  });
+
   it("rejects a mistyped membership outside an assumption", async () => {
     const result = await check({
       source:

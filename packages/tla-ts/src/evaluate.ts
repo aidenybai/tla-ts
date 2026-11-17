@@ -1588,6 +1588,7 @@ const compileApply = (
     return (context) => domain(operand(context));
   }
   if (global?.kind === "Builtin" && global.name === "TLCEval" && args.length === 1) {
+    // Deviation from TLC: TLCEval#tlcEval evaluates an argument SANY takes for constant, such as Print(v, TRUE), in an empty state.
     const isCached =
       !contextualApplications.has(expression) && !isNonconstant(args[0], environment);
     return (context) =>
