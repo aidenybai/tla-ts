@@ -308,6 +308,35 @@ describe("name resolution matches SANY", () => {
       ],
     ],
     [
+      "CONSTANT C(_)\nVARIABLE v\n---- MODULE In ----\nCONSTANT k, F(_)\n====\nOp(P(_)) == P(1)\nA == WF_v(LAMBDA p : lab:: p)\nD == Op(LAMBDA r : r) /\\ Op(LAMBDA r, s : r)\nI == INSTANCE In WITH k <- LAMBDA a : a, F <- LAMBDA a : a\nG(a) == a\nH == G(LAMBDA z : z) /\\ C(LAMBDA z : z)",
+      [
+        [
+          "line 8, col 11 to line 8, col 28",
+          "LAMBDA expression used where an expression is required.",
+        ],
+        [
+          "line 9, col 26 to line 9, col 27",
+          "Lambda expression with arity 2 used as argument 1 of operator `Op', \nbut an operator of arity 1 is required.",
+        ],
+        [
+          "line 9, col 26 to line 9, col 44",
+          "Argument number 1 to operator 'Op' \nshould be a 1-parameter operator.",
+        ],
+        [
+          "line 10, col 28 to line 10, col 39",
+          "LAMBDA expression used where an expression is required.",
+        ],
+        [
+          "line 12, col 8 to line 12, col 19",
+          "LAMBDA expression used where an expression is required.",
+        ],
+        [
+          "line 12, col 27 to line 12, col 38",
+          "LAMBDA expression used where an expression is required.",
+        ],
+      ],
+    ],
+    [
       "f == 1 + 1",
       [
         [

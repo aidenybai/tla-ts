@@ -1070,7 +1070,8 @@ const matchArgument = (
     return true;
   }
   if (arg.kind === "Lambda") {
-    resolveExpression(arg, scope, unit);
+    if (selections.has(arg)) resolveExpression(arg, scope, unit);
+    else resolveLambda(arg, scope, unit);
     const isMatched = arg.params.length === expected;
     if (!isMatched && selections.has(arg)) {
       report(range, `Expected arity ${expected} but found operator of arity ${arg.params.length}.`);
@@ -1190,6 +1191,20 @@ const isSelectionReported = (expression: Expression, scope: LocalName | undefine
   return true;
 };
 
+const resolveLambda = (
+  expression: Expression & { kind: "Lambda" },
+  scope: LocalName | undefined,
+  unit: Unit,
+) =>
+  resolveExpression(
+    expression.body,
+    bindNames(scope, expression.params, expression.paramRanges, unit),
+    {
+      ...unit,
+      labelParams: [...unit.labelParams, ...expression.params],
+    },
+  );
+
 const resolveExpression = (
   expression: Expression,
   scope: LocalName | undefined,
@@ -1249,11 +1264,13 @@ const resolveExpression = (
       resolveApply(expression, scope, unit);
       return;
     case "Lambda":
-      resolveExpression(
-        expression.body,
-        bindNames(scope, expression.params, expression.paramRanges, unit),
-        bindLabelParams(expression.params),
-      );
+      if (selections.has(expression)) resolveLambda(expression, scope, unit);
+      else if (expression.location.range) {
+        unit.errors.push({
+          location: formatRange(expression.location.range),
+          message: "LAMBDA expression used where an expression is required.",
+        });
+      }
       return;
     case "And":
     case "Or":
@@ -1764,7 +1781,7 @@ const checkSubstitutions = (
       return;
     }
     if (expression.kind === "Lambda") {
-      resolveExpression(expression, scope, unit);
+      resolveLambda(expression, scope, unit);
       if (expression.params.length !== declaration.arity && range) {
         reportArity(declaration, formatRange(range));
       }
