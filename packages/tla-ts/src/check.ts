@@ -1031,7 +1031,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       stateWriter?.writeInitialState(getGraphState(state, 1));
     }
     if (options.isContinued) {
-      search.getViolatedInvariants(state).forEach((invariant) =>
+      search.forEachViolatedInvariant(state, (invariant) =>
         reportContinuedViolation("invariant-violation", {
           name: invariant.name,
           ...traces.toTrace([{ action: undefined, state }], []),

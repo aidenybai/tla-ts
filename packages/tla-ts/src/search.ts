@@ -746,7 +746,7 @@ export interface Search {
       }
     | undefined;
   findViolatedInvariant: (state: Value[], parent?: Value[]) => StateCheck | undefined;
-  getViolatedInvariants: (state: Value[]) => StateCheck[];
+  forEachViolatedInvariant: (state: Value[], onViolated: (invariant: StateCheck) => void) => void;
   checkReplayedInitialState: (
     state: Value[],
     tracing: Environment,
@@ -1342,15 +1342,16 @@ export const createSearch = (
       if (violated) violatingStates.add(state);
       return violated;
     },
-    getViolatedInvariants: (state) => {
-      const violated = invariantPredicates.filter((predicate) =>
-        invariants.some(
+    forEachViolatedInvariant: (state, onViolated) => {
+      for (const predicate of invariantPredicates) {
+        const isPredicateViolated = invariants.some(
           (invariant) =>
             invariant.predicate === predicate.predicate && isViolated(invariant, state, undefined),
-        ),
-      );
-      if (violated.length > 0) violatingStates.add(state);
-      return violated;
+        );
+        if (!isPredicateViolated) continue;
+        violatingStates.add(state);
+        onViolated(predicate);
+      }
     },
     checkReplayedInitialState: (state, tracing, addFingerprint) => {
       const holdsIn = (expression: Expression, scope: Scope | undefined) =>

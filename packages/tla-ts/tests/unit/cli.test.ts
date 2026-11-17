@@ -535,16 +535,19 @@ describe("the CLI reports results like TLC", () => {
     expect(getSteadyLines(result.stdout)).toEqual([...(lines ?? []), ""]);
   });
 
-  it.each(["Continue", "DoInitFunctorInvariantContinue", "ContinueSuccessors", "ContinueAlias"])(
-    "goes on past each violation in %s with -continue like TLC",
-    (name) => {
-      const result = runCli("tlc-continue", name, ["-continue"]);
-      expect(result.status).toBe(12);
-      expect(getSteadyLines(result.stdout)).toEqual(
-        readFileSync(join(FIXTURES, "tlc-continue", `${name}.out`), "utf8").split("\n"),
-      );
-    },
-  );
+  it.each([
+    "Continue",
+    "DoInitFunctorInvariantContinue",
+    "ContinueSuccessors",
+    "ContinueAlias",
+    "ContinueInitialPrint",
+  ])("goes on past each violation in %s with -continue like TLC", (name) => {
+    const result = runCli("tlc-continue", name, ["-continue"]);
+    expect(result.status).toBe(12);
+    expect(getSteadyLines(result.stdout)).toEqual(
+      readFileSync(join(FIXTURES, "tlc-continue", `${name}.out`), "utf8").split("\n"),
+    );
+  });
 
   it("rejects a spec whose file name differs from its module name like TLC", () => {
     const result = runCli("cli-module-name", "Renamed");
