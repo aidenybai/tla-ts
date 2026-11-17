@@ -441,6 +441,22 @@ describe("runSmtlibScript prints what Z3 prints", () => {
     ]);
   });
 
+  it("keeps a distinct of more than two terms in eval", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(declare-const z Int)",
+        "(assert (= x 1))",
+        "(check-sat)",
+        "(eval (distinct x y z))",
+        "(eval (distinct x 1 z))",
+        "(eval (distinct x 2 3))",
+        "(get-value ((distinct x y z)))",
+      ]),
+    ).toEqual(["sat", "(distinct 1 y z)", "false", "true", "(((distinct x y z) false))"]);
+  });
+
   // z3test's regressions/smt2/fp-rem-1.smt2, with what Z3 prints for it.
   it("decides floating-point terms with the smt core and with the fpa2bv tactic", () => {
     expect(
