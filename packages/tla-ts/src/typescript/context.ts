@@ -22,6 +22,7 @@ import { getKeptReads } from "./narrowing";
 import { mayThrow } from "./functions";
 import { findGetterKeys, findWrittenFunctions, getGetterKeys, isProxyOperation } from "./protocols";
 import type { ChangeTable } from "./change-summaries";
+import { createReachGraph, type ReachGraph } from "./reach-graph";
 import type { Namespace } from "./namespaces";
 import {
   createReferences,
@@ -109,6 +110,8 @@ export interface Context {
   // The nodes of the program's files, which tla-ts walks once, and the names of each symbol.
   nodes: ProgramNodes;
   references: References;
+  // What each declaration that a name names reaches by name.
+  reachGraph: ReachGraph;
   // The keys that each of the program's files defines getters under, by the file's index.
   getterKeys: readonly ReadonlySet<string>[];
   // Whether each function of the program's files is called once, by its position, as
@@ -620,10 +623,12 @@ export const createContext = (
   nodes: ProgramNodes,
 ): Context => {
   const reads = getDeclaredReads(checker, files);
+  const references = createReferences(nodes, (name) => getSymbol(name, checker));
   const context: Context = {
     checker: withNodeTypes(withDeclaredReads(checker, reads), nodes),
     nodes,
-    references: createReferences(nodes, (name) => getSymbol(name, checker)),
+    references,
+    reachGraph: createReachGraph(nodes, references),
     getterKeys: files.map(findGetterKeys),
     calledOnce: new Uint8Array(nodes.nodes.length),
     heapCode: new Uint8Array(nodes.nodes.length),
