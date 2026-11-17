@@ -1634,6 +1634,26 @@ describe("runSmtlibScript prints what Z3 prints", () => {
     ]);
   });
 
+  it("gives an array of bit-vectors the default of a bit-vector value made before it", () => {
+    expect(
+      run([
+        "(declare-const v0 (_ BitVec 4))",
+        "(declare-const a0 (Array (_ BitVec 4) (_ BitVec 4)))",
+        "(assert (not (= v0 (select (store a0 v0 v0) #x0))))",
+        "(check-sat-using smt)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      [
+        "(",
+        "  (define-fun v0 () (_ BitVec 4)\n    #x1)",
+        "  (define-fun a0 () (Array (_ BitVec 4) (_ BitVec 4))\n    (store ((as const (Array (_ BitVec 4) (_ BitVec 4))) #x1) #x0 #x0))",
+        ")",
+      ].join("\n"),
+    ]);
+  });
+
   it("throws at a theory it does not implement", () => {
     expect(() =>
       run(["(declare-const b (_ BitVec 8))", '(assert (= (str.from_ubv b) "12"))', "(check-sat)"]),

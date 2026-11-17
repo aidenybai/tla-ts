@@ -75,6 +75,7 @@ import {
   TRUE_LITERAL,
 } from "./literal";
 import { UnionFind } from "./lp/union-find";
+import type { ProtoModel } from "./proto-model";
 import { Rewriter, TACTIC_REWRITER_OPTIONS } from "./rewriter";
 import { Theory } from "./theory";
 
@@ -247,6 +248,7 @@ export class TheoryBv extends Theory {
   private propQueue: number[] = [];
   private mergeAux: [number[], number[]] = [[], []];
   private bv2ints: Enode[] = [];
+  private model: ProtoModel | undefined;
 
   constructor(context: Context) {
     super(context, FAMILY_BV);
@@ -1193,8 +1195,16 @@ export class TheoryBv extends Theory {
     this.dropAll(clause);
   }
 
+  initModel(model: ProtoModel) {
+    this.model = model;
+  }
+
   mkValue(node: Enode) {
+    const model = this.model;
+    if (model === undefined) throw new SmtInvariantError("the model was not initialized");
     const thVar = this.getThVar(node);
-    return this.manager.mkBvNumeral(this.getFixedValue(thVar).value, this.getBvSize(thVar));
+    const value = this.manager.mkBvNumeral(this.getFixedValue(thVar).value, this.getBvSize(thVar));
+    model.registerValue(value);
+    return value;
   }
 }
