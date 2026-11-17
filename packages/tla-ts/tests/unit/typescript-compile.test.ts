@@ -48416,7 +48416,7 @@ describe("BigInts", () => {
       return { path, source: readFileSync(path, "utf8") };
     };
 
-    it.each(["entry.cjs", "wrapped.ts", "mixed.ts", "typed.ts"])(
+    it.each(["entry.cjs", "wrapped.ts", "mixed.ts", "typed.ts", "for-in-key.cjs"])(
       "agrees with Node on %s",
       async (name) => {
         const fixture = getFixture(name);
@@ -48429,6 +48429,7 @@ describe("BigInts", () => {
       ["wrapped.ts", "wrapped:2,inner,true,2", "wrapped:1,inner,true,2"],
       ["mixed.ts", "legacy,require,import", "legacy,import,import"],
       ["typed.ts", "4,sides", "3,sides"],
+      ["for-in-key.cjs", "a=1+b=2;children", "a=1+b=3;children"],
     ])("rejects another outcome of %s", async (name, expected, wrong) => {
       const fixture = getFixture(name);
       const result = await check(compile(fixture.source.replace(expected, wrong), fixture.path));
