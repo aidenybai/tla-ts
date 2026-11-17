@@ -462,28 +462,101 @@ const getEdits = (
   return undefined;
 };
 
+// Whether a literal fits a pattern as its value, which an array pattern reads as an array: an array
+// literal for an array pattern, with each element that a nested pattern reads fitting it, an object
+// literal for an object pattern, and null, undefined, or a missing element for either.
+const isLiteralFit = (value: ts.Node, pattern: ts.BindingName): boolean => {
+  const inner = ts.isExpression(value) ? skipCasts(value) : value;
+  const isNullish =
+    inner.kind === ts.SyntaxKind.NullKeyword ||
+    (ts.isIdentifier(inner) && inner.text === "undefined");
+  if (ts.isIdentifier(pattern) || isNullish) return true;
+  if (ts.isObjectBindingPattern(pattern)) return ts.isObjectLiteralExpression(inner);
+  return (
+    ts.isArrayLiteralExpression(inner) &&
+    !inner.elements.some(ts.isSpreadElement) &&
+    pattern.elements.every((element, position) => {
+      const item = inner.elements.at(position);
+      return (
+        ts.isOmittedExpression(element) ||
+        element.dotDotDotToken !== undefined ||
+        item === undefined ||
+        ts.isOmittedExpression(item) ||
+        ts.isIdentifier(element.name) ||
+        isLiteralFit(item, element.name)
+      );
+    })
+  );
+};
+
 // The pattern parameters of the functions that a write gives a variable that TypeScript types by
-// what it's assigned, as var f; f = function ([x]) {} does, whose calls TypeScript reads as of a
-// value of type any, so it checks no argument against the type that it makes of the pattern.
+// what it's assigned, as var f; f = function ([x]) {} does, whose calls TypeScript may read as of a
+// value of type any, so that it checks no argument against the type that it makes of the pattern.
+// A parameter keeps that type where the variable is only called, with an argument of a type that
+// fits it.
 const getUncheckedPatterns = (file: ts.SourceFile, checker: ts.TypeChecker) => {
   const parameters: ts.ParameterDeclaration[] = [];
+  const getReferences = (symbol: ts.Symbol) => {
+    const references: ts.Identifier[] = [];
+    const visit = (node: ts.Node) => {
+      if (
+        ts.isIdentifier(node) &&
+        !isName(node) &&
+        !isWritten(node) &&
+        checker.getSymbolAtLocation(node) === symbol
+      ) {
+        references.push(node);
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(file);
+    return references;
+  };
+  const isFitted = (
+    parameter: ts.ParameterDeclaration,
+    position: number,
+    references: ts.Identifier[],
+  ) =>
+    references.every((reference) => {
+      const call = reference.parent;
+      const argument = ts.isCallExpression(call) ? call.arguments.at(position) : undefined;
+      return (
+        ts.isCallExpression(call) &&
+        call.expression === reference &&
+        !call.arguments.some(ts.isSpreadElement) &&
+        (argument === undefined
+          ? parameter.initializer !== undefined
+          : checker.isTypeAssignableTo(
+              checker.getTypeAtLocation(argument),
+              checker.getTypeAtLocation(parameter),
+            ) || isLiteralFit(argument, parameter.name))
+      );
+    });
   const visit = (node: ts.Node) => {
     const parent = node.parent;
-    const declaration =
+    const symbol =
       (ts.isFunctionExpression(node) || ts.isArrowFunction(node)) &&
       isAssignment(parent) &&
       parent.right === node &&
       ts.isIdentifier(parent.left)
-        ? checker.getSymbolAtLocation(parent.left)?.valueDeclaration
+        ? checker.getSymbolAtLocation(parent.left)
         : undefined;
+    const declaration = symbol?.valueDeclaration;
     if (
+      symbol !== undefined &&
       declaration !== undefined &&
       ts.isVariableDeclaration(declaration) &&
       declaration.initializer === undefined &&
       declaration.type === undefined &&
       (ts.isFunctionExpression(node) || ts.isArrowFunction(node))
     ) {
-      parameters.push(...node.parameters.filter((parameter) => !ts.isIdentifier(parameter.name)));
+      const references = getReferences(symbol);
+      parameters.push(
+        ...node.parameters.filter(
+          (parameter, position) =>
+            !ts.isIdentifier(parameter.name) && !isFitted(parameter, position, references),
+        ),
+      );
     }
     ts.forEachChild(node, visit);
   };

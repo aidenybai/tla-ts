@@ -52497,4 +52497,35 @@ describe("BigInts", () => {
     });
   });
 
+  describe("keeps a JavaScript pattern parameter's type where each call passes a literal that fits it", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      var box = { seen: "" };
+      var take;
+      take = function ([[first]], { second }) {
+        return first + second;
+      };
+      function run() {
+        try {
+          take([null], {});
+        } catch (error) {
+          box.seen += error instanceof TypeError;
+        }
+        var sum = take([[5]], { second: 1 });
+        box.seen += sum;
+      }
+      run();
+      if (box.seen !== "${expected}") throw new Error("seen " + box.seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await check(compile(getSource("true6"), path))).failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      expect((await check(compile(getSource("false6"), path))).failure?.message).toContain(
+        "seen true6",
+      );
+    });
+  });
 });
