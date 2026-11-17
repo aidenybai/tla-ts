@@ -138,11 +138,13 @@ const extractCase = (
   return {
     fixes,
     assumes: [{ name: "", props: stripAssumsHyp(prop).flatMap(destConjunctions).map(absFixes) }],
-    binds: [[CASE_CONCL, concl] as [string, Term], ...destBinops(concls, concl)].map((bind) => ({
-      name: bind[0],
-      index: 0,
-      term: absFixes(bind[1]),
-    })),
+    binds: [[CASE_CONCL, concl] satisfies [string, Term], ...destBinops(concls, concl)].map(
+      (bind) => ({
+        name: bind[0],
+        index: 0,
+        term: absFixes(bind[1]),
+      }),
+    ),
     cases: [],
   };
 };
