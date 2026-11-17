@@ -19,6 +19,7 @@ import {
   type SourceLocation,
   type SourceRange,
   type Theorem,
+  type UseOrHide,
 } from "./ast";
 import { formatRange, TlaSyntaxError, type SanyError } from "./errors";
 import { resolveSynonym } from "./tlc/jar-data";
@@ -1362,6 +1363,44 @@ const checkFacts = (facts: Fact[], scope: LocalName | undefined, unit: Unit) =>
     } else if (!isFact(name, unit)) resolveExpression(fact, scope, unit);
   });
 
+const isDefinitionEntry = (def: Fact, scope: LocalName | undefined, unit: Unit) => {
+  const range = def.location.range;
+  const name =
+    def.kind === "Identifier" ? def.name : def.kind === "OperatorReference" ? def.operator : "";
+  if (name === "" || !range) return true;
+  const binding =
+    lookupLocal(scope, name) ?? findSymbol(name, unit) ?? getModuleBinding(name, unit, range);
+  if (binding === undefined && (isFact(name, unit) || isStepName(name))) return true;
+  if (binding === undefined) {
+    unit.errors.push({
+      location: formatRange(range),
+      message: `Unknown operator: \`${resolveSynonym(name)}'.`,
+    });
+  }
+  if (binding && SELECTABLE_KINDS.has(binding.kind) && !isStepName(name)) return true;
+  unit.errors.push({
+    location: formatRange(range),
+    message: "DEF clause entry should describe a defined operator.",
+  });
+  return false;
+};
+
+const checkUseOrHide = (
+  statement: UseOrHide | Extract<Proof, { kind: "By" }>,
+  scope: LocalName | undefined,
+  unit: Unit,
+) => {
+  checkFacts(statement.facts, scope, unit);
+  const defCount = statement.defs.filter((def) => isDefinitionEntry(def, scope, unit)).length;
+  const range = statement.location.range;
+  if (statement.facts.length + defCount === 0 && range) {
+    unit.errors.push({
+      location: formatRange(range),
+      message: statement.kind === "By" ? "Empty BY" : "Empty USE or HIDE statement.",
+    });
+  }
+};
+
 const resolveNewSymbol = (symbol: NewSymbol, scope: LocalName | undefined, unit: Unit) => {
   if (symbol.set) resolveExpression(symbol.set, scope, unit);
   return bindName(
@@ -1409,7 +1448,7 @@ const resolveStatement = (
 
 const resolveProof = (proof: Proof | undefined, scope: LocalName | undefined, outer: Unit) => {
   const unit = outer.hasLabelScope ? { ...outer, hasLabelScope: false } : outer;
-  if (proof?.kind === "By") checkFacts(proof.facts, scope, unit);
+  if (proof?.kind === "By") checkUseOrHide(proof, scope, unit);
   if (proof?.kind !== "Steps") return;
   proof.steps.reduce((current, step) => resolveStep(step, current, unit), scope);
 };
@@ -1458,7 +1497,7 @@ const resolveStep = (
     }
     case "Use":
     case "Hide":
-      checkFacts(body.facts, scope, unit);
+      checkUseOrHide(body, scope, unit);
       return bindNonFactStep(scope);
     case "Instance":
       return bindNonFactStep(resolveLocalInstance(body, scope, stepUnit));
@@ -1949,7 +1988,7 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
       ),
       ...module.uses.map((use) =>
         createCheck(use.location, undefined, false, (inner) =>
-          checkFacts(use.facts, undefined, inner),
+          checkUseOrHide(use, undefined, inner),
         ),
       ),
       {

@@ -1725,6 +1725,64 @@ describe("name resolution matches SANY", () => {
     });
   });
 
+  it("reports DEF clause entries that name no definition like SANY", async () => {
+    await expect(
+      check({
+        source:
+          "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nCONSTANT c\nF == 1\nUSE DEF Later\nLater == 1\n---- MODULE Inner ----\nG == 1\n====\nI == INSTANCE Inner\nTHEOREM TRUE BY DEF x, c, F, Nope, I, I!G, I!H\nTHEOREM ASSUME NEW xx PROVE TRUE\n  BY DEF xx\nTHEOREM TRUE\n<1> PICK p : p = 1 OBVIOUS\n<1> QED BY DEF p\nHIDE DEF -., \\cup, +, Nat\n====",
+        config: "",
+      }),
+    ).rejects.toThrow(
+      createSanyError(
+        [
+          ["line 6, col 9 to line 6, col 13", "Unknown operator: `Later'."],
+          [
+            "line 6, col 9 to line 6, col 13",
+            "DEF clause entry should describe a defined operator.",
+          ],
+          ["line 6, col 1 to line 6, col 13", "Empty USE or HIDE statement."],
+          [
+            "line 12, col 21 to line 12, col 21",
+            "DEF clause entry should describe a defined operator.",
+          ],
+          [
+            "line 12, col 24 to line 12, col 24",
+            "DEF clause entry should describe a defined operator.",
+          ],
+          ["line 12, col 30 to line 12, col 33", "Unknown operator: `Nope'."],
+          [
+            "line 12, col 30 to line 12, col 33",
+            "DEF clause entry should describe a defined operator.",
+          ],
+          ["line 12, col 44 to line 12, col 46", "Unknown operator: `I!H'."],
+          [
+            "line 12, col 44 to line 12, col 46",
+            "DEF clause entry should describe a defined operator.",
+          ],
+          [
+            "line 14, col 10 to line 14, col 11",
+            "DEF clause entry should describe a defined operator.",
+          ],
+          ["line 14, col 3 to line 14, col 11", "Empty BY"],
+          [
+            "line 17, col 16 to line 17, col 16",
+            "DEF clause entry should describe a defined operator.",
+          ],
+          ["line 17, col 9 to line 17, col 16", "Empty BY"],
+          ["line 18, col 10 to line 18, col 11", "Unknown operator: `-.'."],
+          [
+            "line 18, col 10 to line 18, col 11",
+            "DEF clause entry should describe a defined operator.",
+          ],
+          [
+            "line 18, col 14 to line 18, col 17",
+            "DEF clause entry should describe a defined operator.",
+          ],
+        ].map((entry) => ({ location: `${entry[0]} of module M`, message: entry[1] })),
+      ),
+    );
+  });
+
   it("reports an operator parameter where a RECURSIVE declaration has _, which SANY accepts", async () => {
     await expect(checkNames("RECURSIVE Map(_, _)\nMap(f(_), s) == 1")).rejects.toThrow(
       createSanyError([
