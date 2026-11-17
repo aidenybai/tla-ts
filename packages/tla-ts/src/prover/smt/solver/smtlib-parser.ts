@@ -586,6 +586,14 @@ const ARRAY_OPS = new Map([
 ]);
 const ARRAY_EXTENSION_OPS = new Map([["default", OP_ARRAY_DEFAULT]]);
 
+const isPortedTheoryOperator = (name: string) =>
+  BV_OP_NAMES.has(name) ||
+  FPA_OP_NAMES.has(name) ||
+  SEQ_OP_NAMES.has(name) ||
+  CHAR_OP_NAMES.has(name) ||
+  ARRAY_OPS.has(name) ||
+  ARRAY_EXTENSION_OPS.has(name);
+
 const UNARY_BOOL_REFS = new Map([["not", OP_NOT]]);
 const BINARY_BOOL_REFS = new Map([
   ["and", OP_AND],
@@ -2203,7 +2211,19 @@ export const createSmtlibReader = (
     const op = named === OP_SUB && args.length === 1 ? OP_UMINUS : named;
     const domainSort = op === undefined ? -1 : getDomainSort(op, args, at);
     if (op !== undefined && domainSort !== -1) return mkApp(op, args, at, domainSort);
-    if (op === undefined && (THEORY_OPERATOR.test(name) || THEORY_OPERATORS.has(name)))
+    // The port gates each theory operator it has by the logic, as load_plugin does. A name it
+    // lacks may still be one Z3 knows, unless the logic leaves out the theory of the name.
+    if (
+      op === undefined &&
+      !isPortedTheoryOperator(name) &&
+      ((THEORY_OPERATOR.test(name) &&
+        (name.startsWith("bv")
+          ? hasBv
+          : name.startsWith("fp.")
+            ? hasFpa
+            : name.startsWith("ff.") || hasSeq)) ||
+        THEORY_OPERATORS.has(name))
+    )
       throw new SmtUnsupportedError(`the operator ${name}`);
     const instance = mkDatatypeInstanceApp(name, args, at);
     if (instance !== undefined) return instance;

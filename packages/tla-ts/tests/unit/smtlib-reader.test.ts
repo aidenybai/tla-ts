@@ -96,6 +96,44 @@ describe("the operators of a theory the logic lacks, as Z3 5.3.2 reports them", 
       "(+ u u)",
     ]);
   });
+
+  it("leaves the operators of the other theories unknown, and bit-vector overflow predicates", () => {
+    expect(
+      run([
+        "(set-logic QF_UF)",
+        "(declare-sort U 0)",
+        "(declare-const u U)",
+        "(simplify (bvadd #x1 #x2))",
+        '(simplify (str.len "a"))',
+        "(simplify (fp.abs u))",
+        "(simplify (select u u))",
+        "(simplify (bvfoo u))",
+        "(simplify (concat u u))",
+      ]),
+    ).toEqual([
+      '(error "line 4 column 24: unknown constant bvadd ((_ BitVec 4) (_ BitVec 4)) ")',
+      '(error "line 5 column 22: unknown constant str.len (String) ")',
+      '(error "line 6 column 19: unknown constant fp.abs (U) ")',
+      '(error "line 7 column 21: unknown constant select (U U) ")',
+      '(error "line 8 column 18: unknown constant bvfoo (U) ")',
+      '(error "line 9 column 21: unknown constant concat (U U) ")',
+    ]);
+    expect(
+      run([
+        "(set-logic QF_ABV)",
+        "(declare-const v (_ BitVec 4))",
+        "(simplify (bvsmul_noovfl v v))",
+        "(simplify (bvumul_noovfl v v))",
+        "(simplify (bvsmul_noudfl v v))",
+        "(simplify (concat v v))",
+      ]),
+    ).toEqual([
+      '(error "line 3 column 28: unknown constant bvsmul_noovfl ((_ BitVec 4) (_ BitVec 4)) ")',
+      '(error "line 4 column 28: unknown constant bvumul_noovfl ((_ BitVec 4) (_ BitVec 4)) ")',
+      '(error "line 5 column 28: unknown constant bvsmul_noudfl ((_ BitVec 4) (_ BitVec 4)) ")',
+      "(concat v v)",
+    ]);
+  });
 });
 
 describe("terms nested 20,000 deep, which Z3 5.3.2 reads on its own stack", () => {
