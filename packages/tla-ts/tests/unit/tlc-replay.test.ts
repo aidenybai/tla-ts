@@ -284,9 +284,9 @@ describe("the replay of a failed initial state matches TLC", () => {
     expect([
       result.generatedStates,
       result.failure?.traceOutput?.map((line) =>
-        line.kind === "initial-state-violation"
+        typeof line !== "string" && line.kind === "initial-state-violation"
           ? `${line.name} ${formatValue(line.state.x)}`
-          : line.kind,
+          : line,
       ),
       formatCallStack(result.failure?.callStack),
     ]).toEqual([2, ["Inv0 1", "Inv0 2"], ["8.9-8.18", "11.9-11.39", "11.18-11.39"]]);
