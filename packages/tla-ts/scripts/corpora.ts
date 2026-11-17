@@ -46,6 +46,12 @@ export const listFiles = (directory: string, isSorted = false): string[] => {
   });
 };
 
+export const TEST262_DIRECTORY = join(CORPORA_DIRECTORY, "test262", "test");
+
+// test262's tests, without the fixture files that its module tests import.
+export const listTest262Files = () =>
+  listFiles(TEST262_DIRECTORY).filter((path) => path.endsWith(".js") && !path.includes("_FIXTURE"));
+
 export interface CorpusModule {
   id: string;
   path: string;

@@ -82,9 +82,8 @@ export const App = () => (
         </p>
         <BenchmarkChart />
         <p className="text-pretty">
-          TLA-ts currently maintains{" "}
-          {getTest262Percent(TEST262_RUNS[TEST262_RUNS.length - 1].passed)} conformance with{" "}
-          <Link href="https://github.com/tc39/test262">test262</Link>.
+          TLA-ts currently maintains {getTest262Percent(TEST262_RUNS[TEST262_RUNS.length - 1])}{" "}
+          conformance with <Link href="https://github.com/tc39/test262">test262</Link>.
         </p>
         <Test262Chart />
       </Section.Root>
