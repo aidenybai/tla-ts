@@ -1242,7 +1242,9 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       } catch (error) {
         if (isStackOverflow(error)) throw error;
         const behavior = traces.getTrace(index, successor, { isPrintedOnly: true });
-        const replay = captureOutput(() => replayNext(index));
+        const replay = is174
+          ? captureOutput(() => replayNext(index))
+          : replayFailedNext(index, liveSuccessors);
         return createFailureResult(
           error,
           appendTraceOutput(behavior, replay.lines),

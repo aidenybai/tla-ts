@@ -1478,6 +1478,14 @@ ASSUME TLCFP(a) = -887695703
     ).toEqual(["2:2 2", "2:4 4"]);
   });
 
+  it("adds a state to the behavior graph after an invariant fails to evaluate in its successor, as TLC's Worker does", async () => {
+    const result = await check({
+      source: `---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nInit == x = 0\nNext == PrintT(<<"n", x>>) /\\ x' = x + 1\nSpec == Init /\\ [][Next]_x /\\ WF_x(Next)\nInv == x < 1 \\/ CHOOSE e \\in {} : TRUE\nP == <>(x = 5)\n====`,
+      config: "SPECIFICATION Spec\nINVARIANT Inv\nPROPERTY P",
+    });
+    expect(result.failure?.traceOutput).toEqual(Array(4).fill('<<"n", 0>>'));
+  });
+
   it("counts the successors the behavior graph generates again for a deadlocked state, as TLC does", async () => {
     expect(
       await getCoverageCounts(
