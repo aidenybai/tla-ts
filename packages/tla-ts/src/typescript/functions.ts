@@ -1048,9 +1048,12 @@ export const translateLiftedCall = (
 };
 
 // Whether a function can run as its operator, which takes the state and compiles once, rather
-// than as a copy of its body: one that reads no this or arguments object, and takes its parameters
-// by name.
+// than as a copy of its body: a function, not a method, that reads no this, super, new.target, or
+// arguments object, and takes its parameters by name.
 const isOperatorFunction = (candidate: FunctionNode, context: Context) =>
+  (ts.isFunctionDeclaration(candidate) ||
+    ts.isFunctionExpression(candidate) ||
+    ts.isArrowFunction(candidate)) &&
   isPlain(candidate) &&
   getParameters(candidate).every(
     (parameter) =>
@@ -1060,7 +1063,10 @@ const isOperatorFunction = (candidate: FunctionNode, context: Context) =>
   ) &&
   findNodes(
     candidate,
-    (inner): inner is ts.ThisExpression => inner.kind === ts.SyntaxKind.ThisKeyword,
+    (inner): inner is ts.Node =>
+      inner.kind === ts.SyntaxKind.ThisKeyword ||
+      inner.kind === ts.SyntaxKind.SuperKeyword ||
+      ts.isMetaProperty(inner),
   ).length === 0 &&
   getArgumentsReads(candidate, context).length === 0 &&
   getKeptLocal(candidate, context) === undefined;
