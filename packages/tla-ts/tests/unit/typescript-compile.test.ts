@@ -52441,4 +52441,19 @@ describe("BigInts", () => {
       "Give this pattern's value an array type",
     );
   });
+
+  describe("makes hold the types of JavaScript's for-in keys and of a property's array", () => {
+    const path = join(import.meta.dirname, "../fixtures/typescript/es-modules/loose-types.ts");
+    const source = readFileSync(path, "utf8");
+
+    it("agrees with Node", async () => {
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      expect(
+        (await check(compile(source.replace('"a,b,1"', '"0,1"'), path))).failure?.message,
+      ).toContain("seen a,b,1");
+    });
+  });
 });
