@@ -356,7 +356,7 @@ export class NraSolver {
     for (let index = 0; index < polynomial.size; index++) {
       const monomial = polynomial.ms[index];
       const coeff = Rational.of(polynomial.as[index]);
-      // Z3 keeps the variables of a monomial but drops their degrees.
+      // A linear cell leaves every new lemma polynomial linear, so like Z3 this ignores degrees.
       if (monomial.size === 0) bound = bound.sub(coeff);
       else if (monomial.size === 1) term.addMonomial(coeff, nl2lp[monomial.vars[0]]);
       else {
