@@ -1427,13 +1427,56 @@ const isDefinitionEntry = (def: Fact, scope: LocalName | undefined, unit: Unit) 
   return false;
 };
 
+const getHiddenExpressionLocation = (fact: Fact, scope: LocalName | undefined, unit: Unit) => {
+  const range = fact.location.range && formatRange(fact.location.range);
+  if (fact.kind === "ModuleFact" || selections.has(fact)) return undefined;
+  if (selectionErrors.has(fact) || fact.kind === "ExceptAt") return BUILTIN_LOCATION;
+  switch (fact.kind) {
+    case "Number":
+    case "String":
+    case "Decimal":
+    case "Let":
+    case "Label":
+      return undefined;
+    case "Identifier":
+    case "Apply":
+    case "Subexpression": {
+      const first = getSelectors(fact)[0];
+      if (fact.kind === "Subexpression" || first.kind !== "Name") return undefined;
+      const name = fact.kind === "Identifier" ? fact.name : fact.operator;
+      const goal = lookupLocal(scope, first.name)?.goal ?? getGoal(first.name, unit);
+      if (isFact(name, unit) || goal || (isStepName(name) && lookupLocal(scope, name))) {
+        return undefined;
+      }
+      const binding = findBinding(name, scope, unit);
+      const count = fact.kind === "Apply" ? fact.args.length : 0;
+      return binding?.arity === count ? range : BUILTIN_LOCATION;
+    }
+    default:
+      return range;
+  }
+};
+
 const checkUseOrHide = (
   statement: UseOrHide | Extract<Proof, { kind: "By" }>,
   scope: LocalName | undefined,
   unit: Unit,
 ) => {
+  const hidden =
+    statement.kind === "Hide"
+      ? statement.facts.map((fact) => getHiddenExpressionLocation(fact, scope, unit))
+      : [];
   checkFacts(statement.facts, scope, unit);
   const defCount = statement.defs.filter((def) => isDefinitionEntry(def, scope, unit)).length;
+  hidden.forEach((location) => {
+    if (location) {
+      unit.errors.push({
+        location,
+        message:
+          "The only expression allowed as a fact in a HIDE is \nthe name of a theorem, assumption, or step.",
+      });
+    }
+  });
   const range = statement.location.range;
   if (statement.facts.length + defCount === 0 && range) {
     unit.errors.push({

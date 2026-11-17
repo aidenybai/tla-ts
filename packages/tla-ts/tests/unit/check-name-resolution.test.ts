@@ -1861,6 +1861,46 @@ describe("name resolution matches SANY", () => {
     );
   });
 
+  it("reports HIDE facts that name no theorem, assumption or step like SANY", async () => {
+    const message =
+      "The only expression allowed as a fact in a HIDE is \nthe name of a theorem, assumption, or step.";
+    await expect(
+      checkNames(
+        'EXTENDS Naturals\nCONSTANT c\nVARIABLE y\nD == 1\nE(a) == a\nTHEOREM T == TRUE\nAXIOM A == TRUE\nHIDE 1, "s", TRUE, y, c, D, Unk, 1 + 1, E(1), T, A, LET q == 1 IN q, MODULE Naturals, {1}, l :: 1, 1.5\nHIDE T DEF D\nTHEOREM ASSUME NEW n PROVE TRUE\n<1>1. TRUE\n<1>2. ASSUME NEW m PROVE TRUE\n  <2> HIDE <1>1, <1>2, n, m, T, Q, c\n  <2>1. QED\n<1> HIDE <1>1, 1\n<1>3. QED',
+      ),
+    ).rejects.toThrow(
+      createSanyError([
+        {
+          location: "line 9, col 29 to line 9, col 31 of module M",
+          message: "Unknown operator: `Unk'.",
+        },
+        {
+          location: "line 9, col 92 to line 9, col 97 of module M",
+          message: "Label not in definition or proof step.",
+        },
+        ...[
+          "line 9, col 14 to line 9, col 17 of module M",
+          "line 9, col 20 to line 9, col 20 of module M",
+          "line 9, col 23 to line 9, col 23 of module M",
+          "line 9, col 26 to line 9, col 26 of module M",
+          "In module --TLA+ BUILTINS--",
+          "line 9, col 34 to line 9, col 38 of module M",
+          "line 9, col 41 to line 9, col 44 of module M",
+          "line 9, col 87 to line 9, col 89 of module M",
+        ].map((location) => ({ location, message })),
+        {
+          location: "line 14, col 33 to line 14, col 33 of module M",
+          message: "Unknown operator: `Q'.",
+        },
+        ...[
+          "line 14, col 24 to line 14, col 24 of module M",
+          "line 14, col 27 to line 14, col 27 of module M",
+          "line 14, col 36 to line 14, col 36 of module M",
+        ].map((location) => ({ location, message })),
+      ]),
+    );
+  });
+
   it("reports an operator parameter where a RECURSIVE declaration has _, which SANY accepts", async () => {
     await expect(checkNames("RECURSIVE Map(_, _)\nMap(f(_), s) == 1")).rejects.toThrow(
       createSanyError([

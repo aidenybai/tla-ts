@@ -21,7 +21,7 @@ import type {
   StepBody,
   UseOrHide,
 } from "./ast";
-import { createSanyError, formatRange, TlaSyntaxError } from "./errors";
+import { TlaSyntaxError } from "./errors";
 import { getNumeralValue, readAtAsIdentifier, tokenize, type Token } from "./lexer";
 import { getSanyParseError } from "./sany/parse-error";
 
@@ -500,7 +500,6 @@ const parse = (
   let lastOperator: Precedence | undefined;
   let precedingOperator: Precedence | undefined;
   const recursiveScopes: Set<string>[] = [];
-  const factNames = new Set<string>();
   const openModules: Module[] = [];
   // Pco's backtracking: a failure not past a commit rewinds to its attempt's frame.
   let attemptFrame: number | undefined;
@@ -2064,23 +2063,6 @@ const parse = (
     return isFirst ? level > outer : proofLevels[top] === level;
   };
 
-  const isDeclared = (name: string) =>
-    !factNames.has(name) &&
-    openModules.some(
-      (module) =>
-        module.constants.some((constant) => constant.name === name) ||
-        module.variables.some((variable) => variable.name === name) ||
-        module.definitions.some((definition) => definition.name === name),
-    );
-
-  const isHideFact = (fact: Fact) => {
-    if (fact.kind === "ModuleFact" || fact.kind === "Subexpression") return true;
-    if (fact.kind === "Apply") return fact.operator.includes("!");
-    if (fact.kind !== "Identifier") return false;
-    if (fact.name.startsWith("<") || fact.name.includes("!")) return true;
-    return !BUILTIN_CONSTANTS.has(fact.name) && !isDeclared(fact.name);
-  };
-
   const isFactAhead = () => {
     const token = peek();
     if (token.kind === "Step") return isStepReference(token);
@@ -2170,25 +2152,16 @@ const parse = (
     const keyword = advance();
     const isOnly = keyword.text === "USE" && accept("ONLY");
     const keywordRange = getRange(start);
-    const use: UseOrHide = {
-      kind: keyword.text === "USE" ? "Use" : "Hide",
-      isOnly,
-      ...parseFacts(),
-      keyword: keywordRange,
-      location: getLocation(keyword),
-    };
-    const invalid =
-      use.kind === "Hide" && mode === "tlc" ? use.facts.filter((fact) => !isHideFact(fact)) : [];
-    if (invalid.length > 0) {
-      throw createSanyError(
-        invalid.map((fact) => ({
-          location: formatRange(fact.location.range ?? getRange(start)),
-          message:
-            "The only expression allowed as a fact in a HIDE is \nthe name of a theorem, assumption, or step.",
-        })),
-      );
-    }
-    return withRange(use, start);
+    return withRange(
+      {
+        kind: keyword.text === "USE" ? "Use" : "Hide",
+        isOnly,
+        ...parseFacts(),
+        keyword: keywordRange,
+        location: getLocation(keyword),
+      },
+      start,
+    );
   };
 
   const parseNewSymbol = (): NewSymbol => {
@@ -2579,7 +2552,6 @@ const parse = (
   const parseFactName = () => {
     if (peek().kind !== "Identifier" || !isAt("==", 1)) return undefined;
     const name = expectIdentifier();
-    factNames.add(name);
     advance();
     return name;
   };
