@@ -49226,4 +49226,47 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("keys a member by a value whose type parameter's constraint is a key type", () => {
+    const getSource = (expected: string) => `
+      const args = Symbol("args");
+      interface Exit {
+        readonly _tag: string;
+        readonly value?: unknown;
+        readonly cause?: unknown;
+      }
+      const makeExit = <Prop extends string,>(options: {
+        readonly prop: Prop;
+        readonly op: "Success" | "Failure";
+      }) => {
+        const Proto = {
+          _tag: options.op,
+          get [options.prop](): any {
+            return (this as any)[args];
+          },
+        };
+        return (value: unknown): Exit => {
+          const self = Object.create(Proto);
+          self[args] = value;
+          return self;
+        };
+      };
+      const done = makeExit({ prop: "value", op: "Success" })(3);
+      const failed = makeExit({ prop: "cause", op: "Failure" })(4);
+      const doneValue = done.value;
+      const failedCause = failed.cause;
+      const seen = [doneValue, done._tag, failedCause, failed._tag].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("3,Success,4,Failure"))).failure).toBeUndefined();
+    });
+
+    it("rejects another value", async () => {
+      expect((await checkModel(getSource("3,Success,3,Failure"))).failure?.message).toContain(
+        "seen 3,Success,4,Failure",
+      );
+    });
+  });
 });
