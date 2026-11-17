@@ -283,7 +283,9 @@ const findSymbol = (name: string, unit: Unit): ModuleSymbol | undefined => {
     };
   }
   const binding = getModuleBinding(name, unit, undefined);
-  if (binding?.isPending) return { key: name, arity: binding.arity, kind: binding.kind };
+  if (binding?.isPending) {
+    return { key: name, arity: binding.arity, params: binding.params, kind: binding.kind };
+  }
   return binding ? unit.imported.get(name) : undefined;
 };
 

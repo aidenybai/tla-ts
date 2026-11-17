@@ -2284,6 +2284,45 @@ describe("name resolution matches SANY", () => {
     );
   });
 
+  it("checks the arguments of a RECURSIVE operator that is never defined like SANY", async () => {
+    await expect(
+      checkNames(
+        "CONSTANT c\nRECURSIVE R(_, _), S\nA == R(1, R) /\\ R(S, LAMBDA p : p) /\\ R(c, c)\nTHEOREM R(c, R) = 1",
+      ),
+    ).rejects.toThrow(
+      createSanyError([
+        {
+          location: "line 4, col 11 to line 4, col 11 of module M",
+          message: "The operator R requires 2 arguments.",
+        },
+        {
+          location: "line 4, col 22 to line 4, col 33 of module M",
+          message: "LAMBDA expression used where an expression is required.",
+        },
+        {
+          location: "line 5, col 1 to line 5, col 19 of module M",
+          message: "A THEOREM may not appear within a recursive definition section.",
+        },
+        {
+          location: "line 5, col 14 to line 5, col 14 of module M",
+          message: "The operator R requires 2 arguments.",
+        },
+        {
+          location: "line 6, col 1 to line 6, col 10 of module M",
+          message: "A VARIABLE declaration may not appear within a recursive definition section.",
+        },
+        {
+          location: "line 3, col 11 to line 3, col 17 of module M",
+          message: "Symbol R declared in RECURSIVE statement but not defined.",
+        },
+        {
+          location: "line 3, col 20 to line 3, col 20 of module M",
+          message: "Symbol S declared in RECURSIVE statement but not defined.",
+        },
+      ]),
+    );
+  });
+
   it("selects from a RECURSIVE operator by its declared arity like SANY", async () => {
     await expect(
       checkNames(
