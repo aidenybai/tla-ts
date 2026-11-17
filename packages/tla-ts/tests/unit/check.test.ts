@@ -1453,6 +1453,15 @@ ASSUME TLCFP(a) = -887695703
     ).toEqual(["2:2 2", "2:4 4"]);
   });
 
+  it("counts the successors the behavior graph generates again for a deadlocked state, as TLC does", async () => {
+    expect(
+      await getCoverageCounts(
+        "Init == x = 1\nNext == x = 0 /\\ x' = x\nSpec == Init /\\ [][Next]_x /\\ WF_x(Next)\nP == [](x = 1 => [](x = 1))",
+        "SPECIFICATION Spec\nPROPERTY P",
+      ),
+    ).toEqual(["2:2 2", "0:0 2 0"]);
+  });
+
   it.each([
     [
       "as TLC prints the trace",

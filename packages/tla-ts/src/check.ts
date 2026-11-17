@@ -1665,9 +1665,11 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         ...traces.getStateTrace(index),
       });
       const live = addReportedLiveState(index, liveSuccessors, source);
-      const reported = deadlock.violation
-        ? { ...deadlock, violation: appendTraceOutput(deadlock.violation, live.lines) }
-        : deadlock;
+      const reported = {
+        ...deadlock,
+        violation: deadlock.violation && appendTraceOutput(deadlock.violation, live.lines),
+        coverage: getCoverage(),
+      };
       const counted = withOutDegrees(
         reported,
         live.result.isFailed ? getFailureOutDegrees() : getPartialOutDegrees(),
