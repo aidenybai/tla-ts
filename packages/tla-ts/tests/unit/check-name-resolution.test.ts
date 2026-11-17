@@ -2454,6 +2454,25 @@ describe("name resolution matches SANY", () => {
     );
   });
 
+  it("accepts only a definition step as a DEF entry like SANY", async () => {
+    const message = "DEF clause entry should describe a defined operator.";
+    await expect(
+      checkNames(
+        "THEOREM TRUE\n<1>1. DEFINE G == 1\n<1>2. USE TRUE\n<1>3. TRUE\n  OBVIOUS\n<1> USE DEF <1>1, <1>2, <1>3, <1>4\n<1> QED",
+      ),
+    ).rejects.toThrow(
+      createSanyError(
+        [
+          ["line 7, col 19 to line 7, col 22", "DEF clause entry refers to a non-definition step."],
+          ["line 7, col 19 to line 7, col 22", message],
+          ["line 7, col 25 to line 7, col 28", message],
+          ["line 7, col 31 to line 7, col 34", "Unknown operator: `<1>4'."],
+          ["line 7, col 31 to line 7, col 34", message],
+        ].map((entry) => ({ location: `${entry[0]} of module M`, message: entry[1] })),
+      ),
+    );
+  });
+
   it.each<[string, [string, string][]]>([
     [
       "CONSTANT c\nHIDE MODULE Naturals DEF Thm9, c",

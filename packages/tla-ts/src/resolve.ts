@@ -61,7 +61,7 @@ interface LocalName extends Binding {
   parent: LocalName | undefined;
   goal?: Goal;
   isPending?: boolean;
-  isNonFact?: boolean;
+  nonFactStep?: "Use" | "Hide" | "Instance" | "Define";
 }
 
 interface ModuleBinding extends Binding {
@@ -797,7 +797,7 @@ const getSymbolArity = (
   if (renamed !== undefined) return renamed;
   if (isKey(name)) return expression.kind === "Apply" ? expression.args.length : 0;
   const local = lookupLocal(scope, name);
-  if (local?.isNonFact) {
+  if (local?.nonFactStep) {
     unit.errors.push({
       location: formatRange(getSpelledNameRange(expression, name)),
       message: "Step number of non-expression step used as an expression.",
@@ -1669,7 +1669,7 @@ const isSubexpressionReported = (
       });
       return true;
     }
-    if (binding && (!SELECTABLE_KINDS.has(binding.kind) || local?.isNonFact)) {
+    if (binding && (!SELECTABLE_KINDS.has(binding.kind) || local?.nonFactStep)) {
       reportUnselectable(head.name, range, unit);
       return true;
     }
@@ -1736,7 +1736,7 @@ const checkFact = (fact: Fact, reference: Fact, scope: LocalName | undefined, un
     return isSubexpressionReported(fact, scope, unit) ? BUILTIN_LOCATION : hidden;
   }
   const name = fact.kind === "Identifier" ? fact.name : fact.kind === "Apply" ? fact.operator : "";
-  if (fact.kind === "Identifier" && lookupLocal(scope, name)?.isNonFact) {
+  if (fact.kind === "Identifier" && lookupLocal(scope, name)?.nonFactStep) {
     unit.errors.push({
       location: formatRange(getSpelledNameRange(fact, name)),
       message: "Step number of non-fact used as a fact",
@@ -1762,13 +1762,20 @@ const isDefinitionEntry = (def: Fact, scope: LocalName | undefined, unit: Unit) 
   const name =
     def.kind === "Identifier" ? def.name : def.kind === "OperatorReference" ? def.operator : "";
   if (name === "" || !range) return true;
-  const binding =
-    lookupLocal(scope, name) ?? findSymbol(name, unit) ?? getModuleBinding(name, unit, range);
-  if (binding === undefined && (isFact(name, unit) || isStepName(name))) return true;
+  const local = lookupLocal(scope, name);
+  const binding = local ?? findSymbol(name, unit) ?? getModuleBinding(name, unit, range);
+  if (binding === undefined && isFact(name, unit)) return true;
   if (binding === undefined) {
     unit.errors.push({
       location: formatRange(range),
       message: `Unknown operator: \`${resolveSynonym(name)}'.`,
+    });
+  }
+  if (local?.nonFactStep === "Define") return true;
+  if (local?.nonFactStep) {
+    unit.errors.push({
+      location: formatRange(range),
+      message: "DEF clause entry refers to a non-definition step.",
     });
   }
   if (binding && SELECTABLE_KINDS.has(binding.kind) && !isStepName(name)) return true;
@@ -1967,10 +1974,13 @@ const resolveStep = (
   const goal = getStepGoal(body, step.location);
   const bindStep = (parent: LocalName | undefined): LocalName | undefined =>
     step.name === undefined ? parent : { name: step.name, arity: 0, kind: "Theorem", parent, goal };
-  const bindNonFactStep = (parent: LocalName | undefined): LocalName | undefined =>
+  const bindNonFactStep = (
+    parent: LocalName | undefined,
+    nonFactStep: LocalName["nonFactStep"],
+  ): LocalName | undefined =>
     step.name === undefined
       ? parent
-      : { name: step.name, arity: 0, kind: "Theorem", parent, isNonFact: true };
+      : { name: step.name, arity: 0, kind: "Theorem", parent, nonFactStep };
   switch (body.kind) {
     case "Assert": {
       const assumed = resolveStatement(body.statement, scope, stepUnit);
@@ -2003,9 +2013,9 @@ const resolveStep = (
     case "Use":
     case "Hide":
       checkUseOrHide(body, scope, unit);
-      return bindNonFactStep(scope);
+      return bindNonFactStep(scope, body.kind);
     case "Instance":
-      return bindNonFactStep(resolveLocalInstance(body, scope, stepUnit));
+      return bindNonFactStep(resolveLocalInstance(body, scope, stepUnit), body.kind);
     case "Define":
       return bindNonFactStep(
         body.definitions.reduce(
@@ -2015,6 +2025,7 @@ const resolveStep = (
               : resolveDefinitions([definition], current, unit),
           scope,
         ),
+        body.kind,
       );
     case "Have":
     case "Case":
