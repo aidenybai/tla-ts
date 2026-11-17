@@ -882,6 +882,10 @@ const expectSymbol = (sexpr: SExpr | undefined, message: string, at: SExpr): Smt
   return sexpr;
 };
 
+const expectEnd = (extra: SExpr | undefined, message: string) => {
+  if (extra !== undefined) throw new SmtParseError(message, extra);
+};
+
 export const createSmtlibReader = (
   manager: AstManager,
   logic?: string,
@@ -2918,14 +2922,13 @@ export const createSmtlibReader = (
       name,
     );
     const body = parseDatatypeBody(bodyList, new Map([[name.text, 0]]), missing, list);
-    if (list.items.length > 3)
-      throw new SmtParseError("invalid end of datatype declaration, ')' expected", list.items[3]);
     commitDatatypes(
       [mkDatatypeDef(manager, name.text, body.parameters, body.constructors)],
       missing,
       name,
-      list.end,
+      list.items[3] ?? list.end,
     );
+    expectEnd(list.items[3], "invalid end of datatype declaration, ')' expected");
   };
 
   // parse_rec_fun_decl: the variables are bound only while the range is parsed, and Z3 holds them
@@ -2990,6 +2993,7 @@ export const createSmtlibReader = (
       const decl = declareRecFun(list.items.slice(1), list.end);
       insertFunc(decl, list.items[4] ?? list.end);
       defineRecFun(decl, list.items[2], list.items[4] ?? list.end, list.items[5] ?? list.end);
+      expectEnd(list.items[5], "invalid function/constant definition, ')' expected");
       shrinkRefs(exprStack, 0);
       return;
     }
@@ -3018,9 +3022,11 @@ export const createSmtlibReader = (
           bodies.items[index + 1] ?? bodies.end,
         );
       });
-      const extra = bodies.items[signatures.length];
-      if (extra !== undefined)
-        throw new SmtParseError("invalid recursive function definition, ')' expected", extra);
+      expectEnd(
+        bodies.items[signatures.length],
+        "invalid recursive function definition, ')' expected",
+      );
+      expectEnd(list.items[3], "invalid function/constant definition, ')' expected");
       shrinkRefs(exprStack, 0);
       return;
     }
@@ -3042,8 +3048,6 @@ export const createSmtlibReader = (
           "invalid sort declaration, arity (<numeral>) or ')' expected",
           arity,
         );
-      if (list.items.length > 3)
-        throw new SmtParseError("invalid sort declaration, ')' expected", list.items[3]);
       declare(
         sortDecls,
         symbol.text,
@@ -3051,6 +3055,7 @@ export const createSmtlibReader = (
           ? { kind: "sort", sort: manager.mkSort(symbol.text) }
           : { kind: "user", name: symbol.text, arity: Number(arity.text) },
       );
+      expectEnd(list.items[3], "invalid sort declaration, ')' expected");
       return;
     }
     if (name === "define-sort") {
@@ -3064,6 +3069,7 @@ export const createSmtlibReader = (
       const body = list.items[3] ?? list.end;
       checkPsort(body, bindTypeParameters(parameters));
       declare(sortDecls, symbol.text, { kind: "definition", parameters, body });
+      expectEnd(list.items[4], "invalid sort definition, ')' expected");
       return;
     }
     if (name === "define-fun" || name === "define-const") {
@@ -3078,16 +3084,23 @@ export const createSmtlibReader = (
       runTerm(list.items[isConst ? 3 : 4] ?? list.end, false);
       const body = exprStack[exprStack.length - 1];
       if (!isConst) unbindSortedVars(bound.varSorts.length);
+      const extra = list.items[isConst ? 4 : 5];
       if (manager.sorts[body] !== range)
         throw new SmtParseError(
           isConst
             ? "invalid constant definition, sort mismatch"
             : "invalid function/constant definition, sort mismatch",
-          list.end,
+          extra ?? list.end,
         );
       manager.incRef(body);
       declare(macros, symbol.text, { domain: bound.varSorts, range, body });
       defineMacroFunc(symbol.text, bound.varSorts, body);
+      expectEnd(
+        extra,
+        isConst
+          ? "invalid constant definition, ')' expected"
+          : "invalid function/constant definition, ')' expected",
+      );
       shrinkRefs(exprStack, 0);
       return;
     }
@@ -3103,16 +3116,23 @@ export const createSmtlibReader = (
       for (const domainVar of vars) manager.decRef(domainVar);
     }
     const decl = manager.mkFuncDecl(symbol.text, domain, range);
-    checkDecl(decl, list.end);
+    const extra = list.items[name === "declare-fun" ? 4 : 3];
+    checkDecl(decl, extra ?? list.end);
     if (macros.has(symbol.text))
       throw new SmtUnsupportedError(`the overloaded symbol ${symbol.text}`);
     const existing = funcs.get(symbol.text) ?? [];
     if (existing.some((other) => hasSignature(other, domain, range)))
       throw new SmtParseError(
         `invalid declaration, ${domain.length === 0 ? "constant" : "function"} '${symbol.text}' (with the given signature) already declared`,
-        list.end,
+        extra ?? list.end,
       );
     declare(funcs, symbol.text, [...existing, decl]);
+    expectEnd(
+      extra,
+      name === "declare-fun"
+        ? "invalid function declaration, ')' expected"
+        : "invalid constant declaration, ')' expected",
+    );
   };
 
   // The caller takes the reference of the stack.

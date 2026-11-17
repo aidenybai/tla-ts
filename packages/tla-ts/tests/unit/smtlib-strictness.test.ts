@@ -300,6 +300,41 @@ describe("messages of the reader, as Z3 5.3.2 prints them", () => {
       "(error \"line 8 column 18: Invalid constant declaration: unknown sort 'String'\")",
     ]);
   });
+
+  it("makes a declaration with a token before its closing parenthesis, and reports the token", () => {
+    expect(
+      run([
+        "(declare-const a Int 1)",
+        "(declare-fun f (Int) Int 2)",
+        "(define-fun g ((x Int)) Int (+ x 1) 3)",
+        "(define-const c Int 4 5)",
+        "(define-fun-rec r ((x Int)) Int x 6)",
+        "(define-sort S () Int 7)",
+        "(declare-sort T 0 8)",
+        "(declare-datatype D ((d1) (d2)) 9)",
+        "(define-funs-rec ((h ((x Int)) Int)) (x) 10)",
+        "(define-fun e () Int true   11)",
+        "(declare-const a Int   12)",
+        "(declare-const s S)",
+        "(declare-const t T)",
+        "(declare-const d D)",
+        "(simplify (+ a (f (g c)) (r 1) (h 2)))",
+      ]),
+    ).toEqual([
+      "(error \"line 1 column 22: invalid constant declaration, ')' expected\")",
+      "(error \"line 2 column 25: invalid function declaration, ')' expected\")",
+      "(error \"line 3 column 36: invalid function/constant definition, ')' expected\")",
+      "(error \"line 4 column 22: invalid constant definition, ')' expected\")",
+      "(error \"line 5 column 34: invalid function/constant definition, ')' expected\")",
+      "(error \"line 6 column 22: invalid sort definition, ')' expected\")",
+      "(error \"line 7 column 18: invalid sort declaration, ')' expected\")",
+      "(error \"line 8 column 32: invalid end of datatype declaration, ')' expected\")",
+      "(error \"line 9 column 41: invalid function/constant definition, ')' expected\")",
+      "(error \"line 10 column 28: invalid function/constant definition, sort mismatch\")",
+      "(error \"line 11 column 23: invalid declaration, constant 'a' (with the given signature) already declared\")",
+      "(+ 3 a (f 5))",
+    ]);
+  });
 });
 
 describe("the terms the reader makes and frees, in Z3's order", () => {
