@@ -183,6 +183,22 @@ describe("liveness matches TLC", () => {
     ]).toEqual(["Act", [1, 0], "Prop", [1, 0]]);
   });
 
+  // Deviation from TLC: under -continue, TLC also reports an InvariantViolatedException and exits with 255.
+  it("stops at a temporal property that fails as its state joins the behavior graph under -continue", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nVARIABLE x\nSpec == x \\in {0, 1} /\\ [][x' = IF x = 0 THEN 1 ELSE 0]_x\nProp == [](x = 1 => [](x = 1))\n====",
+      config: "SPECIFICATION Spec\nPROPERTY Prop",
+      isContinued: true,
+    });
+    expect([
+      result.status,
+      result.violation?.name,
+      result.violation?.trace.map((step) => step.state.x),
+      result.failure,
+    ]).toEqual(["property-violation", "Prop", [1, 0], undefined]);
+  });
+
   it("finds a violation of a safety-like property early unless TLC is 1.7.4", async () => {
     const master = await checkGithub710("Github710d", "master");
     expect(master.additionalViolation?.name).toBe("NeverThree");

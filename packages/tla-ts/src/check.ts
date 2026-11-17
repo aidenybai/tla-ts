@@ -1543,6 +1543,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       }
       const accepted = liveness?.addState(index, state, liveSuccessors);
       if (!liveness || !accepted) return undefined;
+      // Deviation from TLC: under -continue, TLC's LiveCheck throws an InvariantViolatedException after it reports the property, which its Worker reports as unexpected.
       const steps = traces.getPathSteps(accepted);
       const properties = getViolatedProperties(
         liveness,
