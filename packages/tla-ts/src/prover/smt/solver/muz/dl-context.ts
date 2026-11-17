@@ -19,7 +19,7 @@ import { BindVariables, mkExists, type Rule, RuleManager, getUsedVars } from "./
 import { RuleSet } from "./dl-rule-set";
 import { RuleProperties } from "./rule-properties";
 
-const ENGINE_DATALOG = 0;
+export const ENGINE_DATALOG = 0;
 export const ENGINE_SPACER = 1;
 const ENGINE_BMC = 2;
 const ENGINE_QBMC = 3;
@@ -217,7 +217,13 @@ export class DatalogContext {
     const properties = this.ruleProperties;
     switch (this.getEngine()) {
       case ENGINE_DATALOG:
-        throw new SmtUnsupportedError("the datalog engine");
+        properties.collect(rules);
+        properties.checkQuantifierFree();
+        properties.checkUninterpretedFree();
+        properties.checkNestedFree();
+        properties.checkInfiniteSorts();
+        properties.checkBackgroundFree();
+        break;
       case ENGINE_SPACER:
         properties.collect(rules);
         properties.checkExistentialTail();

@@ -305,6 +305,20 @@ describe("rule errors", () => {
     );
   });
 
+  it("rejects a quantifier in a query that the datalog engine answers", () => {
+    expect(
+      run([
+        "(set-logic HORN)",
+        "(assert (exists ((x (_ BitVec 4))) (= (bvadd x #x1) #x0)))",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+      ]),
+    ).toEqual([
+      "unknown",
+      '(:reason-unknown "cannot process quantifier in rule <null>:\nquery!0() :- \n (let ((a!1 (= (exists ((x (_ BitVec 4))) (= (bvadd x #x1) #x0)) true)))\n  (not a!1)).\n")',
+    ]);
+  });
+
   it("prints the term a recursive predicate is nested in", () => {
     expect(
       run([
