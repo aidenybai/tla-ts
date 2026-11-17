@@ -166,6 +166,7 @@ import {
   getAssignedTarget,
   getClassStop,
   getValueDeclaration,
+  getRunMembers,
 } from "./context";
 import { TlaTypeScriptError } from "../errors";
 import { UNSETTLED_AWAIT_WARNING } from "../exit-codes";
@@ -11132,7 +11133,7 @@ const getSuperConstructor = (
   const base = getBaseClass(node, context);
   return base === undefined
     ? undefined
-    : (base.members.find(ts.isConstructorDeclaration) ?? getSuperConstructor(base, context));
+    : (getRunMembers(base).find(ts.isConstructorDeclaration) ?? getSuperConstructor(base, context));
 };
 
 // A derived constructor's super(...), which runs the base's constructor on the instance that the
@@ -18884,7 +18885,7 @@ const getClassOperands = (node: ts.ClassLikeDeclaration): ts.Expression[] => [
       ? clause.types.map((type) => type.expression)
       : [],
   ),
-  ...node.members.flatMap((member) =>
+  ...getRunMembers(node).flatMap((member) =>
     member.name !== undefined && ts.isComputedPropertyName(member.name)
       ? [member.name.expression]
       : [],
@@ -19966,7 +19967,7 @@ const getHoistedAssignment = (statement: ts.Statement, path: Path, context: Cont
       : undefined;
   // A class evaluates its computed keys in order as the script defines it, before it makes its
   // objects, so a key that assigns runs first where each key before it is a literal or ran.
-  const key = defined?.members
+  const key = (defined === undefined ? [] : getRunMembers(defined))
     .map((member) => member.name)
     .find(
       (name): name is ts.ComputedPropertyName =>

@@ -50605,4 +50605,37 @@ describe("BigInts", () => {
       expect(getTrace(result)?.map((state) => state.count)).toEqual(["0", "2", "3", "4"]);
     });
   });
+
+  describe("runs the implementations of a class's overloaded methods and constructor", () => {
+    const getSource = (expected: string) => `
+      class Shape {
+        side: number;
+        constructor(side: number);
+        constructor(side: string);
+        constructor(side: number | string) {
+          this.side = typeof side === "number" ? side : side.length;
+        }
+        area(scale?: undefined): number;
+        area(scale: number): number;
+        area(scale?: number): number {
+          return (scale ?? 1) * this.side * this.side;
+        }
+      }
+      const shape = new Shape("abc");
+      const small = new Shape(2);
+      const names = Object.getOwnPropertyNames(Shape.prototype).join("+");
+      const seen = [shape.area(), shape.area(2), small.area(), names].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with TypeScript's output run in Node", async () => {
+      expect((await checkModel(getSource("9,18,4,constructor+area"))).failure).toBeUndefined();
+    });
+
+    it("rejects a prototype that holds a signature too", async () => {
+      expect(
+        (await checkModel(getSource("9,18,4,constructor+area+area"))).failure?.message,
+      ).toContain("seen 9,18,4,constructor+area");
+    });
+  });
 });

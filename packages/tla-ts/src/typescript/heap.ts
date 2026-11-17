@@ -63,6 +63,7 @@ import {
   isAsyncGenerator,
   isStrictCode,
   getValueDeclaration,
+  getRunMembers,
 } from "./context";
 import { getPosition } from "./program-nodes";
 import { TlaTypeScriptError } from "../errors";
@@ -960,7 +961,7 @@ const translateClass = (
   const getRef = (offset: number) => useJavaScript("NextRef", [heap, number(offset)], context);
   const define = (object: Expression, key: Expression, value: Expression, flags: boolean[]) =>
     useJavaScript("Define", [object, key, value, ...flags.map(boolean)], context);
-  const members = ts.isClassLike(node) ? node.members : [];
+  const members = ts.isClassLike(node) ? getRunMembers(node) : [];
   const defineMethods = (object: Expression, isStaticObject: boolean) =>
     members.reduce<Expression>((current, member) => {
       if (isPrivateMember(member)) return current;
@@ -1034,7 +1035,7 @@ const translateClass = (
           number(
             getFunctionLength(
               ts.isClassLike(node)
-                ? (node.members.find(ts.isConstructorDeclaration)?.parameters ?? [])
+                ? (getRunMembers(node).find(ts.isConstructorDeclaration)?.parameters ?? [])
                 : getParameters(node),
             ),
           ),
@@ -1095,7 +1096,7 @@ const translateClass = (
 // A class that a default makes, after its methods, each a function that a script can only read,
 // and its prototype.
 const translateClassObject = (node: ts.ClassExpression, heap: Expression, context: Context) => {
-  const methods = node.members.filter(ts.isMethodDeclaration);
+  const methods = getRunMembers(node).filter(ts.isMethodDeclaration);
   const getName = (method: ts.MethodDeclaration) =>
     ts.isIdentifier(method.name) || ts.isStringLiteral(method.name) ? method.name.text : "";
   const getRef = (offset: number) => useJavaScript("NextRef", [heap, number(offset)], context);
@@ -1162,7 +1163,7 @@ const translateClassObject = (node: ts.ClassExpression, heap: Expression, contex
     false,
   );
   const length = getFunctionLength(
-    node.members.find(ts.isConstructorDeclaration)?.parameters ?? [],
+    getRunMembers(node).find(ts.isConstructorDeclaration)?.parameters ?? [],
   );
   const object = defineMethods(
     define(
@@ -1318,7 +1319,7 @@ const translateInstance = (
   const dropped = construction.arguments.slice(wrapper !== undefined ? 1 : isError ? 2 : 0);
   const defaults = getChain(created, context).flatMap((current) =>
     (ts.isClassLike(current)
-      ? (current.members.find(ts.isConstructorDeclaration)?.parameters ?? [])
+      ? (getRunMembers(current).find(ts.isConstructorDeclaration)?.parameters ?? [])
       : current.parameters
     ).flatMap((parameter) => (parameter.initializer === undefined ? [] : [parameter.initializer])),
   );
@@ -1330,7 +1331,7 @@ const translateInstance = (
     throw new TlaTypeScriptError("Unsupported arguments to a constructor that runs no code", node);
   }
   const members = getChain(created, context).flatMap((current) =>
-    ts.isClassLike(current) ? [...current.members] : [],
+    ts.isClassLike(current) ? [...getRunMembers(current)] : [],
   );
   const empty = members.reduce<Expression>(
     (object, member) =>
@@ -1358,7 +1359,7 @@ const translateInstance = (
             // A constructor gives the error its message as it calls super(...).
             getChain(created, context).some(
               (current) =>
-                ts.isClassLike(current) && current.members.some(ts.isConstructorDeclaration),
+                ts.isClassLike(current) && getRunMembers(current).some(ts.isConstructorDeclaration),
             )
               ? []
               : construction.arguments,
@@ -1373,10 +1374,10 @@ const translateInstance = (
   const fields = getChain(created, context).flatMap((current) =>
     ts.isClassLike(current)
       ? [
-          ...(current.members.find(ts.isConstructorDeclaration)?.parameters ?? []).filter(
+          ...(getRunMembers(current).find(ts.isConstructorDeclaration)?.parameters ?? []).filter(
             (parameter) => ts.isParameterPropertyDeclaration(parameter, parameter.parent),
           ),
-          ...current.members.filter(
+          ...getRunMembers(current).filter(
             (member) =>
               !ts.isPropertyDeclaration(member) ||
               ![
@@ -3845,7 +3846,7 @@ export const getAllocated = (node: ts.Node, context: Context, isSometimes = fals
     created !== undefined && isNewInstance
       ? getChain(created, context).flatMap((current) =>
           ts.isClassLike(current)
-            ? current.members.flatMap((member) =>
+            ? getRunMembers(current).flatMap((member) =>
                 ts.isPropertyDeclaration(member) &&
                 !isStatic(member) &&
                 member.initializer !== undefined &&

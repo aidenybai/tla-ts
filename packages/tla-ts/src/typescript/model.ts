@@ -14,6 +14,7 @@ import {
   isInlined,
   isScript,
   getValueDeclaration,
+  getRunMembers,
 } from "./context";
 import type { Expression } from "../ast";
 import { getWritten, getWrittenRoots } from "./actions";
@@ -145,7 +146,7 @@ const isInertClass = (statement: ts.Statement) =>
   (statement.heritageClauses ?? []).every((clause) =>
     clause.types.every((type) => isName(type.expression)),
   ) &&
-  !statement.members.some(
+  !getRunMembers(statement).some(
     (member) =>
       ts.isClassStaticBlockDeclaration(member) ||
       (member.name !== undefined && ts.isComputedPropertyName(member.name)) ||
