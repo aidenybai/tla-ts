@@ -129,6 +129,30 @@ it.each([
   },
 );
 
+it("reports an implied initial predicate that an initial state violates, which TLC's simulator never checks", () => {
+  const messages: [number, string][] = [];
+  const result = simulate({
+    source:
+      "---- MODULE M ----\nVARIABLE x\nInit == x \\in {0, 1}\nNext == x' = x\nProp == x = 1\n====",
+    config: "INIT Init\nNEXT Next\nPROPERTY Prop",
+    seed: 4n,
+    traceDepth: 2,
+    traceCount: 1n,
+    aril: 0n,
+    isGenerating: false,
+    scheduler: "random",
+    onSimulation: (output) => {
+      if (output.kind === "message" && output.isError) {
+        messages.push([output.code, output.message]);
+      }
+    },
+  });
+  expect([result, messages]).toEqual([
+    13,
+    [[2108, "Property Prop is violated by the initial state:\nx = 0\n"]],
+  ]);
+});
+
 it("checks a behavior against one solution after another up to the first it violates, as TLC's LiveCheck1 does", () => {
   const printed: string[] = [];
   const status = simulate({
