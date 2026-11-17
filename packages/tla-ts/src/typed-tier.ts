@@ -2851,6 +2851,10 @@ const compileBuiltin = (
     ? findGlobalName(operator, program.environment)
     : undefined;
   if (global?.kind === "Value") return compileConstant(program, global.value);
+  // TLC's TLCEval enumerates its argument, which the tier's values already are.
+  if (args.length === 1 && isBuiltin(program, frame, operator, "TLCEval")) {
+    return compileValue(program, args[0], frame);
+  }
   if (args.length === 2 && (operator === "\\in" || operator === "\\notin")) {
     const test = compileMembership(program, compileValue(program, args[0], frame), args[1], frame);
     return operator === "\\in" ? test : { type: createBool(), emit: () => `!(${test.emit()})` };
