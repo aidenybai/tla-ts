@@ -461,6 +461,35 @@ const getEdits = (
   return undefined;
 };
 
+// The pattern parameters of the functions that a write gives a variable that TypeScript types by
+// what it's assigned, as var f; f = function ([x]) {} does, whose calls TypeScript reads as of a
+// value of type any, so it checks no argument against the type that it makes of the pattern.
+const getUncheckedPatterns = (file: ts.SourceFile, checker: ts.TypeChecker) => {
+  const parameters: ts.ParameterDeclaration[] = [];
+  const visit = (node: ts.Node) => {
+    const parent = node.parent;
+    const declaration =
+      (ts.isFunctionExpression(node) || ts.isArrowFunction(node)) &&
+      isAssignment(parent) &&
+      parent.right === node &&
+      ts.isIdentifier(parent.left)
+        ? checker.getSymbolAtLocation(parent.left)?.valueDeclaration
+        : undefined;
+    if (
+      declaration !== undefined &&
+      ts.isVariableDeclaration(declaration) &&
+      declaration.initializer === undefined &&
+      declaration.type === undefined &&
+      (ts.isFunctionExpression(node) || ts.isArrowFunction(node))
+    ) {
+      parameters.push(...node.parameters.filter((parameter) => !ts.isIdentifier(parameter.name)));
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(file);
+  return parameters;
+};
+
 // Whether two edits' spans overlap, so that one round can't make both.
 const isOverlapping = (left: Edit[], right: Edit[]) => {
   const getSpan = (edits: Edit[]) => [
@@ -527,7 +556,11 @@ export const typeJavaScript = (
       return edits;
     })
     .filter((edits) => edits.length > 0);
-  const chosen = fixes.reduce<Edit[][]>(
+  const patterns = getUncheckedPatterns(file, checker).flatMap((parameter) => {
+    const edits = widenDeclaration(parameter, file, "any");
+    return edits === undefined ? [] : [edits];
+  });
+  const chosen = [...fixes, ...patterns].reduce<Edit[][]>(
     (kept, edits) => (kept.some((other) => isOverlapping(other, edits)) ? kept : [...kept, edits]),
     [],
   );

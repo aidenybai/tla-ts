@@ -50651,4 +50651,25 @@ describe("BigInts", () => {
       (await check(compile(source, join(import.meta.dirname, "model.js")))).failure?.message,
     ).toContain("tla-ts can't throw the TypeError of reading a property of undefined or null");
   });
+
+  it("stops at the pattern parameter of a JavaScript function whose calls TypeScript doesn't check", () => {
+    const source = `
+      var box = { seen: "" };
+      var take;
+      take = function ([first]) {
+        return first;
+      };
+      function run() {
+        return take({});
+      }
+      try {
+        run();
+      } catch (error) {
+        box.seen = "threw";
+      }
+    `;
+    expect(() => compile(source, join(import.meta.dirname, "model.js"))).toThrow(
+      "Give this pattern's value an array type",
+    );
+  });
 });
