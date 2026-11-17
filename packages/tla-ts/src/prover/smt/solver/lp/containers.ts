@@ -159,7 +159,7 @@ interface HashLink<V> {
 }
 
 interface HashNode<V> extends HashLink<V> {
-  readonly value: V;
+  value: V;
 }
 
 const constrainHash = (hash: number, count: number) =>
@@ -195,6 +195,12 @@ export class UnorderedUintMap<V> {
 
   *[Symbol.iterator](): IterableIterator<[number, V]> {
     for (let node = this.anchor.next; node !== null; node = node.next) yield [node.key, node.value];
+  }
+
+  set(key: number, value: V) {
+    const node = this.nodes.get(key);
+    if (node === undefined) this.insert(key, value);
+    else node.value = value;
   }
 
   insert(key: number, value: V) {

@@ -1,4 +1,5 @@
 import { Rational } from "../rational";
+import type { UnorderedUintMap } from "./containers";
 
 interface NexScalar {
   readonly kind: "scalar";
@@ -63,7 +64,7 @@ export const isALinearTerm = (sum: NexSum) => {
   return numberOfNonScalars > 1;
 };
 
-export const getPowersFromMul = (mul: NexMul, powers: Map<number, number>) => {
+export const getPowersFromMul = (mul: NexMul, powers: UnorderedUintMap<number>) => {
   powers.clear();
   for (const child of mul.children)
     if (child.expr.kind === "var") powers.set(child.expr.variable, child.power);

@@ -1242,12 +1242,9 @@ export class Derive {
   }
 
   derivativeCofactors(regex: number, result: RefVector) {
-    const manager = this.manager;
-    const elementSort = manager.getSeqElementSort(manager.getReSeqSort(manager.sorts[regex]));
-    const element = manager.mkVar(0, elementSort);
-    const derivative = this.derive(DERIVATIVE_BRZOZOWSKI, element, regex);
-    // Deviation from Z3: a cached derivative leaves m_ele null there, which stops the pruning.
-    this.getCofactors(element, derivative, result);
+    const derivative = this.deriveSymbolic(DERIVATIVE_BRZOZOWSKI, regex);
+    // Like Z3, a cached derivative leaves the element unset here, which stops the interval pruning.
+    this.getCofactors(this.element, derivative, result);
   }
 
   lightAntDerivativeCofactors(regex: number, result: RefVector) {

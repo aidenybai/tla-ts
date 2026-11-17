@@ -280,6 +280,8 @@ export const createIndex = (exprs: Expressions) => {
     getGoalness,
     findPositive: (symbol: string) => withGoalness(getLatestFirst(positive, symbol)),
     findNegative: (symbol: string) => withGoalness(getLatestFirst(negative, symbol)),
+    getPositive: (symbol: string) => positive.get(symbol),
+    getNegative: (symbol: string) => negative.get(symbol),
     findEqualRight: (term: Expr) => getLatestFirst(equalLeftRight, term),
     findEqualLeft: (term: Expr) => getLatestFirst(equalRightLeft, term),
     findDisequalities: (term: Expr) => [
