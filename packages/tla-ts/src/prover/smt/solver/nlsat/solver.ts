@@ -1,7 +1,7 @@
 // Of Z3's nlsat parameters only seed and factor are ported, so nlsat_simplify and the bounds of
 // eliminated variables are not. The search counts its steps against the resource limit, but not the
 // memory, which Z3 also bounds by max_memory.
-import { SmtCanceledError, SmtInvariantError } from "../../../../errors";
+import { SmtInvariantError } from "../../../../errors";
 import { L_FALSE, L_TRUE, L_UNDEF } from "../lbool";
 import { type Dependency, linearize, mkJoin, mkLeaf } from "../lp/dependency";
 import { RandomGen } from "../random-gen";
@@ -11,8 +11,14 @@ import { AlgebraicManager, Anum } from "./algebraic";
 import { AtomTable, FALSE_LITERAL, ScopedLiterals, TRUE_LITERAL } from "./atoms";
 import { Evaluator } from "./evaluator";
 import { Explain } from "./explain";
-import type { IntervalSet } from "./interval-set";
-import { NULL_VAR, type Polynomial, PolynomialCache, PolynomialManager } from "./polynomial";
+import type { IntervalSet, IntervalSetManager } from "./interval-set";
+import {
+  NULL_VAR,
+  type Polynomial,
+  PolynomialCache,
+  PolynomialManager,
+  PolynomialRef,
+} from "./polynomial";
 import { NlsatTranscendentals } from "./transcendentals";
 import { type Clause, type IneqAtom, type IneqKind, isIneqAtom, type RootKind } from "./types";
 
@@ -35,30 +41,18 @@ type Trail =
   | { kind: "eq"; old: IneqAtom | null };
 
 export class NlsatSolver {
-  readonly pm = new PolynomialManager();
-  readonly am = new AlgebraicManager();
-  private cache = new PolynomialCache(this.pm);
+  readonly pm: PolynomialManager;
+  readonly am: AlgebraicManager;
+  private cache: PolynomialCache;
   private bvalues: number[] = [];
   private levels: number[] = [];
   private justifications: (Justification | null)[] = [];
   private bwatches: Clause[][] = [];
   private isDead: boolean[] = [];
-  readonly atoms = new AtomTable(this.pm, this.cache, {
-    onMk: (boolVar) => {
-      this.bvalues[boolVar] = L_UNDEF;
-      this.levels[boolVar] = Infinity;
-      this.justifications[boolVar] = null;
-      this.bwatches[boolVar] = [];
-      this.isDead[boolVar] = false;
-    },
-    onDelete: (boolVar) => {
-      this.isDead[boolVar] = true;
-      this.bvalues[boolVar] = L_UNDEF;
-    },
-  });
+  readonly atoms: AtomTable;
   private assignment: (Anum | undefined)[] = [];
-  private evaluator = new Evaluator(this.pm, this.am, this.assignment);
-  private ism = this.evaluator.ism;
+  private evaluator: Evaluator;
+  private ism: IntervalSetManager;
   private clauses: Clause[] = [];
   private learned: Clause[] = [];
   private nextClauseId = 0;
@@ -68,24 +62,16 @@ export class NlsatSolver {
   private var2eq: (IneqAtom | null)[] = [];
   private perm: number[] = [];
   private invPerm: number[] = [];
-  readonly explain = new Explain(this.pm, this.am, this.cache, {
-    atoms: this.atoms,
-    sample: this.assignment,
-    getValue: (literal) => this.value(literal),
-    var2eq: this.var2eq,
-    getNumVars: () => this.isInt.length,
-    reorder: (permutation) => this.reorder(permutation),
-    restoreOrder: () => this.restoreOrder(),
-  });
-  readonly transcendentals = new NlsatTranscendentals(this);
+  readonly explain: Explain;
+  readonly transcendentals: NlsatTranscendentals;
   private bk = 0;
   private xk = NULL_VAR;
   private scopeLevel = 0;
   private trail: Trail[] = [];
   private marks: boolean[] = [];
   private markCount = 0;
-  private lemma = new ScopedLiterals(this.atoms);
-  private lazyClause = new ScopedLiterals(this.atoms);
+  private lemma: ScopedLiterals;
+  private lazyClause: ScopedLiterals;
   private lemmaAssumptions: Dependency = null;
   private randomSeed = 0;
   private isReordered = false;
@@ -102,7 +88,37 @@ export class NlsatSolver {
     irrationalAssignments: 0,
   };
 
-  constructor(private limit: ResourceLimit | null = null) {
+  constructor(private limit: ResourceLimit) {
+    this.pm = new PolynomialManager(limit);
+    this.am = new AlgebraicManager(limit);
+    this.cache = new PolynomialCache(this.pm);
+    this.atoms = new AtomTable(this.pm, this.cache, {
+      onMk: (boolVar) => {
+        this.bvalues[boolVar] = L_UNDEF;
+        this.levels[boolVar] = Infinity;
+        this.justifications[boolVar] = null;
+        this.bwatches[boolVar] = [];
+        this.isDead[boolVar] = false;
+      },
+      onDelete: (boolVar) => {
+        this.isDead[boolVar] = true;
+        this.bvalues[boolVar] = L_UNDEF;
+      },
+    });
+    this.evaluator = new Evaluator(this.pm, this.am, this.assignment);
+    this.ism = this.evaluator.ism;
+    this.explain = new Explain(this.pm, this.am, this.cache, {
+      atoms: this.atoms,
+      sample: this.assignment,
+      getValue: (literal) => this.value(literal),
+      var2eq: this.var2eq,
+      getNumVars: () => this.isInt.length,
+      reorder: (permutation) => this.reorder(permutation),
+      restoreOrder: () => this.restoreOrder(),
+    });
+    this.transcendentals = new NlsatTranscendentals(this);
+    this.lemma = new ScopedLiterals(this.atoms);
+    this.lazyClause = new ScopedLiterals(this.atoms);
     this.mkClause([TRUE_LITERAL], false, null);
   }
 
@@ -110,10 +126,6 @@ export class NlsatSolver {
     this.randomSeed = seed;
     this.ism.setSeed(seed);
     this.explain.isFactoring = isFactoring;
-  }
-
-  private checkpoint() {
-    if (this.limit !== null && !this.limit.inc()) throw new SmtCanceledError();
   }
 
   mkVar(isInt: boolean) {
@@ -394,7 +406,7 @@ export class NlsatSolver {
     let selectedSet: IntervalSet | null = null;
     const xkSet = this.infeasible[this.xk];
     for (const [index, literal] of clause.literals.entries()) {
-      this.checkpoint();
+      this.limit.checkpoint();
       if (this.value(literal) === L_FALSE) continue;
       if (this.value(literal) === L_TRUE) return true;
       const atom = this.atoms.getAtom(literal);
@@ -482,7 +494,7 @@ export class NlsatSolver {
       } else this.newStage();
       if (this.bk === NULL_BOOL_VAR && this.xk >= this.isInt.length) return L_TRUE;
       while (true) {
-        this.checkpoint();
+        this.limit.checkpoint();
         const conflict = this.processClauses(
           this.xk === NULL_VAR ? this.bwatches[this.bk] : this.watches[this.xk],
         );
@@ -502,7 +514,7 @@ export class NlsatSolver {
   private gc() {
     if (this.learned.length <= 4 * this.clauses.length) return;
     this.resetWatches();
-    this.atoms.reinitCache();
+    this.atoms.reinitCache(this.clauses, this.learned);
     let kept = 0;
     for (const [index, clause] of this.learned.entries()) {
       if (index - kept < this.clauses.length && clause.literals.length > 1 && !clause.isActive)
@@ -569,12 +581,14 @@ export class NlsatSolver {
       }
       this.initSearch();
       for (const bound of bounds) {
+        const p = new PolynomialRef(this.pm);
         this.lemma.reset();
-        const below = this.pm.mkLinear([1n], [bound[0]], -bound[1].num);
-        this.lemma.push(this.mkIneqLiteral("GT", [below], [false]) ^ 1);
-        const above = this.pm.mkLinear([1n], [bound[0]], -bound[1].num - 1n);
-        this.lemma.push(this.mkIneqLiteral("LT", [above], [false]) ^ 1);
+        p.set(this.pm.mkLinear([1n], [bound[0]], -bound[1].num));
+        this.lemma.push(this.mkIneqLiteral("GT", [p.get()], [false]) ^ 1);
+        p.set(this.pm.mkLinear([1n], [bound[0]], -bound[1].num - 1n));
+        this.lemma.push(this.mkIneqLiteral("LT", [p.get()], [false]) ^ 1);
         this.mkClause(this.lemma.literals, true, null);
+        p.reset();
       }
     }
   }
@@ -654,7 +668,7 @@ export class NlsatSolver {
   private projectModel(cube: ScopedLiterals) {
     const seen = new Set<number>();
     for (const clause of this.clauses) {
-      this.checkpoint();
+      this.limit.checkpoint();
       const witness = clause.literals.find((literal) => this.value(literal) === L_TRUE);
       if (witness === undefined) throw new SmtInvariantError("nlsat's model falsifies a clause");
       if (this.atoms.getAtom(witness) === null || seen.has(witness >> 1)) continue;
@@ -666,7 +680,7 @@ export class NlsatSolver {
     const projected = new ScopedLiterals(this.atoms);
     try {
       for (let variable = this.isInt.length - 1; variable >= 1 && cube.size > 0; variable--) {
-        this.checkpoint();
+        this.limit.checkpoint();
         projected.reset();
         this.explain.projectVariable(variable, cube.literals, projected);
         [cube.literals, projected.literals] = [projected.literals, cube.literals];
@@ -702,14 +716,16 @@ export class NlsatSolver {
     try {
       if (limit !== null) {
         const isRational = this.am.isRational(limit);
-        const polynomial = this.pm.fromCoeffs(this.am.getPolynomial(limit), variable);
+        const p = new PolynomialRef(this.pm);
+        p.set(this.pm.toPolynomial(this.am.getPolynomial(limit), variable));
         const upper = isRational
-          ? this.mkIneqLiteral("LT", [polynomial], [false])
-          : 2 * this.mkRootAtom("ROOT_LT", variable, this.am.getRootIndex(limit), polynomial);
+          ? this.mkIneqLiteral("LT", [p.get()], [false])
+          : 2 * this.mkRootAtom("ROOT_LT", variable, this.am.getRootIndex(limit), p.get());
         this.mkExternalClause([upper], tag);
+        p.reset();
       }
       while (true) {
-        this.checkpoint();
+        this.limit.checkpoint();
         const status = this.check();
         if (status !== L_TRUE) return status;
         const cube = new ScopedLiterals(this.atoms);
@@ -792,10 +808,10 @@ export class NlsatSolver {
   }
 
   private processAntecedent(antecedent: number) {
-    this.checkpoint();
+    this.limit.checkpoint();
     const boolVar = antecedent >> 1;
     if (this.getAssignedValue(antecedent) === L_UNDEF) {
-      this.checkpoint();
+      this.limit.checkpoint();
       if (!this.marks[boolVar]) {
         this.marks[boolVar] = true;
         this.lemma.push(antecedent);
@@ -823,7 +839,7 @@ export class NlsatSolver {
     this.lazyClause.reset();
     this.explain.computeConflictExplanation(literals, this.lazyClause);
     for (const literal of literals) this.lazyClause.push(literal ^ 1);
-    this.checkpoint();
+    this.limit.checkpoint();
     this.resolveLiterals(boolVar, this.lazyClause.literals);
     for (const clause of clauses)
       this.lemmaAssumptions = mkJoin(clause.assumptions, this.lemmaAssumptions);
@@ -864,7 +880,7 @@ export class NlsatSolver {
     let isDecision = false;
     while (true) {
       while (this.markCount > 0) {
-        this.checkpoint();
+        this.limit.checkpoint();
         const entry = this.trail[top - 1];
         if (entry.kind === "assignment" && this.marks[entry.boolVar]) {
           const boolVar = entry.boolVar;
@@ -998,7 +1014,7 @@ export class NlsatSolver {
       else this.learned[kept++] = clause;
     }
     this.learned.length = kept;
-    this.atoms.reinitCache();
+    this.atoms.reinitCache(this.clauses, this.learned);
     this.resetWatches();
     const assignment: (Anum | undefined)[] = [];
     for (const [variable, value] of this.assignment.entries())
@@ -1011,15 +1027,9 @@ export class NlsatSolver {
     for (const [variable, isIntVariable] of isInt.entries())
       this.isInt[permutation[variable]] = isIntVariable;
     this.invPerm = invPerm;
-    const polynomials = new Set<Polynomial>();
-    for (const atom of this.atoms.atoms) {
-      if (atom === null) continue;
-      if (isIneqAtom(atom)) for (const polynomial of atom.polynomials) polynomials.add(polynomial);
-      else polynomials.add(atom.polynomial);
-    }
-    this.pm.rename(permutation, polynomials);
+    this.pm.rename(permutation);
     this.transcendentals.rename(permutation);
-    this.atoms.reinitCache();
+    this.atoms.reinitCache(this.clauses, this.learned);
     this.setAssignment(assignment);
     this.reattachArithClauses(this.clauses);
     this.reattachArithClauses(this.learned);

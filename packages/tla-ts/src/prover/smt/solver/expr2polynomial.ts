@@ -12,105 +12,227 @@ import {
   SORT_INT,
   SORT_REAL,
 } from "./ast";
-import type { Polynomial, PolynomialManager } from "./nlsat/polynomial";
+import {
+  type Polynomial,
+  type PolynomialManager,
+  PolynomialRef,
+  PolynomialRefVector,
+} from "./nlsat/polynomial";
 import { getLcm, Rational } from "./rational";
 import { RefVector } from "./ref-vector";
 
-export interface PolynomialResult {
-  polynomial: Polynomial;
-  denominator: bigint;
+interface Frame {
+  term: number;
+  index: number;
 }
 
-export const toPolynomial = (
-  manager: AstManager,
-  pm: PolynomialManager,
-  term: number,
-  mkVar: (term: number) => number,
-): PolynomialResult => {
-  const convert = (expr: number): PolynomialResult => {
-    if (manager.kinds[expr] !== KIND_APP || manager.getFamily(expr) !== FAMILY_ARITH)
-      return { polynomial: pm.mkVar(mkVar(expr)), denominator: 1n };
-    const op = manager.getOp(expr);
-    switch (op) {
-      case OP_NUM: {
-        const value = manager.getRationalValue(expr);
-        return { polynomial: pm.mkConst(value.num), denominator: value.den };
-      }
-      case OP_ADD:
-      case OP_SUB: {
-        const args = manager.getArgs(expr).map(convert);
-        const denominator = args.reduce((lcm, arg) => getLcm(lcm, arg.denominator), 1n);
-        let polynomial = pm.zero;
-        for (const [index, arg] of args.entries()) {
-          const scaled = pm.mulConst(denominator / arg.denominator, arg.polynomial);
-          polynomial =
-            index === 0
-              ? scaled
-              : op === OP_ADD
-                ? pm.add(polynomial, scaled)
-                : pm.sub(polynomial, scaled);
-        }
-        return { polynomial, denominator };
-      }
-      case OP_MUL: {
-        let polynomial = pm.one;
-        let denominator = 1n;
-        for (const arg of manager.getArgs(expr).map(convert)) {
-          polynomial = pm.mul(polynomial, arg.polynomial);
-          denominator *= arg.denominator;
-        }
-        return { polynomial, denominator };
-      }
-      case OP_UMINUS: {
-        const arg = convert(manager.getArg(expr, 0));
-        return { polynomial: pm.neg(arg.polynomial), denominator: arg.denominator };
-      }
-      case OP_TO_REAL:
-        return convert(manager.getArg(expr, 0));
-      case OP_POWER: {
-        const exponent = manager.getArg(expr, 1);
-        const value = manager.isNumeral(exponent) ? manager.getRationalValue(exponent) : undefined;
-        if (value === undefined || !value.isInt() || value.num <= 0n || value.num > 0xffffffffn)
-          return { polynomial: pm.mkVar(mkVar(expr)), denominator: 1n };
-        const base = convert(manager.getArg(expr, 0));
-        return {
-          polynomial: pm.pw(base.polynomial, Number(value.num)),
-          denominator: base.denominator ** value.num,
-        };
-      }
-      default:
-        return { polynomial: pm.mkVar(mkVar(expr)), denominator: 1n };
-    }
-  };
-  return convert(term);
-};
-
 export class Expr2Polynomial {
-  private termToVar = new Map<number, number>();
-  private varToTerm: RefVector;
+  private cache = new Map<number, number>();
+  private cachedDomain: RefVector;
+  private cachedPolynomials: PolynomialRefVector;
+  private cachedDenominators: bigint[] = [];
+  private frames: Frame[] = [];
+  private presult: PolynomialRefVector;
+  private dresult: bigint[] = [];
+  private var2expr: RefVector;
 
   constructor(
     private manager: AstManager,
     readonly pm: PolynomialManager,
+    private t2x: Map<number, number>,
+    private mkVar: (isInt: boolean) => number,
   ) {
-    this.varToTerm = new RefVector(manager);
+    this.cachedDomain = new RefVector(manager);
+    this.cachedPolynomials = new PolynomialRefVector(pm);
+    this.presult = new PolynomialRefVector(pm);
+    this.var2expr = new RefVector(manager);
   }
 
-  private getVar(term: number) {
-    const existing = this.termToVar.get(term);
-    if (existing !== undefined) return existing;
-    const variable = this.varToTerm.size;
-    this.termToVar.set(term, variable);
-    this.varToTerm.push(term);
-    return variable;
+  private reset() {
+    this.frames.length = 0;
+    this.presult.reset();
+    this.dresult.length = 0;
+  }
+
+  private cacheResult(term: number) {
+    if (this.manager.getRefCount(term) <= 1) return;
+    this.cache.set(term, this.cachedPolynomials.size);
+    this.cachedDomain.push(term);
+    this.cachedPolynomials.push(this.presult.get(this.presult.size - 1));
+    this.cachedDenominators.push(this.dresult[this.dresult.length - 1]);
+  }
+
+  private storeResult(term: number, polynomial: Polynomial, denominator: bigint) {
+    this.presult.push(polynomial);
+    this.dresult.push(denominator);
+    this.cacheResult(term);
+  }
+
+  private storeVarPoly(term: number) {
+    let variable = this.t2x.get(term);
+    if (variable === undefined) {
+      variable = this.mkVar(this.manager.sorts[term] === SORT_INT);
+      this.t2x.set(term, variable);
+      if (variable >= this.var2expr.size) this.var2expr.resize(variable + 1);
+      this.var2expr.set(variable, term);
+    }
+    this.storeResult(term, this.pm.mkVar(variable), 1n);
+  }
+
+  private visitArithApp(term: number) {
+    const manager = this.manager;
+    switch (manager.getOp(term)) {
+      case OP_NUM: {
+        const value = manager.getRationalValue(term);
+        this.storeResult(term, this.pm.mkConst(value.num), value.den);
+        return true;
+      }
+      case OP_ADD:
+      case OP_SUB:
+      case OP_MUL:
+      case OP_UMINUS:
+      case OP_TO_REAL:
+        this.frames.push({ term, index: 0 });
+        return false;
+      case OP_POWER: {
+        const exponent = manager.getArg(term, 1);
+        const value = manager.isNumeral(exponent) ? manager.getRationalValue(exponent) : undefined;
+        if (value === undefined || !value.isInt() || value.num <= 0n || value.num > 0xffffffffn) {
+          this.storeVarPoly(term);
+          return true;
+        }
+        this.frames.push({ term, index: 0 });
+        return false;
+      }
+      default:
+        this.storeVarPoly(term);
+        return true;
+    }
+  }
+
+  private visit(term: number) {
+    const manager = this.manager;
+    const cached = manager.getRefCount(term) > 1 ? this.cache.get(term) : undefined;
+    if (cached !== undefined) {
+      this.presult.push(this.cachedPolynomials.get(cached));
+      this.dresult.push(this.cachedDenominators[cached]);
+      return true;
+    }
+    if (manager.kinds[term] !== KIND_APP || manager.getFamily(term) !== FAMILY_ARITH) {
+      this.storeVarPoly(term);
+      return true;
+    }
+    return this.visitArithApp(term);
+  }
+
+  private pop(numArgs: number) {
+    this.presult.shrink(this.presult.size - numArgs);
+    this.dresult.length -= numArgs;
+  }
+
+  private processAddSub(term: number, numArgs: number, isAdd: boolean) {
+    const pm = this.pm;
+    const first = this.presult.size - numArgs;
+    const p = new PolynomialRef(pm);
+    const pAux = new PolynomialRef(pm);
+    let denominator = 1n;
+    for (let index = 0; index < numArgs; index++)
+      denominator = getLcm(denominator, this.dresult[first + index]);
+    p.set(pm.zero);
+    for (let index = 0; index < numArgs; index++) {
+      pAux.set(
+        pm.mulConst(denominator / this.dresult[first + index], this.presult.get(first + index)),
+      );
+      if (index === 0) p.copy(pAux);
+      else p.set(isAdd ? pm.add(p.get(), pAux.get()) : pm.sub(p.get(), pAux.get()));
+    }
+    this.pop(numArgs);
+    this.storeResult(term, p.get(), denominator);
+    pAux.reset();
+    p.reset();
+  }
+
+  private processMul(term: number, numArgs: number) {
+    const first = this.presult.size - numArgs;
+    const p = new PolynomialRef(this.pm);
+    let denominator = 1n;
+    p.set(this.pm.one);
+    for (let index = 0; index < numArgs; index++) {
+      p.set(this.pm.mul(p.get(), this.presult.get(first + index)));
+      denominator *= this.dresult[first + index];
+    }
+    this.pop(numArgs);
+    this.storeResult(term, p.get(), denominator);
+    p.reset();
+  }
+
+  private processUminus(term: number) {
+    const negP = new PolynomialRef(this.pm);
+    negP.set(this.pm.neg(this.presult.get(this.presult.size - 1)));
+    this.presult.shrink(this.presult.size - 1);
+    this.presult.push(negP.get());
+    this.cacheResult(term);
+    negP.reset();
+  }
+
+  private processPower(term: number, numArgs: number) {
+    const first = this.presult.size - numArgs;
+    const k = Number(this.manager.getRationalValue(this.manager.getArg(term, 1)).num);
+    const p = new PolynomialRef(this.pm);
+    this.pm.pw(this.presult.get(first), k, p);
+    const denominator = this.dresult[first] ** BigInt(k);
+    this.pop(numArgs);
+    this.storeResult(term, p.get(), denominator);
+    p.reset();
+  }
+
+  private processApp(term: number) {
+    const numArgs = this.manager.getNumArgs(term);
+    switch (this.manager.getOp(term)) {
+      case OP_ADD:
+        return this.processAddSub(term, numArgs, true);
+      case OP_SUB:
+        return this.processAddSub(term, numArgs, false);
+      case OP_MUL:
+        return this.processMul(term, numArgs);
+      case OP_POWER:
+        return this.processPower(term, numArgs);
+      case OP_UMINUS:
+        return this.processUminus(term);
+      default:
+        return this.cacheResult(term);
+    }
+  }
+
+  toPolynomial(term: number, p: PolynomialRef) {
+    this.reset();
+    if (!this.visit(term)) {
+      const frames = this.frames;
+      while (frames.length > 0) {
+        const frame = frames[frames.length - 1];
+        const numArgs = this.manager.getNumArgs(frame.term);
+        let isPushed = false;
+        while (frame.index < numArgs) {
+          const arg = this.manager.getArg(frame.term, frame.index);
+          frame.index++;
+          if (!this.visit(arg)) {
+            isPushed = true;
+            break;
+          }
+        }
+        if (isPushed) continue;
+        this.processApp(frame.term);
+        frames.pop();
+      }
+    }
+    p.set(this.presult.get(this.presult.size - 1));
+    const denominator = this.dresult[this.dresult.length - 1];
+    this.reset();
+    return denominator;
   }
 
   private isIntVar(variable: number) {
-    return this.manager.sorts[this.varToTerm.items[variable]] === SORT_INT;
-  }
-
-  toPolynomial(term: number) {
-    return toPolynomial(this.manager, this.pm, term, (expr) => this.getVar(expr));
+    return this.manager.sorts[this.var2expr.items[variable]] === SORT_INT;
   }
 
   toExpr(polynomial: Polynomial, isUsingPower: boolean) {
@@ -125,7 +247,7 @@ export class Expr2Polynomial {
       const coeff = polynomial.as[index];
       if (coeff !== 1n) factors.push(mkNumeral(coeff));
       for (const [position, variable] of monomial.vars.entries()) {
-        const term = this.varToTerm.items[variable];
+        const term = this.var2expr.items[variable];
         const base =
           this.isIntVar(variable) && !isInt ? manager.mkApp(OP_TO_REAL, [term], SORT_REAL) : term;
         const degree = monomial.degrees[position];
@@ -141,6 +263,9 @@ export class Expr2Polynomial {
   }
 
   release() {
-    this.varToTerm.reset();
+    this.presult.reset();
+    this.cachedPolynomials.reset();
+    this.cachedDomain.reset();
+    this.var2expr.reset();
   }
 }

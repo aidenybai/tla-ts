@@ -208,8 +208,6 @@ type SortDecl = ConstantSortDecl | UserSortDecl | DatatypeSortDecl | DefinedSort
 
 const NO_BINDINGS: ReadonlyMap<string, number> = new Map();
 
-const UPOLYNOMIALS = new UpolynomialManager();
-
 interface SmtProblem {
   assertions: number[];
   hasCheckSat: boolean;
@@ -1649,8 +1647,10 @@ export const createSmtlibReader = (
     return mkSeqAppOf(manager, signature, args);
   };
 
+  const upolynomials = new UpolynomialManager(manager.limit);
+
   const parseUpolynomial = (sexpr: SExpr): bigint[] => {
-    if (sexpr.kind === "numeral") return UPOLYNOMIALS.set([BigInt(sexpr.text)]);
+    if (sexpr.kind === "numeral") return upolynomials.set([BigInt(sexpr.text)]);
     if (sexpr.kind === "decimal") {
       const parts = sexpr.text.split(".");
       const value = Rational.of(BigInt(parts[0] + parts[1]), 10n ** BigInt(parts[1].length));
@@ -1659,7 +1659,7 @@ export const createSmtlibReader = (
           "invalid univariate polynomial, integer coefficient expected",
           sexpr,
         );
-      return UPOLYNOMIALS.set([value.num]);
+      return upolynomials.set([value.num]);
     }
     if (sexpr.kind === "symbol") {
       if (sexpr.text !== "x")
@@ -1684,15 +1684,15 @@ export const createSmtlibReader = (
           "invalid univariate polynomial, exponent must be an unsigned integer",
           exponent,
         );
-      return UPOLYNOMIALS.pw(parseUpolynomial(operands[0]), Number(exponent.text));
+      return upolynomials.pw(parseUpolynomial(operands[0]), Number(exponent.text));
     }
     const combine =
       head.text === "+"
-        ? UPOLYNOMIALS.add
+        ? upolynomials.add
         : head.text === "-"
-          ? UPOLYNOMIALS.sub
+          ? upolynomials.sub
           : head.text === "*"
-            ? UPOLYNOMIALS.mul
+            ? upolynomials.mul
             : undefined;
     if (combine === undefined)
       throw new SmtParseError(
@@ -1705,11 +1705,11 @@ export const createSmtlibReader = (
         sexpr,
       );
     const first = parseUpolynomial(operands[0]);
-    if (head.text === "-" && operands.length === 1) return UPOLYNOMIALS.neg(first);
+    if (head.text === "-" && operands.length === 1) return upolynomials.neg(first);
     return operands
       .slice(1)
       .reduce(
-        (result, operand) => combine.call(UPOLYNOMIALS, result, parseUpolynomial(operand)),
+        (result, operand) => combine.call(upolynomials, result, parseUpolynomial(operand)),
         first,
       );
   };

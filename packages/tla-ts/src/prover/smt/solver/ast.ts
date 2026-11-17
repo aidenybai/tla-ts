@@ -2051,7 +2051,7 @@ export class AstManager {
   }
 
   get am() {
-    this.algebraicManager ??= new AlgebraicManager();
+    this.algebraicManager ??= new AlgebraicManager(this.limit);
     return this.algebraicManager;
   }
 

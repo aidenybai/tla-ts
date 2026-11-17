@@ -3,9 +3,11 @@ import {
   type Polynomial,
   type PolynomialCache,
   type PolynomialManager,
+  PolynomialRef,
 } from "./polynomial";
 import {
   type Atom,
+  type Clause,
   type IneqAtom,
   type IneqKind,
   type RootAtom,
@@ -60,21 +62,27 @@ export class AtomTable {
     return max;
   }
 
-  reinitCache() {
-    for (const atom of this.atoms) {
-      if (atom === null) continue;
-      if (isIneqAtom(atom)) {
-        let max = 0;
-        for (const polynomial of atom.polynomials) {
-          this.cache.mkUnique(polynomial);
-          max = Math.max(max, this.pm.maxVar(polynomial));
-        }
-        atom.maxVar = max;
-        continue;
+  reinitCache(clauses: readonly Clause[], learned: readonly Clause[]) {
+    for (const clause of clauses)
+      for (const literal of clause.literals) this.reinitAtomCache(this.atoms[literal >> 1]);
+    for (const clause of learned)
+      for (const literal of clause.literals) this.reinitAtomCache(this.atoms[literal >> 1]);
+    for (const atom of this.atoms) this.reinitAtomCache(atom);
+  }
+
+  private reinitAtomCache(atom: Atom | null) {
+    if (atom === null) return;
+    if (isIneqAtom(atom)) {
+      let max = 0;
+      for (const polynomial of atom.polynomials) {
+        this.cache.mkUnique(polynomial);
+        max = Math.max(max, this.pm.maxVar(polynomial));
       }
-      this.cache.mkUnique(atom.polynomial);
-      atom.maxVar = this.pm.maxVar(atom.polynomial);
+      atom.maxVar = max;
+      return;
     }
+    this.cache.mkUnique(atom.polynomial);
+    atom.maxVar = this.pm.maxVar(atom.polynomial);
   }
 
   getAtom(literal: number) {
@@ -113,6 +121,8 @@ export class AtomTable {
     this.atoms[boolVar] = null;
     this.hooks?.onDelete(boolVar);
     this.freeBoolVars.push(boolVar);
+    if (isIneqAtom(atom)) for (const polynomial of atom.polynomials) this.pm.decRef(polynomial);
+    else this.pm.decRef(atom.polynomial);
   }
 
   private getIneqKey(atom: Pick<IneqAtom, "kind" | "polynomials" | "isEven">) {
@@ -126,13 +136,15 @@ export class AtomTable {
   mkIneqAtom(kind: IneqKind, polynomials: readonly Polynomial[], isEven: readonly boolean[]) {
     let sign = 1;
     let maxVar = NULL_VAR;
-    const unique = polynomials.map((polynomial, index) => {
-      const normalized = this.pm.flipSignIfLmNeg(polynomial);
-      if (normalized !== polynomial && !isEven[index]) sign = -sign;
-      const variable = this.pm.maxVar(normalized);
+    const p = new PolynomialRef(this.pm);
+    const unique: Polynomial[] = [];
+    for (let index = 0; index < polynomials.length; index++) {
+      p.set(this.pm.flipSignIfLmNeg(polynomials[index]));
+      if (p.get() !== polynomials[index] && !isEven[index]) sign = -sign;
+      const variable = this.pm.maxVar(p.get());
       if (variable > maxVar || maxVar === NULL_VAR) maxVar = variable;
-      return this.cache.mkUnique(normalized);
-    });
+      unique.push(this.cache.mkUnique(p.get()));
+    }
     const atom = {
       kind: sign < 0 ? flipKind(kind) : kind,
       boolVar: 0,
@@ -142,7 +154,12 @@ export class AtomTable {
     };
     const key = this.getIneqKey(atom);
     const existing = this.ineqAtoms.get(key);
-    if (existing !== undefined) return existing.boolVar;
+    if (existing !== undefined) {
+      p.reset();
+      return existing.boolVar;
+    }
+    for (const polynomial of unique) this.pm.incRef(polynomial);
+    p.reset();
     atom.boolVar = this.mkBoolVar();
     this.atoms[atom.boolVar] = atom;
     this.ineqAtoms.set(key, atom);
@@ -177,21 +194,23 @@ export class AtomTable {
   }
 
   mkRootAtom(kind: RootKind, variable: number, index: number, polynomial: Polynomial) {
-    const atom = {
-      kind,
-      boolVar: 0,
-      maxVar: variable,
-      index,
-      polynomial: this.cache.mkUnique(this.pm.flipSignIfLmNeg(polynomial)),
-    };
+    const p1 = new PolynomialRef(this.pm);
+    const uniqP = new PolynomialRef(this.pm);
+    p1.set(this.pm.flipSignIfLmNeg(polynomial));
+    uniqP.set(this.cache.mkUnique(p1.get()));
+    const atom = { kind, boolVar: 0, maxVar: variable, index, polynomial: uniqP.get() };
     const key = this.getRootKey(atom);
     const existing = this.rootAtoms.get(key);
-    if (existing !== undefined) return existing.boolVar;
-    atom.boolVar = this.mkBoolVar();
-    this.atoms[atom.boolVar] = atom;
-    this.rootAtoms.set(key, atom);
-    this.rootKeys.set(atom.boolVar, key);
-    return atom.boolVar;
+    if (existing === undefined) {
+      atom.boolVar = this.mkBoolVar();
+      this.atoms[atom.boolVar] = atom;
+      this.rootAtoms.set(key, atom);
+      this.rootKeys.set(atom.boolVar, key);
+      this.pm.incRef(atom.polynomial);
+    }
+    uniqP.reset();
+    p1.reset();
+    return existing === undefined ? atom.boolVar : existing.boolVar;
   }
 }
 

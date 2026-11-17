@@ -22,9 +22,10 @@ import {
   SORT_INT,
   SORT_REAL,
 } from "./ast";
-import { toPolynomial } from "./expr2polynomial";
+import { Expr2Polynomial } from "./expr2polynomial";
 import { getLcm } from "./rational";
 import { flipKind } from "./nlsat/atoms";
+import { Factors, type Polynomial, PolynomialRef } from "./nlsat/polynomial";
 import type { NlsatSolver } from "./nlsat/solver";
 import { TRANSCENDENTAL_OPS } from "./nlsat/transcendental-eval";
 import type { IneqKind } from "./nlsat/types";
@@ -39,38 +40,54 @@ export const goal2nlsat = (
   isFactoring = true,
 ) => {
   const pm = solver.pm;
+  const expr2poly = new Expr2Polynomial(manager, pm, t2x, (isInt) => solver.mkVar(isInt));
 
-  const mkVar = (term: number) => {
-    let variable = t2x.get(term);
-    if (variable === undefined) {
-      variable = solver.mkVar(manager.sorts[term] === SORT_INT);
-      t2x.set(term, variable);
-    }
-    return variable;
+  const factorAtom = (polynomial: Polynomial, kind: IneqKind) => {
+    const factors = new Factors(pm);
+    pm.factor(polynomial, factors);
+    const literal = solver.mkIneqLiteral(
+      factors.constant < 0n ? flipKind(kind) : kind,
+      factors.factors,
+      factors.degrees.map((degree) => degree % 2 === 0),
+    );
+    factors.reset();
+    return literal;
   };
 
-  const processIneq = (atom: number, kind: IneqKind) => {
-    const lhs = toPolynomial(manager, pm, manager.getArg(atom, 0), mkVar);
-    const rhs = toPolynomial(manager, pm, manager.getArg(atom, 1), mkVar);
-    const lcm = getLcm(lhs.denominator, rhs.denominator);
-    const polynomial = pm.addmul(
-      lcm / lhs.denominator,
-      lhs.polynomial,
-      -(lcm / rhs.denominator),
-      rhs.polynomial,
-    );
+  const processIneqPolynomial = (p: PolynomialRef, kind: IneqKind) => {
+    const polynomial = p.get();
     if (pm.isConst(polynomial)) {
       const sign = pm.isZero(polynomial) ? 0 : polynomial.as[0] > 0n ? 1 : -1;
       const isTrue = kind === "EQ" ? sign === 0 : kind === "LT" ? sign < 0 : sign > 0;
       return isTrue ? 0 : 1;
     }
-    if (!isFactoring) return solver.mkIneqLiteral(kind, [polynomial], [false]);
-    const factors = pm.factor(polynomial);
-    return solver.mkIneqLiteral(
-      factors.constant < 0n ? flipKind(kind) : kind,
-      factors.factors,
-      factors.degrees.map((degree) => degree % 2 === 0),
+    return isFactoring
+      ? factorAtom(polynomial, kind)
+      : solver.mkIneqLiteral(kind, [polynomial], [false]);
+  };
+
+  const processIneq = (atom: number, kind: IneqKind) => {
+    const first = new PolynomialRef(pm);
+    const second = new PolynomialRef(pm);
+    const p = new PolynomialRef(pm);
+    const firstDenominator = expr2poly.toPolynomial(manager.getArg(atom, 0), first);
+    const secondDenominator = expr2poly.toPolynomial(manager.getArg(atom, 1), second);
+    const lcm = getLcm(firstDenominator, secondDenominator);
+    p.set(
+      pm.addmulTerms(
+        lcm / firstDenominator,
+        pm.unit,
+        first.get(),
+        -(lcm / secondDenominator),
+        pm.unit,
+        second.get(),
+      ),
     );
+    const literal = processIneqPolynomial(p, kind);
+    p.reset();
+    second.reset();
+    first.reset();
+    return literal;
   };
 
   const processBoolVar = (atom: number) => {
@@ -129,20 +146,29 @@ export const goal2nlsat = (
   // The polynomial conversion treats a transcendental application, argument included, as one
   // variable, so its argument gets a variable here, through an equation unless it is one already.
   const mkArgVar = (term: number) => {
-    const result = toPolynomial(manager, pm, term, mkVar);
-    const polynomial = result.polynomial;
+    const p = new PolynomialRef(pm);
+    const denominator = expr2poly.toPolynomial(term, p);
+    const polynomial = p.get();
     const monomial = polynomial.ms[0];
     if (
-      result.denominator === 1n &&
+      denominator === 1n &&
       polynomial.ms.length === 1 &&
       polynomial.as[0] === 1n &&
       monomial.size === 1 &&
       monomial.degrees[0] === 1
-    )
+    ) {
+      p.reset();
       return monomial.vars[0];
+    }
     const variable = solver.mkVar(false);
-    const equation = pm.addmul(result.denominator, pm.mkVar(variable), -1n, polynomial);
-    solver.mkExternalClause([solver.mkIneqLiteral("EQ", [equation], [false])], null);
+    const vp = new PolynomialRef(pm);
+    const equation = new PolynomialRef(pm);
+    vp.set(pm.mkVar(variable));
+    equation.set(pm.addmulTerms(denominator, pm.unit, vp.get(), -1n, pm.unit, polynomial));
+    solver.mkExternalClause([solver.mkIneqLiteral("EQ", [equation.get()], [false])], null);
+    equation.reset();
+    vp.reset();
+    p.reset();
     return variable;
   };
 
@@ -174,6 +200,7 @@ export const goal2nlsat = (
     }
   }
   if (piVar !== undefined) solver.transcendentals.addPi(piVar);
+  expr2poly.release();
 };
 
 const hasTermIte = (manager: AstManager, form: number) => {

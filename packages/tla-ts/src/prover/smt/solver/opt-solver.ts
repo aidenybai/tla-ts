@@ -2,7 +2,7 @@ import { SmtCanceledError, SmtInvariantError } from "../../../errors";
 import { type AstManager, FAMILY_ARITH, FAMILY_PB } from "./ast";
 import { InfEps } from "./inf-eps";
 import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
-import { AlgebraicManager } from "./nlsat/algebraic";
+import type { AlgebraicManager } from "./nlsat/algebraic";
 import type { ParetoSolver } from "./opt-pareto";
 import type { ProtoModel } from "./proto-model";
 import { Rational } from "./rational";
@@ -40,7 +40,6 @@ export const getModelValueBound = (
 
 export class OptSolver {
   private readonly kernel: SmtKernel;
-  private readonly am = new AlgebraicManager();
   private model: ProtoModel | null = null;
   private objectiveVars: number[] = [];
   private objectiveValues: InfEps[] = [];
@@ -165,7 +164,7 @@ export class OptSolver {
 
   private getModelValueLowerBound(model: ProtoModel, index: number) {
     const value = model.eval(this.objectiveTerms[index], false);
-    const bound = getModelValueBound(this.manager, this.am, value, true);
+    const bound = getModelValueBound(this.manager, this.manager.am, value, true);
     this.manager.decRef(value);
     return bound;
   }
