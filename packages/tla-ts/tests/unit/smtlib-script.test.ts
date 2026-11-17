@@ -1517,6 +1517,19 @@ describe("runSmtlibScript prints what Z3 prints", () => {
     ]);
   });
 
+  it("sets up no context whose formulas are inconsistent, so its setup rejects nothing", () => {
+    expect(
+      run([
+        "(set-logic QF_LRA)",
+        "(declare-const y Real)",
+        "(assert (>= y (/ 3.1 0.0)))",
+        "(assert (>= y (+ 3.0 y)))",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+      ]),
+    ).toEqual(["unsat", '(:reason-unknown "")']);
+  });
+
   it("reports where Z3 raises on a datatype whose declaration failed", () => {
     expect(
       run([

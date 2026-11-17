@@ -225,11 +225,14 @@ export class Context extends Internalizer {
   }
 
   // setup_context and setup_components. The setup's theories come in its order, then setup_card's.
+  // An inconsistent context stays unconfigured, so its setup rejects nothing, and a later check
+  // sets it up.
   setupContext(
     setup: SmtSetup | undefined,
     isUsingStaticFeatures: boolean,
     asserted: AssertedFormulas,
   ) {
+    if (this.isInconsistent() || asserted.isInconsistent) return false;
     const config = getSmtConfig(
       this.manager,
       setup,
@@ -244,6 +247,7 @@ export class Context extends Internalizer {
       if (family !== FAMILY_POLY || this.manager.hasTypeVars) this.registerFamily(family);
     this.registerFamily(FAMILY_PB);
     asserted.setup(config);
+    return true;
   }
 
   // register_plugin keeps the theory a family already has.
