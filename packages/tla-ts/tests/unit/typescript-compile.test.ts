@@ -50692,4 +50692,36 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("stops where a loop's operator runs an async function, rather than where it compiles", () => {
+    const getSource = (isAsync: boolean, expected: number) => `
+      const box = { seen: [] as string[] };
+      const load = async () => {
+        box.seen.push("load");
+      };
+      let runs = 0;
+      const step = (isAsync: boolean) => {
+        for (let index = 0; index < 2; index++) {
+          runs++;
+          if (isAsync) load();
+        }
+      };
+      step(${isAsync});
+      if (runs !== ${expected}) throw new Error("runs " + runs);
+    `;
+
+    it("agrees with Node where the loop never calls it", async () => {
+      expect((await checkModel(getSource(false, 2))).failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      expect((await checkModel(getSource(false, 3))).failure?.message).toContain("runs 2");
+    });
+
+    it("stops where the loop calls it", async () => {
+      expect((await checkModel(getSource(true, 2))).failure?.message).toContain(
+        "tla-ts can't follow a promise in a loop",
+      );
+    });
+  });
 });

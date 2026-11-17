@@ -3957,16 +3957,20 @@ export const translateAsyncCall = (
   continueWith: (path: Path, value?: Expression) => Formula,
   argumentNodes: readonly ts.Expression[] = ts.isCallExpression(node) ? node.arguments : [],
 ): Formula =>
-  runAsyncBody(
-    node,
-    callee,
-    path,
-    context,
-    frame,
-    (made, rejectFrame, bindWith) =>
-      bindCall(node, callee, argumentNodes, receiver, made, context, rejectFrame, bindWith),
-    continueWith,
-  );
+  // A loop's operator carries no jobs, so a call there stops where it runs, as one that a value
+  // may make runs only where the value holds the async function.
+  path.tasks === undefined
+    ? leaf(apply("Assert", [boolean(false), string("tla-ts can't follow a promise in a loop")]))
+    : runAsyncBody(
+        node,
+        callee,
+        path,
+        context,
+        frame,
+        (made, rejectFrame, bindWith) =>
+          bindCall(node, callee, argumentNodes, receiver, made, context, rejectFrame, bindWith),
+        continueWith,
+      );
 
 // Runs a built-in async function's body, such as an AsyncDisposableStack's disposeAsync, which
 // gives a promise that settles as the body returns or throws.
