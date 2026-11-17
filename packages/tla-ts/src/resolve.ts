@@ -100,8 +100,15 @@ type Reference = Expression & { kind: "Identifier" | "Apply" | "Subexpression" }
 
 export const LOCAL_RESOLUTION = { kind: "Local" } as const;
 
+export interface NullSelection {
+  node: Expression;
+  error: SanyError;
+}
+
 export const selections = new WeakSet<Expression>();
 export const selectionErrors = new WeakMap<Expression, SelectionError>();
+export const nullSelections = new WeakMap<Expression, NullSelection[]>();
+const unresolvedExpressions = new WeakSet<Expression>();
 
 const renamedArities = new WeakMap<Expression, number>();
 
@@ -239,21 +246,30 @@ const getVisibleDefinition = (name: string, unit: Unit) => {
     definition !== undefined &&
     (definition === unit.self
       ? definition.kind === "Function" || definition.isRecursive
-      : definition.isRecursive || isBefore(definition.location, unit.location));
+      : definition.isRecursive
+        ? getModuleBinding(name, unit, undefined) !== undefined
+        : isBefore(definition.location, unit.location));
   return isVisible ? definition : undefined;
 };
 
 const findSymbol = (name: string, unit: Unit): ModuleSymbol | undefined => {
   const definition = getVisibleDefinition(name, unit);
-  return definition
-    ? {
-        key: unit.getKey(definition),
-        arity: getArity(definition),
-        params: getParamArities(definition),
-        kind: "Definition",
-      }
-    : unit.imported.get(name);
+  if (definition) {
+    return {
+      key: unit.getKey(definition),
+      arity: getArity(definition),
+      params: getParamArities(definition),
+      kind: "Definition",
+    };
+  }
+  return getModuleBinding(name, unit, undefined) ? unit.imported.get(name) : undefined;
 };
+
+const isFact = (name: string, unit: Unit) =>
+  unit.facts.has(name) || unit.bindings.get(name)?.kind === "Theorem";
+
+const getGoal = (name: string, unit: Unit) =>
+  unit.bindings.get(name)?.kind === "Theorem" ? unit.goals.get(name) : undefined;
 
 const findBinding = (name: string, scope: LocalName | undefined, unit: Unit): Binding | undefined =>
   lookupLocal(scope, name) ?? findSymbol(name, unit);
@@ -281,6 +297,8 @@ const getFixity = (expression: Expression) => {
   if (expression.args.length !== 1) return undefined;
   return isBefore(expression.location, expression.args[0].location) ? "prefix" : "postfix";
 };
+
+const BUILTIN_LOCATION = "In module --TLA+ BUILTINS--";
 
 const SELECTABLE_KINDS = new Set<SymbolKind>(["Definition", "Instance", "Theorem"]);
 
@@ -672,7 +690,7 @@ const checkReference = (
   const first = selectors[0];
   const goal =
     selectors.length > 1 && first.kind === "Name"
-      ? (lookupLocal(scope, first.name)?.goal ?? unit.goals.get(first.name))
+      ? (lookupLocal(scope, first.name)?.goal ?? getGoal(first.name, unit))
       : undefined;
   if (goal) checkSelection(expression, selectors, goal, scope, unit, isFact);
   return goal !== undefined;
@@ -721,7 +739,7 @@ const getSymbolArity = (
     );
     return undefined;
   }
-  if (selected || (prefix !== "" && unit.facts.has(prefix))) {
+  if (selected || (prefix !== "" && isFact(prefix, unit))) {
     return expression.kind === "Apply" ? expression.args.length : 0;
   }
   const fixity = getFixity(expression);
@@ -742,6 +760,7 @@ const getSymbolArity = (
     ),
     message: `Could not find declaration or definition of symbol '${spelling}'.`,
   });
+  if (fixity) unresolvedExpressions.add(expression);
   if (fixity && location.range) {
     unit.errors.push({
       location: formatRange(location.range),
@@ -1042,7 +1061,11 @@ const resolveExpression = (
   unit: Unit,
 ): void => {
   if (selections.has(expression) && !unit.isGenerated) {
-    resolveExpression(expression, scope, { ...unit, isGenerated: true });
+    const failed = nullSelections
+      .get(expression)
+      ?.find((selection) => unresolvedExpressions.has(selection.node));
+    if (failed) unit.errors.push(failed.error);
+    else resolveExpression(expression, scope, { ...unit, isGenerated: true });
     return;
   }
   const resolveAll = (expressions: Expression[]) =>
@@ -1055,7 +1078,14 @@ const resolveExpression = (
     case "Number":
     case "Decimal":
     case "String":
+      return;
     case "ExceptAt":
+      if (!unit.isInExcept && expression.location.range) {
+        unit.errors.push({
+          location: formatRange(expression.location.range),
+          message: "@ used where its meaning is not defined.",
+        });
+      }
       return;
     case "Identifier": {
       if (isInstanceArityReported(expression, scope, unit)) return;
@@ -1201,9 +1231,41 @@ const resolveExpression = (
       if (checkReference(expression, scope, unit, false)) return;
       const head = expression.selectors[0];
       const range = expression.selectorRanges?.[0];
+      const nameCount = expression.selectors.findIndex((selector) => selector.kind !== "Name");
+      const names = expression.selectors
+        .slice(0, nameCount)
+        .flatMap((selector) => (selector.kind === "Name" ? [selector.name] : []));
+      const symbolIndex = names.findIndex(
+        (_name, index) => index > 0 && findSymbol(names.slice(0, index + 1).join("!"), unit),
+      );
+      const isInstance =
+        names.length > 1 &&
+        (lookupLocal(scope, names[0]) ?? getModuleBinding(names[0], unit, undefined))?.kind ===
+          "Instance";
+      const lastRange = expression.selectorRanges?.[nameCount - 1];
+      if (isInstance && symbolIndex === -1 && range && lastRange) {
+        unit.errors.push({
+          location: formatRange({ module: range.module, start: range.start, end: lastRange.end }),
+          message: `Unknown operator: \`${resolveSynonym(names.join("!"))}'.`,
+        });
+        return;
+      }
+      const name = names.slice(0, symbolIndex + 1).join("!");
+      const symbol = symbolIndex > 0 ? findSymbol(name, unit) : undefined;
+      const argumentCount = expression.selectors
+        .slice(0, symbolIndex + 1)
+        .flatMap((selector) => ("args" in selector ? selector.args : [])).length;
+      const argumentRange = expression.argumentRanges?.[symbolIndex] ?? expression.location.range;
+      if (symbol && symbol.arity !== argumentCount && argumentRange) {
+        unit.errors.push({
+          location: formatRange(argumentRange),
+          message: `The operator ${resolveSynonym(name)} requires ${symbol.arity} arguments.`,
+        });
+        return;
+      }
       if (head.kind !== "Name" || expression.selectors[1].kind === "Name" || !range) return;
       const binding = lookupLocal(scope, head.name) ?? findSymbol(head.name, unit);
-      if ((binding === undefined && !unit.facts.has(head.name)) || binding?.kind === "Instance") {
+      if ((binding === undefined && !isFact(head.name, unit)) || binding?.kind === "Instance") {
         unit.errors.push({
           location: formatRange(range),
           message: `Unknown operator: \`${resolveSynonym(head.name)}'.`,
@@ -1231,7 +1293,7 @@ const checkFacts = (facts: Fact[], scope: LocalName | undefined, unit: Unit) =>
         location: formatRange(getSpelledNameRange(fact, name)),
         message: "Step number of non-fact used as a fact",
       });
-    } else if (!unit.facts.has(name)) resolveExpression(fact, scope, unit);
+    } else if (!isFact(name, unit)) resolveExpression(fact, scope, unit);
   });
 
 const resolveNewSymbol = (symbol: NewSymbol, scope: LocalName | undefined, unit: Unit) => {
@@ -1453,18 +1515,72 @@ const checkSubstitutions = (
     (parent, param) => ({ name: param.name, arity: param.arity, kind: "Parameter", parent }),
     outer,
   );
+  const reportArity = (declaration: Declaration, location: string) =>
+    unit.errors.push({
+      location,
+      message: `An operator must be substituted for symbol '${resolveSynonym(declaration.name)}', and it must have arity ${declaration.arity}.`,
+    });
   const resolveSubstitute = (declaration: Declaration, expression: Expression) => {
-    if (declaration.arity === 0 || expression.kind !== "Identifier") {
+    const range = expression.location.range;
+    if (declaration.arity === 0) {
       resolveExpression(expression, scope, unit);
+      return;
+    }
+    if (expression.kind === "Lambda") {
+      resolveExpression(expression, scope, unit);
+      if (expression.params.length !== declaration.arity && range) {
+        reportArity(declaration, formatRange(range));
+      }
+      return;
+    }
+    if (expression.kind === "OperatorReference") {
+      const arity = getSymbolArity(expression, expression.operator, scope, unit);
+      if (arity === undefined) reportArity(declaration, BUILTIN_LOCATION);
+      else if (arity !== declaration.arity && range) reportArity(declaration, formatRange(range));
+      return;
+    }
+    if (expression.kind !== "Identifier") {
+      if (range) {
+        unit.errors.push({
+          location: formatRange(range),
+          message: `Arity ${declaration.arity} operator (not an expression) is expected \nto substitute for CONSTANT '${resolveSynonym(declaration.name)}'.`,
+        });
+      }
+      reportArity(declaration, BUILTIN_LOCATION);
       return;
     }
     const arity = getSymbolArity(expression, expression.name, scope, unit);
     if (arity !== undefined && arity !== declaration.arity) {
-      throw new TlaSyntaxError(
-        `An operator must be substituted for symbol '${resolveSynonym(declaration.name)}', and it must have arity ${declaration.arity} in the instance of ${instance.module} at line ${instance.location.line}, column ${instance.location.column}`,
-      );
+      unit.errors.push({
+        location: formatRange(getSpelledNameRange(expression, expression.name)),
+        message: `Expected arity ${declaration.arity} but found operator of arity ${arity}.`,
+      });
     }
+    if (arity !== declaration.arity) reportArity(declaration, BUILTIN_LOCATION);
   };
+  const instanceRange = instance.location.range;
+  const isFound = (declaration: Declaration) =>
+    lookupLocal(scope, declaration.name) !== undefined ||
+    findSymbol(declaration.name, unit) !== undefined;
+  const implicit = declarations.filter(isFound).map((declaration) => {
+    const expression: Expression & { kind: "Identifier" } = {
+      kind: "Identifier",
+      name: declaration.name,
+      location: instance.location,
+    };
+    return { declaration, expression };
+  });
+  implicit
+    .filter((item) => item.declaration.arity === 0)
+    .forEach((item) => {
+      const arity = getSymbolArity(item.expression, item.declaration.name, scope, unit);
+      if (arity && instanceRange) {
+        unit.errors.push({
+          location: formatRange(instanceRange),
+          message: `Wrong number of arguments (0) given to operator '${resolveSynonym(item.declaration.name)}', \nwhich requires ${arity} arguments.`,
+        });
+      }
+    });
   const substitutions = new Map<string, Expression>();
   instance.substitutions.forEach((substitution) => {
     const name = substitution.name;
@@ -1487,30 +1603,29 @@ const checkSubstitutions = (
       });
     }
   });
-  const implicit = declarations.filter((declaration) => !substitutions.has(declaration.name));
-  const isMissing = (declaration: Declaration) =>
-    !lookupLocal(scope, declaration.name) && !findSymbol(declaration.name, unit);
   implicit
-    .filter((declaration) => !isMissing(declaration))
-    .forEach((declaration) => {
-      const expression: Expression = {
-        kind: "Identifier",
-        name: declaration.name,
-        location: instance.location,
-      };
-      resolveSubstitute(declaration, expression);
-      substitutions.set(declaration.name, expression);
+    .filter((item) => !substitutions.has(item.declaration.name))
+    .forEach((item) => {
+      const arity =
+        item.declaration.arity === 0
+          ? 0
+          : getSymbolArity(item.expression, item.declaration.name, scope, unit);
+      if (arity !== item.declaration.arity && instanceRange) {
+        reportArity(item.declaration, formatRange(instanceRange));
+      }
+      substitutions.set(item.declaration.name, item.expression);
     });
-  implicit.filter(isMissing).forEach((declaration) => {
-    const range = instance.location.range;
-    const declared = declaration.location.range;
-    if (range && declared) {
-      unit.errors.push({
-        location: formatRange(range),
-        message: `Substitution missing for symbol ${resolveSynonym(declaration.name)} declared at ${formatRange(declared)} \nand instantiated in module ${instancer}.`,
-      });
-    }
-  });
+  declarations
+    .filter((declaration) => !substitutions.has(declaration.name))
+    .forEach((declaration) => {
+      const declared = declaration.location.range;
+      if (instanceRange && declared) {
+        unit.errors.push({
+          location: formatRange(instanceRange),
+          message: `Substitution missing for symbol ${resolveSynonym(declaration.name)} declared at ${formatRange(declared)} \nand instantiated in module ${instancer}.`,
+        });
+      }
+    });
   return substitutions;
 };
 
@@ -1530,6 +1645,12 @@ export const resolveSubstitutions = (
   unit: ModuleUnit,
 ) => {
   const imported = createSymbols(module, unit.imported);
+  const positions = new Map(
+    [...module.constants, ...module.variables].map((declaration) => [
+      declaration.name,
+      declaration.location,
+    ]),
+  );
   const report: ModuleReport = { location: instance.location, errors: [], warnings: [] };
   unit.reports.push(report);
   return checkSubstitutions(instance, declarations, module.name, undefined, {
@@ -1542,7 +1663,10 @@ export const resolveSubstitutions = (
     facts: new Set(),
     goals: new Map(),
     bindings: new Map(
-      [...imported].map(([name, symbol]) => [name, { ...symbol, position: MODULE_START }]),
+      [...imported].map(([name, symbol]) => [
+        name,
+        { ...symbol, position: positions.get(name) ?? MODULE_START },
+      ]),
     ),
     errors: report.errors,
     warnings: report.warnings,
@@ -1598,10 +1722,6 @@ export const collectSemanticErrors = (units: SemanticUnit[], warnings: SanyError
 
 export const resolveModule = (module: Module, unit: ModuleUnit) => {
   const symbols = createSymbols(module, unit.imported);
-  const facts = new Set([
-    ...unit.facts,
-    ...[...module.theorems, ...module.assumptions].flatMap((fact) => fact.name ?? []),
-  ]);
   const goals = new Map(
     module.theorems.flatMap((theorem): [string, Goal][] =>
       theorem.name !== undefined && theorem.statement.kind === "AssumeProve"
@@ -1632,7 +1752,7 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
         getKey: unit.getKey,
         location,
         self,
-        facts,
+        facts: unit.facts,
         goals,
         bindings,
         errors,
@@ -1657,6 +1777,37 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
     );
   return collectSemanticErrors(
     [
+      ...module.units.flatMap((item): SemanticUnit[] => {
+        const section =
+          item.kind === "Variables"
+            ? { type: "A VARIABLE declaration", location: item.location }
+            : item.kind === "Constants"
+              ? { type: "A declaration", location: item.location }
+              : item.kind === "Module"
+                ? { type: "A MODULE ", location: item.module.location }
+                : item.kind === "Theorem"
+                  ? { type: "A THEOREM", location: item.theorem.location }
+                  : item.kind === "Assumption"
+                    ? { type: "An ASSUME", location: item.assumption.location }
+                    : item.kind === "Use"
+                      ? { type: "A USE or HIDE", location: item.use.location }
+                      : undefined;
+        const range = section?.location.range;
+        if (!section || !range) return [];
+        return [
+          {
+            location: section.location,
+            check: (errors) => {
+              if (declarations.some((declared) => declared.binding?.isPending)) {
+                errors.push({
+                  location: formatRange(range),
+                  message: `${section.type} may not appear within a recursive definition section.`,
+                });
+              }
+            },
+          },
+        ];
+      }),
       ...unit.reports.map((report) => ({
         location: report.location,
         check: (errors: SanyError[], warnings: SanyError[]) => {

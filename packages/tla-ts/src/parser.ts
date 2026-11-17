@@ -653,6 +653,7 @@ const parse = (
     return result;
   };
 
+  // Deviation from SANY: TLAplusParser#belchDEF reads a field named THEOREM, AXIOM, DOMAIN or a like keyword as that keyword, so SANY rejects the definition after it.
   const isFieldName = (token: Token) =>
     (token.kind === "Identifier" ||
       token.kind === "Keyword" ||

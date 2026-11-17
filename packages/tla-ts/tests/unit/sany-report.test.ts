@@ -91,6 +91,58 @@ Spec == Init /\\ [][Next]_x
     );
   });
 
+  it("reports a selection into an expression that failed to resolve as SANY does", () => {
+    const report = getReport({
+      M: "---- MODULE M ----\nVARIABLE x\nOp(a) == a + zz\nV == x\nS(a) == {zz + 1}\nC == CASE TRUE -> zz + 1\nf == Op(2)!1 /\\ V!1 /\\ S(2)!1 /\\ Op(2)!: /\\ C!1!2 /\\ Op(2)!<<\n====\n",
+    });
+    expect(report.text).toBe(
+      joinLines([
+        "Semantic errors:",
+        "",
+        "*** Errors: 12",
+        "",
+        ...[
+          [
+            "line 3, col 12 to line 3, col 12",
+            "Could not find declaration or definition of symbol '+'.",
+          ],
+          ["line 3, col 10 to line 3, col 15", "Couldn't resolve infix operator symbol `+'."],
+          [
+            "line 5, col 13 to line 5, col 13",
+            "Could not find declaration or definition of symbol '+'.",
+          ],
+          ["line 5, col 10 to line 5, col 15", "Couldn't resolve infix operator symbol `+'."],
+          [
+            "line 6, col 22 to line 6, col 22",
+            "Could not find declaration or definition of symbol '+'.",
+          ],
+          ["line 6, col 19 to line 6, col 24", "Couldn't resolve infix operator symbol `+'."],
+          [
+            "line 7, col 12 to line 7, col 12",
+            "Subexpression selection failed, probably due to an error in the selected expression.",
+          ],
+          [
+            "line 7, col 19 to line 7, col 19",
+            "Choosing operand `argument selector 1' of subexpression with no operands.",
+          ],
+          [
+            "line 7, col 29 to line 7, col 29",
+            "An unexpected null node specified by 'argument selector 1'.\nThis is probably due to a previous error.",
+          ],
+          [
+            "line 7, col 40 to line 7, col 40",
+            "An unexpected null node specified by ':'.\nThis is probably due to a previous error.",
+          ],
+          ["line 7, col 49 to line 7, col 49", "Selecting OTHER in a CASE statement."],
+          [
+            "line 7, col 60 to line 7, col 61",
+            "Subexpression selection failed, probably due to an error in the selected expression.",
+          ],
+        ].flatMap((error) => [`${error[0]} of module M`, "", error[1], "", ""]),
+      ]),
+    );
+  });
+
   it("parses a module once the module that names it reaches it, though another loaded it", () => {
     const report = getReport(
       {
@@ -308,6 +360,55 @@ Spec == Init /\\ [][Next]_x
         "to substitute for CONSTANT 'Op'.",
       ]),
     );
+  });
+
+  it("reports an operator substitution that is undefined or parenthesized as SANY does", () => {
+    const report = getReport({
+      M: "---- MODULE M ----\nG(a) == a\nI == INSTANCE R WITH Op <- +\nJ == INSTANCE R WITH Op <- (G)\n====\n",
+      R: "---- MODULE R ----\nCONSTANT Op(_)\n====\n",
+    });
+    expect(report.text).toContain(
+      joinLines([
+        "*** Errors: 3",
+        "",
+        "line 3, col 28 to line 3, col 28 of module M",
+        "",
+        "Could not find declaration or definition of symbol '+'.",
+        "",
+        "",
+        "In module --TLA+ BUILTINS--",
+        "",
+        "An operator must be substituted for symbol 'Op', and it must have arity 1.",
+        "",
+        "",
+        "line 4, col 28 to line 4, col 30 of module M",
+        "",
+        "Arity 1 operator (not an expression) is expected ",
+        "to substitute for CONSTANT 'Op'.",
+      ]),
+    );
+  });
+
+  it("substitutes for an operator CONSTANT named by a synonym, which SANY rejects", () => {
+    const report = getReport({
+      M: "---- MODULE M ----\nG(a, b) == a\nI == INSTANCE R WITH <= <- G\n====\n",
+      R: "---- MODULE R ----\nCONSTANT _ <= _\n====\n",
+    });
+    expect(report).toEqual({ text: "", isFailed: false });
+  });
+
+  it("accepts an inner module that only a LET instantiates, which SANY rejects", () => {
+    const report = getReport({
+      M: "---- MODULE M ----\n---- MODULE Inner ----\nK == 1\n====\nD == LET N == INSTANCE Inner IN N!K\n====\n",
+    });
+    expect(report).toEqual({ text: "", isFailed: false });
+  });
+
+  it("accepts a definition after a field named THEOREM, AXIOM or DOMAIN, which SANY rejects", () => {
+    const report = getReport({
+      M: "---- MODULE M ----\nr == [a |-> 1]\nF == r.THEOREM\nG == [r EXCEPT !.AXIOM = 1]\nH == r.DOMAIN\nI == 1\n====\n",
+    });
+    expect(report).toEqual({ text: "", isFailed: false });
   });
 
   it.each([

@@ -131,6 +131,14 @@ describe("name resolution matches SANY", () => {
       "an operator argument to an operator of a standard module a LET instantiates",
       "ASSUME LET S == INSTANCE Sequences IN S!SelectSeq(<<1, 2>>, LAMBDA a : a = 2) = <<2>>",
     ],
+    [
+      "an inner module that only a LET instantiates, which SANY rejects",
+      "---- MODULE Inner ----\nK == 1\n====\nF == LET N == INSTANCE Inner IN N!K",
+    ],
+    [
+      "a definition after a field named THEOREM, AXIOM or DOMAIN, which SANY rejects",
+      "r == [a |-> 1]\nF == r.THEOREM\nG == [r EXCEPT !.AXIOM = 1]\nH == r.DOMAIN\nI == 1",
+    ],
   ])("accepts %s", async (_title, source) => {
     expect((await checkNames(source)).status).toBe("success");
   });
@@ -178,6 +186,13 @@ describe("name resolution matches SANY", () => {
 
   it.each([
     ["f == g", [["line 2, col 6 to line 2, col 6", "Unknown operator: `g'."]]],
+    [
+      "f == [i \\in {1} |-> i]\ng == <<@>> /\\ [f EXCEPT ![@] = LET h == @ IN [@ EXCEPT ![1] = @]]",
+      [
+        ["line 3, col 8 to line 3, col 8", "@ used where its meaning is not defined."],
+        ["line 3, col 27 to line 3, col 27", "@ used where its meaning is not defined."],
+      ],
+    ],
     [
       "f == 1 + 1",
       [
@@ -229,6 +244,25 @@ describe("name resolution matches SANY", () => {
       ],
     ],
     ["Ab == 1\nf == Abc", [["line 3, col 6 to line 3, col 8", "Unknown operator: `Abc'."]]],
+    [
+      "f == y!1 /\\ c!1 /\\ T!1 /\\ A!1 /\\ g(1) /\\ U!1 /\\ h!1\nVARIABLE y\nCONSTANT c\nTHEOREM T == 1 = 1\nASSUME A == 1 = 1\nRECURSIVE g(_)\ng(n) == n\nTHEOREM U == ASSUME 1 = 1 PROVE 2 = 2\nh == {1}",
+      [
+        ["line 2, col 6 to line 2, col 6", "Unknown operator: `y'."],
+        ["line 2, col 13 to line 2, col 13", "Unknown operator: `c'."],
+        ["line 2, col 20 to line 2, col 20", "Unknown operator: `T'."],
+        ["line 2, col 27 to line 2, col 27", "Unknown operator: `A'."],
+        ["line 2, col 34 to line 2, col 34", "Unknown operator: `g'."],
+        ["line 2, col 42 to line 2, col 42", "Unknown operator: `U'."],
+        ["line 2, col 49 to line 2, col 49", "Unknown operator: `h'."],
+      ],
+    ],
+    [
+      "RECURSIVE g(_)\nf == g!1\ng(n) == {n}\n---- MODULE Inner ----\nCONSTANT k\n====\nI == INSTANCE Inner WITH k <- d\nCONSTANT d\nTHEOREM T == ASSUME 1 = 1 PROVE 2 = 2\nPROOF BY T!1",
+      [
+        ["line 3, col 6 to line 3, col 8", "The operator g requires 1 arguments."],
+        ["line 8, col 31 to line 8, col 31", "Unknown operator: `d'."],
+      ],
+    ],
     [
       "EXTENDS Naturals\nf == -1",
       [
@@ -634,6 +668,53 @@ describe("name resolution matches SANY", () => {
           "LAMBDA expression used where an expression is required.",
         ],
         ["line 4, col 59 to line 4, col 61", "The operator _Track requires 2 arguments."],
+      ],
+    ],
+    [
+      "M == INSTANCE Naturals\nf == M!+!1 /\\ M!+(1)!1 /\\ M!zz!1",
+      [
+        ["line 3, col 6 to line 3, col 10", "The operator M!+ requires 2 arguments."],
+        ["line 3, col 18 to line 3, col 20", "The operator M!+ requires 2 arguments."],
+        ["line 3, col 27 to line 3, col 30", "Unknown operator: `M!zz'."],
+      ],
+    ],
+    [
+      "Op(a) == a + zz\nS(a) == {zz + 1}\nL == 1\nT == <<1, 2>>\nf == Op(2)!1 /\\ S(2)!1 /\\ Op(2)!: /\\ Op(2)!<< /\\ L!1 /\\ T!3",
+      [
+        [
+          "line 2, col 12 to line 2, col 12",
+          "Could not find declaration or definition of symbol '+'.",
+        ],
+        ["line 2, col 10 to line 2, col 15", "Couldn't resolve infix operator symbol `+'."],
+        [
+          "line 3, col 13 to line 3, col 13",
+          "Could not find declaration or definition of symbol '+'.",
+        ],
+        ["line 3, col 10 to line 3, col 15", "Couldn't resolve infix operator symbol `+'."],
+        [
+          "line 6, col 12 to line 6, col 12",
+          "Subexpression selection failed, probably due to an error in the selected expression.",
+        ],
+        [
+          "line 6, col 22 to line 6, col 22",
+          "An unexpected null node specified by 'argument selector 1'.\nThis is probably due to a previous error.",
+        ],
+        [
+          "line 6, col 33 to line 6, col 33",
+          "An unexpected null node specified by ':'.\nThis is probably due to a previous error.",
+        ],
+        [
+          "line 6, col 44 to line 6, col 45",
+          "Subexpression selection failed, probably due to an error in the selected expression.",
+        ],
+        [
+          "line 6, col 52 to line 6, col 52",
+          "Selecting subexpression of expression that has none.",
+        ],
+        [
+          "line 6, col 59 to line 6, col 59",
+          "Nonexistent operand specified by `argument selector 3'.",
+        ],
       ],
     ],
   ])("reports %j at the range SANY reports", async (source, errors) => {
@@ -1410,6 +1491,62 @@ describe("name resolution matches SANY", () => {
           message: "Unknown operator: `U'.",
         },
       ],
+      [],
+    ],
+    [
+      "substitutions that are no operator of the arity a CONSTANT takes",
+      "---- MODULE Inner ----\nCONSTANT Op(_)\n====\n---- MODULE Pair ----\nCONSTANT c, Op(_)\n====\nc(a) == 1\nG(a, b) == a\nOp(a, b) == a\nI == INSTANCE Pair WITH c <- 1, Op <- zz\nJ == INSTANCE Inner WITH Op <- LAMBDA a, b : a\nK == INSTANCE Inner WITH Op <- G\nL == INSTANCE Inner WITH Op <- +\nN == INSTANCE Inner WITH Op <- G(1)\nP == INSTANCE Inner",
+      [
+        {
+          location: "line 11, col 1 to line 11, col 40 of module M",
+          message:
+            "Wrong number of arguments (0) given to operator 'c', \nwhich requires 1 arguments.",
+        },
+        {
+          location: "line 11, col 39 to line 11, col 40 of module M",
+          message: "Unknown operator: `zz'.",
+        },
+        {
+          location: "In module --TLA+ BUILTINS--",
+          message: "An operator must be substituted for symbol 'Op', and it must have arity 1.",
+        },
+        {
+          location: "line 12, col 32 to line 12, col 46 of module M",
+          message: "An operator must be substituted for symbol 'Op', and it must have arity 1.",
+        },
+        {
+          location: "line 13, col 32 to line 13, col 32 of module M",
+          message: "Expected arity 1 but found operator of arity 2.",
+        },
+        {
+          location: "line 14, col 32 to line 14, col 32 of module M",
+          message: "Could not find declaration or definition of symbol '+'.",
+        },
+        {
+          location: "line 15, col 32 to line 15, col 35 of module M",
+          message:
+            "Arity 1 operator (not an expression) is expected \nto substitute for CONSTANT 'Op'.",
+        },
+        {
+          location: "line 16, col 1 to line 16, col 19 of module M",
+          message: "An operator must be substituted for symbol 'Op', and it must have arity 1.",
+        },
+      ],
+      [],
+    ],
+    [
+      "declarations, assumptions, theorems, and USE between a RECURSIVE declaration and its definition",
+      "RECURSIVE f(_)\nVARIABLES y,\n  z\nCONSTANT C\nASSUME TRUE\nTHEOREM T == TRUE\nUSE T\nf(n) == n\nVARIABLE w",
+      [
+        ["line 3, col 1 to line 4, col 3", "A VARIABLE declaration"],
+        ["line 5, col 1 to line 5, col 10", "A declaration"],
+        ["line 6, col 1 to line 6, col 11", "An ASSUME"],
+        ["line 7, col 1 to line 7, col 17", "A THEOREM"],
+        ["line 8, col 1 to line 8, col 5", "A USE or HIDE"],
+      ].map((error) => ({
+        location: `${error[0]} of module M`,
+        message: `${error[1]} may not appear within a recursive definition section.`,
+      })),
       [],
     ],
   ])("rejects %s like SANY", async (_title, source, errors, warnings) => {

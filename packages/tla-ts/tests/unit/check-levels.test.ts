@@ -15,13 +15,83 @@ describe("level checking matches SANY", () => {
     ["<>(x')", "<> followed by action not of form <<A>>_v"],
     ["[](x')", "[] followed by action not of form [A]_v"],
     ["\\A i \\in {}, j \\in x' : []x", "Action-level bound of quantified temporal formula"],
-    ["x' /\\ []x", "Formula has both temporal formula and action as arguments"],
+    ["x' /\\ []x", "\\land has both temporal formula and action as arguments"],
     ["(x')'", "Level error in applying operator '"],
     ["ENABLED []x", "Level error in applying operator ENABLED"],
     ["{x'} \\cup [](x = 1)", "Level error in applying operator \\union:"],
     ["x' # []x", "Level error in applying operator /=:"],
   ])("rejects %s", async (definition, message) => {
     await expect(checkDefinition(definition)).rejects.toThrow(message);
+  });
+
+  it("names the builtin operator a level error applies like SANY", async () => {
+    await expect(
+      check({
+        source:
+          "---- MODULE M ----\nVARIABLE x\nA == x' /\\ []x\nB == x' \\equiv []x\nC ==\n  /\\ x'\n  /\\ []x\nD == {x', []x}\nE == \\E v \\in {[]x} : TRUE\nG == [x EXCEPT ![1] = []x]\nH == x[[]x, 1]\nI == {v \\in [](x = 1) : TRUE}\nInit == x = 0\nNext == x' = x\n====",
+        config: "INIT Init\nNEXT Next",
+      }),
+    ).rejects.toThrow(
+      createSanyError(
+        [
+          [
+            "line 3, col 6 to line 3, col 14",
+            "\\land has both temporal formula and action as arguments.",
+          ],
+          [
+            "line 4, col 6 to line 4, col 18",
+            "\\equiv has both temporal formula and action as arguments.",
+          ],
+          [
+            "line 6, col 3 to line 7, col 8",
+            "Conjunction list has both temporal formula and action as arguments.",
+          ],
+          [
+            "line 8, col 6 to line 8, col 14",
+            "Level error in applying operator $SetEnumerate:\nThe level of argument 2 exceeds the maximum level allowed by the operator.",
+          ],
+          [
+            "line 9, col 15 to line 9, col 19",
+            "Level error in applying operator $SetEnumerate:\nThe level of argument 1 exceeds the maximum level allowed by the operator.",
+          ],
+          [
+            "line 10, col 6 to line 10, col 26",
+            "Level error in applying operator $Except:\nThe level of argument 2 exceeds the maximum level allowed by the operator.",
+          ],
+          [
+            "line 11, col 6 to line 11, col 14",
+            "Level error in applying operator $Tuple:\nThe level of argument 1 exceeds the maximum level allowed by the operator.",
+          ],
+          [
+            "line 12, col 6 to line 12, col 29",
+            "Level error in applying operator $SubsetOf:\nThe level of the range for the bounded variable line 12, col 7 to line 12, col 7 of module M \nexceeds the maximum level allowed by the operator.",
+          ],
+        ].map((error) => ({ location: `${error[0]} of module M`, message: error[1] })),
+      ),
+    );
+  });
+
+  it("rejects an ASSUME above constant level like SANY", async () => {
+    await expect(
+      check({
+        source:
+          "---- MODULE M ----\nVARIABLE x\nASSUME x' = x\nASSUME x = 1\nInit == x = 0\nNext == x' = x\n====",
+        config: "INIT Init\nNEXT Next",
+      }),
+    ).rejects.toThrow(
+      createSanyError([
+        {
+          location: "line 3, col 1 to line 3, col 13 of module M",
+          message:
+            "Level error: assumptions must be level 0 (Constant), \nbut this one has level 2.",
+        },
+        {
+          location: "line 4, col 1 to line 4, col 12 of module M",
+          message:
+            "Level error: assumptions must be level 0 (Constant), \nbut this one has level 1.",
+        },
+      ]),
+    );
   });
 
   it.each(["x ~> []x", "<><<x'>>_x", "[][x']_x", "\\A i \\in x' : x'", "[](LET A == x' IN A)"])(

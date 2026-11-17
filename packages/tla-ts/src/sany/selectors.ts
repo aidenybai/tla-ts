@@ -4,6 +4,7 @@ import {
   CONSTANT_DECL_KIND,
   getContextSymbol,
   getSymbolArity,
+  isAbsent,
   type AssumeProveNode,
   type Context,
   type ExprNode,
@@ -382,7 +383,7 @@ export const createSelectorResolver =
                 "`!:' can be used only after a name and either at the end after an\noperator name or before an operator name.",
               );
             }
-          } else if (node === undefined) {
+          } else if (node === undefined || isAbsent(node)) {
             return generator.addError(
               getItemLocation(),
               "Subexpression selection failed, probably due to an error in the selected expression.",
@@ -438,7 +439,7 @@ export const createSelectorResolver =
                   );
                 }
                 walk.node = pair.operands[number - 1];
-                if (walk.node === undefined)
+                if (walk.node === undefined || isAbsent(walk.node))
                   return generator.addError(
                     getItemLocation(),
                     "Selecting OTHER in a CASE statement.",
@@ -476,7 +477,7 @@ export const createSelectorResolver =
             } else {
               return generator.addError(
                 getItemLocation(),
-                `Choosing operand \`${item.name}' of subexpression with no operands.`,
+                `Choosing operand \`${getSelectorItemName(item)}' of subexpression with no operands.`,
               );
             }
           } else if (node.kind === "AssumeProve") {
@@ -542,10 +543,10 @@ export const createSelectorResolver =
               "Selecting subexpression of expression that has none.",
             );
           }
-          if (walk.node === undefined)
+          if (walk.node === undefined || isAbsent(walk.node))
             return generator.addError(
               getItemLocation(),
-              `An unexpected null node specified by '${item.name}'.\nThis is probably due to a previous error.`,
+              `An unexpected null node specified by '${getSelectorItemName(item)}'.\nThis is probably due to a previous error.`,
             );
           if (walk.index !== items.length - 1) {
             const next = items[walk.index + 1];

@@ -125,6 +125,7 @@ const isInternalInstance = (module: Module, instance: Instance) => {
       return seen.has(instance.module);
     }
   }
+  // Deviation from SANY: SpecObj#instanceResolvesToInternalModule reads only top-level INSTANCEs, so SANY loads an inner module that only a LET instantiates a second time and rejects it as multiply defined.
   return module.modules.some(
     (inner) => inner.name === instance.module && isBefore(inner.location, instance.location),
   );
