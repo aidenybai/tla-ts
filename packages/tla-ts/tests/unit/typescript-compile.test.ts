@@ -49408,4 +49408,35 @@ describe("BigInts", () => {
       ).toContain(`seen ${expected}`);
     });
   });
+
+  describe("stops where a function named arguments that a block declares meets the arguments object", () => {
+    const getSource = (parameter: string, expected: string) => `
+      const seen: string[] = [];
+      // @ts-ignore
+      (function (${parameter}) {
+        {
+          // @ts-ignore
+          function arguments() {}
+        }
+        seen.push(typeof arguments);
+      })(1);
+      if (seen.join() !== "${expected}") throw new Error("seen " + seen.join());
+    `;
+
+    it("agrees with Node where a parameter takes the name", async () => {
+      expect((await checkModel(getSource("arguments: unknown", "number"))).failure).toBeUndefined();
+    });
+
+    it("rejects the block's function where a parameter takes the name", async () => {
+      expect(
+        (await checkModel(getSource("arguments: unknown", "function"))).failure?.message,
+      ).toContain("seen number");
+    });
+
+    it("stops where the arguments object takes the name", () => {
+      expect(() => compile(getSource("", "function"))).toThrow(
+        "tla-ts can't tell whether a function named arguments that a block declares replaces the arguments object",
+      );
+    });
+  });
 });

@@ -793,8 +793,10 @@ const isVarConflict = (node: ts.Node, name: string) => {
 
 // A function that a block, a case, or an if's branch declares outside strict mode, which as Annex
 // B.3.2 and B.3.3 add also assigns a var of its name in its function or its script, unless such a
-// var in its place would be an early error or names a parameter. A function's arguments object takes the name arguments as a
-// parameter does, but in an arrow or beside a function declaration of that name.
+// var in its place would be an early error or names a parameter. Where a function's arguments
+// object takes the name arguments, the spec skips such a function as it skips a parameter's name but
+// Node assigns it, so tla-ts stops there. An arrow or a function declaration of that name leaves no
+// arguments object.
 export const isVarFunction = (
   node: ts.Node,
 ): node is ts.FunctionDeclaration & { name: ts.Identifier } => {
@@ -833,10 +835,16 @@ export const isVarFunction = (
     !scope.statements.some(
       (statement) => ts.isFunctionDeclaration(statement) && statement.name?.text === "arguments",
     );
-  return (
-    !owner.parameters.some((parameter) => getBindingNames(parameter.name).includes(name)) &&
-    !(name === "arguments" && isArgumentsObject)
+  const isParameter = owner.parameters.some((parameter) =>
+    getBindingNames(parameter.name).includes(name),
   );
+  if (!isParameter && name === "arguments" && isArgumentsObject) {
+    throw new TlaTypeScriptError(
+      "tla-ts can't tell whether a function named arguments that a block declares replaces the arguments object",
+      node.name,
+    );
+  }
+  return !isParameter;
 };
 
 // The name of the var that a function that isVarFunction finds assigns: one that a var declaration
