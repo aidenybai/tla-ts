@@ -92,13 +92,15 @@ const isDyadicArtifact = (lra: LarSolver, constraint: LarConstraint) =>
     getConstraintCoeffs(lra, constraint).some((entry) => hasLargeDyadicDenominator(entry[1])));
 
 export class NraSolver {
-  private solver = new NlsatSolver();
+  private solver: NlsatSolver;
   private values: Anum[] = [];
   private lp2nl = new Map<number, number>();
   private literal2constraint = new Map<number, number>();
   private vars2mon = new Map<string, number>();
 
-  constructor(private core: NlaCore) {}
+  constructor(private core: NlaCore) {
+    this.solver = new NlsatSolver(core.nraLimit);
+  }
 
   get am() {
     return this.solver.am;

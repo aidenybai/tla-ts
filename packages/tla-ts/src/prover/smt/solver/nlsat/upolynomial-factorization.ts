@@ -221,7 +221,7 @@ const henselLiftOnce = (
   r: bigint,
   polynomials: { u: Upolynomial; a: Upolynomial; v: Upolynomial; b: Upolynomial; c: Upolynomial },
 ) => {
-  const zr = new UpolynomialManager(r);
+  const zr = new UpolynomialManager(z.limit, r);
   const f = zr.set(z.divConst(z.sub(polynomials.c, z.mul(polynomials.a, polynomials.b)), b));
   const division = zr.divRem(zr.mul(polynomials.v, f), polynomials.a);
   const t = zr.add(zr.mul(polynomials.u, f), zr.mul(polynomials.b, division.quotient));
@@ -239,13 +239,14 @@ const henselLiftQuadratic = (
   b: Upolynomial,
   e: number,
 ) => {
-  const zp = new UpolynomialManager(zpe.zp);
+  const zp = new UpolynomialManager(z.limit, zpe.zp);
   const ext = zp.extGcd(a, b);
   let u = ext.u;
   let v = ext.v;
   let currentA = [...a];
   let currentB = [...b];
   for (let k = 1; k < e; k *= 2) {
+    z.limit.checkpoint();
     const modulus = zpe.zp as bigint;
     const lifted = henselLiftOnce(z, modulus, modulus, {
       u,
@@ -451,12 +452,13 @@ export const factorSquareFree = (
     fPp = fPp.map((coeff) => -coeff);
     if (k % 2 === 1) fs.constant = -fs.constant;
   }
-  const zp = new UpolynomialManager(2n);
+  const zp = new UpolynomialManager(z.limit, 2n);
   let zpFs = mkFactors();
   let zpFsPrime = 2n;
   let degreeSet = [true];
   const getNextPrime = mkPrimeIterator();
   for (let trials = 0; trials <= params.primeTrials;) {
+    z.limit.checkpoint();
     const nextPrime = getNextPrime();
     if (nextPrime > params.maxPrime) {
       pushFactor(z, fs, fPp, k);
@@ -488,7 +490,7 @@ export const factorSquareFree = (
     }
   }
   zp.setZp(zpFsPrime);
-  const zpe = new UpolynomialManager(zpFsPrime);
+  const zpe = new UpolynomialManager(z.limit, zpFsPrime);
   const zpeFs = henselLiftFactors(z, fPp, zp, zpFs, getMignotteBound(fPp, zpFsPrime), zpe);
   let leading = zpe.normalizeNumeral(fPp[fPp.length - 1]);
   fPp = z.mulConst(fPp, leading);
@@ -497,6 +499,7 @@ export const factorSquareFree = (
   let result = true;
   let isRemoving = false;
   for (let counter = 1; iterator.next(isRemoving); counter++) {
+    z.limit.checkpoint();
     if (counter > params.maxSearchSize) {
       result = false;
       break;
@@ -584,6 +587,7 @@ export const factorUpolynomial = (
   let isComplete = true;
   let product = z.exactDiv(primitive, square) as bigint[];
   for (let multiplicity = 1; product.length > 1; multiplicity++) {
+    z.limit.checkpoint();
     const next = z.gcd(product, square);
     const factor = z.exactDiv(product, next) as bigint[];
     if (factor.length > 1) {

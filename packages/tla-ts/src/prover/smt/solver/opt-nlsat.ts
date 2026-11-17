@@ -19,7 +19,7 @@ import {
 import { Goal } from "./goal";
 import { goal2nlsat } from "./goal2nlsat";
 import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
-import { AlgebraicManager, type Anum } from "./nlsat/algebraic";
+import type { AlgebraicManager, Anum } from "./nlsat/algebraic";
 import { PolynomialManager, PolynomialRef } from "./nlsat/polynomial";
 import { NlsatSolver } from "./nlsat/solver";
 import { ProtoModel } from "./proto-model";
@@ -98,8 +98,12 @@ export const isInNraFragment = (manager: AstManager, exprs: readonly number[]) =
   return true;
 };
 
-const getCoarseInterval = (am: AlgebraicManager, value: Anum): [Rational, Rational] => {
-  const pm = new PolynomialManager();
+const getCoarseInterval = (
+  manager: AstManager,
+  am: AlgebraicManager,
+  value: Anum,
+): [Rational, Rational] => {
+  const pm = new PolynomialManager(manager.limit);
   const p = new PolynomialRef(pm);
   p.set(pm.toPolynomial(am.getPolynomial(value), 0));
   const roots = am.isolateRoots(pm, p.get(), []);
@@ -111,7 +115,7 @@ const getCoarseInterval = (am: AlgebraicManager, value: Anum): [Rational, Ration
 };
 
 export const mkAlgebraicEq = (manager: AstManager, term: number, value: Anum) => {
-  const am = new AlgebraicManager();
+  const am = manager.am;
   if (am.isRational(value))
     return manager.mkApp(OP_EQ, [term, manager.mkRealNumeral(am.toRational(value))], SORT_BOOL);
   const coeffs = am.getPolynomial(value);
@@ -127,7 +131,7 @@ export const mkAlgebraicEq = (manager: AstManager, term: number, value: Anum) =>
             SORT_REAL,
           );
   }
-  const [lower, upper] = getCoarseInterval(am, value);
+  const [lower, upper] = getCoarseInterval(manager, am, value);
   return manager.mkApp(
     OP_AND,
     [

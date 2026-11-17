@@ -1,5 +1,6 @@
-import { SmtInvariantError } from "../../../../errors";
+import { SmtCanceledError, SmtInvariantError } from "../../../../errors";
 import { Rational } from "../rational";
+import type { ResourceLimit } from "../rlimit";
 import { getLog2, Mpbq } from "./mpbq";
 import { PolynomialManager, type Polynomial, PolynomialRef, type ValueOps } from "./polynomial";
 import { UpolynomialManager, type Upolynomial } from "./upolynomial";
@@ -224,14 +225,19 @@ export const mergeSortIndices = (
 };
 
 export class AlgebraicManager {
-  private um = new UpolynomialManager();
-  private pm = new PolynomialManager();
+  private um: UpolynomialManager;
+  private pm: PolynomialManager;
   private anumOps: ValueOps<Anum> = {
     fromInteger: (value) => new Anum(Rational.of(value)),
     add: (first, second) => this.add(first, second),
     mul: (first, second) => this.mul(first, second),
     power: (base, exponent) => this.power(base, exponent),
   };
+
+  constructor(private limit: ResourceLimit) {
+    this.um = new UpolynomialManager(limit);
+    this.pm = new PolynomialManager(limit);
+  }
 
   isZero(anum: Anum) {
     return anum.value instanceof Rational && anum.value.isZero();
@@ -421,7 +427,7 @@ export class AlgebraicManager {
   }
 
   private sortRoots(roots: Anum[]) {
-    if (roots.length < 2) return;
+    if (!this.limit.inc() || roots.length < 2) return;
     const sorted = mergeSortIndices(
       roots.length,
       (first, second) => this.compare(roots[first], roots[second]) < 0,
@@ -458,6 +464,7 @@ export class AlgebraicManager {
     let highVariations = isNonPositive ? atZero : this.um.signVariationsAtPlusInf(sequence);
     let target = isNonPositive ? rootIndex : rootIndex - nonPositiveCount;
     while (lowVariations > highVariations + 1) {
+      this.limit.checkpoint();
       const middle = low.add(high).div2();
       const middleVariations = this.um.signVariationsAt(sequence, middle);
       const leftCount = lowVariations - middleVariations;
@@ -544,6 +551,7 @@ export class AlgebraicManager {
       if (values[x] !== undefined) return [];
       q.copy(pPrime);
       for (let index = 0; index + 1 < xs.length; index++) {
+        this.limit.checkpoint();
         const y = xs[index];
         pY.set(pm.toPolynomial(getCell(values[y]).p, y));
         pm.resultant(q.get(), pY.get(), y, q);
@@ -555,9 +563,10 @@ export class AlgebraicManager {
       }
       if (pm.isZero(q.get())) return this.isolateVanishedRoots(pm, reduced, values, xs, x);
       if (pm.isConst(q.get())) return [];
-      return this.isolateUnivariateRoots(pm.toCoeffs(q.get())).filter(
-        (root) => this.evalSignAt(pm, reduced, getExtended(values, x, root)) === 0,
-      );
+      return this.isolateUnivariateRoots(pm.toCoeffs(q.get())).filter((root) => {
+        this.limit.checkpoint();
+        return this.evalSignAt(pm, reduced, getExtended(values, x, root)) === 0;
+      });
     } finally {
       pY.reset();
       q.reset();
@@ -714,10 +723,8 @@ export class AlgebraicManager {
   evalSignAt(pm: PolynomialManager, polynomial: Polynomial, values: readonly (Anum | undefined)[]) {
     while (true) {
       const rationalValues = getRationalValues(values);
-      // Z3's optimistic rational evaluation sorts p before it fails on an irrational value.
-      if (!pm.isConst(polynomial)) polynomial.lexSort();
-      if (pm.getVars(polynomial).every((variable) => rationalValues[variable] !== undefined))
-        return pm.getSign(polynomial, rationalValues);
+      const rationalSign = pm.getRationalSign(polynomial, rationalValues);
+      if (rationalSign !== null) return rationalSign;
       const pPrime = new PolynomialRef(pm);
       try {
         pPrime.set(pm.substituteRational(polynomial, rationalValues));
@@ -730,9 +737,11 @@ export class AlgebraicManager {
           return { lower: cell.lower, upper: cell.upper };
         };
         const evaluate = () => pm.evaluateWith(reduced, INTERVAL_OPS, getInterval);
-        let interval = evaluate();
+        let interval: BqInterval;
         let isRestarted = false;
         while (true) {
+          this.limit.checkpoint();
+          interval = evaluate();
           if (!containsZero(interval)) return interval.lower.isNeg ? -1 : 1;
           let isRefined = false;
           for (const variable of xs) {
@@ -745,9 +754,11 @@ export class AlgebraicManager {
             isRefined = true;
           }
           if (!isRefined || isRestarted) break;
-          interval = evaluate();
         }
-        if (isRestarted) continue;
+        if (isRestarted) {
+          this.limit.checkpoint();
+          continue;
+        }
         const sign = this.evalSignByResultant(pm, reduced, values, xs, interval, evaluate);
         if (sign !== null) return sign;
       } finally {
@@ -773,6 +784,7 @@ export class AlgebraicManager {
     pPrimeAux.set(this.convert(pm, reduced));
     r.set(this.pm.sub(yp.get(), pPrimeAux.get()));
     for (const variable of sorted) {
+      this.limit.checkpoint();
       qi.set(this.pm.toPolynomial(getCell(values[variable]).p, variable));
       this.pm.resultant(r.get(), qi.get(), variable, r);
     }
@@ -788,6 +800,7 @@ export class AlgebraicManager {
     const saved = sorted.map((variable) => this.saveInterval(getAssigned(values, variable)));
     let sign: number | null = null;
     while (sign === null) {
+      this.limit.checkpoint();
       const interval = evaluate();
       if (!containsZero(interval)) sign = interval.lower.isNeg ? -1 : 1;
       else if (isInsideBound(interval)) sign = 0;
@@ -953,6 +966,7 @@ export class AlgebraicManager {
     const sequences: (Upolynomial[] | null)[] = factors.map((factor) => this.um.sturmSeq(factor));
     const saved = this.saveInterval(anum);
     while (true) {
+      this.limit.checkpoint();
       const interval = { lower: cell.lower.rootLower(k), upper: cell.upper.rootUpper(k) };
       const found = this.findIsolatingFactor(factors, sequences, interval);
       if (found !== null) {
@@ -1079,6 +1093,7 @@ export class AlgebraicManager {
     const savedA = this.saveInterval(first);
     const savedB = this.saveInterval(second);
     while (true) {
+      this.limit.checkpoint();
       const interval = isAdd ? INTERVAL_OPS.add(cellA, cellB) : INTERVAL_OPS.mul(cellA, cellB);
       const found = this.findIsolatingFactor(factors, sequences, interval);
       if (found !== null) {
@@ -1108,6 +1123,7 @@ export class AlgebraicManager {
     const sequences: (Upolynomial[] | null)[] = factors.map((factor) => this.um.sturmSeq(factor));
     const saved = this.saveInterval(anum);
     while (true) {
+      this.limit.checkpoint();
       const interval = getIntervalPower(cell, exponent);
       const found = this.findIsolatingFactor(factors, sequences, interval);
       if (found !== null) {
@@ -1162,12 +1178,13 @@ export class AlgebraicManager {
     if (sign !== 0) return sign;
     if (hasSameCoeffs(cellA.p, cellB.p)) return 0;
     if (cellA.isMinimal && cellB.isMinimal)
-      while (true) {
+      while (this.limit.inc()) {
         this.refine(first);
         this.refine(second);
         sign = compareIntervals();
         if (sign !== 0) return sign;
       }
+    if (!this.limit.inc()) throw new SmtCanceledError();
     const magnitudeA = this.getCellMagnitude(cellA);
     const magnitudeB = this.getCellMagnitude(cellB);
     const target = Math.max(MIN_MAGNITUDE, Math.min(magnitudeA, magnitudeB));

@@ -1,6 +1,7 @@
 import { SmtInvariantError } from "../../../../errors";
 import { RandomGen } from "../random-gen";
 import { getGcd, Rational } from "../rational";
+import type { ResourceLimit } from "../rlimit";
 import { BIG_PRIMES, getExtendedGcd, UpolynomialManager } from "./upolynomial";
 import {
   DEFAULT_FACTOR_PARAMS,
@@ -717,7 +718,7 @@ export class PolynomialManager {
   readonly unit: Monomial;
   readonly zero: Polynomial;
   readonly one: Polynomial;
-  private um = new UpolynomialManager();
+  private um: UpolynomialManager;
   private som = new SomBuffer(this);
   private som2 = new SomBuffer(this);
   private cheap = new CheapSomBuffer(this);
@@ -727,7 +728,8 @@ export class PolynomialManager {
   private mgcdSkeletons: (Skeleton | null)[] = [];
   private iccpZpXBuffers: SomBuffer[] = [];
 
-  constructor() {
+  constructor(readonly limit: ResourceLimit) {
+    this.um = new UpolynomialManager(limit);
     this.unit = this.mkMonomial([], []);
     this.zero = this.mkPolynomialCore([], []);
     this.incRef(this.zero);
@@ -1061,8 +1063,10 @@ export class PolynomialManager {
   muladd(first: Polynomial, second: Polynomial, constant: bigint) {
     if (first.size === 0 || second.size === 0) return this.mkConst(constant);
     this.som.reset();
-    for (let index = 0; index < first.size; index++)
+    for (let index = 0; index < first.size; index++) {
+      this.limit.checkpoint();
       this.som.addmul(first.as[index], first.ms[index], second);
+    }
     this.som.addTerm(constant, this.unit);
     return this.som.mk();
   }
@@ -1085,8 +1089,10 @@ export class PolynomialManager {
   private mulScaled(coeff: bigint, first: Polynomial, second: Polynomial) {
     if (coeff === 0n || first.size === 0 || second.size === 0) return this.zero;
     this.som.reset();
-    for (let index = 0; index < first.size; index++)
+    for (let index = 0; index < first.size; index++) {
+      this.limit.checkpoint();
       this.som.addmul(this.mulNumeral(coeff, first.as[index]), first.ms[index], second);
+    }
     return this.som.mk();
   }
 
@@ -1295,6 +1301,7 @@ export class PolynomialManager {
     g.set(this.one);
     h.set(this.one);
     while (true) {
+      this.limit.checkpoint();
       const delta = this.degree(ppU.get(), variable) - this.degree(ppV.get(), variable);
       this.exactPseudoRemainder(ppU.get(), ppV.get(), variable, rem);
       if (this.isZero(rem.get())) {
@@ -2059,6 +2066,7 @@ export class PolynomialManager {
     remainder.set(a);
     quotient.set(this.zero);
     while (true) {
+      this.limit.checkpoint();
       const r = remainder.get();
       const degR = this.degree(r, x);
       if (degB > degR) {
@@ -2079,6 +2087,7 @@ export class PolynomialManager {
       this.som.reset();
       this.som2.reset();
       for (let index = 0; index < r.size; index++) {
+        if (r.size > 100 && index % 100 === 0) this.limit.checkpoint();
         const monomial = r.ms[index];
         const coeff = r.as[index];
         if (monomial.degreeOf(x) === degR) {
@@ -2132,6 +2141,7 @@ export class PolynomialManager {
     const divisorMonomial = divisor.ms[maxPos];
     const divisorCoeff = divisor.as[maxPos];
     while (true) {
+      this.limit.checkpoint();
       const remainderPos = remainder.getGradedLexMaxPos();
       if (remainderPos === -1) {
         remainder.reset();
@@ -2155,6 +2165,7 @@ export class PolynomialManager {
     const divisorMonomial = divisor.ms[maxPos];
     const divisorCoeff = divisor.as[maxPos];
     while (true) {
+      this.limit.checkpoint();
       const remainderPos = remainder.getGradedLexMaxPos();
       if (remainderPos === -1) return true;
       const monomial = this.divMonomials(remainder.ms[remainderPos], divisorMonomial);
@@ -2217,6 +2228,7 @@ export class PolynomialManager {
     g.set(this.one);
     h.set(this.one);
     while (true) {
+      this.limit.checkpoint();
       degA = this.degree(a.get(), x);
       degB = this.degree(b.get(), x);
       const delta = degA - degB;
@@ -2485,6 +2497,7 @@ export class PolynomialManager {
     for (let index = 0; index < polynomial.size; index++)
       if (index !== maxPos) rest.addTerm(polynomial.as[index], polynomial.ms[index]);
     while (true) {
+      this.limit.checkpoint();
       const restMax = rest.getGradedLexMaxPos();
       if (restMax === -1) {
         r.set(root.mk());
@@ -2560,9 +2573,11 @@ export class PolynomialManager {
         this.divX(monomial, variable),
       );
     }
-    for (let step = 1; step <= degree; step++)
+    for (let step = 1; step <= degree; step++) {
+      this.limit.checkpoint();
       for (let power = degree - step; power <= degree - 1; power++)
         coeffs[power].addmulBuffer(value, this.unit, coeffs[power + 1]);
+    }
     this.som.reset();
     for (let power = 0; power <= degree; power++)
       this.som.addmulBuffer(1n, this.mkPower(variable, power), coeffs[power]);
@@ -2668,6 +2683,7 @@ export class PolynomialManager {
     else {
       a.set(this.exactDiv(cPart.get(), b.get()));
       for (let j = 1; !this.isConst(a.get()); j++) {
+        this.limit.checkpoint();
         this.gcd(a.get(), b.get(), d);
         cPart.set(this.exactDiv(a.get(), d.get()));
         if (!this.isConst(cPart.get())) this.factorSqfPp(cPart.get(), r, x, j);
@@ -2791,12 +2807,14 @@ export class PolynomialManager {
       if (degMain <= 1) continue;
       for (const liftVar of allVars) {
         if (liftVar === mainVar) continue;
+        this.limit.checkpoint();
         const evalVars: number[] = [];
         for (const variable of allVars)
           if (variable !== mainVar && variable !== liftVar) evalVars.push(variable);
         const nEval = evalVars.length;
         const maxCombos = nEval === 0 ? 1 : Math.min(FACTOR_EVAL_VALUES.length, 5);
         for (let combo = 0; combo < maxCombos; combo++) {
+          this.limit.checkpoint();
           const pBivar = new PolynomialRef(this);
           const isFound = this.tryMultivarFactorCombo(
             polynomial,
@@ -2921,6 +2939,7 @@ export class PolynomialManager {
     for (const prime of FACTOR_PRIMES) {
       if (getGcd(prime, lcAtZero) !== 1n) continue;
       for (let split = 1; split <= Math.floor(nf / 2); split++) {
+        this.limit.checkpoint();
         let h1 = this.um.set(univariateFs.factors[0]);
         for (let index = 1; index < split; index++)
           h1 = this.um.mul(h1, univariateFs.factors[index]);
@@ -3032,7 +3051,7 @@ export class PolynomialManager {
     f1Out: PolynomialRef,
     f2Out: PolynomialRef,
   ) {
-    const zp = new UpolynomialManager(prime);
+    const zp = new UpolynomialManager(this.limit, prime);
     const f1 = zp.mkMonic(zp.set(h1));
     const f2 = zp.mkMonic(zp.set(h2));
     const ext = zp.extGcd(f1, f2);
@@ -3052,6 +3071,7 @@ export class PolynomialManager {
     f2Coeffs[0] = zp.mulConst(zp.set(f2), zp.normalizeNumeral(lcValue));
     const lcInv = zp.inv(lcValue);
     for (let j = 1; j <= degY; j++) {
+      this.limit.checkpoint();
       let e = zp.set(qCoeffs[j]);
       for (let first = 0; first <= j; first++) {
         const second = j - first;
@@ -3114,6 +3134,17 @@ export class PolynomialManager {
   }
 
   evaluateWith<T>(polynomial: Polynomial, ops: ValueOps<T>, getValue: (variable: number) => T) {
+    const result = this.evaluatePartially(polynomial, ops, getValue);
+    if (result === null) throw new SmtInvariantError("a total evaluation stopped early");
+    return result;
+  }
+
+  // Like Z3's t_eval, this stops at the first variable that getValue has no value for.
+  private evaluatePartially<T>(
+    polynomial: Polynomial,
+    ops: ValueOps<T>,
+    getValue: (variable: number) => T | null,
+  ) {
     if (polynomial.size === 0) return ops.fromInteger(0n);
     if (this.isConst(polynomial)) return ops.fromInteger(polynomial.as[0]);
     polynomial.lexSort();
@@ -3130,34 +3161,38 @@ export class PolynomialManager {
   private evaluateCore<T>(
     polynomial: Polynomial,
     ops: ValueOps<T>,
-    getValue: (variable: number) => T,
+    getValue: (variable: number) => T | null,
     start: number,
     end: number,
     x: number,
-  ): T {
+  ): T | null {
     if (end === start + 1) {
       let result = ops.fromInteger(polynomial.as[start]);
       const monomial = polynomial.ms[start];
       for (let index = 0; index < monomial.size; index++) {
         const variable = monomial.vars[index];
         if (variable > x) break;
-        result = ops.mul(result, ops.power(getValue(variable), monomial.degrees[index]));
+        const value = getValue(variable);
+        if (value === null) return null;
+        result = ops.mul(result, ops.power(value, monomial.degrees[index]));
       }
       return result;
     }
     const value = getValue(x);
+    if (value === null) return null;
     let result = ops.fromInteger(0n);
     let index = start;
     while (index < end) {
+      this.limit.checkpoint();
       const degree = polynomial.ms[index].degreeOf(x);
       if (degree === 0) {
         const below = this.maxSmallerThan(polynomial, index, end, x);
-        result = ops.add(
-          result,
+        const rest =
           below === NULL_VAR
             ? ops.fromInteger(polynomial.as[index])
-            : this.evaluateCore(polynomial, ops, getValue, index, end, below),
-        );
+            : this.evaluateCore(polynomial, ops, getValue, index, end, below);
+        if (rest === null) return null;
+        result = ops.add(result, rest);
         break;
       }
       let next = index + 1;
@@ -3170,13 +3205,12 @@ export class PolynomialManager {
         }
       }
       const below = this.maxSmallerThan(polynomial, index, next, x);
-      result = ops.add(
-        result,
+      const coeff =
         below === NULL_VAR
           ? ops.fromInteger(polynomial.as[index])
-          : this.evaluateCore(polynomial, ops, getValue, index, next, below),
-      );
-      result = ops.mul(result, ops.power(value, degree - nextDegree));
+          : this.evaluateCore(polynomial, ops, getValue, index, next, below);
+      if (coeff === null) return null;
+      result = ops.mul(ops.add(result, coeff), ops.power(value, degree - nextDegree));
       index = next;
     }
     return result;
@@ -3189,17 +3223,14 @@ export class PolynomialManager {
     return max;
   }
 
-  evaluate(polynomial: Polynomial, values: readonly (Rational | undefined)[]) {
-    return this.evaluateWith(polynomial, RATIONAL_OPS, (variable) => {
-      const value = values[variable];
-      if (value === undefined) throw new SmtInvariantError(`x${variable} is unassigned`);
-      return value;
-    });
-  }
-
-  getSign(polynomial: Polynomial, values: readonly (Rational | undefined)[]) {
-    const value = this.evaluate(polynomial, values);
-    return value.isZero() ? 0 : value.isPositive() ? 1 : -1;
+  // The sign of polynomial at values, or null once it needs a variable values lacks.
+  getRationalSign(polynomial: Polynomial, values: readonly (Rational | undefined)[]) {
+    const value = this.evaluatePartially(
+      polynomial,
+      RATIONAL_OPS,
+      (variable) => values[variable] ?? null,
+    );
+    return value === null ? null : value.isZero() ? 0 : value.isPositive() ? 1 : -1;
   }
 }
 

@@ -40,7 +40,7 @@ class FactorRewriter extends RewriterTpl {
     let variableCount = 0;
     this.expr2poly = new Expr2Polynomial(
       manager,
-      new PolynomialManager(),
+      new PolynomialManager(manager.limit),
       new Map(),
       () => variableCount++,
     );
