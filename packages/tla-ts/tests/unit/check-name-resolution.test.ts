@@ -237,6 +237,52 @@ describe("name resolution matches SANY", () => {
       ],
     ],
     [
+      "EXTENDS Naturals\nRECURSIVE A, B(_), F\nG == F\nA(p) == A\nB == B(1)\nC == A + B(2)\nD == LET RECURSIVE E\n         E(q) == E\n     IN E + E(1)\nF(r) == 1",
+      [
+        [
+          "line 5, col 1 to line 5, col 9",
+          "Definition of A has different arity than its RECURSIVE declaration.",
+        ],
+        [
+          "line 5, col 9 to line 5, col 9",
+          "Wrong number of arguments (0) given to operator 'A', \nwhich requires 1 arguments.",
+        ],
+        [
+          "line 6, col 1 to line 6, col 9",
+          "Definition of B has different arity than its RECURSIVE declaration.",
+        ],
+        [
+          "line 6, col 6 to line 6, col 9",
+          "Wrong number of arguments (1) given to operator 'B', \nwhich requires 0 arguments.",
+        ],
+        [
+          "line 7, col 6 to line 7, col 6",
+          "Wrong number of arguments (0) given to operator 'A', \nwhich requires 1 arguments.",
+        ],
+        [
+          "line 7, col 10 to line 7, col 13",
+          "Wrong number of arguments (1) given to operator 'B', \nwhich requires 0 arguments.",
+        ],
+        [
+          "line 9, col 10 to line 9, col 18",
+          "Definition of E has different arity than its RECURSIVE declaration.",
+        ],
+        [
+          "line 9, col 18 to line 9, col 18",
+          "Wrong number of arguments (0) given to operator 'E', \nwhich requires 1 arguments.",
+        ],
+        [
+          "line 10, col 9 to line 10, col 9",
+          "Wrong number of arguments (0) given to operator 'E', \nwhich requires 1 arguments.",
+        ],
+        ["line 10, col 14 to line 10, col 16", "The operator E requires 0 arguments."],
+        [
+          "line 11, col 1 to line 11, col 9",
+          "Definition of F has different arity than its RECURSIVE declaration.",
+        ],
+      ],
+    ],
+    [
       "f == 1 + 1",
       [
         [
