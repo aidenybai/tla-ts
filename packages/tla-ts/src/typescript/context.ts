@@ -3516,7 +3516,7 @@ const isPropertyWrite = (node: ts.Node) =>
   ts.isExpressionStatement(node.parent.parent);
 
 // The locals that a function reads from the functions around it, with the function that binds each.
-const getOuterLocals = (node: ts.Node, context: Context) =>
+export const getOuterLocals = (node: ts.Node, context: Context) =>
   findNodes(node, ts.isIdentifier).flatMap((name) => {
     const symbol = getSymbol(name, context.checker);
     // A variable that a require initializes in JavaScript has an alias's symbol, which TypeScript

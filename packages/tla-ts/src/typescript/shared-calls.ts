@@ -19,7 +19,7 @@ import {
   findNodes,
   type FunctionNode,
   getAnyFunction,
-  getCaptures,
+  getOuterLocals,
   getParameters,
   getSymbol,
   getUndefined,
@@ -379,8 +379,11 @@ export const classifySharedHelpers = (reached: readonly ts.Node[], context: Cont
         queued.push(run);
       });
     }
+    // The locals of the functions around a closure, which it reads from its environment.
     const captures = new Set(
-      isEntered && isClosure(callee, context) ? getCaptures(callee, context) : [],
+      isEntered && isClosure(callee, context)
+        ? getOuterLocals(callee, context).map((local) => local.symbol)
+        : [],
     );
     const reachedUnits = [...reach].flatMap((node) =>
       node === callee && isEntered ? getUnit(node, context, node) : (units.get(node) ?? []),
