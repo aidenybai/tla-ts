@@ -93,6 +93,7 @@ import {
   mkDatatypes,
   mkUpdateField,
   removeDatatype,
+  resetDatatypePlugin,
   substituteSort,
 } from "./datatype-decl-plugin";
 import {
@@ -3290,6 +3291,8 @@ export const createSmtlibReader = (
     for (const decl of scopedFuncs.splice(funcStart)) manager.eraseRecFunDef(decl);
     const start = scopeStarts.splice(scopeStarts.length - count)[0];
     for (const restore of undo.splice(start).reverse()) restore();
+    // cmd_context::pop resets the plugin through its datatype handler.
+    resetDatatypePlugin(manager);
   };
 
   // parser::reset, after an error: Z3 frees its stacks, and with them the terms that only the

@@ -327,7 +327,8 @@ const computeSizeFunctions = (manager: AstManager, names: string[]) => {
   }
 };
 
-const resetDeclarations = (manager: AstManager) => {
+// plugin::reset, which drops the declarations the plugin made for each datatype.
+export const resetDatatypePlugin = (manager: AstManager) => {
   manager.datatypeConstructors = [];
   manager.constructorAccessors = [];
   manager.constructorRecognizers = [];
@@ -337,7 +338,7 @@ const resetDeclarations = (manager: AstManager) => {
 
 export const removeDatatype = (manager: AstManager, name: string) => {
   manager.datatypeDefs.delete(name);
-  resetDeclarations(manager);
+  resetDatatypePlugin(manager);
 };
 
 export const mkDatatypeDef = (
@@ -357,7 +358,7 @@ export const mkDatatypeDef = (
 
 export const mkDatatypes = (manager: AstManager, defs: DatatypeDef[]): number[] | string => {
   for (const def of defs) {
-    if (manager.datatypeDefs.has(def.name)) resetDeclarations(manager);
+    if (manager.datatypeDefs.has(def.name)) resetDatatypePlugin(manager);
     manager.datatypeDefs.set(def.name, def);
   }
   const sorts = defs.map((def) => instantiateDef(manager, def, []));

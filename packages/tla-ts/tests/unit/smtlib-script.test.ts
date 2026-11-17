@@ -1560,6 +1560,29 @@ describe("runSmtlibScript prints what Z3 prints", () => {
     ]);
   });
 
+  it("forgets the constructors of a datatype at a pop, as the datatype plugin does", () => {
+    expect(
+      run([
+        "(declare-datatype Opt ((none) (some (the X))))",
+        "(declare-const o Opt)",
+        "(push)",
+        "(check-sat)",
+        "(get-model)",
+        "(pop)",
+        "(check-sat)",
+        "(get-model)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      `(error "line 1 column 19: invalid datatype declaration, unknown sort 'X'")`,
+      "sat",
+      '(error "line 5 column 10: datatype constructors have not been created")',
+      "sat",
+      '(error "line 8 column 10: datatype constructors have not been created")',
+      '(error "line 9 column 10: constructor not available")',
+    ]);
+  });
+
   it("throws at a theory it does not implement", () => {
     expect(() =>
       run(["(declare-const b (_ BitVec 8))", '(assert (= (str.from_ubv b) "12"))', "(check-sat)"]),
