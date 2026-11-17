@@ -52441,4 +52441,75 @@ describe("BigInts", () => {
       "Give this pattern's value an array type",
     );
   });
+
+  describe("makes a typed array of every value that a script's iterator gives", () => {
+    const getSource = (count: number, expected: string) => `
+      interface Counter {
+        index: number;
+        next: (this: Counter) => IteratorResult<number>;
+        [Symbol.iterator]: (this: Counter) => Counter;
+      }
+      const counter: Counter = {
+        index: 0,
+        next() {
+          if (this.index >= ${count}) return { value: undefined, done: true };
+          this.index += 1;
+          return { value: this.index * 3, done: false };
+        },
+        [Symbol.iterator]() {
+          return this;
+        },
+      };
+      const source: unknown = counter;
+      const made = new Uint8Array(source as never);
+      const result = [made.length, made[0], made[made.length - 1], counter.index].join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(40, "40,3,120,40"))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation", async () => {
+      expect((await checkModel(getSource(40, "39,3,117,39"))).failure?.message).toContain(
+        "40,3,120,40",
+      );
+    });
+
+    it("translates the iterator's next once, whatever the count", () => {
+      const getSize = (count: number) => printModule(compile(getSource(count, "")).source).length;
+      expect(getSize(400)).toBe(getSize(100));
+    });
+
+    const getThrown = (expected: string) => `
+      let calls = 0;
+      const iterable = {
+        [Symbol.iterator]() {
+          return {
+            next(): IteratorResult<number> {
+              calls += 1;
+              if (calls === 30) throw new RangeError("next");
+              return { value: calls, done: false };
+            },
+          };
+        },
+      };
+      const source: unknown = iterable;
+      let caught = "none";
+      try {
+        new Float64Array(source as never);
+      } catch (error) {
+        caught = error instanceof RangeError ? "range" : "other";
+      }
+      if ([caught, calls].join() !== "${expected}") throw new Error([caught, calls].join());
+    `;
+
+    it("agrees with Node where next throws", async () => {
+      expect((await checkModel(getThrown("range,30"))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation where next throws", async () => {
+      expect((await checkModel(getThrown("range,29"))).failure?.message).toContain("range,30");
+    });
+  });
 });

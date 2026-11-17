@@ -3,6 +3,7 @@ import type { Expression } from "../ast";
 import {
   type Frame,
   type Path,
+  getChanged,
   throwTypeError,
   isGeneratorMade,
   takeFromHeld,
@@ -34,6 +35,7 @@ import {
   callMethod,
   getWrittenFunctions,
   isNullish,
+  loopStates,
   madeIterators,
   read,
   withHeap,
@@ -965,6 +967,97 @@ const stepAll = (
         );
   return step(path, []);
 };
+
+interface LoopStep {
+  (
+    current: Path,
+    state: Expression,
+    inner: Frame,
+    again: (current: Path, state: Expression) => Formula,
+    stop: (current: Path, result: Expression) => Formula,
+  ): Formula;
+}
+
+// Steps an iterator in a recursive operator, as a loop's iterations run, from a state that each
+// step gives the next. A generator that a generator method made keeps its state in the path, which
+// the operator can't carry, so its steps unroll, up to a limit.
+const loopIterator = (
+  site: ts.Node,
+  iterator: Expression,
+  seed: Expression,
+  limit: number,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  step: LoopStep,
+  continueWith: (path: Path, result: Expression) => Formula,
+): Formula => {
+  if (!madeIterators.has(iterator)) {
+    // The operator carries what the iterator's functions may change, which the effects of an
+    // assignment's pattern, unlike its assignment's, leave out. A let whose declaration hasn't run
+    // has no value to carry.
+    const changed = [
+      ...new Set([
+        ...getChanged(site, path, context),
+        ...getIteratorFunctions(site, context).flatMap((called) =>
+          getChanged(called, path, context),
+        ),
+        ...(context.heap === undefined ? [] : [context.heap]),
+      ]),
+    ].filter((symbol) => !path.scope.uninitialized.has(symbol));
+    return loopStates(site, seed, changed, path, context, frame, step, continueWith);
+  }
+  const unroll = (current: Path, state: Expression, count: number): Formula =>
+    count > limit
+      ? leaf(
+          apply("Assert", [
+            boolean(false),
+            string(`tla-ts can't take more than ${limit} values from a generator`),
+          ]),
+        )
+      : step(current, state, frame, (after, next) => unroll(after, next, count + 1), continueWith);
+  return unroll(path, seed, 0);
+};
+
+// Steps an iterator to its end, as a spread does, appending each value it gives to those taken.
+export const takeRest = (
+  site: ts.Node,
+  iterator: Expression,
+  next: Expression,
+  taken: Expression,
+  limit: number,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path, values: Expression) => Formula,
+) =>
+  loopIterator(
+    site,
+    iterator,
+    taken,
+    limit,
+    path,
+    context,
+    frame,
+    (current, values, inner, again, stop) =>
+      stepIterator(
+        site,
+        iterator,
+        "next",
+        next,
+        [],
+        current,
+        context,
+        inner,
+        (after) => throwTypeError(after, site, context, inner),
+        (done) => stop(done, values),
+        (stepped, result) =>
+          readValue(site, result, stepped, context, inner, (read, value) =>
+            again(read, apply("Append", [values, value])),
+          ),
+      ),
+    continueWith,
+  );
 
 // Runs spreads that iterate objects, which take and read each value of the objects' iterators, for
 // a statement that drops what they take.

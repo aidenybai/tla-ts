@@ -204,6 +204,7 @@ import {
   closeIterator,
   getIteratedSpreads,
   getIteratorFunctions,
+  takeRest,
   getTaken,
   isCaughtIteration,
   isIterablePattern,
@@ -14382,8 +14383,8 @@ const isStatementCall = (node: ts.CallExpression, path: Path, context: Context) 
   );
 };
 
-// The values that new of a typed array takes from an iterator that a script gives, before tla-ts
-// stops following it.
+// The values that new of a typed array takes from a generator that a script's @@iterator method
+// makes, before tla-ts stops following it.
 const TYPED_ARRAY_TAKE_LIMIT = 8;
 
 // new of a typed array of a value whose type doesn't tell whether it's an object that a script's
@@ -14808,38 +14809,6 @@ const translateNewBufferStatement = (
               make(current, madeArguments, finish),
             );
       const throwWith = (after: Path) => throwTypeError(after, node, context, frame);
-      const step = (
-        current: Path,
-        iterator: Expression,
-        next: Expression,
-        taken: Expression[],
-        finish: (path: Path, value: Expression) => Formula,
-      ): Formula =>
-        taken.length > TYPED_ARRAY_TAKE_LIMIT
-          ? leaf(
-              apply("Assert", [
-                boolean(false),
-                string(
-                  `tla-ts can't take more than ${TYPED_ARRAY_TAKE_LIMIT} values into a typed array`,
-                ),
-              ]),
-            )
-          : stepIterator(
-              node,
-              iterator,
-              "next",
-              next,
-              [],
-              current,
-              context,
-              frame,
-              throwWith,
-              (done) => make(done, [tuple(taken), ...values.slice(1)], finish),
-              (stepped, result) =>
-                readValue(node, result, stepped, context, frame, (read, value) =>
-                  step(read, iterator, next, [...taken, value], finish),
-                ),
-            );
       // new of a typed array reads an object's @@iterator, and else its length and its elements in
       // order, so the first that a getter which only throws answers throws, where nothing before
       // runs code. The typed arrays of numbers and those of BigInts convert the elements apart.
@@ -14909,7 +14878,18 @@ const translateNewBufferStatement = (
                     context,
                     frame,
                     throwWith,
-                    (opened, iterator, next) => step(opened, iterator, next, [], finish),
+                    (opened, iterator, next) =>
+                      takeRest(
+                        node,
+                        iterator,
+                        next,
+                        tuple([]),
+                        TYPED_ARRAY_TAKE_LIMIT,
+                        opened,
+                        context,
+                        frame,
+                        (done, taken) => make(done, [taken, ...values.slice(1)], finish),
+                      ),
                   ),
                 ),
                 madeFrom(finish),
