@@ -808,31 +808,46 @@ const canonicalizeElements = (elements: Value[], canonicalize: (value: Value) =>
   }
 };
 
+// The canonical copy of each set and function a search has stored, in an open-addressed table
+// whose slots hold a value's hash and its position in values plus one, so that equal values in
+// states share one object.
 export const createCanonicalizer = () => {
-  const canonicalValues = new Map<number, Value | Value[]>();
+  let slots = new Int32Array(1 << 11);
+  const values: Value[] = [];
+  const insert = (hash: number, position: number) => {
+    const mask = slots.length - 1;
+    let slot = (Math.imul(hash, 0x9e3779b1) >>> 0) & mask & ~1;
+    while (slots[slot + 1] !== 0) slot = (slot + 2) & mask;
+    slots[slot] = hash;
+    slots[slot + 1] = position + 1;
+  };
   const canonicalize = (value: Value): Value => {
     if (typeof value !== "object" || (value.kind !== "Set" && value.kind !== "Function")) {
       return value;
     }
     const hash = getValueHash(value);
-    const bucket = canonicalValues.get(hash);
-    if (bucket !== undefined && !Array.isArray(bucket)) {
-      if (bucket === value || isInterchangeableValue(bucket, value)) return bucket;
-    }
-    if (Array.isArray(bucket)) {
-      for (let index = 0; index < bucket.length; index++) {
-        if (bucket[index] === value || isInterchangeableValue(bucket[index], value))
-          return bucket[index];
-      }
+    const mask = slots.length - 1;
+    for (
+      let slot = (Math.imul(hash, 0x9e3779b1) >>> 0) & mask & ~1;
+      slots[slot + 1] !== 0;
+      slot = (slot + 2) & mask
+    ) {
+      if (slots[slot] !== hash) continue;
+      const stored = values[slots[slot + 1] - 1];
+      if (stored === value || isInterchangeableValue(stored, value)) return stored;
     }
     if (value.kind === "Set") canonicalizeElements(value.elements, canonicalize);
     else {
       canonicalizeElements(value.domain, canonicalize);
       canonicalizeElements(value.range, canonicalize);
     }
-    if (bucket === undefined) canonicalValues.set(hash, value);
-    else if (Array.isArray(bucket)) bucket.push(value);
-    else canonicalValues.set(hash, [bucket, value]);
+    values.push(value);
+    if (values.length * 4 > slots.length) {
+      slots = new Int32Array(slots.length * 2);
+      values.forEach((stored, position) => insert(getValueHash(stored), position));
+    } else {
+      insert(hash, values.length - 1);
+    }
     return value;
   };
   return (state: Value[]) => {
