@@ -2592,6 +2592,59 @@ describe("name resolution matches SANY", () => {
     );
   });
 
+  it.each<[string, [string, string][]]>([
+    [
+      "CONSTANT Cop(_)\nOp0(a0) == Cop(inner:: a0)!1\nf == Op0(1)!inner",
+      [
+        ["line 3, col 12 to line 3, col 14", "Cannot take subexpression of `Cop'."],
+        ["line 4, col 13 to line 4, col 17", "Cannot find label `inner'."],
+      ],
+    ],
+    [
+      "Op0(a0) == Nope(inner:: a0)!1\nf == Op0(1)!inner",
+      [
+        ["line 2, col 12 to line 2, col 15", "Unknown operator: `Nope'."],
+        ["line 3, col 13 to line 3, col 17", "Cannot find label `inner'."],
+      ],
+    ],
+    [
+      "G(y) == {y}\nOp0(a0) == G(inner:: a0, 2)!1\nf == Op0(1)!inner",
+      [
+        ["line 3, col 13 to line 3, col 27", "The operator G requires 1 arguments."],
+        ["line 4, col 13 to line 4, col 17", "Cannot find label `inner'."],
+      ],
+    ],
+    [
+      "G(y) == {y}\nOp0(a0) == G(inner:: a0)!3\nf == Op0(1)!inner",
+      [
+        [
+          "line 3, col 26 to line 3, col 26",
+          "Nonexistent operand specified by `argument selector 3'.",
+        ],
+      ],
+    ],
+    [
+      "---- MODULE Sub ----\nCONSTANT e\nS1(z) == e\n====\nSubI(q) == INSTANCE Sub WITH e <- 1\nOp0(a0) == SubI(1)!S1(inner:: a0, 2)!1\nf == Op0(1)!inner",
+      [
+        ["line 7, col 22 to line 7, col 36", "The operator SubI!S1 requires 1 arguments."],
+        ["line 8, col 13 to line 8, col 17", "Cannot find label `inner'."],
+      ],
+    ],
+    [
+      "---- MODULE Sub ----\nCONSTANT e\nS1(z) == e\n====\nSubI(q) == INSTANCE Sub WITH e <- 1\nOp0(a0) == SubI(inner:: a0)!S1(1, 2)!1\nf == Op0(1)!inner",
+      [["line 7, col 31 to line 7, col 36", "The operator SubI!S1 requires 1 arguments."]],
+    ],
+  ])(
+    "finds a label in a failed selection's arguments only if SANY generated them, in %j",
+    async (source, errors) => {
+      await expect(checkNames(source)).rejects.toThrow(
+        createSanyError(
+          errors.map((error) => ({ location: `${error[0]} of module M`, message: error[1] })),
+        ),
+      );
+    },
+  );
+
   it("reports a selection that leaves parameters unfilled under a built-in operator like SANY", async () => {
     await expect(
       checkNames(

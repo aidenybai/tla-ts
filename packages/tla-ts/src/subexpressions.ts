@@ -60,6 +60,8 @@ interface SelectingName {
 }
 
 const declaredArities = new WeakMap<Definition, number>();
+// SANY generates a failed selection's arguments only up to the selector it rejects.
+const generatedArgumentCounts = new WeakMap<Expression, number>();
 
 const setDeclaredArities = (declarations: Declaration[], definitions: Definition[]) =>
   declarations.forEach((declaration) => {
@@ -106,7 +108,7 @@ const findLabel = (
   if (expression.kind === "Let")
     return findLabel(expression.body, name, [...lets, expression.definitions]);
   if (expression.kind === "Lambda") return undefined;
-  for (const child of getChildren(expression)) {
+  for (const child of getChildren(expression).slice(0, generatedArgumentCounts.get(expression))) {
     const found = findLabel(child, name, lets);
     if (found) return found;
   }
@@ -209,6 +211,7 @@ const selectSubexpression = (
   let selectorIndex = 0;
   let current: Expression | undefined;
   let isFailed = false;
+  let generatedArguments = 0;
   const nulls: NullSelection[] = [];
   const applications: SelectionArguments[] = [];
   let expressionError: SanyError | undefined;
@@ -229,6 +232,7 @@ const selectSubexpression = (
       nulls,
       error: { location: formatRange(range), message },
     });
+    generatedArgumentCounts.set(reference, generatedArguments);
     isFailed = true;
     return undefined;
   };
@@ -265,9 +269,13 @@ const selectSubexpression = (
     if (found.args.length !== arity) {
       const range = reference.argumentRanges?.[selectorIndex] ?? location.range;
       const message = `The operator ${resolveSynonym(found.name)} requires ${arity - found.earlier} arguments.`;
-      if (!isOperator || found.args.length !== 0) return report(range, message);
+      if (!isOperator || found.args.length !== 0) {
+        generatedArguments += found.earlier;
+        return report(range, message);
+      }
       deferToExpression(range, message);
     }
+    generatedArguments += found.args.length;
     found.args.forEach((arg, index) =>
       selectionArguments.set(arg, {
         operator: found.name,
@@ -321,6 +329,7 @@ const selectSubexpression = (
         if (!isOperator) return report(range, message);
         deferToExpression(range, message);
       }
+      generatedArguments += selector.args.length;
       selection.lets.push(...found.lets);
       selection.params.push(...params.map((name) => ({ name, arity: 0 })));
       selection.args.push(...selector.args);
@@ -386,6 +395,7 @@ const selectSubexpression = (
       }
       selection.params.push(...binder.names.map((name) => ({ name, arity: 0 })));
       if (selector.kind === "Bound") {
+        generatedArguments += selector.args.length;
         selection.args.push(...selector.args);
         applications.push(getExpressionArguments("", range, selector.args));
       }
@@ -587,7 +597,16 @@ const resolveSubexpressions = (
           ? getQualifiedSelectors(mapped.operator, mapped.args, mapped.argumentCounts, lookup)
           : undefined;
   const first = selectors?.[0];
-  if (!selectors) return mapped;
+  const setGeneratedArguments = (count: number) => {
+    generatedArgumentCounts.set(expression, count);
+    generatedArgumentCounts.set(mapped, count);
+  };
+  if (!selectors) {
+    if (mapped.kind === "Apply" && mapped.operator.includes("!") && !lookup(mapped.operator)) {
+      setGeneratedArguments(0);
+    }
+    return mapped;
+  }
   const nameCount = selectors.findIndex((selector) => selector.kind !== "Name");
   const names = selectors.slice(0, nameCount === -1 ? selectors.length : nameCount);
   const isQualified = names.some(
@@ -601,8 +620,13 @@ const resolveSubexpressions = (
       ),
   );
   if (first?.kind === "Name" && isGoal(first.name) && !isQualified) return mapped;
-  if (first?.kind === "Name" && selectors[1].kind !== "Name" && !lookup(first.name)) return mapped;
+  if (first?.kind === "Name" && selectors[1].kind !== "Name" && !lookup(first.name)) {
+    setGeneratedArguments(0);
+    return mapped;
+  }
   const selected = selectSubexpression(selectors, lookup, isGoal, mapped, isOperator);
+  const generated = generatedArgumentCounts.get(mapped);
+  if (generated !== undefined) setGeneratedArguments(generated);
   if (selected !== mapped) selections.add(selected);
   return selected;
 };
