@@ -24,7 +24,7 @@ import {
 import type { AckrSolver } from "./lackr";
 import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
 import { DerRewriter } from "./der";
-import { finishSimplifier } from "./dependent-expr-state";
+import { finishSimplifier, runSimplifier } from "./dependent-expr-state";
 import { fixDlVar } from "./fix-dl-var";
 import { runFpa2Bv } from "./fpa2bv-tactic";
 import { type BitBlasterRewriter, runBitBlast } from "./bit-blast-tactic";
@@ -510,16 +510,16 @@ const runSplitClause = (isLargest: boolean) => (goal: Goal) => {
 };
 
 const runDer = (manager: AstManager) => (goal: Goal) => {
-  const rewriter = new DerRewriter(manager);
-  const size = goal.forms.size;
-  for (let index = 0; !goal.isInconsistent && index < size; index++) {
-    const result = rewriter.rewrite(goal.forms.items[index]);
-    goal.update(index, result);
-    manager.decRef(result);
-  }
-  finishSimplifier(goal);
-  rewriter.der.release();
-  rewriter.release();
+  runSimplifier(goal, true, (state) => {
+    const rewriter = new DerRewriter(manager);
+    return {
+      reduce: () => state.rewriteEach((form) => rewriter.rewrite(form)),
+      release: () => {
+        rewriter.der.release();
+        rewriter.release();
+      },
+    };
+  });
   return [goal];
 };
 
