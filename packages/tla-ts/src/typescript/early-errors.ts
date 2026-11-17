@@ -341,6 +341,21 @@ export const rejectEarlyErrors = (sourceFile: ts.SourceFile) => {
         );
       }
     }
+    // An import binds no name that strict code reserves.
+    if (
+      ts.isIdentifier(node) &&
+      (node.text === "arguments" || node.text === "eval") &&
+      (ts.isImportClause(node.parent) ||
+        ts.isNamespaceImport(node.parent) ||
+        (ts.isImportSpecifier(node.parent) && node.parent.name === node))
+    ) {
+      reject(`Unexpected ${node.text} in strict mode`, node);
+    }
+    // An import's attributes name each key once.
+    if (ts.isImportAttributes(node)) {
+      const keys = node.elements.map((element) => element.name.text);
+      if (new Set(keys).size !== keys.length) reject("Import attribute has duplicate key", node);
+    }
     // A module reserves await, which TypeScript reads as a name inside a function that isn't
     // async, as in an arrow's parameters.
     if (

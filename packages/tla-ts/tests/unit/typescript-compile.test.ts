@@ -50496,6 +50496,13 @@ describe("BigInts", () => {
       ["super's private name", "class C { #x() {} m() { super.#x(); } }", "SyntaxError"],
       ["a module's repeated function", "function x() {}\nfunction x() {}", "SyntaxError"],
       ["an export of an undeclared name", "export { missing };", "TS2304"],
+      ["an import of eval", 'import eval from "./missing.js";', "SyntaxError"],
+      ["an import of arguments", 'import { x as arguments } from "./missing.js";', "SyntaxError"],
+      [
+        "an import's repeated attribute",
+        'import x from "./missing.json" with { type: "json", type: "json" };',
+        "SyntaxError",
+      ],
     ])("rejects %s", (_, statement, message) => {
       expect(() => compile(`export {};\n${statement}`, path)).toThrow(message);
     });
