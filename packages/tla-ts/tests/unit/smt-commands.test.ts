@@ -774,6 +774,20 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
     ).toEqual(["unknown", '(:reason-unknown "push canceled")']);
   });
 
+  it("checks the limit at each step of tseitin-cnf", () => {
+    expect(
+      run([
+        "(set-option :rlimit 2)",
+        "(declare-const p Bool)",
+        "(declare-const q Bool)",
+        "(declare-const r Bool)",
+        "(assert (or (= p (or q r)) (ite p q r) (= q (or p r))))",
+        "(check-sat-using tseitin-cnf)",
+        "(get-info :reason-unknown)",
+      ]),
+    ).toEqual(["unknown", '(:reason-unknown "max. resource limit exceeded")']);
+  });
+
   // The time limit is Z3's soft timeout: check-sat gives every solver the reason timeout, which
   // the smt kernel keeps for its later checks and reports while its last search did not fail.
   it("prints the reason of a check that timed out", () => {
