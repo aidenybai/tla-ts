@@ -465,7 +465,7 @@ export class Rewriter extends RewriterTpl {
     const manager = this.manager;
     if (sort === SORT_BOOL && manager.sorts[first] !== SORT_BOOL) {
       if (this.isIte(first)) {
-        if (manager.isUniqueValue(second) && manager.getRefCount(first) === 1)
+        if (manager.isValue(second) && manager.getRefCount(first) === 1)
           return this.pullIteCore(decl, first, second, sort, false);
         if (this.isIte(second) && manager.getArg(first, 0) === manager.getArg(second, 0)) {
           const branches = [1, 2].map((index) =>
@@ -481,15 +481,15 @@ export class Rewriter extends RewriterTpl {
           };
         }
       }
-      if (this.isIte(second) && manager.isUniqueValue(first) && manager.getRefCount(second) === 1)
+      if (this.isIte(second) && manager.isValue(first) && manager.getRefCount(second) === 1)
         return this.pullIteCore(decl, second, first, sort, true);
     }
     const family = manager.funcDecls[decl].family;
     if (family !== FAMILY_BASIC && family !== FAMILY_ARITH && family !== FAMILY_BV)
       return undefined;
-    if (manager.isUniqueValue(first) && this.isIteValueTree(second))
+    if (manager.isValue(first) && this.isIteValueTree(second))
       return this.pullIteCore(decl, second, first, sort, true);
-    if (manager.isUniqueValue(second) && this.isIteValueTree(first))
+    if (manager.isValue(second) && this.isIteValueTree(first))
       return this.pullIteCore(decl, first, second, sort, false);
     return undefined;
   }
@@ -506,7 +506,7 @@ export class Rewriter extends RewriterTpl {
       manager.funcDecls[decl].op === OP_EQ
         ? branch === value
           ? manager.trueExpr
-          : this.areDistinct(branch, value)
+          : manager.areDistinct(branch, value)
             ? manager.falseExpr
             : manager.mkEq(branch, value)
         : manager.mkApp(decl, isSwapped ? [value, branch] : [branch, value], sort),
@@ -521,7 +521,7 @@ export class Rewriter extends RewriterTpl {
     for (let ite = todo.pop(); ite !== undefined; ite = todo.pop()) {
       for (const branch of [manager.getArg(ite, 1), manager.getArg(ite, 2)]) {
         if (this.isIte(branch) && manager.getRefCount(branch) === 1) todo.push(branch);
-        else if (!manager.isUniqueValue(branch)) return false;
+        else if (!manager.isValue(branch)) return false;
       }
     }
     return true;
@@ -879,9 +879,9 @@ export class Rewriter extends RewriterTpl {
   private tryIteEq(ite: number, other: number): Rewrite | undefined {
     const manager = this.manager;
     if (!this.isIte(ite)) return undefined;
-    if (manager.getArg(ite, 1) === other && this.areDistinct(manager.getArg(ite, 2), other))
+    if (manager.getArg(ite, 1) === other && manager.areDistinct(manager.getArg(ite, 2), other))
       return { expr: manager.getArg(ite, 0), depth: 1 };
-    if (manager.getArg(ite, 2) === other && this.areDistinct(manager.getArg(ite, 1), other))
+    if (manager.getArg(ite, 2) === other && manager.areDistinct(manager.getArg(ite, 1), other))
       return { expr: manager.mkNot(manager.getArg(ite, 0)), depth: 1 };
     return undefined;
   }
@@ -890,15 +890,10 @@ export class Rewriter extends RewriterTpl {
     return this.manager.getOp(expr) === OP_ITE;
   }
 
-  private areDistinct(first: number, second: number) {
-    const manager = this.manager;
-    return first !== second && manager.isUniqueValue(first) && manager.isUniqueValue(second);
-  }
-
   private mkIteValueEq(left: number, right: number): number | Rewrite | undefined {
     const manager = this.manager;
-    if (this.isIte(left) && manager.isUniqueValue(right)) return this.tryIteValue(left, right);
-    if (this.isIte(right) && manager.isUniqueValue(left)) return this.tryIteValue(right, left);
+    if (this.isIte(left) && manager.isValue(right)) return this.tryIteValue(left, right);
+    if (this.isIte(right) && manager.isValue(left)) return this.tryIteValue(right, left);
     if (
       !this.isIte(left) ||
       !this.isIte(right) ||
@@ -907,7 +902,7 @@ export class Rewriter extends RewriterTpl {
         manager.getArg(left, 2),
         manager.getArg(right, 1),
         manager.getArg(right, 2),
-      ].every((arg) => manager.isUniqueValue(arg))
+      ].every((arg) => manager.isValue(arg))
     )
       return undefined;
     const mkOr = (args: number[]) => manager.mkApp(OP_OR, args, SORT_BOOL);
@@ -950,16 +945,16 @@ export class Rewriter extends RewriterTpl {
     const mkPlainEq = (branch: number) =>
       branch === value
         ? manager.trueExpr
-        : this.areDistinct(branch, value)
+        : manager.areDistinct(branch, value)
           ? manager.falseExpr
           : manager.mkEq(branch, value);
     const mkAnd = (first: number, second: number) =>
       manager.mkApp(OP_AND, [first, second], SORT_BOOL);
     const mkOr = (first: number, second: number) =>
       manager.mkApp(OP_OR, [first, second], SORT_BOOL);
-    if (this.areDistinct(value, elseExpr))
+    if (manager.areDistinct(value, elseExpr))
       return { expr: mkAnd(mkBranchEq(thenExpr), condition), depth: 2 };
-    if (this.areDistinct(value, thenExpr))
+    if (manager.areDistinct(value, thenExpr))
       return { expr: mkAnd(mkBranchEq(elseExpr), manager.mkNot(condition)), depth: 2 };
     if (value === thenExpr)
       return value === elseExpr
@@ -969,8 +964,8 @@ export class Rewriter extends RewriterTpl {
       return { expr: mkOr(write(this.mkEq(thenExpr, value)), manager.mkNot(condition)), depth: 2 };
     const isValueIte = (expr: number) =>
       this.isIte(expr) &&
-      manager.isUniqueValue(manager.getArg(expr, 1)) &&
-      manager.isUniqueValue(manager.getArg(expr, 2));
+      manager.isValue(manager.getArg(expr, 1)) &&
+      manager.isValue(manager.getArg(expr, 2));
     const getExpr = (result: number | Rewrite) =>
       typeof result === "number" ? result : result.expr;
     const thenEq = isValueIte(thenExpr) ? this.tryIteValue(thenExpr, value) : undefined;
@@ -995,7 +990,7 @@ export class Rewriter extends RewriterTpl {
       const expr = todo.pop() ?? ite;
       if (visited.has(expr)) continue;
       visited.add(expr);
-      if (this.areDistinct(expr, value)) continue;
+      if (manager.isValue(expr) && manager.areDistinct(expr, value)) continue;
       if (!this.isIte(expr)) return false;
       todo.push(manager.getArg(expr, 1), manager.getArg(expr, 2));
     }
@@ -1014,8 +1009,7 @@ export class Rewriter extends RewriterTpl {
   private mkEqCore(inputLeft: number, inputRight: number): number | Rewrite | undefined {
     const manager = this.manager;
     if (inputLeft === inputRight) return manager.trueExpr;
-    if (manager.isUniqueValue(inputLeft) && manager.isUniqueValue(inputRight))
-      return manager.falseExpr;
+    if (manager.areDistinct(inputLeft, inputRight)) return manager.falseExpr;
     const iteEq = this.tryIteEq(inputLeft, inputRight) ?? this.tryIteEq(inputRight, inputLeft);
     if (iteEq !== undefined) return iteEq;
     const iteValueEq = this.mkIteValueEq(inputLeft, inputRight);
