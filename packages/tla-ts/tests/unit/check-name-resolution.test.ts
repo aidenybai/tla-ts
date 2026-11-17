@@ -2196,6 +2196,42 @@ describe("name resolution matches SANY", () => {
     );
   });
 
+  it("reports selecting through an expression that failed to resolve before later selectors like SANY", async () => {
+    const failed =
+      "Subexpression selection failed, probably due to an error in the selected expression.";
+    const unexpected =
+      "An unexpected null node specified by 'argument selector 1'.\nThis is probably due to a previous error.";
+    const getPrefixErrors = (line: number, column: number, end: number) => [
+      {
+        location: `line ${line}, col ${column} to line ${line}, col ${column} of module M`,
+        message: "Could not find declaration or definition of symbol '-.'.",
+      },
+      {
+        location: `line ${line}, col ${column} to line ${line}, col ${end} of module M`,
+        message: "Couldn't resolve prefix operator symbol `-.'.",
+      },
+    ];
+    await expect(
+      checkNames(
+        "CONSTANT c\nOp1(a0) == -{c}\nOp2 == {-c, 1}\nA == Op1(1)!1!@ /\\ Op1(2)!1!9 /\\ Op2!1!1!@\nTHEOREM T == -c\nTHEOREM U == ASSUME -c PROVE c\nTHEOREM V == {-c, 1}\nB == T!1!@ /\\ U!1 /\\ V!1!1",
+      ),
+    ).rejects.toThrow(
+      createSanyError([
+        ...getPrefixErrors(3, 12, 15),
+        ...getPrefixErrors(4, 9, 10),
+        { location: "line 5, col 13 to line 5, col 13 of module M", message: failed },
+        { location: "line 5, col 27 to line 5, col 27 of module M", message: failed },
+        { location: "line 5, col 38 to line 5, col 38 of module M", message: unexpected },
+        ...getPrefixErrors(6, 14, 15),
+        ...getPrefixErrors(7, 21, 22),
+        ...getPrefixErrors(8, 15, 16),
+        { location: "line 9, col 8 to line 9, col 8 of module M", message: failed },
+        { location: "line 9, col 17 to line 9, col 17 of module M", message: unexpected },
+        { location: "line 9, col 24 to line 9, col 24 of module M", message: unexpected },
+      ]),
+    );
+  });
+
   it("reports a selection that leaves parameters unfilled under a built-in operator like SANY", async () => {
     await expect(
       checkNames(

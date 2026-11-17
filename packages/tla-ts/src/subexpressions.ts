@@ -218,6 +218,7 @@ const selectSubexpression = (
     if (!range) throw createError(message, location);
     selectionErrors.set(reference, {
       applications,
+      nulls,
       error: { location: formatRange(range), message },
     });
     isFailed = true;

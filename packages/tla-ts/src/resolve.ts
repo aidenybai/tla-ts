@@ -97,6 +97,7 @@ export interface SelectionArguments {
 
 interface SelectionError {
   applications: SelectionArguments[];
+  nulls: NullSelection[];
   error: SanyError;
 }
 
@@ -121,6 +122,9 @@ export const operatorSelectionErrors = new WeakMap<Expression, SanyError>();
 export const factReferences = new WeakMap<Fact[], Fact[]>();
 export const nullSelections = new WeakMap<Expression, NullSelection[]>();
 const unresolvedExpressions = new WeakSet<Expression>();
+
+const findNullError = (nulls: NullSelection[] | undefined) =>
+  nulls?.find((selection) => unresolvedExpressions.has(selection.node))?.error;
 
 const renamedArities = new WeakMap<Expression, number>();
 
@@ -576,6 +580,7 @@ const checkSelection = (
           : "!(...)";
     const getPosition = (count: number) =>
       selector.kind === "Operand" ? getOperandIndex(selector.operand, count) : -1;
+    const unexpectedNull = `An unexpected null node specified by '${operand}'.\nThis is probably due to a previous error.`;
     if (state.isSufficesOpen) {
       if (getPosition(1) !== 0) {
         return report(
@@ -591,6 +596,12 @@ const checkSelection = (
     if (node.kind === "NewSymbol") return node;
     if (node.kind !== "AssumeProve") {
       const expression = getLabelBody(node);
+      if (unresolvedExpressions.has(expression)) {
+        return report(
+          index,
+          "Subexpression selection failed, probably due to an error in the selected expression.",
+        );
+      }
       if (["Number", "Decimal", "String"].includes(expression.kind)) {
         return report(index, "Selecting subexpression of expression that has none.");
       }
@@ -618,6 +629,7 @@ const checkSelection = (
       if (position === -1) return report(index, `Nonexistent operand specified by \`${operand}'.`);
       state.node = operands[position];
       state.isGoal = false;
+      if (unresolvedExpressions.has(state.node)) return report(index, unexpectedNull);
       continue;
     }
     const clauses = [...node.assumptions, node.conclusion];
@@ -632,6 +644,13 @@ const checkSelection = (
     }
     state.node = clause;
     state.isGoal = false;
+    if (
+      clause.kind !== "NewSymbol" &&
+      clause.kind !== "AssumeProve" &&
+      unresolvedExpressions.has(clause)
+    ) {
+      return report(index, unexpectedNull);
+    }
   }
   if (isFact) return state.node;
   if (state.node.kind === "AssumeProve") {
@@ -1209,7 +1228,7 @@ const isSelectionReported = (expression: Expression, scope: LocalName | undefine
         ),
       ),
   );
-  unit.errors.push(failed.error);
+  unit.errors.push(findNullError(failed.nulls) ?? failed.error);
   return true;
 };
 
@@ -1233,10 +1252,8 @@ const resolveExpression = (
   unit: Unit,
 ): void => {
   if (selections.has(expression) && !unit.isGenerated) {
-    const failed = nullSelections
-      .get(expression)
-      ?.find((selection) => unresolvedExpressions.has(selection.node));
-    if (failed) unit.errors.push(failed.error);
+    const failed = findNullError(nullSelections.get(expression));
+    if (failed) unit.errors.push(failed);
     else resolveExpression(expression, scope, { ...unit, isGenerated: true });
     return;
   }
