@@ -50420,4 +50420,23 @@ describe("BigInts", () => {
       ).toThrow("tla-ts can't bind a default, a rest, or a pattern here: amount: 1 | 2 = 1");
     });
   });
+
+  describe("keeps in the state a const whose object an action changes in place", () => {
+    const getSource = (bound: number) => `
+      const holder: { prepare: number } = { prepare: 0 };
+      export const setPrepare = (value: 1 | 2): void => {
+        holder.prepare = value;
+      };
+      export const isSmall = () => holder.prepare < ${bound};
+    `;
+
+    it("agrees with Node", async () => {
+      const result = await checkModel(getSource(3));
+      expect([result.status, result.distinctStates]).toEqual(["success", 3]);
+    });
+
+    it("rejects a smaller bound", async () => {
+      expect((await checkModel(getSource(2))).status).toBe("invariant-violation");
+    });
+  });
 });
