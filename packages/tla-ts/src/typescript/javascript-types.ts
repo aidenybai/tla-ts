@@ -14,15 +14,15 @@ const getCast = (type: string) => `/** @type {${type}} */ (`;
 
 const ANY = "/** @type {any} */ ";
 
-// Errors about types that hold: an implicit any, a value that may be null or undefined, a name
+// Errors about types that hold: a setter's return of a value, which the write drops, an implicit any, a value that may be null or undefined, a name
 // that no declaration binds, which tla-ts resolves as Node does, a property that the type lacks,
 // which TypeScript reads as any, as it does a class field's computed key that it leaves out of the
 // type, and a read before a declaration, which throws as tla-ts follows.
 const IGNORED_ERRORS = new Set([
-  1166, 1170, 2304, 2339, 2448, 2449, 2450, 2531, 2532, 2533, 2550, 2551, 2552, 2580, 2581, 2582,
-  2583, 2584, 2591, 2592, 2593, 2662, 2663, 2683, 2721, 2722, 2723, 2867, 2868, 7005, 7006, 7008,
-  7010, 7011, 7015, 7016, 7017, 7018, 7019, 7022, 7023, 7024, 7025, 7031, 7032, 7033, 7034, 7041,
-  7052, 7053, 7055, 7056, 7057, 18047, 18048, 18049,
+  1166, 1170, 2304, 2408, 2339, 2448, 2449, 2450, 2531, 2532, 2533, 2550, 2551, 2552, 2580, 2581,
+  2582, 2583, 2584, 2591, 2592, 2593, 2662, 2663, 2683, 2721, 2722, 2723, 2867, 2868, 7005, 7006,
+  7008, 7010, 7011, 7015, 7016, 7017, 7018, 7019, 7022, 7023, 7024, 7025, 7031, 7032, 7033, 7034,
+  7041, 7052, 7053, 7055, 7056, 7057, 18047, 18048, 18049,
 ]);
 
 // A value of another type than the declaration, the parameter, or the property that takes it.
@@ -39,8 +39,8 @@ const READ_ONLY_ERROR = 2540;
 // A value of a type that an operator, a call, a key, a spread, or an iteration doesn't take, or of
 // type unknown.
 const OPERAND_ERRORS = new Set([
-  2356, 2358, 2359, 2360, 2361, 2362, 2363, 2469, 2488, 2490, 2504, 2538, 2547, 2548, 2549, 2556,
-  2571, 2731, 2767, 18046,
+  2356, 2358, 2359, 2360, 2361, 2362, 2363, 2464, 2469, 2488, 2490, 2504, 2538, 2547, 2548, 2549,
+  2556, 2571, 2731, 2767, 18046,
 ]);
 
 // A binary operator whose operands' types don't go together.
@@ -384,7 +384,10 @@ const getEdits = (
   }
   if (OPERAND_ERRORS.has(code)) {
     if (isWritten(node)) return widenName(node, file, checker);
-    return castExpression(ts.isSpreadElement(node) ? node.expression : node, file);
+    return castExpression(
+      ts.isSpreadElement(node) || ts.isComputedPropertyName(node) ? node.expression : node,
+      file,
+    );
   }
   if (OPERANDS_ERRORS.has(code)) {
     if (!ts.isBinaryExpression(node)) return undefined;

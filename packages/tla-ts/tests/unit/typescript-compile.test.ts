@@ -50509,4 +50509,34 @@ describe("BigInts", () => {
       ).toContain("seen 2");
     });
   });
+
+  describe("runs JavaScript's computed keys of other types and setters that return values", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      var box = { seen: "" };
+      class Keyed {
+        [null]() {
+          return 1;
+        }
+        set x(value) {
+          box.seen += value;
+          return 2;
+        }
+      }
+      var keyed = new Keyed();
+      var written = (keyed.x = 5);
+      box.seen += [keyed[null](), written].join();
+      if (box.seen !== "${expected}") throw new Error("seen " + box.seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await check(compile(getSource("51,5"), path))).failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      expect((await check(compile(getSource("51,2"), path))).failure?.message).toContain(
+        "seen 51,5",
+      );
+    });
+  });
 });
