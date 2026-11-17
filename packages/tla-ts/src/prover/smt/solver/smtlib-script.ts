@@ -1590,8 +1590,7 @@ export const runSmtlibScript = (
           state.reader = createSmtlibReader(state.manager, logic.text, settings.parserOptions);
         else {
           state.reader.restrictSorts(logic.text);
-          // Deviation from Z3: its new solver starts without the open scopes, so it ignores their pop
-          // and keeps what they asserted.
+          // Deviation from Z3: its new solver starts without the open scopes, so it ignores their pop and keeps what they asserted.
           resetKernel();
         }
         if (settings.isPrintingSuccess) print("success");

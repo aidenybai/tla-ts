@@ -530,8 +530,7 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
     ).toEqual(["sat", "sat", '(error "line 9 column 11: unknown constant x")', "sat", "sat"]);
   });
 
-  // Deviation from Z3: its new solver ignores the pop of a scope opened before set-logic and keeps
-  // p, so it prints sat, unsat, unsat here.
+  // Deviation from Z3: its new solver ignores the pop of a scope opened before set-logic and keeps p, so it prints sat, unsat, unsat here.
   it("pops the assertions of a scope opened before set-logic", () => {
     expect(
       run([
