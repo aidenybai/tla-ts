@@ -11,10 +11,14 @@ import {
   isDeclarationOnly,
   isHeldError,
   isMethodCall,
+  getUnmodelledHostName,
+  getValueDeclaration,
+  skipCasts,
 } from "./context";
 import { TlaTypeScriptError } from "../errors";
 import { isAllocation } from "./heap";
-import { getPosition } from "./program-nodes";
+import { getPosition, hasBit } from "./program-nodes";
+import { forEachReachedName, holdsMaker, isSkippedForReach } from "./reach-graph";
 import { type Scope } from "./scope";
 import {
   getKind,
@@ -327,7 +331,7 @@ const isRunByOwner = (
 
 const isOnlyName = (node: ts.Identifier, statement: ts.ReturnStatement, context: Context) => {
   const symbol = getSymbol(node, context.checker);
-  const declaration = symbol?.valueDeclaration;
+  const declaration = getValueDeclaration(symbol, context);
   const owner = getOwner(statement);
   if (
     symbol === undefined ||
@@ -532,62 +536,67 @@ const getEscapes = (
 // which hold every function of another file that the model may run.
 export const getReached = (roots: readonly ts.Node[], context: Context) => {
   const table = context.nodes;
+  const graph = context.reachGraph;
   const reached = [...roots];
   // The walk's mark on each node of the program's files that it has seen, and the few nodes that no
   // file walks to, such as JSDoc's.
   table.generation += 1;
   const generation = table.generation;
   const seenElsewhere = new Set<ts.Node>();
-  const hasSeen = (node: ts.Node, position: number) =>
-    position < 0 ? seenElsewhere.has(node) : table.marks[position] === generation;
-  const see = (node: ts.Node, position: number) => {
-    if (position < 0) seenElsewhere.add(node);
+  roots.forEach((root) => {
+    const position = getPosition(table, root);
+    if (position < 0) seenElsewhere.add(root);
     else table.marks[position] = generation;
-  };
-  roots.forEach((root) => see(root, getPosition(table, root)));
-  // A type runs nothing, though a class's base, which TypeScript parses as one, runs.
-  const isSkipped = (node: ts.Node) =>
-    (ts.isTypeNode(node) && !ts.isExpressionWithTypeArguments(node)) ||
-    (ts.isImportDeclaration(node) && node.importClause?.isTypeOnly === true) ||
-    (ts.isImportSpecifier(node) && node.isTypeOnly);
-  // A module's namespace object reaches only the exports that a script reads through it.
-  const reach = (symbol: ts.Symbol | undefined) => {
-    for (const declaration of symbol?.declarations ?? []) {
-      if (ts.isSourceFile(declaration)) continue;
-      const position = getPosition(table, declaration);
-      const file = declaration.getSourceFile();
-      if (
-        hasSeen(file, position < 0 ? getPosition(table, file) : table.files[position]) ||
-        file.isDeclarationFile ||
-        hasSeen(declaration, position)
-      ) {
-        continue;
-      }
-      see(declaration, position);
-      reached.push(declaration);
-      visit(declaration);
+  });
+  // A declaration of the program's files follows its run in the reach graph, whose declarations
+  // it meets in the order that a walk of its subtree would.
+  const reachPosition = (position: number): void => {
+    if (table.marks[table.files[position]] === generation || table.marks[position] === generation) {
+      return;
+    }
+    table.marks[position] = generation;
+    reached.push(table.nodes[position]);
+    for (let index = graph.starts[position]; index < graph.ends[position]; index += 1) {
+      const target = graph.targets[index];
+      if (target >= 0) reachPosition(target);
+      else reachElsewhere(graph.elsewhere[-1 - target]);
     }
   };
-  // A walk of a file's node scans the node's subtree in the table, past the subtrees it skips.
+  // A module's namespace object reaches only the exports that a script reads through it.
+  const reachElsewhere = (declaration: ts.Node) => {
+    const file = declaration.getSourceFile();
+    const filePosition = getPosition(table, file);
+    if (
+      (filePosition < 0 ? seenElsewhere.has(file) : table.marks[filePosition] === generation) ||
+      file.isDeclarationFile ||
+      seenElsewhere.has(declaration)
+    ) {
+      return;
+    }
+    seenElsewhere.add(declaration);
+    reached.push(declaration);
+    visit(declaration);
+  };
+  const reach = (symbol: ts.Symbol | undefined) =>
+    symbol?.declarations?.forEach((declaration) => {
+      if (ts.isSourceFile(declaration)) return;
+      const position = getPosition(table, declaration);
+      if (position < 0) reachElsewhere(declaration);
+      else reachPosition(position);
+    });
+  // A walk of a root scans its subtree in the table, past the subtrees it skips.
   const visit = (node: ts.Node): void => {
     const start = getPosition(table, node);
     if (start < 0) {
-      if (isSkipped(node)) return;
+      if (isSkippedForReach(node)) return;
       if (ts.isIdentifier(node)) reach(getSymbol(node, context.checker));
       ts.forEachChild(node, visit);
       return;
     }
-    const end = table.ends[start];
-    let position = start;
-    while (position < end) {
-      const inner = table.nodes[position];
-      if (isSkipped(inner)) {
-        position = table.ends[position];
-        continue;
-      }
-      if (ts.isIdentifier(inner)) reach(context.references.symbols[position]);
-      position += 1;
-    }
+    forEachReachedName(table, context.references, start, (declaration, position) => {
+      if (position < 0) reachElsewhere(declaration);
+      else reachPosition(position);
+    });
   };
   roots.forEach(visit);
   return reached;
@@ -609,12 +618,33 @@ export const readsUninitialized = (roots: readonly ts.Node[], scope: Scope, cont
 // one does, itself or through a function that it names.
 export const isMakingObjects = (node: ts.Node, context: Context) => {
   const isMaking = (inner: ts.Node): boolean =>
-    ts.isObjectLiteralExpression(inner) ||
-    ts.isRegularExpressionLiteral(inner) ||
-    isAllocation(inner, context) ||
-    (ts.forEachChild(inner, isMaking) ?? false);
-  return getReached([node], context).some(isMaking);
+    isMakingNode(inner, context) || (ts.forEachChild(inner, isMaking) ?? false);
+  const table = context.nodes;
+  const makers = context.makers;
+  const start = getPosition(table, node);
+  if (makers === undefined || start < 0) return getReached([node], context).some(isMaking);
+  if (holdsMaker(table, makers, start)) return true;
+  // The makers tell for each declaration that the node's names reach, but for those that reach
+  // one elsewhere.
+  const found = { isMaking: false, isElsewhere: false };
+  forEachReachedName(table, context.references, start, (declaration, position) => {
+    if (position < 0) {
+      if (!declaration.getSourceFile().isDeclarationFile) found.isElsewhere = true;
+    } else if (hasBit(makers.makesObjects, position)) {
+      found.isMaking = true;
+    } else if (hasBit(makers.reachesElsewhere, position)) {
+      found.isElsewhere = true;
+    }
+  });
+  return found.isMaking || (found.isElsewhere && getReached([node], context).some(isMaking));
 };
+
+// Whether a node itself makes an object: an object or a regexp literal, or a built-in that makes
+// one, which only a call or a new does.
+export const isMakingNode = (node: ts.Node, context: Context) =>
+  ts.isObjectLiteralExpression(node) ||
+  ts.isRegularExpressionLiteral(node) ||
+  ((ts.isCallExpression(node) || ts.isNewExpression(node)) && isAllocation(node, context));
 
 // Whether a call gives a new object each time: Array(...), or a callee that returns only object
 // literals, which nothing else can name, though the objects inside them may still be shared.
@@ -646,7 +676,7 @@ export const findSharing = (reached: readonly ts.Node[], context: Context) => {
   // Whether a reference to a function's own variable is the last that runs, so that nothing
   // changes the variable's array after the reference shares it.
   const isLastUse = (node: ts.Node, symbol: ts.Symbol) => {
-    const declaration = symbol.valueDeclaration;
+    const declaration = getValueDeclaration(symbol, context);
     if (
       declaration === undefined ||
       !ts.isVariableDeclaration(declaration) ||
@@ -853,6 +883,25 @@ export const rejectSharing = (reached: readonly ts.Node[], context: Context) => 
     throw new TlaTypeScriptError(
       `tla-ts can't run ${text}, which only a declaration gives`,
       sharing.node,
+    );
+  }
+  // An object that a host's constructor or function makes, which no built-in tla-ts models gives,
+  // such as the DOM's MessageChannel, has no code to run either.
+  const declaration = getValueDeclaration(sharing.symbol, context);
+  const made =
+    declaration !== undefined &&
+    ts.isVariableDeclaration(declaration) &&
+    declaration.initializer !== undefined
+      ? skipCasts(declaration.initializer)
+      : undefined;
+  const host =
+    made !== undefined && (ts.isNewExpression(made) || ts.isCallExpression(made))
+      ? getUnmodelledHostName(made.expression, context)
+      : undefined;
+  if (made !== undefined && host !== undefined) {
+    throw new TlaTypeScriptError(
+      `tla-ts can't run ${host}, which the host gives and tla-ts doesn't model`,
+      made,
     );
   }
   throw new TlaTypeScriptError(

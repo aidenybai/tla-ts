@@ -1,25 +1,44 @@
 import ts from "@typescript/typescript6";
 import type { Expression } from "../ast";
-import { type Frame, type Path, throwTypeError, translateJoined } from "./actions";
+import {
+  type Frame,
+  type Path,
+  throwTypeError,
+  isGeneratorMade,
+  takeFromHeld,
+  translateJoined,
+  withoutMade,
+} from "./actions";
 import {
   type Context,
   findNodes,
   getAccessorFunctions,
   getSymbol,
   getUndefined,
+  isAnyGenerator,
   isAssigned,
   isInertValue,
   isUnresolved,
   skipCasts,
+  getValueDeclaration,
 } from "./context";
 import { type Formula, ifThenElse, leaf } from "./formula";
 import { getHeap } from "./heap";
 import { translateBuiltInValue } from "./intrinsics";
+import { holdsArrayIteration } from "./collections";
 import { useJavaScript } from "./javascript";
 import { runToPrimitive } from "./conversions";
 import { dispatchFollowed } from "./promises";
-import { bind, callMethod, getWrittenFunctions, isNullish, read, withHeap } from "./protocols";
-import { apply, boolean, identifier, string, tuple } from "./tla";
+import {
+  bind,
+  callMethod,
+  getWrittenFunctions,
+  isNullish,
+  madeIterators,
+  read,
+  withHeap,
+} from "./protocols";
+import { apply, boolean, identifier, junction, string, tuple } from "./tla";
 import { getCaughtElements } from "./scope";
 import { getCollectionType, isLibraryIterable } from "./types";
 
@@ -147,7 +166,7 @@ const isFixedRestWrite = (element: ts.Node, context: Context) => {
     object !== undefined && ts.isIdentifier(object)
       ? getSymbol(object, context.checker)
       : undefined;
-  const declaration = symbol?.valueDeclaration;
+  const declaration = getValueDeclaration(symbol, context);
   return (
     symbol !== undefined &&
     declaration !== undefined &&
@@ -203,9 +222,8 @@ const isPlainPattern = (
   );
   const isHidden = tries.every((tryStatement) =>
     symbols.every((symbol) => {
-      const declaration =
-        symbol.valueDeclaration &&
-        ts.findAncestor(symbol.valueDeclaration, ts.isVariableDeclaration);
+      const value = getValueDeclaration(symbol, context);
+      const declaration = value && ts.findAncestor(value, ts.isVariableDeclaration);
       return (
         declaration !== undefined &&
         ((ts.getCombinedNodeFlags(declaration) & ts.NodeFlags.BlockScoped) !== 0 ||
@@ -266,7 +284,10 @@ export const takeFromIterator = (
           taken.add(held);
           return continueWith(after, held);
         },
-        (rejoin) => takeAll(pattern, iterable, path, context, frame, throwWith, rejoin),
+        (rejoin) =>
+          takeAll(pattern, iterable, path, context, frame, throwWith, (after, values) =>
+            rejoin(withoutMade(path, after), values),
+          ),
       ),
   );
 };
@@ -295,7 +316,12 @@ export const isIterablePattern = (
       ? context.checker.getTypeAtLocation(pattern)
       : context.checker.getTypeOfAssignmentPattern(pattern),
   );
-  return (type.isIntersection() ? type.types : [type]).some(isLibraryIterable);
+  // An array whose Symbol.iterator a script may replace with a generator method iterates through it.
+  return (
+    (type.isIntersection() ? type.types : [type]).some(isLibraryIterable) ||
+    (context.checker.isArrayLikeType(type) &&
+      getWrittenFunctions(pattern, ITERATOR_KEY, context).some(isAnyGenerator))
+  );
 };
 
 // Takes the values that an array pattern binds from a value that its type doesn't tell, as what a
@@ -325,22 +351,109 @@ export const takeFromIterable = (
           taken.add(held);
           return continueWith(after, held);
         },
-        (rejoin) =>
-          ifThenElse(
-            apply("/\\", [
-              useJavaScript("IsRef", [value], context),
-              apply("~", [useJavaScript("IsProxy", [heap, value], context)]),
-              apply("~", [useJavaScript("IsArray", [heap, value], context)]),
-            ]),
-            takeAll(pattern, value, path, context, frame, throwWith, rejoin),
-            rejoin(path, getCaughtElements(value, heap, pattern, context)),
-          ),
+        (rejoin) => {
+          // An array whose Symbol.iterator, which a script may delete from Array.prototype, isn't a
+          // function throws the TypeError of GetIterator.
+          const lacksIterator = (receiver: Expression) =>
+            apply("#", [
+              useJavaScript(
+                "TypeOfIn",
+                [
+                  heap,
+                  useJavaScript(
+                    "Get",
+                    [
+                      heap,
+                      receiver,
+                      useJavaScript("WellKnownSymbol", [string("iterator")], context),
+                    ],
+                    context,
+                  ),
+                ],
+                context,
+              ),
+              string("function"),
+            ]);
+          const isObjectValue = apply("/\\", [
+            useJavaScript("IsRef", [value], context),
+            apply("~", [useJavaScript("IsProxy", [heap, value], context)]),
+            apply("~", [useJavaScript("IsArray", [heap, value], context)]),
+          ]);
+          // An array value whose Symbol.iterator a script replaced on Array.prototype with a
+          // generator method iterates through it, whose code reads this as an array value.
+          const isReplacedArray = apply("/\\", [
+            useJavaScript("IsSequenceValue", [value], context),
+            apply("~", [holdsArrayIteration(heap, pattern, context)]),
+          ]);
+          return ifThenElse(
+            getWrittenFunctions(pattern, ITERATOR_KEY, context).some(isAnyGenerator)
+              ? junction("Or", [isObjectValue, isReplacedArray])
+              : isObjectValue,
+            takeAll(pattern, value, path, context, frame, throwWith, (after, values) =>
+              rejoin(withoutMade(path, after), values),
+            ),
+            ifThenElse(
+              junction("Or", [
+                apply("/\\", [
+                  useJavaScript("IsRef", [value], context),
+                  apply("~", [useJavaScript("IsProxy", [heap, value], context)]),
+                  lacksIterator(value),
+                ]),
+                apply("/\\", [
+                  useJavaScript("IsSequenceValue", [value], context),
+                  lacksIterator(translateBuiltInValue("Array.prototype", pattern, context)),
+                ]),
+              ]),
+              throwWith(path),
+              rejoin(path, getCaughtElements(value, heap, pattern, context)),
+            ),
+          );
+        },
       ),
   );
 };
 
 const isObject = (site: ts.Node, path: Path, value: Expression, context: Context) =>
   useJavaScript("IsObjectIn", [getHeap(path.scope, site, context), value], context);
+
+// Reads a method of an iterator. The generator object that a generator method made as GetIterator
+// called it holds none of its own, so it reads what its prototype holds.
+const readMethod = (
+  site: ts.Node,
+  iterator: Expression,
+  key: string,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path, method: Expression) => Formula,
+) => {
+  const heap = getHeap(path.scope, site, context);
+  return madeIterators.has(iterator)
+    ? bind(
+        path,
+        "method",
+        useJavaScript(
+          "Get",
+          [
+            heap,
+            useJavaScript(
+              "GeneratorMethods",
+              [
+                heap,
+                iterator,
+                translateBuiltInValue("%GeneratorFunction%.prototype.prototype", site, context),
+              ],
+              context,
+            ),
+            string(key),
+          ],
+          context,
+        ),
+        context,
+        continueWith,
+      )
+    : read(site, iterator, key, path, context, frame, continueWith);
+};
 
 interface Opener {
   (
@@ -376,15 +489,26 @@ const openWith =
             frame,
             throwWith,
             (made, result) =>
-              bind(made, "iterator", result, context, (bound, iterator) =>
-                ifThenElse(
-                  isObject(site, bound, iterator, context),
-                  read(site, iterator, "next", bound, context, frame, (after, next) =>
-                    continueWith(after, iterator, next),
-                  ),
-                  throwWith(bound),
-                ),
-              ),
+              bind(made, "iterator", result, context, (bound, iterator) => {
+                const isMade = isGeneratorMade(found, made);
+                if (isMade) madeIterators.add(iterator);
+                const readNext = readMethod(
+                  site,
+                  iterator,
+                  "next",
+                  bound,
+                  context,
+                  frame,
+                  (after, next) => continueWith(after, iterator, next),
+                );
+                return isMade
+                  ? readNext
+                  : ifThenElse(
+                      isObject(site, bound, iterator, context),
+                      readNext,
+                      throwWith(bound),
+                    );
+              }),
           ),
         ),
       ),
@@ -478,7 +602,7 @@ export const closeIterator = (
   throwWith: (path: Path) => Formula,
   continueWith: (path: Path) => Formula,
 ) =>
-  read(site, iterator, "return", path, context, frame, (found, method) =>
+  readMethod(site, iterator, "return", path, context, frame, (found, method) =>
     ifThenElse(
       isNullish(method, context),
       continueWith(found),
@@ -509,7 +633,7 @@ const closeQuietly = (
   continueWith: (path: Path) => Formula,
 ) => {
   const quiet = { ...frame, throwTo: (after: Path) => continueWith(after) };
-  return read(site, iterator, "return", path, context, quiet, (found, method) =>
+  return readMethod(site, iterator, "return", path, context, quiet, (found, method) =>
     ifThenElse(
       isNullish(method, context),
       continueWith(found),
@@ -764,7 +888,22 @@ const takeAll = (
     context,
     frame,
     throwWith,
-    (opened, iterator, next) => step(opened, iterator, next, []),
+    // The generator that a generator method made steps as the pattern takes from it.
+    (opened, iterator, next) =>
+      madeIterators.has(iterator)
+        ? takeFromHeld(
+            pattern,
+            iterator,
+            [...opened.generators]
+              .filter((entry) => !path.generators.has(entry[0]))
+              .flatMap((entry) => entry[1].generator ?? []),
+            [],
+            opened,
+            context,
+            frame,
+            continueWith,
+          )
+        : step(opened, iterator, next, []),
   );
 };
 

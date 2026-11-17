@@ -1,5 +1,6 @@
-// Runs test262 through the TypeScript compiler. Tests that Node fails or that aren't valid
-// TypeScript are skipped, not blamed on the compiler.
+// Runs test262 through the TypeScript compiler. A test that TypeScript rejects for its types runs as
+// JavaScript. Tests that Node fails or that TypeScript rejects otherwise are skipped, not blamed on
+// the compiler.
 // Usage: bun scripts/run.ts test262 [--verbose] [test path prefixes]
 
 import { spawnSync } from "node:child_process";
@@ -3924,6 +3925,24 @@ const isNodeSyntaxError = (source: string) => {
   }
 };
 
+// The run of a test that expects a SyntaxError, from what its compile threw, which passes where
+// tla-ts rejects the program with one, and takes a TypeScript error as onTypeError does.
+const getSyntaxRun = (
+  id: string,
+  error: unknown,
+  onTypeError: (reason: string) => TestRun,
+): TestRun => {
+  if (!(error instanceof TlaTypeScriptError)) return getFailedRun(id, String(error));
+  const codes = [...error.message.matchAll(/(?:error|message) TS(\d+):/g)].map((match) =>
+    Number(match[1]),
+  );
+  const reason = getFirstLine(error.message);
+  if (codes.some(isEarlyError) || reason.includes(" SyntaxError: ")) {
+    return { id, outcome: "pass", reason: "" };
+  }
+  return codes.length > 0 ? onTypeError(reason) : { id, outcome: "untranslatable", reason };
+};
+
 // A test that expects a SyntaxError passes when tla-ts rejects the program with one.
 const runSyntaxTest = (id: string, source: string, metadata: Metadata): TestRun => {
   // A module is strict code, which tla-ts reads only of a file that imports or exports.
@@ -3940,17 +3959,13 @@ ${source}`;
   try {
     compile(program, "test262.ts");
   } catch (error) {
-    if (!(error instanceof TlaTypeScriptError)) return getFailedRun(id, String(error));
-    const codes = [...error.message.matchAll(/(?:error|message) TS(\d+):/g)].map((match) =>
-      Number(match[1]),
+    // A test that TypeScript rejects for its types runs as JavaScript, where Node rejects it as a
+    // module too, as tla-ts compiles JavaScript there.
+    return getSyntaxRun(id, error, (reason) =>
+      metadata.isModule || isModuleSyntaxError(source)
+        ? runJavaScriptSyntaxTest(id, source)
+        : { id, outcome: "skipped", reason: `type error: ${reason}` },
     );
-    const reason = getFirstLine(error.message);
-    if (codes.some(isEarlyError) || reason.includes(" SyntaxError: ")) {
-      return { id, outcome: "pass", reason: "" };
-    }
-    return codes.length > 0
-      ? { id, outcome: "skipped", reason: `type error: ${reason}` }
-      : { id, outcome: "untranslatable", reason };
   }
   return metadata.isModule || isModuleSyntaxError(source)
     ? { id, outcome: "wrong", reason: "Compiled a program with a SyntaxError" }
@@ -4183,6 +4198,134 @@ const getScriptError = (source: string, path: string, isSloppy: boolean) => {
   return run.stderr.split("\n").find((line) => /^\w*Error\b/.test(line)) ?? `exit ${run.status}`;
 };
 
+// Compiles a program and checks it, where a TypeScript error gives the run that onTypeError makes.
+const checkProgram = async (
+  id: string,
+  program: string,
+  path: string,
+  onTypeError: (reason: string) => TestRun | Promise<TestRun>,
+): Promise<TestRun> => {
+  try {
+    const result = await check({ ...compile(program, path), onPrint: () => {} });
+    if (result.status === "success" || result.status === "deadlock") {
+      return { id, outcome: "pass", reason: "" };
+    }
+    return getFailedRun(id, result.failure?.message ?? result.status);
+  } catch (error) {
+    // tla-ts compiles each statement inside the one before it, so thousands of statements, as in
+    // the tests of Unicode identifiers, run out of stack.
+    if (error instanceof RangeError && error.message.includes("Maximum call stack size exceeded")) {
+      return { id, outcome: "untranslatable", reason: "Too many statements to compile" };
+    }
+    if (!(error instanceof TlaTypeScriptError)) return getFailedRun(id, String(error));
+    const reason = getFirstLine(error.message);
+    return /: (?:error|message) TS\d+: /.test(reason)
+      ? onTypeError(reason)
+      : { id, outcome: "untranslatable", reason };
+  }
+};
+
+// A test that TypeScript rejects runs as JavaScript: an ES module, which tla-ts loads as it loads
+// a package's JavaScript, whose types TypeScript infers and doesn't check, and which imports the
+// harness's names from a TypeScript module. Node runs the same two modules.
+const JAVASCRIPT_DIRECTORY = join(MODULE_DIRECTORY, "javascript");
+mkdirSync(JAVASCRIPT_DIRECTORY);
+const JAVASCRIPT_PATH = join(JAVASCRIPT_DIRECTORY, "test262.js");
+
+const getBindingNames = (name: ts.BindingName): string[] =>
+  ts.isIdentifier(name)
+    ? [name.text]
+    : name.elements.flatMap((element) =>
+        ts.isOmittedExpression(element) ? [] : getBindingNames(element.name),
+      );
+
+// The names that a module's top level binds: its declarations', and each var's outside functions.
+const getModuleNames = (sourceFile: ts.SourceFile) => {
+  const names = sourceFile.statements.flatMap((statement) =>
+    (ts.isFunctionDeclaration(statement) ||
+      ts.isClassDeclaration(statement) ||
+      ts.isModuleDeclaration(statement) ||
+      ts.isEnumDeclaration(statement)) &&
+    statement.name !== undefined &&
+    ts.isIdentifier(statement.name) &&
+    !(ts.getModifiers(statement) ?? []).some(
+      (modifier) => modifier.kind === ts.SyntaxKind.DeclareKeyword,
+    )
+      ? [statement.name.text]
+      : ts.isVariableStatement(statement)
+        ? statement.declarationList.declarations.flatMap((declaration) =>
+            getBindingNames(declaration.name),
+          )
+        : [],
+  );
+  const visit = (node: ts.Node): void => {
+    if (ts.isFunctionLike(node) || ts.isClassLike(node)) return;
+    if (ts.isVariableDeclarationList(node) && (node.flags & ts.NodeFlags.BlockScoped) === 0) {
+      names.push(...node.declarations.flatMap((declaration) => getBindingNames(declaration.name)));
+    }
+    ts.forEachChild(node, visit);
+  };
+  sourceFile.statements.forEach(visit);
+  return new Set(names);
+};
+
+// The two modules of a test that runs as JavaScript: the harness, which exports its names, and the
+// test, which imports those that it doesn't bind itself from the harness's path.
+const getJavaScriptModules = (harness: string, source: string, harnessPath: string) => {
+  const harnessNames = getModuleNames(
+    ts.createSourceFile("harness.ts", harness, ts.ScriptTarget.Latest, true),
+  );
+  const testNames = getModuleNames(
+    ts.createSourceFile(JAVASCRIPT_PATH, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS),
+  );
+  const imported = [...harnessNames].filter((name) => !testNames.has(name));
+  return {
+    harness: `${harness}\nexport { ${[...harnessNames].join(", ")} };\n`,
+    test: `import { ${imported.join(", ")} } from "${harnessPath}"; ${source}`,
+  };
+};
+
+// Runs a test as JavaScript in Node and with tla-ts.
+const runJavaScriptTest = async (
+  id: string,
+  source: string,
+  metadata: Metadata,
+): Promise<TestRun> => {
+  const harness = getHarness(metadata, source);
+  const modules = getJavaScriptModules(harness, source, "./harness.ts");
+  const nodeModules = getJavaScriptModules(harness, source, "./harness.js");
+  writeFileSync(join(JAVASCRIPT_DIRECTORY, "harness.ts"), modules.harness);
+  writeFileSync(join(JAVASCRIPT_DIRECTORY, "harness.js"), transpileModule(nodeModules.harness));
+  const nodePath = join(JAVASCRIPT_DIRECTORY, "node.js");
+  writeFileSync(nodePath, nodeModules.test);
+  const run = spawnSync(process.execPath, [nodePath], { encoding: "utf8" });
+  if (run.status !== 0) {
+    const nodeError =
+      run.stderr.split("\n").find((line) => /^\w*Error\b/.test(line)) ?? `exit ${run.status}`;
+    return { id, outcome: "skipped", reason: `Node fails as JavaScript: ${nodeError}` };
+  }
+  return checkProgram(id, modules.test, JAVASCRIPT_PATH, (reason) => ({
+    id,
+    outcome: "skipped",
+    reason: `type error as JavaScript: ${reason}`,
+  }));
+};
+
+// Runs a test that expects a SyntaxError as JavaScript, which passes where tla-ts rejects it with
+// one.
+const runJavaScriptSyntaxTest = (id: string, source: string): TestRun => {
+  try {
+    compile(source, JAVASCRIPT_PATH);
+  } catch (error) {
+    return getSyntaxRun(id, error, (reason) => ({
+      id,
+      outcome: "skipped",
+      reason: `type error as JavaScript: ${reason}`,
+    }));
+  }
+  return { id, outcome: "wrong", reason: "Compiled a program with a SyntaxError" };
+};
+
 const runTest = async (path: string): Promise<TestRun> => {
   const id = relative(TEST262_DIRECTORY, path);
   const read = readFileSync(path, "utf8");
@@ -4234,35 +4377,18 @@ const runTest = async (path: string): Promise<TestRun> => {
   if (nodeError !== undefined) {
     return { id, outcome: "skipped", reason: `Node fails: ${getFirstLine(nodeError)}` };
   }
-  try {
-    // A noStrict test runs outside strict mode, as a script, and any other runs in strict mode, as
-    // Node runs it as a module.
-    const program = isSloppy ? annotated : `"use strict"; ${annotated}`;
-    // A linked test's own file is on disk, as its fixtures are, so that TypeScript resolves an
-    // import of the test's .js path to the test's code rather than to the .js that Node runs.
-    if (isLinked) writeFileSync(programPath, program);
-    const result = await check({
-      ...compile(program, isLinked ? programPath : "test262.ts"),
-      onPrint: () => {},
-    });
-    if (result.status === "success" || result.status === "deadlock") {
-      return { id, outcome: "pass", reason: "" };
-    }
-    return getFailedRun(id, result.failure?.message ?? result.status);
-  } catch (error) {
-    // tla-ts compiles each statement inside the one before it, so thousands of statements, as in
-    // the tests of Unicode identifiers, run out of stack.
-    if (error instanceof RangeError && error.message.includes("Maximum call stack size exceeded")) {
-      return { id, outcome: "untranslatable", reason: "Too many statements to compile" };
-    }
-    if (!(error instanceof TlaTypeScriptError)) {
-      return getFailedRun(id, String(error));
-    }
-    const reason = getFirstLine(error.message);
-    return /: (?:error|message) TS\d+: /.test(reason)
+  // A noStrict test runs outside strict mode, as a script, and any other runs in strict mode, as
+  // Node runs it as a module.
+  const program = isSloppy ? annotated : `"use strict"; ${annotated}`;
+  // A linked test's own file is on disk, as its fixtures are, so that TypeScript resolves an
+  // import of the test's .js path to the test's code rather than to the .js that Node runs.
+  if (isLinked) writeFileSync(programPath, program);
+  // A test outside strict mode, or that imports fixtures, can't run as an ES module of its own.
+  return checkProgram(id, program, isLinked ? programPath : "test262.ts", (reason) =>
+    isSloppy || isLinked
       ? { id, outcome: "skipped", reason: `type error: ${reason}` }
-      : { id, outcome: "untranslatable", reason };
-  }
+      : runJavaScriptTest(id, metadata.isModule ? source : nameGlobalObject(source), metadata),
+  );
 };
 
 const getReasonKind = (reason: string) =>

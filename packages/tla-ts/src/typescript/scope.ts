@@ -10,6 +10,7 @@ import {
   getUndefined,
   share,
   skipCasts,
+  getValueDeclaration,
 } from "./context";
 import { getWritten } from "./actions";
 import { TlaTypeScriptError } from "../errors";
@@ -90,6 +91,9 @@ export interface Scope {
   brandChecked?: ts.Statement;
   // The statement that runs where the global object holds the built-ins it reads.
   globalsChecked?: ts.Statement;
+  // The statement that runs where the script hasn't changed the built-ins that the regexp calls
+  // that it runs as expressions read.
+  regExpsChecked?: ts.Statement;
   // The statement that runs where the global that a write outside strict mode makes, which it
   // reads first, exists.
   globalChecked?: ts.Statement;
@@ -212,7 +216,10 @@ export const declareParameter = (
     parameter.initializer !== undefined ||
     parameter.dotDotDotToken !== undefined
   ) {
-    throw new TlaTypeScriptError(`Use a plain parameter here: ${parameter.getText()}`, parameter);
+    throw new TlaTypeScriptError(
+      `tla-ts can't bind a default, a rest, or a pattern here: ${parameter.getText()}. Use a plain parameter, or call the function from a script instead`,
+      parameter,
+    );
   }
   return {
     node: parameter,
@@ -255,7 +262,7 @@ export const isBeforeDeclaration = (name: ts.Identifier, symbol: ts.Symbol, scop
 // throws a ReferenceError that the try catches.
 export const isCaughtBeforeDeclaration = (node: ts.Identifier, scope: Scope, context: Context) => {
   const symbol = getSymbol(node, context.checker);
-  const declaration = symbol?.valueDeclaration;
+  const declaration = getValueDeclaration(symbol, context);
   if (
     !scope.isCatching ||
     symbol === undefined ||
@@ -314,7 +321,7 @@ const isAssigningCall = (initializer: ts.Expression, context: Context) => {
       const target = written === undefined ? undefined : skipCasts(written);
       const declaration =
         target !== undefined && ts.isIdentifier(target)
-          ? getSymbol(target, context.checker)?.valueDeclaration
+          ? getValueDeclaration(getSymbol(target, context.checker), context)
           : undefined;
       return (
         declaration !== undefined && (declaration.pos < callee.pos || declaration.end > callee.end)
@@ -837,10 +844,14 @@ export const bindValues = (
           ? values.at(position)
           : (restValue ?? tuple(values.slice(position)));
       const initializer = deferred.has(parameter) ? undefined : parameter.initializer;
+      // A name that the call leaves out, with no default, holds undefined itself, which tells that
+      // it holds no function.
       const getDefault = () =>
-        initializer === undefined
-          ? getUndefined(context)
-          : translateExpression(initializer, current.scope, context);
+        initializer !== undefined
+          ? translateExpression(initializer, current.scope, context)
+          : ts.isIdentifier(parameter.name)
+            ? getTakenValue(getUndefined(context))
+            : getUndefined(context);
       // A rest parameter's array is a new one, which the heap holds where it holds every array.
       const heapSymbol = context.heap;
       const heap = heapSymbol === undefined ? undefined : current.scope.bindings.get(heapSymbol);

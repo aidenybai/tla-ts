@@ -3,6 +3,7 @@ import {
   addChanged,
   getComponent,
   getComponentParameters,
+  getOwnEffects,
   hasChanged,
   isComponentErrorMade,
   isMarked,
@@ -45,6 +46,7 @@ import {
   holdsArrayIteration,
   ARRAY_ITERATOR_REPLACED,
   getHeapRegExpCall,
+  getStatementRegExpBuiltIns,
   translateRegExpText,
   getStringCall,
   translateRegExpReplacer,
@@ -64,9 +66,11 @@ import {
   translateSortArguments,
   flattenReturned,
   translateLongRead,
+  getValueKinds,
 } from "./collections";
 import {
   findNodes,
+  findNodesOf,
   getFunctionCandidates,
   getFunctionValue,
   getObjectGetter,
@@ -91,6 +95,7 @@ import {
   isClosure,
   getBuiltInBase,
   isNestedFunction,
+  isOnlyCalled,
   type Closure,
   getFactoryCall,
   isAsyncFunction,
@@ -128,7 +133,7 @@ import {
   getOwnSymbol,
   getAppliedList,
   getSharedDeclaration,
-  getSharedWrite,
+  getSharedWrites,
   getStaticTruth,
   getSymbol,
   isAssigned,
@@ -142,6 +147,7 @@ import {
   isHeapEnum,
   isHeapFunction,
   isMethodCall,
+  isNodeGlobal,
   isSuperAccess,
   type MethodCall,
   isStatementNew,
@@ -163,12 +169,15 @@ import {
   rejectDeclaredCall,
   getAssignedTarget,
   getClassStop,
+  getValueDeclaration,
+  getRunMembers,
 } from "./context";
 import { TlaTypeScriptError } from "../errors";
 import { UNSETTLED_AWAIT_WARNING } from "../exit-codes";
 import {
   getConversion,
   getConversionFunctions,
+  getKeyedConversionFunctions,
   isAnyOperand,
   isCompoundAssignment,
   isObjectOperand,
@@ -234,6 +243,7 @@ import {
   ARITHMETIC_OPERATORS,
   BIGINT_OPERATORS,
   BITWISE_OPERATORS,
+  getGlobalBinding,
 } from "./expressions";
 import { and, bindValue, DISABLED, type Formula, ifThenElse, letIn, leaf, render } from "./formula";
 import {
@@ -287,6 +297,7 @@ import {
   isRevoke,
   getPrimitiveObjectCall,
   isObjectChange,
+  getObjectChangeKey,
   isReflectChange,
   isReflectSet,
   isUnreachableChange,
@@ -309,10 +320,13 @@ import {
   getFormatCall,
   translateFunctionValue,
   getAnyProperty,
+  getBoundBuiltIn,
 } from "./heap";
 import {
   COLLECTIONS,
   getBuiltIn,
+  getBuiltInPath,
+  isBuiltInRead,
   getMissingMethod,
   isBuiltInObject,
   translateMissingMethod,
@@ -419,7 +433,7 @@ import {
   readFlags,
   runRegExpProtocolCall,
 } from "./regexp-protocol";
-import { getThrownMessage, isSharedCall, translateSharedCall } from "./shared-calls";
+import { getThrownMessage, isEnteredCall, isSharedCall, translateSharedCall } from "./shared-calls";
 import {
   set,
   lambda,
@@ -448,7 +462,12 @@ import {
   tuple,
   unchanged,
 } from "./tla";
-import { getTemporalCall, type TemporalCall, translateTemporalCall } from "./temporal";
+import {
+  getTemporalCall,
+  isConvertingTemporalCall,
+  type TemporalCall,
+  translateTemporalCall,
+} from "./temporal";
 import {
   getCollection,
   isBooleanLike,
@@ -495,6 +514,8 @@ export interface Path {
   // State variables and mutable locals, which assignments may change.
   mutable: Set<ts.Symbol>;
   isAssigned: boolean;
+  // A step of an exported function, which a path that changes nothing leaves disabled.
+  isAction?: boolean;
   isLast: boolean;
   isLooping: boolean;
   // The generator objects that the statements made, by name, with where each one's body suspended.
@@ -875,6 +896,8 @@ const isCollectionMethodRun = (write: ts.PropertyAccessExpression, context: Cont
 
 const getHeapWrite = (node: ts.Expression, path: Path, context: Context): HeapWrite | undefined => {
   if (!ts.isPropertyAccessExpression(node) && !ts.isElementAccessExpression(node)) return undefined;
+  const globalBinding = getGlobalBinding(node, context);
+  if (globalBinding !== undefined && path.scope.bindings.has(globalBinding)) return undefined;
   if (ts.isPropertyAccessExpression(node) && ts.isPrivateIdentifier(node.name)) return undefined;
   const receiver = node.expression;
   // tla-ts translates a collection's methods itself, so it can't call the ones a script puts there.
@@ -937,7 +960,7 @@ const getNameError = (node: ts.Expression, context: Context) => {
 // declaration's binding throws a TypeError, and so does a function expression's own name in strict
 // code, which outside it ignores the write.
 const getImmutable = (name: ts.Identifier, context: Context) => {
-  const declaration = getSymbol(name, context.checker)?.valueDeclaration;
+  const declaration = getValueDeclaration(getSymbol(name, context.checker), context);
   if (declaration === undefined) return undefined;
   if (
     (ts.isVariableDeclaration(declaration) || ts.isBindingElement(declaration)) &&
@@ -970,6 +993,50 @@ const getTarget = (node: ts.Expression, path: Path, context: Context): Target =>
     return getTarget(node.expression, path, context);
   }
   if (isChainedChange(node, context)) return getTarget(node.expression.expression, path, context);
+  // TypeScript makes a namespace's exported variable a property of the namespace's object, which
+  // tla-ts makes no object for.
+  const namespace = ts.isPropertyAccessExpression(node)
+    ? getValueDeclaration(getSymbol(skipCasts(node.expression), context.checker), context)
+    : undefined;
+  if (namespace !== undefined && ts.isModuleDeclaration(namespace)) {
+    throw new TlaTypeScriptError(
+      `tla-ts can't write ${node.getText()}, which a namespace exports, outside the namespace`,
+      node,
+    );
+  }
+  // A write of the global object's property that a var or a global holds writes the binding, and
+  // makes the global where it's absent, as the property's write would.
+  const globalBinding = getGlobalBinding(node, context);
+  const globalCurrent = globalBinding && path.scope.bindings.get(globalBinding);
+  if (globalBinding !== undefined && globalCurrent !== undefined) {
+    const current = globalCurrent;
+    if (!path.mutable.has(globalBinding)) {
+      throw new TlaTypeScriptError(`tla-ts can't follow this write to ${node.getText()}`, node);
+    }
+    const isGlobal = context.implicitGlobals.has(globalBinding);
+    const read = isGlobal
+      ? ifExpression(isUnresolvable(current, context), getUndefined(context), current)
+      : current;
+    const heap = context.heap === undefined ? undefined : path.scope.bindings.get(context.heap);
+    return {
+      symbol: globalBinding,
+      current: read,
+      update: (getValue) =>
+        isGlobal && heap !== undefined
+          ? ifExpression(
+              apply("/\\", [
+                isUnresolvable(current, context),
+                apply("~", [useJavaScript("IsKept", [heap, string("Object.prototype")], context)]),
+              ]),
+              apply("Assert", [
+                boolean(false),
+                string("tla-ts can't make a global once Object.prototype changed"),
+              ]),
+              getValue(read),
+            )
+          : getValue(read),
+    };
+  }
   if (ts.isIdentifier(node)) {
     rejectBeforeDeclaration(node, path.scope, context);
     const mapped = getMappedTarget(node, path, context);
@@ -1027,10 +1094,11 @@ const getTarget = (node: ts.Expression, path: Path, context: Context): Target =>
     if (!isReceiver && getImmutable(node, context) !== undefined) {
       throw new TlaTypeScriptError(`tla-ts can't follow this write to ${node.text}`, node);
     }
+    const declaration = getValueDeclaration(symbol, context);
     const isChangedInPlace =
-      symbol?.valueDeclaration !== undefined &&
-      ts.isParameter(symbol.valueDeclaration) &&
-      symbol.valueDeclaration.dotDotDotToken === undefined &&
+      declaration !== undefined &&
+      ts.isParameter(declaration) &&
+      declaration.dotDotDotToken === undefined &&
       isReceiver;
     if (
       symbol === undefined ||
@@ -1097,7 +1165,7 @@ const getTarget = (node: ts.Expression, path: Path, context: Context): Target =>
       current,
       update: (getValue) =>
         useJavaScript(
-          "SetProperty",
+          isStrictCode(node) ? "SetProperty" : "LooseSetProperty",
           [write.heap, write.ref, write.key, getValue(current)],
           context,
         ),
@@ -1790,7 +1858,7 @@ const assignPatternWith = (
 // Reflect.set, which runs a setter that the script writes with the receiver as this, and gives
 // true, or sets the key as OrdinarySet does and gives whether it did.
 const translateReflectSet = (
-  expression: MethodCall,
+  expression: ts.CallExpression,
   path: Path,
   context: Context,
   frame: Frame,
@@ -2414,12 +2482,18 @@ export const translateCallStatement = (
     if (!ts.isIdentifier(expression.expression)) {
       throw new TlaTypeScriptError("Optional calls aren't supported", expression);
     }
+    const callee = translateExpression(expression.expression, path.scope, context);
+    // A parameter that the call leaves out holds undefined, which runs none of the functions that
+    // its type allows.
+    if (callee.kind === "Identifier" && ["Undefined", "Null"].includes(callee.name)) {
+      return continueWith(path, getUndefined(context));
+    }
     const name = context.names.getFresh("callee");
     context.prelude.add("Null");
     return bindOnce(
       path,
       name,
-      translateExpression(expression.expression, path.scope, context),
+      callee,
       translateJoined(expression, path, context, continueWith, (next) =>
         ifThenElse(
           apply("\\in", [identifier(name), set([getUndefined(context), identifier("Null")])]),
@@ -2555,6 +2629,8 @@ const translateCallStatementBody = (
   context: Context,
   frame: Frame,
   continueWith: (path: Path, value?: Expression) => Formula,
+  // Whether the call already checked that a const it runs through holds the built-in it denotes.
+  isHeld = false,
 ): Formula => {
   const loop = getLoopCall(expression, path, context);
   // A receiver or a later argument that only statements can run runs first, where what evaluates
@@ -3872,7 +3948,11 @@ const translateCallStatementBody = (
           ifThenElse(
             apply("=", [field(change, "error"), string("RangeError")]),
             throwError("RangeError", current, expression, context, frame),
-            throwTypeError(current, expression, context, frame),
+            ifThenElse(
+              apply("=", [field(change, "error"), string("SyntaxError")]),
+              throwError("SyntaxError", current, expression, context, frame),
+              throwTypeError(current, expression, context, frame),
+            ),
           ),
         ),
       );
@@ -4090,6 +4170,61 @@ const translateCallStatementBody = (
         throwTypeError(path, expression, context, frame),
       );
     };
+    // includes, indexOf, and lastIndexOf read the typed array's length before they convert their
+    // fromIndex, and give false or -1 without converting it where the length is 0.
+    const convertedSearchValues = getConvertedSearchValues(expression, context);
+    const runConvertedSearch = (converted: readonly ts.Expression[]) => {
+      const lengthName = context.names.getFresh("length");
+      const length = identifier(lengthName);
+      return translateJoined(
+        expression,
+        path,
+        context,
+        (after, value) => continueWith(after, value ?? getUndefined(context)),
+        (next) =>
+          bindOnce(
+            path,
+            lengthName,
+            useJavaScript("TypedArrayLength", [heap, ref], context),
+            ifThenElse(
+              apply("=", [length, number(-1)]),
+              throwTypeError(path, expression, context, frame),
+              ifThenElse(
+                apply("=", [length, number(0)]),
+                next(path, method === "includes" ? boolean(false) : number(-1)),
+                runConversion(
+                  expression,
+                  {
+                    operands: converted,
+                    hints: ["number"],
+                    combine: (primitives) => primitives[0],
+                  },
+                  path,
+                  context,
+                  frame,
+                  (after, fromIndex) =>
+                    runChange(
+                      after,
+                      useJavaScript(
+                        "TypedArraySearch",
+                        [
+                          getHeap(after.scope, expression, context),
+                          ref,
+                          string(method),
+                          typedValues[0],
+                          fromIndex,
+                          length,
+                        ],
+                        context,
+                      ),
+                      next,
+                    ),
+                ),
+              ),
+            ),
+          ),
+      );
+    };
     // set of an array-like source writes each element in order, so the first that a getter which
     // only throws answers throws once set wrote those before it, where nothing before runs code.
     const setGetter = useJavaScript(
@@ -4104,22 +4239,24 @@ const translateCallStatementBody = (
           ? runConvertedAtomics(convertedAtomicsValues)
           : convertedSubarrayValues !== undefined
             ? runConvertedSubarray(convertedSubarrayValues)
-            : viewCall.owner === "TypedArray" &&
-                method === "set" &&
-                getThrowingGetters(expression, context).length > 0
-              ? throwFirstGetter(
-                  expression,
-                  apply("#", [setGetter, getUndefined(context)]),
-                  setGetter,
-                  typedValues[0] ?? getUndefined(context),
-                  withHeap(
-                    useJavaScript("TypedArraySetBefore", [heap, ref, typedArguments], context),
-                  ),
-                  context,
-                  frame,
-                  runOperation(),
-                )
-              : runOperation();
+            : convertedSearchValues !== undefined
+              ? runConvertedSearch(convertedSearchValues)
+              : viewCall.owner === "TypedArray" &&
+                  method === "set" &&
+                  getThrowingGetters(expression, context).length > 0
+                ? throwFirstGetter(
+                    expression,
+                    apply("#", [setGetter, getUndefined(context)]),
+                    setGetter,
+                    typedValues[0] ?? getUndefined(context),
+                    withHeap(
+                      useJavaScript("TypedArraySetBefore", [heap, ref, typedArguments], context),
+                    ),
+                    context,
+                    frame,
+                    runOperation(),
+                  )
+                : runOperation();
     return bindOnce(
       path,
       receiver,
@@ -4506,7 +4643,36 @@ const translateCallStatementBody = (
   if (isOwnValuesRead(expression, context)) {
     return readOwnValues(expression, path, context, frame, continueWith);
   }
-  if (isObjectChange(expression, context) && isReflectSet(expression) && heapSymbol !== undefined) {
+  // A const that holds the built-in runs it where it still holds it, as it read it as it started.
+  const builtInPath = getBuiltInPath(expression.expression, context);
+  if (
+    isObjectChange(expression, context) &&
+    heapSymbol !== undefined &&
+    builtInPath !== undefined &&
+    !isHeld &&
+    !isBuiltInRead(expression.expression, context)
+  ) {
+    const held = translateExpression(expression.expression, path.scope, context);
+    return ifThenElse(
+      useJavaScript(
+        "SameValue",
+        [held, useJavaScript(":>", [identifier("Ref"), string(builtInPath)], context)],
+        context,
+      ),
+      translateCallStatementBody(expression, path, context, frame, continueWith, true),
+      leaf(
+        apply("Assert", [
+          boolean(false),
+          string(`tla-ts can't call ${builtInPath} where a script replaced it`),
+        ]),
+      ),
+    );
+  }
+  if (
+    isObjectChange(expression, context) &&
+    isReflectSet(expression, context) &&
+    heapSymbol !== undefined
+  ) {
     return translateReflectSet(expression, path, context, frame, continueWith);
   }
   if (isObjectChange(expression, context) && heapSymbol !== undefined) {
@@ -4516,9 +4682,9 @@ const translateCallStatementBody = (
     // whether they made the change.
     const target = expression.arguments.at(0);
     const value =
-      expression.expression.name.text === "construct" || target === undefined
+      getObjectChangeKey(expression, context) === "construct" || target === undefined
         ? undefined
-        : isReflectChange(expression)
+        : isReflectChange(expression, context)
           ? field(identifier(name), "value")
           : translateObjectValue(target, path.scope, context);
     if (isDescriptorRead(expression, context) && "values" in translated) {
@@ -4576,7 +4742,7 @@ const translateCallStatementBody = (
         bind(
           path,
           "descriptor",
-          expression.expression.name.text === "defineProperties"
+          getObjectChangeKey(expression, context) === "defineProperties"
             ? useJavaScript(
                 "PropertiesLengthDescriptor",
                 [getHeap(path.scope, expression, context), values[0], values[1]],
@@ -4611,7 +4777,9 @@ const translateCallStatementBody = (
                       next(
                         again,
                         useJavaScript(
-                          isReflectChange(expression) ? "ReflectDefineLength" : "DefineLength",
+                          isReflectChange(expression, context)
+                            ? "ReflectDefineLength"
+                            : "DefineLength",
                           [
                             getHeap(again.scope, expression, context),
                             values[0],
@@ -4885,12 +5053,19 @@ const translateCallStatementBody = (
         through.thisArgument === undefined
           ? getUndefined(context)
           : translateExpression(through.thisArgument, path.scope, context);
+      // An apply of an array that isn't a literal passes its elements, which no node names.
+      const isListed =
+        through.isApply && through.argumentNodes.at(0) === expression.arguments.at(1);
       return through.candidates.reduceRight(
         (otherwise, candidate) => {
           const candidateValue = getCandidateValue(candidate, context);
+          const isEntered =
+            candidateValue !== undefined &&
+            !isListed &&
+            isEnteredCall(expression, candidate, through.argumentNodes, path, context);
           if (
             candidateValue === undefined ||
-            frame.inlining.has(candidate) ||
+            (frame.inlining.has(candidate) && !isEntered) ||
             isAnyGenerator(candidate) ||
             isAsyncFunction(candidate)
           ) {
@@ -4899,20 +5074,8 @@ const translateCallStatementBody = (
           const receiver = ts.isArrowFunction(candidate)
             ? undefined
             : { value: thisValue, method: candidate };
-          const run = isClosure(candidate, context)
-            ? enterClosure(candidate, value, path, context, frame, (inner, innerFrame, leave) =>
-                inlineBody(
-                  expression,
-                  candidate,
-                  through.argumentNodes,
-                  receiver,
-                  inner,
-                  context,
-                  innerFrame,
-                  (after, result) => continueCall(leave(after), result),
-                ),
-              )
-            : inlineBody(
+          const run = isEntered
+            ? translateSharedCall(
                 expression,
                 candidate,
                 through.argumentNodes,
@@ -4921,7 +5084,32 @@ const translateCallStatementBody = (
                 context,
                 frame,
                 continueCall,
-              );
+                () => leaf(boolean(false)),
+                { value, receiver: thisValue },
+              )
+            : isClosure(candidate, context)
+              ? enterClosure(candidate, value, path, context, frame, (inner, innerFrame, leave) =>
+                  inlineBody(
+                    expression,
+                    candidate,
+                    through.argumentNodes,
+                    receiver,
+                    inner,
+                    context,
+                    innerFrame,
+                    (after, result) => continueCall(leave(after), result),
+                  ),
+                )
+              : inlineBody(
+                  expression,
+                  candidate,
+                  through.argumentNodes,
+                  receiver,
+                  path,
+                  context,
+                  frame,
+                  continueCall,
+                );
           return ifThenElse(
             apply("=", [
               isClosure(candidate, context) ||
@@ -5163,7 +5351,12 @@ const translateCallStatementBody = (
       return dispatched.reduceRight(
         (otherwise, candidate) => {
           const candidateValue = getCandidateValue(candidate, context);
-          if (candidateValue === undefined || frame.inlining.has(candidate)) return otherwise;
+          const isEntered =
+            candidateValue !== undefined &&
+            isEnteredCall(expression, candidate, expression.arguments, path, context);
+          if (candidateValue === undefined || (frame.inlining.has(candidate) && !isEntered)) {
+            return otherwise;
+          }
           const candidateReceiver = ts.isArrowFunction(candidate)
             ? undefined
             : { value: receiver, method: candidate };
@@ -5180,42 +5373,21 @@ const translateCallStatementBody = (
                 : value,
               candidateValue,
             ]),
-            !isAnyGenerator(candidate) && !isAsyncFunction(candidate)
-              ? isClosure(candidate, context)
-                ? enterClosure(candidate, value, path, context, frame, (inner, innerFrame, leave) =>
-                    inlineBody(
-                      expression,
-                      candidate,
-                      expression.arguments,
-                      candidateReceiver,
-                      inner,
-                      context,
-                      innerFrame,
-                      (after, result) => continueCall(leave(after), result),
-                    ),
-                  )
-                : inlineBody(
-                    expression,
-                    candidate,
-                    expression.arguments,
-                    candidateReceiver,
-                    path,
-                    context,
-                    frame,
-                    continueCall,
-                  )
-              : isAnyGenerator(candidate)
-                ? makeGenerator(
-                    expression,
-                    candidate,
-                    expression.arguments,
-                    candidateReceiver,
-                    path,
-                    context,
-                    frame,
-                    continueCall,
-                  )
-                : isClosure(candidate, context)
+            isEntered
+              ? translateSharedCall(
+                  expression,
+                  candidate,
+                  expression.arguments,
+                  candidateReceiver,
+                  path,
+                  context,
+                  frame,
+                  continueCall,
+                  () => leaf(boolean(false)),
+                  { value, receiver },
+                )
+              : !isAnyGenerator(candidate) && !isAsyncFunction(candidate)
+                ? isClosure(candidate, context)
                   ? enterClosure(
                       candidate,
                       value,
@@ -5223,9 +5395,10 @@ const translateCallStatementBody = (
                       context,
                       frame,
                       (inner, innerFrame, leave) =>
-                        translateAsyncCall(
+                        inlineBody(
                           expression,
                           candidate,
+                          expression.arguments,
                           candidateReceiver,
                           inner,
                           context,
@@ -5233,15 +5406,54 @@ const translateCallStatementBody = (
                           (after, result) => continueCall(leave(after), result),
                         ),
                     )
-                  : translateAsyncCall(
+                  : inlineBody(
                       expression,
                       candidate,
+                      expression.arguments,
                       candidateReceiver,
                       path,
                       context,
                       frame,
                       continueCall,
-                    ),
+                    )
+                : isAnyGenerator(candidate)
+                  ? makeGenerator(
+                      expression,
+                      candidate,
+                      expression.arguments,
+                      candidateReceiver,
+                      path,
+                      context,
+                      frame,
+                      continueCall,
+                    )
+                  : isClosure(candidate, context)
+                    ? enterClosure(
+                        candidate,
+                        value,
+                        path,
+                        context,
+                        frame,
+                        (inner, innerFrame, leave) =>
+                          translateAsyncCall(
+                            expression,
+                            candidate,
+                            candidateReceiver,
+                            inner,
+                            context,
+                            innerFrame,
+                            (after, result) => continueCall(leave(after), result),
+                          ),
+                      )
+                    : translateAsyncCall(
+                        expression,
+                        candidate,
+                        candidateReceiver,
+                        path,
+                        context,
+                        frame,
+                        continueCall,
+                      ),
             otherwise,
           );
         },
@@ -5493,16 +5705,40 @@ const translateCallStatementBody = (
   if (callee?.body === undefined) {
     throw new TlaTypeScriptError(`Unsupported statement: ${expression.getText()}`, expression);
   }
-  const call = inlineBody(
-    expression,
-    callee,
-    expression.arguments,
-    getReceiver(path.scope, context, called, { node: expression, callee }),
-    path,
-    context,
-    frame,
-    continueWith,
-  );
+  const run = (inner: Path, innerFrame: Frame, next: typeof continueWith) =>
+    inlineBody(
+      expression,
+      callee,
+      expression.arguments,
+      getReceiver(inner.scope, context, called, { node: expression, callee }),
+      inner,
+      context,
+      innerFrame,
+      next,
+    );
+  // A closure that a name's declaration makes runs in the environment that the name's value holds.
+  const name = skipCasts(expression.expression);
+  const declaration = ts.isIdentifier(name)
+    ? getValueDeclaration(getSymbol(name, context.checker), context)
+    : undefined;
+  const call =
+    isClosure(callee, context) &&
+    path.scope.entered !== callee &&
+    ts.isIdentifier(name) &&
+    declaration !== undefined &&
+    ts.isVariableDeclaration(declaration) &&
+    declaration.initializer !== undefined &&
+    skipCasts(declaration.initializer) === callee
+      ? enterClosure(
+          callee,
+          translateExpression(name, path.scope, context),
+          path,
+          context,
+          frame,
+          (inner, innerFrame, leave) =>
+            run(inner, innerFrame, (after, result) => continueWith(leave(after), result)),
+        )
+      : run(path, frame, continueWith);
   return called === undefined
     ? call
     : ifThenElse(
@@ -5536,7 +5772,7 @@ const getCalledThrough = (node: ts.CallExpression, context: Context) => {
 // A name of a rest parameter, which holds an array that the call made, as its type may not tell.
 const isRestParameter = (node: ts.Expression, context: Context) => {
   const declaration = ts.isIdentifier(node)
-    ? getSymbol(node, context.checker)?.valueDeclaration
+    ? getValueDeclaration(getSymbol(node, context.checker), context)
     : undefined;
   return (
     declaration !== undefined &&
@@ -5591,7 +5827,7 @@ const isFunctionThroughCall = (node: ts.CallExpression, context: Context): node 
 // several: a parameter, or what a for-of takes.
 const isDispatchedName = (node: ts.Expression, context: Context) => {
   const declaration = ts.isIdentifier(node)
-    ? getSymbol(node, context.checker)?.valueDeclaration
+    ? getValueDeclaration(getSymbol(node, context.checker), context)
     : undefined;
   return (
     declaration !== undefined &&
@@ -5870,9 +6106,28 @@ export const getPassedCallbacks = (
           ? undefined
           : (getCallback(argument, path, context) ?? getAsyncCallee(argument, path, context));
     const symbol = getSymbol(parameter.name, context.checker);
+    // A function object that a parameter's body reads as a value, which no model value stands for,
+    // is the value that the argument gives.
+    const isValueRead =
+      callback !== undefined &&
+      getFunctionValue(callback, context) === undefined &&
+      (isHeapFunction(callback, context) ||
+        isClosure(callback, context) ||
+        isNestedFunction(callback, context)) &&
+      findNodes(
+        parameter.parent,
+        (inner): inner is ts.Identifier =>
+          ts.isIdentifier(inner) &&
+          inner !== parameter.name &&
+          getSymbol(inner, context.checker) === symbol &&
+          !(ts.isCallExpression(inner.parent) && inner.parent.expression === inner),
+      ).length > 0;
     // A parameter of a function that runs once holds its function in the state, where the
     // functions that it makes read it after it returns.
-    return callback?.body !== undefined && symbol !== undefined && !context.onceLocals.has(symbol)
+    return callback?.body !== undefined &&
+      symbol !== undefined &&
+      !context.onceLocals.has(symbol) &&
+      !isValueRead
       ? [[symbol, callback]]
       : [];
   });
@@ -5997,13 +6252,13 @@ export const bindCall = (
       : undefined;
   if (iterated !== undefined) return iterated;
   // A parameter's array pattern that a script types as iterable takes its values from the argument,
-  // which the call passes as a name, through the argument's iterator before the body runs. Every
-  // argument is inert, so taking the values first runs nothing out of order.
+  // which the call passes as a name or an array literal, through the argument's iterator before the
+  // body runs. Every argument is inert, so taking the values first runs nothing out of order.
   const iterable = parameters.flatMap((parameter, position) => {
     const argument = argumentNodes.at(position);
     return ts.isArrayBindingPattern(parameter.name) &&
       argument !== undefined &&
-      ts.isIdentifier(argument) &&
+      (ts.isIdentifier(argument) || ts.isArrayLiteralExpression(argument)) &&
       !path.scope.results.has(argument) &&
       argumentNodes.every(isInertValue) &&
       !isAsyncFunction(callee)
@@ -6096,7 +6351,7 @@ export const bindCall = (
   const firstDefault = first?.initializer === undefined ? undefined : skipCasts(first.initializer);
   const named =
     firstDefault !== undefined && ts.isIdentifier(firstDefault)
-      ? getSymbol(firstDefault, context.checker)?.valueDeclaration
+      ? getValueDeclaration(getSymbol(firstDefault, context.checker), context)
       : undefined;
   const defaultObject =
     argumentNodes.length === 0 &&
@@ -6185,7 +6440,7 @@ export const bindCall = (
   const valueParameters = parameters.filter((_, position) => isValue(position));
   const parameterScope = ts.isCallExpression(node)
     ? bindFactory(
-        getSymbol(node.expression, context.checker)?.valueDeclaration,
+        getValueDeclaration(getSymbol(node.expression, context.checker), context),
         made.scope,
         context,
       )
@@ -7014,6 +7269,65 @@ const isAction = (callee: FunctionNode, context: Context) =>
     ts.ModifierFlags.Export) !==
     0;
 
+// The locals that a closure reads from its environment: those that it copies there, those that
+// closures share, which stay in environments of their own that its environment holds, and the
+// function whose arguments object it reads.
+const getEnvironment = (closure: Closure, context: Context) => {
+  const read = getCaptures(closure, context);
+  const shared = read.flatMap((symbol) => {
+    const declaration = getSharedDeclaration(symbol, context);
+    return declaration === undefined ? [] : [{ symbol, declaration }];
+  });
+  const isShared = (symbol: ts.Symbol) => shared.some((entry) => entry.symbol === symbol);
+  return {
+    captures: read.filter((symbol) => !isShared(symbol)),
+    shared,
+    isShared,
+    argumentsBody: getCapturedArguments(closure, context)?.body,
+  };
+};
+
+// A scope that binds the locals that a closure reads to those that the environment of the closure
+// that a value holds has in a heap, for a run of its body.
+export const enterScope = (
+  closure: Closure,
+  value: Expression,
+  heap: Expression,
+  scope: Scope,
+  context: Context,
+): Scope => {
+  const environment = getEnvironment(closure, context);
+  const argumentsBody = environment.argumentsBody;
+  return {
+    ...scope,
+    allocated:
+      argumentsBody === undefined
+        ? scope.allocated
+        : new Map([
+            ...scope.allocated,
+            [argumentsBody, useJavaScript("Captured", [heap, value, string("arguments")], context)],
+          ]),
+    entered: closure,
+    bindings: new Map([
+      ...scope.bindings,
+      ...environment.captures.map((symbol): [ts.Symbol, Expression] => [
+        symbol,
+        useJavaScript("Captured", [heap, value, string(symbol.name)], context),
+      ]),
+    ]),
+    activations: new Map([
+      ...(scope.activations ?? []),
+      ...environment.shared.map((entry): [ts.Node, Expression] => [
+        entry.declaration,
+        useJavaScript("Captured", [heap, value, string(entry.symbol.name)], context),
+      ]),
+    ]),
+    uninitialized: new Set(
+      [...scope.uninitialized].filter((symbol) => !environment.isShared(symbol)),
+    ),
+  };
+};
+
 // Binds the locals that a closure reads to those its environment holds, for a call of the closure
 // that a value holds. Once the call returns or throws, the environment holds the locals that the
 // closure changed, and the caller's bindings are as they were.
@@ -7025,17 +7339,12 @@ export const enterClosure = (
   frame: Frame,
   run: (inner: Path, innerFrame: Frame, leave: (after: Path) => Path) => Formula,
 ) => {
-  // The locals that closures share stay in their own environments, which the closure's holds, and
-  // which its body reads and writes.
-  const read = getCaptures(closure, context);
-  const shared = read.flatMap((symbol) => {
-    const declaration = getSharedDeclaration(symbol, context);
-    return declaration === undefined ? [] : [{ symbol, declaration }];
-  });
-  const isShared = (symbol: ts.Symbol) => shared.some((entry) => entry.symbol === symbol);
-  const isSharedKey = (key: ts.Node) => shared.some((entry) => entry.declaration === key);
-  const captures = read.filter((symbol) => !isShared(symbol));
-  const argumentsBody = getCapturedArguments(closure, context)?.body;
+  const environment = getEnvironment(closure, context);
+  const isShared = environment.isShared;
+  const isSharedKey = (key: ts.Node) =>
+    environment.shared.some((entry) => entry.declaration === key);
+  const captures = environment.captures;
+  const argumentsBody = environment.argumentsBody;
   const written = captures.filter((symbol) => isAssigned(symbol, closure, context));
   const heapSymbol = context.heap;
   const leave = (after: Path): Path => ({
@@ -7088,41 +7397,12 @@ export const enterClosure = (
       ]),
     },
   });
-  const heap = getHeap(path.scope, closure, context);
   const throwTo = frame.throwTo;
   return run(
     {
       ...path,
       mutable: new Set([...path.mutable, ...written]),
-      scope: {
-        ...path.scope,
-        allocated:
-          argumentsBody === undefined
-            ? path.scope.allocated
-            : new Map([
-                ...path.scope.allocated,
-                [
-                  argumentsBody,
-                  useJavaScript("Captured", [heap, value, string("arguments")], context),
-                ],
-              ]),
-        entered: closure,
-        bindings: new Map([
-          ...path.scope.bindings,
-          ...captures.map((symbol): [ts.Symbol, Expression] => [
-            symbol,
-            useJavaScript("Captured", [heap, value, string(symbol.name)], context),
-          ]),
-        ]),
-        activations: new Map([
-          ...(path.scope.activations ?? []),
-          ...shared.map((entry): [ts.Node, Expression] => [
-            entry.declaration,
-            useJavaScript("Captured", [heap, value, string(entry.symbol.name)], context),
-          ]),
-        ]),
-        uninitialized: new Set([...path.scope.uninitialized].filter((symbol) => !isShared(symbol))),
-      },
+      scope: enterScope(closure, value, getHeap(path.scope, closure, context), path.scope, context),
     },
     {
       ...frame,
@@ -7220,7 +7500,7 @@ export const inlineBody = (
     argumentNodes === node.arguments &&
     isLiftable(callee, context)
     ? continueWith(path, translateLiftedCall(callee, node, path.scope, context))
-    : isSharedCall(node, callee, argumentNodes, receiver, context)
+    : isSharedCall(node, callee, argumentNodes, context)
       ? translateSharedCall(
           node,
           callee,
@@ -7354,7 +7634,7 @@ export const makeGenerator = (
     const shared = new Set(
       findNodes(callee, ts.isIdentifier).flatMap((identifier) => {
         const symbol = getSymbol(identifier, context.checker);
-        const declaration = symbol?.valueDeclaration;
+        const declaration = getValueDeclaration(symbol, context);
         return symbol !== undefined &&
           declaration !== undefined &&
           isOuter(symbol) &&
@@ -8499,10 +8779,9 @@ const translateGeneratorStep = (
   frame: Frame,
   continueWith: (path: Path, value?: Expression) => Formula,
 ): Formula => {
-  const heapSymbol = context.heap;
   const method = step.name.text;
   const argument = node.arguments.at(0);
-  return resumeGenerator(
+  return stepGenerator(
     node,
     translateExpression(step.expression, path.scope, context),
     method,
@@ -8513,6 +8792,31 @@ const translateGeneratorStep = (
           : translateExpression(argument, path.scope, context),
       node: argument,
     },
+    path,
+    context,
+    frame,
+    continueWith,
+  );
+};
+
+// Resumes the generator that a receiver holds for its next, return, or throw, and gives the object
+// with what it yields or returns.
+export const stepGenerator = (
+  node: ts.Node,
+  receiver: Expression,
+  method: string,
+  argument: { value: Expression; node?: ts.Expression } | undefined,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path, value?: Expression) => Formula,
+): Formula => {
+  const heapSymbol = context.heap;
+  return resumeGenerator(
+    node,
+    receiver,
+    method,
+    argument,
     path,
     context,
     frame,
@@ -8805,7 +9109,7 @@ const translateGeneratorCall = (
 // of the generator functions made. The pattern binds the values once the generator has run, so the
 // generator must not read what the pattern binds, and the pattern's defaults, like the evaluated
 // expressions, must not read what the generator changes.
-const takeFromHeld = (
+export const takeFromHeld = (
   pattern: ts.ArrayBindingPattern | ts.ArrayLiteralExpression,
   receiver: Expression,
   generators: FunctionNode[],
@@ -9495,23 +9799,34 @@ const isOrderFree = (body: ts.Node | undefined, element: ts.Node | undefined, co
 
 // Whether a script deletes a key from a set or a map, which leaves a gap in its entries that an
 // iterator that has passed it skips, where a list of its keys closes the gap.
-const isKeyDeleted = (node: ts.Node, visited: ts.Expression | undefined, context: Context) => {
-  // A set's delete can't change a map, nor a map's a set.
+// Whether a node, or a function that it may run, may delete a key of the kind of collection that a
+// loop visits. A set's delete can't change a map, nor a map's a set.
+const isKeyDeleted = (
+  node: ts.Node,
+  visited: ts.Expression | undefined,
+  functions: ReadonlyMap<ts.Symbol, FunctionNode>,
+  context: Context,
+) => {
   const kind = visited === undefined ? undefined : getCollection(visited, context);
   const isVisitedKind = (deleted: string | undefined) =>
     deleted !== undefined &&
     ["Set", "Map"].includes(deleted) &&
     (kind === undefined || !["Set", "Map"].includes(kind) || deleted === kind);
-  return (
-    findNodes(
-      node.getSourceFile(),
-      (inner): inner is ts.PropertyAccessExpression =>
-        ts.isPropertyAccessExpression(inner) &&
-        ["delete", "clear"].includes(inner.name.text) &&
-        (isVisitedKind(getCollection(inner.expression, context)) ||
-          /^(Set|Map)\.prototype$/.test(inner.expression.getText())),
-    ).length > 0
-  );
+  const isDelete = (inner: ts.Node) =>
+    ts.isPropertyAccessExpression(inner) &&
+    ["delete", "clear"].includes(inner.name.text) &&
+    (isVisitedKind(getCollection(inner.expression, context)) ||
+      /^(Set|Map)\.prototype$/.test(inner.expression.getText()));
+  const reached = new Set<ts.Node>();
+  const visit = (inner: ts.Node): boolean =>
+    isDelete(inner) ||
+    getNodeEffects(inner, functions, context).called.some((called) => {
+      if (reached.has(called)) return false;
+      reached.add(called);
+      return visit(called);
+    }) ||
+    (ts.forEachChild(inner, (child) => visit(child) || undefined) ?? false);
+  return visit(node);
 };
 
 // A set's forEach whose callback ends the same in any order.
@@ -9710,7 +10025,7 @@ const isObjectLength = (receiver: ts.Node, context: Context) => {
 
 // Whether Object.defineProperty, Reflect.defineProperty, or Object.defineProperties may define an
 // array's length with an object as its value.
-const mayDefineObjectLength = (node: MethodCall, context: Context) => {
+const mayDefineObjectLength = (node: ts.CallExpression, context: Context) => {
   const checker = context.checker;
   const isOpen = (type: ts.Type) => (type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;
   const getMember = (type: ts.Type | undefined, key: string) => {
@@ -9732,14 +10047,14 @@ const mayDefineObjectLength = (node: MethodCall, context: Context) => {
     );
   const key = node.arguments.at(1);
   const descriptor = node.arguments.at(2);
-  if (node.expression.name.text === "defineProperties") {
+  if (getObjectChangeKey(node, context) === "defineProperties") {
     return (
       key !== undefined &&
       mayBeObject(getMember(getMember(checker.getTypeAtLocation(key), "length"), "value"))
     );
   }
   return (
-    node.expression.name.text === "defineProperty" &&
+    getObjectChangeKey(node, context) === "defineProperty" &&
     key !== undefined &&
     ts.isStringLiteralLike(key) &&
     key.text === "length" &&
@@ -9967,7 +10282,7 @@ const translateShortLoopCall = (
   if (
     loop.isOrdered &&
     changed.some((symbol) => symbol === context.heap) &&
-    isKeyDeleted(expression, receiver, context)
+    isKeyDeleted(expression, receiver, path.scope.functions, context)
   ) {
     throw new TlaTypeScriptError(
       "Unsupported call: tla-ts can't call forEach on a set or a map while its callback changes objects and the script deletes keys",
@@ -10534,8 +10849,25 @@ const translateShortLoopCall = (
     };
     // A typed array's filter makes its typed array through the receiver's constructor once it
     // visited the elements, reading it through a getter that the script may write.
+    // filter writes the values that it kept to its typed array, which throws the TypeError of one
+    // that it can't convert, as undefined where a callback shrank the buffer.
     const finish = (): Formula =>
-      loop.isTyped && method === "filter" ? readSpecies(after, finishFrom) : finishFrom(after);
+      loop.isTyped && method === "filter"
+        ? readSpecies(after, (read) =>
+            ifThenElse(
+              apply("=", [
+                useJavaScript(
+                  "TypedArrayElementsError",
+                  [getHeap(read.scope, expression, context), owner, value],
+                  context,
+                ),
+                string(""),
+              ]),
+              finishFrom(read),
+              throwTypeError(read, expression, context, frame),
+            ),
+          )
+        : finishFrom(after);
     const completed = isUnseeded
       ? ifThenElse(
           index(identifier(result), [number(changed.length + 2)]),
@@ -11055,7 +11387,7 @@ const getSuperConstructor = (
   const base = getBaseClass(node, context);
   return base === undefined
     ? undefined
-    : (base.members.find(ts.isConstructorDeclaration) ?? getSuperConstructor(base, context));
+    : (getRunMembers(base).find(ts.isConstructorDeclaration) ?? getSuperConstructor(base, context));
 };
 
 // A derived constructor's super(...), which runs the base's constructor on the instance that the
@@ -12151,7 +12483,7 @@ const getMisreceivedCall = (node: ts.CallExpression, context: Context) => {
   // A const may hold the method, as const union = Set.prototype.union does.
   const held =
     ts.isPropertyAccessExpression(callee) && ts.isIdentifier(callee.expression)
-      ? getSymbol(callee.expression, context.checker)?.valueDeclaration
+      ? getValueDeclaration(getSymbol(callee.expression, context.checker), context)
       : undefined;
   const method =
     held !== undefined &&
@@ -13105,7 +13437,7 @@ export const getImmutableWrite = (
   const name = target === undefined ? undefined : skipCasts(target);
   if (name === undefined || !ts.isIdentifier(name)) return undefined;
   const immutable = getImmutable(name, context);
-  const declaration = getSymbol(name, context.checker)?.valueDeclaration;
+  const declaration = getValueDeclaration(getSymbol(name, context.checker), context);
   return immutable === undefined ||
     declaration === undefined ||
     !(ts.isBinaryExpression(expression) || isIncrement(expression))
@@ -13457,30 +13789,27 @@ const translateWriteStatement = (
   return translateJoined(expression, path, context, continueWith, (next) =>
     setters.reduceRight((rest, setter) => {
       const value = getCandidateValue(setter, context);
+      const found = useJavaScript("SetterOf", [write.heap, write.ref, write.key], context);
+      const run = (inner: Path, innerFrame: Frame, after: (path: Path) => Formula) =>
+        inlineBody(
+          expression,
+          setter,
+          [right],
+          { value: write.ref, method: setter },
+          inner,
+          context,
+          innerFrame,
+          after,
+        );
       return value === undefined
         ? rest
         : ifThenElse(
-            apply("=", [
-              useJavaScript(
-                "CodeOf",
-                [
-                  write.heap,
-                  useJavaScript("SetterOf", [write.heap, write.ref, write.key], context),
-                ],
-                context,
-              ),
-              value,
-            ]),
-            inlineBody(
-              expression,
-              setter,
-              [right],
-              { value: write.ref, method: setter },
-              path,
-              context,
-              frame,
-              next,
-            ),
+            apply("=", [useJavaScript("CodeOf", [write.heap, found], context), value]),
+            isClosure(setter, context)
+              ? enterClosure(setter, found, path, context, frame, (inner, innerFrame, leave) =>
+                  run(inner, innerFrame, (after) => next(leave(after))),
+                )
+              : run(path, frame, next),
             rest,
           );
     }, translateWrite(next)),
@@ -13585,7 +13914,10 @@ const usesHeap = (node: ts.Node, context: Context, visited: Set<ts.Node>): boole
     }
     // A call through a variable that holds one of several functions branches between them, which
     // only statements can do.
-    const declaration = getSymbol(getCast(node.expression), context.checker)?.valueDeclaration;
+    const declaration = getValueDeclaration(
+      getSymbol(getCast(node.expression), context.checker),
+      context,
+    );
     if (
       callee === undefined &&
       declaration !== undefined &&
@@ -13672,7 +14004,9 @@ const isAnyMember = (node: ts.Expression, context: Context) => {
 // those that no other function encloses, whose type TypeScript lets the callee hold. The call
 // branches on its callee's value between them.
 // The functions that a call through a value may run, which may be none that the script writes.
-const getCandidates = (
+// Whether a call may run any of the functions and closures whose type its callee's type allows,
+// where tla-ts can't tell which it runs.
+const isDispatchedCall = (
   node: ts.CallExpression,
   functions: ReadonlyMap<ts.Symbol, FunctionNode>,
   context: Context,
@@ -13694,19 +14028,72 @@ const getCandidates = (
     declarations.some((declaration) => declaration.getSourceFile().isDeclarationFile) ||
     (assigned === undefined ? getCallee(callee, context) !== undefined : isPlain(assigned)) ||
     getCalledMethod(callee, context) !== undefined ||
+    getBoundBuiltIn(callee, context) !== undefined ||
     getFunctionOfKind(callee, context, isAnyGenerator) !== undefined ||
     getFunctionOfKind(callee, context, isAsyncFunction) !== undefined ||
     // A call of a key that may hold a built-in method matches its functions as an expression, or
     // runs the method that changes its receiver as a statement.
     isUntypedStoredCall(node, context)
   ) {
-    return undefined;
+    return false;
   }
-  return (
-    getMadeFunctions(callee, context) ?? [
-      ...getFunctionCandidates(callee, context),
-      ...getClosures(callee, context),
-    ]
+  return true;
+};
+
+const getAllCandidates = (
+  node: ts.CallExpression,
+  functions: ReadonlyMap<ts.Symbol, FunctionNode>,
+  context: Context,
+  called: ts.Expression,
+) => {
+  const callee = skipCasts(called);
+  return isDispatchedCall(node, functions, context, called)
+    ? (getMadeFunctions(callee, context) ?? [
+        ...getFunctionCandidates(callee, context),
+        ...getClosures(callee, context),
+      ])
+    : undefined;
+};
+
+// The functions that a call through a value may run, but for those that the program only calls by
+// name, which no value holds.
+const getCandidates = (
+  node: ts.CallExpression,
+  functions: ReadonlyMap<ts.Symbol, FunctionNode>,
+  context: Context,
+  called: ts.Expression,
+) =>
+  getAllCandidates(node, functions, context, called)?.filter(
+    (candidate) => !isOnlyCalled(candidate, context),
+  );
+
+// The callees of the calls in the model's code whose functions findEffects looks for among the
+// candidates, as a call or through call or apply, which tla-ts finds before it does.
+export const findDispatchedCallees = (reached: readonly ts.Node[], context: Context) => {
+  // Each call once, though a reached declaration may sit inside another.
+  const table = context.nodes;
+  table.generation += 1;
+  const generation = table.generation;
+  const isFirst = (node: ts.Node): node is ts.CallExpression => {
+    const position = getPosition(table, node);
+    if (!ts.isCallExpression(node) || (position >= 0 && table.marks[position] === generation)) {
+      return false;
+    }
+    if (position >= 0) table.marks[position] = generation;
+    return true;
+  };
+  return reached.flatMap((root) =>
+    findNodesOf(root, ts.SyntaxKind.CallExpression, isFirst, context).flatMap((node) =>
+      [
+        node.expression,
+        ...(isFunctionThroughCall(node, context) ? [getCast(node.expression.expression)] : []),
+      ].flatMap((called) =>
+        isDispatchedCall(node, NO_FUNCTIONS, context, called) &&
+        getMadeFunctions(skipCasts(called), context) === undefined
+          ? [skipCasts(called)]
+          : [],
+      ),
+    ),
   );
 };
 
@@ -13717,8 +14104,12 @@ const getDispatched = (
   // The function that the call runs, which a call through call or apply names before them.
   called: ts.Expression = node.expression,
 ) => {
-  const dispatched = getCandidates(node, functions, context, called);
-  return dispatched !== undefined && dispatched.length > 0 ? dispatched : undefined;
+  // A call dispatches where the callee may hold any function, even one that the program only calls
+  // by name, which it then leaves out.
+  const dispatched = getAllCandidates(node, functions, context, called);
+  return dispatched !== undefined && dispatched.length > 0
+    ? getCandidates(node, functions, context, called)
+    : undefined;
 };
 
 // RegExp.prototype.exec and test, where a script stores them as values, which throw a TypeError
@@ -13920,9 +14311,9 @@ const isStatementResult = (node: ts.CallExpression, path: Path, context: Context
     isOwnValuesRead(node, context) ||
     isRevoke(node, context) ||
     (isObjectChange(node, context) &&
-      node.expression.name.text !== "construct" &&
-      (isReflectChange(node) ||
-        isReflectSet(node) ||
+      getObjectChangeKey(node, context) !== "construct" &&
+      (isReflectChange(node, context) ||
+        isReflectSet(node, context) ||
         isHeapType(context.checker.getTypeAtLocation(node), context) ||
         // An array that the heap holds, which a variable that it holds takes.
         context.heapCollections.has(node.parent) ||
@@ -14094,7 +14485,13 @@ const getConvertedAtomicsValues = (node: ts.Node, context: Context) => {
     return undefined;
   }
   const converted = call.values.slice(1);
-  return converted.some((value) => isObjectOperand(value, context) || isAnyOperand(value, context))
+  // A symbol throws the TypeError of its conversion in turn.
+  return converted.some(
+    (value) =>
+      isObjectOperand(value, context) ||
+      isAnyOperand(value, context) ||
+      (context.checker.getTypeAtLocation(skipCasts(value)).flags & ts.TypeFlags.ESSymbolLike) !== 0,
+  )
     ? converted
     : undefined;
 };
@@ -14108,6 +14505,19 @@ const getConvertedSubarrayValues = (node: ts.Node, context: Context) => {
     call.values.length <= 2 &&
     call.values.some((value) => isObjectOperand(value, context) || isAnyOperand(value, context))
     ? call.values
+    : undefined;
+};
+
+// The fromIndex of includes, indexOf, or lastIndexOf of a typed array where it's an object, which
+// the call converts after it reads the typed array's length.
+const getConvertedSearchValues = (node: ts.Node, context: Context) => {
+  const call = getViewCall(node, context);
+  return call?.owner === "TypedArray" &&
+    ["includes", "indexOf", "lastIndexOf"].includes(call.method) &&
+    call.values.length === 2 &&
+    !call.values.some(ts.isSpreadElement) &&
+    (isObjectOperand(call.values[1], context) || isAnyOperand(call.values[1], context))
+    ? call.values.slice(1)
     : undefined;
 };
 
@@ -14163,7 +14573,12 @@ const translateNewBufferStatement = (
           ifThenElse(
             apply("=", [error, string("RangeError")]),
             throwError("RangeError", current, node, context, frame),
-            throwTypeError(current, node, context, frame),
+            // A typed array of BigInts throws the SyntaxError of a string that holds no integer.
+            ifThenElse(
+              apply("=", [error, string("SyntaxError")]),
+              throwError("SyntaxError", current, node, context, frame),
+              throwTypeError(current, node, context, frame),
+            ),
           ),
         );
       const makeWith = (
@@ -14644,7 +15059,14 @@ export const bindOnce = (path: Path, name: string, value: Expression, rest: Form
       )
     : bindValue(name, value, rest);
 
-// Throws the TypeError that JavaScript throws where a change to an object fails.
+// The keys that the global object inherits from Object.prototype.
+const INHERITED_GLOBAL_KEYS = new Set(
+  BUILT_INS["Object.prototype"][3].map((property) => property[0]),
+);
+
+// Throws the TypeError that JavaScript throws where a change to an object fails. A read or a write
+// of a name that no declaration binds reads the global object, which inherits Object.prototype's
+// keys, so tla-ts stops where one names such a key rather than throw a ReferenceError.
 export const throwError = (
   name: "TypeError" | "RangeError" | "ReferenceError" | "SyntaxError" | "URIError",
   path: Path,
@@ -14652,6 +15074,19 @@ export const throwError = (
   context: Context,
   frame: Pick<Frame, "throwTo">,
 ) => {
+  const target = ts.isBinaryExpression(node) ? skipCasts(node.left) : node;
+  if (
+    name === "ReferenceError" &&
+    isUnresolved(target, context) &&
+    INHERITED_GLOBAL_KEYS.has(target.text)
+  ) {
+    return leaf(
+      apply("Assert", [
+        boolean(false),
+        string(`tla-ts can't follow ${target.text}, which the global object inherits`),
+      ]),
+    );
+  }
   const uncaught = apply("Assert", [boolean(false), string(name)]);
   return frame.throwTo === undefined
     ? leaf(uncaught)
@@ -15350,6 +15785,7 @@ const getEffects = (
       : [];
   const isObjectMade = isMade(node, context);
   const isErrorMade = isObjectMade && isNewError(node, context);
+  const temporalCall = getTemporalCall(node, context);
   // An operation that converts an object runs its valueOf and toString methods, as does a definition
   // of an array's length.
   const conversions =
@@ -15359,9 +15795,12 @@ const getEffects = (
     isObjectDateCall(node, context) ||
     getConvertedViewValues(node, context) !== undefined ||
     getConvertedAtomicsValues(node, context) !== undefined ||
-    getConvertedSubarrayValues(node, context) !== undefined
+    getConvertedSubarrayValues(node, context) !== undefined ||
+    getConvertedSearchValues(node, context) !== undefined
       ? getConversionFunctions(node, context)
-      : undefined;
+      : temporalCall !== undefined && isConvertingTemporalCall(temporalCall, node, context)
+        ? getKeyedConversionFunctions(node, context)
+        : undefined;
   // A definition that reads its descriptor's fields, a read of a key with getters, or an
   // operation on a proxy, which runs its traps, runs them.
   const getters = [
@@ -15498,7 +15937,9 @@ const getEffects = (
           )
         : []),
       ...(isStackCall || isUsing ? getStackFunctions(node, context) : []),
-      ...(isObjectChange(node, context) && isReflectSet(node) ? getSetters(node, context) : []),
+      ...(isObjectChange(node, context) && isReflectSet(node, context)
+        ? getSetters(node, context)
+        : []),
       ...(isIteratorDispose ? getWrittenFunctions(node, "return", context) : []),
       ...(isIteratorDispose ? getMethods(node, "return", context, true) : []),
       ...callees.flatMap((callee) => getFunctionNode(callee) ?? []),
@@ -15518,7 +15959,7 @@ const getEffects = (
     parameters: [...callees, ...callees.slice(0, 1).map((callee) => getCast(callee))].flatMap(
       (callee) => {
         const symbol = getSymbol(callee, context.checker);
-        const declaration = symbol?.valueDeclaration;
+        const declaration = getValueDeclaration(symbol, context);
         return symbol !== undefined && declaration !== undefined && ts.isParameter(declaration)
           ? [symbol]
           : [];
@@ -15588,7 +16029,17 @@ export const summarizeEffects = (context: Context) =>
     context.nodes,
     (node) => getFoundEffects(node, context.effects, context),
     (node) => getEffects(node, NO_FUNCTIONS, context),
-    (node) => getCalledSymbols(node, context),
+    // A call's effects that findEffects didn't find, which a path's bindings make anew, read the
+    // binding of the function that a call through call or apply runs too.
+    (node, isFound) =>
+      !isFound && ts.isCallExpression(node) && isFunctionThroughCall(node, context)
+        ? [
+            ...getCalledSymbols(node, context),
+            ...[node.expression.expression, skipCasts(getCast(node.expression.expression))].flatMap(
+              (inner) => getSymbol(inner, context.checker) ?? [],
+            ),
+          ]
+        : getCalledSymbols(node, context),
   );
 
 // A node's place in its file, which tells it apart from every other node.
@@ -15618,12 +16069,13 @@ const summarize = (
   const table = context.changes;
   const key = [...bindings]
     .map((entry) => {
-      const declaration = entry[0].valueDeclaration;
+      const declaration = getValueDeclaration(entry[0], context);
       return `${declaration === undefined ? entry[0].name : getNodeKey(declaration)}=${getNodeKey(entry[1])}`;
     })
     .sort()
     .join(",");
   const summaries = walked.get(key) ?? new Map<ts.Node, WalkedSummary>();
+  const boundIds = Int32Array.from(bindings.keys(), (symbol) => ts.getSymbolId(symbol)).sort();
   walked.set(key, summaries);
   // The component whose summary a called function takes, or -1.
   const getKept = (called: ts.Node) => {
@@ -15648,7 +16100,11 @@ const summarize = (
       found.push(getNodeEffects(inner, bindings, context));
       ts.forEachChild(inner, visit);
     };
-    visit(node);
+    // A function of the table whose nodes name no bound symbol takes the effects that it found.
+    const tabled =
+      table === undefined ? undefined : getOwnEffects(table, context.nodes, node, boundIds);
+    if (tabled === undefined) visit(node);
+    else found.push(tabled);
     effects.set(node, found);
     found.forEach((effect) =>
       effect.called.forEach((called) => {
@@ -15838,7 +16294,7 @@ export const translateJoined = (
   // A var that the statement declares outlives it, as does any binding it declares that a function
   // in it captures, such as a catch's error.
   const isVarInside = (symbol: ts.Symbol) => {
-    const declaration = symbol.valueDeclaration;
+    const declaration = getValueDeclaration(symbol, context);
     return (
       declaration !== undefined &&
       ts.isVariableDeclaration(declaration) &&
@@ -15887,7 +16343,7 @@ export const translateJoined = (
   // that code after the statement can read. That leaves out the names that the statement declares
   // and that don't outlive it, and those of the functions it called.
   const isReadAfter = (symbol: ts.Symbol) => {
-    const declaration = symbol.valueDeclaration;
+    const declaration = getValueDeclaration(symbol, context);
     if (declaration === undefined) return true;
     if (ts.findAncestor(declaration, (ancestor) => ancestor === node) !== undefined) {
       return isVarInside(symbol);
@@ -15969,8 +16425,20 @@ export const translateJoined = (
       : isSameEntries(pruned, path.generators)
         ? path.generators
         : pruned;
+  // An action is enabled on a path that assigns a state variable or changes the heap, which the
+  // operator can't tell from the heap it takes, so an action's exits join only where each is
+  // enabled, or none is and the operator doesn't take the heap.
+  const heapSymbol = context.heap;
+  const isEnabled = (exit: Path) =>
+    exit.isAssigned ||
+    (heapSymbol !== undefined &&
+      exit.scope.bindings.get(heapSymbol) !== path.scope.bindings.get(heapSymbol));
+  const isAllEnabled = exits.length > 0 && isEnabled(exits[0].path);
   const isJoinable = exits.every(
     (exit) =>
+      (path.isAction !== true ||
+        (isEnabled(exit.path) === isAllEnabled &&
+          (isAllEnabled || heapSymbol === undefined || !passed.includes(heapSymbol)))) &&
       changed.every((symbol) => exit.path.scope.bindings.has(symbol)) &&
       settled !== undefined &&
       (exit.path.generators === settled ||
@@ -16008,6 +16476,7 @@ export const translateJoined = (
   const rest = continueWith(
     {
       ...path,
+      isAssigned: path.isAction === true ? isAllEnabled : path.isAssigned,
       generators: settled ?? exits[0].path.generators,
       unboundThis: exits[0].path.unboundThis,
       scope: {
@@ -16424,6 +16893,68 @@ const writesGeneratorKey = (node: ts.Node): boolean => {
   );
 };
 
+// Runs a for-of's body for each value that the generator that a receiver holds yields, as its
+// next resumes it, and closes it through its return where the loop leaves early.
+const iterateGenerator = (
+  loop: ts.ForOfStatement,
+  start: Path,
+  receiver: Expression,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path) => Formula,
+): Formula => {
+  const resume = (
+    current: Path,
+    method: string,
+    resumeFrame: Frame,
+    step: Caller["step"],
+  ): Formula =>
+    resumeGenerator(
+      loop.expression,
+      receiver,
+      method,
+      undefined,
+      current,
+      context,
+      resumeFrame,
+      step,
+    );
+  // Leaving the body early runs the generator's return, though a throw keeps what it threw.
+  const close = (current: Path, exit: (path: Path) => Formula) =>
+    resume(current, "return", frame, (after) => exit(after));
+  const next = (current: Path): Formula =>
+    resume(current, "next", frame, (after, value, isDone, isResult) => {
+      if (isDone) return continueWith(after);
+      const bodyFrame: Frame = {
+        ...guardYields(frame),
+        next,
+        continueTo: next,
+        breakTo: (left) => close(left, continueWith),
+        exit: (left, returned) => close(left, (closed) => frame.exit(closed, returned)),
+        // A throw closes the generator and keeps what it threw, even where the return throws.
+        throwTo: (left, thrown) => {
+          const rethrow = (closed: Path) =>
+            frame.throwTo === undefined ? leaf(thrown.uncaught) : frame.throwTo(closed, thrown);
+          return resume(left, "return", { ...frame, throwTo: rethrow }, rethrow);
+        },
+      };
+      const runBody = (current: Path, element: Expression) =>
+        bindIteration(
+          loop.initializer,
+          element,
+          undefined,
+          startIteration(loop, current),
+          context,
+          bodyFrame,
+          (bound, innerFrame) => translateStatements([loop.statement], bound, context, innerFrame),
+        );
+      return isResult && value !== undefined
+        ? readValue(loop.expression, value, after, context, frame, runBody)
+        : runBody(after, value ?? getUndefined(context));
+    });
+  return next(start);
+};
+
 // A for-of over a generator, which calls its next for each value, and its return where the loop
 // leaves early, as the generator object's own iterator does.
 const translateForOfGenerator = (
@@ -16445,59 +16976,15 @@ const translateForOfGenerator = (
       iterated,
     );
   }
-  const iterate = (start: Path, receiver: Expression) => {
-    const resume = (
-      current: Path,
-      method: string,
-      resumeFrame: Frame,
-      step: Caller["step"],
-    ): Formula =>
-      resumeGenerator(
-        loop.expression,
-        receiver,
-        method,
-        undefined,
-        current,
-        context,
-        resumeFrame,
-        step,
-      );
-    // Leaving the body early runs the generator's return, though a throw keeps what it threw.
-    const close = (current: Path, exit: (path: Path) => Formula) =>
-      resume(current, "return", frame, (after) => exit(after));
-    const next = (current: Path): Formula =>
-      resume(current, "next", frame, (after, value, isDone, isResult) => {
-        if (isDone) return continueWith(after);
-        const bodyFrame: Frame = {
-          ...guardYields(frame),
-          next,
-          continueTo: next,
-          breakTo: (left) => close(left, continueWith),
-          exit: (left, returned) => close(left, (closed) => frame.exit(closed, returned)),
-          // A throw closes the generator and keeps what it threw, even where the return throws.
-          throwTo: (left, thrown) => {
-            const rethrow = (closed: Path) =>
-              frame.throwTo === undefined ? leaf(thrown.uncaught) : frame.throwTo(closed, thrown);
-            return resume(left, "return", { ...frame, throwTo: rethrow }, rethrow);
-          },
-        };
-        const runBody = (current: Path, element: Expression) =>
-          bindIteration(
-            loop.initializer,
-            element,
-            undefined,
-            startIteration(loop, current),
-            context,
-            bodyFrame,
-            (bound, innerFrame) =>
-              translateStatements([loop.statement], bound, context, innerFrame),
-          );
-        return isResult && value !== undefined
-          ? readValue(loop.expression, value, after, context, frame, runBody)
-          : runBody(after, value ?? getUndefined(context));
-      });
-    return next(isBuiltIn ? withBuiltInIterator(loop.expression, start, receiver, context) : start);
-  };
+  const iterate = (start: Path, receiver: Expression) =>
+    iterateGenerator(
+      loop,
+      isBuiltIn ? withBuiltInIterator(loop.expression, start, receiver, context) : start,
+      receiver,
+      context,
+      frame,
+      continueWith,
+    );
   if (opened !== undefined) {
     return translateIteratorCall(loop.expression, opened, path, context, frame, (after, ref) =>
       iterate(after, ref ?? getUndefined(context)),
@@ -16580,7 +17067,7 @@ const isTakingFromGenerators = (loop: ts.ForOfStatement, context: Context) => {
     const symbol = ts.isIdentifier(node) ? getSymbol(node, context.checker) : undefined;
     return (
       symbol !== undefined &&
-      symbol.valueDeclaration !== undefined &&
+      getValueDeclaration(symbol, context) !== undefined &&
       !isAssigned(symbol, node.getSourceFile(), context)
     );
   };
@@ -16804,7 +17291,7 @@ const translateForAwait = (
   // An array that a variable holds, which the script never changes, holds the elements that its
   // declaration wrote, other than generators, which taking from would make again.
   const declaration = ts.isIdentifier(iterated)
-    ? getSymbol(iterated, context.checker)?.valueDeclaration
+    ? getValueDeclaration(getSymbol(iterated, context.checker), context)
     : undefined;
   const initializer =
     declaration !== undefined && ts.isVariableDeclaration(declaration) && declaration.initializer
@@ -17023,6 +17510,10 @@ const translateYieldingForOf = (
 // The most iterations of a generator's counted loop that tla-ts unrolls.
 const UNROLL_LIMIT = 64;
 
+// The most iterations of a loop that follows promises that tla-ts compiles one after another, as
+// each copies the loop's body.
+const PROMISE_LOOP_LIMIT = 4;
+
 // The values that a generator's for loop gives its counter, where a literal starts it, a comparison
 // with a literal ends it, a step of a literal moves it, and nothing else writes it, with the value
 // that a var keeps once the loop ends. tla-ts unrolls such a loop, whose iterations then suspend at
@@ -17137,6 +17628,156 @@ const isForever = (loop: ts.IterationStatement) =>
     loop.initializer === undefined &&
     loop.condition === undefined &&
     loop.incrementor === undefined);
+
+// Whether a loop's own code, outside the functions it makes, follows promises: it awaits, imports,
+// makes a promise, reacts to one, or calls an async function. A loop's operator can't carry the
+// promises and the jobs that this changes.
+const isFollowingPromises = (loop: ts.IterationStatement, context: Context) => {
+  const visit = (node: ts.Node): boolean =>
+    ts.isAwaitExpression(node) ||
+    (ts.isCallExpression(node) &&
+      (node.expression.kind === ts.SyntaxKind.ImportKeyword ||
+        isPromiseCall(node, context) ||
+        (ts.isPropertyAccessExpression(node.expression) &&
+          ["then", "catch", "finally"].includes(node.expression.name.text)) ||
+        (() => {
+          const callee = getCallee(node.expression, context);
+          return callee !== undefined && isAsyncFunction(callee);
+        })())) ||
+    (ts.isNewExpression(node) && getBuiltIn(node.expression, context) === "Promise") ||
+    (!ts.isFunctionLike(node) && !ts.isClassLike(node) && (ts.forEachChild(node, visit) ?? false));
+  return visit(loop);
+};
+
+// Runs a while, a do-while, or a for loop that follows promises as its iterations, one after
+// another, each testing its condition, so that the promises and the jobs carry from one iteration
+// to the next. Past PROMISE_LOOP_LIMIT iterations it stops.
+const translatePromiseLoop = (
+  loop: ts.WhileStatement | ts.DoStatement | ts.ForStatement,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path) => Formula,
+): Formula => {
+  const condition = ts.isForStatement(loop) ? loop.condition : loop.expression;
+  const incrementor = ts.isForStatement(loop) ? loop.incrementor : undefined;
+  return translateJoined(loop, path, context, continueWith, (leave) => {
+    const runBody = (current: Path, position: number): Formula => {
+      if (position >= PROMISE_LOOP_LIMIT) {
+        return leaf(
+          apply("Assert", [
+            boolean(false),
+            string(
+              `tla-ts can't follow promises through more than ${PROMISE_LOOP_LIMIT} iterations of a loop`,
+            ),
+          ]),
+        );
+      }
+      const next = (after: Path) =>
+        incrementor === undefined
+          ? test(after, position + 1)
+          : allocate(incrementor, after, context, (inner) =>
+              translateExpressionStatement(incrementor, inner, context, frame, (stepped) =>
+                test(stepped, position + 1),
+              ),
+            );
+      return translateStatements([loop.statement], startIteration(loop, current), context, {
+        ...frame,
+        next,
+        continueTo: next,
+        breakTo: (after) => leave(after),
+      });
+    };
+    const test = (current: Path, position: number): Formula =>
+      condition === undefined
+        ? runBody(current, position)
+        : ifThenElse(
+            translateCondition(condition, current.scope, context),
+            runBody(current, position),
+            leave(current),
+          );
+    return ts.isDoStatement(loop) ? runBody(path, 0) : test(path, 0);
+  });
+};
+
+// Runs a for-in over an object that follows promises as its iterations, one after another. It
+// visits the keys that the object and its prototypes enumerate as it starts, skipping one that an
+// iteration deletes before the loop reaches it, as Node does. Past PROMISE_LOOP_LIMIT keys it stops.
+const translatePromiseForIn = (
+  loop: ts.ForInStatement,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path) => Formula,
+): Formula => {
+  const keys = context.names.getFresh("keys");
+  const object = context.names.getFresh("object");
+  // A list that no heap holds has its indices as keys, which nothing deletes.
+  const isList = getKind(loop.expression, context) === "sequence";
+  return allocate(loop.expression, path, context, (inner) =>
+    letIn(
+      [
+        define(object, [], translateObjectValue(loop.expression, inner.scope, context)),
+        define(
+          keys,
+          [],
+          isList
+            ? functionOf(
+                [bound("index", apply("DOMAIN", [identifier(object)]))],
+                apply("ToString", [apply("-", [identifier("index"), number(1)])]),
+              )
+            : useJavaScript(
+                "ForInKeys",
+                [getHeap(inner.scope, loop.expression, context), identifier(object)],
+                context,
+              ),
+        ),
+      ],
+      translateJoined(loop, inner, context, continueWith, (leave) => {
+        const iterate = (current: Path, position: number): Formula => {
+          const key = index(identifier(keys), [number(position + 1)]);
+          const next = (after: Path) => iterate(after, position + 1);
+          const run =
+            position >= PROMISE_LOOP_LIMIT
+              ? leaf(
+                  apply("Assert", [
+                    boolean(false),
+                    string(
+                      `tla-ts can't follow promises through more than ${PROMISE_LOOP_LIMIT} iterations of a loop`,
+                    ),
+                  ]),
+                )
+              : ifThenElse(
+                  isList
+                    ? boolean(true)
+                    : useJavaScript(
+                        "Has",
+                        [getHeap(current.scope, loop.expression, context), identifier(object), key],
+                        context,
+                      ),
+                  bindIteration(
+                    loop.initializer,
+                    key,
+                    undefined,
+                    startIteration(loop, current),
+                    context,
+                    { ...frame, next, continueTo: next, breakTo: (after) => leave(after) },
+                    (bound, innerFrame) =>
+                      translateStatements([loop.statement], bound, context, innerFrame),
+                  ),
+                  next(current),
+                );
+          return ifThenElse(
+            apply("<=", [number(position + 1), apply("Len", [identifier(keys)])]),
+            run,
+            leave(current),
+          );
+        };
+        return iterate(inner, 0);
+      }),
+    ),
+  );
+};
 
 // Runs a generator's loop that yields as its iterations, one after another: a counted loop's with
 // the counter each one reads, or a loop that runs until something leaves it, which tla-ts follows
@@ -17253,12 +17894,12 @@ const getThrowingGetters = (node: ts.Node, context: Context) =>
       getCandidateValue(getter, context) !== undefined,
   );
 
-// Runs the getter whose code a built-in reads first, where it reads one and it only throws, which
-// throws from there; otherwise runs the built-in.
+// Runs the getter that a built-in reads first, where it reads one and it only throws, which throws
+// from there; otherwise runs the built-in. A closure runs in the environment that the getter holds.
 export const throwFirstGetter = (
   node: ts.Node,
   isRead: Expression,
-  code: Expression,
+  getter: Expression,
   receiver: Expression,
   path: Path,
   context: Context,
@@ -17267,28 +17908,35 @@ export const throwFirstGetter = (
   held?: ts.Expression,
 ) =>
   getThrowingGetters(node, context)
-    .filter((getter) => isReachedGetter(getter, held))
-    .reduceRight<Formula>(
-      (rest, getter) =>
-        ifThenElse(
-          apply("/\\", [
-            isRead,
-            apply("=", [code, getCandidateValue(getter, context) ?? getUndefined(context)]),
+    .filter((candidate) => isReachedGetter(candidate, held))
+    .reduceRight<Formula>((rest, candidate) => {
+      const run = (inner: Path, innerFrame: Frame) =>
+        inlineBody(
+          node,
+          candidate,
+          [],
+          { value: receiver, method: candidate },
+          inner,
+          context,
+          innerFrame,
+          () => otherwise,
+        );
+      return ifThenElse(
+        apply("/\\", [
+          isRead,
+          apply("=", [
+            useJavaScript("CodeOf", [getHeap(path.scope, node, context), getter], context),
+            getCandidateValue(candidate, context) ?? getUndefined(context),
           ]),
-          inlineBody(
-            node,
-            getter,
-            [],
-            { value: receiver, method: getter },
-            path,
-            context,
-            frame,
-            () => otherwise,
-          ),
-          rest,
-        ),
-      otherwise,
-    );
+        ]),
+        isClosure(candidate, context)
+          ? enterClosure(candidate, getter, path, context, frame, (inner, innerFrame) =>
+              run(inner, innerFrame),
+            )
+          : run(path, frame),
+        rest,
+      );
+    }, otherwise);
 
 const translateLoop = (
   loop: ts.IterationStatement,
@@ -17305,8 +17953,8 @@ const translateLoop = (
   const literal = ts.isForOfStatement(loop) ? getCast(loop.expression) : undefined;
   if (
     ts.isForOfStatement(loop) &&
-    frame.yieldTo !== undefined &&
-    (isYielding || hasYield(loop.initializer)) &&
+    ((frame.yieldTo !== undefined && (isYielding || hasYield(loop.initializer))) ||
+      (path.tasks !== undefined && isFollowingPromises(loop, context))) &&
     literal !== undefined &&
     ts.isArrayLiteralExpression(literal) &&
     literal.elements.every(
@@ -17315,7 +17963,32 @@ const translateLoop = (
   ) {
     return translateYieldingForOf(loop, literal, path, context, frame, continueWith);
   }
-  const runLoop = (inner: Path) => translateIterations(loop, inner, context, frame, continueWith);
+  // A loop whose code follows promises runs as its iterations where its condition is an
+  // expression's, and a for's initializer declares no let that a function could keep.
+  const condition =
+    ts.isWhileStatement(loop) || ts.isDoStatement(loop)
+      ? loop.expression
+      : ts.isForStatement(loop)
+        ? loop.condition
+        : undefined;
+  const forInitializer = ts.isForStatement(loop) ? loop.initializer : undefined;
+  const isPromiseLoop =
+    (ts.isWhileStatement(loop) || ts.isDoStatement(loop) || ts.isForStatement(loop)) &&
+    path.tasks !== undefined &&
+    (forInitializer === undefined ||
+      !ts.isVariableDeclarationList(forInitializer) ||
+      (forInitializer.flags & ts.NodeFlags.BlockScoped) === 0) &&
+    (condition === undefined ||
+      (getLeadingCall(condition, () => true, path, context) === undefined &&
+        getBranch(condition, path, context) === undefined &&
+        findNodes(condition, (node): node is ts.Node => getWritten(node) !== undefined).length ===
+          0)) &&
+    isFollowingPromises(loop, context);
+  const runLoop = (inner: Path) =>
+    isPromiseLoop &&
+    (ts.isWhileStatement(loop) || ts.isDoStatement(loop) || ts.isForStatement(loop))
+      ? translatePromiseLoop(loop, inner, context, frame, continueWith)
+      : translateIterations(loop, inner, context, frame, continueWith);
   // A for-of of an array whose first element a getter that only throws gives throws before its
   // first iteration, as the iterator's first next reads the element.
   if (
@@ -17344,6 +18017,15 @@ const translateLoop = (
         runLoop(inner),
       );
     });
+  }
+  if (
+    ts.isForInStatement(loop) &&
+    path.tasks !== undefined &&
+    context.heap !== undefined &&
+    ["object", "sequence"].includes(getKind(loop.expression, context)) &&
+    isFollowingPromises(loop, context)
+  ) {
+    return translatePromiseForIn(loop, path, context, frame, continueWith);
   }
   // A for-of or a for-in evaluates what it iterates once, before its first iteration.
   if (ts.isForOfStatement(loop) || ts.isForInStatement(loop)) {
@@ -17456,7 +18138,7 @@ const translateIterations = (
     iterated !== undefined && ts.isIdentifier(iterated.expression)
       ? getSymbol(iterated.expression, context.checker)
       : undefined;
-  const heldDeclaration = heldSymbol?.valueDeclaration;
+  const heldDeclaration = getValueDeclaration(heldSymbol, context);
   const isHeldBuiltIn =
     heldSymbol !== undefined &&
     heldDeclaration !== undefined &&
@@ -17469,7 +18151,12 @@ const translateIterations = (
     ts.isForInStatement(iterated) &&
     (getKind(iterated.expression, context) === "object" ||
       (context.heap !== undefined &&
-        (isBuiltInObject(iterated.expression, context) || isHeldBuiltIn)) ||
+        (isBuiltInObject(iterated.expression, context) ||
+          isHeldBuiltIn ||
+          ((context.checker.getTypeAtLocation(iterated.expression).flags &
+            (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !==
+            0 &&
+            getValueKinds(iterated.expression, context, [])?.join() === "object"))) ||
       ownFunctionKeys !== undefined);
   // A for-in over a list visits its indices, as strings in order.
   const isListKeys =
@@ -17477,6 +18164,20 @@ const translateIterations = (
     ts.isForInStatement(iterated) &&
     !isForIn &&
     getKind(iterated.expression, context) === "sequence";
+  // Node's own globals, such as console, are objects that tla-ts doesn't follow, where a loop
+  // reads them.
+  if (
+    iterated !== undefined &&
+    ts.isIdentifier(iterated.expression) &&
+    isNodeGlobal(iterated.expression, context)
+  ) {
+    return leaf(
+      apply("Assert", [
+        boolean(false),
+        string(`tla-ts can't read Node's global ${iterated.expression.text}`),
+      ]),
+    );
+  }
   if (ts.isForInStatement(loop) && !isForIn && !isListKeys) {
     throw new TlaTypeScriptError("for-in iterates only objects", loop.expression);
   }
@@ -17507,7 +18208,11 @@ const translateIterations = (
   // entries, where an entry that the loop adds comes last, which reading its entries again at each
   // step matches while no key leaves it.
   const isLive = isHeapIteration && changesObjects(loop, path, context);
-  if (isLive && isKeyDeleted(loop, iterated?.expression, context)) {
+  if (
+    isLive &&
+    ordered !== undefined &&
+    isKeyDeleted(loop, iterated?.expression, path.scope.functions, context)
+  ) {
     throw new TlaTypeScriptError(
       "Unsupported loop: tla-ts can't iterate a set or a map while the loop changes objects and the script deletes keys",
       iterated?.expression,
@@ -18015,6 +18720,32 @@ const translateIterations = (
       ),
     );
   };
+  // A for-of of an array throws the TypeError of GetIterator before its first iteration where the
+  // array's Symbol.iterator, which a script may delete from Array.prototype, isn't a function.
+  if (
+    iterated !== undefined &&
+    ts.isForOfStatement(iterated) &&
+    iterated.awaitModifier === undefined &&
+    context.heap !== undefined &&
+    (getKind(iterated.expression, context) === "sequence" ||
+      isHeapArray(iterated.expression, context))
+  ) {
+    const heap = getHeap(path.scope, iterated.expression, context);
+    const receiver =
+      getKind(iterated.expression, context) === "sequence"
+        ? translateBuiltInValue("Array.prototype", iterated.expression, context)
+        : translateExpression(iterated.expression, path.scope, context);
+    const method = useJavaScript(
+      "Get",
+      [heap, receiver, useJavaScript("WellKnownSymbol", [string("iterator")], context)],
+      context,
+    );
+    return ifThenElse(
+      apply("#", [useJavaScript("TypeOfIn", [heap, method], context), string("function")]),
+      throwTypeError(path, iterated.expression, context, frame),
+      translateFrom(path),
+    );
+  }
   if (!isIterator || iterated === undefined) return translateFrom(path);
   const iteratedExpression = iterated.expression;
   return translateJoined(
@@ -18030,10 +18761,42 @@ const translateIterations = (
         context,
         frame,
         throwWith,
-        (opened, iterator, next) => translateFrom(opened, { iterator, next }),
+        // A generator method that the open ran made the iterator, whose body the loop resumes. No
+        // code after the loop can reach the generator object, so the loop's exits join without it.
+        (opened, iterator, next) =>
+          ts.isForOfStatement(iterated) && isGeneratorMade(path, opened)
+            ? translateJoined(
+                iterated,
+                withoutMade(path, opened),
+                context,
+                (after) => continueWith(after),
+                (joinNext) =>
+                  iterateGenerator(iterated, opened, iterator, context, frame, (after) =>
+                    joinNext(withoutMade(path, after)),
+                  ),
+              )
+            : translateFrom(opened, { iterator, next }),
       ),
   );
 };
+
+// Whether a path holds a generator that it didn't hold before, as one that a generator method made.
+export const isGeneratorMade = (before: Path, after: Path) =>
+  [...after.generators.keys()].some((name) => !before.generators.has(name));
+
+// A path without the generators that it made since another and that completed, as the iterator
+// that a generator method made for a loop or a pattern, which nothing else reaches.
+export const withoutMade = (before: Path, after: Path): Path => ({
+  ...after,
+  generators: new Map(
+    [...after.generators].filter(
+      (entry) =>
+        before.generators.has(entry[0]) ||
+        entry[1].resume !== undefined ||
+        entry[1].caller !== undefined,
+    ),
+  ),
+});
 
 // A call to a built-in function that changes nothing, which an expression can make.
 const isLibraryCall = (node: ts.CallExpression, context: Context) =>
@@ -18593,10 +19356,18 @@ const getLeadingAssignment = (
   }
   const isPattern =
     ts.isArrayLiteralExpression(node.left) || ts.isObjectLiteralExpression(node.left);
-  // A value that assigns a property, as in a = b.x = v, runs first, since the setter it may run
-  // can't change which binding a name or a pattern writes.
+  // A value that assigns a property, as in a = b.x = v, runs first, since the setter it may run,
+  // or a call or a new that makes v, can't change which binding a name or a pattern writes.
   if (ts.isIdentifier(node.left) || isPattern) {
-    return getLeadingAssignment(node.right, results, context) ?? node;
+    const value = skipCasts(node.right);
+    return (
+      getLeadingAssignment(node.right, results, context) ??
+      (ts.isBinaryExpression(value) &&
+      value.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      !results.has(value)
+        ? value
+        : node)
+    );
   }
   // A property's assignment evaluates its object and key, then its value.
   const inner = getLeadingAssignment(node.right, results, context);
@@ -18740,7 +19511,7 @@ const getClassOperands = (node: ts.ClassLikeDeclaration): ts.Expression[] => [
       ? clause.types.map((type) => type.expression)
       : [],
   ),
-  ...node.members.flatMap((member) =>
+  ...getRunMembers(node).flatMap((member) =>
     member.name !== undefined && ts.isComputedPropertyName(member.name)
       ? [member.name.expression]
       : [],
@@ -19091,25 +19862,24 @@ const findLeadingCall = (
   }
   if (ts.isArrayLiteralExpression(node)) return inOrder(node.elements);
   if (ts.isOmittedExpression(node)) return none;
+  // A method or an accessor evaluates only its computed key, as it makes a function that nothing
+  // can call before the literal is made.
   if (ts.isObjectLiteralExpression(node)) {
-    return node.properties.every(
-      (property) =>
-        ts.isPropertyAssignment(property) ||
-        ts.isShorthandPropertyAssignment(property) ||
-        ts.isSpreadAssignment(property),
-    )
-      ? inOrder(
-          node.properties.flatMap((property): ts.Node[] =>
-            ts.isPropertyAssignment(property)
-              ? ts.isComputedPropertyName(property.name)
-                ? [property.name.expression, property.initializer]
-                : [property.initializer]
-              : ts.isShorthandPropertyAssignment(property)
-                ? [property.name]
-                : [property],
-          ),
-        )
-      : blocked;
+    return inOrder(
+      node.properties.flatMap((property): ts.Node[] =>
+        ts.isPropertyAssignment(property)
+          ? ts.isComputedPropertyName(property.name)
+            ? [property.name.expression, property.initializer]
+            : [property.initializer]
+          : ts.isShorthandPropertyAssignment(property)
+            ? [property.name]
+            : ts.isSpreadAssignment(property)
+              ? [property]
+              : ts.isComputedPropertyName(property.name)
+                ? [property.name.expression]
+                : [],
+      ),
+    );
   }
   if (ts.isTemplateExpression(node)) {
     return thenConverted(inOrder(node.templateSpans.map((span) => span.expression)));
@@ -19211,6 +19981,16 @@ const findLeadingCall = (
           : [node.left.expression, node.left.argumentExpression, node.right],
       );
       return found.call !== undefined || found.isBlocked ? found : blocked;
+    }
+    // A compound assignment to a name reads the name first, which keeps the value it had then
+    // where its right operand runs a call first.
+    if (isCompoundAssignment(node) && ts.isIdentifier(node.left)) {
+      const read = [...before, node.left];
+      const right = findLeadingCall(node.right, read, path, context);
+      if (right.call !== undefined) {
+        before.push(...read.slice(before.length));
+        return right;
+      }
     }
     if (isAssignment) {
       const right = isCompoundAssignment(node)
@@ -19328,7 +20108,10 @@ const findLeadingCall = (
     const found = thenConverted(inOrder(node.arguments));
     if (found.call !== undefined || found.isBlocked) return found;
     if (isGeneratorType(node, context)) return blocked;
-    return isStatementCall(node, path, context) || isRemoving(node, context)
+    // A call that may throw inside try runs as a statement, whose throw the try catches.
+    return isStatementCall(node, path, context) ||
+      isRemoving(node, context) ||
+      (path.scope.isCatching && mayThrow(node, context))
       ? { call: node, isBlocked: false }
       : evaluate(node);
   }
@@ -19380,7 +20163,7 @@ const getEvaluated = (statement: ts.Statement) =>
         ? statement.expression
         : ts.isReturnStatement(statement) || ts.isThrowStatement(statement)
           ? statement.expression
-          : ts.isForOfStatement(statement)
+          : ts.isForOfStatement(statement) || ts.isForInStatement(statement)
             ? statement.expression
             : undefined;
 
@@ -19393,13 +20176,14 @@ const getHoistedCall = (statement: ts.Statement, path: Path, context: Context) =
   return getLeadingCall(
     evaluated,
     (call) =>
-      // An if, a switch, or a throw statement evaluates its expression, and a for-of what it
-      // iterates, and runs no call of it.
+      // An if, a switch, or a throw statement evaluates its expression, and a for-of or a for-in
+      // what it iterates, and runs no call of it.
       (call !== outer ||
         ts.isIfStatement(statement) ||
         ts.isSwitchStatement(statement) ||
         ts.isThrowStatement(statement) ||
-        ts.isForOfStatement(statement)) &&
+        ts.isForOfStatement(statement) ||
+        ts.isForInStatement(statement)) &&
       !(
         ts.isBinaryExpression(outer) &&
         outer.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
@@ -19822,7 +20606,7 @@ const getHoistedAssignment = (statement: ts.Statement, path: Path, context: Cont
       : undefined;
   // A class evaluates its computed keys in order as the script defines it, before it makes its
   // objects, so a key that assigns runs first where each key before it is a literal or ran.
-  const key = defined?.members
+  const key = (defined === undefined ? [] : getRunMembers(defined))
     .map((member) => member.name)
     .find(
       (name): name is ts.ComputedPropertyName =>
@@ -19939,7 +20723,7 @@ const getHoistedVars = (statements: readonly ts.Statement[], context: Context) =
   };
   const getEarlyRead = (node: ts.Node): ts.Identifier | undefined => {
     const symbol = ts.isIdentifier(node) ? getSymbol(node, context.checker) : undefined;
-    const declaration = symbol?.valueDeclaration;
+    const declaration = getValueDeclaration(symbol, context);
     return ts.isIdentifier(node) &&
       symbol !== undefined &&
       declaration !== undefined &&
@@ -20027,20 +20811,54 @@ const hoistVars = (statements: readonly ts.Statement[], path: Path, context: Con
       };
 };
 
-// A declaration of a local that closures share, which makes the environment that holds it before
-// its initializer runs, as the closures that the initializer makes share it too.
+// A declaration of locals that closures share, which makes the environment that holds them before
+// the first initializer runs, as the closures that the initializers make share it too. Each holds
+// its value there once its own declaration runs.
 const translateSharedDeclaration = (
   statement: ts.VariableStatement,
-  shared: { symbol: ts.Symbol; declaration: ts.VariableDeclaration },
+  shared: readonly { symbol: ts.Symbol; declaration: ts.VariableDeclaration }[],
   path: Path,
   context: Context,
   frame: Frame,
   continueWith: (path: Path) => Formula,
 ): Formula => {
-  const symbol = shared.symbol;
   const name = context.names.getFresh("environment");
   const environment = useJavaScript("Allocated", [identifier(name)], context);
   const made = withHeap(path, identifier(name), context);
+  const declare = (declarations: readonly ts.VariableDeclaration[], current: Path): Formula => {
+    if (declarations.length === 0) return continueWith(current);
+    const declaration = declarations[0];
+    const symbol = shared.find((entry) => entry.declaration === declaration)?.symbol;
+    return translateDeclarations([declaration], current, context, frame, (after) => {
+      if (symbol === undefined) return declare(declarations.slice(1), after);
+      const value = after.scope.bindings.get(symbol);
+      if (value === undefined) throw new TlaTypeScriptError("Unsupported write", statement);
+      const stored: Path = {
+        ...after,
+        mutable: new Set([...after.mutable].filter((other) => other !== symbol)),
+        scope: {
+          ...after.scope,
+          bindings: new Map([...after.scope.bindings].filter((entry) => entry[0] !== symbol)),
+        },
+      };
+      return declare(
+        declarations.slice(1),
+        withHeap(
+          stored,
+          useJavaScript(
+            "SetEnvironment",
+            [
+              getHeap(after.scope, statement, context),
+              environment,
+              functionFrom([[string(symbol.name), value]]),
+            ],
+            context,
+          ),
+          context,
+        ),
+      );
+    });
+  };
   return bindOnce(
     path,
     name,
@@ -20052,48 +20870,16 @@ const translateSharedDeclaration = (
       ],
       context,
     ),
-    translateDeclarations(
-      statement.declarationList.declarations,
-      {
-        ...made,
-        scope: {
-          ...made.scope,
-          activations: new Map([
-            ...(made.scope.activations ?? []),
-            [shared.declaration, environment],
-          ]),
-        },
+    declare(statement.declarationList.declarations, {
+      ...made,
+      scope: {
+        ...made.scope,
+        activations: new Map([
+          ...(made.scope.activations ?? []),
+          ...shared.map((entry): [ts.Node, Expression] => [entry.declaration, environment]),
+        ]),
       },
-      context,
-      frame,
-      (after) => {
-        const value = after.scope.bindings.get(symbol);
-        if (value === undefined) throw new TlaTypeScriptError("Unsupported write", statement);
-        const stored: Path = {
-          ...after,
-          mutable: new Set([...after.mutable].filter((other) => other !== symbol)),
-          scope: {
-            ...after.scope,
-            bindings: new Map([...after.scope.bindings].filter((entry) => entry[0] !== symbol)),
-          },
-        };
-        return continueWith(
-          withHeap(
-            stored,
-            useJavaScript(
-              "SetEnvironment",
-              [
-                getHeap(after.scope, statement, context),
-                environment,
-                functionFrom([[string(symbol.name), value]]),
-              ],
-              context,
-            ),
-            context,
-          ),
-        );
-      },
-    ),
+    }),
   );
 };
 
@@ -20175,6 +20961,14 @@ export const translateStatements = (
       frame,
     );
   }
+  if (path.scope.regExpsChecked !== undefined && path.scope.regExpsChecked !== statements[0]) {
+    return translateStatements(
+      statements,
+      { ...path, scope: { ...path.scope, regExpsChecked: undefined } },
+      context,
+      frame,
+    );
+  }
   if (path.scope.globalChecked !== undefined && path.scope.globalChecked !== statements[0]) {
     return translateStatements(
       statements,
@@ -20244,6 +21038,37 @@ export const translateStatements = (
         apply("Assert", [
           boolean(false),
           string("tla-ts can't read a built-in that the script changed on the global object"),
+        ]),
+      ),
+    );
+  }
+  // A regexp call that runs as an expression gives its value where it's read, which may be after
+  // what follows the statement runs, so the statement checks first that the script hasn't changed
+  // the built-ins that the call reads.
+  const regExpBuiltIns =
+    path.scope.regExpsChecked === statement
+      ? new Set<string>()
+      : getStatementRegExpBuiltIns(statement, context);
+  if (regExpBuiltIns.size > 0) {
+    return ifThenElse(
+      useJavaScript(
+        "RegExpsHold",
+        [
+          getHeap(path.scope, statement, context),
+          set([...regExpBuiltIns].map((name) => string(name))),
+        ],
+        context,
+      ),
+      translateStatements(
+        statements,
+        { ...path, scope: { ...path.scope, regExpsChecked: statement } },
+        context,
+        frame,
+      ),
+      leaf(
+        apply("Assert", [
+          boolean(false),
+          string("tla-ts can't call a regexp's method where a script changed what it reads"),
         ]),
       ),
     );
@@ -20384,8 +21209,8 @@ export const translateStatements = (
   ) {
     return continueWith(path);
   }
-  const shared = getSharedWrite(statement, context);
-  if (shared !== undefined && ts.isVariableStatement(statement)) {
+  const shared = getSharedWrites(statement, context);
+  if (shared.length > 0 && ts.isVariableStatement(statement)) {
     return translateSharedDeclaration(
       statement,
       shared,
@@ -20447,7 +21272,7 @@ export const translateStatements = (
   };
   const isThrowing = (name: ts.Identifier) => {
     const symbol = getSymbol(name, context.checker);
-    const declaration = symbol?.valueDeclaration;
+    const declaration = getValueDeclaration(symbol, context);
     return (
       isGlobalRead(name) ||
       isUnresolved(name, context) ||
@@ -21013,7 +21838,10 @@ export const translateStatements = (
             )
         : statementFrame.exit;
     if (statementFrame.inlining.size === 0) {
-      throw new TlaTypeScriptError("Actions can't return a value", statement);
+      throw new TlaTypeScriptError(
+        "tla-ts can't check an exported function that changes state and returns a value as an action. Return nothing, or call it from a script instead",
+        statement,
+      );
     }
     if (getIntlError(skipCasts(returned), context) !== undefined) {
       return translateIntlError(skipCasts(returned), path, context, statementFrame);
@@ -21038,18 +21866,20 @@ export const translateStatements = (
       if (constructor !== undefined && ts.isNewExpression(returned)) {
         return translateConstruction(returned, constructor, inner, context, statementFrame, exit);
       }
-      // A call that makes an object, such as Object(1), made it as the return allocated it.
+      // A call that makes an object, such as Object(1), made it as the return allocated it. A cast
+      // of a call returns what the call gives.
+      const called = skipCasts(returned);
       if (
-        ts.isCallExpression(returned) &&
-        !inner.scope.allocated.has(returned) &&
-        (!isLibraryCall(returned, context) ||
-          isPromiseCall(returned, context) ||
-          getLoopCall(returned, inner, context) !== undefined ||
-          isObjectChange(returned, context) ||
-          isStatementResult(returned, inner, context) ||
-          isRemoving(returned, context))
+        ts.isCallExpression(called) &&
+        !inner.scope.allocated.has(called) &&
+        (!isLibraryCall(called, context) ||
+          isPromiseCall(called, context) ||
+          getLoopCall(called, inner, context) !== undefined ||
+          isObjectChange(called, context) ||
+          isStatementResult(called, inner, context) ||
+          isRemoving(called, context))
       ) {
-        return translateCallStatement(returned, inner, context, statementFrame, exit);
+        return translateCallStatement(called, inner, context, statementFrame, exit);
       }
       return throwReadError(
         returned,
@@ -21350,6 +22180,7 @@ export const translateAction = (
       scope,
       mutable: new Set(context.variables.keys()),
       isAssigned: false,
+      isAction: true,
       isLast: false,
       isLooping: false,
       generators: new Map(),
@@ -21707,7 +22538,7 @@ export const translateScript = (
   // A script's vars hold undefined until their declarations run, as do the parameters of a
   // function that runs once until it runs.
   const hoisted = [...context.variables.keys()].filter((symbol) => {
-    const declaration = symbol.valueDeclaration;
+    const declaration = getValueDeclaration(symbol, context);
     return (
       isLast &&
       declaration !== undefined &&
@@ -21979,7 +22810,7 @@ export const writesState = (
     return true;
   }
   if (ts.isCallExpression(node)) {
-    const helper = getTopLevelDeclaration(getSymbol(node.expression, context.checker));
+    const helper = getTopLevelDeclaration(getSymbol(node.expression, context.checker), context);
     if (helper !== undefined && !visited.has(helper)) {
       visited.add(helper);
       if (writesState(helper, context, visited)) return true;

@@ -5,6 +5,26 @@ declare module "@typescript/typescript6" {
   function getNodeId(node: ts.Node): number;
   // And of a symbol.
   function getSymbolId(symbol: ts.Symbol): number;
+  // A type's id, which TypeScript gives each type as it makes it.
+  interface Type {
+    readonly id: number;
+    readonly objectFlags?: ts.ObjectFlags;
+  }
+  // A signature's flags, which tell a rest parameter and an untyped signature of JavaScript, and its
+  // count of the parameters before the first optional one.
+  interface Signature {
+    readonly flags: number;
+    readonly minArgumentCount: number;
+    // The generic signature that an instantiated one comes from.
+    readonly target?: ts.Signature;
+  }
+  // A context's checker reads tla-ts's own symbol of each name of the program's files from the
+  // program's reference index: undefined where the name has none, and null for another node.
+  interface TypeChecker {
+    readonly getNameSymbol?: (node: ts.Node) => ts.Symbol | undefined | null;
+    // The type of a signature's parameter at a position.
+    getParameterType(signature: ts.Signature, position: number): ts.Type;
+  }
 }
 
 // The nodes of a program's files, in the order that a walk of each file's children visits them,
@@ -28,6 +48,9 @@ export interface ProgramNodes {
   nameTexts: string[];
   marks: Int32Array;
   generation: number;
+  // The position of the implementation of an overloaded function or method, by the position of each
+  // of its signatures, which runs nothing, or -1.
+  implementations: Int32Array;
 }
 
 // tla-ts's own symbol of each identifier of the program's files, by its position, and the positions
@@ -94,17 +117,49 @@ export const createProgramNodes = (
     kindPositions[kindEnds[node.kind]] = position;
     kindEnds[node.kind] += 1;
   });
-  const names = nodes.flatMap((node, position) =>
-    ts.isIdentifier(node) ? [{ text: node.text, position }] : [],
+  const endColumn = Int32Array.from(ends);
+  // TypeScript requires a function's or a method's signatures to come right before its
+  // implementation, in the same block, class, or file, so each is a sibling that the walk reaches
+  // past the subtree of the one before.
+  const isSignature = (node: ts.Node) =>
+    (ts.isFunctionDeclaration(node) || ts.isMethodDeclaration(node)) && node.body === undefined;
+  const getName = (node: ts.Node) =>
+    (ts.isFunctionDeclaration(node) || ts.isMethodDeclaration(node)) && node.name !== undefined
+      ? node.name.getText()
+      : undefined;
+  const getImplementation = (position: number): number => {
+    const next = endColumn[position];
+    const node = nodes[position];
+    const sibling = nodes[next];
+    if (
+      next >= nodes.length ||
+      sibling.parent !== node.parent ||
+      sibling.kind !== node.kind ||
+      getName(sibling) !== getName(node)
+    ) {
+      return -1;
+    }
+    return isSignature(sibling) ? getImplementation(next) : next;
+  };
+  const implementations = Int32Array.from(nodes, (node, position) =>
+    isSignature(node) && getName(node) !== undefined ? getImplementation(position) : -1,
   );
-  names.sort((left, right) =>
-    left.text < right.text ? -1 : left.text > right.text ? 1 : left.position - right.position,
+  // The identifiers' positions and texts, in order of position, and then of text.
+  const texts: string[] = [];
+  const named: number[] = [];
+  nodes.forEach((node, position) => {
+    if (!ts.isIdentifier(node)) return;
+    texts.push(node.text);
+    named.push(position);
+  });
+  const byText = Int32Array.from(named, (_, index) => index).sort((left, right) =>
+    texts[left] < texts[right] ? -1 : texts[left] > texts[right] ? 1 : left - right,
   );
   return {
     first,
     positions,
     nodes,
-    ends: Int32Array.from(ends),
+    ends: endColumn,
     files: Int32Array.from(fileStarts),
     fileStarts: Int32Array.from(new Set(fileStarts)),
     symbols: nodes.map((node) =>
@@ -112,11 +167,20 @@ export const createProgramNodes = (
     ),
     kindStarts,
     kindPositions,
-    namePositions: Int32Array.from(names, (name) => name.position),
-    nameTexts: names.map((name) => name.text),
+    namePositions: byText.map((index) => named[index]),
+    nameTexts: Array.from(byText, (index) => texts[index]),
     marks: new Int32Array(nodes.length),
     generation: 0,
+    implementations,
   };
+};
+
+// Whether a bitset has an index's bit.
+export const hasBit = (bits: Uint32Array, index: number) =>
+  (bits[index >>> 5] & (1 << (index & 31))) !== 0;
+
+export const setBit = (bits: Uint32Array, index: number) => {
+  bits[index >>> 5] |= 1 << (index & 31);
 };
 
 // The index of the first of a sorted run's values at or past a value.
@@ -228,9 +292,13 @@ export const createReferences = (
   const ids = Int32Array.from(symbols, (symbol) =>
     symbol === undefined ? -1 : ts.getSymbolId(symbol),
   );
-  const positions = Int32Array.from(
-    symbols.flatMap((symbol, position) => (symbol === undefined ? [] : [position])),
-  ).sort((left, right) => ids[left] - ids[right] || left - right);
+  const named: number[] = [];
+  ids.forEach((id, position) => {
+    if (id >= 0) named.push(position);
+  });
+  const positions = Int32Array.from(named).sort(
+    (left, right) => ids[left] - ids[right] || left - right,
+  );
   return { symbols, symbolIds: positions.map((position) => ids[position]), positions };
 };
 

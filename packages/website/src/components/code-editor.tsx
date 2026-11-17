@@ -1,6 +1,6 @@
 import { useMemo, useRef } from "react";
 import { getHighlightedLines } from "../highlighter";
-import { getLineMarks } from "../line-marks";
+import { getLineHoveredName, getLineMarks } from "../line-marks";
 import type { Mark } from "../site-data";
 import { CodeLine, LineNumber } from "./code-line";
 
@@ -46,7 +46,7 @@ export const CodeEditor = (props: CodeEditorProps) => {
                 tokens={line.tokens}
                 isWrapped={false}
                 marks={lineMarks[line.index]}
-                hoveredName={props.hoveredName}
+                hoveredName={getLineHoveredName(lineMarks[line.index], props.hoveredName)}
                 isHighlighted={props.isHighlighted}
                 isDimmed={
                   props.focusedNames.length > 0 &&

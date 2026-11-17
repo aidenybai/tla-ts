@@ -514,6 +514,8 @@ export const resolveModuleSubexpressions = (module: Module, available: Definitio
   const hasReferences =
     module.definitions.some((definition) => containsReference(definition.body)) ||
     module.assumptions.some((assumption) => containsReference(assumption.expression));
+  // A module with nothing to resolve stays itself, so that a check links a prepared module as it is.
+  if (!hasReferences && module.theorems.length === 0 && module.uses.length === 0) return module;
   if (!hasReferences) return resolved;
   return {
     ...resolved,

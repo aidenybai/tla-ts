@@ -15,7 +15,7 @@ export const Verdict = (props: VerdictProps) => (
     )}
     <span
       className={cn(
-        "min-w-0 truncate",
+        "min-w-0 truncate max-sm:line-clamp-2 max-sm:leading-tight max-sm:whitespace-normal",
         props.result.isPassed ? "text-success" : "text-destructive",
       )}
     >

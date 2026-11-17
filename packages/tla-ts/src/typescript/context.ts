@@ -3,7 +3,7 @@ import type { Expression, OperatorDefinition, OperatorParam, SourceLocation } fr
 import { getTypeNames, JAVASCRIPT_OPERATORS } from "./javascript";
 import { BUILT_INS, HOST_GLOBAL_KEYS, NODE_GLOBALS } from "./built-ins";
 import { getErrorClass, isNativeErrorName, isPrototypeRead, NATIVE_ERRORS } from "./exceptions";
-import { type Collection, getBuiltIn, isHeldBuiltInObject } from "./intrinsics";
+import { type Collection, getBuiltIn, getBuiltInPath, isHeldBuiltInObject } from "./intrinsics";
 import {
   type BufferName,
   getArrayMethodCall,
@@ -22,12 +22,14 @@ import { getKeptReads } from "./narrowing";
 import { mayThrow } from "./functions";
 import { findGetterKeys, findWrittenFunctions, getGetterKeys, isProxyOperation } from "./protocols";
 import type { ChangeTable } from "./change-summaries";
+import { createReachGraph, type Makers, type ReachGraph } from "./reach-graph";
 import type { Namespace } from "./namespaces";
 import {
   createReferences,
   findNames,
   findNodesOfKind,
   getFileIndex,
+  getLowerBound,
   getPosition,
   getReferences,
   type ProgramNodes,
@@ -65,6 +67,9 @@ export interface SharedCall {
   captured: ts.Symbol[];
   // The function that each parameter takes, which the operator calls where the body calls it.
   callbacks: ReadonlyMap<ts.Symbol, FunctionNode>;
+  // The parameters whose type allows a function that its call leaves out or passes undefined, which
+  // hold undefined in the operator rather than any function.
+  absent: ReadonlySet<ts.Symbol>;
   // The function that each name it reads holds where its caller calls it, which no value carries.
   held: ReadonlyMap<ts.Symbol, FunctionNode>;
   // The state and the names from outside that it changes, which it gives back in that order.
@@ -75,6 +80,9 @@ export interface SharedCall {
   // nor gives back, and whose reads throw.
   uninitialized: ts.Symbol[];
   parameters: OperatorParam[];
+  // Whether its caller catches what its body throws, so that the body runs as inside a try. A
+  // caller that doesn't stops where an expression of the body throws, as the body inlined would.
+  isCatching: boolean;
   // Whether a call inside its own body, or a body that it runs, calls it.
   isRecursive: boolean;
   // Whether its body can end but by a throw, as a call inside its own body takes it to.
@@ -88,6 +96,9 @@ export interface SharedHelper {
   changed: ts.Symbol[];
   // The variables that a function or a class of the script names, which its operator takes.
   state: ts.Symbol[];
+  // Whether its operator also takes the function's value, whose environment a closure reads its
+  // captures from, and its this, as a call through a value runs it.
+  isEntered: boolean;
 }
 
 export interface Passed {
@@ -108,6 +119,13 @@ export interface Context {
   // The nodes of the program's files, which tla-ts walks once, and the names of each symbol.
   nodes: ProgramNodes;
   references: References;
+  // What each declaration that a name names reaches by name.
+  reachGraph: ReachGraph;
+  // Which declarations may make objects, as isMakingObjects tells, where the heap is as it is now:
+  // found once as the context is made, and again once the heap is known.
+  makers: Makers | undefined;
+  // The assignments of the program's files, by the symbols of the names they write.
+  writes: References;
   // The keys that each of the program's files defines getters under, by the file's index.
   getterKeys: readonly ReadonlySet<string>[];
   // Whether each function of the program's files is called once, by its position, as
@@ -283,6 +301,20 @@ export interface Context {
   // What running each node of the model's code changes where no parameter holds a function, which
   // tla-ts finds once before it compiles the code.
   effects: NodeEffects;
+  // Which function candidates the callees of the model's calls through values may hold.
+  dispatch: Dispatch | undefined;
+}
+
+// The types of the callees that findEffects dispatches among the function candidates, by type id in
+// order, each with a row of bits over the candidates' distinct types, of those that TypeScript lets
+// it hold, and the index of each candidate's type plus one by the candidate's position.
+export interface Dispatch {
+  calleeIds: Int32Array;
+  words: number;
+  rows: Uint32Array;
+  // The bits that each row tested, which the rest of the bits don't tell.
+  tested: Uint32Array;
+  candidateTypes: Int32Array;
 }
 
 // The effects of the nodes of the program's files by their positions, and of the few nodes that no
@@ -599,6 +631,19 @@ const withDeclaredReads = (checker: ts.TypeChecker, reads: DeclaredReads): ts.Ty
   },
 });
 
+// The declaration of a symbol's value that runs. TypeScript gives an overloaded function or method
+// its first signature, which runs nothing, so this gives its implementation instead.
+export const getValueDeclaration = (symbol: ts.Symbol | undefined, context: Context) => {
+  const declaration = symbol?.valueDeclaration;
+  const position = declaration === undefined ? -1 : getPosition(context.nodes, declaration);
+  const implementation =
+    position < 0 ? undefined : context.nodes.nodes[context.nodes.implementations[position]];
+  return implementation !== undefined &&
+    (ts.isFunctionDeclaration(implementation) || ts.isMethodDeclaration(implementation))
+    ? implementation
+    : declaration;
+};
+
 export const createContext = (
   checker: ts.TypeChecker,
   files: readonly ts.SourceFile[],
@@ -607,10 +652,20 @@ export const createContext = (
   nodes: ProgramNodes,
 ): Context => {
   const reads = getDeclaredReads(checker, files);
+  const references = createReferences(nodes, (name) => getSymbol(name, checker));
   const context: Context = {
-    checker: withNodeTypes(withDeclaredReads(checker, reads), nodes),
+    checker: {
+      ...withNodeTypes(withDeclaredReads(checker, reads), nodes),
+      getNameSymbol: (node) => {
+        const position = ts.isIdentifier(node) ? getPosition(nodes, node) : -1;
+        return position < 0 ? null : references.symbols[position];
+      },
+    },
     nodes,
-    references: createReferences(nodes, (name) => getSymbol(name, checker)),
+    references,
+    reachGraph: createReachGraph(nodes, references),
+    makers: undefined,
+    writes: createWrites(nodes, references),
     getterKeys: files.map(findGetterKeys),
     calledOnce: new Uint8Array(nodes.nodes.length),
     heapCode: new Uint8Array(nodes.nodes.length),
@@ -681,6 +736,7 @@ export const createContext = (
     passed: new Map(),
     changes: undefined,
     effects: { positions: [], elsewhere: new Map(), found: [] },
+    dispatch: undefined,
     assignedNames: new Map(
       files.map((file) => [
         file,
@@ -1121,11 +1177,12 @@ export const rejectArgumentsVarReads = (file: ts.SourceFile, context: Context) =
     ) {
       return false;
     }
-    const declaration = (
+    const declaration = getValueDeclaration(
       ts.isShorthandPropertyAssignment(parent)
         ? context.checker.getShorthandAssignmentValueSymbol(parent)
-        : getSymbol(name, context.checker)
-    )?.valueDeclaration;
+        : getSymbol(name, context.checker),
+      context,
+    );
     const scope =
       declaration !== undefined &&
       ts.isVariableDeclaration(declaration) &&
@@ -1277,7 +1334,7 @@ export const getUnresolvedRead = (
   if (ts.isClassLike(node)) {
     if (node.heritageClauses !== undefined) return undefined;
     return readInOrder(
-      node.members.flatMap((member) =>
+      getRunMembers(node).flatMap((member) =>
         member.name !== undefined && ts.isComputedPropertyName(member.name)
           ? [member.name.expression]
           : [],
@@ -1293,7 +1350,7 @@ export const getUnresolvedRead = (
     // name that no getter or proxy can answer.
     const callee = skipCasts(node.expression);
     const declaration = ts.isIdentifier(callee)
-      ? context.checker.getSymbolAtLocation(callee)?.valueDeclaration
+      ? getValueDeclaration(context.checker.getSymbolAtLocation(callee), context)
       : undefined;
     if (ts.isPropertyAccessExpression(callee) && ts.isIdentifier(callee.expression)) {
       if (isThrowing(callee.expression)) return callee.expression;
@@ -1452,6 +1509,8 @@ export const getRedeclaredCatchParameter = (declaration: ts.VariableDeclaration)
 // The symbol that a name binds or reads, where a var that declares a catch parameter again binds
 // the parameter.
 export const getSymbol = (node: ts.Node, checker: ts.TypeChecker) => {
+  const known = checker.getNameSymbol === undefined ? null : checker.getNameSymbol(node);
+  if (known !== null) return known;
   const redeclared =
     ts.isIdentifier(node) && ts.isVariableDeclaration(node.parent) && node.parent.name === node
       ? getRedeclaredCatchParameter(node.parent)
@@ -1509,6 +1568,12 @@ const getCastNamespaceMember = (node: ts.Node, checker: ts.TypeChecker) => {
     : undefined;
 };
 
+// Whether a declaration runs no code, as a declaration file's doesn't, or one that a file's declare
+// global holds to add to a built-in's type.
+export const isAmbientDeclaration = (declaration: ts.Node) =>
+  declaration.getSourceFile().isDeclarationFile ||
+  ts.findAncestor(declaration, isAmbient) !== undefined;
+
 // Whether only declarations, such as a declaration file's, declare a name.
 const isOnlyDeclared = (symbol: ts.Symbol) => {
   const declarations = symbol.declarations ?? [];
@@ -1524,6 +1589,22 @@ const isOnlyDeclared = (symbol: ts.Symbol) => {
 
 // A name that only declarations type, as Node's typings type process, which has no code to run,
 // unlike a built-in that TypeScript's library declares.
+// The name of a host's global that a node names, which only TypeScript's libraries declare, such as
+// the DOM's MessageChannel, and which no built-in that tla-ts models gives.
+export const getUnmodelledHostName = (node: ts.Expression, context: Context) => {
+  const name = skipCasts(node);
+  const declarations =
+    (ts.isIdentifier(name) ? getSymbol(name, context.checker)?.declarations : undefined) ?? [];
+  return ts.isIdentifier(name) &&
+    declarations.length > 0 &&
+    declarations.every((declaration) =>
+      context.defaultLibraries.has(declaration.getSourceFile()),
+    ) &&
+    !Object.hasOwn(BUILT_INS, name.text)
+    ? name.text
+    : undefined;
+};
+
 export const isDeclarationOnly = (symbol: ts.Symbol, context: Context) =>
   isOnlyDeclared(symbol) &&
   (symbol.declarations ?? []).every(
@@ -1633,8 +1714,8 @@ export const isTopLevel = (statement: ts.Node): boolean => {
 
 // The declaration of a constant or function at the top level of a module, which becomes a TLA+
 // definition.
-export const getTopLevelDeclaration = (symbol: ts.Symbol | undefined) => {
-  const declaration = symbol?.valueDeclaration;
+export const getTopLevelDeclaration = (symbol: ts.Symbol | undefined, context: Context) => {
+  const declaration = getValueDeclaration(symbol, context);
   if (declaration === undefined || declaration.getSourceFile().isDeclarationFile) return undefined;
   if (ts.isFunctionDeclaration(declaration) && isTopLevel(declaration)) return declaration;
   const isTopLevelConst =
@@ -1648,9 +1729,10 @@ export const getTopLevelDeclaration = (symbol: ts.Symbol | undefined) => {
 // The symbol that a node names, where a property's read names a module's export only through the
 // module's namespace object, or a namespace's through the namespace: another object of the same
 // type, such as another module's namespace object, may hold another value under the name.
-export const getNamedSymbol = (node: ts.Expression, checker: ts.TypeChecker) => {
+export const getNamedSymbol = (node: ts.Expression, context: Context) => {
+  const checker = context.checker;
   const symbol = getSymbol(node, checker);
-  const declaration = getTopLevelDeclaration(symbol);
+  const declaration = getTopLevelDeclaration(symbol, context);
   if (!ts.isPropertyAccessExpression(node) || declaration === undefined) return symbol;
   const container = ts.findAncestor(
     declaration.parent,
@@ -1692,6 +1774,17 @@ export const getFunction = (node: ts.Node | undefined) => {
   return found !== undefined && isPlain(found) ? found : undefined;
 };
 
+// The members of a class that run. TypeScript erases a method's or a constructor's signature
+// without a body, as an overload's or an abstract method's, which JavaScript never sees.
+export const getRunMembers = (node: ts.ClassLikeDeclaration) =>
+  node.members.filter(
+    (member) =>
+      !(
+        (ts.isMethodDeclaration(member) || ts.isConstructorDeclaration(member)) &&
+        member.body === undefined
+      ),
+  );
+
 // A class whose definition and instances run no code, so only its methods matter.
 const isInert = (node: ts.ClassLikeDeclaration) =>
   node.heritageClauses === undefined &&
@@ -1706,7 +1799,7 @@ const isInert = (node: ts.ClassLikeDeclaration) =>
 // initializes.
 export const getClass = (node: ts.Node | undefined, context: Context) => {
   const declaration =
-    node === undefined ? undefined : getSymbol(node, context.checker)?.valueDeclaration;
+    node === undefined ? undefined : getValueDeclaration(getSymbol(node, context.checker), context);
   if (declaration === undefined) return undefined;
   const found = ts.isVariableDeclaration(declaration) ? declaration.initializer : declaration;
   return found !== undefined &&
@@ -1746,14 +1839,14 @@ const getReturnedMethod = (getter: ts.GetAccessorDeclaration, context: Context) 
   ) {
     return undefined;
   }
-  return getSymbol(returned.name, context.checker)?.valueDeclaration;
+  return getValueDeclaration(getSymbol(returned.name, context.checker), context);
 };
 
 // A method whose class the call names exactly: a static method on the class, or a method on a
 // new instance.
 const getMethod = (node: ts.Expression, context: Context) => {
   if (!ts.isPropertyAccessExpression(node)) return undefined;
-  const named = getSymbol(node.name, context.checker)?.valueDeclaration;
+  const named = getValueDeclaration(getSymbol(node.name, context.checker), context);
   const declaration =
     named !== undefined && ts.isGetAccessor(named) ? getReturnedMethod(named, context) : named;
   if (
@@ -1774,7 +1867,7 @@ const getMethod = (node: ts.Expression, context: Context) => {
     ? getErrorClass(getSymbol(receiver, context.checker), context)
     : undefined;
   if (
-    errorClass?.[0].valueDeclaration === declaration.parent &&
+    getValueDeclaration(errorClass?.[0], context) === declaration.parent &&
     findNodes(
       declaration,
       (inner): inner is ts.Node =>
@@ -2154,7 +2247,7 @@ export const isComputedField = (member: ts.PropertyDeclaration) =>
   ts.isComputedPropertyName(member.name) && !isLiteralKey(member.name.expression);
 
 export const getFieldKey = (member: ts.PropertyDeclaration, context: Context) =>
-  `${getBrand(member.parent, context)} key ${member.parent.members.indexOf(member)}`;
+  `${getBrand(member.parent, context)} key ${getRunMembers(member.parent).indexOf(member)}`;
 
 // An accessor with a body and a key that a property can have, which a computed name gives as it
 // evaluates.
@@ -2344,26 +2437,66 @@ export const isAssigned = (symbol: ts.Symbol, node: ts.Node, context: Context): 
   );
 };
 
+// The assignments of the program's files, by the symbols of the names that each writes, alone or in
+// a pattern, as isWrittenBy tells, and then in the order that a walk meets them.
+const createWrites = (table: ProgramNodes, references: References): References => {
+  // Each assignment's symbols once, in flat columns that a sort of their indexes orders.
+  const ids: number[] = [];
+  const positions: number[] = [];
+  table.nodes.forEach((node, position) => {
+    const target = getAssignedTarget(node);
+    const first = ids.length;
+    (target === undefined ? [] : getWrittenNames(target)).forEach((name) => {
+      const at = ts.isIdentifier(name) ? getPosition(table, name) : -1;
+      const symbol = at < 0 ? undefined : references.symbols[at];
+      const id = symbol === undefined ? -1 : ts.getSymbolId(symbol);
+      if (id < 0 || ids.indexOf(id, first) >= 0) return;
+      ids.push(id);
+      positions.push(position);
+    });
+  });
+  const order = Int32Array.from(ids, (_, index) => index).sort(
+    (left, right) => ids[left] - ids[right] || positions[left] - positions[right],
+  );
+  return {
+    symbols: [],
+    symbolIds: order.map((index) => ids[index]),
+    positions: order.map((index) => positions[index]),
+  };
+};
+
+// The assignments under a root that write a symbol's name, in the order that a walk meets them.
+export const findWrites = (symbol: ts.Symbol, root: ts.Node, context: Context): ts.Node[] => {
+  const table = context.nodes;
+  const start = getPosition(table, root);
+  if (start < 0) {
+    return findNodes(root, (inner): inner is ts.Node => {
+      const target = getAssignedTarget(inner);
+      return target !== undefined && isWrittenBy(target, symbol, context);
+    });
+  }
+  const writes = context.writes;
+  const id = ts.getSymbolId(symbol);
+  const last = getLowerBound(writes.symbolIds, 0, writes.symbolIds.length, id + 1);
+  const first = getLowerBound(writes.symbolIds, 0, last, id);
+  const from = getLowerBound(writes.positions, first, last, start);
+  const to = getLowerBound(writes.positions, from, last, table.ends[start]);
+  return [...writes.positions.subarray(from, to)].map((position) => table.nodes[position]);
+};
+
 // Whether a script assigns to a name inside a function other than the one around a read of it,
 // which TypeScript's narrowing at the read doesn't see.
 export const isAssignedElsewhere = (symbol: ts.Symbol, read: ts.Node, context: Context) => {
   const around = ts.findAncestor(read, ts.isFunctionLike);
-  return (
-    findNodes(read.getSourceFile(), (inner): inner is ts.Node => {
-      const target = getAssignedTarget(inner);
-      return (
-        target !== undefined &&
-        isWrittenBy(target, symbol, context) &&
-        ts.findAncestor(inner, ts.isFunctionLike) !== around
-      );
-    }).length > 0
+  return findWrites(symbol, read.getSourceFile(), context).some(
+    (inner) => ts.findAncestor(inner, ts.isFunctionLike) !== around,
   );
 };
 
 // Whether a variable that a script declares without a type or a value is assigned only as the
 // rest of object patterns, so that it holds undefined or an object.
 export const isRestOnly = (symbol: ts.Symbol, context: Context) => {
-  const declaration = symbol.valueDeclaration;
+  const declaration = getValueDeclaration(symbol, context);
   if (
     declaration === undefined ||
     !ts.isVariableDeclaration(declaration) ||
@@ -2372,10 +2505,7 @@ export const isRestOnly = (symbol: ts.Symbol, context: Context) => {
   ) {
     return false;
   }
-  const targets = findNodes(declaration.getSourceFile(), (inner): inner is ts.Node => {
-    const target = getAssignedTarget(inner);
-    return target !== undefined && isWrittenBy(target, symbol, context);
-  }).map(getAssignedTarget);
+  const targets = findWrites(symbol, declaration.getSourceFile(), context).map(getAssignedTarget);
   return (
     targets.length > 0 &&
     targets.every((target) => {
@@ -2462,7 +2592,7 @@ const getPatternKey = (key: ts.PropertyName | ts.BindingName) =>
 // object. A pattern's binding that nothing assigns may take such a default too.
 export const isMadeOnly = (symbol: ts.Symbol, context: Context) => {
   const checker = context.checker;
-  const declaration = symbol.valueDeclaration;
+  const declaration = getValueDeclaration(symbol, context);
   const isMadeValue = (node: ts.Expression | undefined) =>
     node !== undefined && isFunctionObject(getGivenValue(node), context);
   if (declaration !== undefined && ts.isBindingElement(declaration)) {
@@ -2521,10 +2651,7 @@ export const isMadeOnly = (symbol: ts.Symbol, context: Context) => {
     }
     return !isPatternPart(parent);
   };
-  const written = findNodes(declaration.getSourceFile(), (inner): inner is ts.Node => {
-    const target = getAssignedTarget(inner);
-    return target !== undefined && isWrittenBy(target, symbol, context);
-  }).flatMap((inner) =>
+  const written = findWrites(symbol, declaration.getSourceFile(), context).flatMap((inner) =>
     getWrittenNames(getAssignedTarget(inner) ?? inner).filter(
       (name) => ts.isIdentifier(name) && getSymbol(name, checker) === symbol,
     ),
@@ -2537,10 +2664,7 @@ export const isMadeOnly = (symbol: ts.Symbol, context: Context) => {
 export const getAssignedValues = (symbol: ts.Symbol, context: Context) => {
   const declaration = symbol.valueDeclaration;
   if (declaration === undefined) return undefined;
-  const written = findNodes(declaration.getSourceFile(), (inner): inner is ts.Node => {
-    const target = getAssignedTarget(inner);
-    return target !== undefined && isWrittenBy(target, symbol, context);
-  }).flatMap((inner) =>
+  const written = findWrites(symbol, declaration.getSourceFile(), context).flatMap((inner) =>
     getWrittenNames(getAssignedTarget(inner) ?? inner).filter(
       (name) => ts.isIdentifier(name) && getSymbol(name, context.checker) === symbol,
     ),
@@ -2566,7 +2690,7 @@ export const getLocalCaptures = (node: FunctionNode, context: Context) => {
   const visit = (current: ts.Node, owner: ts.Node) => {
     if (ts.isIdentifier(current)) {
       const symbol = getSymbol(current, context.checker);
-      const declaration = symbol?.valueDeclaration ?? symbol?.declarations?.[0];
+      const declaration = getValueDeclaration(symbol, context) ?? symbol?.declarations?.[0];
       const isLocal =
         declaration !== undefined &&
         (ts.isVariableDeclaration(declaration) ||
@@ -2609,7 +2733,7 @@ export const getFunctionValue = (
 ): ts.FunctionExpression | ts.ArrowFunction | ts.FunctionDeclaration | undefined => {
   if (context.heap === undefined) return undefined;
   const symbol = ts.isIdentifier(node) ? getSymbol(node, context.checker) : undefined;
-  const declaration = symbol?.valueDeclaration;
+  const declaration = getValueDeclaration(symbol, context);
   const isNamed =
     symbol !== undefined &&
     declaration !== undefined &&
@@ -2646,7 +2770,7 @@ export interface Binding {
 
 // A value that reads the same wherever a script reads it: a literal, or a name that nothing assigns
 // and that holds its value by the time the node runs.
-const isSteady = (value: ts.Expression, node: ts.Node, context: Context) => {
+export const isSteady = (value: ts.Expression, node: ts.Node, context: Context) => {
   if (
     ts.isLiteralExpression(value) ||
     value.getText() === "undefined" ||
@@ -2657,7 +2781,7 @@ const isSteady = (value: ts.Expression, node: ts.Node, context: Context) => {
     return true;
   }
   const symbol = ts.isIdentifier(value) ? getSymbol(value, context.checker) : undefined;
-  const declaration = symbol?.valueDeclaration;
+  const declaration = getValueDeclaration(symbol, context);
   return (
     symbol !== undefined &&
     declaration !== undefined &&
@@ -2670,7 +2794,7 @@ const isSteady = (value: ts.Expression, node: ts.Node, context: Context) => {
 // The function or function expression that a name holds, where nothing assigns the name.
 const getNamedFunction = (node: ts.Expression, context: Context) => {
   const symbol = ts.isIdentifier(node) ? getSymbol(node, context.checker) : undefined;
-  const declaration = symbol?.valueDeclaration;
+  const declaration = getValueDeclaration(symbol, context);
   const made =
     declaration !== undefined && ts.isVariableDeclaration(declaration)
       ? declaration.initializer
@@ -2757,7 +2881,7 @@ export const getBinding = (node: ts.Node, context: Context): Binding | undefined
 // The binding that a value is: a call of bind, or a name that one gives and nothing assigns.
 export const getBound = (node: ts.Expression, context: Context) => {
   const symbol = ts.isIdentifier(node) ? getSymbol(node, context.checker) : undefined;
-  const declaration = symbol?.valueDeclaration;
+  const declaration = getValueDeclaration(symbol, context);
   if (
     symbol === undefined ||
     declaration === undefined ||
@@ -2894,7 +3018,7 @@ export const getSettableSupers = (
   node !== undefined &&
   ts.isClassLike(node) &&
   hasExtends(node) &&
-  !node.members.some(ts.isConstructorDeclaration)
+  !getRunMembers(node).some(ts.isConstructorDeclaration)
     ? [
         ...(isPrototypeSettable(node, context) ? [node] : []),
         ...getSettableSupers(getBaseClass(node, context), context),
@@ -2904,11 +3028,11 @@ export const getSettableSupers = (
 // A class that extends null, whose constructor never reads this or super, or that nothing
 // constructs, as its constructor without a body throws. Its instance fields never initialize.
 const isNullSafe = (node: ts.ClassLikeDeclaration, context: Context) => {
-  const isFielded = node.members.some(
+  const isFielded = getRunMembers(node).some(
     (member) => ts.isPropertyDeclaration(member) && !isStatic(member) && !isAmbient(member),
   );
   if (!isNullBased(node) || isFielded) return false;
-  const constructor = node.members.find(ts.isConstructorDeclaration);
+  const constructor = getRunMembers(node).find(ts.isConstructorDeclaration);
   // Its this is never initialized, which tla-ts follows as the constructor runs.
   if (constructor?.body !== undefined) {
     return (
@@ -2955,7 +3079,7 @@ export const getBuiltInBase = (
   | "Date"
   | Collection
   | undefined => {
-  const hasConstructor = node.members.some(ts.isConstructorDeclaration);
+  const hasConstructor = getRunMembers(node).some(ts.isConstructorDeclaration);
   const heritage = node.heritageClauses?.find(
     (clause) => clause.token === ts.SyntaxKind.ExtendsKeyword,
   )?.types[0]?.expression;
@@ -2972,7 +3096,7 @@ export const getBuiltInBase = (
   // A collection's subclass may add only static members, as the heap reads its instances as the
   // collection's.
   if (name !== undefined && isNewTargetBase(name)) {
-    return node.members.some((member) =>
+    return getRunMembers(node).some((member) =>
       isCollectionName(name)
         ? !isStatic(member)
         : ts.isConstructorDeclaration(member) ||
@@ -3020,7 +3144,7 @@ export const getBaseClass = (node: ts.ClassLikeDeclaration, context: Context) =>
   const declaration =
     heritage === undefined || !ts.isIdentifier(heritage)
       ? undefined
-      : getSymbol(heritage, context.checker)?.valueDeclaration;
+      : getValueDeclaration(getSymbol(heritage, context.checker), context);
   const found =
     declaration !== undefined && ts.isVariableDeclaration(declaration)
       ? declaration.initializer
@@ -3079,7 +3203,7 @@ export const getSuperCall = (constructor: ts.ConstructorDeclaration) => {
 // tla-ts gives as the new makes the instance.
 const hasComputedFields = (node: ts.ClassLikeDeclaration | undefined, context: Context): boolean =>
   node !== undefined &&
-  (node.members.some(
+  (getRunMembers(node).some(
     (member) =>
       ts.isPropertyDeclaration(member) &&
       !isStatic(member) &&
@@ -3125,10 +3249,10 @@ const isDerivedSafe = (
   base: ts.ClassLikeDeclaration,
   context: Context,
 ) => {
-  const constructor = node.members.find(ts.isConstructorDeclaration);
+  const constructor = getRunMembers(node).find(ts.isConstructorDeclaration);
   // A constructor defines the fields with plain names once super(...) returns.
   const isAdding =
-    node.members.some(
+    getRunMembers(node).some(
       (member) =>
         !isStatic(member) &&
         ((ts.isPropertyDeclaration(member) &&
@@ -3163,7 +3287,7 @@ export const isOnceField = (node: ts.ClassLikeDeclaration, context: Context) => 
     isStatic(field) ||
     !ts.isIdentifier(field.name) ||
     // Nothing runs the static elements of a class that a field makes.
-    node.members.some(
+    getRunMembers(node).some(
       (member) =>
         ts.isClassStaticBlockDeclaration(member) ||
         (ts.isPropertyDeclaration(member) && isStatic(member)),
@@ -3350,7 +3474,7 @@ export const isHeapClass = (node: ts.ClassLikeDeclaration, context: Context): bo
       isField ||
       getInPlaceNew(node) !== undefined) &&
     isOnce(node, context) &&
-    node.members.every(
+    getRunMembers(node).every(
       (member) =>
         ts.isSemicolonClassElement(member) ||
         (ts.isConstructorDeclaration(member) && member.body !== undefined) ||
@@ -3413,7 +3537,7 @@ export const isFunctionObject = (
     ts.isFunctionExpression(node) ||
     (ts.isClassExpression(node) &&
       node.heritageClauses === undefined &&
-      node.members.every(
+      getRunMembers(node).every(
         (member) =>
           ts.isSemicolonClassElement(member) ||
           (ts.isConstructorDeclaration(member) && member.body !== undefined) ||
@@ -3574,7 +3698,7 @@ const isPropertyWrite = (node: ts.Node) =>
   ts.isExpressionStatement(node.parent.parent);
 
 // The locals that a function reads from the functions around it, with the function that binds each.
-const getOuterLocals = (node: ts.Node, context: Context) =>
+export const getOuterLocals = (node: ts.Node, context: Context) =>
   findNodes(node, ts.isIdentifier).flatMap((name) => {
     const symbol = getSymbol(name, context.checker);
     // A variable that a require initializes in JavaScript has an alias's symbol, which TypeScript
@@ -3582,7 +3706,7 @@ const getOuterLocals = (node: ts.Node, context: Context) =>
     const declaration =
       symbol === undefined || context.onceLocals.has(symbol)
         ? undefined
-        : (symbol.valueDeclaration ??
+        : (getValueDeclaration(symbol, context) ??
           (symbol.flags & ts.SymbolFlags.Alias ? symbol.declarations?.at(0) : undefined));
     const owner =
       declaration === undefined
@@ -3675,7 +3799,7 @@ export const isClosure = (node: ts.Node, context: Context): node is Closure => {
       const declaration =
         symbol === undefined || context.onceLocals.has(symbol)
           ? undefined
-          : symbol.valueDeclaration;
+          : getValueDeclaration(symbol, context);
       return (
         declaration !== undefined &&
         ts.findAncestor(declaration, (ancestor) => ancestor === node) === undefined &&
@@ -3737,7 +3861,7 @@ export const isClosure = (node: ts.Node, context: Context): node is Closure => {
       !isFactory());
   const declaration =
     isAssignment && ts.isIdentifier(assignment.left)
-      ? getSymbol(assignment.left, context.checker)?.valueDeclaration
+      ? getValueDeclaration(getSymbol(assignment.left, context.checker), context)
       : undefined;
   return (
     (isAsync && ts.isReturnStatement(node.parent) && node.parent.expression === node) ||
@@ -3788,7 +3912,7 @@ export const getCaptures = (node: Closure, context: Context) => {
   const pending: ts.Node[] = [node];
   while (pending.length > 0) {
     findNodes(pending.pop() ?? node, ts.isIdentifier).forEach((name) => {
-      const declaration = getNamed(name)?.valueDeclaration;
+      const declaration = getValueDeclaration(getNamed(name), context);
       const run =
         declaration !== undefined &&
         ts.isVariableDeclaration(declaration) &&
@@ -3813,7 +3937,7 @@ export const getCaptures = (node: Closure, context: Context) => {
     .flatMap((run) => findNodes(run, ts.isIdentifier))
     .flatMap((name) => {
       const symbol = getNamed(name);
-      const declaration = symbol?.valueDeclaration;
+      const declaration = getValueDeclaration(symbol, context);
       return symbol !== undefined &&
         declaration !== undefined &&
         !context.onceLocals.has(symbol) &&
@@ -3859,18 +3983,27 @@ export const getCaptures = (node: Closure, context: Context) => {
     // A local of a function around the maker holds the value it had as the maker ran, which the
     // environment copies where nothing assigns it, and where it's a let, a const, or a parameter,
     // which the maker can't read before it holds its value.
+    // A name that a pattern binds holds its value from where the pattern's declaration runs.
+    const root = ts.isBindingElement(declaration)
+      ? ts.walkUpBindingElementsAndPatterns(declaration)
+      : declaration;
     const owner = ts.findAncestor(declaration.parent, ts.isFunctionLike);
     if (
-      !(ts.isVariableDeclaration(declaration) || ts.isParameter(declaration)) ||
+      !(ts.isVariableDeclaration(root) || ts.isParameter(root)) ||
+      !(
+        ts.isVariableDeclaration(declaration) ||
+        ts.isParameter(declaration) ||
+        ts.isBindingElement(declaration)
+      ) ||
       !ts.isIdentifier(declaration.name) ||
       isRepeated(node) ||
       (owner === maker
-        ? ts.isVariableDeclaration(declaration) &&
-          (isRepeated(declaration) ||
-            (declaration.end > node.getStart() && getHolder(node)?.declaration !== declaration))
+        ? ts.isVariableDeclaration(root) &&
+          (isRepeated(root) ||
+            (root.end > node.getStart() && getHolder(node)?.declaration !== root))
         : isAssigned(capture.symbol, node.getSourceFile(), context) ||
-          (ts.isVariableDeclaration(declaration) &&
-            (ts.getCombinedNodeFlags(declaration) & ts.NodeFlags.BlockScoped) === 0))
+          (ts.isVariableDeclaration(root) &&
+            (ts.getCombinedNodeFlags(root) & ts.NodeFlags.BlockScoped) === 0))
     ) {
       throw new TlaTypeScriptError(
         "tla-ts can't follow a function that outlives its call and reads this name",
@@ -3887,7 +4020,7 @@ export const getCaptures = (node: Closure, context: Context) => {
 // runs, which each reads and writes. A let, or a var of the function's body, that a statement of
 // its own declares.
 export const getSharedDeclaration = (symbol: ts.Symbol, context: Context) => {
-  const declaration = symbol.valueDeclaration;
+  const declaration = getValueDeclaration(symbol, context);
   // A module's namespace object has its source file as its declaration, which has no parent.
   const statement =
     declaration !== undefined && ts.isVariableDeclaration(declaration)
@@ -3901,7 +4034,6 @@ export const getSharedDeclaration = (symbol: ts.Symbol, context: Context) => {
     !ts.isIdentifier(declaration.name) ||
     statement === undefined ||
     !ts.isVariableStatement(statement) ||
-    statement.declarationList.declarations.length !== 1 ||
     symbol.declarations?.length !== 1 ||
     owner === undefined ||
     (ts.getCombinedModifierFlags(owner) & ts.ModifierFlags.Async) !== 0 ||
@@ -3915,14 +4047,9 @@ export const getSharedDeclaration = (symbol: ts.Symbol, context: Context) => {
   ) {
     return undefined;
   }
-  const names = findNodes(
-    owner,
-    (inner): inner is ts.Identifier =>
-      ts.isIdentifier(inner) &&
-      inner.text === symbol.name &&
-      (ts.isShorthandPropertyAssignment(inner.parent)
-        ? context.checker.getShorthandAssignmentValueSymbol(inner.parent)
-        : getSymbol(inner, context.checker)) === symbol,
+  // A shorthand property's name names the value it takes, as getSymbol tells.
+  const names = findReferences(symbol, owner, context).filter(
+    (inner) => inner.text === symbol.name,
   );
   const isShared = names.some((name) => {
     const closure = ts.findAncestor(name.parent, (ancestor) =>
@@ -3942,16 +4069,18 @@ export const getSharedDeclaration = (symbol: ts.Symbol, context: Context) => {
   return isShared ? declaration : undefined;
 };
 
-// The local that closures share that a statement declares, which makes its environment.
-export const getSharedWrite = (statement: ts.Statement, context: Context) => {
-  const declarations = ts.isVariableStatement(statement)
-    ? statement.declarationList.declarations
-    : undefined;
-  const name = declarations?.length === 1 ? declarations[0].name : undefined;
-  const symbol = name && ts.isIdentifier(name) ? getSymbol(name, context.checker) : undefined;
-  const declaration = symbol && getSharedDeclaration(symbol, context);
-  return symbol === undefined || declaration === undefined ? undefined : { symbol, declaration };
-};
+// The locals that closures share that a statement declares, which make their environment.
+export const getSharedWrites = (statement: ts.Statement, context: Context) =>
+  (ts.isVariableStatement(statement) ? statement.declarationList.declarations : []).flatMap(
+    (declaration) => {
+      const symbol = ts.isIdentifier(declaration.name)
+        ? getSymbol(declaration.name, context.checker)
+        : undefined;
+      return symbol !== undefined && getSharedDeclaration(symbol, context) === declaration
+        ? [{ symbol, declaration }]
+        : [];
+    },
+  );
 
 // The async function around a function that binds each local the function reads from outside it.
 const getAsyncOwner = (node: ts.Node, context: Context) => {
@@ -4113,7 +4242,7 @@ export const changesState = (
           ts.isIdentifier(node.name)
         ? getSymbol(node.name, context.checker)
         : undefined;
-  const declaration = written?.valueDeclaration;
+  const declaration = getValueDeclaration(written, context);
   if (
     (target !== undefined &&
       (declaration === undefined ||
@@ -4136,7 +4265,7 @@ export const changesState = (
     const receiver = isMethodCall(node) ? skipCasts(node.expression.expression) : undefined;
     const local =
       receiver !== undefined && ts.isIdentifier(receiver)
-        ? context.checker.getSymbolAtLocation(receiver)?.valueDeclaration
+        ? getValueDeclaration(context.checker.getSymbolAtLocation(receiver), context)
         : undefined;
     if (
       called === undefined &&
@@ -4459,9 +4588,17 @@ const isSuperThis = (
   const literal = ts.isPropertyAssignment(candidate.parent)
     ? candidate.parent.parent
     : candidate.parent;
+  // A this that the candidate only passes on as a value reads none of the literal's properties.
+  const isOnlyValue = (inner: ts.Node) =>
+    !(
+      (ts.isPropertyAccessExpression(inner.parent) || ts.isElementAccessExpression(inner.parent)) &&
+      inner.parent.expression === inner
+    );
   return (
-    findNodes(candidate, (inner): inner is ts.Node => inner.kind === ts.SyntaxKind.ThisKeyword)
-      .length === 0 ||
+    findNodes(
+      candidate,
+      (inner): inner is ts.Node => inner.kind === ts.SyntaxKind.ThisKeyword && !isOnlyValue(inner),
+    ).length === 0 ||
     (home !== undefined &&
       ts.isObjectLiteralExpression(literal) &&
       checker
@@ -4585,7 +4722,8 @@ export const isHeapFunction = (node: ts.Node, context: Context): node is HeapFun
     return (
       found !== undefined &&
       (found === symbol ||
-        (ts.isPropertyAssignment(node.parent) && found.valueDeclaration === node.parent))
+        (ts.isPropertyAssignment(node.parent) &&
+          getValueDeclaration(found, context) === node.parent))
     );
   };
   const sourceFile = node.getSourceFile();
@@ -4676,11 +4814,12 @@ export const findObjectTargets = (files: readonly ts.SourceFile[], context: Cont
         ).flatMap((node) =>
           getObjectTargets(node, context).flatMap((target): (ts.Symbol | ts.Node)[] => {
             const symbol = getSymbol(skipCasts(target), context.checker);
+            const declaration = getValueDeclaration(symbol, context);
             return symbol === undefined
               ? []
-              : symbol.valueDeclaration === undefined
+              : declaration === undefined
                 ? [symbol]
-                : [symbol, symbol.valueDeclaration];
+                : [symbol, declaration];
           }),
         ),
       ),
@@ -4696,7 +4835,7 @@ export const getHeapClass = (node: ts.Expression, context: Context): HeapClass |
       ? inPlace
       : undefined;
   }
-  const declaration = getSymbol(inPlace, context.checker)?.valueDeclaration;
+  const declaration = getValueDeclaration(getSymbol(inPlace, context.checker), context);
   const found =
     declaration !== undefined && ts.isVariableDeclaration(declaration)
       ? declaration.initializer
@@ -4761,7 +4900,7 @@ export interface Construction {
 // The built-in that a class extends where the class is a buffer's, a typed array's, Date's, or a
 // collection's, which makes the class's instance as super(...args) would, with the same new.target.
 const getConstructedBase = (callee: ts.Expression, context: Context) => {
-  const declaration = getSymbol(skipCasts(callee), context.checker)?.valueDeclaration;
+  const declaration = getValueDeclaration(getSymbol(skipCasts(callee), context.checker), context);
   const created =
     declaration !== undefined && ts.isVariableDeclaration(declaration)
       ? declaration.initializer
@@ -4783,7 +4922,7 @@ const getConstructedBase = (callee: ts.Expression, context: Context) => {
 const getBoundConstruction = (node: ts.NewExpression, context: Context) => {
   const name = skipCasts(node.expression);
   const symbol = ts.isIdentifier(name) ? getSymbol(name, context.checker) : undefined;
-  const declaration = symbol?.valueDeclaration;
+  const declaration = getValueDeclaration(symbol, context);
   const initializer =
     declaration !== undefined && ts.isVariableDeclaration(declaration)
       ? declaration.initializer
@@ -5003,7 +5142,7 @@ export const isHeldErrorName = (
   assumed: ReadonlySet<ts.Node> = new Set(),
 ) => {
   const declaration = ts.isIdentifier(node)
-    ? getSymbol(node, context.checker)?.valueDeclaration
+    ? getValueDeclaration(getSymbol(node, context.checker), context)
     : undefined;
   return (
     declaration !== undefined &&
@@ -5033,7 +5172,7 @@ export const getRunConstructor = (
   context: Context,
 ): ts.ConstructorDeclaration | HeapClass | undefined => {
   if (!ts.isClassLike(node)) return (node.body?.statements.length ?? 0) > 0 ? node : undefined;
-  const constructor = node.members.find(ts.isConstructorDeclaration);
+  const constructor = getRunMembers(node).find(ts.isConstructorDeclaration);
   const base = getBaseClass(node, context);
   const run =
     constructor === undefined
@@ -5057,7 +5196,7 @@ export const getRunConstructor = (
 // first that runs a constructor.
 export const getRunFields = (node: HeapClass, context: Context) => {
   if (!ts.isClassLike(node) || hasExtends(node)) return [];
-  const fields = node.members.filter(
+  const fields = getRunMembers(node).filter(
     (member): member is ts.PropertyDeclaration =>
       ts.isPropertyDeclaration(member) && !isStatic(member) && !isAmbient(member),
   );
@@ -5084,14 +5223,14 @@ export const getRunFields = (node: HeapClass, context: Context) => {
 export const getFieldsAfterSuper = (node: HeapClass, context: Context) => {
   const base = ts.isClassLike(node) ? getBaseClass(node, context) : undefined;
   const constructor = ts.isClassLike(node)
-    ? node.members.find(ts.isConstructorDeclaration)
+    ? getRunMembers(node).find(ts.isConstructorDeclaration)
     : undefined;
   return ts.isClassLike(node) &&
     constructor !== undefined &&
     base !== undefined &&
     (getRunConstructor(base, context) !== undefined ||
       getDeferredSuperCalls(constructor, context) !== undefined)
-    ? node.members.filter(
+    ? getRunMembers(node).filter(
         (member): member is ts.PropertyDeclaration =>
           ts.isPropertyDeclaration(member) && !isStatic(member) && !isAmbient(member),
       )
@@ -5180,7 +5319,7 @@ export const getLeadingPrivate = (node: ts.Expression): ts.PropertyAccessExpress
 };
 
 export const getPrivateMember = (name: ts.PrivateIdentifier, context: Context) => {
-  const declaration = getSymbol(name, context.checker)?.valueDeclaration;
+  const declaration = getValueDeclaration(getSymbol(name, context.checker), context);
   return declaration !== undefined &&
     ts.isClassElement(declaration) &&
     ts.isClassLike(declaration.parent) &&
@@ -5209,6 +5348,8 @@ export interface CalledMethod {
   method: ts.MethodDeclaration | ts.GetAccessorDeclaration;
   receiver: ts.Expression;
   key: string;
+  // The well-known symbol that keys the method, such as iterator for obj[Symbol.iterator].
+  symbol?: string;
   // A getter like `get method() { return this.#method; }` that the call reads the method through.
   getter?: ts.GetAccessorDeclaration;
 }
@@ -5225,10 +5366,25 @@ export const getCalledMethod = (
     (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node));
   if (!isAccess) return undefined;
   const name = ts.isPropertyAccessExpression(node) ? node.name : node.argumentExpression;
-  if (!ts.isIdentifier(name) && !ts.isPrivateIdentifier(name) && !ts.isStringLiteralLike(name)) {
-    return undefined;
-  }
-  const declaration = getSymbol(name, context.checker)?.valueDeclaration;
+  const symbol =
+    ts.isPropertyAccessExpression(name) && getBuiltInPath(name.expression, context) === "Symbol"
+      ? name.name.text
+      : undefined;
+  const text =
+    ts.isIdentifier(name) || ts.isPrivateIdentifier(name) || ts.isStringLiteralLike(name)
+      ? name.text
+      : undefined;
+  const key = symbol === undefined ? text : `@@${symbol}`;
+  if (key === undefined) return undefined;
+  // A method that a well-known symbol keys is the property of the receiver's type with its name.
+  const property =
+    symbol === undefined
+      ? getSymbol(name, context.checker)
+      : context.checker
+          .getTypeAtLocation(node.expression)
+          .getProperties()
+          .find((inner) => inner.escapedName.toString().startsWith(`__@${symbol}@`));
+  const declaration = getValueDeclaration(property, context);
   const getter =
     declaration !== undefined &&
     ts.isGetAccessorDeclaration(declaration) &&
@@ -5241,7 +5397,13 @@ export const getCalledMethod = (
   const method = getObjectMethod(returned ?? declaration, context);
   return method === undefined || !isKind(method)
     ? undefined
-    : { method, receiver: node.expression, key: name.text, getter };
+    : {
+        method,
+        receiver: node.expression,
+        key,
+        symbol,
+        getter,
+      };
 };
 
 // A value that a literal writes, which reads the same wherever it runs.
@@ -5268,7 +5430,9 @@ export const getFactoryCall = (
   context: Context,
 ): FactoryCall | undefined => {
   if (node === undefined || !ts.isCallExpression(node)) return undefined;
-  const factory = getAnyFunction(getSymbol(node.expression, context.checker)?.valueDeclaration);
+  const factory = getAnyFunction(
+    getValueDeclaration(getSymbol(node.expression, context.checker), context),
+  );
   const body = factory?.body;
   if (factory === undefined || !isPlain(factory) || body === undefined) return undefined;
   const returned = ts.isBlock(body) ? body.statements.at(-1) : undefined;
@@ -5331,7 +5495,7 @@ export const getFactoryCall = (
     expression === undefined
       ? undefined
       : (getAnyFunction(expression) ??
-        getAnyFunction(getSymbol(expression, context.checker)?.valueDeclaration));
+        getAnyFunction(getValueDeclaration(getSymbol(expression, context.checker), context)));
   if (
     !isDeclaringFunctions ||
     closure === undefined ||
@@ -5362,15 +5526,155 @@ export const getFactoryCall = (
 // The function that a callee or callback names: one written in place, one declared elsewhere, one
 // that a factory returns, or a method of a known class.
 const resolve = (node: ts.Expression, context: Context) => {
-  const declaration = getNamedSymbol(skipCasts(node), context.checker)?.valueDeclaration;
+  const declaration = getValueDeclaration(getNamedSymbol(skipCasts(node), context), context);
   return (
     getAnyFunction(skipCasts(node)) ??
     getAnyFunction(declaration) ??
     (declaration !== undefined && ts.isVariableDeclaration(declaration)
       ? getFactoryCall(declaration.initializer, context)?.closure
       : undefined) ??
-    getMethod(node, context)
+    getMethod(node, context) ??
+    getObjectFunction(node, context)
   );
+};
+
+// The names of a symbol in every file of the program.
+const findProgramReferences = (symbol: ts.Symbol, context: Context) =>
+  [...context.nodes.fileStarts].flatMap((start) =>
+    findReferences(symbol, context.nodes.nodes[start], context),
+  );
+
+// Whether a node is the object of a property read that nothing writes or deletes through.
+const isReadReceiver = (node: ts.Node) => {
+  const access = node.parent;
+  if (!ts.isPropertyAccessExpression(access) || access.expression !== node) return false;
+  const parent = access.parent;
+  const isWritten =
+    (ts.isBinaryExpression(parent) &&
+      parent.left === access &&
+      parent.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+      parent.operatorToken.kind <= ts.SyntaxKind.LastAssignment) ||
+    ((ts.isPrefixUnaryExpression(parent) || ts.isPostfixUnaryExpression(parent)) &&
+      (parent.operator === ts.SyntaxKind.PlusPlusToken ||
+        parent.operator === ts.SyntaxKind.MinusMinusToken)) ||
+    ts.isDeleteExpression(parent);
+  return !isWritten;
+};
+
+// Whether every call of a function that takes no parameters only reads a property of what it gives,
+// and nothing else names the function.
+const isReadOnlyFactory = (factory: FunctionNode, context: Context) => {
+  const declaration = ts.isFunctionDeclaration(factory)
+    ? factory
+    : ts.isVariableDeclaration(factory.parent) && factory.parent.initializer === factory
+      ? factory.parent
+      : undefined;
+  const name = declaration?.name;
+  const symbol =
+    name !== undefined && ts.isIdentifier(name) ? getSymbol(name, context.checker) : undefined;
+  return (
+    factory.parameters.length === 0 &&
+    symbol !== undefined &&
+    findProgramReferences(symbol, context).every(
+      (use) =>
+        use === name ||
+        (ts.isCallExpression(use.parent) &&
+          use.parent.expression === use &&
+          use.parent.arguments.length === 0 &&
+          isReadReceiver(use.parent)),
+    )
+  );
+};
+
+// The expression that a function only returns, where its body runs nothing else.
+const getOnlyReturned = (factory: FunctionNode) => {
+  const body = factory.body;
+  if (body === undefined || !ts.isBlock(body)) return body;
+  const statement = body.statements.length === 1 ? body.statements[0] : undefined;
+  return statement !== undefined && ts.isReturnStatement(statement)
+    ? statement.expression
+    : undefined;
+};
+
+// The object literal that a const holds, where the script only reads its properties, directly or
+// through what a function that only returns the const gives at calls that only read a property of
+// it: no code changes the object, so each property holds what the literal writes.
+const getReadOnlyObject = (
+  node: ts.Expression,
+  context: Context,
+): ts.ObjectLiteralExpression | undefined => {
+  const inner = skipCasts(node);
+  if (ts.isCallExpression(inner)) {
+    const factory = getAnyFunction(
+      getValueDeclaration(getSymbol(skipCasts(inner.expression), context.checker), context),
+    );
+    const returned = factory === undefined ? undefined : getOnlyReturned(factory);
+    return factory !== undefined &&
+      returned !== undefined &&
+      inner.arguments.length === 0 &&
+      isReadOnlyFactory(factory, context)
+      ? getReadOnlyObject(returned, context)
+      : undefined;
+  }
+  if (!ts.isIdentifier(inner)) return undefined;
+  const symbol = getSymbol(inner, context.checker);
+  const declaration = getValueDeclaration(symbol, context);
+  if (
+    symbol === undefined ||
+    declaration === undefined ||
+    !ts.isVariableDeclaration(declaration) ||
+    (ts.getCombinedNodeFlags(declaration) & ts.NodeFlags.Const) === 0 ||
+    declaration.initializer === undefined
+  ) {
+    return undefined;
+  }
+  const initializer = skipCasts(declaration.initializer);
+  // A function that only returns the const, and whose calls only read its properties.
+  const isFactoryReturn = (use: ts.Identifier) => {
+    const factory = ts.findAncestor(use, ts.isFunctionLike);
+    const anyFactory = factory === undefined ? undefined : getAnyFunction(factory);
+    return (
+      anyFactory !== undefined &&
+      getOnlyReturned(anyFactory) === use &&
+      isReadOnlyFactory(anyFactory, context)
+    );
+  };
+  return ts.isObjectLiteralExpression(initializer) &&
+    findProgramReferences(symbol, context).every(
+      (use) => use === declaration.name || isReadReceiver(use) || isFactoryReturn(use),
+    )
+    ? initializer
+    : undefined;
+};
+
+// The function that a read of an object's property gives, in a script without a heap, where the
+// object is one that only reads of its properties reach, and the literal writes the function under
+// the name, which reads no this.
+export const getObjectFunction = (node: ts.Expression, context: Context) => {
+  const inner = skipCasts(node);
+  // A script whose heap holds its objects reads the function from the heap.
+  if (context.heap !== undefined || !ts.isPropertyAccessExpression(inner)) return undefined;
+  const object = getReadOnlyObject(inner.expression, context);
+  const properties = (object?.properties ?? []).filter(
+    (property) =>
+      property.name !== undefined &&
+      (ts.isIdentifier(property.name) || ts.isStringLiteral(property.name)) &&
+      property.name.text === inner.name.text,
+  );
+  const property =
+    properties.length === 1 && object?.properties.every((other) => !ts.isSpreadAssignment(other))
+      ? properties[0]
+      : undefined;
+  const found =
+    property !== undefined && ts.isPropertyAssignment(property)
+      ? getAnyFunction(skipCasts(property.initializer))
+      : undefined;
+  return found !== undefined &&
+    (ts.isArrowFunction(found) ||
+      findNodes(found, (node): node is ts.Node => node.kind === ts.SyntaxKind.ThisKeyword)
+        .length === 0)
+    ? found
+    : undefined;
 };
 
 export const getCallee = (node: ts.Expression, context: Context) => {
@@ -5494,6 +5798,46 @@ export const getEnclosingFunction = (node: ts.Node, context: Context) =>
     (ancestor) => ts.isFunctionLike(ancestor) && !context.onceFunctions.has(ancestor),
   );
 
+// A function that no value holds, as the program names it only to call it: a function or a
+// variable that no other module may import, no global object property holds, and no block holds
+// outside strict mode, whose name the files call wherever they write it, at least once, and that
+// reads no arguments object, whose callee would hold it.
+export const isOnlyCalled = (candidate: FunctionNode, context: Context) => {
+  const declaration = ts.isFunctionDeclaration(candidate)
+    ? candidate
+    : (ts.isArrowFunction(candidate) ||
+          (ts.isFunctionExpression(candidate) && candidate.name === undefined)) &&
+        ts.isVariableDeclaration(candidate.parent) &&
+        candidate.parent.initializer === candidate
+      ? candidate.parent
+      : undefined;
+  const name = declaration?.name;
+  const parent = declaration?.parent;
+  const table = context.nodes;
+  const uses =
+    name !== undefined && ts.isIdentifier(name)
+      ? [...table.fileStarts].flatMap((start) =>
+          findNames(table, table.nodes[start], [name.text]).filter((use) => use !== name),
+        )
+      : [];
+  return (
+    declaration !== undefined &&
+    name !== undefined &&
+    ts.isIdentifier(name) &&
+    parent !== undefined &&
+    (!ts.isFunctionDeclaration(declaration) ||
+      ts.isSourceFile(parent) ||
+      ts.isModuleBlock(parent) ||
+      (ts.isBlock(parent) && ts.isFunctionLike(parent.parent))) &&
+    (ts.getCombinedModifierFlags(declaration) & ts.ModifierFlags.ExportDefault) === 0 &&
+    (ts.isExternalModule(candidate.getSourceFile()) ||
+      ts.findAncestor(candidate.parent, ts.isFunctionLike) !== undefined) &&
+    (ts.isArrowFunction(candidate) || findNames(table, candidate, ["arguments"]).length === 0) &&
+    uses.length > 0 &&
+    uses.every((use) => ts.isCallExpression(use.parent) && use.parent.expression === use)
+  );
+};
+
 // The functions of a file that a value may hold where tla-ts can't tell which: those that no other
 // function encloses, or that a function makes each time it runs or as its var holds them outside
 // strict mode and that read none of its locals.
@@ -5576,10 +5920,349 @@ export const getFunctionCandidates = (callee: ts.Expression, context: Context) =
       )
     );
   };
-  return found.filter(
-    (candidate) =>
-      checker.isTypeAssignableTo(checker.getTypeAtLocation(candidate), type) && isTyped(candidate),
+  // A callee whose type createDispatch tested reads its row.
+  const dispatch = context.dispatch;
+  const rowIndex =
+    dispatch === undefined || isSuperAccess(callee)
+      ? -1
+      : getLowerBound(dispatch.calleeIds, 0, dispatch.calleeIds.length, type.id);
+  const row =
+    dispatch !== undefined && rowIndex >= 0 && dispatch.calleeIds[rowIndex] === type.id
+      ? rowIndex
+      : -1;
+  const isAssignable = (candidate: FunctionNode) => {
+    const position = row < 0 ? -1 : getPosition(context.nodes, candidate);
+    const bit = position < 0 || dispatch === undefined ? -1 : dispatch.candidateTypes[position] - 1;
+    const word = row * (dispatch?.words ?? 0) + (bit >>> 5);
+    return dispatch !== undefined && bit >= 0 && (dispatch.tested[word] & (1 << (bit & 31))) !== 0
+      ? (dispatch.rows[word] & (1 << (bit & 31))) !== 0
+      : checker.isTypeAssignableTo(checker.getTypeAtLocation(candidate), type);
+  };
+  return found.filter((candidate) => isAssignable(candidate) && isTyped(candidate));
+};
+
+// TypeScript's flags of a signature with a rest parameter, and of an untyped one of JavaScript.
+const SIGNATURE_REST = 1;
+const SIGNATURE_UNTYPED = 32;
+
+// The distinct types of some nodes or values, in the order of their ids.
+const getDistinctTypes = (types: readonly ts.Type[]) =>
+  [...new Set(types)].toSorted((left, right) => left.id - right.id);
+
+// Tests each callee type that findEffects dispatches against each distinct type of the function
+// candidates once, before findEffects runs, rather than each candidate at each call.
+export const createDispatch = (
+  callees: readonly ts.Expression[],
+  context: Context,
+  isStrictFunctionTypes: boolean,
+): Dispatch => {
+  const checker = context.checker;
+  const candidates = [...new Set([...context.functionCandidates.values()].flat())];
+  const candidateTypes = getDistinctTypes(
+    candidates.map((candidate) => checker.getTypeAtLocation(candidate)),
   );
+  const candidateIds = Int32Array.from(candidateTypes, (type) => type.id);
+  const indexes = new Int32Array(context.nodes.nodes.length);
+  candidates.forEach((candidate) => {
+    const position = getPosition(context.nodes, candidate);
+    const id = checker.getTypeAtLocation(candidate).id;
+    if (position >= 0) {
+      indexes[position] = getLowerBound(candidateIds, 0, candidateIds.length, id) + 1;
+    }
+  });
+  const dispatched = callees.filter(
+    (callee) => !isHeldBuiltInObject(callee, context) && !isSuperAccess(callee),
+  );
+  const calleeTypes = getDistinctTypes(
+    dispatched.map((callee) => checker.getTypeAtLocation(callee)),
+  );
+  const calleeIds = Int32Array.from(calleeTypes, (type) => type.id);
+  const words = (candidateTypes.length + 31) >>> 5;
+  const rows = new Uint32Array(calleeTypes.length * words);
+  // A callee reads the candidates of its own file and those of the other files that read no
+  // locals of a function around them, so each callee type needs only the candidate types of
+  // those: a row of the bits that it tests, from a row of the shared candidates' bits and one of
+  // each file's.
+  const getBit = (candidate: FunctionNode) =>
+    getLowerBound(candidateIds, 0, candidateIds.length, checker.getTypeAtLocation(candidate).id);
+  const sharedBits = new Uint32Array(words);
+  context.sharedFunctionCandidates.forEach((shared) =>
+    shared.forEach((candidate) => {
+      const bit = getBit(candidate);
+      sharedBits[bit >>> 5] |= 1 << (bit & 31);
+    }),
+  );
+  const tested = new Uint32Array(calleeTypes.length * words);
+  calleeTypes.forEach((_, row) => tested.set(sharedBits, row * words));
+  dispatched.forEach((callee) => {
+    const row = getLowerBound(calleeIds, 0, calleeIds.length, checker.getTypeAtLocation(callee).id);
+    context.functionCandidates.get(callee.getSourceFile())?.forEach((candidate) => {
+      const bit = getBit(candidate);
+      tested[row * words + (bit >>> 5)] |= 1 << (bit & 31);
+    });
+  });
+  // TypeScript relates a function type to a type of one call signature, no rest parameter, and no
+  // properties only through its call signatures, each of which fails where it takes more arguments
+  // than the target's parameters: the least count of arguments that each candidate takes, or -1,
+  // and the count of parameters that each callee type takes, or -1.
+  const isVoidAccepting = (type: ts.Type) =>
+    (type.isUnion() ? type.types : [type]).some(
+      (member) => (member.flags & ts.TypeFlags.Void) !== 0,
+    );
+  const getLeastArguments = (signature: ts.Signature) => {
+    const count = { value: signature.minArgumentCount };
+    for (let position = signature.minArgumentCount - 1; position >= 0; position -= 1) {
+      if (!isVoidAccepting(checker.getParameterType(signature, position))) break;
+      count.value = position;
+    }
+    return count.value;
+  };
+  const leastArguments = Int32Array.from(candidateTypes, (type) => {
+    const signatures = checker.getSignaturesOfType(type, ts.SignatureKind.Call);
+    const isFunctionType =
+      (type.flags & ts.TypeFlags.Object) !== 0 &&
+      ((type.objectFlags ?? 0) & ts.ObjectFlags.Reference) === 0 &&
+      signatures.length > 0 &&
+      signatures.every(
+        (signature) => (signature.flags & (SIGNATURE_REST | SIGNATURE_UNTYPED)) === 0,
+      );
+    return isFunctionType ? Math.min(...signatures.map(getLeastArguments)) : -1;
+  });
+  const parameterCounts = Int32Array.from(calleeTypes, (type) => {
+    const signatures = checker.getSignaturesOfType(type, ts.SignatureKind.Call);
+    const isOneSignature =
+      type.flags === ts.TypeFlags.Object &&
+      ((type.objectFlags ?? 0) & ts.ObjectFlags.Mapped) === 0 &&
+      signatures.length === 1 &&
+      (signatures[0].flags & SIGNATURE_REST) === 0 &&
+      checker.getSignaturesOfType(type, ts.SignatureKind.Construct).length === 0 &&
+      checker.getPropertiesOfType(type).length === 0 &&
+      checker.getIndexInfosOfType(type).length === 0;
+    return isOneSignature ? signatures[0].parameters.length : -1;
+  });
+  // TypeScript relates a function type of TypeScript's own, not an alias's or an instantiation's,
+  // with call signatures that take no type parameters and nothing else, to another type only
+  // through its signatures' flags, counts of arguments, and the types of its this, parameters,
+  // predicate, and return: candidate types alike in those, by a key that sorting groups, give each
+  // callee type one answer. Each candidate type takes the answer of the first of its group, other
+  // than for a callee type of a candidate's symbol, which TypeScript relates by the symbol's own
+  // signatures.
+  const isPlainFunctionType = (type: ts.Type) => {
+    const signatures = checker.getSignaturesOfType(type, ts.SignatureKind.Call);
+    return (
+      type.flags === ts.TypeFlags.Object &&
+      type.aliasSymbol === undefined &&
+      ((type.objectFlags ?? 0) &
+        (ts.ObjectFlags.Reference | ts.ObjectFlags.Mapped | ts.ObjectFlags.Instantiated)) ===
+        0 &&
+      signatures.length > 0 &&
+      signatures.every(
+        (signature) =>
+          signature.typeParameters === undefined &&
+          signature.target === undefined &&
+          (signature.flags & SIGNATURE_UNTYPED) === 0 &&
+          signature.declaration !== undefined &&
+          !isJavaScriptFile(signature.declaration.getSourceFile().fileName),
+      ) &&
+      checker.getSignaturesOfType(type, ts.SignatureKind.Construct).length === 0 &&
+      checker.getPropertiesOfType(type).length === 0 &&
+      checker.getIndexInfosOfType(type).length === 0
+    );
+  };
+  const getKey = (type: ts.Type) =>
+    isPlainFunctionType(type)
+      ? checker
+          .getSignaturesOfType(type, ts.SignatureKind.Call)
+          .map((signature) => {
+            const predicate = checker.getTypePredicateOfSignature(signature);
+            return [
+              signature.flags,
+              signature.minArgumentCount,
+              signature.thisParameter === undefined
+                ? -1
+                : checker.getTypeOfSymbol(signature.thisParameter).id,
+              ...signature.parameters.map((parameter) => checker.getTypeOfSymbol(parameter).id),
+              predicate === undefined
+                ? -1
+                : `${predicate.kind}:${predicate.parameterIndex ?? -1}:${predicate.type?.id ?? -1}`,
+              checker.getReturnTypeOfSignature(signature).id,
+            ].join(",");
+          })
+          .join(";")
+      : undefined;
+  const keys = candidateTypes.map(getKey);
+  const byKey = Int32Array.from(candidateTypes, (_, bit) => bit).sort((left, right) => {
+    const leftKey = keys[left] ?? "";
+    const rightKey = keys[right] ?? "";
+    return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : left - right;
+  });
+  const firsts = Int32Array.from(candidateTypes, (_, bit) => bit);
+  byKey.forEach((bit, index) => {
+    const previous = index > 0 ? byKey[index - 1] : -1;
+    if (previous >= 0 && keys[bit] !== undefined && keys[bit] === keys[previous]) {
+      firsts[bit] = firsts[previous];
+    }
+  });
+  const candidateSymbols = Int32Array.from(
+    candidateTypes.flatMap((type) =>
+      type.symbol === undefined ? [] : [ts.getSymbolId(type.symbol)],
+    ),
+  ).sort();
+  const isCandidateSymbol = (symbol: ts.Symbol | undefined) => {
+    const id = symbol === undefined ? -1 : ts.getSymbolId(symbol);
+    return candidateSymbols[getLowerBound(candidateSymbols, 0, candidateSymbols.length, id)] === id;
+  };
+  // Where both are function types of one call signature with no rest parameter, the candidate
+  // type a plain one with no this, and the callee type's signature has no type parameter or type
+  // predicate, TypeScript's compareSignaturesRelated relates them by the count of arguments, then
+  // each pair of parameter types, then the return types, unless the parameters at a position are
+  // both function types, which it compares as callbacks. The pairs of those types take far fewer
+  // tests than the pairs of function types: the candidate types' parameter and return types, and
+  // the callee types', each by an index, with a table each way of the answers that the tests find,
+  // 1 and 2 for no and yes.
+  const sources = candidateTypes.map((type) => {
+    const signatures = checker.getSignaturesOfType(type, ts.SignatureKind.Call);
+    return isPlainFunctionType(type) &&
+      signatures.length === 1 &&
+      (signatures[0].flags & SIGNATURE_REST) === 0 &&
+      signatures[0].thisParameter === undefined
+      ? signatures[0]
+      : undefined;
+  });
+  // A callee type may be an alias's or an instantiation's, and its signature may take a this,
+  // which TypeScript compares only to a candidate's own this, and come from a generic one, which
+  // changes only how it compares callbacks.
+  const targets = calleeTypes.map((type) => {
+    const signatures = checker.getSignaturesOfType(type, ts.SignatureKind.Call);
+    const signature = signatures.length === 1 ? signatures[0] : undefined;
+    return type.flags === ts.TypeFlags.Object &&
+      ((type.objectFlags ?? 0) & (ts.ObjectFlags.Reference | ts.ObjectFlags.Mapped)) === 0 &&
+      signature !== undefined &&
+      signature.typeParameters === undefined &&
+      (signature.flags & (SIGNATURE_REST | SIGNATURE_UNTYPED)) === 0 &&
+      signature.declaration !== undefined &&
+      !isJavaScriptFile(signature.declaration.getSourceFile().fileName) &&
+      checker.getTypePredicateOfSignature(signature) === undefined &&
+      checker.getSignaturesOfType(type, ts.SignatureKind.Construct).length === 0 &&
+      checker.getPropertiesOfType(type).length === 0 &&
+      checker.getIndexInfosOfType(type).length === 0
+      ? signature
+      : undefined;
+  });
+  const getParts = (signature: ts.Signature | undefined) =>
+    signature === undefined
+      ? []
+      : [
+          ...signature.parameters.map((_, position) =>
+            checker.getParameterType(signature, position),
+          ),
+          checker.getReturnTypeOfSignature(signature),
+        ];
+  const sourceParts = sources.map(getParts);
+  const targetParts = targets.map(getParts);
+  const sourcePartTypes = getDistinctTypes(sourceParts.flat());
+  const targetPartTypes = getDistinctTypes(targetParts.flat());
+  const sourcePartIds = Int32Array.from(sourcePartTypes, (type) => type.id);
+  const targetPartIds = Int32Array.from(targetPartTypes, (type) => type.id);
+  const getPartIndexes = (parts: readonly ts.Type[], ids: Int32Array) =>
+    Int32Array.from(parts, (part) => getLowerBound(ids, 0, ids.length, part.id));
+  const sourceIndexes = sourceParts.map((parts) => getPartIndexes(parts, sourcePartIds));
+  const targetIndexes = targetParts.map((parts) => getPartIndexes(parts, targetPartIds));
+  // A parameter type that TypeScript may compare as a callback: an object type of call signatures.
+  const isCallable = (type: ts.Type) => {
+    const value = checker.getNonNullableType(type);
+    return (
+      (value.flags & ts.TypeFlags.Object) !== 0 &&
+      checker.getSignaturesOfType(value, ts.SignatureKind.Call).length > 0
+    );
+  };
+  const isSourceCallable = sourcePartTypes.map(isCallable);
+  const isTargetCallable = targetPartTypes.map(isCallable);
+  const sourceToTarget = new Uint8Array(sourcePartTypes.length * targetPartTypes.length);
+  const targetToSource = new Uint8Array(targetPartTypes.length * sourcePartTypes.length);
+  const isSourceRelated = (source: number, target: number) => {
+    const at = source * targetPartTypes.length + target;
+    if (sourceToTarget[at] === 0) {
+      const isRelated = checker.isTypeAssignableTo(
+        sourcePartTypes[source],
+        targetPartTypes[target],
+      );
+      sourceToTarget[at] = isRelated ? 2 : 1;
+    }
+    return sourceToTarget[at] === 2;
+  };
+  const isTargetRelated = (target: number, source: number) => {
+    const at = target * sourcePartTypes.length + source;
+    if (targetToSource[at] === 0) {
+      const isRelated = checker.isTypeAssignableTo(
+        targetPartTypes[target],
+        sourcePartTypes[source],
+      );
+      targetToSource[at] = isRelated ? 2 : 1;
+    }
+    return targetToSource[at] === 2;
+  };
+  // The answer through the parts, 1 and 2 for no and yes, or 0 where only the whole relation tells.
+  const getPartsAnswer = (bit: number, row: number) => {
+    const source = sources[bit];
+    const target = targets[row];
+    if (source === undefined || target === undefined) return 0;
+    if (source === target) return 2;
+    const sourceCount = source.parameters.length;
+    const targetCount = target.parameters.length;
+    if (leastArguments[bit] > targetCount) return 1;
+    const kind = target.declaration?.kind;
+    const isStrictVariance =
+      isStrictFunctionTypes &&
+      kind !== ts.SyntaxKind.MethodDeclaration &&
+      kind !== ts.SyntaxKind.MethodSignature &&
+      kind !== ts.SyntaxKind.Constructor;
+    const sourceIndex = sourceIndexes[bit];
+    const targetIndex = targetIndexes[row];
+    for (let position = 0; position < Math.min(sourceCount, targetCount); position += 1) {
+      const sourcePart = sourceIndex[position];
+      const targetPart = targetIndex[position];
+      if (sourcePartTypes[sourcePart] === targetPartTypes[targetPart]) continue;
+      if (isSourceCallable[sourcePart] && isTargetCallable[targetPart]) return 0;
+      const isRelated =
+        (!isStrictVariance && isSourceRelated(sourcePart, targetPart)) ||
+        isTargetRelated(targetPart, sourcePart);
+      if (!isRelated) return 1;
+    }
+    const targetReturn = targetIndex[targetCount];
+    if ((targetPartTypes[targetReturn].flags & (ts.TypeFlags.Void | ts.TypeFlags.Any)) !== 0) {
+      return 2;
+    }
+    return isSourceRelated(sourceIndex[sourceCount], targetReturn) ? 2 : 1;
+  };
+  // The answer of each group's first candidate type for the callee type being tested, by the
+  // callee type's row plus one: 1 and 2 for no and yes.
+  const answerRows = new Int32Array(candidateTypes.length);
+  const answers = new Uint8Array(candidateTypes.length);
+  calleeTypes.forEach((calleeType, row) => {
+    const isGrouped = !isCandidateSymbol(calleeType.symbol);
+    candidateTypes.forEach((candidateType, bit) => {
+      const isTooFew =
+        parameterCounts[row] >= 0 &&
+        leastArguments[bit] > parameterCounts[row] &&
+        candidateType.symbol !== calleeType.symbol;
+      const isTested = (tested[row * words + (bit >>> 5)] & (1 << (bit & 31))) !== 0;
+      if (!isTested || isTooFew) return;
+      const first = isGrouped ? firsts[bit] : bit;
+      if (answerRows[first] !== row + 1) {
+        answerRows[first] = row + 1;
+        const partsAnswer = getPartsAnswer(bit, row);
+        answers[first] =
+          partsAnswer !== 0
+            ? partsAnswer
+            : checker.isTypeAssignableTo(candidateType, calleeType)
+              ? 2
+              : 1;
+      }
+      if (answers[first] === 2) rows[row * words + (bit >>> 5)] |= 1 << (bit & 31);
+    });
+  });
+  return { calleeIds, words, rows, tested, candidateTypes: indexes };
 };
 
 // Whether the model reaches a node's code, as no value holds a function that nothing names.

@@ -19,10 +19,14 @@ export interface CompiledSpec {
 
 // The TypeScript compiler takes a while to load, so only compiling loads it.
 export const compile = async (options: CompileOptions): Promise<CompiledSpec> => {
-  const compiled = (await import("./typescript/compile")).compile(
+  const [typescript, program] = await Promise.all([
+    import("./typescript/compile"),
+    import("./typescript/program"),
+  ]);
+  const compiled = typescript.compile(
     options.source,
     options.fileName,
-    options.libraries,
+    options.libraries === undefined ? undefined : program.createLibrary(options.libraries),
   );
   return {
     name: compiled.name,

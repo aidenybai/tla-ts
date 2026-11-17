@@ -15,3 +15,7 @@ export const getLineMarks = (lines: string[], marks: Mark[]) => {
     return lineMarks.length > 0 ? lineMarks : NO_MARKS;
   });
 };
+
+// A line is told of a hovered name only when it holds that name, so other lines keep their props.
+export const getLineHoveredName = (marks: Mark[], hoveredName: string | undefined) =>
+  marks.some((mark) => mark.name === hoveredName) ? hoveredName : undefined;

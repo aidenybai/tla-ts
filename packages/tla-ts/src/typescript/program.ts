@@ -17,6 +17,7 @@ import {
   typeExportsAsAny,
 } from "./common-js";
 import { rejectEarlyErrors } from "./early-errors";
+import { typeJavaScript } from "./javascript-types";
 import { createProgramNodes, withNameSymbols } from "./program-nodes";
 import { rewriteNameDeletes } from "./name-deletes";
 import { rewriteWithStatements } from "./with-statements";
@@ -55,7 +56,8 @@ const COMPILER_OPTIONS: ts.CompilerOptions = {
   strict: true,
   noEmit: true,
   allowJs: true,
-  checkJs: false,
+  // TypeScript checks JavaScript's types only where tla-ts asks for a file's errors.
+  checkJs: true,
   target: ts.ScriptTarget.ESNext,
   module: ts.ModuleKind.ESNext,
   moduleResolution: ts.ModuleResolutionKind.Bundler,
@@ -122,10 +124,6 @@ const getExtension = (path: string) =>
 // TypeScript's error for an if whose branch is the empty statement, which JavaScript runs.
 const EMPTY_IF_BRANCH_ERROR = 1313;
 
-// TypeScript's own declaration files, parsed once and shared by every program, since parsing them
-// takes most of a compile.
-const libraryFiles = new Map<string, ts.SourceFile>();
-
 const createLibraryHost = (libraries: ReadonlyMap<string, string>): ts.CompilerHost => ({
   getSourceFile: (fileName, languageVersion) => {
     const text = libraries.get(fileName);
@@ -141,6 +139,54 @@ const createLibraryHost = (libraries: ReadonlyMap<string, string>): ts.CompilerH
   fileExists: (fileName) => libraries.has(fileName),
   readFile: (fileName) => libraries.get(fileName),
 });
+
+// TypeScript's declaration files of its default library, by name, which every program shares, and,
+// for a host without a file system, the texts that its files read from.
+export interface Library {
+  files: ReadonlyMap<string, ts.SourceFile>;
+  texts: ReadonlyMap<string, string> | undefined;
+}
+
+// A program of no code that reads the default library through a host, whose files it parses.
+const LIBRARY_ROOT = "/library.ts";
+
+const parseLibrary = (
+  host: ts.CompilerHost,
+  texts: ReadonlyMap<string, string> | undefined,
+): Library => {
+  const program = ts.createProgram({
+    rootNames: [LIBRARY_ROOT],
+    options: COMPILER_OPTIONS,
+    host: {
+      ...host,
+      getSourceFile: (fileName, languageVersion) =>
+        fileName === LIBRARY_ROOT
+          ? ts.createSourceFile(fileName, "", languageVersion)
+          : host.getSourceFile(fileName, languageVersion),
+      fileExists: (fileName) => fileName === LIBRARY_ROOT || host.fileExists(fileName),
+    },
+  });
+  return {
+    files: new Map(
+      program
+        .getSourceFiles()
+        .filter((file) => file.fileName !== LIBRARY_ROOT)
+        .map((file) => [file.fileName, file]),
+    ),
+    texts,
+  };
+};
+
+// A browser has no file system, so it passes the texts of TypeScript's declaration files, which
+// it parses once into its library.
+export const createLibrary = (texts: ReadonlyMap<string, string>) =>
+  parseLibrary(createLibraryHost(texts), texts);
+
+// Where there is a file system, the compiler parses the default library from it as it loads.
+const DEFAULT_LIBRARY: Library =
+  ts.sys === undefined
+    ? { files: new Map(), texts: undefined }
+    : parseLibrary(ts.createCompilerHost(COMPILER_OPTIONS), undefined);
 
 // HACK: TypeScript checks a parameter property's assignment only in its emit, so the text gains it.
 // A file's text where each constructor assigns its parameter properties, as TypeScript does once
@@ -274,7 +320,7 @@ const getProjectOptions = (options: ts.CompilerOptions): ts.CompilerOptions => (
   strictNullChecks: true,
   noImplicitAny: true,
   allowJs: true,
-  checkJs: false,
+  checkJs: true,
   moduleDetection: ts.ModuleDetectionKind.Force,
   noEmit: true,
   composite: false,
@@ -290,25 +336,22 @@ const getProjectOptions = (options: ts.CompilerOptions): ts.CompilerOptions => (
 // Type checks a model, with the files it imports, and throws their type errors. A file of a project
 // on disk type checks with the project's options, and where it needs them, as in an editor, the
 // globals that the project's other files declare, such as those of a types package one references.
-export const createProgram = (
-  source: string,
-  path: string,
-  libraries: ReadonlyMap<string, string> | undefined,
-) => {
+export const createProgram = (source: string, path: string, library: Library = DEFAULT_LIBRARY) => {
+  const libraries = library.texts;
   const project = libraries === undefined ? getProject(path) : undefined;
   const options = project === undefined ? COMPILER_OPTIONS : getProjectOptions(project.options);
   const host =
     libraries === undefined ? ts.createCompilerHost(options) : createLibraryHost(libraries);
-  const libraryDirectory = host.getDefaultLibLocation?.() ?? "";
   // Whether a module that Node loads as JavaScript gave its types from a declaration file, which
   // type checks the code that imports it.
   let isDeclared = false;
   // A module that TypeScript finds no code of, as a package or JavaScript, and any module that
   // JavaScript names, loads as Node loads it, though a package may give its types, and TypeScript
   // reads it as code. A type's import, and any import of a declaration file, loads nothing when the
-  // code runs. A program that type checks reads a package's types from its declarations instead.
+  // code runs. A program that type checks reads a package's types from its declarations instead,
+  // as do the files that the model doesn't load, which only give the project's globals.
   const getModuleResolver =
-    (isTyped: boolean) =>
+    (valueFiles: ReadonlySet<string> | undefined) =>
     (
       literals: readonly ts.StringLiteralLike[],
       containingFile: string,
@@ -317,20 +360,23 @@ export const createProgram = (
       containingSourceFile: ts.SourceFile,
     ) =>
       literals.map((literal): ts.ResolvedModuleWithFailedLookupLocations => {
-        const resolved = isJavaScriptFile(containingFile)
-          ? undefined
-          : ts.resolveModuleName(
-              literal.text,
-              containingFile,
-              resolutionOptions,
-              host,
-              undefined,
-              redirectedReference,
-            );
+        const isValue = valueFiles === undefined || valueFiles.has(containingFile);
+        const resolved =
+          isJavaScriptFile(containingFile) && isValue
+            ? undefined
+            : ts.resolveModuleName(
+                literal.text,
+                containingFile,
+                resolutionOptions,
+                host,
+                undefined,
+                redirectedReference,
+              );
         // tla-ts reads JSON's value as any, which the declaration of JSON's modules gives.
         if (resolved?.resolvedModule?.extension === ts.Extension.Json) {
           return { resolvedModule: undefined };
         }
+        if (resolved !== undefined && !isValue) return resolved;
         if (
           resolved !== undefined &&
           (CODE_EXTENSIONS.has(resolved.resolvedModule?.extension ?? "") ||
@@ -344,10 +390,7 @@ export const createProgram = (
         if (found === undefined || extension === undefined || extension === ts.Extension.Json) {
           return resolved ?? { resolvedModule: undefined };
         }
-        if (resolved?.resolvedModule !== undefined) {
-          isDeclared = true;
-          if (isTyped) return resolved;
-        }
+        if (resolved?.resolvedModule !== undefined) isDeclared = true;
         return {
           resolvedModule: { resolvedFileName: found, extension, isExternalLibraryImport: false },
         };
@@ -359,7 +402,10 @@ export const createProgram = (
     rootNames: string[],
     text: string,
     globals: ReadonlySet<string>,
-    isTyped = false,
+    // The files whose imports load as Node loads them, every file's where undefined.
+    valueFiles: ReadonlySet<string> | undefined,
+    // The texts of the JavaScript files whose types tla-ts made any where they may not hold.
+    typedTexts: ReadonlyMap<string, string>,
   ) => {
     const programHost: ts.CompilerHost & SourceRedirectingHost = {
       ...host,
@@ -371,6 +417,8 @@ export const createProgram = (
         if (fileName === JSON_DECLARATIONS.path) {
           return ts.createSourceFile(fileName, JSON_DECLARATIONS.text, languageVersion);
         }
+        const typedText = typedTexts.get(fileName);
+        if (typedText !== undefined) return createFile(fileName, typedText, languageVersion);
         if (fileName === path) {
           return createFile(
             path,
@@ -378,15 +426,8 @@ export const createProgram = (
             languageVersion,
           );
         }
-        const cached = libraryFiles.get(fileName);
-        if (cached !== undefined) return cached;
-        const file = host.getSourceFile(fileName, languageVersion);
-        if (file === undefined || file.isDeclarationFile) {
-          if (file !== undefined && fileName.startsWith(libraryDirectory)) {
-            libraryFiles.set(fileName, file);
-          }
-          return file;
-        }
+        const file = library.files.get(fileName) ?? host.getSourceFile(fileName, languageVersion);
+        if (file === undefined || file.isDeclarationFile) return file;
         return createVarFunctionsFile(
           fileName,
           assignParameterProperties(fileName, file.text),
@@ -395,7 +436,8 @@ export const createProgram = (
       },
       fileExists: (fileName) => fileName === path || host.fileExists(fileName),
       readFile: (fileName) => (fileName === path ? source : host.readFile(fileName)),
-      resolveModuleNameLiterals: libraries === undefined ? getModuleResolver(isTyped) : undefined,
+      resolveModuleNameLiterals:
+        libraries === undefined ? getModuleResolver(valueFiles) : undefined,
     };
     return ts.createProgram({
       rootNames: [...rootNames, JSON_DECLARATIONS.path],
@@ -410,7 +452,7 @@ export const createProgram = (
     return file;
   };
   const firstText = declareFileVarFunctions(path, assignParameterProperties(path, source));
-  const firstProgram = createTypeScriptProgram([path], firstText, new Set());
+  const firstProgram = createTypeScriptProgram([path], firstText, new Set(), undefined, new Map());
   const firstSourceFile = getModelSourceFile(firstProgram);
   const syntaxErrors = firstProgram.getSyntacticDiagnostics(firstSourceFile);
   if (syntaxErrors.length > 0)
@@ -418,26 +460,58 @@ export const createProgram = (
   rejectEarlyErrors(firstSourceFile);
   const withText = rewriteWithStatements(firstSourceFile, firstProgram.getTypeChecker());
   const withProgram =
-    withText === firstText ? firstProgram : createTypeScriptProgram([path], withText, new Set());
+    withText === firstText
+      ? firstProgram
+      : createTypeScriptProgram([path], withText, new Set(), undefined, new Map());
   const text = rewriteNameDeletes(getModelSourceFile(withProgram), withProgram.getTypeChecker());
   const rewrittenProgram =
-    text === withText ? withProgram : createTypeScriptProgram([path], text, new Set());
+    text === withText
+      ? withProgram
+      : createTypeScriptProgram([path], text, new Set(), undefined, new Map());
   const rewrittenChecker = rewrittenProgram.getTypeChecker();
   const globals = getImplicitGlobals(getModelSourceFile(rewrittenProgram), (name) =>
     getSymbol(name, rewrittenChecker),
   );
-  const modelProgram =
-    globals.size === 0 ? rewrittenProgram : createTypeScriptProgram([path], text, globals);
+  // Outside strict mode, a word that only strict mode reserves, arguments, or eval names a binding,
+  // and a delete of a read-only property gives false. JavaScript runs an if whose branch is empty.
+  const isReported = (diagnostic: ts.Diagnostic) =>
+    diagnostic.code !== EMPTY_IF_BRANCH_ERROR &&
+    (!STRICT_MODE_ERRORS.has(diagnostic.code) ||
+      diagnostic.file === undefined ||
+      isStrictCode(getNodeAt(diagnostic.file, diagnostic.start ?? 0)) ||
+      isGeneratorYield(getNodeAt(diagnostic.file, diagnostic.start ?? 0)));
+  const untypedProgram =
+    globals.size === 0
+      ? rewrittenProgram
+      : createTypeScriptProgram([path], text, globals, undefined, new Map());
+  // The program's own JavaScript, rather than a package's, whose types tla-ts makes hold, round by
+  // round, until TypeScript reports no error that changes them.
+  const typeJavaScriptFiles = (
+    program: ts.Program,
+    typedTexts: ReadonlyMap<string, string>,
+  ): { program: ts.Program; typedTexts: ReadonlyMap<string, string> } => {
+    const texts = program
+      .getSourceFiles()
+      .filter(
+        (file) =>
+          isJavaScriptFile(file.fileName) && !file.fileName.split("/").includes("node_modules"),
+      )
+      .flatMap((file) => {
+        const typed = typeJavaScript(file, program, host, isReported);
+        return typed === undefined ? [] : [[file.fileName, typed] as const];
+      });
+    if (texts.length === 0) return { program, typedTexts };
+    const next = new Map([...typedTexts, ...texts]);
+    return typeJavaScriptFiles(
+      createTypeScriptProgram([path], text, globals, undefined, next),
+      next,
+    );
+  };
+  const typed = typeJavaScriptFiles(untypedProgram, new Map());
+  const modelProgram = typed.program;
   const getModelFiles = (program: ts.Program) =>
     modelProgram.getSourceFiles().flatMap((file) => program.getSourceFile(file.fileName) ?? []);
-  // Outside strict mode, a word that only strict mode reserves, arguments, or eval names a binding,
-  // and a delete of a read-only property gives false.
-  const isReported = (diagnostic: ts.Diagnostic) =>
-    !STRICT_MODE_ERRORS.has(diagnostic.code) ||
-    diagnostic.file === undefined ||
-    isStrictCode(getNodeAt(diagnostic.file, diagnostic.start ?? 0)) ||
-    isGeneratorYield(getNodeAt(diagnostic.file, diagnostic.start ?? 0));
-  // TypeScript checks no types of JavaScript, only its syntax.
+  // JavaScript's type errors are those that typeJavaScriptFiles took, so only its syntax's remain.
   const getDiagnostics = (program: ts.Program) =>
     ts
       .sortAndDeduplicateDiagnostics(
@@ -447,7 +521,7 @@ export const createProgram = (
             : ts.getPreEmitDiagnostics(program, file),
         ),
       )
-      .filter((diagnostic) => isReported(diagnostic) && diagnostic.code !== EMPTY_IF_BRANCH_ERROR);
+      .filter(isReported);
   // TypeScript reads the code of a package that gives its types in declarations as JavaScript,
   // whose values it doesn't type, so the TypeScript that imports it type checks against the
   // declarations, while tla-ts runs the package's JavaScript.
@@ -459,9 +533,9 @@ export const createProgram = (
       ? diagnostics
       : [
           ...diagnostics.filter((diagnostic) => !isTypeScript(diagnostic)),
-          ...getDiagnostics(createTypeScriptProgram(rootNames, text, globals, true)).filter(
-            isTypeScript,
-          ),
+          ...getDiagnostics(
+            createTypeScriptProgram(rootNames, text, globals, new Set(), typed.typedTexts),
+          ).filter(isTypeScript),
         ];
   };
   const modelDiagnostics = getTypedDiagnostics(modelProgram, [path]);
@@ -470,31 +544,17 @@ export const createProgram = (
   const program =
     project === undefined || modelDiagnostics.length === 0
       ? modelProgram
-      : createTypeScriptProgram(projectRoots, text, globals);
+      : createTypeScriptProgram(
+          projectRoots,
+          text,
+          globals,
+          new Set(modelProgram.getSourceFiles().map((file) => file.fileName)),
+          typed.typedTexts,
+        );
   const diagnostics =
     program === modelProgram ? modelDiagnostics : getTypedDiagnostics(program, projectRoots);
   if (diagnostics.length > 0) throw new TlaTypeScriptError(ts.formatDiagnostics(diagnostics, host));
   const sourceFile = getModelSourceFile(program);
-  // HACK: TypeScript gives an overloaded function's symbol its first signature as its value
-  // declaration, but only the implementation runs, so the symbol takes the implementation.
-  getModelFiles(program).forEach((file) =>
-    findNodes(
-      file,
-      (node): node is ts.FunctionDeclaration | ts.MethodDeclaration =>
-        (ts.isFunctionDeclaration(node) || ts.isMethodDeclaration(node)) && node.body !== undefined,
-    ).forEach((implementation) => {
-      const symbol =
-        implementation.name === undefined
-          ? undefined
-          : program.getTypeChecker().getSymbolAtLocation(implementation.name);
-      const isOverloaded = (symbol?.declarations ?? []).some(
-        (declaration) =>
-          (ts.isFunctionDeclaration(declaration) || ts.isMethodDeclaration(declaration)) &&
-          declaration.body === undefined,
-      );
-      if (symbol !== undefined && isOverloaded) symbol.valueDeclaration = implementation;
-    }),
-  );
   const files = getModelFiles(program).filter((file) => !file.isDeclarationFile);
   const nodes = createProgramNodes(program.getTypeChecker(), files);
   const checker = typeExportsAsAny(withNameSymbols(program.getTypeChecker(), nodes));
@@ -503,6 +563,8 @@ export const createProgram = (
     checker,
     files,
     nodes,
+    // Whether TypeScript compares a function type's parameters one way only, as its own options tell.
+    isStrictFunctionTypes: options.strictFunctionTypes ?? options.strict ?? false,
     defaultLibraries: new Set(
       program.getSourceFiles().filter((file) => program.isSourceFileDefaultLibrary(file)),
     ),

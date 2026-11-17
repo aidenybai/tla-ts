@@ -5,6 +5,7 @@ import { check, type CheckResult, formatValue } from "../../src";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { printModule } from "../../src/printer";
 import { compile } from "../../src/typescript/compile";
+import { createLibrary } from "../../src/typescript/program";
 import { printRegions } from "../../src/typescript/regions";
 
 const checkModel = (source: string) => check(compile(source));
@@ -8909,7 +8910,9 @@ describe("errors", () => {
   it("rejects a parameter without a finite type", () => {
     expect(() =>
       compile(`let count = 0;\nexport const run = (step: () => number) => { count += step(); };`),
-    ).toThrow("spec.ts:2:21 () => number isn't finite");
+    ).toThrow(
+      "spec.ts:2:21 tla-ts can't choose every value of the parameter step: () => number isn't finite",
+    );
   });
 
   it("fails the check where an action writes past the end of an array", async () => {
@@ -15137,8 +15140,6 @@ describe("errors", () => {
     `;
 
     it.each([
-      "globalThis.parseInt",
-      'globalThis["parseInt"]',
       '"parseInt" in globalThis',
       'Object.hasOwn(globalThis, "parseInt")',
       'Object.getOwnPropertyDescriptor(globalThis, "parseInt")',
@@ -15154,6 +15155,16 @@ describe("errors", () => {
       const result = await checkModel(getSource("parseInt"));
       expect(result.failure).toBeUndefined();
     });
+
+    it.each(["globalThis.parseInt", 'globalThis["parseInt"]'])(
+      "reads the var's value at %s",
+      async (read) => {
+        const source = `${getSource(read)}\nif (holder.value !== 1) throw new Error("value");`;
+        expect((await checkModel(source)).failure).toBeUndefined();
+        const wrong = source.replace("holder.value !== 1", "holder.value !== 2");
+        expect((await checkModel(wrong)).failure?.message).toContain("value");
+      },
+    );
 
     it("rejects another value of another key", async () => {
       const source = getSource("parseInt").replace("=== parseFloat", "!== parseFloat");
@@ -17994,7 +18005,7 @@ describe("errors", () => {
           }
           if (caught !== "ReferenceError") throw new Error(caught);
         `),
-      ).toThrow("Unknown name: missing");
+      ).toThrow("tla-ts can't throw the ReferenceError of reading missing, which nothing declares");
     });
   });
 
@@ -18363,16 +18374,15 @@ describe("errors", () => {
       ).toContain("tla-ts can't tell which properties the global object has");
     });
 
-    it("stops where a var declares the key", async () => {
-      expect(
-        (
-          await checkModel(`
-            var declared = 1;
-            const holder = { seen: 0 };
-            holder.seen = (globalThis as unknown as Record<string, unknown>).declared === 1 ? 1 : 2;
-          `)
-        ).failure?.message,
-      ).toContain("tla-ts can't tell which properties the global object has");
+    it("reads the value of a var that declares the key", async () => {
+      const getSource = (expected: number) => `
+        var declared = 1;
+        const holder = { seen: 0 };
+        holder.seen = (globalThis as unknown as Record<string, unknown>).declared === 1 ? 1 : 2;
+        if (holder.seen !== ${expected}) throw new Error("seen " + holder.seen);
+      `;
+      expect((await checkModel(getSource(1))).failure).toBeUndefined();
+      expect((await checkModel(getSource(2))).failure?.message).toContain("seen 1");
     });
   });
 
@@ -23126,16 +23136,20 @@ describe("errors", () => {
     expect((await checkModel(getBoxSource(32))).failure?.message).toContain("box");
   });
 
-  it("stops where a call doesn't enter the closure that it runs", () => {
-    expect(() =>
-      compile(`
-        const seen = { count: 0 };
-        function make(x: number) {
-          return { get: function () { return x; } };
-        }
-        if (make(3).get() !== 3) throw new Error("get");
-      `),
-    ).toThrow("tla-ts can't tell which call made this function");
+  const getGetSource = (expected: number) => `
+      const seen = { count: 0 };
+      function make(x: number) {
+        return { get: function () { return x; } };
+      }
+      if (make(3).get() * 10 + make(4).get() !== ${expected}) throw new Error("get");
+  `;
+
+  it("reads a closure that a property named get holds, which may be a getter, in its environment", async () => {
+    expect((await checkModel(getGetSource(34))).failure).toBeUndefined();
+  });
+
+  it("reads the locals of the call that made the closure that a property named get holds", async () => {
+    expect((await checkModel(getGetSource(43))).failure?.message).toContain("get");
   });
 
   const getCounterSource = (expected: string) => `
@@ -28546,7 +28560,7 @@ describe("errors", () => {
   it("stops where a script makes more symbols than it has calls of Symbol", async () => {
     const result = await checkModel(`
       let count = 0;
-      for (let index = 0; index < 10; index++) {
+      for (let index = 0; index < 130; index++) {
         const made: symbol = Symbol();
         count++;
       }
@@ -33308,16 +33322,18 @@ ${call}
 
 describe("without a file system", () => {
   const directory = dirname(ts.getDefaultLibFilePath({}));
-  const libraries = new Map(
-    readdirSync(directory)
-      .filter((fileName) => /^lib\..*\.d\.ts$/.test(fileName))
-      .map((fileName) => [fileName, readFileSync(join(directory, fileName), "utf8")]),
+  const library = createLibrary(
+    new Map(
+      readdirSync(directory)
+        .filter((fileName) => /^lib\..*\.d\.ts$/.test(fileName))
+        .map((fileName) => [fileName, readFileSync(join(directory, fileName), "utf8")]),
+    ),
   );
 
   it("compiles with TypeScript's declaration files passed in", () => {
     const path = join(import.meta.dirname, "../fixtures/typescript/examples/die-hard/die-hard.ts");
     const source = readFileSync(path, "utf8");
-    const compiled = compile(source, "die-hard.ts", libraries);
+    const compiled = compile(source, "die-hard.ts", library);
     const expected = compile(source, "die-hard.ts");
     expect([printModule(compiled.source), compiled.config]).toEqual([
       printModule(expected.source),
@@ -33326,7 +33342,7 @@ describe("without a file system", () => {
   });
 
   it("reports type errors", () => {
-    expect(() => compile(`let count: number = "one";`, "spec.ts", libraries)).toThrow(
+    expect(() => compile(`let count: number = "one";`, "spec.ts", library)).toThrow(
       "spec.ts(1,5): error TS2322: Type 'string' is not assignable to type 'number'.",
     );
   });
@@ -37157,18 +37173,26 @@ describe("buffers", () => {
         "const value: any = 1; let thrown = ''; try { new BigInt64Array(1)[0] = value; } catch (error) { thrown = 'thrown'; } if (thrown === '') throw new Error('number');",
         "tla-ts can't throw the TypeError of converting a number to a BigInt",
       ],
+    ])("stops where a script %s", async (_, source, message) => {
+      expect((await checkModel(source)).failure?.message).toContain(message);
+    });
+
+    it.each([
       [
         "converts a string that isn't decimal digits",
         "const texts: any = ['1e3']; let thrown = ''; try { new BigInt64Array(texts); } catch (error) { thrown = 'thrown'; } if (thrown === '') throw new Error('syntax');",
-        "tla-ts can't convert this value to a BigInt",
+        "const texts: any = ['1e3']; let thrown = ''; try { new BigInt64Array(texts); } catch (error) { thrown = 'thrown'; } if (thrown !== '') throw new Error('syntax');",
+        "syntax",
       ],
       [
         "keeps undefined through filter",
         "const buffer = new ArrayBuffer(16, { maxByteLength: 16 }); const sample = new BigInt64Array(buffer); let calls = 0; try { sample.filter(() => { if (calls === 0) buffer.resize(8); calls++; return true; }); } catch (error) { calls = -1; } if (calls !== -1) throw new Error('kept');",
-        "tla-ts can't convert this value to a BigInt",
+        "const buffer = new ArrayBuffer(16, { maxByteLength: 16 }); const sample = new BigInt64Array(buffer); let calls = 0; try { sample.filter(() => { if (calls === 0) buffer.resize(8); calls++; return true; }); } catch (error) { calls = -1; } if (calls === -1) throw new Error('kept');",
+        "kept",
       ],
-    ])("stops where a script %s", async (_, source, message) => {
-      expect((await checkModel(source)).failure?.message).toContain(message);
+    ])("throws as Node does where a script %s", async (_, source, wrong, message) => {
+      expect((await checkModel(source)).failure).toBeUndefined();
+      expect((await checkModel(wrong)).failure?.message).toContain(message);
     });
   });
 
@@ -42397,17 +42421,20 @@ describe("BigInts", () => {
       );
     });
 
-    it("stops at a namespace object outside a script", () => {
+    it("makes a namespace object outside a script, which the heap holds", async () => {
       const model = [
         'import * as first from "./first";',
         "let count = 0;",
         "export const step = () => {",
-        "  count += Object.keys(first).length;",
+        "  if (count < 3) count += Object.keys(first).length + 1;",
         "};",
+        "export const isUnder = () => count < 4;",
       ].join("\n");
-      expect(() => compile(model, path)).toThrow(
-        "tla-ts can't make a module's namespace object outside a script",
-      );
+      const result = await check(compile(model, path));
+      expect([result.status, getTrace(result)?.map((state) => state.count)]).toEqual([
+        "invariant-violation",
+        ["0", "2", "4"],
+      ]);
     });
 
     it("follows the script's own namespace object as its exports change", async () => {
@@ -46053,7 +46080,9 @@ describe("BigInts", () => {
         // @ts-ignore
         const version = process.version;
       `);
-      expect(result.failure?.message).toContain("tla-ts can't follow Node's process object");
+      expect(result.failure?.message).toContain(
+        "tla-ts can't read process.version, which Node's process object holds",
+      );
     });
   });
 
@@ -46724,10 +46753,10 @@ describe("BigInts", () => {
 
     it("stops at a calendar that Node takes", async () => {
       const result = await checkModel(`
-        const date = new Temporal.PlainDate(2000, 1, 1, "gregory");
+        const date = new Temporal.PlainDate(2000, 1, 1, "chinese");
         if (date.year !== 2000) throw new Error("year " + date.year);
       `);
-      expect(result.failure?.message).toContain("tla-ts can't use the calendar gregory");
+      expect(result.failure?.message).toContain("tla-ts can't use the calendar chinese");
     });
   });
 
@@ -48405,19 +48434,25 @@ describe("BigInts", () => {
       return { path, source: readFileSync(path, "utf8") };
     };
 
-    it.each(["entry.cjs", "wrapped.ts", "mixed.ts", "typed.ts"])(
-      "agrees with Node on %s",
-      async (name) => {
-        const fixture = getFixture(name);
-        expect((await check(compile(fixture.source, fixture.path))).failure).toBeUndefined();
-      },
-    );
+    it.each([
+      "entry.cjs",
+      "wrapped.ts",
+      "mixed.ts",
+      "typed.ts",
+      "for-in-key.cjs",
+      "chained-prototype.cjs",
+    ])("agrees with Node on %s", async (name) => {
+      const fixture = getFixture(name);
+      expect((await check(compile(fixture.source, fixture.path))).failure).toBeUndefined();
+    });
 
     it.each([
       ["entry.cjs", "early,,1,true,string,true,true", "early,late,1,true,string,true,true"],
       ["wrapped.ts", "wrapped:2,inner,true,2", "wrapped:1,inner,true,2"],
       ["mixed.ts", "legacy,require,import", "legacy,import,import"],
       ["typed.ts", "4,sides", "3,sides"],
+      ["for-in-key.cjs", "a=1+b=2;children", "a=1+b=3;children"],
+      ["chained-prototype.cjs", "3,true,true,true", "3,false,true,true"],
     ])("rejects another outcome of %s", async (name, expected, wrong) => {
       const fixture = getFixture(name);
       const result = await check(compile(fixture.source.replace(expected, wrong), fixture.path));
@@ -48617,8 +48652,8 @@ describe("BigInts", () => {
 
     // Node gives 9, but a compound assignment runs the call inside its expression, which can't
     // keep d in the state for the function that the call makes.
-    it("stops where an expression calls it", () => {
-      const source = `
+    it("runs it as a statement where a compound assignment calls it", async () => {
+      const getSource = (expected: number) => `
         const results: any = {};
         var total = 0;
         total += (function (d: number) {
@@ -48626,11 +48661,10 @@ describe("BigInts", () => {
             return d;
           };
         })(9)();
-        if (total !== 9) throw new Error("seen " + total);
+        if (total !== ${expected}) throw new Error("seen " + total);
       `;
-      expect(() => checkModel(source)).toThrow(
-        "tla-ts can't call inside an expression a function that runs once and makes a function that reads its locals",
-      );
+      expect((await checkModel(getSource(9))).failure).toBeUndefined();
+      expect((await checkModel(getSource(8))).failure?.message).toContain("seen 9");
     });
   });
 
@@ -48777,8 +48811,9 @@ describe("BigInts", () => {
 
     it("agrees with Node, as an action changes the array through another name", async () => {
       const result = await checkModel(getSource(2));
+      // Once the array holds two items, add changes nothing, so no action is enabled.
       expect([result.status, result.failure, result.distinctStates]).toEqual([
-        "success",
+        "deadlock",
         undefined,
         7,
       ]);
@@ -49497,6 +49532,232 @@ describe("BigInts", () => {
     });
   });
 
+  describe("runs a closure that a getter or a setter holds in the environment of the call that made it", () => {
+    const getSource = (expected: string) => `
+      const memo = (type: number) => {
+        const element = { type };
+        let ownName: string | undefined;
+        Object.defineProperty(element, "displayName", {
+          enumerable: false,
+          configurable: true,
+          get: function () {
+            return ownName;
+          },
+          set: function (name: string) {
+            ownName = name + type;
+          },
+        });
+        return element as { type: number; displayName?: string };
+      };
+      const first = memo(1);
+      const second = memo(2);
+      first.displayName = "A";
+      second.displayName = "B";
+      const names = first.displayName + "," + second.displayName;
+      if (names !== "${expected}") throw new Error("names " + names);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("A1,B2"))).failure).toBeUndefined();
+    });
+
+    it("rejects the names of another call", async () => {
+      expect((await checkModel(getSource("B2,B2"))).failure?.message).toContain("names A1,B2");
+    });
+  });
+
+  describe("describes properties in a module, as a function that an expression calls may", () => {
+    const getSource = (expected: string) => `
+      export const isWritable = (): boolean => {
+        const described = Object.getOwnPropertyDescriptor(Error, "stackTraceLimit");
+        if (described === undefined) return Object.isExtensible(Error);
+        return Object.hasOwn(described, "writable")
+          ? described.writable === true
+          : described.set !== undefined;
+      };
+      const isLimitWritable = isWritable();
+      const length = Object.getOwnPropertyDescriptor(Error, "length")!;
+      const all = Object.getOwnPropertyDescriptors({ a: 1, get b() { return 2; } });
+      const seen = [
+        isLimitWritable,
+        length.value,
+        length.writable,
+        length.enumerable,
+        length.configurable,
+        all.a.value,
+        typeof all.b.get,
+        "value" in all.b,
+      ].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("true,1,false,false,true,1,function,false"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects another description", async () => {
+      expect(
+        (await checkModel(getSource("true,1,true,false,true,1,function,false"))).failure?.message,
+      ).toContain("seen true,1,false,false,true,1,function,false");
+    });
+  });
+
+  describe("reads a built-in whose type a file's declare global adds to as the built-in", () => {
+    const getSource = (expected: string) => `
+      declare global {
+        interface Error {
+          readonly reported?: boolean;
+        }
+      }
+      const described = Object.getOwnPropertyDescriptor(Error, "stackTraceLimit");
+      const error = new Error("made");
+      const seen = [described?.value, described?.writable, error instanceof Error, error.reported].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+      export {};
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("10,true,true,"))).failure).toBeUndefined();
+    });
+
+    it("rejects another description", async () => {
+      expect((await checkModel(getSource("10,false,true,"))).failure?.message).toContain(
+        "seen 10,true,true,",
+      );
+    });
+  });
+
+  describe("runs a closure that a const holds in the environment that the const's value holds", () => {
+    const getSource = (expected: number) => `
+      function make(start: number) {
+        let count = start;
+        const read = function () {
+          return count;
+        };
+        const early = read();
+        count += 4;
+        return { read, early };
+      }
+      const first = make(1);
+      const second = make(10);
+      const seen = first.read() * 1000 + first.early * 100 + second.read();
+      if (seen !== ${expected}) throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(5114))).failure).toBeUndefined();
+    });
+
+    it("rejects the value of another call", async () => {
+      expect((await checkModel(getSource(5514))).failure?.message).toContain("seen 5114");
+    });
+  });
+
+  describe("shares the locals that one declaration of several declares with closures", () => {
+    const getSource = (expected: string) => `
+      function forwardRef(render: { name: string }) {
+        var elementType = { render: render },
+          ownName: string | undefined;
+        Object.defineProperty(elementType, "displayName", {
+          enumerable: false,
+          configurable: true,
+          get: function () {
+            return ownName;
+          },
+          set: function (name: string) {
+            ownName = name + render.name;
+          },
+        });
+        return elementType as { render: { name: string }; displayName?: string };
+      }
+      const first = forwardRef({ name: "a" });
+      const second = forwardRef({ name: "b" });
+      first.displayName = "A";
+      const seen = first.displayName + "," + second.displayName;
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("Aa,undefined"))).failure).toBeUndefined();
+    });
+
+    it("rejects the name of another call", async () => {
+      expect((await checkModel(getSource("Aa,Aa"))).failure?.message).toContain(
+        "seen Aa,undefined",
+      );
+    });
+  });
+
+  describe("keys a member by a value whose type parameter's constraint is a key type", () => {
+    const getSource = (expected: string) => `
+      const args = Symbol("args");
+      interface Exit {
+        readonly _tag: string;
+        readonly value?: unknown;
+        readonly cause?: unknown;
+      }
+      const makeExit = <Prop extends string,>(options: {
+        readonly prop: Prop;
+        readonly op: "Success" | "Failure";
+      }) => {
+        const Proto = {
+          _tag: options.op,
+          get [options.prop](): any {
+            return (this as any)[args];
+          },
+        };
+        return (value: unknown): Exit => {
+          const self = Object.create(Proto);
+          self[args] = value;
+          return self;
+        };
+      };
+      const done = makeExit({ prop: "value", op: "Success" })(3);
+      const failed = makeExit({ prop: "cause", op: "Failure" })(4);
+      const doneValue = done.value;
+      const failedCause = failed.cause;
+      const seen = [doneValue, done._tag, failedCause, failed._tag].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("3,Success,4,Failure"))).failure).toBeUndefined();
+    });
+
+    it("rejects another value", async () => {
+      expect((await checkModel(getSource("3,Success,3,Failure"))).failure?.message).toContain(
+        "seen 3,Success,4,Failure",
+      );
+    });
+  });
+
+  describe("passes a closure to a parameter that its function reads as a value", () => {
+    const getSource = (expected: number) => `
+      const held: { value?: unknown } = {};
+      function keep(value: unknown) {
+        held.value = value;
+      }
+      function make(start: number) {
+        const read = () => start;
+        keep(read);
+        return read;
+      }
+      const first = make(4);
+      const kept = held.value as () => number;
+      if (kept() !== ${expected} || kept !== first) throw new Error("kept " + kept());
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(4))).failure).toBeUndefined();
+    });
+
+    it("rejects another value", async () => {
+      expect((await checkModel(getSource(5))).failure?.message).toContain("kept 4");
+    });
+  });
+
   describe("type checks a package's JavaScript against its declarations", () => {
     const path = join(import.meta.dirname, "../fixtures/typescript/es-modules/declared.ts");
     const source = readFileSync(path, "utf8");
@@ -49688,6 +49949,149 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("base,after"))).failure?.message).toContain(
         "seen child,after",
       );
+    });
+  });
+
+  describe("runs no function where a call leaves out a parameter that may hold one", () => {
+    const getSource = (expected: string) => `
+      const box = { seen: [] as string[] };
+      const target: Record<string, unknown> = {};
+      const own = target.hasOwnProperty.bind(target);
+      const report = () => {
+        box.seen.push(String(own("x")));
+      };
+      const patch = (onActive?: () => void, onReady?: () => void) => {
+        box.seen.push("patch");
+        if (onActive) box.seen.push("active");
+        onReady?.();
+      };
+      const get = (onActive?: () => void) => {
+        patch(onActive);
+      };
+      patch();
+      patch(undefined, undefined);
+      get(() => {});
+      const seen = box.seen.join();
+      if (seen !== "${expected}") throw new Error("seen " + seen + typeof report);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("patch,patch,patch,active"))).failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      expect((await checkModel(getSource("patch,patch,active"))).failure?.message).toContain(
+        "seen patch,patch,patch,active",
+      );
+    });
+  });
+
+  describe("iterates a map whose keys only code that the loop doesn't run deletes", () => {
+    const getSource = (expected: string) => `
+      const roots = new Map<number, { name: string }>([
+        [1, { name: "a" }],
+        [2, { name: "b" }],
+      ]);
+      const found = new Set<{ name: string }>();
+      const remove = (id: number) => {
+        roots.delete(id);
+      };
+      const find = (name: string) => {
+        for (const [id, root] of roots) {
+          found.add(root);
+          root.name = root.name + "!";
+          if (root.name === name) return id;
+        }
+        return 0;
+      };
+      const first = find("b!");
+      remove(1);
+      const second = find("b!!");
+      const seen = [first, second, found.size, roots.size].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("2,2,2,1"))).failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      expect((await checkModel(getSource("2,2,3,1"))).failure?.message).toContain("seen 2,2,2,1");
+    });
+
+    it("stops where the loop deletes a key", () => {
+      expect(() =>
+        compile(`
+          const roots = new Map<number, { name: string }>([[1, { name: "a" }]]);
+          for (const [id, root] of roots) {
+            root.name = root.name + "!";
+            roots.delete(id + 1);
+          }
+        `),
+      ).toThrow("tla-ts can't iterate a set or a map while the loop changes objects");
+    });
+  });
+
+  describe("calls the own-key check that a bind of a built-in method gives", () => {
+    const getSource = (expected: string) => `
+      const box: { seen: string[] } = { seen: [] };
+      const target: Record<string, unknown> = { own: 1 };
+      const original = target.hasOwnProperty.bind(target);
+      const enumerable = Object.prototype.propertyIsEnumerable.bind(target, "own");
+      Object.defineProperty(target, "hasOwnProperty", { configurable: true, value: () => false });
+      target.added = 2;
+      box.seen.push(String(original("own")), String(original("other")), String(original("added")));
+      box.seen.push(String(enumerable()));
+      const seen = box.seen.join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("true,false,true,true"))).failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      expect((await checkModel(getSource("true,false,false,true"))).failure?.message).toContain(
+        "seen true,false,true,true",
+      );
+    });
+
+    it("stops where the bound receiver may change", async () => {
+      const result = await checkModel(`
+        let target: Record<string, unknown> = { own: 1 };
+        const original = target.hasOwnProperty.bind(target);
+        target = {};
+        if (!original("own")) throw new Error("not own");
+      `);
+      expect(result.failure?.message).toContain(
+        "tla-ts can't call the function that Object.prototype.hasOwnProperty's bind gives here",
+      );
+    });
+  });
+
+  describe("iterates an array while the loop deletes a set's keys", () => {
+    const getSource = (expected: string) => `
+      const listeners = new Set<{ name: string }>([{ name: "a" }, { name: "b" }]);
+      const remove = (listener: { name: string }) => {
+        listeners.delete(listener);
+      };
+      const notify = (pending = [...listeners]) => {
+        for (const listener of pending) {
+          listener.name = listener.name + "!";
+          remove(listener);
+        }
+        return pending.map((listener) => listener.name).join("+");
+      };
+      const seen = [notify(), listeners.size].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("a!+b!,0"))).failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      expect((await checkModel(getSource("a!,1"))).failure?.message).toContain("seen a!+b!,0");
     });
   });
 
@@ -49998,6 +50402,24 @@ describe("BigInts", () => {
       expect((await checkModel(getShapes(2))).failure?.message).toContain("side 1");
     });
 
+    it("stops where code outside a namespace writes a variable that it exports", () => {
+      expect(() =>
+        compile(`
+          namespace Tally {
+            export let total = 0;
+            export function add() {
+              total += 1;
+              return total;
+            }
+          }
+          Tally.add();
+          Tally.total += 5;
+        `),
+      ).toThrow(
+        "spec.ts:10:11 tla-ts can't write Tally.total, which a namespace exports, outside the namespace",
+      );
+    });
+
     it("agrees with TypeScript's output run in Node for another file's namespace", async () => {
       const path = join(import.meta.dirname, "../fixtures/typescript/imports/countering.ts");
       const getImporter = (expected: string) => `
@@ -50041,7 +50463,7 @@ describe("BigInts", () => {
       expect(() =>
         compile(`export const isSame = (value: 1 | "a"): boolean => value === value;`),
       ).toThrow(
-        `spec.ts:1:24 1 | "a" mixes values that TLC can't compare, such as a string and a number`,
+        `spec.ts:1:24 tla-ts can't choose every value of the parameter value: 1 | "a" mixes values that TLC can't compare, such as a string and a number`,
       );
     });
 
@@ -50065,7 +50487,7 @@ describe("BigInts", () => {
     });
   });
 
-  describe("makes no namespace object for a module where no code that may run reads one", () => {
+  describe("makes a module's namespace object only where code that may run reads it", () => {
     const path = join(import.meta.dirname, "../fixtures/typescript/imports/picking.ts");
 
     it("agrees with Node where only a function that never runs reads it", async () => {
@@ -50088,19 +50510,23 @@ describe("BigInts", () => {
       ]);
     });
 
-    it("stops where code that may run reads it", () => {
-      expect(() =>
-        compile(
-          `
-          import { pickAreas } from "./area-picker";
-          export let count = 0;
-          export const step = () => {
-            if (count < 4) count = pickAreas().getArea(count + 1);
-          };
-        `,
-          path,
-        ),
-      ).toThrow("tla-ts can't make a module's namespace object outside a script");
+    it("agrees with Node where code that runs reads it, holding it on the heap", async () => {
+      const getSource = (limit: number) => `
+        import { pickAreas } from "./area-picker";
+        const keys = Object.keys(pickAreas()).join();
+        export let count = 0;
+        export const step = () => {
+          if (count < ${limit}) count = pickAreas().getArea(count + 1);
+        };
+        export const isSame = (): boolean => keys === "getArea" && pickAreas() === pickAreas();
+      `;
+      const result = await check(compile(getSource(4), path));
+      expect([result.status, getTrace(result)?.map((state) => state.count)]).toEqual([
+        "deadlock",
+        ["0", "1", "4"],
+      ]);
+      const longer = await check(compile(getSource(5), path));
+      expect(getTrace(longer)?.map((state) => state.count)).toEqual(["0", "1", "4", "25"]);
     });
   });
 
@@ -50197,5 +50623,1903 @@ describe("BigInts", () => {
         "tla-ts can't iterate an array whose iterator a script replaced",
       );
     });
+  });
+
+  describe("runs a helper that a statement calls by name as its operator, catching only where its caller catches", () => {
+    const getSource = (calls: number, expected: number) => `
+      const log: { n: number } = { n: 0 };
+      function half(value: number): number {
+        if (value % 2 !== 0) throw new RangeError("odd " + value);
+        return value / 2;
+      }
+      function check(value: number): number {
+        try {
+          log.n += 1;
+          return half(value) + 1;
+        } catch (error) {
+          return -1;
+        }
+      }
+      let total = 0;
+      ${Array.from({ length: calls }, (_, position) => `const r${position}: number = check(${position});\ntotal += r${position};`).join("\n")}
+      let caught = "";
+      try {
+        check(2);
+        half(3);
+      } catch (error) {
+        caught = (error as RangeError).message;
+      }
+      if (total !== ${expected} || log.n !== ${calls + 1} || caught !== "odd 3") {
+        throw new Error("total " + total + " " + caught);
+      }
+    `;
+    const getSize = (calls: number) => printModule(compile(getSource(calls, 0)).source).length;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(2, 0))).failure).toBeUndefined();
+    });
+
+    it("rejects another total", async () => {
+      expect((await checkModel(getSource(2, 1))).failure?.message).toContain("total 0 odd 3");
+    });
+
+    it("grows by a call for each call rather than by a copy of the helper", () => {
+      expect(getSize(8)).toBeLessThan(getSize(4) * 1.3);
+    });
+  });
+
+  describe("runs a closure that a call through a value runs as an operator that takes its environment", () => {
+    const getSource = (composed: number, expected: number) => `
+      function compose(f: any, g: any): any {
+        return function (x: any): any {
+          return f(g(x));
+        };
+      }
+      const increment = (x: number): number => x + 1;
+      let composite: any = increment;
+      ${Array.from({ length: composed }, () => "composite = compose(composite, increment);").join("\n")}
+      const result: number = composite(0);
+      if (result !== ${expected}) throw new Error("result " + result);
+    `;
+    const getSize = (composed: number) =>
+      printModule(compile(getSource(composed, 0)).source).length;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(3, 4))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkModel(getSource(3, 5))).failure?.message).toContain("result 4");
+    });
+
+    it("grows by a statement for each closure that it composes", () => {
+      expect(getSize(8)).toBeLessThan(getSize(4) * 1.4);
+    });
+  });
+
+  describe("runs a function that reads its this, which a call through a value runs, as an operator that takes the this", () => {
+    const getSource = (expected: string) => `
+      function describe(this: any, prefix: string): string {
+        return prefix + this.name;
+      }
+      function sum(this: any, depth: number): number {
+        if (depth === 0) return this.base;
+        const rest: number = this.step(depth - 1);
+        return rest + depth;
+      }
+      const holder: any = { name: "h", run: describe };
+      const counter: any = { base: 10, step: sum };
+      const first: string = holder.run("a:");
+      const second: number = counter.step(3);
+      const results = [first, String(second)].join(",");
+      if (results !== "${expected}") throw new Error("results " + results);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("a:h,16"))).failure).toBeUndefined();
+    });
+
+    it("rejects other results", async () => {
+      expect((await checkModel(getSource("a:h,17"))).failure?.message).toContain("results a:h,16");
+    });
+  });
+
+  describe("runs a method that super reads in an object literal and that passes its this on as a value", () => {
+    const getSource = (expected: string) => `
+      let seen: unknown;
+      const parent = {
+        getThis: function () {
+          return this;
+        },
+      };
+      const child = {
+        method() {
+          seen = super.getThis();
+        },
+      };
+      Object.setPrototypeOf(child, parent);
+      child.method();
+      const result = [seen === child, seen === parent].join(",");
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("true,false"))).failure).toBeUndefined();
+    });
+
+    it("rejects another this", async () => {
+      expect((await checkModel(getSource("false,true"))).failure?.message).toContain(
+        "result true,false",
+      );
+    });
+  });
+
+  describe("runs a closure that call through a value runs as an operator that takes its environment", () => {
+    const getSource = (composed: number, expected: number) => `
+      function compose(f: (x: number) => number, g: (x: number) => number): (x: number) => number {
+        return function (this: unknown, x: number): number {
+          const inner: number = g.call(this, x);
+          const outer: number = f.call(this, inner);
+          return outer;
+        };
+      }
+      const increment = (x: number): number => x + 1;
+      let composite: (x: number) => number = increment;
+      ${Array.from({ length: composed }, () => "composite = compose(composite, increment);").join("\n")}
+      const result: number = composite(0);
+      if (result !== ${expected}) throw new Error("result " + result);
+    `;
+    const getSize = (composed: number) =>
+      printModule(compile(getSource(composed, 0)).source).length;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(2, 3))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkModel(getSource(2, 4))).failure?.message).toContain("result 3");
+    });
+
+    it("grows by a statement for each closure that it composes", () => {
+      expect(getSize(8)).toBeLessThan(getSize(4) * 1.4);
+    });
+  });
+
+  describe("stops at an object that only a heap could hold where none does", () => {
+    it("stops at a built-in read as a value", () => {
+      expect(() =>
+        compile(`
+          export const Pattern = globalThis.RegExp;
+          export const isSame = (value: 1 | 2): boolean => Pattern === Pattern && value === value;
+        `),
+      ).toThrow(
+        "spec.ts:2:34 tla-ts can't use the built-in globalThis as a value where no heap holds objects",
+      );
+    });
+
+    it("stops at a function's arguments object", () => {
+      expect(() =>
+        compile(`
+          let count = 0;
+          export function step(): void {
+            if (count < 2) count += arguments.length + 1;
+          }
+        `),
+      ).toThrow("tla-ts can't read a function's arguments object where no heap holds objects");
+    });
+
+    it("stops at a property of a class of errors, which TLC can't read from a model value", () => {
+      expect(() =>
+        compile(`
+          export const getLimit = (): number | undefined =>
+            (Error as { stackTraceLimit?: number }).stackTraceLimit;
+          export const isSet = (): boolean => getLimit() !== undefined;
+        `),
+      ).toThrow(
+        "tla-ts can't read stackTraceLimit of a class of errors where no heap holds objects",
+      );
+    });
+  });
+
+  describe("keys a Map by what the calls pass a parameter of type any", () => {
+    const getSource = (expected: string, size = "Size") => `
+      enum Color {
+        Red,
+        Green,
+      }
+      enum Size {
+        Small,
+        Large,
+      }
+      const shapes = { Color, Size };
+      const cache = new Map<any, string[]>();
+      function getMembers(enumObject: any) {
+        const existing = cache.get(enumObject);
+        if (existing) return existing;
+        const result: string[] = [];
+        for (const name in enumObject) {
+          if (typeof enumObject[name] === "number") result.push(name);
+        }
+        cache.set(enumObject, result);
+        return result;
+      }
+      function format(value: number, enumObject: any) {
+        return getMembers(enumObject)[value];
+      }
+      const seen = [format(1, (shapes as any).Color), format(0, ${size}), format(0, Size), cache.size].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with TypeScript's output run in Node", async () => {
+      expect((await checkModel(getSource("Green,Small,Small,2"))).failure).toBeUndefined();
+    });
+
+    it("rejects another size", async () => {
+      expect((await checkModel(getSource("Green,Small,Small,3"))).failure?.message).toContain(
+        "seen Green,Small,Small,2",
+      );
+    });
+
+    it("stops where a call passes a key of another kind", () => {
+      expect(() => compile(getSource("Green,Small,Small,2", '"Size"'))).toThrow(
+        "Give a Map keys of one kind, as TLC can't compare a number with a string",
+      );
+    });
+  });
+
+  describe("stops at a member of Node's process object, which tla-ts doesn't model", () => {
+    const path = join(import.meta.dirname, "../fixtures/typescript/common-js/typing.ts");
+
+    it("stops where a script reads process.nextTick, as TypeScript's isNodeLikeSystem does", async () => {
+      const source = `/// <reference types="node" />
+        const box = { isNode: false };
+        box.isNode = typeof process !== "undefined" && !!process.nextTick;
+      `;
+      expect((await check(compile(source, path))).failure?.message).toContain(
+        "tla-ts can't read process.nextTick, which Node's process object holds",
+      );
+    });
+  });
+
+  describe("stops at a host's constructor that no built-in tla-ts models gives", () => {
+    it("names the constructor, as the DOM's MessageChannel", () => {
+      expect(() =>
+        compile(`/// <reference lib="scripthost" />
+          let count = 0;
+          const setup = () => {
+            const host = new ActiveXObject("Scripting.Dictionary");
+            host.count = 2;
+            return host;
+          };
+          export const step = () => {
+            if (count === 0) count = setup().count;
+          };
+        `),
+      ).toThrow(
+        "spec.ts:4:26 tla-ts can't run ActiveXObject, which the host gives and tla-ts doesn't model",
+      );
+    });
+  });
+
+  describe("stops where a loop reads Node's console, which it never may", () => {
+    const getSource = (isQuiet: boolean, expected: number) => `
+      declare const console: Record<string, unknown>;
+      const saved: Record<string, unknown> = {};
+      const suppress = () => {
+        for (const method in console) {
+          saved[method] = console[method];
+        }
+      };
+      let calls = 0;
+      const run = (isQuiet: boolean) => {
+        calls++;
+        if (isQuiet) suppress();
+      };
+      run(${isQuiet});
+      if (calls !== ${expected}) throw new Error("calls " + calls);
+    `;
+
+    it("agrees with Node where the loop never runs", async () => {
+      expect((await checkModel(getSource(false, 1))).failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      expect((await checkModel(getSource(false, 2))).failure?.message).toContain("calls 1");
+    });
+
+    it("stops where the loop runs", async () => {
+      expect((await checkModel(getSource(true, 1))).failure?.message).toContain(
+        "tla-ts can't read Node's global console",
+      );
+    });
+  });
+
+  describe("names what to do where an exported function's parameter has no finite model", () => {
+    it("stops at a type with no end", () => {
+      expect(() =>
+        compile(`
+          let count = 0;
+          export const add = (options: { amount?: 1 | 2 }) => {
+            count += options.amount ?? 0;
+          };
+        `),
+      ).toThrow(
+        "tla-ts can't choose every value of the parameter options: { amount?: 1 | 2 | undefined; } isn't finite: the optional field amount may be missing. Give options a finite type",
+      );
+    });
+
+    it("stops at a default", () => {
+      expect(() =>
+        compile(`
+          let count = 0;
+          export const add = (amount: 1 | 2 = 1) => {
+            count += amount;
+          };
+        `),
+      ).toThrow("tla-ts can't bind a default, a rest, or a pattern here: amount: 1 | 2 = 1");
+    });
+  });
+
+  describe("keeps in the state a const whose object an action changes in place", () => {
+    const getSource = (bound: number) => `
+      const holder: { prepare: number } = { prepare: 0 };
+      export const setPrepare = (value: 1 | 2): void => {
+        holder.prepare = value;
+      };
+      export const isSmall = () => holder.prepare < ${bound};
+    `;
+
+    it("agrees with Node", async () => {
+      const result = await checkModel(getSource(3));
+      expect([result.status, result.distinctStates]).toEqual(["success", 3]);
+    });
+
+    it("rejects a smaller bound", async () => {
+      expect((await checkModel(getSource(2))).status).toBe("invariant-violation");
+    });
+  });
+
+  it("names what to do where an action returns a value", () => {
+    expect(() =>
+      compile(`
+        const seen = new Map<string, number>();
+        export const record = (key: "a" | "b") => {
+          seen.set(key, 1);
+          return seen.size;
+        };
+      `),
+    ).toThrow(
+      "tla-ts can't check an exported function that changes state and returns a value as an action",
+    );
+  });
+
+  describe("makes a typed array through a value that holds a class extending a typed array", () => {
+    const getSource = (expected: string) => `
+      class MyUint8Array extends Uint8Array {}
+      const buffer = new ArrayBuffer(4, { maxByteLength: 8 });
+      const makers: Uint8ArrayConstructor[] = [Uint8Array, MyUint8Array];
+      const make = (maker: Uint8ArrayConstructor) => new maker(buffer, 1, 2);
+      const lengths: number[] = [];
+      for (const maker of makers) {
+        const made = new maker(buffer);
+        if (Object.getPrototypeOf(made) !== maker.prototype) throw new Error("prototype");
+        lengths.push(made.length);
+      }
+      const view = make(MyUint8Array);
+      lengths.push(view.length, view instanceof MyUint8Array ? 1 : 0);
+      if (lengths.join() !== "${expected}") throw new Error("lengths " + lengths.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("4,4,2,1"))).failure).toBeUndefined();
+    });
+
+    it("rejects other lengths", async () => {
+      expect((await checkModel(getSource("4,4,2,0"))).failure?.message).toContain(
+        "lengths 4,4,2,1",
+      );
+    });
+  });
+
+  describe("makes a symbol each time a call of Symbol in a loop runs", () => {
+    const getSource = (expected: string) => `
+      const make = (index: number) => Symbol(String(index));
+      const made: symbol[] = [];
+      for (let index = 0; index < 12; index++) made.push(make(index));
+      const first = made[0];
+      const descriptions = made.map((symbol) => symbol.description).join();
+      const isDistinct = made.every((symbol, index) => index === 0 || symbol !== first);
+      if (descriptions !== "${expected}" || !isDistinct) {
+        throw new Error("made " + descriptions + " " + isDistinct);
+      }
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("0,1,2,3,4,5,6,7,8,9,10,11"))).failure).toBeUndefined();
+    });
+
+    it("rejects other descriptions", async () => {
+      expect((await checkModel(getSource("0,1,2,3,4,5,6,7,8,9,10"))).failure?.message).toContain(
+        "made 0,1,2,3,4,5,6,7,8,9,10,11 true",
+      );
+    });
+  });
+
+  describe("throws the TypeError of a write that Object.assign can't make", () => {
+    const getSource = (expected: string) => `
+      const sealed = Object.seal({ foo: 1 });
+      const log: string[] = [];
+      let isSealedThrown = false;
+      try {
+        Object.assign(sealed, {
+          foo: 2,
+          get bar() {
+            log.push("bar");
+            return 1;
+          },
+        });
+      } catch (error) {
+        isSealedThrown = error instanceof TypeError;
+      }
+      const empty = {};
+      Object.seal(empty);
+      let isEmptyThrown = false;
+      try {
+        Object.assign(empty, { [Symbol()]: 1 });
+      } catch (error) {
+        isEmptyThrown = error instanceof TypeError;
+      }
+      const result = [isSealedThrown, isEmptyThrown, sealed.foo, log.join()].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("true,true,2,bar"))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkModel(getSource("true,true,1,bar"))).failure?.message).toContain(
+        "result true,true,2,bar",
+      );
+    });
+  });
+
+  describe("throws the TypeError of a typed array method that converts a symbol or a BigInt to an integer", () => {
+    const getSource = (expected: string) => `
+      const symbol = Symbol("1");
+      const sample = new Int8Array([7, 8]);
+      const empty = new Int8Array(0);
+      const results: string[] = [];
+      const attempt = (run: () => unknown) => {
+        try {
+          results.push(String(run()));
+        } catch (error) {
+          results.push(error instanceof TypeError ? "TypeError" : "other");
+        }
+      };
+      attempt(() => sample.includes(7, symbol as any));
+      attempt(() => sample.indexOf(7, 1n as any));
+      attempt(() => empty.includes(7, symbol as any));
+      attempt(() => sample.at(symbol as any));
+      attempt(() => sample.copyWithin(0, 0, symbol as any));
+      attempt(() => sample.slice(symbol as any).length);
+      if (results.join() !== "${expected}") throw new Error("results " + results.join());
+    `;
+
+    it("agrees with Node", async () => {
+      const expected = "TypeError,TypeError,false,TypeError,TypeError,TypeError";
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects other results", async () => {
+      const expected = "TypeError,TypeError,TypeError,TypeError,TypeError,TypeError";
+      expect((await checkModel(getSource(expected))).failure?.message).toContain(
+        "results TypeError,TypeError,false,TypeError,TypeError,TypeError",
+      );
+    });
+  });
+
+  describe("runs the generic array methods on a typed array, which holds an element at each index below its length", () => {
+    const getSource = (expected: string) => `
+      const sample = new Int8Array([3, 1, 4, 1]);
+      const results = [
+        Array.prototype.at.call(sample, -1),
+        Array.prototype.includes.call(sample, 4),
+        Array.prototype.indexOf.call(sample, 1),
+        Array.prototype.lastIndexOf.call(sample, 1),
+        Array.prototype.join.call(sample, "-"),
+        Array.prototype.every.call(sample, (value: number) => value > 0),
+        Array.prototype.find.call(sample, (value: number) => value > 3),
+        Array.isArray(sample),
+      ];
+      if (results.join() !== "${expected}") throw new Error("results " + results.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("1,true,1,3,3-1-4-1,true,4,false"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects other results", async () => {
+      expect(
+        (await checkModel(getSource("1,true,1,3,3-1-4-1,true,4,true"))).failure?.message,
+      ).toContain("results 1,true,1,3,3-1-4-1,true,4,false");
+    });
+  });
+
+  describe("throws the TypeError of an Atomics function that converts a symbol", () => {
+    const getSource = (expected: string) => `
+      const i32a = new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT * 4));
+      const results: string[] = [];
+      const attempt = (run: () => unknown) => {
+        try {
+          results.push(String(run()));
+        } catch (error) {
+          results.push(error instanceof TypeError ? "TypeError" : "other");
+        }
+      };
+      attempt(() => Atomics.notify(i32a, 0, Symbol() as any));
+      attempt(() => Atomics.store(i32a, Symbol() as any, 1));
+      if (results.join() !== "${expected}") throw new Error("results " + results.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("TypeError,TypeError"))).failure).toBeUndefined();
+    });
+
+    it("rejects other results", async () => {
+      expect((await checkModel(getSource("TypeError,0"))).failure?.message).toContain(
+        "results TypeError,TypeError",
+      );
+    });
+  });
+
+  describe("throws the TypeError of a typed array whose length is a symbol or a BigInt", () => {
+    const getSource = (expected: string) => `
+      const symbol = Symbol("1");
+      const results: string[] = [];
+      const attempt = (run: () => unknown) => {
+        try {
+          results.push(String(run()));
+        } catch (error) {
+          results.push(error instanceof TypeError ? "TypeError" : "other");
+        }
+      };
+      attempt(() => {
+        new Int8Array(symbol as any);
+      });
+      attempt(() => {
+        new BigInt64Array(2n as any);
+      });
+      attempt(() => new Int8Array(2).length);
+      if (results.join() !== "${expected}") throw new Error("results " + results.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("TypeError,TypeError,2"))).failure).toBeUndefined();
+    });
+
+    it("rejects other results", async () => {
+      expect((await checkModel(getSource("TypeError,undefined,2"))).failure?.message).toContain(
+        "results TypeError,TypeError,2",
+      );
+    });
+  });
+
+  describe("throws the error of an element that a typed array can't convert", () => {
+    const getSource = (expected: string) => `
+      const results: string[] = [];
+      const attempt = (run: () => unknown) => {
+        try {
+          results.push(String(run()));
+        } catch (error) {
+          results.push(
+            error instanceof TypeError
+              ? "TypeError"
+              : error instanceof SyntaxError
+                ? "SyntaxError"
+                : "other",
+          );
+        }
+      };
+      attempt(() => {
+        new BigInt64Array([null] as any);
+      });
+      attempt(() => {
+        new BigInt64Array(["1.1"] as any);
+      });
+      attempt(() => {
+        new Int8Array([1, Symbol() as any]);
+      });
+      attempt(() => new BigInt64Array(["", "1"] as any).join());
+      if (results.join() !== "${expected}") throw new Error("results " + results.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("TypeError,SyntaxError,TypeError,0,1"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects other results", async () => {
+      expect(
+        (await checkModel(getSource("TypeError,TypeError,TypeError,0,1"))).failure?.message,
+      ).toContain("results TypeError,SyntaxError,TypeError,0,1");
+    });
+  });
+
+  describe("reads and writes the properties of a typed array apart from its elements", () => {
+    const getSource = (expected: string) => `
+      const s1 = Symbol("1");
+      const sample = new Int8Array([42, 43]);
+      const results: unknown[] = [];
+      results.push(Reflect.set(sample, s1, "ecma262"), (sample as any)[s1]);
+      results.push(Reflect.set(sample, "foo", 1), (sample as any).foo);
+      const keys: string[] = [];
+      for (const key in sample) keys.push(key);
+      results.push(keys.join("|"));
+      const proto = Object.create(Int8Array.prototype);
+      results.push(Object.setPrototypeOf(sample, proto) === sample);
+      const enumerable = ["0", "2", "-0", "foo"].map((key) =>
+        Object.prototype.propertyIsEnumerable.call(sample, key),
+      );
+      results.push(enumerable.join());
+      if (results.join() !== "${expected}") throw new Error("results " + results.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("true,ecma262,true,1,0|1|foo,true,true,false,false,true")))
+          .failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects other results", async () => {
+      expect(
+        (await checkModel(getSource("true,ecma262,true,1,0|1|foo,true,true,true,false,true")))
+          .failure?.message,
+      ).toContain("results true,ecma262,true,1,0|1|foo,true,true,false,false,true");
+    });
+  });
+
+  describe("converts the fromIndex of a typed array's search after it reads the length", () => {
+    const getSource = (expected: string) => `
+      const rab = new ArrayBuffer(4, { maxByteLength: 20 });
+      const ta = new Int8Array(rab);
+      ta[1] = 5;
+      const log: string[] = [];
+      const shrink = {
+        valueOf() {
+          log.push("shrink");
+          rab.resize(1);
+          return 0;
+        },
+      };
+      const results: unknown[] = [];
+      results.push(ta.includes(undefined as any, shrink as any));
+      rab.resize(4);
+      ta[1] = 5;
+      results.push(ta.indexOf(5, { valueOf: () => 1 } as any));
+      results.push(ta.lastIndexOf(5, { valueOf: () => 0 } as any));
+      const empty = new Int8Array(0);
+      const emptyIndex = {
+        valueOf() {
+          log.push("empty");
+          return 0;
+        },
+      };
+      results.push(empty.includes(0, emptyIndex as any), log.join("|"));
+      if (results.join() !== "${expected}") throw new Error("results " + results.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("true,1,-1,false,shrink"))).failure).toBeUndefined();
+    });
+
+    it("rejects other results", async () => {
+      expect((await checkModel(getSource("false,1,-1,false,shrink"))).failure?.message).toContain(
+        "results true,1,-1,false,shrink",
+      );
+    });
+  });
+
+  describe("throws the TypeError of iterating an array once a script deletes Array.prototype's iterator", () => {
+    const getSource = (expected: string) => `
+      const results: string[] = [];
+      const run = (body: () => void) => {
+        try {
+          body();
+          results.push("ok");
+        } catch (error) {
+          results.push(error instanceof TypeError ? "TypeError" : "other");
+        }
+      };
+      const held = [1, 2];
+      run(() => {
+        for (const value of held) results.push(String(value));
+      });
+      delete (Array.prototype as any)[Symbol.iterator];
+      run(() => {
+        for (const [x, y] of [[1, 2]]) results.push(String(x + y));
+      });
+      run(() => {
+        for (const value of held) results.push(String(value));
+      });
+      run(() => {
+        try {
+          throw [1, 2, 3];
+        } catch ([x, y, z]: any) {
+          results.push(String(x + y + z));
+        }
+      });
+      if (results.join() !== "${expected}") throw new Error("results " + results.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("1,2,ok,TypeError,TypeError,TypeError"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects other results", async () => {
+      expect(
+        (await checkModel(getSource("1,2,ok,TypeError,TypeError,6,ok"))).failure?.message,
+      ).toContain("results 1,2,ok,TypeError,TypeError,TypeError");
+    });
+  });
+
+  describe("throws the error of a value that a DataView's set can't convert", () => {
+    const getSource = (expected: string) => `
+      const sample = new DataView(new ArrayBuffer(8), 0);
+      const results: string[] = [];
+      const attempt = (run: () => unknown) => {
+        try {
+          results.push(String(run()));
+        } catch (error) {
+          results.push(
+            error instanceof TypeError
+              ? "TypeError"
+              : error instanceof SyntaxError
+                ? "SyntaxError"
+                : "other",
+          );
+        }
+      };
+      // @ts-ignore
+      attempt(() => sample.setBigInt64(0));
+      attempt(() => sample.setBigInt64(0, "x" as any));
+      attempt(() => sample.setInt8(0, Symbol() as any));
+      attempt(() => sample.setBigInt64(0, 5n));
+      if (results.join() !== "${expected}") throw new Error("results " + results.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("TypeError,SyntaxError,TypeError,undefined"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects other results", async () => {
+      expect(
+        (await checkModel(getSource("TypeError,TypeError,TypeError,undefined"))).failure?.message,
+      ).toContain("results TypeError,SyntaxError,TypeError,undefined");
+    });
+  });
+
+  describe("throws the TypeError of a value that a typed array's filter kept and can't convert", () => {
+    const getSource = (expected: string) => `
+      const rab = new ArrayBuffer(24, { maxByteLength: 24 });
+      const sample = new BigInt64Array(rab);
+      sample[0] = 1n;
+      let calls = 0;
+      let result = "none";
+      try {
+        sample.filter(() => {
+          if (calls === 0) rab.resize(8);
+          calls++;
+          return true;
+        });
+        result = "made";
+      } catch (error) {
+        result = error instanceof TypeError ? "TypeError" : "other";
+      }
+      const numbers = new Float64Array(new ArrayBuffer(16, { maxByteLength: 16 }));
+      const kept = numbers.filter(() => true).length;
+      const outcome = [result, calls, kept].join();
+      if (outcome !== "${expected}") throw new Error("outcome " + outcome);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("TypeError,3,2"))).failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      expect((await checkModel(getSource("made,3,2"))).failure?.message).toContain(
+        "outcome TypeError,3,2",
+      );
+    });
+  });
+
+  describe("writes a typed array's elements in the generic array methods", () => {
+    const getSource = (expected: string) => `
+      const sample = new Int8Array([1, 2, 3]);
+      Array.prototype.reverse.call(sample);
+      const joined = Array.prototype.join.call(sample, ",");
+      if (joined !== "${expected}") throw new Error("joined " + joined);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("3,2,1"))).failure).toBeUndefined();
+    });
+
+    it("rejects another order", async () => {
+      expect((await checkModel(getSource("1,2,3"))).failure?.message).toContain("joined 3,2,1");
+    });
+  });
+
+  describe("runs a built-in that a const holds where the const still holds it", () => {
+    const getSource = (expected: string, replaced = "") => `
+      const objectDefineProperty = Object.defineProperty;
+      const objectFreeze = Object.freeze;
+      const target: { x?: number } = {};
+      ${replaced}
+      objectDefineProperty(target, "x", { value: 2, enumerable: true });
+      objectFreeze(target);
+      const results = [target.x, Object.isFrozen(target)].join(",");
+      if (results !== "${expected}") throw new Error("results " + results);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("2,true"))).failure).toBeUndefined();
+    });
+
+    it("rejects other results", async () => {
+      expect((await checkModel(getSource("2,false"))).failure?.message).toContain("results 2,true");
+    });
+
+    it("runs the built-in that the const read where a script replaces it later", async () => {
+      const replaced =
+        "Object.defineProperty = ((object: object) => object) as typeof Object.defineProperty;";
+      expect((await checkModel(getSource("2,true", replaced))).failure).toBeUndefined();
+    });
+  });
+
+  describe("runs a String.prototype method that an object holds under its key", () => {
+    const getSource = (expected: string) => `
+      const word = {
+        toString: function () {
+          return "tla";
+        },
+        charAt: String.prototype.charAt,
+      };
+      const broken = {
+        toString: function (): string {
+          throw "intostring";
+        },
+        charAt: String.prototype.charAt,
+      };
+      const first = word.charAt(1);
+      let caught: unknown;
+      try {
+        broken.charAt(0);
+      } catch (error) {
+        caught = error;
+      }
+      const results = [first, caught].join(",");
+      if (results !== "${expected}") throw new Error("results " + results);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("l,intostring"))).failure).toBeUndefined();
+    });
+
+    it("rejects other results", async () => {
+      expect((await checkModel(getSource("t,intostring"))).failure?.message).toContain(
+        "results l,intostring",
+      );
+    });
+  });
+
+  describe("inlines a helper whose caller holds the environment of a local that closures share", () => {
+    const getSource = (expected: number) => `
+      function expectThrow(f: () => unknown, expected: unknown) {
+        try {
+          f();
+        } catch (error) {
+          if (error !== expected) throw new Error("other");
+          return;
+        }
+        throw new Error("none");
+      }
+      let seen = -1;
+      function test() {
+        var returnCalled = 0;
+        var iterable = {} as unknown as { [key: string | symbol]: unknown } & Iterable<unknown>;
+        // @ts-ignore
+        iterable[Symbol.iterator] = function () {
+          return {
+            next() {
+              return { done: false };
+            },
+            return() {
+              returnCalled++;
+              throw 42;
+            },
+          };
+        };
+        expectThrow(function () {
+          for (var x of iterable) {
+            return;
+          }
+        }, 42);
+        seen = returnCalled;
+      }
+      test();
+      if (seen !== ${expected}) throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(1))).failure).toBeUndefined();
+    });
+
+    it("rejects another count", async () => {
+      expect((await checkModel(getSource(2))).failure?.message).toContain("seen 1");
+    });
+  });
+
+  describe("follows promises through a loop's iterations, one after another", () => {
+    const getSource = (limit: number, expected: string) => `
+      const seen: string[] = [];
+      const run = async (limit: number) => {
+        let count = 0;
+        while (count < limit) {
+          count++;
+          Promise.resolve(count).then((value) => seen.push("then" + value));
+          await null;
+          seen.push("after" + count);
+        }
+        return count;
+      };
+      run(${limit}).then((count) => {
+        seen.push("done" + count);
+        if (seen.join() !== "${expected}") throw new Error("seen " + seen.join());
+      });
+      seen.push("sync");
+    `;
+
+    it("agrees with Node", async () => {
+      const result = await checkModel(getSource(2, "sync,then1,after1,then2,after2,done2"));
+      expect(result.failure).toBeUndefined();
+    });
+
+    it("rejects another order", async () => {
+      const result = await checkModel(getSource(2, "sync,after1,then1,then2,after2,done2"));
+      expect(result.failure?.message).toContain("A promise rejected with no handler");
+    });
+
+    it("stops past the iterations that it follows", async () => {
+      expect((await checkModel(getSource(9, "none"))).failure?.message).toContain(
+        "tla-ts can't follow promises through more than 4 iterations of a loop",
+      );
+    });
+  });
+
+  describe("stops where a loop's operator runs an async function, rather than where it compiles", () => {
+    const getSource = (isAsync: boolean, expected: number) => `
+      const box = { seen: [] as string[] };
+      const load = async () => {
+        box.seen.push("load");
+      };
+      let runs = 0;
+      const step = (isAsync: boolean) => {
+        for (let index = 0; index < 2; index++) {
+          runs++;
+          if (isAsync) load();
+        }
+      };
+      step(${isAsync});
+      if (runs !== ${expected}) throw new Error("runs " + runs);
+    `;
+
+    it("agrees with Node where the loop never calls it", async () => {
+      expect((await checkModel(getSource(false, 2))).failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      expect((await checkModel(getSource(false, 3))).failure?.message).toContain("runs 2");
+    });
+
+    it("stops where the loop calls it", async () => {
+      expect((await checkModel(getSource(true, 2))).failure?.message).toContain(
+        "tla-ts can't follow a promise in a loop",
+      );
+    });
+  });
+
+  describe("follows promises through a for-of over an array literal, one element after another", () => {
+    const getSource = (expected: string) => `
+      const seen: string[] = [];
+      const run = async () => {
+        for (const value of [1, 2, 3]) {
+          Promise.resolve(value).then((resolved) => seen.push("then" + resolved));
+          await null;
+          seen.push("after" + value);
+          if (value === 2) break;
+        }
+      };
+      run().then(() => {
+        if (seen.join() !== "${expected}") throw new Error("seen " + seen.join());
+      });
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("then1,after1,then2,after2"))).failure).toBeUndefined();
+    });
+
+    it("rejects another order", async () => {
+      expect((await checkModel(getSource("after1,then1,then2,after2"))).failure?.message).toContain(
+        "A promise rejected with no handler",
+      );
+    });
+  });
+
+  describe("catches what a call on the right of a compound assignment throws inside try", () => {
+    const getSource = (expected: string) => `
+      let output = "a";
+      const change = (text: string): string => {
+        if (text === "") throw new Error("empty");
+        output = "changed";
+        return text;
+      };
+      const run = (text: string) => {
+        try {
+          output += change(text);
+        } catch {
+          output += "!";
+        }
+        return output;
+      };
+      const seen = [run("b"), run("")].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("ab,ab!"))).failure).toBeUndefined();
+    });
+
+    it("rejects the value that the call wrote", async () => {
+      expect((await checkModel(getSource("changedb,ab!"))).failure?.message).toContain(
+        "seen ab,ab!",
+      );
+    });
+  });
+
+  describe("catches in an action what a call inside a compound assignment throws", () => {
+    const getSource = (start: number) => `
+      let count = ${start};
+      export const step = () => {
+        const getChecked = (): number => {
+          throw new Error("no");
+        };
+        try {
+          count += getChecked();
+        } catch {
+          count = 0;
+        }
+      };
+      export const isZeroAfterStep = () => count === 0 || count === ${start};
+      export const isStart = () => count === ${start};
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(0))).failure).toBeUndefined();
+    });
+
+    it("rejects a count that the catch didn't reset", async () => {
+      expect((await checkModel(getSource(1))).status).toBe("invariant-violation");
+    });
+  });
+
+  describe("disables an action on a path that changes nothing where the heap holds objects", () => {
+    const getSource = (limit: number) => `
+      const box = { side: 1 };
+      const alias = box;
+      export let count = 0;
+      export const step = () => {
+        if (count < ${limit}) {
+          box.side += 1;
+          count = alias.side;
+        }
+      };
+    `;
+
+    it("deadlocks once the branch that assigns no longer runs", async () => {
+      const result = await checkModel(getSource(3));
+      expect([result.status, getTrace(result)?.map((state) => state.count)]).toEqual([
+        "deadlock",
+        ["0", "2", "3"],
+      ]);
+    });
+
+    it("deadlocks where only the heap changes on one branch", async () => {
+      const result = await checkModel(`
+        const box = { side: 1 };
+        const alias = box;
+        export const step = () => {
+          if (box.side < 3) box.side += 1;
+        };
+        export const isSmall = (): boolean => alias.side < 5;
+      `);
+      expect([result.status, result.distinctStates]).toEqual(["deadlock", 3]);
+    });
+
+    it("rejects a model that a later limit lets run further", async () => {
+      const result = await checkModel(getSource(4));
+      expect(getTrace(result)?.map((state) => state.count)).toEqual(["0", "2", "3", "4"]);
+    });
+  });
+
+  describe("runs the implementations of a class's overloaded methods and constructor", () => {
+    const getSource = (expected: string) => `
+      class Shape {
+        side: number;
+        constructor(side: number);
+        constructor(side: string);
+        constructor(side: number | string) {
+          this.side = typeof side === "number" ? side : side.length;
+        }
+        area(scale?: undefined): number;
+        area(scale: number): number;
+        area(scale?: number): number {
+          return (scale ?? 1) * this.side * this.side;
+        }
+      }
+      const shape = new Shape("abc");
+      const small = new Shape(2);
+      const names = Object.getOwnPropertyNames(Shape.prototype).join("+");
+      const seen = [shape.area(), shape.area(2), small.area(), names].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with TypeScript's output run in Node", async () => {
+      expect((await checkModel(getSource("9,18,4,constructor+area"))).failure).toBeUndefined();
+    });
+
+    it("rejects a prototype that holds a signature too", async () => {
+      expect(
+        (await checkModel(getSource("9,18,4,constructor+area+area"))).failure?.message,
+      ).toContain("seen 9,18,4,constructor+area");
+    });
+  });
+
+  describe("leaves a function that the program only calls by name out of a call through a value", () => {
+    const getSource = (expected: string) => `
+      const seen: string[] = [];
+      const listeners = new Set<() => void>();
+      const callListener = (listener: (...values: unknown[]) => unknown) => {
+        try {
+          listener.apply(undefined, []);
+        } catch (error) {
+          seen.push("caught");
+        }
+      };
+      const getSize = (onActive?: () => void) => {
+        if (onActive !== undefined) listeners.add(onActive);
+        for (const listener of [...listeners]) callListener(listener);
+        return listeners.size;
+      };
+      const clear = () => {
+        seen.push("clear " + getSize(undefined));
+      };
+      getSize(() => seen.push("listener"));
+      clear();
+      const result = seen.join();
+      if (result !== "${expected}") throw new Error("seen " + result);
+      export {};
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("listener,listener,clear 1"))).failure).toBeUndefined();
+    });
+
+    it("rejects other calls", async () => {
+      expect((await checkModel(getSource("listener,clear 1"))).failure?.message).toContain(
+        "seen listener,listener,clear 1",
+      );
+    });
+  });
+
+  describe("runs a generator method that makes an object's iterator for a for-of and a pattern", () => {
+    const getSource = (expected: string) => `
+      class Bag {
+        items = [1, 2, 3];
+        *[Symbol.iterator]() {
+          yield this.items[0] * 10;
+          yield this.items[1] * 10;
+          yield this.items[2] * 10;
+        }
+      }
+      const seen: number[] = [];
+      for (const value of new Bag()) {
+        if (value > 20) break;
+        seen.push(value);
+      }
+      const [first, second] = new Bag();
+      seen.push(first, second);
+      const result = seen.join();
+      if (result !== "${expected}") throw new Error("seen " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("10,20,10,20"))).failure).toBeUndefined();
+    });
+
+    it("rejects other values", async () => {
+      expect((await checkModel(getSource("10,20,30,10,20"))).failure?.message).toContain(
+        "seen 10,20,10,20",
+      );
+    });
+  });
+
+  describe("iterates the generator object that a call of an object's Symbol.iterator method makes", () => {
+    const getSource = (expected: string) => `
+      class Bag {
+        items = [1, 2, 3];
+        *[Symbol.iterator]() {
+          yield this.items[0] * 10;
+          yield this.items[1] * 10;
+          yield this.items[2] * 10;
+        }
+      }
+      const seen: number[] = [];
+      const bag = new Bag();
+      for (const value of bag[Symbol.iterator]()) seen.push(value);
+      const result = seen.join();
+      if (result !== "${expected}") throw new Error("seen " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("10,20,30"))).failure).toBeUndefined();
+    });
+
+    it("rejects other values", async () => {
+      expect((await checkModel(getSource("10,20"))).failure?.message).toContain("seen 10,20,30");
+    });
+  });
+
+  describe("destructures an array through the generator that a script put on Array.prototype", () => {
+    const getSource = (expected: number) => `
+      const box = { total: 0 };
+      Array.prototype[Symbol.iterator] = function* (this: number[]) {
+        if (this.length > 0) yield this[0];
+        if (this.length > 2) yield 42;
+      } as unknown as () => ArrayIterator<number>;
+      const take = ([first, second]: number[]) => {
+        box.total = first + second;
+      };
+      take([1, 2, 3]);
+      if (box.total !== ${expected}) throw new Error("total " + box.total);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(43))).failure).toBeUndefined();
+    });
+
+    it("rejects the array's own elements", async () => {
+      expect((await checkModel(getSource(3))).failure?.message).toContain("total 43");
+    });
+  });
+
+  describe("calls a primitive prototype's method through a const that holds the prototype", () => {
+    const getSource = (expected: string) => `
+      const box = { text: "" };
+      const numbers = Number.prototype;
+      box.text = numbers.toFixed.call(1.25, 1) + numbers.toString.call(255, 16);
+      if (box.text !== "${expected}") throw new Error("text " + box.text);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("1.3ff"))).failure).toBeUndefined();
+    });
+
+    it("rejects other text", async () => {
+      expect((await checkModel(getSource("1.2ff"))).failure?.message).toContain("text 1.3ff");
+    });
+  });
+
+  describe("runs a function that a const object holds, read through a function that returns the object", () => {
+    const getSource = (expected: number) => `
+      const shapes = { area: (side: number) => side * side };
+      const pick = () => shapes;
+      const total = pick().area(3) + shapes.area(2);
+      if (total !== ${expected}) throw new Error("total " + total);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(13))).failure).toBeUndefined();
+    });
+
+    it("rejects another total", async () => {
+      expect((await checkModel(getSource(9))).failure?.message).toContain("total 13");
+    });
+
+    it("steps through the function's values in an action, as Node does", async () => {
+      const result = await checkModel(`
+        const shapes = { area: (side: number) => side * side };
+        const pick = () => shapes;
+        export let count = 0;
+        export const step = () => {
+          if (count < 4) count = pick().area(count + 1);
+        };
+      `);
+      expect([result.status, result.distinctStates]).toEqual(["deadlock", 3]);
+    });
+
+    it("steps through the function's values where the heap holds objects, as Node does", async () => {
+      const result = await checkModel(`
+        const shapes = { area: (side: number) => side * side };
+        const pick = () => shapes;
+        const box = { size: 0 };
+        export let count = 0;
+        export const step = () => {
+          if (count < 4) {
+            count = pick().area(count + 1);
+            box.size = count;
+          }
+        };
+      `);
+      expect([result.status, result.distinctStates]).toEqual(["deadlock", 3]);
+    });
+
+    it("stops where the object escapes, rather than choose the call's value", () => {
+      expect(() =>
+        compile(`
+          const shapes = { area: (side: number) => side * side };
+          const pick = () => shapes;
+          const held = [shapes];
+          export let count = 0;
+          export const step = () => {
+            if (count < 4) count = pick().area(count + 1);
+          };
+        `),
+      ).toThrow("Unsupported call: pick().area");
+    });
+  });
+
+  describe("keeps what a write of an array's length deleted before it failed outside strict mode", () => {
+    const getSource = (expected: string) => `
+      var arr: any[] = [0, 1, 2, 3];
+      Object.defineProperty(arr, "2", { value: "kept", configurable: false });
+      arr.length = 1;
+      var other: any[] = [0, 1];
+      Object.defineProperty(other, "length", { writable: false });
+      other[5] = 1;
+      var result = [arr.length, arr[2], 3 in arr, other.length, 5 in other].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("3,kept,false,2,false"))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkModel(getSource("3,kept,true,2,false"))).failure?.message).toContain(
+        "result 3,kept,false,2,false",
+      );
+    });
+  });
+
+  describe("reads and writes a var or a global outside strict mode through the global object's property", () => {
+    const getSource = (expected: string) => `
+      var counter: number = 1;
+      (globalThis as any).counter = 5;
+      (globalThis as any).counter++;
+      function setLater() {
+        // @ts-ignore
+        later = "x";
+      }
+      var before = (globalThis as any).later;
+      (globalThis as any).later = "y";
+      // @ts-ignore
+      var read = later;
+      var result = [counter, String(before), read, typeof setLater].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("6,undefined,y,function"))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkModel(getSource("5,undefined,y,function"))).failure?.message).toContain(
+        "result 6,undefined,y,function",
+      );
+    });
+  });
+
+  describe("converts an object that a Temporal function reads through its methods", () => {
+    const getSource = (expected: string) => `
+      const calls: string[] = [];
+      const years = {
+        valueOf() {
+          calls.push("years");
+          return 2;
+        },
+      };
+      const duration = new Temporal.Duration(years as any, 3);
+      const outcome = [duration.years, duration.months, calls.join("|")].join();
+      if (outcome !== "${expected}") throw new Error("outcome " + outcome);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("2,3,years"))).failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      expect((await checkModel(getSource("2,3,"))).failure?.message).toContain("outcome 2,3,years");
+    });
+  });
+
+  describe("follows promises through a for-in, one key after another", () => {
+    const getSource = (expected: string) => `
+      const seen: string[] = [];
+      const run = async () => {
+        const object: Record<string, number> = { a: 1, b: 2, c: 3 };
+        for (const key in await Promise.resolve(object)) {
+          await null;
+          seen.push(key);
+          if (key === "a") delete object.b;
+        }
+      };
+      run().then(() => {
+        if (seen.join() !== "${expected}") throw new Error("seen " + seen.join());
+      });
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("a,c"))).failure).toBeUndefined();
+    });
+
+    it("rejects the key that the loop deleted", async () => {
+      expect((await checkModel(getSource("a,b,c"))).failure?.message).toContain(
+        "A promise rejected with no handler",
+      );
+    });
+  });
+
+  describe("returns what a call that makes an object gives through a cast", () => {
+    const getSource = (expected: string) => `
+      const base = { kind: "effect" };
+      const make = (op: string): unknown => ({ ...base, identifier: op }) as any;
+      const wrap = (label: string) => make(label) as any;
+      const first = wrap("E");
+      const second = wrap("F");
+      const seen = [first.kind, first.identifier, second.identifier, first === second].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("effect,E,F,false"))).failure).toBeUndefined();
+    });
+
+    it("rejects another object", async () => {
+      expect((await checkModel(getSource("effect,E,E,false"))).failure?.message).toContain(
+        "seen effect,E,F,false",
+      );
+    });
+  });
+
+  describe("throws from a closure's getter that a built-in reads first, in the closure's environment", () => {
+    const getSource = (expected: string) => `
+      const make = (label: string) => ({
+        get raw(): string[] {
+          throw new Error(label + " raw");
+        },
+      });
+      const read = (label: string) => {
+        try {
+          const text = String.raw(make(label));
+          return text;
+        } catch (error) {
+          return (error as Error).message;
+        }
+      };
+      const seen = read("first") + "," + read("second");
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("first raw,second raw"))).failure).toBeUndefined();
+    });
+
+    it("rejects the message of another call", async () => {
+      expect((await checkModel(getSource("first raw,first raw"))).failure?.message).toContain(
+        "seen first raw,second raw",
+      );
+    });
+  });
+
+  describe("runs a call that an object literal with methods spreads before it makes the literal", () => {
+    const getSource = (expected: string) => `
+      interface Primitive {
+        readonly kind: string;
+        readonly identifier: string;
+      }
+      const base = { kind: "effect" };
+      const make = (options: { op: string }): Primitive =>
+        ({ ...base, identifier: options.op }) as any;
+      const makeExit = (options: { op: string }) => {
+        const Proto = {
+          _tag: options.op,
+          ...make(options),
+          describe() {
+            return options.op + "!";
+          },
+        };
+        return (value: number) => {
+          const self = Object.create(Proto);
+          self.value = value;
+          return self;
+        };
+      };
+      const done = makeExit({ op: "Success" })(3);
+      const seen = [done._tag, done.kind, done.identifier, done.value, typeof done.describe].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("Success,effect,Success,3,function"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects another spread", async () => {
+      expect(
+        (await checkModel(getSource("Success,effect,Failure,3,function"))).failure?.message,
+      ).toContain("seen Success,effect,Success,3,function");
+    });
+  });
+
+  describe("copies the names that a pattern binds to the closures that read them", () => {
+    const getSource = (expected: string) => `
+      const createResource = (start: string) => {
+        const { kind } = { kind: start + "!" };
+        const [size] = [start.length];
+        const read = () => kind + size;
+        return { read };
+      };
+      const first = createResource("ab");
+      const second = createResource("xyz");
+      const seen = [first.read(), second.read()].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("ab!2,xyz!3"))).failure).toBeUndefined();
+    });
+
+    it("rejects the names of another call", async () => {
+      expect((await checkModel(getSource("ab!3,xyz!3"))).failure?.message).toContain(
+        "seen ab!2,xyz!3",
+      );
+    });
+  });
+
+  describe("runs JavaScript whose writes break the types that TypeScript infers", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      var box = { seen: "" };
+      var count = 1;
+      count = "one";
+      var first = 0;
+      [first] = ["two"];
+      var later = 0;
+      function setLater() {
+        later = null;
+      }
+      setLater();
+      var total = 1;
+      total += "0";
+      var twice = 2;
+      var twice = "2";
+      var holder = { a: 1 };
+      holder.a = "t";
+      var list = [1];
+      list[0] = "s";
+      list.push("w");
+      box.seen = [
+        typeof count,
+        typeof first,
+        later === null,
+        total,
+        typeof twice,
+        holder.a + 1,
+        list.join(""),
+      ].join();
+      if (box.seen !== "${expected}") throw new Error("seen " + box.seen);
+    `;
+
+    it("agrees with Node", async () => {
+      const source = getSource("string,string,true,10,string,t1,sw");
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects the types that TypeScript infers", async () => {
+      const source = getSource("number,number,false,1,number,2,1w");
+      expect((await check(compile(source, path))).failure?.message).toContain(
+        "seen string,string,true,10,string,t1,sw",
+      );
+    });
+  });
+
+  it("stops at a name that only a key that the global object inherits binds", async () => {
+    const source = `
+      var box = { seen: 0 };
+      try {
+        toString = Object.prototype.toString;
+      } catch (error) {
+        box.seen = 1;
+      }
+    `;
+    expect(
+      (await check(compile(source, join(import.meta.dirname, "model.js")))).failure?.message,
+    ).toContain("tla-ts can't follow toString, which the global object inherits");
+  });
+
+  describe("runs JavaScript whose calls' results, class keys, and computed properties break TypeScript's types", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      var box = { seen: "" };
+      var key = "k";
+      class Keyed {
+        [key] = 1;
+      }
+      var made = new Keyed();
+      var digits = String(Number("12"));
+      var found = [12].includes(String(digits));
+      var holder = { [Symbol.iterator]: 3 };
+      box.seen = [made.k, found, typeof holder[Symbol.iterator]].join();
+      if (box.seen !== "${expected}") throw new Error("seen " + box.seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await check(compile(getSource("1,false,number"), path))).failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      expect((await check(compile(getSource("1,true,number"), path))).failure?.message).toContain(
+        "seen 1,false,number",
+      );
+    });
+  });
+
+  describe("runs JavaScript's regular expressions that only TypeScript's grammar rejects", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      var box = { seen: "" };
+      box.seen = [/\\1/.test("\\x01"), /[\\1]/.test("\\x01"), /\\k<a>/.test("k<a>")].join();
+      if (box.seen !== "${expected}") throw new Error("seen " + box.seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await check(compile(getSource("true,true,true"), path))).failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      expect((await check(compile(getSource("true,false,true"), path))).failure?.message).toContain(
+        "seen true,true,true",
+      );
+    });
+
+    it("rejects a regular expression that Node rejects", () => {
+      expect(() => compile("var pattern = /(?<a>.)\\k<b>/u;", path)).toThrow("SyntaxError");
+    });
+  });
+
+  it("stops at JavaScript whose value TypeScript rejects even once it's cast", () => {
+    const source = `
+      var box = { seen: false };
+      box.seen = [].includes.call([1, 2], 2);
+    `;
+    expect(() => compile(source, join(import.meta.dirname, "model.js"))).toThrow(
+      "tla-ts can't run JavaScript whose types TypeScript rejects",
+    );
+  });
+
+  describe("rejects the early errors of JavaScript that TypeScript reads as names it can't find", () => {
+    const path = join(import.meta.dirname, "model.js");
+
+    it.each([
+      ["await in an arrow's parameters", "async () => { (a = await/r/g) => {}; };", "SyntaxError"],
+      ["await as a rest parameter", "async (a = (...await) => {}) => {};", "SyntaxError"],
+      ["an undeclared private name", "class C { x = this.#foo; }", "TS2339"],
+      ["arguments in a field", "var C = class { x = () => arguments; };", "SyntaxError"],
+      ["arguments in a static block", "class C { static { arguments; } }", "SyntaxError"],
+      ["super's private name", "class C { #x() {} m() { super.#x(); } }", "SyntaxError"],
+      ["a module's repeated function", "function x() {}\nfunction x() {}", "SyntaxError"],
+      ["an export of an undeclared name", "export { missing };", "TS2304"],
+      ["an import of eval", 'import eval from "./missing.js";', "SyntaxError"],
+      ["an import of arguments", 'import { x as arguments } from "./missing.js";', "SyntaxError"],
+      [
+        "an import's repeated attribute",
+        'import x from "./missing.json" with { type: "json", type: "json" };',
+        "SyntaxError",
+      ],
+    ])("rejects %s", (_, statement, message) => {
+      expect(() => compile(`export {};\n${statement}`, path)).toThrow(message);
+    });
+
+    it("runs a property named await", async () => {
+      const source = `
+        export {};
+        var box = { await: 1 };
+        box.await = box.await + 1;
+        if (box.await !== 2) throw new Error("seen " + box.await);
+      `;
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+      expect(
+        (await check(compile(source.replace("!== 2", "!== 3"), path))).failure?.message,
+      ).toContain("seen 2");
+    });
+  });
+
+  describe("runs JavaScript's computed keys of other types, setters that return values, and unused commas' operands", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      var box = { seen: "" };
+      class Keyed {
+        [null]() {
+          return 1;
+        }
+        set x(value) {
+          box.seen += value;
+          return 2;
+        }
+      }
+      var keyed = new Keyed();
+      var written = (keyed.x = 5);
+      box.seen += [keyed[null](), (0, written)].join();
+      if (box.seen !== "${expected}") throw new Error("seen " + box.seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await check(compile(getSource("51,5"), path))).failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      expect((await check(compile(getSource("51,2"), path))).failure?.message).toContain(
+        "seen 51,5",
+      );
+    });
+  });
+
+  describe("writes JSON with a replacer that is a primitive, as it does with none", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      var box = { seen: "" };
+      var value = { key: [1] };
+      var written = [JSON.stringify(value, 0), JSON.stringify(value, true)];
+      box.seen = [written[0] === written[1], written[0].length].join();
+      if (box.seen !== "${expected}") throw new Error("seen " + box.seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await check(compile(getSource("true,11"), path))).failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      expect((await check(compile(getSource("true,2"), path))).failure?.message).toContain(
+        "seen true,11",
+      );
+    });
+  });
+
+  it("stops at a string's regexp method where a script replaced the regexp's before a throw", async () => {
+    const source = `
+      var box = { seen: "" };
+      var called = 0;
+      RegExp.prototype[Symbol.search] = function () {
+        called += 1;
+        return 7;
+      };
+      try {
+        var result = "target".search("source");
+        if (called !== 1) throw new Error("called " + called);
+      } finally {
+        box.seen = "done";
+      }
+    `;
+    expect(
+      (await check(compile(source, join(import.meta.dirname, "model.js")))).failure?.message,
+    ).toContain("tla-ts can't call a regexp's method where a script changed what it reads");
+  });
+
+  it("stops at a typed array's subarray through a script's species before its buffer's detach throws", async () => {
+    const source = `
+      var box = { seen: "" };
+      var buffer = new ArrayBuffer(8);
+      var view = new Int8Array(buffer, 1, 1);
+      var result = new Int8Array(0);
+      view.constructor = {
+        [Symbol.species]: function () {
+          return result;
+        },
+      };
+      var end = {
+        valueOf() {
+          buffer.transfer();
+          return 0;
+        },
+      };
+      box.seen = String(view.subarray(1, end) === result);
+    `;
+    expect(
+      (await check(compile(source, join(import.meta.dirname, "model.js")))).failure?.message,
+    ).toContain("tla-ts can't make a typed array through a constructor that a script gives");
+  });
+
+  it("stops at a JavaScript function's pattern parameter that an argument doesn't fit", () => {
+    const source = `
+      var box = { seen: "" };
+      var iterable = {};
+      iterable[Symbol.iterator] = function () {
+        throw new Error("get");
+      };
+      var take = async function* ([first]) {};
+      try {
+        take(iterable);
+        box.seen = "none";
+      } catch (error) {
+        box.seen = "threw";
+      }
+    `;
+    expect(() => compile(source, join(import.meta.dirname, "model.js"))).toThrow(
+      "Give this pattern's value an array type",
+    );
+  });
+
+  it("stops at a JavaScript key of a value that is only null", async () => {
+    const source = `
+      var box = { seen: "" };
+      function attempt() {
+        var base = null;
+        var key = {
+          toString: function () {
+            throw new Error("key");
+          },
+        };
+        base[key];
+      }
+      try {
+        attempt();
+      } catch (error) {
+        box.seen = error instanceof TypeError ? "type" : "other";
+      }
+    `;
+    expect(
+      (await check(compile(source, join(import.meta.dirname, "model.js")))).failure?.message,
+    ).toContain("tla-ts can't throw the TypeError of reading a property of undefined or null");
+  });
+
+  it("stops at the pattern parameter of a JavaScript function whose calls TypeScript doesn't check", () => {
+    const source = `
+      var box = { seen: "" };
+      var take;
+      take = function ([first]) {
+        return first;
+      };
+      function run() {
+        return take({});
+      }
+      try {
+        run();
+      } catch (error) {
+        box.seen = "threw";
+      }
+    `;
+    expect(() => compile(source, join(import.meta.dirname, "model.js"))).toThrow(
+      "Give this pattern's value an array type",
+    );
   });
 });

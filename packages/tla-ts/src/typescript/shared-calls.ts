@@ -4,6 +4,7 @@ import { TlaTypeScriptError } from "../errors";
 import {
   bindCall,
   bindOnce,
+  enterClosure,
   findChanged,
   type Frame,
   getDeferredDefaults,
@@ -18,7 +19,7 @@ import {
   findNodes,
   type FunctionNode,
   getAnyFunction,
-  getCallee,
+  getOuterLocals,
   getParameters,
   getSymbol,
   getUndefined,
@@ -27,9 +28,11 @@ import {
   type SharedCall,
   type SharedHelper,
   skipCasts,
+  getValueDeclaration,
 } from "./context";
 import { getPosition } from "./program-nodes";
 import { forceHeap } from "./functions";
+import { isUndefinedValue } from "./intrinsics";
 import { type Formula, ifThenElse, leaf, letIn, render } from "./formula";
 import { link } from "./regions";
 import { type Bound, bindValues, createStateScope, type Receiver } from "./scope";
@@ -73,9 +76,17 @@ const getFixedFunction = (declaration: ts.Node) =>
 // this, arguments, or new.target of a function around it, no yield, await, or using, and no
 // function that it makes but a callback that a call takes, a parameter's default, or a function
 // that a const or a declaration holds and that only calls run or take.
-const isOwnCode = (node: ts.Node, context: Context): boolean => {
+const isOwnCode = (node: ts.Node, context: Context, owner?: ts.Node): boolean => {
   // A type runs nothing, though an instantiation expression, which TypeScript parses as one, runs.
   if (ts.isTypeNode(node) && !ts.isExpressionWithTypeArguments(node)) return true;
+  // The this of the function whose operator takes it.
+  if (
+    node.kind === ts.SyntaxKind.ThisKeyword &&
+    owner !== undefined &&
+    ts.findAncestor(node.parent, ts.isFunctionLike) === owner
+  ) {
+    return true;
+  }
   if (
     node.kind === ts.SyntaxKind.ThisKeyword ||
     node.kind === ts.SyntaxKind.SuperKeyword ||
@@ -118,7 +129,9 @@ const isOwnCode = (node: ts.Node, context: Context): boolean => {
       ts.forEachChild(node, (child) => !isOwnCode(child, context) || undefined) === undefined
     );
   }
-  return ts.forEachChild(node, (child) => !isOwnCode(child, context) || undefined) === undefined;
+  return (
+    ts.forEachChild(node, (child) => !isOwnCode(child, context, owner) || undefined) === undefined
+  );
 };
 
 // The message of a throw that nothing catches, which an operator gives on to its caller.
@@ -139,7 +152,7 @@ interface Unit {
   isOwn: boolean;
 }
 
-const getUnit = (unit: ts.Node, context: Context): Unit => {
+const getUnit = (unit: ts.Node, context: Context, owner?: ts.Node): Unit => {
   const runs = new Set<ts.Node>();
   const read = new Map<ts.Symbol, ts.Node>();
   const isTaskNamed = { value: false };
@@ -149,7 +162,7 @@ const getUnit = (unit: ts.Node, context: Context): Unit => {
       named !== undefined && (named.flags & ts.SymbolFlags.Alias) !== 0
         ? context.checker.getAliasedSymbol(named)
         : named;
-    const declaration = symbol?.valueDeclaration;
+    const declaration = getValueDeclaration(symbol, context);
     if (symbol === undefined || declaration === undefined) return;
     if (declaration.getSourceFile().isDeclarationFile) {
       if (TASK_NAMES.has(symbol.name)) isTaskNamed.value = true;
@@ -183,7 +196,8 @@ const getUnit = (unit: ts.Node, context: Context): Unit => {
     isOwn:
       (!ts.isFunctionLike(unit) || isPlain(unit as FunctionNode)) &&
       (ts.isClassLike(unit) ||
-        ts.forEachChild(unit, (child) => !isOwnCode(child, context) || undefined) === undefined),
+        ts.forEachChild(unit, (child) => !isOwnCode(child, context, owner) || undefined) ===
+          undefined),
   };
 };
 
@@ -212,14 +226,17 @@ export const classifySharedHelpers = (reached: readonly ts.Node[], context: Cont
     ...new Set(
       reached.flatMap((node) =>
         findNodes(node, ts.isCallExpression).flatMap((call) => {
-          const declaration = getSymbol(call.expression, context.checker)?.valueDeclaration;
+          const declaration = getValueDeclaration(
+            getSymbol(call.expression, context.checker),
+            context,
+          );
           const callee = declaration === undefined ? undefined : getFixedFunction(declaration);
           return callee === undefined || !isCandidate.has(callee)
             ? []
             : call.arguments.flatMap((argument) => {
                 const passed = skipCasts(argument);
                 const named = ts.isIdentifier(passed)
-                  ? getSymbol(passed, context.checker)?.valueDeclaration
+                  ? getValueDeclaration(getSymbol(passed, context.checker), context)
                   : undefined;
                 const callback =
                   ts.isArrowFunction(passed) || ts.isFunctionExpression(passed)
@@ -257,9 +274,31 @@ export const classifySharedHelpers = (reached: readonly ts.Node[], context: Cont
   );
   context.functionNames = namedInside;
   const sharedState = [...context.variables.keys()].filter((symbol) => namedInside.has(symbol));
-  // The units that the candidates and the callbacks run, each found once.
+  const entered = [
+    ...new Set(
+      [...context.functionCandidates.values(), ...context.closures.values()]
+        .flat()
+        .filter(
+          (callee): callee is ts.FunctionExpression | ts.FunctionDeclaration | ts.ArrowFunction =>
+            (ts.isFunctionExpression(callee) ||
+              ts.isFunctionDeclaration(callee) ||
+              ts.isArrowFunction(callee)) &&
+            callee.body !== undefined &&
+            isPlain(callee) &&
+            getParameters(callee).every((parameter) => ts.isIdentifier(parameter.name)) &&
+            (isClosure(callee, context) ||
+              findNodes(
+                callee,
+                (inner): inner is ts.Node =>
+                  inner.kind === ts.SyntaxKind.ThisKeyword &&
+                  ts.findAncestor(inner.parent, ts.isFunctionLike) === callee,
+              ).length > 0),
+        ),
+    ),
+  ];
+  // The units that the candidates, the callbacks, and the entered functions run, each found once.
   const units = new Map<ts.Node, Unit>();
-  const pending: ts.Node[] = [...candidates, ...callbacks];
+  const pending: ts.Node[] = [...candidates, ...callbacks, ...entered];
   while (pending.length > 0) {
     const node = pending.pop() ?? candidates[0];
     if (units.has(node)) continue;
@@ -325,8 +364,16 @@ export const classifySharedHelpers = (reached: readonly ts.Node[], context: Cont
   };
   // What a function and the functions it runs read from outside it and change, where all of their
   // code runs as an operator's would.
-  const getHelper = (callee: ts.Node): SharedHelper | undefined => {
-    if (isReachingUnshared(callee)) return undefined;
+  // An entered function's operator takes its this, and a closure's reads the locals of the call
+  // that made it from its environment, so only the functions that it runs must be shared.
+  const getHelper = (callee: ts.Node, isEntered = false): SharedHelper | undefined => {
+    if (
+      isEntered
+        ? [...(units.get(callee)?.runs ?? [])].some(isReachingUnshared)
+        : isReachingUnshared(callee)
+    ) {
+      return undefined;
+    }
     const reach = new Set<ts.Node>([callee]);
     const queued: ts.Node[] = [callee];
     const read = new Map<ts.Symbol, ts.Node>();
@@ -337,9 +384,19 @@ export const classifySharedHelpers = (reached: readonly ts.Node[], context: Cont
         queued.push(run);
       });
     }
-    const reachedUnits = [...reach].flatMap((node) => units.get(node) ?? []);
+    // The locals of the functions around a closure, which it reads from its environment.
+    const captures = new Set(
+      isEntered && isClosure(callee, context)
+        ? getOuterLocals(callee, context).map((local) => local.symbol)
+        : [],
+    );
+    const reachedUnits = [...reach].flatMap((node) =>
+      node === callee && isEntered ? getUnit(node, context, node) : (units.get(node) ?? []),
+    );
     reachedUnits.forEach((unit) =>
-      unit.read.forEach((declaration, symbol) => read.set(symbol, declaration)),
+      unit.read.forEach((declaration, symbol) => {
+        if (!captures.has(symbol)) read.set(symbol, declaration);
+      }),
     );
     // A name that a function around the helper declares comes from outside, though the helper runs
     // that function again: the helper's call sees the name of the call that made it.
@@ -372,12 +429,15 @@ export const classifySharedHelpers = (reached: readonly ts.Node[], context: Cont
         ? (getSymbol(node.name, context.checker) ?? [])
         : [],
     );
+    // A closure keeps the captures that it changes in its environment, on the heap.
+    const isCaptureChanged = [...captures].some((symbol) => changed.has(symbol));
     return {
       read: [...outsideNames, ...classes],
       state: sharedState,
-      changed: [...new Set([...context.variables.keys(), ...outsideNames])].filter((symbol) =>
-        changed.has(symbol),
+      changed: [...new Set([...context.variables.keys(), ...outsideNames])].filter(
+        (symbol) => changed.has(symbol) || (isCaptureChanged && symbol === context.heap),
       ),
+      isEntered,
     };
   };
   candidates.forEach((callee) => {
@@ -388,27 +448,28 @@ export const classifySharedHelpers = (reached: readonly ts.Node[], context: Cont
     const helper = getHelper(callback);
     if (helper !== undefined) context.sharedCallbacks.set(callback, helper);
   });
+  // The closures, and the functions that read their this, that a call through a value may run.
+  entered.forEach((callee) => {
+    const helper = context.sharedHelpers.has(callee) ? undefined : getHelper(callee, true);
+    if (helper !== undefined) context.sharedHelpers.set(callee, helper);
+  });
 };
 
-// Whether a call runs a function other than the one that its callee names, as a call through a
-// value does.
-const isThroughValue = (node: ts.Node, callee: FunctionNode, context: Context) =>
-  ts.isCallExpression(node) && getCallee(node.expression, context) !== callee;
-
-// Whether a statement's call of a helper may run as the helper's operator: a call by name with no
-// more arguments than the helper takes, but where a rest parameter takes them, none of which
-// spreads. A helper reads no this, so a call through a value may run it with any receiver.
+// Whether a statement's call of a helper may run as the helper's operator: a call with no more
+// arguments than the helper takes, but where a rest parameter takes them, none of which spreads. A
+// helper reads no this, so a call may run it with any receiver.
 export const isSharedCall = (
   node: ts.Node,
   callee: FunctionNode,
   argumentNodes: readonly ts.Expression[],
-  receiver: Receiver | undefined,
   context: Context,
+  isEntered = false,
 ) =>
-  context.sharedHelpers.has(callee) &&
-  (receiver === undefined || isThroughValue(node, callee, context)) &&
+  context.sharedHelpers.get(callee)?.isEntered === isEntered &&
   ts.isCallExpression(node) &&
-  argumentNodes === node.arguments &&
+  // An entered function's call may pass what call or apply passes on.
+  (argumentNodes === node.arguments ||
+    (isEntered && !argumentNodes.some(ts.isOmittedExpression))) &&
   !argumentNodes.some(ts.isSpreadElement) &&
   (argumentNodes.length <= getParameters(callee).length ||
     getParameters(callee).some((parameter) => parameter.dotDotDotToken !== undefined));
@@ -419,6 +480,7 @@ export const isSharedCall = (
 const getSharedCall = (
   callee: FunctionNode,
   callbacks: ReadonlyMap<ts.Symbol, FunctionNode>,
+  absent: ReadonlySet<ts.Symbol>,
   path: Path,
   context: Context,
 ) => {
@@ -432,7 +494,7 @@ const getSharedCall = (
     (symbol) => !context.variables.has(symbol) && path.scope.bindings.has(symbol),
   );
   const isReadable = (symbol: ts.Symbol) => {
-    const declaration = symbol.valueDeclaration;
+    const declaration = getValueDeclaration(symbol, context);
     return (
       declaration !== undefined &&
       !path.scope.uninitialized.has(symbol) &&
@@ -442,9 +504,11 @@ const getSharedCall = (
     );
   };
   // The generators that the caller made live in its path, which an operator, compiled once, can't
-  // resume or close.
+  // resume or close, as do the environments of the locals that its closures share, which a closure
+  // that the operator's code makes would share.
   if (
     path.generators.size > 0 ||
+    (path.scope.activations?.size ?? 0) > 0 ||
     !read.every(isReadable) ||
     !changed.every((symbol) => context.variables.has(symbol) || captured.includes(symbol))
   ) {
@@ -463,10 +527,13 @@ const getSharedCall = (
       shared.captured.length === captured.length &&
       shared.captured.every((symbol) => captured.includes(symbol)) &&
       [...callbacks].every((entry) => shared.callbacks.get(entry[0]) === entry[1]) &&
+      shared.absent.size === absent.size &&
+      [...absent].every((symbol) => shared.absent.has(symbol)) &&
       shared.uninitialized.length === uninitialized.length &&
       shared.uninitialized.every((symbol) => uninitialized.includes(symbol)) &&
       shared.held.size === held.size &&
-      [...held].every((entry) => shared.held.get(entry[0]) === entry[1]),
+      [...held].every((entry) => shared.held.get(entry[0]) === entry[1]) &&
+      shared.isCatching === path.scope.isCatching,
   );
   if (defined !== undefined && context.inProgress.has(callee)) defined.isRecursive = true;
   if (defined !== undefined) return defined;
@@ -483,24 +550,68 @@ const getSharedCall = (
       changed: changed.filter((symbol) => !uninitialized.includes(symbol)),
       captured,
       callbacks,
+      absent,
       held,
       state,
       uninitialized,
+      isCatching: path.scope.isCatching,
     },
     context,
   );
 };
 
-// The parameters that take values, not the functions that the operator calls.
+// Whether a call through a value may run a closure, or a function that reads its this, as its
+// operator, which takes the function's value and its this. A call inside the operator calls the
+// operator itself, as where a closure runs another closure that the same function made.
+export const isEnteredCall = (
+  node: ts.Node,
+  callee: FunctionNode,
+  argumentNodes: readonly ts.Expression[],
+  path: Path,
+  context: Context,
+) =>
+  isSharedCall(node, callee, argumentNodes, context, true) &&
+  getSharedCall(
+    callee,
+    new Map(),
+    getAbsentFunctions(callee, argumentNodes, context),
+    path,
+    context,
+  ) !== undefined;
+
+// The parameters that take values, not the functions that the operator calls nor those that hold
+// undefined.
 const getValueParameters = (
   callee: FunctionNode,
-  callbacks: ReadonlyMap<ts.Symbol, FunctionNode>,
+  variant: Pick<SharedCall, "callbacks" | "absent">,
   context: Context,
 ) =>
   getParameters(callee).filter((parameter) => {
     const symbol = getSymbol(parameter.name, context.checker);
-    return symbol === undefined || !callbacks.has(symbol);
+    return symbol === undefined || (!variant.callbacks.has(symbol) && !variant.absent.has(symbol));
   });
+
+// The parameters whose type allows a function, with no default, that a call leaves out or passes
+// undefined.
+const getAbsentFunctions = (
+  callee: FunctionNode,
+  argumentNodes: readonly ts.Expression[],
+  context: Context,
+) =>
+  new Set(
+    getParameters(callee).flatMap((parameter, position) => {
+      const symbol = getSymbol(parameter.name, context.checker);
+      const argument = argumentNodes.at(position);
+      const type = context.checker.getNonNullableType(context.checker.getTypeAtLocation(parameter));
+      return symbol !== undefined &&
+        parameter.initializer === undefined &&
+        parameter.dotDotDotToken === undefined &&
+        type.getCallSignatures().length > 0 &&
+        (argument === undefined || isUndefinedValue(argument, context))
+        ? [symbol]
+        : [];
+    }),
+  );
 
 // The place of a throw that an operator gives its caller, among every operator's.
 const getPlace = (location: SourceLocation, context: Context) => {
@@ -550,20 +661,31 @@ const defineShared = (
   callee: FunctionNode,
   variant: Pick<
     SharedCall,
-    "changed" | "captured" | "callbacks" | "held" | "state" | "uninitialized"
+    | "changed"
+    | "captured"
+    | "callbacks"
+    | "absent"
+    | "held"
+    | "state"
+    | "uninitialized"
+    | "isCatching"
   >,
   context: Context,
 ) => {
   const parameters = getParameters(callee);
   const changed = variant.changed;
   const named = [
-    ...getValueParameters(callee, variant.callbacks, context).map((parameter) => ({
+    ...getValueParameters(callee, variant, context).map((parameter) => ({
       symbol: getSymbol(parameter.name, context.checker),
       name: context.names.getFresh(parameter.name.getText()),
     })),
     ...variant.captured.map((symbol) => ({ symbol, name: context.names.getFresh(symbol.name) })),
     ...variant.state.map((symbol) => ({ symbol, name: context.names.getFresh(symbol.name) })),
   ];
+  // An entered function's operator takes its value and its this last.
+  const entered = context.sharedHelpers.get(callee)?.isEntered
+    ? { value: context.names.getFresh("function"), receiver: context.names.getFresh("this") }
+    : undefined;
   const shared: SharedCall = {
     name: context.names.getFresh(
       ts.isVariableDeclaration(callee.parent) && ts.isIdentifier(callee.parent.name)
@@ -571,7 +693,10 @@ const defineShared = (
         : (callee.name?.getText() ?? "helper"),
     ),
     ...variant,
-    parameters: named.map((item) => ({ name: item.name, arity: 0 })),
+    parameters: [
+      ...named.map((item) => item.name),
+      ...(entered === undefined ? [] : [entered.value, entered.receiver]),
+    ].map((name) => ({ name, arity: 0 })),
     isRecursive: false,
     isReturning: true,
     isThrowing: true,
@@ -581,16 +706,24 @@ const defineShared = (
   const base = createStateScope(context);
   const scope = {
     ...base,
-    // The body runs as inside a try, so that each caller catches or stops at what it throws.
-    isCatching: true,
+    // The body runs as inside a try where its caller catches what it throws.
+    isCatching: variant.isCatching,
     functions: new Map([...base.functions, ...variant.held, ...variant.callbacks]),
+    receiver:
+      entered === undefined || ts.isArrowFunction(callee)
+        ? base.receiver
+        : { value: identifier(entered.receiver), method: callee },
     uninitialized: new Set(variant.uninitialized),
     // A variable that the operator doesn't take has no binding, so its code can't read it stale.
-    bindings: new Map(
-      named.flatMap((item): [ts.Symbol, Expression][] =>
+    bindings: new Map([
+      ...named.flatMap((item): [ts.Symbol, Expression][] =>
         item.symbol === undefined ? [] : [[item.symbol, identifier(item.name)]],
       ),
-    ),
+      ...[...variant.absent].map((symbol): [ts.Symbol, Expression] => [
+        symbol,
+        getUndefined(context),
+      ]),
+    ]),
   };
   // The defaults that the operator evaluates where its call passes undefined, in order, as each
   // may read the parameters before it.
@@ -649,29 +782,45 @@ const defineShared = (
       : ts.isBlock(body)
         ? body.statements
         : [ts.factory.createReturnStatement(body)];
+  const frame: Frame = {
+    next: (current) => end(current, "return", getUndefined(context), string(""), number(0)),
+    exit: (current, returned) =>
+      returned === undefined
+        ? end(current, "return", getUndefined(context), string(""), number(0))
+        : end(current, "returnValue", returned, string(""), number(0)),
+    breakTo: undefined,
+    continueTo: undefined,
+    // The caller catches what the body throws, or stops where the body threw it.
+    throwTo: (current, thrown) =>
+      end(
+        current,
+        "throw",
+        thrown.value,
+        getThrownMessage(thrown, callee),
+        thrown.shared?.place ?? getPlace(thrown.uncaught.location, context),
+      ),
+    yieldTo: undefined,
+    awaitTo: undefined,
+    inlining: new Set([callee]),
+  };
+  // A closure reads and writes the captures in the environment of the value that the call runs.
   const translated = letIn(
     defaulted.definitions,
-    translateStatements(statements, inner, context, {
-      next: (current) => end(current, "return", getUndefined(context), string(""), number(0)),
-      exit: (current, returned) =>
-        returned === undefined
-          ? end(current, "return", getUndefined(context), string(""), number(0))
-          : end(current, "returnValue", returned, string(""), number(0)),
-      breakTo: undefined,
-      continueTo: undefined,
-      // The caller catches what the body throws, or stops where the body threw it.
-      throwTo: (current, thrown) =>
-        end(
-          current,
-          "throw",
-          thrown.value,
-          getThrownMessage(thrown, callee),
-          thrown.shared?.place ?? getPlace(thrown.uncaught.location, context),
-        ),
-      yieldTo: undefined,
-      awaitTo: undefined,
-      inlining: new Set([callee]),
-    }),
+    entered !== undefined && isClosure(callee, context)
+      ? enterClosure(
+          callee,
+          identifier(entered.value),
+          inner,
+          context,
+          frame,
+          (enteredPath, enteredFrame, leave) =>
+            translateStatements(statements, enteredPath, context, {
+              ...enteredFrame,
+              next: (current) => frame.next(leave(current)),
+              exit: (current, returned) => frame.exit(leave(current), returned),
+            }),
+        )
+      : translateStatements(statements, inner, context, frame),
   );
   shared.isReturning = [...kinds].some((kind) => kind !== "throw");
   shared.isThrowing = kinds.has("throw");
@@ -702,6 +851,8 @@ export const translateSharedCall = (
   frame: Frame,
   continueWith: (path: Path, value?: Expression) => Formula,
   inlineCall: (bound: Bound, inner: Path) => Formula,
+  // The function's value and this, which an entered function's operator takes.
+  entered?: { value: Expression; receiver: Expression },
 ): Formula => {
   // A call inside the helper's own operator binds its arguments as any other call does.
   const outside = {
@@ -710,18 +861,18 @@ export const translateSharedCall = (
   };
   const parameters = getParameters(callee);
   // A parameter whose type is a function takes the function that the call passes it, which the
-  // operator runs as the inlined body would. A call through a value, which may run any of several
-  // functions, may instead pass the value, which the body's calls through it branch on.
-  const callbacks = new Map(getPassedCallbacks(parameters, argumentNodes, path, context));
+  // operator runs as the inlined body would, or else the value that the call passes, which the
+  // body's calls through it branch on, as the inlined body's would.
+  const callbacks = new Map(
+    entered === undefined ? getPassedCallbacks(parameters, argumentNodes, path, context) : [],
+  );
+  const absent = getAbsentFunctions(callee, argumentNodes, context);
   const shared = parameters.every((parameter) => {
     const symbol = getSymbol(parameter.name, context.checker);
     const isFunction = context.checker.getTypeAtLocation(parameter).getCallSignatures().length > 0;
-    return (
-      symbol !== undefined &&
-      (callbacks.has(symbol) ? isFunction : !isFunction || isThroughValue(node, callee, context))
-    );
+    return symbol !== undefined && (!callbacks.has(symbol) || isFunction);
   })
-    ? getSharedCall(callee, callbacks, path, context)
+    ? getSharedCall(callee, callbacks, absent, path, context)
     : undefined;
   if (shared === undefined) {
     return bindCall(node, callee, argumentNodes, receiver, path, context, outside, inlineCall);
@@ -795,7 +946,7 @@ export const translateSharedCall = (
           )
         : returned;
       const operands = [
-        ...getValueParameters(callee, shared.callbacks, context).map((parameter) => {
+        ...getValueParameters(callee, shared, context).map((parameter) => {
           const symbol = getSymbol(parameter.name, context.checker);
           return (symbol && bound.scope.bindings.get(symbol)) ?? getUndefined(context);
         }),
@@ -809,6 +960,7 @@ export const translateSharedCall = (
           }
           return value;
         }),
+        ...(entered === undefined ? [] : [entered.value, entered.receiver]),
       ];
       return letIn(
         bound.definitions,

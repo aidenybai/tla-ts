@@ -11,6 +11,7 @@ import {
   isScript,
   isWrittenBy,
   skipCasts,
+  getValueDeclaration,
 } from "./context";
 import { getWrapperName } from "./common-js";
 import { NATIVE_ERRORS } from "./exceptions";
@@ -256,8 +257,7 @@ export const findNamespaces = (
 ): ReadonlyMap<ts.SourceFile, Namespace> => {
   const checker = context.checker;
   const loaded = new Set(getDynamicImports(sourceFile, checker));
-  // A module, which holds no objects on a heap, needs a namespace object only where code that may
-  // run reads one.
+  // A module needs a namespace object only where code that may run reads one.
   const scanned = isScript(sourceFile) ? [sourceFile, ...files] : getReached([sourceFile], context);
   const roots = [
     ...findNodes(sourceFile, isImportCall).flatMap((call) => {
@@ -277,11 +277,12 @@ export const findNamespaces = (
           ? getNameModule(node.expression, checker)
           : undefined;
         const member = module && checker.getSymbolAtLocation(node.name);
-        const declaration = (
+        const declaration = getValueDeclaration(
           member !== undefined && member.flags & ts.SymbolFlags.Alias
             ? checker.getAliasedSymbol(member)
-            : member
-        )?.valueDeclaration;
+            : member,
+          context,
+        );
         return module !== undefined && declaration !== undefined && ts.isSourceFile(declaration)
           ? [module]
           : [];
@@ -297,13 +298,6 @@ export const findNamespaces = (
     });
   };
   roots.forEach(add);
-  // Only a script, which runs as JavaScript does, holds objects on a heap.
-  if (modules.size > 0 && !isScript(sourceFile)) {
-    throw new TlaTypeScriptError(
-      "tla-ts can't make a module's namespace object outside a script",
-      sourceFile,
-    );
-  }
   // The module whose namespace object a node reads: a namespace import as a value or to read an
   // export, or an import() of a string.
   const getRead = (node: ts.Node) => {
@@ -349,7 +343,7 @@ export const findNamespaces = (
   // A binding that a function writes may change after its module has run, which the namespace
   // object wouldn't follow.
   const isChangedLater = (symbol: ts.Symbol) => {
-    const file = symbol.valueDeclaration?.getSourceFile();
+    const file = getValueDeclaration(symbol, context)?.getSourceFile();
     return (
       file !== undefined &&
       findNodes(file, (node): node is ts.Node => {
@@ -373,7 +367,7 @@ export const findNamespaces = (
         if (nested !== undefined) {
           return [{ name: exported.name, value: nested.file, declared: undefined }];
         }
-        const declaration = target.valueDeclaration;
+        const declaration = getValueDeclaration(target, context);
         if (file !== sourceFile && declaration?.getSourceFile() === sourceFile) {
           throw new TlaTypeScriptError(
             "tla-ts can't make the namespace object of a module that hasn't run",

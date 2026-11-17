@@ -52,6 +52,7 @@ import {
   isTimerCall,
   skipCasts,
   translateString,
+  getValueDeclaration,
 } from "./context";
 import { getFileIndex } from "./program-nodes";
 import { getCallbackReceiver, translateArrayIteratorPrototype } from "./collections";
@@ -350,7 +351,7 @@ const getHeld = (path: Path, node: ts.Node, valueNode: ts.Expression, context: C
   const cast = skipCasts(valueNode);
   const root = ts.isPropertyAccessExpression(cast) ? skipCasts(cast.expression) : cast;
   const declaration = ts.isIdentifier(root)
-    ? getSymbol(root, context.checker)?.valueDeclaration
+    ? getValueDeclaration(getSymbol(root, context.checker), context)
     : undefined;
   const variable =
     declaration !== undefined &&
@@ -438,7 +439,7 @@ const getThrowingThens = (node: ts.Node, context: Context) =>
       statement !== undefined && ts.isThrowStatement(statement) ? statement.expression : undefined;
     const declaration =
       thrown !== undefined && ts.isIdentifier(thrown)
-        ? getSymbol(thrown, context.checker)?.valueDeclaration
+        ? getValueDeclaration(getSymbol(thrown, context.checker), context)
         : undefined;
     return ts.isPropertyAccessExpression(call.expression) &&
       call.expression.name.text === "defineProperty" &&
@@ -646,8 +647,8 @@ const getThenFunctions = (
   );
   if (valueNode === undefined) return all;
   const type = context.checker.getTypeAtLocation(valueNode);
-  const literals = (type.isUnion() ? type.types : [type]).map(
-    (member) => member.getSymbol()?.valueDeclaration,
+  const literals = (type.isUnion() ? type.types : [type]).map((member) =>
+    getValueDeclaration(member.getSymbol(), context),
   );
   return literals.every((literal) => literal !== undefined && ts.isObjectLiteralExpression(literal))
     ? all.filter((candidate) =>
@@ -1111,7 +1112,7 @@ const getCallbackRunner =
 // length that it writes.
 const getArrayLike = (node: ts.Expression, context: Context) => {
   const declaration = ts.isIdentifier(node)
-    ? getSymbol(node, context.checker)?.valueDeclaration
+    ? getValueDeclaration(getSymbol(node, context.checker), context)
     : undefined;
   const literal =
     declaration !== undefined &&
@@ -1140,7 +1141,7 @@ const getArrayLike = (node: ts.Expression, context: Context) => {
 // and queue no job.
 const getIteratedLiteral = (node: ts.Identifier, context: Context) => {
   const symbol = getSymbol(node, context.checker);
-  const valueDeclaration = symbol?.valueDeclaration;
+  const valueDeclaration = getValueDeclaration(symbol, context);
   const declaration =
     valueDeclaration !== undefined && ts.isVariableDeclaration(valueDeclaration)
       ? valueDeclaration
@@ -1161,7 +1162,7 @@ const getIteratedLiteral = (node: ts.Identifier, context: Context) => {
       : undefined;
   const isConstant = (element: ts.Expression): boolean => {
     const declared = ts.isIdentifier(element)
-      ? getSymbol(element, context.checker)?.valueDeclaration
+      ? getValueDeclaration(getSymbol(element, context.checker), context)
       : undefined;
     return (
       ts.isLiteralExpression(element) ||
@@ -1287,7 +1288,7 @@ const translateFromAsync = (
       ? path.scope.bindings.get(symbol)
       : undefined;
   // The generator function that the variable's initializer calls.
-  const declaration = held === undefined ? undefined : symbol?.valueDeclaration;
+  const declaration = held === undefined ? undefined : getValueDeclaration(symbol, context);
   const call =
     declaration !== undefined &&
     ts.isVariableDeclaration(declaration) &&
@@ -1757,7 +1758,7 @@ const COMBINATORS = ["all", "allSettled", "any", "race"];
 // variable only as the combinator's argument or for its length, so the array keeps its elements.
 const getHeldLiteral = (node: ts.Identifier, context: Context) => {
   const symbol = getSymbol(node, context.checker);
-  const declaration = symbol?.valueDeclaration;
+  const declaration = getValueDeclaration(symbol, context);
   if (declaration === undefined || !ts.isVariableDeclaration(declaration)) return undefined;
   const initializer = declaration.initializer && getCast(declaration.initializer);
   const uses = findNodes(
@@ -2199,7 +2200,9 @@ export const findResolverHolders = (sourceFile: ts.SourceFile, context: Context)
   const holders = new Set<ts.Symbol>();
   const isParameterValue = (node: ts.Expression | undefined) => {
     const declaration =
-      node === undefined ? undefined : getSymbol(getCast(node), context.checker)?.valueDeclaration;
+      node === undefined
+        ? undefined
+        : getValueDeclaration(getSymbol(getCast(node), context.checker), context);
     return declaration !== undefined && isResolverParameter(declaration, context);
   };
   const visit = (node: ts.Node): void => {
@@ -2238,7 +2241,7 @@ const isResolver = (node: ts.Expression, context: Context) => {
     );
   }
   const symbol = ts.isIdentifier(cast) ? getSymbol(cast, context.checker) : undefined;
-  const declaration = symbol?.valueDeclaration;
+  const declaration = getValueDeclaration(symbol, context);
   return (
     symbol !== undefined &&
     ((declaration !== undefined && isResolverParameter(declaration, context)) ||
@@ -2374,7 +2377,7 @@ export const translatePromiseConstruction = (
   const argument = node.arguments?.length === 1 ? getCast(node.arguments[0]) : undefined;
   const declaration =
     argument !== undefined && ts.isIdentifier(argument)
-      ? getSymbol(argument, context.checker)?.valueDeclaration
+      ? getValueDeclaration(getSymbol(argument, context.checker), context)
       : undefined;
   const executor =
     argument !== undefined && (ts.isArrowFunction(argument) || ts.isFunctionExpression(argument))
@@ -2496,7 +2499,8 @@ const isIncapable = (node: ts.Expression | undefined, path: Path, context: Conte
   if (node === undefined || getBuiltIn(getCast(node), context) !== undefined) return true;
   const isRead =
     isInert(node) ||
-    (ts.isIdentifier(node) && getSymbol(node, context.checker)?.valueDeclaration !== undefined) ||
+    (ts.isIdentifier(node) &&
+      getValueDeclaration(getSymbol(node, context.checker), context) !== undefined) ||
     (ts.isCallExpression(node) &&
       getBuiltIn(node.expression, context) === "Symbol" &&
       node.arguments.every(isInert));
@@ -2524,7 +2528,7 @@ const isIncapable = (node: ts.Expression | undefined, path: Path, context: Conte
 // NewPromiseCapability constructs with an executor that the function only calls.
 const getCapabilityConstructor = (node: ts.Expression, context: Context) => {
   const callee = ts.isIdentifier(node)
-    ? getSymbol(node, context.checker)?.valueDeclaration
+    ? getValueDeclaration(getSymbol(node, context.checker), context)
     : getCast(node);
   const constructor =
     callee !== undefined && ts.isVariableDeclaration(callee) && callee.initializer !== undefined
@@ -2602,7 +2606,7 @@ const getCapabilityConstructor = (node: ts.Expression, context: Context) => {
 
 // The parameter of a capability constructor, which names its executor.
 const isCapabilityExecutor = (node: ts.Expression, context: Context) => {
-  const declaration = getSymbol(node, context.checker)?.valueDeclaration;
+  const declaration = getValueDeclaration(getSymbol(node, context.checker), context);
   if (declaration === undefined || !ts.isParameter(declaration)) return false;
   const constructor = declaration.parent;
   if (!ts.isFunctionDeclaration(constructor) && !ts.isFunctionExpression(constructor)) {
@@ -3953,16 +3957,20 @@ export const translateAsyncCall = (
   continueWith: (path: Path, value?: Expression) => Formula,
   argumentNodes: readonly ts.Expression[] = ts.isCallExpression(node) ? node.arguments : [],
 ): Formula =>
-  runAsyncBody(
-    node,
-    callee,
-    path,
-    context,
-    frame,
-    (made, rejectFrame, bindWith) =>
-      bindCall(node, callee, argumentNodes, receiver, made, context, rejectFrame, bindWith),
-    continueWith,
-  );
+  // A loop's operator carries no jobs, so a call there stops where it runs, as one that a value
+  // may make runs only where the value holds the async function.
+  path.tasks === undefined
+    ? leaf(apply("Assert", [boolean(false), string("tla-ts can't follow a promise in a loop")]))
+    : runAsyncBody(
+        node,
+        callee,
+        path,
+        context,
+        frame,
+        (made, rejectFrame, bindWith) =>
+          bindCall(node, callee, argumentNodes, receiver, made, context, rejectFrame, bindWith),
+        continueWith,
+      );
 
 // Runs a built-in async function's body, such as an AsyncDisposableStack's disposeAsync, which
 // gives a promise that settles as the body returns or throws.
@@ -4068,7 +4076,7 @@ const runAsyncBody = (
       const fixed = new Set(
         kept.flatMap((entry) =>
           entry.locals.flatMap((local) => {
-            const declaration = local.symbol.valueDeclaration;
+            const declaration = getValueDeclaration(local.symbol, context);
             return written.has(local.symbol) ||
               isAssigned(local.symbol, sourceFile, context) ||
               (declaration !== undefined &&

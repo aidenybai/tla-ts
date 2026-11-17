@@ -1,6 +1,6 @@
 import ts from "@typescript/typescript6";
 import { TlaTypeScriptError } from "../errors";
-import { isStrictCode } from "./context";
+import { isModuleFile, isStrictCode } from "./context";
 
 const reject = (message: string, node: ts.Node): never => {
   throw new TlaTypeScriptError(`SyntaxError: ${message}`, node);
@@ -181,18 +181,70 @@ const isSloppyFunctionBody = (node: ts.Statement) => {
   );
 };
 
+// The SyntaxError of a regular expression literal that JavaScript rejects, as Node reads its
+// grammar, or undefined where JavaScript accepts it.
+export const getRegularExpressionError = (node: ts.RegularExpressionLiteral) => {
+  const text = node.text;
+  const end = text.lastIndexOf("/");
+  try {
+    new RegExp(text.slice(1, end), text.slice(end + 1));
+    return undefined;
+  } catch (error) {
+    return String(error).replace(/^SyntaxError: /, "");
+  }
+};
+
+// Whether a name is a property's or a module's export, which any word may be, rather than a
+// binding's or a reference's.
+const isPropertyName = (node: ts.Identifier) => {
+  const parent = node.parent;
+  return (
+    (ts.isPropertyAccessExpression(parent) && parent.name === node) ||
+    ((ts.isPropertyAssignment(parent) ||
+      ts.isMethodDeclaration(parent) ||
+      ts.isPropertyDeclaration(parent) ||
+      ts.isAccessor(parent) ||
+      ts.isPropertySignature(parent) ||
+      ts.isMethodSignature(parent)) &&
+      parent.name === node) ||
+    ((ts.isBindingElement(parent) || ts.isImportSpecifier(parent)) &&
+      parent.propertyName === node) ||
+    (ts.isExportSpecifier(parent) && parent.name === node && parent.propertyName !== undefined)
+  );
+};
+
 // Rejects programs that JavaScript rejects as it parses, where TypeScript accepts them, and stops at
 // those that it accepts only outside strict mode, where tla-ts doesn't follow them.
 export const rejectEarlyErrors = (sourceFile: ts.SourceFile) => {
+  // A module's top-level functions are lexical declarations, which no other declaration repeats.
+  if (isModuleFile(sourceFile)) {
+    const names = new Set<string>();
+    const vars = new Set(
+      sourceFile.statements.flatMap((statement) =>
+        ts.isVariableStatement(statement) &&
+        (statement.declarationList.flags & ts.NodeFlags.BlockScoped) === 0
+          ? statement.declarationList.declarations.flatMap((declaration) =>
+              getBindingNames(declaration.name),
+            )
+          : [],
+      ),
+    );
+    sourceFile.statements.forEach((statement) => {
+      const name =
+        ts.isFunctionDeclaration(statement) && statement.body !== undefined
+          ? statement.name
+          : undefined;
+      if (name === undefined) return;
+      if (names.has(name.text) || vars.has(name.text)) {
+        reject(`Identifier '${name.text}' has already been declared`, name);
+      }
+      names.add(name.text);
+    });
+  }
   const visit = (node: ts.Node) => {
     if (ts.isRegularExpressionLiteral(node)) {
-      const text = node.text;
-      const end = text.lastIndexOf("/");
-      try {
-        new RegExp(text.slice(1, end), text.slice(end + 1));
-      } catch (error) {
-        reject(String(error).replace(/^SyntaxError: /, ""), node);
-      }
+      const error = getRegularExpressionError(node);
+      if (error !== undefined) reject(error, node);
     }
     if (ts.isBlock(node) || ts.isCaseBlock(node)) {
       const statements = ts.isBlock(node)
@@ -258,6 +310,61 @@ export const rejectEarlyErrors = (sourceFile: ts.SourceFile) => {
       !node.text.isWellFormed()
     ) {
       reject("A module's export names can't have lone surrogates", node);
+    }
+    if (
+      ts.isPropertyAccessExpression(node) &&
+      node.expression.kind === ts.SyntaxKind.SuperKeyword &&
+      ts.isPrivateIdentifier(node.name)
+    ) {
+      reject("Unexpected private name after super", node.name);
+    }
+    // A class field's initializer and a static block read no arguments, outside the functions that
+    // they hold that aren't arrows.
+    if (ts.isIdentifier(node) && node.text === "arguments" && !isPropertyName(node)) {
+      const owner = ts.findAncestor(
+        node.parent,
+        (ancestor) =>
+          (ts.isFunctionLike(ancestor) && !ts.isArrowFunction(ancestor)) ||
+          (ts.isPropertyDeclaration(ancestor) && ancestor.initializer !== undefined) ||
+          ts.isClassStaticBlockDeclaration(ancestor),
+      );
+      if (
+        owner !== undefined &&
+        (ts.isClassStaticBlockDeclaration(owner) ||
+          (ts.isPropertyDeclaration(owner) &&
+            owner.initializer !== undefined &&
+            node.pos >= owner.initializer.pos))
+      ) {
+        reject(
+          "'arguments' is not allowed in class field initializer or static initialization block",
+          node,
+        );
+      }
+    }
+    // An import binds no name that strict code reserves.
+    if (
+      ts.isIdentifier(node) &&
+      (node.text === "arguments" || node.text === "eval") &&
+      (ts.isImportClause(node.parent) ||
+        ts.isNamespaceImport(node.parent) ||
+        (ts.isImportSpecifier(node.parent) && node.parent.name === node))
+    ) {
+      reject(`Unexpected ${node.text} in strict mode`, node);
+    }
+    // An import's attributes name each key once.
+    if (ts.isImportAttributes(node)) {
+      const keys = node.elements.map((element) => element.name.text);
+      if (new Set(keys).size !== keys.length) reject("Import attribute has duplicate key", node);
+    }
+    // A module reserves await, which TypeScript reads as a name inside a function that isn't
+    // async, as in an arrow's parameters.
+    if (
+      ts.isIdentifier(node) &&
+      node.text === "await" &&
+      isModuleFile(sourceFile) &&
+      !isPropertyName(node)
+    ) {
+      reject("Unexpected reserved word", node);
     }
     if (ts.isMetaProperty(node) && node.name.getText() !== node.name.text) {
       reject("Keywords can't contain escapes", node.name);

@@ -27,11 +27,11 @@ interface LineNumberProps {
   number: number;
 }
 
-export const LineNumber = (props: LineNumberProps) => (
+export const LineNumber = memo((props: LineNumberProps) => (
   <span aria-hidden className="block min-w-[3ch] shrink-0 text-right text-faint select-none">
     {props.number}
   </span>
-);
+));
 
 interface CodeWordsProps {
   tokens: Token[];
@@ -41,7 +41,6 @@ interface CodeWordsProps {
   colors?: Record<string, string>;
 }
 
-// Memoized so hovering a state, which re-renders every line, does not re-tokenize the code.
 const CodeWords = memo((props: CodeWordsProps) => {
   const words = getWords(props.tokens).map((word) => {
     const marks = (props.marks ?? []).filter(
@@ -50,35 +49,30 @@ const CodeWords = memo((props: CodeWordsProps) => {
     const isHovered = marks.some((mark) => mark.name === props.hoveredName);
     const name = isHovered ? props.hoveredName : props.isHighlighted && marks.at(0)?.name;
     const color = !/^\s/.test(word.text) && name && props.colors?.[name];
-    const strength =
-      marks.at(0)?.name === props.hoveredName
-        ? 28
-        : isHovered
-          ? 12
-          : props.hoveredName === undefined
-            ? 16
-            : 8;
-    return {
-      ...word,
-      region: marks.at(0)?.name,
-      tint: color ? `color-mix(in srgb, ${color} ${strength}%, transparent)` : undefined,
-    };
+    // A hovered name sets its own strength. Other names take theirs from a rule that their
+    // pane switches, so hovering a name re-renders only the lines that hold it.
+    const strength = marks.at(0)?.name === props.hoveredName ? 28 : 12;
+    const tint: Record<string, string> = isHovered
+      ? { "--tint-fill": `color-mix(in srgb, ${color} ${strength}%, transparent)` }
+      : { "--tint": `${color}` };
+    return { ...word, region: marks.at(0)?.name, tint: color ? tint : undefined };
   });
   return words.map((word, index) => {
     if (/^\s/.test(word.text)) return word.text;
     // A tint spills 2px past the word, except toward a tinted neighbor, where two would overlap.
     const edges = [
-      words[index + 1]?.tint === undefined && `2px 0 0 ${word.tint}`,
-      words[index - 1]?.tint === undefined && `-2px 0 0 ${word.tint}`,
+      words[index + 1]?.tint === undefined && "2px 0 0 var(--tint-fill)",
+      words[index - 1]?.tint === undefined && "-2px 0 0 var(--tint-fill)",
     ].filter(Boolean);
     return (
       <span
         key={`${word.column}:${word.text}`}
         data-token
         data-region={word.region}
+        data-tint={word.tint && ""}
         style={{
           ...word.style,
-          backgroundColor: word.tint,
+          ...word.tint,
           boxShadow: word.tint && edges.length > 0 ? edges.join(", ") : undefined,
         }}
         className="inline-block rounded-xs leading-[1.35] text-(--token-light) dark:text-(--token-dark)"
@@ -104,7 +98,8 @@ interface CodeLineProps {
   className?: string;
 }
 
-export const CodeLine = (props: CodeLineProps) => (
+// Memoized so hovering a state or a name re-renders only the lines whose look changes.
+export const CodeLine = memo((props: CodeLineProps) => (
   <span
     data-line={props.number}
     className={cn(
@@ -126,7 +121,7 @@ export const CodeLine = (props: CodeLineProps) => (
       <CodeWords
         tokens={props.tokens}
         marks={props.marks}
-        hoveredName={props.marks?.length ? props.hoveredName : undefined}
+        hoveredName={props.hoveredName}
         isHighlighted={props.isHighlighted}
         colors={props.colors}
       />
@@ -144,4 +139,4 @@ export const CodeLine = (props: CodeLineProps) => (
       </span>
     )}
   </span>
-);
+));

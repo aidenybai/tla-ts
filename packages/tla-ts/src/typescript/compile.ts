@@ -1,5 +1,6 @@
 import ts from "@typescript/typescript6";
 import {
+  findDispatchedCallees,
   findEffects,
   getWritten,
   getWrittenRoots,
@@ -7,11 +8,13 @@ import {
   translateScript,
   writesState,
 } from "./actions";
-import { findSharing, getReached, isMakingObjects, rejectSharing } from "./aliasing";
+import { findSharing, getReached, isMakingNode, isMakingObjects, rejectSharing } from "./aliasing";
+import { findMakers } from "./reach-graph";
 import {
   type Closure,
   type Context,
   createContext,
+  createDispatch,
   findNodes,
   findFunctionCandidates,
   findFileAccessors,
@@ -36,6 +39,7 @@ import {
   rejectArgumentsVarReads,
   rejectSloppyGlobalWrites,
   isVarFunction,
+  getValueDeclaration,
 } from "./context";
 import { type CompiledSpec, createSections, emit, type Sections } from "./emit";
 import { getBinary, getNumberValue, isRawTemplate, MATH_OPERATORS } from "./expressions";
@@ -70,7 +74,7 @@ import {
   isLiteralValue,
   rejectRunningModules,
 } from "./namespaces";
-import { createProgram, isTypeImport } from "./program";
+import { createProgram, isTypeImport, type Library } from "./program";
 import { findResolverHolders } from "./promises";
 import {
   getJsonPath,
@@ -122,6 +126,9 @@ const NORMAL_FORMS = ["NFC", "NFD", "NFKC", "NFKD"];
 // The most code units of a literal whose escapes tla-ts tells the codes of. A longer one, such as a
 // string of every code point in a range, may hold more than the module can list.
 const LONG_LITERAL = 1024;
+
+// The symbols that a call of Symbol which may run again makes at most.
+const REPEATED_SYMBOLS = 128;
 
 // The fewest digits that give a number back, without its sign, and the power of 10 of the first,
 // as Number::toString finds them, which toExponential writes where a call gives no digits.
@@ -200,7 +207,7 @@ const getCounted = (statement: ts.Statement, context: Context) => {
     target !== undefined && ts.isIdentifier(target)
       ? getSymbol(target, context.checker)
       : undefined;
-  const declaration = symbol?.valueDeclaration;
+  const declaration = getValueDeclaration(symbol, context);
   const initializer =
     declaration !== undefined && ts.isVariableDeclaration(declaration)
       ? declaration.initializer
@@ -259,7 +266,8 @@ const rejectEndlessCount = (model: Model, sections: Sections, context: Context) 
 
 // Compiles a TypeScript file into a TLA+ spec and the config that checks it. Imports resolve
 // relative to fileName, and the module takes its name, so die-hard.ts is the module DieHard.
-// Without a file system, as in a browser, libraries holds TypeScript's declaration files by name.
+// Without a file system, as in a browser, library holds TypeScript's declaration files, which
+// createLibrary parses once.
 // Where the CLI runs a script in Node's place, isNodeScript has the script report a throw or a
 // rejection that nothing handles with the text Node prints.
 // The operators that convert their operands to numbers, which may give NaN.
@@ -306,11 +314,11 @@ const isBuiltInValueArgument = (node: ts.Expression, checker: ts.TypeChecker) =>
 export const compile = (
   source: string,
   fileName = "spec.ts",
-  libraries?: ReadonlyMap<string, string>,
+  library?: Library,
   isNodeScript = false,
 ): CompiledSpec => {
   const path = fileName.replaceAll("\\", "/");
-  const program = createProgram(source, path, libraries);
+  const program = createProgram(source, path, library);
   const context = createContext(
     program.checker,
     program.files,
@@ -319,6 +327,12 @@ export const compile = (
     program.nodes,
   );
   context.resolverHolders = program.files.map((file) => findResolverHolders(file, context));
+  // Only a model that imports files asks which of their declarations make objects before the
+  // heap is known.
+  context.makers =
+    program.files.length > 1
+      ? findMakers(context.nodes, context.reachGraph, (node) => isMakingNode(node, context))
+      : undefined;
   if (isScript(program.sourceFile)) {
     const onceFunctions = findOnceFunctions(program.files, context);
     context.onceFunctions = new Set(onceFunctions);
@@ -442,8 +456,10 @@ export const compile = (
     const symbol = program.checker.getSymbolAtLocation(node);
     return symbol === undefined
       ? undefined
-      : (symbol.flags & ts.SymbolFlags.Alias ? program.checker.getAliasedSymbol(symbol) : symbol)
-          .valueDeclaration;
+      : getValueDeclaration(
+          symbol.flags & ts.SymbolFlags.Alias ? program.checker.getAliasedSymbol(symbol) : symbol,
+          context,
+        );
   };
   context.namespaces = findNamespaces(sourceFile, files, context);
   context.valueEnums = findValueEnums(order, program.checker);
@@ -765,7 +781,7 @@ export const compile = (
         node.name.text === "hasOwnProperty")) ||
     (ts.isPropertyAccessExpression(node) &&
       node.name.text === "prototype" &&
-      isScriptClass(getSymbol(node.expression, context.checker)?.valueDeclaration)) ||
+      isScriptClass(getValueDeclaration(getSymbol(node.expression, context.checker), context))) ||
     // A class with members that extends a native error, whose errors only objects can be.
     (ts.isClassLike(node) &&
       hasObjectMembers(node) &&
@@ -818,7 +834,8 @@ export const compile = (
         ts.isSatisfiesExpression(node.parent) ||
         (ts.isVariableDeclaration(node.parent) && node.parent.initializer === node) ||
         isBuiltInValueArgument(node, context.checker)) &&
-      getFunction(getTopLevelDeclaration(getSymbol(node, context.checker))) !== undefined) ||
+      getFunction(getTopLevelDeclaration(getSymbol(node, context.checker), context)) !==
+        undefined) ||
     // A function that a block declares outside strict mode, which its var holds as a value.
     isVarFunction(node) ||
     isPrototypeArray(node, context) ||
@@ -896,13 +913,30 @@ export const compile = (
     heap !== undefined &&
     !(isScript(sourceFile) && isUsingHeap) &&
     findSharing(shareable, context) !== undefined;
-  const isHeapFile = isScript(sourceFile) || isSharing;
+  // A description of a property is an object that only the heap makes, as a script's is.
+  const isDescribing = (node: ts.Node): boolean =>
+    (ts.isCallExpression(node) &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      ["getOwnPropertyDescriptor", "getOwnPropertyDescriptors"].includes(
+        node.expression.name.text,
+      ) &&
+      ["Object", "Reflect"].includes(getBuiltIn(node.expression.expression, context) ?? "")) ||
+    (ts.forEachChild(node, isDescribing) ?? false);
+  // A module whose code reads a module's namespace object holds it on the heap, as a script does.
+  const isHeapFile =
+    isScript(sourceFile) ||
+    isSharing ||
+    context.namespaces.size > 0 ||
+    (heap !== undefined && reached.some(isDescribing));
   context.hasOrderedCollections = isHeapFile && reached.some(usesOrder);
   const changedArrays = isHeapFile ? findChangedArrays(reached, context) : [];
   if (heap !== undefined && isHeapFile && (isSharing || changedArrays.length > 0 || isUsingHeap)) {
     context.heap = heap;
     context.objectTargets = findObjectTargets(program.files, context);
     findHeapCode(context);
+    context.makers = findMakers(context.nodes, context.reachGraph, (node) =>
+      isMakingNode(node, context),
+    );
     findFileAccessors(context);
     context.variables.set(heap, identifier(context.names.getFresh("heap")));
     context.storedBuiltIns = new Map(
@@ -1078,21 +1112,33 @@ export const compile = (
         prototypes.has(node.left.expression.getText())) ||
       (ts.forEachChild(node, changesPrototype) ?? false);
     context.hasInheritedElements = roots.some(changesPrototype);
-    const getSymbolCalls = (node: ts.Node): number =>
+    // Each call of Symbol makes a symbol each time it runs: once at the top level outside loops,
+    // and many times where a function, a class, or a loop runs it again, as a test runs its
+    // function for each typed array and each way of making one.
+    const getSymbolCalls = (node: ts.Node, isRepeated: boolean): number =>
       node
         .getChildren()
         .reduce(
-          (count, child) => count + getSymbolCalls(child),
+          (count, child) =>
+            count +
+            getSymbolCalls(
+              child,
+              isRepeated ||
+                ts.isFunctionLike(node) ||
+                ts.isClassLike(node) ||
+                ts.isIterationStatement(node, false),
+            ),
           ts.isCallExpression(node) && ["Symbol", "Symbol.for"].includes(node.expression.getText())
-            ? 1
+            ? isRepeated
+              ? REPEATED_SYMBOLS
+              : 1
             : 0,
         );
-    // The built-in objects hold properties that the well-known symbols key. Each call of Symbol
-    // may make a few symbols, as where a loop or a function runs it again.
+    // The built-in objects hold properties that the well-known symbols key.
     context.symbols = [
       ...WELL_KNOWN_SYMBOLS,
       ...Array.from(
-        { length: 4 * roots.reduce((count, root) => count + getSymbolCalls(root), 0) },
+        { length: roots.reduce((count, root) => count + getSymbolCalls(root, false), 0) },
         () => "",
       ),
     ].map((name) =>
@@ -1123,6 +1169,11 @@ export const compile = (
   if (context.isEveryCollectionHeld) rejectSharing(shareable, context);
   rejectRegExpIndicesUses(roots, context);
   if (context.heap !== undefined) {
+    context.dispatch = createDispatch(
+      findDispatchedCallees(reached, context),
+      context,
+      program.isStrictFunctionTypes,
+    );
     context.effects = findEffects(reached, context);
     context.changes = summarizeEffects(context);
   }

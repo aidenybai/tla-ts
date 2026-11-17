@@ -13,6 +13,8 @@ import {
   isHeapFunction,
   isInlined,
   isScript,
+  getValueDeclaration,
+  getRunMembers,
 } from "./context";
 import type { Expression } from "../ast";
 import { getWritten, getWrittenRoots } from "./actions";
@@ -144,7 +146,7 @@ const isInertClass = (statement: ts.Statement) =>
   (statement.heritageClauses ?? []).every((clause) =>
     clause.types.every((type) => isName(type.expression)),
   ) &&
-  !statement.members.some(
+  !getRunMembers(statement).some(
     (member) =>
       ts.isClassStaticBlockDeclaration(member) ||
       (member.name !== undefined && ts.isComputedPropertyName(member.name)) ||
@@ -240,21 +242,21 @@ export const readModel = (
         .flatMap(getListDeclarations)
     : [];
   const declarations = [...statements.flatMap(getDeclarations), ...nestedVars];
+  // A const whose object a write changes in place holds a new value after it, as a let does.
   const changed = new Set(
-    isScript(sourceFile)
-      ? [sourceFile, ...imported]
-          .flatMap((root) =>
-            findNodes(root, (node): node is ts.Node => getWritten(node) !== undefined),
-          )
-          .flatMap((node) => {
-            const written = getWritten(node);
-            return written === undefined ? [] : getWrittenRoots(written);
-          })
-          .flatMap((root) => {
-            const symbol = ts.isIdentifier(root) ? getSymbol(root, context.checker) : undefined;
-            return symbol !== undefined && getKind(root, context) !== "object" ? [symbol] : [];
-          })
-      : [],
+    [sourceFile, ...imported]
+      .flatMap((root) => findNodes(root, (node): node is ts.Node => getWritten(node) !== undefined))
+      .flatMap((node) => {
+        const written = getWritten(node);
+        return written === undefined ? [] : getWrittenRoots(written);
+      })
+      .flatMap((root) => {
+        const symbol = ts.isIdentifier(root) ? getSymbol(root, context.checker) : undefined;
+        return symbol !== undefined &&
+          (!isScript(sourceFile) || getKind(root, context) !== "object")
+          ? [symbol]
+          : [];
+      }),
   );
   // A variable that changes is state, the model's own or an imported file's, which its file may
   // export, as an importer reads the same binding.
@@ -275,7 +277,7 @@ export const readModel = (
   });
   // A var or a parameter of a function that runs once holds one value, which the state holds.
   const onceVariables = [...context.onceLocals].flatMap((symbol) => {
-    const declaration = symbol.valueDeclaration;
+    const declaration = getValueDeclaration(symbol, context);
     if (
       declaration === undefined ||
       !(ts.isVariableDeclaration(declaration) || ts.isParameter(declaration)) ||

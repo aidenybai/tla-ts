@@ -15,6 +15,9 @@ import {
   type MethodCall,
   share,
   skipCasts,
+  getValueDeclaration,
+  findReferences,
+  getUnmodelledHostName,
 } from "./context";
 import type { Expression } from "../ast";
 import { TlaTypeScriptError } from "../errors";
@@ -47,6 +50,7 @@ import {
 import {
   COLLECTIONS,
   getBuiltIn,
+  getBuiltInPath,
   getBuiltInKey,
   isBuiltInObject,
   translateBuiltInValue,
@@ -2419,24 +2423,46 @@ export const getHeapRegExpCall = (node: ts.Node, context: Context) => {
 // an expression only one that reads a literal and gives no object, so that no one can observe the
 // object that the literal makes. tla-ts then follows the built-in methods only while a script
 // hasn't changed those that the call reads.
-export const translateRegExpCall = (node: ts.CallExpression, scope: Scope, context: Context) => {
+// A regexp call that runs as an expression, of a literal or of a string's regexp, where a script
+// with objects may change the built-ins that it reads.
+const getExpressionRegExpCall = (node: ts.Node, context: Context) => {
   const call = getRegExpCall(node, context);
-  if (
-    call === undefined ||
+  return call === undefined ||
     (context.heap !== undefined &&
       ((!ts.isRegularExpressionLiteral(call.regexp) &&
         getStringRegExp(call.regexp) === undefined) ||
         call.method === "exec" ||
         call.method === "match"))
-  ) {
-    return undefined;
-  }
+    ? undefined
+    : call;
+};
+
+// The built-ins that a regexp call reads, which a script may change.
+const getChangeableBuiltIns = (call: RegExpCall) => [
+  "RegExp.prototype",
+  ...(call.method === "test" ? [] : ["String.prototype"]),
+  ...(call.method === "split" ? ["RegExp"] : []),
+];
+
+// The built-ins that a script with objects may change, which the regexp calls that a statement
+// runs as expressions read, outside the functions and the statements that it holds.
+export const getStatementRegExpBuiltIns = (statement: ts.Statement, context: Context) => {
+  const builtIns = new Set<string>();
+  const visit = (node: ts.Node) => {
+    if (node !== statement && (ts.isStatement(node) || ts.isFunctionLike(node))) return;
+    const call = context.heap === undefined ? undefined : getExpressionRegExpCall(node, context);
+    if (call !== undefined) getChangeableBuiltIns(call).forEach((name) => builtIns.add(name));
+    ts.forEachChild(node, visit);
+  };
+  visit(statement);
+  return builtIns;
+};
+
+export const translateRegExpCall = (node: ts.CallExpression, scope: Scope, context: Context) => {
+  const call = getExpressionRegExpCall(node, context);
+  if (call === undefined) return undefined;
   const translate = (value: ts.Expression) => translateExpression(value, scope, context);
-  const changeable = [
-    "RegExp.prototype",
-    ...(call.method === "test" ? [] : ["String.prototype"]),
-    ...(call.method === "split" ? ["RegExp"] : []),
-  ];
+  const changeable = getChangeableBuiltIns(call);
   const regexp =
     context.heap === undefined
       ? getStringRegExp(call.regexp) === undefined
@@ -2539,7 +2565,7 @@ const getPrimitiveCall = (node: MethodCall, kind: Kind, context: Context) => {
   const receiver = node.expression.expression;
   const prototype =
     node.expression.name.text === "call" && ts.isPropertyAccessExpression(receiver)
-      ? PRIMITIVE_PROTOTYPES.get(receiver.expression.getText())
+      ? PRIMITIVE_PROTOTYPES.get(getBuiltInPath(receiver.expression, context) ?? "")
       : undefined;
   if (prototype !== undefined && ts.isPropertyAccessExpression(receiver)) {
     return {
@@ -2554,7 +2580,7 @@ const getPrimitiveCall = (node: MethodCall, kind: Kind, context: Context) => {
   // primitive the method reads.
   const symbol =
     kind === "object" ? context.checker.getTypeAtLocation(receiver).getSymbol() : undefined;
-  const declaration = symbol?.valueDeclaration;
+  const declaration = getValueDeclaration(symbol, context);
   const wrapper =
     declaration !== undefined && ts.isClassLike(declaration)
       ? getBuiltInBase(declaration, context)
@@ -2624,14 +2650,16 @@ export const getStringCall = (node: ts.Node, context: Context) => {
     : { method, primitive, callee, owner, values, kinds, isCall };
 };
 
-// The String.prototype method that a key whose type doesn't tell which function it holds may hold,
-// where the script stores the method as a value, as obj.charAt = String.prototype.charAt does, and
-// writes no function of its own under the key.
+// The String.prototype method that a key of an object, or a key whose type doesn't tell which
+// function it holds, may hold, where the script stores the method as a value, as obj.charAt =
+// String.prototype.charAt does, and writes no function of its own under the key. The call checks
+// that the key holds the method.
 const getStoredStringMethod = (callee: ts.PropertyAccessExpression, context: Context) => {
   const name = callee.name.text;
-  return (context.checker.getTypeAtLocation(callee).flags &
+  return ((context.checker.getTypeAtLocation(callee).flags &
     (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !==
-    0 &&
+    0 ||
+    getKind(callee.expression, context) === "object") &&
     getWrittenFunctions(callee, name, context).length === 0 &&
     context.storedBuiltIns.get(callee.getSourceFile())?.has(`String.prototype.${name}`) === true
     ? name
@@ -3722,6 +3750,65 @@ const getComparedKinds = (type: ts.Type, checker: ts.TypeChecker) =>
     ?.filter((name) => !["undefined", "null", "symbol"].includes(name))
     .map((name) => (name === "function" ? "object" : name));
 
+// The kinds of the values that an expression gives, where its type tells them. A cast to any
+// changes no value, so the type of what the cast reads tells, and the type of a property that a
+// read through such a cast reads. A parameter of type any holds what the calls of its function
+// pass it, where each reference to the function calls it.
+export const getValueKinds = (
+  node: ts.Expression,
+  context: Context,
+  parameters: readonly ts.Symbol[],
+): string[] | undefined => {
+  const checker = context.checker;
+  const typed = getComparedKinds(checker.getTypeAtLocation(node), checker);
+  if (typed !== undefined) return typed;
+  const inner = skipCasts(node);
+  if (inner !== node) return getValueKinds(inner, context, parameters);
+  if (ts.isPropertyAccessExpression(inner) && skipCasts(inner.expression) !== inner.expression) {
+    const property = checker
+      .getTypeAtLocation(skipCasts(inner.expression))
+      .getProperty(inner.name.text);
+    return property === undefined
+      ? undefined
+      : getComparedKinds(checker.getTypeOfSymbol(property), checker);
+  }
+  const symbol = ts.isIdentifier(inner) ? getSymbol(inner, checker) : undefined;
+  const parameter = getValueDeclaration(symbol, context);
+  const owner = parameter !== undefined && ts.isParameter(parameter) ? parameter.parent : undefined;
+  if (
+    symbol === undefined ||
+    parameters.includes(symbol) ||
+    parameter === undefined ||
+    !ts.isParameter(parameter) ||
+    parameter.dotDotDotToken !== undefined ||
+    owner === undefined ||
+    !ts.isFunctionDeclaration(owner) ||
+    owner.name === undefined
+  ) {
+    return undefined;
+  }
+  const position = owner.parameters.indexOf(parameter);
+  const name = owner.name;
+  const callee = getSymbol(name, checker);
+  if (callee === undefined) return undefined;
+  const files = Array.from(context.nodes.fileStarts, (start) => context.nodes.nodes[start]);
+  const calls = files
+    .flatMap((file) => findReferences(callee, file, context))
+    .filter((reference) => reference !== name);
+  const kinds = calls.map((reference) => {
+    const read =
+      ts.isPropertyAccessExpression(reference.parent) && reference.parent.name === reference
+        ? reference.parent
+        : reference;
+    const call = read.parent;
+    if (!ts.isCallExpression(call) || call.expression !== read) return undefined;
+    if (call.arguments.slice(0, position + 1).some(ts.isSpreadElement)) return undefined;
+    const argument = call.arguments.at(position);
+    return argument === undefined ? [] : getValueKinds(argument, context, [...parameters, symbol]);
+  });
+  return kinds.every((kind) => kind !== undefined) ? [...new Set(kinds.flat())] : undefined;
+};
+
 // The kinds of the keys that the type of a Set or a Map gives it.
 const getDeclaredKeyKinds = (node: ts.Expression, checker: ts.TypeChecker) => {
   const type = getCollectionType(checker.getTypeAtLocation(node));
@@ -3791,10 +3878,14 @@ const getKeyKinds = (node: ts.NewExpression, context: Context) => {
   if (isUntyped) return undefined;
   // A Set or Map that no variable holds has only the keys it starts with.
   const keys = [...initial, ...(symbol === undefined ? [] : getUses(node.getSourceFile()))];
+  // A Set or Map whose type tells its keys' kinds checks a key of another kind as it runs, so only
+  // one whose type doesn't looks at what the key's value may be.
   const kinds = keys.map((key) =>
     key === undefined || ts.isSpreadElement(key)
       ? undefined
-      : getComparedKinds(checker.getTypeAtLocation(key), checker),
+      : declared === undefined
+        ? getValueKinds(key, context, [])
+        : getComparedKinds(checker.getTypeAtLocation(key), checker),
   );
   if (declared !== undefined) {
     return new Set([...declared, ...kinds.flatMap((kind) => kind ?? [])]);
@@ -4020,6 +4111,13 @@ const translateNewCollection = (
       return set(argument.elements.map((element) => translateSetKey(element, scope, context)));
     }
     return translateSet(argument, scope, context);
+  }
+  const host = getUnmodelledHostName(node.expression, context);
+  if (host !== undefined) {
+    throw new TlaTypeScriptError(
+      `tla-ts can't run ${host}, which the host gives and tla-ts doesn't model`,
+      node,
+    );
   }
   if (kind !== "Map") {
     return translateUnknown(node, `Unsupported constructor: new ${constructor}`, context);

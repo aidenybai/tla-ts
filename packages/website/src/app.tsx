@@ -5,8 +5,8 @@ import { Code, Example, Hero, Section } from "./components/parts";
 import { Prompt } from "./components/prompt";
 import { Reference } from "./components/reference";
 import { ThemeMenu } from "./components/theme-menu";
-import { InlineCode } from "./components/ui/inline-code";
 import { Test262Chart } from "./components/test262-chart";
+import { InlineCode } from "./components/ui/inline-code";
 import { buttonVariants } from "./components/ui/button-variants";
 import { Link } from "./components/ui/link";
 import { cn } from "cn";
@@ -50,6 +50,7 @@ export const App = () => (
         <Example.Root>
           <Example.Description />
           <Example.Source />
+          <Example.Graph />
           <Example.Hint />
         </Example.Root>
       </Section.Root>

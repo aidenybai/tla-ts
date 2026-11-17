@@ -65,6 +65,9 @@ LOCAL TFail(kind) == [error |-> kind, value |-> Undefined]
 LOCAL TArgument(arguments, position) ==
   IF position <= Len(arguments) THEN arguments[position] ELSE Undefined
 
+\* The label of an argument that a Temporal function converts.
+LOCAL TArgumentLabel(position) == "argument " \o ToString(position)
+
 LOCAL TBig(integer) == BigIntOfInteger(integer)
 
 LOCAL TIsNegative(value) == BigIntIsNegative(value)
@@ -143,30 +146,49 @@ LOCAL TGet(heap, object, key) ==
             Assert(FALSE, "tla-ts can't run a getter that a Temporal function reads")
        [] OTHER -> Get(heap, object, key)
 
+\* A Temporal function converts an object through its methods, which a script gives, so it asks for
+\* the primitive that ToPrimitive gives with a kind's hint, which the statement that calls it gets
+\* and passes back in its heap's answers, keyed by the kind, the label of the property or argument
+\* that the object came from, and the object.
+LOCAL TPending(kind, label, value) ==
+  [error |-> "pending", value |-> Undefined, request |-> [kind |-> kind, label |-> label, value |-> value]]
+
+LOCAL TIsAnswered(heap, kind, label, value) ==
+  "answers" \in DOMAIN heap /\ <<kind, label, value>> \in DOMAIN heap.answers
+
+LOCAL TAnswer(heap, kind, label, value) == heap.answers[<<kind, label, value>>]
+
+LOCAL TPrimitiveNumber(value) ==
+  IF IsBigInt(value) \/ IsSymbol(value) THEN TFail("TypeError") ELSE TOk(ToNumber(value))
+
+LOCAL TPrimitiveString(value) == IF IsSymbol(value) THEN TFail("TypeError") ELSE TOk(StringOf(value))
+
 \* ToNumber of a value that a Temporal function reads.
-LOCAL TToNumber(value) ==
-  CASE IsBigInt(value) \/ IsSymbol(value) -> TFail("TypeError")
-    [] IsRef(value) \/ IsSequenceValue(value) ->
-         Assert(FALSE, "tla-ts can't convert an object that a Temporal function reads to a number")
-    [] OTHER -> TOk(ToNumber(value))
+LOCAL TToNumber(heap, value, label) ==
+  CASE IsRef(value) \/ IsSequenceValue(value) ->
+         IF TIsAnswered(heap, "number", label, value)
+         THEN TPrimitiveNumber(TAnswer(heap, "number", label, value))
+         ELSE TPending("number", label, value)
+    [] OTHER -> TPrimitiveNumber(value)
 
 \* ToString of a value that a Temporal function reads.
-LOCAL TToString(value) ==
-  CASE IsSymbol(value) -> TFail("TypeError")
-    [] IsRef(value) \/ IsSequenceValue(value) ->
-         Assert(FALSE, "tla-ts can't convert an object that a Temporal function reads to a string")
-    [] OTHER -> TOk(StringOf(value))
+LOCAL TToString(heap, value, label) ==
+  CASE IsRef(value) \/ IsSequenceValue(value) ->
+         IF TIsAnswered(heap, "string", label, value)
+         THEN TPrimitiveString(TAnswer(heap, "string", label, value))
+         ELSE TPending("string", label, value)
+    [] OTHER -> TPrimitiveString(value)
 
 \* ToIntegerIfIntegral.
-LOCAL TIntegral(value) ==
-  LET number == TToNumber(value)
+LOCAL TIntegral(heap, value, label) ==
+  LET number == TToNumber(heap, value, label)
   IN CASE number.error # "" -> number
        [] ~IsIntegral(number.value) -> TFail("RangeError")
        [] OTHER -> TOk(ToBigInt(number.value))
 
 \* ToIntegerWithTruncation.
-LOCAL TTruncated(value) ==
-  LET number == TToNumber(value)
+LOCAL TTruncated(heap, value, label) ==
+  LET number == TToNumber(heap, value, label)
   IN CASE number.error # "" -> number
        [] ~IsFinite(number.value) -> TFail("RangeError")
        [] IsIntegral(number.value) -> TOk(ToBigInt(number.value))
@@ -179,6 +201,9 @@ LOCAL TFirstError(steps) ==
   LET failed == SelectSeq(steps, LAMBDA step : step.error # "")
   IN IF failed = <<>> THEN "" ELSE Head(failed).error
 
+\* The first step of steps in order that fails, which a failure passes on whole.
+LOCAL TFirstFailed(steps) == Head(SelectSeq(steps, LAMBDA step : step.error # ""))
+
 \* GetOptionsObject, where undefined stands for an object without properties.
 LOCAL TOptions(heap, options) ==
   CASE options = Undefined -> TOk(Undefined)
@@ -188,8 +213,8 @@ LOCAL TOptions(heap, options) ==
 LOCAL TOption(heap, options, key) == IF options = Undefined THEN Undefined ELSE TGet(heap, options, key)
 
 \* GetOption of a string among allowed, of the option's value, or the fallback where it's undefined.
-LOCAL TStringOf(value, allowed, fallback) ==
-  LET text == TToString(value)
+LOCAL TStringOf(heap, value, label, allowed, fallback) ==
+  LET text == TToString(heap, value, label)
   IN CASE value = Undefined -> TOk(fallback)
        [] text.error # "" -> text
        [] text.value \notin allowed -> TFail("RangeError")
@@ -199,12 +224,12 @@ LOCAL TRoundingModes ==
   {"ceil", "floor", "expand", "trunc", "halfCeil", "halfFloor", "halfExpand", "halfTrunc", "halfEven"}
 
 LOCAL TRoundingModeOption(heap, options, fallback) ==
-  TStringOf(TOption(heap, options, "roundingMode"), TRoundingModes, fallback)
+  TStringOf(heap, TOption(heap, options, "roundingMode"), "roundingMode", TRoundingModes, fallback)
 
 \* GetRoundingIncrementOption.
 LOCAL TRoundingIncrementOption(heap, options) ==
   LET value == TOption(heap, options, "roundingIncrement")
-      integer == TTruncated(value)
+      integer == TTruncated(heap, value, "roundingIncrement")
   IN CASE value = Undefined -> TOk(Big :> 1)
        [] integer.error # "" -> integer
        [] TLess(integer.value, Big :> 1) \/ TLess(Big :> 1000000000, integer.value) -> TFail("RangeError")
@@ -245,16 +270,16 @@ LOCAL TMaximumIncrement(unit) ==
     [] OTHER -> 0
 
 \* GetTemporalUnitValuedOption of the option's value, as a unit, "auto", or "unset".
-LOCAL TUnitOf(value) ==
+LOCAL TUnitOf(heap, value, label) ==
   LET allowed == {TUnits[position] : position \in 1..10} \cup {TPluralUnits[position] : position \in 1..10}
                    \cup {"auto"}
-      text == TStringOf(value, allowed, "unset")
+      text == TStringOf(heap, value, label, allowed, "unset")
   IN CASE text.error # "" -> text
        [] text.value \in {TPluralUnits[position] : position \in 1..10} ->
             TOk(TUnits[CHOOSE position \in 1..10 : TPluralUnits[position] = text.value])
        [] OTHER -> text
 
-LOCAL TUnitOption(heap, options, key) == TUnitOf(TOption(heap, options, key))
+LOCAL TUnitOption(heap, options, key) == TUnitOf(heap, TOption(heap, options, key), key)
 
 \* ValidateTemporalUnitValue, of a group: "date", "time", or "datetime".
 LOCAL TUnitValid(unit, group, extra) ==
@@ -324,7 +349,7 @@ LOCAL TNegatedMode(mode) ==
 \* GetTemporalFractionalSecondDigitsOption, as a count, or -1 for auto.
 LOCAL TDigitsOption(heap, options) ==
   LET value == TOption(heap, options, "fractionalSecondDigits")
-      text == TToString(value)
+      text == TToString(heap, value, "fractionalSecondDigits")
   IN CASE value = Undefined -> TOk(-1)
        [] TypeOf(value) # "number" ->
             IF text.error # "" THEN text ELSE IF text.value = "auto" THEN TOk(-1) ELSE TFail("RangeError")
@@ -425,10 +450,12 @@ LOCAL TDefaultLargestUnit(fields) ==
 LOCAL TPartialDuration(heap, item) ==
   LET order == <<4, 5, 9, 8, 6, 2, 10, 7, 3, 1>>
       read == [position \in 1..10 |-> TGet(heap, item, TDurationKeys[position])]
-      converted == [position \in 1..10 |-> IF read[position] = Undefined THEN TOk(Undefined) ELSE TIntegral(read[position])]
+      converted == [position \in 1..10 |->
+                      IF read[position] = Undefined THEN TOk(Undefined)
+                      ELSE TIntegral(heap, read[position], TDurationKeys[position])]
       error == TFirstError([position \in 1..10 |-> converted[order[position]]])
   IN CASE ~TIsObject(heap, item) -> TFail("TypeError")
-       [] error # "" -> TFail(error)
+       [] error # "" -> TFirstFailed([position \in 1..10 |-> converted[order[position]]])
        [] \A position \in 1..10 : read[position] = Undefined -> TFail("TypeError")
        [] OTHER -> TOk([position \in 1..10 |-> converted[position].value])
 
@@ -1556,11 +1583,11 @@ LOCAL TTimeZone(heap, value) ==
        [] OTHER -> TFail("RangeError")
 
 LOCAL TOverflowOption(heap, options) ==
-  TStringOf(TOption(heap, options, "overflow"), {"constrain", "reject"}, "constrain")
+  TStringOf(heap, TOption(heap, options, "overflow"), "overflow", {"constrain", "reject"}, "constrain")
 
 \* ToPositiveIntegerWithTruncation.
-LOCAL TPositive(value) ==
-  LET integer == TTruncated(value)
+LOCAL TPositive(heap, value, label) ==
+  LET integer == TTruncated(heap, value, label)
   IN IF integer.error = "" /\ ~TLess(Big :> 0, integer.value) THEN TFail("RangeError") ELSE integer
 
 \* ParseMonthCode of a property's value, as the month code that CreateMonthCode gives.
@@ -1614,19 +1641,19 @@ LOCAL TPrepareFields(heap, item, calendar, names, required, isPartial) ==
                value == read[index]
            IN CASE value = Undefined ->
                      IF ~isPartial /\ key \in required THEN TFail("TypeError") ELSE TOk(Undefined)
-                [] key \in {"month", "day"} -> TPositive(value)
+                [] key \in {"month", "day"} -> TPositive(heap, value, key)
                 [] key = "monthCode" -> TMonthCodeOf(value)
-                [] key = "era" -> TToString(value)
+                [] key = "era" -> TToString(heap, value, key)
                 [] key = "offset" -> TOffsetString(value)
                 [] key = "timeZone" -> TTimeZone(heap, value)
-                [] OTHER -> TTruncated(value)]
+                [] OTHER -> TTruncated(heap, value, key)]
       error == TFirstError(converted)
       valueOf(key) ==
         IF \E index \in DOMAIN keys : keys[index] = key
         THEN converted[CHOOSE index \in DOMAIN keys : keys[index] = key].value
         ELSE Undefined
       defaulted(key) == IF ~isPartial /\ key \in TTimeKeys /\ valueOf(key) = Undefined THEN Big :> 0 ELSE valueOf(key)
-  IN CASE error # "" -> TFail(error)
+  IN CASE error # "" -> TFirstFailed(converted)
        [] isPartial /\ \A index \in DOMAIN keys : read[index] = Undefined -> TFail("TypeError")
        [] OTHER -> TOk([key \in TFieldKeySet |-> defaulted(key)])
 
@@ -1836,7 +1863,7 @@ LOCAL TToDateTime(heap, item, options) ==
 
 \* GetTemporalShowCalendarNameOption.
 LOCAL TCalendarNameOption(heap, options) ==
-  TStringOf(TOption(heap, options, "calendarName"), {"auto", "always", "never", "critical"}, "auto")
+  TStringOf(heap, TOption(heap, options, "calendarName"), "calendarName", {"auto", "always", "never", "critical"}, "auto")
 
 \* GetDifferenceSettings, of a group, the disallowed units, the fallback smallest unit, and the
 \* default largest unit.
@@ -2167,10 +2194,10 @@ LOCAL TDifferenceDuration(difference, largestUnit, isSince) ==
 LOCAL TLocal(zone, ns) == TDateTimeOfNs(BigIntAdd(ns, zone.offset))
 
 LOCAL TDisambiguationOption(heap, options) ==
-  TStringOf(TOption(heap, options, "disambiguation"), {"compatible", "earlier", "later", "reject"}, "compatible")
+  TStringOf(heap, TOption(heap, options, "disambiguation"), "disambiguation", {"compatible", "earlier", "later", "reject"}, "compatible")
 
 LOCAL TOffsetOption(heap, options, fallback) ==
-  TStringOf(TOption(heap, options, "offset"), {"prefer", "use", "ignore", "reject"}, fallback)
+  TStringOf(heap, TOption(heap, options, "offset"), "offset", {"prefer", "use", "ignore", "reject"}, fallback)
 
 \* ParseTimeZoneIdentifier, as an available time zone identifier.
 LOCAL TTimeZoneIdentifier(text) == IF TIsZoneIdentifier(text) THEN TZoneOfName(text) ELSE TFail("RangeError")
@@ -2220,11 +2247,11 @@ LOCAL TToZoned(heap, item, options) ==
                                    zone.value, offsetOption.value, ~offsetParse.hasSecond)
       made(ns, timeZone, cal) == TOk([ns |-> ns, zone |-> timeZone, calendar |-> cal])
   IN CASE slots.kind = "ZonedDateTime" ->
-            IF optionsError # "" THEN TFail(optionsError) ELSE made(slots.ns, slots.zone, slots.calendar)
+            IF optionsError # "" THEN TFirstFailed(<<resolved, disambiguation, offsetOption, overflow>>) ELSE made(slots.ns, slots.zone, slots.calendar)
        [] TIsObject(heap, item) ->
             CASE calendar.error # "" -> calendar
               [] fields.error # "" -> fields
-              [] optionsError # "" -> TFail(optionsError)
+              [] optionsError # "" -> TFirstFailed(<<resolved, disambiguation, offsetOption, overflow>>)
               [] date.error # "" -> date
               [] time.error # "" -> time
               [] bagNs.error # "" -> bagNs
@@ -2322,7 +2349,7 @@ LOCAL TZonedRound(heap, slots, roundTo) ==
   LET options == IF TypeOf(roundTo) = "string" THEN TOk(Undefined) ELSE TOptions(heap, roundTo)
       increment == TRoundingIncrementOption(heap, options.value)
       mode == TRoundingModeOption(heap, options.value, "halfExpand")
-      smallest == IF TypeOf(roundTo) = "string" THEN TUnitOf(roundTo) ELSE TUnitOption(heap, options.value, "smallestUnit")
+      smallest == IF TypeOf(roundTo) = "string" THEN TUnitOf(heap, roundTo, "smallestUnit") ELSE TUnitOption(heap, options.value, "smallestUnit")
       isValidIncrement ==
         IF smallest.value = "day"
         THEN TIncrementValid(increment.value, 1, TRUE)
@@ -2363,10 +2390,10 @@ LOCAL TZonedToString(heap, slots, value) ==
   LET options == TOptions(heap, value)
       show == TCalendarNameOption(heap, options.value)
       digits == TDigitsOption(heap, options.value)
-      showOffset == TStringOf(TOption(heap, options.value, "offset"), {"auto", "never"}, "auto")
+      showOffset == TStringOf(heap, TOption(heap, options.value, "offset"), "offset", {"auto", "never"}, "auto")
       mode == TRoundingModeOption(heap, options.value, "trunc")
       smallest == TUnitOption(heap, options.value, "smallestUnit")
-      showZone == TStringOf(TOption(heap, options.value, "timeZoneName"), {"auto", "never", "critical"}, "auto")
+      showZone == TStringOf(heap, TOption(heap, options.value, "timeZoneName"), "timeZoneName", {"auto", "never", "critical"}, "auto")
       precision == TPrecision(smallest.value, digits.value)
   IN CASE options.error # "" -> options
        [] show.error # "" -> show
@@ -2464,7 +2491,7 @@ LOCAL TDurationRound(heap, fields, roundTo) ==
   LET options == IF TypeOf(roundTo) = "string" THEN TOk(Undefined) ELSE TOptions(heap, roundTo)
       unitOf(key) ==
         IF TypeOf(roundTo) = "string"
-        THEN IF key = "smallestUnit" THEN TUnitOf(roundTo) ELSE TOk("unset")
+        THEN IF key = "smallestUnit" THEN TUnitOf(heap, roundTo, "smallestUnit") ELSE TOk("unset")
         ELSE TUnitOption(heap, options.value, key)
       largest == unitOf("largestUnit")
       relative == IF TypeOf(roundTo) = "string" THEN TOk([kind |-> "none"]) ELSE TRelativeTo(heap, options.value)
@@ -2534,7 +2561,7 @@ LOCAL TDurationTotal(heap, fields, totalOf) ==
   LET options == IF TypeOf(totalOf) = "string" THEN TOk(Undefined) ELSE TOptions(heap, totalOf)
       relative == IF TypeOf(totalOf) = "string" THEN TOk([kind |-> "none"]) ELSE TRelativeTo(heap, options.value)
       unit == IF TypeOf(totalOf) = "string"
-              THEN TUnitOf(totalOf)
+              THEN TUnitOf(heap, totalOf, "unit")
               ELSE TUnitOption(heap, options.value, "unit")
       time == BigIntAdd(TTimeOf(fields), BigIntMultiply(fields[4], TNsPerDay))
       target == TRelativeTarget(relative.value.calendar, fields, relative.value.date)
@@ -2612,7 +2639,7 @@ LOCAL TTimeRound(heap, time, roundTo) ==
   LET options == IF TypeOf(roundTo) = "string" THEN TOk(Undefined) ELSE TOptions(heap, roundTo)
       increment == TRoundingIncrementOption(heap, options.value)
       mode == TRoundingModeOption(heap, options.value, "halfExpand")
-      smallest == IF TypeOf(roundTo) = "string" THEN TUnitOf(roundTo) ELSE TUnitOption(heap, options.value, "smallestUnit")
+      smallest == IF TypeOf(roundTo) = "string" THEN TUnitOf(heap, roundTo, "smallestUnit") ELSE TUnitOption(heap, options.value, "smallestUnit")
   IN CASE roundTo = Undefined -> TFail("TypeError")
        [] options.error # "" -> options
        [] increment.error # "" -> increment
@@ -2729,7 +2756,7 @@ LOCAL TDateTimeRound(heap, date, time, roundTo) ==
   LET options == IF TypeOf(roundTo) = "string" THEN TOk(Undefined) ELSE TOptions(heap, roundTo)
       increment == TRoundingIncrementOption(heap, options.value)
       mode == TRoundingModeOption(heap, options.value, "halfExpand")
-      smallest == IF TypeOf(roundTo) = "string" THEN TUnitOf(roundTo) ELSE TUnitOption(heap, options.value, "smallestUnit")
+      smallest == IF TypeOf(roundTo) = "string" THEN TUnitOf(heap, roundTo, "smallestUnit") ELSE TUnitOption(heap, options.value, "smallestUnit")
       isValidIncrement ==
         IF smallest.value = "day"
         THEN TIncrementValid(increment.value, 1, TRUE)
@@ -2777,11 +2804,11 @@ LOCAL TDateTimeWith(heap, date, time, calendar, like, options) ==
        [] OTHER -> TOk([date |-> madeDate.value, time |-> madeTime.value])
 
 \* The time of a constructor's arguments from a position, each undefined as 0.
-LOCAL TTimeArguments(arguments, first) ==
+LOCAL TTimeArguments(heap, arguments, first) ==
   [position \in 1..6 |->
      IF TArgument(arguments, first + position - 1) = Undefined
      THEN TOk(Big :> 0)
-     ELSE TTruncated(TArgument(arguments, first + position - 1))]
+     ELSE TTruncated(heap, TArgument(arguments, first + position - 1), TArgumentLabel(first + position - 1))]
 
 \* A constructor's calendar argument.
 LOCAL TCalendarArgument(value) ==
@@ -2793,13 +2820,18 @@ LOCAL TCalendarArgument(value) ==
 \* Instants, year-months, and month-days.
 
 \* ToBigInt of a value that a Temporal function reads.
-LOCAL TToBigInt(value) ==
+LOCAL TPrimitiveBigInt(value) ==
   CASE IsBigInt(value) -> TOk(value)
     [] TypeOf(value) = "boolean" -> TOk(Big :> IF value THEN 1 ELSE 0)
-    [] IsRef(value) \/ IsSequenceValue(value) ->
-         Assert(FALSE, "tla-ts can't convert an object that a Temporal function reads to a BigInt")
     [] TypeOf(value) = "string" -> Assert(FALSE, "tla-ts can't convert a string to a BigInt here")
     [] OTHER -> TFail("TypeError")
+
+LOCAL TToBigInt(heap, value, label) ==
+  CASE IsRef(value) \/ IsSequenceValue(value) ->
+         IF TIsAnswered(heap, "bigint", label, value)
+         THEN TPrimitiveBigInt(TAnswer(heap, "bigint", label, value))
+         ELSE TPending("bigint", label, value)
+    [] OTHER -> TPrimitiveBigInt(value)
 
 \* ToTemporalInstant, as the epoch nanoseconds.
 LOCAL TToInstant(heap, item) ==
@@ -2848,7 +2880,7 @@ LOCAL TInstantRound(heap, ns, roundTo) ==
   LET options == IF TypeOf(roundTo) = "string" THEN TOk(Undefined) ELSE TOptions(heap, roundTo)
       increment == TRoundingIncrementOption(heap, options.value)
       mode == TRoundingModeOption(heap, options.value, "halfExpand")
-      smallest == IF TypeOf(roundTo) = "string" THEN TUnitOf(roundTo) ELSE TUnitOption(heap, options.value, "smallestUnit")
+      smallest == IF TypeOf(roundTo) = "string" THEN TUnitOf(heap, roundTo, "smallestUnit") ELSE TUnitOption(heap, options.value, "smallestUnit")
       length == TUnitLength(smallest.value)
   IN CASE roundTo = Undefined -> TFail("TypeError")
        [] options.error # "" -> options
@@ -3059,7 +3091,45 @@ LOCAL TYearMonthDifference(heap, date, calendar, other, options, isSince) ==
 LOCAL TObject(prototype, slots) == [EmptyObject EXCEPT !.prototype = prototype] @@ [temporal |-> slots]
 
 \* What a Temporal function gives: the error that it throws, or "", the heap after it, and its value.
-LOCAL TGives(heap, step) == [error |-> step.error, heap |-> heap, value |-> step.value]
+\* The heap that a Temporal function reads, with the answers to the conversions it asked for.
+TemporalHeap(heap, answers) ==
+  [key \in DOMAIN heap \cup {"answers"} |-> IF key = "answers" THEN answers ELSE heap[key]]
+
+\* The objects that a Temporal function may read from its arguments: those that they hold, and
+\* those that their data properties hold, but for functions, whose properties it doesn't read.
+LOCAL TReadable(heap, value) == IsHeap(value) /\ ~heap.objects[value[Ref]].isCallable
+
+\* The objects that an object's data properties hold, which a set of objects alone holds, as TLC
+\* can't compare an object with every other value.
+LOCAL TDataObjects(heap, ref) ==
+  LET object == heap.objects[ref[Ref]]
+  IN {object.values[key] :
+        key \in {other \in DOMAIN object.values :
+                   object.attributes[other].kind = "data" /\ TReadable(heap, object.values[other])}}
+
+RECURSIVE TemporalReached(_, _, _)
+TemporalReached(heap, frontier, seen) ==
+  IF frontier = {}
+  THEN seen
+  ELSE LET next == UNION {TDataObjects(heap, ref) : ref \in frontier} \ (seen \cup frontier)
+       IN TemporalReached(heap, next, seen \cup frontier)
+
+\* Whether the objects that a Temporal function read from its arguments before a conversion that it
+\* asked for are as they were, so that it reads them again as it would have read them then.
+TemporalInputsKept(before, after, inputs) ==
+  LET held(sequence) == {sequence[index] : index \in {other \in DOMAIN sequence : TReadable(before, sequence[other])}}
+      roots == held(inputs)
+                 \cup UNION {held(inputs[position]) :
+                              position \in {other \in DOMAIN inputs : IsSequenceValue(inputs[other])}}
+  IN /\ before.changed = after.changed
+     /\ \A ref \in TemporalReached(before, roots, {}) : after.objects[ref[Ref]] = before.objects[ref[Ref]]
+
+LOCAL TPlainHeap(heap) ==
+  IF "answers" \in DOMAIN heap THEN [key \in DOMAIN heap \ {"answers"} |-> heap[key]] ELSE heap
+
+LOCAL TGives(heap, step) ==
+  [error |-> step.error, heap |-> TPlainHeap(heap), value |-> step.value,
+   request |-> IF "request" \in DOMAIN step THEN step.request ELSE Undefined]
 
 \* A duration's slots, with what its getters give.
 LOCAL TDurationSlots(fields) ==
@@ -3143,8 +3213,8 @@ LOCAL TSlotsOf(kind, value) ==
 LOCAL TMakes(heap, prototype, kind, step) ==
   IF step.error # ""
   THEN TGives(heap, step)
-  ELSE LET made == Allocate(heap, TObject(prototype, TSlotsOf(kind, step.value)))
-       IN [error |-> "", heap |-> made, value |-> Allocated(made)]
+  ELSE LET made == Allocate(TPlainHeap(heap), TObject(prototype, TSlotsOf(kind, step.value)))
+       IN [error |-> "", heap |-> made, value |-> Allocated(made), request |-> Undefined]
 
 \* A step's value with a calendar.
 LOCAL TWithCalendar(step, calendar) ==
@@ -3156,28 +3226,29 @@ TemporalNew(heap, kind, arguments, prototype) ==
          LET converted == [position \in 1..10 |->
                              IF TArgument(arguments, position) = Undefined
                              THEN TOk(Big :> 0)
-                             ELSE TIntegral(TArgument(arguments, position))]
+                             ELSE TIntegral(heap, TArgument(arguments, position), TArgumentLabel(position))]
              error == TFirstError(converted)
          IN TMakes(heap, prototype, kind,
-                   IF error # "" THEN TFail(error)
+                   IF error # "" THEN TFirstFailed(converted)
                    ELSE TCheckedDuration([position \in 1..10 |-> converted[position].value]))
     [] kind = "PlainTime" ->
-         LET converted == TTimeArguments(arguments, 1)
+         LET converted == TTimeArguments(heap, arguments, 1)
              error == TFirstError(converted)
              time == [position \in 1..6 |-> TFieldOf(converted[position].value)]
          IN TMakes(heap, prototype, kind,
-                   CASE error # "" -> TFail(error)
+                   CASE error # "" -> TFirstFailed(converted)
                      [] ~TIsValidTime(time) -> TFail("RangeError")
                      [] OTHER -> TOk(time))
     [] kind \in {"PlainDate", "PlainDateTime"} ->
-         LET converted == [position \in 1..3 |-> TTruncated(TArgument(arguments, position))]
-                            \o (IF kind = "PlainDate" THEN <<>> ELSE TTimeArguments(arguments, 4))
+         LET converted == [position \in 1..3 |->
+                             TTruncated(heap, TArgument(arguments, position), TArgumentLabel(position))]
+                            \o (IF kind = "PlainDate" THEN <<>> ELSE TTimeArguments(heap, arguments, 4))
              error == TFirstError(converted)
              calendar == TCalendarArgument(TArgument(arguments, IF kind = "PlainDate" THEN 4 ELSE 10))
              date == <<TYearOf(converted[1].value), TFieldOf(converted[2].value), TFieldOf(converted[3].value)>>
              time == IF kind = "PlainDate" THEN TMidnight ELSE [position \in 1..6 |-> TFieldOf(converted[position + 3].value)]
          IN TMakes(heap, prototype, kind,
-                   CASE error # "" -> TFail(error)
+                   CASE error # "" -> TFirstFailed(converted)
                      [] calendar.error # "" -> calendar
                      [] ~TIsYearKept(date[1]) \/ ~TIsValidDate(date[1], date[2], date[3]) -> TFail("RangeError")
                      [] ~TIsValidTime(time) -> TFail("RangeError")
@@ -3185,11 +3256,11 @@ TemporalNew(heap, kind, arguments, prototype) ==
                      [] kind = "PlainDateTime" /\ ~TDateTimeWithinLimits(date, time) -> TFail("RangeError")
                      [] OTHER -> TOk([date |-> date, time |-> time, calendar |-> calendar.value]))
     [] kind = "Instant" ->
-         LET ns == TToBigInt(TArgument(arguments, 1))
+         LET ns == TToBigInt(heap, TArgument(arguments, 1), TArgumentLabel(1))
          IN TMakes(heap, prototype, kind,
                    CASE ns.error # "" -> ns [] ~TIsValidEpochNs(ns.value) -> TFail("RangeError") [] OTHER -> ns)
     [] kind = "ZonedDateTime" ->
-         LET ns == TToBigInt(TArgument(arguments, 1))
+         LET ns == TToBigInt(heap, TArgument(arguments, 1), TArgumentLabel(1))
              zoneArgument == TArgument(arguments, 2)
              zone == TTimeZoneIdentifier(zoneArgument)
              calendar == TCalendarArgument(TArgument(arguments, 3))
@@ -3202,17 +3273,18 @@ TemporalNew(heap, kind, arguments, prototype) ==
                      [] OTHER -> TOk([ns |-> ns.value, zone |-> zone.value, calendar |-> calendar.value]))
     [] kind \in {"PlainYearMonth", "PlainMonthDay"} ->
          LET isYearMonth == kind = "PlainYearMonth"
-             converted == [position \in 1..2 |-> TTruncated(TArgument(arguments, position))]
+             converted == [position \in 1..2 |->
+                             TTruncated(heap, TArgument(arguments, position), TArgumentLabel(position))]
              error == TFirstError(converted)
              calendar == TCalendarArgument(TArgument(arguments, 3))
              reference == IF TArgument(arguments, 4) = Undefined
                           THEN TOk(TBig(IF isYearMonth THEN 1 ELSE 1972))
-                          ELSE TTruncated(TArgument(arguments, 4))
+                          ELSE TTruncated(heap, TArgument(arguments, 4), TArgumentLabel(4))
              date == IF isYearMonth
                      THEN <<TYearOf(converted[1].value), TFieldOf(converted[2].value), TFieldOf(reference.value)>>
                      ELSE <<TYearOf(reference.value), TFieldOf(converted[1].value), TFieldOf(converted[2].value)>>
          IN TMakes(heap, prototype, kind,
-                   CASE error # "" -> TFail(error)
+                   CASE error # "" -> TFirstFailed(converted)
                      [] calendar.error # "" -> calendar
                      [] reference.error # "" -> reference
                      [] ~TIsYearKept(date[1]) \/ ~TIsValidDate(date[1], date[2], date[3]) -> TFail("RangeError")
@@ -3259,11 +3331,11 @@ TemporalStatic(heap, kind, method, arguments, prototype) ==
                                                                 two.value.date \o two.value.time)))
        [] kind = "Instant" /\ method = "from" -> TMakes(heap, prototype, kind, TToInstant(heap, first))
        [] kind = "Instant" /\ method = "fromEpochNanoseconds" ->
-            LET ns == TToBigInt(first)
+            LET ns == TToBigInt(heap, first, TArgumentLabel(1))
             IN TMakes(heap, prototype, kind,
                       CASE ns.error # "" -> ns [] ~TIsValidEpochNs(ns.value) -> TFail("RangeError") [] OTHER -> ns)
        [] kind = "Instant" /\ method = "fromEpochMilliseconds" ->
-            LET number == TToNumber(first)
+            LET number == TToNumber(heap, first, TArgumentLabel(1))
                 ns == BigIntMultiply(ToBigInt(number.value), Big :> 1000000)
             IN TMakes(heap, prototype, kind,
                       CASE number.error # "" -> number
@@ -3380,7 +3452,7 @@ LOCAL TZonedMethod(heap, slots, method, arguments, prototype) ==
       withCalendar == TCalendarIdentifier(heap, first)
       direction == IF TypeOf(first) = "string" THEN TOk(Undefined) ELSE TOptions(heap, first)
       directionValue == IF TypeOf(first) = "string" THEN first ELSE TOption(heap, direction.value, "direction")
-      directionText == TStringOf(directionValue, {"next", "previous"}, "unset")
+      directionText == TStringOf(heap, directionValue, "direction", {"next", "previous"}, "unset")
   IN CASE method \in {"add", "subtract"} ->
             TMakes(heap, prototype, "ZonedDateTime",
                    CASE converted.error # "" -> converted

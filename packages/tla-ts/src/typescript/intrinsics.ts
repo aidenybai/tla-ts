@@ -5,12 +5,14 @@ import {
   getAssignedTarget,
   getSymbol,
   getUndefined,
+  isAmbientDeclaration,
   isAssigned,
   isInertValue,
   isUnresolved,
-  isWrittenBy,
+  findWrites,
   share,
   skipCasts,
+  getValueDeclaration,
 } from "./context";
 import { TlaTypeScriptError } from "../errors";
 import {
@@ -48,8 +50,7 @@ import { getCollection, getKind, isGeneratorType } from "./types";
 const isGlobal = (name: string) => !/[.%\s]/.test(name) && Object.hasOwn(BUILT_INS, name);
 
 const isLibrary = (symbol: ts.Symbol) =>
-  (symbol.declarations ?? []).length > 0 &&
-  (symbol.declarations ?? []).every((declaration) => declaration.getSourceFile().isDeclarationFile);
+  (symbol.declarations ?? []).length > 0 && (symbol.declarations ?? []).every(isAmbientDeclaration);
 
 export const getBuiltIn = (node: ts.Expression, context: Pick<Context, "checker">) => {
   const symbol = getSymbol(node, context.checker);
@@ -76,7 +77,7 @@ export const findCheckedGlobals = (sourceFile: ts.SourceFile, context: Context) 
   const isInert = (node: ts.Node) => {
     const declaration =
       ts.isPropertyAccessExpression(node) && ts.isIdentifier(node.expression)
-        ? getSymbol(node, context.checker)?.valueDeclaration
+        ? getValueDeclaration(getSymbol(node, context.checker), context)
         : undefined;
     return (
       node.kind <= ts.SyntaxKind.LastToken ||
@@ -386,7 +387,7 @@ export const getGeneratorPrototypeRef = (node: ts.Node | undefined, context: Con
   const declaration =
     node === undefined || ts.isFunctionLike(node)
       ? node
-      : getSymbol(node, context.checker)?.valueDeclaration;
+      : getValueDeclaration(getSymbol(node, context.checker), context);
   const generator =
     declaration !== undefined && ts.isVariableDeclaration(declaration)
       ? declaration.initializer
@@ -619,7 +620,7 @@ export const isBuiltInObject = (node: ts.Expression, context: Context) =>
 // declaration.
 const getHeldBuiltIn = (node: ts.Expression, context: Context) => {
   const symbol = ts.isIdentifier(node) ? getSymbol(node, context.checker) : undefined;
-  const declaration = symbol?.valueDeclaration;
+  const declaration = getValueDeclaration(symbol, context);
   const initializer =
     declaration !== undefined && ts.isVariableDeclaration(declaration)
       ? declaration.initializer
@@ -824,6 +825,7 @@ export const translateBuiltInValue = (
     | "%SetIteratorPrototype%"
     | "%GeneratorFunction%.prototype"
     | "%GeneratorFunction%.prototype.prototype"
+    | `%GeneratorFunction%.prototype.prototype.${string}`
     | "%AsyncFunction%.prototype"
     | "%AsyncGeneratorFunction%.prototype"
     | "%AsyncGeneratorFunction%.prototype.prototype"
@@ -864,6 +866,61 @@ export const stopUnknownCall = (value: Expression, context: Context) =>
       ),
     apply("Assert", [boolean(false), string("tla-ts can't tell which function this call runs")]),
   );
+
+// The built-in that an expression denotes, by its path, as "Object.defineProperty": a global
+// built-in, a read of a built-in object's property, a const that holds one, or a const's
+// destructuring of one. A const holds the value that it read as it started, which a call checks it
+// still is where a script may have replaced the built-in.
+export const getBuiltInPath = (node: ts.Expression, context: Context): string | undefined => {
+  const inner = skipCasts(node);
+  if (ts.isPropertyAccessExpression(inner)) {
+    const owner = getBuiltInPath(inner.expression, context);
+    return owner === undefined ? undefined : getBuiltInFunction(owner, inner.name.text);
+  }
+  if (!ts.isIdentifier(inner)) return undefined;
+  const global = getBuiltIn(inner, context);
+  if (global !== undefined) return global;
+  const declaration = getValueDeclaration(getSymbol(inner, context.checker), context);
+  const isConst = (variable: ts.Node) =>
+    ts.isVariableDeclaration(variable) &&
+    (ts.getCombinedNodeFlags(variable) & ts.NodeFlags.Const) !== 0;
+  if (
+    declaration !== undefined &&
+    ts.isVariableDeclaration(declaration) &&
+    isConst(declaration) &&
+    ts.isIdentifier(declaration.name) &&
+    declaration.initializer !== undefined
+  ) {
+    return getBuiltInPath(declaration.initializer, context);
+  }
+  if (
+    declaration === undefined ||
+    !ts.isBindingElement(declaration) ||
+    !ts.isObjectBindingPattern(declaration.parent) ||
+    declaration.initializer !== undefined ||
+    declaration.dotDotDotToken !== undefined
+  ) {
+    return undefined;
+  }
+  const variable = declaration.parent.parent;
+  const key = declaration.propertyName ?? declaration.name;
+  const owner =
+    ts.isIdentifier(key) && isConst(variable) && variable.initializer !== undefined
+      ? getBuiltInPath(variable.initializer, context)
+      : undefined;
+  return owner === undefined || !ts.isIdentifier(key)
+    ? undefined
+    : getBuiltInFunction(owner, key.text);
+};
+
+// Whether an expression reads a built-in from its object as it runs, rather than from a const that
+// read it earlier.
+export const isBuiltInRead = (node: ts.Expression, context: Context): boolean => {
+  const inner = skipCasts(node);
+  return ts.isPropertyAccessExpression(inner)
+    ? isBuiltInRead(inner.expression, context)
+    : ts.isIdentifier(inner) && getBuiltIn(inner, context) !== undefined;
+};
 
 // The built-in function that a built-in object holds at a key, by its path, such as "Math.max".
 const getBuiltInFunction = (owner: string, key: string) => {
@@ -2507,7 +2564,7 @@ const getConstantValues = (
     return isExact ? undefined : getIndexedValues(expression.expression, context, visited);
   }
   const symbol = ts.isIdentifier(expression) ? getSymbol(expression, context.checker) : undefined;
-  const declaration = symbol?.valueDeclaration;
+  const declaration = getValueDeclaration(symbol, context);
   if (symbol === undefined || declaration === undefined || visited.has(declaration)) {
     return undefined;
   }
@@ -2591,7 +2648,7 @@ const getConstantValues = (
 // or to strings. An index past the end reads undefined, which none of them is.
 const getIndexedValues = (node: ts.Expression, context: Context, visited: ReadonlySet<ts.Node>) => {
   const symbol = ts.isIdentifier(node) ? getSymbol(node, context.checker) : undefined;
-  const declaration = symbol?.valueDeclaration;
+  const declaration = getValueDeclaration(symbol, context);
   if (
     symbol === undefined ||
     declaration === undefined ||
@@ -2605,10 +2662,7 @@ const getIndexedValues = (node: ts.Expression, context: Context, visited: Readon
     return undefined;
   }
   const file = declaration.getSourceFile();
-  const writes = findNodes(file, (inner): inner is ts.Node => {
-    const target = getAssignedTarget(inner);
-    return target !== undefined && isWrittenBy(target, symbol, context);
-  });
+  const writes = findWrites(symbol, file, context);
   const given = writes.map((write) =>
     ts.isBinaryExpression(write) &&
     write.operatorToken.kind === ts.SyntaxKind.EqualsToken &&

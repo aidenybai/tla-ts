@@ -21,6 +21,7 @@ import {
   getTopLevelDeclaration,
   getUndefined,
   type HelperDeclaration,
+  isClosure,
   isHeapFunction,
   isInlined,
   isLiteral,
@@ -29,6 +30,7 @@ import {
   share,
   isInertValue,
   skipCasts,
+  getValueDeclaration,
 } from "./context";
 import {
   allocateArguments,
@@ -40,6 +42,7 @@ import {
   getImmutableWrite,
   isMaybeNullish,
   throwOnUnentered,
+  enterScope,
   isValueReturn,
   translateLocalStatements,
 } from "./actions";
@@ -51,6 +54,7 @@ import { translateCondition, translateExpression, translateNegatedCondition } fr
 import { type Formula, ifThenElse, letIn, render, leaf } from "./formula";
 import { getAllocated, getCandidateValue, getSuperLookup, translateObjectValue } from "./heap";
 import { isComparable, mayBeNumber, useJavaScript } from "./javascript";
+import { getTakenValue, isTaken } from "./iterators";
 import {
   type Bound,
   bindNames,
@@ -108,7 +112,7 @@ export const readsState = (
     ) {
       return true;
     }
-    const declaration = getTopLevelDeclaration(symbol);
+    const declaration = getTopLevelDeclaration(symbol, context);
     if (declaration !== undefined && !visited.has(declaration)) {
       visited.add(declaration);
       return readsState(declaration, context, visited);
@@ -399,7 +403,13 @@ export const getReceiver = (
 export const shareArguments = (values: Expression[], context: Context) => {
   const names =
     context.heap === undefined ? [] : values.map(() => context.names.getFresh("argument"));
-  const shared = context.heap === undefined ? values : names.map((name) => identifier(name));
+  // A name that holds what a pattern took from an iterator stays one that the pattern binds.
+  const shared =
+    context.heap === undefined
+      ? values
+      : names.map((name, position) =>
+          isTaken(values[position]) ? getTakenValue(identifier(name)) : identifier(name),
+        );
   return {
     shared,
     evaluate: (rest: Formula, otherwise: Formula) =>
@@ -429,7 +439,7 @@ const getCallback = (argument: ts.Expression, scope: Scope, context: Context) =>
 const getKeptLocal = (callee: FunctionNode, context: Context) =>
   findNodes(callee, ts.isIdentifier).find((name) => {
     const symbol = getSymbol(name, context.checker);
-    const declaration = symbol?.valueDeclaration;
+    const declaration = getValueDeclaration(symbol, context);
     return (
       symbol !== undefined &&
       declaration !== undefined &&
@@ -615,7 +625,7 @@ const translateOperatorArgument = (
 ): Expression => {
   const symbol = getSymbol(node, context.checker);
   // A top-level function passes as its operator, and a constant that holds one only as a value.
-  const declaration = getTopLevelDeclaration(symbol);
+  const declaration = getTopLevelDeclaration(symbol, context);
   if (declaration !== undefined && getHelper(declaration, context) !== undefined) {
     return identifier(getDefinition(declaration, context).name);
   }
@@ -877,7 +887,7 @@ const getCaptured = (callee: FunctionNode, context: Context) => {
   const pending = [callee];
   while (pending.length > 0) {
     findNodes(pending.pop() ?? callee, ts.isIdentifier).forEach((name) => {
-      const declaration = getSymbol(name, context.checker)?.valueDeclaration;
+      const declaration = getValueDeclaration(getSymbol(name, context.checker), context);
       const found = getAnyFunction(declaration);
       if (found === undefined || !isLocal(found) || reached.has(found)) return;
       reached.add(found);
@@ -890,7 +900,7 @@ const getCaptured = (callee: FunctionNode, context: Context) => {
   reached.forEach((current) =>
     findNodes(current, ts.isIdentifier).forEach((name) => {
       const symbol = getSymbol(name, context.checker);
-      const declaration = symbol?.valueDeclaration;
+      const declaration = getValueDeclaration(symbol, context);
       if (
         symbol !== undefined &&
         declaration !== undefined &&
@@ -1390,27 +1400,24 @@ export const translateFoundGetter = (
           (rest, getter) => {
             const candidate = getCandidateValue(getter, context);
             if (getter.body === undefined || candidate === undefined) return rest;
+            const found = useJavaScript("GetterOf", [sharedHeap, sharedObject, sharedKey], context);
+            const received = {
+              ...scope,
+              receiver: { value: receiver ?? sharedObject, method: getter },
+            };
             context.inProgress.add(getter);
             const value = translateBody(
               getter.body,
-              { ...scope, receiver: { value: receiver ?? sharedObject, method: getter } },
+              isClosure(getter, context)
+                ? enterScope(getter, found, sharedHeap, received, context)
+                : received,
               context,
             );
             context.inProgress.delete(getter);
             return ifExpression(
               junction("And", [
                 useJavaScript("IsRef", [sharedObject], context),
-                apply("=", [
-                  useJavaScript(
-                    "CodeOf",
-                    [
-                      sharedHeap,
-                      useJavaScript("GetterOf", [sharedHeap, sharedObject, sharedKey], context),
-                    ],
-                    context,
-                  ),
-                  candidate,
-                ]),
+                apply("=", [useJavaScript("CodeOf", [sharedHeap, found], context), candidate]),
               ]),
               value,
               rest,
@@ -1476,11 +1483,14 @@ export const translateBody = (body: ts.ConciseBody, scope: Scope, context: Conte
   const owner = body.parent;
   throwOnUnentered(owner, scope, context);
   if (!ts.isBlock(body)) return translateExpression(body, scope, context);
-  const literal = body.statements
+  // The objects that the body makes, as a literal or a description does, apart from functions.
+  const made = body.statements
     .flatMap((statement) => getAllocated(statement, context))
-    .find((node) => ts.isObjectLiteralExpression(node) && !scope.allocated.has(node));
-  const isMaking =
-    literal !== undefined && ts.isFunctionLike(owner) && isValueReturn(owner, context);
+    .filter(
+      (node) => !ts.isFunctionLike(node) && !ts.isClassLike(node) && !scope.allocated.has(node),
+    );
+  const literal = made.find(ts.isObjectLiteralExpression);
+  const isMaking = made.length > 0 && ts.isFunctionLike(owner) && isValueReturn(owner, context);
   // An operator that converts an operand, which may run its valueOf or toString, runs as a
   // statement does.
   const isConverting =
