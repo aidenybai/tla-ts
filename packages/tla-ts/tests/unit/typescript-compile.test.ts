@@ -49266,4 +49266,43 @@ describe("BigInts", () => {
       expect([result.status, result.failure]).toEqual(["deadlock", undefined]);
     });
   });
+
+  describe("makes no namespace object for a module where no code that may run reads one", () => {
+    const path = join(import.meta.dirname, "../fixtures/typescript/imports/picking.ts");
+
+    it("agrees with Node where only a function that never runs reads it", async () => {
+      const result = await check(
+        compile(
+          `
+          import { double } from "./area-picker";
+          export let count = 0;
+          export const step = () => {
+            if (count < 4) count = double(count + 1);
+          };
+          export const isSmall = () => count !== 6;
+        `,
+          path,
+        ),
+      );
+      expect([result.status, getTrace(result)]).toEqual([
+        "invariant-violation",
+        [{ count: "0" }, { count: "2" }, { count: "6" }],
+      ]);
+    });
+
+    it("stops where code that may run reads it", () => {
+      expect(() =>
+        compile(
+          `
+          import { pickAreas } from "./area-picker";
+          export let count = 0;
+          export const step = () => {
+            if (count < 4) count = pickAreas().getArea(count + 1);
+          };
+        `,
+          path,
+        ),
+      ).toThrow("tla-ts can't make a module's namespace object outside a script");
+    });
+  });
 });

@@ -1,4 +1,5 @@
 import ts from "@typescript/typescript6";
+import { getReached } from "./aliasing";
 import { TlaTypeScriptError } from "../errors";
 import {
   type Context,
@@ -255,6 +256,9 @@ export const findNamespaces = (
 ): ReadonlyMap<ts.SourceFile, Namespace> => {
   const checker = context.checker;
   const loaded = new Set(getDynamicImports(sourceFile, checker));
+  // A module, which holds no objects on a heap, needs a namespace object only where code that may
+  // run reads one.
+  const scanned = isScript(sourceFile) ? [sourceFile, ...files] : getReached([sourceFile], context);
   const roots = [
     ...findNodes(sourceFile, isImportCall).flatMap((call) => {
       const specifier = call.arguments.at(0);
@@ -263,11 +267,11 @@ export const findNamespaces = (
         ? [module]
         : [];
     }),
-    ...[sourceFile, ...files].flatMap((file) =>
-      findNodes(file, ts.isIdentifier).flatMap((node) => getNamespaceRead(node, checker) ?? []),
+    ...scanned.flatMap((node) =>
+      findNodes(node, ts.isIdentifier).flatMap((inner) => getNamespaceRead(inner, checker) ?? []),
     ),
-    ...[sourceFile, ...files]
-      .flatMap((file) => findNodes(file, ts.isPropertyAccessExpression))
+    ...scanned
+      .flatMap((node) => findNodes(node, ts.isPropertyAccessExpression))
       .flatMap((node) => {
         const module = ts.isIdentifier(node.expression)
           ? getNameModule(node.expression, checker)
