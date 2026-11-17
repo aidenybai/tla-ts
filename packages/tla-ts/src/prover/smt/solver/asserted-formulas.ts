@@ -14,6 +14,7 @@ import {
 import { mkNot } from "./ast-util";
 import { simplifyInjAxiom } from "./inj-axiom";
 import { MacroManager } from "./macro-finder";
+import { ElimBoundsRw } from "./elim-bounds";
 import { DefinedNames, Nnf } from "./nnf";
 import { PatternInference } from "./pattern-inference";
 import { MaxBvSharing } from "./maximize-ac-sharing";
@@ -196,11 +197,13 @@ export class AssertedFormulas {
   private isEq2Ineq = false;
   private isEliminatingTermIte = false;
   private isLiftingNonGroundIte = false;
+  private isEliminatingBounds = false;
   private names: DefinedNames;
   private termIteElim: ElimTermIteRw;
   private patternInference: PatternInferenceRw;
   private bvSharing: MaxBvSharing;
   private ngLiftIte: NgPushAppIteRw;
+  private boundsElim: ElimBoundsRw;
   hasQuantifiers = false;
   readonly macros: MacroManager;
   isInconsistent = false;
@@ -223,6 +226,7 @@ export class AssertedFormulas {
     this.patternInference = new PatternInferenceRw(manager, new PatternInference(manager));
     this.bvSharing = new MaxBvSharing(manager);
     this.ngLiftIte = new NgPushAppIteRw(manager);
+    this.boundsElim = new ElimBoundsRw(manager);
   }
 
   push() {
@@ -280,6 +284,7 @@ export class AssertedFormulas {
     this.isEq2Ineq = config.isEq2Ineq;
     this.isEliminatingTermIte = config.isEliminatingTermIte;
     this.isLiftingNonGroundIte = config.isLiftingNonGroundIte;
+    this.isEliminatingBounds = config.isEliminatingBounds;
     this.isFindingMacros ||= config.isFindingMacros;
   }
 
@@ -288,6 +293,7 @@ export class AssertedFormulas {
     this.isEq2Ineq = config.isEq2Ineq;
     this.isEliminatingTermIte = config.isEliminatingTermIte;
     this.isLiftingNonGroundIte = config.isLiftingNonGroundIte;
+    this.isEliminatingBounds = config.isEliminatingBounds;
     this.isFindingMacros = config.isFindingMacros;
     this.isReducePending = true;
   }
@@ -328,6 +334,8 @@ export class AssertedFormulas {
     const refineInjAxiom = (formula: number) => this.refineInjAxiom(formula);
     if (!this.invoke(this.hasQuantifiers, () => this.simplifyFormulas(refineInjAxiom))) return;
     if (!this.invoke(isFindingMacros, () => this.findMacros())) return;
+    const elimBounds = () => this.simplifyAndReduce((formula) => this.boundsElim.rewrite(formula));
+    if (!this.invoke(this.isEliminatingBounds && this.hasQuantifiers, elimBounds)) return;
     const inferPatterns = (formula: number) => this.patternInference.rewrite(formula);
     if (!this.invoke(this.hasQuantifiers, () => this.simplifyFormulas(inferPatterns))) return;
     const maximizeBvSharing = () => {

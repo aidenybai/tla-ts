@@ -176,4 +176,30 @@ describe("the preprocessing setup_AUFLIA turns on, as Z3 5.3.2 runs it", () => {
       ")",
     ]);
   });
+
+  it("drops the bounds on a variable that occurs in nothing else, as elim_bounds does", () => {
+    expect(
+      run([
+        "(declare-fun f (Int) Int)",
+        "(declare-const a Int)",
+        "(declare-const b Int)",
+        "(assert (> a b))",
+        "(assert (forall ((x Int)) (or (<= x 3) (> (f a) (+ b 5)))))",
+        "(assert (< (f b) 10))",
+        "(check-sat)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      "(",
+      "  (define-fun b () Int",
+      "    0)",
+      "  (define-fun a () Int",
+      "    1)",
+      "  (define-fun f ((x!0 Int)) Int",
+      "    (ite (= x!0 0) 0",
+      "      6))",
+      ")",
+    ]);
+  });
 });
