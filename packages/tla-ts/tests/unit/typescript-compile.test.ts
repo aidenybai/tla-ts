@@ -50604,4 +50604,24 @@ describe("BigInts", () => {
       (await check(compile(source, join(import.meta.dirname, "model.js")))).failure?.message,
     ).toContain("tla-ts can't make a typed array through a constructor that a script gives");
   });
+
+  it("stops at a JavaScript function's pattern parameter that an argument doesn't fit", () => {
+    const source = `
+      var box = { seen: "" };
+      var iterable = {};
+      iterable[Symbol.iterator] = function () {
+        throw new Error("get");
+      };
+      var take = async function* ([first]) {};
+      try {
+        take(iterable);
+        box.seen = "none";
+      } catch (error) {
+        box.seen = "threw";
+      }
+    `;
+    expect(() => compile(source, join(import.meta.dirname, "model.js"))).toThrow(
+      "Give this pattern's value an array type",
+    );
+  });
 });

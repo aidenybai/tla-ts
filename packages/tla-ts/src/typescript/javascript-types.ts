@@ -210,7 +210,8 @@ const widenDeclaration = (
   const position = ts.isParameter(declaration)
     ? declaration.getStart(file)
     : declaration.name.getStart(file);
-  return ts.isIdentifier(declaration.name) && !isTyped(position, file)
+  return (ts.isIdentifier(declaration.name) || ts.isParameter(declaration)) &&
+    !isTyped(position, file)
     ? [{ position, text: ANY }]
     : undefined;
 };
@@ -330,9 +331,19 @@ const fixAssigned = (
       ? widenElements(callee.expression, file, checker)
       : undefined;
   if (elements !== undefined) return elements;
-  if (call === undefined || values.some((argument) => argument === node)) {
-    return castExpression(node, file);
-  }
+  // A JavaScript function's parameter that the argument doesn't fit, such as a pattern, whose type
+  // TypeScript makes of the pattern, becomes any, as the argument may be any value.
+  const position = values.findIndex((argument) => argument === node);
+  const parameter =
+    call === undefined || position === -1
+      ? undefined
+      : checker.getResolvedSignature(call)?.getDeclaration()?.parameters.at(position);
+  const widened =
+    parameter !== undefined && parameter.dotDotDotToken === undefined
+      ? widenDeclaration(parameter, file, "any")
+      : undefined;
+  if (widened !== undefined) return widened;
+  if (call === undefined || position !== -1) return castExpression(node, file);
   const casts = values.map((argument) =>
     castExpression(ts.isSpreadElement(argument) ? argument.expression : argument, file),
   );
