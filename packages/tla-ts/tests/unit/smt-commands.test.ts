@@ -1088,4 +1088,26 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
       ")",
     ]);
   });
+
+  it("has no model after a tactic leaves its goal undecided without a model converter", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(assert (> (* x x) 2))",
+        "(check-sat-using simplify)",
+        "(get-model)",
+        "(reset)",
+        "(set-logic QF_SLIA)",
+        "(declare-const s String)",
+        '(assert (= (str.replace_re (str.++ s s) (str.to_re "a") s) (str.replace_all "" s "ba")))',
+        "(check-sat)",
+        "(get-value (s))",
+      ]),
+    ).toEqual([
+      "unknown",
+      '(error "line 4 column 10: model is not available")',
+      "unknown",
+      '(error "line 10 column 14: model is not available")',
+    ]);
+  });
 });

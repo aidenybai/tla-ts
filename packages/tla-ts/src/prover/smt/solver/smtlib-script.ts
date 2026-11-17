@@ -348,6 +348,8 @@ interface CheckResult {
   status: number;
   context: Context | undefined;
   isOptimizing: boolean;
+  // A tactic answered, so a missing model is one its model converter did not make.
+  isFromTactic: boolean;
   model: ProtoModel | undefined;
   core: number[] | undefined;
   // check_sat_result::reason_unknown, where the port tracks it.
@@ -653,17 +655,17 @@ export const runSmtlibScript = (
       const assumptions = isNamed ? [...names, ...extra] : extra;
       const kernel = isKernelChecking ? checkKernel(assumptions) : undefined;
       // Z3 retries a quantifier-free problem with its tactic when the incremental kernel gives up.
-      const solved =
+      const isFromTactic =
         kernel === undefined ||
         (!isAssuming &&
           kernel.result === L_UNDEF &&
           !state.assertions.some((assertion) => manager.hasQuantifierFlags[assertion]) &&
-          manager.limit.inc())
-          ? { ...solveWithStrategy(), core: undefined }
-          : kernel;
+          manager.limit.inc());
+      const solved = isFromTactic ? { ...solveWithStrategy(), core: undefined } : kernel;
       setCheck(solved.result, {
         context: solved.context,
         isOptimizing,
+        isFromTactic: isFromTactic && !isUsingFdSolver(),
         model: solved.model,
         core: solved.core ?? solved.context?.unsatCore ?? [],
         reasonUnknown: getReasonUnknown(solved, deadline),
@@ -681,6 +683,7 @@ export const runSmtlibScript = (
       const context = isKernelChecking ? state.kernel?.context : undefined;
       setCheck(L_UNDEF, {
         isOptimizing,
+        isFromTactic: !isKernelChecking && !isUsingFdSolver(),
         reasonUnknown:
           error instanceof SmtDefaultError
             ? error.message
@@ -699,7 +702,9 @@ export const runSmtlibScript = (
     if (check.model !== undefined) return check.model;
     if (check.isOptimizing) throw new SmtUnsupportedError("the models of optimization");
     if (check.context === undefined && check.status !== L_TRUE)
-      throw new SmtUnsupportedError("the model of a canceled search");
+      throw check.isFromTactic
+        ? new SmtParseError("model is not available", list.end)
+        : new SmtUnsupportedError("the model of a canceled search");
     const model = check.context?.getModel() ?? new ProtoModel(state.manager);
     model.incRef();
     check.model = model;
@@ -722,6 +727,7 @@ export const runSmtlibScript = (
       status,
       context: undefined,
       isOptimizing: false,
+      isFromTactic: false,
       model: undefined,
       core: undefined,
       ...result,
@@ -1141,6 +1147,7 @@ export const runSmtlibScript = (
         try {
           const checked = checkSatUsing(tactic, goal);
           setCheck(checked.status, {
+            isFromTactic: true,
             model: checked.model,
             core:
               builder.isTrackingDependencies || !hasNames()
