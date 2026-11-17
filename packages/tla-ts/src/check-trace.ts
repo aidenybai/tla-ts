@@ -98,7 +98,7 @@ export const createTraceBuilder = (context: TraceContext) => {
       runtime.getBehavior = searchBehavior;
     }
   };
-  // Deviation from TLC: TLCTrace#printTrace rebuilds a step with the generator that already drew for its state, so it misses the step and leaks a NullPointerException.
+  // Deviation from TLC: TLCTrace#printTrace and Worker#doPostCondition rebuild a step with the generator that already drew for its state, so they miss it; printTrace leaks a NullPointerException and doPostCondition skips the postcondition.
   const rebuildFrom = (state: Value[], level: number) => {
     current.rebuilt = { state, level };
     runtime.reseedRandom();
