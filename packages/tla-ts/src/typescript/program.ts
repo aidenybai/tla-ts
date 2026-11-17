@@ -484,18 +484,15 @@ export const createProgram = (source: string, path: string, library: Library = D
     globals.size === 0
       ? rewrittenProgram
       : createTypeScriptProgram([path], text, globals, undefined, new Map());
-  // The program's own JavaScript, rather than a package's, whose types tla-ts makes hold, round by
-  // round, until TypeScript reports no error that changes them.
+  // The JavaScript that the model loads, its own and its packages', whose types tla-ts makes hold,
+  // round by round, until TypeScript reports no error that changes them.
   const typeJavaScriptFiles = (
     program: ts.Program,
     typedTexts: ReadonlyMap<string, string>,
   ): { program: ts.Program; typedTexts: ReadonlyMap<string, string> } => {
     const texts = program
       .getSourceFiles()
-      .filter(
-        (file) =>
-          isJavaScriptFile(file.fileName) && !file.fileName.split("/").includes("node_modules"),
-      )
+      .filter((file) => isJavaScriptFile(file.fileName))
       .flatMap((file) => {
         const typed = typeJavaScript(file, program, host, isReported);
         return typed === undefined ? [] : [[file.fileName, typed] as const];
