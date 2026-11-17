@@ -3,6 +3,9 @@ import { type AstManager } from "./ast";
 import type { SmtSetup } from "./smt-setup";
 import { AssertedFormulas } from "./asserted-formulas";
 import { Context } from "./context";
+import { L_TRUE } from "./lbool";
+import { Mus } from "./mus";
+import { RefVector } from "./ref-vector";
 import type { KernelParams } from "./solver";
 
 export class SmtKernel {
@@ -10,6 +13,7 @@ export class SmtKernel {
   private asserted: AssertedFormulas;
   isSetUp = false;
   private setup: SmtSetup | undefined;
+  private isCoreMinimizing: boolean;
 
   constructor(manager: AstManager, params: KernelParams) {
     this.asserted = new AssertedFormulas(manager, params.isFindingMacros);
@@ -19,11 +23,13 @@ export class SmtKernel {
       relevancyLevel: params.relevancyLevel ?? 2,
     });
     this.setup = params.setup;
+    this.isCoreMinimizing = params.isCoreMinimizing ?? false;
   }
 
   // As in Z3, a kernel not yet set up reads auto_config again.
   updateParams(params: KernelParams) {
     if (!this.isSetUp) this.setup = params.setup;
+    this.isCoreMinimizing = params.isCoreMinimizing ?? false;
     this.context.updateParams(params);
     this.asserted.updateParams(this.context.config);
   }
@@ -85,5 +91,23 @@ export class SmtKernel {
   setupAndCheck() {
     this.setupContext(true);
     return this.check();
+  }
+
+  getUnsatCore(core: RefVector) {
+    for (const expr of this.context.unsatCore) core.push(expr);
+    if (!this.isCoreMinimizing) return;
+    const manager = this.context.manager;
+    const mus = new Mus(manager, {
+      checkSat: (assumptions) => this.check(assumptions),
+      getUnsatCore: () => this.context.unsatCore,
+    });
+    for (const literal of core.items) mus.addSoft(literal);
+    const minimized = new RefVector(manager);
+    if (mus.getMus(minimized) === L_TRUE) {
+      core.reset();
+      for (const literal of minimized.items) core.push(literal);
+    }
+    minimized.reset();
+    mus.reset();
   }
 }

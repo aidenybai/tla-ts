@@ -1325,7 +1325,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     {
       descrs: new Map(),
       isRejectingUnknown: false,
-      build: (environment) => runQsat(environment.manager, QSAT_SAT),
+      build: (environment) => runQsat(environment, QSAT_SAT),
     },
   ],
   [
@@ -1333,7 +1333,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     {
       descrs: new Map(),
       isRejectingUnknown: false,
-      build: (environment) => runQsat(environment.manager, QSAT_QE),
+      build: (environment) => runQsat(environment, QSAT_QE),
     },
   ],
   [
@@ -1341,7 +1341,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     {
       descrs: new Map(),
       isRejectingUnknown: false,
-      build: (environment) => runQsat(environment.manager, QSAT_QE_REC),
+      build: (environment) => runQsat(environment, QSAT_QE_REC),
     },
   ],
   [

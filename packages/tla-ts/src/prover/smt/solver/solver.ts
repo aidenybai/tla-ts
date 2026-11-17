@@ -20,6 +20,7 @@ export interface KernelParams {
   mbqiMaxIterations: number;
   isFindingMacros: boolean;
   relevancyLevel?: 0 | 2;
+  isCoreMinimizing?: boolean;
   // A kernel without a setup runs as with auto_config false.
   setup?: SmtSetup;
 }

@@ -55,7 +55,6 @@ import { getVerdict, solveAssertions, solveAssuming } from "./solver";
 import { getConsequences } from "./smt-consequences";
 import { getFdConsequences } from "./fd-solver";
 import { SmtKernel } from "./smt-kernel";
-import { Mus } from "./mus";
 import { RefVector } from "./ref-vector";
 import { IncSatSolver } from "./sat/inc-sat-solver";
 import { mkThSolver } from "./euf/th-solvers";
@@ -625,6 +624,7 @@ export const runSmtlibScript = (
     isMbqi: settings.isMbqi || (!isSetUp && isMbqiByLogic(getSetup())),
     mbqiMaxIterations: settings.mbqiMaxIterations,
     isFindingMacros: settings.isFindingMacros,
+    isCoreMinimizing: settings.parameters.get("smt.core.minimize") === "true",
     setup: getSetup(),
   });
   // mk_special_solver_for_logic gives these logics the finite-domain solver, incremental or not.
@@ -1545,26 +1545,15 @@ export const runSmtlibScript = (
         if (check.core === undefined)
           throw new SmtUnsupportedError("the unsat core of a tactic that drops dependencies");
         const kernel = state.kernel;
-        if (
-          kernel === undefined ||
-          check.context !== kernel.context ||
-          settings.parameters.get("smt.core.minimize") !== "true"
-        ) {
+        if (kernel === undefined || check.context !== kernel.context) {
           print(`(${check.core.map(format).join(" ")})`);
           return;
         }
-        const mus = new Mus(state.manager, {
-          checkSat: (assumptions) => kernel.check(assumptions),
-          getUnsatCore: () => kernel.context.unsatCore,
-        });
-        const core = [...kernel.context.unsatCore];
-        for (const literal of core) mus.addSoft(literal);
-        const minimized = new RefVector(state.manager);
         state.manager.limit.restart(Date.now() + options.timeLimitMs);
-        const status = mus.getMus(minimized);
-        print(`(${(status === L_TRUE ? minimized.items : core).map(format).join(" ")})`);
-        minimized.reset();
-        mus.reset();
+        const core = new RefVector(state.manager);
+        kernel.getUnsatCore(core);
+        print(`(${core.items.map(format).join(" ")})`);
+        core.reset();
       },
     ],
     [
