@@ -18704,22 +18704,23 @@ describe("errors", () => {
     });
   });
 
-  it("stops at a typeof of a let inside try before its declaration, as at a read of it", () => {
-    expect(() =>
-      compile(`
-        const seen: string[] = [];
-        const note = (run: () => string) => {
-          try {
-            seen.push(run());
-          } catch (error) {
-            seen.push(error instanceof ReferenceError ? "reference" : "other");
-          }
-        };
-        note(() => typeof counter);
-        let counter = 1;
-        if (seen.join() !== "reference") throw new Error(seen.join());
-      `),
-    ).toThrow("Inside try, use counter after its declaration");
+  it("stops at a typeof of a let inside try before its declaration, as at a read of it", async () => {
+    const result = await checkModel(`
+      const seen: string[] = [];
+      const note = (run: () => string) => {
+        try {
+          seen.push(run());
+        } catch (error) {
+          seen.push(error instanceof ReferenceError ? "reference" : "other");
+        }
+      };
+      note(() => typeof counter);
+      let counter = 1;
+      if (seen.join() !== "reference") throw new Error(seen.join());
+    `);
+    expect(result.failure?.message).toContain(
+      "tla-ts can't throw the ReferenceError of reading counter before its declaration",
+    );
   });
 
   describe("throws the ReferenceError of a class's name before its declaration finishes", () => {
@@ -18756,22 +18757,23 @@ describe("errors", () => {
     });
   });
 
-  it("stops at a read of a class inside try before its declaration, as at a let's", () => {
-    expect(() =>
-      compile(`
-        const seen: string[] = [];
-        const note = (run: () => string) => {
-          try {
-            seen.push(run());
-          } catch (error) {
-            seen.push(error instanceof ReferenceError ? "reference" : "other");
-          }
-        };
-        note(() => String(Shape));
-        class Shape {}
-        if (seen.join() !== "reference") throw new Error(seen.join());
-      `),
-    ).toThrow("Inside try, use Shape after its declaration");
+  it("stops at a read of a class inside try before its declaration, as at a let's", async () => {
+    const result = await checkModel(`
+      const seen: string[] = [];
+      const note = (run: () => string) => {
+        try {
+          seen.push(run());
+        } catch (error) {
+          seen.push(error instanceof ReferenceError ? "reference" : "other");
+        }
+      };
+      note(() => String(Shape));
+      class Shape {}
+      if (seen.join() !== "reference") throw new Error(seen.join());
+    `);
+    expect(result.failure?.message).toContain(
+      "tla-ts can't throw the ReferenceError of reading Shape before its declaration",
+    );
   });
 
   describe("constructs a function expression that new calls where the script writes it", () => {
@@ -49113,6 +49115,46 @@ describe("BigInts", () => {
       expect(
         (await checkModel(getSource("first,caught,second,ready,third"))).failure?.message,
       ).toContain("seen first,second,ready,third");
+    });
+  });
+
+  describe("compiles a read inside try before its declaration where it never runs", () => {
+    const getSource = (expected: string, isEarly = false) => `
+      const box = { seen: [] as string[] };
+      const note = (run?: () => void) => {
+        try {
+          box.seen.push("note");
+          run?.();
+        } catch (error) {
+          box.seen.push(error instanceof ReferenceError ? "reference" : "other");
+        }
+      };
+      const start = () => note(${isEarly ? "() => box.seen.push(String(counter))" : ""});
+      start();
+      let counter = 1;
+      note(() => {
+        box.seen.push(String(counter));
+      });
+      const seen = box.seen.join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("note,note,1"))).failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      expect((await checkModel(getSource("note,1"))).failure?.message).toContain(
+        "seen note,note,1",
+      );
+    });
+
+    it("stops where the read runs", async () => {
+      expect(
+        (await checkModel(getSource("note,reference,note,1", true))).failure?.message,
+      ).toContain(
+        "tla-ts can't throw the ReferenceError of reading counter before its declaration",
+      );
     });
   });
 });

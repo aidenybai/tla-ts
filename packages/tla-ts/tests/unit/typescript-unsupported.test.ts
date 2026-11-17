@@ -51,10 +51,6 @@ const CASES: [string, string][] = [
     "const getLength = () => { return step.length; }; getLength();",
   ],
   [
-    "a let used before its declaration in try",
-    "try { const read = () => later; count = read(); } catch { count = 0; } let later = 1;",
-  ],
-  [
     "instanceof on a value that isn't caught, an error, or of type unknown or any",
     "const value: object = record; if (value instanceof Error) count = 1;",
   ],
@@ -104,6 +100,20 @@ it.each(CASES)("rejects %s", (_, statements) => {
   `;
   expect(() => compile(model)).toThrow(TlaTypeScriptError);
   expect(() => compile(model)).toThrow(/spec\.ts[:(]8[:,]/);
+});
+
+it("stops where a let is used before its declaration in try", async () => {
+  const result = await check(
+    compile(`
+      let count = 0;
+      export const step = () => {
+        try { const read = () => later; count = read(); } catch { count = 0; } let later = 1;
+      };
+    `),
+  );
+  expect(result.failure?.message).toContain(
+    "tla-ts can't throw the ReferenceError of reading later before its declaration",
+  );
 });
 
 describe.each([
