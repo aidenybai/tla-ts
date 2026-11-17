@@ -7,11 +7,10 @@ import {
 } from "../../../errors";
 import { type AstManager, OP_DIV0, OP_IDIV0, OP_MOD0, OP_OR, OP_POWER0, SORT_BOOL } from "./ast";
 import { createQfufbvAckrTactic, runAckermannizeBv } from "./ackermannize-bv-tactic";
-import { AssertedFormulas } from "./asserted-formulas";
 import { createAigTactic } from "./aig-tactic";
 import { blastTermIte } from "./blast-term-ite";
 import { card2bv } from "./card2bv";
-import { Context, MBQI_MAX_ITERATIONS } from "./context";
+import { type Context, MBQI_MAX_ITERATIONS } from "./context";
 import { ctxSimplify } from "./ctx-simplify";
 import { createCtxSolverSimplify } from "./ctx-solver-simplify";
 import {
@@ -67,6 +66,7 @@ import { propagateValues } from "./propagate-values";
 import { purifyArith } from "./purify-arith";
 import { ModelEvaluator } from "./model-evaluator";
 import { FuncInterp, ProtoModel } from "./proto-model";
+import { SmtKernel } from "./smt-kernel";
 import { isMbqiByFeatures, type SmtSetup } from "./smt-setup";
 import { compileProbe, formatProbeValue, isQfufbv, type Probe } from "./probes";
 import { runHorn } from "./muz/horn-tactic";
@@ -432,30 +432,42 @@ const createTacticSolver = (manager: AstManager, getTactic: () => Tactic): AckrS
 // Each clause gets a fresh context, where Z3 pushes a scope on one context.
 const runUnitSubsume = (environment: TacticEnvironment) => (goal: Goal) => {
   const manager = environment.manager;
+  const kernel = new SmtKernel(manager, {
+    isMbqi: environment.isMbqi,
+    mbqiMaxIterations: environment.mbqiMaxIterations,
+    isFindingMacros: false,
+  });
+  const trail = new RefVector(manager);
   const clauses = goal.forms.items.map(() => manager.mkFreshConst("#clause", SORT_BOOL));
-  const definitions = goal.forms.items.map((form, index) => manager.mkEq(clauses[index], form));
-  for (const expr of [...clauses, ...definitions]) manager.incRef(expr);
+  for (const clause of clauses) trail.push(clause);
+  kernel.push();
+  for (const [index, form] of goal.forms.items.entries()) {
+    const definition = manager.mkEq(clauses[index], form);
+    trail.push(definition);
+    kernel.assertExpr(definition);
+  }
+  kernel.push();
+  const isDeleted = clauses.map(() => false);
   const deleted: number[] = [];
   for (const [index, clause] of clauses.entries()) {
-    const asserted = new AssertedFormulas(manager);
-    const context = new Context(manager, {
-      isMbqi: environment.isMbqi,
-      mbqiMaxIterations: environment.mbqiMaxIterations,
-      relevancyLevel: 2,
-    });
-    for (const definition of definitions) asserted.assertExpr(definition);
+    kernel.push();
     for (const [other, otherClause] of clauses.entries())
-      if (other === index) asserted.assertExpr(manager.mkNot(clause));
-      else if (!deleted.includes(other)) asserted.assertExpr(otherClause);
-    // The context has no logic, so setup_default picks setup_unknown.
-    context.setupContext(undefined, false, asserted);
-    context.internalizeAssertions(asserted);
-    if (!context.isInconsistent()) context.propagate();
-    if (context.isInconsistent()) deleted.push(index);
+      if (other === index) {
+        const negated = manager.mkNot(clause);
+        trail.push(negated);
+        kernel.assertExpr(negated);
+      } else if (!isDeleted[other]) kernel.assertExpr(otherClause);
+    kernel.push();
+    const isUnsat = kernel.context.isInconsistent();
+    kernel.pop(2);
+    if (!isUnsat) continue;
+    isDeleted[index] = true;
+    deleted.push(index);
   }
   for (const index of deleted) goal.update(index, manager.trueExpr);
   goal.elimTrue();
-  for (const expr of [...clauses, ...definitions]) manager.decRef(expr);
+  kernel.pop(2);
+  trail.reset();
   return [goal];
 };
 

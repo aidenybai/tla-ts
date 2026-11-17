@@ -803,6 +803,20 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
     ).toEqual(["unknown", '(:reason-unknown "max. resource limit exceeded")']);
   });
 
+  it("pushes a scope of unit-subsume-simplify's context for each clause it prunes", () => {
+    expect(
+      run([
+        "(set-option :rlimit 1)",
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(assert (> x 0))",
+        "(assert (or (> x 0) (> y 0)))",
+        "(check-sat-using (or-else unit-subsume-simplify skip))",
+        "(get-info :reason-unknown)",
+      ]),
+    ).toEqual(["unknown", '(:reason-unknown "push canceled")']);
+  });
+
   // The time limit is Z3's soft timeout: check-sat gives every solver the reason timeout, which
   // the smt kernel keeps for its later checks and reports while its last search did not fail.
   it("prints the reason of a check that timed out", () => {
