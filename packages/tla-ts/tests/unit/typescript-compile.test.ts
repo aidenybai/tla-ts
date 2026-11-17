@@ -49201,4 +49201,32 @@ describe("BigInts", () => {
       ).toContain(`seen ${expected}`);
     });
   });
+
+  describe("runs Temporal in the Coptic, Ethiopian, Indian, and tabular Islamic calendars", () => {
+    const getSource = (expected: string) => `
+      const coptic = Temporal.PlainDate.from("2000-01-01").withCalendar("coptic");
+      const islamic = Temporal.PlainDate.from({ calendar: "islamic-civil", era: "bh", eraYear: 5, month: 12, day: 30 });
+      const seen = [
+        coptic.monthCode,
+        coptic.add({ months: 10 }).toString(),
+        Temporal.PlainMonthDay.from({ calendar: "coptic", monthCode: "M13", day: 6 }).toString(),
+        islamic.toString(),
+        Temporal.PlainDate.from("2000-01-01").withCalendar("indian").until("2001-03-21[u-ca=indian]", { largestUnit: "years" }).toString(),
+      ].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+    const expected =
+      "M04,2000-10-02[u-ca=coptic],1971-09-11[u-ca=coptic],0618-08-31[u-ca=islamic-civil],P1Y2M19D";
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects a thirteenth month that starts the next year", async () => {
+      expect(
+        (await checkModel(getSource(expected.replace("2000-10-02", "2000-10-07")))).failure
+          ?.message,
+      ).toContain(`seen ${expected}`);
+    });
+  });
 });
