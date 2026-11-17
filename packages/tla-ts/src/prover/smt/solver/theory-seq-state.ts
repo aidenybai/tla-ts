@@ -53,7 +53,7 @@ export interface Ne {
   dep: Dependency;
 }
 
-export interface Nc {
+interface Nc {
   contains: number;
   lengthGreater: Literal;
   dep: Dependency;
@@ -64,7 +64,7 @@ interface ExprDep {
   dep: Dependency;
 }
 
-export class ScopedVector<T> {
+class ScopedVector<T> {
   items: T[] = [];
   private undoIndexes: number[] = [];
   private undoValues: T[] = [];

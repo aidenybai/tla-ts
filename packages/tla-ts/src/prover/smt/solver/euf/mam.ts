@@ -42,7 +42,7 @@ import { type Egraph, type Enode, getClass } from "./egraph";
 import type { TrailStack } from "./th-solver";
 
 // euf::mam_solver: the solver whose trail undoes the matcher.
-export interface MamSolver {
+interface MamSolver {
   readonly manager: AstManager;
   readonly egraph: Egraph;
   readonly trail: TrailStack;

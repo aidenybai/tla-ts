@@ -35,15 +35,15 @@ import {
   ViewWitness,
 } from "./seq-view-witness";
 
-export const ORIENTATION_FORWARD = 0;
-export const ORIENTATION_REVERSED = 1;
+const ORIENTATION_FORWARD = 0;
+const ORIENTATION_REVERSED = 1;
 export const ORIENTATION_RETRY = 2;
 
 const LIVE_STATE_CAP = 1 << 12;
 const COFACTOR_CACHE_CAP = 1 << 16;
 const LENGTH_CONSTRAINING_KEY = 2 ** 40;
 
-export interface Memberships {
+interface Memberships {
   terms: number[];
   regexes: number[];
   deps: number[];

@@ -63,7 +63,7 @@ import {
 import { type ReRewriter, getResultExpr } from "./seq-re-rewriter";
 
 export const DERIVATIVE_ANTIMIROV = 0;
-export const DERIVATIVE_BRZOZOWSKI = 1;
+const DERIVATIVE_BRZOZOWSKI = 1;
 export const TRANSITION_BRZOZOWSKI = 0;
 export const TRANSITION_LIGHT_ANTIMIROV = 1;
 

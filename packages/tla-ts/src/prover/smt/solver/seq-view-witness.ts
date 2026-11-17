@@ -8,12 +8,12 @@ import type { ReRewriter } from "./seq-re-rewriter";
 import { isReEmpty } from "./seq-re-util";
 
 export const VIEW_FAILURE_NONE = 0;
-export const VIEW_FAILURE_UNSUPPORTED = 1;
+const VIEW_FAILURE_UNSUPPORTED = 1;
 export const VIEW_FAILURE_BUDGET = 2;
 export const VIEW_FAILURE_RESOURCE = 3;
 export const VIEW_FAILURE_STATE_EXPANSION = 4;
-export const VIEW_FAILURE_NULLABILITY = 5;
-export const VIEW_FAILURE_GUARD = 6;
+const VIEW_FAILURE_NULLABILITY = 5;
+const VIEW_FAILURE_GUARD = 6;
 
 const INNER_LIMIT = 1 << 16;
 const RANGE_CACHE_CAP = 1 << 16;
@@ -24,7 +24,7 @@ interface IntervalList {
   isOk: boolean;
 }
 
-export interface ProductResult {
+interface ProductResult {
   status: number;
   word: number;
 }

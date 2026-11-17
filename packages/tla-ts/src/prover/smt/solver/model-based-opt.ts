@@ -28,7 +28,7 @@ export const DEF_ADD = 0;
 export const DEF_MUL = 1;
 export const DEF_DIV = 2;
 export const DEF_CONST = 3;
-export const DEF_VAR = 4;
+const DEF_VAR = 4;
 
 interface AddDef {
   readonly kind: typeof DEF_ADD;

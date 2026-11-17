@@ -37,7 +37,7 @@ import { RefVector } from "./ref-vector";
 import { Rewriter, type RewriterOptions } from "./rewriter";
 import { RewriterTpl } from "./rewriter-tpl";
 
-export interface SolveEqsOptions {
+interface SolveEqsOptions {
   isTheorySolver: boolean;
   isIteSolver: boolean;
   isContextSolve: boolean;

@@ -67,7 +67,7 @@ const mkInternalizeState = (): InternalizeState => ({
 
 const MAX_POWER_DEGREE = 10;
 
-export const isUnderspecified = (op: number) =>
+const isUnderspecified = (op: number) =>
   op === OP_DIV ||
   op === OP_IDIV ||
   op === OP_REM ||

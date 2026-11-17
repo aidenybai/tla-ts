@@ -72,7 +72,7 @@ export interface MamEnode<E> {
 }
 
 // The context that undoes a compiler's updates of shared code trees.
-export interface CompilerContext {
+interface CompilerContext {
   readonly manager: AstManager;
   pushTrail(undo: () => void): void;
 }

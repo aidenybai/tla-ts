@@ -27,7 +27,7 @@ export const BIG_PRIMES = [
 
 const getSign = (value: bigint) => (value > 0n ? 1 : value < 0n ? -1 : 0);
 
-export const floorDiv = (dividend: bigint, divisor: bigint) => {
+const floorDiv = (dividend: bigint, divisor: bigint) => {
   const quotient = dividend / divisor;
   return dividend % divisor !== 0n && dividend < 0n !== divisor < 0n ? quotient - 1n : quotient;
 };

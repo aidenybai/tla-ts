@@ -5,8 +5,8 @@ import type { ReRewriter } from "./seq-re-rewriter";
 import { isReEmpty } from "./seq-re-util";
 
 export const LIVE_FAILURE_NONE = 0;
-export const LIVE_FAILURE_STATE_CAP = 1;
-export const LIVE_FAILURE_RESOURCE = 2;
+const LIVE_FAILURE_STATE_CAP = 1;
+const LIVE_FAILURE_RESOURCE = 2;
 
 const NULLABLE_UNKNOWN = 2;
 const NULLABLE_UNDEF = 3;

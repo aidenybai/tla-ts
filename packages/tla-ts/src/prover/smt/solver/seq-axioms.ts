@@ -36,7 +36,7 @@ import { FALSE_LITERAL, type Literal, TRUE_LITERAL, negate } from "./literal";
 import { isBinaryApp, isEmptySeq, mkConcatOf, mkEmptySeq, mkSeqApp } from "./seq-decl-plugin";
 import { SeqSkolem } from "./seq-skolem";
 
-export interface SeqAxiomsHost {
+interface SeqAxiomsHost {
   rewrite(expr: number): number;
   mkEqLiteral(first: number, second: number): Literal;
   ensureEnode(expr: number): void;
@@ -62,7 +62,7 @@ export const getMinLengthOf = (manager: AstManager, seq: number): number => {
 
 const UINT_MAX = 0xffffffff;
 
-export const getMaxLengthOf = (manager: AstManager, seq: number): number => {
+const getMaxLengthOf = (manager: AstManager, seq: number): number => {
   const getLength = (expr: number) => {
     if (isEmptySeq(manager, expr)) return 0;
     const op = manager.getOp(expr);

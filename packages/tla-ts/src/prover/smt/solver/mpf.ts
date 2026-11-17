@@ -44,9 +44,9 @@ const getRoot = (value: bigint) => {
   return low * low === value ? { root: low, isExact: true } : { root: low + 1n, isExact: false };
 };
 
-export const mkBotExp = (ebits: number) => -(2 ** (ebits - 1) - 1);
+const mkBotExp = (ebits: number) => -(2 ** (ebits - 1) - 1);
 
-export const mkTopExp = (ebits: number) => 2 ** (ebits - 1);
+const mkTopExp = (ebits: number) => 2 ** (ebits - 1);
 
 export const mkMinExp = (ebits: number) => mkBotExp(ebits) + 1;
 

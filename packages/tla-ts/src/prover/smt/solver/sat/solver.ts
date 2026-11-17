@@ -74,7 +74,7 @@ const RANDOM_MAX_VALUE = 0x7fff;
 const S_SAT = 0;
 const S_UNSAT = 1;
 
-export class Ema {
+class Ema {
   private beta = 1;
   value = 0;
   private period = 0;

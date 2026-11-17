@@ -20,7 +20,7 @@ export class TrailStack {
   }
 }
 
-export interface UnionFindTrail {
+interface UnionFindTrail {
   push(undo: () => void): void;
 }
 

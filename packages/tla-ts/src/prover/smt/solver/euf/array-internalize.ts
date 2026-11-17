@@ -32,7 +32,7 @@ export interface AxiomRecord {
   readonly select: Enode | null;
 }
 
-export interface VarData {
+interface VarData {
   isPropUpward: boolean;
   hasDefault: boolean;
   readonly lambdas: Enode[];
