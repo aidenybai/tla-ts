@@ -26,7 +26,7 @@ import { countCoverage, getCoverageNode, runAtCoverageNode, type Coverage } from
 import { MESSAGE_CODE } from "./tlc/messages";
 import type { CheckerRuntime } from "./runtime";
 import {
-  isConstantLevel,
+  isEvaluatedAtStartup,
   isImpureDefinition,
   isNonconstant,
   type DefinitionFacts,
@@ -821,7 +821,7 @@ export const evaluateStartupDefinitions = (definitions: Definition[], environmen
     if (definition.kind === "Operator" && definition.params.length > 0) return;
     const name = definition.name;
     if (environment.constants.has(name) || environment.substitutions.has(name)) return;
-    if (!isConstantLevel(definition, environment)) return;
+    if (!isEvaluatedAtStartup(definition, environment)) return;
     const definitionId = environment.facts.ids.get(definition);
     if (definitionId === undefined || environment.startupValues[definitionId] !== undefined) return;
     const context = { environment, scope: undefined, state: undefined, next: undefined };

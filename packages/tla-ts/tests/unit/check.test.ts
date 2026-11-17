@@ -1474,6 +1474,19 @@ describe("initial predicate and next-state relation match TLC", () => {
     ]);
   });
 
+  it("evaluates a constant invariant once as it starts when it passes such an operator as an argument, as TLC does", async () => {
+    const prints: string[] = [];
+    await expect(
+      check({
+        source:
+          "---- MODULE M ----\nEXTENDS Integers, TLC\nIsEven(v) == v % 2 = 0\nApply(Op(_), w) == Op(w)\nVARIABLE v\nInit == v = 0\nNext == UNCHANGED v\nInv == PrintT(1) /\\ Apply(IsEven, 1)\n====",
+        config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+        onPrint: (text) => prints.push(text),
+      }),
+    ).rejects.toThrow(new TlaConfigError("The invariant of Inv is equal to FALSE"));
+    expect(prints).toEqual(["1"]);
+  });
+
   it("warns about a state-level property before it reads the constraints", async () => {
     const warned: string[] = [];
     await expect(

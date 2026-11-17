@@ -1,4 +1,4 @@
-import { isConstantLevel } from "./dependencies";
+import { isEvaluatedAtStartup } from "./dependencies";
 import {
   isLocallyResolved,
   type Definition,
@@ -148,7 +148,7 @@ const isEvaluable = (expression: Expression, environment: Environment) => {
 const isStartupValue = (definition: Definition | undefined, environment: Environment) =>
   definition?.kind === "Operator" &&
   definition.params.length === 0 &&
-  isConstantLevel(definition, environment) &&
+  isEvaluatedAtStartup(definition, environment) &&
   isEvaluable(definition.body, environment);
 
 const isConstantValue = (definition: Definition | undefined, environment: Environment) =>

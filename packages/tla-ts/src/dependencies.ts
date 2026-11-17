@@ -29,7 +29,7 @@ const VARIABLE_LEVEL_FLAGS = 32;
 const ACTION_LEVEL_FLAGS = VARIABLE_LEVEL_FLAGS | 64;
 const TEMPORAL_LEVEL_FLAGS = ACTION_LEVEL_FLAGS | 128;
 const RANDOM = 256;
-const NAMED_LIKE_VARIABLE = 512;
+const ABOVE_CONSTANT_BOUND = 512;
 
 const ACTION_KINDS = new Set<Expression["kind"]>([
   "Prime",
@@ -81,6 +81,7 @@ interface Edge {
   callee: Definition;
   isOverridden: boolean;
   isLevelCounted: boolean;
+  isOperatorArgument: boolean;
 }
 
 const collectLocalFacts = (
@@ -105,14 +106,16 @@ const collectLocalFacts = (
     }
     return undefined;
   };
-  const visit = (node: Expression, isLevelCounted: boolean) => {
+  const visit = (node: Expression, isLevelCounted: boolean, isOperatorArgument: boolean) => {
     const kind = node.kind;
+    // TLC's getLevelBound takes an operator argument for a constant.
+    const nonconstantFlags = isOperatorArgument ? NONCONSTANT : NONCONSTANT | ABOVE_CONSTANT_BOUND;
     if (
       NONCONSTANT_KINDS.has(kind) ||
       (kind === "UnboundedQuantifier" && node.isTemporal === true) ||
       (kind === "Apply" && NONCONSTANT_OPERATORS.has(node.operator))
     ) {
-      row[0] |= NONCONSTANT;
+      row[0] |= nonconstantFlags;
     }
     if (NONCONSTANT_KINDS.has(kind)) row[0] |= READS_IMPURE;
     const ownLevelFlags = getOwnLevelFlags(node);
@@ -121,7 +124,7 @@ const collectLocalFacts = (
     const name = getReferencedName(node);
     // TLC's getLevelBound takes a parameter named like a variable for that variable.
     if (name !== undefined && isLocallyResolved(node) && environment.variableIndex.has(name)) {
-      row[0] |= NAMED_LIKE_VARIABLE;
+      if (!isOperatorArgument) row[0] |= ABOVE_CONSTANT_BOUND;
       if (isInnerLevelCounted) row[0] |= VARIABLE_LEVEL_FLAGS;
     }
     if (name !== undefined && !isLocallyResolved(node)) {
@@ -134,14 +137,24 @@ const collectLocalFacts = (
         environment.builtins.get(name)?.isStateLevel ||
         (definition && environment.variableIndex.has(definition.name))
       ) {
-        row[0] |= NONCONSTANT;
+        row[0] |= nonconstantFlags;
       }
       if (variableIndex !== undefined) {
         if (isInnerLevelCounted) row[0] |= VARIABLE_LEVEL_FLAGS;
         if (!isOverridden) row[1 + (variableIndex >>> 5)] |= 1 << (variableIndex & 31);
       }
       if (definition) {
-        edges.push({ callee: definition, isOverridden, isLevelCounted: isInnerLevelCounted });
+        edges.push({
+          callee: definition,
+          isOverridden,
+          isLevelCounted: isInnerLevelCounted,
+          isOperatorArgument:
+            isOperatorArgument ||
+            kind === "OperatorReference" ||
+            (kind === "Identifier" &&
+              definition.kind === "Operator" &&
+              definition.params.length > 0),
+        });
       } else {
         if (isImpureBuiltin(name, environment)) {
           row[0] |= IMPURE | (name === "Assert" ? 0 : REPEATED_EFFECT);
@@ -161,9 +174,11 @@ const collectLocalFacts = (
         }
       }
     }
-    getChildren(node).forEach((child) => visit(child, isInnerLevelCounted));
+    getChildren(node).forEach((child) =>
+      visit(child, isInnerLevelCounted, isOperatorArgument || kind === "Lambda"),
+    );
   };
-  expressions.forEach((expression) => visit(expression, true));
+  expressions.forEach((expression) => visit(expression, true, false));
   return { row, edges };
 };
 
@@ -235,8 +250,8 @@ const closeRows = (local: Uint32Array, words: number, edges: Int32Array[], mask:
 };
 
 const PURITY_MASK = IMPURE | REPEATED_EFFECT | STREAMED | RANDOM;
-const READ_MASK = NONCONSTANT | READS_IMPURE | NAMED_LIKE_VARIABLE;
-const STARTUP_MASK = NONCONSTANT | NAMED_LIKE_VARIABLE;
+const READ_MASK = NONCONSTANT | READS_IMPURE;
+const STARTUP_MASK = NONCONSTANT | ABOVE_CONSTANT_BOUND;
 
 const isEvaluatedOnce = (definition: Definition, flags: number) =>
   definition.kind === "Operator" && definition.params.length === 0 && (flags & STARTUP_MASK) === 0;
@@ -263,18 +278,32 @@ export const createDefinitionFacts = (environment: DefinitionNames): DefinitionF
       new Int32Array(own.filter((edge) => !edge.isOverridden && edge.isLevelCounted).map(getId)),
   );
   const levels = closeRows(local, words, levelEdges, TEMPORAL_LEVEL_FLAGS);
+  const startupEdges = edges.map(
+    (own) =>
+      new Int32Array(
+        own.filter((edge) => !edge.isOverridden && !edge.isOperatorArgument).map(getId),
+      ),
+  );
+  const startup = closeRows(local, words, startupEdges, ABOVE_CONSTANT_BOUND);
   const purityEdges = edges.map(
     (own) =>
       new Int32Array(
         own
           .map(getId)
-          .filter((callee) => !isEvaluatedOnce(definitions[callee], reads[callee * words])),
+          .filter(
+            (callee) =>
+              !isEvaluatedOnce(
+                definitions[callee],
+                reads[callee * words] | startup[callee * words],
+              ),
+          ),
       ),
   );
   const purity = closeRows(localImpurity, words, purityEdges, PURITY_MASK);
   const rows = reads.map((word, position) =>
     position % words === 0
       ? (word & READ_MASK) |
+        (startup[position] & ABOVE_CONSTANT_BOUND) |
         (levels[position] & TEMPORAL_LEVEL_FLAGS) |
         (purity[position] & PURITY_MASK)
       : word,
@@ -298,6 +327,7 @@ const getExpressionsRow = (expressions: Expression[], environment: Environment) 
     const callee = getRow(edge.callee, environment);
     if (!edge.isOverridden) {
       row[0] |= callee[0] & READ_MASK;
+      if (!edge.isOperatorArgument) row[0] |= callee[0] & ABOVE_CONSTANT_BOUND;
       if (edge.isLevelCounted) row[0] |= callee[0] & TEMPORAL_LEVEL_FLAGS;
       for (let word = 1; word < words; word++) row[word] |= callee[word];
     }
@@ -308,6 +338,9 @@ const getExpressionsRow = (expressions: Expression[], environment: Environment) 
 
 export const isConstantLevel = (definition: Definition, environment: Environment) =>
   (getRow(definition, environment)[0] & STARTUP_MASK) === 0;
+
+export const isEvaluatedAtStartup = (definition: Definition, environment: Environment) =>
+  (getRow(definition, environment)[0] & ABOVE_CONSTANT_BOUND) === 0;
 
 const EFFECT_FLAGS = {
   any: IMPURE,
