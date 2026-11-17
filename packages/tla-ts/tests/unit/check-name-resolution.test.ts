@@ -1431,6 +1431,47 @@ describe("name resolution matches SANY", () => {
       ],
       [],
     ],
+    [
+      "substitutions that are no operator of the arity a CONSTANT takes",
+      "---- MODULE Inner ----\nCONSTANT Op(_)\n====\n---- MODULE Pair ----\nCONSTANT c, Op(_)\n====\nc(a) == 1\nG(a, b) == a\nOp(a, b) == a\nI == INSTANCE Pair WITH c <- 1, Op <- zz\nJ == INSTANCE Inner WITH Op <- LAMBDA a, b : a\nK == INSTANCE Inner WITH Op <- G\nL == INSTANCE Inner WITH Op <- +\nN == INSTANCE Inner WITH Op <- G(1)\nP == INSTANCE Inner",
+      [
+        {
+          location: "line 11, col 1 to line 11, col 40 of module M",
+          message:
+            "Wrong number of arguments (0) given to operator 'c', \nwhich requires 1 arguments.",
+        },
+        {
+          location: "line 11, col 39 to line 11, col 40 of module M",
+          message: "Unknown operator: `zz'.",
+        },
+        {
+          location: "In module --TLA+ BUILTINS--",
+          message: "An operator must be substituted for symbol 'Op', and it must have arity 1.",
+        },
+        {
+          location: "line 12, col 32 to line 12, col 46 of module M",
+          message: "An operator must be substituted for symbol 'Op', and it must have arity 1.",
+        },
+        {
+          location: "line 13, col 32 to line 13, col 32 of module M",
+          message: "Expected arity 1 but found operator of arity 2.",
+        },
+        {
+          location: "line 14, col 32 to line 14, col 32 of module M",
+          message: "Could not find declaration or definition of symbol '+'.",
+        },
+        {
+          location: "line 15, col 32 to line 15, col 35 of module M",
+          message:
+            "Arity 1 operator (not an expression) is expected \nto substitute for CONSTANT 'Op'.",
+        },
+        {
+          location: "line 16, col 1 to line 16, col 19 of module M",
+          message: "An operator must be substituted for symbol 'Op', and it must have arity 1.",
+        },
+      ],
+      [],
+    ],
   ])("rejects %s like SANY", async (_title, source, errors, warnings) => {
     await expect(checkNames(source)).rejects.toMatchObject({ sany: { errors, warnings } });
   });

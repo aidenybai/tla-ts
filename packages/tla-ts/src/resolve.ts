@@ -291,6 +291,8 @@ const getFixity = (expression: Expression) => {
   return isBefore(expression.location, expression.args[0].location) ? "prefix" : "postfix";
 };
 
+const BUILTIN_LOCATION = "In module --TLA+ BUILTINS--";
+
 const SELECTABLE_KINDS = new Set<SymbolKind>(["Definition", "Instance", "Theorem"]);
 
 const reportUnselectable = (name: string, range: SourceRange, unit: Unit) =>
@@ -1462,18 +1464,72 @@ const checkSubstitutions = (
     (parent, param) => ({ name: param.name, arity: param.arity, kind: "Parameter", parent }),
     outer,
   );
+  const reportArity = (declaration: Declaration, location: string) =>
+    unit.errors.push({
+      location,
+      message: `An operator must be substituted for symbol '${resolveSynonym(declaration.name)}', and it must have arity ${declaration.arity}.`,
+    });
   const resolveSubstitute = (declaration: Declaration, expression: Expression) => {
-    if (declaration.arity === 0 || expression.kind !== "Identifier") {
+    const range = expression.location.range;
+    if (declaration.arity === 0) {
       resolveExpression(expression, scope, unit);
+      return;
+    }
+    if (expression.kind === "Lambda") {
+      resolveExpression(expression, scope, unit);
+      if (expression.params.length !== declaration.arity && range) {
+        reportArity(declaration, formatRange(range));
+      }
+      return;
+    }
+    if (expression.kind === "OperatorReference") {
+      const arity = getSymbolArity(expression, expression.operator, scope, unit);
+      if (arity === undefined) reportArity(declaration, BUILTIN_LOCATION);
+      else if (arity !== declaration.arity && range) reportArity(declaration, formatRange(range));
+      return;
+    }
+    if (expression.kind !== "Identifier") {
+      if (range) {
+        unit.errors.push({
+          location: formatRange(range),
+          message: `Arity ${declaration.arity} operator (not an expression) is expected \nto substitute for CONSTANT '${resolveSynonym(declaration.name)}'.`,
+        });
+      }
+      reportArity(declaration, BUILTIN_LOCATION);
       return;
     }
     const arity = getSymbolArity(expression, expression.name, scope, unit);
     if (arity !== undefined && arity !== declaration.arity) {
-      throw new TlaSyntaxError(
-        `An operator must be substituted for symbol '${resolveSynonym(declaration.name)}', and it must have arity ${declaration.arity} in the instance of ${instance.module} at line ${instance.location.line}, column ${instance.location.column}`,
-      );
+      unit.errors.push({
+        location: formatRange(getSpelledNameRange(expression, expression.name)),
+        message: `Expected arity ${declaration.arity} but found operator of arity ${arity}.`,
+      });
     }
+    if (arity !== declaration.arity) reportArity(declaration, BUILTIN_LOCATION);
   };
+  const instanceRange = instance.location.range;
+  const isFound = (declaration: Declaration) =>
+    lookupLocal(scope, declaration.name) !== undefined ||
+    findSymbol(declaration.name, unit) !== undefined;
+  const implicit = declarations.filter(isFound).map((declaration) => {
+    const expression: Expression & { kind: "Identifier" } = {
+      kind: "Identifier",
+      name: declaration.name,
+      location: instance.location,
+    };
+    return { declaration, expression };
+  });
+  implicit
+    .filter((item) => item.declaration.arity === 0)
+    .forEach((item) => {
+      const arity = getSymbolArity(item.expression, item.declaration.name, scope, unit);
+      if (arity && instanceRange) {
+        unit.errors.push({
+          location: formatRange(instanceRange),
+          message: `Wrong number of arguments (0) given to operator '${resolveSynonym(item.declaration.name)}', \nwhich requires ${arity} arguments.`,
+        });
+      }
+    });
   const substitutions = new Map<string, Expression>();
   instance.substitutions.forEach((substitution) => {
     const name = substitution.name;
@@ -1496,30 +1552,29 @@ const checkSubstitutions = (
       });
     }
   });
-  const implicit = declarations.filter((declaration) => !substitutions.has(declaration.name));
-  const isMissing = (declaration: Declaration) =>
-    !lookupLocal(scope, declaration.name) && !findSymbol(declaration.name, unit);
   implicit
-    .filter((declaration) => !isMissing(declaration))
-    .forEach((declaration) => {
-      const expression: Expression = {
-        kind: "Identifier",
-        name: declaration.name,
-        location: instance.location,
-      };
-      resolveSubstitute(declaration, expression);
-      substitutions.set(declaration.name, expression);
+    .filter((item) => !substitutions.has(item.declaration.name))
+    .forEach((item) => {
+      const arity =
+        item.declaration.arity === 0
+          ? 0
+          : getSymbolArity(item.expression, item.declaration.name, scope, unit);
+      if (arity !== item.declaration.arity && instanceRange) {
+        reportArity(item.declaration, formatRange(instanceRange));
+      }
+      substitutions.set(item.declaration.name, item.expression);
     });
-  implicit.filter(isMissing).forEach((declaration) => {
-    const range = instance.location.range;
-    const declared = declaration.location.range;
-    if (range && declared) {
-      unit.errors.push({
-        location: formatRange(range),
-        message: `Substitution missing for symbol ${resolveSynonym(declaration.name)} declared at ${formatRange(declared)} \nand instantiated in module ${instancer}.`,
-      });
-    }
-  });
+  declarations
+    .filter((declaration) => !substitutions.has(declaration.name))
+    .forEach((declaration) => {
+      const declared = declaration.location.range;
+      if (instanceRange && declared) {
+        unit.errors.push({
+          location: formatRange(instanceRange),
+          message: `Substitution missing for symbol ${resolveSynonym(declaration.name)} declared at ${formatRange(declared)} \nand instantiated in module ${instancer}.`,
+        });
+      }
+    });
   return substitutions;
 };
 
