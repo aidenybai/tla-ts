@@ -50423,4 +50423,31 @@ describe("BigInts", () => {
       expect(getSize(8)).toBeLessThan(getSize(4) * 1.4);
     });
   });
+
+  describe("runs a built-in that a const holds where the const still holds it", () => {
+    const getSource = (expected: string, replaced = "") => `
+      const objectDefineProperty = Object.defineProperty;
+      const objectFreeze = Object.freeze;
+      const target: { x?: number } = {};
+      ${replaced}
+      objectDefineProperty(target, "x", { value: 2, enumerable: true });
+      objectFreeze(target);
+      const results = [target.x, Object.isFrozen(target)].join(",");
+      if (results !== "${expected}") throw new Error("results " + results);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("2,true"))).failure).toBeUndefined();
+    });
+
+    it("rejects other results", async () => {
+      expect((await checkModel(getSource("2,false"))).failure?.message).toContain("results 2,true");
+    });
+
+    it("runs the built-in that the const read where a script replaces it later", async () => {
+      const replaced =
+        "Object.defineProperty = ((object: object) => object) as typeof Object.defineProperty;";
+      expect((await checkModel(getSource("2,true", replaced))).failure).toBeUndefined();
+    });
+  });
 });

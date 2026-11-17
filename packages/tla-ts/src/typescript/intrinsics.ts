@@ -865,6 +865,61 @@ export const stopUnknownCall = (value: Expression, context: Context) =>
     apply("Assert", [boolean(false), string("tla-ts can't tell which function this call runs")]),
   );
 
+// The built-in that an expression denotes, by its path, as "Object.defineProperty": a global
+// built-in, a read of a built-in object's property, a const that holds one, or a const's
+// destructuring of one. A const holds the value that it read as it started, which a call checks it
+// still is where a script may have replaced the built-in.
+export const getBuiltInPath = (node: ts.Expression, context: Context): string | undefined => {
+  const inner = skipCasts(node);
+  if (ts.isPropertyAccessExpression(inner)) {
+    const owner = getBuiltInPath(inner.expression, context);
+    return owner === undefined ? undefined : getBuiltInFunction(owner, inner.name.text);
+  }
+  if (!ts.isIdentifier(inner)) return undefined;
+  const global = getBuiltIn(inner, context);
+  if (global !== undefined) return global;
+  const declaration = getSymbol(inner, context.checker)?.valueDeclaration;
+  const isConst = (variable: ts.Node) =>
+    ts.isVariableDeclaration(variable) &&
+    (ts.getCombinedNodeFlags(variable) & ts.NodeFlags.Const) !== 0;
+  if (
+    declaration !== undefined &&
+    ts.isVariableDeclaration(declaration) &&
+    isConst(declaration) &&
+    ts.isIdentifier(declaration.name) &&
+    declaration.initializer !== undefined
+  ) {
+    return getBuiltInPath(declaration.initializer, context);
+  }
+  if (
+    declaration === undefined ||
+    !ts.isBindingElement(declaration) ||
+    !ts.isObjectBindingPattern(declaration.parent) ||
+    declaration.initializer !== undefined ||
+    declaration.dotDotDotToken !== undefined
+  ) {
+    return undefined;
+  }
+  const variable = declaration.parent.parent;
+  const key = declaration.propertyName ?? declaration.name;
+  const owner =
+    ts.isIdentifier(key) && isConst(variable) && variable.initializer !== undefined
+      ? getBuiltInPath(variable.initializer, context)
+      : undefined;
+  return owner === undefined || !ts.isIdentifier(key)
+    ? undefined
+    : getBuiltInFunction(owner, key.text);
+};
+
+// Whether an expression reads a built-in from its object as it runs, rather than from a const that
+// read it earlier.
+export const isBuiltInRead = (node: ts.Expression, context: Context): boolean => {
+  const inner = skipCasts(node);
+  return ts.isPropertyAccessExpression(inner)
+    ? isBuiltInRead(inner.expression, context)
+    : ts.isIdentifier(inner) && getBuiltIn(inner, context) !== undefined;
+};
+
 // The built-in function that a built-in object holds at a key, by its path, such as "Math.max".
 const getBuiltInFunction = (owner: string, key: string) => {
   const value = BUILT_INS[owner]?.[3].find(

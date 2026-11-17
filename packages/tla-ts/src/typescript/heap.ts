@@ -93,6 +93,7 @@ import {
 } from "./expressions";
 import {
   getBuiltIn,
+  getBuiltInPath,
   getBuiltInBinding,
   getGeneratorPrototypeRef,
   translateBoundBuiltIn,
@@ -6658,33 +6659,49 @@ const FALLIBLE_CHANGES = new Set([
   "create",
 ]);
 
-const isConstruct = (node: MethodCall) =>
-  node.expression.expression.getText() === "Reflect" && node.expression.name.text === "construct";
+// The key of Object's or Reflect's function that a call runs, where its callee denotes one.
+const getObjectFunctionKey = (node: ts.Node, owner: "Object" | "Reflect", context: Context) => {
+  const path = ts.isCallExpression(node) ? getBuiltInPath(node.expression, context) : undefined;
+  return path?.startsWith(`${owner}.`) ? path.slice(owner.length + 1) : undefined;
+};
+
+const isConstruct = (node: ts.Node, context: Context) =>
+  getObjectFunctionKey(node, "Reflect", context) === "construct";
 
 // Reflect.defineProperty, deleteProperty, preventExtensions, and setPrototypeOf, which give whether
 // they made the change rather than throwing where they can't.
-export const isReflectChange = (node: MethodCall) =>
-  node.expression.expression.getText() === "Reflect" &&
+export const isReflectChange = (node: ts.Node, context: Context) =>
   ["defineProperty", "deleteProperty", "preventExtensions", "setPrototypeOf"].includes(
-    node.expression.name.text,
+    getObjectFunctionKey(node, "Reflect", context) ?? "",
   );
 
 // Reflect.set, which gives whether it set the key rather than throwing where it can't.
-export const isReflectSet = (node: MethodCall) =>
-  node.expression.expression.getText() === "Reflect" && node.expression.name.text === "set";
+export const isReflectSet = (node: ts.Node, context: Context) =>
+  getObjectFunctionKey(node, "Reflect", context) === "set";
+
+// The key of the function that a change of an object runs.
+export const getObjectChangeKey = (node: ts.Node, context: Context) =>
+  getObjectFunctionKey(node, "Object", context) ?? getObjectFunctionKey(node, "Reflect", context);
 
 // Object.create runs as a change only where nothing reads the object it makes, so that it can
-// throw.
-export const isObjectChange = (node: ts.Node, context: Context): node is MethodCall =>
-  isMethodCall(node) &&
-  ((node.expression.expression.getText() === "Object" &&
-    OBJECT_CHANGES.has(node.expression.name.text) &&
-    (node.expression.name.text !== "create" ||
-      ts.isExpressionStatement(node.parent) ||
-      isDescriptorsRead(node, context)) &&
-    !isProxyOperation(node, context)) ||
-    (isConstruct(node) && getNewClass(node, context) === undefined) ||
-    ((isReflectChange(node) || isReflectSet(node)) && !isProxyOperation(node, context)));
+// throw. A callee may denote the function through a const that holds it.
+export const isObjectChange = (node: ts.Node, context: Context): node is ts.CallExpression => {
+  if (!ts.isCallExpression(node)) return false;
+  const key = getObjectFunctionKey(node, "Object", context);
+  return (
+    (key !== undefined &&
+      OBJECT_CHANGES.has(key) &&
+      (key !== "create" ||
+        ts.isExpressionStatement(node.parent) ||
+        isDescriptorsRead(node, context)) &&
+      !isProxyOperation(node, context)) ||
+    (isConstruct(node, context) &&
+      isMethodCall(node) &&
+      getNewClass(node, context) === undefined) ||
+    ((isReflectChange(node, context) || isReflectSet(node, context)) &&
+      !isProxyOperation(node, context))
+  );
+};
 
 // The Object functions that convert their first argument to an object, which throws a TypeError for
 // null and undefined, and those that give a primitive back, or test it, without converting it.
@@ -6904,9 +6921,11 @@ const translateConstruct = (node: MethodCall, scope: Scope, context: Context) =>
 
 // A call that changes an object's properties. A definition gives a record of the heap after it
 // and whether it succeeded, since one that fails throws a TypeError, and the others give the heap.
-export const translateObjectChange = (node: MethodCall, scope: Scope, context: Context) => {
-  if (isConstruct(node)) return translateConstruct(node, scope, context);
-  const method = node.expression.name.text;
+export const translateObjectChange = (node: ts.CallExpression, scope: Scope, context: Context) => {
+  if (isConstruct(node, context) && isMethodCall(node)) {
+    return translateConstruct(node, scope, context);
+  }
+  const method = getObjectChangeKey(node, context) ?? "";
   const change = OBJECT_CHANGES.get(method);
   const isObject = (position: number) => {
     const argument = node.arguments.at(position);
@@ -6947,7 +6966,7 @@ export const translateObjectChange = (node: MethodCall, scope: Scope, context: C
   );
   return {
     change: useJavaScript(
-      isReflectChange(node) ? `Reflect${change.operator}` : change.operator,
+      isReflectChange(node, context) ? `Reflect${change.operator}` : change.operator,
       [
         getHeap(scope, node, context),
         ...(isAssign ? [values[0], tuple(values.slice(1))] : values),
@@ -6955,7 +6974,7 @@ export const translateObjectChange = (node: MethodCall, scope: Scope, context: C
       ],
       context,
     ),
-    isFallible: FALLIBLE_CHANGES.has(method) || isReflectChange(node),
+    isFallible: FALLIBLE_CHANGES.has(method) || isReflectChange(node, context),
     values,
   };
 };
