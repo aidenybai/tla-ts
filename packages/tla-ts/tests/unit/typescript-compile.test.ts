@@ -49195,4 +49195,39 @@ describe("BigInts", () => {
       expect(result.failure?.message).toContain("tla-ts can't tell which function this bind binds");
     });
   });
+
+  describe("describes a property of a global that only the DOM's types declare", () => {
+    const getSource = (expected: string) => `
+      declare global {
+        interface Frame {
+          label: string;
+        }
+        var window: Frame & typeof globalThis;
+      }
+      const box: { seen: string[] } = { seen: [] };
+      const read = () => {
+        if (typeof window === "undefined") {
+          box.seen.push("none");
+          return;
+        }
+        const described = Object.getOwnPropertyDescriptor(window, "label");
+        box.seen.push(String(described?.value), String(described?.writable));
+      };
+      read();
+      Object.defineProperty(globalThis, "window", { value: { label: "own" }, configurable: true });
+      read();
+      const seen = box.seen.join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("none,own,true"))).failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      expect((await checkModel(getSource("none,own,false"))).failure?.message).toContain(
+        "seen none,own,true",
+      );
+    });
+  });
 });

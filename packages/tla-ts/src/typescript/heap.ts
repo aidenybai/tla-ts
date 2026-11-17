@@ -79,6 +79,7 @@ import { isParsedObject, translateParsedObjects } from "./json";
 import { getCalledError, getConstructor, getErrorClass, isNativeErrorName } from "./exceptions";
 import {
   getThisValue,
+  isGlobalObjectVar,
   translateElements,
   translateCondition,
   translateCall,
@@ -2375,7 +2376,22 @@ export const isDescription = (node: ts.Node, context: Context) =>
   (["object", "sequence"].includes(getKind(node.arguments[0], context)) ||
     isBuiltInObject(node.arguments[0], context) ||
     (node.expression.expression.getText() === "Object" &&
-      getKind(node.arguments[0], context) === "string"));
+      getKind(node.arguments[0], context) === "string") ||
+    isUntypedObject(node.arguments[0], context));
+
+// A global that the global object holds, whose type tells an object though only declarations give
+// it, such as the DOM's window, which holds what a script defines there.
+const isUntypedObject = (node: ts.Expression, context: Context) => {
+  const type = context.checker.getTypeAtLocation(node);
+  return (
+    ts.isIdentifier(node) &&
+    isGlobalObjectVar(node, context) &&
+    getKind(node, context) === "other" &&
+    type.getCallSignatures().length === 0 &&
+    type.getConstructSignatures().length === 0 &&
+    isEvery(type, ts.TypeFlags.Object | ts.TypeFlags.NonPrimitive | ts.TypeFlags.Intersection)
+  );
+};
 
 // A number that reading changes nothing, such as -Infinity or Math.PI.
 const isConstantNumber = (node: ts.Expression, context: Context): boolean =>
