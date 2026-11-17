@@ -8939,6 +8939,25 @@ describe("errors", () => {
       expect((await checkModel(getSource(3))).failure?.message).toContain("count 2");
     });
 
+    it("calls no export whose parameter's type holds itself", async () => {
+      const getTree = (expected: number) => `
+        interface Tree {
+          value: 1 | 2;
+          children: Tree[];
+        }
+        export const size = (tree: Tree): number =>
+          1 + tree.children.reduce((total, child) => total + size(child), 0);
+        const leaf: Tree = { value: 1, children: [] };
+        const root: Tree = { value: 2, children: [leaf, leaf] };
+        if (size(root) !== ${expected}) throw new Error("size " + size(root));
+      `;
+      expect(compile(getTree(3)).notes).toEqual([
+        "tla-ts calls no size: its parameter tree takes values it can't list",
+      ]);
+      expect((await checkModel(getTree(3))).failure).toBeUndefined();
+      await expect(checkModel(getTree(2))).rejects.toThrow("size 3");
+    });
+
     it("notes an exported function that throws on every call", async () => {
       const source = `
         export function cannotCoerce(): never {
