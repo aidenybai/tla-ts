@@ -260,16 +260,20 @@ export const findNamespaces = (
   // A module, which holds no objects on a heap, needs a namespace object only where code that may
   // run reads one.
   const scanned = isScript(sourceFile) ? [sourceFile, ...files] : getReached([sourceFile], context);
-  const roots = [
+  // The modules whose namespace objects code reads, each with the node that reads it.
+  const reads = [
     ...findNodes(sourceFile, isImportCall).flatMap((call) => {
       const specifier = call.arguments.at(0);
       const module = specifier && getModule(checker.getSymbolAtLocation(specifier), checker);
       return module !== undefined && (loaded.has(module.file) || module.file === sourceFile)
-        ? [module]
+        ? [{ module, node: call }]
         : [];
     }),
     ...scanned.flatMap((node) =>
-      findNodes(node, ts.isIdentifier).flatMap((inner) => getNamespaceRead(inner, checker) ?? []),
+      findNodes(node, ts.isIdentifier).flatMap((inner) => {
+        const module = getNamespaceRead(inner, checker);
+        return module === undefined ? [] : [{ module, node: inner }];
+      }),
     ),
     ...scanned
       .flatMap((node) => findNodes(node, ts.isPropertyAccessExpression))
@@ -285,7 +289,7 @@ export const findNamespaces = (
           context,
         );
         return module !== undefined && declaration !== undefined && ts.isSourceFile(declaration)
-          ? [module]
+          ? [{ module, node }]
           : [];
       }),
   ];
@@ -298,12 +302,12 @@ export const findNamespaces = (
       if (nested !== undefined) add(nested);
     });
   };
-  roots.forEach(add);
+  reads.forEach((read) => add(read.module));
   // Only a script, which runs as JavaScript does, holds objects on a heap.
-  if (modules.size > 0 && !isScript(sourceFile)) {
+  if (reads.length > 0 && !isScript(sourceFile)) {
     throw new TlaTypeScriptError(
       "tla-ts can't make a module's namespace object outside a script",
-      sourceFile,
+      reads[0].node,
     );
   }
   // The module whose namespace object a node reads: a namespace import as a value or to read an

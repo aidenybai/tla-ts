@@ -49677,7 +49677,9 @@ describe("BigInts", () => {
         `,
           path,
         ),
-      ).toThrow("tla-ts can't make a module's namespace object outside a script");
+      ).toThrow(
+        /area-picker\.ts:3:32 tla-ts can't make a module's namespace object outside a script/,
+      );
     });
   });
 
