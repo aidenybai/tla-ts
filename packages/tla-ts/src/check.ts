@@ -272,6 +272,11 @@ export interface Postcondition {
   counts?: string;
 }
 
+export interface TraceFailure extends FailureMessage {
+  /** What the spec prints as TLC rebuilds the step it then fails to print. */
+  output: OutputLine[];
+}
+
 /** An evaluation that failed during the search, with the behavior up to the state TLC was working on. */
 export interface EvaluationFailure {
   code: number;
@@ -288,7 +293,7 @@ export interface EvaluationFailure {
   /** The FingerprintException the replay raises, which TLC reports in place of the call stack. */
   fingerprint?: FingerprintFailure;
   /** How TLC reports failing again as it prints the trace, since it can't fingerprint the state. */
-  traceFailure?: FailureMessage;
+  traceFailure?: TraceFailure;
   /** A POSTCONDITION that is false or fails after the trace, which TLC checks as it prints one. */
   postcondition?: Postcondition;
   /** Whether TLC stops before it prints the statistics, as it does for an illegal initial state. */
@@ -346,13 +351,15 @@ const toUnexpectedError = (error: TlaEvaluationError) =>
     `${isEvalException(error) ? UNEXPECTED_EVAL_EXCEPTION : UNEXPECTED_EXCEPTION}${error.message}`,
   );
 
-const getTraceFailure = (error: TlaEvaluationError) =>
-  getFailureMessage(
+const getTraceFailure = (error: TlaEvaluationError, output: OutputLine[]): TraceFailure => ({
+  ...getFailureMessage(
     isEvalException(error)
       ? new TlaEvaluationError(`${UNEXPECTED_EVAL_EXCEPTION}${error.message}`)
       : error,
     true,
-  );
+  ),
+  output,
+});
 
 const STOP_REPLAY = new Error("The replay stopped");
 const STOP_WALK = new Error("The walk stopped");
@@ -894,15 +901,15 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
           action: nextActions.find((item) =>
             hasIncompleteSuccessor(item.expression, states[index], environment, item.scope),
           ),
-          traceFailure: undefined,
+          failed: undefined,
         };
       } catch (failed) {
         if (!(failed instanceof TlaEvaluationError)) throw failed;
-        return { action: undefined, traceFailure: getTraceFailure(failed) };
+        return { action: undefined, failed };
       }
     });
     const action = found.result.action;
-    const traceFailure = found.result.traceFailure;
+    const traceFailure = found.result.failed && getTraceFailure(found.result.failed, found.lines);
     const message = getIncompleteSuccessorMessage(
       error.variables,
       error.action,
@@ -1574,7 +1581,18 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         }
         const isTraceFailed = isUnfingerprintable(successor.state);
         const traceFailure =
-          isTraceFailed && error instanceof TlaEvaluationError ? getTraceFailure(error) : undefined;
+          isTraceFailed && error instanceof TlaEvaluationError
+            ? getTraceFailure(
+                error,
+                captureOutput(() => {
+                  try {
+                    traces.findStepAction(index, state, successor.state, true);
+                  } catch (failed) {
+                    if (!(failed instanceof TlaEvaluationError)) throw failed;
+                  }
+                }).lines,
+              )
+            : undefined;
         outcome = createFailureResult(
           error,
           appendTraceOutput(

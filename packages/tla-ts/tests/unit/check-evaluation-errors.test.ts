@@ -1526,6 +1526,28 @@ describe("evaluation errors match TLC", () => {
     ]);
   });
 
+  it.each([
+    [
+      "a successor it can't fingerprint",
+      'VARIABLE x\nInit == x = 0\nA == PrintT(<<"a", x>>) /\\ x \\in 0..1 /\\ x\' = x + 5\nB == PrintT(<<"b", x>>) /\\ x\' = IF x = 1 THEN [k \\in SUBSET {1} |-> 1 \\div 0] ELSE x + 1\nNext == A \\/ B',
+      ['<<"a", 1>>'],
+    ],
+    [
+      "an incomplete successor",
+      'VARIABLES x, y\nInit == x = 0 /\\ y = 0\nNext == PrintT(<<"n", x>>) /\\ x\' = 1 /\\ (x = 0 \\/ <<x>>[2] = 0)',
+      ['<<"n", 0>>'],
+    ],
+  ])(
+    "keeps what the spec prints as TLC fails to print %s, like TLC",
+    async (_name, definitions, expected) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Integers, TLC\n${definitions}\n====`,
+        config: "INIT Init\nNEXT Next",
+      });
+      expect(result.failure?.traceFailure?.output).toEqual(expected);
+    },
+  );
+
   it("records where the liveness check of a state fails after a successor of it is left incomplete, like TLC", async () => {
     const result = await check({
       source:

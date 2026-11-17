@@ -6,7 +6,7 @@ import { getStateHash, isSameState } from "./fingerprints";
 import type { Search } from "./search";
 import { getActionLabel, type SpecAction } from "./spec-description";
 import { getSuccessors, type Successor } from "./successors";
-import { createModelValue, type Value } from "./values";
+import { createModelValue, getFingerprintError, isSameValue, type Value } from "./values";
 
 export interface Behavior {
   trace: TraceStep[];
@@ -102,15 +102,23 @@ export const createTraceBuilder = (context: TraceContext) => {
     current.rebuilt = { state, level };
     runtime.reseedRandom();
   };
+  // TLC's TLCStateMut#equals compares the variables in turn, and a lazy value fails as it reaches it.
+  const isEqualState = (state: Value[], successor: Value[]) =>
+    state.every((value, position) => {
+      const error = getFingerprintError(value);
+      if (error) throw error;
+      return isSameValue(value, successor[position]);
+    });
   const findStepAction = (index: number, previous: Value[], state: Value[], isHeld: boolean) => {
     const expanding = { ...current };
     Object.assign(current, { index, isExpanding: true, candidate: undefined });
     rebuildFrom(previous, depths[index]);
-    const getKey = isHeld ? (values: Value[]) => values : getFingerprintState;
-    const key = getKey(state);
+    const key = isHeld ? state : getFingerprintState(state);
     try {
       return context.findSuccessorAction(previous, (successor) =>
-        isSameState(getKey(successor.state), key),
+        isHeld
+          ? isEqualState(key, successor.state)
+          : isSameState(getFingerprintState(successor.state), key),
       );
     } finally {
       Object.assign(current, expanding);

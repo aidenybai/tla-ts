@@ -7,7 +7,8 @@ import {
   type FingerprintFailure,
 } from "./evaluate";
 import { EXIT_STATUS, getExitCode, getMessageExitStatus } from "./exit-codes";
-import { getCodedMessage, type FailureMessage } from "./tlc/messages";
+import type { TraceFailure } from "./check";
+import { getCodedMessage } from "./tlc/messages";
 import { getFingerprintError, getHeldValues, markFingerprinted, type Value } from "./values";
 
 export interface ReplayFailure {
@@ -24,7 +25,7 @@ export interface FailureOptions {
   callStack?: Expression[];
   fingerprint?: FingerprintFailure;
   replayError?: TlaEvaluationError;
-  traceFailure?: FailureMessage;
+  traceFailure?: TraceFailure;
 }
 
 const getInitialExitCode = (error: TlaEvaluationError) => {

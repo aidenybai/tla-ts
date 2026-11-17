@@ -1328,6 +1328,15 @@ ASSUME TLCFP(a) = -887695703
     expect(await getCoverageCounts(definitions, config)).toEqual(expected);
   });
 
+  it("counts the coverage of the step TLC fails to rebuild as it can't fingerprint the successor", async () => {
+    expect(
+      await getCoverageCounts(
+        "Init == x = 0\nNext == x' = IF x = 1 THEN [k \\in SUBSET {1} |-> 1 \\div 0] ELSE x + 1",
+        "INIT Init\nNEXT Next",
+      ),
+    ).toEqual(["2:2 2", "1:5 4 5 5 3 2 3 2"]);
+  });
+
   it.each([
     [
       "an invariant",
