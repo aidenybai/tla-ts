@@ -2876,6 +2876,27 @@ describe("name resolution matches SANY", () => {
     );
   });
 
+  it.each([
+    ["---- MODULE I ----\nQ == {5}\nOp == {Q!1, 2}\n====\nJ == INSTANCE I\nB == J!Op!1!1!1", 7, 15],
+    [
+      "---- MODULE I ----\nQ == {{5}}\nC == Q!1\n====\nJ == INSTANCE I\nB == J!C!1!1\nB2 == J!C!1!1!1",
+      8,
+      15,
+    ],
+  ])(
+    "selects through a reference in an instantiated definition in %j like SANY",
+    async (source, line, column) => {
+      await expect(checkNames(source)).rejects.toThrow(
+        createSanyError([
+          {
+            location: `line ${line}, col ${column} to line ${line}, col ${column} of module M`,
+            message: "Selecting subexpression of expression that has none.",
+          },
+        ]),
+      );
+    },
+  );
+
   it("reports a selection that leaves parameters unfilled under a built-in operator like SANY", async () => {
     await expect(
       checkNames(

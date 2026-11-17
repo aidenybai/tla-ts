@@ -212,6 +212,7 @@ const selectSubexpression = (
   const selection: Selection = { params: [], args: [], lets: [], location };
   let selectorIndex = 0;
   let current: Expression | undefined;
+  let unwrappedSelection: Expression | undefined;
   let isFailed = false;
   let generatedArguments = 0;
   const nulls: NullSelection[] = [];
@@ -354,15 +355,16 @@ const selectSubexpression = (
     if (!current) throw createError("Subexpression selection failed", location);
     if (selector.kind === "Colon") return;
     const range = reference.selectorRanges?.[selectorIndex];
-    if (
+    const isReference =
       (current.kind === "Subexpression" ||
         (current.kind === "Identifier" && current.name.includes("!")) ||
         (current.kind === "Apply" && current.operator.includes("!"))) &&
-      isWrittenBefore(current)
-    ) {
-      const selected = selectionErrors.has(current)
-        ? current
-        : resolveSubexpressions(current, lookupWritten, isGoal);
+      isWrittenBefore(current);
+    if (isReference || (selections.has(current) && current !== unwrappedSelection)) {
+      const selected =
+        !isReference || selectionErrors.has(current)
+          ? current
+          : resolveSubexpressions(current, lookupWritten, isGoal);
       const noOperands = `Choosing operand \`${getSelectorName(selector)}' of subexpression with no operands.`;
       if (selectionErrors.has(selected)) {
         report(range, noOperands);
@@ -370,6 +372,7 @@ const selectSubexpression = (
       }
       if (selections.has(selected) && selected.kind !== "Lambda") {
         checkNull(selected, noOperands, true);
+        unwrappedSelection = selected;
         current =
           selected.kind === "Let" &&
           selected.body.kind === "Apply" &&
