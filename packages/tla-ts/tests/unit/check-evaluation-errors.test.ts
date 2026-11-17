@@ -1635,6 +1635,17 @@ describe("evaluation errors match TLC", () => {
     expect(messages).toEqual(cases.map((item) => item[1]));
   });
 
+  it("applies a recursive function as its table once an error message has printed it, like TLC", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers\nfib[n \\in 0..3] == IF n < 2 THEN n ELSE fib[n - 1] + fib[n - 2]\nFoo == fib[7] = 1\nASSUME Foo\n====",
+      config: "",
+    });
+    expect(result.violation?.message).toBe(
+      "Attempted to apply function:\n(0 :> 0 @@ 1 :> 1 @@ 2 :> 1 @@ 3 :> 2)\nto argument 7, which is not in the domain of the function.",
+    );
+  });
+
   it("evaluates a function over a domain TLC keeps lazy only where it is applied", async () => {
     const prints: string[] = [];
     const result = await check({

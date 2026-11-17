@@ -2311,12 +2311,9 @@ export const toFiniteFunction = (value: Value): FunctionValue => {
       throw new TlaEvaluationError("The domains of formal parameters must be enumerable.");
     }
     const domain = getFunctionDomain(value.domain);
-    value.enumerated = setFunctionClass(
-      createSortedFunction(
-        domain,
-        domain.map((key) => value.apply(key)),
-      ),
-      getFunctionClass(value),
+    value.enumerated = createSortedFunction(
+      domain,
+      domain.map((key) => value.apply(key)),
     );
     return value.enumerated;
   }
