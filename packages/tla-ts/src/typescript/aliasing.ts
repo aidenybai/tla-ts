@@ -15,7 +15,7 @@ import {
 import { TlaTypeScriptError } from "../errors";
 import { isAllocation } from "./heap";
 import { getPosition } from "./program-nodes";
-import { forEachReachedName, isSkippedForReach } from "./reach-graph";
+import { forEachReachedName, holdsMaker, isReachBit, isSkippedForReach } from "./reach-graph";
 import { type Scope } from "./scope";
 import {
   getKind,
@@ -615,12 +615,33 @@ export const readsUninitialized = (roots: readonly ts.Node[], scope: Scope, cont
 // one does, itself or through a function that it names.
 export const isMakingObjects = (node: ts.Node, context: Context) => {
   const isMaking = (inner: ts.Node): boolean =>
-    ts.isObjectLiteralExpression(inner) ||
-    ts.isRegularExpressionLiteral(inner) ||
-    isAllocation(inner, context) ||
-    (ts.forEachChild(inner, isMaking) ?? false);
-  return getReached([node], context).some(isMaking);
+    isMakingNode(inner, context) || (ts.forEachChild(inner, isMaking) ?? false);
+  const table = context.nodes;
+  const makers = context.makers;
+  const start = getPosition(table, node);
+  if (makers === undefined || start < 0) return getReached([node], context).some(isMaking);
+  if (holdsMaker(table, makers, start)) return true;
+  // The makers tell for each declaration that the node's names reach, but for those that reach
+  // one elsewhere.
+  const found = { isMaking: false, isElsewhere: false };
+  forEachReachedName(table, context.references, start, (declaration, position) => {
+    if (position < 0) {
+      if (!declaration.getSourceFile().isDeclarationFile) found.isElsewhere = true;
+    } else if (isReachBit(makers.makesObjects, position)) {
+      found.isMaking = true;
+    } else if (isReachBit(makers.reachesElsewhere, position)) {
+      found.isElsewhere = true;
+    }
+  });
+  return found.isMaking || (found.isElsewhere && getReached([node], context).some(isMaking));
 };
+
+// Whether a node itself makes an object: an object or a regexp literal, or a built-in that makes
+// one, which only a call or a new does.
+export const isMakingNode = (node: ts.Node, context: Context) =>
+  ts.isObjectLiteralExpression(node) ||
+  ts.isRegularExpressionLiteral(node) ||
+  ((ts.isCallExpression(node) || ts.isNewExpression(node)) && isAllocation(node, context));
 
 // Whether a call gives a new object each time: Array(...), or a callee that returns only object
 // literals, which nothing else can name, though the objects inside them may still be shared.

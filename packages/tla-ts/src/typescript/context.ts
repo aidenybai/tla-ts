@@ -22,7 +22,7 @@ import { getKeptReads } from "./narrowing";
 import { mayThrow } from "./functions";
 import { findGetterKeys, findWrittenFunctions, getGetterKeys, isProxyOperation } from "./protocols";
 import type { ChangeTable } from "./change-summaries";
-import { createReachGraph, type ReachGraph } from "./reach-graph";
+import { createReachGraph, type Makers, type ReachGraph } from "./reach-graph";
 import type { Namespace } from "./namespaces";
 import {
   createReferences,
@@ -121,6 +121,9 @@ export interface Context {
   references: References;
   // What each declaration that a name names reaches by name.
   reachGraph: ReachGraph;
+  // Which declarations may make objects, as isMakingObjects tells, where the heap is as it is now:
+  // found once as the context is made, and again once the heap is known.
+  makers: Makers | undefined;
   // The assignments of the program's files, by the symbols of the names they write.
   writes: References;
   // The keys that each of the program's files defines getters under, by the file's index.
@@ -646,6 +649,7 @@ export const createContext = (
     nodes,
     references,
     reachGraph: createReachGraph(nodes, references),
+    makers: undefined,
     writes: createWrites(nodes, references),
     getterKeys: files.map(findGetterKeys),
     calledOnce: new Uint8Array(nodes.nodes.length),
