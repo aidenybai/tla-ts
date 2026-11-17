@@ -225,6 +225,11 @@ export class OptContext {
     return pareto;
   }
 
+  getReasonUnknown() {
+    if (this.reasonUnknown !== "") return this.reasonUnknown;
+    return (this.satSolver ?? this.optSolver)?.reasonUnknown ?? "unknown";
+  }
+
   optimize(hard: readonly number[], options: OptOptions) {
     if (this.pareto !== null) return this.executePareto();
     if (this.boxIndex !== -1) {

@@ -8,7 +8,7 @@ import type { KernelParams } from "./solver";
 export class SmtKernel {
   readonly context: Context;
   private asserted: AssertedFormulas;
-  private isSetUp = false;
+  isSetUp = false;
   private setup: SmtSetup | undefined;
 
   constructor(manager: AstManager, params: KernelParams) {
@@ -19,6 +19,13 @@ export class SmtKernel {
       relevancyLevel: params.relevancyLevel ?? 2,
     });
     this.setup = params.setup;
+  }
+
+  // As in Z3, a kernel not yet set up reads auto_config again.
+  updateParams(params: KernelParams) {
+    if (!this.isSetUp) this.setup = params.setup;
+    this.context.updateParams(params);
+    this.asserted.updateParams(this.context.config);
   }
 
   private setupContext(isUsingStaticFeatures: boolean) {

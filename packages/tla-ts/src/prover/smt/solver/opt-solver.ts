@@ -129,6 +129,10 @@ export class OptSolver {
     return this.kernel.context.unsatCore;
   }
 
+  get reasonUnknown() {
+    return this.kernel.context.getLastFailureMessage();
+  }
+
   findMutexes(vars: readonly number[]) {
     const mutexes = this.kernel.context.findMutexes(vars);
     for (const mutex of mutexes) for (const literal of mutex) this.pinned.push(literal);

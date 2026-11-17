@@ -673,6 +673,174 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
     ]);
   });
 
+  // opt::context::reason_unknown asks the solver that optimized: opt_solver's kernel, or the sat
+  // solver of a finite-domain maxsat problem.
+  it("prints the reason of the solver that optimized", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(assert (> x 3))",
+        "(minimize x)",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+        "(assert (< x 2))",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+      ]),
+    ).toEqual(["sat", '(:reason-unknown "unknown")', "unsat", '(:reason-unknown "unknown")']);
+    expect(
+      run([
+        "(declare-const a Bool)",
+        "(declare-const b Bool)",
+        "(assert (or a b))",
+        "(assert-soft (not a))",
+        "(assert-soft (not b))",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+      ]),
+    ).toEqual(["sat", '(:reason-unknown "no reason given")']);
+  });
+
+  it("prints the reason of an optimization that timed out", () => {
+    expect(
+      run(
+        [
+          ...getPigeonholeLines(11),
+          "(declare-const k Int)",
+          "(assert (>= k 0))",
+          "(minimize k)",
+          "(check-sat)",
+          "(get-info :reason-unknown)",
+        ],
+        200,
+      ),
+    ).toEqual(["unknown", '(:reason-unknown "canceled")']);
+  });
+
+  it("prints the reason and the core of get-consequences on the finite-domain solver", () => {
+    expect(
+      run([
+        "(set-option :produce-unsat-cores true)",
+        "(set-logic QF_FD)",
+        "(declare-const a Bool)",
+        "(declare-const b Bool)",
+        "(declare-const c Bool)",
+        "(assert (=> a b))",
+        "(get-consequences (a) (a b c))",
+        "(get-info :reason-unknown)",
+        "(assert (not b))",
+        "(get-consequences (a c) (a b c))",
+        "(get-unsat-core)",
+        "(get-info :reason-unknown)",
+      ]),
+    ).toEqual([
+      "sat",
+      "",
+      "(=> a a)",
+      "(=> a b)",
+      '(:reason-unknown "no reason given")',
+      "unsat",
+      "",
+      "(a)",
+      '(:reason-unknown "no reason given")',
+    ]);
+  });
+
+  // The reason is left out: Z3 gives canceled when the sat solver throws at a checkpoint, and no
+  // reason when its search stops first.
+  it("answers unknown when the finite-domain solver stops in get-consequences", () => {
+    expect(
+      run([
+        "(set-option :rlimit 20000)",
+        "(set-logic QF_FD)",
+        ...getPigeonholeLines(11),
+        "(get-consequences () (p0_0))",
+      ]),
+    ).toEqual(["unknown", ""]);
+  });
+
+  it("runs the commands after a check that timed out", () => {
+    expect(
+      run(
+        [
+          ...getPigeonholeLines(11),
+          "(check-sat)",
+          "(push)",
+          "(assert false)",
+          "(check-sat)",
+          "(pop)",
+          "(simplify (and p0_0 (or p0_0 p1_0)))",
+          "(reset-assertions)",
+          "(check-sat)",
+          "(eval (or p0_0 (not p0_0)))",
+        ],
+        200,
+      ),
+    ).toEqual(["unknown", "unsat", "(and p0_0 (or p0_0 p1_0))", "sat", "true"]);
+  });
+
+  it("gives smt.mbqi to the incremental kernel that exists", () => {
+    expect(
+      run([
+        "(declare-fun f (Int) Int)",
+        "(assert (forall ((x Int)) (> (f x) 0)))",
+        "(push)",
+        "(check-sat)",
+        "(set-option :smt.mbqi false)",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+        "(set-option :smt.mbqi true)",
+        "(check-sat)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      "unknown",
+      '(:reason-unknown "(incomplete quantifiers)")',
+      "sat",
+      "(",
+      "  (define-fun f ((x!0 Int)) Int",
+      "    2)",
+      ")",
+    ]);
+  });
+
+  it("drops the mbqi of the logic's setup once an option is set", () => {
+    expect(
+      run([
+        "(set-logic AUFLIA)",
+        "(set-option :smt.mbqi false)",
+        "(declare-fun f (Int) Int)",
+        "(assert (forall ((x Int)) (> (f x) 0)))",
+        "(push)",
+        "(check-sat)",
+        "(set-option :smt.random_seed 0)",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+      ]),
+    ).toEqual(["sat", "unknown", '(:reason-unknown "(incomplete quantifiers)")']);
+  });
+
+  it("finds macros once smt.macro_finder is set, but not for functions already asserted", () => {
+    expect(
+      run([
+        "(set-option :smt.mbqi false)",
+        "(declare-fun f (Int) Int)",
+        "(declare-fun g (Int) Int)",
+        "(assert (= (g 0) 5))",
+        "(push)",
+        "(set-option :smt.macro_finder true)",
+        "(assert (forall ((x Int)) (= (f x) (+ x 1))))",
+        "(assert (forall ((x Int)) (= (g x) (+ x 1))))",
+        "(check-sat)",
+        "(pop)",
+        "(push)",
+        "(assert (forall ((x Int)) (= (f x) (+ x 1))))",
+        "(check-sat)",
+      ]),
+    ).toEqual(["unsat", "sat"]);
+  });
+
   // mk_fm_tactic is and_then(simplify, fm), and and_then stops at a decided goal.
   it("skips fm once simplify has decided the goal", () => {
     expect(
