@@ -762,6 +762,18 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
     ).toEqual(["unknown", '(:reason-unknown "canceled")']);
   });
 
+  it("reports the limit that stops a push of ctx-solver-simplify as its reason", () => {
+    expect(
+      run([
+        "(set-option :rlimit 1)",
+        "(declare-const x Int)",
+        "(assert (> x 0))",
+        "(check-sat-using ctx-solver-simplify)",
+        "(get-info :reason-unknown)",
+      ]),
+    ).toEqual(["unknown", '(:reason-unknown "push canceled")']);
+  });
+
   // The time limit is Z3's soft timeout: check-sat gives every solver the reason timeout, which
   // the smt kernel keeps for its later checks and reports while its last search did not fail.
   it("prints the reason of a check that timed out", () => {

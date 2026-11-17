@@ -1,4 +1,4 @@
-import { SmtCanceledError } from "../../../errors";
+import { SmtDefaultError } from "../../../errors";
 import { type AstManager } from "./ast";
 import type { SmtSetup } from "./smt-setup";
 import { AssertedFormulas } from "./asserted-formulas";
@@ -62,7 +62,7 @@ export class SmtKernel {
     const wasConsistent = !context.isInconsistent();
     context.internalizeAssertions(this.asserted);
     const limit = context.manager.limit;
-    if (!limit.inc()) throw new SmtCanceledError();
+    if (!limit.inc()) throw new SmtDefaultError("push canceled");
     const wasSuspended = limit.isSuspended;
     limit.isSuspended = true;
     if (!context.isInconsistent()) context.propagate();
