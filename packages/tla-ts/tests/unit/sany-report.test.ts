@@ -167,6 +167,25 @@ Spec == Init /\\ [][Next]_x
     );
   });
 
+  it("reports an @ fact as an unknown operator as SANY does", () => {
+    const report = getReport({ M: "---- MODULE M ----\nUSE @\nTHEOREM TRUE\nBY @\n====\n" });
+    expect(report.text).toBe(
+      joinLines([
+        "Semantic errors:",
+        "",
+        "*** Errors: 2",
+        "",
+        ...["line 2, col 5 to line 2, col 5", "line 4, col 4 to line 4, col 4"].flatMap((range) => [
+          `${range} of module M`,
+          "",
+          "Unknown operator: `@'.",
+          "",
+          "",
+        ]),
+      ]),
+    );
+  });
+
   it("parses a module once the module that names it reaches it, though another loaded it", () => {
     const report = getReport(
       {

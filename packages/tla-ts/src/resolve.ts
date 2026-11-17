@@ -1388,6 +1388,13 @@ const resolveExpression = (
 
 const checkFacts = (facts: Fact[], scope: LocalName | undefined, unit: Unit) =>
   facts.forEach((fact) => {
+    if (fact.kind === "ExceptAt" && fact.location.range) {
+      unit.errors.push({
+        location: formatRange(fact.location.range),
+        message: "Unknown operator: `@'.",
+      });
+      return;
+    }
     if (
       fact.kind === "ModuleFact" ||
       isInstanceArityReported(fact, scope, unit) ||

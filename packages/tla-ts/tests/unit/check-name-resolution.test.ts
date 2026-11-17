@@ -1861,6 +1861,30 @@ describe("name resolution matches SANY", () => {
     );
   });
 
+  it("reports an @ fact as an unknown operator like SANY", async () => {
+    await expect(checkNames("USE @\nTHEOREM TRUE\nBY @\nHIDE @")).rejects.toThrow(
+      createSanyError([
+        {
+          location: "line 2, col 5 to line 2, col 5 of module M",
+          message: "Unknown operator: `@'.",
+        },
+        {
+          location: "line 4, col 4 to line 4, col 4 of module M",
+          message: "Unknown operator: `@'.",
+        },
+        {
+          location: "line 5, col 6 to line 5, col 6 of module M",
+          message: "Unknown operator: `@'.",
+        },
+        {
+          location: "In module --TLA+ BUILTINS--",
+          message:
+            "The only expression allowed as a fact in a HIDE is \nthe name of a theorem, assumption, or step.",
+        },
+      ]),
+    );
+  });
+
   it("reports HIDE facts that name no theorem, assumption or step like SANY", async () => {
     const message =
       "The only expression allowed as a fact in a HIDE is \nthe name of a theorem, assumption, or step.";

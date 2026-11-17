@@ -108,9 +108,11 @@ const getFactModules = (generation: ModuleGeneration, fact: Fact & { kind: "Modu
 const generateFacts = (generation: ModuleGeneration, facts: Fact[]) =>
   facts.flatMap((fact): FactNode[] => {
     if (fact.kind === "ModuleFact") return getFactModules(generation, fact);
-    const items = getSelectorItems(fact);
+    const reference: Expression =
+      fact.kind === "ExceptAt" ? { kind: "Identifier", name: "@", location: fact.location } : fact;
+    const items = getSelectorItems(reference);
     if (items === undefined || !isGeneralId(items)) return [generateExpression(generation, fact)];
-    const node = generateSelector(generation, fact, 0, true, false);
+    const node = generateSelector(generation, reference, 0, true, false);
     if (node.kind === "ThmOrAssumpDef") throw new TlaSyntaxError("Expected a fact");
     return [node];
   });
