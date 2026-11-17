@@ -282,6 +282,8 @@ const getProjectOptions = (options: ts.CompilerOptions): ts.CompilerOptions => (
   declarationMap: false,
   emitDeclarationOnly: false,
   isolatedDeclarations: false,
+  // An option that TypeScript deprecates still works as it did, and Node reads none of them.
+  ignoreDeprecations: "6.0",
 });
 
 // Type checks a model, with the files it imports, and throws their type errors. A file of a project

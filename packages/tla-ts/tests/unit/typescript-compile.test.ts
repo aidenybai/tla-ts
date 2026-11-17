@@ -49305,4 +49305,18 @@ describe("BigInts", () => {
       ).toThrow("tla-ts can't make a module's namespace object outside a script");
     });
   });
+
+  describe("compiles a project whose options TypeScript deprecates", () => {
+    const path = join(import.meta.dirname, "../fixtures/typescript/projects/legacy/main.ts");
+    const source = readFileSync(path, "utf8");
+
+    it("agrees with Node", async () => {
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      const wrong = source.replace('"2,4,6"', '"2,4"');
+      await expect(check(compile(wrong, path))).rejects.toThrow("seen 2,4,6");
+    });
+  });
 });
