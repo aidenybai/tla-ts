@@ -798,6 +798,7 @@ export class AstManager {
     this.declRefCounts[decl] = 1;
     this.mkSmallId();
     this.macros.set(decl, expr);
+    return decl;
   }
 
   // recfun::def: the declaration of a defined function, which the definition holds.

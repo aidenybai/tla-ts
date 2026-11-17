@@ -1,6 +1,7 @@
 import {
   SmtCanceledError,
   SmtParseError,
+  SmtSetupError,
   SmtTacticError,
   SmtUnsupportedError,
 } from "../../../errors";
@@ -87,6 +88,7 @@ import { LOGIC_TACTICS, QFAUFBV, QFUFBV_ACKR_PREAMBLE } from "./logic-tactics";
 import {
   createCommandReader,
   isSymbol,
+  isUnsigned,
   type SExpr,
   type SmtList,
   type SmtToken,
@@ -1213,7 +1215,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
         const manager = environment.manager;
         const preamble = createCommandReader(QFUFBV_ACKR_PREAMBLE).read() as SmtList;
         return runAndThen(
-          compile(environment, preamble, preamble.end, true).build(params),
+          compile(environment, preamble, true).build(params),
           runCond(
             isQfufbv,
             createQfufbvAckrTactic(manager, getRewriterOptions(manager, new Map()), true, () =>
@@ -1398,8 +1400,8 @@ const UNPORTED_TACTICS = new Set(
   ).split(" "),
 );
 
-const isUnsigned = (sexpr: SExpr | undefined): sexpr is SmtToken =>
-  sexpr?.kind === "numeral" && BigInt(sexpr.text) <= BigInt(UINT_MAX);
+const isUnsignedNumeral = (sexpr: SExpr | undefined): sexpr is SmtToken =>
+  sexpr?.kind === "numeral" && isUnsigned(sexpr.text);
 
 const getParamName = (keyword: string) =>
   keyword.replace(/^:/, "").toLowerCase().replaceAll("-", "_");
@@ -1420,7 +1422,7 @@ const parseParamValue = (kind: number, value: SExpr) =>
   kind === PARAM_BOOL
     ? isSymbol(value, "true") || (isSymbol(value, "false") ? false : undefined)
     : kind === PARAM_UINT
-      ? isUnsigned(value)
+      ? isUnsignedNumeral(value)
         ? Number(value.text)
         : undefined
       : kind === PARAM_NUMERAL
@@ -1449,27 +1451,33 @@ const checkParams = (descrs: ParamDescrs, params: TacticParams) => {
   }
 };
 
+// sexpr2tactic reports an error at the s-expression: a list at its closing parenthesis.
+const getSexprPosition = (sexpr: SExpr) => (sexpr.kind === "list" ? sexpr.end : sexpr);
+
 const getParams = (
   builder: TacticBuilder,
   items: SExpr[],
-  end: SmtToken,
   isInternal: boolean,
 ): Map<string, TacticParam> => {
   const params = new Map<string, TacticParam>();
   for (let index = 2; index < items.length; index += 2) {
     const keyword = items[index];
     if (keyword.kind !== "keyword")
-      throw new SmtParseError("invalid using-params combinator, keyword expected", end);
+      throw new SmtParseError(
+        "invalid using-params combinator, keyword expected",
+        getSexprPosition(keyword),
+      );
     const value = items[index + 1];
     if (value === undefined)
-      throw new SmtParseError("invalid using-params combinator, parameter value expected", end);
+      throw new SmtParseError("invalid using-params combinator, parameter value expected", keyword);
     const found = findParam(builder.descrs, getParamName(keyword.text));
     if (isInternal) {
       const parsed =
         found === undefined
           ? getUntypedParamValue(value)
           : parseParamValue(found.descr.kind, value);
-      if (parsed === undefined) throw new SmtParseError("invalid parameter value", end);
+      if (parsed === undefined)
+        throw new SmtParseError("invalid parameter value", getSexprPosition(value));
       params.set(found?.name ?? getParamName(keyword.text), parsed);
       continue;
     }
@@ -1478,7 +1486,7 @@ const getParams = (
         throw new SmtUnsupportedError(`the parameter ${keyword.text} of the tactic`);
       throw new SmtParseError(
         `invalid using-params combinator, unknown parameter ${getParamName(keyword.text)}`,
-        end,
+        getSexprPosition(value),
       );
     }
     const parsed = parseParamValue(found.descr.kind, value);
@@ -1491,7 +1499,7 @@ const getParams = (
             : found.descr.kind === PARAM_NUMERAL
               ? "invalid parameter value, numeral expected"
               : "invalid parameter value, symbol expected",
-        end,
+        getSexprPosition(value),
       );
     if (isUnportedParam(found.descr, parsed))
       throw new SmtUnsupportedError(`the parameter ${found.name} of the tactic`);
@@ -1572,22 +1580,21 @@ const runRepeat = (tactic: Tactic, maxDepth: number) => {
 const runCond = (probe: Probe, onTrue: Tactic, onFalse: Tactic) => (goal: Goal) =>
   probe(goal) === 0 ? onFalse(goal) : onTrue(goal);
 
-const checkHasArgument = (list: SmtList, combinator: string, end: SmtToken) => {
+const checkHasArgument = (list: SmtList, combinator: string) => {
   if (list.items.length < 2)
     throw new SmtParseError(
       `invalid ${combinator} combinator, at least one argument expected`,
-      end,
+      list.end,
     );
 };
 
 const compile = (
   environment: TacticEnvironment,
   sexpr: SExpr,
-  end: SmtToken,
   isInternal: boolean,
 ): TacticBuilder => {
   if (sexpr.kind !== "list") {
-    if (!isSymbol(sexpr)) throw new SmtParseError("invalid tactic, unexpected input", end);
+    if (!isSymbol(sexpr)) throw new SmtParseError("invalid tactic, unexpected input", sexpr);
     const named = NAMED_TACTICS.get(sexpr.text);
     if (named !== undefined)
       return {
@@ -1605,7 +1612,7 @@ const compile = (
       };
     const strategy = LOGIC_TACTICS.get(sexpr.text);
     if (strategy !== undefined)
-      return compile(environment, createCommandReader(strategy).read() as SmtList, end, true);
+      return compile(environment, createCommandReader(strategy).read() as SmtList, true);
     if (UNPORTED_TACTICS.has(sexpr.text)) {
       const error = new SmtUnsupportedError(`the tactic ${sexpr.text}`);
       if (!isInternal) throw error;
@@ -1618,14 +1625,14 @@ const compile = (
         },
       };
     }
-    throw new SmtParseError(`invalid tactic, unknown tactic ${sexpr.text}`, end);
+    throw new SmtParseError(`invalid tactic, unknown tactic ${sexpr.text}`, sexpr);
   }
   const head = sexpr.items[0];
-  if (head === undefined) throw new SmtParseError("invalid tactic, arguments expected", end);
-  if (!isSymbol(head)) throw new SmtParseError("invalid tactic, symbol expected", end);
+  if (head === undefined) throw new SmtParseError("invalid tactic, arguments expected", sexpr.end);
+  if (!isSymbol(head)) throw new SmtParseError("invalid tactic, symbol expected", sexpr.end);
   const compileChildren = (combinator: string) => {
-    checkHasArgument(sexpr, combinator, end);
-    return sexpr.items.slice(1).map((child) => compile(environment, child, end, isInternal));
+    checkHasArgument(sexpr, combinator);
+    return sexpr.items.slice(1).map((child) => compile(environment, child, isInternal));
   };
   switch (head.text) {
     case "then":
@@ -1675,27 +1682,27 @@ const compile = (
     // The timeout is not ported, so the child runs to the end.
     case "try-for": {
       if (sexpr.items.length !== 3)
-        throw new SmtParseError("invalid try-for combinator, two arguments expected", end);
-      if (!isUnsigned(sexpr.items[2]))
+        throw new SmtParseError("invalid try-for combinator, two arguments expected", sexpr.end);
+      if (!isUnsignedNumeral(sexpr.items[2]))
         throw new SmtParseError(
           "invalid try-for combinator, second argument must be an unsigned integer",
-          end,
+          sexpr.end,
         );
-      return compile(environment, sexpr.items[1], end, isInternal);
+      return compile(environment, sexpr.items[1], isInternal);
     }
     case "fail-if-branching": {
       if (sexpr.items.length !== 3 && sexpr.items.length !== 2)
         throw new SmtParseError(
           "invalid fail-if-branching combinator, one or two arguments expected",
-          end,
+          sexpr.end,
         );
       const bound = sexpr.items[2];
-      if (bound !== undefined && !isUnsigned(bound))
+      if (bound !== undefined && !isUnsignedNumeral(bound))
         throw new SmtParseError(
           "invalid fail-if-branching combinator, second argument must be an unsigned integer",
-          end,
+          sexpr.end,
         );
-      const child = compile(environment, sexpr.items[1], end, isInternal);
+      const child = compile(environment, sexpr.items[1], isInternal);
       const threshold = bound === undefined ? 1 : Number(bound.text);
       return {
         ...mergeDescrs([child]),
@@ -1713,8 +1720,11 @@ const compile = (
     case "if-no-unsat-cores":
     case "if-no-models": {
       if (sexpr.items.length !== 2)
-        throw new SmtParseError(`invalid ${head.text} combinator, one argument expected`, end);
-      const child = compile(environment, sexpr.items[1], end, isInternal);
+        throw new SmtParseError(
+          `invalid ${head.text} combinator, one argument expected`,
+          sexpr.end,
+        );
+      const child = compile(environment, sexpr.items[1], isInternal);
       const isSkipping = (goal: Goal) =>
         head.text === "if-no-models" ||
         (head.text === "if-no-proofs" ? goal.isProofsEnabled : goal.isCoresEnabled);
@@ -1728,14 +1738,17 @@ const compile = (
     }
     case "repeat": {
       if (sexpr.items.length !== 3 && sexpr.items.length !== 2)
-        throw new SmtParseError("invalid repeat combinator, one or two arguments expected", end);
+        throw new SmtParseError(
+          "invalid repeat combinator, one or two arguments expected",
+          sexpr.end,
+        );
       const bound = sexpr.items[2];
-      if (bound !== undefined && !isUnsigned(bound))
+      if (bound !== undefined && !isUnsignedNumeral(bound))
         throw new SmtParseError(
           "invalid repeat combinator, second argument must be an unsigned integer",
-          end,
+          sexpr.end,
         );
-      const child = compile(environment, sexpr.items[1], end, isInternal);
+      const child = compile(environment, sexpr.items[1], isInternal);
       const maxDepth = bound === undefined ? UINT_MAX : Number(bound.text);
       return {
         ...mergeDescrs([child]),
@@ -1745,10 +1758,10 @@ const compile = (
     case "!":
     case "using-params":
     case "with": {
-      checkHasArgument(sexpr, "using-params", end);
-      const child = compile(environment, sexpr.items[1], end, isInternal);
+      checkHasArgument(sexpr, "using-params");
+      const child = compile(environment, sexpr.items[1], isInternal);
       if (sexpr.items.length === 2) return child;
-      const own = getParams(child, sexpr.items, end, isInternal);
+      const own = getParams(child, sexpr.items, isInternal);
       return {
         ...mergeDescrs([child]),
         build: (params) => child.build(new Map([...params, ...own])),
@@ -1756,8 +1769,11 @@ const compile = (
     }
     case "skip-if-failed": {
       if (sexpr.items.length !== 2)
-        throw new SmtParseError("invalid skip-if-failed combinator, one argument expected", end);
-      const child = compile(environment, sexpr.items[1], end, isInternal);
+        throw new SmtParseError(
+          "invalid skip-if-failed combinator, one argument expected",
+          sexpr.end,
+        );
+      const child = compile(environment, sexpr.items[1], isInternal);
       return {
         ...mergeDescrs([child]),
         build: (params) => runOrElse([child.build(params), (goal) => [goal]]),
@@ -1767,11 +1783,12 @@ const compile = (
     case "ite":
     case "cond": {
       if (sexpr.items.length !== 4)
-        throw new SmtParseError("invalid if/conditional combinator, three arguments expected", end);
-      const probe = compileProbe(sexpr.items[1], end, isInternal);
-      const children = sexpr.items
-        .slice(2)
-        .map((child) => compile(environment, child, end, isInternal));
+        throw new SmtParseError(
+          "invalid if/conditional combinator, three arguments expected",
+          sexpr.end,
+        );
+      const probe = compileProbe(sexpr.items[1], isInternal);
+      const children = sexpr.items.slice(2).map((child) => compile(environment, child, isInternal));
       return {
         ...mergeDescrs(children),
         build: (params) => runCond(probe, children[0].build(params), children[1].build(params)),
@@ -1779,9 +1796,9 @@ const compile = (
     }
     case "when": {
       if (sexpr.items.length !== 3)
-        throw new SmtParseError("invalid when combinator, two arguments expected", end);
-      const probe = compileProbe(sexpr.items[1], end, isInternal);
-      const child = compile(environment, sexpr.items[2], end, isInternal);
+        throw new SmtParseError("invalid when combinator, two arguments expected", sexpr.end);
+      const probe = compileProbe(sexpr.items[1], isInternal);
+      const child = compile(environment, sexpr.items[2], isInternal);
       return {
         ...mergeDescrs([child]),
         build: (params) => runCond(probe, child.build(params), (goal) => [goal]),
@@ -1789,8 +1806,8 @@ const compile = (
     }
     case "fail-if": {
       if (sexpr.items.length !== 2)
-        throw new SmtParseError("invalid fail-if tactic, one argument expected", end);
-      const probe = compileProbe(sexpr.items[1], end, isInternal);
+        throw new SmtParseError("invalid fail-if tactic, one argument expected", sexpr.end);
+      const probe = compileProbe(sexpr.items[1], isInternal);
       return {
         descrs: new Map(),
         isRejectingUnknown: true,
@@ -1803,7 +1820,7 @@ const compile = (
     }
     case "echo": {
       if (sexpr.items.length < 2)
-        throw new SmtParseError("invalid echo tactic, must have at least one argument", end);
+        throw new SmtParseError("invalid echo tactic, must have at least one argument", sexpr.end);
       const pieces = sexpr.items.slice(1).map((piece, index, all): Tactic => {
         const newline = index === all.length - 1 ? "\n" : "";
         if (piece.kind === "string")
@@ -1811,7 +1828,7 @@ const compile = (
             environment.write(piece.text + newline, false);
             return [goal];
           };
-        const probe = compileProbe(piece, end, isInternal);
+        const probe = compileProbe(piece, isInternal);
         return (goal) => {
           environment.write(formatProbeValue(probe(goal)) + newline, true);
           return [goal];
@@ -1825,7 +1842,7 @@ const compile = (
       };
     }
     default:
-      throw new SmtParseError(`invalid tactic, unknown tactic combinator ${head.text}`, end);
+      throw new SmtParseError(`invalid tactic, unknown tactic combinator ${head.text}`, sexpr.end);
   }
 };
 
@@ -1873,12 +1890,12 @@ export const mkIncSatPreprocess = (manager: AstManager, bitBlaster: BitBlasterRe
     ),
   ].reduceRight((second, first) => runAndThen(first, second));
 
-export const compileTactic = (environment: TacticEnvironment, sexpr: SExpr, end: SmtToken) =>
-  compile(environment, sexpr, end, false);
+export const compileTactic = (environment: TacticEnvironment, sexpr: SExpr) =>
+  compile(environment, sexpr, false);
 
 export const compileInternalTactic = (environment: TacticEnvironment, text: string) => {
   const list = createCommandReader(`(${text})`).read() as SmtList;
-  return compile(environment, list.items[0], list.end, true).build(new Map());
+  return compile(environment, list.items[0], true).build(new Map());
 };
 
 interface TacticCheck {
@@ -1958,7 +1975,7 @@ export const checkSatUsing = (tactic: Tactic, goal: Goal): TacticCheck => {
     try {
       return tactic(goal);
     } catch (error) {
-      if (error instanceof SmtTacticError) return error.message;
+      if (error instanceof SmtTacticError || error instanceof SmtSetupError) return error.message;
       if (error instanceof SmtCanceledError) return undefined;
       throw error;
     }
@@ -1966,7 +1983,7 @@ export const checkSatUsing = (tactic: Tactic, goal: Goal): TacticCheck => {
   if (goals === undefined) return { ...undecided, reasonUnknown: undefined };
   if (typeof goals === "string") return { ...undecided, reasonUnknown: goals };
   if (isDecidedSat(goals)) {
-    const model = convertModel(goals[0], goals[0].model ?? new ProtoModel(goal.manager));
+    const model = convertModel(goals[0], goals[0].model ?? new ProtoModel(goal.manager).mkModel());
     return goal.manager.limit.inc()
       ? { status: L_TRUE, model, core: undefined, reasonUnknown: "" }
       : { ...undecided, model, reasonUnknown: "canceled" };

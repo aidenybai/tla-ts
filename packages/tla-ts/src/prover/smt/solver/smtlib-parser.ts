@@ -1,4 +1,4 @@
-import { SmtParseError, SmtUnsupportedError } from "../../../errors";
+import { SmtParseError, type SmtPosition, SmtUnsupportedError } from "../../../errors";
 import {
   type AstManager,
   getSymbolHash,
@@ -72,7 +72,7 @@ import {
   QUANTIFIER_LAMBDA,
 } from "./ast";
 import { getArraySignature, getMapSignature, mkAsArray } from "./array-decl-plugin";
-import { BV_OP_NAMES, getBvSignature } from "./bv-decl-plugin";
+import { BV_OP_NAMES, getBvSignature, getMismatchedArgument } from "./bv-decl-plugin";
 import {
   type ConstructorDef,
   type DatatypeDef,
@@ -586,6 +586,14 @@ const ARRAY_OPS = new Map([
 ]);
 const ARRAY_EXTENSION_OPS = new Map([["default", OP_ARRAY_DEFAULT]]);
 
+const isPortedTheoryOperator = (name: string) =>
+  BV_OP_NAMES.has(name) ||
+  FPA_OP_NAMES.has(name) ||
+  SEQ_OP_NAMES.has(name) ||
+  CHAR_OP_NAMES.has(name) ||
+  ARRAY_OPS.has(name) ||
+  ARRAY_EXTENSION_OPS.has(name);
+
 const UNARY_BOOL_REFS = new Map([["not", OP_NOT]]);
 const BINARY_BOOL_REFS = new Map([
   ["and", OP_AND],
@@ -640,7 +648,8 @@ const FF_LITERAL = /^#f-?[0-9]+m[0-9]+$/;
 const FF_LOGICS = new Set(["QF_FF", "QF_FFA", "ALL", "HO_ALL"]);
 
 // rational::is_unsigned of a numeral token.
-const isUnsigned = (numeral: string) => BigInt(numeral) >= 0n && BigInt(numeral) <= 0xffffffffn;
+export const isUnsigned = (numeral: string) =>
+  BigInt(numeral) >= 0n && BigInt(numeral) <= 0xffffffffn;
 
 const SYMBOL_CHARACTER = /[A-Za-z0-9~!@$%^&*_\-+=<>.?/,]/;
 
@@ -820,12 +829,28 @@ export const createCommandReader = (text: string) => {
       current = parent;
     }
   };
-  const read = (): SmtList | undefined => {
+  const readOpen = () => {
     const token = take();
     if (token === undefined) return undefined;
     if (token.kind !== "(") throw new SmtParseError("invalid command, '(' expected", token);
     state.depth = 1;
-    return readList(token);
+    return token;
+  };
+  const read = () => {
+    const open = readOpen();
+    return open === undefined ? undefined : readList(open);
+  };
+  // parse_cmd checks the head of a command before it reads the rest.
+  const readCommand = () => {
+    const open = readOpen();
+    if (open === undefined) return undefined;
+    state.lookahead = take();
+    if (!isSymbol(state.lookahead))
+      throw new SmtParseError(
+        "invalid command, symbol expected",
+        state.lookahead ?? scanner.getPosition(),
+      );
+    return readList(open);
   };
   const skip = (report: (error: SmtParseError) => void) => {
     for (;;) {
@@ -844,7 +869,7 @@ export const createCommandReader = (text: string) => {
       }
     }
   };
-  return { read, skip };
+  return { read, readCommand, skip };
 };
 
 export const isSymbol = (sexpr: SExpr | undefined, text?: string): sexpr is SmtToken =>
@@ -880,6 +905,10 @@ const expectList = (sexpr: SExpr | undefined, message: string, at: SExpr): SmtLi
 const expectSymbol = (sexpr: SExpr | undefined, message: string, at: SExpr): SmtToken => {
   if (!isSymbol(sexpr)) throw new SmtParseError(message, sexpr ?? at);
   return sexpr;
+};
+
+const expectEnd = (extra: SExpr | undefined, message: string) => {
+  if (extra !== undefined) throw new SmtParseError(message, extra);
 };
 
 export const createSmtlibReader = (
@@ -1075,7 +1104,11 @@ export const createSmtlibReader = (
     bindings: ReadonlyMap<string, number>,
   ): number => {
     const head = sexpr.items[0];
-    if (!isSymbol(head)) throw new SmtParseError("invalid sort, symbol or '_' expected", head);
+    if (!isSymbol(head))
+      throw new SmtParseError(
+        `${context === "" ? "" : `${context} `}invalid sort, symbol or '_' expected`,
+        head ?? sexpr.end,
+      );
     const isArray =
       ARRAY_SORT_NAMES.has(head.text) || (head.text === "Set" && restricted.hasSetSort);
     if (isArray && hasArrays) {
@@ -1569,13 +1602,15 @@ export const createSmtlibReader = (
 
   const mkBvApp = (name: string, args: number[], indices: number[], at: SExpr) => {
     const op = BV_OP_NAMES.get(name) ?? -1;
-    const signature = getBvSignature(
-      manager,
-      op,
-      args.map((arg) => manager.sorts[arg]),
-      indices,
-    );
+    const argSorts = args.map((arg) => manager.sorts[arg]);
+    const signature = getBvSignature(manager, op, argSorts, indices);
     if (typeof signature === "string") throw new SmtParseError(signature, at);
+    const mismatched = getMismatchedArgument(signature, argSorts);
+    if (mismatched !== -1)
+      throw new SmtParseError(
+        `Argument ${printExpr(manager, { options: DEFAULT_PRINT_OPTIONS, isUsed, isClashing }, args[mismatched])} at position ${mismatched} has sort ${manager.getSortName(argSorts[mismatched])} it does not match declaration (declare-fun ${signature.name} (${signature.domain.map((sort) => manager.getSortName(sort)).join(" ")}) ${manager.getSortName(signature.range)})`,
+        at,
+      );
     const decl = manager.mkBvDecl(op, signature.name, indices, signature.domain, signature.range);
     return manager.mkApp(decl, args, signature.range);
   };
@@ -1857,18 +1892,19 @@ export const createSmtlibReader = (
     const sort = parseQualifierSort(list);
     const target = list.items[1];
     const local = isSymbol(target) ? locals.get(target.text) : undefined;
-    if (isSymbol(target) && local === undefined)
-      return hasArrays && target.text === "const"
-        ? mkArrayTerm(OP_CONST_ARRAY, [], [sort], at)
-        : parseApp(target, [], at, [], sort);
+    if (isSymbol(target) && local === undefined && hasArrays && target.text === "const")
+      return mkArrayTerm(OP_CONST_ARRAY, [], [sort], at);
+    // A macro takes no range, so check_qualifier catches the sort of the term it stands for.
     const term =
-      local === undefined
-        ? parseIndexedTerm(
-            expectList(target, "invalid indexed identifier, '_' expected", list),
-            at,
-            sort,
-          )
-        : getLocalTerm(local);
+      local !== undefined
+        ? getLocalTerm(local)
+        : isSymbol(target)
+          ? parseApp(target, [], at, [], sort)
+          : parseIndexedTerm(
+              expectList(target, "invalid indexed identifier, '_' expected", list),
+              at,
+              sort,
+            );
     if (manager.sorts[term] !== sort)
       throw new SmtParseError(
         `sort mismatch in qualified identifier, expected: ${manager.getSortName(sort)}, got: ${manager.getSortName(manager.sorts[term])}`,
@@ -2163,10 +2199,15 @@ export const createSmtlibReader = (
     const transcendentalOp = isTranscendental ? TRANSCENDENTAL_OPS.get(builtin) : undefined;
     if (isTranscendental && transcendentalOp === undefined)
       throw new SmtUnsupportedError(`the operator ${name}`);
-    const named =
+    const builtinOp =
       builtin === "~"
         ? OP_UMINUS
         : (CHAINABLE_OPS.get(builtin) ?? BUILTIN_OPS.get(builtin) ?? transcendentalOp);
+    // load_plugin registers the operators of arithmetic only for a logic that has it.
+    const named =
+      builtinOp !== undefined && manager.funcDecls[builtinOp].family === FAMILY_ARITH && !hasArith
+        ? undefined
+        : builtinOp;
     if (
       args.length === 0 &&
       named !== undefined &&
@@ -2177,7 +2218,17 @@ export const createSmtlibReader = (
     const op = named === OP_SUB && args.length === 1 ? OP_UMINUS : named;
     const domainSort = op === undefined ? -1 : getDomainSort(op, args, at);
     if (op !== undefined && domainSort !== -1) return mkApp(op, args, at, domainSort);
-    if (op === undefined && (THEORY_OPERATOR.test(name) || THEORY_OPERATORS.has(name)))
+    if (
+      op === undefined &&
+      !isPortedTheoryOperator(name) &&
+      ((THEORY_OPERATOR.test(name) &&
+        (name.startsWith("bv")
+          ? hasBv
+          : name.startsWith("fp.")
+            ? hasFpa
+            : name.startsWith("ff.") || hasSeq)) ||
+        THEORY_OPERATORS.has(name))
+    )
       throw new SmtUnsupportedError(`the operator ${name}`);
     const instance = mkDatatypeInstanceApp(name, args, at);
     if (instance !== undefined) return instance;
@@ -2234,7 +2285,7 @@ export const createSmtlibReader = (
     manager.incRef(expr);
     lastNamed.name = name;
     lastNamed.expr = expr;
-    manager.mkMacro(name, expr);
+    declare(funcs, name, [...(funcs.get(name) ?? []), manager.mkMacro(name, expr)]);
     declare(macros, name, { domain: [], range: manager.sorts[expr], body: expr });
   };
 
@@ -2918,14 +2969,13 @@ export const createSmtlibReader = (
       name,
     );
     const body = parseDatatypeBody(bodyList, new Map([[name.text, 0]]), missing, list);
-    if (list.items.length > 3)
-      throw new SmtParseError("invalid end of datatype declaration, ')' expected", list.items[3]);
     commitDatatypes(
       [mkDatatypeDef(manager, name.text, body.parameters, body.constructors)],
       missing,
       name,
-      list.end,
+      list.items[3] ?? list.end,
     );
+    expectEnd(list.items[3], "invalid end of datatype declaration, ')' expected");
   };
 
   // parse_rec_fun_decl: the variables are bound only while the range is parsed, and Z3 holds them
@@ -2990,6 +3040,7 @@ export const createSmtlibReader = (
       const decl = declareRecFun(list.items.slice(1), list.end);
       insertFunc(decl, list.items[4] ?? list.end);
       defineRecFun(decl, list.items[2], list.items[4] ?? list.end, list.items[5] ?? list.end);
+      expectEnd(list.items[5], "invalid function/constant definition, ')' expected");
       shrinkRefs(exprStack, 0);
       return;
     }
@@ -3018,9 +3069,11 @@ export const createSmtlibReader = (
           bodies.items[index + 1] ?? bodies.end,
         );
       });
-      const extra = bodies.items[signatures.length];
-      if (extra !== undefined)
-        throw new SmtParseError("invalid recursive function definition, ')' expected", extra);
+      expectEnd(
+        bodies.items[signatures.length],
+        "invalid recursive function definition, ')' expected",
+      );
+      expectEnd(list.items[3], "invalid function/constant definition, ')' expected");
       shrinkRefs(exprStack, 0);
       return;
     }
@@ -3042,8 +3095,6 @@ export const createSmtlibReader = (
           "invalid sort declaration, arity (<numeral>) or ')' expected",
           arity,
         );
-      if (list.items.length > 3)
-        throw new SmtParseError("invalid sort declaration, ')' expected", list.items[3]);
       declare(
         sortDecls,
         symbol.text,
@@ -3051,6 +3102,7 @@ export const createSmtlibReader = (
           ? { kind: "sort", sort: manager.mkSort(symbol.text) }
           : { kind: "user", name: symbol.text, arity: Number(arity.text) },
       );
+      expectEnd(list.items[3], "invalid sort declaration, ')' expected");
       return;
     }
     if (name === "define-sort") {
@@ -3064,6 +3116,7 @@ export const createSmtlibReader = (
       const body = list.items[3] ?? list.end;
       checkPsort(body, bindTypeParameters(parameters));
       declare(sortDecls, symbol.text, { kind: "definition", parameters, body });
+      expectEnd(list.items[4], "invalid sort definition, ')' expected");
       return;
     }
     if (name === "define-fun" || name === "define-const") {
@@ -3078,16 +3131,23 @@ export const createSmtlibReader = (
       runTerm(list.items[isConst ? 3 : 4] ?? list.end, false);
       const body = exprStack[exprStack.length - 1];
       if (!isConst) unbindSortedVars(bound.varSorts.length);
+      const extra = list.items[isConst ? 4 : 5];
       if (manager.sorts[body] !== range)
         throw new SmtParseError(
           isConst
             ? "invalid constant definition, sort mismatch"
             : "invalid function/constant definition, sort mismatch",
-          list.end,
+          extra ?? list.end,
         );
       manager.incRef(body);
       declare(macros, symbol.text, { domain: bound.varSorts, range, body });
       defineMacroFunc(symbol.text, bound.varSorts, body);
+      expectEnd(
+        extra,
+        isConst
+          ? "invalid constant definition, ')' expected"
+          : "invalid function/constant definition, ')' expected",
+      );
       shrinkRefs(exprStack, 0);
       return;
     }
@@ -3103,33 +3163,43 @@ export const createSmtlibReader = (
       for (const domainVar of vars) manager.decRef(domainVar);
     }
     const decl = manager.mkFuncDecl(symbol.text, domain, range);
-    checkDecl(decl, list.end);
+    const extra = list.items[name === "declare-fun" ? 4 : 3];
+    checkDecl(decl, extra ?? list.end);
     if (macros.has(symbol.text))
       throw new SmtUnsupportedError(`the overloaded symbol ${symbol.text}`);
     const existing = funcs.get(symbol.text) ?? [];
     if (existing.some((other) => hasSignature(other, domain, range)))
       throw new SmtParseError(
         `invalid declaration, ${domain.length === 0 ? "constant" : "function"} '${symbol.text}' (with the given signature) already declared`,
-        list.end,
+        extra ?? list.end,
       );
     declare(funcs, symbol.text, [...existing, decl]);
+    expectEnd(
+      extra,
+      name === "declare-fun"
+        ? "invalid function declaration, ')' expected"
+        : "invalid constant declaration, ')' expected",
+    );
   };
 
-  // The caller takes the reference of the stack.
-  const parseFormula = (sexpr: SExpr) => {
+  // The caller takes the stack's reference. Z3 reports a non-Boolean term at the token after it.
+  const parseFormula = (
+    sexpr: SExpr,
+    follower: SmtPosition,
+    message = "invalid assert command, term is not Boolean",
+  ) => {
     runTerm(sexpr, false);
     const assertion = exprStack[exprStack.length - 1];
-    if (manager.sorts[assertion] !== SORT_BOOL)
-      throw new SmtParseError("invalid assert command, term is not Boolean", sexpr);
+    if (manager.sorts[assertion] !== SORT_BOOL) throw new SmtParseError(message, follower);
     exprStack.pop();
     return assertion;
   };
 
   // An assertion is named when the last name of its term is its own.
-  const parseAssertion = (sexpr: SExpr) => {
+  const parseAssertion = (sexpr: SExpr, follower: SmtPosition) => {
     releasePending();
     lastNamed.expr = -1;
-    const formula = parseFormula(sexpr);
+    const formula = parseFormula(sexpr, follower);
     return { formula, name: lastNamed.expr === formula ? lastNamed.name : undefined };
   };
 
@@ -3275,7 +3345,10 @@ export const parseSmtlib = (
       state.reader.declareCommand(list);
     } else if (name === "assert") {
       state.isInUse = true;
-      const assertion = state.reader.parseFormula(list.items[1] ?? list.end);
+      const assertion = state.reader.parseFormula(
+        list.items[1] ?? list.end,
+        list.items[2] ?? list.end,
+      );
       const logicError = state.reader.getLogicError(assertion);
       if (logicError !== undefined) {
         manager.decRef(assertion);
@@ -3288,7 +3361,7 @@ export const parseSmtlib = (
   };
   for (;;) {
     try {
-      const list = commands.read();
+      const list = commands.readCommand();
       if (list === undefined) return { assertions, hasCheckSat: false, rlimit: state.rlimit };
       if (isSymbol(list.items[0], "check-sat"))
         return { assertions, hasCheckSat: true, rlimit: state.rlimit };

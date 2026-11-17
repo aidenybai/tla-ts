@@ -32,6 +32,35 @@ describe("runSmtlibScript prints what Z3 prints", () => {
     ).toEqual(["sat", "unsat", '(error "line 15 column 8: unknown constant p")']);
   });
 
+  it("drops the last check at a pop past the stack, but not at one it cannot read", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(assert (> x 2))",
+        "(check-sat)",
+        "(pop 1)",
+        "(get-model)",
+        "(get-info :reason-unknown)",
+        "(check-sat)",
+        "(pop 0)",
+        "(get-value (x))",
+        "(check-sat)",
+        "(pop -1)",
+        "(get-value (x))",
+      ]),
+    ).toEqual([
+      "sat",
+      '(error "line 4 column 6: invalid pop command, argument is greater than the current stack depth")',
+      '(error "line 5 column 10: model is not available")',
+      '(:reason-unknown "state of the most recent check-sat command is not known")',
+      "sat",
+      '(error "line 9 column 14: model is not available")',
+      "sat",
+      '(error "line 11 column 5: invalid push command, value is negative.")',
+      "((x 3))",
+    ]);
+  });
+
   it("counts the columns of the first line from 1", () => {
     expect(run(["(assert q)"])).toEqual(['(error "line 1 column 9: unknown constant q")']);
   });
@@ -211,6 +240,95 @@ describe("runSmtlibScript prints what Z3 prints", () => {
         "    0)",
         "  (define-fun p ((x!0 Int)) Bool",
         "    true)",
+        ")",
+      ].join("\n"),
+    ]);
+  });
+
+  it("completes the empty model of a goal that simplifies to true", () => {
+    expect(
+      run([
+        "(declare-sort U 0)",
+        "(declare-fun u () U)",
+        "(declare-const b Bool)",
+        "(assert (or b (= u u)))",
+        "(check-sat)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      [
+        "(",
+        "  (define-fun u () U",
+        "    U!val!0)",
+        "  (define-fun b () Bool",
+        "    false)",
+        ")",
+      ].join("\n"),
+    ]);
+  });
+
+  it("prints a named term's definition in the model as the script spells it", () => {
+    expect(
+      run([
+        "(declare-fun x () Int)",
+        "(assert (! (> (abs x) 2) :named a0))",
+        "(check-sat)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      [
+        "(",
+        "  (define-fun x () Int",
+        "    3)",
+        "  (define-fun a0 () Bool",
+        "    (> (abs x) 2))",
+        ")",
+      ].join("\n"),
+    ]);
+  });
+
+  it("qualifies a constant that a named term of the same name overloads", () => {
+    expect(
+      run([
+        "(declare-const a0 (Array Int Int))",
+        "(declare-const x Int)",
+        "(assert (! (= a0 (store a0 x 1)) :named a0))",
+        "(simplify a0)",
+        "(simplify (! (> x 2) :named x))",
+        "(simplify (x 1))",
+        "(apply skip)",
+        "(reset)",
+        "(declare-const y Int)",
+        "(assert (! (> y 2) :named n))",
+        "(declare-const p Bool)",
+        "(assert (! (not p) :named q))",
+        "(check-sat)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "(= (as a0 (Array Int Int)) (store (as a0 (Array Int Int)) x 1))",
+      "(not (<= (as x Int) 2))",
+      '(error "line 6 column 14: ambiguous constant reference, more than one constant with the same sort, use a qualified expression (as <symbol> <sort>) to disambiguate x")',
+      [
+        "(goals",
+        "(goal",
+        "  (= (as a0 (Array Int Int)) (store (as a0 (Array Int Int)) (as x Int) 1))",
+        "  :precision precise :depth 0)",
+        ")",
+      ].join("\n"),
+      "sat",
+      [
+        "(",
+        "  (define-fun y () Int",
+        "    3)",
+        "  (define-fun p () Bool",
+        "    false)",
+        "  (define-fun q () Bool",
+        "    (not p))",
+        "  (define-fun n () Bool",
+        "    (> y 2))",
         ")",
       ].join("\n"),
     ]);
@@ -1176,10 +1294,163 @@ describe("runSmtlibScript prints what Z3 prints", () => {
     ]);
   });
 
-  it("throws at a command named like a property of Object", () => {
-    expect(() => run(["(constructor)"])).toThrow(SmtUnsupportedError);
-    expect(() => run(["(toString)"])).toThrow(SmtUnsupportedError);
-    expect(() => run(["(__proto__)"])).toThrow(SmtUnsupportedError);
+  it("reports a command Z3 does not know, also one named like a property of Object", () => {
+    expect(
+      run([
+        "(constructor)",
+        "(toString 1 (2 3))",
+        "(__proto__)",
+        "(asert (> 1 0))",
+        "(set-option :print-success true)",
+        "(foo)",
+        '(echo "x")',
+      ]),
+    ).toEqual([
+      "unsupported",
+      "; constructor line: 1 position: 13",
+      "unsupported",
+      "; toString line: 2 position: 17",
+      "unsupported",
+      "; __proto__ line: 3 position: 10",
+      "unsupported",
+      "; asert line: 4 position: 14",
+      "success",
+      "unsupported",
+      "; foo line: 6 position: 4",
+      "x",
+    ]);
+  });
+
+  it("reports an answer that differs from the one set-info :status announces, also after reset", () => {
+    expect(
+      run([
+        "(set-info :status unsat)",
+        "(declare-const p Bool)",
+        "(assert p)",
+        "(check-sat)",
+        "(get-model)",
+        "(set-info :status sat)",
+        "(check-sat-assuming ((not p)))",
+        "(check-sat-using smt)",
+        "(set-info :status foo)",
+        "(set-info :status)",
+        "(set-info :status (unsat))",
+        "(set-info status sat)",
+        "(set-info :status unknown :x)",
+        "(check-sat-assuming ((not p)))",
+        "(set-info :status sat)",
+        "(reset)",
+        "(assert false)",
+        "(check-sat-using simplify)",
+      ]),
+    ).toEqual([
+      "sat",
+      '(error "line 4 column 10: check annotation that says unsat")',
+      "(\n  (define-fun p () Bool\n    true)\n)",
+      "unsat",
+      '(error "line 7 column 29: check annotation that says sat")',
+      "sat",
+      "(error \"line 9 column 18: invalid ':status' attribute\")",
+      '(error "line 10 column 17: invalid command, argument(s) missing")',
+      '(error "line 11 column 18: invalid option value")',
+      '(error "line 12 column 10: invalid command argument, keyword expected")',
+      '(error "line 13 column 26: invalid command, too many arguments")',
+      "unsat",
+      "unsat",
+      '(error "line 18 column 25: check annotation that says sat")',
+    ]);
+  });
+
+  it("rejects apply and check-sat-using under both proofs and unsat cores, and keeps the last check", () => {
+    const error = "Frontend does not support simultaneous generation of proofs and unsat cores";
+    expect(
+      run([
+        "(set-option :produce-proofs true)",
+        "(set-option :produce-unsat-cores true)",
+        "(declare-const x Int)",
+        "(assert (> x 2))",
+        "(check-sat)",
+        "(apply simplify)",
+        "(check-sat-using smt)",
+        "(get-info :reason-unknown)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      `(error "line 6 column 15: ${error}")`,
+      `(error "line 7 column 20: ${error}")`,
+      '(:reason-unknown "")',
+      "(\n  (define-fun x () Int\n    3)\n)",
+    ]);
+  });
+
+  it("keeps the answer of the last check across reset-assertions", () => {
+    expect(
+      run([
+        "(set-option :produce-unsat-cores true)",
+        "(declare-const x Int)",
+        "(declare-const b Bool)",
+        "(assert (! (> x 2) :named a1))",
+        "(check-sat)",
+        "(reset-assertions)",
+        "(get-info :reason-unknown)",
+        "(get-model)",
+        "(get-value (x))",
+        "(assert (! (< x 0) :named a2))",
+        "(assert (! (> x 0) :named a3))",
+        "(check-sat)",
+        "(reset-assertions)",
+        "(get-unsat-core)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      '(:reason-unknown "unknown")',
+      "(\n  (define-fun a1 () Bool\n    (> x 2))\n  (define-fun x () Int\n    3)\n  (define-fun b () Bool\n    false)\n)",
+      "((x 3))",
+      "unsat",
+      "(a2 a3)",
+      '(error "line 15 column 10: model is not available")',
+    ]);
+  });
+
+  it("answers unknown for formulas outside the logic that the smt setup rejects", () => {
+    const reason =
+      "Benchmark contains uninterpreted function symbols, but specified logic does not support them.";
+    expect(
+      run([
+        "(set-logic QF_LIA)",
+        "(declare-const x Int)",
+        "(assert (>= (div x 0) 1))",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+        "(check-sat-using (or-else smt skip))",
+        "(get-info :reason-unknown)",
+        "(apply smt)",
+        "(minimize x)",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+        "(reset)",
+        "(set-logic QF_LRA)",
+        "(declare-const r Real)",
+        "(assert (> (/ r 0.0) 2.5))",
+        "(check-sat-using qflra)",
+        "(get-info :reason-unknown)",
+        "(push)",
+        "(check-sat)",
+      ]),
+    ).toEqual([
+      "unknown",
+      `(:reason-unknown "${reason}")`,
+      "unknown",
+      `(:reason-unknown "${reason}")`,
+      "(goals\n(goal\n  :precision precise :depth 0)\n)",
+      `(error "line 10 column 10: ${reason}")`,
+      '(:reason-unknown "unknown")',
+      "unknown",
+      `(:reason-unknown "${reason}")`,
+      "sat",
+    ]);
   });
 
   it("throws at a theory it does not implement", () => {

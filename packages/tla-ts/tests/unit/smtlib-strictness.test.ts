@@ -128,6 +128,28 @@ describe("applications of the builtin operators, as Z3 5.3.2 makes them", () => 
       '(error "line 14 column 22: invalid parameter to datatype function arity == 1 && num_parameters == 1 && parameters[0].is_ast() && is_func_decl(parameters[0].get_ast())")',
     ]);
   });
+
+  it("reports the bit-vector argument whose size differs from the first one's", () => {
+    expect(
+      run([
+        "(declare-const x (_ BitVec 8))",
+        "(declare-const y (_ BitVec 6))",
+        "(simplify (bvshl x y))",
+        "(simplify (bvadd x y x))",
+        "(simplify (bvneg x y))",
+        "(simplify (bvadd x (bvmul y y)))",
+        "(simplify (bvule (bvadd y y) x))",
+        "(assert (forall ((z (_ BitVec 4))) (= (bvadd x z) x)))",
+      ]),
+    ).toEqual([
+      '(error "line 3 column 20: Argument y at position 1 has sort (_ BitVec 6) it does not match declaration (declare-fun bvshl ((_ BitVec 8) (_ BitVec 8)) (_ BitVec 8))")',
+      '(error "line 4 column 22: declared sorts do not match supplied sorts")',
+      '(error "line 5 column 20: declared arity mismatches supplied arity")',
+      '(error "line 6 column 30: Argument (bvmul y y) at position 1 has sort (_ BitVec 6) it does not match declaration (declare-fun bvadd ((_ BitVec 8) (_ BitVec 8)) (_ BitVec 8))")',
+      '(error "line 7 column 30: Argument x at position 1 has sort (_ BitVec 8) it does not match declaration (declare-fun bvule ((_ BitVec 6) (_ BitVec 6)) Bool)")',
+      '(error "line 8 column 48: Argument (:var 0) at position 1 has sort (_ BitVec 4) it does not match declaration (declare-fun bvadd ((_ BitVec 8) (_ BitVec 8)) (_ BitVec 8))")',
+    ]);
+  });
 });
 
 describe("terms that Z3 5.3.2 rejects", () => {
@@ -300,6 +322,155 @@ describe("messages of the reader, as Z3 5.3.2 prints them", () => {
       "(error \"line 8 column 18: Invalid constant declaration: unknown sort 'String'\")",
     ]);
   });
+
+  it("reports a sort list without a symbol at its head, with the context of the sort", () => {
+    expect(
+      run([
+        "(declare-datatypes ((D 0)) (((mk (f ())))))",
+        "(declare-datatypes ((E 0)) (((mk2 (g (5 Int))))))",
+        "(declare-fun h (()) Int)",
+        "(declare-fun k (Int) ())",
+        "(define-fun m ((x ())) Int 1)",
+        "(simplify (as foo ()))",
+        "(define-sort S () ())",
+        "(declare-const a (Array () Int))",
+        "(declare-const b (Array Int (1)))",
+      ]),
+    ).toEqual([
+      "(error \"line 1 column 38: invalid sort, symbol or '_' expected\")",
+      "(error \"line 2 column 38: invalid sort, symbol or '_' expected\")",
+      "(error \"line 3 column 17: Parsing function declaration. Expecting sort list '(' invalid sort, symbol or '_' expected\")",
+      "(error \"line 4 column 22: Invalid function declaration invalid sort, symbol or '_' expected\")",
+      "(error \"line 5 column 19: invalid sorted variables invalid sort, symbol or '_' expected\")",
+      "(error \"line 6 column 19: Invalid qualified identifier invalid sort, symbol or '_' expected\")",
+      "(error \"line 7 column 19: invalid sort, symbol or '_' expected\")",
+      "(error \"line 8 column 25: Invalid constant declaration invalid sort, symbol or '_' expected\")",
+      "(error \"line 9 column 29: Invalid constant declaration invalid sort, symbol or '_' expected\")",
+    ]);
+  });
+
+  it("makes a declaration with a token before its closing parenthesis, and reports the token", () => {
+    expect(
+      run([
+        "(declare-const a Int 1)",
+        "(declare-fun f (Int) Int 2)",
+        "(define-fun g ((x Int)) Int (+ x 1) 3)",
+        "(define-const c Int 4 5)",
+        "(define-fun-rec r ((x Int)) Int x 6)",
+        "(define-sort S () Int 7)",
+        "(declare-sort T 0 8)",
+        "(declare-datatype D ((d1) (d2)) 9)",
+        "(define-funs-rec ((h ((x Int)) Int)) (x) 10)",
+        "(define-fun e () Int true   11)",
+        "(declare-const a Int   12)",
+        "(declare-const s S)",
+        "(declare-const t T)",
+        "(declare-const d D)",
+        "(simplify (+ a (f (g c)) (r 1) (h 2)))",
+      ]),
+    ).toEqual([
+      "(error \"line 1 column 22: invalid constant declaration, ')' expected\")",
+      "(error \"line 2 column 25: invalid function declaration, ')' expected\")",
+      "(error \"line 3 column 36: invalid function/constant definition, ')' expected\")",
+      "(error \"line 4 column 22: invalid constant definition, ')' expected\")",
+      "(error \"line 5 column 34: invalid function/constant definition, ')' expected\")",
+      "(error \"line 6 column 22: invalid sort definition, ')' expected\")",
+      "(error \"line 7 column 18: invalid sort declaration, ')' expected\")",
+      "(error \"line 8 column 32: invalid end of datatype declaration, ')' expected\")",
+      "(error \"line 9 column 41: invalid function/constant definition, ')' expected\")",
+      '(error "line 10 column 28: invalid function/constant definition, sort mismatch")',
+      "(error \"line 11 column 23: invalid declaration, constant 'a' (with the given signature) already declared\")",
+      "(+ 3 a (f 5))",
+    ]);
+  });
+
+  it("reports a malformed tactic or probe at the s-expression, a list at its closing parenthesis", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(assert (> x 0))",
+        "(apply solve-eqs2)",
+        "(apply (then simplify  foo   ) )",
+        "(apply (then simplify (foo x)  ) )",
+        "(apply (then)  )",
+        "(apply ( )  )",
+        "(apply ((then) simplify) )",
+        "(apply 5  )",
+        "(apply (or-else) )",
+        "(apply (try-for simplify)  )",
+        "(apply (try-for simplify x)  )",
+        "(apply (repeat)  )",
+        "(apply (repeat simplify x) )",
+        "(apply (using-params simplify :foo 1) )",
+        "(apply (using-params simplify foo 1) )",
+        "(apply (using-params simplify :som) )",
+        "(apply (using-params simplify :som 3) )",
+        "(apply (if) )",
+        "(apply (if foo simplify skip) )",
+        "(apply (if (> foo 1) simplify skip) )",
+        "(apply (fail-if) )",
+        "(apply (when) )",
+        "(apply (echo) )",
+        "(apply (fail-if-branching) )",
+        "(check-sat-using (par-or (if has-quantifiers qe aig) (par-or solve-eqs2 qfnia)) :print_unsat_core true)",
+        "(check-sat-using   foo  :print_model true)",
+      ]),
+    ).toEqual([
+      '(error "line 3 column 7: invalid tactic, unknown tactic solve-eqs2")',
+      '(error "line 4 column 23: invalid tactic, unknown tactic foo")',
+      '(error "line 5 column 28: invalid tactic, unknown tactic combinator foo")',
+      '(error "line 6 column 12: invalid and-then combinator, at least one argument expected")',
+      '(error "line 7 column 9: invalid tactic, arguments expected")',
+      '(error "line 8 column 23: invalid tactic, symbol expected")',
+      '(error "line 9 column 7: invalid tactic, unexpected input")',
+      '(error "line 10 column 15: invalid or-else combinator, at least one argument expected")',
+      '(error "line 11 column 24: invalid try-for combinator, two arguments expected")',
+      '(error "line 12 column 26: invalid try-for combinator, second argument must be an unsigned integer")',
+      '(error "line 13 column 14: invalid repeat combinator, one or two arguments expected")',
+      '(error "line 14 column 25: invalid repeat combinator, second argument must be an unsigned integer")',
+      '(error "line 15 column 35: invalid using-params combinator, unknown parameter foo")',
+      '(error "line 16 column 30: invalid using-params combinator, keyword expected")',
+      '(error "line 17 column 30: invalid using-params combinator, parameter value expected")',
+      '(error "line 18 column 35: invalid parameter value, true or false expected")',
+      '(error "line 19 column 10: invalid if/conditional combinator, three arguments expected")',
+      '(error "line 20 column 11: invalid probe, unknown builtin probe foo")',
+      '(error "line 21 column 14: invalid probe, unknown builtin probe foo")',
+      '(error "line 22 column 15: invalid fail-if tactic, one argument expected")',
+      '(error "line 23 column 12: invalid when combinator, two arguments expected")',
+      '(error "line 24 column 12: invalid echo tactic, must have at least one argument")',
+      '(error "line 25 column 25: invalid fail-if-branching combinator, one or two arguments expected")',
+      '(error "line 26 column 61: invalid tactic, unknown tactic solve-eqs2")',
+      '(error "line 27 column 19: invalid tactic, unknown tactic foo")',
+    ]);
+  });
+
+  it("takes no negative numeral for an unsigned value of a tactic or a command", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(assert (> x 0))",
+        "(apply (! simplify :max_steps -1) )",
+        "(apply (repeat simplify -1) )",
+        "(apply (try-for simplify -1) )",
+        "(apply (fail-if-branching simplify -1) )",
+        "(check-sat-using smt :timeout -1)",
+        "(apply simplify :timeout -1)",
+        "(apply (if (> 5 -1) skip fail) )",
+        "(apply (! simplify :max_steps 4294967296) )",
+        "(apply (! propagate-values :max_rounds -2) )",
+      ]),
+    ).toEqual([
+      '(error "line 3 column 30: invalid parameter value, unsigned integer expected")',
+      '(error "line 4 column 26: invalid repeat combinator, second argument must be an unsigned integer")',
+      '(error "line 5 column 27: invalid try-for combinator, second argument must be an unsigned integer")',
+      '(error "line 6 column 37: invalid fail-if-branching combinator, second argument must be an unsigned integer")',
+      '(error "line 7 column 30: invalid indexed identifier, index is too big to fit in an unsigned machine integer")',
+      '(error "line 8 column 25: invalid indexed identifier, index is too big to fit in an unsigned machine integer")',
+      "(goals\n(goal\n  (> x 0)\n  :precision precise :depth 0)\n)",
+      '(error "line 10 column 30: invalid parameter value, unsigned integer expected")',
+      '(error "line 11 column 39: invalid parameter value, unsigned integer expected")',
+    ]);
+  });
 });
 
 describe("the terms the reader makes and frees, in Z3's order", () => {
@@ -357,5 +528,26 @@ describe("the terms the reader makes and frees, in Z3's order", () => {
         "(simplify (or (or s r) q p))",
       ]),
     ).toEqual(["2", "(or s r q p)", "(and p q)", "(or s r q p)"]);
+  });
+
+  it("reports a term of assert or check-sat that is not Boolean at the token after it", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(assert x)",
+        "(assert x true)",
+        "(check-sat 1)",
+        "(check-sat-assuming (x true))",
+        "(check-sat-assuming (true x))",
+        "(assert (+ x 1))",
+      ]),
+    ).toEqual([
+      '(error "line 2 column 9: invalid assert command, term is not Boolean")',
+      '(error "line 3 column 10: invalid assert command, term is not Boolean")',
+      '(error "line 4 column 12: invalid check-sat command, argument must be a Boolean literal")',
+      '(error "line 5 column 23: invalid check-sat command, argument must be a Boolean literal")',
+      '(error "line 6 column 27: invalid check-sat command, argument must be a Boolean literal")',
+      '(error "line 7 column 15: invalid assert command, term is not Boolean")',
+    ]);
   });
 });

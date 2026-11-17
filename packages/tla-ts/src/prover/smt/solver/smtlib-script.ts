@@ -3,6 +3,7 @@ import {
   isStackOverflow,
   SmtCanceledError,
   SmtParseError,
+  SmtSetupError,
   SmtTacticError,
   SmtUnsupportedError,
 } from "../../../errors";
@@ -39,9 +40,11 @@ import {
   createSmtlibReader,
   DECLARATIONS,
   isSymbol,
+  isUnsigned,
   type SExpr,
   type SmtList,
   type SmtlibReader,
+  type SmtToken,
 } from "./smtlib-parser";
 import { O_MAXIMIZE, O_MAXSMT, O_MINIMIZE, OptContext, type OptObjective } from "./opt-context";
 import { getLogicStrategy } from "./logic-tactics";
@@ -72,6 +75,58 @@ import {
   getSmtTacticFailure,
   type TacticParam,
 } from "./tactic";
+
+const UNPORTED_COMMANDS = new Set([
+  "assert-not",
+  "assume",
+  "dbg-bool-rewriter",
+  "dbg-elim-and",
+  "dbg-get-qbody",
+  "dbg-params",
+  "dbg-pp-var",
+  "dbg-set",
+  "dbg-set-next-id",
+  "dbg-sexpr",
+  "dbg-shift-vars",
+  "dbg-size",
+  "dbg-subst",
+  "dbg-th-rewriter",
+  "dbg-translator",
+  "declare-map",
+  "declare-tactic",
+  "declare-type-var",
+  "del",
+  "display-dimacs",
+  "euf-project",
+  "eufi",
+  "ff-boolean-certify",
+  "ff-certify",
+  "ff-check-native-proof",
+  "ff-integrated-certify",
+  "get-assignment",
+  "get-interpolant",
+  "get-proof",
+  "get-proof-graph",
+  "get-unsat-assumptions",
+  "get-user-tactics",
+  "help",
+  "help-simplifier",
+  "help-tactic",
+  "include",
+  "infer",
+  "labels",
+  "mbi",
+  "mbp",
+  "mbp-qel",
+  "model-add",
+  "model-del",
+  "prefer",
+  "qe-lite",
+  "qel",
+  "reset-preferences",
+  "set-initial-value",
+  "set-simplifier",
+]);
 
 const SILENT_COMMANDS = new Set([
   ...DECLARATIONS,
@@ -246,6 +301,11 @@ const getCommandParams = (items: SExpr[], isBooleans: ReadonlyMap<string, boolea
           "invalid command argument, unsigned integer expected",
           value ?? keyword,
         );
+      if (!isUnsigned(value.text))
+        throw new SmtParseError(
+          "invalid indexed identifier, index is too big to fit in an unsigned machine integer",
+          value,
+        );
       params.set(name, Number(value.text));
     }
   }
@@ -351,6 +411,8 @@ export const runSmtlibScript = (
     rlimit: 0,
     printOptions: { ...DEFAULT_PRINT_OPTIONS },
     parserOptions: { isIgnoringBadPatterns: true },
+    // Z3 keeps set-info's :status across reset.
+    status: L_UNDEF,
   };
   const createState = (): ScriptState => {
     const manager = new AstManager(new ResourceLimit(Infinity, options.signal));
@@ -415,7 +477,7 @@ export const runSmtlibScript = (
       paretoMaxLemmas: Number(parameters.get("opt.pareto_nlsat_max_lemmas") ?? 128),
     };
   };
-  const optimize = (extra: number[]) => {
+  const optimize = (extra: number[], end: SmtToken) => {
     const manager = state.manager;
     const objectives = state.objectives;
     const hard = [...getNamedAssertions(), ...state.names.filter((name) => name !== -1), ...extra];
@@ -470,6 +532,11 @@ export const runSmtlibScript = (
       if (error instanceof SmtUnsupportedError) {
         resetOptimizer();
         return false;
+      }
+      if (error instanceof SmtSetupError) {
+        optimizer.release();
+        setCheck(L_UNDEF, { isOptimizing: true, reasonUnknown: "unknown" });
+        throw new SmtParseError(error.message, end);
       }
       if (!(error instanceof SmtCanceledError || isStackOverflow(error))) throw error;
       const reasonUnknown = optimizer.getReasonUnknown();
@@ -546,13 +613,13 @@ export const runSmtlibScript = (
     (state.logic === "QF_FD" || state.logic === "SAT") &&
     !settings.isProducingProofs &&
     !settings.parameters.has("tactic.default_tactic");
-  const checkSat = (extra: number[]) => {
+  const checkSat = (extra: number[], end: SmtToken) => {
     const deadline = Date.now() + options.timeLimitMs;
     state.manager.limit.restart(deadline);
     // opt::context::optimize answers as the search of the hard constraints does: once they are
     // satisfiable, optsmt and maxsmt only improve the model. The unported parts of optimization
     // only get that answer.
-    if (state.objectives.length > 0 && optimize(extra)) return;
+    if (state.objectives.length > 0 && optimize(extra, end)) return;
     state.manager.limit.push(settings.rlimit);
     const isOptimizing = state.objectives.length > 0;
     const manager = state.manager;
@@ -584,14 +651,21 @@ export const runSmtlibScript = (
       });
       print(getVerdict(solved.result));
     } catch (error) {
-      if (!(error instanceof SmtCanceledError || isStackOverflow(error))) throw error;
+      if (
+        !(
+          error instanceof SmtCanceledError ||
+          error instanceof SmtSetupError ||
+          isStackOverflow(error)
+        )
+      )
+        throw error;
       const context = isKernelChecking ? state.kernel?.context : undefined;
       setCheck(L_UNDEF, {
         isOptimizing,
-        reasonUnknown: getReasonUnknown(
-          { result: L_UNDEF, context, reasonUnknown: undefined },
-          deadline,
-        ),
+        reasonUnknown:
+          error instanceof SmtSetupError
+            ? error.message
+            : getReasonUnknown({ result: L_UNDEF, context, reasonUnknown: undefined }, deadline),
       });
       print("unknown");
     } finally {
@@ -615,6 +689,12 @@ export const runSmtlibScript = (
   const clearCheck = () => {
     state.check?.model?.decRef();
     state.check = undefined;
+  };
+  // cmd_context::validate_check_sat_result runs after the answer is printed.
+  const validateCheck = (end: SmtToken) => {
+    const status = state.check?.status ?? L_UNDEF;
+    if (status !== L_UNDEF && settings.status !== L_UNDEF && status !== settings.status)
+      throw new SmtParseError(`check annotation that says ${getVerdict(settings.status)}`, end);
   };
   // The check holds a reference to its model until clearCheck.
   const setCheck = (status: number, result: Partial<Omit<CheckResult, "status">> = {}) => {
@@ -742,8 +822,6 @@ export const runSmtlibScript = (
     );
     return state.datalog;
   };
-  const getTactic = (sexpr: SExpr, end: SmtList["end"]) =>
-    compileTactic(getTacticEnvironment(), sexpr, end);
   const getGoal = (isTrackingDependencies = false) => {
     const goal = new Goal(state.manager);
     goal.isProofsEnabled = settings.isProducingProofs || state.isProofsEnabled === true;
@@ -757,13 +835,31 @@ export const runSmtlibScript = (
       );
     return goal;
   };
+  const getCommandGoal = (isTrackingDependencies: boolean, end: SmtToken) => {
+    if (
+      settings.isProducingUnsatCores &&
+      (settings.isProducingProofs || state.isProofsEnabled === true)
+    )
+      throw new SmtParseError(
+        "Frontend does not support simultaneous generation of proofs and unsat cores",
+        end,
+      );
+    return getGoal(isTrackingDependencies);
+  };
   const hasNames = () => state.names.some((name) => name !== -1);
   // parse_check_sat shrinks the expression stack once the check has run.
-  const checkSatAssuming = (items: SmtList["items"]) => {
+  const checkSatAssuming = (items: SmtList["items"], itemsEnd: SmtToken, end: SmtToken) => {
     const literals: number[] = [];
     try {
-      for (const item of items) literals.push(state.reader.parseFormula(item));
-      checkSat(literals);
+      for (const [index, item] of items.entries())
+        literals.push(
+          state.reader.parseFormula(
+            item,
+            items[index + 1] ?? itemsEnd,
+            "invalid check-sat command, argument must be a Boolean literal",
+          ),
+        );
+      checkSat(literals, end);
     } finally {
       for (const literal of literals) state.manager.decRef(literal);
     }
@@ -887,7 +983,7 @@ export const runSmtlibScript = (
       "assert",
       (list) => {
         const term = list.items[1] ?? list.end;
-        const assertion = state.reader.parseAssertion(term);
+        const assertion = state.reader.parseAssertion(term, list.items[2] ?? list.end);
         const logicError = state.reader.getLogicError(assertion.formula);
         if (logicError !== undefined) {
           state.manager.decRef(assertion.formula);
@@ -914,7 +1010,13 @@ export const runSmtlibScript = (
         clearCheck();
       },
     ],
-    ["check-sat", (list) => checkSatAssuming(list.items.slice(1))],
+    [
+      "check-sat",
+      (list) => {
+        checkSatAssuming(list.items.slice(1), list.end, list.end);
+        validateCheck(list.end);
+      },
+    ],
     [
       "declare-rel",
       (list) => {
@@ -954,7 +1056,10 @@ export const runSmtlibScript = (
         const rule = list.items[1];
         if (rule === undefined) throw new SmtParseError("invalid rule, expected formula", list.end);
         const name = list.items[2];
-        getDatalog().addRule(state.reader.parseFormula(rule), isSymbol(name) ? name.text : "");
+        getDatalog().addRule(
+          state.reader.parseFormula(rule, rule),
+          isSymbol(name) ? name.text : "",
+        );
       },
     ],
     [
@@ -995,14 +1100,15 @@ export const runSmtlibScript = (
         const params = getCommandParams(list.items, CHECK_SAT_USING_PARAMETERS);
         if (list.items[1] === undefined)
           throw new SmtParseError("check-sat-using needs a tactic argument", list.end);
-        const builder = getTactic(list.items[1], list.end);
+        const builder = compileTactic(getTacticEnvironment(), list.items[1]);
         const tactic = builder.build(params);
+        const goal = getCommandGoal(builder.isTrackingDependencies, list.end);
         clearCheck();
         const deadline = Date.now() + options.timeLimitMs;
         state.manager.limit.restart(deadline);
         state.manager.limit.push(settings.rlimit);
         try {
-          const checked = checkSatUsing(tactic, getGoal(builder.isTrackingDependencies));
+          const checked = checkSatUsing(tactic, goal);
           setCheck(checked.status, {
             model: checked.model,
             core:
@@ -1015,6 +1121,7 @@ export const runSmtlibScript = (
         } finally {
           state.manager.limit.pop();
         }
+        validateCheck(list.end);
       },
     ],
     [
@@ -1026,7 +1133,8 @@ export const runSmtlibScript = (
             "invalid check-sat-assuming command, '(' expected",
             literals ?? list.end,
           );
-        checkSatAssuming(literals.items);
+        checkSatAssuming(literals.items, literals.end, list.end);
+        validateCheck(list.end);
       },
     ],
     [
@@ -1144,13 +1252,13 @@ export const runSmtlibScript = (
       "pop",
       (list) => {
         const count = getScopeCount(list);
+        clearCheck();
+        if (count === 0) return;
         if (count > state.scopes.length)
           throw new SmtParseError(
             "invalid pop command, argument is greater than the current stack depth",
             list.end,
           );
-        clearCheck();
-        if (count === 0) return;
         state.isIncremental = true;
         const scope = state.scopes[state.scopes.length - count];
         state.kernel?.pop(count);
@@ -1173,7 +1281,6 @@ export const runSmtlibScript = (
     [
       "reset-assertions",
       () => {
-        clearCheck();
         restoreAssertions(0);
         resetOptimizer();
         releaseObjectives(0, 0);
@@ -1238,13 +1345,17 @@ export const runSmtlibScript = (
         const params = getCommandParams(list.items, APPLY_PARAMETERS);
         if (list.items[1] === undefined)
           throw new SmtParseError("apply needs a tactic argument", list.end);
-        const builder = getTactic(list.items[1], list.end);
+        // apply_tactic_cmd, unlike check-sat-using, gives the tactic no logic.
+        const builder = compileTactic(
+          { ...getTacticEnvironment(), setup: { ...getSetup(), logic: undefined } },
+          list.items[1],
+        );
         const tactic = builder.build(params);
+        const input = getCommandGoal(builder.isTrackingDependencies, list.end);
         const isPrintingDependencies = params.get("print_dependencies") === true;
         if (isPrintingDependencies && !builder.isTrackingDependencies && hasNames())
           throw new SmtUnsupportedError("the dependencies of a tactic that drops dependencies");
         state.manager.limit.restart(Date.now() + options.timeLimitMs);
-        const input = getGoal(builder.isTrackingDependencies);
         const goals = (() => {
           try {
             return applyTactic(tactic, input);
@@ -1439,6 +1550,7 @@ export const runSmtlibScript = (
           const funcDecl = manager.funcDecls[decl];
           if (
             funcDecl.family !== FAMILY_USER ||
+            manager.macros.has(decl) ||
             model.constInterps.has(decl) ||
             model.funcInterps.has(decl)
           )
@@ -1666,7 +1778,30 @@ export const runSmtlibScript = (
         if (settings.isPrintingSuccess) print("success");
       },
     ],
-    ["set-info", () => {}],
+    [
+      "set-info",
+      (list) => {
+        const info = list.items[1];
+        if (info === undefined)
+          throw new SmtParseError("invalid command, argument(s) missing", list.end);
+        if (info.kind !== "keyword")
+          throw new SmtParseError("invalid command argument, keyword expected", info);
+        const value = list.items[2];
+        if (value === undefined)
+          throw new SmtParseError("invalid command, argument(s) missing", list.end);
+        if (value.kind === "list" || value.kind === "keyword")
+          throw new SmtParseError("invalid option value", value);
+        if (info.text === ":status" && value.kind === "symbol") {
+          const status = [L_TRUE, L_FALSE, L_UNDEF].find(
+            (innerStatus) => getVerdict(innerStatus) === value.text,
+          );
+          if (status === undefined) throw new SmtParseError("invalid ':status' attribute", value);
+          settings.status = status;
+        }
+        if (list.items[3] !== undefined)
+          throw new SmtParseError("invalid command, too many arguments", list.items[3]);
+      },
+    ],
   ]);
   const run = (list: SmtList) => {
     const head = list.items[0];
@@ -1675,7 +1810,13 @@ export const runSmtlibScript = (
     const command = DECLARATIONS.has(head.text)
       ? (declaration: SmtList) => state.reader.declareCommand(declaration)
       : runCommand.get(head.text);
-    if (command === undefined) throw new SmtUnsupportedError(`the command ${head.text}`);
+    if (command === undefined && UNPORTED_COMMANDS.has(head.text))
+      throw new SmtUnsupportedError(`the command ${head.text}`);
+    if (command === undefined) {
+      print("unsupported");
+      printDiagnostic(`; ${head.text} line: ${list.end.line} position: ${list.end.column}`);
+      return;
+    }
     // Z3's scoped_timer ends with the command that set it, so a command starts without one.
     state.manager.limit.restart(Infinity);
     if (!MANAGERLESS_COMMANDS.has(head.text) && state.isProofsEnabled === undefined) {
@@ -1687,7 +1828,7 @@ export const runSmtlibScript = (
   };
   for (;;) {
     try {
-      const list = commands.read();
+      const list = commands.readCommand();
       if (list === undefined || isSymbol(list.items[0], "exit")) break;
       run(list);
     } catch (error) {

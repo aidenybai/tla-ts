@@ -70,6 +70,72 @@ describe("set-logic after the first declaration, as Z3 5.3.2 prints it", () => {
   });
 });
 
+describe("the operators of a theory the logic lacks, as Z3 5.3.2 reports them", () => {
+  it("reads numerals but not the operators of arithmetic, whose names a declaration may take", () => {
+    expect(
+      run([
+        "(set-logic QF_UF)",
+        "(simplify (- 2))",
+        "(simplify (+ 1 2))",
+        "(simplify (< 1 2))",
+        "(simplify (to_real 2))",
+        "(simplify 2.5)",
+        "(simplify (= 1 2))",
+        "(declare-sort U 0)",
+        "(declare-fun + (U U) U)",
+        "(declare-const u U)",
+        "(simplify (+ u u))",
+      ]),
+    ).toEqual([
+      '(error "line 2 column 14: unknown constant - (Int) ")',
+      '(error "line 3 column 16: unknown constant + (Int Int) ")',
+      '(error "line 4 column 16: unknown constant < (Int Int) ")',
+      '(error "line 5 column 20: unknown constant to_real (Int) ")',
+      "(/ 5.0 2.0)",
+      "false",
+      "(+ u u)",
+    ]);
+  });
+
+  it("leaves the operators of the other theories unknown, and bit-vector overflow predicates", () => {
+    expect(
+      run([
+        "(set-logic QF_UF)",
+        "(declare-sort U 0)",
+        "(declare-const u U)",
+        "(simplify (bvadd #x1 #x2))",
+        '(simplify (str.len "a"))',
+        "(simplify (fp.abs u))",
+        "(simplify (select u u))",
+        "(simplify (bvfoo u))",
+        "(simplify (concat u u))",
+      ]),
+    ).toEqual([
+      '(error "line 4 column 24: unknown constant bvadd ((_ BitVec 4) (_ BitVec 4)) ")',
+      '(error "line 5 column 22: unknown constant str.len (String) ")',
+      '(error "line 6 column 19: unknown constant fp.abs (U) ")',
+      '(error "line 7 column 21: unknown constant select (U U) ")',
+      '(error "line 8 column 18: unknown constant bvfoo (U) ")',
+      '(error "line 9 column 21: unknown constant concat (U U) ")',
+    ]);
+    expect(
+      run([
+        "(set-logic QF_ABV)",
+        "(declare-const v (_ BitVec 4))",
+        "(simplify (bvsmul_noovfl v v))",
+        "(simplify (bvumul_noovfl v v))",
+        "(simplify (bvsmul_noudfl v v))",
+        "(simplify (concat v v))",
+      ]),
+    ).toEqual([
+      '(error "line 3 column 28: unknown constant bvsmul_noovfl ((_ BitVec 4) (_ BitVec 4)) ")',
+      '(error "line 4 column 28: unknown constant bvumul_noovfl ((_ BitVec 4) (_ BitVec 4)) ")',
+      '(error "line 5 column 28: unknown constant bvsmul_noudfl ((_ BitVec 4) (_ BitVec 4)) ")',
+      "(concat v v)",
+    ]);
+  });
+});
+
 describe("terms nested 20,000 deep, which Z3 5.3.2 reads on its own stack", () => {
   const DEPTH = 20000;
 
@@ -188,6 +254,27 @@ describe("a backslash in a quoted symbol, as Z3 5.3.2 reports it", () => {
   });
 });
 
+describe("a command without a symbol at its head, as Z3 5.3.2 reports it", () => {
+  it("reports the head before the rest of the command, which may never close", () => {
+    expect(run(['(echo "a")', "( (assert true)", '(echo "b")'])).toEqual([
+      "a",
+      '(error "line 2 column 2: invalid command, symbol expected")',
+    ]);
+    expect(run(['(echo "a")', "(1 2", '(echo "b")'])).toEqual([
+      "a",
+      '(error "line 2 column 1: invalid command, symbol expected")',
+    ]);
+    expect(run(['(echo "a")', "("])).toEqual([
+      "a",
+      '(error "line 2 column 1: invalid command, symbol expected")',
+    ]);
+    expect(run(["() )", '(echo "b")'])).toEqual([
+      '(error "line 1 column 2: invalid command, symbol expected")',
+      "b",
+    ]);
+  });
+});
+
 describe("a malformed application or indexed constant, as Z3 5.3.2 reports it", () => {
   it("reports a head that is no symbol where it stands, and goes on", () => {
     expect(
@@ -236,6 +323,27 @@ describe("a qualified constant, as Z3 5.3.2 reports it", () => {
     ).toEqual([
       '(error "line 2 column 24: unknown constant fooInt ")',
       '(error "line 3 column 23: unknown constant xBool \ndeclared: (declare-fun x () Int) ")',
+    ]);
+  });
+
+  it("reports a macro of another sort, but not an application of one", () => {
+    expect(
+      run([
+        "(define-const c Bool true)",
+        "(define-fun f ((y Int)) Int (+ y 1))",
+        "(simplify (as c Int))",
+        "(simplify (as c Bool))",
+        "(simplify ((as f Bool) 1))",
+        "(declare-const x Int)",
+        "(simplify (! (> x 2) :named n))",
+        "(simplify (as n Int))",
+      ]),
+    ).toEqual([
+      '(error "line 3 column 20: sort mismatch in qualified identifier, expected: Int, got: Bool")',
+      "true",
+      "2",
+      "(not (<= x 2))",
+      '(error "line 8 column 20: sort mismatch in qualified identifier, expected: Int, got: Bool")',
     ]);
   });
 });

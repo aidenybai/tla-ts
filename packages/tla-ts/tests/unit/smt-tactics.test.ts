@@ -227,6 +227,25 @@ describe("tactics keep the dependencies Z3 keeps", () => {
   });
 });
 
+describe("tactics where Z3 5.3.2 fails", () => {
+  // Z3 answers the second check unknown, for "Sorts RoundingMode and (_ BitVec 3) are incompatible".
+  it("fpa2bv blasts fp.sub as it blasts fp.add of the negation", () => {
+    expect(
+      run([
+        "(declare-const x (_ FloatingPoint 2 3))",
+        "(assert (not (fp.isNaN x)))",
+        "(assert (not (fp.isInfinite x)))",
+        "(push)",
+        "(assert (fp.isNaN (fp.add RNE (fp #b0 #b01 #b00) (fp.neg x))))",
+        "(check-sat-using (then fpa2bv simplify bit-blast sat))",
+        "(pop)",
+        "(assert (fp.isNaN (fp.sub RNE (fp #b0 #b01 #b00) x)))",
+        "(check-sat-using (then fpa2bv simplify bit-blast sat))",
+      ]),
+    ).toEqual(["unsat", "unsat"]);
+  });
+});
+
 describe("the logic check names a theory as Z3 does", () => {
   // check_logic prints m.get_family_name(fid), and the label family is a builtin it accepts.
   it("names the recfun family and accepts a label", () => {

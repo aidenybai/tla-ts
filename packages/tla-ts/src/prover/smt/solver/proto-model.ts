@@ -753,7 +753,7 @@ export class ProtoModel {
         ]);
       }
       for (const [decl, value] of this.constInterps)
-        if (!manager.recFunDefs.has(decl)) collectDeps(decl, [value]);
+        if (!manager.recFunDefs.has(decl) && !manager.macros.has(decl)) collectDeps(decl, [value]);
       sort.sort();
       const rewriter = new Rewriter(manager, TACTIC_REWRITER_OPTIONS);
       for (const decl of sort.sorted) {
