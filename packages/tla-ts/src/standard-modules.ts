@@ -46,6 +46,8 @@ import {
   getSequenceElements,
   isEmptySet,
   isEnumerable,
+  isNormalizedSet,
+  setNormalized,
   isFiniteSet,
   isFunctionValue,
   isOverriddenSet,
@@ -94,7 +96,7 @@ type ReducibleSet = SetValue | MixedSetValue | IntervalValue;
 const isMixedSet = (value: Value) => typeof value === "object" && value.kind === "MixedSet";
 
 const isNormalizedReducible = (set: ReducibleSet) =>
-  set.kind === "Interval" || (set.kind === "Set" && set.isNormalized);
+  set.kind === "Interval" || (set.kind === "Set" && isNormalizedSet(set));
 
 const combineReducible = (
   operator: SetOperationValue["operator"],
@@ -221,14 +223,14 @@ export const CORE_OPERATORS: Builtin[] = [
               if (written.length + added.length > getMaximumSetSize()) {
                 throw new TlaSetBoundError(getSetBoundMessage());
               }
-              if (isSorted && !leftSet.isNormalized) return merged;
+              if (isSorted && !isNormalizedSet(leftSet)) return merged;
               const union = merged === leftSet ? createSortedSet(merged.elements) : merged;
               if (!isSorted) union.writtenElements = [...written, ...added];
               return union;
             }
             if (merged === finiteLeft) return merged;
-            merged.isNormalized = isNormalizedReducible(finiteLeft);
-            if (leftSet.writtenElements && !leftSet.isNormalized) {
+            setNormalized(merged, isNormalizedReducible(finiteLeft));
+            if (leftSet.writtenElements && !isNormalizedSet(leftSet)) {
               merged.writtenElements = leftSet.writtenElements.filter((element) =>
                 isElementOf(element, merged),
               );

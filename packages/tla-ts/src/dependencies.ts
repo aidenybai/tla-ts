@@ -18,6 +18,9 @@ export interface DefinitionFacts {
   ids: Map<Definition, number>;
   rows: Uint32Array;
   words: number;
+  // The effects of each LET definition in the definitions, which a check reads for each LET of an
+  // action it compiles.
+  letEffects: Map<Definition, number>;
 }
 
 const NONCONSTANT = 1;
@@ -80,15 +83,31 @@ interface Edge {
   callee: Definition;
   isOverridden: boolean;
   isLevelCounted: boolean;
+  // The innermost LET definition around the reference, or -1.
+  owner: number;
+}
+
+// The LET definitions that the walk of the definitions meets, numbered as it meets them: each
+// one's innermost enclosing LET definition and the effects of the builtins in its expressions.
+interface LetColumns {
+  numbers: Map<Definition, number>;
+  parents: number[];
+  effects: number[];
 }
 
 const collectLocalFacts = (
   expressions: Expression[],
   environment: DefinitionNames,
   words: number,
+  lets?: LetColumns,
 ) => {
   const row = new Uint32Array(words);
   const edges: Edge[] = [];
+  let owner = -1;
+  const addEffects = (effects: number) => {
+    row[0] |= effects;
+    if (owner !== -1 && lets) lets.effects[owner] |= effects;
+  };
   const getOwnLevelFlags = (node: Expression) => {
     const kind = node.kind;
     if (ACTION_KINDS.has(kind) || (kind === "Apply" && node.operator === "\\cdot")) {
@@ -135,13 +154,18 @@ const collectLocalFacts = (
         if (!isOverridden) row[1 + (variableIndex >>> 5)] |= 1 << (variableIndex & 31);
       }
       if (definition) {
-        edges.push({ callee: definition, isOverridden, isLevelCounted: isInnerLevelCounted });
+        edges.push({
+          callee: definition,
+          isOverridden,
+          isLevelCounted: isInnerLevelCounted,
+          owner,
+        });
       } else {
         if (isImpureBuiltin(name, environment)) {
-          row[0] |= IMPURE | (name === "Assert" ? 0 : REPEATED_EFFECT);
+          addEffects(IMPURE | (name === "Assert" ? 0 : REPEATED_EFFECT));
         }
-        if (STREAMED_BUILTINS.has(name)) row[0] |= STREAMED;
-        if (RANDOM_BUILTINS.has(name)) row[0] |= RANDOM;
+        if (STREAMED_BUILTINS.has(name)) addEffects(STREAMED);
+        if (RANDOM_BUILTINS.has(name)) addEffects(RANDOM);
         if (!isOverridden && isImpureBuiltin(target, environment)) row[0] |= READS_IMPURE;
         const builtin = environment.builtins.get(target);
         if (
@@ -155,7 +179,19 @@ const collectLocalFacts = (
         }
       }
     }
-    getChildren(node).forEach((child) => visit(child, isInnerLevelCounted));
+    if (node.kind !== "Let" || !lets) {
+      getChildren(node).forEach((child) => visit(child, isInnerLevelCounted));
+      return;
+    }
+    const outer = owner;
+    node.definitions.forEach((definition) => {
+      owner = lets.parents.push(outer) - 1;
+      lets.effects.push(0);
+      lets.numbers.set(definition, owner);
+      getDefinitionExpressions(definition).forEach((child) => visit(child, isInnerLevelCounted));
+      owner = outer;
+    });
+    visit(node.body, isInnerLevelCounted);
   };
   expressions.forEach((expression) => visit(expression, true));
   return { row, edges };
@@ -240,8 +276,9 @@ export const createDefinitionFacts = (environment: DefinitionNames): DefinitionF
   const words = 1 + ((environment.variables.length + 31) >>> 5);
   const local = new Uint32Array(definitions.length * words);
   const localImpurity = new Uint32Array(definitions.length * words);
+  const lets: LetColumns = { numbers: new Map(), parents: [], effects: [] };
   const edges = definitions.map((definition, id) => {
-    const facts = collectLocalFacts(getDefinitionExpressions(definition), environment, words);
+    const facts = collectLocalFacts(getDefinitionExpressions(definition), environment, words, lets);
     local.set(facts.row, id * words);
     localImpurity[id * words] = facts.row[0] & PURITY_MASK;
     return facts.edges;
@@ -272,7 +309,26 @@ export const createDefinitionFacts = (environment: DefinitionNames): DefinitionF
         (purity[position] & PURITY_MASK)
       : word,
   );
-  return { ids, rows, words };
+  // A LET definition's effects are those of its builtins and of the definitions it calls, and with
+  // them those of the LET definitions in it, which come after it in the numbering.
+  edges.forEach((own) =>
+    own.forEach((edge) => {
+      if (edge.owner === -1) return;
+      const callee = rows[(ids.get(edge.callee) ?? 0) * words];
+      if (!isEvaluatedOnce(edge.callee, callee)) lets.effects[edge.owner] |= callee & PURITY_MASK;
+    }),
+  );
+  for (let number = lets.parents.length - 1; number >= 0; number--) {
+    const parent = lets.parents[number];
+    if (parent !== -1) lets.effects[parent] |= lets.effects[number];
+  }
+  const letEffects = new Map(
+    [...lets.numbers].map(([definition, number]): [Definition, number] => [
+      definition,
+      lets.effects[number],
+    ]),
+  );
+  return { ids, rows, words, letEffects };
 };
 
 const getRow = (definition: Definition, environment: Environment): Uint32Array => {
@@ -320,7 +376,10 @@ export const isImpureDefinition = (
   definition: Definition,
   environment: Environment,
   effect: keyof typeof EFFECT_FLAGS = "any",
-) => (getRow(definition, environment)[0] & EFFECT_FLAGS[effect]) !== 0;
+) =>
+  ((environment.facts.letEffects.get(definition) ?? getRow(definition, environment)[0]) &
+    EFFECT_FLAGS[effect]) !==
+  0;
 
 export const getDefinitionLevel = (definition: Definition, environment: Environment) => {
   const flags = getRow(definition, environment)[0] & TEMPORAL_LEVEL_FLAGS;

@@ -154,9 +154,9 @@ const getDeclarations = (linked: LinkedModule): Declaration[] => [
   })),
 ];
 
-const parseModuleFile = (source: string, name: string, order: TlcOrder) => {
+const parseModuleFile = (source: string, name: string | undefined, order: TlcOrder) => {
   try {
-    return order.parseModule(source);
+    return order.getModule(name, source);
   } catch (error) {
     if (!(error instanceof TlaSyntaxError)) throw error;
     const parseError = getSanyParseError(source);
@@ -247,7 +247,9 @@ export const createEnvironment = (
 ): Specification => {
   const order = options.order ?? createTlcOrder(options.source, options.loadModule);
   const root =
-    typeof options.source === "string" ? order.parseModule(options.source) : options.source;
+    typeof options.source === "string"
+      ? order.getModule(undefined, options.source)
+      : options.source;
   const definitions = new Map<string, Definition>();
   const parameterized = new Map<string, boolean>();
   const copySources = new Map<string, CopySource>();
@@ -326,7 +328,7 @@ export const createEnvironment = (
     const dependencies = STANDARD_DEPENDENCIES.get(name) ?? [];
     if (
       name === "TLCExt" ||
-      [name, ...dependencies].some((module) => options.loadModule?.(module) !== undefined)
+      [name, ...dependencies].some((module) => order.getLoadedSource(module) !== undefined)
     )
       return undefined;
     const symbols = addStandardModule(name);
@@ -351,7 +353,7 @@ export const createEnvironment = (
 
   const loadModule = (name: string, importer: string) => {
     const source =
-      options.loadModule?.(name) ??
+      order.getLoadedSource(name) ??
       getSanyStandardModules(runtime.version).get(name) ??
       (typeof options.source === "string" ? extractModule(options.source, name) : undefined);
     if (source === undefined) throw createMissingModuleError(name, importer);
@@ -1111,7 +1113,6 @@ export const createEnvironment = (
     definitionEvaluators: new WeakMap(),
     initRunners: new WeakMap(),
     nextRunners: new WeakMap(),
-    tailCalls: new WeakMap(),
   };
   const analyzer = createLevelAnalyzer({
     constants: new Set(constants.keys()),

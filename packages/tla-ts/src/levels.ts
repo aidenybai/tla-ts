@@ -20,12 +20,22 @@ import { forEachChild } from "./instances";
 import { collectSemanticErrors, getBoundNames, getPatternNames } from "./resolve";
 import { STANDARD_LEVELS } from "./standard-definitions";
 
+// Most expressions have no level parameters or constraints, so each collection is undefined until
+// something is added to it.
 interface LevelData {
   level: number;
-  params: Set<string>;
-  constraints: Map<string, number>;
-  argConstraints: Map<string, number>;
-  argParams: Set<string>;
+  params: Set<string> | undefined;
+  constraints: Map<string, number> | undefined;
+  argConstraints: Map<string, number> | undefined;
+  argParams: Map<string, ArgumentParam> | undefined;
+}
+
+// That the level of the argument at index of operator bounds the level of param, kept by its key so
+// that the level checker reads the parts without parsing the key again.
+export interface ArgumentParam {
+  operator: string;
+  index: number;
+  param: string;
 }
 
 export interface OperatorLevels extends LevelData {
@@ -73,20 +83,17 @@ export const getArgumentKey = (operator: string, index: number) =>
 const getArgumentParamKey = (operator: string, index: number, param: string) =>
   `${operator}${SEPARATOR}${index}${SEPARATOR}${param}`;
 
-export const parseArgumentParamKey = (key: string) => {
-  const parts = key.split(SEPARATOR);
-  return { operator: parts[0], index: Number(parts[1]), param: parts[2] };
-};
+const parseArgumentKey = (key: string) => key.split(SEPARATOR)[0];
 
 const getConditionKey = (operator: number, operand: number, argument: number) =>
   `${operator},${operand},${argument}`;
 
 const createData = (level = 0): LevelData => ({
   level,
-  params: new Set(),
-  constraints: new Map(),
-  argConstraints: new Map(),
-  argParams: new Set(),
+  params: undefined,
+  constraints: undefined,
+  argConstraints: undefined,
+  argParams: undefined,
 });
 
 export const putConstraint = (constraints: Map<string, number>, name: string, level: number) =>
@@ -95,10 +102,24 @@ export const putConstraint = (constraints: Map<string, number>, name: string, le
 export const putArgConstraint = (constraints: Map<string, number>, key: string, level: number) =>
   constraints.set(key, Math.max(level, constraints.get(key) ?? 0));
 
+const addParam = (data: LevelData, param: string) => (data.params ??= new Set()).add(param);
+
+const addConstraint = (data: LevelData, name: string, level: number) =>
+  putConstraint((data.constraints ??= new Map()), name, level);
+
+const addArgConstraint = (data: LevelData, key: string, level: number) =>
+  putArgConstraint((data.argConstraints ??= new Map()), key, level);
+
+const copyArgParam = (data: LevelData, key: string, parameter: ArgumentParam) =>
+  (data.argParams ??= new Map()).set(key, parameter);
+
+const addArgParam = (data: LevelData, operator: string, index: number, param: string) =>
+  copyArgParam(data, getArgumentParamKey(operator, index, param), { operator, index, param });
+
 const mergeConstraints = (data: LevelData, part: LevelData) => {
-  part.constraints.forEach((value, key) => putConstraint(data.constraints, key, value));
-  part.argConstraints.forEach((value, key) => putArgConstraint(data.argConstraints, key, value));
-  part.argParams.forEach((key) => data.argParams.add(key));
+  part.constraints?.forEach((value, key) => addConstraint(data, key, value));
+  part.argConstraints?.forEach((value, key) => addArgConstraint(data, key, value));
+  part.argParams?.forEach((parameter, key) => copyArgParam(data, key, parameter));
 };
 
 const createSignature = (
@@ -229,14 +250,16 @@ export const createLevelAnalyzer = (context: LevelContext) => {
   };
 
   const applyDeclared = (name: string, level: number, operands: Operand[]) => {
-    const data = createData(Math.max(level, ...operands.map((operand) => operand.data.level)));
-    data.params.add(name);
+    let maximum = level;
+    for (const operand of operands) maximum = Math.max(maximum, operand.data.level);
+    const data = createData(maximum);
+    addParam(data, name);
     operands.forEach((operand, index) => {
-      operand.data.params.forEach((param) => {
-        data.params.add(param);
-        data.argParams.add(getArgumentParamKey(name, index, param));
+      operand.data.params?.forEach((param) => {
+        addParam(data, param);
+        addArgParam(data, name, index, param);
       });
-      putArgConstraint(data.argConstraints, getArgumentKey(name, index), operand.data.level);
+      addArgConstraint(data, getArgumentKey(name, index), operand.data.level);
       mergeConstraints(data, operand.data);
     });
     return data;
@@ -249,14 +272,14 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     bound: string[] = [],
   ) => {
     const isBound = (name: string) => bound.includes(name);
-    operands.forEach((operand, index) => {
-      if (operand.kind !== "Value") return;
-      if (operand.data.level > getMaxLevel(operator, index)) {
+    for (let index = 0; index < operands.length; index++) {
+      const operand = operands[index];
+      if (operand.kind === "Value" && operand.data.level > getMaxLevel(operator, index)) {
         throw new TlaSyntaxError(
           `Level error in applying operator ${operator.name}:\nThe level of argument ${index + 1} exceeds the maximum level allowed by the operator`,
         );
       }
-    });
+    }
     if (ranges.some((range) => range.level > ACTION_LEVEL)) {
       throw new TlaSyntaxError(
         `Level error in applying operator ${operator.name}:\nThe level of the range for a bounded variable exceeds the maximum level allowed by the operator`,
@@ -268,141 +291,126 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     };
     const hasCondition = (operandIndex: number, otherIndex: number, argumentIndex: number) =>
       operator.conditions.has(getConditionKey(operandIndex, otherIndex, argumentIndex));
-    const data = createData(
-      Math.max(
-        operator.level,
-        ...operands
-          .filter((_operand, index) => getWeight(operator, index) === 1)
-          .map((operand) => operand.data.level),
-        ...ranges.map((range) => range.level),
-      ),
-    );
-    operator.params.forEach((param) => data.params.add(param));
-    operands.forEach((operand, index) => {
+    let level = operator.level;
+    for (let index = 0; index < operands.length; index++) {
+      if (getWeight(operator, index) === 1) level = Math.max(level, operands[index].data.level);
+    }
+    for (const range of ranges) level = Math.max(level, range.level);
+    const data = createData(level);
+    operator.params?.forEach((param) => addParam(data, param));
+    for (let index = 0; index < operands.length; index++) {
       if (getWeight(operator, index) === 1) {
-        operand.data.params.forEach((param) => data.params.add(param));
+        operands[index].data.params?.forEach((param) => addParam(data, param));
       }
-    });
-    ranges.forEach((range) => range.params.forEach((param) => data.params.add(param)));
-    bound.forEach((name) => data.params.delete(name));
+    }
+    for (const range of ranges) range.params?.forEach((param) => addParam(data, param));
+    if (data.params) for (const name of bound) data.params.delete(name);
 
-    operator.constraints.forEach((value, key) => putConstraint(data.constraints, key, value));
-    operands.forEach((operand) =>
-      operand.data.constraints.forEach((value, key) => {
-        if (!isBound(key)) putConstraint(data.constraints, key, value);
-      }),
-    );
-    ranges.forEach((range) =>
-      range.constraints.forEach((value, key) => putConstraint(data.constraints, key, value)),
-    );
-    operands.forEach((operand, index) =>
-      operand.data.params.forEach((param) => {
-        if (!isBound(param)) putConstraint(data.constraints, param, getMaxLevel(operator, index));
-      }),
-    );
+    operator.constraints?.forEach((value, key) => addConstraint(data, key, value));
+    for (const operand of operands) {
+      operand.data.constraints?.forEach((value, key) => {
+        if (!isBound(key)) addConstraint(data, key, value);
+      });
+    }
+    for (const range of ranges) {
+      range.constraints?.forEach((value, key) => addConstraint(data, key, value));
+    }
+    for (let index = 0; index < operands.length; index++) {
+      operands[index].data.params?.forEach((param) => {
+        if (!isBound(param)) addConstraint(data, param, getMaxLevel(operator, index));
+      });
+    }
     operands.forEach((operand, operandIndex) => {
       if (operand.kind !== "Operator") return;
       const argument = operand.data;
       operands.forEach((other, otherIndex) =>
         argument.formals.forEach((_formal, argumentIndex) => {
           if (!hasCondition(operandIndex, otherIndex, argumentIndex)) return;
-          other.data.params.forEach((param) =>
-            putConstraint(data.constraints, param, getMaxLevel(argument, argumentIndex)),
+          other.data.params?.forEach((param) =>
+            addConstraint(data, param, getMaxLevel(argument, argumentIndex)),
           );
         }),
       );
     });
-    operator.argParams.forEach((key) => {
-      const parameter = parseArgumentParamKey(key);
+    operator.argParams?.forEach((parameter) => {
       const argument = getOperand(parameter.operator);
       if (argument?.kind === "Operator") {
-        putConstraint(
-          data.constraints,
-          parameter.param,
-          getMaxLevel(argument.data, parameter.index),
-        );
+        addConstraint(data, parameter.param, getMaxLevel(argument.data, parameter.index));
       }
     });
 
-    const argConstraints = [
-      operator.argConstraints,
-      ...operands.map((operand) => operand.data.argConstraints),
-      ...ranges.map((range) => range.argConstraints),
-    ];
-    argConstraints.forEach((constraints) =>
-      constraints.forEach((value, key) => putArgConstraint(data.argConstraints, key, value)),
-    );
+    operator.argConstraints?.forEach((value, key) => addArgConstraint(data, key, value));
+    for (const operand of operands) {
+      operand.data.argConstraints?.forEach((value, key) => addArgConstraint(data, key, value));
+    }
+    for (const range of ranges) {
+      range.argConstraints?.forEach((value, key) => addArgConstraint(data, key, value));
+    }
     operands.forEach((operand, operandIndex) => {
       if (operand.kind !== "Declared") return;
       const declared = operand.declared;
-      Array.from({ length: declared.arity }, (_value, argumentIndex) =>
-        putArgConstraint(
-          data.argConstraints,
+      for (let argumentIndex = 0; argumentIndex < declared.arity; argumentIndex++) {
+        addArgConstraint(
+          data,
           getArgumentKey(declared.name, argumentIndex),
           operator.minMaxLevels[operandIndex]?.[argumentIndex] ?? 0,
-        ),
-      );
-      operands.forEach((other, otherIndex) =>
-        Array.from({ length: declared.arity }, (_value, argumentIndex) => {
+        );
+      }
+      operands.forEach((other, otherIndex) => {
+        for (let argumentIndex = 0; argumentIndex < declared.arity; argumentIndex++) {
           if (hasCondition(operandIndex, otherIndex, argumentIndex)) {
-            putArgConstraint(
-              data.argConstraints,
-              getArgumentKey(declared.name, argumentIndex),
-              other.data.level,
-            );
+            addArgConstraint(data, getArgumentKey(declared.name, argumentIndex), other.data.level);
           }
-        }),
-      );
+        }
+      });
     });
-    operator.argParams.forEach((key) => {
-      const parameter = parseArgumentParamKey(key);
+    operator.argParams?.forEach((parameter) => {
       const argument = getOperand(parameter.operator);
       if (argument) {
-        putArgConstraint(
-          data.argConstraints,
+        addArgConstraint(
+          data,
           getArgumentKey(parameter.operator, parameter.index),
           argument.data.level,
         );
       }
     });
 
-    operands.forEach((operand) =>
-      operand.data.argParams.forEach((key) => {
-        if (!isBound(parseArgumentParamKey(key).param)) data.argParams.add(key);
-      }),
-    );
-    ranges.forEach((range) => range.argParams.forEach((key) => data.argParams.add(key)));
-    operator.argParams.forEach((key) => {
-      const parameter = parseArgumentParamKey(key);
+    for (const operand of operands) {
+      operand.data.argParams?.forEach((parameter, key) => {
+        if (!isBound(parameter.param)) copyArgParam(data, key, parameter);
+      });
+    }
+    for (const range of ranges) {
+      range.argParams?.forEach((parameter, key) => copyArgParam(data, key, parameter));
+    }
+    operator.argParams?.forEach((parameter, key) => {
       const argument = getOperand(parameter.operator);
       if (!argument) {
         const value = getOperand(parameter.param);
         if (!value) {
-          data.argParams.add(key);
+          copyArgParam(data, key, parameter);
           return;
         }
-        value.data.params.forEach((param) =>
-          data.argParams.add(getArgumentParamKey(parameter.operator, parameter.index, param)),
+        value.data.params?.forEach((param) =>
+          addArgParam(data, parameter.operator, parameter.index, param),
         );
         return;
       }
       if (argument.kind === "Declared") {
-        data.argParams.add(
-          getArgumentParamKey(argument.declared.name, parameter.index, parameter.param),
-        );
+        addArgParam(data, argument.declared.name, parameter.index, parameter.param);
       }
     });
     operands.forEach((operand, operandIndex) => {
       if (operand.kind !== "Declared") return;
       const declared = operand.declared;
-      operands.forEach((other, otherIndex) =>
-        Array.from({ length: declared.arity }, (_value, argumentIndex) => {
-          if (!hasCondition(operandIndex, otherIndex, argumentIndex)) return;
-          other.data.params.forEach((param) =>
-            data.argParams.add(getArgumentParamKey(declared.name, argumentIndex, param)),
+      operands.forEach((other, otherIndex) => {
+        for (let argumentIndex = 0; argumentIndex < declared.arity; argumentIndex++) {
+          if (!hasCondition(operandIndex, otherIndex, argumentIndex)) continue;
+          other.data.params?.forEach((param) =>
+            addArgParam(data, declared.name, argumentIndex, param),
           );
-        }),
-      );
+        }
+      });
     });
     return data;
   };
@@ -433,7 +441,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       }
       if (resolved.kind === "Declared" && resolved.arity > 0) {
         const data = createData();
-        data.params.add(name);
+        addParam(data, name);
         return { kind: "Declared", data, declared: { name, arity: resolved.arity } };
       }
       if (expression.kind === "OperatorReference") return { kind: "Value", data: createData() };
@@ -507,12 +515,12 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       inner.set(definition.name, { kind: "Let", definition, scope: inner }),
     );
     const body = analyze(expression.body, inner);
-    const data = {
+    const data: LevelData = {
       level: body.level,
-      params: new Set(body.params),
-      constraints: new Map(body.constraints),
-      argConstraints: new Map(body.argConstraints),
-      argParams: new Set(body.argParams),
+      params: body.params && new Set(body.params),
+      constraints: body.constraints && new Map(body.constraints),
+      argConstraints: body.argConstraints && new Map(body.argConstraints),
+      argParams: body.argParams && new Map(body.argParams),
     };
     expression.definitions.forEach((definition) =>
       mergeConstraints(data, analyzeDefinition(definition, inner)),
@@ -778,13 +786,13 @@ export const createLevelAnalyzer = (context: LevelContext) => {
         formals.flatMap((formal, index) => (nonLeibnizNames.has(formal.name) ? [index] : [])),
       ),
       maxLevels: formals.map((formal) =>
-        Math.min(TEMPORAL_LEVEL, data.constraints.get(formal.name) ?? TEMPORAL_LEVEL),
+        Math.min(TEMPORAL_LEVEL, data.constraints?.get(formal.name) ?? TEMPORAL_LEVEL),
       ),
-      weights: formals.map((formal) => (data.params.has(formal.name) ? 1 : 0)),
+      weights: formals.map((formal) => (data.params?.has(formal.name) ? 1 : 0)),
       minMaxLevels: formals.map((formal) =>
         Array.from(
           { length: formal.arity },
-          (_value, index) => data.argConstraints.get(getArgumentKey(formal.name, index)) ?? 0,
+          (_value, index) => data.argConstraints?.get(getArgumentKey(formal.name, index)) ?? 0,
         ),
       ),
       conditions: new Set(
@@ -792,25 +800,28 @@ export const createLevelAnalyzer = (context: LevelContext) => {
           formals.flatMap((param, paramIndex) =>
             Array.from({ length: operator.arity }, (_value, argumentIndex) => argumentIndex)
               .filter((argumentIndex) =>
-                data.argParams.has(getArgumentParamKey(operator.name, argumentIndex, param.name)),
+                data.argParams?.has(getArgumentParamKey(operator.name, argumentIndex, param.name)),
               )
               .map((argumentIndex) => getConditionKey(operatorIndex, paramIndex, argumentIndex)),
           ),
         ),
       ),
     };
-    data.params.forEach((param) => {
-      if (!isFormal(param)) levels.params.add(param);
+    data.params?.forEach((param) => {
+      if (!isFormal(param)) addParam(levels, param);
     });
-    data.constraints.forEach((value, key) => {
-      if (!isFormal(key)) levels.constraints.set(key, value);
+    data.constraints?.forEach((value, key) => {
+      if (!isFormal(key)) (levels.constraints ??= new Map()).set(key, value);
     });
-    data.argConstraints.forEach((value, key) => {
-      if (!isFormal(parseArgumentParamKey(key).operator)) levels.argConstraints.set(key, value);
+    data.argConstraints?.forEach((value, key) => {
+      if (!isFormal(parseArgumentKey(key))) {
+        (levels.argConstraints ??= new Map()).set(key, value);
+      }
     });
-    data.argParams.forEach((key) => {
-      const parameter = parseArgumentParamKey(key);
-      if (!isFormal(parameter.operator) || !isFormal(parameter.param)) levels.argParams.add(key);
+    data.argParams?.forEach((parameter, key) => {
+      if (!isFormal(parameter.operator) || !isFormal(parameter.param)) {
+        copyArgParam(levels, key, parameter);
+      }
     });
     return levels;
   };
@@ -867,7 +878,7 @@ export const analyzeAssumeProve = (
   parts.push(analyzer.analyze(assumeProve.conclusion, inner));
   const data = createData(Math.max(...parts.map((part) => part.level)));
   parts.forEach((part) => {
-    part.params.forEach((param) => data.params.add(param));
+    part.params?.forEach((param) => addParam(data, param));
     mergeConstraints(data, part);
   });
   return data;

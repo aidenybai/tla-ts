@@ -31,6 +31,7 @@ import {
   getDefinition,
   getContextElements,
   getEntryEvaluator,
+  getLetSites,
   getReevaluatedDefinitions,
   getStartupValue,
   lookupScope,
@@ -1101,10 +1102,16 @@ const compileAction = (
     case "Let": {
       const body = getChildRunner(expression.body);
       const reevaluated = getReevaluatedDefinitions(expression.definitions, environment);
+      const sites = getLetSites(expression.definitions);
       return (run, scope, partial, action, isFixed, onComplete) =>
         body(
           run,
-          bindDefinitions(expression.definitions, getContext(run, scope, partial), reevaluated),
+          bindDefinitions(
+            expression.definitions,
+            getContext(run, scope, partial),
+            reevaluated,
+            sites,
+          ),
           partial,
           action,
           isFixed,

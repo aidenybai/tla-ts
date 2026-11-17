@@ -10,6 +10,7 @@ import {
   describeNode,
   describeRange,
   bindDefinitions,
+  getLetSites,
   bindOperatorArguments,
   evaluate,
   forEachBinding,
@@ -77,14 +78,6 @@ const TEMPORAL_OPERATORS = new Set(["~>", "-+->"]);
 
 const definitionThunks = new WeakSet<Thunk>();
 
-// The level of each LET definition and argument that a check reads, which a spec compiled from
-// TypeScript reads through many nested bindings.
-const bindingLevels = new WeakMap<object, number>();
-
-// The level of each operator's body for the levels of the arguments that a call passes it, in each
-// check, as another config of the same parsed modules may give the operators other levels.
-const callLevels = new WeakMap<Environment, WeakMap<Expression, Map<string, number>>>();
-
 const JUNCTIONS = new Map<string, "And" | "Or">([
   ["/\\", "And"],
   ["\\/", "Or"],
@@ -116,13 +109,6 @@ export const getLevel = (
     visiting.delete(binding);
     return level;
   };
-  const getBoundLevel = (binding: object, body: Expression, bodyScope: Scope | undefined) => {
-    const known = bindingLevels.get(binding);
-    if (known !== undefined) return known;
-    const level = getBodyLevel(binding, body, bodyScope);
-    bindingLevels.set(binding, level);
-    return level;
-  };
   const getBindingLevel = (name: string) => {
     const binding = lookupScope(scope, name);
     if (!binding) return undefined;
@@ -130,11 +116,11 @@ export const getLevel = (
     if (binding.kind === "Thunk") {
       return binding.isReleased
         ? CONSTANT_LEVEL
-        : getBoundLevel(binding, binding.expression, binding.scope);
+        : getBodyLevel(binding, binding.expression, binding.scope);
     }
     const operator = binding.operator;
     return operator.kind === "Closure"
-      ? getBoundLevel(operator, operator.body, operator.scope)
+      ? getBodyLevel(operator, operator.body, operator.scope)
       : CONSTANT_LEVEL;
   };
   const getGlobalLevel = (name: string) => {
@@ -211,19 +197,7 @@ export const getLevel = (
           operator.body,
           bindOperatorArguments(operator, expression.args, getConstantContext(environment, scope)),
         );
-      if (operator.params.some((param) => param.arity > 0)) return getCallLevel();
-      const key = expression.args
-        .map((arg) => getLevel(arg, scope, environment, shadowed, visiting))
-        .join();
-      const checkLevels = callLevels.get(environment) ?? new WeakMap();
-      callLevels.set(environment, checkLevels);
-      const levels = checkLevels.get(operator.body) ?? new Map<string, number>();
-      checkLevels.set(operator.body, levels);
-      const known = levels.get(key);
-      if (known !== undefined) return known;
-      const callLevel = getCallLevel();
-      levels.set(key, callLevel);
-      return callLevel;
+      return getCallLevel();
     }
     default:
       return getChildrenLevel(expression);
@@ -357,7 +331,12 @@ const bindLetDefinitions = (
   scope: Scope | undefined,
   environment: Environment,
 ) => {
-  const bound = bindDefinitions(expression.definitions, getConstantContext(environment, scope));
+  const bound = bindDefinitions(
+    expression.definitions,
+    getConstantContext(environment, scope),
+    undefined,
+    getLetSites(expression.definitions),
+  );
   for (let current = bound; current && current !== scope; current = current.parent) {
     if (current.binding.kind === "Thunk") definitionThunks.add(current.binding);
   }

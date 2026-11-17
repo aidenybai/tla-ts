@@ -23,7 +23,9 @@ import {
 } from "./errors";
 import {
   describeRange,
+  findGlobalName,
   getDefinition,
+  getStartupValue,
   type CallStack,
   type Environment,
   type FingerprintFailure,
@@ -497,6 +499,16 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     config.postconditions.length > 0 ||
     config.possible.length > 0 ||
     specification.moduleOperators.some((operator) => operator.kind === "postcondition");
+  // The trace file that TLC writes by default holds a counterexample, which a search that the typed
+  // tier decides never has, so that postcondition alone leaves the tier to run.
+  const isTypedSearchable =
+    config.postconditions.length === 0 &&
+    config.possible.length === 0 &&
+    specification.moduleOperators.every(
+      (operator) =>
+        operator.kind !== "postcondition" ||
+        (operator.module === "_TLCTrace" && operator.operator === "_TLCTraceSilent"),
+    );
   const tracedSteps = new WeakMap<TraceStep, TracedStep>();
   const getStepState = (step: TraceStep) => tracedSteps.get(step)?.state ?? step.state;
   const getStepAction = (step: TraceStep) => {
@@ -1102,15 +1114,46 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   if (liveness) {
     options.onProgress?.({ kind: "liveness-prepared", branches: liveness.branches });
   }
+  const checkFinalPostconditions = () => {
+    const missingPostcondition = specification.moduleOperators.find(
+      (operator) => operator.kind === "postcondition" && operator.key === undefined,
+    );
+    if (missingPostcondition) {
+      return createFailureResult(createMissingOperatorError(missingPostcondition), { trace: [] });
+    }
+    const postcondition = search.findPostconditionViolation();
+    return (
+      postcondition &&
+      createResult("postcondition-violation", {
+        name: postcondition.name,
+        message: postcondition.message,
+        counts: postcondition.counts,
+        trace: [],
+        postcondition,
+      })
+    );
+  };
   const assumptionViolation = findViolatedAssumption();
   if (assumptionViolation) return createResult("assumption-violation", assumptionViolation);
   options.onProgress?.({ kind: "initial-states-started" });
+  // A next-state relation that is the constant FALSE leaves every initial state without a successor,
+  // so with deadlock checked the typed tier, which decides only a search that succeeds, would only
+  // search the initial states for the interpreter to search again. A script compiled from
+  // TypeScript runs in its initial state and has no next-state relation.
+  const global =
+    spec.next?.kind === "Identifier" && spec.scope === undefined
+      ? findGlobalName(spec.next.name, environment)
+      : undefined;
+  const isStepless =
+    (global?.kind === "Value" && global.value === false) ||
+    (global?.kind === "Definition" && getStartupValue(global.definition, environment) === false);
   const typedChecks =
+    !(config.checkDeadlock && isStepless) &&
     !options.isContinued &&
     options.dump === undefined &&
     // A set of small integers on the tier is a 31-bit mask, which a lower bound could overflow.
     options.maxSetSize === undefined &&
-    !hasPostconditions
+    isTypedSearchable
       ? search.getTypedChecks(liveness?.solutions)
       : undefined;
   const typed =
@@ -1144,6 +1187,8 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       });
       options.onProgress?.({ kind: "liveness-finished" });
     }
+    const finalPostcondition = checkFinalPostconditions();
+    if (finalPostcondition) return finalPostcondition;
     return {
       ...statistics,
       outDegrees: typed.outDegrees,
@@ -1708,21 +1753,8 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   if (finalLiveness && lasso) return reportLasso(finalLiveness, lasso);
 
   if (finalLiveness) options.onProgress?.({ kind: "liveness-finished" });
-  const missingPostcondition = specification.moduleOperators.find(
-    (operator) => operator.kind === "postcondition" && operator.key === undefined,
+  return (
+    checkFinalPostconditions() ??
+    (continuedStatus ? createResult(continuedStatus) : createSuccess())
   );
-  if (missingPostcondition) {
-    return createFailureResult(createMissingOperatorError(missingPostcondition), { trace: [] });
-  }
-  const postcondition = search.findPostconditionViolation();
-  if (postcondition) {
-    return createResult("postcondition-violation", {
-      name: postcondition.name,
-      message: postcondition.message,
-      counts: postcondition.counts,
-      trace: [],
-      postcondition,
-    });
-  }
-  return continuedStatus ? createResult(continuedStatus) : createSuccess();
 };

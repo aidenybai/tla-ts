@@ -30,10 +30,10 @@ export interface SetValue {
   kind: "Set";
   elements: Value[];
   writtenElements: Value[] | undefined;
-  isNormalized: boolean;
   hash: number;
   fingerprint: number;
-  isFingerprinted: boolean;
+  // VALUE_NORMALIZED, VALUE_FINGERPRINTED and VALUE_ORDER_FORGOTTEN bits.
+  flags: number;
 }
 
 export interface MixedSetValue extends LazySet {
@@ -50,7 +50,8 @@ export interface FunctionValue {
   writtenKeys: Value[] | undefined;
   functionClass: FunctionClass | undefined;
   lambdaDomain: Value | undefined;
-  isFingerprinted: boolean;
+  // VALUE_FINGERPRINTED and VALUE_ORDER_FORGOTTEN bits.
+  flags: number;
 }
 
 export interface IntervalValue {
@@ -179,6 +180,19 @@ const isLazySet = (value: ObjectValue): value is ConvertibleSetValue =>
 
 export const MAXIMUM_INTEGER = 2147483647;
 
+// A set that TLC has normalized, which it prints in sorted order.
+const VALUE_NORMALIZED = 1;
+// A value that a state holds once TLC has fingerprinted it.
+const VALUE_FINGERPRINTED = 2;
+// A value none of whose records keep the order their fields were written in.
+const VALUE_ORDER_FORGOTTEN = 4;
+
+export const isNormalizedSet = (set: SetValue) => (set.flags & VALUE_NORMALIZED) !== 0;
+
+export const setNormalized = (set: SetValue, isNormalized: boolean) => {
+  set.flags = isNormalized ? set.flags | VALUE_NORMALIZED : set.flags & ~VALUE_NORMALIZED;
+};
+
 const DEFAULT_SET_BOUND = 1000000;
 const VALUE_VEC_CAPACITY = 10;
 
@@ -269,9 +283,14 @@ export const getPrintedPairs = (functionValue: FunctionValue): [Value, Value][] 
 export const createWrittenRecord = (names: Value[], range: Value[], writtenNames: Value[]) =>
   setWrittenOrder(createSortedRecord(names, range), writtenNames);
 
+// A value's records keep their written order until it is compared, and then none of them does,
+// so a value walked once is never walked again.
 const forgetWrittenOrder = (value: Value): void => {
   if (typeof value !== "object" || (value.kind !== "Function" && value.kind !== "Set")) return;
-  if (value.hash !== 0 || value.fingerprint !== 0) return;
+  if (value.hash !== 0 || value.fingerprint !== 0 || (value.flags & VALUE_ORDER_FORGOTTEN) !== 0) {
+    return;
+  }
+  value.flags |= VALUE_ORDER_FORGOTTEN;
   if (value.kind === "Set") return value.elements.forEach(forgetWrittenOrder);
   value.writtenKeys = undefined;
   value.range.forEach(forgetWrittenOrder);
@@ -574,15 +593,14 @@ export const createSortedSet = (elements: Value[]): SetValue => ({
   kind: "Set",
   elements,
   writtenElements: undefined,
-  isNormalized: false,
   hash: 0,
   fingerprint: 0,
-  isFingerprinted: false,
+  flags: 0,
 });
 
 export const createNormalizedSet = (elements: Value[]): SetValue => {
   const set = createSortedSet(elements);
-  set.isNormalized = true;
+  set.flags = VALUE_NORMALIZED;
   return set;
 };
 
@@ -595,7 +613,7 @@ export const createSortedFunction = (domain: Value[], range: Value[]): FunctionV
   writtenKeys: undefined,
   functionClass: undefined,
   lambdaDomain: undefined,
-  isFingerprinted: false,
+  flags: 0,
 });
 
 export type FunctionClass = "lambda" | "tuple" | "record";
@@ -656,8 +674,13 @@ export const markFingerprinted = (value: Value): void => {
   if (value.kind === "ModelValue" || value.kind === "Interval" || value.kind === "InfiniteSet") {
     return;
   }
-  if (value.isFingerprinted) return;
-  value.isFingerprinted = true;
+  if (value.kind === "Function" || value.kind === "Set") {
+    if ((value.flags & VALUE_FINGERPRINTED) !== 0) return;
+    value.flags |= VALUE_FINGERPRINTED;
+  } else {
+    if (value.isFingerprinted) return;
+    value.isFingerprinted = true;
+  }
   if (value.kind === "Function") {
     if (value.functionClass === "lambda") value.functionClass = undefined;
     value.domain.forEach(markFingerprinted);
@@ -785,31 +808,46 @@ const canonicalizeElements = (elements: Value[], canonicalize: (value: Value) =>
   }
 };
 
+// The canonical copy of each set and function a search has stored, in an open-addressed table
+// whose slots hold a value's hash and its position in values plus one, so that equal values in
+// states share one object.
 export const createCanonicalizer = () => {
-  const canonicalValues = new Map<number, Value | Value[]>();
+  let slots = new Int32Array(1 << 11);
+  const values: Value[] = [];
+  const insert = (hash: number, position: number) => {
+    const mask = slots.length - 1;
+    let slot = (Math.imul(hash, 0x9e3779b1) >>> 0) & mask & ~1;
+    while (slots[slot + 1] !== 0) slot = (slot + 2) & mask;
+    slots[slot] = hash;
+    slots[slot + 1] = position + 1;
+  };
   const canonicalize = (value: Value): Value => {
     if (typeof value !== "object" || (value.kind !== "Set" && value.kind !== "Function")) {
       return value;
     }
     const hash = getValueHash(value);
-    const bucket = canonicalValues.get(hash);
-    if (bucket !== undefined && !Array.isArray(bucket)) {
-      if (bucket === value || isInterchangeableValue(bucket, value)) return bucket;
-    }
-    if (Array.isArray(bucket)) {
-      for (let index = 0; index < bucket.length; index++) {
-        if (bucket[index] === value || isInterchangeableValue(bucket[index], value))
-          return bucket[index];
-      }
+    const mask = slots.length - 1;
+    for (
+      let slot = (Math.imul(hash, 0x9e3779b1) >>> 0) & mask & ~1;
+      slots[slot + 1] !== 0;
+      slot = (slot + 2) & mask
+    ) {
+      if (slots[slot] !== hash) continue;
+      const stored = values[slots[slot + 1] - 1];
+      if (stored === value || isInterchangeableValue(stored, value)) return stored;
     }
     if (value.kind === "Set") canonicalizeElements(value.elements, canonicalize);
     else {
       canonicalizeElements(value.domain, canonicalize);
       canonicalizeElements(value.range, canonicalize);
     }
-    if (bucket === undefined) canonicalValues.set(hash, value);
-    else if (Array.isArray(bucket)) bucket.push(value);
-    else canonicalValues.set(hash, [bucket, value]);
+    values.push(value);
+    if (values.length * 4 > slots.length) {
+      slots = new Int32Array(slots.length * 2);
+      values.forEach((stored, position) => insert(getValueHash(stored), position));
+    } else {
+      insert(hash, values.length - 1);
+    }
     return value;
   };
   return (state: Value[]) => {
@@ -1046,14 +1084,14 @@ const isElementOfLikeTlc = (element: Value, elements: Value[]) =>
   elements.some((member) => callTracedMethod(member, () => equalsLikeTlc(member, element)));
 
 export const getWrittenElements = (set: SetValue | MixedSetValue) =>
-  set.kind === "MixedSet" || set.isNormalized
+  set.kind === "MixedSet" || isNormalizedSet(set)
     ? set.elements
     : (set.writtenElements ?? set.elements);
 
 export const markNormalized = (value: Value): void => {
   if (typeof value !== "object") return;
   if (value.kind === "Set") {
-    value.isNormalized = true;
+    value.flags |= VALUE_NORMALIZED;
     value.elements.forEach(markNormalized);
   }
   if (value.kind === "Function") {
@@ -1066,7 +1104,7 @@ export const normalizeShallowly = (value: Value): void => {
   if (typeof value !== "object" || isCachedSet(value)) return;
   switch (value.kind) {
     case "Set":
-      value.isNormalized = true;
+      value.flags |= VALUE_NORMALIZED;
       return;
     case "MixedSet":
       toFiniteSet(value);
@@ -2131,7 +2169,7 @@ const isInSortedSet = (element: Value, set: SetValue) =>
   findSortedIndex(set.elements, element) !== -1;
 
 const isInSortedSetLikeTlc = (element: Value, set: SetValue) =>
-  set.isNormalized
+  isNormalizedSet(set)
     ? searchLikeTlc(element, set.elements).isFound
     : isElementOfLikeTlc(element, getWrittenElements(set));
 
@@ -2258,7 +2296,7 @@ const isElementOfAnySet = (element: Value, set: Value): boolean => {
       const sets = toFiniteSet(set.base).elements;
       if (sets.length > 1) {
         sets.forEach((inner) => {
-          if (typeof inner === "object" && inner.kind === "Set") inner.isNormalized = true;
+          if (typeof inner === "object" && inner.kind === "Set") inner.flags |= VALUE_NORMALIZED;
         });
       }
       return sets.some((inner) => isElementOf(element, inner));
@@ -2529,7 +2567,7 @@ export const getDomain = (functionValue: Value): Value => {
     if (finite.writtenKeys) set.writtenElements = finite.writtenKeys;
     return set;
   }
-  set.isNormalized = true;
+  set.flags |= VALUE_NORMALIZED;
   return set;
 };
 
@@ -2902,8 +2940,8 @@ export const formatNormalizedCopies = (values: Value[]) => {
     switch (value.kind) {
       case "Set":
         value.elements.forEach(normalize);
-        if (value.isNormalized) return;
-        value.isNormalized = true;
+        if (isNormalizedSet(value)) return;
+        value.flags |= VALUE_NORMALIZED;
         markedSets.push(value);
         return;
       case "MixedSet":
@@ -2944,9 +2982,7 @@ export const formatNormalizedCopies = (values: Value[]) => {
     values.forEach(normalize);
     return values.map((value) => formatValue(value, true, true));
   } finally {
-    markedSets.forEach((set) => {
-      set.isNormalized = false;
-    });
+    markedSets.forEach((set) => setNormalized(set, false));
   }
 };
 

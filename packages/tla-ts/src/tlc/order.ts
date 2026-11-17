@@ -39,6 +39,13 @@ interface ParsedModule {
   getModule: () => Module;
 }
 
+// A module of the module set read once from its file, with its text and the text the loader gave
+// for it.
+interface ModuleFile extends ParsedModule {
+  text: string | undefined;
+  loaded: string | undefined;
+}
+
 type ModuleLoader = ((name: string) => string | undefined) | undefined;
 
 interface ModuleUnit {
@@ -265,35 +272,35 @@ const readModuleText = (text: string | undefined): ModuleText => {
 // module without a source has no tokens.
 const createModuleSet = (source: string | Module, loadModule: ModuleLoader) => {
   const rootText = typeof source === "string" ? source : undefined;
-  const files = new Map<string, ParsedModule>();
+  const files = new Map<string, ModuleFile>();
   const nestedModules = new Map<string, ParsedModule>();
-  const texts = new Map<string, ModuleText>();
-  const readText = (text: string | undefined) => {
-    const known = text === undefined ? undefined : texts.get(text);
-    if (known) return known;
-    const read = readModuleText(text);
-    if (text !== undefined) texts.set(text, read);
-    return read;
-  };
   const getFile = (name: string | undefined) => {
     const cached = files.get(name ?? "");
     if (cached) return cached;
     if (name === undefined && typeof source !== "string") {
-      const file = { tokens: [], start: 0, end: 0, getModule: () => source };
+      const file = {
+        tokens: [],
+        start: 0,
+        end: 0,
+        getModule: () => source,
+        text: undefined,
+        loaded: undefined,
+      };
       files.set("", file);
       return file;
     }
+    const loaded = name === undefined ? undefined : loadModule?.(name);
     const text =
       name === undefined
         ? rootText
-        : (loadModule?.(name) ??
+        : (loaded ??
           TLC_MODULE_SOURCES.get(name) ??
           SANY_STANDARD_MODULES.get(name) ??
           (rootText === undefined ? undefined : extractModule(rootText, name)));
-    const moduleText = readText(text);
+    const moduleText = readModuleText(text);
     const tokens = moduleText.tokens;
     const range = moduleText.ranges.get(getModuleName(tokens) ?? "") ?? { start: 0, end: 0 };
-    const file = { tokens, ...range, getModule: moduleText.getModule };
+    const file = { tokens, ...range, getModule: moduleText.getModule, text, loaded };
     files.set(name ?? "", file);
     moduleText.ranges.forEach((nestedRange, nestedName) => {
       if (nestedRange.start === range.start || nestedModules.has(nestedName)) return;
@@ -309,7 +316,13 @@ const createModuleSet = (source: string | Module, loadModule: ModuleLoader) => {
   return {
     getParsed: (name: string | undefined): ParsedModule =>
       (name === undefined ? undefined : nestedModules.get(name)) ?? getFile(name),
-    parseText: (text: string) => readText(text).getModule(),
+    // The module of the file read for name, or of another text for it, such as a version's
+    // standard module, read apart.
+    getModule: (name: string | undefined, text: string) => {
+      const file = getFile(name);
+      return file.text === text ? file.getModule() : readModuleText(text).getModule();
+    },
+    getLoadedSource: (name: string) => getFile(name).loaded,
   };
 };
 
@@ -620,7 +633,8 @@ export interface TlcOrder {
   getStringOrder: (config: ModelConfig) => string[];
   getDeclarationOrder: (kind: "variable" | "constant") => string[];
   createDefinitionOrder: () => (name: string | undefined) => string[];
-  parseModule: (source: string) => Module;
+  getModule: (name: string | undefined, source: string) => Module;
+  getLoadedSource: (name: string) => string | undefined;
 }
 
 export const createTlcOrder = (source: string | Module, loadModule: ModuleLoader): TlcOrder => {
@@ -637,7 +651,8 @@ export const createTlcOrder = (source: string | Module, loadModule: ModuleLoader
         .filter((entry) => entry.kind === kind)
         .map((entry) => entry.name)
         .reverse(),
-    parseModule: modules.parseText,
+    getModule: modules.getModule,
+    getLoadedSource: modules.getLoadedSource,
     createDefinitionOrder: () => {
       const moduleContexts = getContexts();
       moduleContexts.getContext(undefined);
