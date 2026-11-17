@@ -1,5 +1,3 @@
-// Deviation from Z3: nodes are never freed, so node indices match Z3 only until its first
-// collection.
 import { PddMemoryOutError } from "../../../../errors";
 import { getGcd, Rational } from "../rational";
 import { shrink } from "../array";
@@ -12,7 +10,7 @@ const MINUS_OP = 4;
 const MUL_OP = 5;
 const REDUCE_OP = 6;
 const NO_OP = 10;
-const INITIAL_FREE_NODES = 1024;
+const MAX_RC = (1 << 10) - 1;
 
 interface PddMonomial {
   coeff: Rational;
@@ -29,9 +27,9 @@ interface PddPower {
   degree: number;
 }
 
-interface PddFactor {
-  lc: Pdd;
-  rest: Pdd;
+interface FactorEntry {
+  lc: number;
+  rest: number;
 }
 
 interface PddVarFactors {
@@ -51,58 +49,52 @@ interface CommonFactors {
   secondCoeff: Rational;
 }
 
+const getNodeKey = (level: number, lo: number, hi: number) => `${level},${lo},${hi}`;
+
 export class PddManager {
   private levels: number[] = [];
   private los: number[] = [];
   private his: number[] = [];
+  private refcounts: number[] = [];
   private values: Rational[] = [];
+  private opCache = new Map<number, number>();
+  private factorCache = new Map<string, FactorEntry>();
   private nodeTable = new Map<string, number>();
   private valueTable = new Map<string, number>();
-  private opCache = new Map<string, number>();
-  private factorCache = new Map<string, PddFactor>();
-  private degrees: number[] = [];
-  private numAllocated = 0;
-  private maxNumNodes = 1 << 24;
-  private isApplying = false;
+  private pddStack: number[] = [];
+  private pddStackSize = 0;
   private var2pdd: number[] = [];
   var2level: number[] = [];
   level2var: number[] = [];
+  private freeNodes: number[] = [];
+  private dmarks: number[] = [];
+  private dmarkLevel = 0;
+  private degrees: number[] = [];
+  private degreeTodo: number[] = [];
+  private maxNumNodes = 1 << 24;
+  private freeValues: number[] = [];
+  private freezeValue = Rational.zero;
 
   constructor(numVars: number) {
     this.initNodes(Array.from({ length: numVars }, (_, index) => index));
   }
 
   reset(level2var: number[]) {
+    this.opCache.clear();
+    this.factorCache.clear();
+    this.nodeTable.clear();
     this.levels = [];
     this.los = [];
     this.his = [];
-    this.values = [];
-    this.nodeTable.clear();
-    this.valueTable.clear();
-    this.opCache.clear();
-    this.factorCache.clear();
+    this.refcounts = [];
+    this.dmarks = [];
     this.degrees = [];
+    this.freeNodes = [];
+    this.pddStackSize = 0;
+    this.values = [];
+    this.freeValues = [];
+    this.valueTable.clear();
     this.initNodes(level2var);
-  }
-
-  private initNodes(level2var: number[]) {
-    for (let index = 0; index < NO_OP; index++) {
-      this.levels.push(0);
-      this.los.push(0);
-      this.his.push(0);
-    }
-    this.los[ONE_PDD] = 1;
-    this.values.push(Rational.zero, Rational.one);
-    this.numAllocated = NO_OP + INITIAL_FREE_NODES + level2var.length;
-    this.var2pdd = [];
-    this.var2level = [];
-    this.level2var = [];
-    for (let level = 0; level < level2var.length; level++) {
-      const variable = level2var[level];
-      this.var2pdd[variable] = this.makeNode(level, ZERO_PDD, ONE_PDD);
-      this.var2level[variable] = level;
-      this.level2var[level] = variable;
-    }
   }
 
   setMaxNumNodes(limit: number) {
@@ -110,7 +102,36 @@ export class PddManager {
   }
 
   numNodes() {
-    return this.levels.length;
+    return this.levels.length - this.freeNodes.length;
+  }
+
+  private initNodes(level2var: number[]) {
+    for (let index = 0; index < NO_OP; index++) {
+      this.levels.push(0);
+      this.los.push(0);
+      this.his.push(0);
+      this.refcounts.push(MAX_RC);
+      this.dmarks.push(0);
+      this.degrees.push(0);
+    }
+    this.los[ONE_PDD] = 1;
+    this.values.push(Rational.zero, Rational.one);
+    this.allocFreeNodes(1024 + level2var.length);
+    this.initVars(level2var);
+  }
+
+  private initVars(level2var: number[]) {
+    const count = level2var.length;
+    this.level2var = Array.from({ length: count }, () => 0);
+    this.var2level = Array.from({ length: count }, () => 0);
+    this.var2pdd = Array.from({ length: count }, () => 0);
+    for (let level = 0; level < count; level++) {
+      const variable = level2var[level];
+      this.var2pdd[variable] = this.makeNode(level, ZERO_PDD, ONE_PDD);
+      this.refcounts[this.var2pdd[variable]] = MAX_RC;
+      this.var2level[variable] = level;
+      this.level2var[level] = variable;
+    }
   }
 
   isVal(node: number) {
@@ -137,13 +158,26 @@ export class PddManager {
     return this.values[this.los[node]];
   }
 
-  mkVar(variable: number) {
+  incRef(node: number) {
+    if (this.refcounts[node] !== MAX_RC) this.refcounts[node]++;
+  }
+
+  decRef(node: number) {
+    if (this.refcounts[node] !== MAX_RC) this.refcounts[node]--;
+  }
+
+  private reserveVar(variable: number) {
     while (this.var2level.length <= variable) {
       const next = this.var2level.length;
       this.var2pdd.push(this.makeNode(next, ZERO_PDD, ONE_PDD));
+      this.refcounts[this.var2pdd[next]] = MAX_RC;
       this.var2level.push(next);
       this.level2var.push(next);
     }
+  }
+
+  mkVar(variable: number) {
+    this.reserveVar(variable);
     return new Pdd(this, this.var2pdd[variable]);
   }
 
@@ -175,151 +209,228 @@ export class PddManager {
     return new Pdd(this, this.apply(first.root, second.root, REDUCE_OP));
   }
 
-  minus(poly: Pdd) {
-    return new Pdd(
-      this,
-      this.whileApplying(() => this.minusRec(poly.root)),
-    );
+  mulValue(value: Rational, poly: Pdd) {
+    const constant = this.mkVal(value);
+    const result = new Pdd(this, this.apply(constant.root, poly.root, MUL_OP));
+    constant.release();
+    return result;
   }
 
-  pow(poly: Pdd, exponent: number): Pdd {
-    if (exponent === 0) return this.one();
-    if (exponent === 1 || poly.isZero() || poly.isOne()) return poly;
-    if (poly.isVal()) return this.mkVal(poly.val().pow(exponent));
-    const half = this.pow(this.mul(poly, poly), Math.floor(exponent / 2));
-    return exponent % 2 === 1 ? this.mul(half, poly) : half;
+  addValue(value: Rational, poly: Pdd) {
+    const constant = this.mkVal(value);
+    const result = new Pdd(this, this.apply(constant.root, poly.root, ADD_OP));
+    constant.release();
+    return result;
+  }
+
+  minus(poly: Pdd) {
+    const size = this.pddStackSize;
+    try {
+      for (let count = 0; ; count++) {
+        try {
+          return new Pdd(this, this.minusRec(poly.root));
+        } catch (error) {
+          if (!(error instanceof PddMemoryOutError)) throw error;
+          this.tryGc();
+          if (count > 0) this.maxNumNodes *= 2;
+        }
+      }
+    } finally {
+      this.pddStackSize = size;
+    }
+  }
+
+  pow(poly: Pdd, exponent: number) {
+    return new Pdd(this, this.powNode(poly.root, exponent));
+  }
+
+  private powNode(node: number, exponent: number) {
+    if (exponent === 0) return ONE_PDD;
+    if (exponent === 1) return node;
+    if (node === ZERO_PDD) return ZERO_PDD;
+    if (node === ONE_PDD) return ONE_PDD;
+    if (this.isVal(node)) return this.imkVal(this.val(node).pow(exponent));
+    return this.powRec(node, exponent);
+  }
+
+  private powRec(node: number, exponent: number): number {
+    if (exponent === 1) return node;
+    const half = this.powRec(this.apply(node, node, MUL_OP), Math.floor(exponent / 2));
+    return exponent % 2 === 1 ? this.apply(half, node, MUL_OP) : half;
   }
 
   private apply(first: number, second: number, op: number) {
-    return this.whileApplying(() => this.applyRec(first, second, op));
-  }
-
-  private whileApplying(compute: () => number) {
-    this.isApplying = true;
+    const size = this.pddStackSize;
     try {
-      return compute();
+      for (let count = 0; ; count++) {
+        try {
+          return this.applyRec(first, second, op);
+        } catch (error) {
+          if (!(error instanceof PddMemoryOutError)) throw error;
+          this.tryGc();
+          if (count > 0) this.maxNumNodes *= 2;
+        }
+      }
     } finally {
-      this.isApplying = false;
+      this.pddStackSize = size;
     }
   }
 
   private applyRec(first: number, second: number, op: number): number {
+    let p = first;
+    let q = second;
     switch (op) {
       case SUB_OP:
-        if (second === ZERO_PDD) return first;
-        if (this.isVal(first) && this.isVal(second)) {
-          return this.imkVal(this.val(first).sub(this.val(second)));
-        }
+        if (q === ZERO_PDD) return p;
+        if (this.isVal(p) && this.isVal(q)) return this.imkVal(this.val(p).sub(this.val(q)));
         break;
       case ADD_OP:
-        if (first === ZERO_PDD) return second;
-        if (second === ZERO_PDD) return first;
-        if (this.isVal(first) && this.isVal(second)) {
-          return this.imkVal(this.val(first).add(this.val(second)));
-        }
-        if (this.isVal(first) || (!this.isVal(second) && this.level(first) < this.level(second))) {
-          return this.applyRec(second, first, op);
+        if (p === ZERO_PDD) return q;
+        if (q === ZERO_PDD) return p;
+        if (this.isVal(p) && this.isVal(q)) return this.imkVal(this.val(p).add(this.val(q)));
+        if (this.isVal(p) || (!this.isVal(q) && this.level(p) < this.level(q))) {
+          p = second;
+          q = first;
         }
         break;
       case MUL_OP:
-        if (first === ZERO_PDD || second === ZERO_PDD) return ZERO_PDD;
-        if (first === ONE_PDD) return second;
-        if (second === ONE_PDD) return first;
-        if (this.isVal(first) && this.isVal(second)) {
-          return this.imkVal(this.val(first).mul(this.val(second)));
-        }
-        if (this.isVal(first) || (!this.isVal(second) && this.level(first) < this.level(second))) {
-          return this.applyRec(second, first, op);
+        if (p === ZERO_PDD || q === ZERO_PDD) return ZERO_PDD;
+        if (p === ONE_PDD) return q;
+        if (q === ONE_PDD) return p;
+        if (this.isVal(p) && this.isVal(q)) return this.imkVal(this.val(p).mul(this.val(q)));
+        if (this.isVal(p) || (!this.isVal(q) && this.level(p) < this.level(q))) {
+          p = second;
+          q = first;
         }
         break;
-      case REDUCE_OP:
-        if (second === ZERO_PDD || this.isVal(first)) return first;
-        if (this.degree(first) < this.degree(second)) return first;
-        if (this.level(this.firstLeading(second)) > this.level(first)) return first;
+      default:
+        if (q === ZERO_PDD || this.isVal(p)) return p;
+        if (this.degree(p) < this.degree(q)) return p;
+        if (this.level(this.firstLeading(q)) > this.level(p)) return p;
         break;
     }
-    const key = `${op},${first},${second}`;
-    const cached = this.opCache.get(key);
-    if (cached !== undefined) return cached;
-    const result = this.computeApply(first, second, op);
-    this.opCache.set(key, result);
-    return result;
-  }
-
-  private computeApply(first: number, second: number, op: number) {
-    const firstLevel = this.level(first);
-    const secondLevel = this.level(second);
-    const firstLo = this.lo(first);
-    const firstHi = this.hi(first);
+    // Z3's op_entry equality compares the cached first operand with the new second one, so
+    // only an operation on two equal operands finds its cached result.
+    // Deviation from Z3: on a hash collision Z3 returns that result for unequal operands too.
+    const isCached = p === q;
+    if (isCached) {
+      const cached = this.opCache.get(q * NO_OP + op);
+      if (cached !== undefined) return cached;
+    }
+    let result: number;
+    const levelP = this.level(p);
+    const levelQ = this.level(q);
+    let npop = 2;
     switch (op) {
-      case ADD_OP: {
-        if (this.isVal(second) || firstLevel !== secondLevel) {
-          return this.makeNode(firstLevel, this.applyRec(firstLo, second, op), firstHi);
+      case ADD_OP:
+        if (this.isVal(q)) {
+          this.push(this.applyRec(this.lo(p), q, op));
+          result = this.makeNode(levelP, this.read(1), this.hi(p));
+          npop = 1;
+        } else if (levelP === levelQ) {
+          this.push(this.applyRec(this.lo(p), this.lo(q), op));
+          this.push(this.applyRec(this.hi(p), this.hi(q), op));
+          result = this.makeNode(levelP, this.read(2), this.read(1));
+        } else {
+          this.push(this.applyRec(this.lo(p), q, op));
+          result = this.makeNode(levelP, this.read(1), this.hi(p));
+          npop = 1;
         }
-        const lo = this.applyRec(firstLo, this.lo(second), op);
-        return this.makeNode(firstLevel, lo, this.applyRec(firstHi, this.hi(second), op));
-      }
-      case SUB_OP: {
-        if (this.isVal(first) || (!this.isVal(second) && firstLevel < secondLevel)) {
-          const lo = this.applyRec(first, this.lo(second), op);
-          return this.makeNode(secondLevel, lo, this.minusRec(this.hi(second)));
+        break;
+      case SUB_OP:
+        if (this.isVal(p) || (!this.isVal(q) && levelP < levelQ)) {
+          this.push(this.applyRec(p, this.lo(q), op));
+          this.push(this.minusRec(this.hi(q)));
+          result = this.makeNode(levelQ, this.read(2), this.read(1));
+        } else if (this.isVal(q) || levelP > levelQ) {
+          this.push(this.applyRec(this.lo(p), q, op));
+          result = this.makeNode(levelP, this.read(1), this.hi(p));
+          npop = 1;
+        } else {
+          this.push(this.applyRec(this.lo(p), this.lo(q), op));
+          this.push(this.applyRec(this.hi(p), this.hi(q), op));
+          result = this.makeNode(levelP, this.read(2), this.read(1));
         }
-        if (this.isVal(second) || firstLevel > secondLevel) {
-          return this.makeNode(firstLevel, this.applyRec(firstLo, second, op), firstHi);
+        break;
+      case MUL_OP:
+        if (this.isVal(q) || levelP !== levelQ) {
+          this.push(this.applyRec(this.lo(p), q, op));
+          this.push(this.applyRec(this.hi(p), q, op));
+          result = this.makeNode(levelP, this.read(2), this.read(1));
+        } else {
+          this.push(this.applyRec(this.hi(p), this.hi(q), op));
+          this.push(this.applyRec(this.hi(p), this.lo(q), op));
+          this.push(this.applyRec(this.lo(p), this.hi(q), op));
+          this.push(this.applyRec(this.lo(p), this.lo(q), op));
+          const ac = this.read(4);
+          const ad = this.read(3);
+          const bc = this.read(2);
+          const bd = this.read(1);
+          this.push(this.applyRec(ad, bc, ADD_OP));
+          const sum = this.read(1);
+          if (!this.isVal(sum) && this.level(sum) === levelP) {
+            this.push(this.applyRec(ac, this.hi(sum), ADD_OP));
+            this.push(this.makeNode(levelP, this.lo(sum), this.read(1)));
+            result = this.makeNode(levelP, bd, this.read(1));
+            npop = 7;
+          } else {
+            this.push(this.makeNode(levelP, sum, ac));
+            result = this.makeNode(levelP, bd, this.read(1));
+            npop = 6;
+          }
         }
-        const lo = this.applyRec(firstLo, this.lo(second), op);
-        return this.makeNode(firstLevel, lo, this.applyRec(firstHi, this.hi(second), op));
-      }
-      case MUL_OP: {
-        if (this.isVal(second) || firstLevel !== secondLevel) {
-          const lo = this.applyRec(firstLo, second, op);
-          return this.makeNode(firstLevel, lo, this.applyRec(firstHi, second, op));
+        break;
+      default:
+        if (this.level(this.firstLeading(q)) < levelP) {
+          this.push(this.applyRec(this.lo(p), q, op));
+          this.push(this.applyRec(this.hi(p), q, op));
+          const lo = this.read(2);
+          const hi = this.read(1);
+          if (lo === this.lo(p) && hi === this.hi(p)) {
+            result = p;
+          } else if (this.level(lo) < levelP && this.level(hi) <= levelP) {
+            result = this.makeNode(levelP, lo, hi);
+          } else {
+            this.push(this.applyRec(hi, this.var2pdd[this.var(p)], MUL_OP));
+            this.push(this.applyRec(this.read(1), lo, ADD_OP));
+            result = this.read(1);
+            npop = 4;
+          }
+        } else {
+          result = this.reduceOnMatch(p, q);
+          npop = 0;
         }
-        const ac = this.applyRec(firstHi, this.hi(second), op);
-        const ad = this.applyRec(firstHi, this.lo(second), op);
-        const bc = this.applyRec(firstLo, this.hi(second), op);
-        const bd = this.applyRec(firstLo, this.lo(second), op);
-        const sum = this.applyRec(ad, bc, ADD_OP);
-        if (!this.isVal(sum) && this.level(sum) === firstLevel) {
-          const hi = this.applyRec(ac, this.hi(sum), ADD_OP);
-          return this.makeNode(firstLevel, bd, this.makeNode(firstLevel, this.lo(sum), hi));
-        }
-        return this.makeNode(firstLevel, bd, this.makeNode(firstLevel, sum, ac));
-      }
-      default: {
-        if (this.level(this.firstLeading(second)) >= firstLevel) {
-          return this.reduceOnMatch(first, second);
-        }
-        const lo = this.applyRec(firstLo, second, op);
-        const hi = this.applyRec(firstHi, second, op);
-        if (lo === firstLo && hi === firstHi) return first;
-        if (this.level(lo) < firstLevel && this.level(hi) <= firstLevel) {
-          return this.makeNode(firstLevel, lo, hi);
-        }
-        const product = this.applyRec(hi, this.var2pdd[this.var(first)], MUL_OP);
-        return this.applyRec(product, lo, ADD_OP);
-      }
     }
+    this.pop(npop);
+    if (isCached) this.opCache.set(q * NO_OP + op, result);
+    return result;
   }
 
   private minusRec(node: number): number {
     if (node === ZERO_PDD) return ZERO_PDD;
     if (this.isVal(node)) return this.imkVal(this.val(node).neg());
-    const key = `${MINUS_OP},${node},${node}`;
-    const cached = this.opCache.get(key);
+    const cached = this.opCache.get(node * NO_OP + MINUS_OP);
     if (cached !== undefined) return cached;
-    const lo = this.minusRec(this.lo(node));
-    const result = this.makeNode(this.level(node), lo, this.minusRec(this.hi(node)));
-    this.opCache.set(key, result);
+    this.push(this.minusRec(this.lo(node)));
+    this.push(this.minusRec(this.hi(node)));
+    const result = this.makeNode(this.level(node), this.read(2), this.read(1));
+    this.pop(2);
+    this.opCache.set(node * NO_OP + MINUS_OP, result);
     return result;
   }
 
   private reduceOnMatch(first: number, second: number) {
     let current = first;
+    this.push(current);
     while (this.lmOccurs(second, current)) {
-      const product = this.applyRec(this.ltQuotient(second, current), second, MUL_OP);
-      current = this.applyRec(current, product, ADD_OP);
+      this.push(this.ltQuotient(second, current));
+      this.push(this.applyRec(this.read(1), second, MUL_OP));
+      this.push(this.applyRec(current, this.read(1), ADD_OP));
+      current = this.read(1);
+      this.pop(4);
+      this.push(current);
     }
+    this.pop(1);
     return current;
   }
 
@@ -359,22 +470,45 @@ export class PddManager {
   }
 
   private ltQuotientHi(first: number, second: number) {
-    const quotient = this.ltQuotient(first, this.hi(second));
-    return this.applyRec(this.var2pdd[this.var(second)], quotient, MUL_OP);
+    this.push(this.ltQuotient(first, this.hi(second)));
+    const result = this.applyRec(this.var2pdd[this.var(second)], this.read(1), MUL_OP);
+    this.pop(1);
+    return result;
   }
 
-  trySpoly(first: Pdd, second: Pdd) {
+  trySpoly(first: Pdd, second: Pdd, result: Pdd) {
     const factors = this.commonFactors(first, second);
-    if (factors === null) return null;
-    let firstMultiplier = this.mkVal(factors.secondCoeff);
-    for (let index = factors.second.length; index-- > 0;) {
-      firstMultiplier = firstMultiplier.mul(this.mkVar(factors.second[index]));
+    if (factors === null) return false;
+    const spoly = this.spoly(first, second, factors);
+    result.assign(spoly);
+    spoly.release();
+    return true;
+  }
+
+  private spoly(first: Pdd, second: Pdd, factors: CommonFactors) {
+    const firstMultiplier = this.mkVal(factors.secondCoeff);
+    try {
+      for (let index = factors.second.length; index-- > 0;) {
+        const variable = this.mkVar(factors.second[index]);
+        firstMultiplier.mulAssign(variable);
+        variable.release();
+      }
+      const secondMultiplier = this.mkVal(factors.firstCoeff.neg());
+      for (let index = factors.first.length; index-- > 0;) {
+        const variable = this.mkVar(factors.first[index]);
+        secondMultiplier.mulAssign(variable);
+        variable.release();
+      }
+      const firstProduct = firstMultiplier.mul(first);
+      const secondProduct = secondMultiplier.mul(second);
+      const result = firstProduct.add(secondProduct);
+      secondProduct.release();
+      firstProduct.release();
+      secondMultiplier.release();
+      return result;
+    } finally {
+      firstMultiplier.release();
     }
-    let secondMultiplier = this.mkVal(factors.firstCoeff.neg());
-    for (let index = factors.first.length; index-- > 0;) {
-      secondMultiplier = secondMultiplier.mul(this.mkVar(factors.first[index]));
-    }
-    return firstMultiplier.mul(first).add(secondMultiplier.mul(second));
   }
 
   private commonFactors(first: Pdd, second: Pdd): CommonFactors | null {
@@ -478,56 +612,109 @@ export class PddManager {
     return this.firstLeading(this.hi(node));
   }
 
-  degree(node: number): number {
+  degree(node: number) {
     if (node === ZERO_PDD || node === ONE_PDD) return 0;
-    const cached = this.degrees[node];
-    if (cached !== undefined) return cached;
-    const degree = this.isVal(node)
-      ? 0
-      : Math.max(this.degree(this.lo(node)), this.degree(this.hi(node)) + 1);
-    this.degrees[node] = degree;
-    return degree;
+    const dmarkLevel = this.dmarkLevel;
+    if (this.dmarks[node] === dmarkLevel) return this.degrees[node];
+    const todo = this.degreeTodo;
+    todo.push(node);
+    while (todo.length > 0) {
+      const current = todo[todo.length - 1];
+      if (this.dmarks[current] === dmarkLevel) {
+        todo.pop();
+      } else if (this.isVal(current)) {
+        this.degrees[current] = 0;
+        this.dmarks[current] = dmarkLevel;
+      } else {
+        const lo = this.lo(current);
+        const hi = this.hi(current);
+        if (this.dmarks[lo] !== dmarkLevel || this.dmarks[hi] !== dmarkLevel) {
+          todo.push(lo, hi);
+        } else {
+          this.degrees[current] = Math.max(this.degrees[lo], this.degrees[hi] + 1);
+          this.dmarks[current] = dmarkLevel;
+        }
+      }
+    }
+    return this.degrees[node];
   }
 
-  factor(poly: Pdd, variable: number, degree: number): PddFactor {
+  factor(poly: Pdd, variable: number, degree: number, lc: Pdd, rest: Pdd) {
     const variableLevel = this.var2level[variable];
     if (degree === 0 || this.level(poly.root) < variableLevel) {
-      return { lc: this.zero(), rest: poly };
+      const zero = this.zero();
+      lc.assign(zero);
+      zero.release();
+      rest.assign(poly);
+      return;
     }
     const key = `${poly.root},${variable},${degree}`;
     const cached = this.factorCache.get(key);
-    if (cached !== undefined) return cached;
-    const result = this.computeFactor(poly, variable, degree);
-    this.factorCache.set(key, result);
-    return result;
-  }
-
-  private computeFactor(poly: Pdd, variable: number, degree: number): PddFactor {
-    const variableLevel = this.var2level[variable];
+    if (cached !== undefined) {
+      const cachedLc = new Pdd(this, cached.lc);
+      lc.assign(cachedLc);
+      cachedLc.release();
+      const cachedRest = new Pdd(this, cached.rest);
+      rest.assign(cachedRest);
+      cachedRest.release();
+      return;
+    }
     if (this.level(poly.root) > variableLevel) {
+      const lc1 = this.zero();
+      const rest1 = this.zero();
       const node = this.mkVar(poly.var());
-      const hiFactor = this.factor(poly.hi(), variable, degree);
-      const loFactor = this.factor(poly.lo(), variable, degree);
-      const lc = hiFactor.lc.mul(node);
-      const rest = hiFactor.rest.mul(node);
-      return { lc: lc.add(loFactor.lc), rest: rest.add(loFactor.rest) };
+      const hi = poly.hi();
+      this.factor(hi, variable, degree, lc, rest);
+      hi.release();
+      const lo = poly.lo();
+      this.factor(lo, variable, degree, lc1, rest1);
+      lo.release();
+      lc.mulAssign(node);
+      rest.mulAssign(node);
+      lc.addAssign(lc1);
+      rest.addAssign(rest1);
+      node.release();
+      rest1.release();
+      lc1.release();
+    } else {
+      let found = 0;
+      const current = poly.copy();
+      while (found < degree && !current.isVal() && this.level(current.root) === variableLevel) {
+        found++;
+        const hi = current.hi();
+        current.assign(hi);
+        hi.release();
+      }
+      if (found === degree) {
+        lc.assign(current);
+        current.assign(poly);
+        const zero = this.zero();
+        rest.assign(zero);
+        zero.release();
+        const power = this.one();
+        for (let index = 0; index < degree; index++) {
+          const lo = current.lo();
+          const term = power.mul(lo);
+          rest.addAssign(term);
+          term.release();
+          lo.release();
+          const hi = current.hi();
+          current.assign(hi);
+          const variablePdd = this.mkVar(variable);
+          power.mulAssign(variablePdd);
+          variablePdd.release();
+          hi.release();
+        }
+        power.release();
+      } else {
+        const zero = this.zero();
+        lc.assign(zero);
+        zero.release();
+        rest.assign(poly);
+      }
+      current.release();
     }
-    let found = 0;
-    let lc = poly;
-    while (found < degree && !lc.isVal() && this.level(lc.root) === variableLevel) {
-      found++;
-      lc = lc.hi();
-    }
-    if (found < degree) return { lc: this.zero(), rest: poly };
-    let rest = this.zero();
-    let power = this.one();
-    let current = poly;
-    for (let index = 0; index < degree; index++) {
-      rest = rest.add(power.mul(current.lo()));
-      current = current.hi();
-      power = power.mul(this.mkVar(variable));
-    }
-    return { lc, rest };
+    this.factorCache.set(key, { lc: lc.root, rest: rest.root });
   }
 
   isBinary(node: number) {
@@ -605,14 +792,36 @@ export class PddManager {
     return vars;
   }
 
+  private push(node: number) {
+    this.pddStack[this.pddStackSize++] = node;
+  }
+
+  private pop(count: number) {
+    this.pddStackSize -= count;
+  }
+
+  private read(index: number) {
+    return this.pddStack[this.pddStackSize - index];
+  }
+
   private imkVal(value: Rational) {
     if (value.isZero()) return ZERO_PDD;
     if (value.equals(Rational.one)) return ONE_PDD;
     const key = value.toString();
-    const existing = this.valueTable.get(key);
-    if (existing !== undefined) return existing;
-    const node = this.insertNode(0, this.values.length, 0);
-    this.values.push(value);
+    return this.valueTable.get(key) ?? this.initValue(value, key);
+  }
+
+  private initValue(value: Rational, key: string) {
+    let valueIndex = this.values.length;
+    if (this.freeValues.length === 0) {
+      this.values.push(value);
+    } else {
+      valueIndex = this.freeValues[this.freeValues.length - 1];
+      this.freeValues.pop();
+      this.values[valueIndex] = value;
+    }
+    this.freezeValue = value;
+    const node = this.insertNode(0, valueIndex, 0);
     this.valueTable.set(key, node);
     return node;
   }
@@ -622,28 +831,158 @@ export class PddManager {
   }
 
   private insertNode(level: number, lo: number, hi: number) {
-    const key = `${level},${lo},${hi}`;
+    const key = getNodeKey(level, lo, hi);
     const existing = this.nodeTable.get(key);
     if (existing !== undefined) return existing;
-    if (this.levels.length === this.numAllocated) {
-      if (this.numAllocated > this.maxNumNodes && !this.isApplying) throw new PddMemoryOutError();
-      while (this.numAllocated > this.maxNumNodes) this.maxNumNodes *= 2;
-      this.numAllocated += Math.floor(this.numAllocated / 2);
+    if (this.freeNodes.length === 0) {
+      this.gc();
+      if (this.levels.length > this.maxNumNodes) throw new PddMemoryOutError();
+      this.allocFreeNodes(Math.floor(this.levels.length / 2));
     }
-    const node = this.levels.length;
-    this.levels.push(level);
-    this.los.push(lo);
-    this.his.push(hi);
+    const node = this.freeNodes[this.freeNodes.length - 1];
+    this.freeNodes.pop();
+    this.levels[node] = level;
+    this.los[node] = lo;
+    this.his[node] = hi;
+    this.refcounts[node] = 0;
     this.nodeTable.set(key, node);
     return node;
   }
+
+  private tryGc() {
+    this.gc();
+    this.opCache.clear();
+  }
+
+  private allocFreeNodes(count: number) {
+    for (let index = 0; index < count; index++) {
+      this.freeNodes.push(this.levels.length);
+      this.levels.push(0);
+      this.los.push(0);
+      this.his.push(0);
+      this.refcounts.push(0);
+      this.dmarks.push(0);
+      this.degrees.push(0);
+    }
+    this.freeNodes.sort((first, second) => second - first);
+    this.initDmark();
+  }
+
+  private computeReachable(reachable: Uint8Array) {
+    const todo: number[] = [];
+    for (let index = this.pddStackSize; index-- > 0;) {
+      reachable[this.pddStack[index]] = 1;
+      todo.push(this.pddStack[index]);
+    }
+    for (let node = NO_OP; node-- > 0;) reachable[node] = 1;
+    for (let node = this.levels.length; node-- > NO_OP;) {
+      if (this.refcounts[node] > 0) {
+        reachable[node] = 1;
+        todo.push(node);
+      }
+    }
+    for (let node = todo.pop(); node !== undefined; node = todo.pop()) {
+      if (this.isVal(node)) continue;
+      const lo = this.lo(node);
+      const hi = this.hi(node);
+      if (reachable[lo] === 0) {
+        reachable[lo] = 1;
+        todo.push(lo);
+      }
+      if (reachable[hi] === 0) {
+        reachable[hi] = 1;
+        todo.push(hi);
+      }
+    }
+  }
+
+  private gc() {
+    this.initDmark();
+    this.freeNodes = [];
+    const size = this.levels.length;
+    const reachable = new Uint8Array(size);
+    this.computeReachable(reachable);
+    for (let node = size; node-- > NO_OP;) {
+      if (reachable[node] === 1) continue;
+      if (this.his[node] === 0 && this.los[node] !== 0) {
+        const value = this.values[this.los[node]];
+        if (this.freezeValue.equals(value)) continue;
+        this.freeValues.push(this.los[node]);
+        this.valueTable.delete(value.toString());
+      }
+      this.los[node] = 0;
+      this.his[node] = 0;
+      this.freeNodes.push(node);
+    }
+    this.opCache.clear();
+    this.factorCache.clear();
+    this.nodeTable.clear();
+    for (let node = size; node-- > 2;) {
+      if (reachable[node] === 0) continue;
+      this.nodeTable.set(getNodeKey(this.levels[node], this.los[node], this.his[node]), node);
+    }
+  }
+
+  private initDmark() {
+    this.dmarkLevel++;
+  }
 }
+
+const getMonomials = (poly: Pdd): PddMonomial[] => {
+  if (poly.isVal()) return poly.val().isZero() ? [] : [{ coeff: poly.val(), vars: [] }];
+  const hi = poly.hi();
+  const monomials = getMonomials(hi);
+  hi.release();
+  for (const monomial of monomials) monomial.vars.push(poly.var());
+  const lo = poly.lo();
+  monomials.push(...getMonomials(lo));
+  lo.release();
+  return monomials;
+};
 
 export class Pdd {
   constructor(
     private readonly manager: PddManager,
-    readonly root: number,
-  ) {}
+    public root: number,
+  ) {
+    manager.incRef(root);
+  }
+
+  copy() {
+    const result = new Pdd(this.manager, this.root);
+    // Like Z3, whose copy constructor delegates to a counting constructor and then counts again.
+    this.manager.incRef(this.root);
+    return result;
+  }
+
+  release() {
+    this.manager.decRef(this.root);
+  }
+
+  assign(other: Pdd) {
+    const previous = this.root;
+    this.root = other.root;
+    this.manager.incRef(this.root);
+    this.manager.decRef(previous);
+  }
+
+  addAssign(other: Pdd) {
+    const sum = this.add(other);
+    this.assign(sum);
+    sum.release();
+  }
+
+  subAssign(value: Rational) {
+    const difference = this.sub(value);
+    this.assign(difference);
+    difference.release();
+  }
+
+  mulAssign(other: Pdd | Rational) {
+    const product = this.mul(other);
+    this.assign(product);
+    product.release();
+  }
 
   lo() {
     return new Pdd(this.manager, this.manager.lo(this.root));
@@ -678,11 +1017,29 @@ export class Pdd {
   }
 
   isUnary() {
-    return !this.isVal() && this.lo().isZero() && this.hi().isVal();
+    if (this.isVal()) return false;
+    const lo = this.lo();
+    let isUnary = lo.isZero();
+    if (isUnary) {
+      const hi = this.hi();
+      isUnary = hi.isVal();
+      hi.release();
+    }
+    lo.release();
+    return isUnary;
   }
 
   isOffset() {
-    return !this.isVal() && this.lo().isVal() && this.hi().isOne();
+    if (this.isVal()) return false;
+    const lo = this.lo();
+    let isOffset = lo.isVal();
+    if (isOffset) {
+      const hi = this.hi();
+      isOffset = hi.isOne();
+      hi.release();
+    }
+    lo.release();
+    return isOffset;
   }
 
   isBinary() {
@@ -699,17 +1056,19 @@ export class Pdd {
 
   add(other: Pdd | Rational) {
     return other instanceof Rational
-      ? this.manager.add(this.manager.mkVal(other), this)
+      ? this.manager.addValue(other, this)
       : this.manager.add(this, other);
   }
 
   sub(other: Pdd | Rational) {
-    return other instanceof Rational ? this.add(other.neg()) : this.manager.sub(this, other);
+    return other instanceof Rational
+      ? this.manager.addValue(other.neg(), this)
+      : this.manager.sub(this, other);
   }
 
   mul(other: Pdd | Rational) {
     return other instanceof Rational
-      ? this.manager.mul(this.manager.mkVal(other), this)
+      ? this.manager.mulValue(other, this)
       : this.manager.mul(this, other);
   }
 
@@ -721,8 +1080,8 @@ export class Pdd {
     return this.manager.reduce(this, other);
   }
 
-  factor(variable: number, degree: number) {
-    return this.manager.factor(this, variable, degree);
+  factor(variable: number, degree: number, lc: Pdd, rest: Pdd) {
+    this.manager.factor(this, variable, degree, lc, rest);
   }
 
   differentLeadingTerm(other: Pdd) {
@@ -750,18 +1109,34 @@ export class Pdd {
   }
 
   varFactors(): PddVarFactors {
-    if (this.isVal()) return { vars: [], poly: this };
+    if (this.isVal()) return { vars: [], poly: this.copy() };
     const manager = this.manager;
     const variable = this.var();
-    if (this.lo().isVal()) {
-      if (!this.lo().isZero()) return { vars: [], poly: this };
-      const factors = this.hi().varFactors();
+    const firstLo = this.lo();
+    const isLoVal = firstLo.isVal();
+    firstLo.release();
+    if (isLoVal) {
+      const secondLo = this.lo();
+      const isLoZero = secondLo.isZero();
+      secondLo.release();
+      if (!isLoZero) return { vars: [], poly: this.copy() };
+      const hi = this.hi();
+      const factors = hi.varFactors();
+      hi.release();
       factors.vars.push(variable);
-      return factors;
+      const result = { vars: factors.vars, poly: factors.poly.copy() };
+      factors.poly.release();
+      return result;
     }
-    const loFactors = this.lo().varFactors();
+    const lo = this.lo();
+    const loFactors = lo.varFactors();
+    lo.release();
     const loVars = loFactors.vars;
-    if (loVars.length === 0) return { vars: [], poly: this };
+    if (loVars.length === 0) {
+      const result = { vars: [], poly: this.copy() };
+      loFactors.poly.release();
+      return result;
+    }
     const loAndHi: number[] = [];
     const merge = (hiVars: number[]) => {
       let loKept = 0;
@@ -786,104 +1161,161 @@ export class Pdd {
       shrink(loVars, loKept);
       shrink(hiVars, hiKept);
     };
-    const multiply = (vars: number[], poly: Pdd) =>
-      vars.reduce((product, innerVar) => product.mul(manager.mkVar(innerVar)), poly);
-    const hiFactors = this.hi().varFactors();
+    const multiply = (vars: number[], poly: Pdd) => {
+      const product = poly.copy();
+      for (const innerVar of vars) {
+        const variablePdd = manager.mkVar(innerVar);
+        product.mulAssign(variablePdd);
+        variablePdd.release();
+      }
+      return product;
+    };
+    const hi = this.hi();
+    const hiFactors = hi.varFactors();
+    hi.release();
     const hiVars = hiFactors.vars;
     if (loVars[loVars.length - 1] === variable) {
       loVars.pop();
       merge(hiVars);
       loAndHi.push(variable);
-      return {
-        vars: loAndHi,
-        poly: multiply(loVars, loFactors.poly).add(multiply(hiVars, hiFactors.poly)),
-      };
+    } else if (hiVars.length > 0) {
+      merge(hiVars);
+      hiVars.push(variable);
     }
-    if (hiVars.length === 0) return { vars: [], poly: this };
-    merge(hiVars);
-    hiVars.push(variable);
-    if (loAndHi.length === 0) return { vars: [], poly: this };
-    return {
-      vars: loAndHi,
-      poly: multiply(loVars, loFactors.poly).add(multiply(hiVars, hiFactors.poly)),
-    };
+    let result: PddVarFactors;
+    if (loAndHi.length === 0) {
+      result = { vars: [], poly: this.copy() };
+    } else {
+      const loProduct = multiply(loVars, loFactors.poly);
+      const hiProduct = multiply(hiVars, hiFactors.poly);
+      result = { vars: loAndHi, poly: loProduct.add(hiProduct) };
+      hiProduct.release();
+      loProduct.release();
+    }
+    hiFactors.poly.release();
+    loFactors.poly.release();
+    return result;
   }
 
   substPdd(variable: number, replacement: Pdd): Pdd {
     const manager = this.manager;
-    if (this.isVal() || manager.var2level[this.var()] < manager.var2level[variable]) return this;
-    const lo = this.lo().substPdd(variable, replacement);
-    const hi = this.hi().substPdd(variable, replacement);
-    if (this.var() === variable) return replacement.mul(hi).add(lo);
-    if (lo.equals(this.lo()) && hi.equals(this.hi())) return this;
-    return manager.mkVar(this.var()).mul(hi).add(lo);
+    if (this.isVal() || manager.var2level[this.var()] < manager.var2level[variable]) {
+      return this.copy();
+    }
+    const lo = this.lo();
+    const substitutedLo = lo.substPdd(variable, replacement);
+    lo.release();
+    const hi = this.hi();
+    const substitutedHi = hi.substPdd(variable, replacement);
+    hi.release();
+    let result: Pdd;
+    if (this.var() === variable) {
+      const product = replacement.mul(substitutedHi);
+      result = product.add(substitutedLo);
+      product.release();
+    } else {
+      const thisLo = this.lo();
+      let isUnchanged = substitutedLo.equals(thisLo);
+      if (isUnchanged) {
+        const thisHi = this.hi();
+        isUnchanged = substitutedHi.equals(thisHi);
+        thisHi.release();
+      }
+      thisLo.release();
+      if (isUnchanged) {
+        result = this.copy();
+      } else {
+        const variablePdd = manager.mkVar(this.var());
+        const product = variablePdd.mul(substitutedHi);
+        result = product.add(substitutedLo);
+        product.release();
+        variablePdd.release();
+      }
+    }
+    substitutedHi.release();
+    substitutedLo.release();
+    return result;
   }
 
   *[Symbol.iterator](): Generator<PddMonomial> {
-    const manager = this.manager;
-    const nodes: IteratorNode[] = [];
-    const vars: number[] = [];
-    let node = this.root;
-    while (!manager.isVal(node)) {
-      nodes.push({ isFirst: true, node });
-      vars.push(manager.var(node));
-      node = manager.hi(node);
-    }
-    if (nodes.length === 0) {
-      if (!manager.val(node).isZero()) yield { coeff: manager.val(node), vars: [] };
-      return;
-    }
-    yield { coeff: manager.val(node), vars: [...vars] };
-    while (nodes.length > 0) {
-      const top = nodes[nodes.length - 1];
-      if (!top.isFirst) {
-        nodes.pop();
-        continue;
+    const begin = this.copy();
+    const end = this.copy();
+    try {
+      const manager = this.manager;
+      const nodes: IteratorNode[] = [];
+      const vars: number[] = [];
+      let node = begin.root;
+      while (!manager.isVal(node)) {
+        nodes.push({ isFirst: true, node });
+        vars.push(manager.var(node));
+        node = manager.hi(node);
       }
-      top.isFirst = false;
-      vars.pop();
-      let next = manager.lo(top.node);
-      if (next === ZERO_PDD) {
-        nodes.pop();
-        continue;
+      if (nodes.length === 0) {
+        if (!manager.val(node).isZero()) yield { coeff: manager.val(node), vars: [] };
+        return;
       }
-      while (!manager.isVal(next)) {
-        nodes.push({ isFirst: true, node: next });
-        vars.push(manager.var(next));
-        next = manager.hi(next);
+      yield { coeff: manager.val(node), vars: [...vars] };
+      while (nodes.length > 0) {
+        const top = nodes[nodes.length - 1];
+        if (!top.isFirst) {
+          nodes.pop();
+          continue;
+        }
+        top.isFirst = false;
+        vars.pop();
+        let next = manager.lo(top.node);
+        if (next === ZERO_PDD) {
+          nodes.pop();
+          continue;
+        }
+        while (!manager.isVal(next)) {
+          nodes.push({ isFirst: true, node: next });
+          vars.push(manager.var(next));
+          next = manager.hi(next);
+        }
+        yield { coeff: manager.val(next), vars: [...vars] };
       }
-      yield { coeff: manager.val(next), vars: [...vars] };
+    } finally {
+      end.release();
+      begin.release();
     }
   }
 
   *coefficients(): Generator<PddCoefficient> {
-    const manager = this.manager;
-    const nodes: number[] = [];
-    let node = this.root;
-    while (!manager.isVal(node)) {
-      nodes.push(node);
-      node = manager.hi(node);
-    }
-    yield { coeff: manager.val(node), isConstant: nodes.length === 0 };
-    for (let top = nodes.pop(); top !== undefined; top = nodes.pop()) {
-      let next = manager.lo(top);
-      if (next === ZERO_PDD) continue;
-      while (!manager.isVal(next)) {
-        nodes.push(next);
-        next = manager.hi(next);
+    const begin = this.copy();
+    const end = this.copy();
+    try {
+      const manager = this.manager;
+      const nodes: number[] = [];
+      let node = begin.root;
+      while (!manager.isVal(node)) {
+        nodes.push(node);
+        node = manager.hi(node);
       }
-      yield { coeff: manager.val(next), isConstant: nodes.length === 0 };
+      yield { coeff: manager.val(node), isConstant: nodes.length === 0 };
+      for (let top = nodes.pop(); top !== undefined; top = nodes.pop()) {
+        let next = manager.lo(top);
+        if (next === ZERO_PDD) continue;
+        while (!manager.isVal(next)) {
+          nodes.push(next);
+          next = manager.hi(next);
+        }
+        yield { coeff: manager.val(next), isConstant: nodes.length === 0 };
+      }
+    } finally {
+      end.release();
+      begin.release();
     }
   }
 
   toString() {
     let text = "";
-    for (const monomial of this) {
+    for (const monomial of getMonomials(this)) {
       if (text !== "") text += " ";
       if (monomial.coeff.isNegative()) text += "- ";
       else if (text !== "") text += "+ ";
       const coeff = monomial.coeff.abs();
-      const vars = monomial.vars;
+      const vars = monomial.vars.reverse();
       if (!coeff.equals(Rational.one) || vars.length === 0) {
         text += vars.length === 0 ? `${coeff}` : `${coeff}*`;
       }
@@ -900,9 +1332,13 @@ export class Pdd {
   }
 }
 
-export const evaluatePdd = (poly: Pdd, getValue: (variable: number) => Rational): Rational =>
-  poly.isVal()
-    ? poly.val()
-    : evaluatePdd(poly.hi(), getValue)
-        .mul(getValue(poly.var()))
-        .add(evaluatePdd(poly.lo(), getValue));
+export const evaluatePdd = (poly: Pdd, getValue: (variable: number) => Rational): Rational => {
+  if (poly.isVal()) return poly.val();
+  const hi = poly.hi();
+  const product = evaluatePdd(hi, getValue).mul(getValue(poly.var()));
+  const lo = poly.lo();
+  const result = product.add(evaluatePdd(lo, getValue));
+  lo.release();
+  hi.release();
+  return result;
+};

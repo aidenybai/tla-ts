@@ -19,8 +19,12 @@ export const getPddInterval = (
     return result;
   }
   const varInterval = getVarInterval(poly.var(), mode);
-  const hi = getPddInterval(poly.hi(), mode, getVarInterval);
-  const lo = getPddInterval(poly.lo(), mode, getVarInterval);
+  const hiPoly = poly.hi();
+  const hi = getPddInterval(hiPoly, mode, getVarInterval);
+  hiPoly.release();
+  const loPoly = poly.lo();
+  const lo = getPddInterval(loPoly, mode, getVarInterval);
+  loPoly.release();
   const product = mkDepInterval();
   mul(hi, varInterval, product, mode);
   add(product, lo, result, mode);
