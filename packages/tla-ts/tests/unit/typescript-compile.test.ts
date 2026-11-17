@@ -17994,7 +17994,7 @@ describe("errors", () => {
           }
           if (caught !== "ReferenceError") throw new Error(caught);
         `),
-      ).toThrow("Unknown name: missing");
+      ).toThrow("tla-ts can't throw the ReferenceError of reading missing, which nothing declares");
     });
   });
 
@@ -49690,6 +49690,42 @@ describe("BigInts", () => {
     it("rejects another outcome", async () => {
       const wrong = source.replace('"2,4,6"', '"2,4"');
       await expect(check(compile(wrong, path))).rejects.toThrow("seen 2,4,6");
+    });
+  });
+
+  describe("stops at an object that only a heap could hold where none does", () => {
+    it("stops at a built-in read as a value", () => {
+      expect(() =>
+        compile(`
+          export const Pattern = globalThis.RegExp;
+          export const isSame = (value: 1 | 2): boolean => Pattern === Pattern && value === value;
+        `),
+      ).toThrow(
+        "spec.ts:2:34 tla-ts can't use the built-in globalThis as a value where no heap holds objects",
+      );
+    });
+
+    it("stops at a function's arguments object", () => {
+      expect(() =>
+        compile(`
+          let count = 0;
+          export function step(): void {
+            if (count < 2) count += arguments.length + 1;
+          }
+        `),
+      ).toThrow("tla-ts can't read a function's arguments object where no heap holds objects");
+    });
+
+    it("stops at a property of a class of errors, which TLC can't read from a model value", () => {
+      expect(() =>
+        compile(`
+          export const getLimit = (): number | undefined =>
+            (Error as { stackTraceLimit?: number }).stackTraceLimit;
+          export const isSet = (): boolean => getLimit() !== undefined;
+        `),
+      ).toThrow(
+        "tla-ts can't read stackTraceLimit of a class of errors where no heap holds objects",
+      );
     });
   });
 });

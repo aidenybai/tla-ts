@@ -2983,7 +2983,27 @@ const translateIdentifier = (node: ts.Identifier, scope: Scope, context: Context
       ),
     ]);
   }
-  throw new TlaTypeScriptError(`Unknown name: ${node.text}`, node);
+  // Only a heap holds objects, such as a function's arguments object or a built-in object.
+  if (getArgumentsOwner(node, context.checker) !== undefined) {
+    throw new TlaTypeScriptError(
+      context.heap === undefined
+        ? "tla-ts can't read a function's arguments object where no heap holds objects"
+        : "tla-ts can't read an arguments object that no call it follows makes, as of a function that the model runs as an action",
+      node,
+    );
+  }
+  if (context.heap === undefined && Object.hasOwn(BUILT_INS, node.text)) {
+    throw new TlaTypeScriptError(
+      `tla-ts can't use the built-in ${node.text} as a value where no heap holds objects`,
+      node,
+    );
+  }
+  throw new TlaTypeScriptError(
+    symbol === undefined
+      ? `tla-ts can't throw the ReferenceError of reading ${node.text}, which nothing declares`
+      : `tla-ts can't tell what ${node.text} holds here`,
+    node,
+  );
 };
 
 // A read of a property that a getter of a heap class or object literal computes, which inlines
@@ -3258,6 +3278,16 @@ const translatePropertyAccess = (
     ) === member.parent
   ) {
     throw new TlaTypeScriptError("tla-ts can't read a static member of a class of errors", node);
+  }
+  // Where no heap holds objects, a class of errors is a model value, which has no properties.
+  if (
+    context.heap === undefined &&
+    getErrorClass(getSymbol(skipCasts(receiver), context.checker), context) !== undefined
+  ) {
+    throw new TlaTypeScriptError(
+      `tla-ts can't read ${name} of a class of errors where no heap holds objects`,
+      node,
+    );
   }
   const getterRead = translateGetterRead(node, scope, context);
   if (getterRead !== undefined) return getterRead;
