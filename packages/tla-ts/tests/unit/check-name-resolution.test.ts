@@ -2134,6 +2134,27 @@ describe("name resolution matches SANY", () => {
     );
   });
 
+  it("selects from operators that a DEFINE step defines for later steps like SANY", async () => {
+    await expect(
+      checkNames(
+        "EXTENDS Naturals\nTHEOREM T == 1 = 1\n<1>1. DEFINE Z(a) == a + 1\n<1>2. Z(2)!1 = 2\n  <2>1. DEFINE Y == Z(3)!2 + 1\n  <2>2. Y!1 = Z(1)!3\n    OBVIOUS\n  <2>3. QED\n<1>3. HIDE Y!1, Z(1)!1\n<1>4. QED",
+      ),
+    ).rejects.toThrow(
+      createSanyError([
+        {
+          location: "line 7, col 20 to line 7, col 20 of module M",
+          message: "Nonexistent operand specified by `argument selector 3'.",
+        },
+        {
+          location: "line 10, col 12 to line 10, col 12 of module M",
+          message: "Unknown operator: `Y'.",
+        },
+        { location: "In module --TLA+ BUILTINS--", message: hidden },
+        { location: "line 10, col 17 to line 10, col 22 of module M", message: hidden },
+      ]),
+    );
+  });
+
   it("passes an operator whose definition has fewer parameters than its RECURSIVE declaration, where SANY crashes", async () => {
     await expect(
       checkNames("RECURSIVE R(_, _)\nR == 1\nL(P(_, _)) == 1\nA == L(R)"),

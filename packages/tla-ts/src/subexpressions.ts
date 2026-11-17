@@ -609,8 +609,7 @@ export const resolveModuleSubexpressions = (module: Module, available: Definitio
       getVisibleLookup(definitionLookup, location),
       (name) => isGoal(name) && clauses.every((clause) => clause.name !== name),
     );
-  const createProofResolver = (location: SourceLocation) => {
-    const lookup = getVisibleLookup(proofLookup, location);
+  const createProofResolver = (lookup: Lookup) => {
     const isProofGoal = (name: string) => isGoal(name) || !lookup(name);
     const resolveInProof = (expression: Expression) =>
       resolveSubexpressions(expression, lookup, isProofGoal);
@@ -666,25 +665,37 @@ export const resolveModuleSubexpressions = (module: Module, available: Definitio
           return body;
       }
     };
-    const resolveProof = (proof: Proof | undefined): Proof | undefined =>
-      proof?.kind === "By"
-        ? { ...proof, facts: resolveFacts(proof.facts) }
-        : proof?.kind === "Steps"
-          ? {
-              ...proof,
-              steps: proof.steps.map((step) => ({
-                ...step,
-                body: resolveStep(step.body),
-                proof: resolveProof(step.proof),
-              })),
-            }
-          : proof;
-    return { resolveFacts, resolveStatement, resolveProof };
+    const resolveProof = (proof: Proof | undefined): Proof | undefined => {
+      if (proof?.kind === "By") return { ...proof, facts: resolveFacts(proof.facts) };
+      if (proof?.kind !== "Steps") return proof;
+      let resolver = { lookup, resolveStep, resolveProof };
+      return {
+        ...proof,
+        steps: proof.steps.map((step) => {
+          const resolved = {
+            ...step,
+            body: resolver.resolveStep(step.body),
+            proof: resolver.resolveProof(step.proof),
+          };
+          if (step.body.kind === "Define") {
+            const definitions = step.body.definitions.flatMap((definition) =>
+              definition.kind === "Instance" ? [] : [definition],
+            );
+            const outer = resolver.lookup;
+            resolver = createProofResolver(
+              (name) => definitions.find((definition) => definition.name === name) ?? outer(name),
+            );
+          }
+          return resolved;
+        }),
+      };
+    };
+    return { lookup, resolveFacts, resolveStatement, resolveStep, resolveProof };
   };
   const resolved = {
     ...module,
     theorems: module.theorems.map((theorem) => {
-      const resolver = createProofResolver(theorem.location);
+      const resolver = createProofResolver(getVisibleLookup(proofLookup, theorem.location));
       return {
         ...theorem,
         statement:
@@ -692,12 +703,17 @@ export const resolveModuleSubexpressions = (module: Module, available: Definitio
             ? theorem.statement
             : resolver.resolveStatement(theorem.statement),
         proof:
-          theorem.proof && createProofResolver(theorem.proof.location).resolveProof(theorem.proof),
+          theorem.proof &&
+          createProofResolver(getVisibleLookup(proofLookup, theorem.proof.location)).resolveProof(
+            theorem.proof,
+          ),
       };
     }),
     uses: module.uses.map((use) => ({
       ...use,
-      facts: createProofResolver(use.location).resolveFacts(use.facts),
+      facts: createProofResolver(getVisibleLookup(proofLookup, use.location)).resolveFacts(
+        use.facts,
+      ),
     })),
   };
   const hasReferences =
