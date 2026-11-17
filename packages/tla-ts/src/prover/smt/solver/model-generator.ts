@@ -104,7 +104,9 @@ export const mkModel = (context: Context): GeneratedModel => {
       interp = new FuncInterp(manager, node.numArgs);
       model.registerFunc(node.decl, interp);
     }
-    const args = Array.from({ length: node.numArgs }, (_, index) => getValue(node.getArg(index)));
+    const args = Array.from({ length: node.numArgs }, (_value, index) =>
+      getValue(node.getArg(index)),
+    );
     if (interp.getEntry(args) === undefined) interp.insertNewEntry(args, getValue(node));
   }
   for (const theory of context.theories) theory.finalizeModel();

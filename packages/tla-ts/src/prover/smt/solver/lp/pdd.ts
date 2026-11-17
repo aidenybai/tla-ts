@@ -76,7 +76,7 @@ export class PddManager {
   private freezeValue = Rational.zero;
 
   constructor(numVars: number) {
-    this.initNodes(Array.from({ length: numVars }, (_, index) => index));
+    this.initNodes(Array.from({ length: numVars }, (_value, index) => index));
   }
 
   reset(level2var: number[]) {

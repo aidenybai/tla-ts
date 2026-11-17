@@ -28,7 +28,7 @@ export const getPbCoeff = (manager: AstManager, decl: number, index: number) => 
 };
 
 export const hasUnitCoefficients = (manager: AstManager, decl: number) =>
-  manager.funcDecls[decl].domain.every((_, index) =>
+  manager.funcDecls[decl].domain.every((_value, index) =>
     getPbCoeff(manager, decl, index).equals(Rational.one),
   );
 

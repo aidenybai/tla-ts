@@ -1701,7 +1701,7 @@ export class SeqRewriter {
     const seq = this.getArg(value, 0);
     const maxLength = this.getMaxLength(seq);
     if (!maxLength.isBounded || maxLength.length > 1n) return undefined;
-    const eqs = Array.from({ length: 10 }, (_, digit) =>
+    const eqs = Array.from({ length: 10 }, (_value, digit) =>
       this.mkEq(seq, manager.mkString([48 + digit])),
     );
     const isDigitString = manager.mkApp(OP_OR, eqs, SORT_BOOL);

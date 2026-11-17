@@ -1731,7 +1731,7 @@ export class AstManager {
       throw new SmtInvariantError(`the operator ${op} has no Z3 declaration`);
     const argSort = op === OP_ITE ? this.sorts[args[1]] : this.sorts[args[0]];
     const arity = builtin[2] === -1 ? args.length : builtin[2];
-    const domain = Array.from({ length: arity }, (_, index) =>
+    const domain = Array.from({ length: arity }, (_value, index) =>
       op === OP_PATTERN
         ? this.sorts[args[index]]
         : op === OP_ITE && index === 0

@@ -117,7 +117,7 @@ export class RegexBisim {
       this.worklist.pop();
       const cofactors = new RefVector(manager);
       derive.derivativeCofactors(regex, cofactors);
-      const leaves = cofactors.items.filter((_, index) => index % 2 === 1);
+      const leaves = cofactors.items.filter((_value, index) => index % 2 === 1);
       const status = this.areLeavesEquivalent(leaves);
       if (status === L_TRUE)
         for (const leaf of leaves) {

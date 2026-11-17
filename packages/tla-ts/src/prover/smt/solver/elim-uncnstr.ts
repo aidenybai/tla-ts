@@ -259,7 +259,7 @@ class UncnstrRewriter extends RewriterTpl {
     if (index === -1) return -1;
     const found = this.mkFreshFor(decl, args, sort);
     if (!found.isNew) return found.fresh;
-    const rest = args.filter((_, other) => other !== index);
+    const rest = args.filter((_value, other) => other !== index);
     const restExpr =
       rest.length === 0
         ? -1

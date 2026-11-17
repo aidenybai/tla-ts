@@ -919,12 +919,12 @@ export class Grobner {
   private setLevel2var() {
     const core = this.core;
     const count = core.lra.getColumnCount();
-    const weights = Array.from({ length: count }, (_, lpVar) => core.getVarWeight(lpVar));
+    const weights = Array.from({ length: count }, (_value, lpVar) => core.getVarWeight(lpVar));
     for (let lpVar = 0; lpVar < count; lpVar++) {
       if (!core.isMonicVar(lpVar) || !core.toRefine.has(lpVar)) continue;
       for (const factor of core.emons.get(lpVar).vars) weights[factor] += 6;
     }
-    const level2var = Array.from({ length: count }, (_, lpVar) => lpVar).sort(
+    const level2var = Array.from({ length: count }, (_value, lpVar) => lpVar).sort(
       (first, second) => weights[first] - weights[second] || first - second,
     );
     this.manager.reset(level2var);

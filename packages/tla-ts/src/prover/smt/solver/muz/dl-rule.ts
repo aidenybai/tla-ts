@@ -382,7 +382,7 @@ export class RuleManager {
     return mkForall(
       manager,
       sorts,
-      sorts.map((_, index) => getVarName(index)),
+      sorts.map((_value, index) => getVarName(index)),
       matrix,
     );
   }
@@ -479,7 +479,7 @@ export class RuleManager {
     const preQuant = this.pin(varSubst.apply(unboundTail, subst));
     varSubst.release();
     sorts.reverse();
-    const names = sorts.map((_, index) => String(sorts.length - 1 - index));
+    const names = sorts.map((_value, index) => String(sorts.length - 1 - index));
     const quantified = this.pin(mkExists(manager, sorts, names, preQuant));
     let fixed = isTryingQe ? this.pin(simplifyQuantifiers(manager, quantified)) : quantified;
     if (manager.kinds[fixed] !== KIND_APP) fixed = this.pin(manager.mkEq(fixed, manager.trueExpr));

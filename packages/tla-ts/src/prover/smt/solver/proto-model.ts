@@ -267,7 +267,7 @@ export class FuncInterp {
       const lambda = manager.mkQuantifier({
         kind: QUANTIFIER_LAMBDA,
         sorts: [...domain],
-        names: domain.map((_, index) => index),
+        names: domain.map((_value, index) => index),
         body,
         patterns: [],
         noPatterns: [],

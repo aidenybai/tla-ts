@@ -316,7 +316,7 @@ export class TheoryPb extends Theory {
     const args = manager.getArgs(atom);
     const op = manager.getOp(atom);
     if (op === OP_PB_EQ) {
-      const coeffs = args.map((_, index) => getPbCoeff(manager, decl, index));
+      const coeffs = args.map((_value, index) => getPbCoeff(manager, decl, index));
       const sum = coeffs.reduce((total, coeff) => total.add(coeff), Rational.zero);
       const k = getPbK(manager, decl);
       const le = mkPbGe(

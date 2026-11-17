@@ -295,7 +295,7 @@ export class SolveEqs {
           )
         )
           continue;
-        const others = factors.filter((_, otherIndex) => otherIndex !== factorIndex);
+        const others = factors.filter((_value, otherIndex) => otherIndex !== factorIndex);
         const term = this.mkSubTerm(x, index, y);
         this.push(
           eqs,
@@ -328,7 +328,7 @@ export class SolveEqs {
         !factors.every((other, otherIndex) => otherIndex === index || this.isNonzeroFactor(other))
       )
         continue;
-      const others = factors.filter((_, otherIndex) => otherIndex !== index);
+      const others = factors.filter((_value, otherIndex) => otherIndex !== index);
       this.push(
         eqs,
         orig,
@@ -893,11 +893,11 @@ export class SolveEqs {
     };
     record(
       firstOccurrence,
-      forms.map((_, index) => index),
+      forms.map((_value, index) => index),
     );
     record(
       lastOccurrence,
-      forms.map((_, index) => forms.length - 1 - index),
+      forms.map((_value, index) => forms.length - 1 - index),
     );
     const kept: DependentEq[] = [];
     let lastVar = -1;

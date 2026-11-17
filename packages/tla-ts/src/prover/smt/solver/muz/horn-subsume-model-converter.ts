@@ -64,7 +64,7 @@ export class HornSubsumeModelConverter {
     const quantified = manager.mkQuantifier({
       kind: QUANTIFIER_EXISTS,
       sorts: sorts.reverse(),
-      names: sorts.map((_, index) => sorts.length - index - 1),
+      names: sorts.map((_value, index) => sorts.length - index - 1),
       body: substituted,
       patterns: [],
       noPatterns: [],
