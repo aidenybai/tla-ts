@@ -49064,4 +49064,24 @@ describe("BigInts", () => {
       expect([result.status, result.distinctStates]).toEqual(["deadlock", 3]);
     });
   });
+
+  describe("type checks a package's JavaScript against its declarations", () => {
+    const path = join(import.meta.dirname, "../fixtures/typescript/es-modules/declared.ts");
+    const source = readFileSync(path, "utf8");
+
+    it("agrees with Node", async () => {
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      const wrong = source.replace('"import,2,1"', '"import,1,1"');
+      await expect(check(compile(wrong, path))).rejects.toThrow("seen import,2,1");
+    });
+
+    it("rejects a value that the declarations' types rule out", () => {
+      expect(() => compile(source.replace("= label;", '= "other";'), path)).toThrow(
+        `Type '"other"' is not assignable to type 'Label'`,
+      );
+    });
+  });
 });

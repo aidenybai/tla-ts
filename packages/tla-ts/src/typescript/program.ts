@@ -297,48 +297,58 @@ export const createProgram = (
   const host =
     libraries === undefined ? ts.createCompilerHost(options) : createLibraryHost(libraries);
   const libraryDirectory = host.getDefaultLibLocation?.() ?? "";
+  // Whether a module that Node loads as JavaScript gave its types from a declaration file, which
+  // type checks the code that imports it.
+  let isDeclared = false;
   // A module that TypeScript finds no code of, as a package or JavaScript, and any module that
   // JavaScript names, loads as Node loads it, though a package may give its types, and TypeScript
   // reads it as code. A type's import, and any import of a declaration file, loads nothing when the
-  // code runs.
-  const resolveModuleNameLiterals = (
-    literals: readonly ts.StringLiteralLike[],
-    containingFile: string,
-    redirectedReference: ts.ResolvedProjectReference | undefined,
-    resolutionOptions: ts.CompilerOptions,
-    containingSourceFile: ts.SourceFile,
-  ) =>
-    literals.map((literal): ts.ResolvedModuleWithFailedLookupLocations => {
-      const resolved = isJavaScriptFile(containingFile)
-        ? undefined
-        : ts.resolveModuleName(
-            literal.text,
-            containingFile,
-            resolutionOptions,
-            host,
-            undefined,
-            redirectedReference,
-          );
-      // tla-ts reads JSON's value as any, which the declaration of JSON's modules gives.
-      if (resolved?.resolvedModule?.extension === ts.Extension.Json) {
-        return { resolvedModule: undefined };
-      }
-      if (
-        resolved !== undefined &&
-        (CODE_EXTENSIONS.has(resolved.resolvedModule?.extension ?? "") ||
-          containingSourceFile.isDeclarationFile ||
-          isTypeImport(literal))
-      ) {
-        return resolved;
-      }
-      const found = resolveModule(literal, containingFile);
-      const extension = found === undefined ? undefined : getExtension(found);
-      return found === undefined || extension === undefined || extension === ts.Extension.Json
-        ? (resolved ?? { resolvedModule: undefined })
-        : {
-            resolvedModule: { resolvedFileName: found, extension, isExternalLibraryImport: false },
-          };
-    });
+  // code runs. A program that type checks reads a package's types from its declarations instead.
+  const getModuleResolver =
+    (isTyped: boolean) =>
+    (
+      literals: readonly ts.StringLiteralLike[],
+      containingFile: string,
+      redirectedReference: ts.ResolvedProjectReference | undefined,
+      resolutionOptions: ts.CompilerOptions,
+      containingSourceFile: ts.SourceFile,
+    ) =>
+      literals.map((literal): ts.ResolvedModuleWithFailedLookupLocations => {
+        const resolved = isJavaScriptFile(containingFile)
+          ? undefined
+          : ts.resolveModuleName(
+              literal.text,
+              containingFile,
+              resolutionOptions,
+              host,
+              undefined,
+              redirectedReference,
+            );
+        // tla-ts reads JSON's value as any, which the declaration of JSON's modules gives.
+        if (resolved?.resolvedModule?.extension === ts.Extension.Json) {
+          return { resolvedModule: undefined };
+        }
+        if (
+          resolved !== undefined &&
+          (CODE_EXTENSIONS.has(resolved.resolvedModule?.extension ?? "") ||
+            containingSourceFile.isDeclarationFile ||
+            isTypeImport(literal))
+        ) {
+          return resolved;
+        }
+        const found = resolveModule(literal, containingFile);
+        const extension = found === undefined ? undefined : getExtension(found);
+        if (found === undefined || extension === undefined || extension === ts.Extension.Json) {
+          return resolved ?? { resolvedModule: undefined };
+        }
+        if (resolved?.resolvedModule !== undefined) {
+          isDeclared = true;
+          if (isTyped) return resolved;
+        }
+        return {
+          resolvedModule: { resolvedFileName: found, extension, isExternalLibraryImport: false },
+        };
+      });
   // HACK: a write outside strict mode to a name that no binding has makes a global, which the text
   // gains a var for, at its start, so that the name binds wherever it's written or read. The
   // compiler treats the var as the global, which reads throw for until a write makes it.
@@ -346,6 +356,7 @@ export const createProgram = (
     rootNames: string[],
     text: string,
     globals: ReadonlySet<string>,
+    isTyped = false,
   ) => {
     const programHost: ts.CompilerHost & SourceRedirectingHost = {
       ...host,
@@ -381,7 +392,7 @@ export const createProgram = (
       },
       fileExists: (fileName) => fileName === path || host.fileExists(fileName),
       readFile: (fileName) => (fileName === path ? source : host.readFile(fileName)),
-      resolveModuleNameLiterals: libraries === undefined ? resolveModuleNameLiterals : undefined,
+      resolveModuleNameLiterals: libraries === undefined ? getModuleResolver(isTyped) : undefined,
     };
     return ts.createProgram({
       rootNames: [...rootNames, JSON_DECLARATIONS.path],
@@ -434,13 +445,31 @@ export const createProgram = (
         ),
       )
       .filter((diagnostic) => isReported(diagnostic) && diagnostic.code !== EMPTY_IF_BRANCH_ERROR);
-  const modelDiagnostics = getDiagnostics(modelProgram);
+  // TypeScript reads the code of a package that gives its types in declarations as JavaScript,
+  // whose values it doesn't type, so the TypeScript that imports it type checks against the
+  // declarations, while tla-ts runs the package's JavaScript.
+  const getTypedDiagnostics = (program: ts.Program, rootNames: string[]) => {
+    const diagnostics = getDiagnostics(program);
+    const isTypeScript = (diagnostic: ts.Diagnostic) =>
+      diagnostic.file === undefined || !isJavaScriptFile(diagnostic.file.fileName);
+    return diagnostics.length === 0 || !isDeclared
+      ? diagnostics
+      : [
+          ...diagnostics.filter((diagnostic) => !isTypeScript(diagnostic)),
+          ...getDiagnostics(createTypeScriptProgram(rootNames, text, globals, true)).filter(
+            isTypeScript,
+          ),
+        ];
+  };
+  const modelDiagnostics = getTypedDiagnostics(modelProgram, [path]);
   // A model that type checks by itself keeps the program of its own files, which loads faster.
+  const projectRoots = [path, ...(project?.fileNames ?? [])];
   const program =
     project === undefined || modelDiagnostics.length === 0
       ? modelProgram
-      : createTypeScriptProgram([path, ...project.fileNames], text, globals);
-  const diagnostics = program === modelProgram ? modelDiagnostics : getDiagnostics(program);
+      : createTypeScriptProgram(projectRoots, text, globals);
+  const diagnostics =
+    program === modelProgram ? modelDiagnostics : getTypedDiagnostics(program, projectRoots);
   if (diagnostics.length > 0) throw new TlaTypeScriptError(ts.formatDiagnostics(diagnostics, host));
   const sourceFile = getModelSourceFile(program);
   const checker = typeExportsAsAny(program.getTypeChecker());
