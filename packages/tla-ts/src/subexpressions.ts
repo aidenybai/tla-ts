@@ -678,7 +678,8 @@ export const resolveModuleSubexpressions = (module: Module, available: Definitio
           theorem.name !== undefined && theorem.statement.kind !== "AssumeProve"
             ? theorem.statement
             : resolver.resolveStatement(theorem.statement),
-        proof: resolver.resolveProof(theorem.proof),
+        proof:
+          theorem.proof && createProofResolver(theorem.proof.location).resolveProof(theorem.proof),
       };
     }),
     uses: module.uses.map((use) => ({

@@ -2048,6 +2048,29 @@ describe("name resolution matches SANY", () => {
     },
   );
 
+  it.each<[string, string, string]>([
+    [
+      "EXTENDS Naturals\nTHEOREM T == 1 = 1\n<1>1. T!1 = 1\n  OBVIOUS\n<1>2. T!3 = 1\n  OBVIOUS\n<1>3. QED",
+      "line 6, col 9 to line 6, col 9 of module M",
+      "Nonexistent operand specified by `argument selector 3'.",
+    ],
+    [
+      "EXTENDS Naturals\nOp == 2\nTHEOREM T == Op = 2\nPROOF BY T!1, T!<<, T!9 DEF Op",
+      "line 5, col 23 to line 5, col 23 of module M",
+      "Nonexistent operand specified by `argument selector 9'.",
+    ],
+    [
+      "EXTENDS Naturals\nTHEOREM T == 1 = 1\n<1>1. 2 = 2\n  BY T\n<1>2. QED\n  <2>1. HIDE T!1\n  <2>2. QED",
+      "line 7, col 14 to line 7, col 16 of module M",
+      hidden,
+    ],
+  ])(
+    "selects from a theorem inside its own proof in %j like SANY",
+    async (source, location, message) => {
+      await expect(checkNames(source)).rejects.toThrow(createSanyError([{ location, message }]));
+    },
+  );
+
   it("passes an operator whose definition has fewer parameters than its RECURSIVE declaration, where SANY crashes", async () => {
     await expect(
       checkNames("RECURSIVE R(_, _)\nR == 1\nL(P(_, _)) == 1\nA == L(R)"),
