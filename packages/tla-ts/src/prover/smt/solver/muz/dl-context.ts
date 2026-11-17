@@ -38,7 +38,7 @@ const ENGINE_NAMES = new Map([
   ["ddnf", ENGINE_DDNF],
 ]);
 
-// The fp module's global parameters, copied when the context is made, as fp_params does.
+// As in Z3, these are copied when the context is made, so a later fp option doesn't apply.
 export class FpParams {
   private parameters: ReadonlyMap<string, string>;
 
@@ -121,7 +121,6 @@ export class DatalogContext {
   readonly rewriter: Rewriter;
   // m_mc: the converters since the last query, or undefined before one.
   modelConverters: ModelConverter[] | undefined;
-  // m_last_status is BOUNDED: spacer stopped at fp.spacer.max_level.
   isBounded = false;
 
   constructor(

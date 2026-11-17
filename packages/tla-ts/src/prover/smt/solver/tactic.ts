@@ -339,7 +339,6 @@ export const getSatParams = (parameters: ReadonlyMap<string, string>) =>
       }),
   );
 
-// The message smt_tactic fails with when its context leaves the goal undecided.
 export const getSmtTacticFailure = (context: Context) =>
   context.checkCanceled()
     ? "canceled"
@@ -1886,7 +1885,6 @@ interface TacticCheck {
   status: number;
   model: ProtoModel | undefined;
   core: Dependency | undefined;
-  // What check_sat leaves in reason_unknown, or undefined once the resource limit stopped the tactic.
   reasonUnknown: string | undefined;
 }
 

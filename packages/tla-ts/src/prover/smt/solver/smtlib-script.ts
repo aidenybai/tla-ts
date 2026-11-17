@@ -282,7 +282,6 @@ interface CheckResult {
 interface SolverAnswer {
   result: number;
   context: Context | undefined;
-  // Undefined once the resource limit stopped the solver.
   reasonUnknown: string | undefined;
 }
 
@@ -519,14 +518,12 @@ export const runSmtlibScript = (
       };
     }
   };
-  // reslimit::get_cancel_msg: a timeout or an abort cancels the limit, where an rlimit exhausts it.
   // Deviation from Z3: the heap guard and a stack overflow, which Z3 lacks, read as an exhausted rlimit.
   const getCancelMessage = (deadline: number) =>
     Date.now() > deadline || options.signal?.aborted === true
       ? "canceled"
       : "max. resource limit exceeded";
-  // cmd_context::check_sat gives every solver the reason timeout once a check times out, which the
-  // smt kernel reports only while its last search did not fail.
+  // As in Z3, a timeout leaves "timeout" in the kernel, which reports it while its last search hasn't failed.
   const getReasonUnknown = (solved: SolverAnswer, deadline: number) => {
     const isTimedOut = solved.result === L_UNDEF && Date.now() > deadline;
     const context = state.kernel?.context;

@@ -191,7 +191,7 @@ export class Context extends Internalizer {
   private r1ParentGenerations = new Map<Enode, number>();
   private erasedGenerations = new Map<Enode, number>();
   private lastSearchFailure: SearchFailure = FAILURE_OK;
-  // m_unknown: the reason while the last search did not fail, which no new search resets.
+  // As in Z3, a new search doesn't reset it.
   reasonUnknown = "unknown";
   private hasCaseSplit = true;
   private incompleteTheories: Theory[] = [];
@@ -245,7 +245,6 @@ export class Context extends Internalizer {
     return family < 0 ? undefined : this.theoryByFamily[family];
   }
 
-  // get_cancel_flag records the cancel as the failure of the search.
   checkCanceled() {
     if (this.manager.limit.inc()) return false;
     this.lastSearchFailure = FAILURE_CANCELED;

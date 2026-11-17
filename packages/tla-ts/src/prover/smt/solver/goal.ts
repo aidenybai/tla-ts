@@ -82,7 +82,7 @@ export class Goal {
   model: ProtoModel | undefined;
   isProofsEnabled = false;
   isCoresEnabled = false;
-  // Set only by the sat tactic, and not copied with the goal.
+  // As in Z3, it isn't copied with the goal.
   reasonUnknown = "";
 
   constructor(readonly manager: AstManager) {
