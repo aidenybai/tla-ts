@@ -1387,6 +1387,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       );
     }, 0);
   };
+  // Deviation from TLC: a FingerprintException in its rerun escapes TLC's Worker, which prints the behavior without the failure.
   const getLiveCallStack = (index: number, liveSuccessors: LiveSuccessor[]) => {
     if (!liveness || is174) return undefined;
     const replay = getReplayFailure(environment, (tracing) =>

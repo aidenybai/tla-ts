@@ -318,3 +318,19 @@ describe("the replay of an initial state that fails to join the behavior graph m
     },
   );
 });
+
+it("reports a failure of a temporal property where TLC's rerun loses it to a FingerprintException", async () => {
+  const result = await checkSpec(
+    "Deep(a) == LET t == <<a>> IN t[a + 2]\nInit == x = 2\nNext == UNCHANGED x\nLive == []<>(Deep(x) > 0)",
+    "INIT Init\nNEXT Next\nPROPERTY Live",
+  );
+  expect([
+    result.failure?.message,
+    formatCallStack(result.failure?.callStack),
+    result.failure?.exitCode,
+  ]).toEqual([
+    "TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: Attempted to access index 4 of tuple\n<<2>>\nwhich is out of bounds.",
+    ["11.14-11.24", "11.14-11.20", "8.12-8.37", "8.30-8.37", "8.21-8.25"],
+    255,
+  ]);
+});
