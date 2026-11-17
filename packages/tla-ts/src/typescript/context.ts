@@ -22,12 +22,14 @@ import { getKeptReads } from "./narrowing";
 import { mayThrow } from "./functions";
 import { findGetterKeys, findWrittenFunctions, getGetterKeys, isProxyOperation } from "./protocols";
 import type { ChangeTable } from "./change-summaries";
+import { createReachGraph, type ReachGraph } from "./reach-graph";
 import type { Namespace } from "./namespaces";
 import {
   createReferences,
   findNames,
   findNodesOfKind,
   getFileIndex,
+  getLowerBound,
   getPosition,
   getReferences,
   type ProgramNodes,
@@ -117,6 +119,10 @@ export interface Context {
   // The nodes of the program's files, which tla-ts walks once, and the names of each symbol.
   nodes: ProgramNodes;
   references: References;
+  // What each declaration that a name names reaches by name.
+  reachGraph: ReachGraph;
+  // The assignments of the program's files, by the symbols of the names they write.
+  writes: References;
   // The keys that each of the program's files defines getters under, by the file's index.
   getterKeys: readonly ReadonlySet<string>[];
   // Whether each function of the program's files is called once, by its position, as
@@ -292,6 +298,18 @@ export interface Context {
   // What running each node of the model's code changes where no parameter holds a function, which
   // tla-ts finds once before it compiles the code.
   effects: NodeEffects;
+  // Which function candidates the callees of the model's calls through values may hold.
+  dispatch: Dispatch | undefined;
+}
+
+// The types of the callees that findEffects dispatches among the function candidates, by type id in
+// order, each with a row of bits over the candidates' distinct types, of those that TypeScript lets
+// it hold, and the index of each candidate's type plus one by the candidate's position.
+export interface Dispatch {
+  calleeIds: Int32Array;
+  words: number;
+  rows: Uint32Array;
+  candidateTypes: Int32Array;
 }
 
 // The effects of the nodes of the program's files by their positions, and of the few nodes that no
@@ -616,10 +634,19 @@ export const createContext = (
   nodes: ProgramNodes,
 ): Context => {
   const reads = getDeclaredReads(checker, files);
+  const references = createReferences(nodes, (name) => getSymbol(name, checker));
   const context: Context = {
-    checker: withNodeTypes(withDeclaredReads(checker, reads), nodes),
+    checker: {
+      ...withNodeTypes(withDeclaredReads(checker, reads), nodes),
+      getNameSymbol: (node) => {
+        const position = ts.isIdentifier(node) ? getPosition(nodes, node) : -1;
+        return position < 0 ? null : references.symbols[position];
+      },
+    },
     nodes,
-    references: createReferences(nodes, (name) => getSymbol(name, checker)),
+    references,
+    reachGraph: createReachGraph(nodes, references),
+    writes: createWrites(nodes, references),
     getterKeys: files.map(findGetterKeys),
     calledOnce: new Uint8Array(nodes.nodes.length),
     heapCode: new Uint8Array(nodes.nodes.length),
@@ -690,6 +717,7 @@ export const createContext = (
     passed: new Map(),
     changes: undefined,
     effects: { positions: [], elsewhere: new Map(), found: [] },
+    dispatch: undefined,
     assignedNames: new Map(
       files.map((file) => [
         file,
@@ -1461,6 +1489,8 @@ export const getRedeclaredCatchParameter = (declaration: ts.VariableDeclaration)
 // The symbol that a name binds or reads, where a var that declares a catch parameter again binds
 // the parameter.
 export const getSymbol = (node: ts.Node, checker: ts.TypeChecker) => {
+  const known = checker.getNameSymbol === undefined ? null : checker.getNameSymbol(node);
+  if (known !== null) return known;
   const redeclared =
     ts.isIdentifier(node) && ts.isVariableDeclaration(node.parent) && node.parent.name === node
       ? getRedeclaredCatchParameter(node.parent)
@@ -2353,19 +2383,59 @@ export const isAssigned = (symbol: ts.Symbol, node: ts.Node, context: Context): 
   );
 };
 
+// The assignments of the program's files, by the symbols of the names that each writes, alone or in
+// a pattern, as isWrittenBy tells, and then in the order that a walk meets them.
+const createWrites = (table: ProgramNodes, references: References): References => {
+  // Each assignment's symbols once, in flat columns that a sort of their indexes orders.
+  const ids: number[] = [];
+  const positions: number[] = [];
+  table.nodes.forEach((node, position) => {
+    const target = getAssignedTarget(node);
+    const first = ids.length;
+    (target === undefined ? [] : getWrittenNames(target)).forEach((name) => {
+      const at = ts.isIdentifier(name) ? getPosition(table, name) : -1;
+      const symbol = at < 0 ? undefined : references.symbols[at];
+      const id = symbol === undefined ? -1 : ts.getSymbolId(symbol);
+      if (id < 0 || ids.indexOf(id, first) >= 0) return;
+      ids.push(id);
+      positions.push(position);
+    });
+  });
+  const order = Int32Array.from(ids, (_, index) => index).sort(
+    (left, right) => ids[left] - ids[right] || positions[left] - positions[right],
+  );
+  return {
+    symbols: [],
+    symbolIds: order.map((index) => ids[index]),
+    positions: order.map((index) => positions[index]),
+  };
+};
+
+// The assignments under a root that write a symbol's name, in the order that a walk meets them.
+export const findWrites = (symbol: ts.Symbol, root: ts.Node, context: Context): ts.Node[] => {
+  const table = context.nodes;
+  const start = getPosition(table, root);
+  if (start < 0) {
+    return findNodes(root, (inner): inner is ts.Node => {
+      const target = getAssignedTarget(inner);
+      return target !== undefined && isWrittenBy(target, symbol, context);
+    });
+  }
+  const writes = context.writes;
+  const id = ts.getSymbolId(symbol);
+  const last = getLowerBound(writes.symbolIds, 0, writes.symbolIds.length, id + 1);
+  const first = getLowerBound(writes.symbolIds, 0, last, id);
+  const from = getLowerBound(writes.positions, first, last, start);
+  const to = getLowerBound(writes.positions, from, last, table.ends[start]);
+  return [...writes.positions.subarray(from, to)].map((position) => table.nodes[position]);
+};
+
 // Whether a script assigns to a name inside a function other than the one around a read of it,
 // which TypeScript's narrowing at the read doesn't see.
 export const isAssignedElsewhere = (symbol: ts.Symbol, read: ts.Node, context: Context) => {
   const around = ts.findAncestor(read, ts.isFunctionLike);
-  return (
-    findNodes(read.getSourceFile(), (inner): inner is ts.Node => {
-      const target = getAssignedTarget(inner);
-      return (
-        target !== undefined &&
-        isWrittenBy(target, symbol, context) &&
-        ts.findAncestor(inner, ts.isFunctionLike) !== around
-      );
-    }).length > 0
+  return findWrites(symbol, read.getSourceFile(), context).some(
+    (inner) => ts.findAncestor(inner, ts.isFunctionLike) !== around,
   );
 };
 
@@ -2381,10 +2451,7 @@ export const isRestOnly = (symbol: ts.Symbol, context: Context) => {
   ) {
     return false;
   }
-  const targets = findNodes(declaration.getSourceFile(), (inner): inner is ts.Node => {
-    const target = getAssignedTarget(inner);
-    return target !== undefined && isWrittenBy(target, symbol, context);
-  }).map(getAssignedTarget);
+  const targets = findWrites(symbol, declaration.getSourceFile(), context).map(getAssignedTarget);
   return (
     targets.length > 0 &&
     targets.every((target) => {
@@ -2530,10 +2597,7 @@ export const isMadeOnly = (symbol: ts.Symbol, context: Context) => {
     }
     return !isPatternPart(parent);
   };
-  const written = findNodes(declaration.getSourceFile(), (inner): inner is ts.Node => {
-    const target = getAssignedTarget(inner);
-    return target !== undefined && isWrittenBy(target, symbol, context);
-  }).flatMap((inner) =>
+  const written = findWrites(symbol, declaration.getSourceFile(), context).flatMap((inner) =>
     getWrittenNames(getAssignedTarget(inner) ?? inner).filter(
       (name) => ts.isIdentifier(name) && getSymbol(name, checker) === symbol,
     ),
@@ -3924,14 +3988,9 @@ export const getSharedDeclaration = (symbol: ts.Symbol, context: Context) => {
   ) {
     return undefined;
   }
-  const names = findNodes(
-    owner,
-    (inner): inner is ts.Identifier =>
-      ts.isIdentifier(inner) &&
-      inner.text === symbol.name &&
-      (ts.isShorthandPropertyAssignment(inner.parent)
-        ? context.checker.getShorthandAssignmentValueSymbol(inner.parent)
-        : getSymbol(inner, context.checker)) === symbol,
+  // A shorthand property's name names the value it takes, as getSymbol tells.
+  const names = findReferences(symbol, owner, context).filter(
+    (inner) => inner.text === symbol.name,
   );
   const isShared = names.some((name) => {
     const closure = ts.findAncestor(name.parent, (ancestor) =>
@@ -5585,10 +5644,114 @@ export const getFunctionCandidates = (callee: ts.Expression, context: Context) =
       )
     );
   };
-  return found.filter(
-    (candidate) =>
-      checker.isTypeAssignableTo(checker.getTypeAtLocation(candidate), type) && isTyped(candidate),
+  // A callee whose type createDispatch tested reads its row.
+  const dispatch = context.dispatch;
+  const rowIndex =
+    dispatch === undefined || isSuperAccess(callee)
+      ? -1
+      : getLowerBound(dispatch.calleeIds, 0, dispatch.calleeIds.length, type.id);
+  const row =
+    dispatch !== undefined && rowIndex >= 0 && dispatch.calleeIds[rowIndex] === type.id
+      ? rowIndex
+      : -1;
+  const isAssignable = (candidate: FunctionNode) => {
+    const position = row < 0 ? -1 : getPosition(context.nodes, candidate);
+    const bit = position < 0 || dispatch === undefined ? -1 : dispatch.candidateTypes[position] - 1;
+    return dispatch !== undefined && bit >= 0
+      ? (dispatch.rows[row * dispatch.words + (bit >>> 5)] & (1 << (bit & 31))) !== 0
+      : checker.isTypeAssignableTo(checker.getTypeAtLocation(candidate), type);
+  };
+  return found.filter((candidate) => isAssignable(candidate) && isTyped(candidate));
+};
+
+// TypeScript's flags of a signature with a rest parameter, and of an untyped one of JavaScript.
+const SIGNATURE_REST = 1;
+const SIGNATURE_UNTYPED = 32;
+
+// The distinct types of some nodes or values, in the order of their ids.
+const getDistinctTypes = (types: readonly ts.Type[]) =>
+  [...new Set(types)].toSorted((left, right) => left.id - right.id);
+
+// Tests each callee type that findEffects dispatches against each distinct type of the function
+// candidates once, before findEffects runs, rather than each candidate at each call.
+export const createDispatch = (callees: readonly ts.Expression[], context: Context): Dispatch => {
+  const checker = context.checker;
+  const candidates = [...new Set([...context.functionCandidates.values()].flat())];
+  const candidateTypes = getDistinctTypes(
+    candidates.map((candidate) => checker.getTypeAtLocation(candidate)),
   );
+  const candidateIds = Int32Array.from(candidateTypes, (type) => type.id);
+  const indexes = new Int32Array(context.nodes.nodes.length);
+  candidates.forEach((candidate) => {
+    const position = getPosition(context.nodes, candidate);
+    const id = checker.getTypeAtLocation(candidate).id;
+    if (position >= 0) {
+      indexes[position] = getLowerBound(candidateIds, 0, candidateIds.length, id) + 1;
+    }
+  });
+  const calleeTypes = getDistinctTypes(
+    callees
+      .filter((callee) => !isHeldBuiltInObject(callee, context) && !isSuperAccess(callee))
+      .map((callee) => checker.getTypeAtLocation(callee)),
+  );
+  const words = (candidateTypes.length + 31) >>> 5;
+  const rows = new Uint32Array(calleeTypes.length * words);
+  // TypeScript relates a function type to a type of one call signature, no rest parameter, and no
+  // properties only through its call signatures, each of which fails where it takes more arguments
+  // than the target's parameters: the least count of arguments that each candidate takes, or -1,
+  // and the count of parameters that each callee type takes, or -1.
+  const isVoidAccepting = (type: ts.Type) =>
+    (type.isUnion() ? type.types : [type]).some(
+      (member) => (member.flags & ts.TypeFlags.Void) !== 0,
+    );
+  const getLeastArguments = (signature: ts.Signature) => {
+    const count = { value: signature.minArgumentCount };
+    for (let position = signature.minArgumentCount - 1; position >= 0; position -= 1) {
+      if (!isVoidAccepting(checker.getParameterType(signature, position))) break;
+      count.value = position;
+    }
+    return count.value;
+  };
+  const leastArguments = Int32Array.from(candidateTypes, (type) => {
+    const signatures = checker.getSignaturesOfType(type, ts.SignatureKind.Call);
+    const isFunctionType =
+      (type.flags & ts.TypeFlags.Object) !== 0 &&
+      ((type.objectFlags ?? 0) & ts.ObjectFlags.Reference) === 0 &&
+      signatures.length > 0 &&
+      signatures.every(
+        (signature) => (signature.flags & (SIGNATURE_REST | SIGNATURE_UNTYPED)) === 0,
+      );
+    return isFunctionType ? Math.min(...signatures.map(getLeastArguments)) : -1;
+  });
+  const parameterCounts = Int32Array.from(calleeTypes, (type) => {
+    const signatures = checker.getSignaturesOfType(type, ts.SignatureKind.Call);
+    const isOneSignature =
+      type.flags === ts.TypeFlags.Object &&
+      ((type.objectFlags ?? 0) & ts.ObjectFlags.Mapped) === 0 &&
+      signatures.length === 1 &&
+      (signatures[0].flags & SIGNATURE_REST) === 0 &&
+      checker.getSignaturesOfType(type, ts.SignatureKind.Construct).length === 0 &&
+      checker.getPropertiesOfType(type).length === 0 &&
+      checker.getIndexInfosOfType(type).length === 0;
+    return isOneSignature ? signatures[0].parameters.length : -1;
+  });
+  calleeTypes.forEach((calleeType, row) =>
+    candidateTypes.forEach((candidateType, bit) => {
+      const isTooFew =
+        parameterCounts[row] >= 0 &&
+        leastArguments[bit] > parameterCounts[row] &&
+        candidateType.symbol !== calleeType.symbol;
+      if (!isTooFew && checker.isTypeAssignableTo(candidateType, calleeType)) {
+        rows[row * words + (bit >>> 5)] |= 1 << (bit & 31);
+      }
+    }),
+  );
+  return {
+    calleeIds: Int32Array.from(calleeTypes, (type) => type.id),
+    words,
+    rows,
+    candidateTypes: indexes,
+  };
 };
 
 // Whether the model reaches a node's code, as no value holds a function that nothing names.

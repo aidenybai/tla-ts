@@ -67,6 +67,7 @@ import {
 } from "./collections";
 import {
   findNodes,
+  findNodesOf,
   getFunctionCandidates,
   getFunctionValue,
   getObjectGetter,
@@ -13714,7 +13715,9 @@ const isAnyMember = (node: ts.Expression, context: Context) => {
 // those that no other function encloses, whose type TypeScript lets the callee hold. The call
 // branches on its callee's value between them.
 // The functions that a call through a value may run, which may be none that the script writes.
-const getCandidates = (
+// Whether a call may run any of the functions and closures whose type its callee's type allows,
+// where tla-ts can't tell which it runs.
+const isDispatchedCall = (
   node: ts.CallExpression,
   functions: ReadonlyMap<ts.Symbol, FunctionNode>,
   context: Context,
@@ -13743,13 +13746,53 @@ const getCandidates = (
     // runs the method that changes its receiver as a statement.
     isUntypedStoredCall(node, context)
   ) {
-    return undefined;
+    return false;
   }
-  return (
-    getMadeFunctions(callee, context) ?? [
-      ...getFunctionCandidates(callee, context),
-      ...getClosures(callee, context),
-    ]
+  return true;
+};
+
+const getCandidates = (
+  node: ts.CallExpression,
+  functions: ReadonlyMap<ts.Symbol, FunctionNode>,
+  context: Context,
+  called: ts.Expression,
+) => {
+  const callee = skipCasts(called);
+  return isDispatchedCall(node, functions, context, called)
+    ? (getMadeFunctions(callee, context) ?? [
+        ...getFunctionCandidates(callee, context),
+        ...getClosures(callee, context),
+      ])
+    : undefined;
+};
+
+// The callees of the calls in the model's code whose functions findEffects looks for among the
+// candidates, as a call or through call or apply, which tla-ts finds before it does.
+export const findDispatchedCallees = (reached: readonly ts.Node[], context: Context) => {
+  // Each call once, though a reached declaration may sit inside another.
+  const table = context.nodes;
+  table.generation += 1;
+  const generation = table.generation;
+  const isFirst = (node: ts.Node): node is ts.CallExpression => {
+    const position = getPosition(table, node);
+    if (!ts.isCallExpression(node) || (position >= 0 && table.marks[position] === generation)) {
+      return false;
+    }
+    if (position >= 0) table.marks[position] = generation;
+    return true;
+  };
+  return reached.flatMap((root) =>
+    findNodesOf(root, ts.SyntaxKind.CallExpression, isFirst, context).flatMap((node) =>
+      [
+        node.expression,
+        ...(isFunctionThroughCall(node, context) ? [getCast(node.expression.expression)] : []),
+      ].flatMap((called) =>
+        isDispatchedCall(node, NO_FUNCTIONS, context, called) &&
+        getMadeFunctions(skipCasts(called), context) === undefined
+          ? [skipCasts(called)]
+          : [],
+      ),
+    ),
   );
 };
 

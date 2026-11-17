@@ -1,5 +1,6 @@
 import ts from "@typescript/typescript6";
 import {
+  findDispatchedCallees,
   findEffects,
   getWritten,
   getWrittenRoots,
@@ -12,6 +13,7 @@ import {
   type Closure,
   type Context,
   createContext,
+  createDispatch,
   findNodes,
   findFunctionCandidates,
   findFileAccessors,
@@ -70,7 +72,7 @@ import {
   isLiteralValue,
   rejectRunningModules,
 } from "./namespaces";
-import { createProgram, isTypeImport } from "./program";
+import { createProgram, isTypeImport, type Library } from "./program";
 import { findResolverHolders } from "./promises";
 import {
   getJsonPath,
@@ -259,7 +261,8 @@ const rejectEndlessCount = (model: Model, sections: Sections, context: Context) 
 
 // Compiles a TypeScript file into a TLA+ spec and the config that checks it. Imports resolve
 // relative to fileName, and the module takes its name, so die-hard.ts is the module DieHard.
-// Without a file system, as in a browser, libraries holds TypeScript's declaration files by name.
+// Without a file system, as in a browser, library holds TypeScript's declaration files, which
+// createLibrary parses once.
 // Where the CLI runs a script in Node's place, isNodeScript has the script report a throw or a
 // rejection that nothing handles with the text Node prints.
 // The operators that convert their operands to numbers, which may give NaN.
@@ -306,11 +309,11 @@ const isBuiltInValueArgument = (node: ts.Expression, checker: ts.TypeChecker) =>
 export const compile = (
   source: string,
   fileName = "spec.ts",
-  libraries?: ReadonlyMap<string, string>,
+  library?: Library,
   isNodeScript = false,
 ): CompiledSpec => {
   const path = fileName.replaceAll("\\", "/");
-  const program = createProgram(source, path, libraries);
+  const program = createProgram(source, path, library);
   const context = createContext(
     program.checker,
     program.files,
@@ -1123,6 +1126,7 @@ export const compile = (
   if (context.isEveryCollectionHeld) rejectSharing(shareable, context);
   rejectRegExpIndicesUses(roots, context);
   if (context.heap !== undefined) {
+    context.dispatch = createDispatch(findDispatchedCallees(reached, context), context);
     context.effects = findEffects(reached, context);
     context.changes = summarizeEffects(context);
   }

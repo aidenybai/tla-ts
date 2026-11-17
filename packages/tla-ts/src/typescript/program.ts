@@ -122,10 +122,6 @@ const getExtension = (path: string) =>
 // TypeScript's error for an if whose branch is the empty statement, which JavaScript runs.
 const EMPTY_IF_BRANCH_ERROR = 1313;
 
-// TypeScript's own declaration files, parsed once and shared by every program, since parsing them
-// takes most of a compile.
-const libraryFiles = new Map<string, ts.SourceFile>();
-
 const createLibraryHost = (libraries: ReadonlyMap<string, string>): ts.CompilerHost => ({
   getSourceFile: (fileName, languageVersion) => {
     const text = libraries.get(fileName);
@@ -141,6 +137,54 @@ const createLibraryHost = (libraries: ReadonlyMap<string, string>): ts.CompilerH
   fileExists: (fileName) => libraries.has(fileName),
   readFile: (fileName) => libraries.get(fileName),
 });
+
+// TypeScript's declaration files of its default library, by name, which every program shares, and,
+// for a host without a file system, the texts that its files read from.
+export interface Library {
+  files: ReadonlyMap<string, ts.SourceFile>;
+  texts: ReadonlyMap<string, string> | undefined;
+}
+
+// A program of no code that reads the default library through a host, whose files it parses.
+const LIBRARY_ROOT = "/library.ts";
+
+const parseLibrary = (
+  host: ts.CompilerHost,
+  texts: ReadonlyMap<string, string> | undefined,
+): Library => {
+  const program = ts.createProgram({
+    rootNames: [LIBRARY_ROOT],
+    options: COMPILER_OPTIONS,
+    host: {
+      ...host,
+      getSourceFile: (fileName, languageVersion) =>
+        fileName === LIBRARY_ROOT
+          ? ts.createSourceFile(fileName, "", languageVersion)
+          : host.getSourceFile(fileName, languageVersion),
+      fileExists: (fileName) => fileName === LIBRARY_ROOT || host.fileExists(fileName),
+    },
+  });
+  return {
+    files: new Map(
+      program
+        .getSourceFiles()
+        .filter((file) => file.fileName !== LIBRARY_ROOT)
+        .map((file) => [file.fileName, file]),
+    ),
+    texts,
+  };
+};
+
+// A browser has no file system, so it passes the texts of TypeScript's declaration files, which
+// it parses once into its library.
+export const createLibrary = (texts: ReadonlyMap<string, string>) =>
+  parseLibrary(createLibraryHost(texts), texts);
+
+// Where there is a file system, the compiler parses the default library from it as it loads.
+const DEFAULT_LIBRARY: Library =
+  ts.sys === undefined
+    ? { files: new Map(), texts: undefined }
+    : parseLibrary(ts.createCompilerHost(COMPILER_OPTIONS), undefined);
 
 // HACK: TypeScript checks a parameter property's assignment only in its emit, so the text gains it.
 // A file's text where each constructor assigns its parameter properties, as TypeScript does once
@@ -290,16 +334,12 @@ const getProjectOptions = (options: ts.CompilerOptions): ts.CompilerOptions => (
 // Type checks a model, with the files it imports, and throws their type errors. A file of a project
 // on disk type checks with the project's options, and where it needs them, as in an editor, the
 // globals that the project's other files declare, such as those of a types package one references.
-export const createProgram = (
-  source: string,
-  path: string,
-  libraries: ReadonlyMap<string, string> | undefined,
-) => {
+export const createProgram = (source: string, path: string, library: Library = DEFAULT_LIBRARY) => {
+  const libraries = library.texts;
   const project = libraries === undefined ? getProject(path) : undefined;
   const options = project === undefined ? COMPILER_OPTIONS : getProjectOptions(project.options);
   const host =
     libraries === undefined ? ts.createCompilerHost(options) : createLibraryHost(libraries);
-  const libraryDirectory = host.getDefaultLibLocation?.() ?? "";
   // Whether a module that Node loads as JavaScript gave its types from a declaration file, which
   // type checks the code that imports it.
   let isDeclared = false;
@@ -380,15 +420,8 @@ export const createProgram = (
             languageVersion,
           );
         }
-        const cached = libraryFiles.get(fileName);
-        if (cached !== undefined) return cached;
-        const file = host.getSourceFile(fileName, languageVersion);
-        if (file === undefined || file.isDeclarationFile) {
-          if (file !== undefined && fileName.startsWith(libraryDirectory)) {
-            libraryFiles.set(fileName, file);
-          }
-          return file;
-        }
+        const file = library.files.get(fileName) ?? host.getSourceFile(fileName, languageVersion);
+        if (file === undefined || file.isDeclarationFile) return file;
         return createVarFunctionsFile(
           fileName,
           assignParameterProperties(fileName, file.text),
