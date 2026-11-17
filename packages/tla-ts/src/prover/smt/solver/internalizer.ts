@@ -172,7 +172,7 @@ export abstract class Internalizer {
   falseEnode: Enode;
   protected generation = 0;
   protected cachedGeneration = new Map<number, number>();
-  private randomSeed = 0;
+  protected randomSeed = 0;
   isSearching = false;
   config = DEFAULT_CONFIG;
 

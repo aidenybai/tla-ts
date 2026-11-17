@@ -154,6 +154,7 @@ export interface SmtParams {
   isMbqi: boolean;
   mbqiMaxIterations: number;
   relevancyLevel: 0 | 2;
+  randomSeed?: number;
   // The model checker's auxiliary context pretends every array operation is supported.
   isArrayFakeSupport?: boolean;
 }
@@ -214,6 +215,7 @@ export class Context extends Internalizer {
   updateParams(params: KernelParams) {
     this.params.isMbqi = params.isMbqi;
     this.params.mbqiMaxIterations = params.mbqiMaxIterations;
+    this.params.randomSeed = params.randomSeed;
     this.config = {
       ...DEFAULT_CONFIG,
       theories: this.config.theories,
@@ -239,6 +241,7 @@ export class Context extends Internalizer {
     );
     this.setup = setup;
     this.config = config;
+    this.randomSeed = this.params.randomSeed ?? 0;
     if (config.relevancyLevel !== undefined) this.relevancy.isEnabled = config.relevancyLevel > 0;
     for (const family of config.theories)
       if (family !== FAMILY_POLY || this.manager.hasTypeVars) this.registerFamily(family);

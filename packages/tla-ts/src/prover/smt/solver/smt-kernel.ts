@@ -21,6 +21,7 @@ export class SmtKernel {
       isMbqi: params.isMbqi,
       mbqiMaxIterations: params.mbqiMaxIterations,
       relevancyLevel: params.relevancyLevel ?? 2,
+      randomSeed: params.randomSeed,
     });
     this.setup = params.setup;
     this.isCoreMinimizing = params.isCoreMinimizing ?? false;

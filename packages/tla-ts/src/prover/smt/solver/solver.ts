@@ -21,6 +21,7 @@ export interface KernelParams {
   isFindingMacros: boolean;
   relevancyLevel?: 0 | 2;
   isCoreMinimizing?: boolean;
+  randomSeed?: number;
   // A kernel without a setup runs as with auto_config false.
   setup?: SmtSetup;
 }
@@ -44,6 +45,7 @@ export const solveGoal = (manager: AstManager, forms: number[], params: KernelPa
     isMbqi: params.isMbqi,
     mbqiMaxIterations: params.mbqiMaxIterations,
     relevancyLevel: 2,
+    randomSeed: params.randomSeed,
   });
   for (const form of forms) asserted.assertExpr(form);
   context.setupContext(params.setup, true, asserted);
@@ -82,6 +84,7 @@ export const solveAssuming = (
     isMbqi: params.isMbqi,
     mbqiMaxIterations: params.mbqiMaxIterations,
     relevancyLevel: 2,
+    randomSeed: params.randomSeed,
   });
   for (const assertion of assertions) asserted.assertExpr(assertion);
   context.setupContext(params.setup, false, asserted);

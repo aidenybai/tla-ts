@@ -908,6 +908,28 @@ describe("the models check-sat-using leaves, as Z3 5.3.2 makes them", () => {
     ]);
   });
 
+  it("seeds the search of the smt tactic with its random_seed", () => {
+    const vars = ["x0", "x1", "x2", "x3", "x4"];
+    expect(
+      run([
+        "(set-logic QF_LIA)",
+        ...vars.map((name) => `(declare-const ${name} Int)`),
+        ...vars.map((name) => `(assert (and (<= 0 ${name}) (<= ${name} 9)))`),
+        "(assert (or (< (+ x0 x4) 4) (> (- x0 x4) -1)))",
+        "(assert (or (< (+ x1 x2) 7) (> (- x1 x2) 1)))",
+        "(assert (or (< (+ x1 x0) 12) (> (- x1 x0) 2)))",
+        "(assert (or (< (+ x1 x3) 9) (> (- x1 x3) 3)))",
+        "(assert (or (< (+ x4 x2) 11) (> (- x4 x2) 0)))",
+        "(assert (or (< (+ x4 x2) 3) (> (- x4 x2) 3)))",
+        "(check-sat-using (using-params smt :random_seed 1))",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      "(\n  (define-fun x4 () Int\n    1)\n  (define-fun x1 () Int\n    4)\n  (define-fun x2 () Int\n    0)\n  (define-fun x0 () Int\n    1)\n  (define-fun x3 () Int\n    0)\n)",
+    ]);
+  });
+
   it("completes the models of nlsat and nlqsat with false, as a model rather than a proto_model does", () => {
     const bools = ["(declare-const b0 Bool)", "(declare-const b1 Bool)", "(declare-const b2 Bool)"];
     const bindings =

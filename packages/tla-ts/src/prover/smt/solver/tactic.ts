@@ -277,6 +277,7 @@ const SMT_DESCRS = getDescrs("smt", [
   ["mbqi", PARAM_BOOL, true, true],
   ["mbqi.max_iterations", PARAM_UINT, MBQI_MAX_ITERATIONS, true],
   ["arith.nl.rounds", PARAM_UINT, 1024, true],
+  ["random_seed", PARAM_UINT, 0, true],
 ]);
 
 // The dependencies are assertion names, which are Boolean constants, so each one is its own
@@ -291,6 +292,11 @@ const getKernelParams = (environment: TacticEnvironment, params: TacticParams, g
     mbqiMaxIterations: getUint(params, "mbqi.max_iterations", environment.mbqiMaxIterations),
     isFindingMacros: environment.isFindingMacros,
     setup: environment.setup,
+    randomSeed: getUint(
+      params,
+      "random_seed",
+      Number(getParameter(environment, "smt.random_seed", "0")),
+    ),
   };
 };
 
