@@ -530,6 +530,30 @@ describe("the terms the reader makes and frees, in Z3's order", () => {
     ).toEqual(["2", "(or s r q p)", "(and p q)", "(or s r q p)"]);
   });
 
+  it("asserts the term of an assert with a token before its closing parenthesis, then reports the token", () => {
+    expect(
+      run([
+        "(set-option :print-success true)",
+        "(set-logic QF_LIA)",
+        "(declare-const x Int)",
+        "(declare-const b Bool)",
+        "(assert (> (* x x) 1) 2)",
+        "(assert b 1)",
+        "(assert (not b) (> x 2))",
+        "(check-sat)",
+      ]),
+    ).toEqual([
+      "success",
+      "success",
+      "success",
+      "success",
+      '(error "line 5 column 22: logic does not support nonlinear arithmetic")',
+      `(error "line 6 column 10: invalid assert command, ')' expected")`,
+      `(error "line 7 column 16: invalid assert command, ')' expected")`,
+      "unsat",
+    ]);
+  });
+
   it("reports a term of assert or check-sat that is not Boolean at the token after it", () => {
     expect(
       run([

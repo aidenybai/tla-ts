@@ -989,11 +989,12 @@ export const runSmtlibScript = (
       "assert",
       (list) => {
         const term = list.items[1] ?? list.end;
-        const assertion = state.reader.parseAssertion(term, list.items[2] ?? list.end);
+        const follower = list.items[2] ?? list.end;
+        const assertion = state.reader.parseAssertion(term, follower);
         const logicError = state.reader.getLogicError(assertion.formula);
         if (logicError !== undefined) {
           state.manager.decRef(assertion.formula);
-          throw new SmtParseError(logicError, list.end);
+          throw new SmtParseError(logicError, follower);
         }
         state.assertions.push(assertion.formula);
         state.assertionTexts.push(
@@ -1014,6 +1015,8 @@ export const runSmtlibScript = (
         }
         assertInKernel(assertion.formula, state.names[state.names.length - 1]);
         clearCheck();
+        if (follower !== list.end)
+          throw new SmtParseError("invalid assert command, ')' expected", follower);
       },
     ],
     [
