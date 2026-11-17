@@ -1260,6 +1260,73 @@ describe("name resolution matches SANY", () => {
     );
   });
 
+  it.each<[string, [string, string][]]>([
+    [
+      "G(a, b) == a\nOp0(P0(_, _), a1) == P0(a1, a1)\nf == Op0((G), 1)",
+      [
+        [
+          "line 4, col 10 to line 4, col 12",
+          "An expression appears as argument number 1 (counting from 1) to operator 'Op0', in a position an operator is required.",
+        ],
+        [
+          "line 4, col 6 to line 4, col 16",
+          "Argument number 1 to operator 'Op0' \nshould be a 2-parameter operator.",
+        ],
+      ],
+    ],
+    [
+      "G(a, b) == a\nOp0(P0(_, _), a1) == P0(a1, a1)\nf == Op0(((G)), 1)",
+      [
+        [
+          "line 4, col 10 to line 4, col 14",
+          "An expression appears as argument number 1 (counting from 1) to operator 'Op0', in a position an operator is required.",
+        ],
+        [
+          "line 4, col 6 to line 4, col 18",
+          "Argument number 1 to operator 'Op0' \nshould be a 2-parameter operator.",
+        ],
+      ],
+    ],
+    [
+      "EXTENDS Naturals\nH(a, b) == a + b\nD == H(1, 2)\nOp0(P0(_), a1) == P0(a1)\nf == Op0((D!1), 1)",
+      [
+        [
+          "line 6, col 10 to line 6, col 14",
+          "An expression appears as argument number 1 (counting from 1) to operator 'Op0', in a position an operator is required.",
+        ],
+        [
+          "line 6, col 6 to line 6, col 18",
+          "Argument number 1 to operator 'Op0' \nshould be a 1-parameter operator.",
+        ],
+      ],
+    ],
+    [
+      "---- MODULE Inner ----\nCONSTANT F(_)\n====\nG(a) == a\nI == INSTANCE Inner WITH F <- (G)",
+      [
+        [
+          "line 6, col 31 to line 6, col 33",
+          "Arity 1 operator (not an expression) is expected \nto substitute for CONSTANT 'F'.",
+        ],
+        [
+          "In module --TLA+ BUILTINS--",
+          "An operator must be substituted for symbol 'F', and it must have arity 1.",
+        ],
+      ],
+    ],
+  ])(
+    "reports an operator in parentheses, which SANY reads as an expression, in %j",
+    async (source, errors) => {
+      await expect(checkNames(source)).rejects.toThrow(
+        createSanyError(
+          errors.map((error) => ({
+            location: error[0].startsWith("In module") ? error[0] : `${error[0]} of module M`,
+            message: error[1],
+          })),
+        ),
+      );
+    },
+  );
+
   it("passes an operator argument through an operator a LET instantiates", async () => {
     const result = await check({
       source:

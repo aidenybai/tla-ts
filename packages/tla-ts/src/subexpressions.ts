@@ -17,6 +17,7 @@ import {
 } from "./ast";
 import { formatRange, TlaSyntaxError, type SanyError } from "./errors";
 import { getSourceName, mapChildren, mapDefinition } from "./instances";
+import { parenthesizedRanges } from "./parser";
 import { resolveSynonym } from "./tlc/jar-data";
 import {
   getArity,
@@ -627,6 +628,8 @@ const resolveSubexpressions = (
   const selected = selectSubexpression(selectors, lookup, isGoal, mapped, isOperator);
   const generated = generatedArgumentCounts.get(mapped);
   if (generated !== undefined) setGeneratedArguments(generated);
+  const parenthesized = parenthesizedRanges.get(expression);
+  if (parenthesized && selected !== mapped) parenthesizedRanges.set(selected, parenthesized);
   if (selected !== mapped) selections.add(selected);
   return selected;
 };

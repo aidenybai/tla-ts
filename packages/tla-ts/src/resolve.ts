@@ -23,6 +23,7 @@ import {
   type UseOrHide,
 } from "./ast";
 import { formatRange, TlaSyntaxError, type SanyError } from "./errors";
+import { parenthesizedRanges } from "./parser";
 import { resolveSynonym } from "./tlc/jar-data";
 
 export type SymbolKind =
@@ -1180,6 +1181,14 @@ const matchArgument = (
     resolveExpressionArgument(arg, scope, unit);
     return true;
   }
+  const parenthesized = parenthesizedRanges.get(arg);
+  if (parenthesized) {
+    report(
+      parenthesized,
+      `An expression appears as argument number ${index + 1} (counting from 1) to operator '${operator}', in a position an operator is required.`,
+    );
+    return false;
+  }
   if (arg.kind === "Lambda") {
     if (selections.has(arg)) resolveExpression(arg, scope, unit);
     else resolveLambda(arg, scope, unit);
@@ -2073,23 +2082,25 @@ const checkSubstitutions = (
       resolveExpressionArgument(expression, scope, unit);
       return;
     }
-    if (expression.kind === "Lambda") {
+    const parenthesized = parenthesizedRanges.get(expression);
+    if (expression.kind === "Lambda" && !parenthesized) {
       resolveLambda(expression, scope, unit);
       if (expression.params.length !== declaration.arity && range) {
         reportArity(declaration, formatRange(range));
       }
       return;
     }
-    if (expression.kind === "OperatorReference") {
+    if (expression.kind === "OperatorReference" && !parenthesized) {
       const arity = getSymbolArity(expression, expression.operator, scope, unit);
       if (arity === undefined) reportArity(declaration, BUILTIN_LOCATION);
       else if (arity !== declaration.arity && range) reportArity(declaration, formatRange(range));
       return;
     }
-    if (expression.kind !== "Identifier") {
-      if (range) {
+    if (expression.kind !== "Identifier" || parenthesized) {
+      const errorRange = parenthesized ?? range;
+      if (errorRange) {
         unit.errors.push({
-          location: formatRange(range),
+          location: formatRange(errorRange),
           message: `Arity ${declaration.arity} operator (not an expression) is expected \nto substitute for CONSTANT '${resolveSynonym(declaration.name)}'.`,
         });
       }
