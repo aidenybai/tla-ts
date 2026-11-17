@@ -120,7 +120,12 @@ export const createProgramNodes = (
 };
 
 // The index of the first of a sorted run's values at or past a value.
-const getLowerBound = (sorted: Int32Array, start: number, end: number, value: number): number => {
+export const getLowerBound = (
+  sorted: Int32Array,
+  start: number,
+  end: number,
+  value: number,
+): number => {
   if (start >= end) return start;
   const middle = (start + end) >>> 1;
   return sorted[middle] < value
