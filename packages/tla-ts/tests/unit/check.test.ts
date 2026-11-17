@@ -1330,6 +1330,32 @@ ASSUME TLCFP(a) = -887695703
 
   it.each([
     [
+      "an invariant",
+      "Init == x = 0\nNext == x < 3 /\\ x' = x + 1\nInv == <<1, 2>>[x + 1] > 0",
+      "INIT Init\nNEXT Next\nINVARIANT Inv",
+      ["2:2 2", "2:5 4 5 4 5", "3"],
+    ],
+    [
+      "an action property",
+      "Init == x = 0\nNext == x < 3 /\\ x' = x + 1\nSpec == Init /\\ [][Next]_x\nP == [][<<1, 2>>[x' + 1] > 0]_x",
+      "SPECIFICATION Spec\nPROPERTY P",
+      ["2:2 2", "2:5 4 5 4 5", "3"],
+    ],
+    [
+      "a constraint",
+      "Init == x = 0\nNext == x < 3 /\\ x' = x + 1\nC == <<1, 2>>[x + 1] > 0\nInv == x >= 0",
+      "INIT Init\nNEXT Next\nCONSTRAINT C\nINVARIANT Inv",
+      ["2:2 2", "1:5 4 5 4 5", "2", "2:2 4"],
+    ],
+  ])(
+    "rebuilds the trace once for the coverage after %s fails to evaluate",
+    async (_name, definitions, config, expected) => {
+      expect(await getCoverageCounts(definitions, config)).toEqual(expected);
+    },
+  );
+
+  it.each([
+    [
       "the invariants of an initial state",
       'Init == x \\in 0..1\nNext == UNCHANGED x\nInvPrint == PrintT(<<"inv", x>>)\nInvLim == x <= 0\nInvAfter == PrintT(<<"after", x>>)',
       "INIT Init\nNEXT Next\nINVARIANT InvPrint\nINVARIANT InvLim\nINVARIANT InvAfter",

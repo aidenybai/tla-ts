@@ -17,6 +17,7 @@ interface TraceOptions {
   loopStart?: number;
   known?: number;
   incomplete?: State;
+  isFailed?: boolean;
 }
 
 interface RebuiltState {
@@ -139,7 +140,7 @@ export const createTraceBuilder = (context: TraceContext) => {
     const loopStart = traceOptions.loopStart;
     const rebuilt = is174 && loopStart !== undefined ? loopStart + 1 : steps.length - known;
     if (environment.coverage && steps.length > 1) {
-      const isRebuiltAgain = known > 0 && !is174;
+      const isRebuiltAgain = known > 0 && !is174 && !traceOptions.isFailed;
       if (rebuilt > 0 && isRebuiltAgain) captureOutput(context.getInitialStates);
       if (isRebuiltAgain) {
         steps.slice(1).forEach((step, position) => {
@@ -232,7 +233,7 @@ export const createTraceBuilder = (context: TraceContext) => {
     }
     return steps;
   };
-  const getTrace = (index: number, lastSuccessor?: Successor, incomplete?: State) => {
+  const getTrace = (index: number, lastSuccessor?: Successor, traceOptions: TraceOptions = {}) => {
     const path: number[] = [];
     for (let position = index; position !== -1; position = context.parents[position]) {
       path.unshift(position);
@@ -244,17 +245,20 @@ export const createTraceBuilder = (context: TraceContext) => {
             state: states[position],
             action: context.actions[position],
           }));
-    if (!lastSuccessor) return toTrace(steps, path, { incomplete });
+    if (!lastSuccessor) return toTrace(steps, path, traceOptions);
     const action = isReducing
       ? findTraceSuccessor(states[index], (successor) =>
           isSameState(successor.state, lastSuccessor.state),
         )?.action
       : lastSuccessor.action;
-    return toTrace([...steps, { state: lastSuccessor.state, action }], path, { known: 2 });
+    return toTrace([...steps, { state: lastSuccessor.state, action }], path, {
+      ...traceOptions,
+      known: 2,
+    });
   };
   // TLCTrace#printTrace applies the alias to every state but an initial one it prints without a successor.
   const getStateTrace = (index: number, incomplete?: State): Behavior => {
-    if (context.parents[index] !== -1) return getTrace(index, undefined, incomplete);
+    if (context.parents[index] !== -1) return getTrace(index, undefined, { incomplete });
     const traceOutput = is174 ? [] : captureOutput(context.getInitialStates).lines;
     const state = states[index];
     if (incomplete !== undefined) {
@@ -290,8 +294,9 @@ export const createTraceBuilder = (context: TraceContext) => {
     context.tracedSteps.set(traceStep, { state, action });
     return traceStep;
   };
+  // TLC's Worker rebuilds the trace for its postconditions after a violation, not a failure.
   const getFailedTrace = (index: number, successor: Successor): Behavior => ({
-    trace: getTrace(index, successor).trace,
+    trace: getTrace(index, successor, { isFailed: true }).trace,
   });
   const getPathSteps = (path: number[]) => getPathStates(path, NEXT_RECOVERY_FAILURE);
   return {
