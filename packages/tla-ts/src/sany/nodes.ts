@@ -156,7 +156,7 @@ export interface OpApplNode extends LevelFields {
   nullKind?: "null" | "absent";
 }
 
-export const isAbsent = (node: LevelNode | undefined) =>
+export const isAbsent = (node: LevelNode | SymbolNode | undefined) =>
   node?.kind === "OpAppl" && node.nullKind === "absent";
 
 export interface NumeralNode extends LevelFields {

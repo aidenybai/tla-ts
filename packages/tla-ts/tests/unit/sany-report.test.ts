@@ -91,6 +91,58 @@ Spec == Init /\\ [][Next]_x
     );
   });
 
+  it("reports a selection into an expression that failed to resolve as SANY does", () => {
+    const report = getReport({
+      M: "---- MODULE M ----\nVARIABLE x\nOp(a) == a + zz\nV == x\nS(a) == {zz + 1}\nC == CASE TRUE -> zz + 1\nf == Op(2)!1 /\\ V!1 /\\ S(2)!1 /\\ Op(2)!: /\\ C!1!2 /\\ Op(2)!<<\n====\n",
+    });
+    expect(report.text).toBe(
+      joinLines([
+        "Semantic errors:",
+        "",
+        "*** Errors: 12",
+        "",
+        ...[
+          [
+            "line 3, col 12 to line 3, col 12",
+            "Could not find declaration or definition of symbol '+'.",
+          ],
+          ["line 3, col 10 to line 3, col 15", "Couldn't resolve infix operator symbol `+'."],
+          [
+            "line 5, col 13 to line 5, col 13",
+            "Could not find declaration or definition of symbol '+'.",
+          ],
+          ["line 5, col 10 to line 5, col 15", "Couldn't resolve infix operator symbol `+'."],
+          [
+            "line 6, col 22 to line 6, col 22",
+            "Could not find declaration or definition of symbol '+'.",
+          ],
+          ["line 6, col 19 to line 6, col 24", "Couldn't resolve infix operator symbol `+'."],
+          [
+            "line 7, col 12 to line 7, col 12",
+            "Subexpression selection failed, probably due to an error in the selected expression.",
+          ],
+          [
+            "line 7, col 19 to line 7, col 19",
+            "Choosing operand `argument selector 1' of subexpression with no operands.",
+          ],
+          [
+            "line 7, col 29 to line 7, col 29",
+            "An unexpected null node specified by 'argument selector 1'.\nThis is probably due to a previous error.",
+          ],
+          [
+            "line 7, col 40 to line 7, col 40",
+            "An unexpected null node specified by ':'.\nThis is probably due to a previous error.",
+          ],
+          ["line 7, col 49 to line 7, col 49", "Selecting OTHER in a CASE statement."],
+          [
+            "line 7, col 60 to line 7, col 61",
+            "Subexpression selection failed, probably due to an error in the selected expression.",
+          ],
+        ].flatMap((error) => [`${error[0]} of module M`, "", error[1], "", ""]),
+      ]),
+    );
+  });
+
   it("parses a module once the module that names it reaches it, though another loaded it", () => {
     const report = getReport(
       {
