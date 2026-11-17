@@ -131,6 +131,10 @@ describe("name resolution matches SANY", () => {
       "an operator argument to an operator of a standard module a LET instantiates",
       "ASSUME LET S == INSTANCE Sequences IN S!SelectSeq(<<1, 2>>, LAMBDA a : a = 2) = <<2>>",
     ],
+    [
+      "an inner module that only a LET instantiates, which SANY rejects",
+      "---- MODULE Inner ----\nK == 1\n====\nF == LET N == INSTANCE Inner IN N!K",
+    ],
   ])("accepts %s", async (_title, source) => {
     expect((await checkNames(source)).status).toBe("success");
   });

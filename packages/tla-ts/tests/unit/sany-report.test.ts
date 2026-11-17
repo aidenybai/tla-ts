@@ -397,6 +397,13 @@ Spec == Init /\\ [][Next]_x
     expect(report).toEqual({ text: "", isFailed: false });
   });
 
+  it("accepts an inner module that only a LET instantiates, which SANY rejects", () => {
+    const report = getReport({
+      M: "---- MODULE M ----\n---- MODULE Inner ----\nK == 1\n====\nD == LET N == INSTANCE Inner IN N!K\n====\n",
+    });
+    expect(report).toEqual({ text: "", isFailed: false });
+  });
+
   it.each([
     ["VARIABLES x,\n  y", "line 4, col 1 to line 5, col 3", "A VARIABLE declaration"],
     ["CONSTANT C", "line 4, col 1 to line 4, col 10", "A declaration"],
