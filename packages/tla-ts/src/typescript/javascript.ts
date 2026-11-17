@@ -1,7 +1,7 @@
 import ts from "@typescript/typescript6";
 import type { Expression, Module, ModuleUnit, SourceLocation } from "../ast";
 import { getPreparedModuleLevels } from "../environment";
-import { tokenize } from "../lexer";
+import { tokenize, type Token } from "../lexer";
 import { decodeGraph, encodeGraph, type EncodedGraph } from "../graph-codec";
 import { parseModuleTokens } from "../parser";
 import type { PreparedModule } from "../tlc/order";
@@ -8919,14 +8919,31 @@ const MODULE_UNITS = UNIT_STARTS.map((start, position) => {
     reads: lines[0].startsWith("RECURSIVE ") ? [] : getReadNames(lines.join("\n")),
   };
 });
-const UNITS_BY_NAME = Map.groupBy(
-  MODULE_UNITS.flatMap((unit) => unit.names.map((name) => ({ name, unit }))),
-  (entry) => entry.name,
+// An id for each name a unit declares, and the units that declare each.
+const NAME_IDS = new Map<string, number>();
+MODULE_UNITS.forEach((unit) =>
+  unit.names.forEach((name) => NAME_IDS.set(name, NAME_IDS.get(name) ?? NAME_IDS.size)),
 );
+const NAME_UNITS = Array.from({ length: NAME_IDS.size }, (): number[] => []);
+MODULE_UNITS.forEach((unit, position) =>
+  unit.names.forEach((name) => NAME_UNITS[NAME_IDS.get(name) ?? 0].push(position)),
+);
+const getNameIds = (names: string[]) =>
+  Int32Array.from(new Set(names.flatMap((name) => NAME_IDS.get(name) ?? [])));
+const UNIT_NAME_IDS = MODULE_UNITS.map((unit) => getNameIds(unit.names));
+const UNIT_READ_IDS = MODULE_UNITS.map((unit) => getNameIds(unit.reads));
 // A unit that defines nothing, such as the header or an ASSUME, stays with what it reads.
-const ROOT_READS = MODULE_UNITS.filter((unit) => unit.names.length === 0).flatMap(
-  (unit) => unit.reads,
+const ROOT_READ_IDS = getNameIds(
+  MODULE_UNITS.filter((unit) => unit.names.length === 0).flatMap((unit) => unit.reads),
 );
+// The unit of each line, and each unit's text, or the newlines that stand for it where a view
+// leaves it out.
+const LINE_UNITS = new Int32Array(MODULE_LINES.length);
+UNIT_STARTS.forEach((start, position) =>
+  LINE_UNITS.fill(position, start, start + MODULE_UNITS[position].lines.length),
+);
+const UNIT_TEXTS = MODULE_UNITS.map((unit) => unit.lines.join("\n"));
+const UNIT_BLANKS = MODULE_UNITS.map((unit) => "\n".repeat(unit.lines.length - 1));
 
 // The JavaScript module read into its tokens and syntax tree and checked by SANY's checks, of which
 // each spec's module is a view.
@@ -8962,6 +8979,19 @@ const PRELUDE: PreparedModule = Array.isArray(encodedPrelude)
     }
   : prepareJavaScriptModule();
 
+// Where each unit's tokens start in the prelude's tokens, which follow one another by line, and
+// where the last one ends.
+const UNIT_TOKEN_STARTS = new Int32Array(MODULE_UNITS.length + 1);
+for (let index = 0, unit = 0; index <= PRELUDE.tokens.length; index++) {
+  const line = index < PRELUDE.tokens.length ? PRELUDE.tokens[index].line - 1 : MODULE_LINES.length;
+  while (
+    unit < MODULE_UNITS.length &&
+    line >= UNIT_STARTS[unit] + MODULE_UNITS[unit].lines.length
+  ) {
+    UNIT_TOKEN_STARTS[++unit] = index;
+  }
+}
+
 const getUnitLocation = (unit: ModuleUnit): SourceLocation => {
   switch (unit.kind) {
     case "Definition":
@@ -8981,49 +9011,54 @@ const getUnitLocation = (unit: ModuleUnit): SourceLocation => {
   }
 };
 
-// The module that the lines kept leave, which is what reading the module's text with every other
+// The module that the units kept leave, which is what reading the module's text with every other
 // line blank gives.
-const getModuleView = (module: Module, keptLines: Uint8Array): Module => {
-  const isKept = (location: SourceLocation) => keptLines[location.line - 1] === 1;
-  return {
-    ...module,
-    modules: module.modules.filter((nested) => isKept(nested.location)),
-    constants: module.constants.filter((constant) => isKept(constant.location)),
-    variables: module.variables.filter((variable) => isKept(variable.location)),
-    definitions: module.definitions.filter((definition) => isKept(definition.location)),
-    instances: module.instances.filter((instance) => isKept(instance.location)),
-    assumptions: module.assumptions.filter((assumption) => isKept(assumption.location)),
-    theorems: module.theorems.filter((theorem) => isKept(theorem.location)),
-    uses: module.uses.filter((use) => isKept(use.location)),
-    units: module.units.filter((unit) => isKept(getUnitLocation(unit))),
-  };
-};
+const getModuleView = (module: Module, isKept: (location: SourceLocation) => boolean): Module => ({
+  ...module,
+  modules: module.modules.filter((nested) => isKept(nested.location)),
+  constants: module.constants.filter((constant) => isKept(constant.location)),
+  variables: module.variables.filter((variable) => isKept(variable.location)),
+  definitions: module.definitions.filter((definition) => isKept(definition.location)),
+  instances: module.instances.filter((instance) => isKept(instance.location)),
+  assumptions: module.assumptions.filter((assumption) => isKept(assumption.location)),
+  theorems: module.theorems.filter((theorem) => isKept(theorem.location)),
+  uses: module.uses.filter((use) => isKept(use.location)),
+  units: module.units.filter((unit) => isKept(getUnitLocation(unit))),
+});
 
 // The JavaScript module with only the definitions that a spec and its config read, directly or
 // through other definitions, so that a check reads and analyzes only those. Every other line is
 // blank, so each definition keeps its line. Its tokens and syntax tree are those of the prelude
 // on the lines kept.
 export const getJavaScriptModule = (text: string): PreparedModule => {
-  const kept = new Set<string>();
-  const keep = (name: string) => {
-    if (kept.has(name)) return;
-    kept.add(name);
-    UNITS_BY_NAME.get(name)?.forEach((entry) => entry.unit.reads.forEach(keep));
-  };
-  [...getReadNames(text), ...ROOT_READS].forEach(keep);
-  const keptLines = new Uint8Array(MODULE_LINES.length);
-  MODULE_UNITS.forEach((unit, position) => {
-    if (unit.names.length > 0 && !unit.names.some((name) => kept.has(name))) return;
-    keptLines.fill(1, UNIT_STARTS[position], UNIT_STARTS[position] + unit.lines.length);
+  const keptNames = new Uint8Array(NAME_IDS.size);
+  const pending = [...getNameIds(getReadNames(text)), ...ROOT_READ_IDS];
+  while (pending.length > 0) {
+    const name = pending.pop() ?? 0;
+    if (keptNames[name] === 1) continue;
+    keptNames[name] = 1;
+    for (const unit of NAME_UNITS[name]) pending.push(...UNIT_READ_IDS[unit]);
+  }
+  const keptUnits = Uint8Array.from(UNIT_NAME_IDS, (names) =>
+    names.length === 0 || names.some((name) => keptNames[name] === 1) ? 1 : 0,
+  );
+  const isKept = (location: SourceLocation) => keptUnits[LINE_UNITS[location.line - 1]] === 1;
+  const tokens: Token[] = [];
+  keptUnits.forEach((isUnitKept, unit) => {
+    if (isUnitKept === 0) return;
+    for (let index = UNIT_TOKEN_STARTS[unit]; index < UNIT_TOKEN_STARTS[unit + 1]; index++) {
+      tokens.push(PRELUDE.tokens[index]);
+    }
   });
   return {
     name: PRELUDE.name,
-    text: MODULE_LINES.map((line, index) => (keptLines[index] === 1 ? line : "")).join("\n"),
-    tokens: PRELUDE.tokens.filter((token) => keptLines[token.line - 1] === 1),
-    module: getModuleView(PRELUDE.module, keptLines),
-    levels: PRELUDE.levels?.filter(
-      (_levels, position) =>
-        keptLines[PRELUDE.module.definitions[position].location.line - 1] === 1,
+    text: UNIT_TEXTS.map((unitText, unit) =>
+      keptUnits[unit] === 1 ? unitText : UNIT_BLANKS[unit],
+    ).join("\n"),
+    tokens,
+    module: getModuleView(PRELUDE.module, isKept),
+    levels: PRELUDE.levels?.filter((_levels, position) =>
+      isKept(PRELUDE.module.definitions[position].location),
     ),
   };
 };
