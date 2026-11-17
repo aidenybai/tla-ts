@@ -718,6 +718,16 @@ describe("name resolution matches SANY", () => {
       ],
     ],
     [
+      "CONSTANT c, Cop(_)\nI == INSTANCE Naturals\nOp(P1(_, _)) == Cop(LAMBDA p : p)!1 /\\ P1(G0, 0)!1!: /\\ zz(G1)!1 /\\ c(G2)!1 /\\ I!Nope(G3)!1",
+      [
+        ["line 4, col 17 to line 4, col 19", "Cannot take subexpression of `Cop'."],
+        ["line 4, col 40 to line 4, col 41", "Cannot take subexpression of `P1'."],
+        ["line 4, col 57 to line 4, col 58", "Unknown operator: `zz'."],
+        ["line 4, col 69 to line 4, col 69", "Cannot take subexpression of `c'."],
+        ["line 4, col 80 to line 4, col 85", "Unknown operator: `I!Nope'."],
+      ],
+    ],
+    [
       "CONSTANT _ <= _\na =< b == 1",
       [
         ["line 3, col 1 to line 3, col 11", "Operator \\leq already defined or declared."],

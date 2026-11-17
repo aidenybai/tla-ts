@@ -1428,11 +1428,6 @@ const isSubexpressionReported = (
   ) {
     return true;
   }
-  expression.selectors
-    .flatMap((selector) => ("args" in selector ? selector.args : []))
-    .forEach((arg) => resolveArgument(arg, scope, unit));
-  const selected = checkReference(expression, scope, unit, false);
-  if (selected) return selected.node === undefined;
   const head = expression.selectors[0];
   const range = expression.selectorRanges?.[0];
   const nameCount = expression.selectors.findIndex((selector) => selector.kind !== "Name");
@@ -1467,21 +1462,26 @@ const isSubexpressionReported = (
     });
     return true;
   }
-  if (head.kind !== "Name" || expression.selectors[1].kind === "Name" || !range) return false;
-  const local = lookupLocal(scope, head.name);
-  const binding = local ?? findSymbol(head.name, unit);
-  if ((binding === undefined && !isFact(head.name, unit)) || binding?.kind === "Instance") {
-    unit.errors.push({
-      location: formatRange(range),
-      message: `Unknown operator: \`${resolveSynonym(head.name)}'.`,
-    });
-    return true;
+  if (head.kind === "Name" && expression.selectors[1].kind !== "Name" && range) {
+    const local = lookupLocal(scope, head.name);
+    const binding = local ?? findSymbol(head.name, unit);
+    if ((binding === undefined && !isFact(head.name, unit)) || binding?.kind === "Instance") {
+      unit.errors.push({
+        location: formatRange(range),
+        message: `Unknown operator: \`${resolveSynonym(head.name)}'.`,
+      });
+      return true;
+    }
+    if (binding && (!SELECTABLE_KINDS.has(binding.kind) || local?.isNonFact)) {
+      reportUnselectable(head.name, range, unit);
+      return true;
+    }
   }
-  if (binding && (!SELECTABLE_KINDS.has(binding.kind) || local?.isNonFact)) {
-    reportUnselectable(head.name, range, unit);
-    return true;
-  }
-  return false;
+  expression.selectors
+    .flatMap((selector) => ("args" in selector ? selector.args : []))
+    .forEach((arg) => resolveArgument(arg, scope, unit));
+  const selected = checkReference(expression, scope, unit, false);
+  return selected ? selected.node === undefined : false;
 };
 
 const checkFact = (fact: Fact, reference: Fact, scope: LocalName | undefined, unit: Unit) => {
