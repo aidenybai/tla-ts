@@ -71,6 +71,29 @@ describe("level checking matches SANY", () => {
     );
   });
 
+  it("rejects an ASSUME above constant level like SANY", async () => {
+    await expect(
+      check({
+        source:
+          "---- MODULE M ----\nVARIABLE x\nASSUME x' = x\nASSUME x = 1\nInit == x = 0\nNext == x' = x\n====",
+        config: "INIT Init\nNEXT Next",
+      }),
+    ).rejects.toThrow(
+      createSanyError([
+        {
+          location: "line 3, col 1 to line 3, col 13 of module M",
+          message:
+            "Level error: assumptions must be level 0 (Constant), \nbut this one has level 2.",
+        },
+        {
+          location: "line 4, col 1 to line 4, col 12 of module M",
+          message:
+            "Level error: assumptions must be level 0 (Constant), \nbut this one has level 1.",
+        },
+      ]),
+    );
+  });
+
   it.each(["x ~> []x", "<><<x'>>_x", "[][x']_x", "\\A i \\in x' : x'", "[](LET A == x' IN A)"])(
     "accepts %s",
     async (definition) => {
