@@ -817,6 +817,19 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
     ).toEqual(["unknown", '(:reason-unknown "push canceled")']);
   });
 
+  it("counts the steps of card2bv's pseudo-Boolean rewriter against the limit", () => {
+    expect(
+      run([
+        "(set-option :rlimit 1)",
+        "(declare-const y0 Real)",
+        "(declare-const b1 Bool)",
+        "(assert (or b1 (= y0 1.25) (> y0 5.0)))",
+        "(check-sat-using card2bv)",
+        "(get-info :reason-unknown)",
+      ]),
+    ).toEqual(["unknown", '(:reason-unknown "max. resource limit exceeded")']);
+  });
+
   // The time limit is Z3's soft timeout: check-sat gives every solver the reason timeout, which
   // the smt kernel keeps for its later checks and reports while its last search did not fail.
   it("prints the reason of a check that timed out", () => {
