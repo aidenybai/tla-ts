@@ -4207,6 +4207,39 @@ const compileStep = (
     }
     case "Label":
       return continueWith(first.scope, [expression.body]);
+    // TLC takes the steps of [A]_e as those of A \/ UNCHANGED e, and the steps of <<A>>_e as those
+    // of A after which e has changed, which it checks once A is done.
+    case "BoxAction":
+      return continueWith(first.scope, [
+        {
+          kind: "Or",
+          operands: [
+            expression.action,
+            {
+              kind: "Unchanged",
+              expression: expression.subscript,
+              location: expression.subscript.location,
+            },
+          ],
+          location: expression.location,
+        },
+      ]);
+    case "AngleAction":
+      return continueWith(first.scope, [
+        expression.action,
+        {
+          kind: "Apply",
+          operator: "~",
+          args: [
+            {
+              kind: "Unchanged",
+              expression: expression.subscript,
+              location: expression.subscript.location,
+            },
+          ],
+          location: expression.subscript.location,
+        },
+      ]);
     case "Identifier": {
       const binding = first.scope.get(expression.name);
       if (binding?.kind === "Operator" && binding.definition.params.length === 0) {
