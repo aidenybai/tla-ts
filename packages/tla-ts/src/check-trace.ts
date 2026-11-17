@@ -234,25 +234,11 @@ export const createTraceBuilder = (context: TraceContext) => {
       : lastSuccessor.action;
     return toTrace([...steps, { state: lastSuccessor.state, action }], path, { known: 2 });
   };
-  // Deviation from TLC: TLCTrace#printTrace prints a lone initial state without the alias.
+  // TLCTrace#printTrace prints a lone initial state without the alias it applies to every other trace.
   const getStateTrace = (index: number): Behavior =>
     context.parents[index] === -1
       ? {
-          trace: [
-            {
-              action: undefined,
-              label: undefined,
-              state:
-                config.alias === undefined
-                  ? toRecord(states[index])
-                  : getAliasState(
-                      config.alias,
-                      [{ state: states[index], action: undefined }],
-                      0,
-                      undefined,
-                    ),
-            },
-          ],
+          trace: [{ action: undefined, label: undefined, state: toRecord(states[index]) }],
           traceOutput: is174 ? [] : captureOutput(context.getInitialStates).lines,
         }
       : getTrace(index);
