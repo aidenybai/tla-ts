@@ -353,9 +353,7 @@ export const runSmtlibScript = (
     parserOptions: { isIgnoringBadPatterns: true },
   };
   const createState = (): ScriptState => {
-    const manager = new AstManager(
-      new ResourceLimit(Date.now() + options.timeLimitMs, options.signal),
-    );
+    const manager = new AstManager(new ResourceLimit(Infinity, options.signal));
     manager.isHiDiv0 = settings.isHiDiv0;
     manager.maxChar = settings.encoding.maxChar;
     manager.charBits = settings.encoding.charBits;
@@ -460,7 +458,11 @@ export const runSmtlibScript = (
           !hasAssumptions &&
           settings.parameters.get("opt.incremental") !== "true",
       });
-      setCheck(status, { isOptimizing: true, model: optimizer.model ?? undefined });
+      setCheck(status, {
+        isOptimizing: true,
+        model: optimizer.model ?? undefined,
+        reasonUnknown: optimizer.getReasonUnknown(),
+      });
       print(getVerdict(status));
       return true;
     } catch (error) {
@@ -470,8 +472,9 @@ export const runSmtlibScript = (
         return false;
       }
       if (!(error instanceof SmtCanceledError || isStackOverflow(error))) throw error;
+      const reasonUnknown = optimizer.getReasonUnknown();
       optimizer.release();
-      setCheck(L_UNDEF, { isOptimizing: true });
+      setCheck(L_UNDEF, { isOptimizing: true, reasonUnknown });
       print("unknown");
       return true;
     } finally {
@@ -531,8 +534,9 @@ export const runSmtlibScript = (
     if (context !== undefined && solved.context === context) return context.getLastFailureMessage();
     return isTimedOut ? "timeout" : (solved.reasonUnknown ?? getCancelMessage(deadline));
   };
-  const getKernelParams = () => ({
-    isMbqi: settings.isMbqi || isMbqiByLogic(getSetup()),
+  // As in Z3, a kernel loses the mbqi its logic turned on once it reads the parameters again.
+  const getKernelParams = (isSetUp = false) => ({
+    isMbqi: settings.isMbqi || (!isSetUp && isMbqiByLogic(getSetup())),
     mbqiMaxIterations: settings.mbqiMaxIterations,
     isFindingMacros: settings.isFindingMacros,
     setup: getSetup(),
@@ -1039,7 +1043,8 @@ export const runSmtlibScript = (
         if (list.items.length > 3)
           throw new SmtParseError("invalid command, too many arguments", list.items[3]);
         clearCheck();
-        manager.limit.restart(Date.now() + options.timeLimitMs);
+        const deadline = Date.now() + options.timeLimitMs;
+        manager.limit.restart(deadline);
         manager.limit.push(settings.rlimit);
         const names = state.names.filter((name) => name !== -1);
         try {
@@ -1053,7 +1058,11 @@ export const runSmtlibScript = (
               assumptions,
               vars,
             );
-            setCheck(found.result, { model: found.model });
+            setCheck(found.result, {
+              model: found.model,
+              core: found.core,
+              reasonUnknown: found.reasonUnknown,
+            });
             print(getVerdict(found.result));
             print("");
             for (const consequence of found.consequences.items) display(consequence);
@@ -1073,6 +1082,13 @@ export const runSmtlibScript = (
           print("");
           for (const consequence of found.consequences.items) display(consequence);
           found.consequences.reset();
+        } catch (error) {
+          if (!(error instanceof SmtCanceledError || isStackOverflow(error))) throw error;
+          const reasonUnknown = getCancelMessage(deadline);
+          if (state.kernel !== undefined) state.kernel.context.reasonUnknown = reasonUnknown;
+          setCheck(L_UNDEF, { reasonUnknown });
+          print("unknown");
+          print("");
         } finally {
           manager.limit.pop();
         }
@@ -1528,13 +1544,12 @@ export const runSmtlibScript = (
             );
           settings.isExitingOnError = isSymbol(value, "immediate-exit");
         }
-        if (
+        const isParameter =
           keyword !== "" &&
           !BUILTIN_OPTIONS.has(keyword) &&
           value !== undefined &&
-          value.kind !== "list"
-        )
-          settings.parameters.set(getParameterName(keyword), value.text);
+          value.kind !== "list";
+        if (isParameter) settings.parameters.set(getParameterName(keyword), value.text);
         if (optionName === ":print_success") settings.isPrintingSuccess = isTrue;
         if (
           !BUILTIN_OPTIONS.has(keyword) &&
@@ -1547,6 +1562,9 @@ export const runSmtlibScript = (
           settings.mbqiMaxIterations = Number(value.text);
         if (optionName === ":rlimit" && value?.kind === "numeral")
           settings.rlimit = Number(value.text);
+        const kernel = state.kernel;
+        if (isParameter && kernel !== undefined)
+          kernel.updateParams(getKernelParams(kernel.isSetUp));
         if (optionName === ":rewriter.hi_div0") {
           settings.isHiDiv0 = isTrue;
           state.manager.isHiDiv0 = isTrue;
@@ -1602,17 +1620,7 @@ export const runSmtlibScript = (
         const info = list.items[1];
         if (info?.kind !== "keyword")
           throw new SmtParseError("invalid command argument, keyword expected", info ?? list.end);
-        const optimizer = state.optimizer;
         const check = state.check;
-        if (
-          info.text === ":reason-unknown" &&
-          check?.status === L_UNDEF &&
-          optimizer !== undefined &&
-          optimizer.reasonUnknown !== ""
-        ) {
-          print(`(:reason-unknown "${optimizer.reasonUnknown}")`);
-          return;
-        }
         const reasonUnknown =
           check === undefined
             ? "state of the most recent check-sat command is not known"
@@ -1670,6 +1678,8 @@ export const runSmtlibScript = (
       ? (declaration: SmtList) => state.reader.declareCommand(declaration)
       : runCommand.get(head.text);
     if (command === undefined) throw new SmtUnsupportedError(`the command ${head.text}`);
+    // Z3's scoped_timer ends with the command that set it, so a command starts without one.
+    state.manager.limit.restart(Infinity);
     if (!MANAGERLESS_COMMANDS.has(head.text) && state.isProofsEnabled === undefined) {
       state.isProofsEnabled = settings.parameters.get("proof") === "true";
       resetKernel();
