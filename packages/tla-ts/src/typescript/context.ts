@@ -20,8 +20,20 @@ import { createNames, type Names } from "./names";
 import { getBindingNames, getLexicalNames } from "./early-errors";
 import { getKeptReads } from "./narrowing";
 import { mayThrow } from "./functions";
-import { getGetterKeys, isProxyOperation } from "./protocols";
+import { findGetterKeys, findWrittenFunctions, getGetterKeys, isProxyOperation } from "./protocols";
+import type { ChangeTable } from "./change-summaries";
 import type { Namespace } from "./namespaces";
+import {
+  createReferences,
+  findNames,
+  findNodesOfKind,
+  getFileIndex,
+  getPosition,
+  getReferences,
+  type ProgramNodes,
+  type References,
+  withNodeTypes,
+} from "./program-nodes";
 import type { Link } from "./regions";
 import { apply, define, identifier, ifExpression, index, letExpression, string } from "./tla";
 
@@ -93,6 +105,28 @@ export interface MadeRegExp {
 
 export interface Context {
   checker: ts.TypeChecker;
+  // The nodes of the program's files, which tla-ts walks once, and the names of each symbol.
+  nodes: ProgramNodes;
+  references: References;
+  // The keys that each of the program's files defines getters under, by the file's index.
+  getterKeys: readonly ReadonlySet<string>[];
+  // Whether each function of the program's files is called once, by its position, as
+  // isCalledOnce answers.
+  calledOnce: Uint8Array;
+  // Whether each class and function of the program's files is a heap class or a heap function, by
+  // its position, as isHeapClass and isHeapFunction answer once the heap is known.
+  heapCode: Uint8Array;
+  // What each of the program's files writes as descriptors' gets and sets, as setters that tla-ts
+  // inlines, as functions that functions return, and as functions under each key, by the file's
+  // index, which tla-ts finds once the heap is known.
+  fileGetters: readonly (readonly AccessorFunction[])[];
+  fileSetters: readonly (readonly AccessorFunction[])[];
+  fileSetAccessors: readonly (readonly ts.SetAccessorDeclaration[])[];
+  fileReturned: readonly (readonly HeapFunction[])[];
+  fileWritten: readonly ReadonlyMap<string, readonly FunctionNode[]>[];
+  // The variables of each of the program's files that the script assigns an executor's resolve or
+  // reject, by the file's index.
+  resolverHolders: readonly ReadonlySet<ts.Symbol>[];
   names: Names;
   variables: Map<ts.Symbol, Expression>;
   // Helper functions and constants, compiled when first referenced.
@@ -243,12 +277,20 @@ export interface Context {
   // Whether each read of a name or a property that another function assigns keeps what TypeScript
   // narrowed it to, which tla-ts finds once before it compiles the code.
   keptReads: ReadonlyMap<ts.Node, boolean>;
-  // What each function that a statement runs changes, with the functions that it runs in turn, by
-  // the functions that the paths bind to the parameters that they call.
-  changeSummaries: Map<string, Map<ts.Node, ChangeSummary>>;
+  // What each function that the model's code runs changes, with the functions that it runs in
+  // turn, where no parameter holds a function, which tla-ts finds once before it compiles the code.
+  changes: ChangeTable | undefined;
   // What running each node of the model's code changes where no parameter holds a function, which
   // tla-ts finds once before it compiles the code.
-  effects: ReadonlyMap<ts.Node, Effects>;
+  effects: NodeEffects;
+}
+
+// The effects of the nodes of the program's files by their positions, and of the few nodes that no
+// file walks to, such as JSDoc's, with all of them in the order that findEffects found them.
+export interface NodeEffects {
+  positions: (Effects | undefined)[];
+  elsewhere: ReadonlyMap<ts.Node, Effects>;
+  found: Effects[];
 }
 
 // What running a node changes, apart from what the functions that it runs change.
@@ -562,10 +604,22 @@ export const createContext = (
   files: readonly ts.SourceFile[],
   implicitGlobals: ReadonlySet<ts.Symbol>,
   defaultLibraries: ReadonlySet<ts.SourceFile>,
+  nodes: ProgramNodes,
 ): Context => {
   const reads = getDeclaredReads(checker, files);
-  return {
-    checker: withDeclaredReads(checker, reads),
+  const context: Context = {
+    checker: withNodeTypes(withDeclaredReads(checker, reads), nodes),
+    nodes,
+    references: createReferences(nodes, (name) => getSymbol(name, checker)),
+    getterKeys: files.map(findGetterKeys),
+    calledOnce: new Uint8Array(nodes.nodes.length),
+    heapCode: new Uint8Array(nodes.nodes.length),
+    fileGetters: [],
+    fileSetters: [],
+    fileSetAccessors: [],
+    fileReturned: [],
+    fileWritten: [],
+    resolverHolders: [],
     keptReads: reads.keptReads,
     names: createNames(JAVASCRIPT_OPERATORS),
     variables: new Map(),
@@ -625,8 +679,8 @@ export const createContext = (
     longLiterals: new Set(),
     regExps: [],
     passed: new Map(),
-    changeSummaries: new Map(),
-    effects: new Map(),
+    changes: undefined,
+    effects: { positions: [], elsewhere: new Map(), found: [] },
     assignedNames: new Map(
       files.map((file) => [
         file,
@@ -673,6 +727,8 @@ export const createContext = (
       ]),
     ),
   };
+  findCalledOnce(context);
+  return context;
 };
 
 // Whether a node writes an object or a regexp literal, each of which makes an object.
@@ -1222,7 +1278,7 @@ export const getUnresolvedRead = (
       : undefined;
     if (ts.isPropertyAccessExpression(callee) && ts.isIdentifier(callee.expression)) {
       if (isThrowing(callee.expression)) return callee.expression;
-      return getGetterKeys(node).has(callee.name.text) || isProxyOperation(callee, context)
+      return getGetterKeys(node, context).has(callee.name.text) || isProxyOperation(callee, context)
         ? undefined
         : readInOrder(node.arguments ?? []);
     }
@@ -1843,15 +1899,15 @@ const findGuardedStatements = (files: readonly ts.SourceFile[]): ReadonlySet<ts.
     }),
   );
 
-const calledOnce = new WeakMap<ts.Node, boolean>();
-
 // A named function or method that its file calls at one place, which runs once, and names nowhere
-// else, so that its body runs at most once.
+// else, so that its body runs at most once. tla-ts answers for each function of the program's files
+// once, in order, before it compiles the code: findCalledOnce marks each function it is answering
+// for, and answers no for one that calls itself through others while it answers for it.
 const isCalledOnce = (node: ts.SignatureDeclaration, context: Context): boolean => {
-  const known = calledOnce.get(node);
-  if (known !== undefined) return known;
-  // Functions that call each other answer no.
-  calledOnce.set(node, false);
+  const position = getPosition(context.nodes, node);
+  const known = position < 0 ? CALLED_UNKNOWN : context.calledOnce[position];
+  if (known !== CALLED_UNKNOWN) return known === CALLED_ONCE;
+  if (position >= 0) context.calledOnce[position] = CALLED_NOT_ONCE;
   const name =
     ts.isFunctionDeclaration(node) || ts.isMethodDeclaration(node)
       ? node.name
@@ -1862,10 +1918,8 @@ const isCalledOnce = (node: ts.SignatureDeclaration, context: Context): boolean 
         : undefined;
   const uses =
     name !== undefined && ts.isIdentifier(name)
-      ? findNodes(
-          node.getSourceFile(),
-          (inner): inner is ts.Identifier =>
-            ts.isIdentifier(inner) && inner.text === name.text && inner !== name,
+      ? findNames(context.nodes, node.getSourceFile(), [name.text]).filter(
+          (inner) => inner !== name,
         )
       : [];
   const use = uses.length === 1 ? uses[0] : undefined;
@@ -1882,18 +1936,41 @@ const isCalledOnce = (node: ts.SignatureDeclaration, context: Context): boolean 
     ts.findAncestor(call, (ancestor) => ancestor === node) === undefined &&
     isOnce(node.parent, context) &&
     isOnce(call, context);
-  calledOnce.set(node, isOnceCalled);
+  if (position >= 0) context.calledOnce[position] = isOnceCalled ? CALLED_ONCE : CALLED_NOT_ONCE;
   return isOnceCalled;
+};
+
+const HEAP_UNKNOWN = 0;
+const HEAP_NO = 1;
+const HEAP_YES = 2;
+
+// Answers isHeapClass and isHeapFunction for each class and function of the program's files, in
+// order, once the heap is known, before tla-ts compiles the code.
+export const findHeapCode = (context: Context) => {
+  context.nodes.nodes.forEach((node) => {
+    if (ts.isClassLike(node)) isHeapClass(node, context);
+    if (ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node)) {
+      isHeapFunction(node, context);
+    }
+  });
+};
+
+const CALLED_UNKNOWN = 0;
+const CALLED_NOT_ONCE = 1;
+const CALLED_ONCE = 2;
+
+// Answers isCalledOnce for each function of the program's files, in order.
+const findCalledOnce = (context: Context) => {
+  context.nodes.nodes.forEach((node) => {
+    if (ts.isFunctionLike(node)) isCalledOnce(node, context);
+  });
 };
 
 // The one function that a name or a namespace's member names in its file, where nothing else
 // declares that name.
-const getPassedTo = (callee: ts.Expression) => {
+const getPassedTo = (callee: ts.Expression, context: Context) => {
   const getDeclarations = (root: ts.Node, name: string) =>
-    findNodes(
-      root,
-      (inner): inner is ts.Identifier => ts.isIdentifier(inner) && inner.text === name,
-    ).flatMap((inner) => {
+    findNames(context.nodes, root, [name]).flatMap((inner) => {
       const parent = inner.parent;
       return (ts.isVariableDeclaration(parent) ||
         ts.isFunctionDeclaration(parent) ||
@@ -1952,7 +2029,7 @@ const isPassedOnce = (node: ts.SignatureDeclaration, context: Context) => {
   ) {
     return false;
   }
-  const callee = getPassedTo(call.expression);
+  const callee = getPassedTo(call.expression, context);
   const parameter = callee?.parameters.at(call.arguments.indexOf(node));
   if (
     callee === undefined ||
@@ -1964,11 +2041,9 @@ const isPassedOnce = (node: ts.SignatureDeclaration, context: Context) => {
   }
   const name = parameter.name.text;
   // The arguments object would alias the parameter.
-  const uses = findNodes(
-    callee,
-    (inner): inner is ts.Identifier =>
-      ts.isIdentifier(inner) && (inner.text === name || inner.text === "arguments"),
-  ).filter((use) => use !== parameter.name);
+  const uses = findNames(context.nodes, callee, [name, "arguments"]).filter(
+    (use) => use !== parameter.name,
+  );
   const use = uses.length === 1 ? uses[0] : undefined;
   return (
     use !== undefined &&
@@ -2850,7 +2925,7 @@ export const getBuiltInBase = (
     name !== "AggregateError" &&
     name !== "SuppressedError" &&
     symbol !== undefined &&
-    (hasObjectMembers(node) || isPrototypeRead(symbol, context.checker))
+    (hasObjectMembers(node) || isPrototypeRead(symbol, context))
   ) {
     return name;
   }
@@ -3008,8 +3083,6 @@ const isDerivedSafe = (
     (!isAdding || getRunConstructor(base, context) === undefined)
   );
 };
-
-const heapClasses = new WeakMap<ts.ClassLikeDeclaration, boolean>();
 
 // A class that a script evaluates once into objects on the heap: a constructor object with the
 // static methods, and its prototype with the other methods. Its name never changes, so a new or
@@ -3183,8 +3256,9 @@ export const findValueEnums = (files: readonly ts.SourceFile[], checker: ts.Type
 
 export const isHeapClass = (node: ts.ClassLikeDeclaration, context: Context): boolean => {
   if (context.heap === undefined) return false;
-  const known = heapClasses.get(node);
-  if (known !== undefined) return known;
+  const position = getPosition(context.nodes, node);
+  const known = position < 0 ? HEAP_UNKNOWN : context.heapCode[position];
+  if (known !== HEAP_UNKNOWN) return known === HEAP_YES;
   const declared = ts.isClassExpression(node) ? node.parent : node;
   const isField = isOnceField(node, context);
   const nameNode =
@@ -3229,7 +3303,7 @@ export const isHeapClass = (node: ts.ClassLikeDeclaration, context: Context): bo
               (isLiteralKey(member.name.expression) || (symbol !== undefined && !isField))))),
     ) &&
     (symbol === undefined || !isAssigned(symbol, node.getSourceFile(), context));
-  heapClasses.set(node, isHeap);
+  if (position >= 0) context.heapCode[position] = isHeap ? HEAP_YES : HEAP_NO;
   return isHeap;
 };
 
@@ -3909,8 +3983,6 @@ export type AccessorFunction = HeapFunction | ts.MethodDeclaration;
 
 export type HeapClass = ts.ClassLikeDeclaration | HeapFunction;
 
-const heapFunctions = new WeakMap<ts.Node, boolean>();
-
 export const skipCasts = (node: ts.Expression): ts.Expression =>
   ts.isParenthesizedExpression(node) ||
   ts.isNonNullExpression(node) ||
@@ -4022,14 +4094,24 @@ export const changesState = (
   );
 };
 
-const accessorFunctions = new WeakMap<ts.SourceFile, Map<string, AccessorFunction[]>>();
+// The index of a node's file, where tla-ts has found what each file writes since the heap became
+// known, or -1.
+const getHeapFileIndex = (node: ts.Node, column: readonly unknown[], context: Context) => {
+  const index = context.heap === undefined ? -1 : getFileIndex(context.nodes, node);
+  return index < column.length ? index : -1;
+};
 
 // The functions that a script writes as the get or the set of a property descriptor, which a read
 // or a write of a property that tla-ts can't resolve may run.
 export const getAccessorFunctions = (node: ts.Node, field: "get" | "set", context: Context) => {
-  const file = node.getSourceFile();
-  const known = accessorFunctions.get(file);
-  if (known !== undefined) return known.get(field) ?? [];
+  const column = field === "get" ? context.fileGetters : context.fileSetters;
+  const index = getHeapFileIndex(node, column, context);
+  return index < 0
+    ? (findAccessorFunctions(node.getSourceFile(), context).get(field) ?? [])
+    : column[index];
+};
+
+const findAccessorFunctions = (file: ts.SourceFile, context: Context) => {
   const found = new Map<string, AccessorFunction[]>([
     ["get", []],
     ["set", []],
@@ -4094,47 +4176,41 @@ export const getAccessorFunctions = (node: ts.Node, field: "get" | "set", contex
     ts.forEachChild(child, visit);
   };
   visit(file);
-  accessorFunctions.set(file, found);
-  return found.get(field) ?? [];
+  return found;
 };
-
-const computedGetters = new WeakMap<ts.SourceFile, ts.GetAccessorDeclaration[]>();
 
 // The getters of object literals whose keys computed names give, which no type names, so that a
 // read runs the one it finds.
-const getComputedGetters = (node: ts.Node) => {
-  const file = node.getSourceFile();
-  const known = computedGetters.get(file);
-  if (known !== undefined) return known;
-  const found = findNodes(
-    file,
+const getComputedGetters = (node: ts.Node, context: Context) =>
+  findNodesOf(
+    node.getSourceFile(),
+    ts.SyntaxKind.GetAccessor,
     (inner): inner is ts.GetAccessorDeclaration =>
       ts.isGetAccessorDeclaration(inner) &&
       ts.isObjectLiteralExpression(inner.parent) &&
       ts.isComputedPropertyName(inner.name),
+    context,
   );
-  computedGetters.set(file, found);
-  return found;
-};
-
-const setAccessors = new WeakMap<ts.SourceFile, ts.SetAccessorDeclaration[]>();
 
 // The setters that a script writes in object literals and classes under a key it names, of those
 // that tla-ts inlines.
 const getSetAccessors = (node: ts.Node, context: Context) => {
-  const file = node.getSourceFile();
-  const known = setAccessors.get(file);
-  if (known !== undefined) return known;
-  const found = findNodes(
+  const index = getHeapFileIndex(node, context.fileSetAccessors, context);
+  return index < 0
+    ? findSetAccessors(node.getSourceFile(), context)
+    : context.fileSetAccessors[index];
+};
+
+const findSetAccessors = (file: ts.SourceFile, context: Context) =>
+  findNodesOf(
     file,
+    ts.SyntaxKind.SetAccessor,
     (inner): inner is ts.SetAccessorDeclaration =>
       ts.isSetAccessorDeclaration(inner) &&
       (getNameKey(inner.name) !== undefined || ts.isComputedPropertyName(inner.name)) &&
       isInlinedAccessor(inner, context),
+    context,
   );
-  setAccessors.set(file, found);
-  return found;
-};
 
 const getNameKey = (name: ts.Node) =>
   ts.isIdentifier(name) || ts.isStringLiteral(name)
@@ -4230,15 +4306,22 @@ const isMaking = (node: ts.Node): boolean =>
     ts.isNewExpression(node) ||
     (ts.forEachChild(node, (child) => isMaking(child) || undefined) ?? false));
 
-const returnedFunctions = new WeakMap<ts.SourceFile, HeapFunction[]>();
-
 // The function objects that functions return, as a function they make or one a name holds, which a
 // descriptor may give as a getter or a setter.
 export const getReturnedFunctions = (node: ts.Node, context: Context) => {
-  const file = node.getSourceFile();
-  const known = returnedFunctions.get(file);
-  if (known !== undefined) return known;
-  const found = findNodes(file, ts.isReturnStatement).flatMap((statement) => {
+  const index = getHeapFileIndex(node, context.fileReturned, context);
+  return index < 0
+    ? findReturnedFunctions(node.getSourceFile(), context)
+    : context.fileReturned[index];
+};
+
+const findReturnedFunctions = (file: ts.SourceFile, context: Context) => {
+  const found = findNodesOf(
+    file,
+    ts.SyntaxKind.ReturnStatement,
+    ts.isReturnStatement,
+    context,
+  ).flatMap((statement) => {
     const returned = statement.expression;
     const named =
       returned !== undefined && ts.isIdentifier(returned)
@@ -4252,9 +4335,22 @@ export const getReturnedFunctions = (node: ts.Node, context: Context) => {
         ? [named]
         : [];
   });
-  const unique = [...new Set(found)];
-  returnedFunctions.set(file, unique);
-  return unique;
+  return [...new Set(found)];
+};
+
+// Finds what each of the program's files writes that reads, writes, and protocols run, once the
+// heap is known, before tla-ts compiles the code.
+export const findFileAccessors = (context: Context) => {
+  const files = [...context.nodes.fileStarts].flatMap((position) => {
+    const file = context.nodes.nodes[position];
+    return ts.isSourceFile(file) ? [file] : [];
+  });
+  const accessors = files.map((file) => findAccessorFunctions(file, context));
+  context.fileGetters = accessors.map((found) => found.get("get") ?? []);
+  context.fileSetters = accessors.map((found) => found.get("set") ?? []);
+  context.fileSetAccessors = files.map((file) => findSetAccessors(file, context));
+  context.fileReturned = files.map((file) => findReturnedFunctions(file, context));
+  context.fileWritten = files.map((file) => findWrittenFunctions(file, context));
 };
 
 // Whether a value of one type may be used as another, which any may not where the other is a type
@@ -4273,7 +4369,7 @@ export const getGetters = (node: ts.Node, context: Context) =>
   [
     ...getAccessorFunctions(node, "get", context),
     ...getReturnedFunctions(node, context),
-    ...getComputedGetters(node),
+    ...getComputedGetters(node, context),
     ...(isSuperAccess(node) ? getSuperGetters(node, context) : []),
   ].filter(
     (getter) =>
@@ -4403,8 +4499,9 @@ const getInPlaceNew = (node: ts.Node) => {
 export const isHeapFunction = (node: ts.Node, context: Context): node is HeapFunction => {
   if (context.heap === undefined) return false;
   if (!ts.isFunctionDeclaration(node) && !ts.isFunctionExpression(node)) return false;
-  const known = heapFunctions.get(node);
-  if (known !== undefined) return known;
+  const position = getPosition(context.nodes, node);
+  const known = position < 0 ? HEAP_UNKNOWN : context.heapCode[position];
+  if (known !== HEAP_UNKNOWN) return known === HEAP_YES;
   // A variable or an object literal's property may name a function expression, as obj.f names
   // the function of { f: function () {} }.
   const nameNode = ts.isFunctionDeclaration(node)
@@ -4440,7 +4537,7 @@ export const isHeapFunction = (node: ts.Node, context: Context): node is HeapFun
     written.left.argumentExpression.name.text === "species"
   ) {
     const isHeap = isPlain(node) && node.body !== undefined && isOnce(written, context);
-    heapFunctions.set(node, isHeap);
+    if (position >= 0) context.heapCode[position] = isHeap ? HEAP_YES : HEAP_NO;
     return isHeap;
   }
   // A function that a new constructs where the script writes it, which the new makes once. A body
@@ -4455,7 +4552,7 @@ export const isHeapFunction = (node: ts.Node, context: Context): node is HeapFun
           ...(constructed.arguments ?? []),
           ...node.parameters.flatMap((parameter) => parameter.initializer ?? []),
         ].every(isInertValue));
-    heapFunctions.set(node, isHeap);
+    if (position >= 0) context.heapCode[position] = isHeap ? HEAP_YES : HEAP_NO;
     return isHeap;
   }
   // A new or Reflect.construct constructs the function or takes it as newTarget, an Object
@@ -4474,7 +4571,7 @@ export const isHeapFunction = (node: ts.Node, context: Context): node is HeapFun
         ).length > 0
       : named.has(symbol) || (ts.isPropertyAssignment(node.parent) && named.has(node.parent))) ||
       isPassedAsObject(symbol, sourceFile, context));
-  heapFunctions.set(node, isHeap);
+  if (position >= 0) context.heapCode[position] = isHeap ? HEAP_YES : HEAP_NO;
   return isHeap;
 };
 
@@ -5301,13 +5398,25 @@ export const getImportedModule = (node: ts.CallExpression, checker: ts.TypeCheck
     : undefined;
 };
 
+// The names under a root that name a symbol, in the order that a walk visits them.
+export const findReferences = (symbol: ts.Symbol, root: ts.Node, context: Context) =>
+  getReferences(context.nodes, context.references, symbol, root, (name) =>
+    getSymbol(name, context.checker),
+  );
+
+// The nodes of a kind under a root that pass a test, in the order that a walk visits them.
+export const findNodesOf = <T extends ts.Node>(
+  root: ts.Node,
+  kind: ts.SyntaxKind | readonly ts.SyntaxKind[],
+  test: (node: ts.Node) => node is T,
+  context: Context,
+) => findNodesOfKind(context.nodes, root, kind, test);
+
 export const findNodes = <T extends ts.Node>(root: ts.Node, test: (node: ts.Node) => node is T) => {
   const found: T[] = [];
-  const visit = (node: ts.Node) => {
+  const visit = (node: ts.Node): undefined => {
     if (test(node)) found.push(node);
-    ts.forEachChild(node, (child) => {
-      visit(child);
-    });
+    return ts.forEachChild(node, visit);
   };
   visit(root);
   return found;
