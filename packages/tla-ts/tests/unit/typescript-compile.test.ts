@@ -49728,4 +49728,50 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("keys a Map by what the calls pass a parameter of type any", () => {
+    const getSource = (expected: string, size = "Size") => `
+      enum Color {
+        Red,
+        Green,
+      }
+      enum Size {
+        Small,
+        Large,
+      }
+      const shapes = { Color, Size };
+      const cache = new Map<any, string[]>();
+      function getMembers(enumObject: any) {
+        const existing = cache.get(enumObject);
+        if (existing) return existing;
+        const result: string[] = [];
+        for (const name in enumObject) {
+          if (typeof enumObject[name] === "number") result.push(name);
+        }
+        cache.set(enumObject, result);
+        return result;
+      }
+      function format(value: number, enumObject: any) {
+        return getMembers(enumObject)[value];
+      }
+      const seen = [format(1, (shapes as any).Color), format(0, ${size}), format(0, Size), cache.size].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with TypeScript's output run in Node", async () => {
+      expect((await checkModel(getSource("Green,Small,Small,2"))).failure).toBeUndefined();
+    });
+
+    it("rejects another size", async () => {
+      expect((await checkModel(getSource("Green,Small,Small,3"))).failure?.message).toContain(
+        "seen Green,Small,Small,2",
+      );
+    });
+
+    it("stops where a call passes a key of another kind", () => {
+      expect(() => compile(getSource("Green,Small,Small,2", '"Size"'))).toThrow(
+        "Give a Map keys of one kind, as TLC can't compare a number with a string",
+      );
+    });
+  });
 });

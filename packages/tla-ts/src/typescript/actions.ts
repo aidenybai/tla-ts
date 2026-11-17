@@ -64,6 +64,7 @@ import {
   translateSortArguments,
   flattenReturned,
   translateLongRead,
+  getValueKinds,
 } from "./collections";
 import {
   findNodes,
@@ -17402,7 +17403,12 @@ const translateIterations = (
     ts.isForInStatement(iterated) &&
     (getKind(iterated.expression, context) === "object" ||
       (context.heap !== undefined &&
-        (isBuiltInObject(iterated.expression, context) || isHeldBuiltIn)) ||
+        (isBuiltInObject(iterated.expression, context) ||
+          isHeldBuiltIn ||
+          ((context.checker.getTypeAtLocation(iterated.expression).flags &
+            (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !==
+            0 &&
+            getValueKinds(iterated.expression, context, [])?.join() === "object"))) ||
       ownFunctionKeys !== undefined);
   // A for-in over a list visits its indices, as strings in order.
   const isListKeys =
