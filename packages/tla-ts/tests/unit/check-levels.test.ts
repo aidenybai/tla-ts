@@ -205,6 +205,14 @@ describe("level checking matches SANY", () => {
         ],
       ],
     ],
+    [
+      "CONSTANT d\nTHEOREM ASSUME NEW m \\in []d, NEW n \\in <>d PROVE TRUE\nTHEOREM TRUE\n<1>1. SUFFICES ASSUME NEW k \\in []d PROVE TRUE\n  OBVIOUS\n<1>2. QED",
+      [
+        ["line 4, col 16 to line 4, col 28", "Level error:\nTemporal formula used as set."],
+        ["line 4, col 31 to line 4, col 43", "Level error:\nTemporal formula used as set."],
+        ["line 6, col 23 to line 6, col 35", "Level error:\nTemporal formula used as set."],
+      ],
+    ],
   ])("reports every error SANY reports in %j", async (definitions, errors) => {
     await expect(
       check({

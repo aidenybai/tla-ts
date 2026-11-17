@@ -889,17 +889,25 @@ export const analyzeAssumeProve = (
   assumeProve: AssumeProve,
   scope: Scope,
   analyzer: ReturnType<typeof createLevelAnalyzer>,
+  errors: SanyError[] = [],
 ): LevelData => {
   const inner = new Map(scope);
   const parts = assumeProve.assumptions.flatMap((assumption) => {
     if (assumption.kind === "NewSymbol") {
       const set = assumption.set && analyzer.analyze(assumption.set, inner);
+      const range = assumption.location.range;
+      if (set?.level === TEMPORAL_LEVEL && range) {
+        errors.push({
+          location: formatRange(range),
+          message: "Level error:\nTemporal formula used as set.",
+        });
+      }
       inner.set(assumption.name, { kind: "Formal", arity: assumption.arity });
       return set ? [set] : [];
     }
     return [
       assumption.kind === "AssumeProve"
-        ? analyzeAssumeProve(assumption, inner, analyzer)
+        ? analyzeAssumeProve(assumption, inner, analyzer, errors)
         : analyzer.analyze(assumption, inner),
     ];
   });
@@ -964,6 +972,10 @@ export const checkModuleLevels = (
       ? []
       : proof.steps.flatMap((step) => {
           const body = step.body;
+          const newSymbolErrors: SanyError[] = [];
+          if (body.kind === "Assert" && body.statement.kind === "AssumeProve") {
+            analyzeAssumeProve(body.statement, new Map(), analyzer, newSymbolErrors);
+          }
           const isTemporal = () => getStepLevel(step) === TEMPORAL_LEVEL;
           const pickErrors =
             body.kind === "Pick" && body.bounds.length > 0 && isTemporal()
@@ -981,6 +993,7 @@ export const checkModuleLevels = (
                   )
               : [];
           return [
+            ...newSymbolErrors,
             ...checkProof(step.proof),
             ...pickErrors,
             ...(step.proof?.kind === "Steps" && isTemporal() ? checkTemporalGoal(step.proof) : []),
@@ -1010,11 +1023,13 @@ export const checkModuleLevels = (
       ...module.theorems.map((theorem) => ({
         location: theorem.location,
         check: () => {
+          const newSymbolErrors: SanyError[] = [];
           const data =
             theorem.statement.kind === "AssumeProve"
-              ? analyzeAssumeProve(theorem.statement, new Map(), analyzer)
+              ? analyzeAssumeProve(theorem.statement, new Map(), analyzer, newSymbolErrors)
               : analyzer.analyze(theorem.statement, new Map());
           const errors = [
+            ...newSymbolErrors,
             ...checkProof(theorem.proof),
             ...(data.level === TEMPORAL_LEVEL ? checkTemporalGoal(theorem.proof) : []),
           ];
