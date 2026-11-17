@@ -1327,7 +1327,6 @@ const headFingerprint = (callStack: CallStack, source: Expression, error: unknow
 
 export const createTracingEnvironment = (environment: Environment): Environment => ({
   ...environment,
-  coverage: undefined,
   evaluators: new WeakMap(),
   entryEvaluators: new WeakMap(),
   definitionEvaluators: new WeakMap(),

@@ -19,6 +19,20 @@ import { checkFixture, checkModule, checkSteps, FIXTURES } from "./check-harness
 
 const DIST = join(import.meta.dirname, "../../dist/index.js");
 
+const getCoverageCounts = async (definitions: string, config: string) => {
+  const result = await check({
+    source: `---- MODULE M ----\nEXTENDS Integers\nVARIABLE x\n${definitions}\n====`,
+    config,
+    coverage: 1,
+  });
+  return result.coverage?.relations.map((relation) => {
+    const counts = relation.expressions.map((expression) => expression.count).join(" ");
+    return relation.kind === "invariant" || relation.kind === "implied"
+      ? counts
+      : `${relation.distinct}:${relation.generated} ${counts}`;
+  });
+};
+
 describe("check matches TLC", () => {
   it("evaluates every assumption in the semantics fixture", async () => {
     const result = await checkFixture("semantics", "Semantics");
@@ -1283,6 +1297,35 @@ ASSUME TLCFP(a) = -887695703
       ["||line 5, col 42 to line 5, col 52 of module M", 4],
       ["|line 8, col 22 to line 8, col 26 of module M", 2],
     ]);
+  });
+
+  it.each([
+    [
+      "a next-state failure",
+      "Init == x = 0\nNext == x < 3 /\\ x' = <<1>>[x + 1]",
+      "INIT Init\nNEXT Next",
+      ["3:3 3", "1:3 3 5 3 5"],
+    ],
+    [
+      "an initial-state failure",
+      "Init == x \\in 0..1 /\\ <<1>>[x + 1] = 1\nNext == UNCHANGED x",
+      "INIT Init\nNEXT Next",
+      ["2:2 2 4", "0:0 0"],
+    ],
+    [
+      "an initial-state failure after states that hold the invariant",
+      "Init == x \\in 0..2 /\\ <<1, 2>>[x + 1] > 0\nNext == UNCHANGED x\nInv == x >= 0",
+      "INIT Init\nNEXT Next\nINVARIANT Inv",
+      ["4:4 4 2 6", "0:0 0", "4"],
+    ],
+    [
+      "an invariant that fails in an initial state",
+      "Init == x \\in 0..2\nNext == UNCHANGED x\nInv == <<1, 2>>[x + 1] > 0",
+      "INIT Init\nNEXT Next\nINVARIANT Inv",
+      ["6:6 6 2", "0:0 0", "6"],
+    ],
+  ])("counts the coverage of TLC's replay of %s", async (_name, definitions, config, expected) => {
+    expect(await getCoverageCounts(definitions, config)).toEqual(expected);
   });
 
   it.each([

@@ -803,10 +803,13 @@ export const replayEnabled = (
   const found = () => {
     throw ENABLED_FOUND;
   };
-  const replay = createReplay(environment, "enabled", state, found, found);
+  const node = environment.coverage?.current ?? -1;
+  const replay = {
+    ...createReplay(environment, "enabled", state, found, found),
+    coverage: node === -1 ? undefined : environment.coverage,
+  };
   const callStack = replay.callStack;
   const depth = callStack?.expressions.length ?? 0;
-  const node = replay.coverage?.current ?? -1;
   try {
     if (expression.kind === "AngleAction" && expression.location === expression.action.location) {
       const changed = createItem("Changed", expression.subscript, scope, node, undefined);
@@ -841,16 +844,21 @@ export const replayInitialStates = (
   visit(replay, first.expression, rest, first.scope, getEmptyState(environment), first.node ?? -1);
 };
 
-export const replaySuccessors = <Action extends ReplayAction>(
+export const replaySuccessors = <Action extends ReplayAction & { node?: number }>(
   actions: Action[],
   state: Value[],
   environment: Environment,
   onState: (state: Value[], action: Action) => void,
 ) => {
   if (actions.some((action) => LITERAL_KINDS.has(action.expression.kind))) return;
+  const coverage = environment.coverage;
   actions.forEach((action) => {
     const successors: Value[][] = [];
-    walkSuccessors(action, -1, state, environment, (next) => successors.push(next));
+    const node = action.node ?? -1;
+    walkSuccessors(action, node, state, environment, (next) => {
+      if (coverage && node !== -1) coverage.primary[node]++;
+      successors.push(next);
+    });
     successors.forEach((successor) => onState(successor, action));
   });
 };

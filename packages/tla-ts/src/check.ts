@@ -686,7 +686,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     const deferred: unknown[] = [];
     const addReplayed = createReplayedStates();
     return getReplayFailure(environment, (tracing) => {
-      replayInitialStates(getDescription().inits, tracing, (state) => {
+      replayInitialStates(coverage ? coverageInits : getDescription().inits, tracing, (state) => {
         reportInitialStatesProgress(replayedCount, (progress) => capturedLines?.push(progress));
         replayedCount++;
         runtime.generatedStates = replayedCount;
@@ -723,7 +723,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       const state = states[index];
       const source = stateWriter && getGraphState(state, depths[index]);
       const addReplayed = createReplayedStates();
-      replaySuccessors(nextActions, state, tracing, (next, action) => {
+      replaySuccessors(coverage ? coverageActions : nextActions, state, tracing, (next, action) => {
         const addFingerprint = () => {
           const isUnseen = addReplayed(next, tracing.callStack);
           if (source) {
