@@ -1470,4 +1470,20 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
       '(error "tactic failed: max. resource limit exceeded")',
     ]);
   });
+
+  it("keeps the reason of the SAT solver when the limit stops its internalization", () => {
+    expect(
+      run([
+        "(set-logic QF_BV)",
+        "(declare-const p Bool)",
+        "(declare-const q Bool)",
+        "(declare-const r Bool)",
+        "(push)",
+        "(assert (not (and (or p q) (=> q r) (= p r))))",
+        "(set-option :rlimit 1)",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+      ]),
+    ).toEqual(["unknown", '(:reason-unknown "no reason given")']);
+  });
 });

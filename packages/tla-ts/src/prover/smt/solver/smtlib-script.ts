@@ -679,13 +679,15 @@ export const runSmtlibScript = (
       )
         throw error;
       const context = isKernelChecking ? state.kernel?.context : undefined;
+      // solver::check_sat keeps the reason that inc_sat_solver had before the exception.
+      const reasonUnknown = isKernelChecking ? state.satSolver?.reasonUnknown : undefined;
       setCheck(L_UNDEF, {
         isOptimizing,
         isFromTactic: !isKernelChecking && !isUsingFdSolver(),
         reasonUnknown:
           error instanceof SmtDefaultError
             ? error.message
-            : getReasonUnknown({ result: L_UNDEF, context, reasonUnknown: undefined }, deadline),
+            : getReasonUnknown({ result: L_UNDEF, context, reasonUnknown }, deadline),
       });
       print("unknown");
     } finally {
