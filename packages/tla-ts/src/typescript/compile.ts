@@ -910,7 +910,17 @@ export const compile = (
     heap !== undefined &&
     !(isScript(sourceFile) && isUsingHeap) &&
     findSharing(shareable, context) !== undefined;
-  const isHeapFile = isScript(sourceFile) || isSharing;
+  // A description of a property is an object that only the heap makes, as a script's is.
+  const isDescribing = (node: ts.Node): boolean =>
+    (ts.isCallExpression(node) &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      ["getOwnPropertyDescriptor", "getOwnPropertyDescriptors"].includes(
+        node.expression.name.text,
+      ) &&
+      ["Object", "Reflect"].includes(getBuiltIn(node.expression.expression, context) ?? "")) ||
+    (ts.forEachChild(node, isDescribing) ?? false);
+  const isHeapFile =
+    isScript(sourceFile) || isSharing || (heap !== undefined && reached.some(isDescribing));
   context.hasOrderedCollections = isHeapFile && reached.some(usesOrder);
   const changedArrays = isHeapFile ? findChangedArrays(reached, context) : [];
   if (heap !== undefined && isHeapFile && (isSharing || changedArrays.length > 0 || isUsingHeap)) {

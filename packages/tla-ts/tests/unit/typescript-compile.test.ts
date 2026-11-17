@@ -23129,16 +23129,20 @@ describe("errors", () => {
     expect((await checkModel(getBoxSource(32))).failure?.message).toContain("box");
   });
 
-  it("stops where a call doesn't enter the closure that it runs", () => {
-    expect(() =>
-      compile(`
-        const seen = { count: 0 };
-        function make(x: number) {
-          return { get: function () { return x; } };
-        }
-        if (make(3).get() !== 3) throw new Error("get");
-      `),
-    ).toThrow("tla-ts can't tell which call made this function");
+  const getGetSource = (expected: number) => `
+      const seen = { count: 0 };
+      function make(x: number) {
+        return { get: function () { return x; } };
+      }
+      if (make(3).get() * 10 + make(4).get() !== ${expected}) throw new Error("get");
+  `;
+
+  it("reads a closure that a property named get holds, which may be a getter, in its environment", async () => {
+    expect((await checkModel(getGetSource(34))).failure).toBeUndefined();
+  });
+
+  it("reads the locals of the call that made the closure that a property named get holds", async () => {
+    expect((await checkModel(getGetSource(43))).failure?.message).toContain("get");
   });
 
   const getCounterSource = (expected: string) => `
@@ -49501,6 +49505,232 @@ describe("BigInts", () => {
       expect(() => compile("// @ts-ignore\ntoString = 5;")).toThrow(
         "tla-ts can't make a global outside strict mode that Object.prototype names",
       );
+    });
+  });
+
+  describe("runs a closure that a getter or a setter holds in the environment of the call that made it", () => {
+    const getSource = (expected: string) => `
+      const memo = (type: number) => {
+        const element = { type };
+        let ownName: string | undefined;
+        Object.defineProperty(element, "displayName", {
+          enumerable: false,
+          configurable: true,
+          get: function () {
+            return ownName;
+          },
+          set: function (name: string) {
+            ownName = name + type;
+          },
+        });
+        return element as { type: number; displayName?: string };
+      };
+      const first = memo(1);
+      const second = memo(2);
+      first.displayName = "A";
+      second.displayName = "B";
+      const names = first.displayName + "," + second.displayName;
+      if (names !== "${expected}") throw new Error("names " + names);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("A1,B2"))).failure).toBeUndefined();
+    });
+
+    it("rejects the names of another call", async () => {
+      expect((await checkModel(getSource("B2,B2"))).failure?.message).toContain("names A1,B2");
+    });
+  });
+
+  describe("describes properties in a module, as a function that an expression calls may", () => {
+    const getSource = (expected: string) => `
+      export const isWritable = (): boolean => {
+        const described = Object.getOwnPropertyDescriptor(Error, "stackTraceLimit");
+        if (described === undefined) return Object.isExtensible(Error);
+        return Object.hasOwn(described, "writable")
+          ? described.writable === true
+          : described.set !== undefined;
+      };
+      const isLimitWritable = isWritable();
+      const length = Object.getOwnPropertyDescriptor(Error, "length")!;
+      const all = Object.getOwnPropertyDescriptors({ a: 1, get b() { return 2; } });
+      const seen = [
+        isLimitWritable,
+        length.value,
+        length.writable,
+        length.enumerable,
+        length.configurable,
+        all.a.value,
+        typeof all.b.get,
+        "value" in all.b,
+      ].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("true,1,false,false,true,1,function,false"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects another description", async () => {
+      expect(
+        (await checkModel(getSource("true,1,true,false,true,1,function,false"))).failure?.message,
+      ).toContain("seen true,1,false,false,true,1,function,false");
+    });
+  });
+
+  describe("reads a built-in whose type a file's declare global adds to as the built-in", () => {
+    const getSource = (expected: string) => `
+      declare global {
+        interface Error {
+          readonly reported?: boolean;
+        }
+      }
+      const described = Object.getOwnPropertyDescriptor(Error, "stackTraceLimit");
+      const error = new Error("made");
+      const seen = [described?.value, described?.writable, error instanceof Error, error.reported].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+      export {};
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("10,true,true,"))).failure).toBeUndefined();
+    });
+
+    it("rejects another description", async () => {
+      expect((await checkModel(getSource("10,false,true,"))).failure?.message).toContain(
+        "seen 10,true,true,",
+      );
+    });
+  });
+
+  describe("runs a closure that a const holds in the environment that the const's value holds", () => {
+    const getSource = (expected: number) => `
+      function make(start: number) {
+        let count = start;
+        const read = function () {
+          return count;
+        };
+        const early = read();
+        count += 4;
+        return { read, early };
+      }
+      const first = make(1);
+      const second = make(10);
+      const seen = first.read() * 1000 + first.early * 100 + second.read();
+      if (seen !== ${expected}) throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(5114))).failure).toBeUndefined();
+    });
+
+    it("rejects the value of another call", async () => {
+      expect((await checkModel(getSource(5514))).failure?.message).toContain("seen 5114");
+    });
+  });
+
+  describe("shares the locals that one declaration of several declares with closures", () => {
+    const getSource = (expected: string) => `
+      function forwardRef(render: { name: string }) {
+        var elementType = { render: render },
+          ownName: string | undefined;
+        Object.defineProperty(elementType, "displayName", {
+          enumerable: false,
+          configurable: true,
+          get: function () {
+            return ownName;
+          },
+          set: function (name: string) {
+            ownName = name + render.name;
+          },
+        });
+        return elementType as { render: { name: string }; displayName?: string };
+      }
+      const first = forwardRef({ name: "a" });
+      const second = forwardRef({ name: "b" });
+      first.displayName = "A";
+      const seen = first.displayName + "," + second.displayName;
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("Aa,undefined"))).failure).toBeUndefined();
+    });
+
+    it("rejects the name of another call", async () => {
+      expect((await checkModel(getSource("Aa,Aa"))).failure?.message).toContain(
+        "seen Aa,undefined",
+      );
+    });
+  });
+
+  describe("keys a member by a value whose type parameter's constraint is a key type", () => {
+    const getSource = (expected: string) => `
+      const args = Symbol("args");
+      interface Exit {
+        readonly _tag: string;
+        readonly value?: unknown;
+        readonly cause?: unknown;
+      }
+      const makeExit = <Prop extends string,>(options: {
+        readonly prop: Prop;
+        readonly op: "Success" | "Failure";
+      }) => {
+        const Proto = {
+          _tag: options.op,
+          get [options.prop](): any {
+            return (this as any)[args];
+          },
+        };
+        return (value: unknown): Exit => {
+          const self = Object.create(Proto);
+          self[args] = value;
+          return self;
+        };
+      };
+      const done = makeExit({ prop: "value", op: "Success" })(3);
+      const failed = makeExit({ prop: "cause", op: "Failure" })(4);
+      const doneValue = done.value;
+      const failedCause = failed.cause;
+      const seen = [doneValue, done._tag, failedCause, failed._tag].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("3,Success,4,Failure"))).failure).toBeUndefined();
+    });
+
+    it("rejects another value", async () => {
+      expect((await checkModel(getSource("3,Success,3,Failure"))).failure?.message).toContain(
+        "seen 3,Success,4,Failure",
+      );
+    });
+  });
+
+  describe("passes a closure to a parameter that its function reads as a value", () => {
+    const getSource = (expected: number) => `
+      const held: { value?: unknown } = {};
+      function keep(value: unknown) {
+        held.value = value;
+      }
+      function make(start: number) {
+        const read = () => start;
+        keep(read);
+        return read;
+      }
+      const first = make(4);
+      const kept = held.value as () => number;
+      if (kept() !== ${expected} || kept !== first) throw new Error("kept " + kept());
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(4))).failure).toBeUndefined();
+    });
+
+    it("rejects another value", async () => {
+      expect((await checkModel(getSource(5))).failure?.message).toContain("kept 4");
     });
   });
 

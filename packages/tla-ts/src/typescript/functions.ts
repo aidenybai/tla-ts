@@ -21,6 +21,7 @@ import {
   getTopLevelDeclaration,
   getUndefined,
   type HelperDeclaration,
+  isClosure,
   isHeapFunction,
   isInlined,
   isLiteral,
@@ -41,6 +42,7 @@ import {
   getImmutableWrite,
   isMaybeNullish,
   throwOnUnentered,
+  enterScope,
   isValueReturn,
   translateLocalStatements,
 } from "./actions";
@@ -1391,27 +1393,24 @@ export const translateFoundGetter = (
           (rest, getter) => {
             const candidate = getCandidateValue(getter, context);
             if (getter.body === undefined || candidate === undefined) return rest;
+            const found = useJavaScript("GetterOf", [sharedHeap, sharedObject, sharedKey], context);
+            const received = {
+              ...scope,
+              receiver: { value: receiver ?? sharedObject, method: getter },
+            };
             context.inProgress.add(getter);
             const value = translateBody(
               getter.body,
-              { ...scope, receiver: { value: receiver ?? sharedObject, method: getter } },
+              isClosure(getter, context)
+                ? enterScope(getter, found, sharedHeap, received, context)
+                : received,
               context,
             );
             context.inProgress.delete(getter);
             return ifExpression(
               junction("And", [
                 useJavaScript("IsRef", [sharedObject], context),
-                apply("=", [
-                  useJavaScript(
-                    "CodeOf",
-                    [
-                      sharedHeap,
-                      useJavaScript("GetterOf", [sharedHeap, sharedObject, sharedKey], context),
-                    ],
-                    context,
-                  ),
-                  candidate,
-                ]),
+                apply("=", [useJavaScript("CodeOf", [sharedHeap, found], context), candidate]),
               ]),
               value,
               rest,
@@ -1477,11 +1476,14 @@ export const translateBody = (body: ts.ConciseBody, scope: Scope, context: Conte
   const owner = body.parent;
   throwOnUnentered(owner, scope, context);
   if (!ts.isBlock(body)) return translateExpression(body, scope, context);
-  const literal = body.statements
+  // The objects that the body makes, as a literal or a description does, apart from functions.
+  const made = body.statements
     .flatMap((statement) => getAllocated(statement, context))
-    .find((node) => ts.isObjectLiteralExpression(node) && !scope.allocated.has(node));
-  const isMaking =
-    literal !== undefined && ts.isFunctionLike(owner) && isValueReturn(owner, context);
+    .filter(
+      (node) => !ts.isFunctionLike(node) && !ts.isClassLike(node) && !scope.allocated.has(node),
+    );
+  const literal = made.find(ts.isObjectLiteralExpression);
+  const isMaking = made.length > 0 && ts.isFunctionLike(owner) && isValueReturn(owner, context);
   // An operator that converts an operand, which may run its valueOf or toString, runs as a
   // statement does.
   const isConverting =

@@ -5,6 +5,7 @@ import {
   getAssignedTarget,
   getSymbol,
   getUndefined,
+  isAmbientDeclaration,
   isAssigned,
   isInertValue,
   isUnresolved,
@@ -49,8 +50,7 @@ import { getCollection, getKind, isGeneratorType } from "./types";
 const isGlobal = (name: string) => !/[.%\s]/.test(name) && Object.hasOwn(BUILT_INS, name);
 
 const isLibrary = (symbol: ts.Symbol) =>
-  (symbol.declarations ?? []).length > 0 &&
-  (symbol.declarations ?? []).every((declaration) => declaration.getSourceFile().isDeclarationFile);
+  (symbol.declarations ?? []).length > 0 && (symbol.declarations ?? []).every(isAmbientDeclaration);
 
 export const getBuiltIn = (node: ts.Expression, context: Pick<Context, "checker">) => {
   const symbol = getSymbol(node, context.checker);
