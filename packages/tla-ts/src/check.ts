@@ -910,7 +910,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       options.version,
     );
     const live = captureOutput(() => addFailedLiveState(index, liveSuccessors));
-    const trace = traces.getStateTrace(index, error.state).trace;
+    const trace = traces.getStateTrace(index, { incomplete: error.state }).trace;
     const failure = createFailureResult(
       error,
       appendTraceOutput(
@@ -1199,7 +1199,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         const replay = captureOutput(() => replayNext(index));
         return createFailureResult(
           error,
-          appendTraceOutput(traces.getFailedTrace(index, successor), replay.lines),
+          appendTraceOutput(traces.getTrace(index, successor, { isFailed: true }), replay.lines),
           replay.result ?? { outDegrees: getFailureOutDegrees() },
         );
       }
@@ -1466,10 +1466,8 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     const replay = captureOutput(() => replayNext(index));
     return { result: replay.result, lines: [...live.lines, ...replay.lines] };
   };
-  const getNextFailureTrace = (index: number, counterExample?: CounterExampleOptions) => {
-    const behavior = traces.getStateTrace(index);
-    return counterExample ? behavior : { trace: behavior.trace };
-  };
+  const getNextFailureTrace = (index: number, counterExample?: CounterExampleOptions) =>
+    traces.getStateTrace(index, { isFailed: !counterExample });
   const reportNextStateOverflow = (index: number, counterExample?: CounterExampleOptions) =>
     createFailureResult(
       createStackOverflowError(),
@@ -1580,7 +1578,9 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         outcome = createFailureResult(
           error,
           appendTraceOutput(
-            traceFailure ? traces.getStateTrace(index) : traces.getFailedTrace(index, successor),
+            traceFailure
+              ? traces.getStateTrace(index, { isFailed: true })
+              : traces.getTrace(index, successor, { isFailed: true }),
             replay.lines,
           ),
           { phase: "next", ...replay.result, traceFailure },

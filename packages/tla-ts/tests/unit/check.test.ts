@@ -1347,8 +1347,20 @@ ASSUME TLCFP(a) = -887695703
       "INIT Init\nNEXT Next\nCONSTRAINT C\nINVARIANT Inv",
       ["2:2 2", "1:5 4 5 4 5", "2", "2:2 4"],
     ],
+    [
+      "the next-state relation without a deadlock check",
+      "Init == x = 0\nNext == x < 3 /\\ x' = <<1>>[x + 1]",
+      "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+      ["2:2 2", "1:2 2 4 2 4"],
+    ],
+    [
+      "the next-state relation of an initial state without a deadlock check",
+      "Init == x \\in 1..2\nNext == x' = <<1>>[x + 1]",
+      "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+      ["2:2 2 1", "0:0 0 2"],
+    ],
   ])(
-    "rebuilds the trace once for the coverage after %s fails to evaluate",
+    "does not rebuild the trace again for the coverage after %s fails to evaluate",
     async (_name, definitions, config, expected) => {
       expect(await getCoverageCounts(definitions, config)).toEqual(expected);
     },
