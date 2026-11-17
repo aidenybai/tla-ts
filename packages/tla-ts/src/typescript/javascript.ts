@@ -8896,56 +8896,6 @@ JSONClose(heap, frames) ==
 ${TEMPORAL_DEFINITIONS}
 ===============================================================================`;
 
-// The lines of the JavaScript module, in units that each start at a line that isn't indented or a
-// comment, such as a definition, a RECURSIVE declaration, or the header's EXTENDS and CONSTANTS.
-const MODULE_LINES = JAVASCRIPT_MODULE.split("\n");
-const getDeclaredNames = (line: string) => {
-  if (line.startsWith("RECURSIVE ")) {
-    return [...line.matchAll(/([A-Z]\w*)\(/g)].map((match) => match[1]);
-  }
-  const match = /^(?:LOCAL )?([A-Z]\w*)(?:\(| ==)/.exec(line);
-  return match === null ? [] : [match[1]];
-};
-const getReadNames = (text: string) => [...(text.match(/\b[A-Z]\w*\b/g) ?? [])];
-const UNIT_STARTS = MODULE_LINES.flatMap((line, position) =>
-  /^[^\s\\(]/.test(line) ? [position] : [],
-);
-// The last unit is the line that closes the module.
-const MODULE_UNITS = UNIT_STARTS.map((start, position) => {
-  const lines = MODULE_LINES.slice(start, UNIT_STARTS[position + 1]);
-  return {
-    lines,
-    names: getDeclaredNames(lines[0]),
-    // A RECURSIVE declaration reads nothing; the definition it declares reads what it reads.
-    reads: lines[0].startsWith("RECURSIVE ") ? [] : getReadNames(lines.join("\n")),
-  };
-});
-// An id for each name a unit declares, and the units that declare each.
-const NAME_IDS = new Map<string, number>();
-MODULE_UNITS.forEach((unit) =>
-  unit.names.forEach((name) => NAME_IDS.set(name, NAME_IDS.get(name) ?? NAME_IDS.size)),
-);
-const NAME_UNITS = Array.from({ length: NAME_IDS.size }, (): number[] => []);
-MODULE_UNITS.forEach((unit, position) =>
-  unit.names.forEach((name) => NAME_UNITS[NAME_IDS.get(name) ?? 0].push(position)),
-);
-const getNameIds = (names: string[]) =>
-  Int32Array.from(new Set(names.flatMap((name) => NAME_IDS.get(name) ?? [])));
-const UNIT_NAME_IDS = MODULE_UNITS.map((unit) => getNameIds(unit.names));
-const UNIT_READ_IDS = MODULE_UNITS.map((unit) => getNameIds(unit.reads));
-// A unit that defines nothing, such as the header or an ASSUME, stays with what it reads.
-const ROOT_READ_IDS = getNameIds(
-  MODULE_UNITS.filter((unit) => unit.names.length === 0).flatMap((unit) => unit.reads),
-);
-// The unit of each line, and each unit's text, or the newlines that stand for it where a view
-// leaves it out.
-const LINE_UNITS = new Int32Array(MODULE_LINES.length);
-UNIT_STARTS.forEach((start, position) =>
-  LINE_UNITS.fill(position, start, start + MODULE_UNITS[position].lines.length),
-);
-const UNIT_TEXTS = MODULE_UNITS.map((unit) => unit.lines.join("\n"));
-const UNIT_BLANKS = MODULE_UNITS.map((unit) => "\n".repeat(unit.lines.length - 1));
-
 // The JavaScript module read into its tokens and syntax tree and checked by SANY's checks, of which
 // each spec's module is a view.
 export const prepareJavaScriptModule = (): PreparedModule => {
@@ -8980,18 +8930,7 @@ const PRELUDE: PreparedModule = Array.isArray(encodedPrelude)
     }
   : prepareJavaScriptModule();
 
-// Where each unit's tokens start in the prelude's tokens, which follow one another by line, and
-// where the last one ends.
-const UNIT_TOKEN_STARTS = new Int32Array(MODULE_UNITS.length + 1);
-for (let index = 0, unit = 0; index <= PRELUDE.tokens.length; index++) {
-  const line = index < PRELUDE.tokens.length ? PRELUDE.tokens[index].line - 1 : MODULE_LINES.length;
-  while (
-    unit < MODULE_UNITS.length &&
-    line >= UNIT_STARTS[unit] + MODULE_UNITS[unit].lines.length
-  ) {
-    UNIT_TOKEN_STARTS[++unit] = index;
-  }
-}
+const getReadNames = (text: string) => [...(text.match(/\b[A-Z]\w*\b/g) ?? [])];
 
 const getUnitLocation = (unit: ModuleUnit): SourceLocation => {
   switch (unit.kind) {
@@ -9011,6 +8950,84 @@ const getUnitLocation = (unit: ModuleUnit): SourceLocation => {
       return unit.location;
   }
 };
+
+const getUnitNames = (unit: ModuleUnit) =>
+  unit.kind === "Definition"
+    ? [unit.definition.name]
+    : unit.kind === "Recursive"
+      ? unit.declarations.map((declaration) => declaration.name)
+      : [];
+
+// The lines of the JavaScript module in units: the header, each top-level unit as the parser read
+// it, and the line that closes the module. A unit holds every line up to the next one, so its
+// lines stay together whatever their layout.
+const MODULE_LINES = JAVASCRIPT_MODULE.split("\n");
+// The column of each line's first token, before which a line that starts a unit holds only blanks,
+// not the end of a comment that a unit before it opened.
+const FIRST_COLUMNS = new Int32Array(MODULE_LINES.length).fill(-1);
+for (let index = PRELUDE.tokens.length - 1; index >= 0; index--) {
+  FIRST_COLUMNS[PRELUDE.tokens[index].line - 1] = PRELUDE.tokens[index].column;
+}
+const isCleanStart = (line: number) =>
+  MODULE_LINES[line].slice(0, FIRST_COLUMNS[line] - 1).trim() === "";
+const UNIT_START_NAMES = new Map<number, string[]>([[0, []]]);
+const addUnitStart = (line: number, names: string[]) => {
+  const start = isCleanStart(line) ? line : Math.max(...UNIT_START_NAMES.keys());
+  UNIT_START_NAMES.set(start, [...(UNIT_START_NAMES.get(start) ?? []), ...names]);
+};
+PRELUDE.module.units.forEach((unit) =>
+  addUnitStart(getUnitLocation(unit).line - 1, getUnitNames(unit)),
+);
+addUnitStart(PRELUDE.tokens[PRELUDE.tokens.length - 1].line - 1, []);
+const UNIT_STARTS = [...UNIT_START_NAMES.keys()].sort((left, right) => left - right);
+const MODULE_UNITS = UNIT_STARTS.map((start, position) => {
+  const lines = MODULE_LINES.slice(start, UNIT_STARTS[position + 1]);
+  const names = UNIT_START_NAMES.get(start) ?? [];
+  return {
+    lines,
+    names,
+    // A RECURSIVE declaration reads nothing; the definition it declares reads what it reads.
+    reads: lines[0].startsWith("RECURSIVE ") ? [] : getReadNames(lines.join("\n")),
+  };
+});
+// An id for each name a unit declares, and the units that declare each.
+const NAME_IDS = new Map<string, number>();
+MODULE_UNITS.forEach((unit) =>
+  unit.names.forEach((name) => NAME_IDS.set(name, NAME_IDS.get(name) ?? NAME_IDS.size)),
+);
+const NAME_UNITS = Array.from({ length: NAME_IDS.size }, (): number[] => []);
+MODULE_UNITS.forEach((unit, position) =>
+  unit.names.forEach((name) => NAME_UNITS[NAME_IDS.get(name) ?? 0].push(position)),
+);
+const getNameIds = (names: string[]) =>
+  Int32Array.from(new Set(names.flatMap((name) => NAME_IDS.get(name) ?? [])));
+const UNIT_NAME_IDS = MODULE_UNITS.map((unit) => getNameIds(unit.names));
+const UNIT_READ_IDS = MODULE_UNITS.map((unit) => getNameIds(unit.reads));
+// A unit that defines nothing, such as the header or an ASSUME, stays with what it reads.
+const ROOT_READ_IDS = getNameIds(
+  MODULE_UNITS.filter((unit) => unit.names.length === 0).flatMap((unit) => unit.reads),
+);
+// The unit of each line, and each unit's text, or the newlines that stand for it where a view
+// leaves it out.
+const LINE_UNITS = new Int32Array(MODULE_LINES.length);
+UNIT_STARTS.forEach((start, position) =>
+  LINE_UNITS.fill(position, start, start + MODULE_UNITS[position].lines.length),
+);
+const UNIT_TEXTS = MODULE_UNITS.map((unit) => unit.lines.join("\n"));
+const UNIT_BLANKS = MODULE_UNITS.map((unit) => "\n".repeat(unit.lines.length - 1));
+
+// Where each unit's tokens start in the prelude's tokens, which follow one another by line, and
+// where the last one ends.
+const UNIT_TOKEN_STARTS = new Int32Array(MODULE_UNITS.length + 1);
+for (let index = 0, unit = 0; index <= PRELUDE.tokens.length; index++) {
+  const line = index < PRELUDE.tokens.length ? PRELUDE.tokens[index].line - 1 : MODULE_LINES.length;
+  while (
+    unit < MODULE_UNITS.length &&
+    line >= UNIT_STARTS[unit] + MODULE_UNITS[unit].lines.length
+  ) {
+    UNIT_TOKEN_STARTS[++unit] = index;
+  }
+}
 
 // The module that the units kept leave, which is what reading the module's text with every other
 // line blank gives.
