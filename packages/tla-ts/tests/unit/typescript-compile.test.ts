@@ -50984,4 +50984,29 @@ describe("BigInts", () => {
       ).toContain("seen Success,effect,Success,3,function");
     });
   });
+
+  describe("copies the names that a pattern binds to the closures that read them", () => {
+    const getSource = (expected: string) => `
+      const createResource = (start: string) => {
+        const { kind } = { kind: start + "!" };
+        const [size] = [start.length];
+        const read = () => kind + size;
+        return { read };
+      };
+      const first = createResource("ab");
+      const second = createResource("xyz");
+      const seen = [first.read(), second.read()].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("ab!2,xyz!3"))).failure).toBeUndefined();
+    });
+
+    it("rejects the names of another call", async () => {
+      expect((await checkModel(getSource("ab!3,xyz!3"))).failure?.message).toContain(
+        "seen ab!2,xyz!3",
+      );
+    });
+  });
 });
