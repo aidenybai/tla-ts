@@ -45,6 +45,7 @@ export interface LivenessChecker {
     successors: LiveSuccessor[],
     tracing?: Environment,
   ) => number[] | undefined;
+  storeState: (pending: number, index: number) => void;
   findViolation: () => Lasso | undefined;
   getViolatedProperties: (path: Value[][], cycleStart: number) => string[];
 }
@@ -58,6 +59,7 @@ export interface LiveGraph<State> {
     state: State,
     successors: LiveSuccessor<State>[],
   ) => number[] | undefined;
+  storeState: (pending: number, index: number) => void;
   findViolation: () => Lasso | undefined;
 }
 
@@ -366,6 +368,7 @@ export const createLivenessChecker = (
       traceWith(replay, () => graph.addInitialState(index, state)),
     addState: (index, state, successors, replay) =>
       traceWith(replay, () => graph.addState(index, state, successors)),
+    storeState: graph.storeState,
     findViolation: graph.findViolation,
     getViolatedProperties: (path, cycleStart) => [
       ...new Set(
@@ -600,8 +603,12 @@ export const createLiveGraph = <State>(
     const slot = getNodeSlot(behavior.nodeIds, state, tableauNode);
     return slots[slot] === 0 ? undefined : slots[slot + 2];
   };
-  const recordNode = (behavior: BehaviorGraph<State>, state: number, tableauNode: number) => {
-    const node = pushNode(behavior, state, tableauNode);
+  const linkNode = (
+    behavior: BehaviorGraph<State>,
+    state: number,
+    tableauNode: number,
+    node: number,
+  ) => {
     const table = behavior.nodeIds;
     if (++table.size * 2 > table.slots.length / 3) {
       const old = table.slots;
@@ -617,12 +624,15 @@ export const createLiveGraph = <State>(
       }
     }
     table.slots.set([state + 1, tableauNode, node], getNodeSlot(table, state, tableauNode));
+    if (state < 0) return node;
     const last = behavior.lastNodes.data[state] ?? NO_NODE;
     if (last === NO_NODE) writeToPool(behavior.firstNodes, state, [node]);
     else behavior.nextSiblings[last] = node;
     writeToPool(behavior.lastNodes, state, [node]);
     return node;
   };
+  const recordNode = (behavior: BehaviorGraph<State>, state: number, tableauNode: number) =>
+    linkNode(behavior, state, tableauNode, pushNode(behavior, state, tableauNode));
   // The action results of the edge to each target are at its position in actions.
   const writeNode = (
     behavior: BehaviorGraph<State>,
@@ -753,8 +763,6 @@ export const createLiveGraph = <State>(
       const isDone = behavior.isDone[successor.index] === true;
       for (const next of tableauNode.successors) {
         if (!isConsistent(behavior, next, index, successor.state, successorRow, 0)) continue;
-        // Deviation from TLC: TLC records the node of a successor the search never stored, which it never expands.
-        if (successor.index === -1) continue;
         const existing = getNodeId(behavior, successor.index, next);
         if (existing !== undefined && successors.includes(existing)) continue;
         const target = existing ?? recordNode(behavior, successor.index, next);
@@ -1159,6 +1167,21 @@ export const createLiveGraph = <State>(
         if (accepted) return accepted;
       }
       return undefined;
+    },
+    storeState: (pending, index) => {
+      for (const behavior of behaviors) {
+        const tableau = behavior.solution.tableau;
+        if (!tableau) continue;
+        const nodes: number[] = [];
+        for (let tableauNode = 0; tableauNode < tableau.nodes.length; tableauNode++) {
+          const node = getNodeId(behavior, pending, tableauNode);
+          if (node !== undefined) nodes.push(node);
+        }
+        for (const node of nodes.sort((left, right) => left - right)) {
+          behavior.nodeStates[node] = index;
+          linkNode(behavior, index, behavior.nodeTableaux[node], node);
+        }
+      }
     },
     findViolation: () => {
       for (const behavior of behaviors) {
