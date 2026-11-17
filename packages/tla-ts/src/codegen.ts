@@ -332,8 +332,8 @@ const generateApply = (
   }
   // TLC caches a constant TLCEval only where no name is bound, so the delegate sees every local.
   if (builtin.name === "TLCEval") return generateDelegate(generator, expression, frame, true);
-  if (builtin.name === "\\subseteq" && args.length === 2) {
-    const subset = addReference(generator, getSubsetOperator(expression, builtin));
+  if (builtin.name === "\\subseteq" && builtin.evaluateBinary && args.length === 2) {
+    const subset = addReference(generator, getSubsetOperator(expression, builtin.evaluateBinary));
     return `${subset}(${generateExpression(generator, args[0], frame)}, ${generateExpression(generator, args[1], frame)})`;
   }
   const environment = generator.environment;

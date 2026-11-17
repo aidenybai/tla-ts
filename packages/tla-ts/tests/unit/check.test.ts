@@ -503,6 +503,17 @@ describe("check matches TLC", () => {
     expect(prints).toEqual(["<<{{}, 0..1, 2..3, 1..3}, TRUE, TRUE, FALSE, 1, TRUE>>"]);
   });
 
+  it("checks whether an interval is a subset of a set like TLC", async () => {
+    const prints: string[] = [];
+    await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers, TLC\nCONSTANT m\nVARIABLE x\nASSUME PrintT(<<1..3 \\subseteq {1, 2}, 1..2 \\subseteq {0, 1, 2, 5}, 2..1 \\subseteq {}, 1..3 \\subseteq {1, 2, 3}, 3..4 \\subseteq {1, 2, 3}, 1..2 \\subseteq 0..5, 1..2 \\subseteq {m, 1, 2}, 1..3 \\subseteq {m, 1, 2}, 0..1 \\subseteq {m, 1, 2}>>)\nInit == x = 0\nNext == UNCHANGED x\n====",
+      config: "CONSTANT m = m\nINIT Init\nNEXT Next",
+      onPrint: (text) => prints.push(text),
+    });
+    expect(prints).toEqual(["<<FALSE, TRUE, TRUE, TRUE, FALSE, TRUE, TRUE, FALSE, FALSE>>"]);
+  });
+
   it("bundles the Reals module, whose Real is not a set TLC can check", async () => {
     const result = await check({
       source:

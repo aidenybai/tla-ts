@@ -321,15 +321,14 @@ export const getDomainOperator = (expression: Expression) => (value: Value) => {
 };
 
 export const getSubsetOperator =
-  (expression: Expression, builtin: Builtin) => (left: Value, right: Value) => {
+  (expression: Expression, subset: (left: Value, right: Value) => Value) =>
+  (left: Value, right: Value) => {
     if (!isSetValue(left) || isOverriddenSet(left)) {
       throw new TlaEvaluationError(
         `Attempted to evaluate an expression of form S \\subseteq T, but S was not enumerable.\n${describeRange(expression)}`,
       );
     }
-    return builtin.evaluateBinary
-      ? builtin.evaluateBinary(left, right)
-      : builtin.evaluate([left, right]);
+    return subset(left, right);
   };
 
 export const createRealNumberError = (expression: DecimalExpression) =>
@@ -1607,10 +1606,15 @@ const compileApply = (
       return value;
     };
   }
-  if (global?.kind === "Builtin" && global.name === "\\subseteq" && args.length === 2) {
+  if (
+    global?.kind === "Builtin" &&
+    global.name === "\\subseteq" &&
+    global.evaluateBinary &&
+    args.length === 2
+  ) {
     const left = getEvaluator(args[0], environment);
     const right = getEvaluator(args[1], environment);
-    const subset = getSubsetOperator(expression, global);
+    const subset = getSubsetOperator(expression, global.evaluateBinary);
     return (context) => subset(left(context), right(context));
   }
   if (global?.kind === "Builtin") return compileBuiltinCall(global, args, environment);
