@@ -50561,4 +50561,43 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("disables an action on a path that changes nothing where the heap holds objects", () => {
+    const getSource = (limit: number) => `
+      const box = { side: 1 };
+      const alias = box;
+      export let count = 0;
+      export const step = () => {
+        if (count < ${limit}) {
+          box.side += 1;
+          count = alias.side;
+        }
+      };
+    `;
+
+    it("deadlocks once the branch that assigns no longer runs", async () => {
+      const result = await checkModel(getSource(3));
+      expect([result.status, getTrace(result)?.map((state) => state.count)]).toEqual([
+        "deadlock",
+        ["0", "2", "3"],
+      ]);
+    });
+
+    it("deadlocks where only the heap changes on one branch", async () => {
+      const result = await checkModel(`
+        const box = { side: 1 };
+        const alias = box;
+        export const step = () => {
+          if (box.side < 3) box.side += 1;
+        };
+        export const isSmall = (): boolean => alias.side < 5;
+      `);
+      expect([result.status, result.distinctStates]).toEqual(["deadlock", 3]);
+    });
+
+    it("rejects a model that a later limit lets run further", async () => {
+      const result = await checkModel(getSource(4));
+      expect(getTrace(result)?.map((state) => state.count)).toEqual(["0", "2", "3", "4"]);
+    });
+  });
 });
