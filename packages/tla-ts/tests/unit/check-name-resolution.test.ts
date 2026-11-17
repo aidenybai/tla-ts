@@ -2165,6 +2165,37 @@ describe("name resolution matches SANY", () => {
     );
   });
 
+  it("selects from LET operators inside theorems and proofs like SANY", async () => {
+    await expect(
+      checkNames(
+        "EXTENDS Naturals\nCONSTANT c\nLEMMA LET L(a, P(_, _)) == a[c] IN L(LAMBDA p : 1, c)!@\n<1>1. LET K(a) == lab:: a + 1 IN K(2)!lab!3 = K(1)!1\n<1> DEFINE D == LET J(b) == {b} IN J(c)!2\n<1>2. QED",
+      ),
+    ).rejects.toThrow(
+      createSanyError([
+        {
+          location: "line 4, col 38 to line 4, col 49 of module M",
+          message: "LAMBDA expression used where an expression is required.",
+        },
+        {
+          location: "line 4, col 52 to line 4, col 52 of module M",
+          message: "Expected arity 2 but found operator of arity 0.",
+        },
+        {
+          location: "line 4, col 55 to line 4, col 55 of module M",
+          message: "Nonexistent operand specified by `@'.",
+        },
+        {
+          location: "line 5, col 43 to line 5, col 43 of module M",
+          message: "Nonexistent operand specified by `argument selector 3'.",
+        },
+        {
+          location: "line 6, col 41 to line 6, col 41 of module M",
+          message: "Nonexistent operand specified by `argument selector 2'.",
+        },
+      ]),
+    );
+  });
+
   it("reports a selection that leaves parameters unfilled under a built-in operator like SANY", async () => {
     await expect(
       checkNames(

@@ -500,11 +500,17 @@ const resolveSubexpressions = (
     if (expression.recursive) setDeclaredArities(expression.recursive, expression.definitions);
     const local: Lookup = (name) =>
       expression.definitions.find((definition) => definition.name === name) ?? lookup(name);
-    const mapped = mapChildren(expression, (child) => resolveSubexpressions(child, local, isGoal));
+    const isLocalGoal = (name: string) =>
+      !expression.definitions.some((definition) => definition.name === name) && isGoal(name);
+    const mapped = mapChildren(expression, (child) =>
+      resolveSubexpressions(child, local, isLocalGoal),
+    );
     return mapped.kind === "Let" && mapped.instances
       ? {
           ...mapped,
-          instances: mapped.instances.map((instance) => resolveInstance(instance, local, isGoal)),
+          instances: mapped.instances.map((instance) =>
+            resolveInstance(instance, local, isLocalGoal),
+          ),
         }
       : mapped;
   }
