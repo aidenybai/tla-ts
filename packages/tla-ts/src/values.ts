@@ -231,7 +231,7 @@ export const isModelValue = (value: Value): value is ModelValue =>
 export const isEnumeratedSet = (value: Value): value is SetValue | MixedSetValue =>
   typeof value === "object" && (value.kind === "Set" || value.kind === "MixedSet");
 
-export const describeKind = (value: Value) => {
+const describeKind = (value: Value) => {
   if (typeof value === "boolean") return "boolean";
   if (typeof value === "number") return "integer";
   if (typeof value === "string") return "string";
