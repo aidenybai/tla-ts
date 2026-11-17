@@ -111,9 +111,13 @@ const isKey = (name: string) => {
   return index > 0 && index < name.length - 1;
 };
 
-const CORE_SYMBOLS: Symbols = new Map(
-  ["~>", "-+->", "\\cdot"].map((name) => [name, { key: name, arity: 2, kind: "Builtin" }]),
-);
+const CORE_SYMBOLS: Symbols = new Map([
+  ...["~>", "-+->", "\\cdot"].map((name): [string, ModuleSymbol] => [
+    name,
+    { key: name, arity: 2, kind: "Builtin" },
+  ]),
+  ["'", { key: "'", arity: 1, kind: "Builtin" }],
+]);
 
 export const isBefore = (left: SourceLocation, right: SourceLocation) =>
   left.line < right.line || (left.line === right.line && left.column < right.column);

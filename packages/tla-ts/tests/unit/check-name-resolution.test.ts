@@ -445,6 +445,30 @@ describe("name resolution matches SANY", () => {
       ],
     ],
     [
+      "EXTENDS Naturals\nf == {'} /\\ <<', 1>> /\\ 1 + ' = 2 /\\ '(1, 2) /\\ ''",
+      [
+        ["line 3, col 7 to line 3, col 7", "The operator ' requires 1 arguments."],
+        ["line 3, col 15 to line 3, col 15", "The operator ' requires 1 arguments."],
+        ["line 3, col 29 to line 3, col 29", "The operator ' requires 1 arguments."],
+        ["line 3, col 39 to line 3, col 44", "The operator ' requires 1 arguments."],
+        ["line 3, col 49 to line 3, col 49", "The operator ' requires 1 arguments."],
+      ],
+    ],
+    [
+      "a ' == a",
+      [
+        ["line 2, col 1 to line 2, col 8", "Operator ' already defined or declared."],
+        [
+          "line 2, col 1 to line 2, col 8",
+          "Symbol ' is a built-in operator, and cannot be redefined.",
+        ],
+      ],
+    ],
+    [
+      "f == =(1, 2, 3)",
+      [["line 2, col 7 to line 2, col 15", "The operator = requires 2 arguments."]],
+    ],
+    [
       "---- MODULE Inner ----\nCONSTANT a\nB == a\nC(p) == a\nTHEOREM T == TRUE\n====\nK(q) == INSTANCE Inner WITH a <- q\nF == K!B = U1 /\\ K(1)!C = U2 /\\ K(1, 2)!B = U3 /\\ K!C(1, 2) = U4\nG == LET L(q) == INSTANCE Inner WITH a <- q IN L!B = U5 /\\ L(1)!C(2, 3) = U6\nUSE K!T, K(1)!T, U7",
       [
         ["line 9, col 6 to line 9, col 8", "The operator K requires 1 arguments."],

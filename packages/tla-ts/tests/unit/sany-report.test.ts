@@ -39,6 +39,33 @@ Spec == Init /\\ [][Next]_x
     expect(report).toEqual({ text: "", isFailed: false });
   });
 
+  it("reports the prime standing alone as an operator that needs an argument", () => {
+    const report = getReport({
+      M: "---- MODULE M ----\nEXTENDS Naturals\nf == {'} /\\ <<', 1>> /\\ 1 + ' = 2 /\\ '(1, 2) /\\ ''\n====\n",
+    });
+    expect(report.text).toBe(
+      joinLines([
+        "Semantic errors:",
+        "",
+        "*** Errors: 5",
+        "",
+        ...[
+          "line 3, col 7 to line 3, col 7",
+          "line 3, col 15 to line 3, col 15",
+          "line 3, col 29 to line 3, col 29",
+          "line 3, col 39 to line 3, col 44",
+          "line 3, col 49 to line 3, col 49",
+        ].flatMap((range) => [
+          `${range} of module M`,
+          "",
+          "The operator ' requires 1 arguments.",
+          "",
+          "",
+        ]),
+      ]),
+    );
+  });
+
   it("parses a module once the module that names it reaches it, though another loaded it", () => {
     const report = getReport(
       {
