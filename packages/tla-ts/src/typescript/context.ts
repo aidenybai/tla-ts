@@ -112,6 +112,8 @@ export interface Context {
   references: References;
   // What each declaration that a name names reaches by name.
   reachGraph: ReachGraph;
+  // The assignments of the program's files, by the symbols of the names they write.
+  writes: References;
   // The keys that each of the program's files defines getters under, by the file's index.
   getterKeys: readonly ReadonlySet<string>[];
   // Whether each function of the program's files is called once, by its position, as
@@ -629,6 +631,7 @@ export const createContext = (
     nodes,
     references,
     reachGraph: createReachGraph(nodes, references),
+    writes: createWrites(nodes, references),
     getterKeys: files.map(findGetterKeys),
     calledOnce: new Uint8Array(nodes.nodes.length),
     heapCode: new Uint8Array(nodes.nodes.length),
@@ -2324,19 +2327,56 @@ export const isAssigned = (symbol: ts.Symbol, node: ts.Node, context: Context): 
   );
 };
 
+// The assignments of the program's files, by the symbols of the names that each writes, alone or in
+// a pattern, as isWrittenBy tells, and then in the order that a walk meets them.
+const createWrites = (table: ProgramNodes, references: References): References => {
+  const pairs = table.nodes.flatMap((node, position) => {
+    const target = getAssignedTarget(node);
+    return target === undefined
+      ? []
+      : [
+          ...new Set(
+            getWrittenNames(target).flatMap((name) => {
+              const at = ts.isIdentifier(name) ? getPosition(table, name) : -1;
+              const symbol = at < 0 ? undefined : references.symbols[at];
+              return symbol === undefined ? [] : [ts.getSymbolId(symbol)];
+            }),
+          ),
+        ].map((id) => ({ id, position }));
+  });
+  pairs.sort((left, right) => left.id - right.id || left.position - right.position);
+  return {
+    symbols: [],
+    symbolIds: Int32Array.from(pairs, (pair) => pair.id),
+    positions: Int32Array.from(pairs, (pair) => pair.position),
+  };
+};
+
+// The assignments under a root that write a symbol's name, in the order that a walk meets them.
+export const findWrites = (symbol: ts.Symbol, root: ts.Node, context: Context): ts.Node[] => {
+  const table = context.nodes;
+  const start = getPosition(table, root);
+  if (start < 0) {
+    return findNodes(root, (inner): inner is ts.Node => {
+      const target = getAssignedTarget(inner);
+      return target !== undefined && isWrittenBy(target, symbol, context);
+    });
+  }
+  const writes = context.writes;
+  const id = ts.getSymbolId(symbol);
+  const last = getLowerBound(writes.symbolIds, 0, writes.symbolIds.length, id + 1);
+  const first = getLowerBound(writes.symbolIds, 0, last, id);
+  const from = getLowerBound(writes.positions, first, last, start);
+  const to = getLowerBound(writes.positions, from, last, table.ends[start]);
+  return [...writes.positions.subarray(from, to)].map((position) => table.nodes[position]);
+};
+
 // Whether a script assigns to a name inside a function other than the one around a read of it,
 // which TypeScript's narrowing at the read doesn't see.
 export const isAssignedElsewhere = (symbol: ts.Symbol, read: ts.Node, context: Context) => {
   const around = ts.findAncestor(read, ts.isFunctionLike);
-  return (
-    findNodes(read.getSourceFile(), (inner): inner is ts.Node => {
-      const target = getAssignedTarget(inner);
-      return (
-        target !== undefined &&
-        isWrittenBy(target, symbol, context) &&
-        ts.findAncestor(inner, ts.isFunctionLike) !== around
-      );
-    }).length > 0
+  return findWrites(symbol, read.getSourceFile(), context).some(
+    (inner) => ts.findAncestor(inner, ts.isFunctionLike) !== around,
   );
 };
 
@@ -2352,10 +2392,7 @@ export const isRestOnly = (symbol: ts.Symbol, context: Context) => {
   ) {
     return false;
   }
-  const targets = findNodes(declaration.getSourceFile(), (inner): inner is ts.Node => {
-    const target = getAssignedTarget(inner);
-    return target !== undefined && isWrittenBy(target, symbol, context);
-  }).map(getAssignedTarget);
+  const targets = findWrites(symbol, declaration.getSourceFile(), context).map(getAssignedTarget);
   return (
     targets.length > 0 &&
     targets.every((target) => {
@@ -2501,10 +2538,7 @@ export const isMadeOnly = (symbol: ts.Symbol, context: Context) => {
     }
     return !isPatternPart(parent);
   };
-  const written = findNodes(declaration.getSourceFile(), (inner): inner is ts.Node => {
-    const target = getAssignedTarget(inner);
-    return target !== undefined && isWrittenBy(target, symbol, context);
-  }).flatMap((inner) =>
+  const written = findWrites(symbol, declaration.getSourceFile(), context).flatMap((inner) =>
     getWrittenNames(getAssignedTarget(inner) ?? inner).filter(
       (name) => ts.isIdentifier(name) && getSymbol(name, checker) === symbol,
     ),
@@ -3870,14 +3904,9 @@ export const getSharedDeclaration = (symbol: ts.Symbol, context: Context) => {
   ) {
     return undefined;
   }
-  const names = findNodes(
-    owner,
-    (inner): inner is ts.Identifier =>
-      ts.isIdentifier(inner) &&
-      inner.text === symbol.name &&
-      (ts.isShorthandPropertyAssignment(inner.parent)
-        ? context.checker.getShorthandAssignmentValueSymbol(inner.parent)
-        : getSymbol(inner, context.checker)) === symbol,
+  // A shorthand property's name names the value it takes, as getSymbol tells.
+  const names = findReferences(symbol, owner, context).filter(
+    (inner) => inner.text === symbol.name,
   );
   const isShared = names.some((name) => {
     const closure = ts.findAncestor(name.parent, (ancestor) =>

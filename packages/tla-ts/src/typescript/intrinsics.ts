@@ -8,7 +8,7 @@ import {
   isAssigned,
   isInertValue,
   isUnresolved,
-  isWrittenBy,
+  findWrites,
   share,
   skipCasts,
 } from "./context";
@@ -2605,10 +2605,7 @@ const getIndexedValues = (node: ts.Expression, context: Context, visited: Readon
     return undefined;
   }
   const file = declaration.getSourceFile();
-  const writes = findNodes(file, (inner): inner is ts.Node => {
-    const target = getAssignedTarget(inner);
-    return target !== undefined && isWrittenBy(target, symbol, context);
-  });
+  const writes = findWrites(symbol, file, context);
   const given = writes.map((write) =>
     ts.isBinaryExpression(write) &&
     write.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
