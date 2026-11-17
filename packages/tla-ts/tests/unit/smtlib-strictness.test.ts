@@ -650,4 +650,28 @@ describe("the terms the reader makes and frees, in Z3's order", () => {
       "success",
     ]);
   });
+
+  it("reports a parameter of simplify, assert-soft or eval that is not a keyword", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(declare-const p Bool)",
+        "(simplify (+ x 1) false)",
+        "(simplify (+ x 1) :som true 1)",
+        "(assert-soft p 1)",
+        "(assert-soft p :weight 2 x)",
+        "(check-sat)",
+        "(eval x 2)",
+        "(eval x (+ x 1))",
+      ]),
+    ).toEqual([
+      '(error "line 3 column 18: invalid command argument, keyword expected")',
+      '(error "line 4 column 28: invalid command argument, keyword expected")',
+      '(error "line 5 column 15: invalid command argument, keyword expected")',
+      '(error "line 6 column 25: invalid command argument, keyword expected")',
+      "sat",
+      '(error "line 8 column 8: invalid command argument, keyword expected")',
+      '(error "line 9 column 8: invalid command argument, keyword expected")',
+    ]);
+  });
 });

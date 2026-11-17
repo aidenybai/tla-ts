@@ -229,7 +229,9 @@ const getSoftParameters = (items: SExpr[]) => {
   const parameters = { weight: Rational.one, id: null as string | null };
   for (let index = 0; index < items.length; index += 2) {
     const keyword = items[index];
-    const name = keyword.kind === "keyword" ? getParameterName(keyword.text) : "";
+    if (keyword.kind !== "keyword")
+      throw new SmtParseError("invalid command argument, keyword expected", keyword);
+    const name = getParameterName(keyword.text);
     const value = items[index + 1];
     if (name === "weight" && (value?.kind === "numeral" || value?.kind === "decimal")) {
       const [whole, fraction = ""] = value.text.split(".");
@@ -247,7 +249,9 @@ const getSimplifyParams = (items: SExpr[]) => {
   const params = new Map<string, TacticParam>();
   for (let index = 0; index < items.length; index += 2) {
     const keyword = items[index];
-    const name = keyword.kind === "keyword" ? getParameterName(keyword.text) : "";
+    if (keyword.kind !== "keyword")
+      throw new SmtParseError("invalid command argument, keyword expected", keyword);
+    const name = getParameterName(keyword.text);
     const value = items[index + 1];
     if (SIMPLIFY_UINT_PARAMETERS.has(name) && value?.kind === "numeral") {
       params.set(name, Number(value.text));
@@ -1525,7 +1529,10 @@ export const runSmtlibScript = (
       (list) => {
         const target = list.items[1];
         const term = target === undefined ? -1 : state.reader.parseTerm(target);
-        if (list.items.length > 2) throw new SmtUnsupportedError("the parameters of eval");
+        const parameter = list.items[2];
+        if (parameter !== undefined && parameter.kind !== "keyword")
+          throw new SmtParseError("invalid command argument, keyword expected", parameter);
+        if (parameter !== undefined) throw new SmtUnsupportedError("the parameters of eval");
         const model = getModel(list);
         if (term === -1) throw new SmtParseError("no arguments passed to eval", list.end);
         const manager = state.manager;
