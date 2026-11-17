@@ -1,4 +1,4 @@
-import { SmtCanceledError } from "../../../errors";
+import { SmtTacticError } from "../../../errors";
 import {
   type AstManager,
   KIND_APP,
@@ -255,7 +255,7 @@ export const createFdTactic = (manager: AstManager, params: SatParams) => (goal:
       }
     } else if (result === L_FALSE) goal.assert(manager.falseExpr);
     else {
-      if (!manager.limit.inc()) throw new SmtCanceledError();
+      if (!manager.limit.inc()) throw new SmtTacticError("canceled");
       for (const form of solver.getAssertions()) goal.assert(form);
       goal.converters = [...goal.converters, ...fmls.converters, ...solver.getConverters()];
     }

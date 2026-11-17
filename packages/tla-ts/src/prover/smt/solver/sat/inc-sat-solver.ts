@@ -1,4 +1,4 @@
-import { SmtTacticError, SmtUnsupportedError } from "../../../../errors";
+import { SmtCanceledError, SmtTacticError, SmtUnsupportedError } from "../../../../errors";
 import { type AstManager, OP_AND, OP_EQ, OP_IMPLIES, OP_NOT, OP_OR, SORT_BOOL } from "../ast";
 import { mkNot } from "../ast-util";
 import { BitBlasterRewriter } from "../bit-blast-tactic";
@@ -177,8 +177,10 @@ export class IncSatSolver {
         return goals;
       } catch (error) {
         this.releaseBitBlaster();
-        if (!(error instanceof SmtTacticError)) throw error;
-        this.reasonUnknown = error.message;
+        if (!(error instanceof SmtTacticError || error instanceof SmtCanceledError)) throw error;
+        // The tactics of the preprocessing report a limit that stops their rewriters as a tactic_exception.
+        this.reasonUnknown =
+          error instanceof SmtCanceledError ? this.manager.limit.getCancelMessage() : error.message;
         return undefined;
       }
     })();
@@ -239,7 +241,16 @@ export class IncSatSolver {
     this.internalizeAssumptions([...literals, ...this.names.items]);
     this.reasonUnknown = "no reason given";
     this.isInternalizedConverted = false;
-    const result = this.solver.check(this.asms);
+    const result = (() => {
+      try {
+        return this.solver.check(this.asms);
+      } catch (error) {
+        if (!(error instanceof SmtCanceledError)) throw error;
+        // check_sat_core counts a step to see whether the limit stopped the search.
+        manager.limit.inc();
+        return L_UNDEF;
+      }
+    })();
     if (result === L_TRUE && this.hasUninterpreted) {
       this.reasonUnknown = "(sat.giveup has-uninterpreted)";
       return L_UNDEF;

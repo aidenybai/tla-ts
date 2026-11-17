@@ -1015,3 +1015,31 @@ describe("theory_pb, as Z3 5.3.2 internalizes it", () => {
     ).toEqual(["sat", "(\n  (define-fun y () Int\n    5)\n  (define-fun x () Int\n    0)\n)"]);
   });
 });
+
+describe("qffd, as Z3 5.3.2 stops its finite-domain solver", () => {
+  const goal = [
+    "(declare-const p Bool)",
+    "(declare-const q Bool)",
+    "(declare-const r Bool)",
+    "(assert (not (and (or p q) (=> q r) (= p r))))",
+  ];
+
+  it("fails with canceled once the limit stops the preprocessing or the search of the SAT solver", () => {
+    expect(
+      run([
+        ...goal,
+        "(set-option :rlimit 100)",
+        "(check-sat-using qffd)",
+        "(get-info :reason-unknown)",
+        "(set-option :rlimit 155)",
+        "(check-sat-using qffd)",
+        "(get-info :reason-unknown)",
+      ]),
+    ).toEqual([
+      "unknown",
+      '(:reason-unknown "canceled")',
+      "unknown",
+      '(:reason-unknown "canceled")',
+    ]);
+  });
+});
