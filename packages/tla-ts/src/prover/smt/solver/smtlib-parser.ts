@@ -2835,13 +2835,16 @@ export const createSmtlibReader = (
     sexpr: SExpr,
     datatypeIndexes: ReadonlyMap<string, number>,
     missing: string[],
+    name?: string,
   ) => {
     const body = expectListNext(sexpr, "invalid datatype declaration, '(' expected");
-    if (!isSymbol(body.items[0], "par"))
+    if (!isSymbol(body.items[0], "par")) {
+      if (name !== undefined) declareDatatypeSort(name, 0, body.items[0] ?? body.end);
       return {
         parameters: [],
         constructors: parseConstructors(body.items, NO_BINDINGS, datatypeIndexes, missing, body),
       };
+    }
     const parameters = parseSortParameters(
       body.items[1] ?? body.end,
       "invalid sort parameter, symbol or ')' expected",
@@ -2850,6 +2853,8 @@ export const createSmtlibReader = (
       body.items[2] ?? body.end,
       "invalid constructor declaration after par, '(' expected",
     );
+    if (name !== undefined && parameters.length > 0)
+      declareDatatypeSort(name, parameters.length, constructors.items[0] ?? constructors.end);
     return {
       parameters: parameters.map((_name, index) => manager.mkTypeParameter(index)),
       constructors: parseConstructors(
@@ -2889,6 +2894,13 @@ export const createSmtlibReader = (
     declare(sortDecls, name, decl);
   };
 
+  const declareDatatypeSort = (name: string, arity: number, at: SExpr) =>
+    declareSortDecl(
+      name,
+      { kind: "datatype", name, arity, siblings: [], instances: new Map() },
+      at,
+    );
+
   const declareDatatypes = (list: SmtList) => {
     const declaration = expectListNext(
       list.items[1] ?? list.end,
@@ -2910,7 +2922,7 @@ export const createSmtlibReader = (
       const name = expectSymbol(
         sortDeclaration.items[0],
         "invalid sort name, identified expected",
-        sortDeclaration,
+        sortDeclaration.end,
       ).text;
       const arity = sortDeclaration.items[1];
       if (arity?.kind !== "numeral")
@@ -2918,16 +2930,16 @@ export const createSmtlibReader = (
           "invalid sort declaration, arity expected",
           arity ?? sortDeclaration.end,
         );
-      if (sortDeclaration.items.length > 2)
-        throw new SmtParseError("invalid sort declaration, ')' expected", sortDeclaration.items[2]);
       datatypeIndexes.set(name, index);
       names.push(name);
       arities.push(Number(arity.text));
-      declareSortDecl(
+      declareDatatypeSort(
         name,
-        { kind: "datatype", name, arity: Number(arity.text), siblings: [], instances: new Map() },
-        sortDeclaration,
+        Number(arity.text),
+        sortDeclaration.items[2] ?? sortDeclaration.end,
       );
+      if (sortDeclaration.items.length > 2)
+        throw new SmtParseError("invalid sort declaration, ')' expected", sortDeclaration.items[2]);
     });
     const bodies = expectListNext(
       list.items[2] ?? list.end,
@@ -2997,21 +3009,14 @@ export const createSmtlibReader = (
   };
 
   const declareDatatype = (list: SmtList) => {
-    const name = expectSymbol(list.items[1], "unexpected token used as datatype name", list);
+    const name = expectSymbol(list.items[1], "unexpected token used as datatype name", list.end);
     const missing: string[] = [];
-    const bodyList = list.items[2];
-    const arity =
-      bodyList?.kind === "list" &&
-      isSymbol(bodyList.items[0], "par") &&
-      bodyList.items[1]?.kind === "list"
-        ? bodyList.items[1].items.length
-        : 0;
-    declareSortDecl(
+    const body = parseDatatypeBody(
+      list.items[2] ?? list.end,
+      new Map([[name.text, 0]]),
+      missing,
       name.text,
-      { kind: "datatype", name: name.text, arity, siblings: [], instances: new Map() },
-      name,
     );
-    const body = parseDatatypeBody(bodyList ?? list.end, new Map([[name.text, 0]]), missing);
     commitDatatypes(
       [mkDatatypeDef(manager, name.text, body.parameters, body.constructors)],
       missing,

@@ -510,6 +510,29 @@ describe("messages of the reader, as Z3 5.3.2 prints them", () => {
     ]);
   });
 
+  it("reports a datatype sort that is already defined at the token where Z3 declares it", () => {
+    expect(
+      run([
+        "(declare-sort T 0)",
+        "(declare-datatypes ((T 0)) (((mk))))",
+        "(declare-datatypes ((T 0 5)) (((mk))))",
+        "(declare-datatypes (()) (((mk))))",
+        "(declare-datatype T ((mk)))",
+        "(declare-datatype T (par (A) ((mk (a A)))))",
+        "(declare-datatype)",
+        "(declare-datatypes ((U 0) (U 0)) (((mk)) ((mk2))))",
+      ]),
+    ).toEqual([
+      '(error "line 2 column 24: sort already defined T")',
+      '(error "line 3 column 25: sort already defined T")',
+      '(error "line 4 column 21: invalid sort name, identified expected")',
+      '(error "line 5 column 21: sort already defined T")',
+      '(error "line 6 column 30: sort already defined T")',
+      '(error "line 7 column 17: unexpected token used as datatype name")',
+      '(error "line 8 column 30: sort already defined U")',
+    ]);
+  });
+
   it("names the declaration that lacks a symbol, and takes _ and as only for define-const", () => {
     expect(
       run([
