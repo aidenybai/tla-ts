@@ -10,13 +10,14 @@ export class NgPushAppIteRw extends RewriterTpl {
     const manager = this.manager;
     if (decl === OP_ITE) return false;
     let hasTermIte = false;
-    for (const arg of args)
-      if (manager.getOp(arg) === OP_ITE && manager.sorts[arg] !== SORT_BOOL) {
+    for (let index = 0; index < args.length; index++)
+      if (manager.getOp(args[index]) === OP_ITE && manager.sorts[args[index]] !== SORT_BOOL) {
         if (hasTermIte) return false;
         hasTermIte = true;
       }
     if (!hasTermIte) return false;
-    for (const arg of args) if (!manager.isGroundApp(arg)) return true;
+    for (let index = 0; index < args.length; index++)
+      if (!manager.isGroundApp(args[index])) return true;
     return false;
   }
 
