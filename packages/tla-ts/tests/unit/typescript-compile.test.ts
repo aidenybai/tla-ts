@@ -50655,4 +50655,41 @@ describe("BigInts", () => {
       "tla-ts can't check an exported function that changes state and returns a value as an action",
     );
   });
+
+  describe("follows promises through a loop's iterations, one after another", () => {
+    const getSource = (limit: number, expected: string) => `
+      const seen: string[] = [];
+      const run = async (limit: number) => {
+        let count = 0;
+        while (count < limit) {
+          count++;
+          Promise.resolve(count).then((value) => seen.push("then" + value));
+          await null;
+          seen.push("after" + count);
+        }
+        return count;
+      };
+      run(${limit}).then((count) => {
+        seen.push("done" + count);
+        if (seen.join() !== "${expected}") throw new Error("seen " + seen.join());
+      });
+      seen.push("sync");
+    `;
+
+    it("agrees with Node", async () => {
+      const result = await checkModel(getSource(2, "sync,then1,after1,then2,after2,done2"));
+      expect(result.failure).toBeUndefined();
+    });
+
+    it("rejects another order", async () => {
+      const result = await checkModel(getSource(2, "sync,after1,then1,then2,after2,done2"));
+      expect(result.failure?.message).toContain("A promise rejected with no handler");
+    });
+
+    it("stops past the iterations that it follows", async () => {
+      expect((await checkModel(getSource(9, "none"))).failure?.message).toContain(
+        "tla-ts can't follow promises through more than 4 iterations of a loop",
+      );
+    });
+  });
 });
