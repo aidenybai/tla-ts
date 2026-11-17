@@ -574,4 +574,44 @@ describe("the terms the reader makes and frees, in Z3's order", () => {
       '(error "line 7 column 15: invalid assert command, term is not Boolean")',
     ]);
   });
+
+  it("runs a command on its arguments, then reports a token past them", () => {
+    expect(
+      run([
+        "(set-option :print-success true)",
+        "(declare-const x Int)",
+        '(echo "a" "b")',
+        "(echo 1)",
+        "(display x x)",
+        "(minimize)",
+        "(minimize x 1)",
+        "(maximize true x)",
+        "(set-logic 1)",
+        "(set-logic QF_LIA x)",
+        "(get-unsat-core x)",
+        "(reset-assertions x)",
+        "(exit 1)",
+        "(check-sat)",
+      ]),
+    ).toEqual([
+      "success",
+      "success",
+      "a",
+      '(error "line 3 column 10: invalid command, too many arguments")',
+      '(error "line 4 column 6: invalid command argument, string expected")',
+      "x",
+      '(error "line 5 column 11: invalid command, too many arguments")',
+      '(error "line 6 column 9: invalid command, argument(s) missing")',
+      "success",
+      '(error "line 7 column 12: invalid command, too many arguments")',
+      '(error "line 8 column 15: Objective must be bit-vector, integer or real")',
+      '(error "line 9 column 11: invalid command argument, symbol expected")',
+      "success",
+      '(error "line 10 column 18: invalid command, too many arguments")',
+      '(error "line 11 column 16: invalid command, too many arguments")',
+      '(error "line 12 column 18: invalid command, too many arguments")',
+      '(error "line 13 column 6: invalid command, too many arguments")',
+      "sat",
+    ]);
+  });
 });

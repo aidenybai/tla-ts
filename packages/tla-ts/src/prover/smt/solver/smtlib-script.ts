@@ -137,8 +137,6 @@ const SILENT_COMMANDS = new Set([
   "reset-assertions",
   "set-option",
   "set-info",
-  "minimize",
-  "maximize",
   "assert-soft",
   "declare-rel",
   "declare-var",
@@ -310,6 +308,18 @@ const getCommandParams = (items: SExpr[], isBooleans: ReadonlyMap<string, boolea
     }
   }
   return params;
+};
+
+const getFirstArgument = (list: SmtList) => {
+  const argument = list.items[1];
+  if (argument === undefined)
+    throw new SmtParseError("invalid command, argument(s) missing", list.end);
+  return argument;
+};
+
+const checkArgumentCount = (list: SmtList, count: number) => {
+  const extra = list.items[count + 1];
+  if (extra !== undefined) throw new SmtParseError("invalid command, too many arguments", extra);
 };
 
 // Z3's parse_opt_unsigned names the push command for pop as well.
@@ -871,10 +881,13 @@ export const runSmtlibScript = (
     }
   };
   const addObjective = (list: SmtList, isMax: boolean) => {
-    const term = state.reader.parseTerm(list.items[1] ?? list.end);
+    const term = state.reader.parseTerm(getFirstArgument(list));
     const sort = state.manager.sorts[term];
     if (sort !== SORT_INT && sort !== SORT_REAL && !state.manager.isBvSort(sort))
-      throw new SmtParseError("Objective must be bit-vector, integer or real", list.end);
+      throw new SmtParseError(
+        "Objective must be bit-vector, integer or real",
+        list.items[2] ?? list.end,
+      );
     resetOptimizer();
     state.manager.incRef(term);
     state.objectives.push({
@@ -884,6 +897,8 @@ export const runSmtlibScript = (
       weights: [],
       id: null,
     });
+    if (settings.isPrintingSuccess) print("success");
+    checkArgumentCount(list, 1);
   };
   const releaseObjectives = (size: number, softSize: number) => {
     for (const index of state.softTrail.splice(softSize).reverse()) {
@@ -1289,7 +1304,8 @@ export const runSmtlibScript = (
     ],
     [
       "reset-assertions",
-      () => {
+      (list) => {
+        checkArgumentCount(list, 0);
         restoreAssertions(0);
         resetOptimizer();
         releaseObjectives(0, 0);
@@ -1470,6 +1486,7 @@ export const runSmtlibScript = (
     [
       "get-assertions",
       (list) => {
+        checkArgumentCount(list, 0);
         if (!settings.isInteractive)
           throw new SmtParseError(
             "command is only available in interactive mode, use command (set-option :interactive-mode true)",
@@ -1481,6 +1498,7 @@ export const runSmtlibScript = (
     [
       "get-unsat-core",
       (list) => {
+        checkArgumentCount(list, 0);
         if (!settings.isProducingUnsatCores)
           throw new SmtParseError(
             "unsat core construction is not enabled, use command (set-option :produce-unsat-cores true)",
@@ -1577,7 +1595,13 @@ export const runSmtlibScript = (
         print(`(\n${printModel(manager, getPrintEnvironment(), model, 2)})`);
       },
     ],
-    ["display", (list) => display(state.reader.parseTerm(list.items[1] ?? list.end))],
+    [
+      "display",
+      (list) => {
+        display(state.reader.parseTerm(getFirstArgument(list)));
+        checkArgumentCount(list, 1);
+      },
+    ],
     [
       "dbg-lt",
       (list) => {
@@ -1626,10 +1650,11 @@ export const runSmtlibScript = (
     [
       "echo",
       (list) => {
-        const message = list.items[1];
-        if (message?.kind !== "string")
-          throw new SmtParseError("invalid echo command, string expected", message ?? list.end);
+        const message = getFirstArgument(list);
+        if (message.kind !== "string")
+          throw new SmtParseError("invalid command argument, string expected", message);
         print(message.text);
+        checkArgumentCount(list, 1);
       },
     ],
     [
@@ -1762,9 +1787,9 @@ export const runSmtlibScript = (
     [
       "set-logic",
       (list) => {
-        const logic = list.items[1];
+        const logic = getFirstArgument(list);
         if (!isSymbol(logic))
-          throw new SmtParseError("invalid logic name, symbol expected", logic ?? list.end);
+          throw new SmtParseError("invalid command argument, symbol expected", logic);
         if (state.logic !== undefined)
           throw new SmtParseError("the logic has already been set", logic);
         if (state.assertions.length > 0)
@@ -1774,6 +1799,7 @@ export const runSmtlibScript = (
           printDiagnostic(
             `; ignoring unsupported logic ${logic.text} line: ${list.line} position: ${list.column}`,
           );
+          checkArgumentCount(list, 1);
           return;
         }
         state.logic = logic.text;
@@ -1785,6 +1811,7 @@ export const runSmtlibScript = (
           resetKernel();
         }
         if (settings.isPrintingSuccess) print("success");
+        checkArgumentCount(list, 1);
       },
     ],
     [
@@ -1843,7 +1870,11 @@ export const runSmtlibScript = (
   for (;;) {
     try {
       const list = commands.readCommand();
-      if (list === undefined || isSymbol(list.items[0], "exit")) break;
+      if (list === undefined) break;
+      if (isSymbol(list.items[0], "exit")) {
+        checkArgumentCount(list, 0);
+        break;
+      }
       run(list);
     } catch (error) {
       if (!(error instanceof SmtParseError)) throw error;
