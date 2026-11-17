@@ -238,6 +238,60 @@ const getName = (literal: number) => `x${Math.abs(literal) - 1}`;
 
 // Each expected value is what z3 5.3.2 prints for the script.
 describe("runSmtlibScript runs its commands as Z3 does", () => {
+  it("prints the assertions under :produce-assertions", () => {
+    expect(
+      run([
+        "(set-option :produce-assertions true)",
+        "(get-option :produce-assertions)",
+        "(get-option :interactive-mode)",
+        "(declare-const p Bool)",
+        "(declare-const q Bool)",
+        "(assert p)",
+        "(assert   (or p",
+        "   q))",
+        "(push)",
+        "(assert (! q :named n))",
+        "(get-assertions)",
+        "(pop)",
+        "(get-assertions)",
+        "(set-option :produce-assertions false)",
+        "(set-option :interactive-mode true)",
+      ]),
+    ).toEqual([
+      "true",
+      "true",
+      "(p",
+      " (or p",
+      "   q)",
+      " (! q :named n))",
+      "(p",
+      " (or p",
+      "   q))",
+      `(error "line 14 column 32: error setting ':produce-assertions', option value cannot be modified after initialization")`,
+      `(error "line 15 column 30: error setting ':produce-assertions', option value cannot be modified after initialization")`,
+    ]);
+  });
+
+  it("gets the assertions without initializing", () => {
+    expect(
+      run([
+        "(get-assertions)",
+        "(set-option :produce-assertions false)",
+        "(get-option :produce-assertions)",
+        "(set-option :interactive-mode true)",
+        "(get-assertions)",
+        "(declare-const p Bool)",
+        "(assert p)",
+        "(get-assertions)",
+      ]),
+    ).toEqual([
+      '(error "line 1 column 16: command is only available in interactive mode, use command (set-option :interactive-mode true)")',
+      "false",
+      "()",
+      "(p)",
+    ]);
+  });
+
   // parse_check_sat shrinks the expression stack, so p is a new term at each check.
   it("releases the literals of a check once it has run", () => {
     expect(

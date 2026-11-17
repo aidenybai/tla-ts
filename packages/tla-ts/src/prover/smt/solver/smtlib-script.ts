@@ -311,6 +311,7 @@ const MANAGERLESS_COMMANDS = new Set([
   "set-logic",
   "get-option",
   "get-info",
+  "get-assertions",
   "echo",
 ]);
 
@@ -1453,7 +1454,14 @@ export const runSmtlibScript = (
         if (keyword === ":produce-models") settings.isProducingModels = isTrue;
         if (keyword === ":produce-unsat-cores") settings.isProducingUnsatCores = isTrue;
         if (keyword === ":produce-proofs") settings.isProducingProofs = isTrue;
-        if (keyword === ":interactive-mode") settings.isInteractive = isTrue;
+        if (keyword === ":interactive-mode" || keyword === ":produce-assertions") {
+          if (state.isProofsEnabled !== undefined)
+            throw new SmtParseError(
+              "error setting ':produce-assertions', option value cannot be modified after initialization",
+              value ?? list.end,
+            );
+          settings.isInteractive = isTrue;
+        }
         if (keyword === ":diagnostic-output-channel")
           settings.isDiagnosticOnStdout = value?.kind === "string" && value.text === "stdout";
         if (keyword === ":int-real-coercions" && !isTrue)
@@ -1519,6 +1527,8 @@ export const runSmtlibScript = (
           [":print-success", settings.isPrintingSuccess],
           [":produce-models", settings.isProducingModels],
           [":produce-unsat-cores", settings.isProducingUnsatCores],
+          [":interactive-mode", settings.isInteractive],
+          [":produce-assertions", settings.isInteractive],
           [":int-real-coercions", true],
           [":error-behavior", settings.isExitingOnError ? "immediate-exit" : "continued-execution"],
         ]);
