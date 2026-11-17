@@ -2071,6 +2071,26 @@ describe("name resolution matches SANY", () => {
     },
   );
 
+  it("resolves a selection through an instance in a proof like SANY", async () => {
+    await expect(
+      checkNames(
+        "EXTENDS Naturals\n---- MODULE Inner ----\nOp == 1 + 2\n====\nI == INSTANCE Inner\nHIDE I!Op!1\nTHEOREM T == 1 = 1\n<1>1. I!Op!1 = 1\n  OBVIOUS\n<1>2. I!Op!3 = 1\n  OBVIOUS\n<1>3. QED\n  BY I!Op!4",
+      ),
+    ).rejects.toThrow(
+      createSanyError([
+        { location: "line 7, col 6 to line 7, col 11 of module M", message: hidden },
+        {
+          location: "line 11, col 12 to line 11, col 12 of module M",
+          message: "Nonexistent operand specified by `argument selector 3'.",
+        },
+        {
+          location: "line 14, col 11 to line 14, col 11 of module M",
+          message: "Nonexistent operand specified by `argument selector 4'.",
+        },
+      ]),
+    );
+  });
+
   it("passes an operator whose definition has fewer parameters than its RECURSIVE declaration, where SANY crashes", async () => {
     await expect(
       checkNames("RECURSIVE R(_, _)\nR == 1\nL(P(_, _)) == 1\nA == L(R)"),

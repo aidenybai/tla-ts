@@ -508,7 +508,20 @@ const resolveSubexpressions = (
           ? getQualifiedSelectors(mapped.operator, mapped.args, mapped.argumentCounts, lookup)
           : undefined;
   const first = selectors?.[0];
-  if (!selectors || (first?.kind === "Name" && isGoal(first.name))) return mapped;
+  if (!selectors) return mapped;
+  const nameCount = selectors.findIndex((selector) => selector.kind !== "Name");
+  const names = selectors.slice(0, nameCount === -1 ? selectors.length : nameCount);
+  const isQualified = names.some(
+    (_name, index) =>
+      index > 0 &&
+      lookup(
+        names
+          .slice(0, index + 1)
+          .map(getSelectorName)
+          .join("!"),
+      ),
+  );
+  if (first?.kind === "Name" && isGoal(first.name) && !isQualified) return mapped;
   if (first?.kind === "Name" && selectors[1].kind !== "Name" && !lookup(first.name)) return mapped;
   const selected = selectSubexpression(selectors, lookup, isGoal, mapped, isOperator);
   if (selected !== mapped) selections.add(selected);
