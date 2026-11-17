@@ -1711,7 +1711,8 @@ const compile = (
             }),
       };
     }
-    // The timeout is not ported, so the child runs to the end.
+    // The timeout is not ported, so the child runs to the end. try_for turns Z3's other
+    // exceptions into tactic exceptions, which or-else catches.
     case "try-for": {
       if (sexpr.items.length !== 3)
         throw new SmtParseError("invalid try-for combinator, two arguments expected", sexpr.end);
@@ -1720,7 +1721,21 @@ const compile = (
           "invalid try-for combinator, second argument must be an unsigned integer",
           sexpr.end,
         );
-      return compile(environment, sexpr.items[1], isInternal);
+      const child = compile(environment, sexpr.items[1], isInternal);
+      return {
+        ...child,
+        build: (params) => {
+          const tactic = child.build(params);
+          return (goal) => {
+            try {
+              return tactic(goal);
+            } catch (error) {
+              if (error instanceof SmtDefaultError) throw new SmtTacticError(error.message);
+              throw error;
+            }
+          };
+        },
+      };
     }
     case "fail-if-branching": {
       if (sexpr.items.length !== 3 && sexpr.items.length !== 2)

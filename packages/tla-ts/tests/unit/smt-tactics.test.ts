@@ -605,6 +605,27 @@ describe("qfufbv, as Z3 5.3.2 answers QF_UFBV", () => {
   });
 });
 
+describe("try-for, as Z3 5.3.2 runs it", () => {
+  it("turns an error of its tactic into a tactic failure, which or-else catches", () => {
+    expect(
+      run([
+        "(set-logic QF_LRA)",
+        "(declare-const y Real)",
+        "(assert (> (/ y 0.0) 1.0))",
+        "(check-sat-using (or-else (try-for smt 100) skip))",
+        "(get-info :reason-unknown)",
+        "(check-sat-using (or-else smt skip))",
+        "(get-info :reason-unknown)",
+      ]),
+    ).toEqual([
+      "unknown",
+      '(:reason-unknown "unknown")',
+      "unknown",
+      '(:reason-unknown "Benchmark contains uninterpreted function symbols, but specified logic does not support them.")',
+    ]);
+  });
+});
+
 describe("purify-arith, as Z3 5.3.2 composes it", () => {
   it("stops at a goal that one of its steps decides", () => {
     expect(
