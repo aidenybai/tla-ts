@@ -50544,6 +50544,87 @@ describe("BigInts", () => {
     });
   });
 
+  describe("converts a Temporal object to a string through its toString", () => {
+    const getSource = (expected: string) => `
+      const date = Temporal.PlainDate.from({ year: 1350, month: 2, day: 1, calendar: "persian" });
+      const zoned = Temporal.ZonedDateTime.from({ year: 2020, month: 3, day: 1, hour: 12, timeZone: "UTC" });
+      const seen = [\`\${date}\`, String(Temporal.Duration.from({ hours: 3 })), \`\${zoned}\`].join(" ");
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+    const expected = "1971-04-21[u-ca=persian] PT3H 2020-03-01T12:00:00+00:00[UTC]";
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects another text", async () => {
+      expect(
+        (await checkModel(getSource(expected.replace("PT3H", "PT180M")))).failure?.message,
+      ).toContain(`seen ${expected}`);
+    });
+
+    it("stops where valueOf throws", async () => {
+      const source = 'const seen = Temporal.PlainDate.from("2020-01-01") + "";';
+      expect((await checkModel(source)).failure?.message).toContain(
+        "tla-ts can't throw the TypeError of Temporal.PlainDate.prototype.valueOf",
+      );
+    });
+  });
+
+  describe("runs Temporal in the Umm al-Qura calendar, whose months Node's table gives", () => {
+    const getSource = (expected: string) => `
+      const seen: string[] = [];
+      for (const iso of ["1882-11-11", "1900-03-01", "2077-11-17"]) {
+        const date = Temporal.PlainDate.from(iso).withCalendar("islamic-umalqura");
+        seen.push(date.year + "-" + date.monthCode + "-" + date.day + "/" + date.daysInMonth);
+      }
+      const later = Temporal.PlainDate.from({ calendar: "islamic-umalqura", year: 1400, month: 1, day: 30 });
+      seen.push(later.add({ months: 7, days: 3 }).withCalendar("iso8601").toString());
+      if (seen.join(" ") !== "${expected}") throw new Error("seen " + seen.join(" "));
+    `;
+    const expected = "1299-M12-29/29 1317-M10-29/30 1501-M01-1/30 1980-07-16";
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects the civil calendar's day", async () => {
+      expect(
+        (await checkModel(getSource(expected.replace("1317-M10-29/30", "1317-M10-28/29")))).failure
+          ?.message,
+      ).toContain(`seen ${expected}`);
+    });
+  });
+
+  describe("spreads the arguments of new of a Temporal class through the array iterator", () => {
+    const getSource = (expected: string) => `
+      const [args]: string[][] = [["gregory"]];
+      const seen = new Temporal.PlainDate(2000, 5, 2, ...args).calendarId;
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("gregory"))).failure).toBeUndefined();
+    });
+
+    it("rejects another calendar", async () => {
+      expect((await checkModel(getSource("iso8601"))).failure?.message).toContain("seen gregory");
+    });
+
+    it("stops where a script replaced the iterator", async () => {
+      const source = `
+        const args = ["gregory"];
+        Array.prototype[Symbol.iterator] = function* (): Generator<any> {
+          yield "japanese";
+        } as any;
+        const date = new Temporal.PlainDate(2000, 5, 2, ...args);
+      `;
+      expect((await checkModel(source)).failure?.message).toContain(
+        "tla-ts can't iterate an array whose iterator a script replaced",
+      );
+    });
+  });
+
   describe("runs a helper that a statement calls by name as its operator, catching only where its caller catches", () => {
     const getSource = (calls: number, expected: number) => `
       const log: { n: number } = { n: 0 };
@@ -52440,5 +52521,35 @@ describe("BigInts", () => {
     expect(() => compile(source, join(import.meta.dirname, "model.js"))).toThrow(
       "Give this pattern's value an array type",
     );
+  });
+
+  describe("makes hold the types of JavaScript's for-in keys and of a property's array", () => {
+    const path = join(import.meta.dirname, "../fixtures/typescript/es-modules/loose-types.ts");
+    const source = readFileSync(path, "utf8");
+
+    it("agrees with Node", async () => {
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      expect(
+        (await check(compile(source.replace('"a,b,1"', '"0,1"'), path))).failure?.message,
+      ).toContain("seen a,b,1");
+    });
+  });
+
+  describe("makes hold the types of a package's JavaScript that a model loads", () => {
+    const path = join(import.meta.dirname, "../fixtures/typescript/es-modules/loose.ts");
+    const source = readFileSync(path, "utf8");
+
+    it("agrees with Node", async () => {
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects the type that TypeScript infers", async () => {
+      await expect(check(compile(source.replace('"string"', '"number"'), path))).rejects.toThrow(
+        "seen string",
+      );
+    });
   });
 });

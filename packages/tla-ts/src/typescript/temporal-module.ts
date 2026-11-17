@@ -26,6 +26,30 @@ TemporalGetterValue(heap, path, receiver) ==
   IN IF "throwing" \in DOMAIN slots /\ TemporalGetterName(path) \in slots.throwing
      THEN Assert(FALSE, "tla-ts can't throw the RangeError of " \o SubSeq(path, 5, Len(path)) \o " here")
      ELSE slots.getters[TemporalGetterName(path)]
+
+RECURSIVE TemporalText(_, _, _)
+
+LOCAL TemporalConversionOwner(path) ==
+  CHOOSE kind \in {"Duration", "Instant", "PlainDate", "PlainTime", "PlainDateTime", "PlainYearMonth",
+                   "PlainMonthDay", "ZonedDateTime"} :
+    path \in {"Temporal." \o kind \o ".prototype.toString", "Temporal." \o kind \o ".prototype.valueOf"}
+
+\* Whether ToPrimitive calls a Temporal prototype's toString or valueOf.
+IsTemporalConversion(path) ==
+  \E kind \in {"Duration", "Instant", "PlainDate", "PlainTime", "PlainDateTime", "PlainYearMonth",
+               "PlainMonthDay", "ZonedDateTime"} :
+    path \in {"Temporal." \o kind \o ".prototype.toString", "Temporal." \o kind \o ".prototype.valueOf"}
+
+\* What a Temporal prototype's toString gives where ToPrimitive calls it, with no options. valueOf
+\* always throws a TypeError, as toString does on another receiver, where tla-ts stops.
+TemporalConverted(heap, path, receiver) ==
+  LET kind == TemporalConversionOwner(path)
+      given == TemporalText(heap, kind, receiver)
+  IN CASE path = "Temporal." \o kind \o ".prototype.valueOf" \/ TSlots(heap, receiver).kind # kind ->
+            Assert(FALSE, "tla-ts can't throw the TypeError of " \o path \o " where it converts an object")
+       [] given.error # "" ->
+            Assert(FALSE, "tla-ts can't throw the " \o given.error \o " of " \o path \o " where it converts an object")
+       [] OTHER -> given.value
 `;
 
 // The part of the JavaScript module that runs Temporal, over the ISO 8601 calendar, as the Temporal
@@ -1122,15 +1146,16 @@ LOCAL TParseISO(text, goal) ==
 
 \* The calendars other than the ISO 8601 calendar that Node 26 takes and tla-ts doesn't run, by
 \* their ASCII-lowercase forms, aliases included.
-LOCAL TOtherCalendars == {"chinese", "dangi", "islamic-umalqura"}
+LOCAL TOtherCalendars == {"chinese", "dangi"}
 
 \* The calendars that tla-ts runs whose months aren't the ISO 8601 calendar's, each of which counts
 \* its days arithmetically, as Node does: the Coptic and the two Ethiopian calendars, of 13 months
 \* each, the tabular Islamic calendars, the Indian national calendar, the Persian calendar, and the
-\* Hebrew calendar, whose leap years add a month.
+\* Hebrew calendar, whose leap years add a month. The Umm al-Qura calendar is the civil Islamic
+\* calendar outside the years that Node's table of its months covers.
 LOCAL TCopticCalendars == {"coptic", "ethiopic", "ethioaa"}
 
-LOCAL TIslamicCalendars == {"islamic-civil", "islamic-tbla"}
+LOCAL TIslamicCalendars == {"islamic-civil", "islamic-tbla", "islamic-umalqura"}
 
 LOCAL TSimpleCalendars == TCopticCalendars \cup TIslamicCalendars \cup {"indian", "persian", "hebrew"}
 
@@ -1148,7 +1173,63 @@ LOCAL TCopticEpoch(calendar) == IF calendar = "coptic" THEN 103604 ELSE 2795
 LOCAL TCopticYear(calendar, year) == IF calendar = "ethioaa" THEN year - 5500 ELSE year
 
 \* The day before a tabular Islamic year 1 starts, on its Friday or its Thursday epoch.
-LOCAL TIslamicEpoch(calendar) == IF calendar = "islamic-civil" THEN 227014 ELSE 227013
+LOCAL TIslamicEpoch(calendar) == IF calendar = "islamic-tbla" THEN 227013 ELSE 227014
+
+\* The years 1300 to 1600 of the Umm al-Qura calendar, as Node's table gives them: each year's 30-day
+\* months as bits, and the days from the start of 1300, which the civil calendar starts on too, to
+\* the start of each year through 1601, where the civil calendar takes over again.
+LOCAL TUmalquraMonths ==
+  <<
+    1365, 683, 2359, 694, 1398, 876, 2901, 2730, 2390, 1182, 2397, 698, 1461, 938, 2891, 2710, 1326,
+    685, 1389, 2906, 1874, 3877, 3722, 3350, 2646, 2741, 1716, 3497, 2962, 2853, 1611, 2715, 858,
+    1753, 1492, 3493, 3402, 2709, 1334, 2421, 756, 1769, 1748, 1705, 1333, 605, 1213, 2490, 948,
+    2921, 2858, 2645, 1197, 2653, 730, 1753, 3754, 3732, 3370, 3158, 1198, 2669, 1386, 3413, 3402,
+    2707, 1323, 2651, 1338, 1717, 3753, 3410, 3369, 2645, 1197, 1389, 2794, 1764, 3793, 3490, 2730,
+    2394, 730, 1465, 2994, 1892, 1737, 1365, 683, 1243, 2746, 1460, 3497, 3410, 2725, 2349, 621,
+    2285, 730, 2773, 2725, 2635, 1175, 2359, 694, 2421, 3433, 3410, 3221, 2347, 603, 1243, 2517,
+    1490, 3493, 3402, 2709, 1357, 2733, 938, 3026, 3012, 2953, 2709, 1325, 1453, 2922, 1748, 3529,
+    3474, 2726, 2390, 686, 1389, 874, 2901, 2730, 2381, 1181, 2397, 698, 1461, 1450, 3413, 2714,
+    2350, 622, 1373, 2778, 1748, 1701, 2855, 2637, 1197, 1389, 2906, 1876, 3913, 3730, 3366, 2646,
+    854, 1717, 2986, 2962, 2853, 1675, 2715, 1370, 2778, 1460, 3497, 2898, 2714, 1334, 630, 1397,
+    2802, 1748, 1705, 1365, 685, 1213, 2490, 1396, 2921, 2898, 2709, 1325, 2653, 1242, 2777, 1714,
+    3733, 3626, 3222, 2350, 2733, 1386, 3429, 3402, 3349, 1579, 3163, 1338, 1717, 3506, 3428, 3369,
+    2645, 1197, 2413, 2794, 1768, 3793, 3492, 3402, 2666, 730, 1465, 2930, 2920, 1745, 1621, 1195,
+    2395, 698, 1461, 3497, 3410, 3238, 2382, 1134, 2397, 1242, 2773, 2730, 2637, 1179, 2359, 1206,
+    2421, 3434, 3410, 2725, 2379, 683, 1371, 2777, 1490, 3525, 3474, 2853, 1365, 2741, 1460, 2985,
+    1954, 1861, 1427, 2731, 1238, 2518, 1490, 2981, 2890, 2709, 1197, 349, 733, 2522, 1460, 1449,
+    1325, 603, 2231, 374, 1389, 2922, 2762, 2710, 1323, 347, 699, 1462, 3498, 2964, 3398, 2701, 1325,
+    2717, 1370, 1877, 1865, 3859, 3658, 2710, 1366, 1717, 2986, 2964
+  >>
+
+LOCAL TUmalquraStarts ==
+  <<
+    0, 354, 708, 1063, 1417, 1772, 2126, 2481, 2835, 3189, 3543, 3898, 4252, 4607, 4961, 5316, 5670,
+    6024, 6378, 6733, 7088, 7442, 7797, 8151, 8505, 8859, 9214, 9568, 9923, 10277, 10631, 10985,
+    11340, 11694, 12049, 12403, 12758, 13112, 13466, 13820, 14175, 14529, 14884, 15238, 15592, 15946,
+    16300, 16655, 17010, 17364, 17719, 18073, 18427, 18781, 19136, 19490, 19845, 20200, 20554, 20908,
+    21262, 21616, 21971, 22325, 22680, 23034, 23388, 23742, 24097, 24451, 24806, 25161, 25515, 25869,
+    26223, 26577, 26932, 27287, 27641, 27996, 28350, 28704, 29058, 29412, 29767, 30122, 30476, 30830,
+    31184, 31538, 31893, 32248, 32602, 32957, 33311, 33665, 34019, 34373, 34728, 35082, 35437, 35791,
+    36145, 36499, 36854, 37208, 37563, 37918, 38272, 38626, 38980, 39334, 39689, 40044, 40398, 40753,
+    41107, 41461, 41815, 42170, 42524, 42879, 43233, 43587, 43941, 44295, 44650, 45005, 45359, 45714,
+    46068, 46422, 46776, 47130, 47485, 47839, 48194, 48548, 48902, 49256, 49611, 49965, 50320, 50674,
+    51029, 51383, 51737, 52091, 52446, 52801, 53155, 53509, 53864, 54218, 54572, 54927, 55282, 55636,
+    55991, 56345, 56699, 57053, 57407, 57762, 58117, 58471, 58825, 59179, 59534, 59888, 60243, 60597,
+    60952, 61306, 61660, 62014, 62368, 62723, 63078, 63432, 63786, 64140, 64494, 64849, 65204, 65558,
+    65913, 66267, 66621, 66975, 67330, 67684, 68039, 68393, 68748, 69102, 69456, 69810, 70165, 70519,
+    70874, 71228, 71582, 71936, 72291, 72645, 73000, 73355, 73709, 74063, 74417, 74771, 75126, 75481,
+    75835, 76190, 76544, 76898, 77252, 77606, 77961, 78316, 78670, 79024, 79378, 79732, 80087, 80441,
+    80796, 81151, 81505, 81859, 82213, 82567, 82922, 83276, 83631, 83985, 84339, 84693, 85048, 85402,
+    85757, 86112, 86466, 86820, 87174, 87528, 87883, 88238, 88592, 88947, 89301, 89655, 90009, 90364,
+    90718, 91073, 91427, 91781, 92135, 92490, 92844, 93199, 93553, 93908, 94262, 94616, 94970, 95324,
+    95679, 96034, 96388, 96742, 97096, 97450, 97805, 98159, 98514, 98869, 99223, 99577, 99931,
+    100285, 100640, 100995, 101350, 101704, 102058, 102412, 102766, 103121, 103475, 103830, 104184,
+    104539, 104893, 105247, 105601, 105956, 106311, 106665
+  >>
+
+LOCAL TIsUmalquraTable(calendar, year) == calendar = "islamic-umalqura" /\ year >= 1300 /\ year <= 1600
+
+LOCAL TUmalquraLong(year, month) == (TUmalquraMonths[year - 1299] \div 2 ^ (month - 1)) % 2 = 1
 
 \* The day that an Indian year starts on, in March of its Gregorian year, and the days before a month.
 LOCAL TIndianStart(year) == TRataDie(<<year + 78, 3, IF TIsLeapYear(year + 78) THEN 21 ELSE 22>>)
@@ -1204,6 +1285,7 @@ LOCAL THebrewLength(year) == THebrewNewYear(year + 1) - THebrewNewYear(year)
 
 LOCAL TSimpleLeap(calendar, year) ==
   CASE calendar \in TCopticCalendars -> TCopticYear(calendar, year) % 4 = 3
+    [] TIsUmalquraTable(calendar, year) -> TUmalquraStarts[year - 1298] - TUmalquraStarts[year - 1299] = 355
     [] calendar \in TIslamicCalendars -> (14 + 11 * year) % 30 < 11
     [] calendar = "hebrew" -> (7 * year + 1) % 19 < 7
     [] calendar = "persian" -> TPersianLeap(year)
@@ -1245,6 +1327,7 @@ LOCAL THebrewDays(year, code) ==
 LOCAL TSimpleDaysInMonth(calendar, year, month) ==
   CASE calendar \in TCopticCalendars ->
          IF month = 13 THEN (IF TSimpleLeap(calendar, year) THEN 6 ELSE 5) ELSE 30
+    [] TIsUmalquraTable(calendar, year) -> IF TUmalquraLong(year, month) THEN 30 ELSE 29
     [] calendar \in TIslamicCalendars ->
          IF month % 2 = 1 \/ (month = 12 /\ TSimpleLeap(calendar, year)) THEN 30 ELSE 29
     [] calendar = "hebrew" -> THebrewDays(year, TSimpleCode(calendar, year, month))
@@ -1256,6 +1339,7 @@ LOCAL TSimpleDaysInMonth(calendar, year, month) ==
 \* The days of a month of a code in the year that's longest.
 LOCAL TSimpleMostDays(calendar, code) ==
   CASE calendar \in TCopticCalendars -> IF code.month = 13 THEN 6 ELSE 30
+    [] calendar = "islamic-umalqura" -> 30
     [] calendar \in TIslamicCalendars -> IF code.month % 2 = 1 \/ code.month = 12 THEN 30 ELSE 29
     [] calendar = "hebrew" -> IF code.month % 2 = 1 \/ code.isLeap \/ code.month \in {2, 3} THEN 30 ELSE 29
     [] OTHER -> IF code.month <= 6 THEN 31 ELSE 30
@@ -1265,11 +1349,18 @@ RECURSIVE THebrewBefore(_, _)
 LOCAL THebrewBefore(year, month) ==
   IF month = 1 THEN 0 ELSE THebrewBefore(year, month - 1) + TSimpleDaysInMonth("hebrew", year, month - 1)
 
+\* The days of the months of an Umm al-Qura year in Node's table before one.
+RECURSIVE TUmalquraBefore(_, _)
+LOCAL TUmalquraBefore(year, month) ==
+  IF month = 1 THEN 0 ELSE TUmalquraBefore(year, month - 1) + IF TUmalquraLong(year, month - 1) THEN 30 ELSE 29
+
 \* The rata die of a valid date in a calendar.
 LOCAL TSimpleRataDie(calendar, year, month, day) ==
   LET coptic == TCopticYear(calendar, year)
   IN CASE calendar \in TCopticCalendars ->
             TCopticEpoch(calendar) + 365 * (coptic - 1) + coptic \div 4 + 30 * (month - 1) + day
+       [] TIsUmalquraTable(calendar, year) ->
+            687337 + TUmalquraStarts[year - 1299] + TUmalquraBefore(year, month) + day - 1
        [] calendar \in TIslamicCalendars ->
             TIslamicEpoch(calendar) + (year - 1) * 354 + (3 + 11 * year) \div 30 + 29 * (month - 1)
               + month \div 2 + day
@@ -1283,6 +1374,13 @@ RECURSIVE THebrewYearAt(_, _)
 LOCAL THebrewYearAt(day, year) ==
   CASE THebrewNewYear(year) > day -> THebrewYearAt(day, year - 1)
     [] THebrewNewYear(year + 1) <= day -> THebrewYearAt(day, year + 1)
+    [] OTHER -> year
+
+\* The Umm al-Qura year that a rata die is in, from its civil year, which is within a year of it.
+RECURSIVE TUmalquraYearAt(_, _)
+LOCAL TUmalquraYearAt(day, year) ==
+  CASE TSimpleRataDie("islamic-umalqura", year, 1, 1) > day -> TUmalquraYearAt(day, year - 1)
+    [] TSimpleRataDie("islamic-umalqura", year + 1, 1, 1) <= day -> TUmalquraYearAt(day, year + 1)
     [] OTHER -> year
 
 \* The month of a calendar's year that a day of the year, counted from 0, is in.
@@ -1302,6 +1400,7 @@ LOCAL TSimpleDateOf(calendar, day) ==
       gregorian == TDateOfRataDie(day)[1]
       indian == IF day < TIndianStart(gregorian - 78) THEN gregorian - 79 ELSE gregorian - 78
       year == CASE calendar \in TCopticCalendars -> IF calendar = "ethioaa" THEN coptic + 5500 ELSE coptic
+                [] calendar = "islamic-umalqura" -> TUmalquraYearAt(day, islamic)
                 [] calendar \in TIslamicCalendars -> islamic
                 [] calendar = "hebrew" -> THebrewYearAt(day, ((day + 1373427) * 19) \div 6940 + 1)
                 [] calendar = "persian" ->
@@ -1310,8 +1409,8 @@ LOCAL TSimpleDateOf(calendar, day) ==
       within == day - TSimpleRataDie(calendar, year, 1, 1)
       first == TSimpleDaysInMonth(calendar, year, 1)
       month == CASE calendar \in TCopticCalendars -> within \div 30 + 1
+                 [] calendar \in {"hebrew", "persian", "islamic-umalqura"} -> TSimpleMonthAt(calendar, year, 1, within)
                  [] calendar \in TIslamicCalendars -> (11 * within + 330) \div 325
-                 [] calendar \in {"hebrew", "persian"} -> TSimpleMonthAt(calendar, year, 1, within)
                  [] within < first -> 1
                  [] within < first + 155 -> 2 + (within - first) \div 31
                  [] OTHER -> 7 + (within - first - 155) \div 30
@@ -3576,4 +3675,6 @@ TemporalMethod(heap, kind, method, receiver, arguments, prototype) ==
        [] kind \in {"PlainYearMonth", "PlainMonthDay"} ->
             TYearMonthOrMonthDayMethod(heap, slots, method, arguments, prototype)
        [] kind = "ZonedDateTime" -> TZonedMethod(heap, slots, method, arguments, prototype)
+
+TemporalText(heap, kind, receiver) == TemporalMethod(heap, kind, "toString", receiver, <<>>, Undefined)
 `;
