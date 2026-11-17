@@ -1489,6 +1489,43 @@ describe("evaluation errors match TLC", () => {
     ]);
   });
 
+  it("prints what finding the action of an incomplete successor prints, and nothing after the trace, like TLC", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLES x, y\nInit == x = 0 /\\ y = 0\nA == PrintT(<<\"a\", x>>) /\\ x' = x + 1 /\\ (x > 0 \\/ y' = 0)\nNext == A\n====",
+      config: "INIT Init\nNEXT Next",
+      onPrint: () => {},
+    });
+    expect([
+      result.failure?.trace.map((step) => [formatValue(step.state.x), step.output]),
+      result.failure?.traceOutput ?? [],
+    ]).toEqual([
+      [
+        ["0", []],
+        ["1", ['<<"a", 0>>']],
+        ["2", ['<<"a", 1>>']],
+      ],
+      [],
+    ]);
+  });
+
+  it("fails as it prints an incomplete successor when another branch of its action fails, like TLC", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nVARIABLES x, y\nInit == x = 0 /\\ y = 0\nNext == x' = 1 /\\ (x = 0 \\/ <<x>>[2] = 0)\n====",
+      config: "INIT Init\nNEXT Next",
+    });
+    expect([
+      result.failure?.trace.map((step) => formatValue(step.state.x)),
+      result.failure?.traceFailure?.message,
+      result.failure?.exitCode,
+    ]).toEqual([
+      ["0"],
+      `${UNEXPECTED_EXCEPTION}Attempted to access index 2 of tuple\n<<0>>\nwhich is out of bounds.`,
+      75,
+    ]);
+  });
+
   it("records where the liveness check of a state fails after a successor of it is left incomplete, like TLC", async () => {
     const result = await check({
       source:

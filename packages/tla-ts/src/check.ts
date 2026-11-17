@@ -338,6 +338,15 @@ const toUnexpectedError = (error: TlaEvaluationError) =>
     `${isEvalException(error) ? UNEXPECTED_EVAL_EXCEPTION : UNEXPECTED_EXCEPTION}${error.message}`,
   );
 
+// TLC's ModelChecker#printTraceAndStop reports an error it hits as it prints the trace as unexpected.
+const getTraceFailure = (error: TlaEvaluationError) =>
+  getFailureMessage(
+    isEvalException(error)
+      ? new TlaEvaluationError(`${UNEXPECTED_EVAL_EXCEPTION}${error.message}`)
+      : error,
+    true,
+  );
+
 const STOP_REPLAY = new Error("The replay stopped");
 const STOP_WALK = new Error("The walk stopped");
 
@@ -878,18 +887,20 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     liveSuccessors: LiveSuccessor[],
   ) => {
     runtime.generatedStates++;
-    const named =
-      nextActions.length === 1
-        ? nextActions
-        : nextActions.filter((item) => item.name === error.action);
-    const action =
-      named.length === 1
-        ? named[0]
-        : captureOutput(() =>
-            named.find((item) =>
-              hasIncompleteSuccessor(item.expression, states[index], environment, item.scope),
-            ),
-          ).result;
+    // TLC's Tool#getState generates the successors of each action in turn until it finds the incomplete one, so another branch can fail as it prints the trace.
+    const found = captureOutput(() => {
+      try {
+        const action = nextActions.find((item) =>
+          hasIncompleteSuccessor(item.expression, states[index], environment, item.scope),
+        );
+        return { action, traceFailure: undefined };
+      } catch (failed) {
+        if (!(failed instanceof TlaEvaluationError)) throw failed;
+        return { action: undefined, traceFailure: getTraceFailure(failed) };
+      }
+    });
+    const action = found.result.action;
+    const traceFailure = found.result.traceFailure;
     const message = getIncompleteSuccessorMessage(
       error.variables,
       error.action,
@@ -897,10 +908,12 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       options.version,
     );
     const live = captureOutput(() => addFailedLiveState(index, liveSuccessors));
+    // TLC's Worker#doPostCondition fails before it rebuilds the trace again.
+    const trace = traces.getStateTrace(index, error.state).trace;
     const failure = createFailureResult(
       error,
-      appendTraceOutput(traces.getStateTrace(index, error.state), live.lines),
-      { callStack: live.result },
+      appendTraceOutput({ trace }, live.lines),
+      { callStack: live.result, traceFailure },
       { isConsole: true },
     );
     return withOutDegrees({
@@ -911,13 +924,16 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         message,
         toolMessage: message,
         exitCode: EXIT_STATUS.specEvaluationFailure,
-        trace: [
-          ...failure.failure.trace,
-          traces.getIncompleteStep(error.state, failure.failure.trace.length + 1, {
-            action: error.action,
-            label: action && getActionLabel(action, options.version),
-          }),
-        ],
+        trace: traceFailure
+          ? trace
+          : [
+              ...trace,
+              traces.getIncompleteStep(error.state, trace.length + 1, {
+                action: error.action,
+                label: action && getActionLabel(action, options.version),
+                output: found.lines,
+              }),
+            ],
       },
     });
   };
@@ -1507,14 +1523,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         }
         const isTraceFailed = isUnfingerprintable(successor.state);
         const traceFailure =
-          isTraceFailed && error instanceof TlaEvaluationError
-            ? getFailureMessage(
-                isEvalException(error)
-                  ? new TlaEvaluationError(`${UNEXPECTED_EVAL_EXCEPTION}${error.message}`)
-                  : error,
-                true,
-              )
-            : undefined;
+          isTraceFailed && error instanceof TlaEvaluationError ? getTraceFailure(error) : undefined;
         outcome = createFailureResult(
           error,
           appendTraceOutput(
