@@ -17,7 +17,7 @@ interface TraceOptions {
   loopStart?: number;
   known?: number;
   incomplete?: State;
-  isFailed?: boolean;
+  isPrintedOnly?: boolean;
 }
 
 interface RebuiltState {
@@ -134,7 +134,7 @@ export const createTraceBuilder = (context: TraceContext) => {
     const known = traceOptions.known ?? 1;
     const loopStart = traceOptions.loopStart;
     const rebuilt = is174 && loopStart !== undefined ? loopStart + 1 : steps.length - known;
-    const isRebuiltAgain = known > 0 && !is174 && !traceOptions.isFailed;
+    const isRebuiltAgain = known > 0 && !is174 && !traceOptions.isPrintedOnly;
     const initialOutput =
       known === 0 || (steps.length > 1 && (rebuilt > 0 || isRebuiltAgain || is174))
         ? captureOutput(context.getInitialStates).lines
@@ -272,7 +272,7 @@ export const createTraceBuilder = (context: TraceContext) => {
   const getStateTrace = (index: number, traceOptions: TraceOptions = {}): Behavior => {
     if (context.parents[index] !== -1) return getTrace(index, undefined, traceOptions);
     const traceOutput =
-      is174 || traceOptions.isFailed ? [] : captureOutput(context.getInitialStates).lines;
+      is174 || traceOptions.isPrintedOnly ? [] : captureOutput(context.getInitialStates).lines;
     const state = states[index];
     if (traceOptions.incomplete !== undefined) {
       return {

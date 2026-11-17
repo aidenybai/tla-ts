@@ -944,7 +944,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       options.version,
     );
     const live = captureOutput(() => addFailedLiveState(index, liveSuccessors));
-    const trace = traces.getStateTrace(index, { incomplete: error.state, isFailed: true }).trace;
+    const trace = traces.getStateTrace(index, { incomplete: error.state, isPrintedOnly: true }).trace;
     const checked = checkFailedTrace(
       appendTraceOutput(
         {
@@ -1235,7 +1235,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         if (violation) reportContinuedViolation("invariant-violation", violation);
       } catch (error) {
         if (isStackOverflow(error)) throw error;
-        const behavior = traces.getTrace(index, successor, { isFailed: true });
+        const behavior = traces.getTrace(index, successor, { isPrintedOnly: true });
         const replay = captureOutput(() => replayNext(index));
         return createFailureResult(
           error,
@@ -1509,7 +1509,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     return { result, lines: [...live.lines, ...replay.lines] };
   };
   const getNextFailureTrace = (index: number, counterExample?: CounterExampleOptions) =>
-    checkFailedTrace(traces.getStateTrace(index, { isFailed: !counterExample }), counterExample);
+    checkFailedTrace(traces.getStateTrace(index, { isPrintedOnly: !counterExample }), counterExample);
   const reportNextStateOverflow = (index: number, counterExample?: CounterExampleOptions) => {
     const checked = getNextFailureTrace(index, counterExample);
     return createFailureResult(
@@ -1620,8 +1620,8 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
             ? error
             : undefined;
         const behavior = traceError
-          ? traces.getStateTrace(index, { isFailed: true })
-          : traces.getTrace(index, successor, { isFailed: true });
+          ? traces.getStateTrace(index, { isPrintedOnly: true })
+          : traces.getTrace(index, successor, { isPrintedOnly: true });
         const traceFailure =
           traceError &&
           getTraceFailure(
@@ -1691,7 +1691,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       const replay = getReplayFailure(environment, (tracing) =>
         liveness?.addState(index, state, liveSuccessors, tracing),
       );
-      const behavior = traces.getStateTrace(index, { isFailed: true });
+      const behavior = traces.getStateTrace(index, { isPrintedOnly: true });
       const replayed = captureOutput(() => replayNext(index));
       return createFailureResult(error, appendTraceOutput(behavior, replayed.lines), {
         outDegrees: getFailureOutDegrees(),
