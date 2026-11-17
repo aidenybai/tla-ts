@@ -4527,9 +4527,17 @@ const isSuperThis = (
   const literal = ts.isPropertyAssignment(candidate.parent)
     ? candidate.parent.parent
     : candidate.parent;
+  // A this that the candidate only passes on as a value reads none of the literal's properties.
+  const isOnlyValue = (inner: ts.Node) =>
+    !(
+      (ts.isPropertyAccessExpression(inner.parent) || ts.isElementAccessExpression(inner.parent)) &&
+      inner.parent.expression === inner
+    );
   return (
-    findNodes(candidate, (inner): inner is ts.Node => inner.kind === ts.SyntaxKind.ThisKeyword)
-      .length === 0 ||
+    findNodes(
+      candidate,
+      (inner): inner is ts.Node => inner.kind === ts.SyntaxKind.ThisKeyword && !isOnlyValue(inner),
+    ).length === 0 ||
     (home !== undefined &&
       ts.isObjectLiteralExpression(literal) &&
       checker
