@@ -184,6 +184,8 @@ describe("name resolution matches SANY", () => {
     ).rejects.toThrow(TlaSyntaxError);
   });
 
+  const exceptSelection = "Selecting subexpression of an EXCEPT not yet implemented.";
+  const letSelector = "A name selector here must be from a LET clause.";
   it.each([
     ["f == g", [["line 2, col 6 to line 2, col 6", "Unknown operator: `g'."]]],
     [
@@ -715,6 +717,202 @@ describe("name resolution matches SANY", () => {
         ["line 3, col 24 to line 3, col 27", "Cannot take subexpression of `TRUE'."],
         ["line 3, col 34 to line 3, col 35", "Unknown operator: `zz'."],
         ["line 3, col 58 to line 3, col 58", "Cannot take subexpression of `z'."],
+      ],
+    ],
+    [
+      "CONSTANT c, Cop(_)\nI == INSTANCE Naturals\nOp(P1(_, _)) == Cop(LAMBDA p : p)!1 /\\ P1(G0, 0)!1!: /\\ zz(G1)!1 /\\ c(G2)!1 /\\ I!Nope(G3)!1",
+      [
+        ["line 4, col 17 to line 4, col 19", "Cannot take subexpression of `Cop'."],
+        ["line 4, col 40 to line 4, col 41", "Cannot take subexpression of `P1'."],
+        ["line 4, col 57 to line 4, col 58", "Unknown operator: `zz'."],
+        ["line 4, col 69 to line 4, col 69", "Cannot take subexpression of `c'."],
+        ["line 4, col 80 to line 4, col 85", "Unknown operator: `I!Nope'."],
+      ],
+    ],
+    [
+      "CONSTANT c, f\nOp == [f EXCEPT ![1] = 2, ![2] = 3]\nOp2 == [f EXCEPT ![1] = 2]\nA == Op!1 /\\ Op!2 /\\ Op!3 /\\ Op!4 /\\ Op!>> /\\ Op2!>> /\\ Op!<< /\\ Op!@\nTHEOREM T == [f EXCEPT ![1] = 2] = f\nB == T!1!1 /\\ T!1!2 /\\ T!1!3 /\\ T!1!>> /\\ T!1!@\nTHEOREM U == ASSUME c PROVE [f EXCEPT ![1] = 2, ![2] = 3] = f\nC == U!2!1!1 /\\ U!2!1!2 /\\ U!2!1!4 /\\ U!2!1!>> /\\ U!2!1!@\nUSE U!2!1!2",
+      [
+        ["line 5, col 17 to line 5, col 17", exceptSelection],
+        ["line 5, col 25 to line 5, col 25", exceptSelection],
+        [
+          "line 5, col 33 to line 5, col 33",
+          "Nonexistent operand specified by `argument selector 4'.",
+        ],
+        ["line 5, col 41 to line 5, col 42", "Nonexistent operand specified by `>>'."],
+        ["line 5, col 51 to line 5, col 52", exceptSelection],
+        ["line 5, col 69 to line 5, col 69", "Nonexistent operand specified by `@'."],
+        ["line 7, col 19 to line 7, col 19", exceptSelection],
+        [
+          "line 7, col 28 to line 7, col 28",
+          "Nonexistent operand specified by `argument selector 3'.",
+        ],
+        ["line 7, col 37 to line 7, col 38", exceptSelection],
+        ["line 7, col 47 to line 7, col 47", "Nonexistent operand specified by `@'."],
+        ["line 9, col 23 to line 9, col 23", exceptSelection],
+        [
+          "line 9, col 34 to line 9, col 34",
+          "Nonexistent operand specified by `argument selector 4'.",
+        ],
+        ["line 9, col 45 to line 9, col 46", "Nonexistent operand specified by `>>'."],
+        ["line 9, col 57 to line 9, col 57", "Nonexistent operand specified by `@'."],
+        ["line 10, col 11 to line 10, col 11", exceptSelection],
+      ],
+    ],
+    [
+      "CONSTANT c\nRECURSIVE S, U(_)\nA == S!lab /\\ U(1)!lab /\\ U!lab /\\ U(1, 2)!lab /\\ U(LAMBDA p : p)!lab /\\ U(S)!lab(c)\nB == U!1 /\\ U(1, 2)!1 /\\ U(LAMBDA p : p)!1 /\\ (LET RECURSIVE T IN T!lab) /\\ (LET RECURSIVE V(_) IN V!lab!1)",
+      [
+        [
+          "line 4, col 6 to line 4, col 6",
+          "Subexpression of  `S' used inside the operator's definition.",
+        ],
+        [
+          "line 4, col 15 to line 4, col 15",
+          "Subexpression of  `U' used inside the operator's definition.",
+        ],
+        ["line 4, col 27 to line 4, col 31", "The operator U requires 1 arguments."],
+        ["line 4, col 37 to line 4, col 42", "The operator U requires 1 arguments."],
+        [
+          "line 4, col 53 to line 4, col 64",
+          "LAMBDA expression used where an expression is required.",
+        ],
+        [
+          "line 4, col 51 to line 4, col 51",
+          "Subexpression of  `U' used inside the operator's definition.",
+        ],
+        [
+          "line 4, col 74 to line 4, col 74",
+          "Subexpression of  `U' used inside the operator's definition.",
+        ],
+        ["line 5, col 6 to line 5, col 8", "The operator U requires 1 arguments."],
+        ["line 5, col 14 to line 5, col 19", "The operator U requires 1 arguments."],
+        [
+          "line 5, col 28 to line 5, col 39",
+          "LAMBDA expression used where an expression is required.",
+        ],
+        [
+          "line 5, col 26 to line 5, col 26",
+          "Subexpression of  `U' used inside the operator's definition.",
+        ],
+        [
+          "line 5, col 62 to line 5, col 62",
+          "Symbol T declared in RECURSIVE statement but not defined.",
+        ],
+        [
+          "line 5, col 67 to line 5, col 67",
+          "Subexpression of  `T' used inside the operator's definition.",
+        ],
+        [
+          "line 5, col 92 to line 5, col 95",
+          "Symbol V declared in RECURSIVE statement but not defined.",
+        ],
+        ["line 5, col 100 to line 5, col 106", "The operator V requires 1 arguments."],
+        [
+          "line 6, col 1 to line 6, col 10",
+          "A VARIABLE declaration may not appear within a recursive definition section.",
+        ],
+        [
+          "line 3, col 11 to line 3, col 11",
+          "Symbol S declared in RECURSIVE statement but not defined.",
+        ],
+        [
+          "line 3, col 14 to line 3, col 17",
+          "Symbol U declared in RECURSIVE statement but not defined.",
+        ],
+      ],
+    ],
+    [
+      "CONSTANT c\nOp1 == {c, lab:: c} \\cap {LET L == c IN L}\nOp2(a) == {a, LET K(b) == b IN K(1)}\nA == Op1!1!lab /\\ Op1!<<!lab /\\ Op1!2!L /\\ Op1!2!1!L /\\ Op2(1)!2!1!K /\\ Op1!1!2!lab",
+      [
+        ["line 5, col 10 to line 5, col 10", letSelector],
+        ["line 5, col 23 to line 5, col 24", letSelector],
+        ["line 5, col 37 to line 5, col 37", letSelector],
+        ["line 5, col 66 to line 5, col 66", letSelector],
+        ["line 5, col 79 to line 5, col 79", letSelector],
+      ],
+    ],
+    [
+      "CONSTANT c\nOp0(a0, P1(_, _)) == l1:: a0\nOp3(P(_, _)) == {LET L(G(_)) == lab:: G(1) IN L(P)}\nA == Op0(c, 1)!l1 /\\ Op3(LAMBDA p : p)!1!1 /\\ Op3(Op0)!<<!L(c)!lab",
+      [
+        ["line 4, col 49 to line 4, col 49", "Expected arity 1 but found operator of arity 2."],
+        [
+          "line 4, col 47 to line 4, col 50",
+          "Argument number 1 to operator 'L' \nshould be a 1-parameter operator.",
+        ],
+        [
+          "line 5, col 13 to line 5, col 13",
+          "An expression appears as argument number 2 (counting from 1) to operator 'Op0', in a position an operator is required.",
+        ],
+        [
+          "line 5, col 6 to line 5, col 17",
+          "Argument number 2 to operator 'LAMBDA' \nshould be a 2-parameter operator.",
+        ],
+        [
+          "line 5, col 22 to line 5, col 24",
+          "Lambda expression with arity 1 used as argument 1 of operator `Op3', \nbut an operator of arity 2 is required.",
+        ],
+        [
+          "line 5, col 22 to line 5, col 42",
+          "Argument number 1 to operator 'LAMBDA' \nshould be a 2-parameter operator.",
+        ],
+        ["line 5, col 61 to line 5, col 61", "Expected arity 1 but found operator of arity 0."],
+        [
+          "line 5, col 47 to line 5, col 66",
+          "Argument number 1 to operator 'LAMBDA' \nshould be a 2-parameter operator.",
+        ],
+        [
+          "line 5, col 47 to line 5, col 66",
+          "Argument number 2 to operator 'LAMBDA' \nshould be a 1-parameter operator.",
+        ],
+      ],
+    ],
+    [
+      "CONSTANT c\nOp1(a0) == {a0}\nOp == {c, Op1(LAMBDA p : p)}\nA == Op!2!1!1 /\\ Op!2!1 /\\ Op!2",
+      [
+        [
+          "line 4, col 15 to line 4, col 26",
+          "LAMBDA expression used where an expression is required.",
+        ],
+        [
+          "line 5, col 11 to line 5, col 11",
+          "An unexpected null node specified by 'argument selector 1'.\nThis is probably due to a previous error.",
+        ],
+        [
+          "line 5, col 23 to line 5, col 23",
+          "An unexpected null node specified by 'argument selector 1'.\nThis is probably due to a previous error.",
+        ],
+      ],
+    ],
+    [
+      "CONSTANT c\nRECURSIVE R(_, _), Q(_), P(_, _)\nA == R(c, R)!1!@ /\\ Q(Q)!1 /\\ P(P, LAMBDA p : p)!1\nR(a, b) == a\nQ(a) == Q(a) /\\ Q(Q)!1\nP == c",
+      [
+        ["line 4, col 11 to line 4, col 11", "The operator R requires 2 arguments."],
+        [
+          "line 4, col 6 to line 4, col 6",
+          "Subexpression of  `R' used inside the operator's definition.",
+        ],
+        ["line 4, col 23 to line 4, col 23", "The operator Q requires 1 arguments."],
+        [
+          "line 4, col 21 to line 4, col 21",
+          "Subexpression of  `Q' used inside the operator's definition.",
+        ],
+        ["line 4, col 33 to line 4, col 33", "The operator P requires 2 arguments."],
+        [
+          "line 4, col 36 to line 4, col 47",
+          "LAMBDA expression used where an expression is required.",
+        ],
+        [
+          "line 4, col 31 to line 4, col 31",
+          "Subexpression of  `P' used inside the operator's definition.",
+        ],
+        ["line 6, col 19 to line 6, col 19", "The operator Q requires 1 arguments."],
+        [
+          "line 6, col 17 to line 6, col 17",
+          "Subexpression of  `Q' used inside the operator's definition.",
+        ],
+        [
+          "line 7, col 1 to line 7, col 6",
+          "Definition of P has different arity than its RECURSIVE declaration.",
+        ],
       ],
     ],
     [
@@ -2155,6 +2353,73 @@ describe("name resolution matches SANY", () => {
     );
   });
 
+  it("selects from LET operators inside theorems and proofs like SANY", async () => {
+    await expect(
+      checkNames(
+        "EXTENDS Naturals\nCONSTANT c\nLEMMA LET L(a, P(_, _)) == a[c] IN L(LAMBDA p : 1, c)!@\n<1>1. LET K(a) == lab:: a + 1 IN K(2)!lab!3 = K(1)!1\n<1> DEFINE D == LET J(b) == {b} IN J(c)!2\n<1>2. QED",
+      ),
+    ).rejects.toThrow(
+      createSanyError([
+        {
+          location: "line 4, col 38 to line 4, col 49 of module M",
+          message: "LAMBDA expression used where an expression is required.",
+        },
+        {
+          location: "line 4, col 52 to line 4, col 52 of module M",
+          message: "Expected arity 2 but found operator of arity 0.",
+        },
+        {
+          location: "line 4, col 55 to line 4, col 55 of module M",
+          message: "Nonexistent operand specified by `@'.",
+        },
+        {
+          location: "line 5, col 43 to line 5, col 43 of module M",
+          message: "Nonexistent operand specified by `argument selector 3'.",
+        },
+        {
+          location: "line 6, col 41 to line 6, col 41 of module M",
+          message: "Nonexistent operand specified by `argument selector 2'.",
+        },
+      ]),
+    );
+  });
+
+  it("reports selecting through an expression that failed to resolve before later selectors like SANY", async () => {
+    const failed =
+      "Subexpression selection failed, probably due to an error in the selected expression.";
+    const unexpected =
+      "An unexpected null node specified by 'argument selector 1'.\nThis is probably due to a previous error.";
+    const getPrefixErrors = (line: number, column: number, end: number) => [
+      {
+        location: `line ${line}, col ${column} to line ${line}, col ${column} of module M`,
+        message: "Could not find declaration or definition of symbol '-.'.",
+      },
+      {
+        location: `line ${line}, col ${column} to line ${line}, col ${end} of module M`,
+        message: "Couldn't resolve prefix operator symbol `-.'.",
+      },
+    ];
+    await expect(
+      checkNames(
+        "CONSTANT c\nOp1(a0) == -{c}\nOp2 == {-c, 1}\nA == Op1(1)!1!@ /\\ Op1(2)!1!9 /\\ Op2!1!1!@\nTHEOREM T == -c\nTHEOREM U == ASSUME -c PROVE c\nTHEOREM V == {-c, 1}\nB == T!1!@ /\\ U!1 /\\ V!1!1",
+      ),
+    ).rejects.toThrow(
+      createSanyError([
+        ...getPrefixErrors(3, 12, 15),
+        ...getPrefixErrors(4, 9, 10),
+        { location: "line 5, col 13 to line 5, col 13 of module M", message: failed },
+        { location: "line 5, col 27 to line 5, col 27 of module M", message: failed },
+        { location: "line 5, col 38 to line 5, col 38 of module M", message: unexpected },
+        ...getPrefixErrors(6, 14, 15),
+        ...getPrefixErrors(7, 21, 22),
+        ...getPrefixErrors(8, 15, 16),
+        { location: "line 9, col 8 to line 9, col 8 of module M", message: failed },
+        { location: "line 9, col 17 to line 9, col 17 of module M", message: unexpected },
+        { location: "line 9, col 24 to line 9, col 24 of module M", message: unexpected },
+      ]),
+    );
+  });
+
   it("reports a selection that leaves parameters unfilled under a built-in operator like SANY", async () => {
     await expect(
       checkNames(
@@ -2174,6 +2439,45 @@ describe("name resolution matches SANY", () => {
           ["line 17, col 7 to line 17, col 9", "The operator Z requires 1 arguments."],
         ].map((error) => ({ location: `${error[0]} of module M`, message: error[1] })),
       ),
+    );
+  });
+
+  it("checks the arguments of a RECURSIVE operator that is never defined like SANY", async () => {
+    await expect(
+      checkNames(
+        "CONSTANT c\nRECURSIVE R(_, _), S\nA == R(1, R) /\\ R(S, LAMBDA p : p) /\\ R(c, c)\nTHEOREM R(c, R) = 1",
+      ),
+    ).rejects.toThrow(
+      createSanyError([
+        {
+          location: "line 4, col 11 to line 4, col 11 of module M",
+          message: "The operator R requires 2 arguments.",
+        },
+        {
+          location: "line 4, col 22 to line 4, col 33 of module M",
+          message: "LAMBDA expression used where an expression is required.",
+        },
+        {
+          location: "line 5, col 1 to line 5, col 19 of module M",
+          message: "A THEOREM may not appear within a recursive definition section.",
+        },
+        {
+          location: "line 5, col 14 to line 5, col 14 of module M",
+          message: "The operator R requires 2 arguments.",
+        },
+        {
+          location: "line 6, col 1 to line 6, col 10 of module M",
+          message: "A VARIABLE declaration may not appear within a recursive definition section.",
+        },
+        {
+          location: "line 3, col 11 to line 3, col 17 of module M",
+          message: "Symbol R declared in RECURSIVE statement but not defined.",
+        },
+        {
+          location: "line 3, col 20 to line 3, col 20 of module M",
+          message: "Symbol S declared in RECURSIVE statement but not defined.",
+        },
+      ]),
     );
   });
 

@@ -97,6 +97,7 @@ export interface SelectionArguments {
 
 interface SelectionError {
   applications: SelectionArguments[];
+  nulls: NullSelection[];
   error: SanyError;
 }
 
@@ -110,17 +111,29 @@ type Reference = Expression & { kind: "Identifier" | "Apply" | "Subexpression" }
 
 export const LOCAL_RESOLUTION = { kind: "Local" } as const;
 
+export const SELECTION_NAME = "$subexpression";
+
 export interface NullSelection {
   node: Expression;
   error: SanyError;
+}
+
+interface SelectionArgument {
+  operator: string;
+  index: number;
+  range: SourceRange | undefined;
 }
 
 export const selections = new WeakSet<Expression>();
 export const selectionErrors = new WeakMap<Expression, SelectionError>();
 export const operatorSelectionErrors = new WeakMap<Expression, SanyError>();
 export const factReferences = new WeakMap<Fact[], Fact[]>();
+export const selectionArguments = new WeakMap<Expression, SelectionArgument>();
 export const nullSelections = new WeakMap<Expression, NullSelection[]>();
 const unresolvedExpressions = new WeakSet<Expression>();
+
+const findNullError = (nulls: NullSelection[] | undefined) =>
+  nulls?.find((selection) => unresolvedExpressions.has(selection.node))?.error;
 
 const renamedArities = new WeakMap<Expression, number>();
 
@@ -279,7 +292,9 @@ const findSymbol = (name: string, unit: Unit): ModuleSymbol | undefined => {
     };
   }
   const binding = getModuleBinding(name, unit, undefined);
-  if (binding?.isPending) return { key: name, arity: binding.arity, kind: binding.kind };
+  if (binding?.isPending) {
+    return { key: name, arity: binding.arity, params: binding.params, kind: binding.kind };
+  }
   return binding ? unit.imported.get(name) : undefined;
 };
 
@@ -576,6 +591,7 @@ const checkSelection = (
           : "!(...)";
     const getPosition = (count: number) =>
       selector.kind === "Operand" ? getOperandIndex(selector.operand, count) : -1;
+    const unexpectedNull = `An unexpected null node specified by '${operand}'.\nThis is probably due to a previous error.`;
     if (state.isSufficesOpen) {
       if (getPosition(1) !== 0) {
         return report(
@@ -591,6 +607,12 @@ const checkSelection = (
     if (node.kind === "NewSymbol") return node;
     if (node.kind !== "AssumeProve") {
       const expression = getLabelBody(node);
+      if (unresolvedExpressions.has(expression)) {
+        return report(
+          index,
+          "Subexpression selection failed, probably due to an error in the selected expression.",
+        );
+      }
       if (["Number", "Decimal", "String"].includes(expression.kind)) {
         return report(index, "Selecting subexpression of expression that has none.");
       }
@@ -610,14 +632,17 @@ const checkSelection = (
             ? sets.length > 0
               ? sets
               : undefined
-            : expression.kind === "Except"
-              ? undefined
-              : getOperands(expression);
+            : getOperands(expression);
       if (!operands) return node;
-      const position = getPosition(operands.length);
+      const isExcept = expression.kind === "Except";
+      const position = getPosition(isExcept ? expression.updates.length + 1 : operands.length);
       if (position === -1) return report(index, `Nonexistent operand specified by \`${operand}'.`);
+      if (isExcept && position > 0) {
+        return report(index, "Selecting subexpression of an EXCEPT not yet implemented.");
+      }
       state.node = operands[position];
       state.isGoal = false;
+      if (unresolvedExpressions.has(state.node)) return report(index, unexpectedNull);
       continue;
     }
     const clauses = [...node.assumptions, node.conclusion];
@@ -632,6 +657,13 @@ const checkSelection = (
     }
     state.node = clause;
     state.isGoal = false;
+    if (
+      clause.kind !== "NewSymbol" &&
+      clause.kind !== "AssumeProve" &&
+      unresolvedExpressions.has(clause)
+    ) {
+      return report(index, unexpectedNull);
+    }
   }
   if (isFact) return state.node;
   if (state.node.kind === "AssumeProve") {
@@ -770,6 +802,22 @@ const getSymbolArity = (
         getSpelledNameRange(expression, name),
       unit,
     );
+    return undefined;
+  }
+  if (
+    expression.kind !== "OperatorReference" &&
+    prefix !== "" &&
+    isPendingSelectionReported(
+      prefix,
+      expression.kind === "Apply" && expression.argumentCounts
+        ? expression.args.slice(0, expression.argumentCounts[0])
+        : [],
+      expression.selectorRanges?.[0],
+      (expression.kind === "Apply" ? expression.argumentRanges?.[0] : undefined) ?? location.range,
+      scope,
+      unit,
+    )
+  ) {
     return undefined;
   }
   if (selected || (prefix !== "" && isFact(prefix, unit))) {
@@ -1077,6 +1125,7 @@ const matchArgument = (
     } else if (selectionError) {
       unit.errors.push(selectionError);
     } else if (arg.kind === "Lambda" && range) {
+      unresolvedExpressions.add(arg);
       report(range, "LAMBDA expression used where an expression is required.");
     } else if (arg.kind === "OperatorReference") {
       const argArity = getSymbolArity(arg, arg.operator, scope, unit);
@@ -1160,11 +1209,19 @@ const resolveApply = (
   }
   const operatorRange =
     expression.selectorRanges?.at(-1) ?? getSpelledNameRange(expression, operator);
-  const matches = expression.args
-    .slice(0, params.length)
-    .map((arg, index) =>
-      matchArgument(arg, params[index], index, operator, operatorRange, scope, unit),
+  const isSelection = operator === SELECTION_NAME;
+  const matches = expression.args.slice(0, params.length).map((arg, index) => {
+    const source = isSelection ? selectionArguments.get(arg) : undefined;
+    return matchArgument(
+      arg,
+      params[index],
+      source?.index ?? index,
+      source?.operator ?? operator,
+      source?.range ?? operatorRange,
+      scope,
+      unit,
     );
+  });
   if (
     isArgumentCountReported(
       callee,
@@ -1180,7 +1237,7 @@ const resolveApply = (
     if (!isMatched && expression.location.range) {
       unit.errors.push({
         location: formatRange(expression.location.range),
-        message: `Argument number ${index + 1} to operator '${operator}' \nshould be a ${params[index]}-parameter operator.`,
+        message: `Argument number ${index + 1} to operator '${isSelection ? "LAMBDA" : operator}' \nshould be a ${params[index]}-parameter operator.`,
       });
     }
   });
@@ -1209,7 +1266,7 @@ const isSelectionReported = (expression: Expression, scope: LocalName | undefine
         ),
       ),
   );
-  unit.errors.push(failed.error);
+  unit.errors.push(findNullError(failed.nulls) ?? failed.error);
   return true;
 };
 
@@ -1233,10 +1290,8 @@ const resolveExpression = (
   unit: Unit,
 ): void => {
   if (selections.has(expression) && !unit.isGenerated) {
-    const failed = nullSelections
-      .get(expression)
-      ?.find((selection) => unresolvedExpressions.has(selection.node));
-    if (failed) unit.errors.push(failed.error);
+    const failed = findNullError(nullSelections.get(expression));
+    if (failed) unit.errors.push(failed);
     else resolveExpression(expression, scope, { ...unit, isGenerated: true });
     return;
   }
@@ -1288,6 +1343,7 @@ const resolveExpression = (
     case "Lambda":
       if (selections.has(expression)) resolveLambda(expression, scope, unit);
       else if (expression.location.range) {
+        unresolvedExpressions.add(expression);
         unit.errors.push({
           location: formatRange(expression.location.range),
           message: "LAMBDA expression used where an expression is required.",
@@ -1417,6 +1473,31 @@ const resolveExpression = (
   }
 };
 
+const isPendingSelectionReported = (
+  name: string,
+  args: Expression[],
+  selectorRange: SourceRange | undefined,
+  argumentsRange: SourceRange | undefined,
+  scope: LocalName | undefined,
+  unit: Unit,
+) => {
+  const pending = lookupLocal(scope, name) ?? getModuleBinding(name, unit, undefined);
+  if (!pending?.isPending || !selectorRange || !argumentsRange) return false;
+  if (args.length !== pending.arity) {
+    unit.errors.push({
+      location: formatRange(argumentsRange),
+      message: `The operator ${name} requires ${pending.arity} arguments.`,
+    });
+    return true;
+  }
+  args.forEach((arg) => resolveExpression(arg, scope, unit));
+  unit.errors.push({
+    location: formatRange(selectorRange),
+    message: `Subexpression of  \`${name}' used inside the operator's definition.`,
+  });
+  return true;
+};
+
 const isSubexpressionReported = (
   expression: Expression & { kind: "Subexpression" },
   scope: LocalName | undefined,
@@ -1428,11 +1509,6 @@ const isSubexpressionReported = (
   ) {
     return true;
   }
-  expression.selectors
-    .flatMap((selector) => ("args" in selector ? selector.args : []))
-    .forEach((arg) => resolveArgument(arg, scope, unit));
-  const selected = checkReference(expression, scope, unit, false);
-  if (selected) return selected.node === undefined;
   const head = expression.selectors[0];
   const range = expression.selectorRanges?.[0];
   const nameCount = expression.selectors.findIndex((selector) => selector.kind !== "Name");
@@ -1467,21 +1543,39 @@ const isSubexpressionReported = (
     });
     return true;
   }
-  if (head.kind !== "Name" || expression.selectors[1].kind === "Name" || !range) return false;
-  const local = lookupLocal(scope, head.name);
-  const binding = local ?? findSymbol(head.name, unit);
-  if ((binding === undefined && !isFact(head.name, unit)) || binding?.kind === "Instance") {
-    unit.errors.push({
-      location: formatRange(range),
-      message: `Unknown operator: \`${resolveSynonym(head.name)}'.`,
-    });
+  if (head.kind === "Name" && expression.selectors[1].kind !== "Name" && range) {
+    const local = lookupLocal(scope, head.name);
+    const binding = local ?? findSymbol(head.name, unit);
+    if ((binding === undefined && !isFact(head.name, unit)) || binding?.kind === "Instance") {
+      unit.errors.push({
+        location: formatRange(range),
+        message: `Unknown operator: \`${resolveSynonym(head.name)}'.`,
+      });
+      return true;
+    }
+    if (binding && (!SELECTABLE_KINDS.has(binding.kind) || local?.isNonFact)) {
+      reportUnselectable(head.name, range, unit);
+      return true;
+    }
+  }
+  if (
+    head.kind === "Name" &&
+    isPendingSelectionReported(
+      head.name,
+      head.args,
+      range,
+      expression.argumentRanges?.[0] ?? expression.location.range,
+      scope,
+      unit,
+    )
+  ) {
     return true;
   }
-  if (binding && (!SELECTABLE_KINDS.has(binding.kind) || local?.isNonFact)) {
-    reportUnselectable(head.name, range, unit);
-    return true;
-  }
-  return false;
+  expression.selectors
+    .flatMap((selector) => ("args" in selector ? selector.args : []))
+    .forEach((arg) => resolveArgument(arg, scope, unit));
+  const selected = checkReference(expression, scope, unit, false);
+  return selected ? selected.node === undefined : false;
 };
 
 const checkFact = (fact: Fact, reference: Fact, scope: LocalName | undefined, unit: Unit) => {

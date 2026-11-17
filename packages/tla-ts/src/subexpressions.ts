@@ -30,7 +30,9 @@ import {
   nullSelections,
   operatorSelectionErrors,
   selectionErrors,
+  selectionArguments,
   selections,
+  SELECTION_NAME,
   factReferences,
   type NullSelection,
   type SelectionArguments,
@@ -55,8 +57,6 @@ interface SelectingName {
   selectorRanges?: SourceRange[];
   argumentRanges?: (SourceRange | undefined)[];
 }
-
-const SELECTION_NAME = "$subexpression";
 
 const declaredArities = new WeakMap<Definition, number>();
 
@@ -218,6 +218,7 @@ const selectSubexpression = (
     if (!range) throw createError(message, location);
     selectionErrors.set(reference, {
       applications,
+      nulls,
       error: { location: formatRange(range), message },
     });
     isFailed = true;
@@ -259,14 +260,25 @@ const selectSubexpression = (
       if (!isOperator || found.args.length !== 0) return report(range, message);
       deferToExpression(range, message);
     }
+    found.args.forEach((arg, index) =>
+      selectionArguments.set(arg, {
+        operator: found.name,
+        index,
+        range: reference.selectorRanges?.[selectorIndex],
+      }),
+    );
     if (isLast) return { definition, args: found.args };
+    const range = definition.location.range;
+    const isUndefined =
+      declaredArities.has(definition) &&
+      range?.module === location.range?.module &&
+      isBefore(location, definition.location);
     applications.push({
       operator: found.name,
       range: reference.selectorRanges?.[selectorIndex],
       args: found.args,
-      params: getParamArities(definition),
+      params: isUndefined ? Array(arity).fill(0) : getParamArities(definition),
     });
-    const range = definition.location.range;
     if (
       definition.isRecursive &&
       range &&
@@ -400,6 +412,14 @@ const selectSubexpression = (
       current = chosen;
       return;
     }
+    if (
+      current.kind === "Except" &&
+      selector.kind === "Operand" &&
+      getOperandIndex(selector.operand, current.updates.length + 1) > 0
+    ) {
+      report(range, "Selecting subexpression of an EXCEPT not yet implemented.");
+      return;
+    }
     const operands = binder ? binder.sets : getOperands(current);
     if (!operands && current.kind !== "Identifier") {
       report(range, "Selecting subexpression of expression that has none.");
@@ -426,7 +446,11 @@ const selectSubexpression = (
     if (selector.kind === "Name") {
       while (current?.kind === "Label") current = current.body;
       if (current?.kind !== "Let") {
-        throw createError("A name selector here must be from a LET clause", location);
+        report(
+          reference.selectorRanges?.[selectorIndex - 1],
+          "A name selector here must be from a LET clause.",
+        );
+        return reference;
       }
       selection.lets.push(current.definitions);
       const last = enterDefinition(current.definitions);
@@ -500,11 +524,17 @@ const resolveSubexpressions = (
     if (expression.recursive) setDeclaredArities(expression.recursive, expression.definitions);
     const local: Lookup = (name) =>
       expression.definitions.find((definition) => definition.name === name) ?? lookup(name);
-    const mapped = mapChildren(expression, (child) => resolveSubexpressions(child, local, isGoal));
+    const isLocalGoal = (name: string) =>
+      !expression.definitions.some((definition) => definition.name === name) && isGoal(name);
+    const mapped = mapChildren(expression, (child) =>
+      resolveSubexpressions(child, local, isLocalGoal),
+    );
     return mapped.kind === "Let" && mapped.instances
       ? {
           ...mapped,
-          instances: mapped.instances.map((instance) => resolveInstance(instance, local, isGoal)),
+          instances: mapped.instances.map((instance) =>
+            resolveInstance(instance, local, isLocalGoal),
+          ),
         }
       : mapped;
   }
