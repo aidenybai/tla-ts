@@ -175,6 +175,15 @@ describe("applications of the builtin operators, as Z3 5.3.2 makes them", () => 
       "((_ int_to_bv 3) b)",
     ]);
   });
+
+  it("reports the arguments of true and false as too many", () => {
+    expect(
+      run(["(declare-const b Bool)", "(simplify (true #b101))", "(simplify (false b b))"]),
+    ).toEqual([
+      '(error "line 2 column 21: Wrong number of arguments (1) passed to function (declare-fun true () Bool) \narg: #b101")',
+      '(error "line 3 column 20: Wrong number of arguments (2) passed to function (declare-fun false () Bool) \narg: b\n\narg: b")',
+    ]);
+  });
 });
 
 describe("terms that Z3 5.3.2 rejects", () => {

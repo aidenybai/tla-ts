@@ -539,6 +539,8 @@ const REAL_FUNCTION_OPS = new Set([
 
 // The arity of each builtin declaration but distinct, which takes the arguments it is given.
 const ARITIES = new Map<number, number>([
+  [OP_TRUE, 0],
+  [OP_FALSE, 0],
   [OP_ITE, 3],
   ...[OP_NOT, OP_UMINUS, OP_ABS, OP_TO_REAL, OP_TO_INT, OP_IS_INT, ...REAL_FUNCTION_OPS]
     .filter((op) => op !== OP_ATAN2)
@@ -2276,7 +2278,11 @@ export const createSmtlibReader = (
     const builtinOp =
       builtin === "~"
         ? OP_UMINUS
-        : (CHAINABLE_OPS.get(builtin) ?? BUILTIN_OPS.get(builtin) ?? transcendentalOp);
+        : builtin === "true"
+          ? OP_TRUE
+          : builtin === "false"
+            ? OP_FALSE
+            : (CHAINABLE_OPS.get(builtin) ?? BUILTIN_OPS.get(builtin) ?? transcendentalOp);
     // load_plugin registers the operators of arithmetic only for a logic that has it.
     const named =
       builtinOp !== undefined && manager.funcDecls[builtinOp].family === FAMILY_ARITH && !hasArith
