@@ -63,6 +63,7 @@ import {
   isAsyncGenerator,
   isStrictCode,
 } from "./context";
+import { getPosition } from "./program-nodes";
 import { TlaTypeScriptError } from "../errors";
 import {
   ARRAY_ITERATOR_REPLACED,
@@ -4795,8 +4796,8 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
   const accesses: (ts.PropertyAccessExpression | ts.ElementAccessExpression)[] = [];
   const objects: ts.ObjectLiteralExpression[] = [];
   const expressions: ts.Expression[] = [];
-  const visit = (node: ts.Node) => {
-    const symbol = ts.isIdentifier(node) ? getSymbol(node, checker) : undefined;
+  // Collects what a node is, and tells whether the walk goes on into its children.
+  const collect = (node: ts.Node, symbol: ts.Symbol | undefined) => {
     if (ts.isIdentifier(node) && symbol !== undefined) {
       const found = references.get(symbol);
       if (found === undefined) references.set(symbol, [node]);
@@ -4806,22 +4807,38 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
       accesses.push(node);
     }
     if (ts.isObjectLiteralExpression(node)) objects.push(node);
-    if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) return;
-    if (ts.isHeritageClause(node) && ts.isInterfaceDeclaration(node.parent)) return;
+    if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) return false;
+    if (ts.isHeritageClause(node) && ts.isInterfaceDeclaration(node.parent)) return false;
     if (
       ts.isExpression(node) &&
       !(
         ts.isIdentifier(node) &&
-        getSymbol(node, checker)?.declarations?.some(
-          (declaration) => ts.getNameOfDeclaration(declaration) === node,
-        )
+        symbol?.declarations?.some((declaration) => ts.getNameOfDeclaration(declaration) === node)
       )
     ) {
       expressions.push(node);
     }
-    if (!ts.isTypeNode(node)) ts.forEachChild(node, visit);
+    return !ts.isTypeNode(node);
   };
-  new Set(reached.map((node) => node.getSourceFile())).forEach(visit);
+  const visit = (node: ts.Node) => {
+    if (collect(node, ts.isIdentifier(node) ? getSymbol(node, checker) : undefined)) {
+      ts.forEachChild(node, visit);
+    }
+  };
+  // A file of the program's files is scanned in its table, past the subtrees the walk skips.
+  new Set(reached.map((node) => node.getSourceFile())).forEach((file) => {
+    const table = context.nodes;
+    const start = getPosition(table, file);
+    if (start < 0) {
+      visit(file);
+      return;
+    }
+    let position = start;
+    while (position < table.ends[start]) {
+      const isEntered = collect(table.nodes[position], context.references.symbols[position]);
+      position = isEntered ? position + 1 : table.ends[position];
+    }
+  });
   const getFields = (type: ts.Type, name: string) =>
     (type.isUnion() || type.isIntersection() ? type.types : [type]).flatMap(
       (member) => checker.getPropertyOfType(member, name) ?? [],

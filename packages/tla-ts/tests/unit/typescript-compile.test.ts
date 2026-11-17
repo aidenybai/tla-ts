@@ -49403,4 +49403,181 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("a!,1"))).failure?.message).toContain("seen a!+b!,0");
     });
   });
+
+  describe("forces what a name in a function that an expression calls binds, not a copy of it", () => {
+    const getNested = (helpers: number, position = 1): string =>
+      position > helpers
+        ? "id"
+        : `(y${position}: number): number => h${position}(${getNested(helpers, position + 1)}, y${position})`;
+    const getSource = (helpers: number, expected: number) => `
+      const box: { a: number } = { a: 1 };
+      ${Array.from(
+        { length: helpers },
+        (_, position) => `function h${position + 1}(f: any, x: number): number {
+          const value: number = f(x);
+          return value + ${position + 1};
+        }`,
+      ).join("\n")}
+      const id = (x: number): number => x;
+      const result = (${getNested(helpers)})(0);
+      if (result !== ${expected}) throw new Error("result " + result);
+    `;
+    const getSize = (helpers: number) => printModule(compile(getSource(helpers, 0)).source).length;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(3, 6))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkModel(getSource(3, 7))).failure?.message).toContain("result 6");
+    });
+
+    it("grows by less than a copy of each value for each call", () => {
+      expect(getSize(4)).toBeLessThan(getSize(3) * 5);
+    });
+  });
+
+  describe("runs each function that a call through a value may run as one operator", () => {
+    const getNested = (helpers: number, position = 1): string =>
+      position > helpers
+        ? "id"
+        : `(y${position}: number): number => h${position}(${getNested(helpers, position + 1)}, y${position})`;
+    const getSource = (helpers: number, expected: number) => `
+      const box: { a: number } = { a: 1 };
+      ${Array.from(
+        { length: helpers },
+        (_, position) => `function h${position + 1}(f: any, x: number): number {
+          const value: number = f(x);
+          return value + ${position + 1};
+        }`,
+      ).join("\n")}
+      const id = (x: number): number => x;
+      const result = (${getNested(helpers)})(0);
+      if (result !== ${expected}) throw new Error("result " + result);
+    `;
+    const getSize = (helpers: number) => printModule(compile(getSource(helpers, 0)).source).length;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(4, 10))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkModel(getSource(4, 11))).failure?.message).toContain("result 10");
+    });
+
+    it("grows with the functions rather than with the ways to nest their calls", () => {
+      expect(getSize(8)).toBeLessThan(getSize(4) * 3);
+    });
+  });
+
+  describe("runs a helper that a statement's call through a value may run as the helper's operator", () => {
+    const getSource = (helpers: number, expected: number) => `
+      const log: { n: number } = { n: 0 };
+      ${Array.from(
+        { length: helpers },
+        (_, position) => `function guard${position + 1}(run: () => unknown): number {
+          try {
+            run();
+            return 0;
+          } catch (error) {
+            log.n += ${position + 1};
+            return 1;
+          }
+        }`,
+      ).join("\n")}
+      function twice(f: any): any {
+        return function (x: any): any {
+          return f(f(x));
+        };
+      }
+      const increment = (x: number): number => x + 1;
+      const twiceIncrement: any = twice(increment);
+      const result: number = twiceIncrement(0);
+      const guarded: number = ${Array.from({ length: helpers }, (_, position) => `guard${position + 1}(() => 0)`).join(" + ")};
+      if (result !== ${expected} || guarded !== 0 || log.n !== 0) throw new Error("result " + result);
+    `;
+    const getSize = (helpers: number) => printModule(compile(getSource(helpers, 0)).source).length;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(2, 2))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkModel(getSource(2, 3))).failure?.message).toContain("result 2");
+    });
+
+    it("grows with the helpers rather than with a copy of each for each call", () => {
+      expect(getSize(4)).toBeLessThan(getSize(2) * 2.2);
+    });
+  });
+
+  describe("runs the functions that calls through values may run through one operator for them all", () => {
+    const getSource = (functions: number, expected: number) => `
+      const box: { a: number } = { a: 1 };
+      ${Array.from(
+        { length: functions },
+        (_, position) => `function add${position + 1}(x: number): number {
+          return x + ${position + 1};
+        }
+        function run${position + 1}(f: any, x: number): number {
+          const value: number = f(x);
+          return value * 2;
+        }`,
+      ).join("\n")}
+      const total: number = ${Array.from(
+        { length: functions },
+        (_, position) => `run${position + 1}(add${position + 1}, box.a)`,
+      ).join(" + ")};
+      if (total !== ${expected}) throw new Error("total " + total);
+    `;
+    const getSize = (functions: number) =>
+      printModule(compile(getSource(functions, 0)).source).length;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(3, 18))).failure).toBeUndefined();
+    });
+
+    it("rejects another total", async () => {
+      expect((await checkModel(getSource(3, 17))).failure?.message).toContain("total 18");
+    });
+
+    it("grows with the calls and the functions rather than with each call for each function", () => {
+      expect(getSize(8)).toBeLessThan(getSize(4) * 2.3);
+    });
+  });
+
+  describe("runs a helper that a function's operator calls by name as an operator too", () => {
+    const getSource = (helpers: number, expected: number) => `
+      const box: { a: number } = { a: 1 };
+      ${Array.from(
+        { length: helpers },
+        (_, position) => `function h${position + 1}(f: any, x: number): number {
+          const value: number = f(x);
+          return value + ${position + 1};
+        }`,
+      ).join("\n")}
+      ${Array.from(
+        { length: helpers - 1 },
+        (_, position) =>
+          `const c${position + 1} = (y: number): number => h${position + 2}(c${position + 2}, y);`,
+      ).join("\n")}
+      const c${helpers} = (y: number): number => y + box.a;
+      const first: any = c1;
+      const result: number = h1(first, 0);
+      if (result !== ${expected}) throw new Error("result " + result);
+    `;
+    const getSize = (helpers: number) => printModule(compile(getSource(helpers, 0)).source).length;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(3, 7))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkModel(getSource(3, 8))).failure?.message).toContain("result 7");
+    });
+
+    it("grows with the helpers rather than with the ways their calls nest", () => {
+      expect(getSize(8)).toBeLessThan(getSize(4) * 2);
+    });
+  });
 });
