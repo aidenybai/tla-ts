@@ -6960,7 +6960,11 @@ TypedArraySubarray(heap, ref, arguments, length, bufferPrototype, constructors) 
                                bufferPrototype,
                                IF isTracking THEN <<view.viewed, begin>>
                                ELSE <<view.viewed, begin, count>>, TRUE)
-  IN CASE buffer.isDetached -> Thrown(heap, "TypeError")
+      \\* The constructor makes the typed array, which throws for a buffer out of bounds, so a
+      \\* constructor that a script gives runs first.
+      species == TypedArraySpecies(heap, ref, constructors)
+  IN CASE species # species -> FALSE
+       [] buffer.isDetached -> Thrown(heap, "TypeError")
        [] begin + (IF isTracking THEN 0 ELSE count * ElementSize(view.elementType))
             > Len(buffer.bytes) -> Thrown(heap, "RangeError")
        [] OTHER -> Returned(viewing, Allocated(viewing))

@@ -50580,4 +50580,28 @@ describe("BigInts", () => {
       (await check(compile(source, join(import.meta.dirname, "model.js")))).failure?.message,
     ).toContain("tla-ts can't call a regexp's method where a script changed what it reads");
   });
+
+  it("stops at a typed array's subarray through a script's species before its buffer's detach throws", async () => {
+    const source = `
+      var box = { seen: "" };
+      var buffer = new ArrayBuffer(8);
+      var view = new Int8Array(buffer, 1, 1);
+      var result = new Int8Array(0);
+      view.constructor = {
+        [Symbol.species]: function () {
+          return result;
+        },
+      };
+      var end = {
+        valueOf() {
+          buffer.transfer();
+          return 0;
+        },
+      };
+      box.seen = String(view.subarray(1, end) === result);
+    `;
+    expect(
+      (await check(compile(source, join(import.meta.dirname, "model.js")))).failure?.message,
+    ).toContain("tla-ts can't make a typed array through a constructor that a script gives");
+  });
 });
