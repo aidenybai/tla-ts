@@ -67,6 +67,7 @@ import {
   flattenReturned,
   translateLongRead,
   getValueKinds,
+  translateAnyStringCall,
 } from "./collections";
 import {
   findNodes,
@@ -5702,6 +5703,54 @@ const translateCallStatementBody = (
       );
     });
   }
+  // A String.prototype method's name on a value of type any runs as the expression does, once an
+  // argument that a postfix ++ or -- gives runs first, as the value it read.
+  const isPure = (part: ts.Expression) =>
+    path.scope.results.has(part) ||
+    (!hasCall(part, context) &&
+      findNodes(part, (inner): inner is ts.Node => getWritten(inner) !== undefined).length === 0);
+  const incremented = expression.arguments.find(
+    (argument) =>
+      !path.scope.results.has(argument) &&
+      ts.isPostfixUnaryExpression(argument) &&
+      !hasCall(argument.operand, context),
+  );
+  const anyString =
+    callee?.body === undefined &&
+    [expression.expression, ...expression.arguments].every(
+      (part) => part === incremented || isPure(part),
+    )
+      ? translateAnyStringCall(expression, path.scope, context)
+      : undefined;
+  if (
+    anyString !== undefined &&
+    incremented !== undefined &&
+    ts.isPostfixUnaryExpression(incremented)
+  ) {
+    const name = context.names.getFresh("stepped");
+    return bindOnce(
+      path,
+      name,
+      translateExpression(incremented.operand, path.scope, context),
+      translateWriteStatement(incremented, path, context, frame, (after) =>
+        translateCallStatementBody(
+          expression,
+          {
+            ...after,
+            scope: {
+              ...after.scope,
+              results: new Map([...after.scope.results, [incremented, identifier(name)]]),
+            },
+          },
+          context,
+          frame,
+          continueWith,
+          isHeld,
+        ),
+      ),
+    );
+  }
+  if (anyString !== undefined) return continueWith(path, anyString);
   if (callee?.body === undefined) {
     throw new TlaTypeScriptError(`Unsupported statement: ${expression.getText()}`, expression);
   }

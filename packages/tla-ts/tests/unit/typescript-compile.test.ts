@@ -52549,4 +52549,31 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("runs a String.prototype method on a value of type any after the postfix ++ that gives its argument", () => {
+    const getSource = (expected: string) => `
+      class Reader {
+        pos: any;
+        buffer: any;
+        constructor(buffer: any) {
+          this.pos = 0;
+          this.buffer = buffer;
+        }
+        next() {
+          return this.buffer.charCodeAt(this.pos++);
+        }
+      }
+      const reader = new Reader("ab");
+      const result = [reader.next(), reader.next(), reader.pos].join();
+      if (result !== "${expected}") throw new Error("read " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("97,98,2"))).failure).toBeUndefined();
+    });
+
+    it("rejects the value after the step", async () => {
+      expect((await checkModel(getSource("98,NaN,2"))).failure?.message).toContain("read 97,98,2");
+    });
+  });
 });
