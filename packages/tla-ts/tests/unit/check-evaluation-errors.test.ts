@@ -120,6 +120,13 @@ describe("evaluation errors match TLC", () => {
     },
   );
 
+  it("passes an operator whose body is a literal to a Java override as an operator, which TLC passes as the literal", async () => {
+    const result = await checkModule("One(a, b) == 1\nASSUME SortSeq(<<2, 1>>, One) = <<>>");
+    expect(result.violation?.message).toBe(
+      "The second argument of SortSeq should be a boolean function, but instead it is:\n1",
+    );
+  });
+
   it("evaluates a record's fields in an invariant in the order they're written, like TLC", async () => {
     const result = await checkSteps(
       "F(s) == s\nInv == [a |-> 1 \\div x, s |-> CASE x -> 2] = 1",
