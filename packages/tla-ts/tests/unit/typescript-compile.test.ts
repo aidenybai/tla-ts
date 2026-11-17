@@ -52441,4 +52441,27 @@ describe("BigInts", () => {
       "Give this pattern's value an array type",
     );
   });
+
+  describe("runs a closure that a loop's head makes with the head's own bindings", () => {
+    const getSource = (expected: number) => `
+      const box = { total: 0 };
+      const a: any[] = [];
+      for (let i = 0, f = function () { return i; }; i < 3; ++i) {
+        a.push(f);
+      }
+      for (let k = 0; k < 3; ++k) {
+        box.total += a[k]();
+      }
+      if (box.total !== ${expected}) throw new Error("total " + box.total);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(0))).failure).toBeUndefined();
+    });
+
+    it("rejects the later iterations' values", async () => {
+      expect((await checkModel(getSource(3))).failure?.message).toContain("total 0");
+    });
+  });
+
 });
