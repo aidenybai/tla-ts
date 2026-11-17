@@ -1726,6 +1726,37 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
     );
   return collectSemanticErrors(
     [
+      ...module.units.flatMap((item): SemanticUnit[] => {
+        const section =
+          item.kind === "Variables"
+            ? { type: "A VARIABLE declaration", location: item.location }
+            : item.kind === "Constants"
+              ? { type: "A declaration", location: item.location }
+              : item.kind === "Module"
+                ? { type: "A MODULE ", location: item.module.location }
+                : item.kind === "Theorem"
+                  ? { type: "A THEOREM", location: item.theorem.location }
+                  : item.kind === "Assumption"
+                    ? { type: "An ASSUME", location: item.assumption.location }
+                    : item.kind === "Use"
+                      ? { type: "A USE or HIDE", location: item.use.location }
+                      : undefined;
+        const range = section?.location.range;
+        if (!section || !range) return [];
+        return [
+          {
+            location: section.location,
+            check: (errors) => {
+              if (declarations.some((declared) => declared.binding?.isPending)) {
+                errors.push({
+                  location: formatRange(range),
+                  message: `${section.type} may not appear within a recursive definition section.`,
+                });
+              }
+            },
+          },
+        ];
+      }),
       ...unit.reports.map((report) => ({
         location: report.location,
         check: (errors: SanyError[], warnings: SanyError[]) => {

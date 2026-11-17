@@ -1472,6 +1472,21 @@ describe("name resolution matches SANY", () => {
       ],
       [],
     ],
+    [
+      "declarations, assumptions, theorems, and USE between a RECURSIVE declaration and its definition",
+      "RECURSIVE f(_)\nVARIABLES y,\n  z\nCONSTANT C\nASSUME TRUE\nTHEOREM T == TRUE\nUSE T\nf(n) == n\nVARIABLE w",
+      [
+        ["line 3, col 1 to line 4, col 3", "A VARIABLE declaration"],
+        ["line 5, col 1 to line 5, col 10", "A declaration"],
+        ["line 6, col 1 to line 6, col 11", "An ASSUME"],
+        ["line 7, col 1 to line 7, col 17", "A THEOREM"],
+        ["line 8, col 1 to line 8, col 5", "A USE or HIDE"],
+      ].map((error) => ({
+        location: `${error[0]} of module M`,
+        message: `${error[1]} may not appear within a recursive definition section.`,
+      })),
+      [],
+    ],
   ])("rejects %s like SANY", async (_title, source, errors, warnings) => {
     await expect(checkNames(source)).rejects.toMatchObject({ sany: { errors, warnings } });
   });
