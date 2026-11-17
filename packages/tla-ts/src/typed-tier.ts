@@ -3665,6 +3665,22 @@ const compileValue = (program: Program, expression: Expression, frame: Frame): C
       );
       return { type: createBool(), emit: () => getEnabledCode(step) };
     }
+    // TLC evaluates [A]_e as A, or else e unchanged, and <<A>>_e as A and e changed.
+    case "BoxAction":
+    case "AngleAction": {
+      const action = expectBool(compileValue(program, expression.action, frame));
+      const unchanged = compileUnchanged(program, expression.subscript, frame);
+      const isBox = expression.kind === "BoxAction";
+      return {
+        type: createBool(),
+        emit: () =>
+          isBox
+            ? `((${action.emit()}) || (${unchanged.emit()}))`
+            : `((${action.emit()}) && !(${unchanged.emit()}))`,
+      };
+    }
+    case "Label":
+      return compileValue(program, expression.body, frame);
     default:
       return unsupported();
   }
@@ -4189,7 +4205,8 @@ const compileStep = (
       const body = continueWith(bindings.scope, [expression.body]);
       return () => `{ ${getDeclarations(bindings.names)} ${body()} }`;
     }
-
+    case "Label":
+      return continueWith(first.scope, [expression.body]);
     case "Identifier": {
       const binding = first.scope.get(expression.name);
       if (binding?.kind === "Operator" && binding.definition.params.length === 0) {
