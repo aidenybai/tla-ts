@@ -6345,6 +6345,18 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
     while (cursor.position < end) addFingerprint(compiled.decode(cursor));
   };
   // Returns the index of a state in the model, or -1 for a state outside it.
+  // TLC's fingerprint of each state stored, by its index, which orders the successors a liveness
+  // check adds.
+  const liveFingerprints = { data: new Int32Array(check.liveness ? 1024 : 0), size: 0 };
+  const addLiveFingerprint = (state: Plain[]) => {
+    if (liveFingerprints.size === liveFingerprints.data.length) {
+      const data = new Int32Array(liveFingerprints.data.length * 2);
+      data.set(liveFingerprints.data);
+      liveFingerprints.data = data;
+    }
+    fingerprinter.fingerprint(state);
+    liveFingerprints.data[liveFingerprints.size++] = fingerprinter.words[0];
+  };
   const visit = (state: Plain[], parent?: Plain[], isUnchanged = false) => {
     statistics.generated++;
     // A step that changes no value leads back to the state it starts from, which is stored already.
@@ -6353,6 +6365,7 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
     writeKey(state);
     const found = findState(true);
     if (found !== -1) return found;
+    if (check.liveness) addLiveFingerprint(state);
     if (!isEncoded) {
       keys.size = keys.start;
       compiled.encode(state, keys);
@@ -6416,7 +6429,6 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
     });
     return path;
   };
-  const liveFingerprints: number[] = [];
   const live =
     check.liveness &&
     createLiveGraph<Plain[]>(
@@ -6429,11 +6441,7 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
         evaluateFrom: (_source, evaluate) => evaluate(),
       },
       {
-        getFingerprint: (successor) =>
-          (liveFingerprints[successor.index] ??= (() => {
-            fingerprinter.fingerprint(successor.state);
-            return fingerprinter.words[0];
-          })()),
+        getFingerprint: (successor) => liveFingerprints.data[successor.index],
         // The successors of a state the search expanded are all stored.
         getSuccessors: (index, state) => {
           const successors: LiveSuccessor<Plain[]>[] = [];
