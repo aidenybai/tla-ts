@@ -69,8 +69,7 @@ const isPb = (manager: AstManager, first: number, second: number) => {
 export const checkPbFree = (manager: AstManager, form: number) => {
   const visited = new Set<number>();
   const todo = [form];
-  while (todo.length > 0) {
-    const expr = todo.pop() as number;
+  for (let expr = todo.pop(); expr !== undefined; expr = todo.pop()) {
     if (visited.has(expr)) continue;
     visited.add(expr);
     if (manager.kinds[expr] === KIND_QUANTIFIER) {

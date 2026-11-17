@@ -59,8 +59,7 @@ export const collectUnconstrained = (manager: AstManager, goal: Goal) => {
   const repeated = new Set<number>();
   for (const form of goal.forms.items) {
     const todo = [form];
-    while (todo.length > 0) {
-      const expr = todo.pop() as number;
+    for (let expr = todo.pop(); expr !== undefined; expr = todo.pop()) {
       const isConst = manager.kinds[expr] === KIND_APP && manager.isUninterpretedConst(expr);
       if (visited.has(expr)) {
         if (isConst) repeated.add(expr);
@@ -82,8 +81,7 @@ export const disableQuantified = (manager: AstManager, goal: Goal, bodies: RefVe
   const disabled = new Set<number>();
   const visited = new Set<number>();
   const todo = [...goal.forms.items];
-  while (todo.length > 0) {
-    const expr = todo.pop() as number;
+  for (let expr = todo.pop(); expr !== undefined; expr = todo.pop()) {
     if (visited.has(expr)) continue;
     visited.add(expr);
     if (manager.kinds[expr] === KIND_QUANTIFIER) {
@@ -92,8 +90,7 @@ export const disableQuantified = (manager: AstManager, goal: Goal, bodies: RefVe
       if (disabled.has(body)) continue;
       bodies.push(body);
       const marks = [body];
-      while (marks.length > 0) {
-        const marked = marks.pop() as number;
+      for (let marked = marks.pop(); marked !== undefined; marked = marks.pop()) {
         if (disabled.has(marked)) continue;
         disabled.add(marked);
         if (manager.kinds[marked] === KIND_APP) manager.pushArgs(marked, marks);

@@ -436,8 +436,7 @@ export class SolveEqs {
     const manager = this.manager;
     const visited = new Set<number>();
     const todo = [root];
-    while (todo.length > 0) {
-      const expr = todo.pop() as number;
+    for (let expr = todo.pop(); expr !== undefined; expr = todo.pop()) {
       if (visited.has(expr)) continue;
       visited.add(expr);
       if (isMatch(expr)) return true;
@@ -553,8 +552,7 @@ export class SolveEqs {
       initLevel -= size + 1;
       let currLevel = initLevel;
       todo.push(id);
-      while (todo.length > 0) {
-        const next = todo.pop() as number;
+      for (let next = todo.pop(); next !== undefined; next = todo.pop()) {
         if (this.id2level[next] !== Infinity) continue;
         this.id2level[next] = currLevel++;
         for (const eq of this.next[next]) {
@@ -562,8 +560,7 @@ export class SolveEqs {
           let isSafe = true;
           const visited = new Set<number>();
           const stack = [eq.term];
-          while (stack.length > 0) {
-            const expr = stack.pop() as number;
+          for (let expr = stack.pop(); expr !== undefined; expr = stack.pop()) {
             if (visited.has(expr)) continue;
             visited.add(expr);
             if (manager.kinds[expr] === KIND_APP) manager.pushArgs(expr, stack);
@@ -737,8 +734,7 @@ export class SolveEqs {
   private containsConjunctively(form: number, isNegated: boolean, eq: number, conjuncts: Signed[]) {
     const manager = this.manager;
     const todo: Signed[] = [{ isNegated, expr: form }];
-    while (todo.length > 0) {
-      const item = todo.pop() as Signed;
+    for (let item = todo.pop(); item !== undefined; item = todo.pop()) {
       if (!item.isNegated && item.expr === eq) return true;
       const marks = item.isNegated ? this.andNegative : this.andPositive;
       if (marks.has(item.expr)) continue;
@@ -758,8 +754,7 @@ export class SolveEqs {
   private isDisjunctivelySafe(depth: number, root: number, isNegated: boolean, eq: number) {
     const manager = this.manager;
     const todo: Signed[] = [{ isNegated, expr: root }];
-    while (todo.length > 0) {
-      const item = todo.pop() as Signed;
+    for (let item = todo.pop(); item !== undefined; item = todo.pop()) {
       const marks = item.isNegated ? this.orNegative : this.orPositive;
       if (marks.has(item.expr)) continue;
       marks.add(item.expr);
@@ -878,8 +873,7 @@ export class SolveEqs {
       const seen = new Set<number>();
       for (const index of order) {
         const todo = [forms[index]];
-        while (todo.length > 0) {
-          const expr = todo.pop() as number;
+        for (let expr = todo.pop(); expr !== undefined; expr = todo.pop()) {
           if (seen.has(expr)) continue;
           seen.add(expr);
           occurrence.set(expr, index);

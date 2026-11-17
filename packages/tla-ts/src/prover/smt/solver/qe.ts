@@ -316,7 +316,8 @@ class SearchTree {
   }
 
   consumeVars(vars: number[]) {
-    while (vars.length > 0) this.vars.push(vars.pop() as number);
+    for (let variable = vars.pop(); variable !== undefined; variable = vars.pop())
+      this.vars.push(variable);
   }
 
   isUnit() {

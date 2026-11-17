@@ -151,8 +151,7 @@ class DiffNeq {
   }
 
   private resolveConflict() {
-    while (this.stack.length > 0) {
-      const value = this.stack.pop() as number;
+    for (let value = this.stack.pop(); value !== undefined; value = this.stack.pop()) {
       const next = this.chooseValue(this.stack.length, value + 1);
       if (next !== -1) {
         this.stack.push(next);

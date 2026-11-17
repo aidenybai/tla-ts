@@ -97,8 +97,7 @@ class TargetFinder {
     if (this.isArithApp(expr)) return this.processArith(expr, false);
     this.todo.push(expr);
     this.visited.add(expr);
-    while (this.todo.length > 0) {
-      const current = this.todo.pop() as number;
+    for (let current = this.todo.pop(); current !== undefined; current = this.todo.pop()) {
       const isProcessed =
         manager.kinds[current] !== KIND_APP
           ? false

@@ -1536,7 +1536,7 @@ const runOrElse = (tactics: Tactic[]) => (goal: Goal) => {
     goal.resetAll();
     goal.copyFrom(original);
   }
-  return (tactics.at(-1) as Tactic)(goal);
+  return tactics[tactics.length - 1](goal);
 };
 
 const isEqualGoal = (first: Goal, second: Goal) => {
