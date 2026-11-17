@@ -2,6 +2,7 @@ import {
   getChildren,
   type AssumeProve,
   type Bound,
+  type Declaration,
   type Definition,
   type Expression,
   type Fact,
@@ -56,6 +57,16 @@ interface SelectingName {
 }
 
 const SELECTION_NAME = "$subexpression";
+
+const declaredArities = new WeakMap<Definition, number>();
+
+const setDeclaredArities = (declarations: Declaration[], definitions: Definition[]) =>
+  declarations.forEach((declaration) => {
+    const definition = definitions.find(
+      (candidate) => candidate.isRecursive && candidate.name === declaration.name,
+    );
+    if (definition) declaredArities.set(definition, declaration.arity);
+  });
 
 const getSelectorName = (selector: Selector) => {
   switch (selector.kind) {
@@ -240,7 +251,7 @@ const selectSubexpression = (
       return undefined;
     }
     const definition = found.definition;
-    const arity = getArity(definition);
+    const arity = declaredArities.get(definition) ?? getArity(definition);
     const isLast = selectorIndex === selectors.length - 1;
     if (found.args.length !== arity) {
       const range = reference.argumentRanges?.[selectorIndex] ?? location.range;
@@ -486,6 +497,7 @@ const resolveSubexpressions = (
 ): Expression => {
   if (!containsReference(expression)) return expression;
   if (expression.kind === "Let") {
+    if (expression.recursive) setDeclaredArities(expression.recursive, expression.definitions);
     const local: Lookup = (name) =>
       expression.definitions.find((definition) => definition.name === name) ?? lookup(name);
     const mapped = mapChildren(expression, (child) => resolveSubexpressions(child, local, isGoal));
@@ -590,6 +602,10 @@ export const resolveModuleSubexpressions = (module: Module, available: Definitio
     ];
   });
   const own = new Set([...module.definitions, ...clauses]);
+  setDeclaredArities(
+    module.units.flatMap((unit) => (unit.kind === "Recursive" ? unit.declarations : [])),
+    module.definitions,
+  );
   const recursive = new Map(
     module.units.flatMap((unit): [string, SourceLocation][] =>
       unit.kind === "Recursive"

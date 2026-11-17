@@ -2177,6 +2177,33 @@ describe("name resolution matches SANY", () => {
     );
   });
 
+  it("selects from a RECURSIVE operator by its declared arity like SANY", async () => {
+    await expect(
+      checkNames(
+        "EXTENDS Naturals\nRECURSIVE R(_)\nR == lab :: 1 + 2\nA == R!lab\nB == R(1)!lab\nC == {R!1}\nD == LET RECURSIVE Q(_, _)\n         Q(x) == x + 1\n     IN Q!1 + Q(1)!1 + Q(1, 2)!1",
+      ),
+    ).rejects.toThrow(
+      createSanyError(
+        [
+          [
+            "line 4, col 1 to line 4, col 17",
+            "Definition of R has different arity than its RECURSIVE declaration.",
+          ],
+          ["line 5, col 6 to line 5, col 10", "The operator R requires 1 arguments."],
+          ["line 6, col 6 to line 6, col 13", "Expected 0 arguments but found 1."],
+          ["line 7, col 7 to line 7, col 9", "The operator R requires 1 arguments."],
+          [
+            "line 9, col 10 to line 9, col 22",
+            "Definition of Q has different arity than its RECURSIVE declaration.",
+          ],
+          ["line 10, col 9 to line 10, col 11", "The operator Q requires 2 arguments."],
+          ["line 10, col 16 to line 10, col 18", "The operator Q requires 2 arguments."],
+          ["line 10, col 24 to line 10, col 32", "Expected 1 arguments but found 2."],
+        ].map((error) => ({ location: `${error[0]} of module M`, message: error[1] })),
+      ),
+    );
+  });
+
   it("passes an operator whose definition has fewer parameters than its RECURSIVE declaration, where SANY crashes", async () => {
     await expect(
       checkNames("RECURSIVE R(_, _)\nR == 1\nL(P(_, _)) == 1\nA == L(R)"),

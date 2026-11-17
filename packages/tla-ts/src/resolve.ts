@@ -1179,17 +1179,19 @@ const isSelectionReported = (expression: Expression, scope: LocalName | undefine
   const failed = selectionErrors.get(expression);
   if (!failed) return false;
   failed.applications.forEach((application) =>
-    application.args.forEach((arg, index) =>
-      matchArgument(
-        arg,
-        application.params[index],
-        index,
-        application.operator,
-        application.range,
-        scope,
-        unit,
+    application.args
+      .slice(0, application.params.length)
+      .forEach((arg, index) =>
+        matchArgument(
+          arg,
+          application.params[index],
+          index,
+          application.operator,
+          application.range,
+          scope,
+          unit,
+        ),
       ),
-    ),
   );
   unit.errors.push(failed.error);
   return true;
