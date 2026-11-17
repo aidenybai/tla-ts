@@ -1,6 +1,7 @@
 import { TlaError } from "tla-ts";
 import libraries from "virtual:typescript-libraries";
 import { compile } from "../../tla-ts/src/typescript/compile";
+import { createLibrary } from "../../tla-ts/src/typescript/program";
 import { printRegions } from "../../tla-ts/src/typescript/regions";
 import type { Mark } from "./site-data";
 
@@ -24,6 +25,9 @@ export interface CompileResponse {
   error?: string;
 }
 
+// The worker parses TypeScript's declaration files once, as it loads, for every compile it runs.
+const library = createLibrary(libraries);
+
 const getMarks = (spans: [string, { start: number; end: number }][]): Mark[] =>
   spans
     .map(([name, span]) => ({ name, start: span.start, end: span.end }))
@@ -31,7 +35,7 @@ const getMarks = (spans: [string, { start: number; end: number }][]): Mark[] =>
 
 self.onmessage = (event: MessageEvent<CompileRequest>) => {
   try {
-    const compiled = compile(event.data.source, event.data.fileName, libraries);
+    const compiled = compile(event.data.source, event.data.fileName, library);
     const printed = printRegions(compiled);
     self.postMessage({
       source: event.data.source,

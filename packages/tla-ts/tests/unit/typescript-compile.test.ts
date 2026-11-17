@@ -5,6 +5,7 @@ import { check, type CheckResult, formatValue } from "../../src";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { printModule } from "../../src/printer";
 import { compile } from "../../src/typescript/compile";
+import { createLibrary } from "../../src/typescript/program";
 import { printRegions } from "../../src/typescript/regions";
 
 const checkModel = (source: string) => check(compile(source));
@@ -33308,16 +33309,18 @@ ${call}
 
 describe("without a file system", () => {
   const directory = dirname(ts.getDefaultLibFilePath({}));
-  const libraries = new Map(
-    readdirSync(directory)
-      .filter((fileName) => /^lib\..*\.d\.ts$/.test(fileName))
-      .map((fileName) => [fileName, readFileSync(join(directory, fileName), "utf8")]),
+  const library = createLibrary(
+    new Map(
+      readdirSync(directory)
+        .filter((fileName) => /^lib\..*\.d\.ts$/.test(fileName))
+        .map((fileName) => [fileName, readFileSync(join(directory, fileName), "utf8")]),
+    ),
   );
 
   it("compiles with TypeScript's declaration files passed in", () => {
     const path = join(import.meta.dirname, "../fixtures/typescript/examples/die-hard/die-hard.ts");
     const source = readFileSync(path, "utf8");
-    const compiled = compile(source, "die-hard.ts", libraries);
+    const compiled = compile(source, "die-hard.ts", library);
     const expected = compile(source, "die-hard.ts");
     expect([printModule(compiled.source), compiled.config]).toEqual([
       printModule(expected.source),
@@ -33326,7 +33329,7 @@ describe("without a file system", () => {
   });
 
   it("reports type errors", () => {
-    expect(() => compile(`let count: number = "one";`, "spec.ts", libraries)).toThrow(
+    expect(() => compile(`let count: number = "one";`, "spec.ts", library)).toThrow(
       "spec.ts(1,5): error TS2322: Type 'string' is not assignable to type 'number'.",
     );
   });
