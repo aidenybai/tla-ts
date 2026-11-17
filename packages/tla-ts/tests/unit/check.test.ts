@@ -1099,6 +1099,17 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  it("reads TLCGet in every state through a constant substituted with it, as TLC's level bound does", async () => {
+    const prints: string[] = [];
+    await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers, TLC\nCONSTANT G(_)\nVARIABLE x\nInit == x = 0\nNext == x < 2 /\\ x' = x + 1\nInv == PrintT(G(\"level\"))\n====",
+      config: "CONSTANT G <- TLCGet\nINIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE",
+      onPrint: (text) => prints.push(text),
+    });
+    expect(prints).toEqual(["1", "2", "3"]);
+  });
+
   it("overrides definitions and ignores undeclared names assigned by the configuration", async () => {
     const result = await check({
       source:

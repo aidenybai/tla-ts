@@ -134,7 +134,7 @@ const collectLocalFacts = (
       const variableIndex = environment.variableIndex.get(name);
       if (
         variableIndex !== undefined ||
-        environment.builtins.get(name)?.isStateLevel ||
+        environment.builtins.get(target)?.isStateLevel ||
         (definition && environment.variableIndex.has(definition.name))
       ) {
         row[0] |= nonconstantFlags;
