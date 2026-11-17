@@ -328,21 +328,14 @@ export class AssertedFormulas {
     if (!this.invoke(this.isNnfCnf || this.hasQuantifiers, () => this.nnfCnf())) return;
     this.setEliminateAnd(true);
     if (!this.invoke(true, () => this.reduceAsserted())) return;
-    const liftIte = () => this.simplifyAndReduce((formula) => this.ngLiftIte.rewrite(formula));
-    if (!this.invoke(this.isLiftingNonGroundIte, liftIte)) return;
+    if (!this.invoke(this.isLiftingNonGroundIte, () => this.liftNonGroundIte())) return;
     if (!this.invoke(this.isEliminatingTermIte, () => this.elimTermIte())) return;
-    const refineInjAxiom = (formula: number) => this.refineInjAxiom(formula);
-    if (!this.invoke(this.hasQuantifiers, () => this.simplifyFormulas(refineInjAxiom))) return;
+    if (!this.invoke(this.hasQuantifiers, () => this.refineInjAxioms())) return;
     if (!this.invoke(isFindingMacros, () => this.findMacros())) return;
-    const elimBounds = () => this.simplifyAndReduce((formula) => this.boundsElim.rewrite(formula));
-    if (!this.invoke(this.isEliminatingBounds && this.hasQuantifiers, elimBounds)) return;
-    const inferPatterns = (formula: number) => this.patternInference.rewrite(formula);
-    if (!this.invoke(this.hasQuantifiers, () => this.simplifyFormulas(inferPatterns))) return;
-    const maximizeBvSharing = () => {
-      if (this.simplifyFormulas((formula) => this.bvSharing.rewrite(formula)))
-        this.reduceAsserted();
-    };
-    if (!this.invoke(true, maximizeBvSharing)) return;
+    if (!this.invoke(this.isEliminatingBounds && this.hasQuantifiers, () => this.elimBounds()))
+      return;
+    if (!this.invoke(this.hasQuantifiers, () => this.inferPatterns())) return;
+    if (!this.invoke(true, () => this.maximizeBvSharing())) return;
     if (!this.invoke(true, () => this.reduceAsserted())) return;
     if (!this.invoke(true, () => this.flattenClauses())) return;
     this.flushCache();
@@ -410,6 +403,26 @@ export class AssertedFormulas {
     if (!this.simplifyFormulas(simplify)) return;
     this.flushCache();
     this.reduceAsserted();
+  }
+
+  private liftNonGroundIte() {
+    this.simplifyAndReduce((formula) => this.ngLiftIte.rewrite(formula));
+  }
+
+  private refineInjAxioms() {
+    this.simplifyFormulas((formula) => this.refineInjAxiom(formula));
+  }
+
+  private elimBounds() {
+    this.simplifyAndReduce((formula) => this.boundsElim.rewrite(formula));
+  }
+
+  private inferPatterns() {
+    this.simplifyFormulas((formula) => this.patternInference.rewrite(formula));
+  }
+
+  private maximizeBvSharing() {
+    if (this.simplifyFormulas((formula) => this.bvSharing.rewrite(formula))) this.reduceAsserted();
   }
 
   private findMacros() {

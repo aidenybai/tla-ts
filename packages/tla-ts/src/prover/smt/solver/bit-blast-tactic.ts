@@ -88,8 +88,8 @@ export class BitBlasterRewriter extends RewriterTpl {
   readonly keys: number[] = [];
   readonly values: RefVector;
   readonly newbits: number[] = [];
-  private keyvalLim: number[] = [];
-  private newbitsLim: number[] = [];
+  private keyLimits: number[] = [];
+  private newbitLimits: number[] = [];
 
   constructor(
     manager: AstManager,
@@ -126,27 +126,27 @@ export class BitBlasterRewriter extends RewriterTpl {
   }
 
   getNumScopes() {
-    return this.keyvalLim.length;
+    return this.keyLimits.length;
   }
 
   push() {
-    this.keyvalLim.push(this.keys.length);
-    this.newbitsLim.push(this.newbits.length);
+    this.keyLimits.push(this.keys.length);
+    this.newbitLimits.push(this.newbits.length);
   }
 
   pop(numScopes: number) {
     if (numScopes === 0) return;
     const manager = this.manager;
-    const size = this.keyvalLim.length - numScopes;
-    const keyvalLim = this.keyvalLim[size];
-    for (const decl of this.keys.splice(keyvalLim)) {
+    const size = this.keyLimits.length - numScopes;
+    const keyLimit = this.keyLimits[size];
+    for (const decl of this.keys.splice(keyLimit)) {
       this.const2bits.delete(decl);
       manager.decDeclRef(decl);
     }
-    this.values.shrink(keyvalLim);
-    this.keyvalLim.length = size;
-    for (const decl of this.newbits.splice(this.newbitsLim[size])) manager.decDeclRef(decl);
-    this.newbitsLim.length = size;
+    this.values.shrink(keyLimit);
+    this.keyLimits.length = size;
+    for (const decl of this.newbits.splice(this.newbitLimits[size])) manager.decDeclRef(decl);
+    this.newbitLimits.length = size;
   }
 
   private mkConst(decl: number) {
