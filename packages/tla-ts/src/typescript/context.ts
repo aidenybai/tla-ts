@@ -27,6 +27,7 @@ import type { Namespace } from "./namespaces";
 import {
   createReferences,
   findNames,
+  findProgramNames,
   findNodesOfKind,
   getFileIndex,
   getLowerBound,
@@ -5816,9 +5817,7 @@ export const isOnlyCalled = (candidate: FunctionNode, context: Context) => {
   const table = context.nodes;
   const uses =
     name !== undefined && ts.isIdentifier(name)
-      ? [...table.fileStarts].flatMap((start) =>
-          findNames(table, table.nodes[start], [name.text]).filter((use) => use !== name),
-        )
+      ? findProgramNames(table, name.text).filter((use) => use !== name)
       : [];
   return (
     declaration !== undefined &&
