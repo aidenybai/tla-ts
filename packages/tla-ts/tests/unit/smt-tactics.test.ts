@@ -700,6 +700,25 @@ describe("split-clause, as Z3 5.3.2 splits a goal", () => {
     ]);
   });
 
+  it("looks for a clause before it checks for proofs", () => {
+    expect(
+      run([
+        "(set-option :produce-proofs true)",
+        "(declare-const a Bool)",
+        "(declare-const b Bool)",
+        "(assert a)",
+        "(assert (not b))",
+        "(apply split-clause)",
+        "(check-sat-using split-clause)",
+        "(get-info :reason-unknown)",
+      ]),
+    ).toEqual([
+      '(error "tactic failed: split-clause tactic failed, goal does not contain any clause")',
+      "unknown",
+      '(:reason-unknown "split-clause tactic failed, goal does not contain any clause")',
+    ]);
+  });
+
   it("keeps the dependencies of the goal, so the smt tactic assumes each name", () => {
     expect(
       run([

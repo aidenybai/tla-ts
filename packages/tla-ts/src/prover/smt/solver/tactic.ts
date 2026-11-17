@@ -476,10 +476,10 @@ const selectClause = (goal: Goal, isLargest: boolean) => {
 
 const runSplitClause = (isLargest: boolean) => (goal: Goal) => {
   const manager = goal.manager;
-  if (goal.isProofsEnabled) throw new SmtUnsupportedError("the proofs of split-clause");
   const position = selectClause(goal, isLargest);
   if (position === -1)
     throw new SmtTacticError("split-clause tactic failed, goal does not contain any clause");
+  if (goal.isProofsEnabled) throw new SmtUnsupportedError("the proofs of split-clause");
   const dependency = goal.dependencies[position];
   return manager.getArgs(goal.forms.items[position]).map((literal) => {
     const subgoal = goal.copy();
