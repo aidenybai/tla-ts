@@ -14,7 +14,7 @@ import {
   type SourceRange,
   type StepBody,
 } from "./ast";
-import { formatRange, TlaSyntaxError } from "./errors";
+import { formatRange, TlaSyntaxError, type SanyError } from "./errors";
 import { getSourceName, mapChildren, mapDefinition } from "./instances";
 import { resolveSynonym } from "./tlc/jar-data";
 import {
@@ -27,6 +27,7 @@ import {
   isBefore,
   LOCAL_RESOLUTION,
   nullSelections,
+  operatorSelectionErrors,
   selectionErrors,
   selections,
   factReferences,
@@ -193,6 +194,10 @@ const selectSubexpression = (
   let isFailed = false;
   const nulls: NullSelection[] = [];
   const applications: SelectionArguments[] = [];
+  let expressionError: SanyError | undefined;
+  const deferToExpression = (range: SourceRange | undefined, message: string) => {
+    if (!expressionError && range) expressionError = { location: formatRange(range), message };
+  };
   const checkNull = (node: Expression | undefined, message: string) => {
     const range = reference.selectorRanges?.[selectorIndex];
     if (node && range) nulls.push({ node, error: { location: formatRange(range), message } });
@@ -237,11 +242,11 @@ const selectSubexpression = (
     const definition = found.definition;
     const arity = getArity(definition);
     const isLast = selectorIndex === selectors.length - 1;
-    if (found.args.length !== arity && (!isOperator || found.args.length !== 0)) {
-      return report(
-        reference.argumentRanges?.[selectorIndex] ?? location.range,
-        `The operator ${resolveSynonym(found.name)} requires ${arity - found.earlier} arguments.`,
-      );
+    if (found.args.length !== arity) {
+      const range = reference.argumentRanges?.[selectorIndex] ?? location.range;
+      const message = `The operator ${resolveSynonym(found.name)} requires ${arity - found.earlier} arguments.`;
+      if (!isOperator || found.args.length !== 0) return report(range, message);
+      deferToExpression(range, message);
     }
     if (isLast) return { definition, args: found.args };
     applications.push({
@@ -280,8 +285,10 @@ const selectSubexpression = (
       const found = current && findLabel(current, selector.name, []);
       if (!found) return report(range, `Cannot find label \`${selector.name}'.`);
       const params = found.label.params;
-      if (!isOperator && selector.args.length !== params.length) {
-        return report(range, `Label \`${selector.name}' used with wrong number of arguments.`);
+      if (selector.args.length !== params.length) {
+        const message = `Label \`${selector.name}' used with wrong number of arguments.`;
+        if (!isOperator) return report(range, message);
+        deferToExpression(range, message);
       }
       selection.lets.push(...found.lets);
       selection.params.push(...params.map((name) => ({ name, arity: 0 })));
@@ -439,12 +446,17 @@ const selectSubexpression = (
   if (!current) throw createError("Subexpression selection failed", location);
   const params = selection.params.length;
   const args = selection.args.length;
-  if (params !== args && (!isOperator || args > 0)) {
-    report(location.range, `Expected ${params} arguments but found ${args}.`);
-    return reference;
+  if (params !== args) {
+    const message = `Expected ${params} arguments but found ${args}.`;
+    if (!isOperator || args > 0) {
+      report(location.range, message);
+      return reference;
+    }
+    deferToExpression(location.range, message);
   }
   const selected = createApplication(selection, current);
   nullSelections.set(selected, nulls);
+  if (expressionError) operatorSelectionErrors.set(selected, expressionError);
   return selected;
 };
 

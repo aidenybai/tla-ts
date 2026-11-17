@@ -115,6 +115,7 @@ export interface NullSelection {
 
 export const selections = new WeakSet<Expression>();
 export const selectionErrors = new WeakMap<Expression, SelectionError>();
+export const operatorSelectionErrors = new WeakMap<Expression, SanyError>();
 export const factReferences = new WeakMap<Fact[], Fact[]>();
 export const nullSelections = new WeakMap<Expression, NullSelection[]>();
 const unresolvedExpressions = new WeakSet<Expression>();
@@ -1053,9 +1054,12 @@ const matchArgument = (
   };
   const range = arg.location.range;
   if (expected === 0) {
+    const selectionError = operatorSelectionErrors.get(arg);
     // Deviation from SANY: SANY names its internal node kind here, where tla-ts words it as for a name.
     if (arg.kind === "Lambda" && arg.operator !== undefined) {
       report(range, `The operator ${resolveSynonym(arg.operator)} requires 1 arguments.`);
+    } else if (selectionError) {
+      unit.errors.push(selectionError);
     } else if (arg.kind === "Lambda" && range) {
       report(range, "LAMBDA expression used where an expression is required.");
     } else if (arg.kind === "OperatorReference") {

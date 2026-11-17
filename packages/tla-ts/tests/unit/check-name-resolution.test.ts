@@ -2155,6 +2155,28 @@ describe("name resolution matches SANY", () => {
     );
   });
 
+  it("reports a selection that leaves parameters unfilled under a built-in operator like SANY", async () => {
+    await expect(
+      checkNames(
+        "EXTENDS Naturals, Sequences, TLC\nPar(a) == {a}\nL == \\A b \\in {} : lab(b) :: b\nF == \\A y \\in {1} : y = 1\nA1 == Par!1 = 1\nA2 == SUBSET Par!1\nA3 == Len(Par!1)\nA4 == Par!1 :> 1\nA5 == Print(Par!1, 1)\nA6 == IF Par!1 THEN 1 ELSE 2\nA7 == L!lab = 1\nA8 == F!@ = 1\nA9 == SelectSeq(<<>>, Par!1)\nTHEOREM T == 1 = 1\n<1>1. DEFINE Z(c) == c + 1\n<1>2. Z!1 = 1\n  OBVIOUS\n<1>3. QED",
+      ),
+    ).rejects.toThrow(
+      createSanyError(
+        [
+          ["line 6, col 7 to line 6, col 11", "The operator Par requires 1 arguments."],
+          ["line 7, col 14 to line 7, col 18", "The operator Par requires 1 arguments."],
+          ["line 8, col 11 to line 8, col 15", "The operator Par requires 1 arguments."],
+          ["line 9, col 7 to line 9, col 11", "The operator Par requires 1 arguments."],
+          ["line 10, col 13 to line 10, col 17", "The operator Par requires 1 arguments."],
+          ["line 11, col 10 to line 11, col 14", "The operator Par requires 1 arguments."],
+          ["line 12, col 9 to line 12, col 11", "Label `lab' used with wrong number of arguments."],
+          ["line 13, col 7 to line 13, col 9", "Expected 1 arguments but found 0."],
+          ["line 17, col 7 to line 17, col 9", "The operator Z requires 1 arguments."],
+        ].map((error) => ({ location: `${error[0]} of module M`, message: error[1] })),
+      ),
+    );
+  });
+
   it("passes an operator whose definition has fewer parameters than its RECURSIVE declaration, where SANY crashes", async () => {
     await expect(
       checkNames("RECURSIVE R(_, _)\nR == 1\nL(P(_, _)) == 1\nA == L(R)"),
