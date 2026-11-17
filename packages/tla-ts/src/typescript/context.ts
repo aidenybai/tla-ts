@@ -5854,8 +5854,28 @@ export const findFunctionCandidates = (sourceFile: ts.SourceFile, context: Conte
       ts.findAncestor(candidate.parent, (ancestor) => context.onceFunctions.has(ancestor)) !==
         undefined &&
       getFunctionValue(candidate, context) === candidate;
+    // A function that a call or a new runs where the script writes it is no value that another call
+    // may run, unless its arguments.callee names it.
+    const called =
+      candidate === undefined
+        ? undefined
+        : ts.findAncestor(
+            candidate.parent,
+            (ancestor) => !(ts.isExpression(ancestor) && skipCasts(ancestor) === candidate),
+          );
+    const isRunInPlace =
+      called !== undefined &&
+      (ts.isCallExpression(called) || ts.isNewExpression(called)) &&
+      candidate !== undefined &&
+      skipCasts(called.expression) === candidate &&
+      (ts.isArrowFunction(candidate) ||
+        findNodes(
+          candidate,
+          (node): node is ts.Identifier => ts.isIdentifier(node) && node.text === "arguments",
+        ).length === 0);
     return (
       candidate?.body !== undefined &&
+      !isRunInPlace &&
       (getEnclosingFunction(candidate, context) === undefined ||
         ((isNestedFunction(candidate, context) || isVarFunction(candidate) || isOnceMade()) &&
           getOuterLocals(candidate, context).length === 0))

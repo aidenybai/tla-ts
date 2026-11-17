@@ -52465,4 +52465,27 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("runs no function that a call runs where the script writes it for a value's call", () => {
+    const getSource = (expected: string) => `
+      const proto = { label: "Effectable" };
+      const Base: new () => { label: string } = (() => {
+        const Base = function () {};
+        Base.prototype = proto;
+        return Base as any;
+      })();
+      const run = (make: () => number) => make() + 1;
+      const seen = [run(() => 1), Base.prototype === proto].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+      export {};
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("2,true"))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkModel(getSource("3,true"))).failure?.message).toContain("seen 2,true");
+    });
+  });
 });
