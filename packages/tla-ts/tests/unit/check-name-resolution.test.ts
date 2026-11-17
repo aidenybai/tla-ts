@@ -283,6 +283,31 @@ describe("name resolution matches SANY", () => {
       ],
     ],
     [
+      "EXTENDS Naturals\nRECURSIVE F(_), G\nA == F(1)!1 + G!1\nF(n) == IF n = 0 THEN 0 ELSE F(n - 1)!1\nG == LET RECURSIVE H(_)\n         H(k) == H(k)!1\n     IN G!1\nB == F(2)!1 + G!1",
+      [
+        [
+          "line 4, col 6 to line 4, col 6",
+          "Subexpression of  `F' used inside the operator's definition.",
+        ],
+        [
+          "line 4, col 15 to line 4, col 15",
+          "Subexpression of  `G' used inside the operator's definition.",
+        ],
+        [
+          "line 5, col 30 to line 5, col 30",
+          "Subexpression of  `F' used inside the operator's definition.",
+        ],
+        [
+          "line 7, col 18 to line 7, col 18",
+          "Subexpression of  `H' used inside the operator's definition.",
+        ],
+        [
+          "line 8, col 9 to line 8, col 9",
+          "Subexpression of  `G' used inside the operator's definition.",
+        ],
+      ],
+    ],
+    [
       "f == 1 + 1",
       [
         [

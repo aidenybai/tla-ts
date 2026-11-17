@@ -187,11 +187,11 @@ const selectSubexpression = (
     if (node && range) nulls.push({ node, error: { location: formatRange(range), message } });
   };
 
-  const report = (range: SourceRange | undefined, message: string) => {
+  const report = (range: SourceRange | undefined, message: string, argumentEnd = selectorIndex) => {
     if (!range) throw createError(message, location);
     selectionErrors.set(reference, {
       args: selectors
-        .slice(0, selectorIndex)
+        .slice(0, argumentEnd)
         .flatMap((selector) => ("args" in selector ? selector.args : [])),
       error: { location: formatRange(range), message },
     });
@@ -235,6 +235,19 @@ const selectSubexpression = (
       );
     }
     if (isLast) return { definition, args: found.args };
+    const range = definition.location.range;
+    if (
+      definition.isRecursive &&
+      range &&
+      range.module === location.range?.module &&
+      isBefore(location, range.end)
+    ) {
+      return report(
+        reference.selectorRanges?.[selectorIndex],
+        `Subexpression of  \`${found.name}' used inside the operator's definition.`,
+        selectorIndex + 1,
+      );
+    }
     if (definition.kind !== "Operator") {
       throw createError(`Cannot select a subexpression of ${definition.name}`, location);
     }
