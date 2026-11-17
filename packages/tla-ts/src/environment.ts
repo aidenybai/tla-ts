@@ -326,7 +326,7 @@ export const createEnvironment = (
     const dependencies = STANDARD_DEPENDENCIES.get(name) ?? [];
     if (
       name === "TLCExt" ||
-      [name, ...dependencies].some((module) => options.loadModule?.(module) !== undefined)
+      [name, ...dependencies].some((module) => order.getLoadedSource(module) !== undefined)
     )
       return undefined;
     const symbols = addStandardModule(name);
@@ -351,7 +351,7 @@ export const createEnvironment = (
 
   const loadModule = (name: string, importer: string) => {
     const source =
-      options.loadModule?.(name) ??
+      order.getLoadedSource(name) ??
       getSanyStandardModules(runtime.version).get(name) ??
       (typeof options.source === "string" ? extractModule(options.source, name) : undefined);
     if (source === undefined) throw createMissingModuleError(name, importer);
