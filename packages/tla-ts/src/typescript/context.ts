@@ -5882,14 +5882,15 @@ export const createDispatch = (
     const id = symbol === undefined ? -1 : ts.getSymbolId(symbol);
     return candidateSymbols[getLowerBound(candidateSymbols, 0, candidateSymbols.length, id)] === id;
   };
-  // Where both are plain function types of one call signature, with no rest parameter and no this,
-  // and the callee type's signature has no type predicate, TypeScript's compareSignaturesRelated
-  // relates them by the count of arguments, then each pair of parameter types, then the return
-  // types, unless the parameters at a position are both function types, which it compares as
-  // callbacks. The pairs of those types take far fewer tests than the pairs of function types:
-  // the candidate types' parameter and return types, and the callee types', each by an index, with
-  // a table each way of the answers that the tests find, 1 and 2 for no and yes.
-  const getSimpleSignature = (type: ts.Type) => {
+  // Where both are function types of one call signature with no rest parameter, the candidate
+  // type a plain one with no this, and the callee type's signature has no type parameter or type
+  // predicate, TypeScript's compareSignaturesRelated relates them by the count of arguments, then
+  // each pair of parameter types, then the return types, unless the parameters at a position are
+  // both function types, which it compares as callbacks. The pairs of those types take far fewer
+  // tests than the pairs of function types: the candidate types' parameter and return types, and
+  // the callee types', each by an index, with a table each way of the answers that the tests find,
+  // 1 and 2 for no and yes.
+  const sources = candidateTypes.map((type) => {
     const signatures = checker.getSignaturesOfType(type, ts.SignatureKind.Call);
     return isPlainFunctionType(type) &&
       signatures.length === 1 &&
@@ -5897,11 +5898,24 @@ export const createDispatch = (
       signatures[0].thisParameter === undefined
       ? signatures[0]
       : undefined;
-  };
-  const sources = candidateTypes.map(getSimpleSignature);
+  });
+  // A callee type may be an alias's or an instantiation's, and its signature may take a this,
+  // which TypeScript compares only to a candidate's own this, and come from a generic one, which
+  // changes only how it compares callbacks.
   const targets = calleeTypes.map((type) => {
-    const signature = getSimpleSignature(type);
-    return signature !== undefined && checker.getTypePredicateOfSignature(signature) === undefined
+    const signatures = checker.getSignaturesOfType(type, ts.SignatureKind.Call);
+    const signature = signatures.length === 1 ? signatures[0] : undefined;
+    return type.flags === ts.TypeFlags.Object &&
+      ((type.objectFlags ?? 0) & (ts.ObjectFlags.Reference | ts.ObjectFlags.Mapped)) === 0 &&
+      signature !== undefined &&
+      signature.typeParameters === undefined &&
+      (signature.flags & (SIGNATURE_REST | SIGNATURE_UNTYPED)) === 0 &&
+      signature.declaration !== undefined &&
+      !isJavaScriptFile(signature.declaration.getSourceFile().fileName) &&
+      checker.getTypePredicateOfSignature(signature) === undefined &&
+      checker.getSignaturesOfType(type, ts.SignatureKind.Construct).length === 0 &&
+      checker.getPropertiesOfType(type).length === 0 &&
+      checker.getIndexInfosOfType(type).length === 0
       ? signature
       : undefined;
   });
