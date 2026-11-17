@@ -605,6 +605,71 @@ describe("qfufbv, as Z3 5.3.2 answers QF_UFBV", () => {
   });
 });
 
+describe("split-clause, as Z3 5.3.2 splits a goal", () => {
+  it("splits the first clause, or the largest, into a subgoal for each literal", () => {
+    expect(
+      run([
+        "(declare-const a Bool)",
+        "(declare-const b Bool)",
+        "(declare-const c Bool)",
+        "(declare-const x Int)",
+        "(assert (> x 0))",
+        "(assert (or a (> x 5)))",
+        "(assert (or a b c))",
+        "(apply split-clause)",
+        "(apply (using-params split-clause :split_largest_clause true))",
+        "(reset)",
+        "(declare-const x Int)",
+        "(assert (> x 0))",
+        "(apply split-clause)",
+      ]),
+    ).toEqual([
+      [
+        "(goals",
+        "(goal\n  (> x 0)\n  a\n  (or a b c)\n  :precision precise :depth 1)",
+        "(goal\n  (> x 0)\n  (> x 5)\n  (or a b c)\n  :precision precise :depth 1)",
+        ")",
+      ].join("\n"),
+      [
+        "(goals",
+        "(goal\n  (> x 0)\n  (or a (> x 5))\n  a\n  :precision precise :depth 1)",
+        "(goal\n  (> x 0)\n  (or a (> x 5))\n  b\n  :precision precise :depth 1)",
+        "(goal\n  (> x 0)\n  (or a (> x 5))\n  c\n  :precision precise :depth 1)",
+        ")",
+      ].join("\n"),
+      '(error "tactic failed: split-clause tactic failed, goal does not contain any clause")',
+    ]);
+  });
+
+  it("keeps the dependencies of the goal, so the smt tactic assumes each name", () => {
+    expect(
+      run([
+        "(set-option :produce-unsat-cores true)",
+        "(declare-const a Bool)",
+        "(declare-const b Bool)",
+        "(declare-const c Bool)",
+        "(declare-const x Int)",
+        "(assert (> x 0))",
+        "(assert (or a (> x 5)))",
+        "(assert (! (or a b c) :named n1))",
+        "(check-sat-using (then split-clause smt))",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      [
+        "(",
+        "  (define-fun n1 () Bool\n    (or a b c))",
+        "  (define-fun x () Int\n    1)",
+        "  (define-fun a () Bool\n    true)",
+        "  (define-fun b () Bool\n    false)",
+        "  (define-fun c () Bool\n    false)",
+        ")",
+      ].join("\n"),
+    ]);
+  });
+});
+
 describe("if-no-models, as Z3 5.3.2 runs it", () => {
   it("runs its tactic when the goal produces no models", () => {
     expect(

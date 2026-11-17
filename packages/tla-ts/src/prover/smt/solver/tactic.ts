@@ -5,7 +5,7 @@ import {
   SmtTacticError,
   SmtUnsupportedError,
 } from "../../../errors";
-import { type AstManager, OP_DIV0, OP_IDIV0, OP_MOD0, OP_POWER0, SORT_BOOL } from "./ast";
+import { type AstManager, OP_DIV0, OP_IDIV0, OP_MOD0, OP_OR, OP_POWER0, SORT_BOOL } from "./ast";
 import { createQfufbvAckrTactic, runAckermannizeBv } from "./ackermannize-bv-tactic";
 import { AssertedFormulas } from "./asserted-formulas";
 import { createAigTactic } from "./aig-tactic";
@@ -453,6 +453,26 @@ const runUnitSubsume = (environment: TacticEnvironment) => (goal: Goal) => {
 const inPlace = (run: (goal: Goal) => void) => (goal: Goal) => {
   run(goal);
   return [goal];
+};
+
+// split_clause_tactic: a subgoal for each literal of the first clause, or of the largest.
+const runSplitClause = (isLargest: boolean) => (goal: Goal) => {
+  const manager = goal.manager;
+  if (goal.isProofsEnabled) throw new SmtUnsupportedError("the proofs of split-clause");
+  const sizes = goal.forms.items.map((form) =>
+    manager.getOp(form) === OP_OR ? manager.getNumArgs(form) : 0,
+  );
+  const largest = sizes.reduce((max, size) => Math.max(max, size), 0);
+  const position = sizes.findIndex((size) => size >= 2 && (!isLargest || size === largest));
+  if (position === -1)
+    throw new SmtTacticError("split-clause tactic failed, goal does not contain any clause");
+  const dependency = goal.dependencies[position];
+  return manager.getArgs(goal.forms.items[position]).map((literal) => {
+    const subgoal = goal.copy();
+    subgoal.update(position, literal, dependency);
+    subgoal.depth++;
+    return subgoal;
+  });
 };
 
 const runDer = (manager: AstManager) => (goal: Goal) => {
@@ -1101,6 +1121,15 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     },
   ],
   [
+    "split-clause",
+    {
+      descrs: getDescrs("", [["split_largest_clause", PARAM_BOOL, false, true]]),
+      isTrackingDependencies: true,
+      build: (_environment, params) =>
+        runSplitClause(getBool(params, "split_largest_clause", false)),
+    },
+  ],
+  [
     "occf",
     {
       descrs: new Map(),
@@ -1384,7 +1413,7 @@ const UNPORTED_TACTICS = new Set(
     "horn-simplify injectivity pb-preprocess pqffd propagate-bv-bounds " +
     "propagate-bv-bounds2 propagate-values2 qfbv-sls recover-01 reduce-args2 " +
     "sat-preprocess sls-smt smtfd solver-subsumption special-relations " +
-    "split-clause subpaving symmetry-reduce"
+    "subpaving symmetry-reduce"
   ).split(" "),
 );
 
