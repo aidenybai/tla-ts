@@ -6375,16 +6375,13 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
     });
     return path;
   };
-  const holders = new Map(atoms.map((atom, position) => [atom, compiled.liveAtoms[position]]));
-  const holds = (atom: LiveAtom, state: Plain[], next: Plain[]) =>
-    (holders.get(atom) ?? unsupported())(state, next);
   const liveFingerprints: number[] = [];
   const live =
     check.liveness &&
     createLiveGraph<Plain[]>(
       check.liveness,
       {
-        atoms: { holdsState: (atom, state) => holds(atom, state, state), holdsAction: holds },
+        holds: (position, state, next) => compiled.liveAtoms[position](state, next),
         isShared: true,
         // Without symmetry, a state's index identifies it. With it, states of one class share it.
         isSame: isImaged ? isSame : () => true,
