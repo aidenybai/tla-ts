@@ -52549,4 +52549,62 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("takes every entry that a script's iterator gives into Object.fromEntries", () => {
+    const getSource = (count: number, expected: string) => `
+      interface Entries {
+        index: number;
+        next: (this: Entries) => IteratorResult<[string, number]>;
+        return: () => IteratorResult<[string, number]>;
+        [Symbol.iterator]: (this: Entries) => Entries;
+      }
+      let closed = 0;
+      const entries: Entries = {
+        index: 0,
+        next() {
+          if (this.index >= ${count}) return { value: undefined, done: true };
+          this.index += 1;
+          const entry: unknown = this.index === 18 ? null : ["k" + (this.index % 12), this.index];
+          return { value: entry as [string, number], done: false };
+        },
+        return() {
+          closed += 1;
+          return { value: undefined, done: true };
+        },
+        [Symbol.iterator]() {
+          return this;
+        },
+      };
+      let made = "none";
+      try {
+        made = JSON.stringify(Object.fromEntries(entries));
+      } catch (error) {
+        made = error instanceof TypeError ? "type" : "other";
+      }
+      const result = [made, entries.index, closed].join("|");
+      if (result !== '${expected}') throw new Error(result);
+    `;
+    const read =
+      '{"k1":13,"k2":14,"k3":15,"k4":16,"k5":5,"k6":6,"k7":7,"k8":8,"k9":9,"k10":10,"k11":11,"k0":12}|16|0';
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(16, read))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation", async () => {
+      expect(
+        (await checkModel(getSource(16, read.replace('"k5":5', '"k5":17')))).failure?.message,
+      ).toContain("k11");
+    });
+
+    it("agrees with Node where an entry isn't an object", async () => {
+      expect((await checkModel(getSource(30, "type|18|1"))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation where an entry isn't an object", async () => {
+      expect((await checkModel(getSource(30, "type|18|0"))).failure?.message).toContain(
+        "type|18|1",
+      );
+    });
+  });
 });
