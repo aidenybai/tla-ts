@@ -52488,4 +52488,26 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("3,true"))).failure?.message).toContain("seen 2,true");
     });
   });
+
+  describe("runs a comma that a branch runs only sometimes, operand by operand", () => {
+    const getSource = (expected: string) => `
+      let proxy = false;
+      const pick = (s: number) => (s > 1 ? ((proxy = true), s * 2) : s);
+      const a = pick(1);
+      const before = proxy;
+      const b = pick(2);
+      const seen = [a, before, b, proxy].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("1,false,4,true"))).failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      expect((await checkModel(getSource("1,true,4,true"))).failure?.message).toContain(
+        "seen 1,false,4,true",
+      );
+    });
+  });
 });
