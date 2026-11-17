@@ -49106,4 +49106,42 @@ describe("BigInts", () => {
       ).toContain("seen none,ReferenceError,ReferenceError");
     });
   });
+
+  describe("runs the implementation of an overloaded function", () => {
+    const getSource = (expected: string) => `
+      function pick(value?: undefined): number | undefined;
+      function pick(value: number): number;
+      function pick(value?: number): number | undefined {
+        return value === undefined ? undefined : value + 1;
+      }
+      const picks = [pick, pick];
+      const seen = [pick(1), pick(), picks[1](4), typeof pick, pick.length, pick.name].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("2,,5,function,1,pick"))).failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      expect((await checkModel(getSource("2,,5,function,0,pick"))).failure?.message).toContain(
+        "seen 2,,5,function,1,pick",
+      );
+    });
+
+    it("agrees with Node where an exported action calls it", async () => {
+      const result = await checkModel(`
+        function next(count: number): number;
+        function next(count: string): string;
+        function next(count: number | string): number | string {
+          return typeof count === "number" ? count + 1 : count;
+        }
+        export let count = 0;
+        export const step = () => {
+          if (count < 2) count = next(count);
+        };
+      `);
+      expect([result.status, result.distinctStates]).toEqual(["deadlock", 3]);
+    });
+  });
 });
