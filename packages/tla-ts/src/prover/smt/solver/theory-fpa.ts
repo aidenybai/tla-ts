@@ -1,4 +1,3 @@
-// Ported from Z3 (src/smt/theory_fpa.cpp), MIT license, see z3-license.txt.
 import { SmtInvariantError } from "../../../errors";
 import {
   type AstManager,

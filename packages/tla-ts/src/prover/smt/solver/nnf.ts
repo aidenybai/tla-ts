@@ -1,4 +1,3 @@
-// Ported from Z3 (src/ast/normal_forms/nnf.cpp, name_exprs.cpp, defined_names.cpp), MIT license, see z3-license.txt.
 import { ActCache } from "./act-cache";
 import {
   type AstManager,

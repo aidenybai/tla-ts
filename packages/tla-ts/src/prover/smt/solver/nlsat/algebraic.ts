@@ -1,5 +1,3 @@
-// Ported from Z3 (src/math/polynomial/algebraic_numbers.cpp, src/util/basic_interval.h,
-// src/util/mpbq.cpp, src/util/index_sort_with_mutations.h), MIT license, see z3-license.txt.
 import { SmtInvariantError } from "../../../../errors";
 import { Rational } from "../rational";
 import { getLog2, Mpbq } from "./mpbq";

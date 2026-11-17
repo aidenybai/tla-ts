@@ -1,4 +1,3 @@
-// Ported from Z3 (src/util/search_tree.h), MIT license, see z3-license.txt.
 import { SmtInvariantError } from "../../../errors";
 import type { AstManager } from "./ast";
 import { RandomGen } from "./random-gen";

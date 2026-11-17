@@ -1,5 +1,3 @@
-// Ported from Z3 (src/nlsat/nlsat_types.h, src/nlsat/nlsat_clause.h), MIT license, see
-// z3-license.txt.
 import type { Dependency } from "../lp/dependency";
 import type { Polynomial } from "./polynomial";
 

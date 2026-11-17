@@ -1,5 +1,3 @@
-// Ported from Z3 (src/ast/simplifiers/dominator_simplifier.cpp, src/ast/rewriter/dom_simplifier.cpp,
-// src/ast/expr_substitution.cpp), MIT license, see z3-license.txt.
 import { type AstManager, KIND_APP, OP_AND, OP_EQ, OP_ITE, OP_NOT, OP_OR } from "./ast";
 import { mkNot } from "./ast-util";
 import { type DependentExprState, runSimplifier } from "./dependent-expr-state";

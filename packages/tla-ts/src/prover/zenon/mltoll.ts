@@ -1,5 +1,3 @@
-// Ported from Zenon's mltoll.ml, as shipped in tlapm. Copyright 2004 INRIA, see LICENSE.
-
 import { TlaZenonError } from "../../errors";
 import type { Direction, Origin, RelationProperty, Relations } from "./eqrel";
 import {

@@ -1,5 +1,3 @@
-// Ported from Z3 (src/parsers/smt2/smt2scanner.cpp, src/parsers/smt2/smt2parser.cpp,
-// src/cmd_context/cmd_context.cpp), MIT license, see z3-license.txt.
 import { SmtParseError, SmtUnsupportedError } from "../../../errors";
 import {
   type AstManager,

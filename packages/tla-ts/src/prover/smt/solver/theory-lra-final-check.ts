@@ -1,4 +1,3 @@
-// Ported from Z3 (src/smt/theory_lra.cpp), MIT license, see z3-license.txt.
 import { OP_POWER, OP_POWER0 } from "./ast";
 import { FC_CONTINUE, FC_DONE, FC_GIVEUP } from "./theory";
 import { TheoryJustification } from "./enode";

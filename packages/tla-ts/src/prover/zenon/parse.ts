@@ -1,5 +1,3 @@
-// Ported from Zenon's lexzen.mll and parsezen.mly, as shipped in tlapm. Copyright 2005 INRIA, see LICENSE.
-
 import { TlaZenonError } from "../../errors";
 import {
   FALSE,

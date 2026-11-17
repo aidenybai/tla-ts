@@ -1,4 +1,3 @@
-// Ported from Z3 (src/tactic/arith/purify_arith_tactic.cpp), MIT license, see z3-license.txt.
 import {
   type AstManager,
   FAMILY_ARITH,

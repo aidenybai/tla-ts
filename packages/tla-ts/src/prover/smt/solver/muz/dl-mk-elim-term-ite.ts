@@ -1,5 +1,3 @@
-// Ported from Z3 (src/muz/transforms/dl_mk_elim_term_ite.cpp,
-// src/ast/simplifiers/blast_term_ite_simplifier.h), MIT license, see z3-license.txt.
 import { SmtUnsupportedError } from "../../../../errors";
 import { type AstManager, KIND_APP, KIND_QUANTIFIER, OP_ITE, SORT_BOOL } from "../ast";
 import { flattenAndVector, getNumExprs } from "../ast-util";

@@ -1,5 +1,3 @@
-// Ported from Z3 (src/sat/smt/arith_solver.h, src/sat/smt/arith_internalize.cpp,
-// src/math/lp/lp_api.h), MIT license, see z3-license.txt.
 import {
   FAMILY_ARITH,
   OP_ABS,

@@ -1,4 +1,3 @@
-// Ported from Z3 (src/math/lp/lar_solver.h, src/math/lp/lar_solver.cpp, src/math/lp/column.h, src/math/lp/var_register.h), MIT license, see z3-license.txt.
 import { SmtInvariantError } from "../../../../errors";
 import { Rational } from "../rational";
 import { IndexedUintSet, StackedVector } from "./containers";

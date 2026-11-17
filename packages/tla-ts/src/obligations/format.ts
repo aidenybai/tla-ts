@@ -1,5 +1,3 @@
-// A port of OCaml's Format module, which tlapm uses to lay out obligations.
-
 type BoxKind = "h" | "v" | "hv" | "hov" | "b" | "fits";
 
 type Token =

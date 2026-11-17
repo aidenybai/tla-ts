@@ -1,4 +1,3 @@
-// Ported from Z3 (src/ast/recfun_decl_plugin.cpp), MIT license, see z3-license.txt.
 import {
   type AstManager,
   KIND_APP,

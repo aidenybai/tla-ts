@@ -1,5 +1,3 @@
-// Ported from Z3 (src/sat/tactic/goal2sat.h, src/sat/tactic/goal2sat.cpp,
-// src/ast/expr2var.cpp, src/sat/smt/atom2bool_var.cpp), MIT license, see z3-license.txt.
 import { SmtCanceledError, SmtTacticError } from "../../../../errors";
 import {
   type AstManager,

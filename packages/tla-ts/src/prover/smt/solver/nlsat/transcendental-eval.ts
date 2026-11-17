@@ -1,6 +1,5 @@
-// Ported from Z3 (src/nlsat/transcendental_eval.h, src/nlsat/transcendental_eval.cpp), MIT license,
-// see z3-license.txt. Z3 evaluates with the platform's libm, and V8's Math functions can differ from
-// it in the last bit.
+// Z3 evaluates with the platform's libm, and V8's Math functions can differ from it in the last
+// bit.
 import {
   OP_ACOS,
   OP_ACOSH,

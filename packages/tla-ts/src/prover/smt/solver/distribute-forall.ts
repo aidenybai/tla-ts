@@ -1,4 +1,3 @@
-// Ported from Z3 (src/ast/simplifiers/distribute_forall.cpp), MIT license, see z3-license.txt.
 import { type AstManager, OP_AND, OP_IMPLIES, OP_OR, QUANTIFIER_FORALL } from "./ast";
 import { flattenAndVector, flattenOrVector } from "./ast-util";
 import { runSimplifier } from "./dependent-expr-state";

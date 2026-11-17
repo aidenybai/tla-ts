@@ -1,4 +1,3 @@
-// Ported from Z3 (src/ast/seq/seq_axioms.cpp, src/smt/seq_axioms.cpp), MIT license, see z3-license.txt.
 import { SmtUnsupportedError } from "../../../errors";
 import {
   type AstManager,

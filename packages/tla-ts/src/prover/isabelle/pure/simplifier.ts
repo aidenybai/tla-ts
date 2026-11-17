@@ -1,5 +1,3 @@
-// Ported from Isabelle2025's Pure/simplifier.ML and Pure/goal.ML. Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
-
 import { genAll, isNormHhf, normHhfEq, protectCong } from "./drule";
 import { preferGoal } from "./goal";
 import { congKey, makeSimpContext, type SimpContext, type Solver } from "./raw-simplifier";

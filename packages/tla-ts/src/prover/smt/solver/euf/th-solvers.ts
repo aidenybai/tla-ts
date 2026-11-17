@@ -1,4 +1,3 @@
-// Ported from Z3 (src/sat/smt/euf_solver.cpp), MIT license, see z3-license.txt.
 import { SmtUnsupportedError } from "../../../../errors";
 import {
   FAMILY_ARITH,

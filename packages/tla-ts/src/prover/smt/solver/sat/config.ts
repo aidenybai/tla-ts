@@ -1,6 +1,3 @@
-// Ported from Z3 (src/sat/sat_config.h, src/sat/sat_config.cpp, src/params/sat_params.pyg,
-// src/sat/sat_simplifier_params.pyg, src/sat/sat_asymm_branch_params.pyg,
-// src/sat/sat_scc_params.pyg), MIT license, see z3-license.txt.
 import { SmtTacticError } from "../../../../errors";
 import { UINT_MAX } from "./clause";
 

@@ -1,5 +1,3 @@
-// Ported from Zenon's ext_tla.ml, as shipped in tlapm. Copyright 2008 INRIA, see LICENSE.
-
 import { TlaZenonError } from "../../../errors";
 import { isApp, isRelation, type Expr, type Expressions, type RelationExpr } from "../expr";
 import type { Index } from "../index-table";

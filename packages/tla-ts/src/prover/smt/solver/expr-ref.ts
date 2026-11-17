@@ -1,4 +1,3 @@
-// Ported from Z3 (src/ast/ast.h), MIT license, see z3-license.txt.
 import type { AstManager } from "./ast";
 
 export const assign = (manager: AstManager, old: number, value: number) => {

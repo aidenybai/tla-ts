@@ -1,4 +1,3 @@
-// Ported from Z3 (src/tactic/aig/aig_tactic.cpp), MIT license, see z3-license.txt.
 import { SmtTacticError } from "../../../errors";
 import type { AstManager } from "./ast";
 import { AigManager } from "./aig";

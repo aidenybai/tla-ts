@@ -1,5 +1,3 @@
-// Ported from Z3 (src/ast/rewriter/bv_rewriter.cpp, mk_extract_proc.cpp), MIT license, see
-// z3-license.txt.
 import { isAstLess } from "./ast-lt";
 import {
   type AstManager,

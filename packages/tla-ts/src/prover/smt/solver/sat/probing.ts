@@ -1,5 +1,3 @@
-// Ported from Z3 (src/sat/sat_probing.h, src/sat/sat_probing.cpp,
-// src/sat/sat_simplifier_params.pyg), MIT license, see z3-license.txt.
 import { L_UNDEF } from "../lbool";
 import { Big } from "./big";
 import { getBool, getNumber, type SatParams } from "./config";

@@ -1,4 +1,3 @@
-// Ported from Z3 (src/ast/rewriter/fpa_rewriter.cpp), MIT license, see z3-license.txt.
 import {
   type AstManager,
   OP_EXTRACT,

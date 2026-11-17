@@ -1,4 +1,3 @@
-// Ported from Z3 (src/ast/seq/seq_skolem.cpp, src/ast/seq/seq_skolem.h), MIT license, see z3-license.txt.
 import {
   type AstManager,
   OP_SEQ_CONCAT,

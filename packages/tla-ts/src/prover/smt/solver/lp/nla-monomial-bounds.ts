@@ -1,5 +1,3 @@
-// Ported from Z3 (src/math/lp/monomial_bounds.{h,cpp}, src/util/mpq.h root), MIT license, see
-// z3-license.txt.
 import { getLcm, Rational } from "../rational";
 import { type ConstraintKind, KIND_EQ, KIND_GE, KIND_GT, KIND_LE, KIND_LT } from "./constraints";
 import {

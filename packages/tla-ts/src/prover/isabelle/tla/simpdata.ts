@@ -1,5 +1,3 @@
-// Ported from Isabelle/TLA+'s simplifier_setup.ML and PredicateLogic.thy, BSD licensed, see LICENSE.
-
 import { TlaIsabelleError } from "../../../errors";
 import { genAll, reflexiveThm } from "../pure/drule";
 import { emptyNet, insertTermNet, type Net } from "../pure/net";

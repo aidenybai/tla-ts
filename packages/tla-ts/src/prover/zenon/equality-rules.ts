@@ -1,5 +1,3 @@
-// Ported from Zenon's prove.ml, as shipped in tlapm. Copyright 2002 INRIA, see LICENSE.
-
 import { TlaZenonError } from "../../errors";
 import {
   isApp,

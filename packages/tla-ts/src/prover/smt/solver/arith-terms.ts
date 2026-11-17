@@ -1,5 +1,3 @@
-// Ported from Z3 (src/smt/theory_lra.cpp, src/sat/smt/arith_solver.cpp), MIT license, see
-// z3-license.txt.
 import {
   type AstManager,
   OP_ADD,

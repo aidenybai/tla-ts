@@ -1,5 +1,3 @@
-// Ported from Z3 (src/tactic/bv/bv1_blaster_tactic.h, src/ast/simplifiers/bv1_blaster.cpp), MIT
-// license, see z3-license.txt.
 import { SmtUnsupportedError } from "../../../errors";
 import {
   type AstManager,

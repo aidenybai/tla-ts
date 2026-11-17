@@ -1,4 +1,3 @@
-// Ported from Z3 (src/tactic/core/occf_tactic.cpp), MIT license, see z3-license.txt.
 import { SmtTacticError } from "../../../errors";
 import { type AstManager, OP_OR, SORT_BOOL } from "./ast";
 import type { Goal } from "./goal";

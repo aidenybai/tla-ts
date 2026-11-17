@@ -1,5 +1,3 @@
-// Ported from Z3 (src/opt/opt_pareto.cpp, src/opt/opt_pareto_solver.cpp), MIT license, see
-// z3-license.txt.
 import { SmtTacticError } from "../../../errors";
 import {
   type AstManager,

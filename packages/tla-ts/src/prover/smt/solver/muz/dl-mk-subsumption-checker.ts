@@ -1,5 +1,3 @@
-// Ported from Z3 (src/muz/transforms/dl_mk_subsumption_checker.cpp,
-// src/muz/base/dl_rule_subsumption_index.cpp), MIT license, see z3-license.txt.
 import { KIND_VAR } from "../ast";
 import { ObjHashtable } from "../hashtable";
 import type { DatalogContext } from "./dl-context";

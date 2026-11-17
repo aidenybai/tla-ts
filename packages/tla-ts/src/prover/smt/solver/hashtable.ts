@@ -1,4 +1,3 @@
-// Ported from Z3 (src/util/hashtable.h, src/util/obj_hashtable.h), MIT license, see z3-license.txt.
 import { SmtInvariantError } from "../../../errors";
 
 const INITIAL_CAPACITY = 8;

@@ -1,6 +1,3 @@
-// Ported from Z3 (src/ast/rewriter/bit_blaster/bit_blaster_rewriter.cpp,
-// src/tactic/bv/bit_blaster_tactic.cpp, src/tactic/bv/bit_blaster_model_converter.cpp), MIT
-// license, see z3-license.txt.
 import { SmtTacticError } from "../../../errors";
 import {
   type AstManager,

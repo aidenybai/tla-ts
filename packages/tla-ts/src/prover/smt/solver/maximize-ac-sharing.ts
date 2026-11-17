@@ -1,4 +1,3 @@
-// Ported from Z3 (src/ast/rewriter/maximize_ac_sharing.cpp), MIT license, see z3-license.txt.
 import { OP_ADD, OP_BADD, OP_BAND, OP_BMUL, OP_BOR, OP_OR } from "./ast";
 import { RewriterTpl } from "./rewriter-tpl";
 import { shrink } from "./array";

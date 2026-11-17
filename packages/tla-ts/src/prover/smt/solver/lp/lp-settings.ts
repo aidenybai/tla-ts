@@ -1,4 +1,3 @@
-// Ported from Z3 (src/math/lp/lp_settings.h, src/math/lp/lp_settings.cpp), MIT license, see z3-license.txt.
 import { RandomGen } from "../random-gen";
 
 export interface LpStats {

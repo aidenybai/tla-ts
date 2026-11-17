@@ -1,4 +1,3 @@
-// Ported from Z3 (src/muz/spacer/spacer_util.cpp), MIT license, see z3-license.txt.
 import { SmtUnsupportedError } from "../../../../errors";
 import {
   type AstManager,
