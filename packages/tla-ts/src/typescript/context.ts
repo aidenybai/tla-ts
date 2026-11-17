@@ -22,7 +22,14 @@ import { getKeptReads } from "./narrowing";
 import { mayThrow } from "./functions";
 import { getGetterKeys, isProxyOperation } from "./protocols";
 import type { Namespace } from "./namespaces";
-import { type ProgramNodes, withNodeTypes } from "./program-nodes";
+import {
+  createReferences,
+  findNodesOfKind,
+  getReferences,
+  type ProgramNodes,
+  type References,
+  withNodeTypes,
+} from "./program-nodes";
 import type { Link } from "./regions";
 import { apply, define, identifier, ifExpression, index, letExpression, string } from "./tla";
 
@@ -89,8 +96,9 @@ export interface MadeRegExp {
 
 export interface Context {
   checker: ts.TypeChecker;
-  // The nodes of the program's files, which tla-ts walks once.
+  // The nodes of the program's files, which tla-ts walks once, and the names of each symbol.
   nodes: ProgramNodes;
+  references: References;
   names: Names;
   variables: Map<ts.Symbol, Expression>;
   // Helper functions and constants, compiled when first referenced.
@@ -558,6 +566,7 @@ export const createContext = (
   return {
     checker: withNodeTypes(withDeclaredReads(checker, reads), nodes),
     nodes,
+    references: createReferences(nodes, (name) => getSymbol(name, checker)),
     keptReads: reads.keptReads,
     names: createNames(JAVASCRIPT_OPERATORS),
     variables: new Map(),
@@ -2839,7 +2848,7 @@ export const getBuiltInBase = (
     name !== "AggregateError" &&
     name !== "SuppressedError" &&
     symbol !== undefined &&
-    (hasObjectMembers(node) || isPrototypeRead(symbol, context.checker))
+    (hasObjectMembers(node) || isPrototypeRead(symbol, context))
   ) {
     return name;
   }
@@ -4450,7 +4459,7 @@ export const isHeapFunction = (node: ts.Node, context: Context): node is HeapFun
   // A new or Reflect.construct constructs the function or takes it as newTarget, an Object
   // function reads or changes it as an object, or its @@hasInstance or an instanceof reads its
   // prototype.
-  const isNewTarget = (child: ts.Node): boolean => {
+  const isNewTarget = (child: ts.Node): child is ts.Node => {
     const construction = getConstruction(child, context);
     const receiver = ts.isCallExpression(child)
       ? getHasInstanceReceiver(child, context)
@@ -4468,10 +4477,7 @@ export const isHeapFunction = (node: ts.Node, context: Context): node is HeapFun
             : construction === undefined
               ? []
               : [construction.callee, construction.newTarget];
-    return (
-      targets.some(isNamedBy) ||
-      (ts.forEachChild(child, (inner) => isNewTarget(inner) || undefined) ?? false)
-    );
+    return targets.some(isNamedBy);
   };
   const isHeap =
     symbol !== undefined &&
@@ -4479,15 +4485,22 @@ export const isHeapFunction = (node: ts.Node, context: Context): node is HeapFun
     isPlain(node) &&
     isOnce(node.parent, context) &&
     !isAssigned(symbol, sourceFile, context) &&
-    (isNewTarget(sourceFile) ||
+    // Only an instanceof, a call, or a new names a target.
+    ([
+      ts.SyntaxKind.BinaryExpression,
+      ts.SyntaxKind.CallExpression,
+      ts.SyntaxKind.NewExpression,
+    ].some((kind) => findNodesOf(sourceFile, kind, isNewTarget, context).length > 0) ||
       // An assignment writes one of its properties, or a call passes it as an object.
-      findNodes(
+      findNodesOf(
         sourceFile,
+        ts.SyntaxKind.BinaryExpression,
         (child): child is ts.BinaryExpression =>
           ts.isBinaryExpression(child) &&
           child.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
           (ts.isPropertyAccessExpression(child.left) || ts.isElementAccessExpression(child.left)) &&
           isNamedBy(child.left.expression),
+        context,
       ).length > 0 ||
       isPassedAsObject(symbol, sourceFile, context));
   heapFunctions.set(node, isHeap);
@@ -5268,6 +5281,20 @@ export const getImportedModule = (node: ts.CallExpression, checker: ts.TypeCheck
     ? module
     : undefined;
 };
+
+// The names under a root that name a symbol, in the order that a walk visits them.
+export const findReferences = (symbol: ts.Symbol, root: ts.Node, context: Context) =>
+  getReferences(context.nodes, context.references, symbol, root, (name) =>
+    getSymbol(name, context.checker),
+  );
+
+// The nodes of a kind under a root that pass a test, in the order that a walk visits them.
+export const findNodesOf = <T extends ts.Node>(
+  root: ts.Node,
+  kind: ts.SyntaxKind,
+  test: (node: ts.Node) => node is T,
+  context: Context,
+) => findNodesOfKind(context.nodes, root, kind, test);
 
 export const findNodes = <T extends ts.Node>(root: ts.Node, test: (node: ts.Node) => node is T) => {
   const found: T[] = [];

@@ -30,6 +30,7 @@ import {
   type Context,
   type FunctionNode,
   findNodes,
+  findReferences,
   getAssignedTarget,
   getLocalCaptures,
   getFunctionOfKind,
@@ -2328,12 +2329,8 @@ const isExecutorDeclaration = (node: ts.Node, context: Context): node is ts.Func
   const uses =
     symbol === undefined
       ? []
-      : findNodes(
-          node.getSourceFile(),
-          (inner): inner is ts.Identifier =>
-            ts.isIdentifier(inner) &&
-            inner !== node.name &&
-            getSymbol(inner, context.checker) === symbol,
+      : findReferences(symbol, node.getSourceFile(), context).filter(
+          (inner) => inner !== node.name,
         );
   // A function that no code names is no executor, though an unknown callee may still call it.
   return (

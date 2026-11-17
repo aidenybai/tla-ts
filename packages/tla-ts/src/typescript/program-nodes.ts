@@ -2,13 +2,16 @@ import ts from "@typescript/typescript6";
 
 declare module "@typescript/typescript6" {
   // TypeScript's own dense id of a node, which its checker keys its per-node tables by.
-  function getNodeId(node: Node): number;
+  function getNodeId(node: ts.Node): number;
+  // And of a symbol.
+  function getSymbolId(symbol: ts.Symbol): number;
 }
 
 // The nodes of a program's files, in the order that a walk of each file's children visits them,
 // each by its position there, as columns: the node, the position past its subtree, the position
 // of its file, and an identifier's symbol. A node's position is found by its id, through a slot per
-// id from the files' lowest, which holds the position plus one, or 0 for a node of no file.
+// id from the files' lowest, which holds the position plus one, or 0 for a node of no file. The
+// positions of each kind of node run in order, the kind's from its start to the next kind's.
 export interface ProgramNodes {
   first: number;
   positions: Int32Array;
@@ -16,6 +19,15 @@ export interface ProgramNodes {
   ends: Int32Array;
   files: Int32Array;
   symbols: (ts.Symbol | undefined)[];
+  kindStarts: Int32Array;
+  kindPositions: Int32Array;
+}
+
+// The positions of the identifiers that name each symbol, by the symbol's id and then in order, as
+// tla-ts's own symbol of a name gives it.
+export interface References {
+  symbolIds: Int32Array;
+  positions: Int32Array;
 }
 
 // The position of a node of the program's files, or -1.
@@ -53,6 +65,19 @@ export const createProgramNodes = (
   ids.forEach((id, position) => {
     positions[id - first] = position + 1;
   });
+  const kindStarts = new Int32Array(ts.SyntaxKind.Count + 1);
+  nodes.forEach((node) => {
+    kindStarts[node.kind + 1] += 1;
+  });
+  kindStarts.forEach((count, kind) => {
+    if (kind > 0) kindStarts[kind] = kindStarts[kind - 1] + count;
+  });
+  const kindEnds = kindStarts.slice(0, -1);
+  const kindPositions = new Int32Array(nodes.length);
+  nodes.forEach((node, position) => {
+    kindPositions[kindEnds[node.kind]] = position;
+    kindEnds[node.kind] += 1;
+  });
   return {
     first,
     positions,
@@ -62,7 +87,101 @@ export const createProgramNodes = (
     symbols: nodes.map((node) =>
       ts.isIdentifier(node) ? checker.getSymbolAtLocation(node) : undefined,
     ),
+    kindStarts,
+    kindPositions,
   };
+};
+
+// The index of the first of a sorted run's values at or past a value.
+const getLowerBound = (sorted: Int32Array, start: number, end: number, value: number): number => {
+  if (start >= end) return start;
+  const middle = (start + end) >>> 1;
+  return sorted[middle] < value
+    ? getLowerBound(sorted, middle + 1, end, value)
+    : getLowerBound(sorted, start, middle, value);
+};
+
+// The nodes under a root, itself too, in the order that a walk visits them, that pass a test.
+const walkNodes = <T extends ts.Node>(root: ts.Node, test: (node: ts.Node) => node is T) => {
+  const found: T[] = [];
+  const visit = (node: ts.Node): void => {
+    if (test(node)) found.push(node);
+    ts.forEachChild(node, visit);
+  };
+  visit(root);
+  return found;
+};
+
+// The nodes of a kind under a root, itself too, in the order that a walk visits them, that pass a
+// test. Under a root of the program's files, only the nodes of the kind are tested.
+export const findNodesOfKind = <T extends ts.Node>(
+  table: ProgramNodes,
+  root: ts.Node,
+  kind: ts.SyntaxKind,
+  test: (node: ts.Node) => node is T,
+): T[] => {
+  const start = getPosition(table, root);
+  if (start < 0) {
+    return walkNodes(root, (node): node is T => node.kind === kind && test(node));
+  }
+  const end = table.ends[start];
+  const last = table.kindStarts[kind + 1];
+  const found: T[] = [];
+  for (
+    let index = getLowerBound(table.kindPositions, table.kindStarts[kind], last, start);
+    index < last && table.kindPositions[index] < end;
+    index += 1
+  ) {
+    const node = table.nodes[table.kindPositions[index]];
+    if (test(node)) found.push(node);
+  }
+  return found;
+};
+
+export const createReferences = (
+  table: ProgramNodes,
+  getSymbol: (name: ts.Identifier) => ts.Symbol | undefined,
+): References => {
+  const ids = new Int32Array(table.nodes.length).fill(-1);
+  const named: number[] = [];
+  table.nodes.forEach((node, position) => {
+    const symbol = ts.isIdentifier(node) ? getSymbol(node) : undefined;
+    if (symbol === undefined) return;
+    ids[position] = ts.getSymbolId(symbol);
+    named.push(position);
+  });
+  const positions = Int32Array.from(named).sort(
+    (left, right) => ids[left] - ids[right] || left - right,
+  );
+  return { symbolIds: positions.map((position) => ids[position]), positions };
+};
+
+// The identifiers under a root that name a symbol, as getSymbol gives it, in the order that a walk
+// visits them. Under a root of the program's files, only the symbol's names are looked at.
+export const getReferences = (
+  table: ProgramNodes,
+  references: References,
+  symbol: ts.Symbol,
+  root: ts.Node,
+  getSymbol: (name: ts.Identifier) => ts.Symbol | undefined,
+): ts.Identifier[] => {
+  const start = getPosition(table, root);
+  if (start < 0) {
+    return walkNodes(
+      root,
+      (node): node is ts.Identifier => ts.isIdentifier(node) && getSymbol(node) === symbol,
+    );
+  }
+  const end = table.ends[start];
+  const id = ts.getSymbolId(symbol);
+  const last = getLowerBound(references.symbolIds, 0, references.symbolIds.length, id + 1);
+  const found: ts.Identifier[] = [];
+  for (let index = getLowerBound(references.symbolIds, 0, last, id); index < last; index += 1) {
+    const position = references.positions[index];
+    const node = table.nodes[position];
+    if (position >= start && position < end && ts.isIdentifier(node)) found.push(node);
+  }
+  return found;
 };
 
 // A checker that reads an identifier's symbol from the table.
