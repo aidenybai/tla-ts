@@ -588,13 +588,28 @@ export const typeJavaScript = (
   isReported: (diagnostic: ts.Diagnostic) => boolean,
 ) => {
   const checker = program.getTypeChecker();
-  // A private name that no class declares, arguments where no function binds it, as in a field's
-  // initializer, and an export of a name that nothing declares are early errors that TypeScript reports as names it can't find.
+  // A private name that no class around it declares, arguments where no function binds it, as in a
+  // field's initializer, and an export of a name that nothing declares are early errors that
+  // TypeScript reports as names it can't find. A private name that a class around it declares
+  // reads an object that may lack it, which throws as tla-ts follows.
   const isIgnored = (diagnostic: ts.Diagnostic) => {
     const node = getDiagnosedNode(file, diagnostic);
+    const isUndeclaredPrivate =
+      ts.isPrivateIdentifier(node) &&
+      ts.findAncestor(
+        node,
+        (ancestor) =>
+          ts.isClassLike(ancestor) &&
+          ancestor.members.some(
+            (member) =>
+              member.name !== undefined &&
+              ts.isPrivateIdentifier(member.name) &&
+              member.name.text === node.text,
+          ),
+      ) === undefined;
     return (
       IGNORED_ERRORS.has(diagnostic.code) &&
-      !(ts.isPrivateIdentifier(node) && PRIVATE_NAME_ERRORS.has(diagnostic.code)) &&
+      !(isUndeclaredPrivate && PRIVATE_NAME_ERRORS.has(diagnostic.code)) &&
       !(ts.isIdentifier(node) && node.text === "arguments") &&
       !ts.isExportSpecifier(node.parent)
     );

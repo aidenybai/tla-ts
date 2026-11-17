@@ -52528,4 +52528,26 @@ describe("BigInts", () => {
       );
     });
   });
+
+  it("stops rather than skips at a JavaScript private name that a class declares and that an object may lack", () => {
+    const source = `
+      var box = { seen: "" };
+      var C = class {
+        static #f() {
+          return 42;
+        }
+        g() {
+          return this.#f();
+        }
+      };
+      try {
+        new C().g();
+      } catch (error) {
+        box.seen += error instanceof TypeError;
+      }
+    `;
+    expect(() => compile(source, join(import.meta.dirname, "model.js"))).toThrow(
+      "Unsupported statement: this.#f()",
+    );
+  });
 });
