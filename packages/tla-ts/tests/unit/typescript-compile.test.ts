@@ -49575,6 +49575,24 @@ describe("BigInts", () => {
       expect((await checkModel(getShapes(2))).failure?.message).toContain("side 1");
     });
 
+    it("stops where code outside a namespace writes a variable that it exports", () => {
+      expect(() =>
+        compile(`
+          namespace Tally {
+            export let total = 0;
+            export function add() {
+              total += 1;
+              return total;
+            }
+          }
+          Tally.add();
+          Tally.total += 5;
+        `),
+      ).toThrow(
+        "spec.ts:10:11 tla-ts can't write Tally.total, which a namespace exports, outside the namespace",
+      );
+    });
+
     it("agrees with TypeScript's output run in Node for another file's namespace", async () => {
       const path = join(import.meta.dirname, "../fixtures/typescript/imports/countering.ts");
       const getImporter = (expected: string) => `

@@ -970,6 +970,17 @@ const getTarget = (node: ts.Expression, path: Path, context: Context): Target =>
     return getTarget(node.expression, path, context);
   }
   if (isChainedChange(node, context)) return getTarget(node.expression.expression, path, context);
+  // TypeScript makes a namespace's exported variable a property of the namespace's object, which
+  // tla-ts makes no object for.
+  const namespace = ts.isPropertyAccessExpression(node)
+    ? getValueDeclaration(getSymbol(skipCasts(node.expression), context.checker), context)
+    : undefined;
+  if (namespace !== undefined && ts.isModuleDeclaration(namespace)) {
+    throw new TlaTypeScriptError(
+      `tla-ts can't write ${node.getText()}, which a namespace exports, outside the namespace`,
+      node,
+    );
+  }
   if (ts.isIdentifier(node)) {
     rejectBeforeDeclaration(node, path.scope, context);
     const mapped = getMappedTarget(node, path, context);
