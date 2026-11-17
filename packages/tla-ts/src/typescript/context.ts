@@ -107,6 +107,9 @@ export interface Context {
   // Whether each function of the program's files is called once, by its position, as
   // isCalledOnce answers.
   calledOnce: Uint8Array;
+  // Whether each class and function of the program's files is a heap class or a heap function, by
+  // its position, as isHeapClass and isHeapFunction answer once the heap is known.
+  heapCode: Uint8Array;
   names: Names;
   variables: Map<ts.Symbol, Expression>;
   // Helper functions and constants, compiled when first referenced.
@@ -577,6 +580,7 @@ export const createContext = (
     references: createReferences(nodes, (name) => getSymbol(name, checker)),
     getterKeys: files.map(findGetterKeys),
     calledOnce: new Uint8Array(nodes.nodes.length),
+    heapCode: new Uint8Array(nodes.nodes.length),
     keptReads: reads.keptReads,
     names: createNames(JAVASCRIPT_OPERATORS),
     variables: new Map(),
@@ -1894,6 +1898,21 @@ const isCalledOnce = (node: ts.SignatureDeclaration, context: Context): boolean 
   return isOnceCalled;
 };
 
+const HEAP_UNKNOWN = 0;
+const HEAP_NO = 1;
+const HEAP_YES = 2;
+
+// Answers isHeapClass and isHeapFunction for each class and function of the program's files, in
+// order, once the heap is known, before tla-ts compiles the code.
+export const findHeapCode = (context: Context) => {
+  context.nodes.nodes.forEach((node) => {
+    if (ts.isClassLike(node)) isHeapClass(node, context);
+    if (ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node)) {
+      isHeapFunction(node, context);
+    }
+  });
+};
+
 const CALLED_UNKNOWN = 0;
 const CALLED_NOT_ONCE = 1;
 const CALLED_ONCE = 2;
@@ -3023,8 +3042,6 @@ const isDerivedSafe = (
   );
 };
 
-const heapClasses = new WeakMap<ts.ClassLikeDeclaration, boolean>();
-
 // A class that a script evaluates once into objects on the heap: a constructor object with the
 // static methods, and its prototype with the other methods. Its name never changes, so a new or
 // a method call can find the class it names.
@@ -3197,8 +3214,9 @@ export const findValueEnums = (files: readonly ts.SourceFile[], checker: ts.Type
 
 export const isHeapClass = (node: ts.ClassLikeDeclaration, context: Context): boolean => {
   if (context.heap === undefined) return false;
-  const known = heapClasses.get(node);
-  if (known !== undefined) return known;
+  const position = getPosition(context.nodes, node);
+  const known = position < 0 ? HEAP_UNKNOWN : context.heapCode[position];
+  if (known !== HEAP_UNKNOWN) return known === HEAP_YES;
   const declared = ts.isClassExpression(node) ? node.parent : node;
   const isField = isOnceField(node, context);
   const nameNode =
@@ -3243,7 +3261,7 @@ export const isHeapClass = (node: ts.ClassLikeDeclaration, context: Context): bo
               (isLiteralKey(member.name.expression) || (symbol !== undefined && !isField))))),
     ) &&
     (symbol === undefined || !isAssigned(symbol, node.getSourceFile(), context));
-  heapClasses.set(node, isHeap);
+  if (position >= 0) context.heapCode[position] = isHeap ? HEAP_YES : HEAP_NO;
   return isHeap;
 };
 
@@ -3923,8 +3941,6 @@ export type AccessorFunction = HeapFunction | ts.MethodDeclaration;
 
 export type HeapClass = ts.ClassLikeDeclaration | HeapFunction;
 
-const heapFunctions = new WeakMap<ts.Node, boolean>();
-
 export const skipCasts = (node: ts.Expression): ts.Expression =>
   ts.isParenthesizedExpression(node) ||
   ts.isNonNullExpression(node) ||
@@ -4411,8 +4427,9 @@ const getInPlaceNew = (node: ts.Node) => {
 export const isHeapFunction = (node: ts.Node, context: Context): node is HeapFunction => {
   if (context.heap === undefined) return false;
   if (!ts.isFunctionDeclaration(node) && !ts.isFunctionExpression(node)) return false;
-  const known = heapFunctions.get(node);
-  if (known !== undefined) return known;
+  const position = getPosition(context.nodes, node);
+  const known = position < 0 ? HEAP_UNKNOWN : context.heapCode[position];
+  if (known !== HEAP_UNKNOWN) return known === HEAP_YES;
   // A variable or an object literal's property may name a function expression, as obj.f names
   // the function of { f: function () {} }.
   const nameNode = ts.isFunctionDeclaration(node)
@@ -4448,7 +4465,7 @@ export const isHeapFunction = (node: ts.Node, context: Context): node is HeapFun
     written.left.argumentExpression.name.text === "species"
   ) {
     const isHeap = isPlain(node) && node.body !== undefined && isOnce(written, context);
-    heapFunctions.set(node, isHeap);
+    if (position >= 0) context.heapCode[position] = isHeap ? HEAP_YES : HEAP_NO;
     return isHeap;
   }
   // A function that a new constructs where the script writes it, which the new makes once. A body
@@ -4463,7 +4480,7 @@ export const isHeapFunction = (node: ts.Node, context: Context): node is HeapFun
           ...(constructed.arguments ?? []),
           ...node.parameters.flatMap((parameter) => parameter.initializer ?? []),
         ].every(isInertValue));
-    heapFunctions.set(node, isHeap);
+    if (position >= 0) context.heapCode[position] = isHeap ? HEAP_YES : HEAP_NO;
     return isHeap;
   }
   // A new or Reflect.construct constructs the function or takes it as newTarget, an Object
@@ -4513,7 +4530,7 @@ export const isHeapFunction = (node: ts.Node, context: Context): node is HeapFun
         context,
       ).length > 0 ||
       isPassedAsObject(symbol, sourceFile, context));
-  heapFunctions.set(node, isHeap);
+  if (position >= 0) context.heapCode[position] = isHeap ? HEAP_YES : HEAP_NO;
   return isHeap;
 };
 

@@ -14,6 +14,7 @@ import {
   createContext,
   findNodes,
   findFunctionCandidates,
+  findHeapCode,
   findSharedFunctionCandidates,
   findOnceFunctions,
   findValueEnums,
@@ -893,6 +894,7 @@ export const compile = (
   const changedArrays = isHeapFile ? findChangedArrays(reached, context) : [];
   if (heap !== undefined && isHeapFile && (isSharing || changedArrays.length > 0 || isUsingHeap)) {
     context.heap = heap;
+    findHeapCode(context);
     context.variables.set(heap, identifier(context.names.getFresh("heap")));
     context.storedBuiltIns = new Map(
       program.files.map((file) => [
