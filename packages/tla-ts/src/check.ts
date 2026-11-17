@@ -47,6 +47,7 @@ import {
   getStateHash,
   isSameState,
   markSeenState,
+  type StateTable,
 } from "./fingerprints";
 import type { JavaOverride } from "./java-overrides";
 import {
@@ -205,7 +206,7 @@ export type CheckProgress =
       branches: number;
       /** Whether TLC checks the complete state graph. */
       isComplete: boolean;
-      /** How many states of the graph each branch has. */
+      /** How many states the graphs of all branches have together. */
       states: number;
       statistics: SearchStatistics;
     }
@@ -414,6 +415,15 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
           key.startsWith(`${name}${KEY_SEPARATOR}`),
         ),
     });
+  const getCoverage = () =>
+    coverage?.relations.some((relation) => relation.kind === "next")
+      ? getCoverageReport(
+          coverage,
+          environment,
+          specification.variableLocations,
+          search?.getTlcOrder() ?? [],
+        )
+      : undefined;
   const createResult = (
     status: CheckStatus,
     violation?: ReportedViolation,
@@ -434,14 +444,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       initialStates: computedInitialStates,
       outDegrees: undefined,
       fingerprintDistance: undefined,
-      coverage: coverage?.relations.some((relation) => relation.kind === "next")
-        ? getCoverageReport(
-            coverage,
-            environment,
-            specification.variableLocations,
-            search?.getTlcOrder() ?? [],
-          )
-        : undefined,
+      coverage: getCoverage(),
       ...(traceSpec !== undefined && { traceSpec }),
     };
   };
@@ -465,7 +468,12 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       : getFingerprintDistance(runtime.distinctStates, runtime.generatedStates, (visit) =>
           visit(
             search
-              ? search.getStoredFingerprints(states, fingerprintStates)
+              ? search.getStoredFingerprints(
+                  exploredStates.length === 0 ? states : states.concat(exploredStates),
+                  exploredStates.length === 0
+                    ? fingerprintStates
+                    : fingerprintStates.concat(exploredFingerprintStates),
+                )
               : BigInt64Array.from(states, runtime.getFingerprint),
           ),
         ),
@@ -478,6 +486,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     () => created.order.getDeclarationOrder("variable"),
     options.onProgress,
     specification.moduleOperators,
+    specification.runtimeInvariants,
   );
   const findViolatedAssumption = () =>
     findAssumptionViolation(specification.assumptions, environment);
@@ -554,12 +563,6 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   const getFingerprintState = search.getFingerprintState;
   // Tool's constructor splits the next-state relation into actions before TLC checks anything.
   const nextActions = getDescription().actions;
-  runtime.getSuccessorAction = (state, next) =>
-    nextActions.find((action) =>
-      getSuccessors(action.expression, state, environment, action.scope).some((successor) =>
-        successor.state.every((value, index) => isSameValue(value, next[index])),
-      ),
-    );
   const addCoverageRelations = (kind: "init" | "next", actions: SpecAction[]) =>
     actions.map((action): CoveredAction => ({
       ...action,
@@ -609,6 +612,17 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     );
     return successors;
   };
+  // TLC generates the successors of each action again, which its coverage counts.
+  const findSuccessorAction = (state: Value[], isMatch: (successor: Successor) => boolean) =>
+    coverage
+      ? coverageActions.find((item) => getCoveredSuccessors(item, state).some(isMatch))
+      : nextActions.find((item) =>
+          getSuccessors(item.expression, state, environment, item.scope).some(isMatch),
+        );
+  runtime.getSuccessorAction = (state, next) =>
+    findSuccessorAction(state, (successor) =>
+      successor.state.every((value, index) => isSameValue(value, next[index])),
+    );
   const rejectIncompleteInitialState = (partial: (Value | undefined)[]) => {
     throw setExitCode(new TlaIllegalStateError([...partial]), EXIT_STATUS.error);
   };
@@ -627,8 +641,10 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     return (state: Value[], callStack: CallStack | undefined) => {
       fingerprintReplayed(state, getFingerprintState(state), callStack);
       const fingerprintState = getFingerprintState(state);
+      const hash = getStateHash(fingerprintState);
       const isSeen =
-        findStateIndex(seenStates, getStateHash(fingerprintState), fingerprintState) !== -1 ||
+        findStateIndex(seenStates, hash, fingerprintState) !== -1 ||
+        isExplored(hash, fingerprintState) ||
         replayed.some((seen) => isSameState(seen, fingerprintState));
       if (isSeen) return false;
       replayed.push(fingerprintState);
@@ -715,28 +731,38 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
           if (spec.next === undefined) return successors;
           const livenessSource = current.livenessSource;
           current.livenessSource = source;
+          const addSuccessor = (successor: Value[]) => {
+            canonicalizeState(successor);
+            const isInModel =
+              search.satisfiesConstraints(successor, state) &&
+              search.satisfiesActionConstraints(state, successor);
+            if (!isInModel) return;
+            const fingerprintState = getFingerprintState(successor);
+            const hash = getStateHash(fingerprintState);
+            const index = findStateIndex(seenStates, hash, fingerprintState);
+            successors.push({
+              index: index === -1 ? getPendingIndex(hash, fingerprintState) : index,
+              state: successor,
+            });
+          };
           try {
-            forEachSuccessor(
-              spec.next,
-              state,
-              environment,
-              (successor) => {
-                canonicalizeState(successor.state);
-                const isInModel =
-                  search.satisfiesConstraints(successor.state, state) &&
-                  search.satisfiesActionConstraints(state, successor.state);
-                if (!isInModel) return false;
-                const fingerprintState = getFingerprintState(successor.state);
-                const index = findStateIndex(
-                  seenStates,
-                  getStateHash(fingerprintState),
-                  fingerprintState,
-                );
-                successors.push({ index, state: successor.state });
-                return false;
-              },
-              spec.scope,
-            );
+            // TLC's coverage counts the successors of each action the graph generates again.
+            if (coverage) {
+              coverageActions.forEach((action) =>
+                walkCoveredSuccessors(action, state, addSuccessor),
+              );
+            } else {
+              forEachSuccessor(
+                spec.next,
+                state,
+                environment,
+                (successor) => {
+                  addSuccessor(successor.state);
+                  return false;
+                },
+                spec.scope,
+              );
+            }
           } finally {
             current.livenessSource = livenessSource;
           }
@@ -755,6 +781,23 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   const actions: (string | undefined)[] = [];
   const depths: number[] = [];
   const seenStates = createStateTable(fingerprintStates);
+  const exploredStates: Value[][] = [];
+  const exploredFingerprintStates: Value[][] = [];
+  let exploredTable: StateTable | undefined;
+  const isExplored = (hash: number, fingerprintState: Value[]) =>
+    exploredTable !== undefined && findStateIndex(exploredTable, hash, fingerprintState) !== -1;
+  const pendingFingerprintStates: Value[][] = [];
+  let pendingStates: StateTable | undefined;
+  const getPendingIndex = (hash: number, fingerprintState: Value[]) => {
+    pendingStates ??= createStateTable(pendingFingerprintStates);
+    const found = findStateIndex(pendingStates, hash, fingerprintState);
+    const position = found === -1 ? pendingFingerprintStates.length : found;
+    if (found === -1) {
+      markSeenState(pendingStates, hash, position);
+      pendingFingerprintStates.push(fingerprintState);
+    }
+    return -2 - position;
+  };
   const canonicalizeState = createCanonicalizer();
 
   const toRecord = search.toRecord;
@@ -855,7 +898,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   };
   let unstoredFingerprint: Value[] | undefined;
   const countDistinctState = (depth: number) => {
-    runtime.distinctStates = states.length + 1;
+    runtime.distinctStates = states.length + exploredStates.length + 1;
     searchDepth = Math.max(searchDepth, depth);
     runtime.diameter = Math.max(runtime.diameter, depth);
   };
@@ -896,18 +939,27 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     tracedSteps,
     captureOutput,
     getInitialStates: getSpecInitialStates,
-    findSuccessorAction: (state, isMatch) =>
-      coverage
-        ? coverageActions.find((item) => getCoveredSuccessors(item, state).some(isMatch))
-        : nextActions.find((item) =>
-            getSuccessors(item.expression, state, environment, item.scope).some(isMatch),
-          ),
+    findSuccessorAction,
   });
   const getPath = (index: number): Value[][] =>
     index === -1 ? [] : [...getPath(parents[index]), states[index]];
+  // TLC adds a successor's fingerprint to its set before it checks the invariants of the successor.
   runtime.isSeen = (state) => {
     const fingerprintState = getFingerprintState(state);
-    return findStateIndex(seenStates, getStateHash(fingerprintState), fingerprintState) !== -1;
+    const hash = getStateHash(fingerprintState);
+    return (
+      findStateIndex(seenStates, hash, fingerprintState) !== -1 ||
+      isExplored(hash, fingerprintState) ||
+      (unstoredFingerprint !== undefined && isSameState(unstoredFingerprint, fingerprintState))
+    );
+  };
+  runtime.markExplored = (state) => {
+    const fingerprintState = getFingerprintState(state);
+    exploredTable ??= createStateTable(exploredFingerprintStates);
+    markSeenState(exploredTable, getStateHash(fingerprintState), exploredStates.length);
+    exploredStates.push(state);
+    exploredFingerprintStates.push(fingerprintState);
+    runtime.distinctStates++;
   };
   runtime.getBehavior = (state) => {
     const index = state === current.candidate ? -1 : states.indexOf(state);
@@ -1012,7 +1064,14 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       fingerprintModelState(fingerprintState);
       successor.state.forEach(markFingerprinted);
     }
-    return { fingerprintState, hash, isInModel, existing: isInModel ? foundIndex : -1 };
+    const existing = isInModel ? foundIndex : -1;
+    return {
+      fingerprintState,
+      hash,
+      isInModel,
+      existing,
+      isSeen: existing !== -1 || (isInModel && isExplored(hash, fingerprintState)),
+    };
   };
   const visitSuccessor = (
     index: number,
@@ -1031,7 +1090,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       stateWriter?.writeSuccessor(
         source,
         getGraphState(successor.state, depths[index] + 1),
-        found.existing !== -1,
+        found.isSeen,
         action && getGraphAction(action),
       );
     }
@@ -1053,7 +1112,13 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       const isStored = stored.every((value, position) => value === successor.state[position]);
       liveSuccessors.push({ index: found.existing, state: isStored ? stored : successor.state });
     }
-    const isNew = found.isInModel && found.existing === -1;
+    if (found.isSeen && found.existing === -1 && liveness) {
+      liveSuccessors.push({
+        index: getPendingIndex(found.hash, found.fingerprintState),
+        state: successor.state,
+      });
+    }
+    const isNew = found.isInModel && !found.isSeen;
     if (isNew && liveness) liveSuccessors.push({ index: states.length, state: successor.state });
     unstoredFingerprint = isNew ? found.fingerprintState : undefined;
     if (isNew) {
@@ -1061,7 +1126,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       newStateCount++;
       if (coverage) coverage.secondary[coveredNode]++;
     }
-    if (found.existing === -1) {
+    if (!found.isSeen) {
       try {
         const violated = search.findViolatedInvariant(successor.state, state);
         const violation = violated && { name: violated.name, ...traces.getTrace(index, successor) };
@@ -1092,6 +1157,10 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     if (coverage) countCoverageVariables(coverage, successor.state);
     if (!isCanonicalizedFirst) canonicalizeState(successor.state);
     markSeenState(seenStates, found.hash, states.length);
+    if (pendingStates) {
+      const pending = findStateIndex(pendingStates, found.hash, found.fingerprintState);
+      if (pending !== -1) liveness?.storeState(-2 - pending, states.length);
+    }
     addState(successor.state, found.fingerprintState, index, successor.action);
     runtime.queueSize++;
     return undefined;
@@ -1139,7 +1208,8 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         kind: "liveness-started",
         branches: liveness.branches,
         isComplete: true,
-        states: typed.distinctStates,
+        // The tier stores and expands every successor, so the graph of each branch has every state.
+        states: liveness.branches * typed.distinctStates,
         statistics,
       });
       options.onProgress?.({ kind: "liveness-finished" });
@@ -1396,6 +1466,8 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       return {
         ...result,
         violation: appendTraceOutput(result.violation, live.lines),
+        // TLC adds the state to the behavior graph before it reports the coverage.
+        coverage: getCoverage(),
         ...(live.result && { liveCallStack: live.result }),
       };
     }
@@ -1527,24 +1599,31 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   const startedAt = performance.now();
   const periodic = {
     at: startedAt + PERIODIC_START,
-    size: 1,
+    // The size of each branch's graph when TLC last checked it, which starts at 1.
+    sizes: liveness?.getStateCounts().map(() => 1) ?? [],
     time: 0,
     coverageCount: Math.trunc(options.coverage ?? 0),
   };
-  const findPeriodicViolation = (expanded: number) => {
+  // TLC counts the states of the graphs of all branches, which can differ.
+  const getGraphStates = (checker: LivenessChecker) =>
+    checker.getStateCounts().reduce((sum, count) => sum + count, 0);
+  const findPeriodicViolation = (checker: LivenessChecker) => {
     const now = performance.now();
-    const isGrown = (expanded - periodic.size) / periodic.size > LIVENESS_GROWTH;
+    const counts = checker.getStateCounts();
+    const isGrown = counts.some(
+      (count, branch) =>
+        (count - periodic.sizes[branch]) / periodic.sizes[branch] > LIVENESS_GROWTH,
+    );
     if (!isGrown || periodic.time > (now - startedAt) * LIVENESS_RATIO) return undefined;
-    periodic.size = expanded;
-    if (!liveness) return undefined;
+    periodic.sizes = counts;
     options.onProgress?.({
       kind: "liveness-started",
-      branches: liveness.branches,
+      branches: checker.branches,
       isComplete: false,
-      states: expanded,
+      states: getGraphStates(checker),
       statistics: createResult("success"),
     });
-    const lasso = liveness.findViolation();
+    const lasso = checker.findViolation();
     if (!lasso) options.onProgress?.({ kind: "liveness-finished" });
     periodic.time += performance.now() - now;
     return lasso;
@@ -1670,7 +1749,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     newStateCount = 0;
     if ((isPeriodic || options.onProgress) && performance.now() >= periodic.at) {
       periodic.at = performance.now() + PROGRESS_INTERVAL;
-      const lasso = isPeriodic ? findPeriodicViolation(index + 1) : undefined;
+      const lasso = isPeriodic && liveness ? findPeriodicViolation(liveness) : undefined;
       if (liveness && lasso) return reportLasso(liveness, lasso);
       const isCoverageDue = options.coverage !== undefined && periodic.coverageCount === 0;
       periodic.coverageCount = isCoverageDue
@@ -1692,7 +1771,10 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       kind: "liveness-started",
       branches: finalLiveness.branches,
       isComplete: true,
-      states: runtime.distinctStates,
+      // The tier that found the lasso stored and expanded every successor, so each graph has every state.
+      states: typedLasso
+        ? finalLiveness.branches * runtime.distinctStates
+        : getGraphStates(finalLiveness),
       statistics: createResult("success"),
     });
   }

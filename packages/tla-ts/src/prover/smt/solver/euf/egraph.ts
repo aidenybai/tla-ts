@@ -490,7 +490,8 @@ export class Egraph {
     }
     const rootVar = root.getThVar(id);
     node.replaceThVar(thVar, id);
-    // Deviation from Z3: the undo restores the variable of the node; Z3 records that of the root.
+    // Deviation from Z3: the undo gives the node back its own variable. Z3 gives it the root's,
+    // which later equates the wrong terms.
     this.updates.push({
       tag: U_REPLACE_TH_VAR,
       r1: node,

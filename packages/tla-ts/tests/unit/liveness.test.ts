@@ -70,6 +70,75 @@ describe("liveness matches TLC", () => {
     expect(violation?.loopStart).toBeLessThan(violation?.trace.length ?? 0);
   });
 
+  it("follows a step from a state a VIEW merges to a state the search stores later, as TLC does", async () => {
+    const result = await check({
+      source: [
+        "---- MODULE ViewLate ----",
+        "EXTENDS Naturals",
+        "VARIABLES x, y",
+        "vars == <<x, y>>",
+        "Init == x = 0 /\\ y = 0",
+        "Next ==",
+        "  \\/ x = 0 /\\ x' = 1 /\\ y' = 0",
+        "  \\/ x = 0 /\\ x' = 2 /\\ y' = 1",
+        "  \\/ x = 0 /\\ x' = 4 /\\ y' = 0",
+        "  \\/ x = 2 /\\ x' = 1 /\\ y' = y",
+        "  \\/ x = 1 /\\ y = 0 /\\ x' = 5 /\\ y' = y",
+        "  \\/ x = 1 /\\ y = 1 /\\ x' = 3 /\\ y' = y",
+        "  \\/ x = 4 /\\ x' = 3 /\\ y' = y",
+        "Spec == Init /\\ [][Next]_vars /\\ WF_vars(Next)",
+        "Prop == (x = 2) ~> (x = 5)",
+        "View == x",
+        "====",
+      ].join("\n"),
+      config: "SPECIFICATION Spec\nPROPERTY Prop\nVIEW View\nCHECK_DEADLOCK FALSE",
+    });
+    expect(result.status).toBe("liveness-violation");
+    expect(result.violation?.trace.map((step) => [step.label, step.state])).toEqual([
+      [undefined, { x: 0, y: 0 }],
+      ["Next line 8, col 6 to line 8, col 30 of module ViewLate", { x: 2, y: 1 }],
+      ["Next line 10, col 6 to line 10, col 30 of module ViewLate", { x: 1, y: 1 }],
+      ["Next line 12, col 6 to line 12, col 39 of module ViewLate", { x: 3, y: 1 }],
+    ]);
+  });
+
+  it.each([
+    ["ViewMerged", []],
+    ["ViewMergedOnward", ["  \\/ x = 3 /\\ x' = 6 /\\ y' = y"]],
+  ])(
+    "counts the states of the behavior graph for the temporal check of %s like TLC",
+    async (name, steps) => {
+      const counts: number[] = [];
+      const result = await check({
+        source: [
+          `---- MODULE ${name} ----`,
+          "EXTENDS Naturals",
+          "VARIABLES x, y",
+          "vars == <<x, y>>",
+          "Init == x = 0 /\\ y = 0",
+          "Next ==",
+          "  \\/ x = 0 /\\ x' = 1 /\\ y' = 0",
+          "  \\/ x = 0 /\\ x' = 2 /\\ y' = 1",
+          "  \\/ x = 2 /\\ x' = 1 /\\ y' = y",
+          "  \\/ x = 1 /\\ y = 0 /\\ x' = 5 /\\ y' = y",
+          "  \\/ x = 1 /\\ y = 1 /\\ x' = 3 /\\ y' = y",
+          ...steps,
+          "Spec == Init /\\ [][Next]_vars /\\ WF_vars(Next)",
+          "Prop == (x = 2) ~> (x = 5)",
+          "View == x",
+          "====",
+        ].join("\n"),
+        config: "SPECIFICATION Spec\nPROPERTY Prop\nVIEW View\nCHECK_DEADLOCK FALSE",
+        onProgress: (progress) => {
+          if (progress.kind === "liveness-started") counts.push(progress.states);
+        },
+      });
+      expect(result.status).toBe("success");
+      expect([result.generatedStates, result.distinctStates]).toEqual([5, 4]);
+      expect(counts).toEqual([5]);
+    },
+  );
+
   it("reports the deadlock before the temporal property that fails in the same state", async () => {
     const checkConfig = async (name: string) => {
       const result = await checkGithub710(name);

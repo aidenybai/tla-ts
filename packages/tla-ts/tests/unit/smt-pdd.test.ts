@@ -18,6 +18,20 @@ const getVars = (manager: PddManager, count: number) =>
 
 const getPolys = (solver: PddSolver) => solver.equations().map((equation) => `${equation.poly}`);
 
+class Temporaries {
+  private polys: Pdd[] = [];
+
+  keep(poly: Pdd) {
+    this.polys.push(poly);
+    return poly;
+  }
+
+  release() {
+    for (let index = this.polys.length; index-- > 0;) this.polys[index].release();
+    this.polys.length = 0;
+  }
+}
+
 describe("pdd", () => {
   it("canonizes sums and products", () => {
     const manager = new PddManager(3);
@@ -52,9 +66,13 @@ describe("pdd", () => {
   it("forms S-polynomials of overlapping leading monomials", () => {
     const manager = new PddManager(3);
     const [v0, v1, v2] = getVars(manager, 3);
-    expect(`${manager.trySpoly(v1.mul(v2), v0.mul(v2).add(v2.mul(v2)))}`).toBe("- v2*v1*v0");
-    expect(`${manager.trySpoly(v1.mul(v2), v0.mul(v2).add(v1.mul(v1)))}`).toBe("- v1^3");
-    expect(manager.trySpoly(v1, v2)).toBeNull();
+    const getSpoly = (first: Pdd, second: Pdd) => {
+      const result = manager.zero();
+      return manager.trySpoly(first, second, result) ? `${result}` : null;
+    };
+    expect(getSpoly(v1.mul(v2), v0.mul(v2).add(v2.mul(v2)))).toBe("- v2*v1*v0");
+    expect(getSpoly(v1.mul(v2), v0.mul(v2).add(v1.mul(v1)))).toBe("- v1^3");
+    expect(getSpoly(v1, v2)).toBeNull();
     const reducer = v0.mul(v1).sub(v0.mul(v0));
     const reduced = v0.mul(v1).mul(v2.add(v0)).add(v2).reduce(reducer);
     expect(reduced.equals(reduced.reduce(reducer))).toBe(true);
@@ -173,11 +191,13 @@ describe("pdd", () => {
     for (const poly of polys) {
       for (const variable of [0, 1, 2, 3]) {
         for (let degree = 0; degree <= 5; degree++) {
-          const factor = poly.factor(variable, degree);
+          const lc = manager.zero();
+          const rest = manager.zero();
+          poly.factor(variable, degree, lc, rest);
           const power = manager.mkVar(variable).pow(degree);
-          expect(factor.lc.mul(power).add(factor.rest).equals(poly)).toBe(true);
-          if (degree > 0) expect(getDegree(factor.rest, variable)).toBeLessThan(degree);
-          else expect(factor.lc.isZero()).toBe(true);
+          expect(lc.mul(power).add(rest).equals(poly)).toBe(true);
+          if (degree > 0) expect(getDegree(rest, variable)).toBeLessThan(degree);
+          else expect(lc.isZero()).toBe(true);
         }
       }
     }
@@ -253,15 +273,140 @@ describe("pdd", () => {
     ]);
   });
 
-  it("runs out of nodes only outside an operation", () => {
+  // The expected lines are what a C++ driver of these steps prints against Z3 5.3.2's dd_pdd.
+  it("collects unreachable nodes and reuses their indices", () => {
+    const manager = new PddManager(3);
+    const [varX, varY, varZ] = getVars(manager, 3);
+    const temporaries = new Temporaries();
+    const getVal = (value: number) => temporaries.keep(manager.mkVal(createRational(value)));
+    const lines: string[] = [];
+    for (let index = 2; index < 40; index++) {
+      const first = temporaries
+        .keep(varX.add(getVal(index)))
+        .mul(temporaries.keep(temporaries.keep(varY.add(varZ)).add(getVal(index))));
+      temporaries.release();
+      const second = temporaries
+        .keep(first.mul(first))
+        .mul(temporaries.keep(varZ.add(getVal(index + 1))));
+      temporaries.release();
+      lines.push(`${index} ${first.root} ${second.root} ${manager.numNodes()}`);
+      second.release();
+      first.release();
+    }
+    expect(lines).toEqual([
+      "2 21 69 70",
+      "3 76 135 136",
+      "4 139 197 198",
+      "5 204 265 266",
+      "6 269 327 328",
+      "7 334 396 397",
+      "8 400 456 457",
+      "9 462 521 522",
+      "10 525 586 587",
+      "11 593 656 657",
+      "12 660 719 720",
+      "13 726 788 789",
+      "14 792 851 852",
+      "15 858 919 920",
+      "16 923 981 982",
+      "17 988 29 83",
+      "18 37 105 157",
+      "19 112 178 230",
+      "20 185 251 303",
+      "21 258 324 376",
+      "22 331 397 449",
+      "23 404 470 521",
+      "24 477 543 594",
+      "25 550 614 665",
+      "26 621 687 738",
+      "27 694 759 810",
+      "28 766 831 882",
+      "29 838 903 954",
+      "30 910 977 1027",
+      "31 991 1097 1098",
+      "32 1104 1169 1170",
+      "33 1176 1239 1240",
+      "34 1243 1306 1307",
+      "35 1313 1376 1377",
+      "36 1380 1443 1444",
+      "37 1450 1513 1514",
+      "38 1517 40 83",
+      "39 48 116 157",
+    ]);
+  });
+
+  // The expected lines are what a C++ driver of these steps prints against Z3 5.3.2's dd_pdd.
+  it("runs out of nodes outside an operation and grows inside one", () => {
     const manager = new PddManager(2);
-    const [varA, varB] = getVars(manager, 2);
+    const [varX, varY] = getVars(manager, 2);
     manager.setMaxNumNodes(0);
+    const values: Pdd[] = [];
     let value = 2;
-    while (manager.numNodes() < 1036) manager.mkVal(createRational(value++));
+    while (manager.numNodes() < 1036) values.push(manager.mkVal(createRational(value++)));
     expect(() => manager.mkVal(createRational(value))).toThrow(PddMemoryOutError);
-    expect(`${varA.mul(varB)}`).toBe("v1*v0");
-    expect(manager.mkVal(createRational(value)).val()).toEqual(createRational(value));
+    const lines = [`mem_out ${value} ${manager.numNodes()}`];
+    const product = varX.mul(varY);
+    lines.push(`x*y ${product.root} ${manager.numNodes()}`);
+    const constant = manager.mkVal(createRational(value));
+    lines.push(`val ${constant.root} ${manager.numNodes()}`);
+    for (const held of values) held.release();
+    const temporaries = new Temporaries();
+    for (let index = 1; index <= 600; index++) {
+      const poly = temporaries
+        .keep(varX.add(temporaries.keep(manager.mkVal(createRational(value + index)))))
+        .mul(varY);
+      temporaries.release();
+      if (index % 50 === 0 || (index >= 515 && index <= 520)) {
+        lines.push(`${index} ${poly.root} ${manager.numNodes()}`);
+      }
+      poly.release();
+    }
+    expect(lines).toEqual([
+      "mem_out 1026 1036",
+      "x*y 1036 1037",
+      "val 1037 1038",
+      "50 1187 1188",
+      "100 1337 1338",
+      "150 1487 1488",
+      "200 95 98",
+      "250 245 248",
+      "300 395 398",
+      "350 545 548",
+      "400 695 698",
+      "450 845 848",
+      "500 995 998",
+      "515 1042 1043",
+      "516 1045 1046",
+      "517 1048 1049",
+      "518 1051 1052",
+      "519 1054 1055",
+      "520 1057 1058",
+      "550 1147 1148",
+      "600 1297 1298",
+    ]);
+  });
+
+  it("multiplies unequal operands whose op cache entries collide in Z3", () => {
+    const manager = new PddManager(2);
+    const [varX] = getVars(manager, 1);
+    const sums: Pdd[] = [];
+    let value = 2;
+    const addSum = () => {
+      const constant = manager.mkVal(createRational(value++));
+      sums.push(varX.add(constant));
+      constant.release();
+    };
+    do addSum();
+    while (sums[sums.length - 1].root < 4299);
+    const first = sums[sums.length - 1];
+    manager.mkVal(createRational(1000000));
+    do addSum();
+    while (sums[sums.length - 1].root < 26642);
+    const second = sums[sums.length - 1];
+    expect([first.root, second.root]).toEqual([4299, 26642]);
+    expect(`${second.mul(second)}`).toBe("v0^2 + 26632*v0 + 177315856");
+    // Z3 5.3.2 finds the cached square here and returns v0^2 + 26632*v0 + 177315856.
+    expect(`${first.mul(second)}`).toBe("v0^2 + 15461*v0 + 28562820");
   });
 });
 
@@ -312,6 +457,36 @@ describe("pdd solver", () => {
       vars[1].sub(vars[0].mul(createRational(2))),
     ]);
     expect(getPolys(solver).toSorted()).toEqual(["v1 - 2*v0", "v2 - 2*v1", "v3 - 2*v2"]);
+  });
+
+  // The expected indices are what a C++ driver of these steps prints against Z3 5.3.2's dd::solver.
+  it("saturates past collections with Z3's node indices", () => {
+    const manager = new PddManager(6);
+    const solver = new PddSolver(manager, () => false);
+    const vars = getVars(manager, 6);
+    const temporaries = new Temporaries();
+    const keep = (poly: Pdd) => temporaries.keep(poly);
+    const getVal = (value: number) => keep(manager.mkVal(createRational(value)));
+    const polys = [
+      () => keep(keep(vars[0].mul(vars[1])).sub(vars[2])).sub(getVal(1)),
+      () => keep(keep(vars[1].mul(vars[2])).sub(vars[3])).add(getVal(2)),
+      () => keep(keep(vars[2].mul(vars[3])).sub(keep(vars[4].mul(vars[0])))).add(getVal(3)),
+      () => keep(keep(vars[3].mul(vars[4])).sub(vars[5])).sub(vars[0]),
+      () => keep(keep(vars[4].mul(vars[5])).sub(keep(vars[0].mul(vars[1])))).add(getVal(5)),
+      () => keep(keep(vars[5].mul(vars[0])).sub(vars[1])).sub(getVal(7)),
+    ];
+    polys.forEach((getPoly, index) => {
+      solver.add(keep(getPoly()), mkLeaf(index));
+      temporaries.release();
+    });
+    solver.config.maxSteps = 40;
+    solver.adjustConfig();
+    solver.saturate();
+    expect(solver.equations().map((equation) => equation.poly.root)).toEqual([
+      20, 1244, 1245, 1197, 1265, 153, 1388, 172, 1415, 1347, 1373, 1513, 140, 1536, 270, 36, 49,
+      42, 71, 68, 87, 32, 267, 241, 1149, 1171, 25, 1253, 1500,
+    ]);
+    expect(manager.numNodes()).toBe(823);
   });
 
   it("simplifies linear equations before saturation", () => {

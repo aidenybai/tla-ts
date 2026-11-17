@@ -147,17 +147,32 @@ Spec == Init /\\ [][Next]_x
     [
       "F(a) == a\nx == F(\\in)",
       "line 3, col 8 to line 3, col 10",
-      "Unsupported expression type `N_GenInfixOp'.",
+      "The operator \\in requires 2 arguments.",
+    ],
+    [
+      "F(a) == a\nx == F(\\cup)",
+      "line 3, col 8 to line 3, col 11",
+      "The operator \\cup requires 2 arguments.",
     ],
     [
       "F(a) == a\nx == F(SUBSET)",
       "line 3, col 8 to line 3, col 13",
-      "Unsupported expression type `N_GenNonExpPrefixOp'.",
+      "The operator SUBSET requires 1 arguments.",
+    ],
+    [
+      "F(a) == a\nx == F(\\lnot)",
+      "line 3, col 8 to line 3, col 12",
+      "The operator ~ requires 1 arguments.",
+    ],
+    [
+      "F(a) == a\nx == F(')",
+      "line 3, col 8 to line 3, col 8",
+      "The operator ' requires 1 arguments.",
     ],
     [
       "F(a) == a\nx == F(^#)",
       "line 3, col 8 to line 3, col 9",
-      "Unsupported expression type `N_GenPostfixOp'.",
+      "Could not find declaration or definition of symbol '^#'.",
     ],
     [
       "F(a) == a\nx == F(LAMBDA y : y)",

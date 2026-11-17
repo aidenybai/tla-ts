@@ -320,11 +320,10 @@ export const printCheckProgress = (
       timing.livenessStartTime = Date.now();
       if (progress.isComplete) printProgress(printer, progress.statistics);
       const branches = progress.branches > 1 ? `${progress.branches} branches of ` : "";
-      const states = progress.branches * progress.states;
       print(
         MESSAGE_CODE.checkingTemporal,
         MESSAGE_LEVEL.none,
-        `Checking ${branches}temporal properties for the ${progress.isComplete ? "complete" : "current"} state space with ${states} total distinct states at (${formatTlcDate(new Date())})`,
+        `Checking ${branches}temporal properties for the ${progress.isComplete ? "complete" : "current"} state space with ${progress.states} total distinct states at (${formatTlcDate(new Date())})`,
       );
       return;
     }

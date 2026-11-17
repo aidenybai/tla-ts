@@ -929,7 +929,7 @@ const resolveApply = (
       const expected = params[index] ?? 0;
       const range = arg.location.range;
       if (expected === 0) {
-        // Deviation from SANY: SANY fails here with an internal error; tla-ts words it as for a name.
+        // Deviation from SANY: SANY names its internal node kind here, where tla-ts words it as for a name.
         if (arg.kind === "Lambda" && arg.operator !== undefined) {
           report(range, `The operator ${arg.operator} requires 1 arguments.`);
         } else if (arg.kind === "Lambda" && range) {

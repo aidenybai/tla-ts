@@ -223,8 +223,12 @@ export class Grobner {
     if (!poly.isOffset()) return false;
     const variable = poly.var();
     if (this.core.varIsFixed(variable)) return false;
-    const coeff = poly.hi().val();
-    const offset = poly.lo().val().neg();
+    const hi = poly.hi();
+    const coeff = hi.val();
+    hi.release();
+    const lo = poly.lo();
+    const offset = lo.val().neg();
+    lo.release();
     const lcm = getRationalLcm(getDenominator(coeff), getDenominator(offset));
     const ineq = mkIneq(new LarTerm([[variable, coeff.mul(lcm)]]), KIND_EQ, offset.mul(lcm));
     return this.addLemmaUnlessHolds(equation, ineq);
@@ -238,31 +242,49 @@ export class Grobner {
 
   private propagateFactorizationOf(equation: Equation) {
     const factors = equation.poly.varFactors();
-    if (factors.vars.length === 0 || !factors.poly.isLinear()) return false;
+    if (factors.vars.length === 0 || !factors.poly.isLinear()) {
+      factors.poly.release();
+      return false;
+    }
     const linear = this.linearToTerm(factors.poly);
     const ineqs = factors.vars.map((variable) => mkIneq(variable, KIND_EQ, 0));
     ineqs.push(mkIneq(linear.term, KIND_EQ, linear.offset.neg()));
-    if (ineqs.some((ineq) => this.core.ineqHolds(ineq))) return false;
+    if (ineqs.some((ineq) => this.core.ineqHolds(ineq))) {
+      factors.poly.release();
+      return false;
+    }
     const lemma = this.addDependencies(new LemmaBuilder(this.core), equation);
     for (const ineq of ineqs) lemma.addIneq(ineq);
+    factors.poly.release();
     return true;
   }
 
   private linearToTerm(poly: Pdd): LinearTerm {
+    const termPoly = poly.copy();
     let lcm = Rational.one;
-    let current = poly;
-    while (!current.isVal()) {
-      lcm = getRationalLcm(lcm, getDenominator(current.hi().val()));
-      current = current.lo();
+    const lcmPoly = termPoly.copy();
+    while (!lcmPoly.isVal()) {
+      const hi = lcmPoly.hi();
+      lcm = getRationalLcm(lcm, getDenominator(hi.val()));
+      hi.release();
+      const lo = lcmPoly.lo();
+      lcmPoly.assign(lo);
+      lo.release();
     }
-    lcm = getRationalLcm(getDenominator(current.val()), lcm);
+    lcm = getRationalLcm(getDenominator(lcmPoly.val()), lcm);
     const term = new LarTerm();
-    current = poly;
-    while (!current.isVal()) {
-      term.addMonomial(lcm.mul(current.hi().val()), current.var());
-      current = current.lo();
+    while (!termPoly.isVal()) {
+      const hi = termPoly.hi();
+      term.addMonomial(lcm.mul(hi.val()), termPoly.var());
+      hi.release();
+      const lo = termPoly.lo();
+      termPoly.assign(lo);
+      lo.release();
     }
-    return { term, offset: lcm.mul(current.val()) };
+    const offset = lcm.mul(termPoly.val());
+    lcmPoly.release();
+    termPoly.release();
+    return { term, offset };
   }
 
   private getValue(poly: Pdd) {
@@ -277,42 +299,61 @@ export class Grobner {
   }
 
   private propagateGcdTestOf(equation: Equation) {
-    let poly = equation.poly;
-    if (poly.isLinear() || poly.isVal() || !this.isIntPoly(poly)) return false;
-    if (this.getValue(poly).isZero()) return false;
-    const powers = poly.getPowers();
-    if (powers.length === 0) return false;
-    let lcm = Rational.one;
-    for (const value of poly.coefficients()) lcm = getRationalLcm(lcm, getDenominator(value.coeff));
-    if (!lcm.equals(Rational.one)) poly = poly.mul(lcm);
-    const manager = this.manager;
-    const failsGcdTest = (substituted: Pdd) => {
-      let gcd = Rational.zero;
-      let constant = Rational.zero;
-      for (const value of substituted.coefficients()) {
-        if (value.isConstant) {
-          constant = constant.add(value.coeff);
-          continue;
+    const poly = equation.poly.copy();
+    try {
+      if (poly.isLinear() || poly.isVal() || !this.isIntPoly(poly)) return false;
+      if (this.getValue(poly).isZero()) return false;
+      const powers = poly.getPowers();
+      if (powers.length === 0) return false;
+      let lcm = Rational.one;
+      for (const value of poly.coefficients()) {
+        lcm = getRationalLcm(lcm, getDenominator(value.coeff));
+      }
+      if (!lcm.equals(Rational.one)) poly.mulAssign(lcm);
+      const manager = this.manager;
+      const failsGcdTest = (substituted: Pdd) => {
+        let gcd = Rational.zero;
+        let constant = Rational.zero;
+        for (const value of substituted.coefficients()) {
+          if (value.isConstant) {
+            constant = constant.add(value.coeff);
+            continue;
+          }
+          gcd = getRationalGcd(gcd, value.coeff);
+          if (gcd.equals(Rational.one)) return false;
         }
-        gcd = getRationalGcd(gcd, value.coeff);
-        if (gcd.equals(Rational.one)) return false;
+        return !constant.isZero() && !divides(gcd, constant);
+      };
+      for (const entry of powers) {
+        if (entry.degree > 4) continue;
+        const variable = manager.mkVar(entry.var);
+        const degree = manager.mkVal(Rational.fromNumber(entry.degree));
+        const scaled = variable.mul(degree);
+        degree.release();
+        variable.release();
+        try {
+          let isGcdFailing = true;
+          for (let residue = 0; isGcdFailing && residue < entry.degree; residue++) {
+            const residuePdd = manager.mkVal(Rational.fromNumber(residue));
+            const replacement = scaled.add(residuePdd);
+            residuePdd.release();
+            const substituted = poly.substPdd(entry.var, replacement);
+            if (!failsGcdTest(substituted)) isGcdFailing = false;
+            substituted.release();
+            replacement.release();
+          }
+          if (isGcdFailing) {
+            this.addDependencies(new LemmaBuilder(this.core), equation);
+            return true;
+          }
+        } finally {
+          scaled.release();
+        }
       }
-      return !constant.isZero() && !divides(gcd, constant);
-    };
-    for (const entry of powers) {
-      if (entry.degree > 4) continue;
-      const scaled = manager.mkVar(entry.var).mul(manager.mkVal(Rational.fromNumber(entry.degree)));
-      let isGcdFailing = true;
-      for (let residue = 0; isGcdFailing && residue < entry.degree; residue++) {
-        const replacement = scaled.add(manager.mkVal(Rational.fromNumber(residue)));
-        if (!failsGcdTest(poly.substPdd(entry.var, replacement))) isGcdFailing = false;
-      }
-      if (isGcdFailing) {
-        this.addDependencies(new LemmaBuilder(this.core), equation);
-        return true;
-      }
+      return false;
+    } finally {
+      poly.release();
     }
-    return false;
   }
 
   private propagateQuotientsOf(equation: Equation) {
@@ -329,11 +370,18 @@ export class Grobner {
     if (this.propagateModResidue(equation)) return true;
     let isLemmaFound = false;
     for (const variable of nlVars) {
-      const factor = poly.factor(variable, 1);
-      if (!factor.rest.isLinear()) continue;
-      const lc = lcm.equals(Rational.one) ? factor.lc : factor.lc.mul(lcm);
-      const rest = lcm.equals(Rational.one) ? factor.rest : factor.rest.mul(lcm);
-      if (this.addQuotientLemma(equation, variable, lc, rest)) isLemmaFound = true;
+      const lc = this.manager.zero();
+      const rest = this.manager.zero();
+      poly.factor(variable, 1, lc, rest);
+      if (rest.isLinear()) {
+        if (!lcm.equals(Rational.one)) {
+          lc.mulAssign(lcm);
+          rest.mulAssign(lcm);
+        }
+        if (this.addQuotientLemma(equation, variable, lc, rest)) isLemmaFound = true;
+      }
+      rest.release();
+      lc.release();
     }
     return isLemmaFound;
   }
@@ -747,28 +795,38 @@ export class Grobner {
   }
 
   private getTermPdd(term: LarTerm, ref: DepRef) {
-    let result = this.manager.mkVal(Rational.zero);
-    for (const entry of term.coeffs) result = result.add(this.getPddExpr(entry[1], entry[0], ref));
+    const result = this.manager.mkVal(Rational.zero);
+    for (const entry of term.coeffs) {
+      const expr = this.getPddExpr(entry[1], entry[0], ref);
+      result.addAssign(expr);
+      expr.release();
+    }
     return result;
   }
 
   private getPddExpr(coeff: Rational, lpVar: number, ref: DepRef) {
     const core = this.core;
-    let result = this.manager.mkVal(coeff);
+    const result = this.manager.mkVal(coeff);
     const vars = [lpVar];
     const zeroRef = { dep: ref.dep };
     for (let current = vars.pop(); current !== undefined; current = vars.pop()) {
       if (NLA_PARAMS.grobnerSubsFixed > 0 && core.varIsFixedToZero(current)) {
-        result = this.manager.mkVal(this.getValOfFixedVarWithDeps(current, zeroRef));
+        const fixed = this.manager.mkVal(this.getValOfFixedVarWithDeps(current, zeroRef));
+        result.assign(fixed);
+        fixed.release();
         ref.dep = zeroRef.dep;
         return result;
       }
       if (NLA_PARAMS.grobnerSubsFixed === 1 && core.varIsFixed(current)) {
-        result = result.mul(this.getValOfFixedVarWithDeps(current, ref));
+        result.mulAssign(this.getValOfFixedVarWithDeps(current, ref));
       } else if (this.expandsTerms && core.lra.hasTerm(current)) {
-        result = result.mul(this.getTermPdd(core.lra.getTerm(current), ref));
+        const termPdd = this.getTermPdd(core.lra.getTerm(current), ref);
+        result.mulAssign(termPdd);
+        termPdd.release();
       } else if (!core.isMonicVar(current)) {
-        result = result.mul(this.manager.mkVar(current));
+        const variable = this.manager.mkVar(current);
+        result.mulAssign(variable);
+        variable.release();
       } else {
         vars.push(...core.emons.get(current).vars);
       }
@@ -776,17 +834,20 @@ export class Grobner {
     return result;
   }
 
-  private getSolvedForm(poly: Pdd) {
+  private getSolvedForm(poly: Pdd, solution: Pdd) {
     if (!poly.isLinear()) return null;
+    solution.assign(poly);
     let numLo = 0;
     let numHi = 0;
     let lo = 0;
     let hi = 0;
     let loCoeff = Rational.zero;
     let hiCoeff = Rational.zero;
-    for (let current = poly; !current.isVal(); current = current.lo()) {
-      const variable = current.var();
-      const value = current.hi().val();
+    while (!solution.isVal()) {
+      const variable = solution.var();
+      const hiPoly = solution.hi();
+      const value = hiPoly.val();
+      hiPoly.release();
       const type = this.core.lra.core.getColumnType(variable);
       if (type === COLUMN_LOWER || type === COLUMN_UPPER) {
         if (value.isPositive() === (type === COLUMN_LOWER)) {
@@ -802,40 +863,57 @@ export class Grobner {
         return null;
       }
       if (numLo > 1 && numHi > 1) return null;
+      const loPoly = solution.lo();
+      solution.assign(loPoly);
+      loPoly.release();
     }
     const isLo = numLo === 1 && numHi > 1;
     if (!isLo && !(numHi === 1 && numLo > 1)) return null;
     const variable = isLo ? lo : hi;
     const coeff = isLo ? loCoeff : hiCoeff;
-    const solution = this.manager.mkVar(variable).mul(coeff).sub(poly);
-    return {
-      variable,
-      poly: coeff.equals(Rational.one) ? solution : solution.mul(Rational.one.div(coeff)),
-    };
+    const variablePdd = this.manager.mkVar(variable);
+    const scaled = variablePdd.mul(coeff);
+    const difference = scaled.sub(poly);
+    solution.assign(difference);
+    difference.release();
+    scaled.release();
+    variablePdd.release();
+    if (!coeff.equals(Rational.one)) solution.mulAssign(Rational.one.div(coeff));
+    return variable;
   }
 
   private addEq(poly: Pdd, dep: Dependency) {
-    const simplified = this.solver.simplify(poly, dep);
-    const solved = this.getSolvedForm(simplified.poly);
-    if (solved === null) this.solver.add(simplified.poly, simplified.dep);
-    else this.solver.addSubst(solved.variable, solved.poly, simplified.dep);
+    const solution = this.manager.zero();
+    const simplifiedDep = this.solver.simplify(poly, dep);
+    const variable = this.getSolvedForm(poly, solution);
+    if (variable === null) this.solver.add(poly, simplifiedDep);
+    else this.solver.addSubst(variable, solution, simplifiedDep);
+    solution.release();
   }
 
   private addFixedMonic(lpVar: number) {
     const ref: DepRef = { dep: null };
-    let product = this.manager.mkVal(Rational.one);
+    const product = this.manager.mkVal(Rational.one);
     for (const factor of this.core.emons.get(lpVar).vars) {
-      product = product.mul(this.getPddExpr(Rational.one, factor, ref));
+      const expr = this.getPddExpr(Rational.one, factor, ref);
+      product.mulAssign(expr);
+      expr.release();
     }
-    product = product.sub(this.getValOfFixedVarWithDeps(lpVar, ref));
+    product.subAssign(this.getValOfFixedVarWithDeps(lpVar, ref));
     this.addEq(product, ref.dep);
+    product.release();
   }
 
   private addRow(row: RowCell[]) {
     const ref: DepRef = { dep: null };
-    let sum = this.manager.mkVal(Rational.zero);
-    for (const cell of row) sum = sum.add(this.getPddExpr(cell.coeff, cell.column, ref));
+    const sum = this.manager.mkVal(Rational.zero);
+    for (const cell of row) {
+      const expr = this.getPddExpr(cell.coeff, cell.column, ref);
+      sum.addAssign(expr);
+      expr.release();
+    }
     this.addEq(sum, ref.dep);
+    sum.release();
   }
 
   private setLevel2var() {

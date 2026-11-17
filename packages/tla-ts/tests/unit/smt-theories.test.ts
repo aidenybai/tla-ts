@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { AstManager, OP_BADD, OP_BSUB } from "../../src/prover/smt/solver/ast";
+import { AstManager, OP_BADD, OP_BSUB, SORT_INT } from "../../src/prover/smt/solver/ast";
 import { mkBvApp } from "../../src/prover/smt/solver/bv-decl-plugin";
 import { Egraph } from "../../src/prover/smt/solver/euf/egraph";
 import { ResourceLimit } from "../../src/prover/smt/solver/rlimit";
@@ -34,6 +34,34 @@ describe("the e-graph of sat.euf", () => {
     pair.egraph.explainEq(reasons, pair.first, pair.second);
     pair.egraph.endExplain();
     expect(reasons.toSorted()).toEqual([7, 9]);
+  });
+
+  it("gives a node back its own theory variable when a replacement is undone, unlike Z3", () => {
+    const manager = new AstManager(new ResourceLimit(Infinity));
+    const egraph = new Egraph(manager);
+    const [nodeX, nodeY, nodeZ] = [0, 1, 2].map(() =>
+      egraph.mk(manager.mkFreshConst(null, SORT_INT), 0, []),
+    );
+    const theory = 1;
+    egraph.addThVar(nodeX, 0, theory);
+    egraph.addThVar(nodeY, 1, theory);
+    egraph.addThVar(nodeZ, 3, theory);
+    egraph.pushScope();
+    egraph.merge(nodeX, nodeY, 0);
+    egraph.propagate();
+    expect(nodeX.root).toBe(nodeY);
+    egraph.pushScope();
+    egraph.addThVar(nodeX, 2, theory);
+    egraph.popScopes(2);
+    expect(nodeX.getThVar(theory)).toBe(0);
+    egraph.merge(nodeX, nodeZ, 0);
+    egraph.propagate();
+    const equalities: number[][] = [];
+    for (; egraph.hasThEq(); egraph.nextThEq()) {
+      const equality = egraph.getThEq();
+      equalities.push([equality.v1, equality.v2]);
+    }
+    expect(equalities).toEqual([[3, 0]]);
   });
 
   it("finds Z3's model when a congruence needs commutativity", () => {

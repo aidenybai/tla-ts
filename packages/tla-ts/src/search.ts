@@ -28,7 +28,11 @@ import {
   isExpressionImpure,
   isImpureDefinition,
 } from "./dependencies";
-import { createEnvironment, type ResolvedModuleOperator } from "./environment";
+import {
+  createEnvironment,
+  type ResolvedModuleOperator,
+  type RuntimeInvariant,
+} from "./environment";
 import {
   isStackOverflow,
   TlaConfigError,
@@ -95,8 +99,9 @@ import {
   type Value,
 } from "./values";
 
-export interface StandardInput {
+export interface CliSettings {
   readLine?: () => string | undefined;
+  runtimeInvariants?: RuntimeInvariant[];
 }
 
 interface EnvironmentSettings
@@ -121,7 +126,7 @@ interface EnvironmentSettings
       | "isLazyValueExpanded"
       | "isViewPrinted"
     >,
-    StandardInput {}
+    CliSettings {}
 
 interface NamedExpression {
   name: string;
@@ -860,7 +865,12 @@ export const createCheckEnvironment = (
   isStringOrderFrozen = false,
 ) => {
   const order = createTlcOrder(options.source, options.loadModule);
-  setStringOrder(order.getStringOrder(config));
+  setStringOrder(
+    order.getStringOrder(
+      config,
+      (options.runtimeInvariants ?? []).flatMap((invariant) => invariant.module ?? []),
+    ),
+  );
   setValueOptions(options);
   setFingerprintPolynomial(options.fingerprintPolynomial ?? 0);
   if (isStringOrderFrozen) freezeStringOrder();
@@ -883,6 +893,7 @@ export const createCheckEnvironment = (
     version: options.version,
     moduleOperators: options.moduleOperators,
     readLine: options.readLine,
+    runtimeInvariants: options.runtimeInvariants,
   });
   return { order, specification };
 };
@@ -908,6 +919,7 @@ export const prepareSearch = (options: CheckOptions) => {
     () => created.order.getDeclarationOrder("variable"),
     options.onProgress,
     specification.moduleOperators,
+    specification.runtimeInvariants,
   );
   return { config, specification, environment, search, getDescription };
 };
@@ -948,6 +960,7 @@ export const createSearch = (
   getVariableOrder: () => string[],
   onProgress?: CheckOptions["onProgress"],
   moduleOperators: ResolvedModuleOperator[] = [],
+  runtimeInvariants: RuntimeInvariant[] = [],
 ): Search | undefined => {
   const getModuleOperators = (kind: ResolvedModuleOperator["kind"]) =>
     moduleOperators
@@ -976,12 +989,12 @@ export const createSearch = (
       text: `Implied-temporal checking is a tautology.\nThe temporal formula ${live} at ${formatRange(liveRange)} equals\nthe fairness constraints of the behavior specification ${specName} at ${formatRange(specRange)}.\nTherefore, checking whether ${specName} => ${live} using TLC will never result in a violation of ${live}.`,
     });
   }
-  const invariants = getStateChecks([...configInvariants, ...properties.invariants], environment);
-  const invariantPredicates = [
-    ...new Map(invariants.map((invariant) => [invariant.predicate, invariant])).values(),
-  ];
+  const checkedInvariants = getStateChecks(
+    [...configInvariants, ...properties.invariants],
+    environment,
+  );
   const isCheckingBehaviors =
-    invariants.length > 0 ||
+    checkedInvariants.length > 0 ||
     properties.actionProperties.length > 0 ||
     properties.liveness.length > 0;
   if (
@@ -999,6 +1012,22 @@ export const createSearch = (
   if (spec.next === undefined && isCheckingBehaviors) {
     throw new TlaConfigError("The configuration file did not specify the next state predicate.");
   }
+  const runtimeChecks = getStateChecks(
+    runtimeInvariants.map((invariant) => {
+      const definition = getDefinition(invariant.name, environment);
+      return {
+        name: invariant.name,
+        expression:
+          definition?.kind === "Operator" ? definition.body : createIdentifier(invariant.name),
+        scope: undefined,
+      };
+    }),
+    environment,
+  );
+  const invariants = [...checkedInvariants, ...runtimeChecks];
+  const invariantPredicates = [
+    ...new Map(invariants.map((invariant) => [invariant.predicate, invariant])).values(),
+  ];
   const namedConstraints = getNamedExpressions(
     "constraint",
     [...config.constraints, ...getModuleOperators("constraint").map((operator) => operator.name)],
@@ -1298,8 +1327,8 @@ export const createSearch = (
       return view === undefined ? representative : [getViewValue(view.expression, representative)];
     },
     findViolatedInvariant: (state, parent) => {
-      if (isCoveredHeld(coveredInvariants, state)) return undefined;
-      const violated = invariants.find((invariant) => isViolated(invariant, state, parent));
+      const checked = isCoveredHeld(coveredInvariants, state) ? runtimeChecks : invariants;
+      const violated = checked.find((invariant) => isViolated(invariant, state, parent));
       if (violated) violatingStates.add(state);
       return violated;
     },

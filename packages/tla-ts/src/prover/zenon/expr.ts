@@ -241,6 +241,27 @@ export const compareExprs = (left: Expr, right: Expr): number => {
   return 0;
 };
 
+const NO_PAIRS: readonly [Expr, Expr][] = [];
+
+const xpreunify = (
+  accu: readonly [Expr, Expr][],
+  left: Expr,
+  right: Expr,
+): readonly [Expr, Expr][] | undefined => {
+  if (left === right) return accu;
+  if (left.kind === "app" && right.kind === "app" && left.symbol === right.symbol) {
+    let current: readonly [Expr, Expr][] | undefined = accu;
+    for (let index = 0; index < left.args.length && current !== undefined; index++)
+      current = xpreunify(current, left.args[index], right.args[index]);
+    return current;
+  }
+  if (left.kind === "meta") return [[left.args[0], right], ...accu];
+  if (right.kind === "meta") return [[right.args[0], left], ...accu];
+  return undefined;
+};
+
+export const preunify = (left: Expr, right: Expr) => xpreunify(NO_PAIRS, left, right) ?? NO_PAIRS;
+
 type Substitution = [Expr, Expr][];
 
 const lookup = (map: Substitution, variable: Expr) => map.find((pair) => pair[0] === variable)?.[1];

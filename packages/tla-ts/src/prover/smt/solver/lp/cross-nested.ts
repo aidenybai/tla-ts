@@ -1,5 +1,3 @@
-// Deviation from Z3: the occurrence map iterates in insertion order where Z3 has an unordered_map,
-// so an extracted common factor may list its variables in another order.
 import { Rational } from "../rational";
 import {
   type Nex,
@@ -146,7 +144,7 @@ export class CrossNested {
   private getVarsFromOccurencesMap() {
     const occurences = this.nexCreator.occurencesMap;
     const isRandomBit = this.nextRandom() % 2 === 1;
-    return [...occurences.keys()].sort((first, second) => {
+    return Array.from(occurences, (entry) => entry[0]).sort((first, second) => {
       const firstOcc = occurences.get(first);
       const secondOcc = occurences.get(second);
       if (firstOcc === undefined || secondOcc === undefined) return 0;

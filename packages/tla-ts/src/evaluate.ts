@@ -615,12 +615,16 @@ export const bindLazyArguments = (
     typeof value.domain === "object" && value.domain.kind === "ProductSet"
       ? value.domain.factors
       : [];
-  // Deviation from TLC: FcnLambdaValue#apply indexes past an argument tuple shorter than the bounds and ignores a longer one.
+  if (elements === undefined) {
+    throw new TlaEvaluationError(
+      `Attempted to apply a function to an argument not in its domain.\n${describeRange(expression.function)}`,
+    );
+  }
+  // Deviation from TLC: Tool#getFcnContext indexes past an argument tuple shorter than the bounds and ignores a longer one.
   const createListError = () =>
     new TlaEvaluationError(
       `In applying the function\n${prettyPrint(formatValue(value))},\nthe argument list is:\n${prettyPrint(formatValue(argument))}\nwhich does not match its formal parameter.\n`,
     );
-  if (elements === undefined) throw createListError();
   bounds.forEach((bound, index) => {
     if (index >= elements.length) throw createListError();
     const element = elements[index];
@@ -1177,7 +1181,9 @@ const evaluateLocalIdentifier = (name: string, expression: Expression, context: 
   }
   const builtin = context.environment.builtins.get(name);
   if (builtin?.arity === 0) return builtin.evaluate([], context);
-  throw new TlaEvaluationError(`Unknown identifier ${name} at ${describeLocation(expression)}`);
+  throw new TlaEvaluationError(
+    `In evaluation, the identifier ${name} is either undefined or not an operator.\n${describeRange(expression)}`,
+  );
 };
 
 export const getReevaluatedDefinitions = (

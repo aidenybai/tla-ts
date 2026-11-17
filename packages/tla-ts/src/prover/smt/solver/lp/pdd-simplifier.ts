@@ -1,4 +1,5 @@
 import { mkJoin } from "./dependency";
+import type { Pdd } from "./pdd";
 import { type Equation, type PddSolver, SetUpdate, SOLVED, TO_SIMPLIFY } from "./pdd-solver";
 import { shrink } from "../array";
 
@@ -17,9 +18,12 @@ export class PddSimplifier {
   }
 
   private simplifyLinearStep(isBinary: boolean) {
-    const linear = this.solver.toSimplify.filter((equation) =>
-      isBinary ? equation.poly.isBinary() : equation.poly.isLinear(),
-    );
+    const linear: Equation[] = [];
+    for (const equation of this.solver.toSimplify) {
+      const poly = equation.poly.copy();
+      if (isBinary ? poly.isBinary() : poly.isLinear()) linear.push(equation);
+      poly.release();
+    }
     if (linear.length === 0) return false;
     return this.simplifyLinear(linear);
   }
@@ -40,8 +44,10 @@ export class PddSimplifier {
       for (let index = 0, length = uses.length; index < length; index++) {
         const target = uses[index];
         if (source === target || solver.isTrivial(target)) continue;
-        if (!source.poly.isBinary() && !target.poly.isLinear()) {
+        const targetPoly = target.poly.copy();
+        if (!source.poly.isBinary() && !targetPoly.isLinear()) {
           isAllReduced = false;
+          targetPoly.release();
           continue;
         }
         this.removeFromUse(target, useList, variable);
@@ -57,6 +63,7 @@ export class PddSimplifier {
           solver.pushEquation(TO_SIMPLIFY, target);
         }
         this.addToUse(target, useList);
+        targetPoly.release();
       }
       if (isAllReduced) linear[kept++] = source;
     }
@@ -67,7 +74,7 @@ export class PddSimplifier {
         solver.pushEquation(SOLVED, source);
       }
     }
-    for (const equation of trivial) solver.popEquation(equation);
+    for (const equation of trivial) solver.delEquation(equation);
     return kept > 0 || hasConflict;
   }
 
@@ -78,23 +85,43 @@ export class PddSimplifier {
     const update = new SetUpdate(solver.toSimplify);
     for (; update.i < update.size; update.i++) {
       const first = update.get();
-      const poly = first.poly;
-      const second = los.get(poly.lo().root) ?? first;
-      if (second === first) los.set(poly.lo().root, first);
-      if (
-        second !== first &&
-        (poly.hi().isVal() || second.poly.hi().isVal()) &&
-        !poly.lo().isVal()
-      ) {
-        first.poly = poly.sub(second.poly);
+      const poly = first.poly.copy();
+      const lo = poly.lo();
+      const second = los.get(lo.root) ?? first;
+      if (second === first) los.set(lo.root, first);
+      lo.release();
+      const secondPoly = second.poly.copy();
+      if (second !== first && this.isCcReducible(poly, secondPoly)) {
+        const difference = poly.sub(second.poly);
+        first.poly.assign(difference);
+        difference.release();
         first.dep = mkJoin(first.dep, second.dep);
         isReduced = true;
-        if (solver.isTrivial(first) || solver.checkConflict(first)) continue;
+        const isTrivial = solver.isTrivial(first);
+        if (isTrivial) solver.retire(first);
+        if (isTrivial || solver.checkConflict(first)) {
+          secondPoly.release();
+          poly.release();
+          continue;
+        }
       }
       update.nextj();
+      secondPoly.release();
+      poly.release();
     }
     update.finish();
     return isReduced;
+  }
+
+  private isCcReducible(poly: Pdd, secondPoly: Pdd) {
+    const hi = poly.hi();
+    const secondHi = hi.isVal() ? null : secondPoly.hi();
+    const lo = secondHi === null || secondHi.isVal() ? poly.lo() : null;
+    const isReducible = lo !== null && !lo.isVal();
+    lo?.release();
+    secondHi?.release();
+    hi.release();
+    return isReducible;
   }
 
   private simplifyLeafStep() {
@@ -102,8 +129,11 @@ export class PddSimplifier {
     const useList = this.getUseList();
     for (let index = 0; index < solver.toSimplify.length; index++) {
       const source = solver.toSimplify[index];
-      const poly = source.poly;
-      if (poly.isVal() || !poly.hi().isVal()) continue;
+      const poly = source.poly.copy();
+      if (poly.isVal() || !this.isHiVal(poly)) {
+        poly.release();
+        continue;
+      }
       const leaves = useList[poly.var()].filter(
         (target) => target !== source && target.poly.varIsLeaf(poly.var()),
       );
@@ -112,16 +142,18 @@ export class PddSimplifier {
         const isLeadingTermChanged = solver.simplifyUsing(target, source);
         this.addToUse(target, useList);
         if (solver.isTrivial(target)) {
-          solver.popEquation(target);
+          solver.delEquation(target);
         } else if (target.poly.isVal()) {
           solver.popEquation(target);
           solver.setConflict(target);
+          poly.release();
           return true;
         } else if (isLeadingTermChanged) {
           solver.popEquation(target);
           solver.pushEquation(TO_SIMPLIFY, target);
         }
       }
+      poly.release();
     }
     return false;
   }
@@ -133,16 +165,24 @@ export class PddSimplifier {
     let hasSolved = false;
     for (; update.i < update.size; update.i++) {
       const equation = update.get();
-      const poly = equation.poly;
-      if (!poly.isVal() && poly.hi().isVal() && useList[poly.var()].length === 1) {
+      const poly = equation.poly.copy();
+      if (!poly.isVal() && this.isHiVal(poly) && useList[poly.var()].length === 1) {
         solver.pushEquation(SOLVED, equation);
         hasSolved = true;
       } else {
         update.nextj();
       }
+      poly.release();
     }
     update.finish();
     return hasSolved;
+  }
+
+  private isHiVal(poly: Pdd) {
+    const hi = poly.hi();
+    const isVal = hi.isVal();
+    hi.release();
+    return isVal;
   }
 
   private addToUse(equation: Equation, useList: Equation[][]) {

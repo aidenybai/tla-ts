@@ -444,7 +444,11 @@ const createContexts = (getParsed: ModuleSet) => {
   };
 };
 
-const getStringOrder = (getParsed: ModuleSet, config: ModelConfig): string[] => {
+const getStringOrder = (
+  getParsed: ModuleSet,
+  config: ModelConfig,
+  runtimeModules: string[],
+): string[] => {
   const order = new Set<string>();
   const intern = (text: string) => {
     order.add(text);
@@ -541,12 +545,19 @@ const getStringOrder = (getParsed: ModuleSet, config: ModelConfig): string[] => 
     });
   };
   analyze(undefined);
+  runtimeModules.forEach((name) => {
+    const tokens = getUnitTokens(name);
+    getParsedTexts(tokens).forEach(intern);
+    tokens.forEach((token) => {
+      if (token.kind === "String") intern(token.text);
+    });
+  });
   TLC_RUNTIME_STRINGS.forEach(intern);
   return [...order];
 };
 
 export interface TlcOrder {
-  getStringOrder: (config: ModelConfig) => string[];
+  getStringOrder: (config: ModelConfig, runtimeModules: string[]) => string[];
   getDeclarationOrder: (kind: "variable" | "constant") => string[];
   createDefinitionOrder: () => (name: string | undefined) => string[];
   parseModule: (source: string) => Module;
@@ -558,7 +569,7 @@ export const createTlcOrder = (source: string, loadModule: ModuleLoader): TlcOrd
   let contexts: ReturnType<typeof createContexts> | undefined;
   const getContexts = () => (contexts ??= createContexts(getParsed));
   return {
-    getStringOrder: (config) => getStringOrder(getParsed, config),
+    getStringOrder: (config, runtimeModules) => getStringOrder(getParsed, config, runtimeModules),
     getDeclarationOrder: (kind) =>
       getContexts()
         .getContext(undefined)
