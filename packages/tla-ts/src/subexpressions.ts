@@ -63,6 +63,7 @@ interface SelectingName {
 const declaredArities = new WeakMap<Definition, number>();
 // SANY generates a failed selection's arguments only up to the selector it rejects.
 const generatedArgumentCounts = new WeakMap<Expression, number>();
+const resolvedNodes = new WeakMap<Expression, Expression>();
 
 const setDeclaredArities = (declarations: Declaration[], definitions: Definition[]) =>
   declarations.forEach((declaration) => {
@@ -222,7 +223,11 @@ const selectSubexpression = (
   const checkNull = (node: Expression | undefined, message: string, isEmpty = false) => {
     const range = reference.selectorRanges?.[selectorIndex];
     if (node && range) {
-      nulls.push({ node, error: { location: formatRange(range), message }, isEmpty });
+      nulls.push({
+        node: resolvedNodes.get(node) ?? node,
+        error: { location: formatRange(range), message },
+        isEmpty,
+      });
     }
   };
 
@@ -589,6 +594,8 @@ const resolveSubexpressions = (
   const mapped = getChildren(rebuilt).every((child, index) => child === children[index])
     ? expression
     : rebuilt;
+  if (mapped !== expression && !resolvedNodes.has(expression))
+    resolvedNodes.set(expression, mapped);
   const selectors =
     mapped.kind === "Subexpression"
       ? mapped.selectors

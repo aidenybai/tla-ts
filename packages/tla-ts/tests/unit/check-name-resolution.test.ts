@@ -2833,6 +2833,36 @@ describe("name resolution matches SANY", () => {
     },
   );
 
+  it.each<[string, [string, string][]]>([
+    [
+      "EXTENDS Naturals\nJ(a, Q(_)) == Q(a)\nK == lab:: 1 + 1\nOp0 == J(K!1)\nf == Op0!@\ng == Op0!1",
+      [
+        ["line 5, col 9 to line 5, col 13", "The operator J requires 2 arguments."],
+        [
+          "line 6, col 10 to line 6, col 10",
+          "Choosing operand `@' of subexpression with no operands.",
+        ],
+        ["line 7, col 10 to line 7, col 10", noOperands],
+      ],
+    ],
+    [
+      "EXTENDS Naturals\nK == lab:: 1 + 1\nOp0 == {Nope(K!1), 2}\nf == Op0!1!1\ng == Op0!1",
+      [
+        ["line 4, col 9 to line 4, col 12", "Unknown operator: `Nope'."],
+        ["line 5, col 12 to line 5, col 12", noOperands],
+      ],
+    ],
+  ])(
+    "reports choosing an operand of a failed expression that contains a selection, in %j, like SANY",
+    async (source, errors) => {
+      await expect(checkNames(source)).rejects.toThrow(
+        createSanyError(
+          errors.map((error) => ({ location: `${error[0]} of module M`, message: error[1] })),
+        ),
+      );
+    },
+  );
+
   it("reports a selection that leaves parameters unfilled under a built-in operator like SANY", async () => {
     await expect(
       checkNames(
