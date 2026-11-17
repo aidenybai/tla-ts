@@ -2,6 +2,7 @@
 // search that succeeds, and gives anything else back to the interpreter, which reruns it.
 import {
   getChildren,
+  isLocallyResolved,
   type ApplyExpression,
   type Bound,
   type Definition,
@@ -1103,6 +1104,8 @@ interface Program {
   // The functions counting the ways the LET functions being compiled hold as actions.
   ways: Map<Definition, string>;
   isGuessing: boolean;
+  // The level of the state that a constraint or an invariant checks, which TLCGet("level") reads.
+  level: { value: number };
 }
 
 // The function a RECURSIVE operator compiles to, which its applications in its own body call.
@@ -1369,6 +1372,10 @@ const isConstantExpression = (program: Program, expression: Expression, scope: T
       if (global?.kind === "Definition") {
         if (!isConstantLevel(global.definition, program.environment)) return false;
       }
+      // A builtin such as TLCGet reads where the search is.
+      if (global === undefined && program.environment.builtins.get(name)?.isStateLevel) {
+        return false;
+      }
     }
     if (
       inner.kind === "Forall" ||
@@ -1395,6 +1402,8 @@ interface Frame {
   // Whether the expression is primed as a whole, where TLC evaluates a LET definition or an argument
   // again in the next state.
   isNext: boolean;
+  // Whether the expression is a constraint or an invariant, whose state's level the search knows.
+  isLevelKnown?: boolean;
 }
 
 const getVariableCodes = (program: Program) => program.variableTypes.map((_, index) => `v${index}`);
@@ -3268,6 +3277,20 @@ const compileValue = (program: Program, expression: Expression, frame: Frame): C
     case "Identifier":
       return compileIdentifier(program, expression.name, frame);
     case "Apply": {
+      // TLCGet("level") reads the level of the state that a constraint or an invariant checks.
+      const [key] = expression.args;
+      if (
+        expression.operator === "TLCGet" &&
+        !isLocallyResolved(expression) &&
+        expression.args.length === 1 &&
+        key.kind === "String" &&
+        key.value === "level"
+      ) {
+        // TLC 1.7.4 reads the level of the state it explores rather than of the one it checks.
+        return frame.isLevelKnown && program.environment.runtime.version !== "1.7.4"
+          ? { type: createInt(), emit: () => "J.value" }
+          : unsupported();
+      }
       const names: LazyDefinition[] = [];
       const expansion = getExpansion(program, expression, frame, names);
       if (!expansion) return compileBuiltin(program, expression, frame);
@@ -5671,6 +5694,7 @@ const compileSpec = (
         primed: unprimed,
         variables: getVariableCodes(program),
         isNext: false,
+        isLevelKnown: true,
       }),
     );
   const invariants = check.invariants.map(compilePredicate);
@@ -5749,7 +5773,8 @@ const compileSpec = (
         .map((match) => Number(match[1]))
         .filter((index) => index < program.variableTypes.length),
     );
-    const guard = /\b(state|parent)\b/.test(body)
+    // A predicate that reads the level holds of a successor whatever its parent's values are.
+    const guard = /\b(state|parent|J)\b/.test(body)
       ? ""
       : `if (parent !== undefined${[...reads].map((index) => ` && state[${index}] === parent[${index}]`).join("")}) return true;`;
     return `(state, parent) => { ${guard} ${unpack} return ${body}; }`;
@@ -5957,7 +5982,7 @@ const compileSpec = (
     moved,
     ...atoms.map((table) => moved.map((atom) => table.findIndex((image) => image === atom))),
   ];
-  return new Function("K", "S", "B", "R", "D", "L", "A", "Q", "Z", "M", "H", source)(
+  return new Function("K", "S", "B", "R", "D", "L", "A", "Q", "Z", "M", "H", "J", source)(
     program.constants,
     program.constantSets,
     program.bitmaps,
@@ -5969,6 +5994,7 @@ const compileSpec = (
     new Int32Array(program.plains.values.length),
     getFullOrbits(preimages),
     HELPERS,
+    program.level,
   );
 };
 
@@ -6145,6 +6171,7 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
     recursions: new Map(),
     ways: new Map(),
     isGuessing: plains.isGuessed,
+    level: { value: 1 },
   };
   // Every variable of such a spec is assigned before TLC branches on the next-state relation.
   if (environment.variables.length === 0) return unsupported();
@@ -6323,7 +6350,9 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
   };
   // Each state on the path is the first successor of the one before it with its key, as it was found.
   const getPath = (indexes: number[]) => {
+    // The constraints check each state of the path at its level, as the search did.
     const findFirst = (states: (emit: (state: Plain[]) => void) => void, target: number) => {
+      program.level.value = path.length + 1;
       const found: Plain[][] = [];
       states((state) => {
         if (found.length > 0 || !isInModel(state)) return;
@@ -6332,14 +6361,15 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
       });
       return found[0];
     };
-    const path = [
+    const path: Plain[][] = [];
+    path.push(
       findFirst((emit) => {
         const cursor: Cursor = { data: initialBytes.data, position: 0 };
         for (let initial = 0; initial < initialStarts.size; initial++) {
           emit(program.variableTypes.map((type) => readPlain(cursor, type, program.plains)));
         }
       }, indexes[0]),
-    ];
+    );
     indexes.slice(1).forEach((target) => {
       path.push(findFirst((emit) => compiled.next(path[path.length - 1], emit), target));
     });
@@ -6367,8 +6397,9 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
             return fingerprinter.words[0];
           })()),
         // The successors of a state the search expanded are all stored.
-        getSuccessors: (_index, state) => {
+        getSuccessors: (index, state) => {
           const successors: LiveSuccessor<Plain[]>[] = [];
+          program.level.value = getDepth(index) + 1;
           compiled.next(state, (successor) => {
             if (!isInModel(successor)) return;
             writeKey(successor);
@@ -6381,6 +6412,7 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
       environment.runtime.version !== "1.7.4",
     );
   const cursor: Cursor = { data: initialBytes.data, position: 0 };
+  program.level.value = 1;
   for (let index = 0; index < initialStarts.size; index++) {
     const state = program.variableTypes.map((type) => readPlain(cursor, type, program.plains));
     const distinct = statistics.distinct;
@@ -6398,6 +6430,14 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
   }
   const initialStates = { generated: statistics.generated, distinct: statistics.distinct };
   const level = { depth: 1, end: statistics.distinct };
+  // The search finds the states of each depth one after another, so the end of each depth's states
+  // gives the depth of any state.
+  const depthEnds: number[] = [];
+  const getDepth = (index: number) => {
+    let depth = 1;
+    while (depth <= depthEnds.length && index >= depthEnds[depth - 1]) depth++;
+    return depth;
+  };
   const expansion = { successors: 0, newStates: 0 };
   const liveSuccessors: LiveSuccessor<Plain[]>[] = [];
   const liveChecks = { at: 1024 };
@@ -6456,12 +6496,14 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
   });
   for (let index = 0; index < statistics.distinct; index++) {
     if (index === level.end) {
+      depthEnds.push(level.end);
       level.depth++;
       level.end = statistics.distinct;
     }
     const state = readState();
     expanding.state = state;
     expanding.index = index;
+    program.level.value = level.depth + 1;
     expansion.successors = 0;
     expansion.newStates = 0;
     liveSuccessors.length = 0;
