@@ -27,6 +27,7 @@ import {
   getArgumentSpan,
   getExpressionSpan,
   getMatchingIndex,
+  getParenthesizedSpan,
   getPreComments,
   getSpanLocation,
   getTokenIndex,
@@ -48,7 +49,6 @@ import {
   type ModuleGeneration,
   popLabels,
   pushLabelScope,
-  resolveName,
   resolveSymbol,
   withContext,
 } from "./generation";
@@ -232,22 +232,33 @@ const getOperatorArgumentName = (file: SourceFile, argument: Expression) =>
       ? argument.body.operator
       : file.tokens[getTokenIndex(file, argument.location)].text;
 
+const resolveOperatorArgument = (
+  generation: ModuleGeneration,
+  argument: Expression,
+  location: SanyLocation,
+) => {
+  const name = getOperatorArgumentName(generation.file, argument);
+  const symbol = resolveSymbol(generation.contexts, resolveSynonym(name));
+  if (symbol !== undefined) return createOpArg(generation, symbol, location);
+  generation.addError(location, `Could not find declaration or definition of symbol '${name}'.`);
+  return createNullNode(generation);
+};
+
 export const generateOperatorArgument = (
   generation: ModuleGeneration,
   argument: Expression,
   target: OpDeclNode,
 ): OpArgNode | OpApplNode => {
-  const location = getLocation(generation.file, argument);
-  if (argument.kind === "Lambda") {
+  const span = getExpressionSpan(generation.file, argument);
+  const parenthesizedSpan = getParenthesizedSpan(generation.file, span);
+  const location = getSpanLocation(generation.file, parenthesizedSpan);
+  const isParenthesized = parenthesizedSpan !== span;
+  if (argument.kind === "Lambda" && !isParenthesized) {
     if (argument.location.range !== undefined && argument.operator === undefined)
       return createOpArg(generation, generateLambda(generation, argument), location);
-    return createOpArg(
-      generation,
-      resolveName(generation, getOperatorArgumentName(generation.file, argument), location),
-      location,
-    );
+    return resolveOperatorArgument(generation, argument, location);
   }
-  if (!isOperatorArgument(argument)) {
+  if (isParenthesized || !isOperatorArgument(argument)) {
     generation.addError(
       location,
       `Arity ${target.arity} operator (not an expression) is expected \nto substitute for CONSTANT '${target.name}'.`,
@@ -255,7 +266,7 @@ export const generateOperatorArgument = (
     return createNullNode(generation);
   }
   if (argument.kind === "OperatorReference") {
-    return createOpArg(generation, resolveName(generation, argument.operator, location), location);
+    return resolveOperatorArgument(generation, argument, location);
   }
   const node = generateSelector(generation, argument, target.arity, false, false);
   if (node.kind === "OpArg" || (node.kind === "OpAppl" && node.nullKind !== undefined)) return node;

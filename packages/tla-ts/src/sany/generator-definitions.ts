@@ -356,6 +356,7 @@ const processSubstitutions = (
     if (targetIndex !== -1) {
       cursor = getExpressionSpan(generation.file, substitution.expression).end + 1;
     }
+    // Deviation from SANY: Generator#generateSubst looks a target up as spelled, so it rejects `<= <- G` for a CONSTANT _ <= _.
     const target = getContextSymbol(instanceeContext, resolveSynonym(substitution.name));
     if (target?.kind !== "OpDecl") {
       generation.addError(

@@ -362,6 +362,41 @@ Spec == Init /\\ [][Next]_x
     );
   });
 
+  it("reports an operator substitution that is undefined or parenthesized as SANY does", () => {
+    const report = getReport({
+      M: "---- MODULE M ----\nG(a) == a\nI == INSTANCE R WITH Op <- +\nJ == INSTANCE R WITH Op <- (G)\n====\n",
+      R: "---- MODULE R ----\nCONSTANT Op(_)\n====\n",
+    });
+    expect(report.text).toContain(
+      joinLines([
+        "*** Errors: 3",
+        "",
+        "line 3, col 28 to line 3, col 28 of module M",
+        "",
+        "Could not find declaration or definition of symbol '+'.",
+        "",
+        "",
+        "In module --TLA+ BUILTINS--",
+        "",
+        "An operator must be substituted for symbol 'Op', and it must have arity 1.",
+        "",
+        "",
+        "line 4, col 28 to line 4, col 30 of module M",
+        "",
+        "Arity 1 operator (not an expression) is expected ",
+        "to substitute for CONSTANT 'Op'.",
+      ]),
+    );
+  });
+
+  it("substitutes for an operator CONSTANT named by a synonym, which SANY rejects", () => {
+    const report = getReport({
+      M: "---- MODULE M ----\nG(a, b) == a\nI == INSTANCE R WITH <= <- G\n====\n",
+      R: "---- MODULE R ----\nCONSTANT _ <= _\n====\n",
+    });
+    expect(report).toEqual({ text: "", isFailed: false });
+  });
+
   it.each([
     ["VARIABLES x,\n  y", "line 4, col 1 to line 5, col 3", "A VARIABLE declaration"],
     ["CONSTANT C", "line 4, col 1 to line 4, col 10", "A declaration"],
