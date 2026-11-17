@@ -238,6 +238,7 @@ import {
   ARITHMETIC_OPERATORS,
   BIGINT_OPERATORS,
   BITWISE_OPERATORS,
+  getGlobalBinding,
 } from "./expressions";
 import { and, bindValue, DISABLED, type Formula, ifThenElse, letIn, leaf, render } from "./formula";
 import {
@@ -880,6 +881,8 @@ const isCollectionMethodRun = (write: ts.PropertyAccessExpression, context: Cont
 
 const getHeapWrite = (node: ts.Expression, path: Path, context: Context): HeapWrite | undefined => {
   if (!ts.isPropertyAccessExpression(node) && !ts.isElementAccessExpression(node)) return undefined;
+  const globalBinding = getGlobalBinding(node, context);
+  if (globalBinding !== undefined && path.scope.bindings.has(globalBinding)) return undefined;
   if (ts.isPropertyAccessExpression(node) && ts.isPrivateIdentifier(node.name)) return undefined;
   const receiver = node.expression;
   // tla-ts translates a collection's methods itself, so it can't call the ones a script puts there.
@@ -985,6 +988,39 @@ const getTarget = (node: ts.Expression, path: Path, context: Context): Target =>
       `tla-ts can't write ${node.getText()}, which a namespace exports, outside the namespace`,
       node,
     );
+  }
+  // A write of the global object's property that a var or a global holds writes the binding, and
+  // makes the global where it's absent, as the property's write would.
+  const globalBinding = getGlobalBinding(node, context);
+  const globalCurrent = globalBinding && path.scope.bindings.get(globalBinding);
+  if (globalBinding !== undefined && globalCurrent !== undefined) {
+    const current = globalCurrent;
+    if (!path.mutable.has(globalBinding)) {
+      throw new TlaTypeScriptError(`tla-ts can't follow this write to ${node.getText()}`, node);
+    }
+    const isGlobal = context.implicitGlobals.has(globalBinding);
+    const read = isGlobal
+      ? ifExpression(isUnresolvable(current, context), getUndefined(context), current)
+      : current;
+    const heap = context.heap === undefined ? undefined : path.scope.bindings.get(context.heap);
+    return {
+      symbol: globalBinding,
+      current: read,
+      update: (getValue) =>
+        isGlobal && heap !== undefined
+          ? ifExpression(
+              apply("/\\", [
+                isUnresolvable(current, context),
+                apply("~", [useJavaScript("IsKept", [heap, string("Object.prototype")], context)]),
+              ]),
+              apply("Assert", [
+                boolean(false),
+                string("tla-ts can't make a global once Object.prototype changed"),
+              ]),
+              getValue(read),
+            )
+          : getValue(read),
+    };
   }
   if (ts.isIdentifier(node)) {
     rejectBeforeDeclaration(node, path.scope, context);
