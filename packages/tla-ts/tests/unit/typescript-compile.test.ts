@@ -52464,4 +52464,50 @@ describe("BigInts", () => {
     });
   });
 
+  describe("gives a static field's arrow the class as its this", () => {
+    const getSource = (expected: boolean) => `
+      var C = class {
+        static f = () => this;
+      };
+      const same = C.f() === C;
+      if (same !== ${expected}) throw new Error("same " + same);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(true))).failure).toBeUndefined();
+    });
+
+    it("rejects another this", async () => {
+      expect((await checkModel(getSource(false))).failure?.message).toContain("same true");
+    });
+  });
+
+  describe("runs a helper that calls a promise's then as its own code, which queues the job", () => {
+    const getSource = (expected: string) => `
+      const seen: number[] = [];
+      const ready = Promise.resolve(1);
+      function f() {
+        ready.then((value) => {
+          seen.push(value);
+        });
+      }
+      f();
+      const check = async () => {
+        await null;
+        await null;
+        if (seen.join() !== "${expected}") throw new Error("seen " + seen.join());
+      };
+      check();
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("1"))).failure).toBeUndefined();
+    });
+
+    it("rejects another value", async () => {
+      expect((await checkModel(getSource("2"))).failure?.message).toContain(
+        "A promise rejected with no handler",
+      );
+    });
+  });
 });
