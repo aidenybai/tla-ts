@@ -1389,58 +1389,72 @@ const resolveExpression = (
       resolveExpression(expression.body, scope, { ...unit, labelParams: [], labels: new Set() });
       checkLabel(expression, scope, unit);
       return;
-    case "Subexpression": {
-      if (isSelectionReported(expression, scope, unit)) return;
-      expression.selectors
-        .flatMap((selector) => ("args" in selector ? selector.args : []))
-        .forEach((arg) => resolveArgument(arg, scope, unit));
-      if (checkReference(expression, scope, unit, false)) return;
-      const head = expression.selectors[0];
-      const range = expression.selectorRanges?.[0];
-      const nameCount = expression.selectors.findIndex((selector) => selector.kind !== "Name");
-      const names = expression.selectors
-        .slice(0, nameCount)
-        .flatMap((selector) => (selector.kind === "Name" ? [selector.name] : []));
-      const symbolIndex = names.findIndex(
-        (_name, index) => index > 0 && findSymbol(names.slice(0, index + 1).join("!"), unit),
-      );
-      const isInstance =
-        names.length > 1 &&
-        (lookupLocal(scope, names[0]) ?? getModuleBinding(names[0], unit, undefined))?.kind ===
-          "Instance";
-      const lastRange = expression.selectorRanges?.[nameCount - 1];
-      if (isInstance && symbolIndex === -1 && range && lastRange) {
-        unit.errors.push({
-          location: formatRange({ module: range.module, start: range.start, end: lastRange.end }),
-          message: `Unknown operator: \`${resolveSynonym(names.join("!"))}'.`,
-        });
-        return;
-      }
-      const name = names.slice(0, symbolIndex + 1).join("!");
-      const symbol = symbolIndex > 0 ? findSymbol(name, unit) : undefined;
-      const argumentCount = expression.selectors
-        .slice(0, symbolIndex + 1)
-        .flatMap((selector) => ("args" in selector ? selector.args : [])).length;
-      const argumentRange = expression.argumentRanges?.[symbolIndex] ?? expression.location.range;
-      if (symbol && symbol.arity !== argumentCount && argumentRange) {
-        unit.errors.push({
-          location: formatRange(argumentRange),
-          message: `The operator ${resolveSynonym(name)} requires ${symbol.arity} arguments.`,
-        });
-        return;
-      }
-      if (head.kind !== "Name" || expression.selectors[1].kind === "Name" || !range) return;
-      const binding = lookupLocal(scope, head.name) ?? findSymbol(head.name, unit);
-      if ((binding === undefined && !isFact(head.name, unit)) || binding?.kind === "Instance") {
-        unit.errors.push({
-          location: formatRange(range),
-          message: `Unknown operator: \`${resolveSynonym(head.name)}'.`,
-        });
-      } else if (binding && !SELECTABLE_KINDS.has(binding.kind)) {
-        reportUnselectable(head.name, range, unit);
-      }
-    }
+    case "Subexpression":
+      isSubexpressionReported(expression, scope, unit);
+      return;
   }
+};
+
+const isSubexpressionReported = (
+  expression: Expression & { kind: "Subexpression" },
+  scope: LocalName | undefined,
+  unit: Unit,
+) => {
+  if (isSelectionReported(expression, scope, unit)) return true;
+  expression.selectors
+    .flatMap((selector) => ("args" in selector ? selector.args : []))
+    .forEach((arg) => resolveArgument(arg, scope, unit));
+  const selected = checkReference(expression, scope, unit, false);
+  if (selected) return selected.node === undefined;
+  const head = expression.selectors[0];
+  const range = expression.selectorRanges?.[0];
+  const nameCount = expression.selectors.findIndex((selector) => selector.kind !== "Name");
+  const names = expression.selectors
+    .slice(0, nameCount)
+    .flatMap((selector) => (selector.kind === "Name" ? [selector.name] : []));
+  const symbolIndex = names.findIndex(
+    (_name, index) => index > 0 && findSymbol(names.slice(0, index + 1).join("!"), unit),
+  );
+  const isInstance =
+    names.length > 1 &&
+    (lookupLocal(scope, names[0]) ?? getModuleBinding(names[0], unit, undefined))?.kind ===
+      "Instance";
+  const lastRange = expression.selectorRanges?.[nameCount - 1];
+  if (isInstance && symbolIndex === -1 && range && lastRange) {
+    unit.errors.push({
+      location: formatRange({ module: range.module, start: range.start, end: lastRange.end }),
+      message: `Unknown operator: \`${resolveSynonym(names.join("!"))}'.`,
+    });
+    return true;
+  }
+  const name = names.slice(0, symbolIndex + 1).join("!");
+  const symbol = symbolIndex > 0 ? findSymbol(name, unit) : undefined;
+  const argumentCount = expression.selectors
+    .slice(0, symbolIndex + 1)
+    .flatMap((selector) => ("args" in selector ? selector.args : [])).length;
+  const argumentRange = expression.argumentRanges?.[symbolIndex] ?? expression.location.range;
+  if (symbol && symbol.arity !== argumentCount && argumentRange) {
+    unit.errors.push({
+      location: formatRange(argumentRange),
+      message: `The operator ${resolveSynonym(name)} requires ${symbol.arity} arguments.`,
+    });
+    return true;
+  }
+  if (head.kind !== "Name" || expression.selectors[1].kind === "Name" || !range) return false;
+  const local = lookupLocal(scope, head.name);
+  const binding = local ?? findSymbol(head.name, unit);
+  if ((binding === undefined && !isFact(head.name, unit)) || binding?.kind === "Instance") {
+    unit.errors.push({
+      location: formatRange(range),
+      message: `Unknown operator: \`${resolveSynonym(head.name)}'.`,
+    });
+    return true;
+  }
+  if (binding && (!SELECTABLE_KINDS.has(binding.kind) || local?.isNonFact)) {
+    reportUnselectable(head.name, range, unit);
+    return true;
+  }
+  return false;
 };
 
 const checkFact = (fact: Fact, reference: Fact, scope: LocalName | undefined, unit: Unit) => {
@@ -1462,13 +1476,18 @@ const checkFact = (fact: Fact, reference: Fact, scope: LocalName | undefined, un
       ? undefined
       : fact.location.range && formatRange(fact.location.range);
   }
+  if (fact.kind === "Subexpression") {
+    return isSubexpressionReported(fact, scope, unit) ? BUILTIN_LOCATION : hidden;
+  }
   const name = fact.kind === "Identifier" ? fact.name : fact.kind === "Apply" ? fact.operator : "";
   if (fact.kind === "Identifier" && lookupLocal(scope, name)?.isNonFact) {
     unit.errors.push({
       location: formatRange(getSpelledNameRange(fact, name)),
       message: "Step number of non-fact used as a fact",
     });
-  } else if (!isFact(name, unit)) resolveExpression(fact, scope, unit);
+    return BUILTIN_LOCATION;
+  }
+  if (!isFact(name, unit)) resolveExpression(fact, scope, unit);
   return hidden;
 };
 

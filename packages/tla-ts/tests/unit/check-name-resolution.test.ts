@@ -2091,6 +2091,49 @@ describe("name resolution matches SANY", () => {
     );
   });
 
+  it.each<[string, [string, string][]]>([
+    [
+      "EXTENDS Naturals\nTHEOREM T == 1 = 1\n<1>1. DEFINE Z == 1\n<1>2. HIDE <1>1\n<1>3. USE <1>1\n<1>4. HIDE <1>2, <1>1!1\n<1>5. QED",
+      [
+        ["line 5, col 12 to line 5, col 15", "Step number of non-fact used as a fact"],
+        ["In module --TLA+ BUILTINS--", hidden],
+        ["line 6, col 11 to line 6, col 14", "Step number of non-fact used as a fact"],
+        ["line 7, col 12 to line 7, col 15", "Step number of non-fact used as a fact"],
+        ["line 7, col 18 to line 7, col 21", "Cannot take subexpression of `<1>1'."],
+      ],
+    ],
+    [
+      "EXTENDS Naturals\nCONSTANT c\nTHEOREM T == 1 = 1\n<1>1. DEFINE Z == 1 + 2\n<1>2. <1>1!1 = 1\n  OBVIOUS\n<1>3. c!1 = 1\n  OBVIOUS\n<1>4. QED",
+      [
+        ["line 6, col 7 to line 6, col 10", "Cannot take subexpression of `<1>1'."],
+        ["line 8, col 7 to line 8, col 7", "Cannot take subexpression of `c'."],
+      ],
+    ],
+    [
+      "EXTENDS Naturals\nCONSTANT c\nTHEOREM T == 1 = 1\n<1>1. DEFINE Z == 1 + 2\n<1>2. HIDE <1>1!1\n<1>3. QED",
+      [
+        ["line 6, col 12 to line 6, col 15", "Cannot take subexpression of `<1>1'."],
+        ["In module --TLA+ BUILTINS--", hidden],
+      ],
+    ],
+    [
+      "EXTENDS Naturals\nCONSTANT c\nHIDE c!1",
+      [
+        ["line 4, col 6 to line 4, col 6", "Cannot take subexpression of `c'."],
+        ["In module --TLA+ BUILTINS--", hidden],
+      ],
+    ],
+  ])("reports selecting from a step that is no fact in %j like SANY", async (source, errors) => {
+    await expect(checkNames(source)).rejects.toThrow(
+      createSanyError(
+        errors.map((error) => ({
+          location: error[0].startsWith("In module") ? error[0] : `${error[0]} of module M`,
+          message: error[1],
+        })),
+      ),
+    );
+  });
+
   it("passes an operator whose definition has fewer parameters than its RECURSIVE declaration, where SANY crashes", async () => {
     await expect(
       checkNames("RECURSIVE R(_, _)\nR == 1\nL(P(_, _)) == 1\nA == L(R)"),
