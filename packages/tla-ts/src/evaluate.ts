@@ -524,10 +524,13 @@ const someElement = (
   return false;
 };
 
-export const mapBoundSets = <Result>(bounds: Bound[], map: (set: Expression) => Result) =>
+export const mapBoundSets = <Result>(
+  bounds: Bound[],
+  map: (set: Expression, index: number) => Result,
+) =>
   bounds.reduce<Result[]>((results, bound, index) => {
     results.push(
-      index > 0 && bounds[index - 1].set === bound.set ? results[index - 1] : map(bound.set),
+      index > 0 && bounds[index - 1].set === bound.set ? results[index - 1] : map(bound.set, index),
     );
     return results;
   }, []);
@@ -1767,8 +1770,14 @@ export const getFunctionBuilder = (
       return markLambdaFunction(functionValue);
     }
     const pairs: [Value, Value][] = [];
-    const sets = mapBoundSets(bounds, (set) =>
-      getNormalizedElements(evaluate(set, context), set, context.environment.runtime.version),
+    const sets = mapBoundSets(bounds, (set, index) =>
+      getNormalizedElements(
+        bounds.length > 1 && typeof domain === "object" && domain.kind === "ProductSet"
+          ? domain.factors[index]
+          : domain,
+        set,
+        context.environment.runtime.version,
+      ),
     );
     forEachBoundElement(bounds, sets, context.scope, (scope) => {
       const key =

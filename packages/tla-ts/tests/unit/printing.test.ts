@@ -72,6 +72,13 @@ describe("printing matches TLC", () => {
     expect(formatValue(result.violation?.trace[0].state.b ?? false)).toBe(text);
   });
 
+  it("evaluates each bound set of a function constructor once", async () => {
+    expect(
+      (await checkPrinting("ASSUME PrintT([m \\in {}, n \\in Print(SUBSET {1, 2}, {1}) |-> 0])"))
+        .printed,
+    ).toEqual(["{{}, {1}, {2}, {1, 2}}  {1}", "<<>>"]);
+  });
+
   it("expands small sets in error messages", async () => {
     expect((await checkPrinting("ASSUME 1 \\in SUBSET {1}")).result.violation?.message).toContain(
       "{{}, {1}}",
