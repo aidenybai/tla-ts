@@ -92,6 +92,7 @@ import {
   getWrittenPairs,
   isFunctionValue,
   isUpdatedElementOf,
+  markNormalized,
   setAliasName,
   setStringOrder,
   setValueOptions,
@@ -1141,9 +1142,15 @@ export const createSearch = (
   };
   const getViewValue = (expression: Expression, state: Value[]) =>
     evaluate(expression, getContext(environment, state, undefined));
+  const getRepresentativeState = (state: Value[]) => {
+    // TLC's TLCStateMut#fingerPrint deep-normalizes a state before it evaluates the view.
+    if (view !== undefined) state.forEach(markNormalized);
+    return symmetryGroup === undefined
+      ? state
+      : getRepresentative(state, symmetryGroup, getTlcOrder());
+  };
   const getTlcStateFingerprint = (state: Value[]) => {
-    const representative =
-      symmetryGroup === undefined ? state : getRepresentative(state, symmetryGroup, getTlcOrder());
+    const representative = getRepresentativeState(state);
     return getTlcFingerprint(
       view === undefined
         ? getTlcOrder().map((index) => representative[index])
@@ -1331,10 +1338,7 @@ export const createSearch = (
     },
     getFingerprintState: (state) => {
       if (isFingerprintedLikeTlc) return [String(getTlcStateFingerprint(state))];
-      const representative =
-        symmetryGroup === undefined
-          ? state
-          : getRepresentative(state, symmetryGroup, getTlcOrder());
+      const representative = getRepresentativeState(state);
       return view === undefined ? representative : [getViewValue(view.expression, representative)];
     },
     findViolatedInvariant: (state, parent) => {

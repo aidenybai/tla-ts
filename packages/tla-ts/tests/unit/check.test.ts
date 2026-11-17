@@ -520,6 +520,19 @@ describe("check matches TLC", () => {
     ]);
   });
 
+  it("sorts the records of each state it fingerprints under a VIEW, as TLC normalizes the state", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLES x, y\nId(a) == a\nInit == x = 0 /\\ y = [b |-> TRUE, a |-> 1]\nNext == x' = x + 1 /\\ y' = [b |-> FALSE, a |-> x]\nInv == x < 2\nView == x\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv\nVIEW View",
+    });
+    expect(result.violation?.trace.map((step) => formatValue(step.state.y))).toEqual([
+      "[a |-> 1, b |-> TRUE]",
+      "[a |-> 0, b |-> FALSE]",
+      "[a |-> 1, b |-> FALSE]",
+    ]);
+  });
+
   it.each([
     ["<<x, y>>", "/\\ x = 0\n/\\ y = 5\n"],
     ["<<y, x>>", "/\\ x = 0\n/\\ y = 5\n"],
