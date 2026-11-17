@@ -565,7 +565,11 @@ export const runSmtlibScript = (
         result: checked.status,
         context: undefined,
         model: checked.model,
-        reasonUnknown: checked.reasonUnknown,
+        // The finite-domain solver is an inc_sat_solver, whose reason stays "no reason given" after an answer.
+        reasonUnknown:
+          isUsingFdSolver() && checked.status !== L_UNDEF
+            ? "no reason given"
+            : checked.reasonUnknown,
       };
     } catch (error) {
       if (!(error instanceof SmtUnsupportedError)) throw error;
@@ -788,7 +792,9 @@ export const runSmtlibScript = (
       ...solved,
       model: undefined,
       core: undefined,
-      reasonUnknown: solved.context.getLastFailureMessage(),
+      // inc_sat_solver, which these logics use, keeps "no reason given" after an answer.
+      reasonUnknown:
+        solved.result === L_UNDEF ? solved.context.getLastFailureMessage() : "no reason given",
     };
   };
   const printDiagnostic = (line: string) => print(line, !settings.isDiagnosticOnStdout);

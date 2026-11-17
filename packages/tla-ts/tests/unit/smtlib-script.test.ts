@@ -1414,6 +1414,38 @@ describe("runSmtlibScript prints what Z3 prints", () => {
     ]);
   });
 
+  it("gives the reason of inc_sat_solver after an answer of the finite-domain or bit-vector solver", () => {
+    expect(
+      run([
+        "(set-logic QF_FD)",
+        "(declare-const b Bool)",
+        "(assert b)",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+        "(check-sat-assuming ((not b)))",
+        "(get-info :reason-unknown)",
+        "(reset)",
+        "(set-option :produce-unsat-cores true)",
+        "(set-logic QF_BV)",
+        "(declare-const v (_ BitVec 4))",
+        "(assert (! (= v #x1) :named a0))",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+        "(check-sat-using smt)",
+        "(get-info :reason-unknown)",
+      ]),
+    ).toEqual([
+      "sat",
+      '(:reason-unknown "no reason given")',
+      "unsat",
+      '(:reason-unknown "no reason given")',
+      "sat",
+      '(:reason-unknown "no reason given")',
+      "sat",
+      '(:reason-unknown "")',
+    ]);
+  });
+
   it("answers unknown for formulas outside the logic that the smt setup rejects", () => {
     const reason =
       "Benchmark contains uninterpreted function symbols, but specified logic does not support them.";
