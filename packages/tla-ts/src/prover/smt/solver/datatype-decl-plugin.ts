@@ -1,4 +1,4 @@
-import { SmtInvariantError } from "../../../errors";
+import { SmtDefaultError, SmtInvariantError } from "../../../errors";
 import {
   type AstManager,
   OP_DT_ACCESSOR,
@@ -415,7 +415,12 @@ export const instantiateAccessor = (
 export const getDatatypeConstructors = (manager: AstManager, sort: number) => {
   const existing = manager.datatypeConstructors[sort];
   if (existing !== undefined) return existing;
-  const def = getDef(manager, sort);
+  const def = getDatatypeDef(manager, sort);
+  if (def === undefined) {
+    // Z3 caches the empty list before it raises, so a later call gets no constructors.
+    manager.datatypeConstructors[sort] = [];
+    throw new SmtDefaultError("datatype constructors have not been created");
+  }
   const parameters = manager.getSortParameters(sort);
   const constructors = def.constructors.map((constructor, index) =>
     manager.mkDatatypeDecl(
@@ -568,5 +573,8 @@ const getNonRecConstructorCore = (
   return result === -1 ? { constructor: -1, depth: 0 } : remember(result, minDepth);
 };
 
-export const getNonRecConstructor = (manager: AstManager, sort: number) =>
-  getNonRecConstructorCore(manager, sort, [sort]).constructor;
+export const getNonRecConstructor = (manager: AstManager, sort: number) => {
+  const constructor = getNonRecConstructorCore(manager, sort, [sort]).constructor;
+  if (constructor === -1) throw new SmtDefaultError("constructor not available");
+  return constructor;
+};

@@ -1485,6 +1485,36 @@ describe("runSmtlibScript prints what Z3 prints", () => {
     ]);
   });
 
+  it("reports where Z3 raises on a datatype whose declaration failed", () => {
+    expect(
+      run([
+        "(declare-datatype Opt ((none) (some (the X))))",
+        "(declare-const o Opt)",
+        "(declare-const p Opt)",
+        "(check-sat)",
+        "(get-value (o))",
+        "(get-model)",
+        "(reset)",
+        "(declare-datatype Opt ((none) (some (the X))))",
+        "(declare-const o Opt)",
+        "(assert (not ((_ is none) o)))",
+        "(declare-const p Opt)",
+        "(assert (distinct o p))",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+      ]),
+    ).toEqual([
+      `(error "line 1 column 19: invalid datatype declaration, unknown sort 'X'")`,
+      "sat",
+      '((error "line 5 column 14: datatype constructors have not been created")',
+      '(error "line 6 column 10: constructor not available")',
+      `(error "line 8 column 18: invalid datatype declaration, unknown sort 'X'")`,
+      '(error "line 10 column 27: datatype constructors have not been created")',
+      "unknown",
+      '(:reason-unknown "constructor not available")',
+    ]);
+  });
+
   it("throws at a theory it does not implement", () => {
     expect(() =>
       run(["(declare-const b (_ BitVec 8))", '(assert (= (str.from_ubv b) "12"))', "(check-sat)"]),

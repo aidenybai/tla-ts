@@ -3,7 +3,7 @@ import {
   isStackOverflow,
   SmtCanceledError,
   SmtParseError,
-  SmtSetupError,
+  SmtDefaultError,
   SmtTacticError,
   SmtUnsupportedError,
 } from "../../../errors";
@@ -533,7 +533,7 @@ export const runSmtlibScript = (
         resetOptimizer();
         return false;
       }
-      if (error instanceof SmtSetupError) {
+      if (error instanceof SmtDefaultError) {
         optimizer.release();
         setCheck(L_UNDEF, { isOptimizing: true, reasonUnknown: "unknown" });
         throw new SmtParseError(error.message, end);
@@ -658,7 +658,7 @@ export const runSmtlibScript = (
       if (
         !(
           error instanceof SmtCanceledError ||
-          error instanceof SmtSetupError ||
+          error instanceof SmtDefaultError ||
           isStackOverflow(error)
         )
       )
@@ -667,7 +667,7 @@ export const runSmtlibScript = (
       setCheck(L_UNDEF, {
         isOptimizing,
         reasonUnknown:
-          error instanceof SmtSetupError
+          error instanceof SmtDefaultError
             ? error.message
             : getReasonUnknown({ result: L_UNDEF, context, reasonUnknown: undefined }, deadline),
       });
@@ -1522,21 +1522,21 @@ export const runSmtlibScript = (
           throw new SmtParseError("invalid get-value command, empty list of terms", terms.end);
         if (list.items.length > 2) throw new SmtUnsupportedError("the parameters of get-value");
         const model = getModel(list);
+        pendingText += "(";
         model.compact();
         // Z3 prints each term as the script spells it, from the end of the term before.
         const offsets = [
           terms.offset + 1,
           ...terms.items.map((item) => (item.kind === "list" ? item.end : item).endOffset),
         ];
-        const lines = exprs.map((expr, index) => {
+        exprs.forEach((expr, index) => {
           manager.incRef(expr);
           const value = model.eval(expr, true);
-          const line = `(${text.slice(offsets[index], offsets[index + 1]).trim()} ${format(value)})`;
+          pendingText += `${index > 0 ? "\n " : ""}(${text.slice(offsets[index], offsets[index + 1]).trim()} ${format(value)})`;
           manager.decRef(value);
           manager.decRef(expr);
-          return line;
         });
-        print(`(${lines.join("\n ")})`);
+        print(")");
       },
     ],
     [
@@ -1832,7 +1832,12 @@ export const runSmtlibScript = (
       state.isProofsEnabled = settings.parameters.get("proof") === "true";
       resetKernel();
     }
-    command(list);
+    try {
+      command(list);
+    } catch (error) {
+      if (!(error instanceof SmtDefaultError)) throw error;
+      throw new SmtParseError(error.message, list.end);
+    }
     if (settings.isPrintingSuccess && SILENT_COMMANDS.has(head.text)) print("success");
   };
   for (;;) {

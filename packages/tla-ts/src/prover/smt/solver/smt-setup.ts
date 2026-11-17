@@ -14,7 +14,7 @@ import {
   FAMILY_RECFUN,
   FAMILY_SEQ,
 } from "./ast";
-import { SmtSetupError } from "../../../errors";
+import { SmtDefaultError } from "../../../errors";
 import { collectStaticFeatures, isDense, type StaticFeatures } from "./static-features";
 
 const AUFLIA_LOGICS = new Set([
@@ -147,7 +147,7 @@ const setupQfUf = (config: SmtConfig) => {
 
 const setupQfUfByFeatures = (config: SmtConfig, features: StaticFeatures) => {
   if (isArith(features))
-    throw new SmtSetupError(
+    throw new SmtDefaultError(
       "Benchmark constrains arithmetic, but specified logic does not support it.",
     );
   setupQfUf(config);
@@ -172,7 +172,7 @@ const setupQfLia = (config: SmtConfig) => {
 
 const checkNoUninterpretedFunctions = (features: StaticFeatures) => {
   if (features.numUninterpretedFunctions !== 0)
-    throw new SmtSetupError(
+    throw new SmtDefaultError(
       "Benchmark contains uninterpreted function symbols, but specified logic does not support them.",
     );
 };
@@ -209,9 +209,9 @@ const setupQfLraByFeatures = (config: SmtConfig, features: StaticFeatures) => {
 
 const setupQfRdlByFeatures = (config: SmtConfig, features: StaticFeatures) => {
   if (!isInDiffLogic(features))
-    throw new SmtSetupError("Benchmark is not in QF_RDL (real difference logic).");
+    throw new SmtDefaultError("Benchmark is not in QF_RDL (real difference logic).");
   if (features.hasInt)
-    throw new SmtSetupError(
+    throw new SmtDefaultError(
       "Benchmark has integer variables but it is marked as QF_RDL (real difference logic).",
     );
   checkNoUninterpretedFunctions(features);
@@ -226,9 +226,9 @@ const setupQfRdlByFeatures = (config: SmtConfig, features: StaticFeatures) => {
 
 const setupQfIdlByFeatures = (config: SmtConfig, features: StaticFeatures, setup: SmtSetup) => {
   if (!isInDiffLogic(features))
-    throw new SmtSetupError("Benchmark is not in QF_IDL (integer difference logic).");
+    throw new SmtDefaultError("Benchmark is not in QF_IDL (integer difference logic).");
   if (features.hasReal)
-    throw new SmtSetupError(
+    throw new SmtDefaultError(
       "Benchmark has real variables but it is marked as QF_IDL (integer difference logic).",
     );
   checkNoUninterpretedFunctions(features);
@@ -257,7 +257,7 @@ const setupQfUfIdl = (config: SmtConfig) => {
 
 const setupQfUfIdlByFeatures = (config: SmtConfig, features: StaticFeatures) => {
   if (features.hasReal)
-    throw new SmtSetupError(
+    throw new SmtDefaultError(
       "Benchmark has real variables but it is marked as QF_UFIDL (uninterpreted functions and difference logic).",
     );
   config.relevancyLevel = 0;
@@ -290,7 +290,7 @@ const setupQfBv = (config: SmtConfig) => {
 
 const setupQfUfLiaByFeatures = (config: SmtConfig, features: StaticFeatures) => {
   if (features.hasReal)
-    throw new SmtSetupError(
+    throw new SmtDefaultError(
       "Benchmark has real variables but it is marked as QF_UFLIA (uninterpreted functions and linear integer arithmetic).",
     );
   setupQfUfLia(config);
@@ -353,7 +353,7 @@ const setupAufLia = (config: SmtConfig) => {
 
 const setupAufLiaByFeatures = (config: SmtConfig, features: StaticFeatures) => {
   if (features.hasReal)
-    throw new SmtSetupError(
+    throw new SmtDefaultError(
       "Benchmark has real variables but it is marked as AUFLIA (arrays, uninterpreted functions and linear integer arithmetic).",
     );
   setupAufLia(config);

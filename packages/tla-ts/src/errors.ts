@@ -320,11 +320,11 @@ export class SmtTacticError extends TlaError {
   }
 }
 
-// Z3's setup throws a default_exception, which or-else doesn't catch and a check reports as unknown.
-export class SmtSetupError extends TlaError {
+// Z3's default_exception or ast_exception, which or-else doesn't catch, a check reports as unknown and a command as an error.
+export class SmtDefaultError extends TlaError {
   constructor(message: string) {
     super(message);
-    this.name = "SmtSetupError";
+    this.name = "SmtDefaultError";
   }
 }
 

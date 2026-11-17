@@ -1,4 +1,9 @@
-import { SmtParseError, type SmtPosition, SmtUnsupportedError } from "../../../errors";
+import {
+  SmtDefaultError,
+  SmtParseError,
+  type SmtPosition,
+  SmtUnsupportedError,
+} from "../../../errors";
 import {
   type AstManager,
   getSymbolHash,
@@ -2041,7 +2046,15 @@ export const createSmtlibReader = (
     const argSort = args.length === 1 ? manager.sorts[args[0]] : -1;
     if (argSort === -1 || !manager.isDatatypeSort(argSort))
       throw new SmtParseError(IS_PARAMETER_MESSAGE, at);
-    const constructor = getDatatypeConstructors(manager, argSort).find(
+    const constructors = (() => {
+      try {
+        return getDatatypeConstructors(manager, argSort);
+      } catch (error) {
+        if (!(error instanceof SmtDefaultError)) throw error;
+        throw new SmtParseError(error.message, at);
+      }
+    })();
+    const constructor = constructors.find(
       (decl) => manager.funcDecls[decl].name === constructorName.text,
     );
     if (constructor === undefined)
