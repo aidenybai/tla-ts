@@ -780,6 +780,11 @@ const checkReference = (
   return goal && { node: checkSelection(expression, selectors, goal, unit, isFact) };
 };
 
+const isInstanceName = (name: string, scope: LocalName | undefined, unit: Unit) =>
+  (lookupLocal(scope, name) ?? getModuleBinding(name, unit, undefined))?.kind === "Instance" ||
+  (findInstance(name, scope, unit) !== undefined &&
+    [...unit.bindings.keys()].some((key) => key.startsWith(`${name}!`)));
+
 const getSymbolArity = (
   expression: Expression & { kind: "Identifier" | "Apply" | "OperatorReference" },
   name: string,
@@ -809,6 +814,20 @@ const getSymbolArity = (
   }
   if (checkReference(expression, scope, unit, false) || (isStepName(name) && local)) {
     return expression.kind === "Apply" ? expression.args.length : 0;
+  }
+  if (isInstanceName(name, scope, unit)) {
+    const range = getSpelledNameRange(expression, name);
+    unit.errors.push({
+      location: formatRange({
+        ...range,
+        start: {
+          line: range.end.line,
+          column: range.end.column - name.slice(name.lastIndexOf("!") + 1).length + 1,
+        },
+      }),
+      message: `Operator name ${name} is incomplete.`,
+    });
+    return undefined;
   }
   if (local && expression.kind !== "OperatorReference") expression.resolution = LOCAL_RESOLUTION;
   if (local) return local.arity;
@@ -1720,7 +1739,13 @@ const checkFact = (fact: Fact, reference: Fact, scope: LocalName | undefined, un
     });
     return BUILTIN_LOCATION;
   }
-  if (!isFact(name, unit) && !lookupLocal(scope, name)?.goal) resolveExpression(fact, scope, unit);
+  if (
+    !isFact(name, unit) &&
+    !lookupLocal(scope, name)?.goal &&
+    !(fact.kind === "Identifier" && isInstanceName(name, scope, unit))
+  ) {
+    resolveExpression(fact, scope, unit);
+  }
   return hidden;
 };
 
@@ -1775,7 +1800,12 @@ const getHiddenExpressionLocation = (
       if (fact.kind === "Subexpression" || first.kind !== "Name") return undefined;
       const name = fact.kind === "Identifier" ? fact.name : fact.operator;
       const goal = lookupLocal(scope, first.name)?.goal ?? getGoal(first.name, unit);
-      if (isFact(name, unit) || goal || (isStepName(name) && lookupLocal(scope, name))) {
+      if (
+        isFact(name, unit) ||
+        goal ||
+        (isStepName(name) && lookupLocal(scope, name)) ||
+        (fact.kind === "Identifier" && isInstanceName(name, scope, unit))
+      ) {
         return undefined;
       }
       const binding = findBinding(name, scope, unit);

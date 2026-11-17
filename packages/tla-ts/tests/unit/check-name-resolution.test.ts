@@ -3005,6 +3005,51 @@ describe("name resolution matches SANY", () => {
     },
   );
 
+  it.each([
+    [
+      "---- MODULE I ----\nK == 1\n====\nJ == INSTANCE I\nB == J",
+      "line 6, col 6 to line 6, col 6",
+      "J",
+    ],
+    [
+      "---- MODULE I2 ----\nK == 1\n====\n---- MODULE I ----\nL == INSTANCE I2\n====\nJ == INSTANCE I\nB == J!L",
+      "line 9, col 8 to line 9, col 8",
+      "J!L",
+    ],
+    [
+      "---- MODULE I ----\nCONSTANT c\nK == c\n====\nJ(x) == INSTANCE I WITH c <- x\nB == J(1)",
+      "line 7, col 6 to line 7, col 6",
+      "J",
+    ],
+    [
+      "---- MODULE I ----\nCONSTANT c\nK == c\n====\nJ(x) == INSTANCE I WITH c <- x\nTHEOREM TRUE BY J(1)",
+      "line 7, col 17 to line 7, col 17",
+      "J",
+    ],
+    [
+      "---- MODULE I ----\nK == 1\n====\nB == LET J == INSTANCE I IN J",
+      "line 5, col 29 to line 5, col 29",
+      "J",
+    ],
+  ])(
+    "reports an instance name used as an operator in %j like SANY",
+    async (source, location, name) => {
+      await expect(checkNames(source)).rejects.toThrow(
+        createSanyError([
+          { location: `${location} of module M`, message: `Operator name ${name} is incomplete.` },
+        ]),
+      );
+    },
+  );
+
+  it("accepts an instance name as a fact like SANY", async () => {
+    await expect(
+      checkNames(
+        "---- MODULE I ----\nK == 1\n====\nJ == INSTANCE I\nUSE J\nHIDE J\nTHEOREM TRUE BY J",
+      ),
+    ).resolves.toMatchObject({ status: "success" });
+  });
+
   it("reports a selection that leaves parameters unfilled under a built-in operator like SANY", async () => {
     await expect(
       checkNames(
