@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
+import { check } from "../../src";
 import { checkFixture } from "./check-harness";
 
 const checkCounterExample = async (configName: string) => {
@@ -44,5 +45,30 @@ describe("POSTCONDITION after a violation matches TLC", () => {
 
   it("keeps the status of the violation when the postcondition is false", async () => {
     expect((await checkCounterExample("CounterExampleFails"))[0]).toBe("invariant-violation");
+  });
+});
+
+const checkUnassigned = async (init: string, printed: string) => {
+  const result = await check({
+    source: `---- MODULE M ----\nEXTENDS Naturals, TLC, TLCExt\nVARIABLES x, y\nInit == ${init}\nNext == x' = 1\nPost == PrintT(${printed}) /\\ FALSE\n====`,
+    config: "INIT Init\nNEXT Next\nPOSTCONDITION Post",
+    onPrint: () => {},
+  });
+  return [result.failure?.traceOutput, result.failure?.postcondition?.message];
+};
+
+describe("POSTCONDITION after a state that leaves a variable unassigned", () => {
+  it("checks the postconditions after an illegal initial state, as TLC does", async () => {
+    expect(await checkUnassigned("x = 0", 'TLCGet("stats").generated')).toEqual([
+      ["1"],
+      "Postcondition Post at line 6, col 9 to line 6, col 50 of module M is false.",
+    ]);
+  });
+
+  it("binds CounterExample to an illegal initial state with null for the unassigned variable", async () => {
+    expect(await checkUnassigned("x = 0", "CounterExample")).toEqual([
+      ["[action |-> {}, state |-> {<<1, [x |-> 0, y |-> null]>>}]"],
+      "Postcondition Post at line 6, col 9 to line 6, col 39 of module M is false.",
+    ]);
   });
 });

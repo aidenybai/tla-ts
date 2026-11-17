@@ -1282,14 +1282,25 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         reportInitialStatesProgress(runtime.initialStates, options.onProgress);
         runtime.generatedStates++;
         runtime.initialStates++;
+        const state = error.state.map((value) => value ?? createModelValue("null"));
+        // Deviation from TLC: CounterExample holds null for an unassigned variable, where TLC leaks a NullPointerException.
+        const checked = checkTracePostconditions(
+          [{ action: undefined, label: undefined, state: toRecord(state) }],
+          undefined,
+        );
+        const postcondition = checked.unwitnessed ?? checked.postcondition;
         const illegal = createFailureResult(
           error,
-          { trace: [] },
-          { initialState: error.state.map((value) => value ?? createModelValue("null")) },
+          { trace: [], traceOutput: checked.lines },
+          { initialState: state },
         );
         return {
           ...illegal,
-          failure: illegal.failure && { ...illegal.failure, isWithoutStatistics: true },
+          failure: illegal.failure && {
+            ...illegal.failure,
+            isWithoutStatistics: true,
+            ...(postcondition && { postcondition }),
+          },
         };
       }
       const replay = captureOutput(replayInit);
