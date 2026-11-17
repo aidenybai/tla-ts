@@ -297,6 +297,19 @@ describe("typed tier matches TLC", () => {
     expect(await getCounts(false)).toEqual(expected);
   });
 
+  it("checks a spec that has no initial state to give a record its fields, as TLC does", async () => {
+    const result = await check({
+      source:
+        "---- MODULE E ----\nEXTENDS Integers\nVARIABLES x, z\nInit == x = 0 /\\ z = [a |-> 0] /\\ x /= 0\nNext == x' = x /\\ z' = [z EXCEPT !.a = 1]\n====",
+      config: "INIT Init\nNEXT Next",
+    });
+    expect([result.status, result.generatedStates, result.distinctStates]).toEqual([
+      "success",
+      0,
+      0,
+    ]);
+  });
+
   it("draws a random constant definition once, as TLC run with -fp 0 -seed 4 does", async () => {
     const results = await Promise.all(
       [undefined, INTERPRETED_SET_SIZE].map((maxSetSize) =>

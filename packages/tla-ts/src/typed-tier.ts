@@ -607,6 +607,7 @@ const closeType = (type: Type, path: Type[] = []): Type => {
   const resolved = resolveType(type);
   // A function built lazily is only applied, never compared or stored.
   if (resolved.kind === "Lambda") return unsupported();
+  if (resolved.kind === "Rec" && resolved.shapes.length === 0) return unsupported();
   if (resolved.kind === "Var") {
     const integer = createInt();
     resolved.target = integer;
