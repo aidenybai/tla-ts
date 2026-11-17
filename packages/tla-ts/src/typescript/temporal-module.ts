@@ -1095,17 +1095,17 @@ LOCAL TParseISO(text, goal) ==
 
 \* The calendars other than the ISO 8601 calendar that Node 26 takes and tla-ts doesn't run, by
 \* their ASCII-lowercase forms, aliases included.
-LOCAL TOtherCalendars == {"chinese", "dangi", "islamic-umalqura", "persian"}
+LOCAL TOtherCalendars == {"chinese", "dangi", "islamic-umalqura"}
 
 \* The calendars that tla-ts runs whose months aren't the ISO 8601 calendar's, each of which counts
 \* its days arithmetically, as Node does: the Coptic and the two Ethiopian calendars, of 13 months
-\* each, the tabular Islamic calendars, the Indian national calendar, and the Hebrew calendar, whose
-\* leap years add a month.
+\* each, the tabular Islamic calendars, the Indian national calendar, the Persian calendar, and the
+\* Hebrew calendar, whose leap years add a month.
 LOCAL TCopticCalendars == {"coptic", "ethiopic", "ethioaa"}
 
 LOCAL TIslamicCalendars == {"islamic-civil", "islamic-tbla"}
 
-LOCAL TSimpleCalendars == TCopticCalendars \cup TIslamicCalendars \cup {"indian", "hebrew"}
+LOCAL TSimpleCalendars == TCopticCalendars \cup TIslamicCalendars \cup {"indian", "persian", "hebrew"}
 
 \* What a calendar's arithmetic year adds to the ISO year.
 LOCAL TYearOffset(calendar) == CASE calendar = "buddhist" -> 543 [] calendar = "roc" -> -1911 [] OTHER -> 0
@@ -1132,6 +1132,31 @@ LOCAL TIndianBefore(year, month) ==
        [] month <= 7 -> first + 31 * (month - 2)
        [] OTHER -> first + 155 + 30 * (month - 7)
 
+\* The Persian years that the 33-year rule makes leap years but Node's calendar doesn't, which moves
+\* each one's leap day to the next year.
+LOCAL TPersianCorrections ==
+  {1502, 1601, 1634, 1667, 1700, 1733, 1766, 1799, 1832, 1865, 1898, 1931, 1964, 1997, 2030, 2059,
+   2063, 2096, 2129, 2158, 2162, 2191, 2195, 2224, 2228, 2257, 2261, 2290, 2294, 2323, 2327, 2356,
+   2360, 2389, 2393, 2422, 2426, 2455, 2459, 2488, 2492, 2521, 2525, 2554, 2558, 2587, 2591, 2620,
+   2624, 2653, 2657, 2686, 2690, 2719, 2723, 2748, 2752, 2756, 2781, 2785, 2789, 2818, 2822, 2847,
+   2851, 2855, 2880, 2884, 2888, 2913, 2917, 2921, 2946, 2950, 2954, 2979, 2983, 2987}
+
+LOCAL TPersianLeap(year) ==
+  CASE year \in TPersianCorrections -> FALSE
+    [] year - 1 \in TPersianCorrections -> TRUE
+    [] OTHER -> (25 * year + 11) % 33 < 8
+
+\* The rata die that a Persian year starts on.
+LOCAL TPersianStart(year) ==
+  226895 + 365 * (year - 1) + (8 * year + 21) \div 33 - (IF year - 1 \in TPersianCorrections THEN 1 ELSE 0)
+
+\* The Persian year that a rata die is in, from an estimate within a year or two.
+RECURSIVE TPersianYearAt(_, _)
+LOCAL TPersianYearAt(day, year) ==
+  CASE TPersianStart(year) > day -> TPersianYearAt(day, year - 1)
+    [] TPersianStart(year + 1) <= day -> TPersianYearAt(day, year + 1)
+    [] OTHER -> year
+
 \* The Hebrew months before a year, and the days from its epoch to the year's molad, delayed as the
 \* calendar delays it, which splits the parts of an hour that a TLC integer wouldn't hold.
 LOCAL THebrewMonthsBefore(year) == (235 * year - 234) \div 19
@@ -1154,6 +1179,7 @@ LOCAL TSimpleLeap(calendar, year) ==
   CASE calendar \in TCopticCalendars -> TCopticYear(calendar, year) % 4 = 3
     [] calendar \in TIslamicCalendars -> (14 + 11 * year) % 30 < 11
     [] calendar = "hebrew" -> (7 * year + 1) % 19 < 7
+    [] calendar = "persian" -> TPersianLeap(year)
     [] OTHER -> TIsLeapYear(year + 78)
 
 LOCAL TSimpleMonths(calendar, year) ==
@@ -1195,6 +1221,8 @@ LOCAL TSimpleDaysInMonth(calendar, year, month) ==
     [] calendar \in TIslamicCalendars ->
          IF month % 2 = 1 \/ (month = 12 /\ TSimpleLeap(calendar, year)) THEN 30 ELSE 29
     [] calendar = "hebrew" -> THebrewDays(year, TSimpleCode(calendar, year, month))
+    [] calendar = "persian" ->
+         CASE month <= 6 -> 31 [] month <= 11 -> 30 [] OTHER -> IF TSimpleLeap(calendar, year) THEN 30 ELSE 29
     [] month = 1 -> IF TSimpleLeap(calendar, year) THEN 31 ELSE 30
     [] OTHER -> IF month <= 6 THEN 31 ELSE 30
 
@@ -1219,6 +1247,8 @@ LOCAL TSimpleRataDie(calendar, year, month, day) ==
             TIslamicEpoch(calendar) + (year - 1) * 354 + (3 + 11 * year) \div 30 + 29 * (month - 1)
               + month \div 2 + day
        [] calendar = "hebrew" -> THebrewNewYear(year) + THebrewBefore(year, month) + day - 1
+       [] calendar = "persian" ->
+            TPersianStart(year) + (IF month <= 7 THEN 31 * (month - 1) ELSE 186 + 30 * (month - 7)) + day - 1
        [] OTHER -> TIndianStart(year) + TIndianBefore(year, month) + day - 1
 
 \* The Hebrew year that a rata die is in, from an estimate within a few years.
@@ -1247,12 +1277,14 @@ LOCAL TSimpleDateOf(calendar, day) ==
       year == CASE calendar \in TCopticCalendars -> IF calendar = "ethioaa" THEN coptic + 5500 ELSE coptic
                 [] calendar \in TIslamicCalendars -> islamic
                 [] calendar = "hebrew" -> THebrewYearAt(day, ((day + 1373427) * 19) \div 6940 + 1)
+                [] calendar = "persian" ->
+                     TPersianYearAt(day, 33 * ((day - 226895) \div 12053) + (33 * ((day - 226895) % 12053)) \div 12053 + 1)
                 [] OTHER -> indian
       within == day - TSimpleRataDie(calendar, year, 1, 1)
       first == TSimpleDaysInMonth(calendar, year, 1)
       month == CASE calendar \in TCopticCalendars -> within \div 30 + 1
                  [] calendar \in TIslamicCalendars -> (11 * within + 330) \div 325
-                 [] calendar = "hebrew" -> TSimpleMonthAt(calendar, year, 1, within)
+                 [] calendar \in {"hebrew", "persian"} -> TSimpleMonthAt(calendar, year, 1, within)
                  [] within < first -> 1
                  [] within < first + 155 -> 2 + (within - first) \div 31
                  [] OTHER -> 7 + (within - first - 155) \div 30
@@ -1346,6 +1378,7 @@ LOCAL TJapaneseEras ==
 \* CanonicalizeEraInCalendar, or "" where the calendar has no such era.
 LOCAL TEraOf(calendar, era) ==
   CASE calendar \in {"coptic", "ethiopic", "hebrew"} /\ era = "am" -> "am"
+    [] calendar = "persian" /\ era = "ap" -> "ap"
     [] calendar \in {"ethiopic", "ethioaa"} /\ era = "aa" -> "aa"
     [] calendar = "indian" /\ era = "shaka" -> "shaka"
     [] calendar \in TIslamicCalendars /\ era \in {"ah", "bh"} -> era
@@ -1373,6 +1406,7 @@ LOCAL TEraOfDate(calendar, date, year) ==
        [] calendar \in {"coptic", "hebrew"} -> <<"am", year>>
        [] calendar = "ethioaa" -> <<"aa", year>>
        [] calendar = "indian" -> <<"shaka", year>>
+       [] calendar = "persian" -> <<"ap", year>>
        [] calendar = "ethiopic" -> IF year >= 1 THEN <<"am", year>> ELSE <<"aa", year + 5500>>
        [] calendar \in TIslamicCalendars -> IF year >= 1 THEN <<"ah", year>> ELSE <<"bh", 1 - year>>
        [] calendar = "japanese" /\ started # <<>> ->

@@ -49262,6 +49262,32 @@ describe("BigInts", () => {
     });
   });
 
+  describe("runs Temporal in the Persian calendar, whose 33-year rule Node corrects", () => {
+    const getSource = (expected: string) => `
+      const nowruz = Temporal.PlainDate.from("2124-03-20").withCalendar("persian");
+      const seen = [
+        nowruz.year,
+        nowruz.monthCode,
+        nowruz.inLeapYear,
+        Temporal.PlainDate.from({ calendar: "persian", year: 1502, monthCode: "M12", day: 30 }).toString(),
+        Temporal.PlainMonthDay.from({ calendar: "persian", monthCode: "M12", day: 30 }).toString(),
+      ].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+    const expected = "1503,M01,true,2124-03-19[u-ca=persian],1972-03-20[u-ca=persian]";
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects the leap day that the 33-year rule gives", async () => {
+      expect(
+        (await checkModel(getSource(expected.replace("2124-03-19", "2124-03-20")))).failure
+          ?.message,
+      ).toContain(`seen ${expected}`);
+    });
+  });
+
   describe("gives the resolved options of Intl's objects of English or the default locale", () => {
     const getSource = (expected: string) => `
       const format = new Intl.ListFormat("en-us", { style: "short", type: "unit" });
