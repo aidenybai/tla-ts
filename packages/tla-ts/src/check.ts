@@ -1650,7 +1650,9 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       const replay = getReplayFailure(environment, (tracing) =>
         liveness?.addState(index, state, liveSuccessors, tracing),
       );
-      return createFailureResult(error, traces.getStateTrace(index), {
+      const behavior = traces.getStateTrace(index, { isFailed: true });
+      const replayed = captureOutput(() => replayNext(index));
+      return createFailureResult(error, appendTraceOutput(behavior, replayed.lines), {
         outDegrees: getFailureOutDegrees(),
         callStack: replay?.callStack.length ? replay.callStack : undefined,
         phase: "liveness",

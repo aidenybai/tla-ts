@@ -1328,6 +1328,19 @@ ASSUME TLCFP(a) = -887695703
     expect(await getCoverageCounts(definitions, config)).toEqual(expected);
   });
 
+  it("replays the next-state relation after a liveness check fails to evaluate, as TLC does", async () => {
+    const config = "INIT Init\nNEXT Next\nPROPERTY P";
+    const property = "P == <>((CHOOSE n \\in {1, 2} : n > x) = 1)";
+    const result = await check({
+      source: `---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nInit == x = 0\nNext == x' = (x + 1) % 4 /\\ PrintT(<<"n", x>>)\n${property}\n====`,
+      config,
+    });
+    expect(result.failure?.traceOutput).toEqual(['<<"n", 1>>']);
+    expect(
+      await getCoverageCounts(`Init == x = 0\nNext == x' = (x + 1) % 4\n${property}`, config),
+    ).toEqual(["2:2 2", "2:4 4"]);
+  });
+
   it("counts the coverage of the step TLC fails to rebuild as it can't fingerprint the successor", async () => {
     expect(
       await getCoverageCounts(
