@@ -5766,18 +5766,92 @@ export const createDispatch = (callees: readonly ts.Expression[], context: Conte
       checker.getIndexInfosOfType(type).length === 0;
     return isOneSignature ? signatures[0].parameters.length : -1;
   });
-  calleeTypes.forEach((calleeType, row) =>
+  // TypeScript relates a function type of TypeScript's own, with no alias and call signatures that
+  // take no type parameters and nothing else, to another type only through its signatures' flags,
+  // counts of arguments, and the types of its this, parameters, predicate, and return: candidate
+  // types alike in those, by a key that sorting groups, give each callee type one answer. Each
+  // candidate type takes the answer of the first of its group, other than for a callee type of a
+  // candidate's symbol, which TypeScript relates by the symbol's own signatures.
+  const getKey = (type: ts.Type) => {
+    const signatures = checker.getSignaturesOfType(type, ts.SignatureKind.Call);
+    const isPlainFunctionType =
+      type.flags === ts.TypeFlags.Object &&
+      type.aliasSymbol === undefined &&
+      ((type.objectFlags ?? 0) & (ts.ObjectFlags.Reference | ts.ObjectFlags.Mapped)) === 0 &&
+      signatures.length > 0 &&
+      signatures.every(
+        (signature) =>
+          signature.typeParameters === undefined &&
+          (signature.flags & SIGNATURE_UNTYPED) === 0 &&
+          signature.declaration !== undefined &&
+          !isJavaScriptFile(signature.declaration.getSourceFile().fileName),
+      ) &&
+      checker.getSignaturesOfType(type, ts.SignatureKind.Construct).length === 0 &&
+      checker.getPropertiesOfType(type).length === 0 &&
+      checker.getIndexInfosOfType(type).length === 0;
+    return isPlainFunctionType
+      ? signatures
+          .map((signature) => {
+            const predicate = checker.getTypePredicateOfSignature(signature);
+            return [
+              signature.flags,
+              signature.minArgumentCount,
+              signature.thisParameter === undefined
+                ? -1
+                : checker.getTypeOfSymbol(signature.thisParameter).id,
+              ...signature.parameters.map((parameter) => checker.getTypeOfSymbol(parameter).id),
+              predicate === undefined
+                ? -1
+                : `${predicate.kind}:${predicate.parameterIndex ?? -1}:${predicate.type?.id ?? -1}`,
+              checker.getReturnTypeOfSignature(signature).id,
+            ].join(",");
+          })
+          .join(";")
+      : undefined;
+  };
+  const keys = candidateTypes.map(getKey);
+  const byKey = Int32Array.from(candidateTypes, (_, bit) => bit).sort((left, right) => {
+    const leftKey = keys[left] ?? "";
+    const rightKey = keys[right] ?? "";
+    return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : left - right;
+  });
+  const firsts = Int32Array.from(candidateTypes, (_, bit) => bit);
+  byKey.forEach((bit, index) => {
+    const previous = index > 0 ? byKey[index - 1] : -1;
+    if (previous >= 0 && keys[bit] !== undefined && keys[bit] === keys[previous]) {
+      firsts[bit] = firsts[previous];
+    }
+  });
+  const candidateSymbols = Int32Array.from(
+    candidateTypes.flatMap((type) =>
+      type.symbol === undefined ? [] : [ts.getSymbolId(type.symbol)],
+    ),
+  ).sort();
+  const isCandidateSymbol = (symbol: ts.Symbol | undefined) => {
+    const id = symbol === undefined ? -1 : ts.getSymbolId(symbol);
+    return candidateSymbols[getLowerBound(candidateSymbols, 0, candidateSymbols.length, id)] === id;
+  };
+  // The answer of each group's first candidate type for the callee type being tested, by the
+  // callee type's row plus one: 1 and 2 for no and yes.
+  const answerRows = new Int32Array(candidateTypes.length);
+  const answers = new Uint8Array(candidateTypes.length);
+  calleeTypes.forEach((calleeType, row) => {
+    const isGrouped = !isCandidateSymbol(calleeType.symbol);
     candidateTypes.forEach((candidateType, bit) => {
       const isTooFew =
         parameterCounts[row] >= 0 &&
         leastArguments[bit] > parameterCounts[row] &&
         candidateType.symbol !== calleeType.symbol;
       const isTested = (tested[row * words + (bit >>> 5)] & (1 << (bit & 31))) !== 0;
-      if (isTested && !isTooFew && checker.isTypeAssignableTo(candidateType, calleeType)) {
-        rows[row * words + (bit >>> 5)] |= 1 << (bit & 31);
+      if (!isTested || isTooFew) return;
+      const first = isGrouped ? firsts[bit] : bit;
+      if (answerRows[first] !== row + 1) {
+        answerRows[first] = row + 1;
+        answers[first] = checker.isTypeAssignableTo(candidateType, calleeType) ? 2 : 1;
       }
-    }),
-  );
+      if (answers[first] === 2) rows[row * words + (bit >>> 5)] |= 1 << (bit & 31);
+    });
+  });
   return { calleeIds, words, rows, tested, candidateTypes: indexes };
 };
 
