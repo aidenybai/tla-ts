@@ -26,9 +26,10 @@ export interface ProgramNodes {
   generation: number;
 }
 
-// The positions of the identifiers that name each symbol, by the symbol's id and then in order, as
-// tla-ts's own symbol of a name gives it.
+// tla-ts's own symbol of each identifier of the program's files, by its position, and the positions
+// of the identifiers that name each symbol, by the symbol's id and then in order.
 export interface References {
+  symbols: (ts.Symbol | undefined)[];
   symbolIds: Int32Array;
   positions: Int32Array;
 }
@@ -147,18 +148,14 @@ export const createReferences = (
   table: ProgramNodes,
   getSymbol: (name: ts.Identifier) => ts.Symbol | undefined,
 ): References => {
-  const ids = new Int32Array(table.nodes.length).fill(-1);
-  const named: number[] = [];
-  table.nodes.forEach((node, position) => {
-    const symbol = ts.isIdentifier(node) ? getSymbol(node) : undefined;
-    if (symbol === undefined) return;
-    ids[position] = ts.getSymbolId(symbol);
-    named.push(position);
-  });
-  const positions = Int32Array.from(named).sort(
-    (left, right) => ids[left] - ids[right] || left - right,
+  const symbols = table.nodes.map((node) => (ts.isIdentifier(node) ? getSymbol(node) : undefined));
+  const ids = Int32Array.from(symbols, (symbol) =>
+    symbol === undefined ? -1 : ts.getSymbolId(symbol),
   );
-  return { symbolIds: positions.map((position) => ids[position]), positions };
+  const positions = Int32Array.from(
+    symbols.flatMap((symbol, position) => (symbol === undefined ? [] : [position])),
+  ).sort((left, right) => ids[left] - ids[right] || left - right);
+  return { symbols, symbolIds: positions.map((position) => ids[position]), positions };
 };
 
 // The identifiers under a root that name a symbol, as getSymbol gives it, in the order that a walk

@@ -551,8 +551,8 @@ export const getReached = (roots: readonly ts.Node[], context: Context) => {
     (ts.isImportDeclaration(node) && node.importClause?.isTypeOnly === true) ||
     (ts.isImportSpecifier(node) && node.isTypeOnly);
   // A module's namespace object reaches only the exports that a script reads through it.
-  const reach = (name: ts.Identifier) => {
-    for (const declaration of getSymbol(name, context.checker)?.declarations ?? []) {
+  const reach = (symbol: ts.Symbol | undefined) => {
+    for (const declaration of symbol?.declarations ?? []) {
       if (ts.isSourceFile(declaration)) continue;
       const position = getPosition(table, declaration);
       const file = declaration.getSourceFile();
@@ -573,7 +573,7 @@ export const getReached = (roots: readonly ts.Node[], context: Context) => {
     const start = getPosition(table, node);
     if (start < 0) {
       if (isSkipped(node)) return;
-      if (ts.isIdentifier(node)) reach(node);
+      if (ts.isIdentifier(node)) reach(getSymbol(node, context.checker));
       ts.forEachChild(node, visit);
       return;
     }
@@ -585,7 +585,7 @@ export const getReached = (roots: readonly ts.Node[], context: Context) => {
         position = table.ends[position];
         continue;
       }
-      if (ts.isIdentifier(inner)) reach(inner);
+      if (ts.isIdentifier(inner)) reach(context.references.symbols[position]);
       position += 1;
     }
   };
