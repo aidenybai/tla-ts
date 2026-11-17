@@ -29,7 +29,7 @@ import { Rational } from "./rational";
 import { RefVector } from "./ref-vector";
 import { Rewriter, TACTIC_REWRITER_OPTIONS } from "./rewriter";
 import { RewriterTpl } from "./rewriter-tpl";
-import { finishSimplifier } from "./dependent-expr-state";
+import { DependentExprState, finishSimplifier } from "./dependent-expr-state";
 
 interface Bound {
   value: Rational;
@@ -374,22 +374,21 @@ class BoundSimplifier {
 
   reduce() {
     const goal = this.goal;
+    const state = new DependentExprState(this.manager, goal);
     let isUpdated = true;
     for (let round = 0; round < 5 && isUpdated; round++) {
       isUpdated = false;
       let isBoundFound = false;
       this.reset();
-      const size = goal.forms.size;
-      for (let index = 0; index < size && !goal.isInconsistent; index++)
-        if (this.insertBound(goal.forms.items[index])) {
-          goal.update(index, this.manager.trueExpr);
-          isBoundFound = true;
-        }
+      state.forEachIndex((index) => {
+        if (!this.insertBound(goal.forms.items[index])) return;
+        goal.update(index, this.manager.trueExpr);
+        isBoundFound = true;
+      });
       if (!isBoundFound) break;
-      for (let index = 0; index < size && !goal.isInconsistent; index++)
-        this.tightenBound(goal.forms.items[index]);
+      state.forEachIndex((index) => this.tightenBound(goal.forms.items[index]));
       const rewriter = new BoundRewriter(this.manager, this);
-      for (let index = 0; index < size && !goal.isInconsistent; index++) {
+      state.forEachIndex((index) => {
         const form = goal.forms.items[index];
         const result = rewriter.rewrite(form);
         if (result !== form) {
@@ -397,7 +396,7 @@ class BoundSimplifier {
           isUpdated = true;
         }
         this.manager.decRef(result);
-      }
+      });
       rewriter.release();
       this.restoreBounds();
     }

@@ -788,6 +788,21 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
     ).toEqual(["unknown", '(:reason-unknown "max. resource limit exceeded")']);
   });
 
+  it("counts a step of the limit for each formula that propagate-ineqs visits", () => {
+    expect(
+      run([
+        "(set-option :rlimit 1)",
+        "(declare-const b0 Bool)",
+        "(declare-const v0 (_ BitVec 4))",
+        "(declare-const v2 (_ BitVec 4))",
+        "(assert (bvsge (bvshl #xd v0) v2))",
+        "(assert (or b0 (bvult v0 v2)))",
+        "(check-sat-using (then propagate-ineqs tseitin-cnf))",
+        "(get-info :reason-unknown)",
+      ]),
+    ).toEqual(["unknown", '(:reason-unknown "max. resource limit exceeded")']);
+  });
+
   // The time limit is Z3's soft timeout: check-sat gives every solver the reason timeout, which
   // the smt kernel keeps for its later checks and reports while its last search did not fail.
   it("prints the reason of a check that timed out", () => {
