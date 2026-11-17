@@ -1356,6 +1356,26 @@ ASSUME TLCFP(a) = -887695703
     expect(await getCoverageCounts(definitions, "INIT Init\nNEXT Next")).toEqual(expected);
   });
 
+  it.each([
+    [
+      "an invariant violation",
+      "VARIABLE y\nInit == x = 0 /\\ y \\in 0..1\nNext == x < 3 /\\ x' = x + 1 /\\ UNCHANGED y\nInv == x < 2\nView == <<x, y>>",
+      "INIT Init\nNEXT Next\nINVARIANT Inv\nVIEW View",
+      ["6:6 6 3", "3:7 6 7 6 7 6", "5"],
+    ],
+    [
+      "a liveness counterexample",
+      "VARIABLE y\nvars == <<x, y>>\nInit == x = 0 /\\ y \\in 0..1\nNext == x' = (x + 1) % 3 /\\ UNCHANGED y\nSpec == Init /\\ [][Next]_vars /\\ WF_vars(Next)\nP == <>(x = 5)\nView == <<x, y>>",
+      "SPECIFICATION Spec\nPROPERTY P\nVIEW View",
+      ["4:4 4 2", "4:9 9 9"],
+    ],
+  ])(
+    "counts the coverage of the trace of %s under a VIEW once per rebuild",
+    async (_name, definitions, config, expected) => {
+      expect(await getCoverageCounts(definitions, config)).toEqual(expected);
+    },
+  );
+
   it("counts the coverage of the step TLC fails to rebuild as it can't fingerprint the successor", async () => {
     expect(
       await getCoverageCounts(

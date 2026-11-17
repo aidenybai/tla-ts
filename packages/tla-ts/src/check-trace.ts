@@ -55,6 +55,7 @@ interface TraceContext {
   tracedSteps: WeakMap<TraceStep, TracedStep>;
   captureOutput: <Result>(rebuild: () => Result) => { result: Result; lines: OutputLine[] };
   getInitialStates: () => Value[][];
+  getUncoveredInitialStates: () => Value[][];
   findSuccessorAction: (
     state: Value[],
     isMatch: (successor: Successor) => boolean,
@@ -224,7 +225,7 @@ export const createTraceBuilder = (context: TraceContext) => {
   const getPathStates = (path: number[], nextFailure: string) => {
     const initial = captureOutput(() =>
       isReducing || isImpure(environment)
-        ? context.getInitialStates().find((state) => hasFingerprint(state, path[0]))
+        ? context.getUncoveredInitialStates().find((state) => hasFingerprint(state, path[0]))
         : states[path[0]],
     ).result;
     if (!initial) throw new TlaEvaluationError(INITIAL_RECOVERY_FAILURE);

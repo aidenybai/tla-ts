@@ -859,10 +859,10 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   const canonicalizeState = createCanonicalizer();
 
   const toRecord = search.toRecord;
-  const getSpecInitialStates = () => {
-    if (coverage) return getCoveredInitialStates();
-    return spec.init === undefined ? [] : getInitialStates(spec.init, environment, spec.scope);
-  };
+  const getUncoveredInitialStates = () =>
+    spec.init === undefined ? [] : getInitialStates(spec.init, environment, spec.scope);
+  const getSpecInitialStates = () =>
+    coverage ? getCoveredInitialStates() : getUncoveredInitialStates();
   const isUnfingerprintable = (state: Value[]) => {
     try {
       return getFingerprintState(state).some((value) => getFingerprintError(value) !== undefined);
@@ -1023,6 +1023,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     tracedSteps,
     captureOutput,
     getInitialStates: getSpecInitialStates,
+    getUncoveredInitialStates,
     findSuccessorAction,
   });
   const getPath = (index: number): Value[][] =>
