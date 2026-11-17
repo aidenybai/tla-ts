@@ -49792,4 +49792,24 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("stops at a host's constructor that no built-in tla-ts models gives", () => {
+    it("names the constructor, as the DOM's MessageChannel", () => {
+      expect(() =>
+        compile(`/// <reference lib="scripthost" />
+          let count = 0;
+          const setup = () => {
+            const host = new ActiveXObject("Scripting.Dictionary");
+            host.count = 2;
+            return host;
+          };
+          export const step = () => {
+            if (count === 0) count = setup().count;
+          };
+        `),
+      ).toThrow(
+        "spec.ts:4:26 tla-ts can't run ActiveXObject, which the host gives and tla-ts doesn't model",
+      );
+    });
+  });
 });

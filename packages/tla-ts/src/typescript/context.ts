@@ -1517,6 +1517,22 @@ const isOnlyDeclared = (symbol: ts.Symbol) => {
 
 // A name that only declarations type, as Node's typings type process, which has no code to run,
 // unlike a built-in that TypeScript's library declares.
+// The name of a host's global that a node names, which only TypeScript's libraries declare, such as
+// the DOM's MessageChannel, and which no built-in that tla-ts models gives.
+export const getUnmodelledHostName = (node: ts.Expression, context: Context) => {
+  const name = skipCasts(node);
+  const declarations =
+    (ts.isIdentifier(name) ? getSymbol(name, context.checker)?.declarations : undefined) ?? [];
+  return ts.isIdentifier(name) &&
+    declarations.length > 0 &&
+    declarations.every((declaration) =>
+      context.defaultLibraries.has(declaration.getSourceFile()),
+    ) &&
+    !Object.hasOwn(BUILT_INS, name.text)
+    ? name.text
+    : undefined;
+};
+
 export const isDeclarationOnly = (symbol: ts.Symbol, context: Context) =>
   isOnlyDeclared(symbol) &&
   (symbol.declarations ?? []).every(

@@ -17,6 +17,7 @@ import {
   skipCasts,
   getValueDeclaration,
   findReferences,
+  getUnmodelledHostName,
 } from "./context";
 import type { Expression } from "../ast";
 import { TlaTypeScriptError } from "../errors";
@@ -4071,6 +4072,13 @@ const translateNewCollection = (
       return set(argument.elements.map((element) => translateSetKey(element, scope, context)));
     }
     return translateSet(argument, scope, context);
+  }
+  const host = getUnmodelledHostName(node.expression, context);
+  if (host !== undefined) {
+    throw new TlaTypeScriptError(
+      `tla-ts can't run ${host}, which the host gives and tla-ts doesn't model`,
+      node,
+    );
   }
   if (kind !== "Map") {
     return translateUnknown(node, `Unsupported constructor: new ${constructor}`, context);
