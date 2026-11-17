@@ -5388,10 +5388,19 @@ const translateCallStatementBody = (
       innerFrame,
       next,
     );
-  // A closure that a name holds runs in the environment that the name's value holds.
+  // A closure that a name's declaration makes runs in the environment that the name's value holds.
   const name = skipCasts(expression.expression);
+  const declaration = ts.isIdentifier(name)
+    ? getSymbol(name, context.checker)?.valueDeclaration
+    : undefined;
   const call =
-    isClosure(callee, context) && path.scope.entered !== callee && ts.isIdentifier(name)
+    isClosure(callee, context) &&
+    path.scope.entered !== callee &&
+    ts.isIdentifier(name) &&
+    declaration !== undefined &&
+    ts.isVariableDeclaration(declaration) &&
+    declaration.initializer !== undefined &&
+    skipCasts(declaration.initializer) === callee
       ? enterClosure(
           callee,
           translateExpression(name, path.scope, context),
